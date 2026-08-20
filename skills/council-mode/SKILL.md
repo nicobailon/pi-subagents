@@ -44,8 +44,8 @@ concise, cited advice using the report contract in the council task.
 
 After `subagent({ action: "list" })`, prefer 2–3 executable names that start with
 `council-`. The prefix is a naming convention, not runtime selection. If fewer
-than two profiles are available, fill the roster with fresh-context `oracle`, then
-`reviewer`, until it has two advisors. Note the fallback in the memo. Use the
+than two profiles are available, fill the roster with fresh-context `reviewer`, then
+`scout`, until it has two advisors. Note the fallback in the memo. Use the
 normal single-oracle consultation loop only when a requested roster or unavailable
 builtins leaves fewer than two advisors. Label that result as degraded mode. Never
 use more than four advisors.
@@ -59,8 +59,8 @@ be settled by evidence an advisor can produce. Never run an unbounded loop.
 1. The parent writes a brief with the question, scope, non-goals, evidence targets,
    roster, roles, and pass cap.
 2. Launch one async `workflowScript` with `runs.all` for independent fresh-context
-   advisor reports. Use stable keys and set `context: "fresh"` explicitly on every
-   advisor run. This is required for fallback `oracle` and `reviewer` advisors and
+advisor reports. Use stable keys and set `context: "fresh"` explicitly on every
+advisor run. This is required for fallback `reviewer` and `scout` advisors and
    also applies to `council-*` advisors. Each advisor is read-only and must not
    spawn children, edit files, run mutating commands, commit, or push.
    Use `{ key, agent, context: "fresh", task }` for every `runs.all` launch item.

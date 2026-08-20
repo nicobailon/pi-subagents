@@ -23,7 +23,7 @@ the question is trivial or settled, answer directly instead of convening a counc
 - Otherwise list agents with `subagent({ action: "list" })`, then prefer 2–3
   executable names that start with `council-`.
 - If fewer than two profiles are available, fill the roster with fresh-context
-  `oracle`, then `reviewer`, until it has two advisors. Note the fallback in the
+  `reviewer`, then `scout`, until it has two advisors. Note the fallback in the
   memo.
 - Use the normal single-oracle loop only when a requested roster or unavailable
   builtins leaves fewer than two advisors. Label the memo as degraded mode.
@@ -35,7 +35,7 @@ exceed 4.
 
 Launch one async `workflowScript` with `runs.all` and a stable key for each advisor.
 Every advisor run sets `context: "fresh"` explicitly. This is required for fallback
-`oracle` and `reviewer` advisors and also applies to `council-*` advisors. Each task
+`reviewer` and `scout` advisors and also applies to `council-*` advisors. Each task
 includes the brief, the assigned role, and these rules:
 
 Use `{ key, agent, context: "fresh", task }` for every `runs.all` launch item.
