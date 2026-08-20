@@ -96,6 +96,10 @@ describe("subagent extension RPC bridge", () => {
 			true,
 		);
 		assert.deepEqual(
+			(reply as { data: { capabilities?: { managementActions?: unknown } } }).data.capabilities?.managementActions,
+			["schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.delete"],
+		);
+		assert.deepEqual(
 			(reply as { data: { capabilities?: { fleetStatus?: unknown } } }).data.capabilities?.fleetStatus,
 			{ version: 1 },
 		);
@@ -152,6 +156,35 @@ describe("subagent extension RPC bridge", () => {
 		assert.deepEqual((reply as { data: { fleet?: unknown } }).data.fleet, {
 			version: 1, entries: [], totalActive: 0, topLevelAsyncCapacity: { used: 0, limit: 0 }, omitted: 0,
 		});
+
+		bridge.dispose();
+	});
+
+	it("delegates allowlisted schedule management through the active session", async () => {
+		const events = new FakeEvents();
+		const executed: unknown[] = [];
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx(),
+			execute: async (_id, params) => {
+				executed.push(params);
+				return { content: [{ type: "text", text: "ok" }], details: { mode: "management", results: [] } } as any;
+			},
+		});
+
+		assert.equal((await request(events, "manage-list", "manage", { action: "schedule.list" })).success, true);
+		assert.equal((await request(events, "manage-pause", "manage", { action: "schedule.pause", id: "nightly" })).success, true);
+		assert.deepEqual(executed, [
+			{ action: "schedule.list" },
+			{ action: "schedule.pause", id: "nightly" },
+		]);
+
+		const denied = await request(events, "manage-denied", "manage", { action: "mission.close", id: "mission-1" });
+		assert.equal(denied.success, false);
+		assert.equal((denied as { error: { code: string } }).error.code, "invalid_params");
+		const missingId = await request(events, "manage-missing", "manage", { action: "schedule.run" });
+		assert.equal(missingId.success, false);
+		assert.equal((missingId as { error: { code: string } }).error.code, "invalid_params");
 
 		bridge.dispose();
 	});

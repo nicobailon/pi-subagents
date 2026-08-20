@@ -27,7 +27,7 @@ export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
 export const SUBAGENT_RPC_READY_EVENT = "subagents:rpc:v1:ready";
 export const SUBAGENT_RPC_REPLY_EVENT_PREFIX = "subagents:rpc:v1:reply:";
 
-export const SUBAGENT_RPC_METHODS = ["ping", "status", "spawn", "steer", "interrupt", "stop", "resume"] as const;
+export const SUBAGENT_RPC_METHODS = ["ping", "status", "manage", "spawn", "steer", "interrupt", "stop", "resume"] as const;
 export type SubagentRpcMethod = typeof SUBAGENT_RPC_METHODS[number];
 
 export interface SubagentRpcRequestEnvelope {
@@ -57,6 +57,18 @@ export type SubagentRpcReplyEnvelope<T = unknown> = {
 		message: string;
 	};
 };
+
+export const SUBAGENT_RPC_MANAGEMENT_ACTIONS = [
+	"schedule.list",
+	"schedule.show",
+	"schedule.history",
+	"schedule.pause",
+	"schedule.resume",
+	"schedule.run",
+	"schedule.delete",
+] as const;
+
+type SubagentRpcManagementAction = typeof SUBAGENT_RPC_MANAGEMENT_ACTIONS[number];
 
 type SubagentRpcErrorCode =
 	| "invalid_request"
@@ -375,6 +387,7 @@ function pingData(ctx: ExtensionContext | null) {
 		methods: [...SUBAGENT_RPC_METHODS],
 		capabilities: {
 			status: true,
+			managementActions: [...SUBAGENT_RPC_MANAGEMENT_ACTIONS],
 			fleetStatus: { version: 1 },
 			asyncStatusSnapshot: { kind: ASYNC_STATUS_SNAPSHOT_KIND, version: ASYNC_STATUS_SNAPSHOT_VERSION },
 			asyncSpawn: true,
@@ -410,6 +423,30 @@ async function executeChecked(
 	const result = await options.execute(`rpc-${method}-${requestId}`, params, controller.signal, undefined, ctx);
 	failIfToolError(result);
 	return dataFromToolResult(result);
+}
+
+function manageParams(params: unknown): SubagentParamsLike {
+	const input = assertRecordParams(params, "manage");
+	if (typeof input.action !== "string" || !(SUBAGENT_RPC_MANAGEMENT_ACTIONS as readonly string[]).includes(input.action)) {
+		throw new SubagentRpcError(
+			"invalid_params",
+			`RPC manage action must be one of: ${SUBAGENT_RPC_MANAGEMENT_ACTIONS.join(", ")}.`,
+		);
+	}
+	if (input.id !== undefined && (typeof input.id !== "string" || !input.id.trim())) {
+		throw new SubagentRpcError("invalid_params", "RPC manage id must be a non-empty string.");
+	}
+	const action = input.action as SubagentRpcManagementAction;
+	const requiresId = action !== "schedule.list";
+	if (requiresId && typeof input.id !== "string") {
+		throw new SubagentRpcError("invalid_params", `RPC manage ${action} requires id.`);
+	}
+	const output: SubagentParamsLike = {
+		action,
+		...(typeof input.id === "string" ? { id: input.id.trim() } : {}),
+	};
+	assertSubagentParams(output, "RPC manage params");
+	return output;
 }
 
 function spawnParams(params: unknown): SubagentParamsLike {
@@ -535,6 +572,9 @@ async function handleRequest(
 	if (request.method === "ping") return pingData(ctx);
 	if (!ctx) throw new SubagentRpcError("no_active_session", "No active extension context for subagent RPC.");
 
+	if (request.method === "manage") {
+		return executeChecked(options, ctx, request.requestId, request.method, manageParams(request.params));
+	}
 	if (request.method === "spawn") {
 		return executeChecked(options, ctx, request.requestId, request.method, spawnParams(request.params));
 	}
