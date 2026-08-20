@@ -144,18 +144,28 @@ function reconcileWorkflowReceipt(status: AsyncStatus, childRunId: string, resul
 		resumability = { state: "not-resumable", reason: error instanceof Error ? error.message : String(error) };
 	}
 	const outputReference = result.savedOutputPath ?? result.outputReference?.path ?? entry.outputReference;
+	const updatedEntry: WorkflowReceipt["entries"][string] = resumability.state === "resumable"
+		? {
+			...entry,
+			...(step.agent ? { agent: step.agent } : {}),
+			...(step.context ? { resolvedContext: step.context } : {}),
+			latestRunId: entry.latestRunId ?? childRunId,
+			resumability,
+			...(outputReference ? { outputReference } : {}),
+		}
+		: {
+			...entry,
+			...(step.agent ? { agent: step.agent } : {}),
+			...(step.context ? { resolvedContext: step.context } : {}),
+			resumability,
+			...(outputReference ? { outputReference } : {}),
+		};
 	const next: WorkflowReceipt = {
 		...receipt,
 		state: status.state === "complete" ? "complete" : status.state === "stopped" ? "stopped" : status.state === "paused" ? "paused" : "failed",
 		entries: {
 			...receipt.entries,
-			[key]: {
-				...entry,
-				...(step.agent ? { agent: step.agent } : {}),
-				...(step.context ? { resolvedContext: step.context } : {}),
-				resumability,
-				...(outputReference ? { outputReference } : {}),
-			},
+			[key]: updatedEntry,
 		},
 	};
 	writeWorkflowReceipt(asyncDir, next);

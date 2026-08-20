@@ -41,16 +41,19 @@ export function buildWorkflowReceipt(input: {
 		if (entries[key]) throw new Error(`Workflow receipt has duplicate child key '${key}'.`);
 		const runIds = [...new Set((child.continuation?.runIds ?? (child.runId ? [child.runId] : [])).filter((runId) => typeof runId === "string" && runId.trim()).map((runId) => runId.trim()))];
 		const latestRunId = runIds.at(-1);
-		entries[key] = {
+		const resumability = child.resumability ?? { state: "not-resumable", reason: child.runId ? "resumability was not recorded" : "child produced no run id" };
+		if (resumability.state === "resumable" && !latestRunId) throw new Error(`Workflow receipt child '${key}' is resumable but has no retained run id.`);
+		const base = {
 			key,
 			...(child.agent ? { agent: child.agent } : {}),
 			...(child.requestedContext ? { requestedContext: child.requestedContext } : {}),
 			...(child.resolvedContext ? { resolvedContext: child.resolvedContext } : {}),
-			...(latestRunId ? { latestRunId } : {}),
-			resumability: child.resumability ?? { state: "not-resumable", reason: child.runId ? "resumability was not recorded" : "child produced no run id" },
 			...(child.outputReference ? { outputReference: child.outputReference } : {}),
 			continuation: { runIds },
 		};
+		entries[key] = resumability.state === "resumable"
+			? { ...base, latestRunId: latestRunId!, resumability }
+			: { ...base, ...(latestRunId ? { latestRunId } : {}), resumability };
 	}
 	return { version: WORKFLOW_RECEIPT_VERSION, workflowRunId, state: input.state, createdAt: input.createdAt ?? Date.now(), entries };
 }
@@ -79,6 +82,7 @@ function parseEntry(value: unknown, key: string, source: string): WorkflowReceip
 	const state = (resumability as Record<string, unknown>).state;
 	if (state !== "resumable" && state !== "not-resumable") throw new Error(`Invalid workflow receipt '${source}': entry '${key}' resumability state is invalid.`);
 	const reason = (resumability as Record<string, unknown>).reason;
+	if (state === "resumable" && latestRunId === undefined) throw new Error(`Invalid workflow receipt '${source}': entry '${key}' resumable entry has no retained run id.`);
 	if (state === "not-resumable" && (typeof reason !== "string" || !reason.trim())) throw new Error(`Invalid workflow receipt '${source}': entry '${key}' non-resumable reason is missing.`);
 	return value as WorkflowReceiptEntry;
 }
@@ -110,17 +114,20 @@ export function resolveWorkflowReceiptResumeEntry(input: {
 	reference: WorkflowReceiptResumeReference;
 	asyncDirRoot: string;
 	assertResumable?: (runId: string) => void;
-}): WorkflowReceiptEntry {
+}): WorkflowReceiptEntry & { latestRunId: string; resumability: { state: "resumable" } } {
 	if (input.reference.latest !== true) throw new Error("Keyed workflow receipt resume requires latest: true.");
 	const key = assertKey(input.reference.key, "keyed resume key");
 	const receipt = readWorkflowReceipt(input.asyncDirRoot, input.reference.workflowRunId.trim());
 	const entry = receipt.entries[key];
 	if (!entry) throw new Error(`Workflow receipt '${receipt.workflowRunId}' has no child key '${key}'.`);
-	if (entry.resumability.state !== "resumable") throw new Error(`Workflow receipt '${receipt.workflowRunId}' child '${key}' is not resumable: ${entry.resumability.reason}.`);
-	const runId = entry.latestRunId;
-	if (!runId) throw new Error(`Workflow receipt '${receipt.workflowRunId}' child '${key}' has no retained run id.`);
-	input.assertResumable?.(runId);
+	assertResumableEntry(entry, receipt.workflowRunId, key);
+	input.assertResumable?.(entry.latestRunId);
 	return entry;
+}
+
+function assertResumableEntry(entry: WorkflowReceiptEntry, workflowRunId: string, key: string): asserts entry is WorkflowReceiptEntry & { latestRunId: string; resumability: { state: "resumable" } } {
+	if (entry.resumability.state !== "resumable") throw new Error(`Workflow receipt '${workflowRunId}' child '${key}' is not resumable: ${entry.resumability.reason}.`);
+	if (!entry.latestRunId) throw new Error(`Workflow receipt '${workflowRunId}' child '${key}' has no retained run id.`);
 }
 
 export function resolveWorkflowReceiptResume(input: {
@@ -129,7 +136,5 @@ export function resolveWorkflowReceiptResume(input: {
 	assertResumable?: (runId: string) => void;
 }): string {
 	const entry = resolveWorkflowReceiptResumeEntry(input);
-	const runId = entry.latestRunId;
-	if (!runId) throw new Error(`Workflow receipt child '${entry.key}' has no retained run id.`);
-	return runId;
+	return entry.latestRunId;
 }

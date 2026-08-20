@@ -73,16 +73,18 @@ export interface WorkflowGraphSnapshot {
 
 export type WorkflowReceiptState = "complete" | "failed" | "paused" | "stopped";
 
-export interface WorkflowReceiptEntry {
+type WorkflowReceiptEntryResumability =
+	| { latestRunId: string; resumability: { state: "resumable" } }
+	| { latestRunId?: string; resumability: { state: "not-resumable"; reason: string } };
+
+export type WorkflowReceiptEntry = WorkflowReceiptEntryResumability & {
 	key: string;
 	agent?: string;
 	requestedContext?: "fresh" | "fork";
 	resolvedContext?: "fresh" | "fork" | "mixed";
-	latestRunId?: string;
-	resumability: { state: "resumable" } | { state: "not-resumable"; reason: string };
 	outputReference?: string;
 	continuation: { runIds: string[] };
-}
+};
 
 export interface WorkflowReceipt {
 	version: 1;

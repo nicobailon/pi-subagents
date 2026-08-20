@@ -4,13 +4,18 @@ import { TEMP_ROOT_DIR } from "../../shared/types.ts";
 
 export const EXCLUSIONS_PATH_ENV = "PI_MODEL_EXCLUSIONS_PATH";
 
-export interface ModelExclusion {
-	modelId?: string;
-	provider?: string;
+type ModelExclusionTarget = { modelId: string; provider?: string } | { provider: string; modelId?: never };
+
+export type ModelExclusion = ModelExclusionTarget & {
 	reason?: string;
 	recordedAt: number;
 	expiresAt: number;
-}
+};
+
+type RecordModelFailureOptions = ModelExclusionTarget & {
+	reason?: string;
+	ttlMs?: number;
+};
 
 let exclusions: ModelExclusion[] = [];
 let loaded = false;
@@ -18,11 +23,10 @@ let defaultTTLMs = 24 * 60 * 60_000; // 24 hours, overridable via setDefaultTTL
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let persistSeq = 0;
 
-/**
- * Override the default exclusion TTL. Invalid or non-positive values are ignored.
- */
+/** Override the default exclusion TTL. */
 export function setDefaultTTL(ms: number): void {
-	if (Number.isFinite(ms) && ms > 0) defaultTTLMs = ms;
+	if (!Number.isFinite(ms) || ms <= 0) throw new Error("Default model exclusion TTL must be a finite positive number.");
+	defaultTTLMs = ms;
 }
 
 /**
@@ -106,18 +110,15 @@ function deduplicate(items: ModelExclusion[]): ModelExclusion[] {
  * the provider when modelId is omitted), and {@link filterFallbackCandidates}
  * removes matching candidates from fallback lists.
  */
-export function recordModelFailure(options: {
-	modelId?: string;
-	provider?: string;
-	reason?: string;
-	ttlMs?: number;
-}): void {
+export function recordModelFailure(options: RecordModelFailureOptions): void {
 	ensureLoaded();
 	const ttl = options.ttlMs ?? defaultTTLMs;
 	const now = Date.now();
+	const target: ModelExclusionTarget = options.modelId !== undefined
+		? { modelId: options.modelId, ...(options.provider ? { provider: options.provider } : {}) }
+		: { provider: options.provider };
 	const exclusion: ModelExclusion = {
-		modelId: options.modelId,
-		provider: options.provider,
+		...target,
 		reason: options.reason ?? "runtime-failure",
 		recordedAt: now,
 		expiresAt: now + ttl,

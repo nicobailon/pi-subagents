@@ -11,12 +11,16 @@ import {
 	parseModelKey,
 	recordModelFailure,
 	reloadFromDisk,
+	setDefaultTTL,
 } from "../../src/runs/shared/model-exclusions.ts";
 
 // The exclusion store is a process-wide singleton persisted under TEMP_ROOT_DIR
 // (isolated per test run by test/support/isolated-temp-root.mjs). Clear it
 // before/after each test so cases don't leak state into each other.
-beforeEach(() => clearExclusions());
+beforeEach(() => {
+	fs.rmSync(getExclusionsFilePath(), { force: true });
+	clearExclusions();
+});
 afterEach(() => clearExclusions());
 
 describe("model exclusions — record & query", () => {
@@ -54,6 +58,11 @@ describe("model exclusions — record & query", () => {
 });
 
 describe("model exclusions — TTL expiry", () => {
+	it("rejects invalid default TTLs", () => {
+		assert.throws(() => setDefaultTTL(0), /finite positive/);
+		assert.throws(() => setDefaultTTL(Number.POSITIVE_INFINITY), /finite positive/);
+	});
+
 	it("drops an exclusion after its TTL elapses", async () => {
 		recordModelFailure({ modelId: "gpt-4", provider: "openai", ttlMs: 100 });
 		assert.equal(isExcluded("gpt-4", "openai"), true);

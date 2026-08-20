@@ -173,7 +173,7 @@ function validateRunner(value: unknown): AgentRunnerConfig | undefined {
 	const supported = new Set(["type", "command", "args", "promptDelivery"]);
 	const unknown = Object.keys(runner).filter((key) => !supported.has(key));
 	if (unknown.length > 0) throw new Error(`Runtime agent definition external-cli runner has unsupported fields: ${unknown.join(", ")}.`);
-	const args = Array.isArray(runner.args) ? runner.args.filter((arg): arg is string => typeof arg === "string") : undefined;
+	const args = runner.args as string[] | undefined;
 	return { type: "external-cli", command: runner.command.trim(), ...(args?.length ? { args } : {}), ...(runner.promptDelivery ? { promptDelivery: "stdin" as const } : {}) };
 }
 
