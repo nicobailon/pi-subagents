@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- Carry full model registry metadata, including tiered pricing, into normalized
+  model information. Thanks to [@srcKod](https://github.com/srcKod) for #1317.
 - Let agent definitions and `agentOverrides` set a default `outputMode`, while
   call-level output mode stays higher priority. Thanks to [@bbbRye007](https://github.com/bbbRye007) for #1305.
 - Add `context: "profile"` for workflow children that should use the selected

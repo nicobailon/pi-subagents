@@ -1,3 +1,5 @@
+import type { ModelCost } from "@earendil-works/pi-ai";
+
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = typeof THINKING_LEVELS[number];
 export type ThinkingLevelMap = Partial<Record<ThinkingLevel, string | null>>;
@@ -9,6 +11,14 @@ export interface ModelInfo {
 	api?: string;
 	reasoning?: boolean;
 	thinkingLevelMap?: ThinkingLevelMap;
+	/** Context window in tokens, when the host model registry reports one. */
+	contextWindow?: number;
+	/** Maximum output tokens, when the host model registry reports one. */
+	maxTokens?: number;
+	/** Input modalities reported by the registry, e.g. ["text", "image"]. */
+	input?: string[];
+	/** Per-token pricing from the registry (USD per 1M tokens). */
+	cost?: ModelCost;
 }
 
 interface RegistryModelLike {
@@ -17,6 +27,10 @@ interface RegistryModelLike {
 	api?: string;
 	reasoning?: boolean;
 	thinkingLevelMap?: ThinkingLevelMap;
+	contextWindow?: number;
+	maxTokens?: number;
+	input?: string[];
+	cost?: ModelCost;
 }
 
 export function toModelInfo(model: RegistryModelLike): ModelInfo {
@@ -27,6 +41,12 @@ export function toModelInfo(model: RegistryModelLike): ModelInfo {
 		api: model.api,
 		reasoning: model.reasoning,
 		thinkingLevelMap: model.thinkingLevelMap,
+		...(typeof model.contextWindow === "number" && Number.isFinite(model.contextWindow) && model.contextWindow > 0 ? { contextWindow: model.contextWindow } : {}),
+		...(typeof model.maxTokens === "number" && Number.isFinite(model.maxTokens) && model.maxTokens > 0 ? { maxTokens: model.maxTokens } : {}),
+		...(Array.isArray(model.input) && model.input.length > 0 ? { input: [...model.input] } : {}),
+		...(model.cost && Number.isFinite(model.cost.input) && Number.isFinite(model.cost.output)
+			? { cost: { ...model.cost, ...(model.cost.tiers ? { tiers: model.cost.tiers.map((tier) => ({ ...tier })) } : {}) } }
+			: {}),
 	};
 }
 
