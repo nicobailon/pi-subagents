@@ -1145,11 +1145,9 @@ async function runMemoizedVerifyCommand(command: AcceptanceVerifyCommand, defaul
  * unquoted executable path containing spaces (e.g. `C:\Program Files\...\tool.exe`)
  * is split at the first space, so cmd tries to run `C:\Program` and fails.
  *
- * The command line is ambiguous (we cannot know where the executable ends), so
- * we only act when we can identify the executable confidently: when the first
- * whitespace-delimited token does NOT end in a Windows executable extension but
- * a longer prefix of the command line DOES (e.g. `C:\Program Files\v\tool.exe`).
- * That prefix is quoted; everything after it is preserved as arguments.
+ * The command line is ambiguous, so only an unquoted absolute drive path at the
+ * start is safe to identify as an executable. That path is quoted; everything
+ * after it is preserved as arguments.
  *
  * Commands that already start with a quote, single-token commands, and commands
  * whose first token already ends in an executable extension are returned
@@ -1159,17 +1157,9 @@ export function quoteExecutableForShell(command: string, platform: string = proc
 	if (platform !== "win32") return command;
 	const trimmed = command.trimStart();
 	if (trimmed.startsWith("\"")) return command;
-	const firstSpace = trimmed.indexOf(" ");
-	if (firstSpace === -1) return command;
-	const firstToken = trimmed.slice(0, firstSpace);
-	if (/\.(exe|bat|cmd|com|ps1)$/i.test(firstToken)) return command;
-	const match = trimmed.match(/^([^"\s].*?\.(?:exe|bat|cmd|com|ps1))(?=\s|$)/i);
+	const match = trimmed.match(/^([A-Za-z]:\\[^"<>|&()*?\r\n]*?\.(?:exe|bat|cmd|com|ps1))(?=\s|$)/i);
 	const executable = match?.[1];
 	if (!executable) return command;
-	// Refuse to quote when the candidate prefix contains flag-like tokens
-	// (e.g. `tool --input file.exe`): that means the extension belongs to an
-	// argument, not the executable.
-	if (/\s-/.test(executable)) return command;
 	const rest = trimmed.slice(executable.length);
 	const leading = command.slice(0, command.length - trimmed.length);
 	return `${leading}"${executable}"${rest}`;

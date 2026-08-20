@@ -5,6 +5,9 @@
 ### Added
 - Add the `resultScanLogging` config to control result scan logging. Thanks to [@apoapostolov](https://github.com/apoapostolov) for #1293.
 
+### Fixed
+- Quote only confidently identified leading Windows executable paths in acceptance verification commands. Thanks to [@srcKod](https://github.com/srcKod) for #1294.
+
 ### Changed
 - Reuse validated workflow launch fingerprints during `runs.all` batch setup, reducing focused fingerprint bookkeeping time by 48.7% (#1287).
 - Speed up recent terminal run history reads when the marker history is large and the requested limit is small.

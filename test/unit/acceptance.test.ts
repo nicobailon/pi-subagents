@@ -1241,8 +1241,9 @@ describe("quoteExecutableForShell", () => {
 		assert.equal(quoteExecutableForShell(command, "darwin"), command);
 	});
 
-	it("does not quote when the extension belongs to a flag argument", () => {
-		const command = "tool --input file.exe";
-		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	it("leaves ambiguous Windows commands unchanged", () => {
+		for (const command of ["tool file.exe", "cmd /c tool.exe", "echo hi > out.exe"]) {
+			assert.equal(quoteExecutableForShell(command, "win32"), command);
+		}
 	});
 });
