@@ -22,9 +22,11 @@ the question is trivial or settled, answer directly instead of convening a counc
   unknown agent.
 - Otherwise list agents with `subagent({ action: "list" })`, then prefer 2–3
   executable names that start with `council-`.
-- If fewer than two profiles are available, fill the roster with fresh-context
-  `reviewer`, then `scout`, until it has two advisors. Note the fallback in the
-  memo.
+- If fewer than two profiles are available, fill the roster with `oracle`, then
+  `reviewer`, until it has two advisors. Launch fallback `oracle` with
+  `context: "fork"` so global defaults cannot remove its parent-chat context.
+  Let `reviewer` use its normal profile context. Note the fallback and known
+  context modes in the memo.
 - Use the normal single-oracle loop only when a requested roster or unavailable
   builtins leaves fewer than two advisors. Label the memo as degraded mode.
 
@@ -34,14 +36,14 @@ exceed 4.
 ## Pass 1: independent reports
 
 Launch one async `workflowScript` with `runs.all` and a stable key for each advisor.
-Every advisor run sets `context: "fresh"` explicitly. This is required for fallback
-`reviewer` and `scout` advisors and also applies to `council-*` advisors. Each task
-includes the brief, the assigned role, and these rules:
+Set `context` when the selected advisor has a known profile context or a fallback
+rule requests one, because a global default can otherwise override that profile.
+Set `context: "fork"` for fallback `oracle`. If no advisor context is known, omit
+`context` and disclose the unknown runtime default in the memo. Each task includes
+the brief, the assigned role, and these rules:
 
-Use `{ key, agent, context: "fresh", task }` for every `runs.all` launch item.
-
-- Fresh context. Inspect the repository and supplied evidence directly. You do not
-  see other advisors and must not ask about them.
+- Inspect the repository and supplied evidence directly. You do not see other
+  advisors and must not ask about them.
 - Read-only. Do not edit files, run mutating commands, commit, or push.
 - Do not spawn subagents. Keep the report to about 600 words or less.
 
@@ -108,7 +110,8 @@ Write the memo yourself. Do not delegate it. Include:
 - Unresolved owner decisions
 - Evidence: paths, commands, and run ids; do not inline transcripts
 - Confidence and what would change the decision
-- Process note: roster, roles, passes, fallbacks, and degraded modes
+- Process note: roster, roles, passes, fallbacks, degraded modes, and known advisor
+  context modes. State that fallback `oracle` is context-aware and forked.
 
 Question and options from the slash command invocation:
 

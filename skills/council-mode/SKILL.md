@@ -18,7 +18,8 @@ trivial or settled question, or for implementation work. Read
 
 Roles such as architect, skeptic, operator, and performance reviewer belong to the
 `/council` request. A `council-*` profile defines only model, tools, context, and
-output defaults.
+output defaults. Its profile configuration or explicit invocation owns its context
+choice.
 
 Create model-based profiles in your user or project agent directory. Do not add
 them to this package. This is a valid example; roles still come from `/council`:
@@ -44,11 +45,13 @@ concise, cited advice using the report contract in the council task.
 
 After `subagent({ action: "list" })`, prefer 2–3 executable names that start with
 `council-`. The prefix is a naming convention, not runtime selection. If fewer
-than two profiles are available, fill the roster with fresh-context `reviewer`, then
-`scout`, until it has two advisors. Note the fallback in the memo. Use the
-normal single-oracle consultation loop only when a requested roster or unavailable
-builtins leaves fewer than two advisors. Label that result as degraded mode. Never
-use more than four advisors.
+than two profiles are available, fill the roster with `oracle`, then `reviewer`,
+until it has two advisors. Launch fallback `oracle` with `context: "fork"` so
+global defaults cannot remove its parent-chat context. Let fallback `reviewer`
+use its normal profile context. Note the fallback and known context modes in the
+memo. Use the normal single-oracle consultation loop only when a requested roster
+or unavailable builtins leaves fewer than two advisors.
+Label that result as degraded mode. Never use more than four advisors.
 
 Pass 1 is independent reports. Pass 2 is one cross-exam. The default pass cap is
 2. Run pass 3 only when `--max-passes 3` was requested and a material dispute can
@@ -58,12 +61,13 @@ be settled by evidence an advisor can produce. Never run an unbounded loop.
 
 1. The parent writes a brief with the question, scope, non-goals, evidence targets,
    roster, roles, and pass cap.
-2. Launch one async `workflowScript` with `runs.all` for independent fresh-context
-advisor reports. Use stable keys and set `context: "fresh"` explicitly on every
-advisor run. This is required for fallback `reviewer` and `scout` advisors and
-   also applies to `council-*` advisors. Each advisor is read-only and must not
-   spawn children, edit files, run mutating commands, commit, or push.
-   Use `{ key, agent, context: "fresh", task }` for every `runs.all` launch item.
+2. Launch one async `workflowScript` with `runs.all` for independent advisor
+reports. Use stable keys. Set `context` when the selected advisor has a known
+   profile context or a fallback rule requests one, because a global default can
+   otherwise override that profile. Set `context: "fork"` for fallback `oracle`.
+   If no advisor context is known, omit `context` and disclose the unknown runtime
+   default in the memo. Each advisor is read-only and must not spawn children,
+   edit files, run mutating commands, commit, or push.
 3. The parent synthesizes a claim matrix in session. It contains agreements,
    disputed claims, missing proof, owner decisions, and a relay set of at most five
    high-impact claims per advisor. Do not delegate this synthesis.
@@ -110,8 +114,9 @@ decisions. Never add a round for polish or symmetry.
 
 The parent memo states the question and scope, recommendation, rationale, accepted
 and rejected feedback with reasons, owner decisions, evidence and run ids,
-confidence, what would change the decision, and the roster, roles, passes, and
-fallbacks.
+confidence, what would change the decision, and the roster, roles, passes,
+fallbacks, and known advisor context modes. State that fallback `oracle` is
+context-aware and forked.
 
 Council mode is not agent-to-agent chat, a transcript dump, mutation authority,
 auto-escalation to writer lanes, or a council UI. Escalate to a writer only after
