@@ -192,6 +192,51 @@ describe("createForkContextResolver", () => {
 		}
 	});
 
+	it("nests forked sessions under a per-parent directory so pi -c never picks them", () => {
+		// Regression test: fork files used to be created as top-level siblings of
+		// the parent session. Pi's findMostRecentSession (`pi -c`) scans that
+		// directory non-recursively and picks the largest-mtime *.jsonl, so a
+		// still-running forked subagent out-writes the idle parent and the next
+		// `pi -c` resumed the subagent instead of the conversation the user left.
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-nested-"));
+		try {
+			const sessionDir = path.join(tempDir, "sessions");
+			const parent = SessionManager.create(tempDir, sessionDir);
+			parent.appendMessage({ role: "user", content: "parent prompt" });
+			parent.appendMessage({ role: "assistant", content: "parent response" });
+			const parentSessionFile = parent.getSessionFile();
+			const leafId = parent.getLeafId();
+
+			assert.ok(parentSessionFile);
+			assert.ok(leafId);
+
+			const resolver = createForkContextResolver({
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => leafId,
+				getSessionDir: () => sessionDir,
+			}, "fork");
+
+			const childSessionFile = resolver.sessionFileForIndex(0);
+			assert.ok(childSessionFile);
+			assert.equal(fs.existsSync(childSessionFile), true);
+
+			// The fork is nested under <sessionDir>/<parentBase>/forks/, never a
+			// top-level sibling of the parent.
+			assert.equal(
+				path.dirname(childSessionFile),
+				path.join(sessionDir, path.basename(parentSessionFile, ".jsonl"), "forks"),
+			);
+			// Top-level listing — what pi -c sees — still contains only the parent.
+			const topLevel = fs.readdirSync(sessionDir).filter((f) => f.endsWith(".jsonl"));
+			assert.deepEqual(topLevel, [path.basename(parentSessionFile)]);
+			// The official parentSession header still records the tree relationship.
+			const header = JSON.parse(fs.readFileSync(childSessionFile, "utf-8").split("\n")[0]);
+			assert.equal(header.parentSession, parentSessionFile);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("fails clearly for an unflushed user-only parent", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-user-only-"));
 		try {

@@ -208,7 +208,23 @@ export function createForkContextResolver(
 	const openSession = options.openSession
 		?? sessionManager.openSession
 		?? ((file: string, dir?: string) => SessionManager.open(file, dir));
-	const sessionDir = sessionManager.getSessionDir?.();
+	// Fork files must not land in the parent's top-level session directory.
+	// Pi's recent-session discovery (`pi -c` → findMostRecentSession) is
+	// non-recursive and picks the largest-mtime *.jsonl in that directory, so
+	// a still-running forked subagent — which keeps appending after the parent
+	// went idle — would hijack the next `pi -c` away from the conversation the
+	// user actually left. Nesting fork sessions in a per-parent directory keeps
+	// them invisible to that discovery; the `parentSession` header still
+	// records the tree relationship. The directory mirrors
+	// getSubagentSessionRoot() plus a "forks" level so fork files never sit
+	// loose next to run-N/ result directories. Derived from the file path
+	// rather than getSessionDir() so it also works when the manager cannot
+	// report its directory.
+	const sessionDir = path.join(
+		path.dirname(parentSessionFile),
+		path.basename(parentSessionFile, ".jsonl"),
+		"forks",
+	);
 	const cachedResolutions = new Map<number, ForkContextResolution>();
 
 	const resolveFork = (index = 0): ForkContextResolution => {
