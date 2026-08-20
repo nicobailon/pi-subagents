@@ -1140,6 +1140,41 @@ async function runMemoizedVerifyCommand(command: AcceptanceVerifyCommand, defaul
 	return evidenced;
 }
 
+/**
+ * On Windows with `shell: true`, cmd.exe parses the command line itself and an
+ * unquoted executable path containing spaces (e.g. `C:\Program Files\...\tool.exe`)
+ * is split at the first space, so cmd tries to run `C:\Program` and fails.
+ *
+ * The command line is ambiguous (we cannot know where the executable ends), so
+ * we only act when we can identify the executable confidently: when the first
+ * whitespace-delimited token does NOT end in a Windows executable extension but
+ * a longer prefix of the command line DOES (e.g. `C:\Program Files\v\tool.exe`).
+ * That prefix is quoted; everything after it is preserved as arguments.
+ *
+ * Commands that already start with a quote, single-token commands, and commands
+ * whose first token already ends in an executable extension are returned
+ * unchanged. Non-Windows platforms pass the command through untouched.
+ */
+export function quoteExecutableForShell(command: string, platform: string = process.platform): string {
+	if (platform !== "win32") return command;
+	const trimmed = command.trimStart();
+	if (trimmed.startsWith("\"")) return command;
+	const firstSpace = trimmed.indexOf(" ");
+	if (firstSpace === -1) return command;
+	const firstToken = trimmed.slice(0, firstSpace);
+	if (/\.(exe|bat|cmd|com|ps1)$/i.test(firstToken)) return command;
+	const match = trimmed.match(/^([^"\s].*?\.(?:exe|bat|cmd|com|ps1))(?=\s|$)/i);
+	const executable = match?.[1];
+	if (!executable) return command;
+	// Refuse to quote when the candidate prefix contains flag-like tokens
+	// (e.g. `tool --input file.exe`): that means the extension belongs to an
+	// argument, not the executable.
+	if (/\s-/.test(executable)) return command;
+	const rest = trimmed.slice(executable.length);
+	const leading = command.slice(0, command.length - trimmed.length);
+	return `${leading}"${executable}"${rest}`;
+}
+
 function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, options: { signal?: AbortSignal; abortMessage?: string } = {}): Promise<AcceptanceVerifyResult> {
 	return new Promise((resolve) => {
 		const startedAt = Date.now();
@@ -1149,7 +1184,7 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 		let timedOut = false;
 		let settled = false;
 		let hardKill: NodeJS.Timeout | undefined;
-		const child = spawn(command.command, {
+		const child = spawn(quoteExecutableForShell(command.command), {
 			cwd,
 			env: effectiveVerifyEnv(command.env),
 			shell: true,

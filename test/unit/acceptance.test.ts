@@ -12,6 +12,7 @@ import {
 	formatAcceptancePrompt,
 	normalizeGateAcceptance,
 	parseAcceptanceReport,
+	quoteExecutableForShell,
 	resolveEffectiveAcceptance,
 	stripAcceptanceReport,
 	validateAcceptanceInput,
@@ -1209,5 +1210,39 @@ describe("acceptance gates", () => {
 		assert.match(validateAcceptanceInput({ review: { required: "yes" } }).join("\n"), /acceptance\.review\.required must be a boolean/);
 		assert.match(validateAcceptanceInput({ stopRules: [123] }).join("\n"), /acceptance\.stopRules\[0\] must be a string/);
 		assert.match(validateAcceptanceInput({ surprise: true }).join("\n"), /acceptance\.surprise is not supported/);
+	});
+});
+
+describe("quoteExecutableForShell", () => {
+	it("quotes an unquoted Windows executable path containing spaces", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files\\vendor\\tool.exe --flag", "win32"),
+			"\"C:\\Program Files\\vendor\\tool.exe\" --flag",
+		);
+	});
+
+	it("leaves an already-quoted command unchanged", () => {
+		const command = "\"C:\\Program Files\\vendor\\tool.exe\" --flag";
+		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	});
+
+	it("leaves a single-token command unchanged", () => {
+		assert.equal(quoteExecutableForShell("phpunit", "win32"), "phpunit");
+	});
+
+	it("leaves a first token without spaces unchanged", () => {
+		const command = "node script.js --check";
+		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	});
+
+	it("passes commands through unchanged on non-Windows platforms", () => {
+		const command = "/opt/my tools/runner --flag";
+		assert.equal(quoteExecutableForShell(command, "linux"), command);
+		assert.equal(quoteExecutableForShell(command, "darwin"), command);
+	});
+
+	it("does not quote when the extension belongs to a flag argument", () => {
+		const command = "tool --input file.exe";
+		assert.equal(quoteExecutableForShell(command, "win32"), command);
 	});
 });
