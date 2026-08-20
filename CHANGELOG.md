@@ -6,6 +6,9 @@
 - Suggest the unique alternate provider model when an explicit qualified subagent model is unavailable, without resolving across providers. Thanks to [@lallenlowe](https://github.com/lallenlowe) for #1280.
 - Tolerate extra fields on registered external-job providers (for example `kind`, `wakeChannels`, or additional operations) so one evolving provider no longer breaks registry reads for every provider. Job payload validation stays strict.
 
+### Changed
+- Add a pi-subagents reference for generic multi-lane orchestration across tasks, worktrees, and repositories.
+
 ## [0.52.0] - 2026-08-19
 
 ### Highlights

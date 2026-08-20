@@ -22,6 +22,7 @@ Read the matching reference file before acting. Paths are relative to this `SKIL
 | --- | --- |
 | Decide whether to delegate, choose agents, compare tool versus slash commands, apply prompt techniques, or understand builtin roles | `references/prompting-and-roles.md` |
 | Run one-child, scripted, async, scheduled, mission-backed, forked, watchdog, oracle, or intercom-coordinated workflows | `references/execution-controls.md` |
+| Coordinate several independent tasks, worktrees, repositories, or writer lanes | `references/multi-lane-orchestration.md` |
 | List/create/update/delete/eject/disable agents, inspect legacy chain records, edit agent files, use prompt-template integration, or expose extension RPC | `references/management-authoring-rpc.md` |
 | Check safety constraints, best practices, standard workflows, or error handling | `references/constraints-and-recipes.md` |
 
@@ -30,6 +31,7 @@ For broad or uncertain requests, read more than one reference. For complex work,
 ## Always-on constraints
 
 - Keep the parent as orchestrator and final decision-maker.
+- Before multiple mutation-capable lanes, record a lane board and each lane's isolation path.
 - For plan, design, or architecture advice that asks to consult, discuss with, or come to agreement with `oracle`, use a short same-session consultation loop: read the first result, resume once with a targeted challenge when material tradeoffs remain, then synthesize the parent decision. Keep explicit one-shot, trivial, and fully settled consultations one-shot.
 - Use one writer per cwd/worktree unless isolated worktrees are intentional.
 - For cross-codebase work, record the target repo, explicit `cwd`, authority boundary, and expected output before launch. Do not assume the parent session cwd is the child repo.
