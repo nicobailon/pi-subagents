@@ -162,10 +162,12 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const contextSchema = SubagentParams?.properties?.context;
 		assert.ok(contextSchema, "context schema should exist");
 		assert.equal(contextSchema.type, "string");
-		assert.deepEqual(contextSchema.enum, ["fresh", "fork"]);
+		assert.deepEqual(contextSchema.enum, ["fresh", "fork", "profile"]);
 		const description = String(contextSchema.description ?? "");
 		assert.match(description, /fresh/);
 		assert.match(description, /fork/);
+		assert.match(description, /profile/);
+		assert.match(description, /declared defaultContext/);
 		assert.match(description, /defaultSubagentContext wins over each agent defaultContext/);
 		assert.match(description, /overrides every child/);
 		assert.match(description, /implicit fork/);

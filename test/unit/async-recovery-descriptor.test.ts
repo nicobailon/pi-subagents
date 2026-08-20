@@ -34,6 +34,7 @@ describe("async recovery descriptor", () => {
 				inheritProjectContext: false,
 				inheritSkills: false,
 				outputMode: "inline",
+				context: "fork",
 				maxSubagentDepth: 2,
 				share: false,
 			}), "utf-8");
@@ -41,6 +42,34 @@ describe("async recovery descriptor", () => {
 			const descriptor = readAsyncRecoveryDescriptor(root);
 
 			assert.equal(descriptor?.launchContractDigest, digest);
+			assert.equal(descriptor?.context, "fork");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects unresolved profile context values", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-bad-context-"));
+		try {
+			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({
+				version: 1,
+				runFanoutBudget: runFanoutBudget("run-bad-context"),
+				sourceRunId: "run-bad-context",
+				agent: "worker",
+				cwd: root,
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				context: "profile",
+				maxSubagentDepth: 2,
+				share: false,
+			}), "utf-8");
+
+			assert.throws(
+				() => readAsyncRecoveryDescriptor(root),
+				/context is invalid/,
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

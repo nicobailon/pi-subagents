@@ -308,7 +308,7 @@ export interface SubagentParamsLike {
 	tasks?: TaskParam[];
 	concurrency?: number;
 	worktree?: boolean;
-	context?: "fresh" | "fork";
+	context?: "fresh" | "fork" | "profile";
 	/** Per-run intercom bridge config. It replaces the global config for this launch only. */
 	intercomBridge?: IntercomBridgeConfig;
 	async?: boolean;
@@ -1566,10 +1566,11 @@ async function resumeAsyncRun(input: {
 	const modelScope = discovered.modelScope;
 	const sessionName = resolveIntercomSessionTarget(input.deps.pi.getSessionName(), input.ctx.sessionManager.getSessionId());
 	const recoveryDescriptor = "recoveryDescriptor" in target ? target.recoveryDescriptor : undefined;
+	const recoveryContext = recoveryDescriptor?.context ?? (input.params.context === "profile" ? undefined : input.params.context);
 	const intercomBridge = resolveIntercomBridge({
 		config: input.deps.config.intercomBridge,
 		override: input.params.intercomBridge ?? recoveryDescriptor?.intercomBridge,
-		context: input.params.context,
+		context: recoveryContext,
 		orchestratorTarget: sessionName,
 	});
 	const agents = intercomBridge.active
@@ -1765,6 +1766,7 @@ async function resumeAsyncRun(input: {
 			sourceRunId: target.runId,
 			...(input.deps.state.currentSessionId ? { parentSessionId: input.deps.state.currentSessionId } : {}),
 		},
+		context: recoveryContext,
 		modelOverride: recoveryDescriptor?.model ?? target.model,
 		modelOverrideFromParent: recoveryDescriptor?.modelOverrideFromParent,
 		thinkingOverride: recoveryDescriptor?.thinking ?? target.thinking,
@@ -1916,9 +1918,12 @@ function formatFailedSingleRunOutput(result: SingleResult, displayOutput: string
 	return lines.join("\n");
 }
 
-function createForegroundControlNotifier(data: Pick<ExecutionContextData, "controlConfig" | "intercomBridge" | "params">, deps: Pick<ExecutorDeps, "pi" | "state">): (event: ControlEvent) => void {
+function createForegroundControlNotifier(data: Pick<ExecutionContextData, "controlConfig" | "contextPolicy" | "intercomBridge" | "params">, deps: Pick<ExecutorDeps, "pi" | "state">): (event: ControlEvent) => void {
 	return (event) => {
 		applyControlEventToRememberedForegroundRun(deps.state, event);
+		const eventBridge = intercomBridgeAppliesToAgent(data.intercomBridge, data.contextPolicy, event.agent)
+			? data.intercomBridge
+			: { ...data.intercomBridge, active: false };
 		const parentWorkflowRunId = data.params.workflowParentRunId;
 		const asyncWorkflow = typeof parentWorkflowRunId === "string" ? deps.state.asyncJobs.get(parentWorkflowRunId) : undefined;
 		const workflowKey = typeof data.params.workflowKey === "string" && data.params.workflowKey.trim()
@@ -1930,8 +1935,8 @@ function createForegroundControlNotifier(data: Pick<ExecutionContextData, "contr
 				job: asyncWorkflow,
 				event: enriched,
 				controlConfig: data.controlConfig,
-				intercomBridge: data.intercomBridge,
-				childIntercomTarget: data.intercomBridge.active
+				intercomBridge: eventBridge,
+				childIntercomTarget: eventBridge.active
 					? resolveSubagentIntercomTarget(enriched.runId, enriched.agent, enriched.index)
 					: undefined,
 			});
@@ -1939,7 +1944,7 @@ function createForegroundControlNotifier(data: Pick<ExecutionContextData, "contr
 		emitControlNotification({
 			pi: deps.pi,
 			controlConfig: data.controlConfig,
-			intercomBridge: data.intercomBridge,
+			intercomBridge: eventBridge,
 			event: enriched,
 			source: asyncWorkflow ? "async" : "foreground",
 		});
@@ -2243,17 +2248,40 @@ interface AgentDefaultContextPolicy {
 	usesFork: boolean;
 }
 
+type AgentDefaultContextPolicyResult = AgentDefaultContextPolicy | { error: string };
+
 function resolveAgentDefaultContextPolicy(
 	params: SubagentParamsLike,
 	agents: AgentConfig[],
 	defaultSubagentContext: ExtensionConfig["defaultSubagentContext"],
 	canUseDefaultFork = false,
-): AgentDefaultContextPolicy {
-	if (params.context !== undefined) return resolveExplicitContextPolicy(params);
+): AgentDefaultContextPolicyResult {
+	if (params.context === "profile") {
+		const byName = new Map(agents.map((agent) => [agent.name, agent]));
+		for (const agentName of collectRequestedAgentNames(params)) {
+			const agent = byName.get(agentName);
+			if (agent && agent.defaultContext === undefined) {
+				return { error: `context: "profile" requires agent '${agentName}' to declare defaultContext.` };
+			}
+		}
+		const contextForAgent = (agentName: string): ContextMode => {
+			const context = byName.get(agentName)?.defaultContext;
+			if (context === undefined) throw new Error(`context: "profile" requires agent '${agentName}' to declare defaultContext.`);
+			return context;
+		};
+		const contextSummary = summarizeContextModes(collectRequestedAgentNames(params).map(contextForAgent));
+		return {
+			params,
+			contextForAgent,
+			contextSummary,
+			usesFork: contextSummary === "fork" || contextSummary === "mixed",
+		};
+	}
+	if (params.context === "fresh" || params.context === "fork") return resolveExplicitContextPolicy(params);
 	const byName = new Map(agents.map((agent) => [agent.name, agent]));
 	const contextForAgent = (agentName: string): ContextMode =>
 		resolveSubagentLaunchContext({
-			explicitContext: params.context,
+			explicitContext: undefined,
 			agentDefaultContext: byName.get(agentName)?.defaultContext,
 			defaultSubagentContext,
 			canUseImplicitFork: canUseDefaultFork,
@@ -2271,7 +2299,7 @@ function resolveAgentDefaultContextPolicy(
 
 function resolveExplicitContextPolicy(params: SubagentParamsLike): AgentDefaultContextPolicy {
 	const context = resolveSubagentLaunchContext({
-		explicitContext: params.context,
+		explicitContext: params.context === "profile" ? undefined : params.context,
 		canUseImplicitFork: false,
 	});
 	return {
@@ -2294,6 +2322,31 @@ function shouldForkAgent(contextPolicy: AgentDefaultContextPolicy, agentName: st
 	return contextPolicy.contextForAgent(agentName) === "fork";
 }
 
+function intercomBridgeAppliesToAgent(bridge: IntercomBridgeState, contextPolicy: AgentDefaultContextPolicy, agentName: string): boolean {
+	if (!bridge.active) return false;
+	return bridge.mode !== "fork-only" || shouldForkAgent(contextPolicy, agentName);
+}
+
+function applyScopedIntercomBridgeToAgents(agents: AgentConfig[], bridge: IntercomBridgeState, contextPolicy: AgentDefaultContextPolicy): AgentConfig[] {
+	if (!bridge.active) return agents;
+	return agents.map((agent) => intercomBridgeAppliesToAgent(bridge, contextPolicy, agent.name)
+		? applyIntercomBridgeToAgent(agent, bridge)
+		: agent);
+}
+
+function resolveChildIntercomTargetFactory(bridge: IntercomBridgeState, contextPolicy: AgentDefaultContextPolicy, runId: string): ((agent: string, index: number) => string | undefined) | undefined {
+	if (!bridge.active) return undefined;
+	return (agent, index) => intercomBridgeAppliesToAgent(bridge, contextPolicy, agent)
+		? resolveSubagentIntercomTarget(runId, agent, index)
+		: undefined;
+}
+
+function resolveRunLevelIntercomTarget(bridge: IntercomBridgeState, contextPolicy: AgentDefaultContextPolicy): string | undefined {
+	if (!bridge.active) return undefined;
+	if (bridge.mode === "fork-only" && contextPolicy.contextSummary === "mixed") return undefined;
+	return bridge.orchestratorTarget;
+}
+
 function summarizeResultContext(details: Details, fallback: ContextSummary | undefined): ContextSummary | undefined {
 	return summarizeContextModes(details.results.map((result) => result.context)) ?? fallback;
 }
@@ -2305,7 +2358,7 @@ function buildRequestedModeError(params: SubagentParamsLike, message: string): A
 			isError: true,
 			details: { mode: getRequestedModeLabel(params), results: [] },
 		},
-		params.context,
+		params.context === "profile" ? undefined : params.context,
 	);
 }
 
@@ -2810,8 +2863,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
 	const currentProvider = parentModel?.provider;
-	const controlIntercomTarget = intercomBridge.active ? intercomBridge.orchestratorTarget : undefined;
-	const childIntercomTarget = intercomBridge.active ? (agent: string, index: number) => resolveSubagentIntercomTarget(id, agent, index) : undefined;
+	const controlIntercomTarget = resolveRunLevelIntercomTarget(intercomBridge, contextPolicy);
+	const childIntercomTarget = resolveChildIntercomTargetFactory(intercomBridge, contextPolicy, id);
 
 
 	if (hasSingle) {
@@ -3158,7 +3211,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		contextPolicy,
 	} = data;
 	const onControlEvent = createForegroundControlNotifier(data, deps);
-	const childIntercomTarget = data.intercomBridge.active ? resolveSubagentIntercomTarget(runId, params.agent!, 0) : undefined;
+	const childBridgeActive = intercomBridgeAppliesToAgent(data.intercomBridge, contextPolicy, params.agent!);
+	const childIntercomTarget = childBridgeActive ? resolveSubagentIntercomTarget(runId, params.agent!, 0) : undefined;
 	const allProgress: AgentProgress[] = [];
 	const allArtifactPaths: ArtifactPaths[] = [];
 	const agentConfig = agents.find((a) => a.name === params.agent);
@@ -3317,7 +3371,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			controlConfig,
 			onControlEvent,
 			intercomSessionName: childIntercomTarget,
-			orchestratorIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
+			orchestratorIntercomTarget: childBridgeActive ? data.intercomBridge.orchestratorTarget : undefined,
 			nestedRoute: foregroundControl?.nestedRoute,
 			index: 0,
 			modelOverride,
@@ -4757,7 +4811,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							cwd: requestCwd,
 							config: deps.config,
 							state: deps.state,
-							context: paramsWithResolvedCwd.context,
+							context: paramsWithResolvedCwd.context === "profile" ? undefined : paramsWithResolvedCwd.context,
 							requestedSessionDir: paramsWithResolvedCwd.sessionDir,
 							currentSessionFile,
 							currentSessionId,
@@ -5127,23 +5181,25 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		// Prefer fork only when the parent session is persisted and has a current leaf;
 		// otherwise use fresh immediately instead of launching a guaranteed-to-fail fork.
 		// Explicit context:"fork" remains strict.
-		const contextPolicy = resolveAgentDefaultContextPolicy(
+		const contextPolicyResult = resolveAgentDefaultContextPolicy(
 			effectiveParams,
 			discoveredAgents,
 			deps.config.defaultSubagentContext,
 			canPreferFork(ctx.sessionManager),
 		);
+		if ("error" in contextPolicyResult) return buildRequestedModeError(effectiveParams, contextPolicyResult.error);
+		const contextPolicy = contextPolicyResult;
 		effectiveParams = contextPolicy.params;
 		const sessionName = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
 		const intercomBridge = resolveIntercomBridge({
 			config: deps.config.intercomBridge,
 			override: effectiveParams.intercomBridge,
-			context: effectiveParams.context ?? (contextPolicy.usesFork ? "fork" : undefined),
+			context: effectiveParams.context === "fresh" || effectiveParams.context === "fork"
+				? effectiveParams.context
+				: contextPolicy.usesFork ? "fork" : undefined,
 			orchestratorTarget: sessionName,
 		});
-		const agents = intercomBridge.active
-			? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge))
-			: discoveredAgents;
+		const agents = applyScopedIntercomBridgeToAgents(discoveredAgents, intercomBridge, contextPolicy);
 		const runId = randomUUID();
 		const inheritedNestedRoute = resolveInheritedNestedRouteFromEnv();
 		const nestedParentAddress = inheritedNestedRoute ? resolveNestedParentAddressFromEnv() : undefined;
@@ -5546,7 +5602,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				startedLaunches = selectedAgentNames.map((agent) => ({ agent }));
 			}
 			const agentsForSummary = startedLaunches.map((launch) => launch.agent);
-			const leafIntercomTarget = intercomBridge.active && agentsForSummary[0]
+			const leafIntercomTarget = agentsForSummary[0] && intercomBridgeAppliesToAgent(intercomBridge, contextPolicy, agentsForSummary[0])
 				? resolveSubagentIntercomTarget(runId, agentsForSummary[0], 0)
 				: undefined;
 			try {

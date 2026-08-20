@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- Add `context: "profile"` for workflow children that should use the selected
+  agent profile's declared context instead of the global default (#1303).
 - Add the `resultScanLogging` config to control result scan logging. Thanks to [@apoapostolov](https://github.com/apoapostolov) for #1293.
 - Add packaged `/council` and `council-mode` resources for a bounded,
   supervisor-mediated advisor loop, plus documented model-based `council-*`
