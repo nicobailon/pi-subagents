@@ -154,6 +154,29 @@ Project prompt.
 		}
 	});
 
+	it("binds the resolved agent outputMode into the launch digest", async () => {
+		const cwd = path.join(tempDir, "repo-output-mode");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+output: report.md
+outputMode: file-only
+---
+Project prompt.
+`);
+
+		const defaultMode = await resolveSubagentLaunchContract({ agent: "worker", cwd });
+		const explicitDefault = await resolveSubagentLaunchContract({ agent: "worker", cwd, outputMode: "file-only" });
+		const override = await resolveSubagentLaunchContract({ agent: "worker", cwd, outputMode: "inline" });
+
+		assert.equal(defaultMode.ok, true);
+		assert.equal(explicitDefault.ok, true);
+		assert.equal(override.ok, true);
+		assert.equal(defaultMode.contract.launchContractDigest, explicitDefault.contract.launchContractDigest);
+		assert.notEqual(defaultMode.contract.launchContractDigest, override.contract.launchContractDigest);
+	});
+
 	it("rejects an unresolved configured model when the host registry is available", async () => {
 		const cwd = path.join(tempDir, "repo-unresolved-model");
 		fs.mkdirSync(cwd, { recursive: true });

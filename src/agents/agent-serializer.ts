@@ -28,6 +28,7 @@ export const KNOWN_FIELDS = new Set([
 	"extensions",
 	"subagentOnlyExtensions",
 	"output",
+	"outputMode",
 	"defaultReads",
 	"defaultProgress",
 	"interactive",
@@ -113,6 +114,7 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	}
 
 	if (config.output) lines.push(`output: ${config.output}`);
+	if (config.outputMode || preserve("outputMode")) lines.push(`outputMode: ${config.outputMode ?? ""}`);
 
 	const readsValue = joinComma(config.defaultReads);
 	if (readsValue) lines.push(`defaultReads: ${readsValue}`);

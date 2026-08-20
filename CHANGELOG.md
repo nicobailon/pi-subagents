@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- Let agent definitions and `agentOverrides` set a default `outputMode`, while
+  call-level output mode stays higher priority. Thanks to [@bbbRye007](https://github.com/bbbRye007) for #1305.
 - Add `context: "profile"` for workflow children that should use the selected
   agent profile's declared context instead of the global default (#1303).
 - Add durable keyed async workflow receipts and resume-by-key selectors for

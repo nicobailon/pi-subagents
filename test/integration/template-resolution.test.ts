@@ -151,12 +151,13 @@ describe("resolveStepBehavior", { skip: !available ? "pi packages not available"
 		assert.equal(behavior.output, "custom.md");
 	});
 
-	it("defaults outputMode to inline unless a step overrides it", () => {
+	it("uses agent outputMode defaults unless a step overrides them", () => {
 		const inlineBehavior = resolveStepBehavior({ name: "test", output: "report.md" }, {});
 		assert.equal(inlineBehavior.outputMode, "inline");
+		assert.equal(resolveStepBehavior({ name: "test", output: "report.md", outputMode: "file-only" }, {}).outputMode, "file-only");
 
-		const stepOverrideBehavior = resolveStepBehavior({ name: "test", output: "report.md" }, { outputMode: "file-only" });
-		assert.equal(stepOverrideBehavior.outputMode, "file-only");
+		const stepOverrideBehavior = resolveStepBehavior({ name: "test", output: "report.md", outputMode: "file-only" }, { outputMode: "inline" });
+		assert.equal(stepOverrideBehavior.outputMode, "inline");
 	});
 
 	it("false disables output", () => {
@@ -189,6 +190,22 @@ describe("resolveStepBehavior", { skip: !available ? "pi packages not available"
 });
 
 describe("resolveParallelBehaviors", { skip: !available ? "pi packages not available" : undefined }, () => {
+	it("uses agent outputMode defaults unless a parallel task overrides them", () => {
+		const [defaultBehavior] = resolveParallelBehaviors(
+			[{ agent: "reviewer", task: "Review" }],
+			[{ name: "reviewer", output: "report.md", outputMode: "file-only" }],
+			0,
+		);
+		assert.equal(defaultBehavior?.outputMode, "file-only");
+
+		const [overrideBehavior] = resolveParallelBehaviors(
+			[{ agent: "reviewer", task: "Review", outputMode: "inline" }],
+			[{ name: "reviewer", output: "report.md", outputMode: "file-only" }],
+			0,
+		);
+		assert.equal(overrideBehavior?.outputMode, "inline");
+	});
+
 	it("string false agent default disables output in chain parallel tasks", () => {
 		const behaviors = resolveParallelBehaviors(
 			[{ agent: "reviewer", task: "Review" }],

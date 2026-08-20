@@ -429,7 +429,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			extensions: toolPlan.extensionArgs,
 			mcpDirectTools: toolPlan.effectiveMcpTools,
 			...(outputPath ? { outputPath } : {}),
-			outputMode: input.outputMode ?? "inline",
+			outputMode: behavior.outputMode,
 			...(input.outputSchema ? { structuredOutputSchema: input.outputSchema } : {}),
 		}),
 	};

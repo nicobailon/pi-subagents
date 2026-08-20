@@ -282,7 +282,7 @@ export function resolveStepBehavior(
 		}
 	}
 
-	const outputMode = stepOverrides.outputMode ?? "inline";
+	const outputMode = stepOverrides.outputMode ?? agentConfig.outputMode ?? "inline";
 	const model = stepOverrides.model ?? agentConfig.model;
 	return { output, outputMode, reads, progress, skills, model };
 }
@@ -465,7 +465,7 @@ export function resolveParallelBehaviors(
 			}
 		}
 
-		const outputMode = task.outputMode ?? "inline";
+		const outputMode = task.outputMode ?? config.outputMode ?? "inline";
 		const model = task.model ?? config.model;
 		return { output, outputMode, reads, progress, skills, model };
 	});

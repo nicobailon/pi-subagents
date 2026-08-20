@@ -578,6 +578,34 @@ const scout = discovered.builtin.find((candidate) => candidate.name === "scout")
 });
 
 describe("agent frontmatter launch defaults", () => {
+	it("parses, serializes, and validates outputMode defaults", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-output-mode-"));
+		tempDirs.push(dir);
+		const filePath = path.join(dir, ".pi", "agents", "worker.md");
+		writeAgent(filePath, `---
+name: worker
+description: Worker
+outputMode: file-only
+---
+
+Do work
+`);
+
+		const worker = discoverAgents(dir, "project").agents.find((agent) => agent.name === "worker");
+		assert.equal(worker?.outputMode, "file-only");
+		assert.match(serializeAgent(worker!), /^outputMode: file-only$/m);
+
+		writeAgent(filePath, `---
+name: worker
+description: Worker
+outputMode: artifact-only
+---
+
+Do work
+`);
+		assert.match(discoverAgents(dir, "project").agentDiagnostics?.[0]?.error ?? "", /Agent 'worker' has invalid outputMode frontmatter; expected 'inline' or 'file-only'/);
+	});
+
 	it("serializes and discovers single-agent launch defaults", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-launch-defaults-"));
 		tempDirs.push(dir);

@@ -510,6 +510,7 @@ describe("builtin agent overrides", () => {
 			subagents: {
 				agentOverrides: {
 					implementer: {
+						outputMode: "file-only",
 						model: "anthropic/claude-sonnet-4-6",
 						fallbackModels: ["openai/gpt-5-mini"],
 						thinking: "high",
@@ -531,6 +532,7 @@ describe("builtin agent overrides", () => {
 		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
 		assert.ok(implementer);
 		assert.equal(implementer.source, "project");
+		assert.equal(implementer.outputMode, "file-only");
 		assert.equal(implementer.model, "anthropic/claude-sonnet-4-6");
 		assert.deepEqual(implementer.fallbackModels, ["openai/gpt-5-mini"]);
 		assert.equal(implementer.thinking, "high");
@@ -596,6 +598,7 @@ describe("builtin agent overrides", () => {
 			subagents: {
 				agentOverrides: {
 					implementer: {
+						outputMode: "file-only",
 						model: "anthropic/claude-sonnet-4-6",
 						thinking: "high",
 						tools: ["bash"],
@@ -608,10 +611,11 @@ describe("builtin agent overrides", () => {
 				},
 			},
 		});
-		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\nmodel: google/gemini-3-pro\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\ndefaultContext: fresh\nacceptanceRole: read-only\ncompletionGuard: false\n---\n\nDrive the failing test first.\n`);
+		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\noutputMode: inline\nmodel: google/gemini-3-pro\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\ndefaultContext: fresh\nacceptanceRole: read-only\ncompletionGuard: false\n---\n\nDrive the failing test first.\n`);
 
 		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
 		assert.ok(implementer);
+		assert.equal(implementer.outputMode, "inline");
 		assert.equal(implementer.model, "google/gemini-3-pro");
 		assert.equal(implementer.thinking, "medium");
 		assert.deepEqual(implementer.tools, ["read"]);
@@ -756,6 +760,27 @@ describe("builtin agent overrides", () => {
 				&& error.message.includes("reviewer")
 				&& error.message.includes("completionGuard"),
 		);
+	});
+
+	it("rejects unsupported outputMode override values", () => {
+		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+		for (const outputMode of ["artifact-only", false]) {
+			writeJson(settingsPath, {
+				subagents: {
+					agentOverrides: {
+						reviewer: { outputMode },
+					},
+				},
+			});
+
+			assert.throws(
+				() => discoverAgents(tempProject, "both"),
+				(error: unknown) => error instanceof Error
+					&& error.message.includes(settingsPath)
+					&& error.message.includes("reviewer")
+					&& error.message.includes("outputMode"),
+			);
+		}
 	});
 
 	it("builds description changes and false sentinels when an override clears builtin fields", () => {
