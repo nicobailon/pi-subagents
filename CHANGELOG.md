@@ -9,7 +9,7 @@
   name and alias collision checks. Thanks to [@fmoda3](https://github.com/fmoda3) for #1310.
 - Skip recently failed fallback models for a TTL-backed window during model
   fallback selection. Thanks to [@srcKod](https://github.com/srcKod) for #1318.
-- Add a schedule-only `manage` method to extension RPC, advertising and accepting list/show/history/pause/resume/run/delete while rejecting arbitrary management actions.
+- Add a schedule-only `manage` method to extension RPC, advertising and accepting list/show/history/pause/resume/run/delete while rejecting arbitrary management actions. Thanks to [@aboubakrine](https://github.com/aboubakrine) for #1319.
 - Let agent definitions and `agentOverrides` set a default `outputMode`, while
   call-level output mode stays higher priority. Thanks to [@bbbRye007](https://github.com/bbbRye007) for #1305.
 - Add `context: "profile"` for workflow children that should use the selected
