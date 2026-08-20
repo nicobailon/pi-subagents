@@ -17,6 +17,7 @@
   profile examples (#1295).
 
 ### Fixed
+- Add tolerant `subagent_wait({ stopOnAttention: false })` blocking waits and scale idle attention defaults for higher-thinking children. Thanks to [@elecnix](https://github.com/elecnix) for #1315 and #1316.
 - Add a separate classifier for model context-overflow errors. Thanks to [@srcKod](https://github.com/srcKod) for #1312.
 - Normalize child result metadata before workflow return persistence (#1307).
 - Quote only confidently identified leading Windows executable paths in acceptance verification commands. Thanks to [@srcKod](https://github.com/srcKod) for #1294.

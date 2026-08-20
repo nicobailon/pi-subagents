@@ -182,6 +182,7 @@ export interface ControlConfig {
 export interface ResolvedControlConfig {
 	enabled: boolean;
 	needsAttentionAfterMs: number;
+	needsAttentionAfterMsIsExplicit?: boolean;
 	activeNoticeAfterMs: number;
 	activeNoticeAfterTurns?: number;
 	activeNoticeAfterTokens?: number;

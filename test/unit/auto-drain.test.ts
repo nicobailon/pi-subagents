@@ -28,19 +28,19 @@ describe("headless background-work auto-drain", () => {
 
 	it("loops until work added while draining is also gone", async () => {
 		let checks = 0;
-		const waits: Array<{ all?: boolean; timeoutMs?: number; stopOnAttention?: boolean; failOnFailedRuns?: boolean }> = [];
+		const waits: Array<{ all?: boolean; timeoutMs?: number; stopOnAttention?: boolean; failOnFailedRuns?: boolean; failOnAttention?: boolean }> = [];
 		await drainOutstandingWork({
 			state: state(),
 			timeoutMs: 1000,
 			now: () => checks * 10,
 			hasWork: () => checks++ < 2,
 			wait: async (params, _signal, deps) => {
-				waits.push({ ...params, stopOnAttention: deps.stopOnAttention, failOnFailedRuns: deps.failOnFailedRuns });
+				waits.push({ ...params, stopOnAttention: deps.stopOnAttention, failOnFailedRuns: deps.failOnFailedRuns, failOnAttention: deps.failOnAttention });
 				return waitResult("done");
 			},
 		});
 		assert.equal(waits.length, 2);
-		assert.ok(waits.every((entry) => entry.all === true && entry.stopOnAttention === false && entry.failOnFailedRuns === true));
+		assert.ok(waits.every((entry) => entry.all === true && entry.stopOnAttention === false && entry.failOnFailedRuns === true && entry.failOnAttention === true));
 		assert.ok((waits[1]!.timeoutMs ?? 0) < (waits[0]!.timeoutMs ?? 0), "each wait must share one absolute deadline");
 	});
 

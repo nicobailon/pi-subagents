@@ -16,6 +16,7 @@ In an interactive chat, do not call this merely to wait: return control to the u
 • { all: true } — wait for every async run and provider item that was active when the call began.
 • { id: "..." } — wait for one async or remembered detached foreground subagent run (id or prefix).
 • { id: "...", nonBlocking: true } — resolve the prefix once, persist an exact-run wake subscription, and return immediately. The originating interactive session wakes on completion, failure, attention, reconciliation failure, or timeout.
+• { stopOnAttention: false } — for blocking waits only, keep waiting through idle or long-thinking attention; supervisor/contact requests still stop the wait.
 • { timeoutMs: 600000 } — stop waiting after N ms; active work keeps running.
 
 Non-blocking subscriptions are visible in subagent status and differ from disabling waitTool: waitTool.enabled=false returns immediately without registering any future wake. Provider jobs are session-scoped and identified exactly, so replacing one job with another cannot hide a completion. Provider extensions must be explicitly loaded in this process. In a child agent, keep \`subagent_wait\` in the child tool allowlist and load each provider through the agent's extensions or subagentOnlyExtensions; this tool never loads providers or grants tools itself.${enabled ? "" : "\n\nConfigured behavior: subagent_wait is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED and returns immediately without blocking."}`,

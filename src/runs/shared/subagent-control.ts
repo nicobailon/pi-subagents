@@ -17,6 +17,7 @@ const DEFAULT_NOTIFY_ON: ControlEventType[] = ["active_long_running", "needs_att
 export const DEFAULT_CONTROL_CONFIG: ResolvedControlConfig = {
 	enabled: true,
 	needsAttentionAfterMs: 60_000,
+	needsAttentionAfterMsIsExplicit: false,
 	activeNoticeAfterMs: 240_000,
 	failedToolAttemptsBeforeAttention: 3,
 	notifyOn: DEFAULT_NOTIFY_ON,
@@ -42,9 +43,13 @@ export function resolveControlConfig(
 	override?: ControlConfig,
 ): ResolvedControlConfig {
 	const enabled = override?.enabled ?? globalConfig?.enabled ?? DEFAULT_CONTROL_CONFIG.enabled;
-	const needsAttentionAfterMs = parsePositiveInt(override?.needsAttentionAfterMs)
-		?? parsePositiveInt(globalConfig?.needsAttentionAfterMs)
+	const overrideNeedsAttentionAfterMs = parsePositiveInt(override?.needsAttentionAfterMs);
+	const globalNeedsAttentionAfterMs = parsePositiveInt(globalConfig?.needsAttentionAfterMs);
+	const needsAttentionAfterMs = overrideNeedsAttentionAfterMs
+		?? globalNeedsAttentionAfterMs
 		?? DEFAULT_CONTROL_CONFIG.needsAttentionAfterMs;
+	const needsAttentionAfterMsIsExplicit = overrideNeedsAttentionAfterMs !== undefined
+		|| globalNeedsAttentionAfterMs !== undefined;
 	const activeNoticeAfterMs = parsePositiveInt(override?.activeNoticeAfterMs)
 		?? parsePositiveInt(globalConfig?.activeNoticeAfterMs)
 		?? DEFAULT_CONTROL_CONFIG.activeNoticeAfterMs;
@@ -64,6 +69,7 @@ export function resolveControlConfig(
 	return {
 		enabled,
 		needsAttentionAfterMs,
+		needsAttentionAfterMsIsExplicit,
 		activeNoticeAfterMs,
 		activeNoticeAfterTurns,
 		activeNoticeAfterTokens,
@@ -73,18 +79,34 @@ export function resolveControlConfig(
 	};
 }
 
+function scaledNeedsAttentionAfterMs(config: ResolvedControlConfig, thinking?: string | false): number {
+	if (config.needsAttentionAfterMsIsExplicit !== false) return config.needsAttentionAfterMs;
+	switch (thinking) {
+		case "medium":
+			return config.needsAttentionAfterMs * 2;
+		case "high":
+			return config.needsAttentionAfterMs * 5;
+		case "xhigh":
+		case "max":
+			return config.needsAttentionAfterMs * 10;
+		default:
+			return config.needsAttentionAfterMs;
+	}
+}
+
 export function deriveActivityState(input: {
 	config: ResolvedControlConfig;
 	startedAt: number;
 	lastActivityAt?: number;
 	currentTool?: string;
+	thinking?: string | false;
 	now?: number;
 }): ActivityState | undefined {
 	if (!input.config.enabled || input.currentTool) return undefined;
 	const now = input.now ?? Date.now();
 	const lastActivity = input.lastActivityAt ?? input.startedAt;
 	const ageMs = Math.max(0, now - lastActivity);
-	return ageMs > input.config.needsAttentionAfterMs ? "needs_attention" : undefined;
+	return ageMs > scaledNeedsAttentionAfterMs(input.config, input.thinking) ? "needs_attention" : undefined;
 }
 
 export function shouldEmitOpenToolAttention(input: {

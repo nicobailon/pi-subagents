@@ -100,6 +100,30 @@ describe("subagent control attention state", () => {
 		}), "time_threshold");
 	});
 
+	it("scales the default idle threshold for higher thinking levels", () => {
+		const defaults = resolveControlConfig();
+
+		assert.equal(deriveActivityState({ config: defaults, startedAt: 0, now: 60_001 }), "needs_attention");
+		assert.equal(deriveActivityState({ config: defaults, startedAt: 0, thinking: "low", now: 60_001 }), "needs_attention");
+		assert.equal(deriveActivityState({ config: defaults, startedAt: 0, thinking: "minimal", now: 60_001 }), "needs_attention");
+		assert.equal(deriveActivityState({ config: defaults, startedAt: 0, thinking: "high", now: 60_001 }), undefined);
+		assert.equal(deriveActivityState({ config: defaults, startedAt: 0, thinking: "high", now: 300_001 }), "needs_attention");
+	});
+
+	it("keeps explicit idle threshold overrides higher priority than thinking scale", () => {
+		const explicit = resolveControlConfig(undefined, { needsAttentionAfterMs: 90_000 });
+
+		assert.equal(explicit.needsAttentionAfterMsIsExplicit, true);
+		assert.equal(deriveActivityState({ config: explicit, startedAt: 0, thinking: "high", now: 90_001 }), "needs_attention");
+	});
+
+	it("treats recovered resolved configs without explicitness metadata as fixed thresholds", () => {
+		const recovered = { ...resolveControlConfig(undefined, { needsAttentionAfterMs: 90_000 }) };
+		delete recovered.needsAttentionAfterMsIsExplicit;
+
+		assert.equal(deriveActivityState({ config: recovered, startedAt: 0, thinking: "high", now: 90_001 }), "needs_attention");
+	});
+
 	it("marks non-exempt open tools for attention at the active threshold", () => {
 		const defaults = resolveControlConfig();
 

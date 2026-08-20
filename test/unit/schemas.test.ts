@@ -140,10 +140,12 @@ function getPropertySchema(schema: JsonSchemaNode | undefined, path: string[]): 
 
 let schemas: Record<string, JsonSchemaNode> = {};
 let SubagentParams: SubagentParamsSchema | undefined;
+let SubagentWaitParams: JsonSchemaNode | undefined;
 let schemasAvailable = true;
 try {
 	schemas = await import("../../src/extension/schemas.ts") as Record<string, JsonSchemaNode>;
 	SubagentParams = schemas.SubagentParams as SubagentParamsSchema;
+	SubagentWaitParams = schemas.SubagentWaitParams as JsonSchemaNode;
 } catch (error) {
 	if (missingPackageName(error) !== "typebox") throw error;
 	schemasAvailable = false;
@@ -321,6 +323,14 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(controlSchema.properties?.failedToolAttemptsBeforeAttention?.minimum, 1);
 		assert.deepEqual(controlSchema.properties?.notifyOn?.items?.enum, ["active_long_running", "needs_attention"]);
 		assert.deepEqual(controlSchema.properties?.notifyChannels?.items?.enum, ["event", "async", "intercom"]);
+	});
+
+	it("exposes tolerant wait mode on subagent_wait", () => {
+		const properties = SubagentWaitParams?.properties as Record<string, JsonSchemaNode> | undefined;
+		const stopOnAttention = properties?.stopOnAttention;
+		assert.ok(stopOnAttention, "stopOnAttention schema should exist");
+		assert.equal(stopOnAttention.type, "boolean");
+		assert.match(String(stopOnAttention.description ?? ""), /idle or long-thinking attention/);
 	});
 
 	it("does not emit description-only schema nodes", () => {

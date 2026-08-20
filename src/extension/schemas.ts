@@ -370,6 +370,9 @@ const SubagentWaitParamsSchema = Type.Object({
 		minimum: 1,
 		description: "Give up waiting after this many milliseconds (the runs keep going regardless). Defaults to 1800000 (30 minutes).",
 	})),
+	stopOnAttention: Type.Optional(Type.Boolean({
+		description: "Blocking waits stop when a run needs attention by default. Set false to keep waiting through idle or long-thinking attention; supervisor/contact requests still stop the wait.",
+	})),
 });
 
 export const SubagentWaitParams = keepTopLevelParameterDescriptions(SubagentWaitParamsSchema);

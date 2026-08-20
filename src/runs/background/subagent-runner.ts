@@ -3330,6 +3330,7 @@ async function runSubagent(
 				startedAt: step.startedAt ?? overallStartTime,
 				lastActivityAt,
 				currentTool: step.currentTool,
+				thinking: step.thinking,
 				now,
 			}));
 			if (idleState === "needs_attention") {

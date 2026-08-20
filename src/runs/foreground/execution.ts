@@ -872,6 +872,7 @@ async function runSingleAttempt(
 				startedAt: startTime,
 				lastActivityAt: progress.lastActivityAt,
 				currentTool: progress.currentTool,
+				thinking: resolvedThinking,
 				now,
 			});
 			if (idleState === "needs_attention") {

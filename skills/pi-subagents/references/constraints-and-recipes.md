@@ -36,6 +36,7 @@ In an interactive chat, do not call `subagent_wait()` merely to wait after launc
 - `subagent_wait()` — return when the next initially active async run or registered provider item finishes, or a subagent needs attention.
 - `subagent_wait({ all: true })` — block until every async run and provider item active at call time finishes, or a subagent needs attention.
 - `subagent_wait({ id: "..." })` — block on one async or remembered detached foreground run (id or prefix). Provider items are not selected through this parameter.
+- `subagent_wait({ stopOnAttention: false })` — for blocking waits only, keep waiting through idle or long-thinking attention; supervisor/contact requests still stop the wait.
 - `subagent_wait({ timeoutMs })` — cap the block; active work keeps running if it elapses.
 
 Providers are discovered through the `pi-subagents/background-work` registry and must return stable item IDs with exact owning session IDs. Child agents receive no provider automatically: keep `subagent_wait` in the child `tools` allowlist and load provider extensions through `extensions` or `subagentOnlyExtensions`.

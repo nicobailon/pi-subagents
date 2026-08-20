@@ -58,6 +58,7 @@ export async function drainOutstandingWork(deps: AutoDrainDeps): Promise<void> {
 				now,
 				stopOnAttention: false,
 				failOnFailedRuns: true,
+				failOnAttention: true,
 			},
 		);
 		if (waitResult.isError) {

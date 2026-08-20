@@ -484,6 +484,84 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
+	it("can keep blocking through idle attention when stopOnAttention is false", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-tolerant-attn-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
+
+			let polls = 0;
+			const sleep = async () => {
+				polls += 1;
+				if (polls === 1) {
+					writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999, activityState: "needs_attention" });
+				}
+				if (polls === 2) writeStatus(asyncRoot, "run-a", "complete", { sessionId: "sess-1" });
+			};
+
+			const result = await waitForSubagents({ all: true, stopOnAttention: false }, undefined, baseDeps(root, state, { sleep }));
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /1 complete/);
+			assert.equal(polls, 2, "tolerant wait should not return on idle attention");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("still stops tolerant waits for supervisor attention", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-tolerant-supervisor-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
+
+			let polls = 0;
+			const sleep = async () => {
+				polls += 1;
+				writeStatus(asyncRoot, "run-a", "running", {
+					sessionId: "sess-1",
+					pid: 999999,
+					activityState: "needs_attention",
+					currentTool: "contact_supervisor",
+				});
+			};
+
+			const result = await waitForSubagents({ all: true, stopOnAttention: false }, undefined, baseDeps(root, state, { sleep }));
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /Reply to any pending supervisor request/);
+			assert.match(textOf(result), /run-a/);
+			assert.equal(polls, 1);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("returns an error for internal auto-drain on supervisor attention", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-drain-supervisor-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
+
+			const result = await waitForSubagents({ all: true, stopOnAttention: false }, undefined, baseDeps(root, state, {
+				failOnAttention: true,
+				sleep: async () => writeStatus(asyncRoot, "run-a", "running", {
+					sessionId: "sess-1",
+					pid: 999999,
+					activityState: "needs_attention",
+					currentTool: "contact_supervisor",
+				}),
+			}));
+
+			assert.equal(result.isError, true);
+			assert.match(textOf(result), /Reply to any pending supervisor request/);
+			assert.match(textOf(result), /run-a/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("reports runs that already need attention before waiting starts", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-initial-attn-"));
 		try {
