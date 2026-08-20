@@ -1252,6 +1252,11 @@ describe("quoteExecutableForShell", () => {
 		assert.equal(quoteExecutableForShell(command, "win32"), command);
 	});
 
+	it("leaves a spaced executable argument after an executable unchanged", () => {
+		const command = "C:\\tools\\tool.exe C:\\Program Files\\data\\file.exe";
+		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	});
+
 	it("passes commands through unchanged on non-Windows platforms", () => {
 		const command = "/opt/my tools/runner --flag";
 		assert.equal(quoteExecutableForShell(command, "linux"), command);
