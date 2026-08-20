@@ -37,6 +37,8 @@ Add `autofix` to `/parallel-review` or `/parallel-cleanup` to apply only the syn
 
 All model-facing subagent execution is expressed through `workflowScript` in the `subagent` tool. Use stable keys and ordinary JavaScript for one child, sequence, and parallelism. For ordinary parallel fanout, use `await runs.all([{ key, agent, task }, ...])`; do not read `.output` from unawaited `runs.run` launches. Store a `runs.run` promise only when the script later observes it with `await`, `Promise.race`, or `Promise.all`, such as steering a live child before awaiting its result. Scripts are ordinary JavaScript statement bodies. Use an explicit `return` for a useful result:
 
+Child results cross into the script as plain JSON data. Non-JSON host metadata is omitted, so use returned fields such as `runId`, `ok`, `output`, and `structuredOutput` for workflow control.
+
 ```js
 subagent({ workflowScript: `
   const scan = await runs.run("scan", { agent: "scout", task: "Scan the codebase" });

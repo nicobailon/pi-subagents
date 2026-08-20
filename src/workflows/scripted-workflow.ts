@@ -665,6 +665,18 @@ function omitUndefinedWorkflowValues(value: unknown, seen = new Set<object>()): 
 	return normalized;
 }
 
+function omitNonJsonWorkflowResultMetadata(value: unknown): unknown {
+	const normalized = omitUndefinedWorkflowValues(value);
+	if (!isPlainJsonObject(normalized) || !Object.hasOwn(normalized, "results")) return normalized;
+	try {
+		assertWorkflowJsonValue(normalized.results, "runs.run result.results");
+		return normalized;
+	} catch {
+		const { results: _results, ...safeResult } = normalized;
+		return safeResult;
+	}
+}
+
 export function assertWorkflowJsonValue(value: unknown, path = "value", seen = new Set<object>()): void {
 	if (value === null || typeof value === "string" || typeof value === "boolean") return;
 	if (typeof value === "number") {
@@ -917,10 +929,21 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			}
 			if (message.type !== "call" || typeof message.callId !== "number" || typeof message.method !== "string" || !isRecord(message.args)) return;
 
-			const respond = (promise: Promise<unknown>) => {
+			const respond = (promise: Promise<unknown>, responsePath?: string) => {
 				void promise.then(
 					(value) => {
-						if (!settled) worker.postMessage({ type: "response", callId: message.callId, ok: true, value: omitUndefinedWorkflowValues(value) });
+						if (settled) return;
+						const normalized = responsePath ? omitNonJsonWorkflowResultMetadata(value) : omitUndefinedWorkflowValues(value);
+						if (!responsePath) {
+							worker.postMessage({ type: "response", callId: message.callId, ok: true, value: normalized });
+							return;
+						}
+						try {
+							assertWorkflowJsonValue(normalized, responsePath);
+							worker.postMessage({ type: "response", callId: message.callId, ok: true, value: normalized });
+						} catch (error) {
+							worker.postMessage({ type: "response", callId: message.callId, ok: false, error: `${responsePath} must contain only JSON data before it can be returned from workflowScript. Return a plain projection such as { runId, ok, output }. ${error instanceof Error ? error.message : String(error)}` });
+						}
 					},
 					(error: unknown) => {
 						if (!settled) worker.postMessage({ type: "response", callId: message.callId, ok: false, error: error instanceof Error ? error.message : String(error), ...(error instanceof Error && (error as { workflowErrorKind?: unknown }).workflowErrorKind === "detached-child" ? { errorKind: "detached-child" } : {}) });
@@ -1052,7 +1075,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				if (callObserved) existing.observed = true;
 				trace.push({ operation: "run", key, state: "reused", ...workflowStringMetadata(params) });
 				traceChanged();
-				return respond(deliver(existing.promise));
+				return respond(deliver(existing.promise), `runs.run('${key}') result`);
 			}
 
 			const startedAt = Date.now();
@@ -1126,7 +1149,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			childOrder.push(key);
 			trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(params) });
 			traceChanged();
-			respond(deliver(promise));
+			respond(deliver(promise), `runs.run('${key}') result`);
 		});
 
 		worker.postMessage({ type: "start", script: options.script, stateEnabled: options.state !== undefined });

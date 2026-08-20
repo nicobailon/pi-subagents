@@ -14,6 +14,7 @@
 
 ### Fixed
 - Add a separate classifier for model context-overflow errors. Thanks to [@srcKod](https://github.com/srcKod) for #1312.
+- Normalize child result metadata before workflow return persistence (#1307).
 - Quote only confidently identified leading Windows executable paths in acceptance verification commands. Thanks to [@srcKod](https://github.com/srcKod) for #1294.
 
 ### Changed

@@ -468,18 +468,30 @@ describe("scripted workflow runtime", () => {
 		assert.deepEqual(result.value, [{ key: "review", output: "completed", values: [null] }]);
 	});
 
-	it("rejects non-plain child result values", async () => {
-		await assert.rejects(
-			runWorkflowScript({
-				script: `return await runs.run("non-plain", { agent: "worker", task: "write output" });`,
-				timeoutMs: 2_000,
-				async launch(key) {
-					return { key, ok: true, output: "Saved output.", artifactPaths: [], results: [{ metadata: new Map([["source", "worker"]]) }] };
-				},
-				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
-			}),
-			(error: unknown) => error instanceof WorkflowScriptError && /return.*plain JSON objects/i.test(error.message),
-		);
+	it("omits non-JSON child result metadata before returning reused runs.run results", async () => {
+		let launches = 0;
+		const result = await runWorkflowScript({
+			script: `
+				const first = await runs.run("non-plain", { agent: "worker", task: "write output" });
+				const reused = await runs.run("non-plain", { agent: "worker", task: "write output" });
+				return [first, reused];
+			`,
+			timeoutMs: 2_000,
+			async launch(key) {
+				launches++;
+				return { key, ok: true, output: "Saved output.", artifactPaths: [], results: [{ metadata: new Map([["source", "worker"]]) }] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.equal(launches, 1);
+		assert.deepEqual(result.value, [
+			{ key: "non-plain", ok: true, output: "Saved output.", artifactPaths: [] },
+			{ key: "non-plain", ok: true, output: "Saved output.", artifactPaths: [] },
+		]);
+		assert.equal((result.value as Array<{ results?: unknown }>)[0]?.results, undefined);
+		assert.equal((result.value as Array<{ results?: unknown }>)[1]?.results, undefined);
+		assert.ok(result.children[0]?.results?.[0] && (result.children[0].results[0] as { metadata?: unknown }).metadata instanceof Map);
 	});
 
 	it("passes retained resume items and rejects agent overrides", async () => {
