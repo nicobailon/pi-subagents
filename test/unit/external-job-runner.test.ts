@@ -712,4 +712,27 @@ describe("external-job runner bridge", () => {
 		assert.equal(result.providerJobId, "job-slow");
 		assert.equal(starts, 1);
 	});
+
+	it("tolerates extra provider fields such as kind, wakeChannels, and follow", async () => {
+		const dir = tempDir("pi-external-job-extra-fields-");
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			kind: "external-job",
+			wakeChannels: ["surf-oracle:finished"],
+			follow: () => { throw new Error("follow must not be called"); },
+			start: () => ({ providerJobId: "job-extra", state: "completed" }),
+			status: () => ({ providerJobId: "job-extra", state: "completed" }),
+			reattach: () => ({ providerJobId: "job-extra", state: "completed" }),
+			result: () => ({ providerJobId: "job-extra", state: "completed", output: "advisor result" }),
+		} as never);
+
+		const result = await serviceUntil(dir, requestExternalJobOperation(dir, {
+			operation: "status",
+			provider: "surf-oracle",
+			providerJobId: "job-extra",
+		}));
+
+		assert.equal(result.providerJobId, "job-extra");
+		assert.equal(result.state, "completed");
+	});
 });

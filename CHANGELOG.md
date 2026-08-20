@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Tolerate extra fields on registered external-job providers (for example `kind`, `wakeChannels`, or additional operations) so one evolving provider no longer breaks registry reads for every provider. Job payload validation stays strict.
+
 ## [0.52.0] - 2026-08-19
 
 ### Highlights
