@@ -12,6 +12,7 @@ import {
 	resolveSubagentModelOverride,
 } from "../../src/runs/shared/model-fallback.ts";
 import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
+import { resolveModelScopesForAgent } from "../../src/runs/shared/model-scope.ts";
 
 beforeEach(() => clearExclusions());
 afterEach(() => clearExclusions());
@@ -458,6 +459,79 @@ describe("resolveSubagentModelOverride scope enforcement", () => {
 		);
 	});
 
+	it("identifies the per-agent scope that rejects an explicit model", () => {
+		const scopes = resolveModelScopesForAgent(
+			{ enforce: true, allow: ["openai/*", "deepseek/*"], agents: { worker: { allow: ["openai/gpt-5-mini"] } } },
+			"worker",
+			parentModel,
+		);
+		assert.throws(
+			() => resolveEffectiveSubagentModel("deepseek/deepseek-v4", undefined, parentModel, availableModels, undefined, { scope: scopes }),
+			/modelScope\.agents\.worker/,
+		);
+	});
+
+	it("allows an inherited parent model through an inherit agent scope", () => {
+		const scopes = resolveModelScopesForAgent(
+			{ enforce: true, agents: { reviewer: { allow: ["inherit"] } } },
+			"reviewer",
+			parentModel,
+		);
+		assert.equal(resolveEffectiveSubagentModel(undefined, undefined, parentModel, availableModels, undefined, { scope: scopes }), "deepseek/deepseek-v4");
+	});
+
+	it("fails closed when enforced inherit cannot resolve a parent model", () => {
+		const scopes = resolveModelScopesForAgent(
+			{ enforce: true, agents: { reviewer: { allow: ["inherit"] } } },
+			"reviewer",
+			undefined,
+		);
+		assert.throws(
+			() => resolveEffectiveSubagentModel(undefined, undefined, undefined, availableModels, undefined, { scope: scopes }),
+			/modelScope\.agents\.reviewer.*requires a current parent session model/,
+		);
+	});
+
+	it("fails closed before using an agent fallback when enforced inherit has no parent model", () => {
+		const scopes = resolveModelScopesForAgent(
+			{ enforce: true, agents: { reviewer: { allow: ["inherit"] } } },
+			"reviewer",
+			undefined,
+		);
+		for (const explicitModel of [undefined, "inherit"] as const) {
+			assert.throws(
+				() => resolveEffectiveSubagentModel(explicitModel, "openai/gpt-5-mini", undefined, availableModels, undefined, { scope: scopes }),
+				/modelScope\.agents\.reviewer.*requires a current parent session model/,
+			);
+		}
+	});
+
+	it("fails closed before using fallback candidates when enforced inherit has no parent model", () => {
+		const scopes = resolveModelScopesForAgent(
+			{ enforce: true, agents: { worker: { allow: ["inherit"] } } },
+			"worker",
+			undefined,
+		);
+		assert.throws(
+			() => buildModelCandidates(undefined, ["openai/gpt-5-mini"], availableModels, undefined, { scope: scopes }),
+			/modelScope\.agents\.worker.*requires a current parent session model/,
+		);
+	});
+
+	it("throws the strict agent violation before emitting a global warning", () => {
+		const warnings: string[] = [];
+		const scopes = resolveModelScopesForAgent(
+			{ enforce: true, allow: ["openai/*"], agents: { worker: { strict: true, allow: ["anthropic/*"] } } },
+			"worker",
+			parentModel,
+		);
+		assert.throws(
+			() => resolveEffectiveSubagentModel(undefined, undefined, parentModel, availableModels, undefined, { scope: scopes, onWarn: (violation) => warnings.push(violation.message) }),
+			/modelScope\.agents\.worker/,
+		);
+		assert.deepEqual(warnings, []);
+	});
+
 	it("warns (and still returns the model) for an inherited out-of-scope model", () => {
 		const warnings: string[] = [];
 		const resolved = resolveSubagentModelOverride("deepseek/deepseek-v4", parentModel, availableModels, undefined, {
@@ -550,6 +624,18 @@ describe("resolveSubagentModelOverride scope enforcement", () => {
 				scope: { ...scope, strict: true },
 			}),
 			/deepseek\/deepseek-v4.*outside the configured subagent model scope/,
+		);
+	});
+
+	it("applies a strict per-agent scope to fallback candidates", () => {
+		const scopes = resolveModelScopesForAgent(
+			{ enforce: true, strict: true, agents: { worker: { allow: ["openai/*"] } } },
+			"worker",
+			parentModel,
+		);
+		assert.throws(
+			() => buildModelCandidates("openai/gpt-5-mini", ["deepseek/deepseek-v4"], availableModels, undefined, { scope: scopes }),
+			/modelScope\.agents\.worker/,
 		);
 	});
 });

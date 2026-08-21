@@ -15,12 +15,21 @@
 
 import { splitKnownThinkingSuffix } from "../../shared/model-info.ts";
 
-export interface ModelScopeConfig {
+export interface ModelScopeRule {
 	enforce?: boolean;
 	/** Reject inherited and fallback models outside the allowlist instead of warning. */
 	strict?: boolean;
 	/** Glob-style allow patterns (only `*` is special), matched against `provider/id`. */
 	allow?: string[];
+}
+
+export interface ModelScopeConfig extends ModelScopeRule {
+	/** Additional restrictions keyed by canonical agent name. */
+	agents?: Record<string, ModelScopeRule>;
+}
+
+export interface ResolvedModelScope extends ModelScopeRule {
+	origin: string;
 }
 
 /** Where a resolved model originated, deciding enforcement severity. */
@@ -32,6 +41,7 @@ export interface ModelScopeViolation {
 	severity: "warn" | "error";
 	message: string;
 	allowedPatterns: string[];
+	origin: string;
 }
 
 function stripThinkingSuffix(model: string): string {
@@ -61,7 +71,7 @@ export function matchesScopePattern(model: string, pattern: string): boolean {
  */
 export function checkModelScope(
 	model: string | undefined,
-	scope: ModelScopeConfig | undefined,
+	scope: ModelScopeRule | undefined,
 	source: ModelSource,
 ): ModelScopeViolation | undefined {
 	if (!model || !scope?.enforce) return undefined;
@@ -71,14 +81,48 @@ export function checkModelScope(
 
 	const baseModel = stripThinkingSuffix(model);
 	const severity: ModelScopeViolation["severity"] = source === "explicit" || scope.strict === true ? "error" : "warn";
+	const origin = "origin" in scope && typeof scope.origin === "string" ? scope.origin : "modelScope";
 	return {
 		model: baseModel,
 		severity,
 		allowedPatterns: allow,
+		origin,
 		message:
-			`Model '${baseModel}' is outside the configured subagent model scope. ` +
+			`Model '${baseModel}' is outside the configured subagent model scope (${origin}). ` +
 			`Allowed patterns: ${allow.join(", ")}.`,
 	};
+}
+
+function expandInheritPattern(pattern: string, parentModel: { provider: string; id: string } | undefined): string {
+	return pattern === "inherit" && parentModel ? `${parentModel.provider}/${parentModel.id}` : pattern;
+}
+
+/** Resolve the global and matching agent policies into independent launch-time checks. */
+export function resolveModelScopesForAgent(
+	config: ModelScopeConfig | undefined,
+	agentName: string,
+	parentModel: { provider: string; id: string } | undefined,
+): ResolvedModelScope[] {
+	if (!config) return [];
+	const scopes: ResolvedModelScope[] = [];
+	if (config.allow) {
+		scopes.push({
+			...(config.enforce !== undefined ? { enforce: config.enforce } : {}),
+			...(config.strict !== undefined ? { strict: config.strict } : {}),
+			allow: config.allow.map((pattern) => expandInheritPattern(pattern, parentModel)),
+			origin: "modelScope",
+		});
+	}
+	const agentScope = config.agents?.[agentName];
+	if (agentScope?.allow) {
+		scopes.push({
+			enforce: agentScope.enforce ?? config.enforce,
+			strict: agentScope.strict ?? config.strict,
+			allow: agentScope.allow.map((pattern) => expandInheritPattern(pattern, parentModel)),
+			origin: `modelScope.agents.${agentName}`,
+		});
+	}
+	return scopes;
 }
 
 /**
@@ -130,7 +174,46 @@ export function parseModelScopeConfig(
 		config.allow = allow;
 	}
 
-	if (config.enforce === true && (!config.allow || config.allow.length === 0)) {
+	if ("agents" in input) {
+		if (!input.agents || typeof input.agents !== "object" || Array.isArray(input.agents)) {
+			throw new Error(`Subagent settings in '${meta.filePath}' have invalid 'modelScope.agents'; expected an object keyed by agent name.`);
+		}
+		const agents: Record<string, ModelScopeRule> = {};
+		for (const [rawName, rawScope] of Object.entries(input.agents as Record<string, unknown>)) {
+			const name = rawName.trim();
+			const field = `modelScope.agents.${name}`;
+			if (!name) throw new Error(`Subagent settings in '${meta.filePath}' have invalid 'modelScope.agents' key; expected a non-empty agent name.`);
+			if (!rawScope || typeof rawScope !== "object" || Array.isArray(rawScope)) {
+				throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}'; expected an object.`);
+			}
+			const agentInput = rawScope as Record<string, unknown>;
+			if ("agents" in agentInput) {
+				throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}.agents'; nested agent scopes are not supported.`);
+			}
+			const rule: ModelScopeRule = {};
+			if ("enforce" in agentInput) {
+				if (typeof agentInput.enforce !== "boolean") throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}.enforce'; expected a boolean.`);
+				rule.enforce = agentInput.enforce;
+			}
+			if ("strict" in agentInput) {
+				if (typeof agentInput.strict !== "boolean") throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}.strict'; expected a boolean.`);
+				rule.strict = agentInput.strict;
+			}
+			if ("allow" in agentInput) {
+				if (!Array.isArray(agentInput.allow) || agentInput.allow.some((entry) => typeof entry !== "string")) {
+					throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}.allow'; expected an array of strings.`);
+				}
+				const allow = agentInput.allow.map((entry) => (entry as string).trim()).filter(Boolean);
+				if (allow.length === 0) throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}.allow'; expected a non-empty array of patterns.`);
+				rule.allow = allow;
+			}
+			agents[name] = rule;
+		}
+		config.agents = agents;
+	}
+
+	const hasAnyAllow = Boolean(config.allow?.length) || Object.values(config.agents ?? {}).some((scope) => Boolean(scope.allow?.length));
+	if (config.enforce === true && !hasAnyAllow) {
 		throw new Error(`Subagent settings in '${meta.filePath}' set modelScope.enforce without a non-empty 'allow' list; supply allowed model patterns or disable enforcement.`);
 	}
 

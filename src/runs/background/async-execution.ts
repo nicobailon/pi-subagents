@@ -26,7 +26,7 @@ import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, PROMPT_REDACTED, resolveChildCwd } from "../../shared/utils.ts";
 import { buildModelCandidates, inheritsParentModel, resolveEffectiveSubagentModel, resolveModelCandidate, resolveSubagentModelOverride, type AvailableModelInfo, type ParentModel } from "../shared/model-fallback.ts";
 import { resolveToolTimeoutMs, toolTimeoutFromEnv } from "../shared/tool-timeout.ts";
-import type { ModelScopeConfig } from "../shared/model-scope.ts";
+import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
@@ -791,13 +791,14 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const taskText = `${readInstructions.prefix}${taskTemplate}${progressInstructions.suffix}`;
 		const task = namespaceOutputPath ? taskText : injectSingleOutputInstruction(taskText, outputPath, a);
 
+		const modelScopes = resolveModelScopesForAgent(ctx.modelScope, a.name, ctx.currentModel);
 		const primaryModel = externalRunner ? undefined : resolveEffectiveSubagentModel(
 			s.model,
 			a.model,
 			ctx.currentModel,
 			availableModels,
 			ctx.currentModelProvider,
-			{ scope: ctx.modelScope },
+			{ scope: modelScopes },
 		);
 		const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
 		const effectiveThinking = externalRunner ? undefined : thinkingOverride ?? a.thinking;
@@ -839,7 +840,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			thinking: resolveEffectiveThinking(model, effectiveThinking),
 			launchResolvedExtensions,
 			modelCandidates: externalRunner ? undefined : buildModelCandidates(primaryModel, a.fallbackModels, availableModels, ctx.currentModelProvider, {
-				scope: ctx.modelScope,
+				scope: modelScopes,
 				primaryModelFromParent: inheritsParentModel(s.model, a.model, ctx.currentModel),
 			}).map((candidate) =>
 				applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined),
@@ -1418,6 +1419,7 @@ export function executeAsyncSingle(
 		? `[Read from: ${readPaths.join(", ")}]\n\n`
 		: "";
 	const taskText = readsInstruction + taskWithOutputInstruction;
+	const modelScopes = resolveModelScopesForAgent(ctx.modelScope, agentConfig.name, ctx.currentModel);
 	const primaryModel = externalRunner ? undefined : params.modelOverrideFromParent
 		? params.modelOverride
 		: resolveSubagentModelOverride(
@@ -1425,6 +1427,7 @@ export function executeAsyncSingle(
 			ctx.currentModel,
 			availableModels,
 			ctx.currentModelProvider,
+			{ scope: modelScopes },
 		);
 	const effectiveThinking = externalRunner ? undefined : params.thinkingOverride ?? agentConfig.thinking;
 	const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinking, params.thinkingOverride !== undefined);
@@ -1453,7 +1456,7 @@ export function executeAsyncSingle(
 	const modelCandidates = externalRunner
 		? []
 		: buildModelCandidates(primaryModel, agentConfig.fallbackModels, availableModels, ctx.currentModelProvider, {
-			scope: ctx.modelScope,
+			scope: modelScopes,
 			primaryModelFromParent: params.modelOverrideFromParent,
 		})
 			.flatMap((candidate) => {

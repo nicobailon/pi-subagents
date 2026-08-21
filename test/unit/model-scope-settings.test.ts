@@ -42,10 +42,17 @@ describe("subagents.modelScope discovery", () => {
 
 	it("exposes a user modelScope from discoverAgents", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
-			subagents: { modelScope: { enforce: true, strict: true, allow: ["anthropic/*", "openai/gpt-5-*"] } },
+			subagents: { modelScope: { enforce: true, strict: true, allow: ["anthropic/*", "openai/gpt-5-*"], agents: { reviewer: { allow: ["inherit"] } } } },
 		});
 		const result = discoverAgents(tempProject, "both");
-		assert.deepEqual(result.modelScope, { enforce: true, strict: true, allow: ["anthropic/*", "openai/gpt-5-*"] });
+		assert.deepEqual(result.modelScope, { enforce: true, strict: true, allow: ["anthropic/*", "openai/gpt-5-*"], agents: { reviewer: { allow: ["inherit"] } } });
+	});
+
+	it("accepts enforcement with only named agent allow lists", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { modelScope: { enforce: true, agents: { worker: { allow: ["openai/gpt-5-mini"] } } } },
+		});
+		assert.deepEqual(discoverAgents(tempProject, "both").modelScope, { enforce: true, agents: { worker: { allow: ["openai/gpt-5-mini"] } } });
 	});
 
 	it("returns undefined when no modelScope is configured", () => {
@@ -54,13 +61,13 @@ describe("subagents.modelScope discovery", () => {
 
 	it("prefers project modelScope over user modelScope", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
-			subagents: { modelScope: { enforce: true, allow: ["anthropic/*"] } },
+			subagents: { modelScope: { enforce: true, allow: ["anthropic/*"], agents: { reviewer: { allow: ["inherit"] } } } },
 		});
 		writeJson(path.join(tempProject, ".pi", "settings.json"), {
-			subagents: { modelScope: { enforce: false, allow: ["deepseek/*"] } },
+			subagents: { modelScope: { enforce: true, agents: { worker: { allow: ["deepseek/*"] } } } },
 		});
 		const result = discoverAgents(tempProject, "both");
-		assert.deepEqual(result.modelScope, { enforce: false, allow: ["deepseek/*"] });
+		assert.deepEqual(result.modelScope, { enforce: true, agents: { worker: { allow: ["deepseek/*"] } } });
 	});
 
 	it("falls back to user modelScope when project does not set one", () => {
@@ -83,5 +90,12 @@ describe("subagents.modelScope discovery", () => {
 			subagents: { modelScope: "anthropic/*" },
 		});
 		assert.throws(() => discoverAgents(tempProject, "both"), /invalid 'modelScope'/);
+	});
+
+	it("rejects malformed per-agent scopes at discovery time", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { modelScope: { agents: { worker: { allow: [] } } } },
+		});
+		assert.throws(() => discoverAgents(tempProject, "both"), /modelScope\.agents\.worker\.allow/);
 	});
 });

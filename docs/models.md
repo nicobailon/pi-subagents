@@ -10,6 +10,8 @@ Builtin agents inherit your current Pi default model. This keeps new installs fr
 
 Precedence, strongest first: per-run override → agent frontmatter `model` → `agentOverrides.<name>.model` → `subagents.defaultModel` → the parent session model.
 
+Use `model: "inherit"` in agent frontmatter or `agentOverrides.<name>.model` to select the current parent session model explicitly.
+
 ## Setting defaults and overrides
 
 In `~/.pi/agent/settings.json` (user) or the project config settings file (`.pi/settings.json` in standard Pi; project wins):
@@ -153,17 +155,29 @@ To keep subagents inside a budget or compliance profile, enforce a model scope. 
     "modelScope": {
       "enforce": true,
       "strict": true,
-      "allow": ["anthropic/*", "openai/gpt-5-*"]
+      "allow": ["inherit", "openai/gpt-5-*"],
+      "agents": {
+        "worker": { "allow": ["openai/gpt-5-mini"] },
+        "reviewer": { "allow": ["inherit"] }
+      }
     }
   }
 }
 ```
 
-- `allow` is a list of glob patterns matched against the resolved `provider/id` (only `*` is special, case-insensitive). A resolved model that matches none of the patterns is rejected.
+- `allow` is a list of glob patterns matched against the resolved `provider/id` (only `*` is special, case-insensitive). The literal `inherit` means the current parent session model.
+- `agents.<name>` adds a second allow-list for that agent. The model must pass both the global list and the matching agent list, so an agent rule cannot weaken the global rule. Agent rules inherit `enforce` and `strict` when those fields are absent.
+- A top-level `enforce: true` with only agent allow-lists restricts only those named agents. Unknown names are allowed so settings can be shared across projects and machines.
 - Models you pass explicitly — the tool-call `model`, `--model`, or a clarify pick — error and abort the run.
 - By default, models from agent frontmatter, `subagents.defaultModel`, the inherited parent session model, or fallback chains only warn and remain available, so existing configurations keep working while you tighten the scope.
 - Set `strict: true` with `enforce: true` to reject every resolved out-of-scope model. This includes inherited models and fallback candidates. An invalid fallback fails the run instead of being removed from the candidate chain.
-- `enforce: true` requires a non-empty `allow` list; otherwise the config is rejected at load time.
+- `enforce: true` requires at least one non-empty global or agent `allow` list; otherwise the config is rejected at load time.
+
+Model scope is policy only. It rejects or warns; it does not select a cheaper model. Set `agentOverrides.worker.model` to choose a worker model and use `modelScope.agents.worker` to prevent a per-run override or fallback from escaping that restriction.
+
+`inherit` expands in the parent process at each launch. It is never sent to the child as a model id. A nested child therefore inherits its immediate parent's current model, not the original top-level model. If no parent model is available, an enforced `inherit` entry does not match and fails closed.
+
+Project `modelScope` settings replace the complete user `modelScope`, as with the existing project-over-user settings precedence. Project settings are trusted and can therefore replace user restrictions.
 
 ## Profiles and provider model catalogs
 
