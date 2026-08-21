@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 
 export type HerdrErrorCode =
 	| "HERDR_UNAVAILABLE"
@@ -16,7 +16,7 @@ export interface HerdrClient {
 	run<T = unknown>(args: string[], options?: { timeoutMs?: number; signal?: AbortSignal; textOk?: boolean }): Promise<HerdrResult<T>>;
 }
 
-type SpawnHerdr = (command: string, args: readonly string[], options: { shell: false; windowsHide: true; env: NodeJS.ProcessEnv }) => ChildProcess;
+type SpawnHerdr = (command: string, args: readonly string[], options: { shell: false; windowsHide: true; env: NodeJS.ProcessEnv }) => ReturnType<typeof spawn>;
 
 function error(code: HerdrErrorCode, message: string, details?: unknown): HerdrResult<never> {
 	return { ok: false, error: { code, message, ...(details !== undefined ? { details } : {}) } };
@@ -46,7 +46,7 @@ export function createHerdrClient(options: { bin?: string; spawn?: SpawnHerdr } 
 	return {
 		run<T>(args: string[], runOptions: { timeoutMs?: number; signal?: AbortSignal; textOk?: boolean } = {}): Promise<HerdrResult<T>> {
 			return new Promise((resolve) => {
-				let child: ChildProcess;
+				let child: ReturnType<typeof spawn>;
 				try {
 					child = spawnImpl(bin, args, { shell: false, windowsHide: true, env: process.env });
 				} catch (cause) {

@@ -125,9 +125,10 @@ describe("non-blocking wait subscriptions", () => {
 			} as never, state, true, {
 				arm() { throw new Error("headless calls must not arm subscriptions"); },
 			});
-			const result = await tool!.execute("wait", { id: "run-headless", nonBlocking: true }, undefined, undefined, { hasUI: false });
-			assert.equal(result.isError, true);
-			assert.match(textOf(result), /long-lived interactive subagent runtime/);
+			await assert.rejects(
+				tool!.execute("wait", { id: "run-headless", nonBlocking: true }, undefined, undefined, { hasUI: false }),
+				/long-lived interactive subagent runtime/,
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

@@ -183,6 +183,7 @@ describe("subagent extension child mode", () => {
 
 	it("rejects blank action at the public executor boundary", () => {
 		const script = String.raw`
+			import assert from "node:assert/strict";
 			import registerSubagentExtension from "./index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
 			let registeredTool;
@@ -193,10 +194,10 @@ describe("subagent extension child mode", () => {
 			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
 			registerSubagentExtension(fakePi);
 			if (!registeredTool) throw new Error("tool not registered");
-			const result = await registeredTool.execute("blank-action", { action: "", agent: "reviewer" }, new AbortController().signal, undefined, { cwd: process.cwd(), hasUI: false });
-			if (!result.isError) throw new Error("blank action should be rejected");
-			const text = result.content?.[0]?.text ?? "";
-			if (!text.includes("action must be a non-empty")) throw new Error("unexpected blank action error: " + text);
+			await assert.rejects(
+				registeredTool.execute("blank-action", { action: "", agent: "reviewer" }, new AbortController().signal, undefined, { cwd: process.cwd(), hasUI: false }),
+				/action must be a non-empty/,
+			);
 		`;
 
 		execFileSync(
@@ -1104,6 +1105,7 @@ describe("subagent extension child mode", () => {
 
 	it("lets fanout children call read-only list but blocks mutating management actions", () => {
 		const script = String.raw`
+			import assert from "node:assert/strict";
 			import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
 			import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
 			process.env[SUBAGENT_CHILD_ENV] = "1";
@@ -1124,18 +1126,18 @@ describe("subagent extension child mode", () => {
 			};
 			const list = await registeredTool.execute("list-check", { action: "list" }, new AbortController().signal, undefined, ctx);
 			if (list.isError) throw new Error("list should be allowed: " + JSON.stringify(list.content));
-			const create = await registeredTool.execute("create-check", { action: "create", config: { name: "x" } }, new AbortController().signal, undefined, ctx);
-			if (!create.isError) throw new Error("create should be blocked");
-			const text = create.content?.[0]?.text ?? "";
-			if (!text.includes("not available from child-safe subagent fanout mode")) throw new Error("unexpected create error: " + text);
-			const refine = await registeredTool.execute("refine-check", { action: "refine", agent: "worker" }, new AbortController().signal, undefined, ctx);
-			if (!refine.isError) throw new Error("refine should be blocked");
-			const refineText = refine.content?.[0]?.text ?? "";
-			if (!refineText.includes("not available from child-safe subagent fanout mode")) throw new Error("unexpected refine error: " + refineText);
-			const grant = await registeredTool.execute("grant-check", { action: "grant-spawn-budget", additional: 1 }, new AbortController().signal, undefined, { ...ctx, hasUI: true });
-			if (!grant.isError) throw new Error("grant-spawn-budget should be blocked");
-			const grantText = grant.content?.[0]?.text ?? "";
-			if (!grantText.includes("root interactive parent session")) throw new Error("unexpected grant error: " + grantText);
+			await assert.rejects(
+				registeredTool.execute("create-check", { action: "create", config: { name: "x" } }, new AbortController().signal, undefined, ctx),
+				/not available from child-safe subagent fanout mode/,
+			);
+			await assert.rejects(
+				registeredTool.execute("refine-check", { action: "refine", agent: "worker" }, new AbortController().signal, undefined, ctx),
+				/not available from child-safe subagent fanout mode/,
+			);
+			await assert.rejects(
+				registeredTool.execute("grant-check", { action: "grant-spawn-budget", additional: 1 }, new AbortController().signal, undefined, { ...ctx, hasUI: true }),
+				/root interactive parent session/,
+			);
 		`;
 
 		execFileSync(

@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {} from "./src/types/pi-runtime-compat.d.ts";
 
 const registerParentExtension = process.env.PI_SUBAGENT_CHILD === "1"
 	? undefined

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -29,6 +31,50 @@ const expectedHostDevVersions = {
 	"@earendil-works/pi-tui": "0.81.0",
 } satisfies Record<Exclude<(typeof hostPeerPackages)[number], "@earendil-works/pi-coding-agent">, string>;
 
+test("the root entrypoint exposes the runtime error flag to TypeScript consumers", () => {
+	const consumerRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-types-"));
+	try {
+		fs.writeFileSync(path.join(consumerRoot, "consumer.ts"), `
+import "pi-subagents";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+
+const result: AgentToolResult<undefined> = {
+	content: [],
+	details: undefined,
+	isError: true,
+};
+
+void result.isError;
+`, "utf-8");
+		fs.writeFileSync(path.join(consumerRoot, "tsconfig.json"), JSON.stringify({
+			compilerOptions: {
+				target: "ES2023",
+				module: "NodeNext",
+				moduleResolution: "NodeNext",
+				strict: true,
+				noEmit: true,
+				types: ["node"],
+				typeRoots: [path.join(projectRoot, "node_modules", "@types")],
+				skipLibCheck: true,
+				allowImportingTsExtensions: true,
+				baseUrl: consumerRoot,
+				paths: {
+					"pi-subagents": [path.join(projectRoot, "index.ts")],
+				"@earendil-works/pi-agent-core": [path.join(projectRoot, "node_modules", "@earendil-works", "pi-agent-core", "dist", "index.d.ts")],
+				},
+			},
+			files: [path.join(consumerRoot, "consumer.ts")],
+		}, null, 2), "utf-8");
+
+		execFileSync(process.execPath, [path.join(projectRoot, "node_modules", "typescript", "bin", "tsc"), "--project", path.join(consumerRoot, "tsconfig.json")], {
+			cwd: consumerRoot,
+			stdio: "pipe",
+		});
+	} finally {
+		fs.rmSync(consumerRoot, { recursive: true, force: true });
+	}
+});
+
 function collectSourceFiles(dir: string): string[] {
 	const files: string[] = [];
 	for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -50,6 +96,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(packageJson.files?.includes("*.mjs"), true);
 	assert.equal(fs.existsSync(path.join(projectRoot, "async-retention-discovery-worker.mjs")), true);
 	const entrySource = fs.readFileSync(path.join(projectRoot, "index.ts"), "utf-8");
+	assert.match(entrySource, /import type \{\} from "\.\/src\/types\/pi-runtime-compat\.d\.ts";/);
 	assert.equal(entrySource.includes('export { default } from "./src/extension/index.ts";'), false);
 	assert.match(entrySource, /process\.env\.PI_SUBAGENT_CHILD === "1"/);
 	assert.match(entrySource, /await import\("\.\/src\/extension\/index\.ts"\)/);
