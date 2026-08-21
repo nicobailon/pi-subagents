@@ -41,7 +41,7 @@ describe("completion replay", () => {
 				mode: "single",
 				state: "complete",
 				success: true,
-				results: [{ agent: "worker", success: true, outputState: "present", output: "finished output" }],
+				results: [{ agent: "worker", success: true, outputState: "present", output: "finished output", contextOverflow: true }],
 			}, now, 60_000, { resultsDir, sessionId: "session-a" });
 
 			const replay = readCompletionReplay(resultsDir, "run-a", { sessionId: "session-a", now: now + 1 });
@@ -58,6 +58,7 @@ describe("completion replay", () => {
 			const completions = collectWaitCompletions(terminal, makeState(), resultsDir);
 			assert.equal(completions?.[0]?.runId, "run-a");
 			assert.equal(completions?.[0]?.results?.[0]?.agent, "worker");
+			assert.equal(completions?.[0]?.results?.[0]?.contextOverflow, true);
 			assert.equal(completions?.[0]?.archivePath, replay?.archivePath);
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });

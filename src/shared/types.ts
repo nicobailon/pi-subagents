@@ -1029,6 +1029,7 @@ export interface WaitCompletionChild {
 	outputState?: SubagentOutputState;
 	error?: string;
 	model?: string;
+	contextOverflow?: boolean;
 	artifactPaths?: Partial<ArtifactPaths>;
 }
 
