@@ -489,7 +489,14 @@ export function resolvePiLaunchToolPlan(
 				+ "List the extensions this child actually needs instead of an empty array.",
 		);
 	}
-	for (const warning of warnings) console.warn(`[pi-subagents] ${warning}`);
+	// Deliberately no console.warn here: resolvePiLaunchToolPlan is called from
+	// several places for the same logical launch — preflight/dry-run checks that
+	// never spawn anything, plus (for an actual launch) once inside buildPiArgs
+	// to build args and again directly by the caller for launch-metadata/digest
+	// purposes. Warning here would print zero times for a pure inspection call
+	// and print twice for one real launch. Callers get `warnings` back and
+	// buildPiArgs — the one place that's unambiguously building args for an
+	// actual spawn — is responsible for emitting it exactly once.
 	const configuredExtensions = capabilityCeiling?.denyExtensions
 		? []
 		: [
@@ -620,6 +627,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		agentName: input.childAgentName,
 		permissionRules: input.permissionRules,
 	});
+	for (const warning of toolPlan.warnings) console.warn(`[pi-subagents] ${warning}`);
 	if (toolPlan.explicitToolAllowlist) {
 		args.push(
 			toolPlan.effectiveToolAllowlist.length > 0 ? "--tools" : "--no-tools",

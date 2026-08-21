@@ -114,6 +114,22 @@ model-provider extension needed to resolve a provider-qualified model. List
 the extensions this child actually needs instead of an empty array.
 ```
 
+**Update from review:** the first version of this logged from inside
+`resolvePiLaunchToolPlan` directly, which sounded right until someone
+pointed out that function runs more than once per launch — once inside
+`buildPiArgs` to actually build the child's args, and again separately by
+the caller (in `execution.ts` and `subagent-runner.ts`) just to compute
+launch metadata like the contract digest, plus a third context where
+`preflight.ts` calls it purely to validate config without launching
+anything. That meant one real launch logged the warning twice, and a pure
+preflight check logged it with nothing actually happening. Moved the
+logging out of `resolvePiLaunchToolPlan` (it now only returns `warnings`,
+no side effects) and into `buildPiArgs` itself, which is the one place
+that's unambiguously about to build args for a real spawn. Added tests that
+replicate the actual double-call shape (`buildPiArgs` then a direct
+`resolvePiLaunchToolPlan` call on the same input) to make sure it logs
+exactly once, not zero or two times.
+
 ## What I didn't touch, and why
 
 `applyBuiltinOverrides` has the exact same project-XOR-user pattern that #1
@@ -141,7 +157,7 @@ explicit empty-array override.
 ## Testing
 
 - `npm run typecheck` — clean.
-- `npm run test:unit` — 2317 passed, 0 failed, 3 pre-existing skips (full
+- `npm run test:unit` — 2320 passed, 0 failed, 3 pre-existing skips (full
   suite, not just the files I touched).
 - New tests:
   - `agent-overrides.test.ts`: layering test that reproduces the real
@@ -153,9 +169,13 @@ explicit empty-array override.
     there (it does — the agent silently disappears from `discoverAgents`'s
     output because it stays disabled when it should have been re-enabled)
     before trusting that it passes after the fix.
-  - `pi-args.test.ts`: three cases for the extensions warning — fires on
-    `[]` with the agent name in the message, doesn't fire when `extensions`
-    is omitted, doesn't fire on a non-empty list.
+  - `pi-args.test.ts`: `resolvePiLaunchToolPlan` reports the warning in
+    `plan.warnings` but never logs by itself; doesn't report anything when
+    `extensions` is omitted or non-empty; `buildPiArgs` logs exactly once on
+    `extensions: []` and never logs when extensions are omitted; and a test
+    that calls `buildPiArgs` then `resolvePiLaunchToolPlan` again on the
+    same input (the real double-call shape from `execution.ts` /
+    `subagent-runner.ts`) and checks the log only happened once.
 - All pre-existing override-precedence tests pass unmodified, including the
   one that checks project overrides winning over user overrides when both
   set the *same* fields (the merge fix is a no-op there, as it should be).
@@ -170,15 +190,21 @@ runner):
    project override — correct model came back, exit 0, no regression from
    before this branch existed.
 2. Dispatched a scratch agent with a project-scope `extensions: []` entry —
-   the warning fired on stderr, word for word what's in the code above.
+   the warning fired on stderr, word for word what's in the code above, and
+   exactly once (checked this specifically after fixing the double-log
+   issue above, by grepping the actual stdout for how many times the string
+   showed up, not just that it showed up).
 
 ## Files changed
 
 - `src/agents/agents.ts` — the layering fix, plus the `disabled` fix.
 - `src/runs/shared/pi-args.ts` — `warnings` field + the `extensions: []`
-  diagnostic in `resolvePiLaunchToolPlan`.
+  diagnostic, logged once from `buildPiArgs` instead of from inside
+  `resolvePiLaunchToolPlan`.
 - `test/unit/agent-overrides.test.ts` — regression tests for both fixes.
-- `test/unit/pi-args.test.ts` — tests for the warning.
+- `test/unit/pi-args.test.ts` — tests for the warning, plus the once-only
+  double-call test.
+- `CHANGELOG.md` — Unreleased entry crediting this PR.
 
 ## Breaking changes
 
