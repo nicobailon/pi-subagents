@@ -966,9 +966,6 @@ describe("subagent extension child mode", () => {
 	it("returns before registering anything for non-fanout children", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
-			import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
-			process.env[SUBAGENT_CHILD_ENV] = "1";
-			process.env[SUBAGENT_FANOUT_CHILD_ENV] = "0";
 			const calls = [];
 			const fakePi = new Proxy({}, {
 				get(_target, prop) {
@@ -994,7 +991,7 @@ describe("subagent extension child mode", () => {
 				"--eval",
 				script,
 			],
-			{ cwd: projectRoot, stdio: "pipe" },
+			{ cwd: projectRoot, env: { ...parentToolEnv(), [SUBAGENT_CHILD_ENV]: "1", [SUBAGENT_FANOUT_CHILD_ENV]: "0" }, stdio: "pipe" },
 		);
 	});
 

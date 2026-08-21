@@ -8,6 +8,7 @@
 - Simplify Council Mode advisor selection so model-based profiles provide the perspective and the question supplies the decision frame.
 
 ### Fixed
+- Avoid loading the parent extension graph in subagent child processes. Thanks to [@ccharname](https://github.com/ccharname) for #1330.
 - Stop model fallback on context-overflow failures and surface `contextOverflow`. Thanks to [@srcKod](https://github.com/srcKod) for #1323.
 - Stop empty slow result scans from spamming the session transcript. Thanks to [@afrodao2394](https://github.com/afrodao2394) for #1329.
 
