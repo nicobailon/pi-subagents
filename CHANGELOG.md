@@ -7,6 +7,10 @@
   preserving explicit custom-agent frontmatter and preventing settings-derived values
   from being serialized into custom definitions. Thanks to [@mevatron](https://github.com/mevatron) for #1349.
 
+### Fixed
+- Report helpful workflow errors when `runs.all(...)` results are read as keyed
+  objects instead of ordered arrays. Thanks to [@ravshansbox](https://github.com/ravshansbox) for #1351.
+
 ## [0.54.0] - 2026-08-21
 
 ### Highlights

@@ -242,6 +242,33 @@ function runHostCall(key, params, collectFailure, batch) {
   return { key, callId, promise };
 }
 
+function isArrayIndexProperty(prop) {
+  if (!/^(0|[1-9]\d*)$/.test(prop)) return false;
+  const index = Number(prop);
+  return Number.isSafeInteger(index) && index >= 0 && index < 4294967295;
+}
+
+const runsAllResultTargets = new WeakMap();
+
+function runsAllKeyAccessError(prop) {
+  return new Error("Cannot read runs.all result property '" + prop + "'. runs.all resolves to an ordered array, not a key map. Use results[0], array destructuring, or results.map((result) => result.output), not results." + prop + ".");
+}
+
+function wrapRunsAllResults(results, keys) {
+  const keySet = new Set(keys);
+  const proxy = new Proxy(results, {
+    get(target, prop, receiver) {
+      if (typeof prop !== "string") return Reflect.get(target, prop, receiver);
+      if (prop === "then" || prop === "toJSON") return undefined;
+      if (prop in target || isArrayIndexProperty(prop)) return Reflect.get(target, prop, receiver);
+      if (keySet.has(prop)) throw runsAllKeyAccessError(prop);
+      throw runsAllKeyAccessError(prop);
+    },
+  });
+  runsAllResultTargets.set(proxy, results);
+  return proxy;
+}
+
 function formatRef(result) {
   if (!result || typeof result !== "object") throw new Error("runs.ref(result) requires a run result object.");
   const parts = ["run " + (result.key || "unknown")];
@@ -302,7 +329,7 @@ const runs = Object.freeze({
     runFingerprints = fingerprints;
     const batch = { id: "batch-" + (++nextCallId), calls };
     const launched = calls.map(({ key, params }) => runHostCall(key, params, true, batch));
-    return trackRunObservation(launched.map(({ key, callId }) => ({ key, operation: "run", callId })), Promise.all(launched.map(({ promise }) => promise)));
+    return trackRunObservation(launched.map(({ key, callId }) => ({ key, operation: "run", callId })), Promise.all(launched.map(({ promise }) => promise)).then((results) => wrapRunsAllResults(results, calls.map(({ key }) => key))));
   },
   steer(key, message, options = {}) {
     if (typeof key !== "string" || !runKeyPattern.test(key)) throw new Error("runs.steer has an invalid key.");
@@ -431,6 +458,31 @@ function isPlainWorkflowObject(value) {
   return prototype === null || prototype === Object.prototype || prototype === contextObjectPrototype;
 }
 
+function unwrapRunsAllResults(value, seen = new Map()) {
+  if (value === null || typeof value !== "object") return value;
+  const runsAllTarget = runsAllResultTargets.get(value);
+  const target = runsAllTarget || value;
+  if (seen.has(target)) return seen.get(target);
+  if (Array.isArray(target)) {
+    const copy = [];
+    seen.set(target, copy);
+    let changed = !!runsAllTarget;
+    for (let index = 0; index < target.length; index++) {
+      copy[index] = unwrapRunsAllResults(target[index], seen);
+      changed ||= copy[index] !== target[index];
+    }
+    return changed ? copy : target;
+  }
+  if (!isPlainWorkflowObject(target) || Object.getOwnPropertySymbols(target).length > 0) return target;
+  let changed = false;
+  const entries = Object.entries(target).map(([key, entry]) => {
+    const unwrapped = unwrapRunsAllResults(entry, seen);
+    changed ||= unwrapped !== entry;
+    return [key, unwrapped];
+  });
+  return changed ? Object.fromEntries(entries) : target;
+}
+
 function omitUndefinedWorkflowValues(value, seen = new Set()) {
   if (value === null || typeof value !== "object") return value;
   if (seen.has(value)) return value;
@@ -459,7 +511,7 @@ parentPort.on("message", async (message) => {
   }
   if (message.type !== "start") return;
   try {
-    const sandbox = { runs, Promise: workflowPromise, emit(value) { assertJsonValue(value); parentPort.postMessage({ type: "emit", value }); }, console: capturedConsole };
+    const sandbox = { runs, Promise: workflowPromise, emit(value) { const emittedValue = unwrapRunsAllResults(value); assertJsonValue(emittedValue); parentPort.postMessage({ type: "emit", value: emittedValue }); }, console: capturedConsole };
     if (message.stateEnabled) sandbox.state = state;
     const context = vm.createContext(sandbox, { codeGeneration: { strings: false, wasm: false } });
     contextObjectPrototype = vm.runInContext("Object.prototype", context);
