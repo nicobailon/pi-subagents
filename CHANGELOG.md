@@ -5,6 +5,9 @@
 ### Changed
 - Document Council Mode routing in the main `pi-subagents` skill so natural-language requests for advisor councils, plan critique, cross-exam, or multiple model perspectives load the Council Mode protocol.
 
+### Fixed
+- Stop model fallback on context-overflow failures and surface `contextOverflow`. Thanks to [@srcKod](https://github.com/srcKod) for #1323.
+
 ## [0.53.0] - 2026-08-20
 
 ### Highlights
