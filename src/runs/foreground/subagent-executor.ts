@@ -1866,6 +1866,7 @@ async function resumeAsyncRun(input: {
 			...(completed.model ? { model: completed.model } : {}),
 			...(completed.attemptedModels ? { attemptedModels: completed.attemptedModels } : {}),
 			...(completed.modelAttempts ? { modelAttempts: completed.modelAttempts } : {}),
+			...(completed.contextOverflow ? { contextOverflow: true } : {}),
 			...(completed.structuredOutput !== undefined ? { structuredOutput: completed.structuredOutput } : {}),
 			...(completed.structuredOutputPath ? { structuredOutputPath: completed.structuredOutputPath } : {}),
 			...(completed.structuredOutputSchemaPath ? { structuredOutputSchemaPath: completed.structuredOutputSchemaPath } : {}),
