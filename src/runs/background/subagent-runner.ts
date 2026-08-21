@@ -1462,6 +1462,7 @@ async function runSingleStepInner(
 	// retries keep the task text out of argv (endpoint pre-exec scans may deny it).
 	let taskDeliveryOverride: SubagentTaskDelivery | undefined;
 	let contextOverflow = false;
+	let launchWarningsEmitted = false;
 	modelAttemptsLoop: while (modelIndex < candidates.length) {
 		if (ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break;
 		const candidate = candidates[modelIndex];
@@ -1483,7 +1484,7 @@ async function runSingleStepInner(
 				childIndex: ctx.flatIndex,
 			})
 			: undefined;
-		const { args, env, tempDir, toolDiagnosticPath, runtimeAcknowledgedExtensionsPath, capabilityAudit: attemptCapabilityAudit } = buildPiArgs(omitUndefinedProperties({
+		const { args, env, tempDir, toolDiagnosticPath, runtimeAcknowledgedExtensionsPath, capabilityAudit: attemptCapabilityAudit, warnings } = buildPiArgs(omitUndefinedProperties({
 			parentSessionId: step.parentSessionId,
 			baseArgs: ["--mode", "json", "-p"],
 			task,
@@ -1529,6 +1530,10 @@ async function runSingleStepInner(
 			childWatchdog,
 			waitToolEnabled: step.waitToolEnabled,
 		}));
+		if (!launchWarningsEmitted && warnings.length > 0) {
+			for (const warning of warnings) console.warn(`[pi-subagents] ${warning}`);
+			launchWarningsEmitted = true;
+		}
 		if (step.definitionDigest) {
 			const toolPlan = resolvePiLaunchToolPlan(omitUndefinedProperties({
 				tools: step.tools,

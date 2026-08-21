@@ -11,8 +11,7 @@
 - Simplify Council Mode advisor selection so model-based profiles provide the perspective and the question supplies the decision frame.
 
 ### Fixed
-- Layer project `agentOverrides` on top of user overrides for custom agents instead of replacing them outright, so a project-scope override no longer silently drops a user-scope agent's `model`/`thinking`/`fallbackModels` (or flips `disabled`) just because it sets an unrelated field for the same agent name. Thanks to [@jagaliano](https://github.com/jagaliano) for #1348.
-- Warn when an agent override sets `extensions: []`, since it disables every ambient extension for that child (including any model-provider extension) rather than adding none. Thanks to [@jagaliano](https://github.com/jagaliano) for #1348.
+- Layer custom-agent user and project overrides without dropping user-only fields, while preserving project precedence. Thanks to [@jagaliano](https://github.com/jagaliano) for #1348.
 - Avoid child tool-call hangs by loading the external permission-system bridge only for explicit native permission rules and by failing stalled ask decisions closed. Thanks to [@moekyo](https://github.com/moekyo) for #1339.
 - Keep foreground workflow children from timing out after a tool result is backfilled without a separate execution-end event. Thanks to [@moekyo](https://github.com/moekyo) for #1339.
 - Mark completed foreground workflow children as resumable in keyed receipts when their persisted session file is available (#1335).

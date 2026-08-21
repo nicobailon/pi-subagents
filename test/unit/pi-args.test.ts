@@ -155,13 +155,7 @@ afterEach(() => {
 });
 
 describe("buildPiArgs session wiring", () => {
-	it("resolvePiLaunchToolPlan reports extensions: [] in plan.warnings but never logs itself", () => {
-		// resolvePiLaunchToolPlan is called multiple times for one real launch
-		// (once inside buildPiArgs to build args, again directly by callers for
-		// launch-metadata/digest purposes) and also from preflight/dry-run paths
-		// that never spawn anything. It must stay side-effect-free and only
-		// report findings through the returned `warnings` array; buildPiArgs is
-		// the one place responsible for actually logging them (see below).
+	it("keeps empty-extension warnings in the resolved plan without logging", () => {
 		const originalWarn = console.warn;
 		const warnCalls: string[] = [];
 		console.warn = (...args: unknown[]) => {
@@ -176,25 +170,13 @@ describe("buildPiArgs session wiring", () => {
 			assert.equal(plan.warnings.length, 1);
 			assert.match(plan.warnings[0]!, /extensions: \[\] override for agent 'quota-reviewer'/);
 			assert.match(plan.warnings[0]!, /disables ALL ambient extensions/);
-			assert.deepEqual(warnCalls, [], "resolvePiLaunchToolPlan must not log by itself");
+			assert.deepEqual(warnCalls, []);
 		} finally {
 			console.warn = originalWarn;
 		}
 	});
 
-	it("does not report a warning when extensions are omitted (ambient extensions inherited normally)", () => {
-		const plan = resolvePiLaunchToolPlan({});
-		assert.equal(plan.disableAmbientExtensions, false);
-		assert.deepEqual(plan.warnings, []);
-	});
-
-	it("does not report a warning when extensions is a non-empty explicit list", () => {
-		const plan = resolvePiLaunchToolPlan({ extensions: ["./tools/provider-ext.ts"] });
-		assert.equal(plan.disableAmbientExtensions, true);
-		assert.deepEqual(plan.warnings, []);
-	});
-
-	it("buildPiArgs logs the extensions: [] warning exactly once per call", () => {
+	it("keeps empty-extension warnings quiet across repeated argument builds", () => {
 		const originalWarn = console.warn;
 		const warnCalls: string[] = [];
 		console.warn = (...args: unknown[]) => {
@@ -202,34 +184,20 @@ describe("buildPiArgs session wiring", () => {
 		};
 		try {
 			buildPiArgs({
-				baseArgs: ["-p"],
-				task: "hello",
-				sessionEnabled: false,
-				inheritProjectContext: false,
-				inheritSkills: false,
+				baseArgs: [],
+				task: "Test warning output.",
+				inheritProjectContext: true,
+				inheritSkills: true,
 				extensions: [],
 				childAgentName: "quota-reviewer",
 			});
-			const matches = warnCalls.filter((line) => line.includes("[pi-subagents]") && line.includes("disables ALL ambient extensions"));
-			assert.equal(matches.length, 1, `expected exactly one warning log, got ${matches.length}: ${JSON.stringify(warnCalls)}`);
-		} finally {
-			console.warn = originalWarn;
-		}
-	});
-
-	it("buildPiArgs does not log a warning when extensions are omitted", () => {
-		const originalWarn = console.warn;
-		const warnCalls: string[] = [];
-		console.warn = (...args: unknown[]) => {
-			warnCalls.push(args.map(String).join(" "));
-		};
-		try {
 			buildPiArgs({
-				baseArgs: ["-p"],
-				task: "hello",
-				sessionEnabled: false,
-				inheritProjectContext: false,
-				inheritSkills: false,
+				baseArgs: [],
+				task: "Retry warning output.",
+				inheritProjectContext: true,
+				inheritSkills: true,
+				extensions: [],
+				childAgentName: "quota-reviewer",
 			});
 			assert.deepEqual(warnCalls, []);
 		} finally {
@@ -237,32 +205,16 @@ describe("buildPiArgs session wiring", () => {
 		}
 	});
 
-	it("calling resolvePiLaunchToolPlan again after buildPiArgs (as execution.ts/subagent-runner.ts do for launch metadata) does not double-log", () => {
-		// This is the exact shape of the real duplicate-resolution flagged in
-		// review: buildPiArgs resolves the plan once internally, then the caller
-		// resolves it again directly (e.g. to compute launchResolvedExtensions /
-		// a launch-contract digest). Only buildPiArgs's own call may log.
-		const originalWarn = console.warn;
-		const warnCalls: string[] = [];
-		console.warn = (...args: unknown[]) => {
-			warnCalls.push(args.map(String).join(" "));
-		};
-		try {
-			buildPiArgs({
-				baseArgs: ["-p"],
-				task: "hello",
-				sessionEnabled: false,
-				inheritProjectContext: false,
-				inheritSkills: false,
-				extensions: [],
-				childAgentName: "quota-reviewer",
-			});
-			resolvePiLaunchToolPlan({ extensions: [], agentName: "quota-reviewer" });
-			const matches = warnCalls.filter((line) => line.includes("[pi-subagents]") && line.includes("disables ALL ambient extensions"));
-			assert.equal(matches.length, 1, `expected exactly one warning log across both calls, got ${matches.length}: ${JSON.stringify(warnCalls)}`);
-		} finally {
-			console.warn = originalWarn;
-		}
+	it("does not warn when extensions are omitted (ambient extensions inherited normally)", () => {
+		const plan = resolvePiLaunchToolPlan({});
+		assert.equal(plan.disableAmbientExtensions, false);
+		assert.deepEqual(plan.warnings, []);
+	});
+
+	it("does not warn when extensions is a non-empty explicit list", () => {
+		const plan = resolvePiLaunchToolPlan({ extensions: ["./tools/provider-ext.ts"] });
+		assert.equal(plan.disableAmbientExtensions, true);
+		assert.deepEqual(plan.warnings, []);
 	});
 
 	it("projects launch-resolved extension identifiers without raw paths", () => {
