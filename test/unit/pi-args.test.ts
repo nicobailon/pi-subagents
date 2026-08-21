@@ -155,6 +155,39 @@ afterEach(() => {
 });
 
 describe("buildPiArgs session wiring", () => {
+	it("warns when an agent override sets extensions: [] (disables all ambient extensions, not \"adds nothing\")", () => {
+		const originalWarn = console.warn;
+		const warnCalls: string[] = [];
+		console.warn = (...args: unknown[]) => {
+			warnCalls.push(args.map(String).join(" "));
+		};
+		try {
+			const plan = resolvePiLaunchToolPlan({
+				extensions: [],
+				agentName: "quota-reviewer",
+			});
+			assert.equal(plan.disableAmbientExtensions, true);
+			assert.equal(plan.warnings.length, 1);
+			assert.match(plan.warnings[0]!, /extensions: \[\] override for agent 'quota-reviewer'/);
+			assert.match(plan.warnings[0]!, /disables ALL ambient extensions/);
+			assert.ok(warnCalls.some((line) => line.includes("[pi-subagents]") && line.includes("disables ALL ambient extensions")));
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+
+	it("does not warn when extensions are omitted (ambient extensions inherited normally)", () => {
+		const plan = resolvePiLaunchToolPlan({});
+		assert.equal(plan.disableAmbientExtensions, false);
+		assert.deepEqual(plan.warnings, []);
+	});
+
+	it("does not warn when extensions is a non-empty explicit list", () => {
+		const plan = resolvePiLaunchToolPlan({ extensions: ["./tools/provider-ext.ts"] });
+		assert.equal(plan.disableAmbientExtensions, true);
+		assert.deepEqual(plan.warnings, []);
+	});
+
 	it("projects launch-resolved extension identifiers without raw paths", () => {
 		const privateExt = path.join(
 			os.tmpdir(),

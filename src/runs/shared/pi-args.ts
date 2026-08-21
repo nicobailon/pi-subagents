@@ -272,6 +272,13 @@ export interface PiLaunchToolPlan {
 	extensionArgs: string[];
 	disableAmbientExtensions: boolean;
 	capabilityAudit?: SubagentCapabilityAudit;
+	/**
+	 * Non-fatal footguns surfaced during plan resolution (currently: an agent
+	 * `extensions: []` override, which disables ALL ambient extensions for the
+	 * child rather than "adding nothing" — see the empty-extensions-override
+	 * warning below). Callers may log these; they never change behavior.
+	 */
+	warnings: string[];
 }
 
 function extensionIdentifier(value: string): string {
@@ -467,6 +474,22 @@ export function resolvePiLaunchToolPlan(
 	const disableAmbientExtensions =
 		capabilityCeiling?.denyExtensions === true ||
 		input.extensions !== undefined;
+	const warnings: string[] = [];
+	// An agent override that sets `extensions: []` reads like "add nothing", but
+	// any *defined* extensions list (including an empty one) disables every
+	// ambient extension for this child — not just skips adding extras. That
+	// silently strips load-bearing ambient extensions (e.g. a model provider
+	// extension), so a provider-qualified model pin becomes unresolvable in the
+	// child with no error pointing back at the override that caused it.
+	if (capabilityCeiling?.denyExtensions !== true && Array.isArray(input.extensions) && input.extensions.length === 0) {
+		const agentLabel = input.agentName ? ` for agent '${input.agentName}'` : "";
+		warnings.push(
+			`extensions: [] override${agentLabel} disables ALL ambient extensions for this child (not just "adds nothing"), `
+				+ "including any model-provider extension needed to resolve a provider-qualified model. "
+				+ "List the extensions this child actually needs instead of an empty array.",
+		);
+	}
+	for (const warning of warnings) console.warn(`[pi-subagents] ${warning}`);
 	const configuredExtensions = capabilityCeiling?.denyExtensions
 		? []
 		: [
@@ -547,6 +570,7 @@ export function resolvePiLaunchToolPlan(
 		configuredExtensions,
 		extensionArgs,
 		disableAmbientExtensions,
+		warnings,
 		...(capabilityAudit ? { capabilityAudit } : {}),
 	};
 }
