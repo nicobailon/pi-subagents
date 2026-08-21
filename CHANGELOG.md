@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+- Let `agentOverrides` set or clear default `output` paths and `defaultReads`, while
+  preserving explicit custom-agent frontmatter and preventing settings-derived values
+  from being serialized into custom definitions. Thanks to [@mevatron](https://github.com/mevatron) for #1349.
+
 ## [0.54.0] - 2026-08-21
 
 ### Highlights

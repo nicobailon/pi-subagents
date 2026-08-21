@@ -215,7 +215,9 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 	const base = agent.override?.base;
 	const {
 		override: _override,
+		output: _output,
 		outputMode: _outputMode,
+		defaultReads: _defaultReads,
 		model: _model,
 		fallbackModels: _fallbackModels,
 		thinking: _thinking,
@@ -243,7 +245,9 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 
 	return withDeclaredExtensionPaths({
 		...editable,
+		...(base.output !== undefined ? { output: base.output } : {}),
 		...(base.outputMode !== undefined ? { outputMode: base.outputMode } : {}),
+		...(base.defaultReads !== undefined ? { defaultReads: [...base.defaultReads] } : {}),
 		...(base.model !== undefined ? { model: base.model } : {}),
 		...(base.fallbackModels !== undefined ? { fallbackModels: [...base.fallbackModels] } : {}),
 		...(base.thinking !== undefined ? { thinking: base.thinking } : {}),
