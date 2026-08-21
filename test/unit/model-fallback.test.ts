@@ -518,6 +518,31 @@ describe("resolveSubagentModelOverride scope enforcement", () => {
 		);
 	});
 
+	it("fails closed for mixed inherit scopes before omitting the model", () => {
+		const scopes = resolveModelScopesForAgent(
+			{ enforce: true, agents: { worker: { allow: ["inherit", "openai/gpt-5-*"] } } },
+			"worker",
+			undefined,
+		);
+		assert.throws(
+			() => resolveEffectiveSubagentModel(undefined, undefined, undefined, availableModels, undefined, { scope: scopes }),
+			/modelScope\.agents\.worker.*requires a current parent session model/,
+		);
+		assert.throws(
+			() => buildModelCandidates(undefined, ["openai/gpt-5-mini"], availableModels, undefined, { scope: scopes }),
+			/modelScope\.agents\.worker.*requires a current parent session model/,
+		);
+	});
+
+	it("allows an explicit model through a mixed inherit scope without a parent", () => {
+		const scopes = resolveModelScopesForAgent(
+			{ enforce: true, agents: { worker: { allow: ["inherit", "openai/gpt-5-*"] } } },
+			"worker",
+			undefined,
+		);
+		assert.equal(resolveEffectiveSubagentModel("openai/gpt-5-mini", undefined, undefined, availableModels, undefined, { scope: scopes }), "openai/gpt-5-mini");
+	});
+
 	it("throws the strict agent violation before emitting a global warning", () => {
 		const warnings: string[] = [];
 		const scopes = resolveModelScopesForAgent(

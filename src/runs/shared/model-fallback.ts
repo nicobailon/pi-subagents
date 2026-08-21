@@ -251,9 +251,9 @@ function configuredScopes(scope: ModelScopeRule | ModelScopeRule[] | undefined):
 	return scope ? (Array.isArray(scope) ? scope : [scope]) : [];
 }
 
-function throwForUnresolvedEnforcedInheritScope(scope: ModelScopeRule | ModelScopeRule[] | undefined): void {
+function throwForUnresolvedEnforcedInheritScope(scope: ModelScopeRule | ModelScopeRule[] | undefined, includeMixed = false): void {
 	const unresolvedInheritScope = configuredScopes(scope)
-		.find((entry) => entry.enforce === true && entry.allow?.length === 1 && entry.allow[0] === INHERIT_MODEL);
+		.find((entry) => entry.enforce === true && (includeMixed ? entry.allow?.includes(INHERIT_MODEL) : entry.allow?.length === 1 && entry.allow[0] === INHERIT_MODEL));
 	if (!unresolvedInheritScope) return;
 	const origin = "origin" in unresolvedInheritScope && typeof unresolvedInheritScope.origin === "string"
 		? unresolvedInheritScope.origin
@@ -302,7 +302,7 @@ export function resolveSubagentModelOverride(
 ): string | undefined {
 	const trimmed = typeof requestedModel === "string" ? requestedModel.trim() : "";
 	const explicit = trimmed && trimmed !== INHERIT_MODEL ? trimmed : undefined;
-	if (!parentModel) throwForUnresolvedEnforcedInheritScope(options?.scope);
+	if (!parentModel) throwForUnresolvedEnforcedInheritScope(options?.scope, explicit === undefined);
 	let resolved: string | undefined;
 	if (explicit === undefined) {
 		resolved = parentModel ? `${parentModel.provider}/${parentModel.id}` : undefined;
@@ -366,7 +366,7 @@ export function buildModelCandidates(
 	preferredProvider?: string,
 	options?: BuildModelCandidatesOptions,
 ): string[] {
-	if (!primaryModel) throwForUnresolvedEnforcedInheritScope(options?.scope);
+	if (!primaryModel) throwForUnresolvedEnforcedInheritScope(options?.scope, true);
 	const seen = new Set<string>();
 	const candidates: string[] = [];
 	const rawCandidates = [primaryModel, ...(fallbackModels ?? [])];
