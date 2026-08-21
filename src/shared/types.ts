@@ -1503,6 +1503,8 @@ export interface AsyncStatus {
 		thinking?: string;
 		attemptedModels?: string[];
 		modelAttempts?: ModelAttempt[];
+		/** True when the child input exceeded the model context window. */
+		contextOverflow?: boolean;
 		totalCost?: CostSummary;
 		steering?: SteeringStatus;
 		error?: string;

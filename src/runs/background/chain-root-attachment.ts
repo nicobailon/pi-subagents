@@ -21,6 +21,7 @@ export interface ImportedAsyncRootResult {
 	model?: string;
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
+	contextOverflow?: boolean;
 	totalCost?: CostSummary;
 	structuredOutput?: unknown;
 	structuredOutputPath?: string;
@@ -49,6 +50,7 @@ interface AsyncResultFile {
 		model?: string;
 		attemptedModels?: string[];
 		modelAttempts?: ModelAttempt[];
+		contextOverflow?: boolean;
 		totalCost?: CostSummary;
 		structuredOutput?: unknown;
 		structuredOutputPath?: string;
@@ -110,6 +112,7 @@ function outputFromTerminalStatus(root: ImportedAsyncRoot, status: AsyncStatus, 
 		...(step?.model ? { model: step.model } : {}),
 		...(step?.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
 		...(step?.modelAttempts ? { modelAttempts: step.modelAttempts } : {}),
+		...(step?.contextOverflow ? { contextOverflow: true } : {}),
 		...(step?.totalCost ? { totalCost: step.totalCost } : {}),
 		...(step?.structuredOutput !== undefined ? { structuredOutput: step.structuredOutput } : {}),
 		...(step?.structuredOutputPath ? { structuredOutputPath: step.structuredOutputPath } : {}),
@@ -131,6 +134,7 @@ function outputFromTimeout(root: ImportedAsyncRoot, status: AsyncStatus | null, 
 		...(step?.model ? { model: step.model } : {}),
 		...(step?.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
 		...(step?.modelAttempts ? { modelAttempts: step.modelAttempts } : {}),
+		...(step?.contextOverflow ? { contextOverflow: true } : {}),
 		...(step?.totalCost ? { totalCost: step.totalCost } : {}),
 	};
 }
@@ -158,6 +162,7 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 		...(child?.model ?? step?.model ? { model: child?.model ?? step?.model } : {}),
 		...(child?.attemptedModels ?? step?.attemptedModels ? { attemptedModels: child?.attemptedModels ?? step?.attemptedModels } : {}),
 		...(child?.modelAttempts ?? step?.modelAttempts ? { modelAttempts: child?.modelAttempts ?? step?.modelAttempts } : {}),
+		...(child?.contextOverflow || step?.contextOverflow ? { contextOverflow: true } : {}),
 		...(child?.totalCost ?? step?.totalCost ? { totalCost: child?.totalCost ?? step?.totalCost } : {}),
 		...(child?.structuredOutput !== undefined ? { structuredOutput: child.structuredOutput } : step?.structuredOutput !== undefined ? { structuredOutput: step.structuredOutput } : {}),
 		...(child?.structuredOutputPath ?? step?.structuredOutputPath ? { structuredOutputPath: child?.structuredOutputPath ?? step?.structuredOutputPath } : {}),
