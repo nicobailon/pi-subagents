@@ -224,6 +224,13 @@ function formatPermissionSystemSection(): string[] {
 	return lines;
 }
 
+function formatWorkflowScriptSection(): string[] {
+	return [
+		"- helpers: runs.run, runs.all, runs.steer, runs.status, runs.ref/refs, emit, console",
+		"- recovery: if runs.all is missing, reload or update pi-subagents; await Promise.all([runs.run(...)]) is also supported",
+	];
+}
+
 export function buildDoctorReport(input: DoctorReportInput): string {
 	const paths = input.paths ?? defaultPaths();
 	const deps = { ...DEFAULT_DEPS, ...input.deps };
@@ -252,6 +259,9 @@ export function buildDoctorReport(input: DoctorReportInput): string {
 		"",
 		"Active async capacity",
 		...formatActiveAsyncCapacitySection(input),
+		"",
+		"Workflow script",
+		...formatWorkflowScriptSection(),
 		"",
 		"Permission system",
 		...formatPermissionSystemSection(),
