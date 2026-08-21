@@ -11,6 +11,7 @@
 - Avoid loading the parent extension graph in subagent child processes. Thanks to [@ccharname](https://github.com/ccharname) for #1330.
 - Stop model fallback on context-overflow failures and surface `contextOverflow`. Thanks to [@srcKod](https://github.com/srcKod) for #1323.
 - Stop empty slow result scans from spamming the session transcript. Thanks to [@afrodao2394](https://github.com/afrodao2394) for #1329.
+- Surface logical tool failures so subagent tool results backfill correctly. Thanks to [@abdwhb-png](https://github.com/abdwhb-png) for #1332 and [@moekyo](https://github.com/moekyo) for #1331.
 
 ## [0.53.0] - 2026-08-20
 
