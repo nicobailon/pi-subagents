@@ -853,6 +853,10 @@ function isAsyncRunNotFound(error: unknown): boolean {
 	return error instanceof Error && error.message.startsWith("Async run not found.");
 }
 
+function isMissingExactAsyncStatusFile(error: unknown, requested: string): boolean {
+	return error instanceof Error && error.message === `Status file not found for async run '${requested}'.`;
+}
+
 function isResumeAmbiguity(error: unknown): boolean {
 	return error instanceof Error && /Ambiguous .*run id prefix/.test(error.message);
 }
@@ -906,7 +910,7 @@ function resolveResumeTarget(params: SubagentParamsLike, state: SubagentState, o
 		throw new Error(`Resume id '${requested}' is ambiguous between foreground run '${foregroundTarget.runId}' and async run '${asyncTarget.runId}'. Provide a full run id.`);
 	}
 	if (foregroundTarget) {
-		if (isExactResumeError(asyncError, "async", requested)) throw asyncError;
+		if (isExactResumeError(asyncError, "async", requested) && !isMissingExactAsyncStatusFile(asyncError, requested)) throw asyncError;
 		if (isResumeAmbiguity(asyncError) && !resumeTargetExact(foregroundTarget, requested)) throw asyncError;
 		return foregroundTarget;
 	}
