@@ -600,7 +600,7 @@ function runRetentionDiscovery(input: {
 		};
 		const onAbort = (): void => fail(new RetentionCancelledError("Retention discovery was cancelled."));
 		input.signal?.addEventListener("abort", onAbort, { once: true });
-		worker.once("error", (error) => fail(error));
+		worker.once("error", (error) => fail(error instanceof Error ? error : new Error(String(error))));
 		worker.once("exit", (code) => {
 			if (!settled) fail(new Error(`Retention discovery worker exited before replying (${code}).`));
 		});
