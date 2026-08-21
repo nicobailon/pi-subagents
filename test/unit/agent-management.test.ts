@@ -769,14 +769,29 @@ Advise only.
 
 	it("does not serialize settings overrides into custom agent frontmatter during updates", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-6" }] } };
+		const userSettingsPath = path.join(process.env.PI_CODING_AGENT_DIR!, "settings.json");
 		const settingsPath = path.join(tempDir, ".pi", "settings.json");
 		const agentPath = path.join(tempDir, ".pi", "agents", "implementer.md");
 		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+		fs.mkdirSync(path.dirname(userSettingsPath), { recursive: true });
+		fs.writeFileSync(userSettingsPath, JSON.stringify({
+			subagents: {
+				agentOverrides: {
+					implementer: {
+						output: "user.md",
+						defaultReads: ["user.md"],
+						model: "anthropic/claude-sonnet-4-6",
+					},
+				},
+			},
+		}, null, 2), "utf-8");
 		fs.writeFileSync(settingsPath, JSON.stringify({
 			subagents: {
 				agentOverrides: {
 					implementer: {
+						output: "artifacts/implementer.md",
 						outputMode: "file-only",
+						defaultReads: ["CONTEXT.md"],
 						model: "anthropic/claude-sonnet-4-6",
 						systemPromptMode: "append",
 						inheritProjectContext: true,
@@ -796,7 +811,9 @@ Drive the failing test first.
 		const got = handleManagementAction("get", { agent: "implementer" }, ctx);
 		assert.equal(got.isError, false);
 		const beforeText = readText(got);
+		assert.match(beforeText, /Output: artifacts\/implementer\.md/);
 		assert.match(beforeText, /Output mode: file-only/);
+		assert.match(beforeText, /Reads: CONTEXT\.md/);
 		assert.match(beforeText, /Model: anthropic\/claude-sonnet-4-6/);
 		assert.match(beforeText, /System prompt mode: append/);
 		assert.match(beforeText, /Inherit project context: true/);
@@ -810,7 +827,9 @@ Drive the failing test first.
 
 		const content = fs.readFileSync(agentPath, "utf-8");
 		assert.match(content, /^description: Updated implementer$/m);
+		assert.doesNotMatch(content, /^output:/m);
 		assert.doesNotMatch(content, /^outputMode:/m);
+		assert.doesNotMatch(content, /^defaultReads:/m);
 		assert.doesNotMatch(content, /^model:/m);
 		assert.doesNotMatch(content, /^systemPromptMode:/m);
 		assert.doesNotMatch(content, /^inheritProjectContext:/m);
@@ -819,11 +838,42 @@ Drive the failing test first.
 		const gotAfter = handleManagementAction("get", { agent: "implementer" }, ctx);
 		assert.equal(gotAfter.isError, false);
 		const afterText = readText(gotAfter);
+		assert.match(afterText, /Output: artifacts\/implementer\.md/);
 		assert.match(afterText, /Output mode: file-only/);
+		assert.match(afterText, /Reads: CONTEXT\.md/);
 		assert.match(afterText, /Model: anthropic\/claude-sonnet-4-6/);
 		assert.match(afterText, /System prompt mode: append/);
 		assert.match(afterText, /Inherit project context: true/);
 		assert.match(afterText, /Inherit skills: true/);
+	});
+
+	it("preserves blank output and defaultReads frontmatter that blocks settings overrides during updates", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const settingsPath = path.join(tempDir, ".pi", "settings.json");
+		const agentPath = path.join(tempDir, ".pi", "agents", "implementer.md");
+		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+		fs.writeFileSync(settingsPath, JSON.stringify({
+			subagents: { agentOverrides: { implementer: { output: "settings.md", defaultReads: ["settings.md"] } } },
+		}, null, 2), "utf-8");
+		fs.writeFileSync(agentPath, `---
+name: implementer
+description: TDD implementer
+output:
+defaultReads:
+---
+
+Drive the failing test first.
+`, "utf-8");
+
+		const updated = handleUpdate({ agent: "implementer", config: { description: "Updated implementer" } }, ctx);
+		assert.equal(updated.isError, false);
+
+		const content = fs.readFileSync(agentPath, "utf-8");
+		assert.match(content, /^output: ?$/m);
+		assert.match(content, /^defaultReads: ?$/m);
+		const after = readText(handleManagementAction("get", { agent: "implementer" }, ctx));
+		assert.doesNotMatch(after, /Output: settings\.md/);
+		assert.doesNotMatch(after, /Reads: settings\.md/);
 	});
 
 	it("preserves explicit default-like frontmatter that blocks settings overrides during updates", () => {

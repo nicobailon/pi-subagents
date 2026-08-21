@@ -50,7 +50,9 @@ export function defaultInheritSkills(): boolean {
 
 export interface BuiltinAgentOverrideBase {
 	description?: string;
+	output?: string;
 	outputMode?: OutputMode;
+	defaultReads?: string[];
 	model?: string;
 	fallbackModels?: string[];
 	thinking?: string | false;
@@ -73,7 +75,9 @@ export interface BuiltinAgentOverrideBase {
 
 interface BuiltinAgentOverrideConfig {
 	description?: string;
+	output?: string | false;
 	outputMode?: OutputMode;
+	defaultReads?: string[] | false;
 	model?: string | false;
 	fallbackModels?: string[] | false;
 	thinking?: string | false;
@@ -621,7 +625,9 @@ function arraysEqual(a: string[] | undefined, b: string[] | undefined): boolean 
 function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 	return {
 		description: agent.description,
+		...(agent.output !== undefined ? { output: agent.output } : {}),
 		...(agent.outputMode !== undefined ? { outputMode: agent.outputMode } : {}),
+		...(agent.defaultReads !== undefined ? { defaultReads: [...agent.defaultReads] } : {}),
 		...(agent.model !== undefined ? { model: agent.model } : {}),
 		...(agent.fallbackModels ? { fallbackModels: [...agent.fallbackModels] } : {}),
 		...(agent.thinking !== undefined ? { thinking: agent.thinking } : {}),
@@ -646,7 +652,9 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentOverrideConfig {
 	return {
 		...(override.description !== undefined ? { description: override.description } : {}),
+		...(override.output !== undefined ? { output: override.output } : {}),
 		...(override.outputMode !== undefined ? { outputMode: override.outputMode } : {}),
+		...(override.defaultReads !== undefined ? { defaultReads: override.defaultReads === false ? false : [...override.defaultReads] } : {}),
 		...(override.model !== undefined ? { model: override.model } : {}),
 		...(override.fallbackModels !== undefined
 			? { fallbackModels: override.fallbackModels === false ? false : [...override.fallbackModels] }
@@ -827,6 +835,11 @@ function parseBuiltinOverrideEntry(
 		}
 	}
 
+	if ("output" in input) {
+		if ((typeof input.output === "string" && input.output.trim()) || input.output === false) override.output = input.output;
+		else throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'output'; expected a non-empty string or false.`);
+	}
+
 	if ("outputMode" in input) {
 		if (input.outputMode === "inline" || input.outputMode === "file-only") {
 			override.outputMode = input.outputMode;
@@ -915,6 +928,9 @@ function parseBuiltinOverrideEntry(
 		if (typeof input.systemPrompt === "string") override.systemPrompt = input.systemPrompt;
 		else throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'systemPrompt'; expected a string.`);
 	}
+
+	const defaultReads = parseOverrideStringArrayOrFalse(input.defaultReads, { filePath, name, field: "defaultReads" });
+	if (defaultReads !== undefined) override.defaultReads = defaultReads;
 
 	const fallbackModels = parseOverrideStringArrayOrFalse(input.fallbackModels, { filePath, name, field: "fallbackModels" });
 	if (fallbackModels !== undefined) override.fallbackModels = fallbackModels;
@@ -1103,7 +1119,9 @@ function applyBuiltinOverride(
 	};
 
 	if (override.description !== undefined) next.description = override.description;
+	if (override.output !== undefined) { if (override.output === false) delete next.output; else next.output = override.output; }
 	if (override.outputMode !== undefined) next.outputMode = override.outputMode;
+	if (override.defaultReads !== undefined) { if (override.defaultReads === false) delete next.defaultReads; else next.defaultReads = [...override.defaultReads]; }
 	if (override.model !== undefined) {
 		if (override.model === false) delete next.model; else next.model = override.model;
 		delete next.modelSource;
@@ -1221,8 +1239,14 @@ function applyCustomAgentOverride(
 		mutable().description = override.description;
 		anyFilled = true;
 	}
+	if (override.output !== undefined) {
+		fill("output", ["output"], override.output === false ? undefined : override.output);
+	}
 	if (override.outputMode !== undefined) {
 		fill("outputMode", ["outputMode"], override.outputMode);
+	}
+	if (override.defaultReads !== undefined) {
+		fill("defaultReads", ["defaultReads"], override.defaultReads === false ? undefined : [...override.defaultReads]);
 	}
 	if (override.model !== undefined && !agentHasFrontmatterField(agent, "model")) {
 		const target = mutable();
@@ -1295,7 +1319,7 @@ function applyCustomAgentOverride(
 	}
 
 	if (!anyFilled || !next) return agent;
-	next.override = { ...meta, base: cloneOverrideBase(agent) };
+	next.override = { ...meta, base: agent.override?.base ?? cloneOverrideBase(agent) };
 	const frontmatterFields = agentFrontmatterFields.get(agent);
 	if (frontmatterFields) agentFrontmatterFields.set(next, frontmatterFields);
 	return next;
@@ -1332,7 +1356,7 @@ function applyCustomAgentOverrides(
 
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
-	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "extensions" | "subagentOnlyExtensions" | "completionGuard" | "toolBudget"> & Partial<Pick<AgentConfig, "description" | "outputMode">>,
+	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "extensions" | "subagentOnlyExtensions" | "completionGuard" | "toolBudget"> & Partial<Pick<AgentConfig, "description" | "output" | "outputMode" | "defaultReads">>,
 ): BuiltinAgentOverrideConfig | undefined {
 	const override: BuiltinAgentOverrideConfig = {};
 
@@ -1340,7 +1364,9 @@ export function buildBuiltinOverrideConfig(
 		const description = draft.description.trim();
 		if (description && description !== base.description) override.description = description;
 	}
+	if (draft.output !== base.output) override.output = draft.output ?? false;
 	if (draft.outputMode !== undefined && draft.outputMode !== base.outputMode) override.outputMode = draft.outputMode;
+	if (!arraysEqual(draft.defaultReads, base.defaultReads)) override.defaultReads = draft.defaultReads ? [...draft.defaultReads] : false;
 	if (draft.model !== base.model) override.model = draft.model ?? false;
 	if (!arraysEqual(draft.fallbackModels, base.fallbackModels)) override.fallbackModels = draft.fallbackModels ? [...draft.fallbackModels] : false;
 	if (draft.thinking !== base.thinking) override.thinking = draft.thinking ?? false;

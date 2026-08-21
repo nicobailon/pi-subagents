@@ -113,11 +113,11 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 		lines.push(`subagentOnlyExtensions: ${subagentOnlyExtensionsValue ?? ""}`);
 	}
 
-	if (config.output) lines.push(`output: ${config.output}`);
+	if (config.output || preserve("output")) lines.push(`output: ${config.output ?? ""}`);
 	if (config.outputMode || preserve("outputMode")) lines.push(`outputMode: ${config.outputMode ?? ""}`);
 
 	const readsValue = joinComma(config.defaultReads);
-	if (readsValue) lines.push(`defaultReads: ${readsValue}`);
+	if (readsValue || preserve("defaultReads")) lines.push(`defaultReads: ${readsValue ?? ""}`);
 
 	if (config.defaultProgress) lines.push("defaultProgress: true");
 	if (config.interactive) lines.push("interactive: true");
