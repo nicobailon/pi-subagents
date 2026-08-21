@@ -85,7 +85,7 @@ import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
 import { claimRunFanoutBatch, getRunFanoutBudgetSnapshot } from "../shared/run-fanout-budget.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
-import { formatModelAttemptNote, isRetryableModelFailure, recordRetryableModelFailure } from "../shared/model-fallback.ts";
+import { formatModelAttemptNote, isContextOverflow, isRetryableModelFailure, recordRetryableModelFailure } from "../shared/model-fallback.ts";
 import {
 	SUBAGENT_STARTUP_RETRY_DELAYS_MS,
 	formatSubagentExtensionConflictError,
@@ -236,6 +236,8 @@ interface StepResult {
 	model?: string;
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
+	/** True when the dispatch failed because the input exceeded the model's context window. */
+	contextOverflow?: boolean;
 	totalCost?: CostSummary;
 	artifactPaths?: ArtifactPaths;
 	outputSaveError?: string;
@@ -1458,6 +1460,7 @@ async function runSingleStepInner(
 	// Escalated to "file" after an unexplained zero-activity startup failure so
 	// retries keep the task text out of argv (endpoint pre-exec scans may deny it).
 	let taskDeliveryOverride: SubagentTaskDelivery | undefined;
+	let contextOverflow = false;
 	modelAttemptsLoop: while (modelIndex < candidates.length) {
 		if (ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break;
 		const candidate = candidates[modelIndex];
@@ -1771,6 +1774,11 @@ async function runSingleStepInner(
 		}
 		const retryableModelFailure = isRetryableModelFailure(error);
 		if (retryableModelFailure) recordRetryableModelFailure(candidate ?? run.model ?? step.model, error);
+		if (isContextOverflow(error)) {
+			contextOverflow = true;
+			attemptNotes.push(`[fallback] ${attempt.model} failed: context overflow — the input exceeds this model's context window. Reduce the task input or use a model with a larger context window.`);
+			break modelAttemptsLoop;
+		}
 		if (!retryableModelFailure || modelIndex === candidates.length - 1) break modelAttemptsLoop;
 		attemptNotes.push(formatModelAttemptNote(attempt, candidates[modelIndex + 1]));
 		modelIndex += 1;
@@ -1908,6 +1916,7 @@ async function runSingleStepInner(
 		model: finalResult?.model,
 		attemptedModels: attemptedModels.length > 0 ? attemptedModels : undefined,
 		modelAttempts,
+		contextOverflow: contextOverflow || undefined,
 		totalCost: costSummaryFromAttempts(modelAttempts),
 		artifactPaths,
 		outputSaveError: artifactErrors.outputSaveError,

@@ -122,6 +122,7 @@ interface RunSyncResult {
 	skillsWarning?: string;
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
+	contextOverflow?: boolean;
 	usage: { turns: number; input: number; output: number };
 	progress: ProgressSummary;
 	controlEvents?: Array<{ type?: string; message: string; reason?: string; turns?: number; tokens?: number; currentPath?: string; recentFailureSummary?: string }>;
@@ -3959,6 +3960,26 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.exitCode, 1);
 		assert.equal(result.modelAttempts?.length, 1);
 		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("stops model fallback and flags contextOverflow when the input exceeds the context window", async () => {
+		mockPi.onCall({ output: "", stderr: "This model's maximum context length is 8192 tokens", exitCode: 1 });
+		mockPi.onCall({ output: "must not run" });
+		const agents = [makeAgent("worker", {
+			model: "openai/gpt-5-mini",
+			fallbackModels: ["anthropic/claude-sonnet-4"],
+		})];
+
+		const result = await runSync(tempDir, agents, "worker", "Summarize a huge file", {
+			runId: "context-overflow-stops-fallback",
+			acceptance: false,
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.contextOverflow, true);
+		assert.equal(result.modelAttempts?.length, 1);
+		assert.equal(mockPi.callCount(), 1);
+		assert.ok(result.error?.includes("context"), "error should mention context overflow");
 	});
 
 	it("does not retry non-SIGKILL signaled child exits", { skip: process.platform === "win32" ? "POSIX child signal reporting is unavailable on Windows" : false }, async () => {

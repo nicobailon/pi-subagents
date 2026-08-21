@@ -957,6 +957,13 @@ export interface SingleResult {
 	modelAttempts?: ModelAttempt[];
 	controlEvents?: ControlEvent[];
 	error?: string;
+	/**
+	 * True when the dispatch failed because the input exceeded the model's
+	 * context window. The model fallback loop stops immediately (retrying the
+	 * same input on another model cannot succeed). Callers should treat this as
+	 * a signal to reduce input size or re-decompose the task.
+	 */
+	contextOverflow?: boolean;
 	protocolError?: ProtocolOutputLimit;
 	sessionFile?: string;
 	skills?: string[];

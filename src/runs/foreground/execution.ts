@@ -73,6 +73,7 @@ import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleO
 import {
 	buildModelCandidates,
 	formatModelAttemptNote,
+	isContextOverflow,
 	isRetryableModelFailure,
 	recordRetryableModelFailure,
 } from "../shared/model-fallback.ts";
@@ -1864,6 +1865,11 @@ async function runSyncCompletionInner(
 			}
 			const retryableModelFailure = isRetryableModelFailure(result.error);
 			if (retryableModelFailure) recordRetryableModelFailure(result.model ?? candidate, result.error);
+			if (isContextOverflow(result.error)) {
+				result.contextOverflow = true;
+				attemptNotes.push(`[fallback] ${attempt.model} failed: context overflow — the input exceeds this model's context window. Reduce the task input or use a model with a larger context window.`);
+				break modelAttemptsLoop;
+			}
 			if (!retryableModelFailure || modelIndex === modelsToTry.length - 1) break modelAttemptsLoop;
 			attemptNotes.push(formatModelAttemptNote(attempt, modelsToTry[modelIndex + 1]));
 			break;
