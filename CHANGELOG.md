@@ -5,6 +5,7 @@
 ### Changed
 - Make scripted-workflow helper support and stale-session recovery visible in `doctor` and the workflow guide (#1344).
 - Keep structured single-child execution receipts quiet by removing an internal conversion log from public workflow output.
+- Expose the TTL-backed model exclusion store as a public `pi-subagents/model-exclusions` package export so extensions can record model failures and skip excluded models in their own fallback selection.
 - Add per-agent model restrictions and a current-parent `inherit` allow-list alias. Thanks to [@hieudmg](https://github.com/hieudmg) for #1328.
 - Show package names, versions, and external-job provider status in subagent list and detail output so package agents such as Surf's `gpt-pro` are easier to find and use.
 - Document Council Mode routing in the main `pi-subagents` skill so natural-language requests for advisor councils, plan critique, cross-exam, or multiple model perspectives load the Council Mode protocol.

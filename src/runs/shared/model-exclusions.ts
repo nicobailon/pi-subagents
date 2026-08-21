@@ -12,7 +12,7 @@ export type ModelExclusion = ModelExclusionTarget & {
 	expiresAt: number;
 };
 
-type RecordModelFailureOptions = ModelExclusionTarget & {
+export type RecordModelFailureOptions = ModelExclusionTarget & {
 	reason?: string;
 	ttlMs?: number;
 };

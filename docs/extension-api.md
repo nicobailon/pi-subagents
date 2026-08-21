@@ -238,6 +238,29 @@ Semantics:
 
 Schedules created while a ceiling is active are rejected until durable schedule persistence is available; unrestricted schedules remain subject to any policy active when they fire. Public status exposes bounded audit counts and sources, never full extension paths.
 
+## Model exclusions
+
+Extensions that run their own model-backed work can share the package's TTL-backed model exclusion store, so a model that just failed is skipped by both the extension and the package's own fallback selection:
+
+```ts
+import { recordModelFailure, isExcluded, filterFallbackCandidates } from "pi-subagents/model-exclusions";
+
+// After a failed model call:
+recordModelFailure({ modelId: "gpt-5", provider: "openai", reason: "429 rate limit" });
+
+// Before picking a model:
+if (!isExcluded("gpt-5", "openai")) { /* use it */ }
+
+// Or filter a candidate list of "provider/model" keys:
+const usable = filterFallbackCandidates(["openai/gpt-5", "anthropic/claude-sonnet-4-6"]);
+```
+
+Semantics:
+
+- Exclusions are keyed by `modelId`, `provider`, or both, and expire after a TTL (default 24 hours; override per call with `ttlMs` or globally with `setDefaultTTL`).
+- The store is process-wide and persisted to disk (`PI_MODEL_EXCLUSIONS_PATH` overrides the location), so exclusions recorded by an extension are visible to the package's model fallback selection in the same process.
+- `recordModelFailure` is additive and never throws on duplicates; `clearExclusions` removes all entries (intended for tests and admin tooling).
+
 ## Background-work provider API
 
 Other Pi extensions can make their current-session jobs visible to `subagent_wait` through the process-local provider contract:

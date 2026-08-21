@@ -1,0 +1,16 @@
+export {
+	EXCLUSIONS_PATH_ENV,
+	clearExclusions,
+	clearExpiredExclusions,
+	filterFallbackCandidates,
+	flushPersist,
+	getExcludedCount,
+	getExclusionsFilePath,
+	isExcluded,
+	parseModelKey,
+	recordModelFailure,
+	reloadFromDisk,
+	setDefaultTTL,
+	type ModelExclusion,
+	type RecordModelFailureOptions,
+} from "../runs/shared/model-exclusions.ts";

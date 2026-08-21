@@ -108,6 +108,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./external-job-provider": "./src/api/external-job-provider.ts",
 		"./external-runs": "./src/api/external-runs.ts",
 		"./capability-ceiling": "./src/api/capability-ceiling.ts",
+		"./model-exclusions": "./src/api/model-exclusions.ts",
 		"./delegation": "./src/api/delegation.ts",
 		"./preflight": "./src/api/preflight.ts",
 		"./control-channel": "./src/api/control-channel.ts",
