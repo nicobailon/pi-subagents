@@ -5,6 +5,7 @@
 ### Changed
 - Show package names, versions, and external-job provider status in subagent list and detail output so package agents such as Surf's `gpt-pro` are easier to find and use.
 - Document Council Mode routing in the main `pi-subagents` skill so natural-language requests for advisor councils, plan critique, cross-exam, or multiple model perspectives load the Council Mode protocol.
+- Simplify Council Mode advisor selection so model-based profiles provide the perspective and the question supplies the decision frame.
 
 ### Fixed
 - Stop model fallback on context-overflow failures and surface `contextOverflow`. Thanks to [@srcKod](https://github.com/srcKod) for #1323.

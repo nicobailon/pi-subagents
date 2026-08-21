@@ -54,7 +54,7 @@ The prompt templates in `prompts/` encode workflows the parent agent can run on 
 
 Use Council Mode when the user asks to convene advisors, debate a material decision, cross-examine recommendations, or critique and improve a plan with several model perspectives. This includes requests such as “run a council on this architecture,” “have Sol, Fable, and Kimi critique this plan,” or “get multiple oracles to debate the tradeoffs.” Read `../council-mode/SKILL.md` and follow its bounded parent-supervised protocol instead of launching ad hoc parallel oracle calls.
 
-Council advisors are read-only. The parent assigns temporary roles such as architect, skeptic, operator, or product reviewer. User or project `council-*` profiles can pin models such as GPT 5.6 Sol, Fable, or Kimi while the `/council` request supplies the role for that run. The parent collects independent reports, optionally sends curated cross-exam packets, and writes the final memo. Do not treat the council as agent-to-agent chat, implementation authority, or a writer swarm.
+Council advisors are read-only. User or project `council-*` profiles can pin models such as GPT 5.6 Sol, Fable, or Kimi and define any persistent stance in the profile body. The council question and scope provide the decision frame; do not invent per-advisor role labels. The parent collects independent reports, optionally sends curated cross-exam packets, and writes the final memo. Do not treat the council as agent-to-agent chat, implementation authority, or a writer swarm.
 
 ### Parallel review technique
 

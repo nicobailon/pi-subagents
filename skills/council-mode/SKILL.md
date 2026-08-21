@@ -16,13 +16,12 @@ trivial or settled question, or for implementation work. Read
 
 ## Roster and limits
 
-Roles such as architect, skeptic, operator, and performance reviewer belong to the
-`/council` request. A `council-*` profile defines only model, tools, context, and
-output defaults. Its profile configuration or explicit invocation owns its context
-choice.
+Use advisor profile names directly. A `council-*` profile defines model, tools,
+context, output defaults, and any persistent stance in the profile body. Its
+profile configuration or explicit invocation owns its context choice.
 
 Create model-based profiles in your user or project agent directory. Do not add
-them to this package. This is a valid example; roles still come from `/council`:
+them to this package. This is a valid example:
 
 ```markdown
 ---
@@ -38,9 +37,9 @@ defaultContext: fresh
 acceptanceRole: read-only
 ---
 
-Analyze only the assigned council role. Inspect evidence directly. Do not edit,
-run mutating commands, commit, push, contact peers, or spawn subagents. Return
-concise, cited advice using the report contract in the council task.
+Analyze the council question independently. Inspect evidence directly. Do not
+edit, run mutating commands, commit, push, contact peers, or spawn subagents.
+Return concise, cited advice using the report contract in the council task.
 ```
 
 After `subagent({ action: "list" })`, prefer 2–3 executable names that start with
@@ -60,9 +59,11 @@ be settled by evidence an advisor can produce. Never run an unbounded loop.
 ## Protocol
 
 1. The parent writes a brief with the question, scope, non-goals, evidence targets,
-   roster, roles, and pass cap.
-2. Before Pass 1, tell the user the roster, roles, requested or known context
-   modes, and pass cap. Use a stable key, `phase`, and concise `label` for every
+   roster, known advisor context modes, and pass cap. If the user wants a specific
+   lens, keep it in the question, scope, or profile body instead of inventing a
+   per-advisor label.
+2. Before Pass 1, tell the user the roster, requested or known context modes, and
+   pass cap. Use a stable key, `phase`, and concise `label` for every
    workflow child. For example, use `advisor-oracle`, `phase: "Council pass 1"`,
    and `label: "Oracle — intent and consistency"`.
 3. Launch one async `workflowScript` with `runs.all` for independent advisor
@@ -162,7 +163,6 @@ return {
   advisors: results.map((result, index) => ({
     key: result.key,
     agent: result.agent,
-    role: roster[index].role,
     requestedContext: roster[index].context ?? "runtime-default-unknown",
     runId: result.runId,
     report: result.structuredOutput
@@ -221,9 +221,10 @@ decisions. Never add a round for polish or symmetry.
 
 The parent memo states the question and scope, recommendation, rationale, accepted
 and rejected feedback with reasons, owner decisions, evidence and run ids,
-confidence, what would change the decision, and the roster, roles, passes,
-fallbacks, and known advisor context modes. State that fallback `oracle` is
-context-aware and forked.
+confidence, what would change the decision, and the roster, passes, fallbacks, and
+known advisor context modes. Identify advisors by profile name or model-based
+profile, not by invented role labels. State that fallback `oracle` is context-aware
+and forked.
 
 Council mode is not agent-to-agent chat, a transcript dump, mutation authority,
 auto-escalation to writer lanes, or a council UI. Escalate to a writer only after

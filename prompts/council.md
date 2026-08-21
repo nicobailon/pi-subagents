@@ -1,6 +1,6 @@
 ---
 description: Run a bounded supervisor-mediated council of advisors and write a decision memo
-argument-hint: "<question> [--advisors name:role,name:role] [--max-passes 2|3] [--scope ...] [--non-goals ...]"
+argument-hint: "<question> [--advisors name,name] [--max-passes 2|3] [--scope ...] [--non-goals ...]"
 ---
 
 Run a bounded, supervisor-mediated council on this question. You, the parent
@@ -13,13 +13,14 @@ Before you orchestrate, read `skills/council-mode/SKILL.md` and
 
 Parse the invocation yourself. The flags below are conventions, not runtime
 options. Record a brief with the question, scope, non-goals, evidence targets,
-roster, roles, and pass cap. Default `--max-passes` to 2. Clamp it to 2 or 3. If
-the question is trivial or settled, answer directly instead of convening a council.
+roster, known advisor context modes, and pass cap. Default `--max-passes` to 2.
+Clamp it to 2 or 3. If the question is trivial or settled, answer directly instead
+of convening a council.
 
 ## Roster
 
-- If `--advisors` is given, use exactly those `name:role` pairs. Fail clearly on an
-  unknown agent.
+- If `--advisors` is given, use exactly those agent names. Fail clearly on an
+  unknown agent. Do not require or invent per-advisor role labels.
 - Otherwise list agents with `subagent({ action: "list" })`, then prefer 2–3
   executable names that start with `council-`.
 - If fewer than two profiles are available, fill the roster with `oracle`, then
@@ -30,8 +31,10 @@ the question is trivial or settled, answer directly instead of convening a counc
 - Use the normal single-oracle loop only when a requested roster or unavailable
   builtins leaves fewer than two advisors. Label the memo as degraded mode.
 
-Roles belong to this request, not to the profiles. Keep the roster at 2–3 and never
-exceed 4.
+Profiles provide the model, tools, context, and advisor stance. The council
+question and scope provide the decision frame. If the user wants a specific lens,
+they should put it in the question, scope, or profile definition. Keep the roster
+at 2–3 and never exceed 4.
 
 ## Run the protocol
 
