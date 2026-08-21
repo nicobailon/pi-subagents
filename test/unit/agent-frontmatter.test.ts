@@ -789,6 +789,7 @@ describe("package-provided agents and chains", () => {
 		const chainsRoot = path.join(dir, ".pi", "npm", "node_modules", "@scope", "chain-workflow");
 		writeJson(path.join(workflowRoot, "package.json"), {
 			name: "my-pi-workflow",
+			version: "1.2.3",
 			"pi-subagents": {
 				agents: ["./agents"],
 			},
@@ -824,6 +825,10 @@ Review the task.
 		const packagedAgent = all.package.find((agent) => agent.name === "my-workflow.reviewer");
 		assert.ok(packagedAgent);
 		assert.equal(packagedAgent.source, "package");
+		assert.equal(packagedAgent.packageName, "my-workflow");
+		assert.equal(packagedAgent.packageSourceName, "my-pi-workflow");
+		assert.equal(packagedAgent.packageSourceVersion, "1.2.3");
+		assert.equal(packagedAgent.packageSourceRoot, workflowRoot);
 		assert.equal(packagedAgent.filePath, path.join(workflowRoot, "agents", "reviewer.md"));
 		assert.equal(discoverAgents(dir, "both").agents.find((agent) => agent.name === "my-workflow.reviewer")?.source, "package");
 

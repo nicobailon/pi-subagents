@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { editableAgentConfig, handleCreate, handleList, handleManagementAction, handleUpdate } from "../../src/agents/agent-management.ts";
 import { EXTRA_AGENT_DIRS_ENV } from "../../src/agents/agents.ts";
+import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
 import { clearSkillCache } from "../../src/agents/skills.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 
@@ -113,6 +114,85 @@ describe("agent management config parsing", () => {
 		assert.match(userScoped, /Description: User worker override/);
 		assert.doesNotMatch(userScoped, /Project worker override|Implementation agent for normal tasks/);
 
+	});
+
+	it("surfaces package source and external-job provider status in list and get", () => {
+		const packageDir = path.join(tempDir, ".pi", "npm", "node_modules", "test-surf");
+		fs.mkdirSync(path.join(packageDir, "agents"), { recursive: true });
+		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({
+			name: "test-surf",
+			version: "9.8.7",
+			pi: { subagents: { agents: ["agents"] } },
+		}));
+		fs.writeFileSync(path.join(packageDir, "agents", "gpt-pro.md"), `---
+name: gpt-pro
+description: ChatGPT Pro advisor via Surf
+runner:
+  type: external-job
+  provider: test-surf-oracle
+  options:
+    model: pro
+async: true
+---
+Advise only.
+`);
+		const dispose = registerExternalJobProvider({
+			name: "test-surf-oracle",
+			start: () => ({ providerJobId: "job", state: "completed" }),
+			status: () => ({ providerJobId: "job", state: "completed" }),
+			result: () => ({ providerJobId: "job", state: "completed", output: "ok" }),
+			reattach: () => ({ providerJobId: "job", state: "completed" }),
+		});
+		try {
+			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+			const listed = readText(handleList({}, ctx));
+			assert.match(listed, /Package agents/);
+			assert.match(listed, /- gpt-pro \(test-surf@9\.8\.7, external-job:test-surf-oracle ✓\): ChatGPT Pro advisor via Surf/);
+
+			const detail = readText(handleManagementAction("get", { agent: "gpt-pro" }, ctx));
+			assert.match(detail, /Source package: test-surf@9\.8\.7/);
+			assert.match(detail, new RegExp(`Package root: ${packageDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+			assert.match(detail, /Runner: external-job via test-surf-oracle ✓/);
+			assert.match(detail, /Runner options: {"model":"pro"}/);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("keeps external-job provider registry errors visible", () => {
+		const packageDir = path.join(tempDir, ".pi", "npm", "node_modules", "test-surf");
+		fs.mkdirSync(path.join(packageDir, "agents"), { recursive: true });
+		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({
+			name: "test-surf",
+			version: "9.8.7",
+			pi: { subagents: { agents: ["agents"] } },
+		}));
+		fs.writeFileSync(path.join(packageDir, "agents", "gpt-pro.md"), `---
+name: gpt-pro
+description: ChatGPT Pro advisor via Surf
+runner:
+  type: external-job
+  provider: test-surf-oracle
+---
+Advise only.
+`);
+		const key = Symbol.for(EXTERNAL_JOB_PROVIDER_REGISTRY_KEY);
+		const globals = globalThis as Record<PropertyKey, unknown>;
+		const previous = globals[key];
+		globals[key] = { version: 0, providers: new Map() };
+		try {
+			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+			const listed = readText(handleList({}, ctx));
+			assert.match(listed, /- gpt-pro \(test-surf@9\.8\.7, external-job:test-surf-oracle \?\): ChatGPT Pro advisor via Surf/);
+			assert.match(listed, /External-job provider registry unavailable: Unsupported external-job provider registry/);
+
+			const detail = readText(handleManagementAction("get", { agent: "gpt-pro" }, ctx));
+			assert.match(detail, /Runner: external-job via test-surf-oracle \?/);
+			assert.match(detail, /External-job provider registry unavailable: Unsupported external-job provider registry/);
+		} finally {
+			if (previous === undefined) delete globals[key];
+			else globals[key] = previous;
+		}
 	});
 
 	it("does not apply a malformed project diagnostic to an explicit user get", () => {

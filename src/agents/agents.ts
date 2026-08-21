@@ -110,6 +110,9 @@ export interface AgentConfig {
 	runner?: AgentRunnerConfig;
 	localName?: string;
 	packageName?: string;
+	packageSourceName?: string;
+	packageSourceVersion?: string;
+	packageSourceRoot?: string;
 	description: string;
 	aliases?: string[];
 	tools?: string[];
@@ -255,8 +258,15 @@ function getUserChainDir(): string {
 	return path.join(getAgentDir(), "chains");
 }
 
+interface PackageSubagentPath {
+	dir: string;
+	packageName?: string;
+	packageVersion?: string;
+	packageRoot: string;
+}
+
 interface PackageSubagentPaths {
-	agents: string[];
+	agents: PackageSubagentPath[];
 	chains: string[];
 }
 
@@ -391,10 +401,21 @@ function stringArray(value: unknown): string[] {
 	return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
 }
 
+function packageMetadata(pkg: Record<string, unknown>, packageRoot: string): Omit<PackageSubagentPath, "dir"> {
+	const name = typeof pkg.name === "string" && pkg.name.trim() ? pkg.name.trim() : undefined;
+	const version = typeof pkg.version === "string" && pkg.version.trim() ? pkg.version.trim() : undefined;
+	return {
+		packageRoot,
+		...(name ? { packageName: name } : {}),
+		...(version ? { packageVersion: version } : {}),
+	};
+}
+
 function extractSubagentPathsFromPackageRoot(packageRoot: string): PackageSubagentPaths {
 	const packageJsonPath = path.join(packageRoot, "package.json");
 	const pkg = readJsonFileBestEffort(packageJsonPath);
 	if (!pkg || typeof pkg !== "object" || Array.isArray(pkg)) return { agents: [], chains: [] };
+	const metadata = packageMetadata(pkg as Record<string, unknown>, packageRoot);
 
 	const roots: Record<string, unknown>[] = [];
 	const piSubagents = (pkg as { "pi-subagents"?: unknown })["pi-subagents"];
@@ -410,10 +431,10 @@ function extractSubagentPathsFromPackageRoot(packageRoot: string): PackageSubage
 		}
 	}
 
-	const agents: string[] = [];
+	const agents: PackageSubagentPath[] = [];
 	const chains: string[] = [];
 	for (const root of roots) {
-		for (const entry of stringArray(root.agents)) agents.push(path.resolve(packageRoot, entry));
+		for (const entry of stringArray(root.agents)) agents.push({ dir: path.resolve(packageRoot, entry), ...metadata });
 		for (const entry of stringArray(root.chains)) chains.push(path.resolve(packageRoot, entry));
 	}
 	return { agents, chains };
@@ -505,17 +526,17 @@ function collectPackageSubagentPaths(cwd: string, options: { includeUser: boolea
 	const seenRoots = new Set<string>();
 	const seenAgents = new Set<string>();
 	const seenChains = new Set<string>();
-	const agents: string[] = [];
+	const agents: PackageSubagentPath[] = [];
 	const chains: string[] = [];
 	for (const packageRoot of packageRoots) {
 		const resolvedRoot = path.resolve(packageRoot);
 		if (seenRoots.has(resolvedRoot)) continue;
 		seenRoots.add(resolvedRoot);
 		const paths = extractSubagentPathsFromPackageRoot(resolvedRoot);
-		for (const agentDir of paths.agents) {
-			if (seenAgents.has(agentDir)) continue;
-			seenAgents.add(agentDir);
-			agents.push(agentDir);
+		for (const agentPath of paths.agents) {
+			if (seenAgents.has(agentPath.dir)) continue;
+			seenAgents.add(agentPath.dir);
+			agents.push(agentPath);
 		}
 		for (const chainDir of paths.chains) {
 			if (seenChains.has(chainDir)) continue;
@@ -1615,7 +1636,7 @@ function resolveAgentRelativeExtensionPaths(paths: string[] | undefined, agentFi
 	});
 }
 
-function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: AgentSource, discoveryPriority?: number): { agents: AgentConfig[]; diagnostics: AgentDiscoveryDiagnostic[] } {
+function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: AgentSource, discoveryPriority?: number, packageSource?: Omit<PackageSubagentPath, "dir">): { agents: AgentConfig[]; diagnostics: AgentDiscoveryDiagnostic[] } {
 	const agents: AgentConfig[] = [];
 	const diagnostics: AgentDiscoveryDiagnostic[] = [];
 
@@ -1750,6 +1771,9 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			...(runner !== undefined ? { runner } : {}),
 			localName,
 			...(packageName !== undefined ? { packageName } : {}),
+			...(packageSource?.packageName ? { packageSourceName: packageSource.packageName } : {}),
+			...(packageSource?.packageVersion ? { packageSourceVersion: packageSource.packageVersion } : {}),
+			...(packageSource?.packageRoot ? { packageSourceRoot: packageSource.packageRoot } : {}),
 			description: frontmatter.description,
 			...(aliases !== undefined ? { aliases } : {}),
 			...(rawTools !== undefined ? { tools } : {}),
@@ -1797,8 +1821,8 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 	return { agents, diagnostics };
 }
 
-function loadAgentsFromDir(dir: string, source: AgentSource, discoveryPriority?: number): { agents: AgentConfig[]; diagnostics: AgentDiscoveryDiagnostic[] } {
-	return loadAgentsFromDefinitionFiles(readAgentDefinitionFiles(dir), source, discoveryPriority);
+function loadAgentsFromDir(dir: string, source: AgentSource, discoveryPriority?: number, packageSource?: Omit<PackageSubagentPath, "dir">): { agents: AgentConfig[]; diagnostics: AgentDiscoveryDiagnostic[] } {
+	return loadAgentsFromDefinitionFiles(readAgentDefinitionFiles(dir), source, discoveryPriority, packageSource);
 }
 
 function loadChainsFromDir(dir: string, source: AgentSource): { chains: ChainConfig[]; diagnostics: ChainDiscoveryDiagnostic[] } {
@@ -1924,7 +1948,7 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 		userSettingsPath,
 		projectSettingsPath,
 	);
-	const packageLoaded = packageSubagentPaths.agents.map((dir, index) => loadAgentsFromDir(dir, "package", packageSubagentPaths.agents.length - index));
+	const packageLoaded = packageSubagentPaths.agents.map((entry, index) => loadAgentsFromDir(entry.dir, "package", packageSubagentPaths.agents.length - index, entry));
 	const packageMap = new Map<string, AgentConfig>();
 	for (const loaded of packageLoaded) {
 		for (const agent of loaded.agents) {
@@ -1998,8 +2022,8 @@ export function discoverAgentsAll(cwd: string): {
 	);
 	const packageMap = new Map<string, AgentConfig>();
 	const packageAgentDiagnostics: AgentDiscoveryDiagnostic[] = [];
-	for (const [index, dir] of packageSubagentPaths.agents.entries()) {
-		const loaded = loadAgentsFromDir(dir, "package", packageSubagentPaths.agents.length - index);
+	for (const [index, entry] of packageSubagentPaths.agents.entries()) {
+		const loaded = loadAgentsFromDir(entry.dir, "package", packageSubagentPaths.agents.length - index, entry);
 		packageAgentDiagnostics.push(...loaded.diagnostics);
 		for (const agent of loaded.agents) {
 			if (!packageMap.has(agent.name)) packageMap.set(agent.name, agent);

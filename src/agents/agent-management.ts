@@ -37,6 +37,7 @@ import type { AcceptanceInput, Details, ExtensionConfig, ToolBudgetConfig } from
 import { getProjectConfigDir } from "../shared/utils.ts";
 import { capabilityCeilingAgentRestrictionSources, isAgentAllowedByCapabilityCeiling, resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
 import { listRuntimeAgentConfigs, mergeRuntimeAgents, type RuntimeAgentOwner } from "./runtime-agent-registry.ts";
+import { listExternalJobProviders } from "../api/external-job-provider.ts";
 
 type ManagementAction = "list" | "get" | "models" | "create" | "update" | "delete" | "eject" | "disable" | "enable" | "reset";
 type ManagementScope = "user" | "project";
@@ -590,9 +591,84 @@ function renamePath(currentPath: string, newName: string, scope: ManagementScope
 	return { filePath };
 }
 
+function packageSourceLabel(agent: AgentConfig): string {
+	if (!agent.packageSourceName) return agent.source;
+	return agent.packageSourceVersion ? `${agent.packageSourceName}@${agent.packageSourceVersion}` : agent.packageSourceName;
+}
+
+interface ExternalJobProviderStatus {
+	names?: Set<string>;
+	error?: string;
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function registeredExternalJobProviderStatus(): ExternalJobProviderStatus {
+	try {
+		return { names: new Set(listExternalJobProviders().map((provider) => provider.name)) };
+	} catch (error) {
+		return { error: errorMessage(error) };
+	}
+}
+
+function externalJobProviderSuffix(provider: string, names: Set<string> | undefined): string {
+	if (!names) return "?";
+	return names.has(provider) ? "✓" : "missing";
+}
+
+function runnerListBadge(agent: AgentConfig, providerNames: Set<string> | undefined): string | undefined {
+	if (agent.runner?.type === "external-job") return `external-job:${agent.runner.provider} ${externalJobProviderSuffix(agent.runner.provider, providerNames)}`;
+	if (agent.runner?.type === "external-cli") return "external-cli";
+	return undefined;
+}
+
+function formatAgentListLine(agent: AgentConfig, providerNames: Set<string> | undefined): string {
+	const source = agent.source === "package" ? packageSourceLabel(agent) : agent.source;
+	const parts = [
+		source,
+		runnerListBadge(agent, providerNames),
+		agent.defaultContext ? `context: ${agent.defaultContext}` : undefined,
+		agent.aliases?.length ? `aliases: ${agent.aliases.join(", ")}` : undefined,
+	].filter((part): part is string => Boolean(part));
+	return `- ${agent.name} (${parts.join(", ")}): ${agent.description}`;
+}
+
+function formatAgentListSections(agents: AgentConfig[], providerNames: Set<string> | undefined): string[] {
+	if (agents.length === 0) return ["- (none)"];
+	const sections: Array<[AgentSource, string]> = [
+		["package", "Package agents"],
+		["user", "User agents"],
+		["project", "Project agents"],
+		["runtime", "Runtime agents"],
+		["builtin", "Builtin agents"],
+	];
+	const lines: string[] = [];
+	for (const [source, label] of sections) {
+		const matches = agents.filter((agent) => agent.source === source);
+		if (matches.length === 0) continue;
+		if (lines.length > 0) lines.push("");
+		lines.push(label, ...matches.map((agent) => formatAgentListLine(agent, providerNames)));
+	}
+	return lines;
+}
+
+function formatRunnerDetail(agent: AgentConfig, providerNames: Set<string> | undefined): string | undefined {
+	if (!agent.runner) return undefined;
+	if (agent.runner.type === "external-job") return `Runner: external-job via ${agent.runner.provider} ${externalJobProviderSuffix(agent.runner.provider, providerNames)}`;
+	if (agent.runner.type === "external-cli") return `Runner: external-cli ${agent.runner.command}`;
+	return `Runner: ${JSON.stringify(agent.runner)}`;
+}
+
 function formatAgentDetail(agent: AgentConfig): string {
 	const tools = [...(agent.tools ?? []), ...(agent.mcpDirectTools ?? []).map((t) => `mcp:${t}`)];
+	const providerStatus = registeredExternalJobProviderStatus();
 	const lines: string[] = [`Agent: ${agent.name} (${agent.source})`, `Path: ${agent.filePath}`, `Description: ${agent.description}`];
+	if (agent.source === "package" && agent.packageSourceName) {
+		lines.push(`Source package: ${packageSourceLabel(agent)}`);
+		if (agent.packageSourceRoot) lines.push(`Package root: ${agent.packageSourceRoot}`);
+	}
 	if (agent.packageName) {
 		lines.push(`Local name: ${frontmatterNameForConfig(agent)}`);
 		lines.push(`Package: ${agent.packageName}`);
@@ -604,7 +680,12 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.skills?.length) lines.push(`Skills: ${agent.skills.join(", ")}`);
 	if (agent.skillPath?.length) lines.push(`Skill paths: ${agent.skillPath.join(", ")}`);
 	lines.push(`System prompt mode: ${agent.systemPromptMode}`);
-	if (agent.runner) lines.push(`Runner: ${JSON.stringify(agent.runner)}`);
+	const runnerDetail = formatRunnerDetail(agent, providerStatus.names);
+	if (runnerDetail) {
+		lines.push(runnerDetail);
+		if (agent.runner?.type === "external-job" && providerStatus.error) lines.push(`External-job provider registry unavailable: ${providerStatus.error}`);
+		if (agent.runner?.type === "external-job" && agent.runner.options) lines.push(`Runner options: ${JSON.stringify(agent.runner.options)}`);
+	}
 	lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
 	lines.push(`Inherit skills: ${agent.inheritSkills ? "true" : "false"}`);
 	if (agent.defaultContext) lines.push(`Default context: ${agent.defaultContext}`);
@@ -654,16 +735,16 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 		...(ctx.config?.proactiveSkillSubagents !== undefined ? { config: ctx.config.proactiveSkillSubagents } : {}),
 		discoverAvailableSkills: () => discoverAvailableSkills(ctx.cwd),
 	});
+	const providerStatus = registeredExternalJobProviderStatus();
 	const lines = [
 		"Executable agents:",
-		...(agents.length
-			? agents.map((a) => `- ${a.name} (${a.source}${a.defaultContext ? `, context: ${a.defaultContext}` : ""}${a.aliases?.length ? `, aliases: ${a.aliases.join(", ")}` : ""}): ${a.description}`)
-			: ["- (none)"]),
+		...formatAgentListSections(agents, providerStatus.names),
 		...(restrictedAgents.length ? [
 			"",
 			`Restricted agents (not executable in this session${restrictedSources?.length ? `; capability ceiling: ${restrictedSources.join(", ")}` : ""}):`,
-			...restrictedAgents.map((a) => `- ${a.name} (${a.source}${a.aliases?.length ? `, aliases: ${a.aliases.join(", ")}` : ""}): ${a.description}`),
+			...restrictedAgents.map((a) => formatAgentListLine(a, providerStatus.names)),
 		] : []),
+		...(providerStatus.error && [...agents, ...restrictedAgents].some((agent) => agent.runner?.type === "external-job") ? ["", `External-job provider registry unavailable: ${providerStatus.error}`] : []),
 		...(d.agentDiagnostics?.length ? [
 			"",
 			"Invalid agent definitions:",
