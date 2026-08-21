@@ -251,6 +251,7 @@ export interface ResolvePiLaunchToolPlanInput {
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	inheritedCapabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	agentName?: string;
+	permissionRules?: PermissionRules;
 }
 
 export interface PiLaunchToolPlan {
@@ -286,6 +287,10 @@ function boundedExtensionIdentifiers(values: string[]): {
 		ids: ids.slice(0, MAX_LAUNCH_RESOLVED_EXTENSION_IDS),
 		omitted: Math.max(0, ids.length - MAX_LAUNCH_RESOLVED_EXTENSION_IDS),
 	};
+}
+
+function hasPermissionRules(rules: PermissionRules | undefined): boolean {
+	return rules !== undefined && Object.keys(rules).length > 0;
 }
 
 export function projectLaunchResolvedChildExtensions(
@@ -451,7 +456,9 @@ export function resolvePiLaunchToolPlan(
 		: [];
 	const permSystemExt = capabilityCeiling?.denyExtensions
 		? undefined
-		: resolvePermissionSystemExtension();
+		: hasPermissionRules(input.permissionRules)
+			? resolvePermissionSystemExtension()
+			: undefined;
 	const runtimeExtensions = [
 		PROMPT_RUNTIME_EXTENSION_PATH,
 		...(fanoutAuthorized ? [FANOUT_CHILD_EXTENSION_PATH] : []),
@@ -587,6 +594,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 			process.env[SUBAGENT_CAPABILITY_CEILING_ENV],
 		),
 		agentName: input.childAgentName,
+		permissionRules: input.permissionRules,
 	});
 	if (toolPlan.explicitToolAllowlist) {
 		args.push(

@@ -615,37 +615,50 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const agentName = `contract-worker-${Date.now().toString(36)}`;
 		const task = "Compare the resolved launch inputs.";
 		const turnBudget = { maxTurns: 2, graceTurns: 1 } as const;
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const agentDir = path.join(tempDir, "agent-home");
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		const permissionExtDir = path.join(agentDir, "extensions", "pi-permission-system");
+		fs.mkdirSync(path.join(permissionExtDir, "src"), { recursive: true });
+		fs.writeFileSync(path.join(permissionExtDir, "src", "index.ts"), "export default () => {};", "utf-8");
+		fs.writeFileSync(path.join(permissionExtDir, "package.json"), JSON.stringify({ name: "test", pi: { extensions: ["./src/index.ts"] } }), "utf-8");
 		const agentPath = path.join(tempDir, ".pi", "agents", `${agentName}.md`);
 		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
-		fs.writeFileSync(agentPath, `---\nname: ${agentName}\ndescription: Contract comparison worker\n---\n`, "utf-8");
-		const discovered = discoverAgents(tempDir).agents.find((agent) => agent.name === agentName);
-		assert.ok(discovered, "expected temporary agent definition to be discovered");
-		const preflight = await resolveSubagentLaunchContract({ agent: agentName, cwd: tempDir, task, turnBudget, runId: "contract-preflight" });
-		assert.equal(preflight.ok, true);
+		fs.writeFileSync(agentPath, `---\nname: ${agentName}\ndescription: Contract comparison worker\npermissions:\n  write: ask\n---\n`, "utf-8");
+		try {
+			const discovered = discoverAgents(tempDir).agents.find((agent) => agent.name === agentName);
+			assert.ok(discovered, "expected temporary agent definition to be discovered");
+			const preflight = await resolveSubagentLaunchContract({ agent: agentName, cwd: tempDir, task, turnBudget, runId: "contract-preflight" });
+			assert.equal(preflight.ok, true);
+			assert.ok(preflight.contract.tools.extensionArgs.some((entry) => entry.endsWith(path.join("pi-permission-system", "src", "index.ts"))));
 
-		mockPi.onCall({ output: "foreground contract comparison" });
-		const foreground = await runSync(tempDir, [discovered], agentName, task, { runId: "contract-foreground", acceptance: false, turnBudget });
-		assert.equal(foreground.exitCode, 0);
-		assert.equal(foreground.launchContractDigest, preflight.contract.launchContractDigest);
+			mockPi.onCall({ output: "foreground contract comparison" });
+			const foreground = await runSync(tempDir, [discovered], agentName, task, { runId: "contract-foreground", acceptance: false, turnBudget });
+			assert.equal(foreground.exitCode, 0);
+			assert.equal(foreground.launchContractDigest, preflight.contract.launchContractDigest);
 
-		mockPi.onCall({ output: "async contract comparison" });
-		const asyncId = `async-contract-equivalence-${Date.now().toString(36)}`;
-		const launch = executeAsyncSingle(asyncId, {
-			agent: agentName,
-			task,
-			agentConfig: discovered,
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-			shareEnabled: false,
-			sessionRoot: path.join(tempDir, "sessions"),
-			maxSubagentDepth: 2,
-			acceptance: false,
-			turnBudget,
-		});
-		const payload = await readAsyncPayload(asyncId);
-		assert.equal(launch.details.launchContractDigest, preflight.contract.launchContractDigest);
-		assert.equal(payload.launchContractDigest, preflight.contract.launchContractDigest);
-		assert.equal(payload.results[0]?.launchContractDigest, preflight.contract.launchContractDigest);
+			mockPi.onCall({ output: "async contract comparison" });
+			const asyncId = `async-contract-equivalence-${Date.now().toString(36)}`;
+			const launch = executeAsyncSingle(asyncId, {
+				agent: agentName,
+				task,
+				agentConfig: discovered,
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				sessionRoot: path.join(tempDir, "sessions"),
+				maxSubagentDepth: 2,
+				acceptance: false,
+				turnBudget,
+			});
+			const payload = await readAsyncPayload(asyncId);
+			assert.equal(launch.details.launchContractDigest, preflight.contract.launchContractDigest);
+			assert.equal(payload.launchContractDigest, preflight.contract.launchContractDigest);
+			assert.equal(payload.results[0]?.launchContractDigest, preflight.contract.launchContractDigest);
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
 	});
 
 	it("persists the actual launch digest in async status and result metadata", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

@@ -1540,6 +1540,7 @@ async function runSingleStepInner(
 				structuredOutput: Boolean(effectiveStructuredOutput),
 				capabilityCeiling: step.capabilityCeiling ?? ctx.capabilityCeiling,
 				inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
+				permissionRules: step.permissionRules,
 			}));
 			launchResolvedExtensions = projectLaunchResolvedChildExtensions(toolPlan);
 			actualLaunchContractDigest = launchBindingDigest(omitUndefinedProperties({

@@ -15,6 +15,7 @@ import { resolveEffectiveThinking } from "../shared/model-info.ts";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, type ArtifactDirPreference, type ArtifactPaths, type JsonSchemaObject, type OutputMode } from "../shared/types.ts";
 import { capabilityCeilingAgentRestrictionMessage, intersectSubagentCapabilityCeilings, type ResolvedSubagentCapabilityCeiling, type SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
 import { appendTurnBudgetSystemPrompt } from "../runs/shared/turn-budget.ts";
+import { resolvePermissionRules } from "../runs/shared/permissions.ts";
 import type { ResolvedTurnBudget } from "../shared/types.ts";
 import type { ResolvedMcpDirectToolSelection } from "../runs/shared/mcp-direct-tool-allowlist.ts";
 import { resolveStepBehavior } from "../shared/settings.ts";
@@ -303,6 +304,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		})
 			.map((candidate) => applyThinkingSuffix(candidate, effectiveThinkingConfig, input.thinking !== undefined) ?? candidate);
 	let toolPlan: PiLaunchToolPlan;
+	const permissionRules = resolvePermissionRules(loadConfig().permissions, agent.permissions);
 	try {
 		toolPlan = resolvePiLaunchToolPlan({
 			tools: agent.tools,
@@ -314,6 +316,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			structuredOutput: Boolean(input.outputSchema),
 			capabilityCeiling: effectiveCapabilityCeiling,
 			agentName: agent.name,
+			permissionRules,
 		});
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);

@@ -383,6 +383,7 @@ async function runSingleAttempt(
 		capabilityCeiling: options.capabilityCeiling,
 		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 		agentName: agent.name,
+		permissionRules,
 	});
 	const launchResolvedExtensions = projectLaunchResolvedChildExtensions(toolPlan);
 	const launchContractDigest = launchBindingDigest({

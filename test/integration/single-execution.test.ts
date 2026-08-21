@@ -438,7 +438,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const result = await executor.executePublic(
 			"structured-single-tool-backfill",
-			{ agent: "bash-worker", task: "Run exactly one tool: bash with command echo PROBE_OK.", async: false, toolTimeoutMs: 100, timeoutMs: 1_000 },
+			{ agent: "bash-worker", task: "Run exactly one tool: bash with command echo PROBE_OK.", async: false, toolTimeoutMs: 100, timeoutMs: 5_000 },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),

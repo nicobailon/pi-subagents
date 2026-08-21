@@ -804,6 +804,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const effectiveThinking = externalRunner ? undefined : thinkingOverride ?? a.thinking;
 		const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined);
 		const agentContract = s.agentContract ?? params.agentContract;
+		const permissionRules = resolvePermissionRules(ctx.permissions, a.permissions);
 		const toolPlan = resolvePiLaunchToolPlan({
 			tools: a.tools,
 			extensions: a.extensions,
@@ -815,9 +816,9 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			capabilityCeiling: params.capabilityCeiling,
 			inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 			agentName: a.name,
+			permissionRules,
 		});
 		const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
-		const permissionRules = resolvePermissionRules(ctx.permissions, a.permissions);
 		if (externalRunner && permissionRules) {
 			throw new AsyncStartValidationError(`Agent '${a.name}' uses runner.type='${externalRunnerType}', which cannot enforce native Pi child permission rules.`);
 		}
@@ -1475,6 +1476,7 @@ export function executeAsyncSingle(
 		capabilityCeiling,
 		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 		agentName: agentConfig.name,
+		permissionRules: resolvePermissionRules(ctx.permissions, agentConfig.permissions),
 	});
 	const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
 	const launchContractDigest = launchBindingDigest({

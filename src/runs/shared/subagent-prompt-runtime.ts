@@ -21,7 +21,7 @@ import type { JsonSchemaObject, ResolvedToolBudget, SubagentState } from "../../
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
 import { registerChildWatchdog } from "../../watchdog/register-child.ts";
-import { CHILD_WATCHDOG_CONFIG_ENV } from "../../watchdog/child-status.ts";
+import { CHILD_WATCHDOG_CONFIG_ENV, decodeChildWatchdogConfig } from "../../watchdog/child-status.ts";
 import { requestWatchdogPermission, type WatchdogPermissionRequest, type WatchdogPermissionResult } from "../../watchdog/permission-arbiter.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../watchdog/types.ts";
 import { resolveWaitToolConfig } from "../background/wait-config.ts";
@@ -296,14 +296,41 @@ export function registerPermissionGate(
 		const decision = permissionDecision(rules, toolName);
 		if (decision === "allow") return undefined;
 		if (decision === "deny") return { block: true, reason: `Blocked by pi-subagents permission rule: '${toolName}' is denied.` };
-		const result = await requestPermission({
-			ctx,
-			toolName,
-			args: event.input ?? {},
-			rawWatchdogConfig: process.env[CHILD_WATCHDOG_CONFIG_ENV],
-			auditPath: process.env[PERMISSION_AUDIT_PATH_ENV],
-			...(ctx.signal ? { signal: ctx.signal } : {}),
-		});
+		const rawWatchdogConfig = process.env[CHILD_WATCHDOG_CONFIG_ENV];
+		let timeoutMs = 30_000;
+		try {
+			timeoutMs = decodeChildWatchdogConfig(rawWatchdogConfig)?.agentEndTimeoutMs ?? timeoutMs;
+		} catch {
+			// The arbiter reports invalid configuration with the concrete decode error.
+		}
+		if (ctx.signal?.aborted) return { block: true, reason: "Blocked by pi-subagents permission rule: Watchdog permission decision was cancelled." };
+		let timeout: ReturnType<typeof setTimeout> | undefined;
+		let abort: (() => void) | undefined;
+		let result: WatchdogPermissionResult;
+		try {
+			result = await Promise.race([
+				requestPermission({
+					ctx,
+					toolName,
+					args: event.input ?? {},
+					rawWatchdogConfig,
+					auditPath: process.env[PERMISSION_AUDIT_PATH_ENV],
+					...(ctx.signal ? { signal: ctx.signal } : {}),
+				}),
+				new Promise<WatchdogPermissionResult>((resolve) => {
+					if (!ctx.signal) return;
+					abort = () => resolve({ approved: false, reason: "Watchdog permission decision was cancelled.", source: "watchdog" });
+					ctx.signal.addEventListener("abort", abort, { once: true });
+				}),
+				new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error(`Watchdog permission decision timed out after ${timeoutMs}ms.`)), timeoutMs); }),
+			]);
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			return { block: true, reason: `Blocked by pi-subagents permission rule: Watchdog permission arbiter failed closed: ${reason}` };
+		} finally {
+			if (timeout) clearTimeout(timeout);
+			if (abort) ctx.signal?.removeEventListener("abort", abort);
+		}
 		if (result.approved) return undefined;
 		return { block: true, reason: `Blocked by pi-subagents permission rule: ${result.reason}` };
 	});

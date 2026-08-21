@@ -76,4 +76,40 @@ describe("watchdog permission arbiter", () => {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
+
+	it("fails closed when watchdog model auth resolution stalls", async () => {
+		const stalledCtx = {
+			...ctx(),
+			modelRegistry: {
+				...ctx().modelRegistry,
+				getApiKeyAndHeaders: async () => new Promise(() => undefined),
+			},
+		} as never;
+
+		const result = await Promise.race([
+			createWatchdogPermissionArbiter()({
+				ctx: stalledCtx,
+				toolName: "write",
+				args: { path: "out.txt" },
+				rawWatchdogConfig: JSON.stringify({
+					enabled: true,
+					watchdogTailTimeoutMs: 1_000,
+					agentEndTimeoutMs: 5,
+					maxWarnings: null,
+					lsp: { enabled: false, timeoutMs: 100, maxFiles: 1, maxDiagnostics: 1 },
+					autoFollowBlockers: false,
+					autoFollowMaxAttempts: null,
+					stalemateRepeats: 2,
+				}),
+			}),
+			new Promise((resolve) => setTimeout(() => resolve("hung"), 100)),
+		]);
+
+		assert.notEqual(result, "hung");
+		assert.deepEqual(result, {
+			approved: false,
+			reason: "Watchdog permission decision timed out.",
+			source: "watchdog",
+		});
+	});
 });

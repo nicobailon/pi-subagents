@@ -221,7 +221,7 @@ describe("resolvePermissionSystemExtension", () => {
 });
 
 describe("resolvePiLaunchToolPlan with permission system", () => {
-	it("adds the permission system extension to buildPiArgs when installed", () => {
+	it("does not inject the permission system when no native permission rules are set", () => {
 		const { agentDir } = createFixture();
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		const extDir = path.join(agentDir, "extensions", "pi-permission-system");
@@ -245,9 +245,41 @@ describe("resolvePiLaunchToolPlan with permission system", () => {
 		const extensionArgs = args.filter(
 			(arg, index) => args[index - 1] === "--extension",
 		);
+		assert.equal(
+			extensionArgs.includes(path.join(extDir, "src", "index.ts")),
+			false,
+			"permission system extension should not be emitted without native rules",
+		);
+	});
+
+	it("injects the permission system when explicit native permission rules are set", () => {
+		const { agentDir } = createFixture();
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		const extDir = path.join(agentDir, "extensions", "pi-permission-system");
+		fs.mkdirSync(path.join(extDir, "src"), { recursive: true });
+		fs.writeFileSync(
+			path.join(extDir, "src", "index.ts"),
+			"export default () => {};",
+		);
+		fs.writeFileSync(
+			path.join(extDir, "package.json"),
+			JSON.stringify({ name: "test", pi: { extensions: ["./src/index.ts"] } }),
+		);
+
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "test task",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			permissionRules: { write: "ask" },
+		});
+		const extensionArgs = args.filter(
+			(arg, index) => args[index - 1] === "--extension",
+		);
 		assert.ok(
 			extensionArgs.includes(path.join(extDir, "src", "index.ts")),
-			"permission system extension should be emitted as an extension argument",
+			"permission system extension should be emitted when native rules are active",
 		);
 	});
 

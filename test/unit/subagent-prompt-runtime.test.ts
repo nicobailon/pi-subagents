@@ -164,6 +164,40 @@ describe("subagent prompt runtime", () => {
 		assert.equal(await askHandlers[0]!({ toolName: "write", input: { path: "out.txt" } }, { signal: undefined }), undefined);
 		assert.deepEqual(requests, [{ toolName: "write", args: { path: "out.txt" } }]);
 	});
+
+	it("fails closed when an ask permission decision stalls", async () => {
+		try {
+			process.env[PERMISSION_POLICY_ENV] = JSON.stringify({ write: "ask" });
+			process.env[CHILD_WATCHDOG_CONFIG_ENV] = JSON.stringify({
+				enabled: true,
+				watchdogTailTimeoutMs: 1_000,
+				agentEndTimeoutMs: 5,
+				maxWarnings: null,
+				lsp: { enabled: false, timeoutMs: 100, maxFiles: 1, maxDiagnostics: 1 },
+				autoFollowBlockers: false,
+				autoFollowMaxAttempts: null,
+				stalemateRepeats: 2,
+			});
+			const handlers: Array<(event: { toolName?: string; input?: unknown }, ctx: { signal?: AbortSignal }) => unknown> = [];
+			registerPermissionGate({ on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx: { signal?: AbortSignal }) => unknown) { if (event === "tool_call") handlers.push(handler); } } as never, async () => new Promise(() => undefined));
+
+			const result = await Promise.race([
+				handlers[0]!({ toolName: "write", input: { path: "out.txt" } }, { signal: undefined }),
+				new Promise((resolve) => setTimeout(() => resolve("hung"), 100)),
+			]);
+
+			assert.notEqual(result, "hung");
+			assert.deepEqual(result, {
+				block: true,
+				reason: "Blocked by pi-subagents permission rule: Watchdog permission arbiter failed closed: Watchdog permission decision timed out after 5ms.",
+			});
+		} finally {
+			if (envSnapshot.PI_SUBAGENT_PERMISSION_POLICY === undefined) delete process.env[PERMISSION_POLICY_ENV];
+			else process.env[PERMISSION_POLICY_ENV] = envSnapshot.PI_SUBAGENT_PERMISSION_POLICY;
+			if (envSnapshot.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG === undefined) delete process.env[CHILD_WATCHDOG_CONFIG_ENV];
+			else process.env[CHILD_WATCHDOG_CONFIG_ENV] = envSnapshot.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG;
+		}
+	});
 	it("collects runtime extension acknowledgements until terminal serialization", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-runtime-ack-"));
 		try {
@@ -634,6 +668,9 @@ describe("subagent prompt runtime", () => {
 		// Clear the ack capture env explicitly: when this test suite itself runs inside a
 		// pi-subagents child, the runner sets it and an extra agent_end handler registers.
 		delete process.env[RUNTIME_EXTENSION_ACK_PATH_ENV];
+		delete process.env[SUBAGENT_STEER_INBOX_ENV];
+		delete process.env[SUBAGENT_STEER_CAPABILITY_ENV];
+		delete process.env[SUBAGENT_STEER_ACK_DIR_ENV];
 		const handlersWithout = new Map<string, unknown[]>();
 		registerSubagentPromptRuntime({
 			on(event: string, handler: unknown) {
