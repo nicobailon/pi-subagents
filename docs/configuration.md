@@ -170,9 +170,9 @@ This is different from `waitTool.enabled=false`, which returns immediately witho
 { "resultScanLogging": "activity" }
 ```
 
-Controls how slow result-index scans are logged. Defaults to `"all"`; valid values are `"all"`, `"activity"`, and `"off"`.
+Controls how slow result-index scans are logged. Defaults to `"activity"`; valid values are `"all"`, `"activity"`, and `"off"`.
 
-The watcher logs `Subagent result scan inspected … scheduled …` through `console.error` whenever a result-index scan passes the slow threshold (500ms). With `"all"` (default) every slow scan is logged, including the periodic healthy rescan that inspects zero files while no async runs are pending. Those empty scans add noise to the session transcript with no signal; choose `"activity"` to log only scans that inspected or scheduled actual work, or `"off"` to silence slow-scan logging entirely. `"off"` does not disable result delivery or the watcher itself, only its slow-scan log line.
+The watcher logs `Subagent result scan inspected … scheduled …` through `console.error` whenever a result-index scan passes the slow threshold (500ms). With `"activity"` (default), it logs only scans that inspected or scheduled actual work. Use `"all"` to log every slow scan, including the periodic healthy rescan that inspects zero files while no async runs are pending, or `"off"` to silence slow-scan logging entirely. `"off"` does not disable result delivery or the watcher itself, only its slow-scan log line.
 
 ## `forceTopLevelAsync`
 

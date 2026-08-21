@@ -517,7 +517,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			observedCompletionRunIds: () => scheduledRunManager.observedCompletionRunIds(),
 			hasDeliveryDemand: hasResultDeliveryDemand,
 			deliverIntercomResults: config.intercomBridge?.resultDelivery === true,
-			resultScanLogging: config.resultScanLogging ?? "all",
+			resultScanLogging: config.resultScanLogging,
 		},
 	);
 	const { startResultWatcher, primeExistingResults, stopResultWatcher } = resultWatcher;

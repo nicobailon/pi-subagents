@@ -9,6 +9,7 @@
 
 ### Fixed
 - Stop model fallback on context-overflow failures and surface `contextOverflow`. Thanks to [@srcKod](https://github.com/srcKod) for #1323.
+- Stop empty slow result scans from spamming the session transcript. Thanks to [@afrodao2394](https://github.com/afrodao2394) for #1329.
 
 ## [0.53.0] - 2026-08-20
 

@@ -2218,10 +2218,20 @@ describe("result watcher", () => {
 			}
 		};
 
-		it('logs empty slow scans with the default "all" mode', () => {
+		it('silences empty slow scans with the default "activity" mode', () => {
 			const { errors, restore } = captureScanErrors();
 			try {
 				runScan({});
+				assert.equal(errors.length, 0);
+			} finally {
+				restore();
+			}
+		});
+
+		it('logs empty slow scans under explicit "all" mode', () => {
+			const { errors, restore } = captureScanErrors();
+			try {
+				runScan({ resultScanLogging: "all" });
 				assert.equal(errors.length, 1);
 				assert.match(errors[0], /inspected 0 indexed result file\(s\), scheduled 0/);
 			} finally {

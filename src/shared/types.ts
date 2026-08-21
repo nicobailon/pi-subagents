@@ -2064,7 +2064,7 @@ export interface ExtensionConfig {
 	/** Artifact cleanup retention. Set cleanupDays to 0 to disable cleanup. */
 	artifactConfig?: Pick<ArtifactConfig, "cleanupDays">;
 	intercomBridge?: IntercomBridgeConfig;
-	/** Control how slow result-index scans are logged. Defaults to \"all\".
+	/** Control how slow result-index scans are logged. Defaults to \"activity\".
 	 *  - \"all\": log every slow scan, including scans that find nothing.
 	 *  - \"activity\": log only slow scans that found or scheduled work. Silences
 	 *    the periodic healthy rescan that inspects zero files while no async runs
