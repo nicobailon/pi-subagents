@@ -28,7 +28,11 @@ export interface ModelScopeConfig extends ModelScopeRule {
 	agents?: Record<string, ModelScopeRule>;
 }
 
-export interface ResolvedModelScope extends ModelScopeRule {
+export interface ModelScopeCheckRule extends ModelScopeRule {
+	origin?: string;
+}
+
+export interface ResolvedModelScope extends ModelScopeCheckRule {
 	origin: string;
 }
 
@@ -71,7 +75,7 @@ export function matchesScopePattern(model: string, pattern: string): boolean {
  */
 export function checkModelScope(
 	model: string | undefined,
-	scope: ModelScopeRule | undefined,
+	scope: ModelScopeCheckRule | undefined,
 	source: ModelSource,
 ): ModelScopeViolation | undefined {
 	if (!model || !scope?.enforce) return undefined;
@@ -81,7 +85,7 @@ export function checkModelScope(
 
 	const baseModel = stripThinkingSuffix(model);
 	const severity: ModelScopeViolation["severity"] = source === "explicit" || scope.strict === true ? "error" : "warn";
-	const origin = "origin" in scope && typeof scope.origin === "string" ? scope.origin : "modelScope";
+	const origin = scope.origin ?? "modelScope";
 	return {
 		model: baseModel,
 		severity,
@@ -95,6 +99,45 @@ export function checkModelScope(
 
 function expandInheritPattern(pattern: string, parentModel: { provider: string; id: string } | undefined): string {
 	return pattern === "inherit" && parentModel ? `${parentModel.provider}/${parentModel.id}` : pattern;
+}
+
+function assertRecord(value: unknown, field: string, meta: { filePath: string }, expected = "an object"): Record<string, unknown> {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}'; expected ${expected}.`);
+	}
+	return value as Record<string, unknown>;
+}
+
+function parseAllowList(value: unknown, field: string, meta: { filePath: string }): string[] {
+	if (!Array.isArray(value)) {
+		throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}'; expected an array of strings.`);
+	}
+	const allow: string[] = [];
+	for (const entry of value) {
+		if (typeof entry !== "string") {
+			throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}'; expected an array of strings.`);
+		}
+		const trimmed = entry.trim();
+		if (trimmed) allow.push(trimmed);
+	}
+	if (allow.length === 0) {
+		throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}'; expected a non-empty array of patterns.`);
+	}
+	return allow;
+}
+
+function parseScopeRule(input: Record<string, unknown>, field: string, meta: { filePath: string }): ModelScopeRule {
+	const rule: ModelScopeRule = {};
+	if ("enforce" in input) {
+		if (typeof input.enforce !== "boolean") throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}.enforce'; expected a boolean.`);
+		rule.enforce = input.enforce;
+	}
+	if ("strict" in input) {
+		if (typeof input.strict !== "boolean") throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}.strict'; expected a boolean.`);
+		rule.strict = input.strict;
+	}
+	if ("allow" in input) rule.allow = parseAllowList(input.allow, `${field}.allow`, meta);
+	return rule;
 }
 
 /** Resolve the global and matching agent policies into independent launch-time checks. */
@@ -135,79 +178,20 @@ export function parseModelScopeConfig(
 	meta: { filePath: string },
 ): ModelScopeConfig | undefined {
 	if (value === undefined) return undefined;
-	if (!value || typeof value !== "object" || Array.isArray(value)) {
-		throw new Error(`Subagent settings in '${meta.filePath}' have invalid 'modelScope'; expected an object.`);
-	}
-
-	const input = value as Record<string, unknown>;
-	const config: ModelScopeConfig = {};
-
-	if ("enforce" in input) {
-		if (typeof input.enforce !== "boolean") {
-			throw new Error(`Subagent settings in '${meta.filePath}' have invalid 'modelScope.enforce'; expected a boolean.`);
-		}
-		config.enforce = input.enforce;
-	}
-
-	if ("strict" in input) {
-		if (typeof input.strict !== "boolean") {
-			throw new Error(`Subagent settings in '${meta.filePath}' have invalid 'modelScope.strict'; expected a boolean.`);
-		}
-		config.strict = input.strict;
-	}
-
-	if ("allow" in input) {
-		if (!Array.isArray(input.allow)) {
-			throw new Error(`Subagent settings in '${meta.filePath}' have invalid 'modelScope.allow'; expected an array of strings.`);
-		}
-		const allow: string[] = [];
-		for (const entry of input.allow) {
-			if (typeof entry !== "string") {
-				throw new Error(`Subagent settings in '${meta.filePath}' have invalid 'modelScope.allow'; expected an array of strings.`);
-			}
-			const trimmed = entry.trim();
-			if (trimmed) allow.push(trimmed);
-		}
-		if (allow.length === 0) {
-			throw new Error(`Subagent settings in '${meta.filePath}' have invalid 'modelScope.allow'; expected a non-empty array of patterns.`);
-		}
-		config.allow = allow;
-	}
+	const input = assertRecord(value, "modelScope", meta);
+	const config: ModelScopeConfig = parseScopeRule(input, "modelScope", meta);
 
 	if ("agents" in input) {
-		if (!input.agents || typeof input.agents !== "object" || Array.isArray(input.agents)) {
-			throw new Error(`Subagent settings in '${meta.filePath}' have invalid 'modelScope.agents'; expected an object keyed by agent name.`);
-		}
 		const agents: Record<string, ModelScopeRule> = {};
-		for (const [rawName, rawScope] of Object.entries(input.agents as Record<string, unknown>)) {
+		for (const [rawName, rawScope] of Object.entries(assertRecord(input.agents, "modelScope.agents", meta, "an object keyed by agent name"))) {
 			const name = rawName.trim();
 			const field = `modelScope.agents.${name}`;
 			if (!name) throw new Error(`Subagent settings in '${meta.filePath}' have invalid 'modelScope.agents' key; expected a non-empty agent name.`);
-			if (!rawScope || typeof rawScope !== "object" || Array.isArray(rawScope)) {
-				throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}'; expected an object.`);
-			}
-			const agentInput = rawScope as Record<string, unknown>;
+			const agentInput = assertRecord(rawScope, field, meta);
 			if ("agents" in agentInput) {
 				throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}.agents'; nested agent scopes are not supported.`);
 			}
-			const rule: ModelScopeRule = {};
-			if ("enforce" in agentInput) {
-				if (typeof agentInput.enforce !== "boolean") throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}.enforce'; expected a boolean.`);
-				rule.enforce = agentInput.enforce;
-			}
-			if ("strict" in agentInput) {
-				if (typeof agentInput.strict !== "boolean") throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}.strict'; expected a boolean.`);
-				rule.strict = agentInput.strict;
-			}
-			if ("allow" in agentInput) {
-				if (!Array.isArray(agentInput.allow) || agentInput.allow.some((entry) => typeof entry !== "string")) {
-					throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}.allow'; expected an array of strings.`);
-				}
-				const allow = agentInput.allow.map((entry) => (entry as string).trim()).filter(Boolean);
-				if (allow.length === 0) throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}.allow'; expected a non-empty array of patterns.`);
-				rule.allow = allow;
-			}
-			agents[name] = rule;
+			agents[name] = parseScopeRule(agentInput, field, meta);
 		}
 		config.agents = agents;
 	}

@@ -415,15 +415,16 @@ function extractSubagentPathsFromPackageRoot(packageRoot: string): PackageSubage
 	const packageJsonPath = path.join(packageRoot, "package.json");
 	const pkg = readJsonFileBestEffort(packageJsonPath);
 	if (!pkg || typeof pkg !== "object" || Array.isArray(pkg)) return { agents: [], chains: [] };
-	const metadata = packageMetadata(pkg as Record<string, unknown>, packageRoot);
+	const pkgRecord = pkg as Record<string, unknown>;
+	const metadata = packageMetadata(pkgRecord, packageRoot);
 
 	const roots: Record<string, unknown>[] = [];
-	const piSubagents = (pkg as { "pi-subagents"?: unknown })["pi-subagents"];
+	const piSubagents = pkgRecord["pi-subagents"];
 	if (piSubagents && typeof piSubagents === "object" && !Array.isArray(piSubagents)) {
 		roots.push(piSubagents as Record<string, unknown>);
 	}
 
-	const pi = (pkg as { pi?: unknown }).pi;
+	const pi = pkgRecord.pi;
 	if (pi && typeof pi === "object" && !Array.isArray(pi)) {
 		const subagents = (pi as { subagents?: unknown }).subagents;
 		if (subagents && typeof subagents === "object" && !Array.isArray(subagents)) {

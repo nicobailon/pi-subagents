@@ -420,7 +420,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.isError, undefined);
 		assert.equal(result.details.mode, "workflow");
 		assert.equal(mockPi.callCount(), 1);
-		assert.match(JSON.stringify(result.details), /Converted structured single-child request/);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /Console:/);
 	});
 
 	it("keeps public structured children alive when tool results backfill without execution_end", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

@@ -11,40 +11,40 @@ describe("public subagent execution normalization", () => {
 			params: {
 				context: "fresh",
 				async: false,
-				workflowScript: `console.info("Converted structured single-child request to workflow runs.run('main', ...)."); return runs.run("main", ${JSON.stringify({ agent: "worker", task, output: true })})`,
+				workflowScript: `return runs.run("main", ${JSON.stringify({ agent: "worker", task, output: true })})`,
 			},
 		});
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker" }), {
 			ok: true,
 			params: {
-				workflowScript: `console.info("Converted structured single-child request to workflow runs.run('main', ...)."); return runs.run("main", {"agent":"worker","output":true})`,
+				workflowScript: `return runs.run("main", {"agent":"worker","output":true})`,
 			},
 		});
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker" }, { asyncByDefault: false }), {
 			ok: true,
 			params: {
 				async: false,
-				workflowScript: `console.info("Converted structured single-child request to workflow runs.run('main', ...)."); return runs.run("main", {"agent":"worker","output":true})`,
+				workflowScript: `return runs.run("main", {"agent":"worker","output":true})`,
 			},
 		});
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", async: true }, { asyncByDefault: false }), {
 			ok: true,
 			params: {
 				async: true,
-				workflowScript: `console.info("Converted structured single-child request to workflow runs.run('main', ...)."); return runs.run("main", {"agent":"worker","output":true})`,
+				workflowScript: `return runs.run("main", {"agent":"worker","output":true})`,
 			},
 		});
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", output: false }), {
 			ok: true,
 			params: {
-				workflowScript: `console.info("Converted structured single-child request to workflow runs.run('main', ...)."); return runs.run("main", {"agent":"worker","output":false})`,
+				workflowScript: `return runs.run("main", {"agent":"worker","output":false})`,
 			},
 		});
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", isolation: "none" }), {
 			ok: true,
 			params: {
 				worktree: false,
-				workflowScript: `console.info("Converted structured single-child request to workflow runs.run('main', ...)."); return runs.run("main", {"agent":"worker","output":true})`,
+				workflowScript: `return runs.run("main", {"agent":"worker","output":true})`,
 			},
 		});
 		assert.deepEqual(normalizePublicSubagentExecution({ action: " list " }), { ok: true, params: { action: "list" } });

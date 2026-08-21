@@ -596,10 +596,9 @@ function packageSourceLabel(agent: AgentConfig): string {
 	return agent.packageSourceVersion ? `${agent.packageSourceName}@${agent.packageSourceVersion}` : agent.packageSourceName;
 }
 
-interface ExternalJobProviderStatus {
-	names?: Set<string>;
-	error?: string;
-}
+type ExternalJobProviderStatus =
+	| { ok: true; names: Set<string> }
+	| { ok: false; error: string };
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -607,9 +606,9 @@ function errorMessage(error: unknown): string {
 
 function registeredExternalJobProviderStatus(): ExternalJobProviderStatus {
 	try {
-		return { names: new Set(listExternalJobProviders().map((provider) => provider.name)) };
+		return { ok: true, names: new Set(listExternalJobProviders().map((provider) => provider.name)) };
 	} catch (error) {
-		return { error: errorMessage(error) };
+		return { ok: false, error: errorMessage(error) };
 	}
 }
 
@@ -680,10 +679,10 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.skills?.length) lines.push(`Skills: ${agent.skills.join(", ")}`);
 	if (agent.skillPath?.length) lines.push(`Skill paths: ${agent.skillPath.join(", ")}`);
 	lines.push(`System prompt mode: ${agent.systemPromptMode}`);
-	const runnerDetail = formatRunnerDetail(agent, providerStatus.names);
+	const runnerDetail = formatRunnerDetail(agent, providerStatus.ok ? providerStatus.names : undefined);
 	if (runnerDetail) {
 		lines.push(runnerDetail);
-		if (agent.runner?.type === "external-job" && providerStatus.error) lines.push(`External-job provider registry unavailable: ${providerStatus.error}`);
+		if (agent.runner?.type === "external-job" && !providerStatus.ok) lines.push(`External-job provider registry unavailable: ${providerStatus.error}`);
 		if (agent.runner?.type === "external-job" && agent.runner.options) lines.push(`Runner options: ${JSON.stringify(agent.runner.options)}`);
 	}
 	lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
@@ -738,13 +737,13 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 	const providerStatus = registeredExternalJobProviderStatus();
 	const lines = [
 		"Executable agents:",
-		...formatAgentListSections(agents, providerStatus.names),
+		...formatAgentListSections(agents, providerStatus.ok ? providerStatus.names : undefined),
 		...(restrictedAgents.length ? [
 			"",
 			`Restricted agents (not executable in this session${restrictedSources?.length ? `; capability ceiling: ${restrictedSources.join(", ")}` : ""}):`,
-			...restrictedAgents.map((a) => formatAgentListLine(a, providerStatus.names)),
+			...restrictedAgents.map((a) => formatAgentListLine(a, providerStatus.ok ? providerStatus.names : undefined)),
 		] : []),
-		...(providerStatus.error && [...agents, ...restrictedAgents].some((agent) => agent.runner?.type === "external-job") ? ["", `External-job provider registry unavailable: ${providerStatus.error}`] : []),
+		...(!providerStatus.ok && [...agents, ...restrictedAgents].some((agent) => agent.runner?.type === "external-job") ? ["", `External-job provider registry unavailable: ${providerStatus.error}`] : []),
 		...(d.agentDiagnostics?.length ? [
 			"",
 			"Invalid agent definitions:",

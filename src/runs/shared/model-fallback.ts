@@ -1,7 +1,7 @@
 import type { ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
 import type { Usage } from "../../shared/types.ts";
 import { filterFallbackCandidates, parseModelKey, recordModelFailure } from "./model-exclusions.ts";
-import { checkModelScope, type ModelScopeRule, type ModelScopeViolation, type ModelSource } from "./model-scope.ts";
+import { checkModelScope, type ModelScopeCheckRule, type ModelScopeViolation, type ModelSource } from "./model-scope.ts";
 
 export type { AvailableModelInfo };
 
@@ -236,7 +236,7 @@ function resolveRequiredSubagentModelCandidate(
 
 export interface ResolveSubagentModelOverrideOptions {
 	/** When set with `enforce: true`, out-of-scope models are rejected. */
-	scope?: ModelScopeRule | ModelScopeRule[];
+	scope?: ModelScopeCheckRule | ModelScopeCheckRule[];
 	/** Origin of the requested model: explicit caller-supplied (hard error) vs inherited (warn). Defaults to `"inherited"`. */
 	source?: ModelSource;
 	/** Called for warn-severity violations instead of `console.warn`. */
@@ -247,23 +247,21 @@ function defaultScopeWarn(violation: ModelScopeViolation): void {
 	console.warn(`[pi-subagents] ${violation.message}`);
 }
 
-function configuredScopes(scope: ModelScopeRule | ModelScopeRule[] | undefined): ModelScopeRule[] {
+function configuredScopes(scope: ModelScopeCheckRule | ModelScopeCheckRule[] | undefined): ModelScopeCheckRule[] {
 	return scope ? (Array.isArray(scope) ? scope : [scope]) : [];
 }
 
-function throwForUnresolvedEnforcedInheritScope(scope: ModelScopeRule | ModelScopeRule[] | undefined, includeMixed = false): void {
+function throwForUnresolvedEnforcedInheritScope(scope: ModelScopeCheckRule | ModelScopeCheckRule[] | undefined, includeMixed = false): void {
 	const unresolvedInheritScope = configuredScopes(scope)
 		.find((entry) => entry.enforce === true && (includeMixed ? entry.allow?.includes(INHERIT_MODEL) : entry.allow?.length === 1 && entry.allow[0] === INHERIT_MODEL));
 	if (!unresolvedInheritScope) return;
-	const origin = "origin" in unresolvedInheritScope && typeof unresolvedInheritScope.origin === "string"
-		? unresolvedInheritScope.origin
-		: "modelScope";
+	const origin = unresolvedInheritScope.origin ?? "modelScope";
 	throw new Error(`Cannot enforce subagent model scope (${origin}): 'inherit' requires a current parent session model.`);
 }
 
 function enforceModelScopes(
 	model: string,
-	scope: ModelScopeRule | ModelScopeRule[] | undefined,
+	scope: ModelScopeCheckRule | ModelScopeCheckRule[] | undefined,
 	source: ModelSource,
 	onWarn: ((violation: ModelScopeViolation) => void) | undefined,
 ): void {
@@ -343,7 +341,7 @@ export function resolveEffectiveSubagentModel(
 
 export interface BuildModelCandidatesOptions {
 	/** Fallback models warn by default and throw when strict scope enforcement is enabled. */
-	scope?: ModelScopeRule | ModelScopeRule[];
+	scope?: ModelScopeCheckRule | ModelScopeCheckRule[];
 	onWarn?: (violation: ModelScopeViolation) => void;
 	/** The primary model came from the running parent session, not configuration. */
 	primaryModelFromParent?: boolean;

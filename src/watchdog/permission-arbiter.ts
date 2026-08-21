@@ -47,7 +47,8 @@ export function createWatchdogPermissionArbiter(options: WatchdogPermissionArbit
 		appendPermissionAudit(request.auditPath, auditBase);
 		let completed = false;
 		const finish = (approved: boolean, reason: string, decision: string): WatchdogPermissionResult => {
-			if (completed) return { approved, reason: conciseReason(reason), source: "watchdog" };
+			const concise = conciseReason(reason);
+			if (completed) return { approved, reason: concise, source: "watchdog" };
 			completed = true;
 			appendPermissionAudit(request.auditPath, {
 				type: "permission.decision",
@@ -57,9 +58,9 @@ export function createWatchdogPermissionArbiter(options: WatchdogPermissionArbit
 				decision,
 				approved,
 				decisionSource: "watchdog",
-				reason: conciseReason(reason),
+				reason: concise,
 			});
-			return { approved, reason: conciseReason(reason), source: "watchdog" };
+			return { approved, reason: concise, source: "watchdog" };
 		};
 
 		let childConfig;
@@ -123,16 +124,7 @@ export function createWatchdogPermissionArbiter(options: WatchdogPermissionArbit
 					beforeToolCall: async ({ toolCall }) => toolCall.name === tool.name ? undefined : { block: true, reason: `Permission arbiter tool '${toolCall.name}' is not allowed.` },
 					toolExecution: "sequential",
 				});
-				const abort = () => agent?.abort();
-				request.signal?.addEventListener("abort", abort, { once: true });
-				request.ctx.signal?.addEventListener("abort", abort, { once: true });
-				try {
-					const prompt = `Tool: ${request.toolName}\nRedacted arguments: ${preview}`;
-					await agent.prompt(prompt);
-				} finally {
-					request.signal?.removeEventListener("abort", abort);
-					request.ctx.signal?.removeEventListener("abort", abort);
-				}
+				await agent.prompt(`Tool: ${request.toolName}\nRedacted arguments: ${preview}`);
 				if (!decision) return finish(false, "Watchdog permission arbiter returned no decision.", "malformed");
 				const approved = decision.decision === "approve";
 				return finish(approved, decision.reason, decision.decision);

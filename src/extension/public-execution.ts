@@ -122,7 +122,7 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 			params: {
 				...workflowDefaults,
 				...(params.async === undefined && options.asyncByDefault === false ? { async: false } : {}),
-				workflowScript: `console.info("Converted structured single-child request to workflow runs.run('main', ...)."); return runs.run("main", ${JSON.stringify(child)})`,
+				workflowScript: `return runs.run("main", ${JSON.stringify(child)})`,
 			} as T,
 		};
 	}
