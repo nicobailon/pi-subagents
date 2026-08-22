@@ -3992,6 +3992,7 @@ function createScheduledOwnerState(source: SubagentState, ownerSessionId: string
 		parentSessionFile: ctx.sessionManager.getSessionFile() ?? null,
 		subagentInProgress: false,
 		...(ownerSpawns ? { subagentSpawns: ownerSpawns } : { subagentSpawns: undefined }),
+		herdrProjectPanes: new Map(),
 		asyncJobs: new Map(),
 		fleetJobs: new Map(),
 		foregroundRuns: new Map(),
@@ -4771,7 +4772,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
 					return { content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }], isError: true, details: { mode: "management", results: [] } };
 				}
-				return handleHerdrProjectPaneAction(action as (typeof HERDR_PROJECT_PANE_ACTIONS)[number], paramsWithResolvedCwd, { cwd: requestCwd, signal });
+				deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+				return handleHerdrProjectPaneAction(action as (typeof HERDR_PROJECT_PANE_ACTIONS)[number], paramsWithResolvedCwd, { cwd: requestCwd, state: deps.state, signal });
 			}
 			if ((HERDR_INSPECTOR_ACTIONS as readonly string[]).includes(action)) {
 				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {

@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- Count Herdr project panes in inline status and report compact Herdr pane
+  title suffixes for active subagent work.
 - Let `agentOverrides` set or clear default `output` paths and `defaultReads`, while
   preserving explicit custom-agent frontmatter and preventing settings-derived values
   from being serialized into custom definitions. Thanks to [@mevatron](https://github.com/mevatron) for #1349.

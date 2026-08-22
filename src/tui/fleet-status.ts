@@ -2,7 +2,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type EditorComponent, isKeyRelease, Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { snapshotExternalRuns } from "../api/external-runs.ts";
 import { formatModelThinking } from "../shared/formatters.ts";
-import type { AsyncJobStep, FleetViewPlacement, NestedRunSummary, NestedStepSummary, SubagentState } from "../shared/types.ts";
+import type { AsyncJobState, AsyncJobStep, FleetViewPlacement, HerdrProjectPaneSnapshot, NestedRunSummary, NestedStepSummary, SubagentState } from "../shared/types.ts";
 import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
 
 export const FLEET_STATUS_WIDGET_KEY = "subagent-fleet-status";
@@ -17,6 +17,7 @@ type FleetStatusTui = {
 };
 type FleetStatusEntry = {
 	key: string;
+	surface?: "project-pane";
 	parentKey?: string;
 	workflowWrapper?: boolean;
 	agent: string;
@@ -26,6 +27,7 @@ type FleetStatusEntry = {
 	tokens: number;
 	state: string;
 	external?: true;
+	projectPane?: HerdrProjectPaneSnapshot;
 	nestedChildren?: NestedRunSummary[];
 	workflowRows?: FleetWorkflowRow[];
 };
@@ -284,7 +286,32 @@ function foregroundDescription(control: { parentWorkflowRunId?: string; workflow
 }
 
 function activeLeafAgentCount(entries: FleetStatusEntry[]): number {
-	return entries.filter((entry) => !entry.workflowWrapper).length;
+	return entries.filter((entry) => !entry.workflowWrapper && !entry.surface).length;
+}
+
+function projectPaneNeedsAttention(pane: HerdrProjectPaneSnapshot): boolean {
+	return ["attention", "blocked", "paused", "failed", "error"].some((status) => pane.agentStatus.includes(status))
+		|| pane.summary?.includes("⚠") === true;
+}
+
+function projectName(projectRoot: string): string {
+	return projectRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? projectRoot;
+}
+
+function projectPaneEntries(state: SubagentState): FleetStatusEntry[] {
+	return [...(state.herdrProjectPanes?.values() ?? [])]
+		.filter((pane) => pane.state === "open")
+		.sort((left, right) => left.openedAt.localeCompare(right.openedAt) || left.projectRoot.localeCompare(right.projectRoot))
+		.map((pane) => ({
+			key: `project-pane:${pane.projectRoot}`,
+			surface: "project-pane" as const,
+			agent: `${projectName(pane.projectRoot)} · ${pane.paneId}`,
+			description: pane.summary,
+			startedAt: Date.parse(pane.openedAt) || pane.refreshedAt,
+			tokens: 0,
+			state: pane.agentStatus || "unknown",
+			projectPane: pane,
+		}));
 }
 
 export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntry[] {
@@ -406,6 +433,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 		}
 	}
 
+	entries.push(...projectPaneEntries(state));
 	return entries.sort((left, right) => left.startedAt - right.startedAt || left.key.localeCompare(right.key));
 }
 
@@ -483,7 +511,7 @@ export class SubagentFleetStatus {
 			this.clearWidget();
 			return;
 		}
-		if (this.entries.length === 0 && !(this.state.activeAsyncCapacity?.used)) {
+		if (!this.hasInlineSurface()) {
 			this.active = false;
 			this.selectedKey = "main";
 			this.lastRenderKey = "";
@@ -578,26 +606,31 @@ export class SubagentFleetStatus {
 	}
 
 	render(width: number, theme: Theme): string[] {
-		if (this.entries.length === 0 && !(this.state.activeAsyncCapacity?.used)) return [];
+		if (!this.hasInlineSurface()) return [];
 		if (!this.active) {
-			const tokens = this.entries.reduce((total, entry) => total + entry.tokens, 0);
+			const workEntries = this.entries.filter((entry) => !entry.surface);
+			const projectEntries = this.entries.filter((entry) => entry.surface === "project-pane");
+			const tokens = workEntries.reduce((total, entry) => total + entry.tokens, 0);
 			const capacity = this.state.activeAsyncCapacity;
-			const hasNativeRows = this.entries.some((entry) => !entry.external);
+			const hasNativeRows = workEntries.some((entry) => !entry.external);
 			const showNativeSummary = hasNativeRows || Boolean(capacity?.used);
 			const asyncRuns = capacity && showNativeSummary ? `Async runs ${capacity.used}/${capacity.limit || "∞"}` : "";
-			const activeEntries = activeLeafAgentCount(this.entries);
-			const noun = this.entries.some((entry) => entry.external) ? "job" : "agent";
+			const activeEntries = activeLeafAgentCount(workEntries);
+			const noun = workEntries.some((entry) => entry.external) ? "job" : "agent";
 			const agents = activeEntries > 0 ? `${activeEntries} active ${noun}${activeEntries === 1 ? "" : "s"}` : "";
-			const label = [agents, asyncRuns].filter(Boolean).join(" · ");
+			const paneAttention = projectEntries.filter((entry) => entry.projectPane && projectPaneNeedsAttention(entry.projectPane)).length;
+			const panes = projectEntries.length > 0 ? `${projectEntries.length} pane${projectEntries.length === 1 ? "" : "s"}${paneAttention ? ` (${paneAttention} ⚠)` : ""}` : "";
+			const label = [agents, asyncRuns, panes].filter(Boolean).join(" · ");
 			const detail = [showNativeSummary ? formatFleetTokens(tokens) : undefined, "↓/← to inspect"].filter(Boolean).join(" · ");
-			return [truncateToWidth(`  ${theme.fg("muted", label)} · ${theme.fg("dim", detail)}`, width)];
+			return [truncateToWidth(`  ${theme.fg("muted", label)}${label && detail ? " · " : ""}${theme.fg("dim", detail)}`, width)];
 		}
 		const roster = this.rosterKeys();
 		const selectedIndex = Math.max(0, roster.indexOf(this.selectedKey));
 		const lines = [truncateToWidth(`  ${theme.fg("dim", "↑↓/jk select · enter inspect · esc back")}`, width), ""];
 		lines.push(truncateToWidth(`  ${this.bullet(0, selectedIndex, theme)} main`, width));
 
-		const tree = fleetTreeRows(this.entries);
+		const workEntries = this.entries.filter((entry) => !entry.surface);
+		const tree = fleetTreeRows(workEntries);
 		const selectedTreeIndex = Math.max(0, tree.findIndex((row) => (row.kind === "owner" || row.kind === "child") && row.entry.key === this.selectedKey));
 		const visibleCount = Math.min(this.maxAgentRows, tree.length);
 		const start = selectedTreeIndex < visibleCount ? 0 : selectedTreeIndex - visibleCount + 1;
@@ -615,15 +648,30 @@ export class SubagentFleetStatus {
 			}
 		}
 		if (hiddenBelow > 0) lines.push(rightAlign("", theme.fg("dim", `↓ ${hiddenBelow} more`), width));
+		this.renderProjectPaneSection(lines, selectedIndex, width, theme);
 		return lines;
 	}
+
+	private renderProjectPaneSection(lines: string[], selectedIndex: number, width: number, theme: Theme): void {
+		const entries = this.entries.filter((entry) => entry.surface === "project-pane");
+		if (!entries.length) return;
+		lines.push("", truncateToWidth(`  ${theme.fg("dim", "project panes")}`, width));
+		for (const entry of entries) {
+			const rosterIndex = this.entries.findIndex((candidate) => candidate.key === entry.key) + 1;
+			lines.push(this.renderEntry(rosterIndex, selectedIndex, entry, width, theme));
+		}
+	}
+
 
 	private renderEntry(rosterIndex: number, selectedIndex: number, entry: FleetStatusEntry, width: number, theme: Theme, branch?: string): string {
 		const agent = entry.modelThinking ? `${entry.agent} (${entry.modelThinking})` : entry.agent;
 		const prefix = branch ? `    ${branch}` : " ";
 		const left = `${prefix} ${this.bullet(rosterIndex, selectedIndex, theme)} ${theme.fg("muted", agent)} · ${entry.state}`;
 		const elapsed = Date.now() - entry.startedAt;
-		const right = theme.fg("dim", entry.external ? formatFleetElapsed(elapsed) : `${formatFleetElapsed(elapsed)} · ${formatFleetTokens(entry.tokens)}`);
+		const rightText = entry.projectPane
+			? `${entry.projectPane.summary ?? "—"} · ${formatFleetElapsed(Date.now() - entry.projectPane.refreshedAt)} ago`
+				: entry.external ? formatFleetElapsed(elapsed) : `${formatFleetElapsed(elapsed)} · ${formatFleetTokens(entry.tokens)}`;
+		const right = theme.fg("dim", rightText);
 		return rightAlign(left, right, width);
 	}
 
@@ -692,6 +740,7 @@ export class SubagentFleetStatus {
 			entries: this.entries.map((entry) => this.active
 				? [
 					entry.key,
+					entry.surface,
 					entry.parentKey,
 					entry.agent,
 					entry.state,
@@ -719,8 +768,12 @@ export class SubagentFleetStatus {
 						row.overflow,
 					]),
 				]
-				: [entry.key, entry.state, entry.external, entry.tokens]),
+				: [entry.key, entry.state, entry.external, entry.surface, entry.tokens, entry.projectPane?.refreshedAt, entry.projectPane?.summary]),
 		});
+	}
+
+	private hasInlineSurface(): boolean {
+		return this.entries.length > 0 || Boolean(this.state.activeAsyncCapacity?.used);
 	}
 
 	private getActiveUiContext(): ExtensionContext | undefined {

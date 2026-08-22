@@ -31,14 +31,14 @@ Chaining is code-driven through `workflowScript`. Use `await runs.run(...)` for 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `agent` | string | - | Agent target for management actions. Workflow child agents are set inside `runs.run` or `runs.all`. |
-| `action` | string | - | Agent management (including `guide`, `children.list`, and `refine`/`refine.show`/`refine.rollback`), mission (`mission.create/list/show/update/resolve-decision/attach-run/close`), Herdr inspector (`inspector.open/status/close`), status/control, schedule, watchdog, or doctor action. |
+| `action` | string | - | Agent management (including `guide`, `children.list`, and `refine`/`refine.show`/`refine.rollback`), mission (`mission.create/list/show/update/resolve-decision/attach-run/close`), Herdr inspector (`inspector.open/status/close`), Herdr project pane (`project.open/status/close`), status/control, schedule, watchdog, or doctor action. |
 | `topic` | `overview \| workflows \| agents \| missions \| observability \| tool-reference \| configuration \| models \| watchdog \| extension-api` | `overview` | Packaged guide topic for `action: "guide"`. |
 | `config` | object/string | - | Agent config for management create/update. |
 | `context` | `fresh \| fork` | global or per-agent default, else `fresh` | Explicit `fresh` or `fork` overrides every workflow child. When omitted, [`defaultSubagentContext`](configuration.md#defaultsubagentcontext) wins over each agent's `defaultContext`; `"fork"` creates a real branched session when the parent session file and current leaf exist, otherwise it falls back to `fresh`. Packaged `worker`, `oracle`, and `advisor` default to `fork`. |
 | `missionId` | string | - | Attach a workflow to an existing project mission instead of creating its default enclosing mission. |
 | `mission` | object/false | auto-create | Override the default enclosing mission with `{ title \| summary, objective?, goal?, budget?, labels? }`. Set exactly one non-empty `title` or `summary`; `objective` and `labels` are optional. `goal` may only be `true`, requires `budget.tokens`, and enables continuation notices. Pass `false` for an intentionally ephemeral workflow with no mission for it or its children and no `state` global. Explicit mission persistence failures are strict. |
 | `handoffPath` | string | - | Aggregate handoff manifest required by `action: "worktree.discard"`. |
-| `focus` | boolean | false | Focus the newly split pane for `action: "inspector.open"` or `action: "project.open"`; not a standalone action. Panes open in the background unless you set `focus: true`. |
+| `focus` | boolean | false | Focus the newly split pane for `action: "inspector.open"` or `action: "project.open"`; not a standalone action. Panes open in the background unless you set `focus: true`. Existing saved project panes can be focused through the public project-pane API when Herdr reports a tab or workspace id. |
 | `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
 | `lines` | number | `80` | Maximum transcript lines for `action: "status", view: "transcript"`; capped at 500. |
 | `agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
@@ -316,6 +316,20 @@ For `attested` or stricter levels, the child prompt includes a standardized acce
 The parser canonicalizes known enum synonyms, snake_case report keys and wrappers, underscore fence tags, unambiguous scalar arrays, string booleans, and criterion-id separators. Unknown or ambiguous keys and enum values fail with field-level diagnostics. Explicit empty `changedFiles` and `testsAddedOrUpdated` arrays are recorded as not applicable; missing fields and empty required command or validation evidence still fail.
 
 Acceptance fences are removed from normal output artifacts, while the raw child transcript remains intact and per-child metadata stores the complete acceptance ledger and parsed report. Explicit failed gates fail the run. Inferred gates remain observable without failing the run.
+
+## Herdr project panes
+
+Herdr project panes are peer Pi sessions opened by this Pi session:
+
+```ts
+subagent({ action: "project.open", cwd: "/path/to/repo", message: "Start in this project." })
+subagent({ action: "project.status", cwd: "/path/to/repo" })
+subagent({ action: "project.close", cwd: "/path/to/repo" })
+```
+
+The saved pane binding is pane-level only. The parent can refresh status, focus the saved pane when Herdr reports a tab or workspace id, or close it after Herdr verifies ownership and `agent_status: "idle"`. It cannot inspect, steer, or stop subagents inside that peer session. Stale or opaque Herdr metadata stays unknown and fails closed.
+
+Inline status counts active current-session work and Herdr project panes. Use Herdr itself or the project-pane API to focus or close project panes.
 
 ## Orca progress tabs (experimental observer)
 

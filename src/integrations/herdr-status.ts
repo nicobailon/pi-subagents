@@ -33,6 +33,8 @@ export interface HerdrStatusBridgeOptions {
 	env?: Record<string, string | undefined>;
 	/** Current authoritative active-run projection, used before TTL refresh. */
 	getRuns?: () => Iterable<HerdrStatusRun>;
+	/** Current project panes opened by this Pi session. Views are excluded. */
+	getProjectPaneCount?: () => number;
 	runHerdr: (args: readonly string[]) => void | Promise<void>;
 	ttlMs?: number;
 	refreshMs?: number;
@@ -109,12 +111,27 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 	let drainPromise = Promise.resolve();
 	let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
-	const label = (): string => {
-		const agents = [...new Set([...runs.values()].flatMap((run) => run.agents?.length ? run.agents : run.agent ? [run.agent] : []))];
+	const activeAgentNames = (): string[] => [...new Set([...runs.values()].flatMap((run) => run.agents?.length ? run.agents : run.agent ? [run.agent] : []))];
+	const activeSubagentCount = (): number => [...runs.values()].reduce((total, run) => total + Math.max(1, run.agents?.length ?? (run.agent ? 1 : 0)), 0);
+
+	const label = (includeAttention = false): string => {
+		const agents = activeAgentNames();
+		const activeCount = activeSubagentCount();
 		const who = agents.length > 0
 			? ` (${agents.slice(0, 3).join(", ")}${agents.length > 3 ? ", …" : ""})`
 			: "";
-		return `⏳ ${runs.size} subagent${runs.size === 1 ? "" : "s"}${who}`;
+		const panes = Math.max(0, options.getProjectPaneCount?.() ?? 0);
+		const paneText = panes > 0 ? ` · ${panes} pane${panes === 1 ? "" : "s"}` : "";
+		const attention = includeAttention && attentionLabels.size > 0 ? " ⚠" : "";
+		return `⏳ ${activeCount} subagent${activeCount === 1 ? "" : "s"}${who}${paneText}${attention}`;
+	};
+
+	const titleSuffix = (): string | undefined => {
+		if (runs.size === 0) return undefined;
+		const agentNames = activeAgentNames();
+		const activeCount = activeSubagentCount();
+		const target = activeCount === 1 && agentNames.length === 1 ? agentNames[0]! : String(activeCount);
+		return `⏳${target}${attentionLabels.size > 0 ? "⚠" : ""}`;
 	};
 
 	const enqueue = (args: readonly string[]): void => {
@@ -150,11 +167,13 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 				"--applies-to-source", "herdr:pi",
 				"--clear-state-labels",
 				"--clear-token", "summary",
+				"--clear-token", "title-suffix",
 				"--seq", seq,
 			]);
 			return;
 		}
-		const text = label();
+		const text = label(true);
+		const suffix = titleSuffix();
 		published = true;
 		enqueue([
 			"pane", "report-metadata", paneId,
@@ -165,6 +184,7 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 			"--state-label", `done=${text}`,
 			"--state-label", `working=${text}`,
 			"--token", `summary=${text}`,
+			...(suffix ? ["--token", `title-suffix=${suffix}`] : []),
 			"--ttl-ms", String(ttlMs),
 			"--seq", seq,
 		]);
@@ -221,6 +241,7 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 	const clearAttention = (): void => {
 		attentionLabels.clear();
 		syncBlocked();
+		publish();
 	};
 
 	const raiseAttention = (runId: string, labelText: string): void => {
@@ -228,6 +249,7 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 		acknowledgedAttention.delete(runId);
 		attentionLabels.set(runId, labelText);
 		syncBlocked();
+		publish();
 	};
 
 	const replaceRuns = (nextRuns: Iterable<HerdrStatusRun>): void => {

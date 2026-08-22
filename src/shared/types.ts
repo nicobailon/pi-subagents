@@ -1764,6 +1764,8 @@ export interface SubagentState {
 	};
 	/** Current-session top-level async capacity projection. */
 	activeAsyncCapacity?: ActiveAsyncCapacitySnapshot;
+	/** Herdr project panes opened by this Pi session, keyed by project root. */
+	herdrProjectPanes?: Map<string, HerdrProjectPaneSnapshot>;
 	asyncJobs: Map<string, AsyncJobState>;
 	/** Current-session active and recent async runs for the native fleet inspector. */
 	fleetJobs?: Map<string, AsyncJobState>;
@@ -1790,6 +1792,24 @@ export interface SubagentState {
 	waitSubscriptions?: Map<string, WaitSubscriptionRecord>;
 	/** Live in-process workflow controllers. Durable status remains on disk after settlement. */
 	workflowControllers?: Map<string, AbortController>;
+}
+
+export interface HerdrProjectPaneSnapshot {
+	projectRoot: string;
+	bindingPath: string;
+	paneId: string;
+	openedAt: string;
+	lastFocusedAt?: string;
+	state: "open" | "stale";
+	agentStatus: string;
+	ownership: "verified" | "unknown" | "mismatch";
+	safeToClose: boolean;
+	refreshedAt: number;
+	summary?: string;
+	tabId?: string;
+	workspaceId?: string;
+	terminalTitle?: string;
+	staleReason?: string;
 }
 
 // ============================================================================

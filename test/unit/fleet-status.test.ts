@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it } from "node:test";
 import { Editor, type EditorComponent, visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -253,6 +256,67 @@ describe("below-editor subagent FleetView", () => {
 			assert.ok(visibleWidth(lines[0]!) <= 50);
 		} finally {
 			fleet.dispose();
+		}
+	});
+
+	it("counts project panes in compact status", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-status-surfaces-"));
+		try {
+			const state = stateForTest();
+			const projectRoot = path.join(root, "peer-project");
+			const asyncDir = path.join(root, "async-run");
+			state.asyncJobs.set("run-view", {
+				asyncId: "run-view",
+				asyncDir,
+				status: "running",
+				mode: "single",
+				agents: ["worker"],
+				startedAt: Date.now() - 12_000,
+				updatedAt: Date.now() - 1_000,
+			});
+			state.herdrProjectPanes = new Map([[projectRoot, {
+				projectRoot,
+				bindingPath: path.join(projectRoot, ".pi/subagents/project-panes/herdr.json"),
+				paneId: "w1:p50",
+				openedAt: "2026-01-01T00:00:00.000Z",
+				state: "open",
+				agentStatus: "needs_attention",
+				ownership: "verified",
+				safeToClose: false,
+				refreshedAt: Date.now() - 2_000,
+				summary: "worker needs attention",
+			}]]);
+
+			let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+			const ctx = {
+				hasUI: true,
+				ui: {
+					setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+					onTerminalInput() { return () => {}; },
+					getEditorText() { return ""; },
+					requestRender() {},
+					notify() {},
+					theme,
+				},
+			} as unknown as ExtensionContext;
+			const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+			try {
+				fleet.setContext(ctx);
+				const component = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor }, theme);
+				const compact = component.render(100)[0]!;
+				assert.match(compact, /1 active agent/);
+				assert.match(compact, /1 pane \(1 ⚠\)/);
+				assert.deepEqual(fleet.handleKey("\x1b[B"), { consume: true });
+				const expanded = component.render(100).join("\n");
+				assert.match(expanded, /project panes/);
+				assert.match(expanded, /peer-project · w1:p50/);
+				assert.match(expanded, /worker needs attention/);
+				assert.doesNotMatch(expanded, /views/);
+			} finally {
+				fleet.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
 

@@ -373,13 +373,13 @@ describe("Herdr status bridge", () => {
 
 		assert.deepEqual(busyEvents, [{
 			active: true,
-			label: "⏳ 1 subagent (worker, reviewer)",
+			label: "⏳ 2 subagents (worker, reviewer)",
 		}]);
 		assert.deepEqual(blockedEvents, [{
 			active: true,
 			label: "reviewer needs attention",
 		}]);
-		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (worker, reviewer)"));
+		assert.ok(commands[0]?.includes("summary=⏳ 2 subagents (worker, reviewer) ⚠"));
 
 		bridge.dispose();
 		await bridge.flush();
@@ -387,6 +387,45 @@ describe("Herdr status bridge", () => {
 		assert.deepEqual(busyEvents.at(-1), { active: false });
 		assert.deepEqual(blockedEvents.at(-1), { active: false });
 		assert.ok(commands.at(-1)?.includes("--clear-state-labels"));
+	});
+
+	it("reports project pane counts and compact title suffixes", async () => {
+		const events = new FakeEvents();
+		const commands: string[][] = [];
+		let paneCount = 1;
+		const bridge = registerHerdrStatusBridge({
+			events,
+			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+			getProjectPaneCount: () => paneCount,
+			runHerdr: (args) => commands.push([...args]),
+			refreshMs: 0,
+		});
+		bridge.sessionStarted({ hasUI: true, runs: [] });
+
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
+		await bridge.flush();
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-2", agent: "reviewer" });
+		await bridge.flush();
+		events.emit(SUBAGENT_CONTROL_EVENT, {
+			source: "async",
+			noticeText: "worker needs attention",
+			event: { type: "needs_attention", runId: "run-1" },
+		});
+		await bridge.flush();
+		paneCount = 0;
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-1" });
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-2" });
+		await bridge.flush();
+
+		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (worker) · 1 pane"));
+		assert.ok(commands[0]?.includes("title-suffix=⏳worker"));
+		assert.ok(commands[1]?.includes("summary=⏳ 2 subagents (worker, reviewer) · 1 pane"));
+		assert.ok(commands[1]?.includes("title-suffix=⏳2"));
+		assert.ok(commands[2]?.includes("title-suffix=⏳2⚠"));
+		assert.ok(commands.at(-1)?.includes("--clear-token"));
+		assert.ok(commands.at(-1)?.includes("title-suffix"));
+
+		bridge.dispose();
 	});
 
 	it("refreshes metadata only while runs are active", async () => {

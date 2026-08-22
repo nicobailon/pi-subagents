@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 import { handleHerdrInspectorAction, readHerdrInspectorBinding } from "../../src/inspectors/herdr/actions.ts";
 import { createHerdrClient, detectHerdr, parseHerdrVersion, supportsRawPanes, type HerdrClient } from "../../src/inspectors/herdr/client.ts";
 import { formatInspectorDashboard, submitInspectorControl } from "../../src/inspectors/herdr/inspector-runner.ts";
-import { createProjectPaneManager, handleHerdrProjectPaneAction, readHerdrProjectPaneBinding } from "../../src/inspectors/herdr/project-panes.ts";
+import { createProjectPaneManager, handleHerdrProjectPaneAction, listHerdrProjectPaneRoots, readHerdrProjectPaneBinding, restoreHerdrProjectPaneSnapshots } from "../../src/inspectors/herdr/project-panes.ts";
 import { consumeSteerRequests, consumeStopRequest } from "../../src/runs/background/control-channel.ts";
 import { PI_SUBAGENT_PI_BINARY_ENV } from "../../src/runs/shared/pi-spawn.ts";
 import type { AsyncStatus, SubagentState } from "../../src/shared/types.ts";
@@ -284,6 +284,8 @@ describe("Herdr inspector", () => {
 		process.env[PI_SUBAGENT_PI_BINARY_ENV] = path.join(root, "pi-bin");
 		try {
 			const projectRoot = fs.realpathSync(root);
+			const ownerRoot = path.join(root, "owner");
+			fs.mkdirSync(ownerRoot);
 			const calls: string[][] = [];
 			const client: HerdrClient = {
 				run: async <T>(args: string[]) => {
@@ -299,7 +301,7 @@ describe("Herdr inspector", () => {
 			};
 
 			const opened = await handleHerdrProjectPaneAction("project.open", { cwd: root, message: "Own this project mission." }, {
-				cwd: process.cwd(),
+				cwd: ownerRoot,
 				client,
 				now: () => new Date("2026-01-01T00:00:00.000Z"),
 			});
@@ -309,6 +311,14 @@ describe("Herdr inspector", () => {
 			assert.equal(binding?.paneId, "w1:p10");
 			assert.equal(binding?.projectRoot, projectRoot);
 			assert.equal(binding?.startupMessage, "Own this project mission.");
+			assert.deepEqual(listHerdrProjectPaneRoots(ownerRoot), [projectRoot]);
+			const restoredState = { herdrProjectPanes: new Map() } as SubagentState;
+			restoreHerdrProjectPaneSnapshots(restoredState, [...listHerdrProjectPaneRoots(ownerRoot), ownerRoot], Date.parse("2026-01-01T00:00:01.000Z"));
+			const restored = restoredState.herdrProjectPanes?.get(projectRoot);
+			assert.equal(restored?.paneId, "w1:p10");
+			assert.equal(restored?.state, "open");
+			assert.equal(restored?.ownership, "unknown");
+			assert.equal(restored?.agentStatus, "unknown");
 			const splitCall = calls.find((args) => args[0] === "pane" && args[1] === "split");
 			assert.deepEqual(splitCall, ["pane", "split", "--current", "--direction", "right", "--cwd", projectRoot, "--no-focus"]);
 			assert.equal(binding?.lastFocusedAt, undefined);
@@ -318,19 +328,20 @@ describe("Herdr inspector", () => {
 			assert.match(runCall?.[3] ?? "", /pi-bin/);
 			assert.match(runCall?.[3] ?? "", /Own this project mission\./);
 
-			const status = await handleHerdrProjectPaneAction("project.status", { cwd: root }, { cwd: process.cwd(), client });
+			const status = await handleHerdrProjectPaneAction("project.status", { cwd: root }, { cwd: ownerRoot, client });
 			assert.equal(status.isError, undefined, text(status));
 			assert.match(text(status), /project pane w1:p10 is open/);
 
-			const closed = await handleHerdrProjectPaneAction("project.close", { cwd: root }, { cwd: process.cwd(), client });
+			const closed = await handleHerdrProjectPaneAction("project.close", { cwd: root }, { cwd: ownerRoot, client });
 			assert.equal(closed.isError, undefined, text(closed));
 			assert.match(text(closed), /Closed Herdr project pane w1:p10/);
 			assert.equal(readHerdrProjectPaneBinding(root), undefined);
+			assert.deepEqual(listHerdrProjectPaneRoots(ownerRoot), []);
 			assert.ok(calls.some((args) => args.join(" ") === "pane close w1:p10"));
 
 			calls.length = 0;
 			const focused = await handleHerdrProjectPaneAction("project.open", { cwd: root, focus: true }, {
-				cwd: process.cwd(),
+				cwd: ownerRoot,
 				client,
 				now: () => new Date("2026-01-01T00:00:00.000Z"),
 			});
@@ -338,6 +349,8 @@ describe("Herdr inspector", () => {
 			const focusedSplitCall = calls.find((args) => args[0] === "pane" && args[1] === "split");
 			assert.deepEqual(focusedSplitCall, ["pane", "split", "--current", "--direction", "right", "--cwd", projectRoot, "--focus"]);
 			assert.equal(readHerdrProjectPaneBinding(root)?.lastFocusedAt, "2026-01-01T00:00:00.000Z");
+			fs.writeFileSync(path.join(ownerRoot, ".pi/subagents/project-panes/herdr-roots.json"), JSON.stringify({ schemaVersion: 1, kind: "herdr-project-pane-roots", projectRoots: [123] }));
+			assert.throws(() => listHerdrProjectPaneRoots(ownerRoot), /Invalid Herdr project pane root index/);
 		} finally {
 			if (previousPiBinary === undefined) delete process.env[PI_SUBAGENT_PI_BINARY_ENV];
 			else process.env[PI_SUBAGENT_PI_BINARY_ENV] = previousPiBinary;
@@ -410,8 +423,9 @@ describe("Herdr inspector", () => {
 			const legacyBinding = readHerdrProjectPaneBinding(root)!;
 			fs.writeFileSync(path.join(root, ".pi/subagents", "project-panes", "herdr.json"), JSON.stringify({ ...legacyBinding, startupMessage: 42 }));
 			const closed = await handleHerdrProjectPaneAction("project.close", { cwd: root }, { cwd: root, client });
-			assert.equal(closed.isError, undefined, text(closed));
-			assert.equal(readHerdrProjectPaneBinding(root), undefined);
+			assert.equal(closed.isError, true);
+			assert.match(text(closed), /INVALID_PANE_RESPONSE/);
+			assert.equal(readHerdrProjectPaneBinding(root)?.paneId, "w1:p32");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -431,4 +445,5 @@ describe("Herdr inspector", () => {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
+
 });

@@ -9,6 +9,7 @@ import {
 	createProjectPaneManager,
 	openProjectPane,
 	getProjectPaneStatus,
+	focusProjectPane,
 	closeProjectPane,
 	projectPaneBindingPath,
 	readProjectPaneBinding,
@@ -22,6 +23,7 @@ describe("public project-panes package export", () => {
 		assert.equal(typeof createProjectPaneManager, "function");
 		assert.equal(typeof openProjectPane, "function");
 		assert.equal(typeof getProjectPaneStatus, "function");
+		assert.equal(typeof focusProjectPane, "function");
 		assert.equal(typeof closeProjectPane, "function");
 		assert.equal(typeof readProjectPaneBinding, "function");
 	});
@@ -41,6 +43,7 @@ describe("public project-panes package export", () => {
 					if (args[0] === "pane" && args[1] === "get" && opened) return { ok: true, data: { pane: {
 						pane_id: "w1:p20", agent: "pi", agent_status: "IDLE", cwd: projectRoot,
 						foreground_cwd: projectRoot, focused: false, terminal_title_stripped: "Pi · project",
+						tab_id: "tab-20", workspace_id: "workspace-1", state_text: "one active subagent",
 					} } as T };
 					return { ok: true, data: {} as T };
 				},
@@ -58,13 +61,19 @@ describe("public project-panes package export", () => {
 			if (status.ok) {
 				assert.equal(status.data.state, "open");
 				assert.equal(status.data.runtime?.agentStatus, "idle");
+				assert.equal(status.data.runtime?.summary, "one active subagent");
 				assert.equal(status.data.ownership, "verified");
 				assert.equal(status.data.safeToClose, true);
 			}
+			const focus = await manager.focus({ cwd: root });
+			assert.equal(focus.ok, true);
+			if (focus.ok) assert.deepEqual(focus.data.focused, { paneId: "w1:p20", tabId: "tab-20", workspaceId: "workspace-1" });
+			assert.equal(readProjectPaneBinding(root).data?.lastFocusedAt, "2026-01-01T00:00:00.000Z");
 			const close = await manager.close({ cwd: root, requireIdle: true });
 			assert.equal(close.ok, true);
 			if (close.ok) assert.equal(close.data.disposition, "closed");
 			assert.deepEqual(readProjectPaneBinding(root), { ok: true, data: undefined });
+			assert.ok(calls.some((args) => args.join(" ") === "tab focus tab-20"));
 			assert.ok(calls.some((args) => args.join(" ") === "pane close w1:p20"));
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -159,6 +168,9 @@ describe("public project-panes package export", () => {
 			}));
 			const client: ProjectPaneCommandClient = {
 				run: async <T>(args: string[]) => {
+					if (args.join(" ") === "pane get w1:p25") return { ok: true, data: { pane: {
+						pane_id: "w1:p25", agent_status: "idle", cwd: projectRoot,
+					} } as T };
 					if (args.join(" ") === "pane close w1:p25") {
 						fs.rmSync(bindingPath);
 						fs.mkdirSync(bindingPath);
@@ -173,6 +185,36 @@ describe("public project-panes package export", () => {
 				assert.equal(result.error.bindingPath, bindingPath);
 			}
 			assert.equal(fs.statSync(bindingPath).isDirectory(), true);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("returns a structured error when focus cannot update the binding", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-public-project-pane-focus-write-failure-"));
+		try {
+			const projectRoot = fs.realpathSync(root);
+			const bindingPath = projectPaneBindingPath(projectRoot);
+			const paneId = "w1:p26";
+			fs.mkdirSync(path.dirname(bindingPath), { recursive: true });
+			fs.writeFileSync(bindingPath, JSON.stringify({ schemaVersion: 1, kind: "herdr-project-pane", projectRoot, paneId, openedAt: "2026-01-01T00:00:00.000Z", command: "pi" }));
+			const client: ProjectPaneCommandClient = {
+				run: async <T>(args: string[]) => {
+					if (args.join(" ") === `pane get ${paneId}`) return { ok: true, data: { pane: { pane_id: paneId, agent_status: "idle", cwd: projectRoot, tab_id: "tab-26" } } as T };
+					if (args.join(" ") === "tab focus tab-26") {
+						fs.rmSync(bindingPath);
+						fs.mkdirSync(bindingPath);
+						return { ok: true, data: {} as T };
+					}
+					return { ok: true, data: {} as T };
+				},
+			};
+			const result = await createProjectPaneManager({ client }).focus({ cwd: root });
+			assert.equal(result.ok, false);
+			if (!result.ok) {
+				assert.equal(result.error.code, "BINDING_WRITE_FAILED");
+				assert.equal(result.error.bindingPath, bindingPath);
+			}
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
