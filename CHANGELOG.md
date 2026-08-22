@@ -21,6 +21,8 @@
   severity labels so first-pass reviews do not default to `blockers only`.
 
 ### Fixed
+- Let read-only reviewer acceptance rely on the parent-side staged-file check
+  instead of requiring child-reported `noStagedFiles` evidence.
 - Slow async widget animation rerenders to 1 Hz so quiet running jobs do not
   repaint the full TUI at the liveness tick rate. Thanks to
   [@0xFlo](https://github.com/0xFlo) for #1376.

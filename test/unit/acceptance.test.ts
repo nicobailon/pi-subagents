@@ -606,6 +606,93 @@ describe("acceptance gates", () => {
 		}
 	});
 
+	it("accepts read-only reviewer reports that omit child no-staged-files evidence when the worktree is clean", async () => {
+		const cwd = tempGitRepo();
+		try {
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "reviewer",
+				task: "Review-only. Do not edit.",
+				explicit: { level: "checked", evidence: ["review-findings", "commands-run", "validation-output", "residual-risks"] },
+			});
+			const ledger = await evaluateAcceptance({
+				acceptance,
+				output: report({
+					changedFiles: [],
+					testsAddedOrUpdated: [],
+					validationOutput: ["Read-only review completed."],
+					reviewFindings: [],
+					noStagedFiles: undefined,
+				}),
+				cwd,
+			});
+
+			assert.equal(ledger.status, "checked");
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "evidence:no-staged-files"), undefined);
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "no-staged-files")?.status, "passed");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("still rejects aggregate no-staged-files evidence when a child worktree reports staged files", async () => {
+		const cwd = tempGitRepo();
+		try {
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "reviewer",
+				task: "Review-only. Do not edit.",
+				explicit: { level: "checked", evidence: ["review-findings", "commands-run", "validation-output", "residual-risks"] },
+			});
+			const ledger = await evaluateAcceptance({
+				acceptance,
+				output: report({
+					changedFiles: [],
+					testsAddedOrUpdated: [],
+					validationOutput: ["Dynamic fanout review completed."],
+					reviewFindings: [],
+					noStagedFiles: false,
+				}),
+				cwd,
+			});
+
+			assert.equal(ledger.status, "rejected");
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "evidence:no-staged-files")?.status, "failed");
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "no-staged-files")?.status, "passed");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("still rejects omitted child no-staged-files evidence when the parent git check finds staged files", async () => {
+		const cwd = tempGitRepo();
+		try {
+			fs.writeFileSync(path.join(cwd, "staged.txt"), "staged\n", "utf-8");
+			execFileSync("git", ["add", "staged.txt"], { cwd });
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "reviewer",
+				task: "Review-only. Do not edit.",
+				explicit: { level: "checked", evidence: ["review-findings", "commands-run", "validation-output", "residual-risks"] },
+			});
+			const ledger = await evaluateAcceptance({
+				acceptance,
+				output: report({
+					changedFiles: [],
+					testsAddedOrUpdated: [],
+					validationOutput: ["Read-only review completed."],
+					reviewFindings: [],
+					noStagedFiles: undefined,
+				}),
+				cwd,
+			});
+
+			assert.equal(ledger.status, "rejected");
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "evidence:no-staged-files"), undefined);
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "no-staged-files")?.status, "failed");
+			assert.match(acceptanceFailureMessage(ledger) ?? "", /Staged files present/);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
 	it("still rejects missing changed and test evidence and empty required commands", async () => {
 		const cwd = tempRepo();
 		try {
