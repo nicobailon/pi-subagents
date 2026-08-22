@@ -523,29 +523,28 @@ function addOwnedPath(record: OrcaParentTabRecord, value: unknown): void {
 	if (!record.parentSessionFile) return;
 	const resolved = path.resolve(value);
 	if (resolved === path.parse(resolved).root) return;
-	let parentRoot: string | undefined;
-	let owningRoot: string | undefined;
-	if (record.parentSessionFile) {
-		parentRoot = path.join(path.dirname(record.parentSessionFile), path.basename(record.parentSessionFile, ".jsonl"));
-		const artifactRoot = path.join(path.dirname(record.parentSessionFile), "subagent-artifacts");
-		owningRoot = [parentRoot, artifactRoot].find((root) => {
-			const relative = path.relative(root, resolved);
-			return !relative.startsWith("..") && !path.isAbsolute(relative);
-		});
-		if (!owningRoot) return;
-	}
+	const parentRoot = path.join(path.dirname(record.parentSessionFile), path.basename(record.parentSessionFile, ".jsonl"));
+	const artifactRoot = path.join(path.dirname(record.parentSessionFile), "subagent-artifacts");
+	const owningRoot = [parentRoot, artifactRoot].find((root) => {
+		const relative = path.relative(root, resolved);
+		return !relative.startsWith("..") && !path.isAbsolute(relative);
+	});
+	if (!owningRoot) return;
 	try {
-		if (fs.statSync(resolved).isDirectory()) record.dirs.add(resolved);
-		else record.files.add(resolved);
+		if (fs.statSync(resolved).isDirectory()) {
+			// Recursive cleanup is allowed only for a directory rooted in one of this
+			// batch's exact run ids. Shared roots such as `forks` and
+			// `subagent-artifacts` can contain retained data from other batches.
+			if (owningRoot !== parentRoot) return;
+			const [runRoot] = path.relative(parentRoot, resolved).split(path.sep);
+			if (!runRoot || !record.runIds.has(runRoot)) return;
+			record.dirs.add(resolved);
+		} else {
+			record.files.add(resolved);
+		}
 	} catch {
 		// Result metadata may name an optional artifact that was not enabled.
-		return;
 	}
-	if (!record.parentSessionFile || !parentRoot || owningRoot !== parentRoot) return;
-	const relative = path.relative(parentRoot, resolved);
-	if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return;
-	const first = relative.split(path.sep)[0];
-	if (first) record.dirs.add(path.join(parentRoot, first));
 }
 
 function collectResultPaths(record: OrcaParentTabRecord, details: unknown): void {
@@ -647,10 +646,11 @@ function batchResultIsTerminal(details: unknown, isError: boolean): boolean {
 	if (isError) return true;
 	if (!details || typeof details !== "object" || Array.isArray(details)) return true;
 	const root = details as Record<string, unknown>;
+	const results = Array.isArray(root.results) ? root.results : undefined;
+	if (root.detached === true || results?.some((entry) => entry && typeof entry === "object" && !Array.isArray(entry) && (entry as Record<string, unknown>).detached === true)) return false;
 	const state = typeof root.state === "string" ? root.state : typeof root.status === "string" ? root.status : undefined;
 	if (state === "running" || state === "pending" || state === "started") return false;
 	if (state === "complete" || state === "completed" || state === "failed" || state === "stopped") return true;
-	const results = Array.isArray(root.results) ? root.results : undefined;
 	const pendingAsyncLaunch = typeof root.asyncId === "string" || typeof root.asyncDir === "string";
 	if (pendingAsyncLaunch) return false;
 	if (!results) return root.async !== true;
@@ -691,7 +691,7 @@ export async function recordOrcaParentResult(input: {
 		? parentTabs().get(`${sessionKey}\u0000${input.toolCallId.trim()}`)
 		: undefined;
 	if (!record) {
-		const runId = resultKey.startsWith("async:") ? resultKey.slice("async:".length) : undefined;
+		const runId = /^(?:async|foreground):(.+)$/.exec(resultKey)?.[1];
 		const candidates = [...parentTabs().values()].filter((candidate) =>
 			((sessionKey !== undefined && candidate.sessionKey === sessionKey)
 				|| (sessionId !== undefined && candidate.parentSessionId === sessionId))
@@ -700,8 +700,8 @@ export async function recordOrcaParentResult(input: {
 	}
 	if (!record || record.seenResults.has(resultKey)) return;
 	record.seenResults.add(resultKey);
-	collectResultPaths(record, input.details);
 	collectBatchRunIds(record, input.details);
+	collectResultPaths(record, input.details);
 	record.tab.append(`\n${conciseResultSummary(input.details, input.isError === true)}\n`);
 	if (batchResultIsTerminal(input.details, input.isError === true)) {
 		await finishOrcaParentRecord(record, input.isError === true ? "failed" : "completed");

@@ -302,7 +302,12 @@ test("one parent aggregate plus N child tabs retain concise results and cleanup 
 	const childDir = path.join(dir, `parent_${parentId}`, "forks");
 	fs.mkdirSync(childDir, { recursive: true });
 	const childFile = path.join(childDir, "child.jsonl");
+	const otherBatchFile = path.join(childDir, "other-batch.jsonl");
 	fs.writeFileSync(childFile, `${JSON.stringify({ type: "session", version: 3, id: "child-session-1234" })}\n`);
+	fs.writeFileSync(otherBatchFile, `${JSON.stringify({ type: "session", version: 3, id: "other-batch-session" })}\n`);
+	const batchRunDir = path.join(dir, `parent_${parentId}`, "child-run");
+	fs.mkdirSync(batchRunDir);
+	fs.writeFileSync(path.join(batchRunDir, "retained.jsonl"), "retained");
 	const artifactsDir = path.join(dir, "subagent-artifacts");
 	fs.mkdirSync(artifactsDir);
 	const inputPath = path.join(artifactsDir, "run_worker_input.md");
@@ -319,7 +324,7 @@ test("one parent aggregate plus N child tabs retain concise results and cleanup 
 		sessionFile: parentFile,
 		toolCallId: "tool-call-1",
 		details: {
-			results: [{ agent: "worker", runId: "child-run", exitCode: 0, finalOutput: "concise child result", sessionFile: childFile, artifactPaths: { inputPath, outputPath } }],
+			results: [{ agent: "worker", runId: "child-run", exitCode: 0, finalOutput: "concise child result", sessionFile: childFile, artifactPaths: { inputPath, outputPath, batchRunDir, sharedArtifactsDir: artifactsDir } }],
 		},
 	});
 	await child.finish("completed", childFile);
@@ -336,8 +341,11 @@ test("one parent aggregate plus N child tabs retain concise results and cleanup 
 	const parentOutput = await captureCommand(parentViewer, dir);
 	assert.match(parentOutput, /✓ worker · child-run/);
 	assert.match(parentOutput, /concise child result/);
-	assert.ok(parentOutput.includes(`rm -f -- '${inputPath}' '${outputPath}'`));
-	assert.ok(parentOutput.includes(`rm -rf -- '${childDir}'`));
+	assert.ok(parentOutput.includes(`rm -f -- '${childFile}' '${inputPath}' '${outputPath}'`));
+	assert.ok(parentOutput.includes(`rm -rf -- '${batchRunDir}'`));
+	assert.doesNotMatch(parentOutput, new RegExp(`rm -rf -- '${childDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`));
+	assert.doesNotMatch(parentOutput, new RegExp(`rm -rf -- '${artifactsDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`));
+	assert.doesNotMatch(parentOutput, new RegExp(otherBatchFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 	assert.match(parentOutput, /✓ parent batch completed\s*$/);
 	assert.doesNotMatch(parentOutput, /launchContractDigest|tool arguments|mirror source retained|artifact transcript retained|Pi session retained/);
 });
@@ -393,6 +401,34 @@ test("an async parent batch stays open only until its run reaches a terminal res
 		sessionFile,
 		toolCallId: "async:run-async",
 		details: { results: [{ agent: "worker", runId: "run-async", exitCode: 0, finalOutput: "async done" }] },
+	});
+	await waitForFile(donePath);
+});
+
+test("a detached foreground receipt stays open until its terminal completion event", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+	const dir = tempDir();
+	fs.mkdirSync(path.join(dir, ".git"));
+	const capture = path.join(dir, "capture.json");
+	const fakeOrca = writeCaptureOrca(dir);
+	const sessionId = `foreground-parent-${Date.now()}`;
+	const sessionFile = path.join(dir, `${sessionId}.jsonl`);
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: sessionId })}\n`);
+	ensureOrcaParentProgressTab({ cwd: dir, batchId: "foreground-call", sessionId, sessionFile, config: { enabled: true }, command: fakeOrca, env: { ...process.env, ORCA_TEST_CAPTURE: capture } });
+
+	await recordOrcaParentResult({
+		sessionId,
+		sessionFile,
+		toolCallId: "foreground-call",
+		details: { state: "complete", results: [{ agent: "worker", runId: "run-foreground", exitCode: -2, detached: true }] },
+	});
+	const donePath = progressFile(`${sessionId}-0-`, ".log").replace(/\.log$/, ".done");
+	assert.equal(fs.existsSync(donePath), false);
+
+	await recordOrcaParentResult({
+		sessionId,
+		sessionFile,
+		toolCallId: "foreground:run-foreground",
+		details: { state: "complete", results: [{ agent: "worker", runId: "run-foreground", exitCode: 0, finalOutput: "foreground done" }] },
 	});
 	await waitForFile(donePath);
 });

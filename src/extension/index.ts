@@ -74,6 +74,7 @@ import {
 	SLASH_TEXT_RESULT_TYPE,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_ASYNC_STARTED_EVENT,
+	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
 	SUBAGENT_PROCESS_TERMINAL_EVENT,
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_STEERING_NOTICE_EVENT,
@@ -757,33 +758,35 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		refreshResultDelivery();
 		fleetStatus?.refresh();
 	};
+	const recordTerminalOrcaResult = (payload: unknown, source: "async" | "foreground") => {
+		if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+		const completion = payload as Record<string, unknown>;
+		const completionSessionId = typeof completion.sessionId === "string" ? completion.sessionId : undefined;
+		const completionResult = Array.isArray(completion.results)
+			? completion
+			: {
+				...completion,
+				results: [{
+					agent: completion.agent,
+					runId: completion.runId ?? completion.id,
+					exitCode: completion.exitCode ?? (completion.success === true ? 0 : 1),
+					finalOutput: completion.summary,
+					error: completion.error,
+					sessionFile: completion.sessionFile,
+					artifactPaths: completion.artifactPaths,
+				}],
+			};
+		void recordOrcaParentResult({
+			sessionId: completionSessionId,
+			sessionFile: completionSessionId && completionSessionId === state.currentSessionId ? state.parentSessionFile ?? undefined : undefined,
+			toolCallId: `${source}:${String(completion.runId ?? completion.id ?? Date.now())}`,
+			details: completionResult,
+			isError: completion.success === false,
+		});
+	};
 	const asyncCompleteHandler = (payload: unknown) => {
 		handleComplete(payload);
-		if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-			const completion = payload as Record<string, unknown>;
-			const completionSessionId = typeof completion.sessionId === "string" ? completion.sessionId : undefined;
-			const completionResult = Array.isArray(completion.results)
-				? completion
-				: {
-					...completion,
-					results: [{
-						agent: completion.agent,
-						runId: completion.runId ?? completion.id,
-						exitCode: completion.exitCode ?? (completion.success === true ? 0 : 1),
-						finalOutput: completion.summary,
-						error: completion.error,
-						sessionFile: completion.sessionFile,
-						artifactPaths: completion.artifactPaths,
-					}],
-				};
-			void recordOrcaParentResult({
-				sessionId: completionSessionId,
-				sessionFile: completionSessionId && completionSessionId === state.currentSessionId ? state.parentSessionFile ?? undefined : undefined,
-				toolCallId: `async:${String(completion.runId ?? completion.id ?? Date.now())}`,
-				details: completionResult,
-				isError: completion.success === false,
-			});
-		}
+		recordTerminalOrcaResult(payload, "async");
 		refreshResultDelivery();
 		refreshActiveAsyncCapacity();
 		scheduledRunManager.handleAsyncCompletion(payload);
@@ -792,6 +795,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const eventUnsubscribes = [
 		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, asyncStartedHandler),
 		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, asyncCompleteHandler),
+		pi.events.on(SUBAGENT_FOREGROUND_COMPLETE_EVENT, (payload) => recordTerminalOrcaResult(payload, "foreground")),
 		pi.events.on(SUBAGENT_PROCESS_TERMINAL_EVENT, () => {
 			refreshActiveAsyncCapacity();
 			fleetStatus?.refresh();

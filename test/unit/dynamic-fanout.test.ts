@@ -123,19 +123,19 @@ describe("dynamic fanout helpers", () => {
 		}
 	});
 
-	it("accepts a runner-injected parentSessionId on the parallel template but keeps it out of user-facing validation", () => {
-		// Regression: the async runner threads parentSessionId onto the dynamic parallel
-		// template for permission-system forwarding. It must pass runner-internal validation
-		// (allowRunnerFields) without leaking into the user-facing dynamic field whitelist.
+	it("accepts runner-injected context fields on the parallel template but keeps them out of user-facing validation", () => {
+		// Regression: the async runner threads parentSessionId and orcaCwd onto the dynamic
+		// parallel template. They must pass runner-internal validation (allowRunnerFields)
+		// without leaking into the user-facing dynamic field whitelist.
 		const runnerStep = {
 			expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
-			parallel: { agent: "reviewer", task: "Review {item.path}", parentSessionId: "session-parent" },
+			parallel: { agent: "reviewer", task: "Review {item.path}", parentSessionId: "session-parent", orcaCwd: "/parent/worktree" },
 			collect: { as: "reviews" },
 		} as unknown as Parameters<typeof validateDynamicStepShape>[0];
 		assert.doesNotThrow(() => validateDynamicStepShape(runnerStep, 1, { allowRunnerFields: true }));
 		assert.throws(
 			() => validateDynamicStepShape(runnerStep, 1),
-			(error: unknown) => error instanceof DynamicFanoutError && /parentSessionId/.test(error.message),
+			(error: unknown) => error instanceof DynamicFanoutError && /parentSessionId|orcaCwd/.test(error.message),
 		);
 	});
 
