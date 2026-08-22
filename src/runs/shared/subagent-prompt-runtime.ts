@@ -11,6 +11,7 @@ import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV, isRuntimeA
 import { createStructuredOutputToolParameters, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
 import {
 	CHILD_TOOL_DIAGNOSTIC_PATH_ENV,
+	formatChildToolDiagnostic,
 	MCP_DIRECT_CHILD_TOOLS_ENV,
 	REQUIRED_CHILD_TOOLS_ENV,
 	writeChildToolDiagnostic,
@@ -625,7 +626,8 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		registerNativeSupervisorClientOnce();
 	});
 	onRuntimeEvent("agent_start", () => {
-		refreshChildToolDiagnostic(pi);
+		const diagnostic = refreshChildToolDiagnostic(pi);
+		if (diagnostic) throw new Error(formatChildToolDiagnostic(diagnostic));
 	});
 	onRuntimeEvent("agent_end", async (_event: unknown, ctx: unknown) => {
 		if ((ctx as { hasUI?: boolean } | undefined)?.hasUI === true) return;

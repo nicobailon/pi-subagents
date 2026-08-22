@@ -1018,12 +1018,41 @@ describe("subagent prompt runtime", () => {
 
 			handlers.get("session_start")?.({});
 			assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
-			handlers.get("agent_start")?.({});
+			assert.throws(() => handlers.get("agent_start")?.({}), /requested unavailable child tools: read, grep, find, ls, bash, edit, write, intercom/);
 			assert.deepEqual(readChildToolDiagnostic(diagnosticPath), {
 				agent: "scout",
 				required: ["read", "grep", "find", "ls", "bash", "edit", "write", "intercom"],
 				available: ["subagent_wait", "contact_supervisor"],
-				missing: ["intercom"],
+				missing: ["read", "grep", "find", "ls", "bash", "edit", "write", "intercom"],
+			});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("records missing core write tools from the actual child registry", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-core-tool-diagnostic-"));
+		try {
+			const diagnosticPath = path.join(dir, "tools.json");
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			process.env[REQUIRED_CHILD_TOOLS_ENV] = JSON.stringify(["read", "grep", "find", "ls", "bash", "edit", "write"]);
+			process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV] = diagnosticPath;
+			process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
+
+			registerSubagentPromptRuntime({
+				on(event: string, handler: (payload?: unknown) => unknown) {
+					handlers.set(event, handler);
+				},
+				getAllTools: () => ["read", "grep", "find", "ls", "contact_supervisor"].map((name) => ({ name })),
+				registerTool() {},
+			} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(): void });
+
+			assert.throws(() => handlers.get("agent_start")?.({}), /requested unavailable child tools: bash, edit, write/);
+			assert.deepEqual(readChildToolDiagnostic(diagnosticPath), {
+				agent: "worker",
+				required: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+				available: ["read", "grep", "find", "ls", "contact_supervisor"],
+				missing: ["bash", "edit", "write"],
 			});
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
@@ -1102,7 +1131,7 @@ describe("subagent prompt runtime", () => {
 			assert.equal(fs.existsSync(diagnosticPath), false);
 			assert.doesNotMatch(promptRewrite?.systemPrompt ?? "", /requested unavailable child tools/);
 
-			handlers.get("agent_start")?.({});
+			assert.throws(() => handlers.get("agent_start")?.({}), /requested unavailable child tools: fixture_search/);
 			assert.deepEqual(readChildToolDiagnostic(diagnosticPath), {
 				agent: "extension-worker",
 				required: ["read", "fixture_search"],
@@ -1136,7 +1165,7 @@ describe("subagent prompt runtime", () => {
 				registerTool() {},
 			} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(): void });
 
-			assert.doesNotThrow(() => handlers.get("agent_start")?.({}));
+			assert.throws(() => handlers.get("agent_start")?.({}), /requested unavailable child tools: fixture_search/);
 			assert.deepEqual(readChildToolDiagnostic(diagnosticPath), {
 				agent: "worker",
 				required: ["read", "fixture_search"],
@@ -1166,7 +1195,7 @@ describe("subagent prompt runtime", () => {
 				registerTool() {},
 			} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(): void });
 
-			handlers.get("agent_start")?.({});
+			assert.throws(() => handlers.get("agent_start")?.({}), /requested unavailable child tools: rust_symbols_workspace_symbols, fixture_search/);
 			const diagnostic = readChildToolDiagnostic(diagnosticPath);
 			assert.deepEqual(diagnostic, {
 				agent: "worker",

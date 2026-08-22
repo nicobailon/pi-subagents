@@ -13,8 +13,6 @@ export interface ChildToolDiagnostic {
 	missingMcpDirectTools?: string[];
 }
 
-const PI_CORE_CHILD_TOOLS = new Set(["bash", "edit", "find", "grep", "ls", "read", "write"]);
-
 export function writeChildToolDiagnostic(
 	filePath: string,
 	required: string[],
@@ -22,7 +20,7 @@ export function writeChildToolDiagnostic(
 	agent?: string,
 	mcpDirectTools?: string[],
 ): ChildToolDiagnostic | undefined {
-	const availableNames = new Set([...available, ...PI_CORE_CHILD_TOOLS]);
+	const availableNames = new Set(available);
 	const missing = required.filter((name) => !availableNames.has(name));
 	if (missing.length === 0) {
 		fs.rmSync(filePath, { force: true });

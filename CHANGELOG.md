@@ -12,6 +12,8 @@
 ### Fixed
 - Report helpful workflow errors when `runs.all(...)` results are read as keyed
   objects instead of ordered arrays. Thanks to [@ravshansbox](https://github.com/ravshansbox) for #1351.
+- Fail child launch attempts when the runtime lacks requested core write tools,
+  instead of letting implementation workers continue as read-only runs.
 
 ## [0.54.0] - 2026-08-21
 
