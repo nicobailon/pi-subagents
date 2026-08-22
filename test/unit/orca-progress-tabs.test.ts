@@ -64,6 +64,27 @@ async function waitForLineCount(file: string, count: number, timeoutMs = 5_000):
 	}
 }
 
+async function waitForFileCount(dir: string, count: number, timeoutMs = 5_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (true) {
+		const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((name) => name.endsWith(".json")) : [];
+		if (files.length >= count) return;
+		if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${count} files in ${dir}`);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+}
+
+async function waitForCreateReady(cwd: string, timeoutMs = 5_000): Promise<void> {
+	const key = createHash("sha256").update(fs.realpathSync(cwd)).digest("hex").slice(0, 20);
+	const root = path.join(TEMP_ROOT_DIR, "orca-progress");
+	const deadline = Date.now() + timeoutMs;
+	while (true) {
+		if (fs.existsSync(root) && fs.readdirSync(root).some((name) => name.startsWith(`create-${key}-`) && name.endsWith(".ready"))) return;
+		if (Date.now() >= deadline) throw new Error(`Timed out waiting for Orca create readiness in ${cwd}`);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+}
+
 function progressFile(prefix: string, suffix: ".log" | ".done"): string {
 	const root = path.join(TEMP_ROOT_DIR, "orca-progress");
 	const name = fs.readdirSync(root).find((candidate) => candidate.startsWith(prefix) && candidate.endsWith(suffix));
@@ -289,6 +310,75 @@ test("child execution cwd still appends tabs to the explicit parent Orca worktre
 	const args = JSON.parse(fs.readFileSync(capture, "utf-8")) as string[];
 	assert.equal(args[args.indexOf("--worktree") + 1], `path:${fs.realpathSync(main)}`);
 	await tab.finish("completed");
+});
+
+test("successful tabs persist passive observer manifests with titles and Orca ids", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+	const dir = tempDir();
+	fs.mkdirSync(path.join(dir, ".git"));
+	const fakeOrca = writeNodeCommand(dir, "orca", "process.stdout.write(JSON.stringify({ok:true,result:{terminal:{handle:'term-observer',tabId:'tab-observer',paneKey:'tab-observer:pane',ptyId:'pty-observer',worktreeId:'worktree-observer'}}}))");
+	const sessionId = "01a02699-observer-manifest";
+	const sessionFile = path.join(dir, `${sessionId}.jsonl`);
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: sessionId })}\n`);
+	const manifestDir = path.join(dir, ".pi", "subagents", "views", "orca");
+	fs.mkdirSync(manifestDir, { recursive: true, mode: 0o755 });
+	fs.chmodSync(manifestDir, 0o755);
+
+	ensureOrcaParentProgressTab({ cwd: dir, batchId: "tool-call-manifest", sessionId, sessionFile, config: { enabled: true }, command: fakeOrca });
+	const child = createOrcaProgressTab({ cwd: dir, runId: "manifest-run", agent: "worker", index: 0, config: { enabled: true }, command: fakeOrca });
+	assert.ok(child?.observerManifestPath);
+	await waitForFileCount(manifestDir, 2);
+	const manifests = fs.readdirSync(manifestDir).map((name) => JSON.parse(fs.readFileSync(path.join(manifestDir, name), "utf-8")) as Record<string, unknown>);
+	const parent = manifests.find((manifest) => manifest.role === "parent");
+	const childManifest = manifests.find((manifest) => manifest.role === "child");
+	assert.deepEqual(parent && {
+		kind: parent.kind,
+		observer: parent.observer,
+		batchId: parent.batchId,
+		title: parent.title,
+	}, {
+		kind: "orca-progress-tab",
+		observer: "orca",
+		batchId: "tool-call-manifest",
+		title: `parent · ${sessionId} · all-manifest`,
+	});
+	assert.equal(childManifest?.title, "subagent · worker · 2");
+	assert.equal(childManifest?.worktree, fs.realpathSync(dir));
+	assert.deepEqual(childManifest?.terminal, {
+		handle: "term-observer",
+		tabId: "tab-observer",
+		paneKey: "tab-observer:pane",
+		ptyId: "pty-observer",
+		worktreeId: "worktree-observer",
+	});
+	assert.equal(child.observerManifestPath, path.join(fs.realpathSync(dir), ".pi", "subagents", "views", "orca", path.basename(child.observerManifestPath)));
+	assert.equal(fs.statSync(child.observerManifestPath).mode & 0o777, 0o600);
+	assert.equal(fs.statSync(manifestDir).mode & 0o777, 0o700);
+	await child.finish("completed");
+});
+
+test("an unsuccessful Orca JSON envelope does not publish a phantom manifest", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+	const dir = tempDir();
+	fs.mkdirSync(path.join(dir, ".git"));
+	const fakeOrca = writeNodeCommand(dir, "orca", "process.stdout.write(JSON.stringify({ok:false,error:'not created'}))");
+	const tab = createOrcaProgressTab({ cwd: dir, runId: "manifest-failed", agent: "worker", index: 0, config: { enabled: true }, command: fakeOrca });
+	assert.ok(tab?.observerManifestPath);
+	await waitForCreateReady(dir);
+	assert.equal(fs.existsSync(tab.observerManifestPath), false);
+	await tab.finish("failed");
+});
+
+test("observer manifests reject symlinked project storage roots", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+	const dir = tempDir();
+	const outside = tempDir();
+	fs.mkdirSync(path.join(dir, ".git"));
+	fs.symlinkSync(outside, path.join(dir, ".pi"), "dir");
+	const fakeOrca = writeNodeCommand(dir, "orca", "process.stdout.write(JSON.stringify({ok:true,result:{terminal:{handle:'term-symlink'}}}))");
+	const tab = createOrcaProgressTab({ cwd: dir, runId: "manifest-symlink", agent: "worker", index: 0, config: { enabled: true }, command: fakeOrca });
+	assert.ok(tab?.observerManifestPath);
+	await waitForCreateReady(dir);
+	assert.equal(fs.existsSync(path.join(outside, "subagents", "views", "orca")), false);
+	assert.equal(fs.existsSync(tab.observerManifestPath), false);
+	await tab.finish("failed");
 });
 
 test("one parent aggregate plus N child tabs retain concise results and cleanup guidance", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {

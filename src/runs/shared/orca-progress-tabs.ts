@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type { Message } from "@earendil-works/pi-ai";
 import { resolveNodeExecutable } from "../../shared/node-executable.ts";
+import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { TEMP_ROOT_DIR, type OrcaProgressTabsConfig } from "../../shared/types.ts";
 import { extractTextFromContent, getAgentDir } from "../../shared/utils.ts";
 
@@ -21,21 +22,24 @@ const ORCA_CREATE_WAIT_TIMEOUT_MS = ORCA_CREATE_TIMEOUT_MS + ORCA_KILL_GRACE_MS 
 
 const ORCA_CREATE_WATCHDOG_SCRIPT = [
 	"const {spawn}=require('node:child_process');",
-	"const fs=require('node:fs');",
+	"const fs=require('node:fs'),path=require('node:path');",
 	"const timeout=Number(process.argv[1]),grace=Number(process.argv[2]),waitTimeout=Number(process.argv[3]);",
-	"const previous=process.argv[4],done=process.argv[5],command=process.argv[6],args=process.argv.slice(7);",
+	"const previous=process.argv[4],done=process.argv[5],manifestPath=process.argv[6],manifestJson=process.argv[7],command=process.argv[8],args=process.argv.slice(9);",
 	"function mark(){try{fs.writeFileSync(done.replace(/\\.pending$/,'.ready'),'')}catch{}}",
 	"function exists(file){try{return fs.existsSync(file)}catch{return false}}",
 	"function keepQueued(){try{const now=new Date();fs.utimesSync(done,now,now)}catch{}}",
 	"function predecessorReady(){if(previous==='-')return true;if(exists(previous.replace(/\\.pending$/,'.ready')))return true;try{return Date.now()-fs.statSync(previous).mtimeMs>=waitTimeout}catch{return true}}",
+	"function text(value){return typeof value==='string'&&value?value:undefined}",
+	"function privateDirectory(root,directory){const relative=path.relative(root,directory);if(!relative||relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))return false;let current=root;for(const segment of relative.split(path.sep)){current=path.join(current,segment);try{const stat=fs.lstatSync(current);if(stat.isSymbolicLink()||!stat.isDirectory())return false}catch(error){if(!error||error.code!=='ENOENT')return false;try{fs.mkdirSync(current,{mode:448})}catch{try{const stat=fs.lstatSync(current);if(stat.isSymbolicLink()||!stat.isDirectory())return false}catch{return false}}}}try{return fs.realpathSync(directory)===directory}catch{return false}}",
+	"function persist(output){let temp;try{const manifest=JSON.parse(manifestJson),response=JSON.parse(output);if(!response||response.ok!==true)return;const terminal=response.result&&response.result.terminal;const ids=terminal&&typeof terminal==='object'?{handle:text(terminal.handle),tabId:text(terminal.tabId),paneKey:text(terminal.paneKey),ptyId:text(terminal.ptyId),worktreeId:text(terminal.worktreeId)}:undefined;const cleanIds=ids&&Object.fromEntries(Object.entries(ids).filter(([,value])=>value));const payload=cleanIds&&Object.keys(cleanIds).length?{...manifest,terminal:cleanIds}:manifest;const directory=path.dirname(manifestPath);if(!privateDirectory(manifest.worktree,directory))return;fs.chmodSync(directory,448);temp=manifestPath+'.'+process.pid+'.tmp';fs.writeFileSync(temp,JSON.stringify(payload,null,2),{encoding:'utf8',mode:384});fs.renameSync(temp,manifestPath);temp=undefined}catch{}finally{if(temp)try{fs.rmSync(temp,{force:true})}catch{}}}",
 	"function start(){",
 	" try{",
-	"  const child=spawn(command,args,{stdio:'ignore',windowsHide:true});",
-	"  let hardKill;",
+	"  const child=spawn(command,args,{stdio:['ignore','pipe','ignore'],windowsHide:true});",
+	"  let hardKill,output=Buffer.alloc(0),settled=false;child.stdout.on('data',chunk=>{if(output.length<65536)output=Buffer.concat([output,chunk.subarray(0,65536-output.length)])});",
 	"  const timer=setTimeout(()=>{child.kill('SIGTERM');hardKill=setTimeout(()=>child.kill('SIGKILL'),grace)},timeout);",
-	"  const clear=()=>{clearTimeout(timer);if(hardKill)clearTimeout(hardKill);mark()};",
-	"  child.once('error',()=>{clear();process.exitCode=1});",
-	"  child.once('close',code=>{clear();process.exitCode=code===0?0:1});",
+	"  const clear=code=>{if(settled)return;settled=true;clearTimeout(timer);if(hardKill)clearTimeout(hardKill);mark();if(code===0)persist(output.toString('utf8'));process.exitCode=code===0?0:1};",
+	"  child.once('error',()=>clear(1));",
+	"  child.once('close',code=>clear(code));",
 	" }catch{mark();process.exitCode=1}",
 	"}",
 	"if(predecessorReady())start();",
@@ -50,6 +54,8 @@ const ORCA_CLEANUP_WATCHDOG_SCRIPT = [
 ].join("");
 
 export interface OrcaProgressTab {
+	/** Best-effort observer metadata for future shared views discovery. */
+	readonly observerManifestPath?: string;
 	append(text: string): void;
 	event(event: { type?: string; message?: Message; toolName?: string; args?: unknown }): void;
 	finish(status: "completed" | "failed" | "stopped", sessionFile?: string): Promise<void>;
@@ -285,6 +291,8 @@ export interface OrcaProgressTabInput {
 	cwd: string;
 	/** Parent Pi worktree where the N+1 Orca tab set must remain grouped. */
 	orcaWorktree?: string;
+	/** Owning top-level tool call for parent observer manifests. */
+	observerBatchId?: string;
 	runId: string;
 	agent: string;
 	index: number;
@@ -330,6 +338,21 @@ function createSingleOrcaProgressTab(input: OrcaProgressTabInput, mirrorSource?:
 	const logPath = path.join(root, `${stem}.log`);
 	const donePath = path.join(root, `${stem}.done`);
 	const title = titleOverride ?? `subagent · ${agent} · ${tabSequence}`;
+	const observerManifestPath = path.join(getProjectSubagentsDir(orcaWorktree), "views", "orca", `${stem}.json`);
+	const observerManifest = {
+		schemaVersion: 1,
+		kind: "orca-progress-tab",
+		observer: "orca",
+		role: titleOverride ? "parent" : "child",
+		title,
+		worktree: orcaWorktree,
+		runId,
+		agent,
+		index,
+		sequence: tabSequence,
+		...(input.observerBatchId ? { batchId: input.observerBatchId } : {}),
+		createdAt: new Date().toISOString(),
+	};
 	const mirrorSourcePath = mirrorSource ? path.resolve(mirrorSource.path) : undefined;
 	const association = [
 		titleOverride ? `parent aggregate: ${runId}` : `child: run ${runId} · ${agent} · ${index + 1}`,
@@ -389,6 +412,8 @@ function createSingleOrcaProgressTab(input: OrcaProgressTabInput, mirrorSource?:
 			String(ORCA_CREATE_WAIT_TIMEOUT_MS),
 			reservation.previousCreateDone ?? "-",
 			reservation.createDone,
+			observerManifestPath,
+			JSON.stringify(observerManifest),
 			command,
 			"terminal", "create",
 			"--worktree", `path:${orcaWorktree}`,
@@ -429,6 +454,7 @@ function createSingleOrcaProgressTab(input: OrcaProgressTabInput, mirrorSource?:
 		return summary;
 	};
 	return {
+		observerManifestPath,
 		append(text) {
 			if (finished) return;
 			writeProgress(text);
@@ -613,6 +639,7 @@ export function ensureOrcaParentProgressTab(input: {
 		config: input.config,
 		env: input.env,
 		command: input.command,
+		observerBatchId: batchId,
 	}, undefined, `parent · ${sessionLabel} · ${batchLabel}`);
 	if (!tab) return;
 	parentTabs().set(key, {
