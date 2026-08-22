@@ -72,6 +72,25 @@ describe("async runner execution", () => {
 		assert.deepEqual(result.steps[1]?.toolBudget, { hard: 2, block: ["grep"] });
 	});
 
+	it("keeps Orca tabs on the parent Pi worktree when the child runs elsewhere", () => {
+		const parentCwd = path.join(process.cwd(), "parent-worktree");
+		const childCwd = path.join(process.cwd(), "target-repository");
+		const result = buildAsyncRunnerSteps("orca-routing", {
+			chain: [{ agent: "worker", task: "inspect another repository" }],
+			agents: [agent("worker")],
+			ctx: { ...ctx, cwd: parentCwd },
+			cwd: childCwd,
+			asyncDir: path.join(process.cwd(), ".tmp-orca-routing"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.ok("steps" in result, "expected successful step build");
+		const step = result.steps[0];
+		assert.ok(step && "agent" in step);
+		assert.equal(step.cwd, childCwd);
+		assert.equal(step.orcaCwd, parentCwd);
+	});
+
 	it("assigns default and agent-level deadlines to async serial and parallel children", () => {
 		const result = buildAsyncRunnerSteps("timeout-run", {
 			chain: [

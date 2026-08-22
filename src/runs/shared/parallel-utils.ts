@@ -21,6 +21,8 @@ export interface RunnerSubagentStep {
 	outputName?: string;
 	structured?: boolean;
 	cwd?: string;
+	/** Parent Pi worktree used only to group experimental Orca progress tabs. */
+	orcaCwd?: string;
 	model?: string;
 	thinking?: string;
 	modelCandidates?: string[];

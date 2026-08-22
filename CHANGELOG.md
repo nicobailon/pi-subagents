@@ -5,6 +5,8 @@
 ### Added
 - Count Herdr project panes in inline status and report compact Herdr pane
   title suffixes for active subagent work.
+- Add opt-in, batch-scoped N+1 Orca progress tabs with concise child projections,
+  aggregate completion, and batch-local cleanup guidance. Thanks to [@hyein-cbio](https://github.com/hyein-cbio) for #1360.
 - Let `agentOverrides` set or clear default `output` paths and `defaultReads`, while
   preserving explicit custom-agent frontmatter and preventing settings-derived values
   from being serialized into custom definitions. Thanks to [@mevatron](https://github.com/mevatron) for #1349.

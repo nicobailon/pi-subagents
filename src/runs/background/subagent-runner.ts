@@ -616,7 +616,6 @@ function runPiStreaming(
 		const writeOutputLine = (line: string) => {
 			if (!line.trim()) return;
 			outputStream.write(`${line}\n`);
-			orcaProgressTab?.append(`${line}\n`);
 		};
 
 		const writeOutputText = (text: string) => {
@@ -658,6 +657,7 @@ function runPiStreaming(
 
 			appendChildEvent(event as unknown as Record<string, unknown>);
 			transcriptWriter?.writeChildEvent(event);
+			orcaProgressTab?.event(event);
 			if (event.type === "agent_settled") agentSettledReceived = true;
 			applyChildLifecycle(projectChildLifecycle(event));
 
@@ -797,7 +797,6 @@ function runPiStreaming(
 			stderrTail.push(chunk);
 			stderrReader.push(chunk);
 			outputStream.write(chunk);
-			orcaProgressTab?.append(chunk.toString("utf-8"));
 		});
 		registerInterrupt?.(() => {
 			if (settled || timedOut || stopped) return;
@@ -1995,18 +1994,29 @@ async function runSingleStep(
 	ctx: SingleStepContext,
 ): Promise<StepResult & { completionGuardTriggered?: boolean }> {
 	if (step.importAsyncRoot) return runSingleStepInner(step, ctx);
+	const transcriptPath = resolveAsyncStepTranscriptPath({
+		artifactsDir: ctx.artifactsDir,
+		artifactConfig: ctx.artifactConfig,
+		runId: ctx.id,
+		agent: step.agent,
+		flatIndex: ctx.flatIndex,
+		flatStepCount: ctx.flatStepCount,
+	});
 	const orcaProgressTab = createOrcaProgressTab({
 		cwd: step.cwd ?? ctx.cwd,
+		orcaWorktree: step.orcaCwd ?? ctx.cwd,
 		runId: ctx.id,
 		agent: step.agent,
 		index: ctx.flatIndex,
+		transcriptPath,
+		sessionFile: step.sessionFile,
 	});
 	try {
 		const result = await runSingleStepInner(step, { ...ctx, orcaProgressTab });
-		orcaProgressTab?.finish(result.stopped ? "stopped" : result.exitCode === 0 && !result.error ? "completed" : "failed", result.sessionFile);
+		await orcaProgressTab?.finish(result.stopped ? "stopped" : result.exitCode === 0 && !result.error ? "completed" : "failed", result.sessionFile);
 		return result;
 	} catch (error) {
-		orcaProgressTab?.finish("failed");
+		await orcaProgressTab?.finish("failed");
 		throw error;
 	}
 }

@@ -1864,6 +1864,8 @@ export interface RunSyncOptions {
 	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	cwd?: string;
+	/** Parent Pi worktree used only to group experimental Orca progress tabs. */
+	orcaCwd?: string;
 	signal?: AbortSignal;
 	interruptSignal?: AbortSignal;
 	timeoutMs?: number;
