@@ -53,6 +53,18 @@ async function waitForFile(file: string, timeoutMs = 5_000): Promise<void> {
 	}
 }
 
+async function readManifestWithState(file: string, state: string, timeoutMs = 5_000): Promise<Record<string, unknown>> {
+	const deadline = Date.now() + timeoutMs;
+	let lastState: unknown;
+	while (Date.now() < deadline) {
+		const manifest = JSON.parse(fs.readFileSync(file, "utf-8")) as Record<string, unknown>;
+		lastState = manifest.state;
+		if (lastState === state) return manifest;
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+	throw new Error(`Timed out waiting for ${file} state ${state}; last state ${String(lastState)}`);
+}
+
 function progressFile(prefix: string, suffix: ".log" | ".done"): string {
 	const root = path.join(TEMP_ROOT_DIR, "orca-progress");
 	const name = fs.readdirSync(root).find((candidate) => candidate.startsWith(prefix) && candidate.endsWith(suffix));
@@ -184,7 +196,7 @@ test("malformed optional observer metadata cannot break child execution", { skip
 	tab.finish("completed");
 	await waitForFile(capture);
 	const args = JSON.parse(fs.readFileSync(capture, "utf-8")) as string[];
-	assert.equal(args[args.indexOf("--title") + 1], "subagent · subagent · 1");
+	assert.equal(args[args.indexOf("--title") + 1], "subagents · subagent · 1");
 	removeProgressFiles("run-0-");
 });
 
@@ -237,13 +249,21 @@ test("enabled tabs use a worktree sequence and successful Pi sessions get cleanu
 	const args = JSON.parse(fs.readFileSync(capture, "utf-8")) as string[];
 	assert.deepEqual(args.slice(0, 2), ["terminal", "create"]);
 	assert.equal(args[args.indexOf("--worktree") + 1], `path:${path.resolve(dir)}`);
-	assert.equal(args[args.indexOf("--title") + 1], "subagent · worker · 1");
+	assert.equal(args[args.indexOf("--title") + 1], "subagents · worker · 1");
 	const viewer = args[args.indexOf("--command") + 1];
 	assert.ok(viewer.includes(process.execPath));
 	assert.doesNotMatch(viewer, /(?:^|;)\s*exec\s/);
 	assert.doesNotMatch(viewer, /(?:&|;)\s*exit(?:\s|$)/);
 
 	const progressDir = path.join(TEMP_ROOT_DIR, "orca-progress");
+	const manifestDir = path.join(dir, ".pi", "subagents", "views", "orca");
+	const manifestName = fs.readdirSync(manifestDir).find((name) => name.startsWith(`${runId}-2-`) && name.endsWith(".json"));
+	assert.ok(manifestName);
+	const manifest = await readManifestWithState(path.join(manifestDir, manifestName), "open");
+	assert.equal(manifest.kind, "orca-observer-view");
+	assert.equal(manifest.role, "run");
+	assert.equal(manifest.title, "subagents · worker · 1");
+	assert.equal(manifest.state, "open");
 	const log = fs.readdirSync(progressDir).find((name) => name.startsWith(`${runId}-2-`) && name.endsWith(".log"));
 	assert.ok(log);
 	const text = fs.readFileSync(path.join(progressDir, log), "utf-8");
@@ -251,7 +271,7 @@ test("enabled tabs use a worktree sequence and successful Pi sessions get cleanu
 	assert.match(text, /› read: README\.md/);
 	assert.match(text, /done output/);
 	const quotedSessionFile = `'${fs.realpathSync(sessionFile).replace(/'/g, `'"'"'`)}'`;
-	assert.ok(text.includes(`completed. To remove the Pi session of this subagent, run rm -- ${quotedSessionFile}`));
+	assert.ok(text.includes(`completed. To remove the Pi session for this run, run rm -- ${quotedSessionFile}`));
 	assert.doesNotMatch(text, /find ~\/\.pi\/agent\/sessions/);
 
 	const nestedCwd = path.join(dir, "packages", "app");
@@ -269,7 +289,7 @@ test("enabled tabs use a worktree sequence and successful Pi sessions get cleanu
 	secondTab.finish("failed", sessionFile);
 	await waitForFile(secondCapture);
 	const secondArgs = JSON.parse(fs.readFileSync(secondCapture, "utf-8")) as string[];
-	assert.equal(secondArgs[secondArgs.indexOf("--title") + 1], "subagent · worker · 2");
+	assert.equal(secondArgs[secondArgs.indexOf("--title") + 1], "subagents · worker · 2");
 	const secondLog = fs.readdirSync(progressDir).find((name) => name.startsWith(`${runId}-second-0-`) && name.endsWith(".log"));
 	assert.ok(secondLog);
 	const secondText = fs.readFileSync(path.join(progressDir, secondLog), "utf-8");
@@ -368,7 +388,7 @@ test("same-worktree Orca creates wait for the previous numbered tab", { skip: pr
 	assert.ok(second);
 	await waitForFile(secondCapture);
 	const titles = fs.readFileSync(order, "utf-8").trim().split("\n");
-	assert.deepEqual(titles, ["subagent · worker · 1", "subagent · reviewer · 2"]);
+	assert.deepEqual(titles, ["subagents · worker · 1", "subagents · reviewer · 2"]);
 	first.finish("failed");
 	second.finish("failed");
 });
@@ -397,7 +417,7 @@ test("a missing predecessor marker does not delay the next tab", { skip: process
 	await waitForFile(capture);
 	assert.ok(Date.now() - startedAt < 2_000, "a missing predecessor delayed tab creation");
 	const args = JSON.parse(fs.readFileSync(capture, "utf-8")) as string[];
-	assert.equal(args[args.indexOf("--title") + 1], "subagent · worker · 5");
+	assert.equal(args[args.indexOf("--title") + 1], "subagents · worker · 5");
 	tab.finish("failed");
 });
 
@@ -435,12 +455,12 @@ test("queued same-worktree creates start their timeout when the predecessor beco
 	assert.equal(fs.existsSync(overlap), false, "same-worktree Orca create invocations overlapped");
 	const events = fs.readFileSync(order, "utf-8").trim().split("\n");
 	assert.deepEqual(events, [
-		"start subagent · worker · 1",
-		"end subagent · worker · 1",
-		"start subagent · reviewer · 2",
-		"end subagent · reviewer · 2",
-		"start subagent · scout · 3",
-		"end subagent · scout · 3",
+		"start subagents · worker · 1",
+		"end subagents · worker · 1",
+		"start subagents · reviewer · 2",
+		"end subagents · reviewer · 2",
+		"start subagents · scout · 3",
+		"end subagents · scout · 3",
 	]);
 	first.finish("failed");
 	second.finish("failed");

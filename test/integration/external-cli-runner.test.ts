@@ -161,6 +161,6 @@ describe("external CLI async lifecycle", () => {
 		const args = JSON.parse(fs.readFileSync(capture, "utf-8")) as string[];
 		assert.deepEqual(args.slice(0, 2), ["terminal", "create"]);
 		assert.equal(args[args.indexOf("--worktree") + 1], `path:${path.resolve(dir)}`);
-		assert.match(args[args.indexOf("--title") + 1], /subagent · external/);
+		assert.match(args[args.indexOf("--title") + 1], /subagents · external/);
 	});
 });

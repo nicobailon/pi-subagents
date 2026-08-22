@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- Create one passive Orca observer tab per top-level subagent call, with
+  shared chain/parallel progress and project-local observer manifests. Thanks to
+  [@hyein-cbio](https://github.com/hyein-cbio) for #1360.
 - Count Herdr project panes in inline status and report compact Herdr pane
   title suffixes for active subagent work.
 - Let `agentOverrides` set or clear default `output` paths and `defaultReads`, while

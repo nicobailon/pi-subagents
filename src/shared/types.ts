@@ -2002,7 +2002,7 @@ export type FleetKeybindingAction = typeof FLEET_KEYBINDING_ACTIONS[number];
 export type FleetKeybindingsConfig = Partial<Record<FleetKeybindingAction, string[]>>;
 
 export interface OrcaProgressTabsConfig {
-	/** Create one Orca terminal tab per running subagent. Experimental and opt-in. */
+	/** Create one Orca observer tab per top-level subagent call. Experimental and opt-in. */
 	enabled?: boolean;
 }
 

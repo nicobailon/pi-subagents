@@ -1994,21 +1994,8 @@ async function runSingleStep(
 	step: SubagentStep,
 	ctx: SingleStepContext,
 ): Promise<StepResult & { completionGuardTriggered?: boolean }> {
-	if (step.importAsyncRoot) return runSingleStepInner(step, ctx);
-	const orcaProgressTab = createOrcaProgressTab({
-		cwd: step.cwd ?? ctx.cwd,
-		runId: ctx.id,
-		agent: step.agent,
-		index: ctx.flatIndex,
-	});
-	try {
-		const result = await runSingleStepInner(step, { ...ctx, orcaProgressTab });
-		orcaProgressTab?.finish(result.stopped ? "stopped" : result.exitCode === 0 && !result.error ? "completed" : "failed", result.sessionFile);
-		return result;
-	} catch (error) {
-		orcaProgressTab?.finish("failed");
-		throw error;
-	}
+	if (!step.importAsyncRoot) ctx.orcaProgressTab?.section({ agent: step.agent, index: ctx.flatIndex, count: ctx.flatStepCount });
+	return runSingleStepInner(step, ctx);
 }
 
 type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
@@ -2389,6 +2376,19 @@ async function runSubagent(
 			step.processTerminal = { version: 1, state: "pending", runId: id, runnerProcessInstanceId: config.runnerProcessInstanceId };
 		}
 	}
+	const initialAgentLabel = initialStatusSteps.length === 1
+		? initialStatusSteps[0]!.agent
+		: (config.resultMode ?? (flatSteps.length > 1 ? "chain" : "single")) === "parallel"
+			? `parallel:${initialStatusSteps.map((step) => step.agent).join("+")}`
+			: `chain:${initialStatusSteps.map((step) => step.agent).join("->")}`;
+	const orcaProgressTab = flatSteps.every((step) => step.importAsyncRoot) ? undefined : createOrcaProgressTab({
+		cwd,
+		runId: id,
+		agent: initialAgentLabel,
+		index: 0,
+		stepCount: Math.max(initialStatusSteps.length, 1),
+	});
+
 	const statusPayload: RunnerStatusPayload = omitUndefinedProperties({
 		lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 		runId: id,
@@ -3897,6 +3897,7 @@ async function runSubagent(
 					onExternalProcess: (process) => updateExternalProcess(fi, process),
 					onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
 					skipAcceptance: () => timedOut || stopped,
+					orcaProgressTab,
 				}), config.deadlineAt);
 				const taskEndTime = Date.now();
 				const childInterrupted = singleResult.interrupted === true;
@@ -4287,6 +4288,7 @@ async function runSubagent(
 							onExternalProcess: (process) => updateExternalProcess(fi, process),
 							onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
 							skipAcceptance: () => timedOut || stopped,
+							orcaProgressTab,
 						}), config.deadlineAt);
 						if (task.sessionFile) {
 							latestSessionFile = task.sessionFile;
@@ -4610,6 +4612,7 @@ async function runSubagent(
 				onExternalProcess: (process) => updateExternalProcess(flatIndex, process),
 				onExternalJob: (externalJob) => updateExternalJob(flatIndex, externalJob),
 				skipAcceptance: () => timedOut || stopped,
+				orcaProgressTab,
 				}), config.deadlineAt);
 			} catch (error) {
 				if (singleWorktreeSetup) cleanupWorktrees(singleWorktreeSetup);
@@ -5058,6 +5061,7 @@ async function runSubagent(
 		statusPayload.lastUpdate = Date.now();
 	}
 	writeStatusPayload();
+	orcaProgressTab?.finish(statusPayload.state === "complete" ? "completed" : statusPayload.state === "stopped" ? "stopped" : "failed", effectiveSessionFile);
 	appendJsonl(
 		eventsPath,
 		JSON.stringify({

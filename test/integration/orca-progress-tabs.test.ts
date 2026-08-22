@@ -118,7 +118,68 @@ describe("Orca progress-tab observer", () => {
 		const args = JSON.parse(fs.readFileSync(capture, "utf-8")) as string[];
 		assert.deepEqual(args.slice(0, 2), ["terminal", "create"]);
 		assert.equal(args[args.indexOf("--worktree") + 1], `path:${path.resolve(dir)}`);
-		assert.equal(args[args.indexOf("--title") + 1], "subagent · worker · 1");
+		assert.equal(args[args.indexOf("--title") + 1], "subagents · worker · 1");
+	});
+
+	it("uses one observer tab for a background parallel run", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-orca-parallel-"));
+		tempDirs.push(dir);
+		const asyncDir = path.join(dir, "async");
+		const agentDir = path.join(dir, "agent-dir");
+		const captures = path.join(dir, "orca-captures");
+		fs.mkdirSync(asyncDir);
+		fs.mkdirSync(captures);
+		fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
+		fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ orcaProgressTabs: { enabled: true } }));
+		const fakeOrca = writeNodeCommand(dir, "orca", "const fs=require('fs'),path=require('path');const args=process.argv.slice(2);fs.writeFileSync(path.join(process.env.ORCA_TEST_CAPTURE_DIR, process.pid+'.json'),JSON.stringify(args))");
+		const fakePi = writeNodeCommand(dir, "pi", "process.stdout.write(JSON.stringify({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'parallel result'}]}})+'\\n')");
+
+		const resultPath = path.join(dir, "result.json");
+		const configPath = path.join(dir, "config.json");
+		fs.writeFileSync(configPath, JSON.stringify({
+			id: "orca-observer-parallel",
+			sessionId: "session-orca-parallel",
+			steps: [{
+				parallel: [
+					{ agent: "worker", task: "One", systemPrompt: "Use native Pi", systemPromptMode: "replace", inheritProjectContext: false, inheritSkills: false },
+					{ agent: "reviewer", task: "Two", systemPrompt: "Use native Pi", systemPromptMode: "replace", inheritProjectContext: false, inheritSkills: false },
+				],
+				concurrency: 2,
+			}],
+			resultPath,
+			cwd: dir,
+			placeholder: "{previous}",
+			artifactConfig: { enabled: false },
+			asyncDir,
+			resultMode: "parallel",
+		}));
+		const repo = path.resolve(import.meta.dirname, "../..");
+		const exitCode = await runProcess(
+			process.execPath,
+			[path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath],
+			repo,
+			{
+				...process.env,
+				PI_CODING_AGENT_DIR: agentDir,
+				PI_SUBAGENT_ORCA_BINARY: fakeOrca,
+				PI_SUBAGENT_PI_BINARY: fakePi,
+				ORCA_TEST_CAPTURE_DIR: captures,
+			},
+		);
+
+		assert.equal(exitCode, 0);
+		await waitForFileCount(captures, 1);
+		const captureFiles = fs.readdirSync(captures);
+		assert.equal(captureFiles.length, 1);
+		const args = JSON.parse(fs.readFileSync(path.join(captures, captureFiles[0]!), "utf-8")) as string[];
+		assert.equal(args[args.indexOf("--title") + 1], "subagents · parallel-worker-reviewer · 1");
+		const progressDir = path.join(TEMP_ROOT_DIR, "orca-progress");
+		const log = fs.readdirSync(progressDir).find((name) => name.startsWith("orca-observer-parallel-0-") && name.endsWith(".log"));
+		assert.ok(log);
+		const text = fs.readFileSync(path.join(progressDir, log), "utf-8");
+		assert.match(text, /2 children/);
+		assert.match(text, /child 1\/2 · worker/);
+		assert.match(text, /child 2\/2 · reviewer/);
 	});
 
 	it("allocates unique worktree-wide numbers across concurrent processes and nested cwd values", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
@@ -146,7 +207,7 @@ describe("Orca progress-tab observer", () => {
 			const args = JSON.parse(fs.readFileSync(path.join(captures, name), "utf-8")) as string[];
 			return args[args.indexOf("--title") + 1];
 		}).sort((left, right) => Number(left.split(" · ").at(-1)) - Number(right.split(" · ").at(-1)));
-		assert.deepEqual(titles, Array.from({ length: 8 }, (_, index) => `subagent · worker · ${index + 1}`));
+		assert.deepEqual(titles, Array.from({ length: 8 }, (_, index) => `subagents · worker · ${index + 1}`));
 		const createdOrder = fs.readFileSync(orderFile, "utf-8").trim().split("\n");
 		assert.deepEqual(createdOrder, titles);
 	});
