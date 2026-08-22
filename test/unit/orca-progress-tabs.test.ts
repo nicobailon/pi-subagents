@@ -74,13 +74,14 @@ async function waitForFileCount(dir: string, count: number, timeoutMs = 5_000): 
 	}
 }
 
-async function waitForCreateReady(cwd: string, timeoutMs = 5_000): Promise<void> {
+async function waitForCreateReady(cwd: string, count = 1, timeoutMs = 5_000): Promise<void> {
 	const key = createHash("sha256").update(fs.realpathSync(cwd)).digest("hex").slice(0, 20);
 	const root = path.join(TEMP_ROOT_DIR, "orca-progress");
 	const deadline = Date.now() + timeoutMs;
 	while (true) {
-		if (fs.existsSync(root) && fs.readdirSync(root).some((name) => name.startsWith(`create-${key}-`) && name.endsWith(".ready"))) return;
-		if (Date.now() >= deadline) throw new Error(`Timed out waiting for Orca create readiness in ${cwd}`);
+		const ready = fs.existsSync(root) ? fs.readdirSync(root).filter((name) => name.startsWith(`create-${key}-`) && name.endsWith(".ready")).length : 0;
+		if (ready >= count) return;
+		if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${count} Orca create marker(s) in ${cwd}`);
 		await new Promise((resolve) => setTimeout(resolve, 20));
 	}
 }
@@ -688,6 +689,7 @@ test("queued same-worktree creates start their timeout when the predecessor beco
 		"start subagent · scout · 3",
 		"end subagent · scout · 3",
 	]);
+	await waitForCreateReady(dir, 3);
 	first.finish("failed");
 	second.finish("failed");
 	third.finish("failed");
@@ -735,6 +737,7 @@ test("queued tabs defer cleanup until their terminal create settles", { skip: pr
 		assert.equal(fs.existsSync(cleanupLog), false, "cleanup started before queued terminal creation settled");
 		await waitForFile(secondCapture);
 		await waitForFile(cleanupLog);
+		await waitForCreateReady(dir, 2);
 		first.finish("failed");
 	} finally {
 		process.execPath = originalExecPath;
