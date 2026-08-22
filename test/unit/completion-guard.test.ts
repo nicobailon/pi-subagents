@@ -7,6 +7,7 @@ import {
 	evaluateCompletionMutationGuard,
 	expectsImplementationMutation,
 	hasMutationToolCall,
+	validateImplementationToolContract,
 } from "../../src/runs/shared/completion-guard.ts";
 import { isMutatingTool } from "../../src/runs/shared/long-running-guard.ts";
 
@@ -319,6 +320,44 @@ test("worker with mutating-capable tools still triggers when no mutation is obse
 		attemptedMutation: false,
 		triggered: true,
 	});
+});
+
+test("implementation tool contract rejects read-only worker launches", () => {
+	assert.match(
+		validateImplementationToolContract({
+			agent: "worker",
+			task: "Implement the requested source fix",
+			tools: ["read", "grep", "find", "ls", "contact_supervisor"],
+		}) ?? "",
+		/no mutation-capable tools/,
+	);
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Review only and return findings",
+		tools: ["read", "grep", "find", "ls"],
+	}), undefined);
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Implement the requested source fix",
+		tools: ["read", "edit"],
+	}), undefined);
+	assert.match(
+		validateImplementationToolContract({
+			agent: "worker",
+			task: "Implement the requested source fix",
+			tools: ["read", "structured_output"],
+		}) ?? "",
+		/no mutation-capable tools/,
+	);
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Implement the requested source fix",
+		tools: ["read", "/tmp/mutation-tools.ts"],
+	}), undefined);
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Implement the requested source fix",
+	}), undefined);
 });
 
 test("oracle review tasks with bash available do not require mutation", () => {

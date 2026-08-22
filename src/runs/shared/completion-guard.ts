@@ -14,6 +14,7 @@ const READ_ONLY_BUILTIN_TOOLS = new Set([
 	"get_search_content",
 	"intercom",
 	"contact_supervisor",
+	"structured_output",
 ]);
 
 // Cursor native edit/write often land as thinking traces (inactive_trace /
@@ -62,6 +63,17 @@ export function hasMutationToolCapability(tools: string[] | undefined, mcpDirect
 	if ((mcpDirectTools?.length ?? 0) > 0) return true;
 	if (tools === undefined) return true;
 	return !tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool));
+}
+
+export function validateImplementationToolContract(input: {
+	agent: string;
+	task: string;
+	tools?: string[];
+	mcpDirectTools?: string[];
+}): string | undefined {
+	if (hasMutationToolCapability(input.tools, input.mcpDirectTools)) return undefined;
+	if (!expectsImplementationMutation(input.agent, input.task)) return undefined;
+	return `Agent '${input.agent}' was given an implementation task, but its tool allowlist has no mutation-capable tools. Add bash, edit, write, or another mutation-capable tool to the agent, or use a read-only task/agent.`;
 }
 
 function hasCheckpointMutationEvidence(message: Message): boolean {

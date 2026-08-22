@@ -55,7 +55,7 @@ import {
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, resolveToolTimeoutMs, toolTimeoutCallKey, toolTimeoutFromEnv } from "../shared/tool-timeout.ts";
-import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
+import { evaluateCompletionMutationGuard, validateImplementationToolContract } from "../shared/completion-guard.ts";
 import { arbitrateCompletionGuardRescue } from "../shared/llm-intent-arbiter.ts";
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
@@ -390,6 +390,34 @@ async function runSingleAttempt(
 		agentName: agent.name,
 		permissionRules,
 	});
+	const contractTools = toolPlan.explicitToolAllowlist
+		? [...toolPlan.effectiveToolAllowlist, ...toolPlan.configuredExtensions]
+		: undefined;
+	const contractError = validateImplementationToolContract({
+		agent: agent.name,
+		task: shared.originalTask ?? task,
+		tools: contractTools,
+		mcpDirectTools: toolPlan.effectiveMcpTools,
+	});
+	if (contractError) {
+		cleanupTempDir(tempDir);
+		return {
+			index: options.index ?? 0,
+			agent: agent.name,
+			task,
+			messages: [],
+			finalOutput: "",
+			exitCode: 1,
+			error: contractError,
+			usage: emptyUsage(),
+			model: modelArg,
+			modelAttempts: [],
+			attemptedModels: [],
+			progressSummary: { status: "failed", toolCount: 0, tokens: 0, durationMs: 0 },
+			...(toolPlan.capabilityCeiling ? { capabilityCeiling: toolPlan.capabilityCeiling } : {}),
+			...(toolPlan.capabilityAudit ? { capabilityAudit: toolPlan.capabilityAudit } : {}),
+		};
+	}
 	const launchResolvedExtensions = projectLaunchResolvedChildExtensions(toolPlan);
 	const launchContractDigest = launchBindingDigest({
 		definitionDigest: agentDefinitionDigest(agent),

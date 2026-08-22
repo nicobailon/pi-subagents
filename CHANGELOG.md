@@ -12,8 +12,8 @@
 ### Fixed
 - Report helpful workflow errors when `runs.all(...)` results are read as keyed
   objects instead of ordered arrays. Thanks to [@ravshansbox](https://github.com/ravshansbox) for #1351.
-- Fail child launch attempts when the runtime lacks requested core write tools,
-  instead of letting implementation workers continue as read-only runs.
+- Fail child launch attempts when the runtime lacks requested core write tools or
+  an implementation worker has only read-only launch tools.
 - Run public single-child launches directly instead of wrapping them in a workflow,
   so async external-job agents do not show a completed workflow before the real
   provider job finishes.

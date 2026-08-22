@@ -716,6 +716,115 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(readMockPiRequiredTools(mockPi, 0), ["read"]);
 	});
 
+	it("rejects implementation workers without mutation-capable tools before spawn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
+		const id = `async-readonly-worker-contract-${Date.now().toString(36)}`;
+		mockPi.onCall({ output: "should not spawn" });
+		const launch = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Implement the requested source fix",
+			agentConfig: makeAgent("worker", { tools: ["read", "grep", "find", "ls", "contact_supervisor"] }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+
+		assert.equal(launch.isError, true);
+		assert.match(launch.content[0]?.text ?? "", /no mutation-capable tools/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("lets unrestricted implementation workers spawn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const id = `async-unrestricted-worker-contract-${Date.now().toString(36)}`;
+		mockPi.onCall({ output: "implemented" });
+		const launch = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Implement the requested source fix",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+
+		assert.equal(launch.isError, undefined);
+		await waitForAsyncResultFile(id, 10_000);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("rejects implementation workers when a capability ceiling removes mutation tools before spawn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
+		const id = `async-ceiling-readonly-worker-contract-${Date.now().toString(36)}`;
+		mockPi.onCall({ output: "should not spawn" });
+		const launch = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Implement the requested source fix",
+			agentConfig: makeAgent("worker", { tools: ["read", "write"] }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+			acceptance: false,
+			capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["test"] },
+		});
+
+		assert.equal(launch.isError, true);
+		assert.match(launch.content[0]?.text ?? "", /no mutation-capable tools/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("rejects workflow implementation workers without mutation-capable tools before spawn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
+		const id = `async-workflow-readonly-worker-contract-${Date.now().toString(36)}`;
+		mockPi.onCall({ output: "should not spawn" });
+		const launch = executeAsyncChain(id, {
+			chain: [{ agent: "worker", task: "Implement the requested source fix" }],
+			resultMode: "chain",
+			agents: [makeAgent("worker", { tools: ["read", "grep", "find", "ls", "contact_supervisor"] })],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+
+		assert.equal(launch.isError, true);
+		assert.match(launch.content[0]?.text ?? "", /no mutation-capable tools/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("rejects workflow read-only workers after previous-output templates resolve to implementation tasks", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const id = `async-workflow-resolved-readonly-worker-contract-${Date.now().toString(36)}`;
+		mockPi.onCall({ output: "Implement the requested source fix" });
+		mockPi.onCall({ output: "should not spawn" });
+		const launch = executeAsyncChain(id, {
+			chain: [
+				{ agent: "producer", task: "Return the next instruction" },
+				{ agent: "worker", task: "{previous}" },
+			],
+			resultMode: "chain",
+			agents: [
+				makeAgent("producer", { completionGuard: false }),
+				makeAgent("worker", { tools: ["read", "grep", "find", "ls", "contact_supervisor"] }),
+			],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+
+		assert.equal(launch.isError, undefined);
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, false);
+		assert.match(payload.results[1]?.error ?? "", /no mutation-capable tools/);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
 	it("background parallel groups report usage budget state and block queued children", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "first async result" });
 		const id = `async-usage-budget-${Date.now().toString(36)}`;

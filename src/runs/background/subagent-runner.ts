@@ -99,7 +99,7 @@ import { createOwnedProcessTreeController, type OwnedProcessTreeController } fro
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, updateSteeringTarget } from "./steering.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
-import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
+import { evaluateCompletionMutationGuard, validateImplementationToolContract } from "../shared/completion-guard.ts";
 import {
 	createMutatingFailureState,
 	didMutatingToolFail,
@@ -1279,6 +1279,41 @@ async function runSingleStepInner(
 	let task = step.task.replace(placeholderRegex, () => ctx.previousOutput);
 	if (ctx.outputs) task = resolveOutputReferences(task, ctx.outputs);
 	const taskForCompletionGuard = task;
+	let resolvedTaskToolPlan: ReturnType<typeof resolvePiLaunchToolPlan> | undefined;
+	if (!step.runner) {
+		resolvedTaskToolPlan = resolvePiLaunchToolPlan(omitUndefinedProperties({
+			tools: step.tools,
+			extensions: step.extensions,
+			subagentOnlyExtensions: step.subagentOnlyExtensions,
+			mcpDirectTools: step.mcpDirectTools,
+			cwd: step.cwd ?? ctx.cwd,
+			requireReadTool: Boolean(step.skills?.length),
+			structuredOutput: Boolean(effectiveStructuredOutput),
+			capabilityCeiling: step.capabilityCeiling ?? ctx.capabilityCeiling,
+			inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
+			permissionRules: step.permissionRules,
+		}));
+		const contractTools = resolvedTaskToolPlan.explicitToolAllowlist
+			? [...resolvedTaskToolPlan.effectiveToolAllowlist, ...resolvedTaskToolPlan.configuredExtensions]
+			: undefined;
+		const contractError = validateImplementationToolContract({
+			agent: step.agent,
+			task: taskForCompletionGuard,
+			tools: contractTools,
+			mcpDirectTools: resolvedTaskToolPlan.effectiveMcpTools,
+		});
+		if (contractError) {
+			return omitUndefinedProperties({
+				agent: step.agent,
+				context: step.context,
+				output: contractError,
+				error: contractError,
+				exitCode: 1,
+				capabilityCeiling: resolvedTaskToolPlan.capabilityCeiling,
+				capabilityAudit: resolvedTaskToolPlan.capabilityAudit,
+			});
+		}
+	}
 	if (step.effectiveAcceptance) {
 		const acceptancePrompt = formatAcceptancePrompt(step.effectiveAcceptance, { reportOptional: isAgentContractV1(step.agentContract) });
 		if (acceptancePrompt) task = `${task}\n${acceptancePrompt}`;
@@ -1535,7 +1570,7 @@ async function runSingleStepInner(
 			launchWarningsEmitted = true;
 		}
 		if (step.definitionDigest) {
-			const toolPlan = resolvePiLaunchToolPlan(omitUndefinedProperties({
+			const toolPlan = resolvedTaskToolPlan ?? resolvePiLaunchToolPlan(omitUndefinedProperties({
 				tools: step.tools,
 				extensions: step.extensions,
 				subagentOnlyExtensions: step.subagentOnlyExtensions,

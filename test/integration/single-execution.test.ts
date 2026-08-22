@@ -3664,9 +3664,18 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 	});
 
+	it("rejects implementation runs without mutation-capable tools before spawn", async () => {
+		mockPi.onCall({ output: "should not spawn" });
+		const agents = [makeAgent("worker", { tools: ["read", "grep", "find", "ls", "contact_supervisor"] })];
 
+		const result = await runSync(tempDir, agents, "worker", "Implement the approved file changes", {
+			runId: "readonly-contract-run",
+		});
 
-
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /no mutation-capable tools/);
+		assert.equal(mockPi.callCount(), 0);
+		});
 
 	it("fails implementation runs that complete without mutation attempts", async () => {
 		mockPi.onCall({ output: "Validation:\nlet rawFilename = params.filename.trim();" });

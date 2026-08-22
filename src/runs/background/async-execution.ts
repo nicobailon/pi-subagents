@@ -34,6 +34,7 @@ import { ChainOutputValidationError, validateChainOutputBindings } from "../shar
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { resolveEffectiveAcceptance, validateAcceptanceInput, validateExecutionAcceptance } from "../shared/acceptance.ts";
 import { createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
+import { validateImplementationToolContract } from "../shared/completion-guard.ts";
 import {
 	type AcceptanceInput,
 	type AgentContract,
@@ -823,6 +824,18 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		if (externalRunner && permissionRules) {
 			throw new AsyncStartValidationError(`Agent '${a.name}' uses runner.type='${externalRunnerType}', which cannot enforce native Pi child permission rules.`);
 		}
+		if (!externalRunner) {
+			const contractTools = toolPlan.explicitToolAllowlist
+				? [...toolPlan.effectiveToolAllowlist, ...toolPlan.configuredExtensions]
+				: undefined;
+			const contractError = validateImplementationToolContract({
+				agent: a.name,
+				task,
+				tools: contractTools,
+				mcpDirectTools: toolPlan.effectiveMcpTools,
+			});
+			if (contractError) throw new AsyncStartValidationError(contractError);
+		}
 		return {
 			parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
 			permissionRules,
@@ -1480,6 +1493,18 @@ export function executeAsyncSingle(
 		permissionRules: resolvePermissionRules(ctx.permissions, agentConfig.permissions),
 	});
 	const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
+	if (!externalRunner) {
+		const contractTools = toolPlan.explicitToolAllowlist
+			? [...toolPlan.effectiveToolAllowlist, ...toolPlan.configuredExtensions]
+			: undefined;
+		const contractError = validateImplementationToolContract({
+			agent: agentConfig.name,
+			task: taskText,
+			tools: contractTools,
+			mcpDirectTools: toolPlan.effectiveMcpTools,
+		});
+		if (contractError) return formatAsyncStartError("single", contractError);
+	}
 	const launchContractDigest = launchBindingDigest({
 		definitionDigest: agentDefinitionDigest(agentConfig),
 		task,
