@@ -164,6 +164,17 @@ Nested fanout status is stored as compact sidecar event/registry metadata and me
 
 Consumers should read these JSON files instead of scraping terminal output. Unknown fields and event types should be ignored for forward compatibility.
 
+RPC hosts that need low-latency child-stop UI hints can subscribe to the
+`subagent:child-status` event advertised by RPC `ping` as `events.childStatus`.
+The payload uses `type: "subagent.child-status"`, `version: 1`, `runId`,
+`childId`, `status` (`"stopping"` or `"stopped"`), `ts`, and optional child
+metadata such as `stepIndex`, `agent`, `childRunId`, `workflowKey`, `phase`, and
+`label`. These events are observer hints only. They can duplicate across RPC and
+async replay paths, and they are not replayed after a host restart. Status
+snapshots remain authoritative for recovery and final state. Child stop control
+still uses the normal `stop` request with `childId`; there is no separate child
+stop API.
+
 ### Status and result fields
 
 The status/result fields are: `lifecycleArtifactVersion`, `runId`/`id`, `sessionId`, `mode`, `state`, `startedAt`, `lastUpdate`, `endedAt`, `durationMs`, `cwd`, `asyncDir`, `sessionFile`, `outputFile`, `workflowGraph`, `steps`, `results`, `totalTokens`, `totalCost`, `model`/`attemptedModels`/`modelAttempts`, `toolCount`, `turnCount`, optional `launchResolvedExtensions`, optional `runtimeAcknowledgedExtensions`, and nested `children` when a child is allowed to launch subagents.

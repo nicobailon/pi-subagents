@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { getArtifactsDir } from "../../src/shared/artifacts.ts";
+import { SUBAGENT_CHILD_STATUS_EVENT } from "../../src/shared/types.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { SubagentFleetComponent } from "../../src/tui/fleet.ts";
 import { createNestedRoute } from "../../src/runs/shared/nested-events.ts";
@@ -1605,6 +1606,64 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.ok(controlEvent);
 			assert.match((controlEvent.data as { noticeText?: string }).noticeText ?? "", /subagent-worker-run-3-1/);
 			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-intercom"), true);
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("bridges async child status events from events.jsonl to the parent event bus", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-");
+		try {
+			const runDir = path.join(asyncRoot, "run-child-status");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "run-child-status",
+				mode: "parallel",
+				state: "running",
+				startedAt: Date.now() - 1000,
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running", workflowKey: "slow" }],
+			}), "utf-8");
+			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
+				type: "subagent.child-status",
+				version: 1,
+				runId: "run-child-status",
+				childId: "slow",
+				status: "stopped",
+				ts: 123,
+				reason: "user",
+				stepIndex: 0,
+				agent: "worker",
+				workflowKey: "slow",
+			})}\n`, "utf-8");
+
+			const state = createState();
+			const recorder = createEventRecorder();
+			const tracker = createTracker(recorder.pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+			});
+			tracker.handleStarted({ id: "run-child-status", asyncDir: runDir, agent: "workflow" });
+
+			await waitForCondition(
+				() => recorder.events.some((event) => event.channel === SUBAGENT_CHILD_STATUS_EVENT),
+				"child status event",
+			);
+
+			const event = recorder.events.find((entry) => entry.channel === SUBAGENT_CHILD_STATUS_EVENT)!;
+			assert.deepEqual(event.data, {
+				type: "subagent.child-status",
+				version: 1,
+				runId: "run-child-status",
+				childId: "slow",
+				status: "stopped",
+				ts: 123,
+				reason: "user",
+				source: "async",
+				asyncDir: runDir,
+				stepIndex: 0,
+				agent: "worker",
+				workflowKey: "slow",
+			});
 		} finally {
 			removeTempDir(asyncRoot);
 		}

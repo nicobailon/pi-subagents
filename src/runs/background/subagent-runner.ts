@@ -48,6 +48,7 @@ import {
 	type SteeringStatus,
 	type SteeringTargetState,
 	type SteeringTargetStatus,
+	type SubagentChildStatusEvent,
 	DEFAULT_MAX_OUTPUT,
 	type MaxOutputConfig,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
@@ -2612,6 +2613,29 @@ async function runSubagent(
 		writeStatusPayload();
 	};
 	const childStopTargetId = (index: number): string => asyncStatusChildIdentity(requiredStatusStep(statusPayload, index), index);
+	const appendChildStatusEvent = (index: number, childId: string, status: "stopping" | "stopped", now = Date.now()): void => {
+		const step = requiredStatusStep(statusPayload, index);
+		appendJsonl(eventsPath, JSON.stringify({
+			type: "subagent.child-status",
+			version: 1,
+			ts: now,
+			runId: id,
+			childId,
+			status,
+			reason: "user",
+			source: "async",
+			stepIndex: index,
+			agent: step.agent,
+			...(step.runId ? { childRunId: step.runId } : {}),
+			...(step.workflowKey ? { workflowKey: step.workflowKey } : {}),
+			...(step.phase ? { phase: step.phase } : {}),
+			...(step.label ? { label: step.label } : {}),
+		} satisfies SubagentChildStatusEvent));
+	};
+	const appendTerminalChildStatusEvent = (index: number, now = Date.now()): void => {
+		const request = childStopRequests.get(index);
+		if (request) appendChildStatusEvent(index, request.childId, "stopped", now);
+	};
 	const markChildStopRequested = (index: number, childId: string, now = Date.now()): boolean => {
 		const step = statusPayload.steps[index];
 		if (!step || (step.status !== "pending" && step.status !== "running")) return false;
@@ -2622,6 +2646,7 @@ async function runSubagent(
 		statusPayload.lastUpdate = now;
 		writeStatusPayload();
 		appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.stop_requested", ts: now, runId: id, stepIndex: index, childId, agent: step.agent }));
+		appendChildStatusEvent(index, childId, "stopping", now);
 		return true;
 	};
 	const markChildStopped = (index: number, now = Date.now()): void => {
@@ -2639,7 +2664,9 @@ async function runSubagent(
 		step.lastActivityAt = now;
 		statusPayload.lastUpdate = now;
 		writeStatusPayload();
-		appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.stopped", ts: now, runId: id, stepIndex: index, childId: childStopRequests.get(index)?.childId ?? childStopTargetId(index), agent: step.agent, exitCode: 1, durationMs: step.durationMs }));
+		const childId = childStopRequests.get(index)?.childId ?? childStopTargetId(index);
+		appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.stopped", ts: now, runId: id, stepIndex: index, childId, agent: step.agent, exitCode: 1, durationMs: step.durationMs }));
+		appendChildStatusEvent(index, childId, "stopped", now);
 	};
 	const childStopResult = (index: number, agent: string, context?: "fresh" | "fork"): SingleStepResult => {
 		markChildStopped(index);
@@ -4010,12 +4037,13 @@ async function runSubagent(
 				statusPayload.lastUpdate = taskEndTime;
 				writeStatusPayload();
 				appendCapabilityCeilingAppliedEvent(eventsPath, id, fi, task.agent, singleResult);
-				appendJsonl(eventsPath, JSON.stringify({
-					type: stopped || childStopped ? "subagent.step.stopped" : timedOut ? "subagent.step.failed" : childInterrupted ? "subagent.step.paused" : singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
-					ts: taskEndTime, runId: id, stepIndex: fi, agent: task.agent,
-					exitCode: stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode, durationMs: taskEndTime - taskStartTime,
-				}));
-				if (singleResult.exitCode !== 0 && failFast && !childStopped) aborted = true;
+		appendJsonl(eventsPath, JSON.stringify({
+			type: stopped || childStopped ? "subagent.step.stopped" : timedOut ? "subagent.step.failed" : childInterrupted ? "subagent.step.paused" : singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
+			ts: taskEndTime, runId: id, stepIndex: fi, agent: task.agent,
+			exitCode: stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode, durationMs: taskEndTime - taskStartTime,
+		}));
+		if (stopped || childStopped) appendTerminalChildStatusEvent(fi, taskEndTime);
+		if (singleResult.exitCode !== 0 && failFast && !childStopped) aborted = true;
 				return stopped || childStopped ? { ...singleResult, output: stopMessage, error: stopMessage, exitCode: 1, interrupted: false, timedOut: false, stopped: true, skipped: false } : timedOut ? { ...singleResult, output: timeoutMessage ?? "Subagent timed out.", error: timeoutMessage ?? "Subagent timed out.", exitCode: 1, interrupted: false, timedOut: true, skipped: false } : { ...singleResult, skipped: false };
 			}, globalSemaphore);
 
@@ -4413,6 +4441,7 @@ async function runSubagent(
 							ts: taskEndTime, runId: id, stepIndex: fi, agent: task.agent,
 							exitCode: stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode, durationMs: taskDuration,
 						}));
+						if (stopped || childStopped) appendTerminalChildStatusEvent(fi, taskEndTime);
 						if (singleResult.completionGuardTriggered) {
 							const event = buildControlEvent(omitUndefinedProperties({
 								from: requiredStatusStep(statusPayload, fi).activityState,
@@ -4836,6 +4865,7 @@ async function runSubagent(
 				durationMs: stepEndTime - stepStartTime,
 				tokens: stepTokens,
 			}));
+			if (stopped || childStopped) appendTerminalChildStatusEvent(flatIndex, stepEndTime);
 			if (singleWorktreeSetup && !singleResult.detached) {
 				const diffs = diffWorktrees(singleWorktreeSetup, [seqStep.agent], path.join(asyncDir, "worktree-diffs", `step-${stepIndex}`));
 				const diffSummary = formatWorktreeDiffSummary(diffs);

@@ -155,6 +155,7 @@ import {
 	type ResolvedToolBudget,
 	type RunFanoutBudgetDescriptor,
 	type SingleResult,
+	type SubagentChildStatusEvent,
 	type ToolBudgetConfig,
 	type TurnBudgetConfig,
 	type UsageBudgetConfig,
@@ -4432,6 +4433,23 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								status.steps?.push(step);
 								workflowSteps.set(entry.key, step);
 							}
+							const projectedStep = workflowSteps.get(entry.key);
+							if (entry.state === "stopped" && projectedStep) {
+								appendWorkflowEvent({
+									type: "subagent.child-status",
+									version: 1,
+									childId: entry.key,
+									status: "stopped",
+									reason: "user",
+									source: "async",
+									stepIndex: status.steps?.indexOf(projectedStep),
+									agent: projectedStep.agent,
+									...(projectedStep.runId ? { childRunId: projectedStep.runId } : {}),
+									workflowKey: entry.key,
+									...(projectedStep.phase ? { phase: projectedStep.phase } : {}),
+									...(projectedStep.label ? { label: projectedStep.label } : {}),
+								});
+							}
 						}
 						projectedTraceLength = trace.length;
 						projectedTraceTail = trace.at(-1);
@@ -5211,16 +5229,38 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const workflowController = targetRunId ? deps.state.workflowControllers?.get(targetRunId) : undefined;
 				if (workflowController) {
 					if (paramsWithResolvedCwd.childId !== undefined) {
-						const asyncJob = deps.state.asyncJobs.get(targetRunId!);
-						const status = asyncJob?.asyncDir ? readStatus(asyncJob.asyncDir) : undefined;
-						if (!status) return { content: [{ type: "text", text: `Status file not found for async workflow '${targetRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
+						const workflowRunId = targetRunId!;
+						const asyncJob = deps.state.asyncJobs.get(workflowRunId);
+						if (!asyncJob?.asyncDir) return { content: [{ type: "text", text: `Status file not found for async workflow '${workflowRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
+						const status = readStatus(asyncJob.asyncDir);
+						if (!status) return { content: [{ type: "text", text: `Status file not found for async workflow '${workflowRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
 						const resolution = resolveAsyncStatusChild(status, paramsWithResolvedCwd.childId);
 						if (!resolution.ok) return { content: [{ type: "text", text: resolution.message }], isError: true, details: { mode: "management", results: [] } };
 						if (!isStoppableAsyncStatusStep(resolution.child.step)) return { content: [{ type: "text", text: `Child '${paramsWithResolvedCwd.childId}' in async run '${targetRunId}' is ${resolution.child.step.status}; stop only supports pending or running children.` }], isError: true, details: { mode: "management", results: [] } };
 						const stopChild = deps.state.workflowChildStops?.get(targetRunId!);
 						if (!stopChild) return { content: [{ type: "text", text: `Workflow ${targetRunId} child stop is unavailable in this extension runtime.` }], isError: true, details: { mode: "management", results: [] } };
-						if (!stopChild(resolution.child.id)) return { content: [{ type: "text", text: `Child '${paramsWithResolvedCwd.childId}' in workflow ${targetRunId} is not available to stop.` }], isError: true, details: { mode: "management", results: [] } };
-						return { content: [{ type: "text", text: `Stop requested for child ${resolution.child.id} in async workflow ${targetRunId}.` }], details: { mode: "management", results: [] } };
+						if (!stopChild(resolution.child.id)) return { content: [{ type: "text", text: `Child '${paramsWithResolvedCwd.childId}' in workflow ${workflowRunId} is not available to stop.` }], isError: true, details: { mode: "management", results: [] } };
+						try {
+							fs.appendFileSync(path.join(asyncJob.asyncDir, "events.jsonl"), `${JSON.stringify({
+								type: "subagent.child-status",
+								version: 1,
+								runId: workflowRunId,
+								childId: resolution.child.id,
+								status: "stopping",
+								ts: Date.now(),
+								reason: "user",
+								source: "async",
+								stepIndex: resolution.child.index,
+								agent: resolution.child.step.agent,
+								...(resolution.child.step.runId ? { childRunId: resolution.child.step.runId } : {}),
+								...(resolution.child.step.workflowKey ? { workflowKey: resolution.child.step.workflowKey } : {}),
+								...(resolution.child.step.phase ? { phase: resolution.child.step.phase } : {}),
+								...(resolution.child.step.label ? { label: resolution.child.step.label } : {}),
+							} satisfies SubagentChildStatusEvent)}\n`, "utf-8");
+						} catch (error) {
+							console.error(`Failed to append child status event for workflow ${workflowRunId}:`, error);
+						}
+						return { content: [{ type: "text", text: `Stop requested for child ${resolution.child.id} in async workflow ${workflowRunId}.` }], details: { mode: "management", results: [] } };
 					}
 					workflowController.abort(new Error("Workflow stopped by user."));
 					return { content: [{ type: "text", text: `Stop requested for async workflow ${targetRunId}.` }], details: { mode: "management", results: [] } };

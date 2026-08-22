@@ -137,7 +137,14 @@ Stop a current-session top-level async run with `stop` (or `/subagents-stop`). S
 
 ```typescript
 subagent({ action: "stop", id: "run-id" })
+subagent({ action: "stop", id: "run-id", childId: "child-id" })
 ```
+
+Use `childId` only for active async/workflow runs whose status snapshot shows a
+matching child. Observer hosts can listen for the advertised
+`subagent:child-status` event to update child-stop UI quickly, but status
+snapshots remain the source of truth after reconnects or duplicate event
+delivery.
 
 Use `steer` for top-level live async guidance and `resume` after a delegated run pauses or finishes. Routed nested runs retain their existing non-destructive live follow-up path:
 

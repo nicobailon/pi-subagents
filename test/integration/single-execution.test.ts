@@ -1479,6 +1479,12 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(payload.stopped, undefined);
 		assert.equal(payload.results?.find((entry) => entry.workflowKey === "slow")?.stopped, true);
 		assert.equal(payload.results?.find((entry) => entry.workflowKey === "fast")?.success, true);
+		const childStatusEvents = fs.readFileSync(path.join(started.details.asyncDir, "events.jsonl"), "utf-8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as { type?: string; childId?: string; status?: string });
+		assert.ok(childStatusEvents.some((event) => event.type === "subagent.child-status" && event.childId === "slow" && event.status === "stopping"));
+		assert.ok(childStatusEvents.some((event) => event.type === "subagent.child-status" && event.childId === "slow" && event.status === "stopped"));
 		fs.rmSync(started.details.asyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		fs.rmSync(resultPath, { force: true });
 	});

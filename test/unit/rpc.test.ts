@@ -13,7 +13,7 @@ import {
 	subagentRpcReplyEvent,
 	type SubagentRpcReplyEnvelope,
 } from "../../src/extension/rpc.ts";
-import type { Details, SubagentState } from "../../src/shared/types.ts";
+import { SUBAGENT_CHILD_STATUS_EVENT, type Details, type SubagentChildStatusEvent, type SubagentState } from "../../src/shared/types.ts";
 
 class FakeEvents {
 	readonly emitted: Array<{ event: string; data: unknown }> = [];
@@ -88,6 +88,10 @@ describe("subagent extension RPC bridge", () => {
 		assert.equal(
 			(reply as { data: { events?: { asyncComplete?: string } } }).data.events?.asyncComplete,
 			"subagent:async-complete",
+		);
+		assert.equal(
+			(reply as { data: { events?: { childStatus?: string } } }).data.events?.childStatus,
+			SUBAGENT_CHILD_STATUS_EVENT,
 		);
 		assert.equal(
 			(reply as { data: { capabilities?: { nonRecoveringSteer?: boolean } } }).data.capabilities?.nonRecoveringSteer,
@@ -767,6 +771,21 @@ describe("subagent extension RPC bridge", () => {
 			assert.equal((reply as { data: { childId?: string } }).data.childId, "review");
 			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
 			assert.deepEqual(consumeStopRequestPayload(asyncDir), { type: "stop", ts: 150, source: "rpc-stop", targetIndex: 1, childId: "review" });
+			const childStatus = events.emitted.find((entry) => entry.event === SUBAGENT_CHILD_STATUS_EVENT)?.data as SubagentChildStatusEvent | undefined;
+			assert.deepEqual(childStatus, {
+				type: "subagent.child-status",
+				version: 1,
+				runId: "run-stop-child",
+				childId: "review",
+				status: "stopping",
+				ts: 150,
+				reason: "user",
+				source: "rpc",
+				asyncDir,
+				stepIndex: 1,
+				agent: "slow",
+				workflowKey: "review",
+			});
 
 			bridge.dispose();
 		} finally {
@@ -812,6 +831,12 @@ describe("subagent extension RPC bridge", () => {
 			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
 			assert.deepEqual(calls, [{ childId: "slow", message: "Workflow child 'slow' stopped by RPC." }]);
 			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), false);
+			const childStatus = events.emitted.find((entry) => entry.event === SUBAGENT_CHILD_STATUS_EVENT)?.data as SubagentChildStatusEvent | undefined;
+			assert.equal(childStatus?.runId, "workflow-stop-child");
+			assert.equal(childStatus?.childId, "slow");
+			assert.equal(childStatus?.status, "stopping");
+			assert.equal(childStatus?.source, "rpc");
+			assert.equal(childStatus?.workflowKey, "slow");
 
 			bridge.dispose();
 		} finally {

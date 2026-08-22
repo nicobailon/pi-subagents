@@ -1851,8 +1851,27 @@ export const SUBAGENT_FOREGROUND_COMPLETE_EVENT = "subagent:foreground-complete"
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 export const SUBAGENT_CONTROL_INTERCOM_EVENT = "subagent:control-intercom";
 export const SUBAGENT_STEERING_NOTICE_EVENT = "subagent:steering-notice";
+export const SUBAGENT_CHILD_STATUS_EVENT = "subagent:child-status";
 export const SUBAGENT_RESULT_INTERCOM_EVENT = "subagent:result-intercom";
 export const SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT = "subagent:result-intercom-delivery";
+
+export interface SubagentChildStatusEvent {
+	type: "subagent.child-status";
+	version: 1;
+	runId: string;
+	childId: string;
+	status: "stopping" | "stopped";
+	ts: number;
+	reason?: string;
+	source?: "rpc" | "async";
+	asyncDir?: string;
+	stepIndex?: number;
+	agent?: string;
+	childRunId?: string;
+	workflowKey?: string;
+	phase?: string;
+	label?: string;
+}
 
 // ============================================================================
 // Execution Options
