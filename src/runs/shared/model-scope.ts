@@ -187,11 +187,18 @@ export function parseModelScopeConfig(
 			const name = rawName.trim();
 			const field = `modelScope.agents.${name}`;
 			if (!name) throw new Error(`Subagent settings in '${meta.filePath}' have invalid 'modelScope.agents' key; expected a non-empty agent name.`);
+			if (Object.prototype.hasOwnProperty.call(agents, name)) {
+				throw new Error(`Subagent settings in '${meta.filePath}' have duplicate canonical '${field}' entries.`);
+			}
 			const agentInput = assertRecord(rawScope, field, meta);
 			if ("agents" in agentInput) {
 				throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${field}.agents'; nested agent scopes are not supported.`);
 			}
-			agents[name] = parseScopeRule(agentInput, field, meta);
+			const rule = parseScopeRule(agentInput, field, meta);
+			if (rule.enforce === true && !rule.allow?.length) {
+				throw new Error(`Subagent settings in '${meta.filePath}' set ${field}.enforce without a non-empty '${field}.allow' list.`);
+			}
+			agents[name] = rule;
 		}
 		config.agents = agents;
 	}

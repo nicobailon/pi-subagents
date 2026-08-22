@@ -3434,6 +3434,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			context: data.contextPolicy.contextForAgent(params.agent!),
 			runFanoutBudget: params.runFanoutAdmitted ? data.runFanoutBudget : { ...data.runFanoutBudget, parentPath: `${data.runFanoutBudget.parentPath ? `${data.runFanoutBudget.parentPath}/` : ""}single` },
 			cwd: singleCwd,
+			orcaCwd: ctx.cwd,
 			signal,
 			interruptSignal: interruptController.signal,
 			allowIntercomDetach: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,

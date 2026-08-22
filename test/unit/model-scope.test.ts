@@ -193,6 +193,11 @@ describe("parseModelScopeConfig", () => {
 		assert.throws(() => parseModelScopeConfig({ enforce: true, agents: { worker: [] } }, meta), /modelScope\.agents\.worker/);
 		assert.throws(() => parseModelScopeConfig({ agents: { worker: { allow: [] } } }, meta), /modelScope\.agents\.worker\.allow/);
 		assert.throws(() => parseModelScopeConfig({ agents: { worker: { agents: {} } } }, meta), /modelScope\.agents\.worker\.agents/);
+		assert.throws(() => parseModelScopeConfig({ agents: { worker: { enforce: true } } }, meta), /modelScope\.agents\.worker\.enforce.*allow/);
+		assert.throws(
+			() => parseModelScopeConfig({ agents: { worker: { allow: ["openai/*"] }, " worker ": { allow: ["anthropic/*"] } } }, meta),
+			/duplicate canonical 'modelScope\.agents\.worker'/,
+		);
 		assert.throws(() => parseModelScopeConfig({ agents: { " ": { allow: ["inherit"] } } }, meta), /non-empty agent name/);
 	});
 });

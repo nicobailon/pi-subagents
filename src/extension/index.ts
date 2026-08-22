@@ -44,6 +44,7 @@ import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
 import { registerHerdrStatusBridge, type HerdrStatusRun } from "../integrations/herdr-status.ts";
 import { listHerdrProjectPaneRoots, restoreHerdrProjectPaneSnapshots } from "../inspectors/herdr/project-panes.ts";
+import { ensureOrcaParentProgressTab, finishOrcaParentProgressTabs, recordOrcaParentResult } from "../runs/shared/orca-progress-tabs.ts";
 import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { inspectSubagentStatus } from "../runs/background/run-status.ts";
@@ -758,6 +759,31 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	const asyncCompleteHandler = (payload: unknown) => {
 		handleComplete(payload);
+		if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+			const completion = payload as Record<string, unknown>;
+			const completionSessionId = typeof completion.sessionId === "string" ? completion.sessionId : undefined;
+			const completionResult = Array.isArray(completion.results)
+				? completion
+				: {
+					...completion,
+					results: [{
+						agent: completion.agent,
+						runId: completion.runId ?? completion.id,
+						exitCode: completion.exitCode ?? (completion.success === true ? 0 : 1),
+						finalOutput: completion.summary,
+						error: completion.error,
+						sessionFile: completion.sessionFile,
+						artifactPaths: completion.artifactPaths,
+					}],
+				};
+			void recordOrcaParentResult({
+				sessionId: completionSessionId,
+				sessionFile: completionSessionId && completionSessionId === state.currentSessionId ? state.parentSessionFile ?? undefined : undefined,
+				toolCallId: `async:${String(completion.runId ?? completion.id ?? Date.now())}`,
+				details: completionResult,
+				isError: completion.success === false,
+			});
+		}
 		refreshResultDelivery();
 		refreshActiveAsyncCapacity();
 		scheduledRunManager.handleAsyncCompletion(payload);
@@ -776,8 +802,29 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		rpcBridge.dispose,
 	];
 
+	pi.on("tool_call", (event, ctx) => {
+		if (event.toolName !== "subagent") return;
+		const input = event.input && typeof event.input === "object" && !Array.isArray(event.input)
+			? event.input as Record<string, unknown>
+			: {};
+		if (typeof input.action === "string") return;
+		ensureOrcaParentProgressTab({
+			cwd: ctx.cwd,
+			batchId: event.toolCallId,
+			sessionId: ctx.sessionManager.getSessionId() ?? undefined,
+			sessionFile: ctx.sessionManager.getSessionFile() ?? undefined,
+		});
+	});
+
 	pi.on("tool_result", (event, ctx) => {
 		if (event.toolName !== "subagent") return;
+		void recordOrcaParentResult({
+			sessionId: ctx.sessionManager.getSessionId() ?? undefined,
+			sessionFile: ctx.sessionManager.getSessionFile() ?? undefined,
+			toolCallId: event.toolCallId,
+			details: event.details,
+			isError: event.isError,
+		});
 		if (!ctx.hasUI) return;
 		state.lastUiContext = ctx;
 		restoreActiveJobs(ctx);
@@ -1016,8 +1063,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		supervisorChannel.activateTransport();
 	});
 
-	pi.on("session_shutdown", async () => {
+	pi.on("session_shutdown", async (event, ctx) => {
+		const parentFinish = event?.reason !== "reload"
+			? finishOrcaParentProgressTabs({
+				sessionId: ctx?.sessionManager.getSessionId() ?? undefined,
+				sessionFile: ctx?.sessionManager.getSessionFile() ?? undefined,
+			})
+			: Promise.resolve();
 		runtimeEntry.cleanup();
+		await parentFinish;
 		await herdrStatusBridge.flush();
 	});
 }

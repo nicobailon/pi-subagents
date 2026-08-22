@@ -5,7 +5,7 @@ import { afterEach, test } from "node:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createOrcaProgressTab, resolveOrcaCommand, resolvePiSessionId } from "../../src/runs/shared/orca-progress-tabs.ts";
+import { createOrcaProgressTab, ensureOrcaParentProgressTab, finishOrcaParentProgressTabs, recordOrcaParentResult, resolveOrcaCommand, resolvePiSessionId } from "../../src/runs/shared/orca-progress-tabs.ts";
 import { TEMP_ROOT_DIR } from "../../src/shared/types.ts";
 import { writeNodeCommand } from "../support/node-command.ts";
 
@@ -19,7 +19,8 @@ function removeProgressFiles(prefix: string): void {
 	}
 }
 
-afterEach(() => {
+afterEach(async () => {
+	await finishOrcaParentProgressTabs();
 	const progressRoot = path.join(TEMP_ROOT_DIR, "orca-progress");
 	for (const dir of tempDirs.splice(0)) {
 		let scope = path.resolve(dir);
@@ -49,6 +50,16 @@ async function waitForFile(file: string, timeoutMs = 5_000): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (!fs.existsSync(file)) {
 		if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${file}`);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+}
+
+async function waitForLineCount(file: string, count: number, timeoutMs = 5_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (true) {
+		const lines = fs.existsSync(file) ? fs.readFileSync(file, "utf-8").trim().split("\n").filter(Boolean) : [];
+		if (lines.length >= count) return;
+		if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${count} lines in ${file}`);
 		await new Promise((resolve) => setTimeout(resolve, 20));
 	}
 }
@@ -206,75 +217,184 @@ test("disabled Orca progress tabs do not invoke Orca", async () => {
 	assert.equal(fs.existsSync(capture), false);
 });
 
-test("enabled tabs use a worktree sequence and successful Pi sessions get cleanup guidance", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+test("one child opens one sanitized summary tab using its readable transcript", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
 	const dir = tempDir();
 	const capture = path.join(dir, "capture.json");
-	const secondCapture = path.join(dir, "capture-2.json");
 	const fakeOrca = writeCaptureOrca(dir);
 	fs.mkdirSync(path.join(dir, ".git"));
 	const runId = `progress-${Date.now()}`;
+	const sessionId = "019ffd40-4859-7015-94e4-7d15c31885ef";
+	const sessionFile = path.join(dir, `session file's ${sessionId}.jsonl`);
+	fs.writeFileSync(sessionFile, [
+		JSON.stringify({ type: "session", version: 3, id: sessionId }),
+		JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "thinking", thinking: "TOP_SECRET_REASONING" }, { type: "toolCall", name: "find", arguments: { token: "TOP_SECRET_ARGUMENT" } }] } }),
+		JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "session output" }] } }),
+	].join("\n") + "\n");
+	const transcriptPath = path.join(dir, "subagent-artifacts", "run_worker_transcript.jsonl");
+	fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+	fs.writeFileSync(transcriptPath, [
+		...Array.from({ length: 2 }, () => JSON.stringify({ recordType: "tool_start", toolName: "read", argsPayload: "TOP_SECRET_TRANSCRIPT_ARGUMENT" })),
+		JSON.stringify({ recordType: "message", role: "assistant", text: "first thinking-block update" }),
+		...Array.from({ length: 3 }, () => JSON.stringify({ recordType: "tool_start", toolName: "read", argsPayload: "TOP_SECRET_TRANSCRIPT_ARGUMENT" })),
+		...Array.from({ length: 6 }, () => JSON.stringify({ recordType: "tool_start", toolName: "ls", argsPayload: "TOP_SECRET_LIST_ARGUMENT" })),
+		JSON.stringify({ recordType: "message", role: "assistant", text: "child summary output" }),
+	].join("\n") + "\n");
 	const tab = createOrcaProgressTab({
 		cwd: dir,
 		runId,
 		agent: "worker",
-		index: 2,
+		index: 0,
+		transcriptPath,
+		sessionFile,
 		config: { enabled: true },
 		command: fakeOrca,
 		env: { ...process.env, ORCA_TEST_CAPTURE: capture },
 	});
 	assert.ok(tab);
-	tab.append("starting\n");
-	tab.event({ type: "tool_execution_start", toolName: "read", args: { path: "README.md" } });
-	tab.event({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "done output" }] } as never });
-	const sessionId = "019ffd40-4859-7015-94e4-7d15c31885ef";
-	const sessionFile = path.join(dir, `session file's ${sessionId}.jsonl`);
-	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: sessionId })}\n`);
-	assert.equal(resolvePiSessionId(sessionFile), sessionId);
-	assert.equal(resolvePiSessionId(path.join(dir, `missing_${sessionId}.jsonl`)), undefined);
 	tab.finish("completed", sessionFile);
-
 	await waitForFile(capture);
 	const args = JSON.parse(fs.readFileSync(capture, "utf-8")) as string[];
-	assert.deepEqual(args.slice(0, 2), ["terminal", "create"]);
-	assert.equal(args[args.indexOf("--worktree") + 1], `path:${path.resolve(dir)}`);
 	assert.equal(args[args.indexOf("--title") + 1], "subagent · worker · 1");
-	const viewer = args[args.indexOf("--command") + 1];
-	assert.ok(viewer.includes(process.execPath));
-	assert.doesNotMatch(viewer, /(?:^|;)\s*exec\s/);
-	assert.doesNotMatch(viewer, /(?:&|;)\s*exit(?:\s|$)/);
+	const output = await captureCommand(args[args.indexOf("--command") + 1]!, dir);
+	assert.match(output, /tools: 2x read\nfirst thinking-block update/);
+	assert.match(output, /tools: 3x read, 6x ls\nchild summary output/);
+	assert.doesNotMatch(output, /› (?:read|ls)/);
+	assert.match(output, /✓ subagent completed\s*$/);
+	assert.doesNotMatch(output, /mirror source retained|artifact transcript retained|Pi session retained|session output|TOP_SECRET_REASONING|TOP_SECRET_ARGUMENT|TOP_SECRET_TRANSCRIPT_ARGUMENT|TOP_SECRET_LIST_ARGUMENT/);
+	assert.doesNotMatch(output, new RegExp(transcriptPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	assert.equal(resolvePiSessionId(sessionFile), sessionId);
+});
 
-	const progressDir = path.join(TEMP_ROOT_DIR, "orca-progress");
-	const log = fs.readdirSync(progressDir).find((name) => name.startsWith(`${runId}-2-`) && name.endsWith(".log"));
-	assert.ok(log);
-	const text = fs.readFileSync(path.join(progressDir, log), "utf-8");
-	assert.match(text, /starting/);
-	assert.match(text, /› read: README\.md/);
-	assert.match(text, /done output/);
-	const quotedSessionFile = `'${fs.realpathSync(sessionFile).replace(/'/g, `'"'"'`)}'`;
-	assert.ok(text.includes(`completed. To remove the Pi session of this subagent, run rm -- ${quotedSessionFile}`));
-	assert.doesNotMatch(text, /find ~\/\.pi\/agent\/sessions/);
-
-	const nestedCwd = path.join(dir, "packages", "app");
-	fs.mkdirSync(nestedCwd, { recursive: true });
-	const secondTab = createOrcaProgressTab({
-		cwd: nestedCwd,
-		runId: `${runId}-second`,
+test("child execution cwd still appends tabs to the explicit parent Orca worktree", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+	const dir = tempDir();
+	const main = path.join(dir, "main");
+	const linked = path.join(dir, "linked");
+	fs.mkdirSync(path.join(main, ".git", "worktrees", "linked"), { recursive: true });
+	fs.mkdirSync(linked, { recursive: true });
+	fs.writeFileSync(path.join(linked, ".git"), `gitdir: ${path.join(main, ".git", "worktrees", "linked")}\n`);
+	const capture = path.join(dir, "capture.json");
+	const fakeOrca = writeCaptureOrca(dir);
+	const tab = createOrcaProgressTab({
+		cwd: linked,
+		orcaWorktree: main,
+		runId: "linked-child",
 		agent: "worker",
 		index: 0,
 		config: { enabled: true },
 		command: fakeOrca,
-		env: { ...process.env, ORCA_TEST_CAPTURE: secondCapture },
+		env: { ...process.env, ORCA_TEST_CAPTURE: capture },
 	});
-	assert.ok(secondTab);
-	secondTab.finish("failed", sessionFile);
-	await waitForFile(secondCapture);
-	const secondArgs = JSON.parse(fs.readFileSync(secondCapture, "utf-8")) as string[];
-	assert.equal(secondArgs[secondArgs.indexOf("--title") + 1], "subagent · worker · 2");
-	const secondLog = fs.readdirSync(progressDir).find((name) => name.startsWith(`${runId}-second-0-`) && name.endsWith(".log"));
-	assert.ok(secondLog);
-	const secondText = fs.readFileSync(path.join(progressDir, secondLog), "utf-8");
-	assert.match(secondText, /failed/);
-	assert.doesNotMatch(secondText, /To remove the Pi session/);
+	assert.ok(tab);
+	await waitForFile(capture);
+	const args = JSON.parse(fs.readFileSync(capture, "utf-8")) as string[];
+	assert.equal(args[args.indexOf("--worktree") + 1], `path:${fs.realpathSync(main)}`);
+	await tab.finish("completed");
+});
+
+test("one parent aggregate plus N child tabs retain concise results and cleanup guidance", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+	const dir = tempDir();
+	fs.mkdirSync(path.join(dir, ".git"));
+	const capture = path.join(dir, "captures.jsonl");
+	const fakeOrca = writeNodeCommand(dir, "orca", "require('fs').appendFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2))+'\\n')");
+	const parentId = "01a025fe-fae7-70c2-bf43-3f0b40887847";
+	const parentFile = path.join(dir, `parent_${parentId}.jsonl`);
+	fs.writeFileSync(parentFile, `${JSON.stringify({ type: "session", version: 3, id: parentId })}\n`);
+	const childDir = path.join(dir, `parent_${parentId}`, "forks");
+	fs.mkdirSync(childDir, { recursive: true });
+	const childFile = path.join(childDir, "child.jsonl");
+	fs.writeFileSync(childFile, `${JSON.stringify({ type: "session", version: 3, id: "child-session-1234" })}\n`);
+	const artifactsDir = path.join(dir, "subagent-artifacts");
+	fs.mkdirSync(artifactsDir);
+	const inputPath = path.join(artifactsDir, "run_worker_input.md");
+	const outputPath = path.join(artifactsDir, "run_worker_output.md");
+	fs.writeFileSync(inputPath, "input");
+	fs.writeFileSync(outputPath, "output");
+	const env = { ...process.env, ORCA_TEST_CAPTURE: capture };
+
+	ensureOrcaParentProgressTab({ cwd: dir, batchId: "tool-call-1", sessionId: parentId, sessionFile: parentFile, config: { enabled: true }, command: fakeOrca, env });
+	const child = createOrcaProgressTab({ cwd: dir, runId: "child-run", agent: "worker", index: 0, sessionFile: childFile, config: { enabled: true }, command: fakeOrca, env });
+	assert.ok(child);
+	await recordOrcaParentResult({
+		sessionId: parentId,
+		sessionFile: parentFile,
+		toolCallId: "tool-call-1",
+		details: {
+			results: [{ agent: "worker", runId: "child-run", exitCode: 0, finalOutput: "concise child result", sessionFile: childFile, artifactPaths: { inputPath, outputPath } }],
+		},
+	});
+	await child.finish("completed", childFile);
+
+	await waitForLineCount(capture, 2);
+	const captures = fs.readFileSync(capture, "utf-8").trim().split("\n").map((line) => JSON.parse(line) as string[]);
+	const parentArgs = captures.find((args) => args[args.indexOf("--title") + 1]?.startsWith("parent ·"));
+	const childArgs = captures.find((args) => args[args.indexOf("--title") + 1] === "subagent · worker · 2");
+	assert.ok(parentArgs);
+	assert.ok(childArgs);
+	assert.equal(parentArgs[parentArgs.indexOf("--title") + 1], `parent · ${parentId} · tool-call-1`);
+	const parentViewer = parentArgs[parentArgs.indexOf("--command") + 1]!;
+	assert.doesNotMatch(parentViewer, / &$/);
+	const parentOutput = await captureCommand(parentViewer, dir);
+	assert.match(parentOutput, /✓ worker · child-run/);
+	assert.match(parentOutput, /concise child result/);
+	assert.ok(parentOutput.includes(`rm -f -- '${inputPath}' '${outputPath}'`));
+	assert.ok(parentOutput.includes(`rm -rf -- '${childDir}'`));
+	assert.match(parentOutput, /✓ parent batch completed\s*$/);
+	assert.doesNotMatch(parentOutput, /launchContractDigest|tool arguments|mirror source retained|artifact transcript retained|Pi session retained/);
+});
+
+test("repeated calls in one Pi session create and complete separate parent batches", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+	const dir = tempDir();
+	fs.mkdirSync(path.join(dir, ".git"));
+	const capture = path.join(dir, "captures.jsonl");
+	const fakeOrca = writeNodeCommand(dir, "orca", "require('fs').appendFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2))+'\\n')");
+	const sessionId = "01a02699-batch-test-session";
+	const sessionFile = path.join(dir, `${sessionId}.jsonl`);
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: sessionId })}\n`);
+	const env = { ...process.env, ORCA_TEST_CAPTURE: capture };
+
+	for (const batchId of ["call-a", "call-b"]) {
+		ensureOrcaParentProgressTab({ cwd: dir, batchId, sessionId, sessionFile, config: { enabled: true }, command: fakeOrca, env });
+		await recordOrcaParentResult({
+			sessionId,
+			sessionFile,
+			toolCallId: batchId,
+			details: { results: [{ agent: "worker", runId: `run-${batchId}`, exitCode: 0, finalOutput: `done ${batchId}` }] },
+		});
+	}
+
+	await waitForLineCount(capture, 2);
+	const titles = fs.readFileSync(capture, "utf-8").trim().split("\n")
+		.map((line) => JSON.parse(line) as string[])
+		.map((args) => args[args.indexOf("--title") + 1]);
+	assert.deepEqual(titles, [`parent · ${sessionId} · call-a`, `parent · ${sessionId} · call-b`]);
+});
+
+test("an async parent batch stays open only until its run reaches a terminal result", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+	const dir = tempDir();
+	fs.mkdirSync(path.join(dir, ".git"));
+	const capture = path.join(dir, "capture.json");
+	const fakeOrca = writeCaptureOrca(dir);
+	const sessionId = `async-parent-${Date.now()}`;
+	const sessionFile = path.join(dir, `${sessionId}.jsonl`);
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: sessionId })}\n`);
+	ensureOrcaParentProgressTab({ cwd: dir, batchId: "async-call", sessionId, sessionFile, config: { enabled: true }, command: fakeOrca, env: { ...process.env, ORCA_TEST_CAPTURE: capture } });
+
+	await recordOrcaParentResult({
+		sessionId,
+		sessionFile,
+		toolCallId: "async-call",
+		details: { asyncId: "run-async", asyncDir: path.join(dir, "async-run"), id: "run-async", results: [] },
+	});
+	const donePath = progressFile(`${sessionId}-0-`, ".log").replace(/\.log$/, ".done");
+	assert.equal(fs.existsSync(donePath), false);
+
+	await recordOrcaParentResult({
+		sessionId,
+		sessionFile,
+		toolCallId: "async:run-async",
+		details: { results: [{ agent: "worker", runId: "run-async", exitCode: 0, finalOutput: "async done" }] },
+	});
+	await waitForFile(donePath);
 });
 
 test("viewer strips split terminal control sequences across poll ticks", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
@@ -520,6 +640,6 @@ test("mirror output truncates at a finite byte bound", { skip: process.platform 
 	await waitForFile(log.replace(/\.log$/, ".done"));
 	assert.ok(fs.statSync(log).size <= 1024 * 1024);
 	const text = fs.readFileSync(log, "utf-8");
-	assert.match(text, /progress mirror truncated at 1048576 bytes/);
+	assert.match(text, /progress projection truncated at 1048576 bytes/);
 	assert.doesNotMatch(text, /must be dropped/);
 });

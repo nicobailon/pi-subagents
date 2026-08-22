@@ -1280,7 +1280,6 @@ async function runSingleAttempt(
 		proc.stderr.on("data", (chunk: Buffer) => {
 			stderrTail.push(chunk);
 			stderrReader.push(chunk);
-			shared.orcaProgressTab?.append(chunk.toString("utf-8"));
 		});
 		proc.on("exit", () => {
 			childExited = true;
@@ -1761,9 +1760,13 @@ async function runSyncCompletionInner(
 
 	const orcaProgressTab = createOrcaProgressTab({
 		cwd: options.cwd ?? runtimeCwd,
+		orcaWorktree: options.orcaCwd ?? runtimeCwd,
 		runId: options.runId,
 		agent: agentName,
 		index: options.index ?? 0,
+		transcriptPath: transcriptWriter?.path,
+		jsonlPath,
+		sessionFile: options.sessionFile,
 	});
 	if (orcaProgressTab) options.onOrcaProgressTabCreated?.(orcaProgressTab);
 
@@ -2071,10 +2074,10 @@ async function runSyncCompletion(
 			...options,
 			onOrcaProgressTabCreated: (tab) => { orcaProgressTab = tab; },
 		});
-		orcaProgressTab?.finish(result.stopped ? "stopped" : result.exitCode === 0 && !result.error ? "completed" : "failed", result.sessionFile);
+		await orcaProgressTab?.finish(result.stopped ? "stopped" : result.exitCode === 0 && !result.error ? "completed" : "failed", result.sessionFile);
 		return result;
 	} catch (error) {
-		orcaProgressTab?.finish("failed");
+		await orcaProgressTab?.finish("failed");
 		throw error;
 	}
 }

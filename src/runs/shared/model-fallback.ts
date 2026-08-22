@@ -300,7 +300,7 @@ export function resolveSubagentModelOverride(
 ): string | undefined {
 	const trimmed = typeof requestedModel === "string" ? requestedModel.trim() : "";
 	const explicit = trimmed && trimmed !== INHERIT_MODEL ? trimmed : undefined;
-	if (!parentModel) throwForUnresolvedEnforcedInheritScope(options?.scope, explicit === undefined || options?.source === "inherited");
+	if (!parentModel) throwForUnresolvedEnforcedInheritScope(options?.scope, explicit === undefined);
 	let resolved: string | undefined;
 	if (explicit === undefined) {
 		resolved = parentModel ? `${parentModel.provider}/${parentModel.id}` : undefined;
