@@ -6,7 +6,7 @@ Run a parent-orchestrated review loop for the requested work.
 
 Use the `subagent` tool. Keep the parent session as the loop controller and final decision-maker. Child subagents must receive concrete role-specific tasks; they must not run subagents or manage the loop themselves unless the parent intentionally selected an explicit fanout agent whose builtin `tools` includes `subagent` for that assigned fanout.
 
-Default to a maximum of 3 review rounds unless I specify a different cap. Count a review round each time fresh-context reviewers inspect the current diff after a worker pass. Stop early when reviewers find no blockers or fixes worth doing now.
+Default to a maximum of 3 review rounds unless I specify a different cap. Count a review round each time fresh-context reviewers inspect the current diff after a worker pass. Stop early when reviewers find no P0 findings, no P1 fixes worth doing now, and no approved P2 notes that should be handled in this loop.
 
 If the invocation includes an implementation request, first launch one async `worker` to implement the approved scope. If the current diff is already the target, start with review. The sequence can be launched up front with `workflowScript` when it is already clear, or continued as follow-up single-agent runs after each async completion. For an initial workflowScript, pass `async: true` so the main chat is unblocked; do not set `clarify: true` unless I explicitly want the foreground clarify UI. Use only one writer against the active worktree at a time unless I explicitly ask for isolated worktrees.
 
@@ -14,12 +14,14 @@ As a conservative orchestration policy, do not set `turnBudget`, a hard `toolBud
 
 For each review round, launch fresh-context `reviewer` agents in parallel. Reviewers must inspect the repository, relevant instructions, and current diff directly from files and commands. They must not rely on the main conversation history and must not edit files.
 
+Tell reviewers to filter on evidence, not severity. They should report only concrete current issues caused or made reachable by the target diff, with source proof, a test or repro, or a contract contradiction. Ask them to label findings P0/P1/P2 and end with `Merge verdict: BLOCK`, `Merge verdict: OK`, or `Merge verdict: OK with notes`. P0 blocks merge. P1 should be fixed before release. P2 is report-only. Use `blockers only` only for final pre-merge re-checks after P1/P2 findings are already captured, or for explicit emergency hotfix lanes.
+
 Choose review angles from the actual change. Common angles are correctness/regressions, tests/validation, and simplicity/maintainability. Add security, performance, docs/API contracts, or user-flow validation when the work calls for it. Prefer three strong reviewers over many vague reviewers.
 
 After reviewers return, synthesize their feedback into:
-- blockers or scope/product/architecture decisions that need user approval;
-- fixes worth doing now;
-- optional improvements;
+- P0 blockers or scope/product/architecture decisions that need user approval;
+- P1 fixes worth doing now;
+- P2 report-only notes or optional improvements;
 - feedback to ignore or defer, with a short reason.
 
 Do not blindly apply every reviewer suggestion. If reviewers surface an unapproved product, scope, or architecture decision, pause and ask me before launching a fix worker.
@@ -30,8 +32,10 @@ When there are fixes worth doing now and the workflow is implementation-authoriz
 
 After a fix worker returns, run another review round only when it made material changes or addressed non-trivial findings. Do not keep looping for optional polish, speculative improvements, or findings already deferred by the parent.
 
+For a targeted follow-up review, ask only three questions: whether the named finding was resolved, whether the fix introduced a new concrete defect in the fix blast radius, and whether prior P1/P2 notes still stand. End with a fix verdict and the merge verdict.
+
 Stop and summarize when one of these is true:
-- reviewers find no blockers or fixes worth doing now;
+- reviewers find no P0 blockers or P1 fixes worth doing now;
 - remaining feedback is optional, speculative, or intentionally deferred;
 - reviewers surface an unapproved decision that needs me;
 - the max review-round cap is reached.

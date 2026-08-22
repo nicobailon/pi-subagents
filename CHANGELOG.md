@@ -6,6 +6,8 @@
 - Let `agentOverrides` set or clear default `output` paths and `defaultReads`, while
   preserving explicit custom-agent frontmatter and preventing settings-derived values
   from being serialized into custom definitions. Thanks to [@mevatron](https://github.com/mevatron) for #1349.
+- Add delegated review guidance that separates evidence requirements from
+  severity labels so first-pass reviews do not default to `blockers only`.
 
 ### Fixed
 - Report helpful workflow errors when `runs.all(...)` results are read as keyed

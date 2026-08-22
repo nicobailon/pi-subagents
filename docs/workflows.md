@@ -226,6 +226,12 @@ fresh: true
 Review $@. Return concrete findings with source proof, or state that no issue was found.
 ```
 
+For first-pass review prompts, filter by evidence rather than by severity. Ask the
+reviewer to label concrete current findings P0/P1/P2 and end with `Merge verdict:
+BLOCK`, `Merge verdict: OK`, or `Merge verdict: OK with notes`. Reserve
+`blockers only` for final pre-merge re-checks after P1/P2 findings are already
+known, or for explicit emergency hotfix lanes.
+
 ```text
 /prompt-workflow review-release-candidate v0.51.0
 ```
