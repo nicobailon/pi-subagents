@@ -213,11 +213,15 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					});
 				}
 			};
+			const previousByte = Buffer.allocUnsafe(1);
+			const cursorIsMidLine = cursor > 0
+				&& fs.readSync(fd, previousByte, 0, 1, cursor - 1) === 1
+				&& previousByte[0] !== 0x0a;
 			let readCursor = cursor;
 			let lastCompleteCursor = cursor;
 			let lineParts: Buffer[] = [];
 			let lineBytes = 0;
-			let skippingOversizedLine = startedFromTail;
+			let skippingOversizedLine = startedFromTail || cursorIsMidLine;
 			const appendLineSegment = (segment: Buffer) => {
 				if (segment.length === 0 || skippingOversizedLine) return;
 				if (lineBytes + segment.length > MAX_CONTROL_EVENT_LINE_BYTES) {

@@ -820,6 +820,61 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("continues skipping an oversized line across polls", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-");
+		const originalError = console.error;
+		const errors: string[] = [];
+		console.error = (...args: unknown[]) => errors.push(args.map(String).join(" "));
+		try {
+			const runDir = path.join(asyncRoot, "run-partial-oversized");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "run-partial-oversized",
+				mode: "single",
+				state: "running",
+				startedAt: Date.now() - 1000,
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running" }],
+			}), "utf-8");
+			const eventPath = path.join(runDir, "events.jsonl");
+			fs.writeFileSync(eventPath, `{"type":"tool_execution_update","data":"${"x".repeat(1024 * 1024)}`, "utf-8");
+
+			const state = createState();
+			const recorder = createEventRecorder();
+			const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+			});
+			tracker.handleStarted({ id: "run-partial-oversized", asyncDir: runDir, agent: "worker" });
+
+			await waitForCondition(
+				() => state.asyncJobs.get("run-partial-oversized")?.controlEventCursor === fs.statSync(eventPath).size,
+				"oversized partial-line cursor",
+			);
+			const controlEvent = JSON.stringify({
+				type: "subagent.control",
+				channels: ["event"],
+				event: {
+					type: "needs_attention",
+					to: "needs_attention",
+					ts: 123,
+					runId: "run-partial-oversized",
+					agent: "worker",
+					message: "worker needs attention",
+				},
+			});
+			fs.appendFileSync(eventPath, `tail"}\n${controlEvent}\n`, "utf-8");
+
+			await waitForCondition(
+				() => recorder.events.some((event) => event.channel === "subagent:control-event"),
+				"control event after oversized partial line",
+			);
+			assert.equal(errors.some((error) => error.includes("Ignoring malformed async control event")), false);
+		} finally {
+			console.error = originalError;
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("scans async control events in bounded chunks", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		const originalAlloc = Buffer.alloc;
