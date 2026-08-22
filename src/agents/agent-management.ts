@@ -177,7 +177,8 @@ function isMutableSource(source: AgentSource): source is ManagementScope {
 function modelWarning(ctx: ManagementContext, model: string | undefined): string | undefined {
 	if (!model) return undefined;
 	const found = ctx.modelRegistry.getAvailable().some((m) => `${m.provider}/${m.id}` === model || m.id === model);
-	return found ? undefined : `Warning: model '${model}' is not in the current model registry.`;
+	if (found) return undefined;
+	return `Warning: model '${model}' is not in the current model registry. Run subagent({ action: "models" }) to list valid provider/id selectors, then use the exact provider/id form (bare ids resolve only when unique).`;
 }
 
 function fallbackModelsWarning(ctx: ManagementContext, fallbackModels: string[] | undefined): string | undefined {
@@ -834,6 +835,17 @@ function handleModels(params: ManagementParams, ctx: ManagementContext): AgentTo
 		lines.push(`    ${resolvedModel ?? "(unresolved)"}`);
 		lines.push(`  source: ${source}`);
 		lines.push("");
+	}
+
+	const availableFullIds = availableModels.map((m) => m.fullId).sort();
+	if (availableFullIds.length > 0) {
+		lines.push("Available models in this session's registry (copy an exact provider/id when passing model):");
+		lines.push("");
+		const shown = availableFullIds.slice(0, 80);
+		for (const fullId of shown) lines.push(`  ${fullId}`);
+		if (availableFullIds.length > shown.length) lines.push(`  ... and ${availableFullIds.length - shown.length} more`);
+		lines.push("");
+		lines.push("Use an exact provider/id from this list when you pass model; bare ids resolve only when unique in the registry.");
 	}
 
 	return result(lines.join("\n"));
