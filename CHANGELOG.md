@@ -27,6 +27,8 @@
 - Fail a Pi child launch when the child reports a different provider/model than
   the resolved requested model. Thanks to [@zzzubair](https://github.com/zzzubair)
   for #1377.
+- Render detached workflow supervisor handoffs as paused/waiting and include
+  workflow and child run ids in completion notifications.
 - Report helpful workflow errors when `runs.all(...)` results are read as keyed
   objects instead of ordered arrays. Thanks to [@ravshansbox](https://github.com/ravshansbox) for #1351.
 - Fail child launch attempts when the runtime lacks requested core write tools or

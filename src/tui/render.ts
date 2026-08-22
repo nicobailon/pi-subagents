@@ -1746,8 +1746,9 @@ function workflowRowStateLabel(row: WorkflowChatProgressRow, theme: Theme): stri
 }
 
 function workflowOverallState(rows: WorkflowChatProgressRow[], hasTerminalValue: boolean, isError?: boolean): "running" | "complete" | "failed" | "paused" {
-	if (isError || rows.some((row) => row.state === "failed")) return "failed";
+	if (rows.some((row) => row.state === "failed")) return "failed";
 	if (rows.some((row) => row.state === "detached")) return "paused";
+	if (isError) return "failed";
 	if ((rows.length > 0 && rows.every((row) => row.state === "complete")) || hasTerminalValue) return "complete";
 	return "running";
 }
@@ -1948,7 +1949,7 @@ export function renderSubagentResult(
 	const layout = resolveMainWindowRenderLayout(rendererConfig);
 	const compact = (component: Component): Component => capCompactMainWindowResult(component, layout, theme, !options.expanded);
 	const d = result.details;
-	if (d?.mode === "workflow" && d.chatProgress?.mode === "live-card" && !result.isError && d.workflow?.value === undefined) {
+	if (d?.mode === "workflow" && d.chatProgress?.mode === "live-card" && d.workflow?.value === undefined && (!result.isError || (d.workflow?.trace.length ?? 0) > 0)) {
 		return compact(renderWorkflowChatProgress(d, result, theme, options.expanded ? resolveMainWindowRenderLayout() : layout, frame));
 	}
 	if (!d || !d.results.length) {

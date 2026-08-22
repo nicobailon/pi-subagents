@@ -602,6 +602,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			const expandKey = keyText("app.tools.expand");
 			text += `\n  ${theme.fg("dim", `${expandKey} full notification`)}`;
 		}
+		if (details.workflowRunId) {
+			text += `\n  ${theme.fg("muted", `workflow: ${details.workflowRunId}`)}`;
+		}
+		if (details.childRuns?.length) {
+			text += `\n  ${theme.fg("muted", `children: ${details.childRuns.map((child) => `${child.workflowKey ?? child.agent ?? "child"}=${child.runId}`).join(", ")}`)}`;
+		}
+		if (details.reconciledFromDetachedChild) {
+			text += `\n  ${theme.fg("muted", `reconciled child: ${details.reconciledFromDetachedChild}`)}`;
+		}
 		if (details.sessionLabel && details.sessionValue) {
 			text += `\n  ${theme.fg("muted", `${details.sessionLabel}: ${shortenPath(details.sessionValue)}`)}`;
 		}

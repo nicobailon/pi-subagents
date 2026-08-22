@@ -24,6 +24,9 @@ export interface SubagentNotifyDetails {
 	taskInfo?: string;
 	resultPreview: string;
 	durationMs?: number;
+	workflowRunId?: string;
+	childRuns?: Array<{ runId: string; workflowKey?: string; agent?: string; status?: string }>;
+	reconciledFromDetachedChild?: string;
 	sessionLabel?: string;
 	sessionValue?: string;
 	handoffPath?: string;
@@ -40,12 +43,18 @@ export interface CompletionNotification {
 	summary?: string;
 	exitCode?: number;
 	state?: string;
+	mode?: string;
+	runId?: string | null;
+	reconciledFromDetachedChild?: string;
 	processSignal?: string | null;
 	interrupted?: boolean;
 	timedOut?: boolean;
 	stopped?: boolean;
 	turnBudgetExceeded?: boolean;
 	results?: Array<{
+		runId?: string;
+		workflowKey?: string;
+		agent?: string;
 		status?: string;
 		success?: boolean;
 		exitCode?: number | null;
@@ -94,8 +103,23 @@ function formatSessionLine(details: SubagentNotifyDetails): string | undefined {
 	return details.sessionLabel ? `${details.sessionLabel}: ${details.sessionValue}` : details.sessionValue;
 }
 
+function formatChildRun(child: { runId: string; workflowKey?: string; agent?: string; status?: string }): string {
+	const label = child.workflowKey ?? child.agent;
+	const status = child.status ? ` (${child.status})` : "";
+	return `${label ? `${label}=` : ""}${child.runId}${status}`;
+}
+
+function formatCorrelationLines(details: SubagentNotifyDetails): string[] {
+	return [
+		details.workflowRunId ? `Workflow run: ${details.workflowRunId}` : undefined,
+		details.childRuns?.length ? `Child runs: ${details.childRuns.map(formatChildRun).join(", ")}` : undefined,
+		details.reconciledFromDetachedChild ? `Reconciled detached child: ${details.reconciledFromDetachedChild}` : undefined,
+	].filter((line): line is string => line !== undefined);
+}
+
 export function formatSingleCompletion(details: SubagentNotifyDetails): string {
 	const sessionLine = formatSessionLine(details);
+	const correlationLines = formatCorrelationLines(details);
 	const taskKind = details.source === "foreground" ? "Detached foreground task" : "Background task";
 	const scheduleLine = details.scheduleOrigin
 		? `Scheduled run from **${details.scheduleOrigin.name ?? details.scheduleOrigin.id}** (schedule ${details.scheduleOrigin.id}).`
@@ -108,6 +132,8 @@ export function formatSingleCompletion(details: SubagentNotifyDetails): string {
 		details.resultPreview.trim() ? details.resultPreview : "(no output)",
 		details.handoffPath ? "" : undefined,
 		details.handoffPath ? `Parallel handoff: ${details.handoffPath}` : undefined,
+		correlationLines.length && !details.handoffPath ? "" : undefined,
+		...correlationLines,
 		sessionLine ? "" : undefined,
 		sessionLine,
 	]
@@ -139,11 +165,27 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 	}
 	const sessionLine = sessionIndex >= 0 ? body[sessionIndex] : undefined;
 	const handoffIndex = body.findIndex((line) => line.startsWith("Parallel handoff: "));
-	const metadataIndexes = [sessionIndex, handoffIndex].filter((index) => index >= 0);
+	const workflowRunIndex = body.findIndex((line) => line.startsWith("Workflow run: "));
+	const childRunsIndex = body.findIndex((line) => line.startsWith("Child runs: "));
+	const reconciledIndex = body.findIndex((line) => line.startsWith("Reconciled detached child: "));
+	const metadataIndexes = [sessionIndex, handoffIndex, workflowRunIndex, childRunsIndex, reconciledIndex].filter((index) => index >= 0);
 	const firstMetadataIndex = metadataIndexes.length ? Math.min(...metadataIndexes) : body.length;
 	const resultEnd = firstMetadataIndex > 0 && body[firstMetadataIndex - 1]?.trim() === "" ? firstMetadataIndex - 1 : firstMetadataIndex;
 	const resultPreview = body.slice(0, resultEnd).join("\n").trim() || "(no output)";
 	const handoffPath = handoffIndex >= 0 ? body[handoffIndex]!.slice("Parallel handoff: ".length).trim() : undefined;
+	const workflowRunId = workflowRunIndex >= 0 ? body[workflowRunIndex]!.slice("Workflow run: ".length).trim() : undefined;
+	const childRuns = childRunsIndex >= 0
+		? body[childRunsIndex]!.slice("Child runs: ".length).split(", ").map((part) => {
+			const trimmed = part.trim();
+			const statusMatch = trimmed.match(/^(.*?)(?: \(([^)]*)\))?$/);
+			const raw = statusMatch?.[1] ?? trimmed;
+			const separator = raw.indexOf("=");
+			return separator >= 0
+				? { workflowKey: raw.slice(0, separator), runId: raw.slice(separator + 1), ...(statusMatch?.[2] ? { status: statusMatch[2] } : {}) }
+				: { runId: raw, ...(statusMatch?.[2] ? { status: statusMatch[2] } : {}) };
+		}).filter((child) => child.runId)
+		: undefined;
+	const reconciledFromDetachedChild = reconciledIndex >= 0 ? body[reconciledIndex]!.slice("Reconciled detached child: ".length).trim() : undefined;
 	let sessionLabel: string | undefined;
 	let sessionValue: string | undefined;
 	if (sessionLine) {
@@ -159,6 +201,9 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 		...(parsedScheduleOrigin ? { scheduleOrigin: parsedScheduleOrigin } : {}),
 		resultPreview,
 		...(handoffPath ? { handoffPath } : {}),
+		...(workflowRunId ? { workflowRunId } : {}),
+		...(childRuns?.length ? { childRuns } : {}),
+		...(reconciledFromDetachedChild ? { reconciledFromDetachedChild } : {}),
 		...(sessionLabel && sessionValue ? { sessionLabel, sessionValue } : {}),
 	};
 }
@@ -173,6 +218,7 @@ export function formatGroupedCompletion(details: SubagentNotifyDetails[]): strin
 		blocks.push(`${index + 1}. ${detail.agent}${detail.taskInfo ?? ""}${detail.scheduleOrigin ? ` — scheduled run from ${detail.scheduleOrigin.name ?? detail.scheduleOrigin.id} (schedule ${detail.scheduleOrigin.id})` : ""}`);
 		blocks.push(detail.resultPreview.trim() ? detail.resultPreview : "(no output)");
 		if (detail.handoffPath) blocks.push(`Parallel handoff: ${detail.handoffPath}`);
+		blocks.push(...formatCorrelationLines(detail));
 		if (sessionLine) blocks.push(sessionLine);
 		blocks.push("");
 	}
@@ -237,6 +283,18 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		? result.parallelHandoff as { path?: unknown }
 		: undefined;
 	const handoffPath = typeof parallelHandoff?.path === "string" ? parallelHandoff.path : undefined;
+	const rawRunId = typeof result.runId === "string" ? result.runId : typeof result.id === "string" ? result.id : undefined;
+	const workflowRunId = (result.mode === "workflow" || agent === "workflow") && rawRunId ? rawRunId : undefined;
+	const childRuns = result.results?.flatMap((child) => {
+		if (typeof child.runId !== "string" || !child.runId.trim()) return [];
+		return [{
+			runId: child.runId,
+			...(typeof child.workflowKey === "string" ? { workflowKey: child.workflowKey } : {}),
+			...(typeof child.agent === "string" ? { agent: child.agent } : {}),
+			...(typeof child.status === "string" ? { status: child.status } : {}),
+		}];
+	}) ?? [];
+	const reconciledFromDetachedChild = typeof result.reconciledFromDetachedChild === "string" ? result.reconciledFromDetachedChild : undefined;
 	const session =
 		result.shareUrl
 			? { label: "Session", value: result.shareUrl }
@@ -258,6 +316,9 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		resultPreview: summary,
 		...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
 		...(handoffPath ? { handoffPath } : {}),
+		...(workflowRunId ? { workflowRunId } : {}),
+		...(childRuns.length ? { childRuns } : {}),
+		...(reconciledFromDetachedChild ? { reconciledFromDetachedChild } : {}),
 		...(session ? { sessionLabel: session.label, sessionValue: session.value } : {}),
 	};
 }

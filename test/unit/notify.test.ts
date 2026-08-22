@@ -299,6 +299,34 @@ describe("registerSubagentNotify", () => {
 		});
 	});
 
+	it("labels detached-only workflow completions as paused and prints workflow child ids", () => {
+		const { events, sent } = createPi();
+
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "workflow-1",
+			runId: "workflow-1",
+			mode: "workflow",
+			agent: "workflow",
+			success: false,
+			state: "paused",
+			summary: "Run 'detaches' detached for intercom coordination.",
+			results: [{ workflowKey: "detaches", agent: "worker", runId: "child-1", status: "paused", success: false }],
+			timestamp: 790,
+			sessionId: "session-1",
+			completionOwnerId: COMPLETION_OWNER_ID,
+		});
+
+		assert.equal(sent.length, 1);
+		assert.deepEqual(sent[0], {
+			message: {
+				customType: "subagent-notify",
+				content: "Background task paused: **workflow**\n\nRun 'detaches' detached for intercom coordination.\n\nWorkflow run: workflow-1\nChild runs: detaches=child-1 (paused)",
+				display: true,
+			},
+			options: { triggerTurn: true },
+		});
+	});
+
 	it("ignores completions for other or missing session ids", () => {
 		const { events, sent } = createPi("session-owner");
 
@@ -496,6 +524,29 @@ describe("completion formatting helpers", () => {
 			+ "1. alpha\nalpha done\n\n"
 			+ "2. beta (1/2)\n(no output)\nSession: https://share/abc",
 		);
+	});
+
+	it("round-trips workflow correlation metadata", () => {
+		const details = buildCompletionDetails({
+			id: "workflow-2",
+			runId: "workflow-2",
+			mode: "workflow",
+			agent: "workflow",
+			success: false,
+			state: "paused",
+			summary: "Run 'review' detached for supervisor handoff.",
+			reconciledFromDetachedChild: "child-2",
+			results: [{ workflowKey: "review", agent: "reviewer", runId: "child-2", status: "paused" }],
+		});
+
+		assert.equal(details.status, "paused");
+		assert.equal(details.workflowRunId, "workflow-2");
+		assert.deepEqual(details.childRuns, [{ runId: "child-2", workflowKey: "review", agent: "reviewer", status: "paused" }]);
+		assert.equal(details.reconciledFromDetachedChild, "child-2");
+		const parsed = parseSubagentNotifyContent(formatSingleCompletion(details));
+		assert.equal(parsed?.workflowRunId, "workflow-2");
+		assert.deepEqual(parsed?.childRuns, [{ runId: "child-2", workflowKey: "review", status: "paused" }]);
+		assert.equal(parsed?.reconciledFromDetachedChild, "child-2");
 	});
 
 	it("reports false when Pi rejects sendMessage synchronously", async () => {

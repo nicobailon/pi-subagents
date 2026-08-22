@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { applyDetachedChildToPausedWorkflow, promotePausedWorkflowIfSettled, reconcileDetachedWorkflowChildCompletion } from "../../src/runs/foreground/workflow-detach-reconcile.ts";
-import { DIRS, type AsyncStatus, type SubagentState } from "../../src/shared/types.ts";
+import { DIRS, type AsyncStatus, type IntercomEventBus, type SubagentState } from "../../src/shared/types.ts";
 import { buildWorkflowReceipt, writeWorkflowReceipt } from "../../src/workflows/workflow-receipt.ts";
 
 function pausedWorkflow(childRunId: string, extra?: Partial<NonNullable<AsyncStatus["steps"]>[number]>): AsyncStatus {
@@ -211,11 +211,28 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			console.error = originalConsoleError;
 		}
 
-		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; workflowReceipt?: unknown };
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; workflowReceipt?: unknown; reconciledFromDetachedChild?: string };
 		assert.equal(published.state, "complete");
 		assert.equal(published.success, true);
 		assert.equal(published.workflowReceipt, undefined);
+		assert.equal(published.reconciledFromDetachedChild, "child-1");
 		assert.equal(emitted?.name, "subagent:async-complete");
+		assert.deepEqual(emitted?.payload, {
+			id: workflowRunId,
+			runId: workflowRunId,
+			source: "async",
+			mode: "workflow",
+			agent: "workflow",
+			success: true,
+			state: "complete",
+			summary: "Workflow completed after detached child child-1 finished.",
+			reconciledFromDetachedChild: "child-1",
+			results: [{ workflowKey: "detaches", agent: "worker", runId: "child-1", success: true, output: "", outputState: "absent" }],
+			sessionId: "session-1",
+			completionOwnerId: undefined,
+			timestamp: (emitted?.payload as { timestamp?: number }).timestamp,
+			triggerTurn: true,
+		});
 	});
 
 	it("does not log workflow completion while another detached child is still open", () => {
