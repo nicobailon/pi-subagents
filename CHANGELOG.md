@@ -6,6 +6,9 @@
 - Let `agentOverrides` set or clear default `output` paths and `defaultReads`, while
   preserving explicit custom-agent frontmatter and preventing settings-derived values
   from being serialized into custom definitions. Thanks to [@mevatron](https://github.com/mevatron) for #1349.
+- Surface copyable `provider/id` model selectors from `{ action: "models" }`
+  and point invalid model warnings at that discovery path. Thanks to
+  [@lixinglong27](https://github.com/lixinglong27) for #1365.
 - Add delegated review guidance that separates evidence requirements from
   severity labels so first-pass reviews do not default to `blockers only`.
 

@@ -958,6 +958,9 @@ Drive the failing test first.
 		assert.match(text, /^Builtin subagent models/m);
 		assert.match(text, /Current session model:\n  openai\/gpt-5-mini/);
 		assert.match(text, /(?:^|\n)scout\n  model:\n    openai\/gpt-5-mini\n  source: inherits current session model(?:\n|$)/);
+		assert.match(text, /Available models in this session's registry/);
+		assert.match(text, /  anthropic\/claude-sonnet-4\n  openai\/gpt-5-mini/);
+		assert.match(text, /Use an exact provider\/id from this list when you pass model/);
 	});
 
 	it("reports override source and disabled builtin state in runtime model mappings", () => {
