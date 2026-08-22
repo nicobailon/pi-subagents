@@ -22,6 +22,15 @@ export function splitThinkingSuffix(model: string): { baseModel: string; thinkin
 	};
 }
 
+export function formatSubagentModelVerificationError(expectedModel: string, observedModel: string, availableModels: AvailableModelInfo[] | undefined): string | undefined {
+	if (!availableModels || availableModels.length === 0) return undefined;
+	const expectedBase = splitThinkingSuffix(expectedModel).baseModel;
+	const observedBase = splitThinkingSuffix(observedModel).baseModel;
+	if (!availableModels.some((entry) => entry.fullId === observedBase)) return undefined;
+	if (expectedBase === observedBase) return undefined;
+	return `model_verification_failed: child reported a different model than the launch candidate. Expected '${expectedModel}' but observed '${observedModel}'.`;
+}
+
 /** Sentinel model value requesting that a subagent inherit the parent session's model. */
 export const INHERIT_MODEL = "inherit";
 

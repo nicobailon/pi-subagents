@@ -4387,6 +4387,32 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.model, "anthropic/claude-sonnet-4");
 	});
 
+	it("fails when a configured provider-qualified model starts on a different child model", async () => {
+		mockPi.onCall({ jsonl: [events.assistantMessage("wrong provider", "openai-codex/gpt-5.6-sol")] });
+		const agents = [makeAgent("echo", { model: "opencode-go/ox-alpha-free:max" })];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "foreground-model-verification-mismatch",
+			acceptance: false,
+			availableModels: [
+				{ provider: "opencode-go", id: "ox-alpha-free", fullId: "opencode-go/ox-alpha-free" },
+				{ provider: "openai-codex", id: "gpt-5.6-sol", fullId: "openai-codex/gpt-5.6-sol" },
+			],
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.model, "opencode-go/ox-alpha-free:max");
+		assert.deepEqual(result.attemptedModels, ["opencode-go/ox-alpha-free:max"]);
+		assert.match(result.error ?? "", /model_verification_failed/);
+		assert.match(result.error ?? "", /Expected 'opencode-go\/ox-alpha-free:max'/);
+		assert.match(result.error ?? "", /observed 'openai-codex\/gpt-5\.6-sol'/);
+		assert.equal(result.modelAttempts?.[0]?.success, false);
+		assert.match(result.modelAttempts?.[0]?.error ?? "", /model_verification_failed/);
+		const args = readAllCallArgs()[0]!;
+		assert.equal(args[args.indexOf("--model") + 1], "opencode-go/ox-alpha-free:max");
+		assert.equal(mockPi.callCount(), 1);
+	});
+
 	it("model override from options takes precedence", async () => {
 		mockPi.onCall({ output: "Done" });
 		const agents = [makeAgent("echo", { model: "anthropic/claude-sonnet-4" })];

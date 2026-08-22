@@ -72,6 +72,7 @@ import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	buildModelCandidates,
+	formatSubagentModelVerificationError,
 	formatModelAttemptNote,
 	isContextOverflow,
 	isRetryableModelFailure,
@@ -310,10 +311,12 @@ async function runSingleAttempt(
 		taskDelivery?: SubagentTaskDelivery;
 		orcaProgressTab?: OrcaProgressTab;
 		launchWarnings: { emitted: boolean };
+		verifyModel: boolean;
 	},
 ): Promise<SingleResult> {
 	const effectiveThinking = options.thinkingOverride ?? agent.thinking;
 	const modelArg = applyThinkingSuffix(model, effectiveThinking, options.thinkingOverride !== undefined);
+	const expectedModelForVerification = shared.verifyModel ? modelArg : undefined;
 	const resolvedThinking = resolveEffectiveThinking(modelArg, effectiveThinking);
 	const watchdogConfig = resolveWatchdogConfig(options.cwd ?? runtimeCwd);
 	const childWatchdog = watchdogConfig.ok
@@ -1072,6 +1075,10 @@ async function runSingleAttempt(
 					if (evt.message.model) {
 						progress.model = evt.message.model;
 						if (!result.model) result.model = evt.message.model;
+						if (expectedModelForVerification) {
+							const modelVerificationError = formatSubagentModelVerificationError(expectedModelForVerification, evt.message.model, options.availableModels);
+							if (modelVerificationError && !result.error) result.error = modelVerificationError;
+						}
 					}
 					if (evt.message.errorMessage) assistantError = evt.message.errorMessage;
 					const assistantText = extractTextFromContent(evt.message.content);
@@ -1807,6 +1814,7 @@ async function runSyncCompletionInner(
 	modelAttemptsLoop: for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
 		const candidate = modelsToTry[modelIndex];
 		for (let startupAttemptIndex = 0; ; startupAttemptIndex++) {
+			const verifyModel = Boolean(candidate) && !(options.modelOverrideFromParent && modelIndex === 0);
 			const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
 			const result = await runSingleAttempt(runtimeCwd, agent, taskWithAcceptance, candidate, attemptOptions, {
 				sessionEnabled,
@@ -1825,6 +1833,7 @@ async function runSyncCompletionInner(
 				taskDelivery: taskDeliveryOverride,
 				orcaProgressTab,
 				launchWarnings,
+				verifyModel,
 			});
 			lastResult = result;
 			if (startupAttemptIndex === 0) {

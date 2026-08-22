@@ -794,6 +794,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const task = namespaceOutputPath ? taskText : injectSingleOutputInstruction(taskText, outputPath, a);
 
 		const modelScopes = resolveModelScopesForAgent(ctx.modelScope, a.name, ctx.currentModel);
+		const primaryModelFromParent = inheritsParentModel(s.model, a.model, ctx.currentModel);
 		const primaryModel = externalRunner ? undefined : resolveEffectiveSubagentModel(
 			s.model,
 			a.model,
@@ -858,10 +859,12 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			launchResolvedExtensions,
 			modelCandidates: externalRunner ? undefined : buildModelCandidates(primaryModel, a.fallbackModels, availableModels, ctx.currentModelProvider, {
 				scope: modelScopes,
-				primaryModelFromParent: inheritsParentModel(s.model, a.model, ctx.currentModel),
+				primaryModelFromParent,
 			}).map((candidate) =>
 				applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined),
 			),
+			...(primaryModelFromParent ? { skipPrimaryModelVerification: true } : {}),
+			...(availableModels && availableModels.length > 0 ? { modelVerificationRegistry: availableModels } : {}),
 			tools: a.tools,
 			extensions: a.extensions,
 			subagentOnlyExtensions: a.subagentOnlyExtensions,
@@ -1607,6 +1610,8 @@ export function executeAsyncSingle(
 						model,
 						thinking: resolveEffectiveThinking(model, effectiveThinking),
 						modelCandidates,
+						...(params.modelOverrideFromParent ? { skipPrimaryModelVerification: true } : {}),
+						...(availableModels && availableModels.length > 0 ? { modelVerificationRegistry: availableModels } : {}),
 						tools: agentConfig.tools,
 						extensions: agentConfig.extensions,
 						subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,

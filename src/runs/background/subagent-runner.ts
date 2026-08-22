@@ -86,7 +86,7 @@ import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
 import { claimRunFanoutBatch, getRunFanoutBudgetSnapshot } from "../shared/run-fanout-budget.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
-import { formatModelAttemptNote, isContextOverflow, isRetryableModelFailure, recordRetryableModelFailure } from "../shared/model-fallback.ts";
+import { formatModelAttemptNote, formatSubagentModelVerificationError, isContextOverflow, isRetryableModelFailure, recordRetryableModelFailure } from "../shared/model-fallback.ts";
 import {
 	SUBAGENT_STARTUP_RETRY_DELAYS_MS,
 	formatSubagentExtensionConflictError,
@@ -562,6 +562,8 @@ function runPiStreaming(
 	toolTimeoutMs?: number,
 	runDeadlineAt?: number,
 	orcaProgressTab?: OrcaProgressTab,
+	expectedModelForVerification?: string,
+	modelVerificationRegistry?: Array<{ provider: string; id: string; fullId: string }>,
 ): Promise<RunPiStreamingResult> {
 	return new Promise((resolve) => {
 		const startedAt = Date.now();
@@ -720,7 +722,13 @@ function runPiStreaming(
 				if (text) writeOutputText(text);
 
 				if (event.type !== "message_end" || event.message.role !== "assistant") return;
-				if (event.message.model) model = event.message.model;
+				if (event.message.model) {
+					model = event.message.model;
+					if (expectedModelForVerification) {
+						const modelVerificationError = formatSubagentModelVerificationError(expectedModelForVerification, event.message.model, modelVerificationRegistry);
+						if (modelVerificationError && !error) error = modelVerificationError;
+					}
+				}
 				if (event.message.errorMessage) assistantError = event.message.errorMessage;
 				const eventUsage = event.message.usage;
 				if (eventUsage) {
@@ -1505,6 +1513,7 @@ async function runSingleStepInner(
 	modelAttemptsLoop: while (modelIndex < candidates.length) {
 		if (ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break;
 		const candidate = candidates[modelIndex];
+		const expectedModelForVerification = candidate && !(step.skipPrimaryModelVerification && modelIndex === 0) ? candidate : undefined;
 		ctx.onAttemptStart?.(omitUndefinedProperties({ model: candidate, thinking: resolveEffectiveThinking(candidate, step.thinking) }));
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
 		if (effectiveStructuredOutput) {
@@ -1629,6 +1638,8 @@ async function runSingleStepInner(
 			ctx.toolTimeoutMs,
 			ctx.deadlineAt,
 			ctx.orcaProgressTab,
+			expectedModelForVerification,
+			step.modelVerificationRegistry,
 		);
 		if (run.processCloseObservedAt !== undefined) {
 			writerProcesses.push({
