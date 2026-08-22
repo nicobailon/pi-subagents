@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { acquireActiveAsyncCapacity } from "../../src/runs/background/active-async-capacity.ts";
-import { consumeSteerRequests, consumeSteerRequestsFromDir, stepSteerInboxDir, writeSteerAck } from "../../src/runs/background/control-channel.ts";
+import { consumeSteerRequests, consumeSteerRequestsFromDir, consumeStopRequestPayload, stepSteerInboxDir, writeSteerAck } from "../../src/runs/background/control-channel.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { createSubagentExecutor, steerWorkflowChildByKey } from "../../src/runs/foreground/subagent-executor.ts";
@@ -624,8 +624,39 @@ describe("async interrupt action", () => {
 
 			assert.equal(result.isError, undefined);
 			assert.match(text(result), new RegExp(`Stop requested for async run ${runId}`));
-			assert.equal(fs.existsSync(path.join(asyncDir, "control", "stop.json")), true);
+			assert.equal(consumeStopRequestPayload(asyncDir)?.type, "stop");
 			assert.deepEqual(kills, [{ pid: 12345, signal: 0 }]);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("writes child-scoped stop requests for a running async run", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `stop-child-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "session" });
+		try {
+			const statusPath = path.join(asyncDir, "status.json");
+			writeJson(statusPath, {
+				...JSON.parse(fs.readFileSync(statusPath, "utf-8")),
+				steps: [
+					{ agent: "first", status: "running", runId: "child-a", startedAt: 100 },
+					{ agent: "second", status: "running", workflowKey: "review", startedAt: 100 },
+				],
+			});
+
+			const result = await executorWithKill(state, () => true)
+				.execute("stop-child", { action: "stop", id: runId, childId: "review" }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, undefined);
+			assert.match(text(result), /Stop requested for child review/);
+			const request = consumeStopRequestPayload(asyncDir);
+			assert.equal(request?.type, "stop");
+			assert.equal(request?.source, "stop-action");
+			assert.equal(request?.targetIndex, 1);
+			assert.equal(request?.childId, "review");
+			assert.equal(typeof request?.ts, "number");
 		} finally {
 			cleanup(runId, asyncDir);
 		}
@@ -824,7 +855,7 @@ describe("async interrupt action", () => {
 
 			assert.equal(result.isError, undefined);
 			assert.match(text(result), new RegExp(`Stop requested for async run ${runId}`));
-			assert.equal(fs.existsSync(path.join(asyncDir, "control", "stop.json")), true);
+			assert.equal(consumeStopRequestPayload(asyncDir)?.type, "stop");
 		} finally {
 			cleanup(runId, asyncDir);
 		}

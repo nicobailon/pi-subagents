@@ -3,6 +3,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Details, SubagentState } from "../../shared/types.ts";
 import { deliverStopRequest } from "../background/control-channel.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
+import { isStoppableAsyncStatusStep, resolveAsyncStatusChild, type ResolvedAsyncStatusChild } from "../shared/child-identity.ts";
 
 function getAsyncStopTarget(
 	state: SubagentState,
@@ -25,6 +26,7 @@ export function stopAsyncRun(
 	runId: string | undefined,
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean,
 	location?: { asyncDir: string | null; resolvedId?: string },
+	childId?: string,
 ): AgentToolResult<Details> | null {
 	const target = getAsyncStopTarget(state, runId, location);
 	if (!target) return null;
@@ -43,15 +45,34 @@ export function stopAsyncRun(
 			details: { mode: "management", results: [] },
 		};
 	}
+	let child: ResolvedAsyncStatusChild | undefined;
+	if (childId !== undefined) {
+		const resolution = resolveAsyncStatusChild(status, childId);
+		if (!resolution.ok) {
+			return {
+				content: [{ type: "text", text: resolution.message }],
+				isError: true,
+				details: { mode: "management", results: [] },
+			};
+		}
+		child = resolution.child;
+		if (!isStoppableAsyncStatusStep(child.step)) {
+			return {
+				content: [{ type: "text", text: `Child '${childId}' in async run '${status.runId}' is ${child.step.status}; stop only supports pending or running children.` }],
+				isError: true,
+				details: { mode: "management", results: [] },
+			};
+		}
+	}
 	try {
-		deliverStopRequest({ asyncDir: target.asyncDir, pid: typeof status.pid === "number" ? status.pid : undefined, kill, source: "stop-action" });
+		deliverStopRequest({ asyncDir: target.asyncDir, pid: typeof status.pid === "number" ? status.pid : undefined, kill, source: "stop-action", targetIndex: child?.index, childId: child?.id ?? childId });
 		const tracked = state.asyncJobs.get(target.asyncId);
 		if (tracked) {
 			tracked.activityState = undefined;
 			tracked.updatedAt = Date.now();
 		}
 		return {
-			content: [{ type: "text", text: `Stop requested for async run ${target.asyncId}.` }],
+			content: [{ type: "text", text: child ? `Stop requested for child ${child.id} in async run ${target.asyncId}.` : `Stop requested for async run ${target.asyncId}.` }],
 			details: { mode: "management", results: [] },
 		};
 	} catch (error) {

@@ -271,6 +271,7 @@ const SubagentParamProperties = {
 	})),
 	handoffPath: Type.Optional(Type.String({ description: "worktree.discard manifest." })),
 	index: Type.Optional(Type.Integer({ minimum: 0, description: "Zero-based child index for actions that target a specific child or transcript." })),
+	childId: Type.Optional(Type.String({ minLength: 1, maxLength: 256, description: "Stable child identity for child-scoped stop requests." })),
 	view: Type.Optional(Type.String({
 		enum: ["fleet", "transcript"],
 		description: "Optional status view. Use view='fleet' for a read-only active foreground/async fleet surface, or view='transcript' with id/dir (and optional index) to tail a run transcript.",

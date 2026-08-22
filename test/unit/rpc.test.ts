@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { stopRequestPath } from "../../src/runs/background/control-channel.ts";
+import { consumeStopRequestPayload, stopRequestPath } from "../../src/runs/background/control-channel.ts";
 import {
 	SUBAGENT_RPC_PROTOCOL_VERSION,
 	SUBAGENT_RPC_READY_EVENT,
@@ -13,7 +13,7 @@ import {
 	subagentRpcReplyEvent,
 	type SubagentRpcReplyEnvelope,
 } from "../../src/extension/rpc.ts";
-import type { Details } from "../../src/shared/types.ts";
+import type { Details, SubagentState } from "../../src/shared/types.ts";
 
 class FakeEvents {
 	readonly emitted: Array<{ event: string; data: unknown }> = [];
@@ -721,7 +721,184 @@ describe("subagent extension RPC bridge", () => {
 			assert.equal(reply.success, true);
 			assert.equal((reply as { data: { runId?: string; state?: string } }).data.runId, "run-stop");
 			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
-			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), true);
+			assert.equal(consumeStopRequestPayload(asyncDir)?.type, "stop");
+
+			bridge.dispose();
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("acknowledges RPC child stop for exactly one async child", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-child-stop-"));
+		try {
+			const events = new FakeEvents();
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const asyncDir = path.join(asyncRoot, "run-stop-child");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-stop-child",
+				sessionId: "/sessions/parent.jsonl",
+				mode: "parallel",
+				state: "running",
+				pid: 4242,
+				startedAt: 100,
+				lastUpdate: 100,
+				steps: [
+					{ agent: "fast", status: "running", runId: "child-a", startedAt: 100 },
+					{ agent: "slow", status: "running", workflowKey: "review", startedAt: 100 },
+				],
+			}, null, 2), "utf-8");
+			const bridge = registerSubagentRpcBridge({
+				events,
+				getContext: () => ctx(),
+				execute: async () => assert.fail("stop should not call executor"),
+				asyncDirRoot: asyncRoot,
+				resultsDir,
+				kill: () => true,
+				now: () => 150,
+			});
+
+			const reply = await request(events, "stop-child-1", "stop", { id: "run-stop-child", childId: "review" });
+
+			assert.equal(reply.success, true);
+			assert.equal((reply as { data: { runId?: string; childId?: string; state?: string } }).data.runId, "run-stop-child");
+			assert.equal((reply as { data: { childId?: string } }).data.childId, "review");
+			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
+			assert.deepEqual(consumeStopRequestPayload(asyncDir), { type: "stop", ts: 150, source: "rpc-stop", targetIndex: 1, childId: "review" });
+
+			bridge.dispose();
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses the live workflow child stopper for RPC child stop", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-workflow-child-stop-"));
+		try {
+			const events = new FakeEvents();
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const asyncDir = path.join(asyncRoot, "workflow-stop-child");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "workflow-stop-child",
+				sessionId: "/sessions/parent.jsonl",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 100,
+				steps: [
+					{ agent: "worker", status: "running", workflowKey: "slow", startedAt: 100 },
+					{ agent: "worker", status: "running", workflowKey: "sibling", startedAt: 100 },
+				],
+			}, null, 2), "utf-8");
+			const calls: Array<{ childId: string; message?: string }> = [];
+			const state = { workflowChildStops: new Map([["workflow-stop-child", (childId: string, message?: string) => { calls.push({ childId, message }); return true; }]]) } as SubagentState;
+			const bridge = registerSubagentRpcBridge({
+				events,
+				getContext: () => ctx(),
+				execute: async () => assert.fail("stop should not call executor"),
+				asyncDirRoot: asyncRoot,
+				resultsDir,
+				state,
+			});
+
+			const reply = await request(events, "stop-workflow-child", "stop", { id: "workflow-stop-child", childId: "slow" });
+
+			assert.equal(reply.success, true);
+			assert.equal((reply as { data: { childId?: string; state?: string } }).data.childId, "slow");
+			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
+			assert.deepEqual(calls, [{ childId: "slow", message: "Workflow child 'slow' stopped by RPC." }]);
+			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), false);
+
+			bridge.dispose();
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses the live workflow controller for RPC run-level workflow stop", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-workflow-run-stop-"));
+		try {
+			const events = new FakeEvents();
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const asyncDir = path.join(asyncRoot, "workflow-run-stop");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "workflow-run-stop",
+				sessionId: "/sessions/parent.jsonl",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 100,
+				steps: [{ agent: "worker", status: "running", workflowKey: "slow", startedAt: 100 }],
+			}, null, 2), "utf-8");
+			const controller = new AbortController();
+			const state = { workflowControllers: new Map([["workflow-run-stop", controller]]) } as SubagentState;
+			const bridge = registerSubagentRpcBridge({
+				events,
+				getContext: () => ctx(),
+				execute: async () => assert.fail("stop should not call executor"),
+				asyncDirRoot: asyncRoot,
+				resultsDir,
+				state,
+			});
+
+			const reply = await request(events, "stop-workflow-run", "stop", { id: "workflow-run-stop" });
+
+			assert.equal(reply.success, true);
+			assert.equal((reply as { data: { runId?: string; state?: string; childId?: string } }).data.runId, "workflow-run-stop");
+			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
+			assert.equal((reply as { data: { childId?: string } }).data.childId, undefined);
+			assert.equal(controller.signal.aborted, true);
+			assert.equal(controller.signal.reason instanceof Error ? controller.signal.reason.message : String(controller.signal.reason), "Workflow stopped by RPC.");
+			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), false);
+
+			bridge.dispose();
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects RPC child stop when the child is absent or terminal", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-child-stop-reject-"));
+		try {
+			const events = new FakeEvents();
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const asyncDir = path.join(asyncRoot, "run-stop-child-reject");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-stop-child-reject",
+				sessionId: "/sessions/parent.jsonl",
+				mode: "parallel",
+				state: "running",
+				pid: 4242,
+				startedAt: 100,
+				lastUpdate: 100,
+				steps: [{ agent: "done", status: "complete", workflowKey: "done", startedAt: 100, endedAt: 120 }],
+			}, null, 2), "utf-8");
+			const bridge = registerSubagentRpcBridge({
+				events,
+				getContext: () => ctx(),
+				execute: async () => assert.fail("stop should not call executor"),
+				asyncDirRoot: asyncRoot,
+				resultsDir,
+				kill: () => true,
+				now: () => 150,
+			});
+
+			const missing = await request(events, "stop-child-missing", "stop", { id: "run-stop-child-reject", childId: "missing" });
+			assert.equal(missing.success, false);
+			assert.equal((missing as { error: { code: string } }).error.code, "not_found");
+			const terminal = await request(events, "stop-child-terminal", "stop", { id: "run-stop-child-reject", childId: "done" });
+			assert.equal(terminal.success, false);
+			assert.equal((terminal as { error: { code: string; message: string } }).error.code, "invalid_state");
+			assert.match((terminal as { error: { message: string } }).error.message, /complete/);
+			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), false);
 
 			bridge.dispose();
 		} finally {

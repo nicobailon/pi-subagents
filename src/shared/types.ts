@@ -1454,6 +1454,8 @@ export interface AsyncStatus {
 	/** Set when a durable schedule launched this run, so completions can name their origin. */
 	scheduleOrigin?: ScheduleOrigin;
 	steps?: Array<{
+		/** Stable caller-facing child identity for inspect/status/stop. */
+		childId?: string;
 		agent: string;
 		runner?: ExternalCliRunnerStatus | ExternalJobRunnerStatus;
 		externalProcess?: ExternalProcessStatus;
@@ -1473,6 +1475,8 @@ export interface AsyncStatus {
 		outputName?: string;
 		structured?: boolean;
 		status: "pending" | "running" | "complete" | "completed" | "failed" | "paused" | "stopped" | "rejected";
+		stopRequested?: boolean;
+		stopRequestedAt?: number;
 		children?: NestedRunSummary[];
 		sessionFile?: string;
 		transcriptPath?: string;
@@ -1792,6 +1796,8 @@ export interface SubagentState {
 	waitSubscriptions?: Map<string, WaitSubscriptionRecord>;
 	/** Live in-process workflow controllers. Durable status remains on disk after settlement. */
 	workflowControllers?: Map<string, AbortController>;
+	/** Live in-process workflow child stoppers keyed by parent workflow run id. */
+	workflowChildStops?: Map<string, (childId: string, message?: string) => boolean>;
 }
 
 export interface HerdrProjectPaneSnapshot {

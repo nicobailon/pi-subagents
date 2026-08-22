@@ -10,6 +10,8 @@ import {
 	consumeSteerCapabilities,
 	consumeSteerRequests,
 	consumeStopRequest,
+	consumeStopRequestPayload,
+	consumeStopRequestPayloads,
 	deliverInterruptRequest,
 	enqueueStepSteer,
 	interruptRequestPath,
@@ -23,6 +25,7 @@ import {
 	steerAcksDir,
 	steerInboxClosedPath,
 	steerCapabilityPath,
+	stopRequestsDir,
 	writeSteerAck,
 	writeSteerCapability,
 	stopRequestPath,
@@ -59,14 +62,62 @@ describe("control channel: request file", () => {
 		const asyncDir = tmpAsyncDir("pi-control-stop-");
 		try {
 			const requestPath = requestAsyncStop(asyncDir, { source: "test" }, { now: () => 1234 });
-			assert.equal(requestPath, stopRequestPath(asyncDir));
+			assert.equal(path.dirname(requestPath), stopRequestsDir(asyncDir));
 			const data = JSON.parse(fs.readFileSync(requestPath, "utf-8"));
 			assert.equal(data.type, "stop");
 			assert.equal(data.ts, 1234);
 			assert.equal(data.source, "test");
 			assert.equal(consumeStopRequest(asyncDir), true);
-			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), false);
+			assert.equal(fs.existsSync(requestPath), false);
 			assert.equal(consumeStopRequest(asyncDir), false);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("keeps concurrent stop requests instead of replacing the first one", () => {
+		const asyncDir = tmpAsyncDir("pi-control-stop-queue-");
+		try {
+			requestAsyncStop(asyncDir, { source: "test", targetIndex: 1, childId: "slow" }, { now: () => 1234 });
+			requestAsyncStop(asyncDir, { source: "test", targetIndex: 2, childId: "review" }, { now: () => 1235 });
+
+			assert.deepEqual(consumeStopRequestPayloads(asyncDir), [
+				{ type: "stop", ts: 1234, source: "test", targetIndex: 1, childId: "slow" },
+				{ type: "stop", ts: 1235, source: "test", targetIndex: 2, childId: "review" },
+			]);
+			assert.deepEqual(consumeStopRequestPayloads(asyncDir), []);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("writes and consumes a child-scoped stop request", () => {
+		const asyncDir = tmpAsyncDir("pi-control-child-stop-");
+		try {
+			requestAsyncStop(asyncDir, { source: "test", targetIndex: 2, childId: "review" }, { now: () => 1234 });
+
+			assert.deepEqual(consumeStopRequestPayload(asyncDir), {
+				type: "stop",
+				ts: 1234,
+				source: "test",
+				targetIndex: 2,
+				childId: "review",
+			});
+			assert.deepEqual(consumeStopRequestPayloads(asyncDir), []);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("drops malformed stop files instead of widening them to run-level stops", () => {
+		const asyncDir = tmpAsyncDir("pi-control-stop-malformed-");
+		try {
+			fs.mkdirSync(stopRequestsDir(asyncDir), { recursive: true });
+			const requestPath = path.join(stopRequestsDir(asyncDir), "0000000001234-bad.json");
+			fs.writeFileSync(requestPath, "{ not json", "utf-8");
+
+			assert.deepEqual(consumeStopRequestPayloads(asyncDir), []);
+			assert.equal(fs.existsSync(requestPath), false);
 		} finally {
 			cleanup(asyncDir);
 		}
@@ -484,6 +535,27 @@ describe("control channel: watchAsyncControlInbox", () => {
 			});
 
 			assert.deepEqual(events, ["stop", "interrupt"]);
+			dispose();
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("delivers stop payloads to the watcher", () => {
+		const asyncDir = tmpAsyncDir("pi-control-watch-child-stop-");
+		try {
+			requestAsyncStop(asyncDir, { targetIndex: 1, childId: "slow" });
+			const stops: Array<{ targetIndex?: number; childId?: string }> = [];
+			const h = harness();
+			const dispose = watchAsyncControlInbox(asyncDir, {
+				onInterrupt() {},
+				onStop: (request) => stops.push({ targetIndex: request.targetIndex, childId: request.childId }),
+				fs: h.fsImpl,
+				timers: h.timers,
+				platform: "linux",
+			});
+
+			assert.deepEqual(stops, [{ targetIndex: 1, childId: "slow" }]);
 			dispose();
 		} finally {
 			cleanup(asyncDir);

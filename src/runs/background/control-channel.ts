@@ -55,6 +55,8 @@ export interface StopRequest {
 	ts?: number;
 	source?: string;
 	reason?: string;
+	targetIndex?: number;
+	childId?: string;
 }
 
 export type SteerDeliveryMode = "steer" | "follow_up" | "auto";
@@ -92,6 +94,7 @@ export interface SteerAck {
 }
 
 const STEER_REQUESTS_DIR = "steer-requests";
+const STOP_REQUESTS_DIR = "stop-requests";
 const REVIVAL_BRIEFS_DIR = "revival-briefs";
 export const MAX_STEER_QUEUE_SIZE = 20;
 const STEER_TARGETS_DIR = "steer-targets";
@@ -119,6 +122,11 @@ export function timeoutRequestPath(asyncDir: string): string {
 /** Path of the portable manual stop request file. */
 export function stopRequestPath(asyncDir: string): string {
 	return path.join(controlInboxDir(asyncDir), "stop.json");
+}
+
+/** Directory of parent-to-runner stop requests. */
+export function stopRequestsDir(asyncDir: string): string {
+	return path.join(controlInboxDir(asyncDir), STOP_REQUESTS_DIR);
 }
 
 /** Directory of parent-to-runner steering requests. */
@@ -164,11 +172,22 @@ export function steerAckPathFromDir(dir: string, requestId: string): string {
 }
 
 function assertChildIndex(index: number): void {
-	if (!Number.isInteger(index) || index < 0 || index > 1_000_000) throw new Error("steer child index must be a non-negative integer.");
+	if (!Number.isInteger(index) || index < 0 || index > 1_000_000) throw new Error("child index must be a non-negative integer.");
+}
+
+function validStopChildId(childId: unknown): childId is string {
+	return typeof childId === "string"
+		&& Boolean(childId.trim())
+		&& childId.length <= 256
+		&& !/[\r\n]/.test(childId);
 }
 
 function steerRequestFileName(request: SteerRequest): string {
 	return `${String(request.ts).padStart(13, "0")}-${Buffer.from(request.id).toString("base64url")}.json`;
+}
+
+function stopRequestFileName(request: StopRequest): string {
+	return `${String(request.ts ?? 0).padStart(13, "0")}-${randomUUID()}.json`;
 }
 
 function validSteerRequest(request: Partial<SteerRequest>): request is SteerRequest {
@@ -279,8 +298,12 @@ export function requestAsyncStop(
 	payload: Omit<StopRequest, "type"> = {},
 	deps: { now?: () => number } = {},
 ): string {
-	const requestPath = stopRequestPath(asyncDir);
+	if (payload.targetIndex !== undefined) assertChildIndex(payload.targetIndex);
+	if (payload.childId !== undefined && !validStopChildId(payload.childId)) {
+		throw new Error("stop childId must be a non-empty string without newlines and at most 256 characters.");
+	}
 	const request: StopRequest = { ...payload, ts: payload.ts ?? deps.now?.() ?? Date.now(), type: "stop" };
+	const requestPath = path.join(stopRequestsDir(asyncDir), stopRequestFileName(request));
 	writeAtomicJson(requestPath, request);
 	return requestPath;
 }
@@ -521,16 +544,75 @@ export function consumeTimeoutRequest(
 
 export function consumeStopRequest(
 	asyncDir: string,
-	fsImpl: Pick<typeof fs, "existsSync" | "rmSync"> = fs,
+	fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs,
 ): boolean {
-	const requestPath = stopRequestPath(asyncDir);
-	if (!fsImpl.existsSync(requestPath)) return false;
+	return consumeStopRequestPayload(asyncDir, fsImpl) !== undefined;
+}
+
+function parseStopRequest(raw: unknown): StopRequest | undefined {
+	const parsed = raw as Partial<StopRequest> | undefined;
+	if (parsed?.type !== "stop") return undefined;
+	return {
+		type: "stop",
+		...(typeof parsed.ts === "number" ? { ts: parsed.ts } : {}),
+		...(typeof parsed.source === "string" ? { source: parsed.source } : {}),
+		...(typeof parsed.reason === "string" ? { reason: parsed.reason } : {}),
+		...(Number.isInteger(parsed.targetIndex) && parsed.targetIndex! >= 0 && parsed.targetIndex! <= 1_000_000 ? { targetIndex: parsed.targetIndex } : {}),
+		...(validStopChildId(parsed.childId) ? { childId: parsed.childId } : {}),
+	};
+}
+
+function consumeStopRequestFile(
+	requestPath: string,
+	fsImpl: Pick<typeof fs, "rmSync" | "readFileSync">,
+): StopRequest | undefined {
+	let request: StopRequest | undefined;
+	try {
+		request = parseStopRequest(JSON.parse(fsImpl.readFileSync(requestPath, "utf-8")));
+	} catch {
+		request = undefined;
+	}
 	try {
 		fsImpl.rmSync(requestPath, { force: true, recursive: true });
 	} catch {
-		// Already removed by a concurrent check — still counts as consumed.
+		// Already removed by a concurrent check — do not execute it twice.
+		return undefined;
 	}
-	return true;
+	return request;
+}
+
+export function consumeStopRequestPayloads(
+	asyncDir: string,
+	fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs,
+): StopRequest[] {
+	const dir = stopRequestsDir(asyncDir);
+	const requests: StopRequest[] = [];
+	if (fsImpl.existsSync(dir)) {
+		let entries: string[];
+		try {
+			entries = fsImpl.readdirSync(dir).filter((name) => name.endsWith(".json")).sort();
+		} catch {
+			entries = [];
+		}
+		for (const entry of entries) {
+			const request = consumeStopRequestFile(path.join(dir, entry), fsImpl);
+			if (request) requests.push(request);
+		}
+	}
+
+	const legacyPath = stopRequestPath(asyncDir);
+	if (fsImpl.existsSync(legacyPath)) {
+		const request = consumeStopRequestFile(legacyPath, fsImpl);
+		if (request) requests.push(request);
+	}
+	return requests.sort((left, right) => (left.ts ?? 0) - (right.ts ?? 0));
+}
+
+export function consumeStopRequestPayload(
+	asyncDir: string,
+	fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs,
+): StopRequest | undefined {
+	return consumeStopRequestPayloads(asyncDir, fsImpl)[0];
 }
 
 /** Parent side: write the authoritative portable interrupt request. */
@@ -560,8 +642,10 @@ export function deliverStopRequest(input: {
 	signal?: NodeJS.Signals;
 	now?: () => number;
 	source?: string;
+	targetIndex?: number;
+	childId?: string;
 }): void {
-	requestAsyncStop(input.asyncDir, input.source ? { source: input.source } : {}, { now: input.now });
+	requestAsyncStop(input.asyncDir, { ...(input.source ? { source: input.source } : {}), ...(input.targetIndex !== undefined ? { targetIndex: input.targetIndex } : {}), ...(input.childId ? { childId: input.childId } : {}) }, { now: input.now });
 }
 
 /**
@@ -575,7 +659,7 @@ export function watchAsyncControlInbox(
 	opts: {
 		onInterrupt: () => void;
 		onTimeout?: () => void;
-		onStop?: () => void;
+		onStop?: (request: StopRequest) => void;
 		onSteer?: (request: SteerRequest) => void;
 		onSteerCapability?: (capability: SteerCapability) => void;
 		onSteerAck?: (ack: SteerAck) => void;
@@ -599,7 +683,7 @@ export function watchAsyncControlInbox(
 	const check = (): void => {
 		if (disposed) return;
 		try {
-			if (consumeStopRequest(asyncDir, fsImpl)) opts.onStop?.();
+			for (const stopRequest of consumeStopRequestPayloads(asyncDir, fsImpl)) opts.onStop?.(stopRequest);
 			if (consumeTimeoutRequest(asyncDir, fsImpl)) opts.onTimeout?.();
 			if (consumeInterruptRequest(asyncDir, fsImpl)) opts.onInterrupt();
 			for (const request of consumeSteerRequests(asyncDir, fsImpl)) opts.onSteer?.(request);
@@ -651,6 +735,7 @@ export function watchAsyncControlInbox(
 	try {
 		if (shouldUseNativeFsWatch("runner-control-inbox", opts.platform)) {
 			watchDir(dir);
+			watchDir(stopRequestsDir(asyncDir), true);
 			watchDir(steerRequestsDir(asyncDir), true);
 			watchDir(steerCapabilitiesDir(asyncDir), true);
 			watchDir(path.join(dir, STEER_ACKS_DIR), true);

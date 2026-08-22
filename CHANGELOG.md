@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- Add child-scoped stop support for async/workflow runs so one child can
+  be cancelled without stopping its siblings. Thanks to
+  [@yanqianglu](https://github.com/yanqianglu) for #1367.
 - Create one passive Orca observer tab per top-level subagent call, with
   shared chain/parallel progress and project-local observer manifests. Thanks to
   [@hyein-cbio](https://github.com/hyein-cbio) for #1360.

@@ -11,7 +11,7 @@ import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilie
 import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
 import { updateActiveRunIndex } from "./active-run-index.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
-import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, enqueueStepSteer, steerAcksDir, steerCapabilityPath, stepSteerInboxDir, watchAsyncControlInbox, type SteerAck, type SteerCapability, type SteerRequest } from "./control-channel.ts";
+import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, enqueueStepSteer, steerAcksDir, steerCapabilityPath, stepSteerInboxDir, watchAsyncControlInbox, type SteerAck, type SteerCapability, type SteerRequest, type StopRequest } from "./control-channel.ts";
 import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
@@ -130,6 +130,7 @@ import { acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAccept
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests, statusStepDescription } from "./chain-append.ts";
+import { asyncStatusChildIdentity } from "../shared/child-identity.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } from "../shared/tool-timeout.ts";
@@ -2266,6 +2267,7 @@ async function runSubagent(
 	const activeChildInterrupts = new Map<number, () => void>();
 	const activeChildTimeouts = new Map<number, () => void>();
 	const activeChildStops = new Map<number, () => void>();
+	const childStopRequests = new Map<number, { childId: string; requestedAt: number }>();
 	const activeChildTurnBudgetAborts = new Map<number, (message: string, state?: TurnBudgetState) => void>();
 	const pendingStepSteers: SteerRequest[] = [];
 	const steeringCapabilities = new Map<number, SteerCapability>();
@@ -2609,6 +2611,57 @@ async function runSubagent(
 		statusPayload.lastUpdate = Date.now();
 		writeStatusPayload();
 	};
+	const childStopTargetId = (index: number): string => asyncStatusChildIdentity(requiredStatusStep(statusPayload, index), index);
+	const markChildStopRequested = (index: number, childId: string, now = Date.now()): boolean => {
+		const step = statusPayload.steps[index];
+		if (!step || (step.status !== "pending" && step.status !== "running")) return false;
+		childStopRequests.set(index, { childId, requestedAt: now });
+		step.stopRequested = true;
+		step.stopRequestedAt = now;
+		delete step.activityState;
+		statusPayload.lastUpdate = now;
+		writeStatusPayload();
+		appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.stop_requested", ts: now, runId: id, stepIndex: index, childId, agent: step.agent }));
+		return true;
+	};
+	const markChildStopped = (index: number, now = Date.now()): void => {
+		const step = requiredStatusStep(statusPayload, index);
+		if (step.status === "stopped") return;
+		step.status = "stopped";
+		step.error = stopMessage;
+		step.exitCode = 1;
+		step.stopped = true;
+		step.stopRequested = true;
+		step.stopRequestedAt = childStopRequests.get(index)?.requestedAt ?? step.stopRequestedAt ?? now;
+		delete step.activityState;
+		step.endedAt = now;
+		step.durationMs = step.startedAt ? now - step.startedAt : 0;
+		step.lastActivityAt = now;
+		statusPayload.lastUpdate = now;
+		writeStatusPayload();
+		appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.stopped", ts: now, runId: id, stepIndex: index, childId: childStopRequests.get(index)?.childId ?? childStopTargetId(index), agent: step.agent, exitCode: 1, durationMs: step.durationMs }));
+	};
+	const childStopResult = (index: number, agent: string, context?: "fresh" | "fork"): SingleStepResult => {
+		markChildStopped(index);
+		return stoppedStepResult(agent, context);
+	};
+	const stopChildStep = (request: StopRequest): void => {
+		if (request.targetIndex === undefined) {
+			stopRunner();
+			return;
+		}
+		const childId = request.childId ?? childStopTargetId(request.targetIndex);
+		const now = Date.now();
+		if (!markChildStopRequested(request.targetIndex, childId, now)) {
+			appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.stop_failed", ts: now, runId: id, stepIndex: request.targetIndex, childId, message: "Child is not pending or running." }));
+			return;
+		}
+		const stop = activeChildStops.get(request.targetIndex);
+		if (stop) stop();
+		else if (requiredStatusStep(statusPayload, request.targetIndex).status === "pending") {
+			appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.stop_queued", ts: now, runId: id, stepIndex: request.targetIndex, childId }));
+		}
+	};
 	const registerStepInterrupt = (flatIndex: number, interrupt: (() => void) | undefined): void => {
 		if (!interrupt) {
 			activeChildInterrupts.delete(flatIndex);
@@ -2631,7 +2684,7 @@ async function runSubagent(
 			return;
 		}
 		activeChildStops.set(flatIndex, stop);
-		if (stopped) stop();
+		if (stopped || childStopRequests.has(flatIndex)) stop();
 	};
 	const registerStepTurnBudgetAbort = (flatIndex: number, abort: ((message: string, state?: TurnBudgetState) => void) | undefined): void => {
 		if (!abort) {
@@ -3536,7 +3589,7 @@ async function runSubagent(
 	const disposeControlInbox = watchAsyncControlInbox(asyncDir, {
 		onInterrupt: interruptRunner,
 		onTimeout: timeoutRunner,
-		onStop: stopRunner,
+		onStop: stopChildStep,
 		onSteer: (request) => {
 			const targetStep = request.targetIndex !== undefined ? statusPayload.steps[request.targetIndex] : undefined;
 			if (targetStep?.status === "pending") {
@@ -3839,6 +3892,7 @@ async function runSubagent(
 				}
 				if (timedOut) return timedOutStepResult(task.agent, task.context);
 				if (stopped) return stoppedStepResult(task.agent, task.context);
+				if (childStopRequests.has(fi)) return childStopResult(fi, task.agent, task.context);
 				if (interrupted) return pausedStepResult(task.agent, task.context);
 				if (aborted && failFast) {
 					const skippedAt = Date.now();
@@ -3898,7 +3952,7 @@ async function runSubagent(
 					onWriterProcess,
 					onExternalProcess: (process) => updateExternalProcess(fi, process),
 					onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
-					skipAcceptance: () => timedOut || stopped,
+					skipAcceptance: () => timedOut || stopped || childStopRequests.has(fi),
 					orcaProgressTab,
 				}), config.deadlineAt);
 				const taskEndTime = Date.now();
@@ -3961,7 +4015,7 @@ async function runSubagent(
 					ts: taskEndTime, runId: id, stepIndex: fi, agent: task.agent,
 					exitCode: stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode, durationMs: taskEndTime - taskStartTime,
 				}));
-				if (singleResult.exitCode !== 0 && failFast) aborted = true;
+				if (singleResult.exitCode !== 0 && failFast && !childStopped) aborted = true;
 				return stopped || childStopped ? { ...singleResult, output: stopMessage, error: stopMessage, exitCode: 1, interrupted: false, timedOut: false, stopped: true, skipped: false } : timedOut ? { ...singleResult, output: timeoutMessage ?? "Subagent timed out.", error: timeoutMessage ?? "Subagent timed out.", exitCode: 1, interrupted: false, timedOut: true, skipped: false } : { ...singleResult, skipped: false };
 			}, globalSemaphore);
 
@@ -4214,6 +4268,7 @@ async function runSubagent(
 						}
 						if (timedOut) return timedOutStepResult(task.agent, task.context);
 						if (stopped) return stoppedStepResult(task.agent, task.context);
+						if (childStopRequests.has(fi)) return childStopResult(fi, task.agent, task.context);
 						if (interrupted) return pausedStepResult(task.agent, task.context);
 						if (aborted && failFast) {
 							const skippedAt = Date.now();
@@ -4289,7 +4344,7 @@ async function runSubagent(
 							onWriterProcess,
 							onExternalProcess: (process) => updateExternalProcess(fi, process),
 							onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
-							skipAcceptance: () => timedOut || stopped,
+							skipAcceptance: () => timedOut || stopped || childStopRequests.has(fi),
 							orcaProgressTab,
 						}), config.deadlineAt);
 						if (task.sessionFile) {
@@ -4372,7 +4427,7 @@ async function runSubagent(
 							appendControlEvent(event);
 						}
 
-						if (singleResult.exitCode !== 0 && failFast) aborted = true;
+						if (singleResult.exitCode !== 0 && failFast && !childStopped) aborted = true;
 						return stopped || childStopped ? { ...singleResult, output: stopMessage, error: stopMessage, exitCode: 1, interrupted: false, timedOut: false, stopped: true, skipped: false } : timedOut ? { ...singleResult, output: timeoutMessage ?? "Subagent timed out.", error: timeoutMessage ?? "Subagent timed out.", exitCode: 1, interrupted: false, timedOut: true, skipped: false } : { ...singleResult, skipped: false };
 					},
 					globalSemaphore,
@@ -4529,6 +4584,26 @@ async function runSubagent(
 			}
 		} else {
 			const seqStep = step as SubagentStep;
+			if (timedOut) {
+				results.push(timedOutStepResult(seqStep.agent, seqStep.context));
+				flatIndex++;
+				continue;
+			}
+			if (stopped) {
+				results.push(stoppedStepResult(seqStep.agent, seqStep.context));
+				flatIndex++;
+				continue;
+			}
+			if (childStopRequests.has(flatIndex)) {
+				results.push(childStopResult(flatIndex, seqStep.agent, seqStep.context));
+				flatIndex++;
+				continue;
+			}
+			if (interrupted) {
+				results.push(pausedStepResult(seqStep.agent, seqStep.context));
+				flatIndex++;
+				continue;
+			}
 			let singleWorktreeSetup: WorktreeSetup | undefined;
 			if (seqStep.worktree) {
 				try {
@@ -4613,7 +4688,7 @@ async function runSubagent(
 				onWriterProcess,
 				onExternalProcess: (process) => updateExternalProcess(flatIndex, process),
 				onExternalJob: (externalJob) => updateExternalJob(flatIndex, externalJob),
-				skipAcceptance: () => timedOut || stopped,
+				skipAcceptance: () => timedOut || stopped || childStopRequests.has(flatIndex),
 				orcaProgressTab,
 				}), config.deadlineAt);
 			} catch (error) {

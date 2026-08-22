@@ -39,6 +39,7 @@ import {
 } from "../../src/api/delegation.ts";
 import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, SUBAGENT_CONTROL_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type ControlEvent, type SubagentState } from "../../src/shared/types.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index.ts";
+import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV } from "../../src/runs/shared/tool-budget.ts";
@@ -1417,6 +1418,69 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		fs.rmSync(path.join(DIRS.results, `${workflowRunId}.json`), { force: true });
+	});
+
+	it("stops one live async workflow child without stopping the parent or sibling", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ matchArgIncludes: "Slow child", delay: 5_000, output: "slow late" });
+		mockPi.onCall({ matchArgIncludes: "Fast child", delay: 250, output: "fast done" });
+		const asyncJobs: SubagentState["asyncJobs"] = new Map();
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, asyncJobs);
+		const started = await executor.execute(
+			`workflow-child-stop-${Date.now()}`,
+			{
+				workflowScript: `
+					const results = await runs.all([
+						{ key: "slow", agent: "echo", task: "Slow child" },
+						{ key: "fast", agent: "echo", task: "Fast child" }
+					]);
+					return results.map((result) => result.key + ":" + (result.stopped ? "stopped" : result.ok ? "ok" : "failed")).join(",");
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(started.isError, undefined);
+		assert.ok(started.details.asyncDir);
+		const workflowRunId = started.details.asyncId!;
+		const statusPath = path.join(started.details.asyncDir, "status.json");
+		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
+		let status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+		for (let attempt = 0; attempt < 150 && !status.steps?.some((step) => step.workflowKey === "slow" && step.status === "running"); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+		}
+		const listed = listAsyncRuns(DIRS.async, { sessionId: "session-123", runId: workflowRunId, exactRunId: true })
+			.find((run) => run.id === workflowRunId);
+		assert.equal(listed?.steps?.find((step) => step.workflowKey === "slow")?.childId, "slow");
+
+		const stop = await executor.execute(
+			"stop-workflow-child-only",
+			{ action: "stop", id: workflowRunId, childId: "slow" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(stop.isError, undefined, stop.content[0]?.text ?? "");
+		assert.match(stop.content[0]?.text ?? "", /Stop requested for child slow/);
+
+		for (let attempt = 0; attempt < 150 && status.state !== "complete"; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+		}
+		assert.equal(status.state, "complete", status.error);
+		assert.equal(status.stopped, undefined);
+		assert.equal(status.steps?.find((step) => step.workflowKey === "slow")?.status, "stopped");
+		assert.equal(status.steps?.find((step) => step.workflowKey === "slow")?.stopped, true);
+		assert.equal(status.steps?.find((step) => step.workflowKey === "fast")?.status, "completed");
+		assert.equal(status.steps?.find((step) => step.workflowKey === "fast")?.stopped, undefined);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { state?: string; stopped?: boolean; results?: Array<{ workflowKey?: string; success?: boolean; stopped?: boolean }> };
+		assert.equal(payload.state, "complete");
+		assert.equal(payload.stopped, undefined);
+		assert.equal(payload.results?.find((entry) => entry.workflowKey === "slow")?.stopped, true);
+		assert.equal(payload.results?.find((entry) => entry.workflowKey === "fast")?.success, true);
+		fs.rmSync(started.details.asyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+		fs.rmSync(resultPath, { force: true });
 	});
 
 	it("reports completed async workflows as not running when stopped after completion", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

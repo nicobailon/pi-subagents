@@ -592,6 +592,7 @@ parentPort.on("message", async (message) => {
 export interface WorkflowScriptChildResult {
 	key: string;
 	ok: boolean;
+	stopped?: boolean;
 	/** Canonical child agent name when launch resolution produced one. */
 	agent?: string;
 	runId?: string;
@@ -680,8 +681,25 @@ export interface RunWorkflowScriptOptions {
 		get: (key: string) => unknown | Promise<unknown>;
 		set: (key: string, value: unknown) => void | Promise<void>;
 	};
+	registerStopChild?: (stop: ((key: string, message?: string) => boolean) | undefined) => void;
 	onTrace?: (trace: WorkflowScriptTraceEntry[]) => void;
 	onEmit?: (emits: unknown[]) => void;
+}
+
+function combinedAbortSignal(signals: AbortSignal[]): AbortSignal {
+	const controller = new AbortController();
+	const abort = (signal: AbortSignal): void => {
+		if (controller.signal.aborted) return;
+		controller.abort(signal.reason);
+	};
+	for (const signal of signals) {
+		if (signal.aborted) {
+			abort(signal);
+			break;
+		}
+		signal.addEventListener("abort", () => abort(signal), { once: true });
+	}
+	return controller.signal;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -847,6 +865,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	const launches = new Map<string, { fingerprint: string; promise: Promise<WorkflowScriptChildResult>; observed: boolean }>();
 	const steers = new Map<number, { key: string; promise: Promise<WorkflowSteerResult>; observed: boolean }>();
 	const stoppedLaunches = new Set<string>();
+	const childStopControllers = new Map<string, AbortController>();
 	const batchAdmissions = new Map<string, Promise<void>>();
 	const observedRunCalls = new Set<number>();
 	const observedSteerCalls = new Set<number>();
@@ -870,6 +889,26 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			console.error("Workflow onTrace callback failed:", error);
 		}
 	};
+	const stoppedChildResult = (key: string, message: string): WorkflowScriptChildResult => ({ key, ok: false, stopped: true, output: message, error: message, artifactPaths: [] });
+	const stopChild = (key: string, message = `Workflow child '${key}' stopped by user.`): boolean => {
+		if (!launches.has(key) || children.has(key)) return false;
+		stoppedLaunches.add(key);
+		children.set(key, stoppedChildResult(key, message));
+		childStopControllers.get(key)?.abort(new Error(message));
+		const started = trace.findLast((entry) => entry.operation === "run" && entry.key === key && entry.state === "started");
+		trace.push({
+			operation: "run",
+			key,
+			state: "stopped",
+			...(started?.agent ? { agent: started.agent } : {}),
+			...(started?.phase ? { phase: started.phase } : {}),
+			...(started?.label ? { label: started.label } : {}),
+			error: message,
+		});
+		traceChanged();
+		return true;
+	};
+	options.registerStopChild?.(stopChild);
 
 	return await new Promise<WorkflowScriptResult>((resolve, reject) => {
 		const finish = (outcome: { value: unknown } | { error: Error & { workflowErrorKind?: unknown } }) => {
@@ -879,6 +918,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			void Promise.allSettled([...steers.values()].map(({ promise }) => promise)).then(() => {
 				if (settled) return;
 				settled = true;
+				options.registerStopChild?.(undefined);
 				if (timer) clearTimeout(timer);
 				options.signal?.removeEventListener("abort", onAbort);
 				void worker.terminate();
@@ -1113,7 +1153,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			const deliver = (promise: Promise<WorkflowScriptChildResult>) => collectFailure
 				? promise
 				: promise.then((result) => {
-					if (!result.ok) {
+					if (!result.ok && !result.stopped) {
 						const childError = new Error(result.detached ? `Run '${key}' detached: ${result.error ?? result.output}` : `Run '${key}' failed: ${result.error ?? result.output}`) as Error & { workflowErrorKind?: "detached-child" };
 						if (result.detached) childError.workflowErrorKind = "detached-child";
 						throw childError;
@@ -1152,13 +1192,16 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			const promise = admission.then(async () => {
 				if (settled || finishing || stoppedLaunches.has(key)) {
 					const reason = childController.signal.reason;
-					const text = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "Workflow script aborted.";
-					return { key, ok: false, output: text, error: text, artifactPaths: [] };
+					const text = children.get(key)?.error ?? (reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "Workflow script aborted.");
+					return stoppedChildResult(key, text);
 				}
+				const childStopController = new AbortController();
+				childStopControllers.set(key, childStopController);
+				const childSignal = combinedAbortSignal([childController.signal, childStopController.signal]);
 				const resolvedResumeValue = resumeReference
 					? await Promise.resolve().then(() => {
 						if (!options.resolveResume) throw new Error("Keyed workflow receipt resume is unavailable in this host.");
-						return options.resolveResume(resumeReference, childController.signal);
+						return options.resolveResume(resumeReference, childSignal);
 					})
 					: undefined;
 				const resolvedResume = typeof resolvedResumeValue === "string"
@@ -1176,22 +1219,24 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					if (resolvedResumeLineage.at(-1) !== resolvedResumeId) resolvedResumeLineage.push(resolvedResumeId!);
 				}
 				const launchParams = resolvedResumeId ? { ...params, resume: resolvedResumeId } : params;
-				return options.launch(key, launchParams, childController.signal, { admitted: true });
+				return options.launch(key, launchParams, childSignal, { admitted: true });
 			}).then((result) => {
 				let normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
 				if (resolvedResumeLineage?.length && normalized.runId) {
 					normalized = { ...normalized, continuation: { runIds: [...new Set([...resolvedResumeLineage, normalized.runId])] } };
 				}
-				if (stoppedLaunches.has(key)) return normalized;
+				childStopControllers.delete(key);
+				if (stoppedLaunches.has(key)) return children.get(key) ?? normalized;
 				children.set(key, normalized);
-				const state = normalized.ok ? "completed" : normalized.detached ? "detached" : "failed";
+				const state = normalized.ok ? "completed" : normalized.stopped ? "stopped" : normalized.detached ? "detached" : "failed";
 				trace.push({ operation: "run", key, state, durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok ? { error: normalized.error ?? normalized.output } : {}) });
 				traceChanged();
 				return normalized;
 			}, (error: unknown) => {
 				const text = error instanceof Error ? error.message : String(error);
 				const failure: WorkflowScriptChildResult = { key, ok: false, output: text, error: text, artifactPaths: [] };
-				if (stoppedLaunches.has(key)) return failure;
+				childStopControllers.delete(key);
+				if (stoppedLaunches.has(key)) return children.get(key) ?? { ...failure, stopped: true };
 				children.set(key, failure);
 				trace.push({ operation: "run", key, state: "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), error: text });
 				traceChanged();
