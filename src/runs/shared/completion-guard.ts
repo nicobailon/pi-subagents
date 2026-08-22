@@ -1,6 +1,7 @@
 import type { Message } from "@earendil-works/pi-ai";
+import type { AcceptanceRole } from "../../shared/types.ts";
 import { isMutatingTool } from "./long-running-guard.ts";
-import { expectsImplementationMutation } from "./task-intent.ts";
+import { classifyTaskMutationIntent, expectsImplementationMutation, taskMayMutate } from "./task-intent.ts";
 
 export { expectsImplementationMutation };
 
@@ -65,14 +66,37 @@ export function hasMutationToolCapability(tools: string[] | undefined, mcpDirect
 	return !tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool));
 }
 
+function hasBuiltinMutationTool(tools: string[] | undefined): boolean {
+	return tools === undefined || tools.some((tool) => !READ_ONLY_BUILTIN_TOOLS.has(tool));
+}
+
+function isWriterRole(agent: string, acceptanceRole: AcceptanceRole | undefined): boolean {
+	return acceptanceRole === "writer"
+		|| (acceptanceRole === undefined && /\bworker\b/i.test(agent));
+}
+
+const WRITER_DELIVERY_PATTERN = /\b(?:address|resolve|work)\s+(?:backlog\s+)?(?:item|issue)\b|\b(?:land|ship)\s+(?:the\s+)?(?:change|changes|fix|feature|implementation)\b/i;
+
 export function validateImplementationToolContract(input: {
 	agent: string;
 	task: string;
 	tools?: string[];
 	mcpDirectTools?: string[];
+	configuredExtensions?: string[];
+	requestedTools?: string[];
+	acceptanceRole?: AcceptanceRole;
+	completionGuard?: boolean;
 }): string | undefined {
-	if (hasMutationToolCapability(input.tools, input.mcpDirectTools)) return undefined;
-	if (!expectsImplementationMutation(input.agent, input.task)) return undefined;
+	if (input.completionGuard === false) return undefined;
+	const requestedMutationTools = input.requestedTools?.filter((tool) => !READ_ONLY_BUILTIN_TOOLS.has(tool)) ?? [];
+	const declaredMutationToolsWereRemoved = requestedMutationTools.length > 0 && !hasBuiltinMutationTool(input.tools);
+	const configuredExtensionCapability = (input.configuredExtensions?.length ?? 0) > 0 && !declaredMutationToolsWereRemoved;
+	if (hasMutationToolCapability(input.tools, input.mcpDirectTools) || configuredExtensionCapability) return undefined;
+	const intent = classifyTaskMutationIntent(input.agent, input.task);
+	if (intent.kind === "read-only") return undefined;
+	const writerTaskMayMutate = isWriterRole(input.agent, input.acceptanceRole)
+		&& (taskMayMutate(input.task) || WRITER_DELIVERY_PATTERN.test(input.task));
+	if (intent.kind !== "implementation" && !writerTaskMayMutate && !declaredMutationToolsWereRemoved) return undefined;
 	return `Agent '${input.agent}' was given an implementation task, but its tool allowlist has no mutation-capable tools. Add bash, edit, write, or another mutation-capable tool to the agent, or use a read-only task/agent.`;
 }
 

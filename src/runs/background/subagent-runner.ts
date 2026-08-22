@@ -1293,14 +1293,16 @@ async function runSingleStepInner(
 			inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 			permissionRules: step.permissionRules,
 		}));
-		const contractTools = resolvedTaskToolPlan.explicitToolAllowlist
-			? [...resolvedTaskToolPlan.effectiveToolAllowlist, ...resolvedTaskToolPlan.configuredExtensions]
-			: undefined;
+		const contractTools = resolvedTaskToolPlan.explicitToolAllowlist ? resolvedTaskToolPlan.effectiveToolAllowlist : undefined;
 		const contractError = validateImplementationToolContract({
 			agent: step.agent,
 			task: taskForCompletionGuard,
 			tools: contractTools,
 			mcpDirectTools: resolvedTaskToolPlan.effectiveMcpTools,
+			configuredExtensions: resolvedTaskToolPlan.configuredExtensions,
+			requestedTools: resolvedTaskToolPlan.requestedBuiltinTools,
+			acceptanceRole: step.acceptanceRole,
+			completionGuard: step.completionGuard,
 		});
 		if (contractError) {
 			return omitUndefinedProperties({

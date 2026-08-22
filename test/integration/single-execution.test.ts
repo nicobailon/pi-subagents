@@ -1679,6 +1679,28 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(path.basename(sessionHeader.cwd), path.basename(callCwd));
 	});
 
+	it("rejects workflowScript implementation children under a read-only capability ceiling before spawn", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "completed without edits" });
+		const executor = makeExecutor([makeAgent("worker")]);
+
+		const result = await executor.execute(
+			"workflow-readonly-implementation-contract",
+			{
+				async: false,
+				workflowScript: `return await runs.run("impl", { agent: "worker", task: "Implement the requested source fix" });`,
+				capabilityCeiling: { version: 1, allowedTools: ["read", "grep", "find", "ls", "contact_supervisor"], denyExtensions: true, sources: ["test"] },
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /no mutation-capable tools/);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /completed without making edits/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("derives workflow child output paths from the workflow output", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "first report", matchArgIncludes: "Review" });
 		mockPi.onCall({ output: "second report", matchArgIncludes: "Monitor" });

@@ -825,14 +825,16 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			throw new AsyncStartValidationError(`Agent '${a.name}' uses runner.type='${externalRunnerType}', which cannot enforce native Pi child permission rules.`);
 		}
 		if (!externalRunner) {
-			const contractTools = toolPlan.explicitToolAllowlist
-				? [...toolPlan.effectiveToolAllowlist, ...toolPlan.configuredExtensions]
-				: undefined;
+			const contractTools = toolPlan.explicitToolAllowlist ? toolPlan.effectiveToolAllowlist : undefined;
 			const contractError = validateImplementationToolContract({
 				agent: a.name,
 				task,
 				tools: contractTools,
 				mcpDirectTools: toolPlan.effectiveMcpTools,
+				configuredExtensions: toolPlan.configuredExtensions,
+				requestedTools: toolPlan.requestedBuiltinTools,
+				acceptanceRole: a.acceptanceRole,
+				completionGuard: a.completionGuard,
 			});
 			if (contractError) throw new AsyncStartValidationError(contractError);
 		}
@@ -1494,14 +1496,16 @@ export function executeAsyncSingle(
 	});
 	const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
 	if (!externalRunner) {
-		const contractTools = toolPlan.explicitToolAllowlist
-			? [...toolPlan.effectiveToolAllowlist, ...toolPlan.configuredExtensions]
-			: undefined;
+		const contractTools = toolPlan.explicitToolAllowlist ? toolPlan.effectiveToolAllowlist : undefined;
 		const contractError = validateImplementationToolContract({
 			agent: agentConfig.name,
 			task: taskText,
 			tools: contractTools,
 			mcpDirectTools: toolPlan.effectiveMcpTools,
+			configuredExtensions: toolPlan.configuredExtensions,
+			requestedTools: toolPlan.requestedBuiltinTools,
+			acceptanceRole: agentConfig.acceptanceRole,
+			completionGuard: agentConfig.completionGuard,
 		});
 		if (contractError) return formatAsyncStartError("single", contractError);
 	}

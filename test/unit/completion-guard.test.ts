@@ -608,3 +608,65 @@ test("implementation task with Cursor edit thinking does not trigger", () => {
 		triggered: false,
 	});
 });
+
+test("writer-role tasks with unknown implementation wording reject read-only launch tools", () => {
+	for (const task of [
+		"Address issue #1371 end-to-end: land the fix with tests.",
+		"Resolve backlog item #1371. Land the change and open a PR.",
+		"Work issue #1371. Ship the feature, run the test suite, and report back.",
+	]) {
+		assert.match(validateImplementationToolContract({
+			agent: "worker",
+			task,
+			tools: ["read", "grep", "find", "ls", "contact_supervisor"],
+			requestedTools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+		}), /no mutation-capable tools/, task);
+	}
+});
+
+test("configured extensions do not rescue clamped-away builtin mutation tools", () => {
+	assert.match(validateImplementationToolContract({
+		agent: "worker",
+		task: "Fix the lane-owned workflowScript launch so writer children get mutation tools.",
+		tools: ["read", "grep", "find", "ls", "contact_supervisor"],
+		configuredExtensions: ["/tmp/provider.ts"],
+		requestedTools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+	}), /no mutation-capable tools/);
+});
+
+test("read-only agents and pure extension workers keep their launch contracts", () => {
+	assert.equal(validateImplementationToolContract({
+		agent: "reviewer",
+		task: "Review the diff and return findings only.",
+		tools: ["read", "grep", "find", "ls", "contact_supervisor"],
+		acceptanceRole: "read-only",
+	}), undefined);
+
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Implement the requested source fix.",
+		tools: ["read", "grep", "find", "ls", "contact_supervisor"],
+		configuredExtensions: ["/tmp/mutation-extension.ts"],
+		requestedTools: ["read", "grep", "find", "ls", "contact_supervisor"],
+	}), undefined);
+
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Implement the requested source fix.",
+	}), undefined);
+
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Task",
+		tools: ["read"],
+		requestedTools: ["read"],
+	}), undefined);
+
+	assert.equal(validateImplementationToolContract({
+		agent: "worker",
+		task: "Summarize the fix",
+		tools: ["read"],
+		requestedTools: ["read"],
+		completionGuard: false,
+	}), undefined);
+});

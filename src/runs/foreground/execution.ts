@@ -390,14 +390,16 @@ async function runSingleAttempt(
 		agentName: agent.name,
 		permissionRules,
 	});
-	const contractTools = toolPlan.explicitToolAllowlist
-		? [...toolPlan.effectiveToolAllowlist, ...toolPlan.configuredExtensions]
-		: undefined;
+	const contractTools = toolPlan.explicitToolAllowlist ? toolPlan.effectiveToolAllowlist : undefined;
 	const contractError = validateImplementationToolContract({
 		agent: agent.name,
 		task: shared.originalTask ?? task,
 		tools: contractTools,
 		mcpDirectTools: toolPlan.effectiveMcpTools,
+		configuredExtensions: toolPlan.configuredExtensions,
+		requestedTools: toolPlan.requestedBuiltinTools,
+		acceptanceRole: agent.acceptanceRole,
+		completionGuard: agent.completionGuard,
 	});
 	if (contractError) {
 		cleanupTempDir(tempDir);
