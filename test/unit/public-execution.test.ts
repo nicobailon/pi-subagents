@@ -9,42 +9,49 @@ describe("public subagent execution normalization", () => {
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: " worker ", task, context: "fresh", async: false }), {
 			ok: true,
 			params: {
+				agent: "worker",
+				task,
 				context: "fresh",
 				async: false,
-				workflowScript: `return runs.run("main", ${JSON.stringify({ agent: "worker", task, output: true })})`,
+				output: true,
 			},
 		});
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker" }), {
 			ok: true,
 			params: {
-				workflowScript: `return runs.run("main", {"agent":"worker","output":true})`,
+				agent: "worker",
+				output: true,
 			},
 		});
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker" }, { asyncByDefault: false }), {
 			ok: true,
 			params: {
+				agent: "worker",
 				async: false,
-				workflowScript: `return runs.run("main", {"agent":"worker","output":true})`,
+				output: true,
 			},
 		});
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", async: true }, { asyncByDefault: false }), {
 			ok: true,
 			params: {
+				agent: "worker",
 				async: true,
-				workflowScript: `return runs.run("main", {"agent":"worker","output":true})`,
+				output: true,
 			},
 		});
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", output: false }), {
 			ok: true,
 			params: {
-				workflowScript: `return runs.run("main", {"agent":"worker","output":false})`,
+				agent: "worker",
+				output: false,
 			},
 		});
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", isolation: "none" }), {
 			ok: true,
 			params: {
+				agent: "worker",
 				worktree: false,
-				workflowScript: `return runs.run("main", {"agent":"worker","output":true})`,
+				output: true,
 			},
 		});
 		assert.deepEqual(normalizePublicSubagentExecution({ action: " list " }), { ok: true, params: { action: "list" } });
@@ -62,6 +69,21 @@ describe("public subagent execution normalization", () => {
 			const result = normalizePublicSubagentExecution(params);
 			assert.equal(result.ok, false);
 			if (!result.ok) assert.match(result.error, /does not accept internal run fan-out fields/);
+		}
+	});
+
+	it("rejects private workflow child fields at the public boundary", () => {
+		for (const params of [
+			{ agent: "worker", workflowParentRunId: "workflow" },
+			{ agent: "worker", workflowKey: "child" },
+			{ agent: "worker", workflowChildAsyncId: "child" },
+			{ agent: "worker", workflowAwaitAsync: true },
+			{ agent: "worker", workflowParentDeadlineAt: Date.now() + 1_000 },
+			{ agent: "worker", suppressRoutineResultIntercom: true },
+		] as const) {
+			const result = normalizePublicSubagentExecution(params);
+			assert.equal(result.ok, false);
+			if (!result.ok) assert.match(result.error, /internal workflow child fields/);
 		}
 	});
 

@@ -52,7 +52,7 @@ describe("slash subagent bridge requester context", () => {
     await done;
   });
 
-  it("lowers structured single-child execution before executor dispatch", async () => {
+  it("passes structured single-child execution to the direct path", async () => {
     const events = eventBus();
     let executedParams: any;
     registerSlashSubagentBridge({
@@ -68,10 +68,11 @@ describe("slash subagent bridge requester context", () => {
       events.on(RESPONSE, (data: any) => {
         try {
           assert.equal(data.isError, false);
-          assert.equal(executedParams.agent, undefined);
-          assert.equal(executedParams.task, undefined);
+          assert.equal(executedParams.agent, "worker");
+          assert.equal(executedParams.task, "work");
           assert.equal(executedParams.async, false);
-          assert.match(executedParams.workflowScript, /runs\.run\("main", \{"agent":"worker","task":"work","output":true\}\)/);
+          assert.equal(executedParams.output, true);
+          assert.equal(executedParams.workflowScript, undefined);
           resolve();
         } catch (error) {
           reject(error);

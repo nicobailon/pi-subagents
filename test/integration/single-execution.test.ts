@@ -405,7 +405,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(output, "Hello from mock agent");
 	});
 
-	it("runs structured single-child requests through the workflow runtime", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("runs public structured single-child requests directly", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Structured child completed" });
 		const executor = makeExecutor([makeAgent("echo")]);
 
@@ -417,8 +417,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			makeMinimalCtx(tempDir),
 		);
 
-		assert.equal(result.isError, undefined);
-		assert.equal(result.details.mode, "workflow");
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
+		assert.equal(result.details.mode, "single");
 		assert.equal(mockPi.callCount(), 1);
 		assert.doesNotMatch(result.content[0]?.text ?? "", /Console:/);
 	});
@@ -461,7 +461,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			makeMinimalCtx(tempDir),
 		);
 
-		assert.equal(result.isError, undefined);
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
 		assert.match(result.content[0]?.text ?? "", /Structured child used the foreground default/);
 		assert.equal(result.details.asyncId, undefined);
 	});
@@ -787,6 +787,30 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true });
 		fs.rmSync(workflowResultPath, { force: true });
+	});
+
+	it("awaits omitted external CLI workflow children through their async result", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const markerPath = path.join(tempDir, "external-awaited-started");
+		const executor = makeExecutor([
+			makeAgent("external", {
+				runner: { type: "external-cli", command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started"); process.stdout.write("awaited external result")`] },
+				model: "mock/default-model",
+				modelSource: { type: "subagents.defaultModel", scope: "user", path: "/settings.json", model: "mock/default-model" },
+			}),
+		]);
+		const result = await executor.execute(
+			"external-awaited-workflow",
+			{ workflowScript: `return await runs.run("external", { agent: "external", task: "Run external" });`, async: false },
+			new AbortController().signal,
+			undefined,
+			{ ...makeMinimalCtx(tempDir), model: { provider: "mock", id: "parent-model" } },
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.equal(result.details.mode, "workflow");
+		assert.match(result.content[0]?.text ?? "", /awaited external result/);
+		assert.equal(fs.readFileSync(markerPath, "utf-8"), "started");
+		assert.equal(mockPi.callCount(), 0);
 	});
 
 	it("runs external CLI agents with fallback models without registry validation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

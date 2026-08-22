@@ -470,7 +470,7 @@ describe("subagent extension RPC bridge", () => {
 		bridge.dispose();
 	});
 
-	it("lowers structured single-child spawn requests onto the async workflow path", async () => {
+	it("passes structured single-child spawn requests to the direct async path", async () => {
 		const events = new FakeEvents();
 		let executedParams: any;
 		const bridge = registerSubagentRpcBridge({
@@ -484,10 +484,11 @@ describe("subagent extension RPC bridge", () => {
 
 		const reply = await request(events, "spawn-structured", "spawn", { agent: "worker", task: "Do work" });
 		assert.equal(reply.success, true);
-		assert.equal(executedParams.agent, undefined);
-		assert.equal(executedParams.task, undefined);
+		assert.equal(executedParams.agent, "worker");
+		assert.equal(executedParams.task, "Do work");
 		assert.equal(executedParams.async, true);
-		assert.match(executedParams.workflowScript, /runs\.run\("main", \{"agent":"worker","task":"Do work","output":true\}\)/);
+		assert.equal(executedParams.output, true);
+		assert.equal(executedParams.workflowScript, undefined);
 		bridge.dispose();
 	});
 

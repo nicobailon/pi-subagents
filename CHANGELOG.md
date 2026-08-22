@@ -14,6 +14,14 @@
   objects instead of ordered arrays. Thanks to [@ravshansbox](https://github.com/ravshansbox) for #1351.
 - Fail child launch attempts when the runtime lacks requested core write tools,
   instead of letting implementation workers continue as read-only runs.
+- Run public single-child launches directly instead of wrapping them in a workflow,
+  so async external-job agents do not show a completed workflow before the real
+  provider job finishes.
+- Let workflow scripts await omitted-`async` external-runner children by launching
+  them in the background internally and returning their terminal result.
+- Clarify that Council Mode can include installed external-runner advisors such
+  as Surf's `gpt-pro` when the `surf-cli` Pi extension has registered
+  `surf-oracle`, with text JSON reports instead of `outputSchema`.
 
 ## [0.54.0] - 2026-08-21
 

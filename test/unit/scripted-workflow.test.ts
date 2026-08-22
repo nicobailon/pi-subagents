@@ -145,7 +145,7 @@ describe("scripted workflow runtime", () => {
 		});
 
 		assert.deepEqual(launches.map(({ key }) => key), ["scan", "review-a", "review-b"]);
-		assert.equal(launches.every(({ params }) => params.async === false), true);
+		assert.equal(launches.every(({ params }) => !Object.prototype.hasOwnProperty.call(params, "async")), true);
 		assert.deepEqual(result.emits, [{ count: 2 }]);
 		assert.deepEqual(result.console, [{ level: "log", text: "reviewed 2" }]);
 		assert.match(JSON.stringify(result.value), /\[run review-a; id=run-revi\]/);
@@ -186,7 +186,7 @@ describe("scripted workflow runtime", () => {
 		});
 
 		assert.deepEqual(resolvedReference, { workflowRunId: "workflow-1", key: "advisor", latest: true });
-		assert.deepEqual(launchParams, { resume: "retained-run", task: "Continue", async: false });
+		assert.deepEqual(launchParams, { resume: "retained-run", task: "Continue" });
 		assert.equal((result.value as { runId?: string }).runId, "continued-run");
 		assert.deepEqual((result.value as { continuation?: { runIds?: string[] } }).continuation?.runIds, ["ancestor-run", "retained-run", "continued-run"]);
 	});
@@ -505,7 +505,7 @@ describe("scripted workflow runtime", () => {
 			},
 			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 		});
-		assert.deepEqual(launchParams, { resume: "retained-run", task: "Apply the follow-up", async: false });
+		assert.deepEqual(launchParams, { resume: "retained-run", task: "Apply the follow-up" });
 		assert.equal((resumed.value as { runId?: string }).runId, "revived-run");
 
 		await assert.rejects(

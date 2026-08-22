@@ -252,6 +252,7 @@ interface AsyncSingleParams {
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
+	workflowAwaitAsync?: boolean;
 	activeAsyncCapacity?: ActiveAsyncCapacityHandle;
 }
 
@@ -1604,7 +1605,7 @@ export function executeAsyncSingle(
 						...(params.worktree === true ? { worktree: true } : {}),
 					},
 				],
-				resultPath: params.parentWorkflowRunId !== undefined && params.revivalLease !== undefined
+				resultPath: params.parentWorkflowRunId !== undefined && (params.revivalLease !== undefined || params.workflowAwaitAsync === true)
 					? workflowAwaitedAsyncResultPath(asyncDir)
 					: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : resultFilePath(DIRS.results, id),
 				cwd: runnerCwd,

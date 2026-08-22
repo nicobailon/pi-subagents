@@ -1176,7 +1176,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					if (resolvedResumeLineage.at(-1) !== resolvedResumeId) resolvedResumeLineage.push(resolvedResumeId!);
 				}
 				const launchParams = resolvedResumeId ? { ...params, resume: resolvedResumeId } : params;
-				return options.launch(key, { ...launchParams, async: launchParams.async ?? false }, childController.signal, { admitted: true });
+				return options.launch(key, launchParams, childController.signal, { admitted: true });
 			}).then((result) => {
 				let normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
 				if (resolvedResumeLineage?.length && normalized.runId) {

@@ -73,6 +73,58 @@ describe("workflow launch params", () => {
 		);
 	});
 
+	it("runs omitted external workflow children async while preserving awaited semantics", () => {
+		assert.deepEqual(
+			prepareWorkflowLaunchParams(
+				{},
+				{ agent: "gpt-pro", task: "Check weather" },
+				"workflow-run",
+				"weather",
+				{ externalAsyncRequired: true },
+			),
+			{
+				agent: "gpt-pro",
+				task: "Check weather",
+				async: true,
+				workflowAwaitAsync: true,
+				workflowParentRunId: "workflow-run",
+				workflowKey: "weather",
+			},
+		);
+		assert.deepEqual(
+			prepareWorkflowLaunchParams(
+				{},
+				{ agent: "gpt-pro", task: "Check weather", async: true },
+				"workflow-run",
+				"weather",
+				{ externalAsyncRequired: true },
+			),
+			{
+				agent: "gpt-pro",
+				task: "Check weather",
+				async: true,
+				workflowParentRunId: "workflow-run",
+				workflowKey: "weather",
+			},
+		);
+		assert.deepEqual(
+			prepareWorkflowLaunchParams(
+				{},
+				{ agent: "gpt-pro", task: "Check weather", async: false },
+				"workflow-run",
+				"weather",
+				{ externalAsyncRequired: true },
+			),
+			{
+				agent: "gpt-pro",
+				task: "Check weather",
+				async: false,
+				workflowParentRunId: "workflow-run",
+				workflowKey: "weather",
+			},
+		);
+	});
+
 	it("keeps a bridge override scoped to the target workflow child", () => {
 		assert.deepEqual(
 			prepareWorkflowLaunchParams(

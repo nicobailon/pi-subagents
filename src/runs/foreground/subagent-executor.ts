@@ -298,6 +298,7 @@ export interface SubagentParamsLike {
 	/** Set by the scheduler so this run's completion can name the schedule that produced it. */
 	scheduleOrigin?: ScheduleOrigin;
 	workflowChildAsyncId?: string;
+	workflowAwaitAsync?: boolean;
 	workflowParentDeadlineAt?: number;
 	suppressRoutineResultIntercom?: boolean;
 	/** Internal inherited cumulative run-tree budget. */
@@ -2826,7 +2827,68 @@ function preflightForkSessionsForStaticTasks(
 	}
 }
 
-function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentToolResult<Details> | null {
+async function waitForWorkflowAsyncSingleResult(
+	params: SubagentParamsLike,
+	launchResult: AgentToolResult<Details>,
+	options: { runId: string; task: string; signal?: AbortSignal; state: SubagentState; kill?: ExecutorDeps["kill"] },
+): Promise<AgentToolResult<Details>> {
+	if (params.workflowAwaitAsync !== true || !launchResult.details.asyncDir) return launchResult;
+	const asyncDir = launchResult.details.asyncDir;
+	const resultPath = workflowAwaitedAsyncResultPath(asyncDir);
+	const stopOnAbort = () => { stopAsyncRun(options.state, options.runId, options.kill, { asyncDir, resolvedId: options.runId }); };
+	if (options.signal?.aborted) stopOnAbort();
+	else options.signal?.addEventListener("abort", stopOnAbort, { once: true });
+	let completed: Awaited<ReturnType<typeof waitForImportedAsyncRoot>>;
+	try {
+		completed = await waitForImportedAsyncRoot({ runId: options.runId, asyncDir, resultPath, index: 0 }, omitUndefinedProperties({
+			shouldAbort: () => options.signal?.aborted === true,
+			timeoutMessage: "Workflow stopped before async child completed.",
+		}));
+	} finally {
+		options.signal?.removeEventListener("abort", stopOnAbort);
+	}
+	fs.rmSync(resultPath, { force: true });
+	const totalCost = completed.totalCost;
+	const childResult: SingleResult = omitUndefinedProperties({
+		index: 0,
+		agent: completed.agent,
+		task: options.task,
+		exitCode: completed.exitCode,
+		usage: {
+			input: totalCost?.inputTokens ?? 0,
+			output: totalCost?.outputTokens ?? 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			cost: totalCost?.costUsd ?? 0,
+			turns: 0,
+		},
+		finalOutput: completed.output,
+		outputState: completed.output.trim() ? "present" as const : "absent" as const,
+		...(completed.error ? { error: completed.error } : {}),
+		...(completed.timedOut ? { timedOut: true } : {}),
+		...(completed.stopped ? { stopped: true } : {}),
+		...(completed.sessionFile ? { sessionFile: completed.sessionFile } : {}),
+		...(completed.model ? { model: completed.model } : {}),
+		...(completed.attemptedModels ? { attemptedModels: completed.attemptedModels } : {}),
+		...(completed.modelAttempts ? { modelAttempts: completed.modelAttempts } : {}),
+		...(completed.contextOverflow ? { contextOverflow: true } : {}),
+		...(completed.structuredOutput !== undefined ? { structuredOutput: completed.structuredOutput } : {}),
+		...(completed.structuredOutputPath ? { structuredOutputPath: completed.structuredOutputPath } : {}),
+		...(completed.structuredOutputSchemaPath ? { structuredOutputSchemaPath: completed.structuredOutputSchemaPath } : {}),
+		...(completed.acceptance ? { acceptance: completed.acceptance } : {}),
+	});
+	return {
+		content: [{ type: "text", text: completed.output || completed.error || `Async workflow child ${options.runId} completed without output.` }],
+		...(completed.success ? {} : { isError: true }),
+		details: {
+			...launchResult.details,
+			runId: options.runId,
+			results: [childResult],
+		},
+	};
+}
+
+async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Promise<AgentToolResult<Details> | null> {
 	const {
 		params,
 		effectiveCwd,
@@ -2901,7 +2963,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			? params.model ?? (externalRunnerWithoutExplicitModel ? undefined : a.model)
 			: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, currentProvider, modelScopes.length === 0 ? {} : { scope: modelScopes });
 		const modelOverrideFromParent = inheritsParentModel(params.model as string | undefined, a.model, parentModel);
-		return executeAsyncSingle(id, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
+		const asyncResult = executeAsyncSingle(id, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
 			agent: params.agent!,
 			task: shouldForkAgent(contextPolicy, params.agent!) ? wrapForkTask(params.task ?? "") : (params.task ?? ""),
 			goal: params.task ?? "",
@@ -2951,7 +3013,9 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			runFanoutBudget: data.runFanoutBudget,
 			parentWorkflowRunId: params.workflowParentRunId,
 			workflowKey: params.workflowKey,
+			workflowAwaitAsync: params.workflowAwaitAsync,
 		}));
+		return waitForWorkflowAsyncSingleResult(params, asyncResult, { runId: id, task: params.task ?? "", signal: data.signal, state: deps.state, kill: deps.kill });
 	}
 
 	return null;
@@ -3146,7 +3210,12 @@ function prepareWorkflowChildLaunchParams(input: {
 		const resolvedOutput = resolveWorkflowChildOutputPath({ ctxCwd: input.ctxCwd, workflowCwd: input.workflowCwd, artifactsDir: input.artifactsDir, workflowRunId: input.parentWorkflowRunId, aggregateOutputPath: input.aggregateOutputPath, configuredOutputBaseDir: input.configuredOutputBaseDir, discoverAgents: input.discoverAgents, workflowAgentScope: input.workflowAgentScope, key: input.workflowKey, params: input.childParams });
 		if (resolvedOutput.path) childParams = { ...input.childParams, output: resolvedOutput.path };
 	}
-	return prepareWorkflowLaunchParams(input.workflowDefaults, childParams, input.parentWorkflowRunId, input.workflowKey, input.options);
+	const childCwd = typeof childParams.cwd === "string" ? resolveChildCwd(input.workflowCwd, childParams.cwd) : input.workflowCwd;
+	const agentScope = resolveExecutionAgentScope(childParams.agentScope ?? input.workflowAgentScope);
+	const agents = input.discoverAgents(childCwd, agentScope).agents;
+	const agent = typeof childParams.agent === "string" ? resolveAgentName(childParams.agent, agents).agent : undefined;
+	const externalAsyncRequired = agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job";
+	return prepareWorkflowLaunchParams(input.workflowDefaults, childParams, input.parentWorkflowRunId, input.workflowKey, { ...input.options, externalAsyncRequired });
 }
 
 function finalizeSingleWorktreeHandoff(input: {
@@ -3821,7 +3890,7 @@ export function prepareWorkflowLaunchParams(
 	childParams: Record<string, unknown>,
 	parentWorkflowRunId: string,
 	workflowKey: string,
-	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number } = {},
+	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number; externalAsyncRequired?: boolean } = {},
 ): SubagentParamsLike {
 	const parentTimeoutMs = options.parentDeadlineAt === undefined
 		|| childParams.timeoutMs !== undefined
@@ -3857,8 +3926,9 @@ export function prepareWorkflowLaunchParams(
 	}
 	const launchParams = {
 		...workflowDefaults,
-		async: false,
+		async: options.externalAsyncRequired === true && childParams.async === undefined && workflowDefaults.async === undefined ? true : false,
 		...childParams,
+		...(options.externalAsyncRequired === true && childParams.async === undefined && workflowDefaults.async === undefined ? { workflowAwaitAsync: true } : {}),
 		...(options.missionDetached ? { mission: false } : {}),
 		workflowParentRunId: parentWorkflowRunId,
 		workflowKey,
@@ -5763,7 +5833,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					workflowLaunchObserver(launch);
 				}
 			}
-			const asyncResult = runAsyncPath(execData, deps);
+			const asyncResult = await runAsyncPath(execData, deps);
 			if (asyncResult) {
 				asyncLaunchFailed = asyncResult.isError === true;
 				return attachMission(withRunFanoutBudget(withResolvedContext(withForkThinkingNotes(asyncResult, forkThinkingDowngrades), contextPolicy.contextSummary), runFanoutBudget));

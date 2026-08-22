@@ -36,6 +36,15 @@ question and scope provide the decision frame. If the user wants a specific lens
 they should put it in the question, scope, or profile definition. Keep the roster
 at 2–3 and never exceed 4.
 
+Package advisors such as Surf's `gpt-pro` are valid only when the package Pi
+extension is installed and its external-job provider is registered. For Surf,
+that means the `surf-cli` Pi extension has loaded and `surf-oracle` appears in
+`subagent({ action: "list" })` or the advisor is explicitly requested in
+`--advisors` after that install. Treat them as external-runner advisors: omit
+child `async` for normal attached council results, do not pass `outputSchema`,
+include any needed evidence in the prompt, and use the fresh fallback cross-exam
+path if the run is not resumable.
+
 ## Run the protocol
 
 Use the canonical workflow, structured advisor contracts, aggregate pass receipts,

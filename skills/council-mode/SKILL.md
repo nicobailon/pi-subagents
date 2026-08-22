@@ -20,6 +20,17 @@ Use advisor profile names directly. A `council-*` profile defines model, tools,
 context, output defaults, and any persistent stance in the profile body. Its
 profile configuration or explicit invocation owns its context choice.
 
+Package advisors can also join the roster only when their package Pi extension is
+installed and their external-job provider is registered. For Surf, `gpt-pro` is
+available only after the `surf-cli` Pi extension loads Surf's `surf-oracle`
+provider. Treat it as a normal advisor name in `runs.all` after that provider is
+visible. It is background-only, so omit `async` unless you explicitly want
+detached receipt semantics; workflow execution will await the terminal provider
+result. External runners can lack repo tools, structured-output support, or
+resumability. For them, include the needed evidence or file excerpts in the task,
+use the text JSON contract below instead of `outputSchema`, and use the
+fresh-context fallback path for cross-exam when the run is not resumable.
+
 Create model-based profiles in your user or project agent directory. Do not add
 them to this package. This is a valid example:
 
@@ -73,7 +84,10 @@ be settled by evidence an advisor can produce. Never run an unbounded loop.
    is known, omit `context` and disclose the unknown runtime default in the memo.
    Each advisor is read-only and must not spawn children, edit files, run mutating
    commands, commit, or push. Set `output: false` unless separate advisor artifacts
-   are explicitly requested or useful for the decision.
+   are explicitly requested or useful for the decision. For installed
+   external-runner advisors such as Surf `gpt-pro` after `surf-oracle` is
+   registered, do not pass `outputSchema`; put the schema request in the task text
+   and accept `result.output` as the report.
 4. Return one aggregate Pass 1 receipt. After it completes, tell the user the
    completion count, agreement count, dispute count, and whether Pass 2 is needed.
 5. The parent synthesizes a claim matrix in session. It contains agreements,
@@ -97,10 +111,12 @@ budgets on advisors. Bound work through the roster, pass cap, and report length.
 
 ## Advisor contracts and pass receipts
 
-Pass-1 reports are at most about 600 words. Give each advisor the same
-`outputSchema`, so reports are comparable without heading cleanup. The following
-shape is a contract template. Use the runtime schema syntax supported by the
-workflow and keep narrative fields as strings:
+Pass-1 reports are at most about 600 words. Give native Pi advisors the same
+`outputSchema`, so reports are comparable without heading cleanup. For
+external-runner advisors, do not pass `outputSchema`; ask them to return compact
+JSON text with the same fields. The following shape is a contract template. Use
+the runtime schema syntax supported by the workflow for native advisors and keep
+narrative fields as strings:
 
 ```js
 const pass1OutputSchema = {
@@ -151,7 +167,9 @@ const pass1OutputSchema = {
 
 Include this contract in each Pass 1 task: inspect supplied evidence directly; do
 not see or ask about other advisors; stay read-only; do not spawn children; return
-only the structured report.
+only the structured report. For external-runner advisors, say `Return only JSON
+matching this shape. Do not wrap it in Markdown.` and include any evidence they
+cannot read through tools.
 
 After `runs.all`, return one aggregate receipt rather than making the parent find
 separate artifacts. Preserve the result order or map it by stable key so each row
@@ -165,7 +183,7 @@ return {
     agent: result.agent,
     requestedContext: roster[index].context ?? "runtime-default-unknown",
     runId: result.runId,
-    report: result.structuredOutput
+    report: result.structuredOutput ?? result.output
   }))
 };
 ```
@@ -208,9 +226,10 @@ const pass2OutputSchema = {
 ```
 
 Use stable resume keys such as `cross-oracle`, `phase: "Council pass 2"`, concise
-labels, and `output: false` unless separate artifacts are requested or useful. The
-aggregate Pass 2 receipt uses the same row shape as Pass 1, with the new `runId`
-and `structuredOutput`.
+labels, and `output: false` unless separate artifacts are requested or useful. Do
+not pass `outputSchema` to external-runner fallback launches; ask for compact JSON
+text instead. The aggregate Pass 2 receipt uses the same row shape as Pass 1, with
+the new `runId` and `structuredOutput ?? output`.
 
 ## Stop and memo
 
