@@ -3107,6 +3107,7 @@ function resolveWorkflowChildOutputPath(input: {
 	aggregateOutputPath?: string;
 	configuredOutputBaseDir?: string;
 	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[] };
+	agents: AgentConfig[];
 	workflowAgentScope?: unknown;
 	state?: SubagentState;
 	key: string;
@@ -3125,8 +3126,10 @@ function resolveWorkflowChildOutputPath(input: {
 	const hasExplicitOutput = typeof rawOutput === "string" || typeof rawOutput === "boolean";
 	const childCwd = typeof input.params.cwd === "string" ? resolveChildCwd(input.workflowCwd, input.params.cwd) : input.workflowCwd;
 	const agentScope = resolveExecutionAgentScope(input.params.agentScope ?? input.workflowAgentScope);
-	const agents = input.discoverAgents(childCwd, agentScope).agents;
-	const agent = typeof input.params.agent === "string" ? resolveAgentName(input.params.agent, agents).agent : undefined;
+	const discoveredAgents = input.discoverAgents(childCwd, agentScope).agents;
+	const agent = typeof input.params.agent === "string"
+		? resolveAgentName(input.params.agent, discoveredAgents).agent ?? resolveAgentName(input.params.agent, input.agents).agent
+		: undefined;
 	const agentOutput = typeof agent?.output === "string" ? agent.output : undefined;
 	const output = rawOutput === true || rawOutput === "true"
 		? agentOutput
@@ -3149,6 +3152,7 @@ function workflowChildOutputClaims(input: {
 	aggregateOutputPath?: string;
 	configuredOutputBaseDir?: string;
 	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[] };
+	agents: AgentConfig[];
 	workflowAgentScope?: unknown;
 	state: SubagentState;
 	claimedOutputPaths: Map<string, string>;
@@ -3197,6 +3201,7 @@ function prepareWorkflowChildLaunchParams(input: {
 	aggregateOutputPath?: string;
 	configuredOutputBaseDir?: string;
 	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[] };
+	agents: AgentConfig[];
 	workflowAgentScope?: unknown;
 	outputOverride?: string;
 	options?: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number };
@@ -3207,13 +3212,15 @@ function prepareWorkflowChildLaunchParams(input: {
 	} else if (input.childParams.output === undefined && input.childParams.resume === undefined && input.aggregateOutputPath !== undefined) {
 		childParams = { ...input.childParams, output: workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.parentWorkflowRunId, input.workflowKey) };
 	} else if (input.childParams.resume === undefined) {
-		const resolvedOutput = resolveWorkflowChildOutputPath({ ctxCwd: input.ctxCwd, workflowCwd: input.workflowCwd, artifactsDir: input.artifactsDir, workflowRunId: input.parentWorkflowRunId, aggregateOutputPath: input.aggregateOutputPath, configuredOutputBaseDir: input.configuredOutputBaseDir, discoverAgents: input.discoverAgents, workflowAgentScope: input.workflowAgentScope, key: input.workflowKey, params: input.childParams });
+		const resolvedOutput = resolveWorkflowChildOutputPath({ ctxCwd: input.ctxCwd, workflowCwd: input.workflowCwd, artifactsDir: input.artifactsDir, workflowRunId: input.parentWorkflowRunId, aggregateOutputPath: input.aggregateOutputPath, configuredOutputBaseDir: input.configuredOutputBaseDir, discoverAgents: input.discoverAgents, agents: input.agents, workflowAgentScope: input.workflowAgentScope, key: input.workflowKey, params: input.childParams });
 		if (resolvedOutput.path) childParams = { ...input.childParams, output: resolvedOutput.path };
 	}
 	const childCwd = typeof childParams.cwd === "string" ? resolveChildCwd(input.workflowCwd, childParams.cwd) : input.workflowCwd;
 	const agentScope = resolveExecutionAgentScope(childParams.agentScope ?? input.workflowAgentScope);
-	const agents = input.discoverAgents(childCwd, agentScope).agents;
-	const agent = typeof childParams.agent === "string" ? resolveAgentName(childParams.agent, agents).agent : undefined;
+	const discoveredAgents = input.discoverAgents(childCwd, agentScope).agents;
+	const agent = typeof childParams.agent === "string"
+		? resolveAgentName(childParams.agent, discoveredAgents).agent ?? resolveAgentName(childParams.agent, input.agents).agent
+		: undefined;
 	const externalAsyncRequired = agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job";
 	return prepareWorkflowLaunchParams(input.workflowDefaults, childParams, input.parentWorkflowRunId, input.workflowKey, { ...input.options, externalAsyncRequired });
 }
@@ -4076,6 +4083,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
 			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);
 			const workflowCwd = resolveRequestedCwd(parentCwd, requestParams.cwd);
+			const workflowAgents = deps.discoverAgents(workflowCwd, resolveExecutionAgentScope(requestParams.agentScope)).agents;
 			const workflowArtifactConfig: ArtifactConfig = omitUndefinedProperties({
 				...DEFAULT_ARTIFACT_CONFIG,
 				enabled: requestParams.artifacts !== false,
@@ -4427,7 +4435,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							...(workflowState ? { state: workflowState } : {}),
 							onTrace: updateTrace,
 							admit: (calls) => {
-								const outputClaims = workflowChildOutputClaims({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, state: deps.state, claimedOutputPaths, entries: calls });
+								const outputClaims = workflowChildOutputClaims({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, state: deps.state, claimedOutputPaths, entries: calls });
 								if (outputClaims.error) throw new Error(outputClaims.error);
 								status.runFanoutBudget = claimRunFanoutBatch(workflowFanoutBudget, calls.map(({ key }) => `workflow[${key}]`));
 								if (outputClaims.claims) applyWorkflowChildOutputClaims(claimedOutputPaths, outputClaims.claims);
@@ -4455,7 +4463,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								});
 								const result = await runMissionWorkflowChild(missionBinding, workflowRunId, key, childPhase, () => {
 									const childRequest = bindMissionWorkflowChildAsyncLaunch(
-										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt } }), runFanoutAdmitted: admission.admitted },
+										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt } }), runFanoutAdmitted: admission.admitted },
 										missionBinding,
 										deps.asyncByDefault,
 									);
@@ -4624,7 +4632,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						sendWorkflowProgress();
 					},
 					admit: (calls) => {
-						const outputClaims = workflowChildOutputClaims({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId: _id, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, state: deps.state, claimedOutputPaths, entries: calls });
+						const outputClaims = workflowChildOutputClaims({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId: _id, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, state: deps.state, claimedOutputPaths, entries: calls });
 						if (outputClaims.error) throw new Error(outputClaims.error);
 						claimRunFanoutBatch(workflowFanoutBudget, calls.map(({ key }) => `workflow[${key}]`));
 						if (outputClaims.claims) applyWorkflowChildOutputClaims(claimedOutputPaths, outputClaims.claims);
@@ -4649,7 +4657,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						});
 						const result = await runMissionWorkflowChild(missionBinding, _id, key, childPhase, () => {
 							const childRequest = bindMissionWorkflowChildAsyncLaunch(
-								{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: _id, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt } }), runFanoutAdmitted: admission.admitted },
+								{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: _id, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt } }), runFanoutAdmitted: admission.admitted },
 								missionBinding,
 								deps.asyncByDefault,
 							);
@@ -5436,9 +5444,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		} catch (error) {
 			return toExecutionErrorResult(effectiveParams, error, contextPolicy.contextSummary);
 		}
-		const requestedAsync = effectiveParams.async ?? deps.asyncByDefault;
-		const backgroundRequestedWhileClarifying = (hasChain || hasTasks) && requestedAsync && effectiveParams.clarify === true;
-		const effectiveAsync = requestedAsync && effectiveParams.clarify !== true;
 		const selectedAgentNames = hasSingle
 			? [effectiveParams.agent!]
 			: hasTasks
@@ -5447,6 +5452,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const externalAgent = selectedAgentNames
 			.map((name) => agents.find((agent) => agent.name === name))
 			.find((agent) => agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job");
+		const externalAsyncRequired = Boolean(externalAgent) && effectiveParams.async === undefined && effectiveParams.clarify !== true && effectiveParams.foregroundOnly !== true;
+		const requestedAsync = externalAsyncRequired ? true : effectiveParams.async ?? deps.asyncByDefault;
+		const backgroundRequestedWhileClarifying = (hasChain || hasTasks) && requestedAsync && effectiveParams.clarify === true;
+		const effectiveAsync = requestedAsync && effectiveParams.clarify !== true;
 		if (externalAgent && (!effectiveAsync || effectiveParams.foregroundOnly === true)) {
 			return buildRequestedModeError(effectiveParams, `Agent '${externalAgent.name}' uses runner.type='${externalAgent.runner?.type}', which currently supports async/background execution only. Omit async or pass async:true; clarify and foregroundOnly are unsupported.`);
 		}

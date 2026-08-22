@@ -126,7 +126,6 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 				...params,
 				agent: params.agent.trim(),
 				output: params.output === undefined ? true : params.output,
-				...(params.async === undefined && options.asyncByDefault === false ? { async: false } : {}),
 			} as T,
 		};
 	}

@@ -813,6 +813,34 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	it("starts omitted external CLI single-child calls in async mode", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const markerPath = path.join(tempDir, "external-single-omitted-async-started");
+		const executor = makeExecutor([
+			makeAgent("external", {
+				runner: { type: "external-cli", command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started"); process.stdout.write("single async result")`] },
+				model: "mock/default-model",
+				modelSource: { type: "subagents.defaultModel", scope: "user", path: "/settings.json", model: "mock/default-model" },
+			}),
+		]);
+		const result = await executor.execute(
+			"external-single-omitted-async",
+			{ agent: "external", task: "Run external" },
+			new AbortController().signal,
+			undefined,
+			{ ...makeMinimalCtx(tempDir), model: { provider: "mock", id: "parent-model" } },
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
+		assert.ok(result.details.asyncId);
+		assert.match(result.content[0]?.text ?? "", /Async: external/);
+		for (let attempt = 0; attempt < 100 && !fs.existsSync(markerPath); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(fs.readFileSync(markerPath, "utf-8"), "started");
+		assert.equal(mockPi.callCount(), 0);
+		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true });
+	});
+
 	it("runs external CLI agents with fallback models without registry validation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const markerPath = path.join(tempDir, "external-fallback-started");
 		const executor = makeExecutor([

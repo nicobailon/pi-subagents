@@ -25,6 +25,9 @@
 - Run public single-child launches directly instead of wrapping them in a workflow,
   so async external-job agents do not show a completed workflow before the real
   provider job finishes.
+- Start omitted-`async` public external-runner single-child launches in the
+  supported background mode, so package agents such as Surf's `gpt-pro` do not
+  fail as foreground requests.
 - Let workflow scripts await omitted-`async` external-runner children by launching
   them in the background internally and returning their terminal result.
 - Clarify that Council Mode can include installed external-runner advisors such

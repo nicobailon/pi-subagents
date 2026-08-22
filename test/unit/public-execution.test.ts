@@ -27,7 +27,6 @@ describe("public subagent execution normalization", () => {
 			ok: true,
 			params: {
 				agent: "worker",
-				async: false,
 				output: true,
 			},
 		});
