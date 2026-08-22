@@ -21,6 +21,9 @@
   severity labels so first-pass reviews do not default to `blockers only`.
 
 ### Fixed
+- Slow async widget animation rerenders to 1 Hz so quiet running jobs do not
+  repaint the full TUI at the liveness tick rate. Thanks to
+  [@0xFlo](https://github.com/0xFlo) for #1376.
 - Report helpful workflow errors when `runs.all(...)` results are read as keyed
   objects instead of ordered arrays. Thanks to [@ravshansbox](https://github.com/ravshansbox) for #1351.
 - Fail child launch attempts when the runtime lacks requested core write tools or

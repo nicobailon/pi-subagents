@@ -10,12 +10,12 @@ import {
 	type SteeringNotice,
 	type SubagentChildStatusEvent,
 	type SubagentState,
-	POLL_INTERVAL_MS,
 	DIRS,
 	SUBAGENT_CHILD_STATUS_EVENT,
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
 	SUBAGENT_STEERING_NOTICE_EVENT,
+	WIDGET_ANIMATION_INTERVAL_MS,
 } from "../../shared/types.ts";
 import { readStatus, resolveWatchPath } from "../../shared/utils.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
@@ -73,6 +73,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const runningJobIds = new Set<string>();
 	let rootWatcher: fs.FSWatcher | undefined;
 	let nextLivenessAt = Date.now() + livenessIntervalMs;
+	let nextWidgetAnimationAt = Date.now() + WIDGET_ANIMATION_INTERVAL_MS;
 	const watch = options.watch ?? fs.watch;
 	const useNativeWatcher = () => shouldUseNativeFsWatch("async-job-tracker", options.platform);
 	const terminalStatus = (status: string) => status === "complete" || status === "failed" || status === "paused" || status === "stopped";
@@ -580,8 +581,11 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				}
 				if (widgetChanged) rerenderLastWidget();
 			}
-			if (runningJobIds.size > 0) requestLastWidgetRender();
-		}, Math.min(POLL_INTERVAL_MS, livenessIntervalMs));
+			if (runningJobIds.size > 0 && now >= nextWidgetAnimationAt) {
+				nextWidgetAnimationAt = now + WIDGET_ANIMATION_INTERVAL_MS;
+				requestLastWidgetRender();
+			}
+		}, Math.min(WIDGET_ANIMATION_INTERVAL_MS, livenessIntervalMs));
 		state.poller.unref?.();
 	};
 

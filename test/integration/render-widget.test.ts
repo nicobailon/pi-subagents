@@ -985,12 +985,12 @@ describe("subagent async widget rendering", () => {
 			);
 			const first = component.render(180);
 
-			Date.now = () => 1_250;
+			Date.now = () => 2_000;
 			const second = component.render(180);
 			const withoutRunningGlyphs = (lines: string[]) => lines.map((line) => line.replace(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/gu, ""));
 
 			assert.equal(renderRequests, 0, "the component must not own the repaint cadence");
-			assert.notDeepEqual(second, first, "the render clock should advance quiet running glyphs");
+			assert.notDeepEqual(second, first, "the animation clock should advance quiet running glyphs");
 			assert.deepEqual(withoutRunningGlyphs(second), withoutRunningGlyphs(first), "only running glyphs should change");
 			assert.notEqual(firstRunningGlyph(first[0] ?? ""), firstRunningGlyph(second[0] ?? ""), "header glyph should advance");
 			assert.notEqual(firstRunningGlyph(first[1] ?? ""), firstRunningGlyph(second[1] ?? ""), "job glyph should advance");

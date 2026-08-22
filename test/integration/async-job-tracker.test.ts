@@ -468,6 +468,36 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("does not request quiet running widget renders on every liveness tick", async () => {
+		const asyncRoot = createTempDir("pi-async-job-quiet-widget-");
+		try {
+			const runDir = path.join(asyncRoot, "quiet-run");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "quiet-run",
+				mode: "single",
+				state: "running",
+				startedAt: 1000,
+				lastUpdate: 1000,
+				steps: [{ agent: "worker", status: "running" }],
+			}), "utf-8");
+			const state = createState();
+			const ui = createUiContext();
+			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 10 });
+			tracker.resetJobs(ui.ctx as never);
+			tracker.handleStarted({ id: "quiet-run", asyncDir: runDir, agent: "worker" });
+
+			await waitForCondition(() => state.asyncJobs.get("quiet-run")?.status === "running", "quiet running job refresh");
+			const renderRequests = ui.renderRequests;
+			await new Promise((resolve) => setTimeout(resolve, 120));
+
+			assert.equal(ui.renderRequests, renderRequests);
+			tracker.resetJobs();
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("uses polling without native watchers on Darwin and fires terminal delivery hooks once", async () => {
 		const asyncRoot = createTempDir("pi-async-job-darwin-poll-");
 		try {

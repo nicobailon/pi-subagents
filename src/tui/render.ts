@@ -18,7 +18,7 @@ import {
 	type WorkflowNodeStatus,
 	type MainWindowRendererConfig,
 	MAX_WIDGET_JOBS,
-	POLL_INTERVAL_MS,
+	WIDGET_ANIMATION_INTERVAL_MS,
 	WIDGET_KEY,
 } from "../shared/types.ts";
 import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
@@ -1580,7 +1580,7 @@ function buildWidgetComponent(jobs: AsyncJobState[], expanded: boolean): (_tui: 
 		const container = new Container();
 		container.render = (renderWidth: number): string[] => {
 			const width = Math.max(0, renderWidth - 2);
-			const frame = Math.floor(Date.now() / POLL_INTERVAL_MS);
+			const frame = Math.floor(Date.now() / WIDGET_ANIMATION_INTERVAL_MS);
 			const buildLines = (): string[] => expanded
 				? buildWidgetLines(jobs, theme, width, true, frame)
 				: jobs.length === 1
