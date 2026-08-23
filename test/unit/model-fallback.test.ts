@@ -12,7 +12,7 @@ import {
 	resolveModelCandidate,
 	resolveSubagentModelOverride,
 } from "../../src/runs/shared/model-fallback.ts";
-import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
+import { clearExclusions, recordModelFailure } from "../../src/runs/shared/model-exclusions.ts";
 import { resolveModelScopesForAgent } from "../../src/runs/shared/model-scope.ts";
 
 beforeEach(() => clearExclusions());
@@ -122,6 +122,12 @@ describe("model fallback helpers", () => {
 			buildModelCandidates("gpt-5-mini", ["openai/gpt-5-mini", "anthropic/claude-sonnet-4", "gpt-5-mini"], availableModels),
 			["openai/gpt-5-mini", "anthropic/claude-sonnet-4"],
 		);
+	});
+
+	it("preserves an authority-required primary while still excluding failed fallbacks", () => {
+		recordModelFailure({ provider: "openai", modelId: "gpt-5-mini" });
+		recordModelFailure({ provider: "anthropic", modelId: "claude-sonnet-4" });
+		assert.deepEqual(buildModelCandidates("openai/gpt-5-mini", ["anthropic/claude-sonnet-4"], availableModels, undefined, { preservePrimary: true }), ["openai/gpt-5-mini"]);
 	});
 
 	it("excludes a candidate after a retryable model failure is recorded", () => {

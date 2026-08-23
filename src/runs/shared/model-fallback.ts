@@ -350,6 +350,8 @@ export interface BuildModelCandidatesOptions {
 	onWarn?: (violation: ModelScopeViolation) => void;
 	/** The primary model came from the running parent session, not configuration. */
 	primaryModelFromParent?: boolean;
+	/** A committed launch authority requires this exact primary despite stale exclusions. */
+	preservePrimary?: boolean;
 }
 
 export function inheritsParentModel(
@@ -394,7 +396,9 @@ export function buildModelCandidates(
 		seen.add(normalized);
 		candidates.push(normalized);
 	}
-	return filterFallbackCandidates(candidates);
+	const filtered = filterFallbackCandidates(candidates);
+	const primary = candidates[0];
+	return options?.preservePrimary && primary && !filtered.includes(primary) ? [primary, ...filtered] : filtered;
 }
 
 const RETRYABLE_MODEL_FAILURE_PATTERNS = [

@@ -61,6 +61,8 @@ export interface SubagentLaunchContractInput {
 	parentModel?: ParentModel;
 	availableModels?: ReadonlyArray<AvailableModelInfo | { provider: string; id: string; fullId?: string; reasoning?: boolean }>;
 	preferredProvider?: string;
+	/** Preserve an authority-required explicit primary despite stale exclusions. */
+	preservePrimaryModel?: boolean;
 	skill?: string | string[] | boolean;
 	output?: string | boolean;
 	outputMode?: OutputMode;
@@ -311,6 +313,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		: buildModelCandidates(primaryModel, agent.fallbackModels, availableModels, preferredProvider, {
 			scope: modelScopes,
 			primaryModelFromParent: inheritsParentModel(input.model, agent.model, input.parentModel),
+			preservePrimary: input.preservePrimaryModel,
 		})
 			.map((candidate) => applyThinkingSuffix(candidate, effectiveThinkingConfig, input.thinking !== undefined) ?? candidate);
 	if (!externalRunner) {

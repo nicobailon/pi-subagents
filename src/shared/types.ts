@@ -1991,6 +1991,8 @@ export interface RunSyncOptions {
 	nestedRoute?: NestedRouteInfo;
 	/** Override the agent's default model (format: "provider/id" or just "id") */
 	modelOverride?: string;
+	/** Preserve an authority-committed explicit primary despite stale exclusions. */
+	preservePrimaryModel?: boolean;
 	/** Opt into priority service tier for supported native OpenAI-Codex launches. */
 	fast?: boolean;
 	/** The override came from the running parent session, not configuration. */

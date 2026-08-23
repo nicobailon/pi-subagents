@@ -1778,7 +1778,7 @@ async function runSyncCompletionInner(
 		agent.fallbackModels,
 		options.availableModels,
 		agent.modelProvider ?? options.preferredModelProvider,
-		{ scope: options.modelScope, primaryModelFromParent: options.modelOverrideFromParent },
+		{ scope: options.modelScope, primaryModelFromParent: options.modelOverrideFromParent, preservePrimary: options.preservePrimaryModel },
 	);
 	try {
 		for (const candidate of candidates) {

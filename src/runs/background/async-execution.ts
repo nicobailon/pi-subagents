@@ -225,6 +225,7 @@ interface AsyncSingleParams {
 	agentContract?: AgentContract;
 	structuredOutputSchema?: JsonSchemaObject;
 	modelOverride?: string;
+	preservePrimaryModel?: boolean;
 	modelOverrideFromParent?: boolean;
 	fast?: boolean;
 	thinkingOverride?: AgentConfig["thinking"];
@@ -1546,6 +1547,7 @@ export function executeAsyncSingle(
 		: buildModelCandidates(primaryModel, agentConfig.fallbackModels, availableModels, agentConfig.modelProvider ?? ctx.currentModelProvider, {
 			scope: modelScopes,
 			primaryModelFromParent: params.modelOverrideFromParent,
+			preservePrimary: params.preservePrimaryModel,
 		})
 			.flatMap((candidate) => {
 				const resolved = applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined);

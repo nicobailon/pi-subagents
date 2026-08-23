@@ -319,6 +319,8 @@ export interface SubagentParamsLike {
 	runFanoutAdmitted?: boolean;
 	/** Internal inherited tool/agent ceiling for delegated child launches. */
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	/** Internal proof that launch authority committed the explicit primary model. */
+	authorityModelRequired?: boolean;
 	/** Internal durable-run compatibility fields. Public callers must use workflowScript. */
 	chain?: ChainStep[];
 	tasks?: TaskParam[];
@@ -3183,6 +3185,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			...(params.reads !== undefined ? { reads: params.reads } : {}),
 			outputBaseDir: resolveSingleRunOutputBaseDir(deps, artifactsDir, id),
 			modelOverride,
+			preservePrimaryModel: params.authorityModelRequired === true,
 			fast: params.fast,
 			modelOverrideFromParent,
 			thinkingOverride: externalRunnerWithoutExplicitModel ? undefined : thinkingOverrideForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
@@ -3662,6 +3665,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			nestedRoute: foregroundControl?.nestedRoute,
 			index: 0,
 			modelOverride,
+			preservePrimaryModel: params.authorityModelRequired === true,
 			fast: params.fast,
 			modelOverrideFromParent,
 			thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
@@ -4713,12 +4717,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									...(childPhase ? { phase: childPhase } : {}),
 									heartbeat: { status: "running", ...(childPhase ? { phase: childPhase } : {}) },
 								});
+								const authorityDigest = authorityDigestByKey.get(key);
 								const result = await runMissionWorkflowChild(missionBinding, workflowRunId, key, childPhase, () => {
 									const childRequest = bindMissionWorkflowChildAsyncLaunch(
 										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt, capabilityCeiling: workflowCapabilityCeiling } }), runFanoutAdmitted: admission.admitted },
 										missionBinding,
 										deps.asyncByDefault,
 									);
+									if (authorityDigest) childRequest.authorityModelRequired = true;
 									workflowLaunchObservers.set(childRequest, (launch) => {
 										const step = status.steps?.find((candidate) => candidate.workflowKey === key);
 										if (step) {
@@ -4761,7 +4767,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									if (childResult.savedOutputPath) producedChildOutputPaths.add(childResult.savedOutputPath);
 								}
 								const child = workflowChildResult(key, result, childParams, deps.state);
-								const authorityDigest = authorityDigestByKey.get(key);
 								if (authorityDigest) child.authorityLaunchContractDigest = authorityDigest;
 								if (child.runId) workflowChildRunIds.set(key, child.runId);
 								const step = status.steps?.find((candidate) => candidate.workflowKey === key);
@@ -4911,12 +4916,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							...(childPhase ? { phase: childPhase } : {}),
 							heartbeat: { status: "running", ...(childPhase ? { phase: childPhase } : {}) },
 						});
+						const authorityDigest = authorityDigestByKey.get(key);
 						const result = await runMissionWorkflowChild(missionBinding, _id, key, childPhase, () => {
 							const childRequest = bindMissionWorkflowChildAsyncLaunch(
 								{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: _id, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt, capabilityCeiling: workflowCapabilityCeiling } }), runFanoutAdmitted: admission.admitted },
 								missionBinding,
 								deps.asyncByDefault,
 							);
+							if (authorityDigest) childRequest.authorityModelRequired = true;
 							workflowLaunchObservers.set(childRequest, (launch) => recordMissionWorkflowChild(missionBinding, _id, key, {
 								status: "running",
 								agent: launch.agent,
@@ -4938,7 +4945,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						}
 						if (result.details.asyncDir && missionBinding) writeMissionAsyncBinding(result.details.asyncDir, missionBinding);
 						const child = workflowChildResult(key, result, childParams, deps.state);
-						const authorityDigest = authorityDigestByKey.get(key);
 						if (authorityDigest) child.authorityLaunchContractDigest = authorityDigest;
 						if (child.runId) workflowChildRunIds.set(key, child.runId);
 						const childStatus = missionWorkflowChildStatus(result);
@@ -6241,6 +6247,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				parentSessionFile: ctx.sessionManager.getSessionFile() ?? null,
 				parentLeafId: ctx.sessionManager.getLeafId?.() ?? null,
 				capabilityCeiling,
+				preservePrimaryModel: true,
 			});
 			if (!contract.ok) throw new Error(`Authorized workflow lane '${call.key}' failed runtime preflight (${contract.code}): ${contract.message}`);
 			const authorityModelCandidates = contract.contract.modelCandidates.length > 0

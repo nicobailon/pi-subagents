@@ -671,6 +671,7 @@ async function preflightResult(params: unknown, ctx: ExtensionContext): Promise<
 		parentSessionFile: ctx.sessionManager.getSessionFile() ?? null,
 		parentLeafId: ctx.sessionManager.getLeafId(),
 		capabilityCeiling: resolveCurrentSubagentCapabilityCeiling(sessionId),
+		preservePrimaryModel: true,
 	});
 	if (!result.ok) throw new SubagentRpcError("execution_failed", `Launch preflight failed (${result.code}): ${result.message}`);
 	return result.contract as unknown as Record<string, unknown>;

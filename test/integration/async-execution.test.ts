@@ -28,6 +28,7 @@ import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey } from "../../src/runs/background/active-async-capacity.ts";
+import { clearExclusions, recordModelFailure } from "../../src/runs/shared/model-exclusions.ts";
 
 interface LaunchResolvedExtensions {
 	version?: number;
@@ -551,10 +552,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				maxLanes: 1,
 				lanes: [{ key: "a", agent: preflight.contract.agent.name, modelCandidates: preflight.contract.modelCandidates, launchContractDigest: preflight.contract.launchContractDigest }],
 			});
-			mockPi.onCall({ output: "authority admitted" });
+			recordModelFailure({ provider: "mock", modelId: "test-model" });
+			mockPi.onCall({ output: "authority admitted", model: "mock/test-model" });
 			bindSubagentLaunchPermits(workflowParams, [token]);
 			const admitted = await executor.executePublic("public-admitted", workflowParams, signal, undefined, context);
-			assert.equal(admitted.isError, undefined);
+			assert.equal(admitted.isError, undefined, JSON.stringify(admitted));
 			assert.doesNotMatch(admitted.content.map(({ text }) => text ?? "").join("\n"), /launch authority|permit required/i);
 			const replay = await executor.executePublic("public-replay", workflowParams, signal, undefined, context);
 			assert.equal(replay.isError, true);
@@ -575,6 +577,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.equal(stale.details?.asyncId, undefined);
 			assert.match(stale.content.map(({ text }) => text ?? "").join("\n"), /launch manifest|launch authority/i);
 		} finally {
+			clearExclusions();
 			authority.dispose();
 		}
 	});
