@@ -641,6 +641,8 @@ export interface WorkflowScriptChildResult {
 	stopped?: boolean;
 	/** Canonical child agent name when launch resolution produced one. */
 	agent?: string;
+	model?: string;
+	launchContractDigest?: string;
 	runId?: string;
 	output: string;
 	error?: string;
