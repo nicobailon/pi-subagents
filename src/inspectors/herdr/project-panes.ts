@@ -284,7 +284,7 @@ export function readProjectPaneBinding(projectRoot: string): ProjectPaneResult<H
 	return { ok: true, data: read.binding };
 }
 
-export function herdrProjectPaneSnapshotFromBinding(binding: HerdrProjectPaneBinding, now = Date.now()): HerdrProjectPaneSnapshot {
+function herdrProjectPaneSnapshotFromBinding(binding: HerdrProjectPaneBinding, now = Date.now()): HerdrProjectPaneSnapshot {
 	return {
 		projectRoot: binding.projectRoot,
 		bindingPath: projectPaneBindingPath(binding.projectRoot),
@@ -354,7 +354,7 @@ function projectPaneRuntime(value: unknown): ProjectPaneRuntime | undefined {
 	};
 }
 
-export function herdrProjectPaneSnapshotFromStatus(data: ProjectPaneStatusData, now: number): HerdrProjectPaneSnapshot | undefined {
+function herdrProjectPaneSnapshotFromStatus(data: ProjectPaneStatusData, now: number): HerdrProjectPaneSnapshot | undefined {
 	if (data.state === "absent" || !data.binding) return undefined;
 	return {
 		projectRoot: data.projectRoot,
@@ -630,7 +630,6 @@ function createProjectPaneManagerInternal(options: InternalProjectPaneManagerOpt
 			if (!bindingResult.ok) return bindingResult;
 			const existing = bindingResult.data;
 			if (!existing) return { ok: true, data: { ...common(projectRoot), disposition: "absent" } };
-			let runtime: ProjectPaneRuntime | undefined;
 			const live = await inspectPane(client, existing.paneId, input.signal);
 			if (!live.ok) {
 				if (live.error.code === "NOT_FOUND" || live.error.code === "PANE_GONE") {
@@ -640,7 +639,7 @@ function createProjectPaneManagerInternal(options: InternalProjectPaneManagerOpt
 				}
 				return { ok: false, error: { ...live.error, projectRoot, bindingPath: projectPaneBindingPath(projectRoot) } };
 			}
-			runtime = live.data;
+			const runtime = live.data;
 			const ownership = projectPaneOwnership(runtime, existing, projectRoot);
 			if (ownership !== "verified") {
 				return projectPaneError("PANE_OWNERSHIP_UNVERIFIED", `Project pane '${existing.paneId}' ownership is '${ownership}' for '${projectRoot}'.`, {

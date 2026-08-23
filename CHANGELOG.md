@@ -64,6 +64,10 @@
   as Surf's `gpt-pro` when the `surf-cli` Pi extension has registered
   `surf-oracle`, with text JSON reports instead of `outputSchema`.
 
+### Changed
+- Simplify unreleased Herdr snapshot and thinking-ceiling internals by removing
+  unused helpers and exports.
+
 ## [0.54.0] - 2026-08-21
 
 ### Highlights

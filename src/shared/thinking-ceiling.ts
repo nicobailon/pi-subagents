@@ -26,10 +26,6 @@ export function intersectThinkingCeilings(...ceilings: Array<ThinkingLevel | und
 	return active.reduce((lowest, ceiling) => compareThinkingLevels(ceiling, lowest) < 0 ? ceiling : lowest);
 }
 
-export function encodeThinkingCeiling(ceiling: ThinkingLevel | undefined): string | undefined {
-	return ceiling;
-}
-
 export function decodeThinkingCeiling(value: string | undefined): ThinkingLevel | undefined {
 	if (value === undefined || value === "") return undefined;
 	return parseThinkingLevel(value, "inherited thinking ceiling");
