@@ -1442,6 +1442,7 @@ async function runSingleStepInner(
 			timeoutMessage: ctx.timeoutMessage,
 			stopMessage: ctx.stopMessage,
 			onExternalJob: ctx.onExternalJob,
+			followUp: step.externalJobFollowUp,
 		}));
 		try { fs.writeFileSync(ctx.outputFile, external.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
 		const resolvedOutput = step.outputPath && external.exitCode === 0

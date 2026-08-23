@@ -22,6 +22,7 @@ import { attachRootChildrenToSteps, findNestedRouteForRootId, projectNestedRegis
 import { readMissionBinding } from "../../missions/lifecycle.ts";
 import { formatWorkflowJsonPreview } from "../../workflows/scripted-workflow.ts";
 import { formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
+import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 
 interface RunStatusParams {
 	action?: string;
@@ -159,6 +160,14 @@ function formatSteeringSummary(input: { steering?: SteeringStatus }): string | u
 	if (!steering || steering.requested === 0) return undefined;
 	const lateAcknowledgments = steering.recent.reduce((count, request) => count + request.targets.filter((target) => target.lateDeliveredAt !== undefined).length, 0);
 	return `${steering.requested} requested, ${steering.scheduled} scheduled, ${steering.pending} pending, ${steering.delivered} delivered, ${steering.failed} failed, ${steering.recovered} recovered${lateAcknowledgments ? `, ${lateAcknowledgments} late acknowledged` : ""}`;
+}
+
+function externalJobFollowUpSupported(provider: string): boolean {
+	try {
+		return typeof getExternalJobProvider(provider)?.followUp === "function";
+	} catch {
+		return false;
+	}
 }
 
 function rememberedForegroundChildOutput(child: ForegroundResumeRun["children"][number]): string {
@@ -513,6 +522,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 					&& Boolean(control.workflowSteeringDir && fs.existsSync(control.workflowSteeringDir))
 					&& (control.activeChildren?.size ?? 0) > 0)
 				: [];
+			let hasExternalJobFollowUpHint = false;
 			for (const [index, step] of (status.steps ?? []).entries()) {
 				const stepActivityText = step.status === "running" ? formatActivityLabel(step.lastActivityAt, step.activityState) : undefined;
 				const modelThinking = formatModelThinking(step.model, step.thinking);
@@ -535,6 +545,10 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 					if (step.externalJob?.state) lines.push(`  Provider state: ${step.externalJob.state}`);
 					if (step.externalJob?.conversationUrl) lines.push(`  Conversation: ${step.externalJob.conversationUrl}`);
 					if (step.externalJob?.resultArtifactPath) lines.push(`  Result artifact: ${step.externalJob.resultArtifactPath}`);
+					if ((step.status === "complete" || step.status === "completed") && step.externalJob?.state === "completed" && step.externalJob.providerJobId && externalJobFollowUpSupported(step.runner.provider)) {
+						hasExternalJobFollowUpHint = true;
+						lines.push(`  Follow-up: subagent({ action: "resume", id: "${status.runId}", index: ${index}, message: "..." })`);
+					}
 				}
 				lines.push(...formatNestedRunStatusLines(step.children, { indent: "  ", commandHints: true, maxLines: 20 }));
 				const stepOutputPath = path.join(asyncDir, `output-${index}.log`);
@@ -563,7 +577,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			if (status.state === "running" && !allExternal && status.mode !== "workflow") lines.push(`Steer running child: subagent({ action: "steer", id: "${status.runId}", message: "..." })`);
 			if (status.state !== "running") {
 				lines.push(allExternal
-					? "Resume: unavailable; external runners do not persist Pi sessions."
+					? hasExternalJobFollowUpHint ? "Resume: use the external-job follow-up hint above." : "Resume: unavailable; external runners do not persist Pi sessions."
 					: formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile, { stopped: status.state === "stopped" || status.stopped === true }));
 			}
 			if (fs.existsSync(logPath)) lines.push(`Log: ${logPath}`);

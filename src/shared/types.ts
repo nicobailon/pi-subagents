@@ -1372,6 +1372,12 @@ export interface ExternalJobStatus {
 	provider: string;
 	providerJobId?: string;
 	promptDigest: string;
+	operation?: "start" | "follow-up";
+	sourceRunId?: string;
+	sourceStepIndex?: number;
+	parentProviderJobId?: string;
+	requestId?: string;
+	requestDigest?: string;
 	options: Record<string, unknown>;
 	handleUrl?: string;
 	conversationUrl?: string;

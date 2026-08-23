@@ -8,6 +8,13 @@ export interface RunnerSubagentStep {
 	agent: string;
 	task: string;
 	runner?: ResolvedRunnerConfig;
+	externalJobFollowUp?: {
+		sourceRunId: string;
+		sourceStepIndex: number;
+		parentProviderJobId: string;
+		requestId: string;
+		requestDigest: string;
+	};
 	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	importAsyncRoot?: {

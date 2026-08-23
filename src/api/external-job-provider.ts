@@ -9,7 +9,7 @@ const MAX_FAILURE_MESSAGE_LENGTH = 4_096;
 const MAX_URL_LENGTH = 4_096;
 
 export type ExternalJobState = "queued" | "running" | "completed" | "failed" | "stopped" | "blocked";
-export type ExternalJobOperation = "start" | "status" | "result" | "reattach";
+export type ExternalJobOperation = "start" | "follow-up" | "status" | "result" | "reattach";
 
 export type ExternalJobOptions = Record<string, unknown>;
 
@@ -22,6 +22,14 @@ export interface ExternalJobStartInput {
 	agent: string;
 	options: ExternalJobOptions;
 	sessionId?: string;
+}
+
+export interface ExternalJobFollowUpInput extends ExternalJobStartInput {
+	sourceRunId: string;
+	sourceStepIndex: number;
+	parentProviderJobId: string;
+	requestId: string;
+	requestDigest: string;
 }
 
 export interface ExternalJobHandle {
@@ -42,6 +50,7 @@ export interface ExternalJobResult extends ExternalJobHandle {
 export interface ExternalJobProvider {
 	name: string;
 	start(input: ExternalJobStartInput): Promise<ExternalJobHandle> | ExternalJobHandle;
+	followUp?(input: ExternalJobFollowUpInput): Promise<ExternalJobHandle> | ExternalJobHandle;
 	status(providerJobId: string): Promise<ExternalJobHandle> | ExternalJobHandle;
 	result(providerJobId: string): Promise<ExternalJobResult> | ExternalJobResult;
 	reattach(providerJobId: string): Promise<ExternalJobHandle> | ExternalJobHandle;

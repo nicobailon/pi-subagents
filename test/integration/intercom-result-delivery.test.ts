@@ -6,6 +6,9 @@ import * as path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { ASYNC_DIR, INTERCOM_DETACH_REQUEST_EVENT, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey, getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
+import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
+import { serviceExternalJobBridgeRequests } from "../../src/runs/shared/external-job-bridge.ts";
+import { externalJobFollowUpRequestDigest, externalJobFollowUpRunId, externalJobPromptDigest } from "../../src/runs/shared/external-job-runner.ts";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { acquireSessionLease, sessionLeaseDir } from "../../src/runs/shared/session-lease.ts";
@@ -114,6 +117,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 	});
 
 	afterEach(() => {
+		delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_JOB_PROVIDER_REGISTRY_KEY)];
 		removeTempDir(tempDir);
 		for (const directory of budgetDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
 	});
@@ -515,6 +519,202 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.equal(events.emitted.some((entry) => entry.channel === "subagent:result-intercom"), false);
 		} finally {
 			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
+	});
+
+	it("resume action starts a completed external-job follow-up and dedupes the same message", async () => {
+		const sourceRunId = `resume-external-job-${Date.now()}`;
+		const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
+		const followUpMessage = "What changed after the first answer?";
+		const requestDigest = externalJobFollowUpRequestDigest({
+			provider: "surf-oracle",
+			parentProviderJobId: "job-parent",
+			promptDigest: externalJobPromptDigest(followUpMessage),
+			options: { tier: "pro" },
+		});
+		const expectedRunId = externalJobFollowUpRunId(requestDigest);
+		const continuationAsyncDir = path.join(ASYNC_DIR, expectedRunId);
+		let followUps = 0;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { throw new Error("start must not be called"); },
+			followUp: (input) => {
+				followUps += 1;
+				assert.equal(input.parentProviderJobId, "job-parent");
+				assert.equal(input.sourceRunId, sourceRunId);
+				assert.equal(input.sourceStepIndex, 0);
+				assert.equal(input.requestDigest, requestDigest);
+				return { providerJobId: "job-child", state: "completed", conversationUrl: "https://surf.example/c/job-child" };
+			},
+			status: (providerJobId) => ({ providerJobId, state: "completed" }),
+			reattach: (providerJobId) => ({ providerJobId, state: "completed" }),
+			result: (providerJobId) => ({ providerJobId, state: "completed", output: "follow-up answer" }),
+		});
+		try {
+			fs.mkdirSync(sourceAsyncDir, { recursive: true });
+			fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
+				runId: sourceRunId,
+				sessionId: "session-123",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				cwd: tempDir,
+				steps: [{
+					agent: "gpt-pro",
+					status: "complete",
+					runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" }, capabilities: { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false } },
+					externalJob: { provider: "surf-oracle", providerJobId: "job-parent", promptDigest: externalJobPromptDigest("original prompt"), options: { tier: "pro" }, state: "completed" },
+				}],
+			}, null, 2), "utf-8");
+			const { executor } = makeExecutor({ agents: [makeAgent("gpt-pro", { runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } } as never)] });
+
+			const first = await executor.execute("resume-external-job-first", { action: "resume", id: sourceRunId, message: followUpMessage }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(first.isError, undefined, first.content[0]?.text ?? "follow-up failed");
+			assert.equal(first.details?.asyncId, expectedRunId);
+
+			const duplicate = await executor.execute("resume-external-job-duplicate", { action: "resume", id: sourceRunId, message: followUpMessage }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(duplicate.isError, undefined, duplicate.content[0]?.text ?? "duplicate failed");
+			assert.equal(duplicate.details?.asyncId, expectedRunId);
+			assert.match(duplicate.content[0]?.text ?? "", /already exists/);
+
+			const resultPath = path.join(RESULTS_DIR, `${expectedRunId}.json`);
+			const deadline = Date.now() + 10_000;
+			while (!fs.existsSync(resultPath)) {
+				if (Date.now() >= deadline) {
+					const statusPath = path.join(continuationAsyncDir, "status.json");
+					const stderrPath = path.join(continuationAsyncDir, "runner.stderr.log");
+					assert.fail(`Timed out waiting for external-job follow-up result; status=${fs.existsSync(statusPath) ? fs.readFileSync(statusPath, "utf-8") : "missing"}; stderr=${fs.existsSync(stderrPath) ? fs.readFileSync(stderrPath, "utf-8") : "missing"}`);
+				}
+				serviceExternalJobBridgeRequests(continuationAsyncDir);
+				await new Promise((resolve) => setTimeout(resolve, 25));
+			}
+			const status = JSON.parse(fs.readFileSync(path.join(continuationAsyncDir, "status.json"), "utf-8")) as { steps?: Array<{ externalJob?: Record<string, unknown> }> };
+			assert.equal(followUps, 1);
+			assert.equal(status.steps?.[0]?.externalJob?.operation, "follow-up");
+			assert.equal(status.steps?.[0]?.externalJob?.parentProviderJobId, "job-parent");
+			assert.equal(status.steps?.[0]?.externalJob?.requestDigest, requestDigest);
+			assert.equal(status.steps?.[0]?.externalJob?.providerJobId, "job-child");
+		} finally {
+			fs.rmSync(sourceAsyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+			fs.rmSync(continuationAsyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+			fs.rmSync(path.join(RESULTS_DIR, `${expectedRunId}.json`), { force: true });
+		}
+	});
+
+	it("resume action starts an indexed external-job follow-up from multi-child async runs", async () => {
+		const sourceRunId = `resume-external-job-multi-${Date.now()}`;
+		const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
+		const followUpMessage = "Continue the selected advisor";
+		const requestDigest = externalJobFollowUpRequestDigest({
+			provider: "surf-oracle",
+			parentProviderJobId: "job-second",
+			promptDigest: externalJobPromptDigest(followUpMessage),
+			options: { tier: "pro" },
+		});
+		const expectedRunId = externalJobFollowUpRunId(requestDigest);
+		const continuationAsyncDir = path.join(ASYNC_DIR, expectedRunId);
+		let selectedSourceStep: number | undefined;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { throw new Error("start must not be called"); },
+			followUp: (input) => {
+				selectedSourceStep = input.sourceStepIndex;
+				assert.equal(input.sourceRunId, sourceRunId);
+				assert.equal(input.parentProviderJobId, "job-second");
+				return { providerJobId: "job-child", state: "completed" };
+			},
+			status: (providerJobId) => ({ providerJobId, state: "completed" }),
+			reattach: (providerJobId) => ({ providerJobId, state: "completed" }),
+			result: (providerJobId) => ({ providerJobId, state: "completed", output: "indexed follow-up answer" }),
+		});
+		try {
+			fs.mkdirSync(sourceAsyncDir, { recursive: true });
+			fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
+				runId: sourceRunId,
+				sessionId: "session-123",
+				mode: "parallel",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				cwd: tempDir,
+				steps: [{
+					agent: "scout",
+					status: "complete",
+				}, {
+					agent: "gpt-pro",
+					status: "complete",
+					runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" }, capabilities: { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false } },
+					externalJob: { provider: "surf-oracle", providerJobId: "job-second", promptDigest: externalJobPromptDigest("original prompt"), options: { tier: "pro" }, state: "completed" },
+				}],
+			}, null, 2), "utf-8");
+			const { executor } = makeExecutor({ agents: [makeAgent("gpt-pro", { runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } } as never)] });
+
+			const first = await executor.execute("resume-external-job-indexed", { action: "resume", id: sourceRunId, index: 1, message: followUpMessage }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(first.isError, undefined, first.content[0]?.text ?? "follow-up failed");
+			assert.equal(first.details?.asyncId, expectedRunId);
+
+			const resultPath = path.join(RESULTS_DIR, `${expectedRunId}.json`);
+			const deadline = Date.now() + 10_000;
+			while (!fs.existsSync(resultPath)) {
+				if (Date.now() >= deadline) assert.fail("Timed out waiting for indexed external-job follow-up result");
+				serviceExternalJobBridgeRequests(continuationAsyncDir);
+				await new Promise((resolve) => setTimeout(resolve, 25));
+			}
+			const status = JSON.parse(fs.readFileSync(path.join(continuationAsyncDir, "status.json"), "utf-8")) as { steps?: Array<{ externalJob?: Record<string, unknown> }> };
+			assert.equal(selectedSourceStep, 1);
+			assert.equal(status.steps?.[0]?.externalJob?.sourceStepIndex, 1);
+			assert.equal(status.steps?.[0]?.externalJob?.parentProviderJobId, "job-second");
+		} finally {
+			fs.rmSync(sourceAsyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+			fs.rmSync(continuationAsyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+			fs.rmSync(path.join(RESULTS_DIR, `${expectedRunId}.json`), { force: true });
+		}
+	});
+
+	it("resume action rejects running or unsupported external-job parents without launching", async () => {
+		for (const [suffix, provider, stepStatus, providerState, expected] of [
+			["running", { followUp: true }, "running", "running", /still running|Wait for completion/],
+			["unsupported", { followUp: false }, "complete", "completed", /does not support follow-up/],
+			["mismatch", { followUp: true }, "complete", "completed", /mismatched provider options/],
+		] as const) {
+			delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_JOB_PROVIDER_REGISTRY_KEY)];
+			registerExternalJobProvider({
+				name: "surf-oracle",
+				start: () => ({ providerJobId: "unused", state: "completed" }),
+				...(provider.followUp ? { followUp: () => ({ providerJobId: "job-child", state: "completed" }) } : {}),
+				status: (providerJobId) => ({ providerJobId, state: "completed" }),
+				reattach: (providerJobId) => ({ providerJobId, state: "completed" }),
+				result: (providerJobId) => ({ providerJobId, state: "completed" }),
+			});
+			const sourceRunId = `resume-external-job-${suffix}-${Date.now()}`;
+			const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
+			try {
+				fs.mkdirSync(sourceAsyncDir, { recursive: true });
+				fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
+					runId: sourceRunId,
+					sessionId: "session-123",
+					mode: "single",
+					state: stepStatus === "running" ? "running" : "complete",
+					startedAt: 100,
+					lastUpdate: 200,
+					cwd: tempDir,
+					steps: [{
+						agent: "gpt-pro",
+						status: stepStatus,
+						runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" }, capabilities: { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false } },
+						externalJob: { provider: "surf-oracle", providerJobId: "job-parent", promptDigest: externalJobPromptDigest("original prompt"), options: suffix === "mismatch" ? { tier: "old" } : { tier: "pro" }, state: providerState },
+					}],
+				}, null, 2), "utf-8");
+				const { executor, events } = makeExecutor({ agents: [makeAgent("gpt-pro", { runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } } as never)] });
+
+				const result = await executor.execute(`resume-external-job-${suffix}`, { action: "resume", id: sourceRunId, message: "Follow up" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+				assert.equal(result.isError, true);
+				assert.match(result.content[0]?.text ?? "", expected);
+				assert.equal(events.emitted.some((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT), false);
+			} finally {
+				fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
+			}
 		}
 	});
 

@@ -46,6 +46,8 @@ export type AsyncResumeTarget = {
 	recoveryDescriptor?: SteeringRecoveryDescriptor;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	launchContractDigest?: string;
+	runner?: NonNullable<AsyncStatus["steps"]>[number]["runner"];
+	externalJob?: NonNullable<AsyncStatus["steps"]>[number]["externalJob"];
 };
 
 interface AsyncResultFile {
@@ -487,6 +489,8 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 					model: selectedStep.model,
 					thinking: selectedStep.thinking,
 					launchContractDigest: selectedStep.launchContractDigest ?? result?.results?.[requestedIndex]?.launchContractDigest ?? result?.launchContractDigest ?? recoveryDescriptor?.launchContractDigest,
+					...(selectedStep.runner ? { runner: selectedStep.runner } : {}),
+					...(selectedStep.externalJob ? { externalJob: selectedStep.externalJob } : {}),
 					...(capabilityCeiling ? { capabilityCeiling } : {}),
 					...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 				};
@@ -515,6 +519,8 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 				model: selected.step.model,
 				thinking: selected.step.thinking,
 				launchContractDigest: selected.step.launchContractDigest ?? result?.results?.[selected.index]?.launchContractDigest ?? result?.launchContractDigest ?? recoveryDescriptor?.launchContractDigest,
+				...(selected.step.runner ? { runner: selected.step.runner } : {}),
+				...(selected.step.externalJob ? { externalJob: selected.step.externalJob } : {}),
 				...(capabilityCeiling ? { capabilityCeiling } : {}),
 				...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 			};
@@ -556,6 +562,8 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		...(stepModel ? { model: stepModel } : {}),
 		...(stepThinking ? { thinking: stepThinking } : {}),
 		launchContractDigest: statusSteps[index]?.launchContractDigest ?? resultSteps[index]?.launchContractDigest ?? result?.launchContractDigest ?? recoveryDescriptor?.launchContractDigest,
+		...(statusSteps[index]?.runner ? { runner: statusSteps[index]!.runner } : {}),
+		...(statusSteps[index]?.externalJob ? { externalJob: statusSteps[index]!.externalJob } : {}),
 		...(capabilityCeiling ? { capabilityCeiling } : {}),
 		...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 	};

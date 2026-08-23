@@ -255,6 +255,13 @@ interface AsyncSingleParams {
 	workflowKey?: string;
 	workflowAwaitAsync?: boolean;
 	activeAsyncCapacity?: ActiveAsyncCapacityHandle;
+	externalJobFollowUp?: {
+		sourceRunId: string;
+		sourceStepIndex: number;
+		parentProviderJobId: string;
+		requestId: string;
+		requestDigest: string;
+	};
 }
 
 interface AsyncExecutionResult {
@@ -1605,6 +1612,7 @@ export function executeAsyncSingle(
 						agent,
 						task: taskText,
 						...(agentConfig.runner ? { runner: agentConfig.runner } : {}),
+						...(params.externalJobFollowUp ? { externalJobFollowUp: params.externalJobFollowUp } : {}),
 						...(params.context ? { context: params.context } : {}),
 						cwd: runnerCwd,
 						model,

@@ -11,6 +11,7 @@ import {
 	type ExternalJobHandle,
 	type ExternalJobOperation,
 	type ExternalJobResult,
+	type ExternalJobFollowUpInput,
 	type ExternalJobStartInput,
 } from "../../api/external-job-provider.ts";
 
@@ -26,6 +27,7 @@ interface ExternalJobBridgeRequest {
 	provider: string;
 	providerJobId?: string;
 	start?: ExternalJobStartInput;
+	followUp?: ExternalJobFollowUpInput;
 	createdAt: number;
 	claimedAt?: number;
 }
@@ -72,6 +74,10 @@ function requestPath(asyncDir: string, id: string): string {
 	return path.join(requestDir(asyncDir), `${id}.json`);
 }
 
+function isDispatchOperation(operation: ExternalJobOperation): boolean {
+	return operation === "start" || operation === "follow-up";
+}
+
 function startClaimDir(asyncDir: string, id: string): string {
 	return path.join(requestDir(asyncDir), `${id}.claim`);
 }
@@ -88,11 +94,11 @@ function startClaimHandlePath(claimDir: string): string {
 	return path.join(claimDir, "handle.json");
 }
 
-function completedStartClaimExists(asyncDir: string, id: string): boolean {
+function completedDispatchClaimExists(asyncDir: string, id: string): boolean {
 	return fs.existsSync(startClaimCompletedPath(startClaimDir(asyncDir, id)));
 }
 
-function cancelStartRequest(asyncDir: string, request: ExternalJobBridgeRequest): boolean {
+function cancelDispatchRequest(asyncDir: string, request: ExternalJobBridgeRequest): boolean {
 	const claimDir = startClaimDir(asyncDir, request.id);
 	const tempClaimDir = startClaimTempDir(asyncDir, request.id);
 	try {
@@ -190,12 +196,14 @@ function assertRequest(value: unknown, filePath: string): ExternalJobBridgeReque
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`External-job bridge request '${filePath}' must be an object.`);
 	const request = value as ExternalJobBridgeRequest;
 	if (typeof request.id !== "string" || !request.id) throw new Error(`External-job bridge request '${filePath}' has invalid id.`);
-	if (request.operation !== "start" && request.operation !== "status" && request.operation !== "result" && request.operation !== "reattach") throw new Error(`External-job bridge request '${filePath}' has invalid operation.`);
+	if (request.operation !== "start" && request.operation !== "follow-up" && request.operation !== "status" && request.operation !== "result" && request.operation !== "reattach") throw new Error(`External-job bridge request '${filePath}' has invalid operation.`);
 	if (typeof request.provider !== "string" || !request.provider.trim()) throw new Error(`External-job bridge request '${filePath}' has invalid provider.`);
 	if (typeof request.createdAt !== "number") throw new Error(`External-job bridge request '${filePath}' has invalid createdAt.`);
 	if (request.claimedAt !== undefined && typeof request.claimedAt !== "number") throw new Error(`External-job bridge request '${filePath}' has invalid claimedAt.`);
 	if (request.operation === "start") {
 		if (!request.start || typeof request.start !== "object" || Array.isArray(request.start)) throw new Error(`External-job bridge start request '${filePath}' is missing start input.`);
+	} else if (request.operation === "follow-up") {
+		if (!request.followUp || typeof request.followUp !== "object" || Array.isArray(request.followUp)) throw new Error(`External-job bridge follow-up request '${filePath}' is missing follow-up input.`);
 	} else if (typeof request.providerJobId !== "string" || !request.providerJobId.trim()) {
 		throw new Error(`External-job bridge ${request.operation} request '${filePath}' is missing providerJobId.`);
 	}
@@ -216,17 +224,25 @@ async function executeBridgeRequest(request: ExternalJobBridgeRequest, claimDir?
 		};
 	}
 	try {
-		const raw = request.operation === "start"
-			? await provider.start(request.start!)
-			: request.operation === "status"
+		let raw: ExternalJobHandle | ExternalJobResult;
+		if (request.operation === "start") {
+			raw = await provider.start(request.start!);
+		} else if (request.operation === "follow-up") {
+			if (typeof provider.followUp !== "function") {
+				throw new ExternalJobProviderError(`External-job provider '${request.provider}' does not support follow-up. Update or reload the provider package, then retry action='resume'.`, { code: "follow-up-unsupported" });
+			}
+			raw = await provider.followUp(request.followUp!);
+		} else {
+			raw = request.operation === "status"
 				? await provider.status(request.providerJobId!)
 				: request.operation === "reattach"
 					? await provider.reattach(request.providerJobId!)
 					: await provider.result(request.providerJobId!);
+		}
 		const result = request.operation === "result"
 			? validateExternalJobResult(provider.name, raw, "External-job bridge result")
 			: validateExternalJobHandle(provider.name, raw, "External-job bridge handle");
-		if (request.operation === "start" && claimDir) writeAtomicJson(startClaimHandlePath(claimDir), result);
+		if (isDispatchOperation(request.operation) && claimDir) writeAtomicJson(startClaimHandlePath(claimDir), result);
 		return { id: request.id, ok: true, operation: request.operation, provider: request.provider, result, completedAt: Date.now() };
 	} catch (error) {
 		const details = bridgeError(error);
@@ -297,7 +313,7 @@ export function serviceExternalJobBridgeRequests(asyncDir: string): void {
 	let files: string[];
 	try {
 		files = fs.readdirSync(requestDir(asyncDir), { withFileTypes: true })
-			.filter((entry) => (entry.isFile() && entry.name.endsWith(".json") && !completedStartClaimExists(asyncDir, entry.name.replace(/\.json$/, ""))) || (entry.isDirectory() && entry.name.endsWith(".claim") && !fs.existsSync(startClaimCompletedPath(path.join(requestDir(asyncDir), entry.name)))))
+			.filter((entry) => (entry.isFile() && entry.name.endsWith(".json") && !completedDispatchClaimExists(asyncDir, entry.name.replace(/\.json$/, ""))) || (entry.isDirectory() && entry.name.endsWith(".claim") && !fs.existsSync(startClaimCompletedPath(path.join(requestDir(asyncDir), entry.name)))))
 			.map((entry) => entry.name)
 			.slice(0, MAX_REQUESTS_PER_SWEEP);
 	} catch (error) {
@@ -335,19 +351,19 @@ export function serviceExternalJobBridgeRequestFile(asyncDir: string, file: stri
 		fs.rmSync(filePath, { force: true });
 		return;
 	}
-	if (request.operation === "start" && completedStartClaimExists(asyncDir, request.id)) {
+	if (isDispatchOperation(request.operation) && completedDispatchClaimExists(asyncDir, request.id)) {
 		fs.rmSync(filePath, { force: true });
 		return;
 	}
 	if (inFlight.has(request.id) || fs.existsSync(responsePath(asyncDir, request.id))) return;
-	if (request.operation === "start" && request.claimedAt !== undefined) return;
-	const claimed = request.operation === "start" ? claimStartRequest(asyncDir, filePath, request) : { request, filePath };
+	if (isDispatchOperation(request.operation) && request.claimedAt !== undefined) return;
+	const claimed = isDispatchOperation(request.operation) ? claimStartRequest(asyncDir, filePath, request) : { request, filePath };
 	if (!claimed) return;
 	const claimedRequest = claimed.request;
 	inFlight.add(claimedRequest.id);
-	void executeBridgeRequest(claimedRequest, claimedRequest.operation === "start" ? claimed.filePath : undefined).then((response) => {
+	void executeBridgeRequest(claimedRequest, isDispatchOperation(claimedRequest.operation) ? claimed.filePath : undefined).then((response) => {
 		writeAtomicJson(responsePath(asyncDir, claimedRequest.id), response);
-		if (claimedRequest.operation === "start") {
+		if (isDispatchOperation(claimedRequest.operation)) {
 			writeAtomicJson(startClaimCompletedPath(claimed.filePath), { completedAt: Date.now() });
 		} else {
 			fs.rmSync(claimed.filePath, { recursive: true, force: true });
@@ -362,7 +378,7 @@ export function serviceExternalJobBridgeRequestFile(asyncDir: string, file: stri
 			message: error instanceof Error ? error.message : String(error),
 			completedAt: Date.now(),
 		} satisfies ExternalJobBridgeResponse);
-		if (claimedRequest.operation === "start") writeAtomicJson(startClaimCompletedPath(claimed.filePath), { completedAt: Date.now() });
+		if (isDispatchOperation(claimedRequest.operation)) writeAtomicJson(startClaimCompletedPath(claimed.filePath), { completedAt: Date.now() });
 	}).finally(() => {
 		inFlight.delete(claimedRequest.id);
 	});
@@ -383,7 +399,7 @@ function serviceExternalJobStartClaim(asyncDir: string, file: string): void {
 	} catch {
 		return;
 	}
-	if (request.operation !== "start" || fs.existsSync(responsePath(asyncDir, request.id))) return;
+	if (!isDispatchOperation(request.operation) || fs.existsSync(responsePath(asyncDir, request.id))) return;
 	const handle = readClaimHandle(request.provider, claimDir);
 	if (handle) {
 		writeAtomicJson(responsePath(asyncDir, request.id), {
@@ -417,16 +433,16 @@ export async function requestExternalJobOperation<T extends ExternalJobHandle | 
 	fs.mkdirSync(responseDir(asyncDir), { recursive: true });
 	const bridgeRequest = { ...request, id, createdAt: Date.now() } satisfies ExternalJobBridgeRequest;
 	writeAtomicJson(requestPath(asyncDir, id), bridgeRequest);
-	const deadline = request.operation === "start" ? undefined : Date.now() + timeoutMs;
+	const deadline = isDispatchOperation(request.operation) ? undefined : Date.now() + timeoutMs;
 	const outPath = responsePath(asyncDir, id);
 	while (!fs.existsSync(outPath)) {
 		const canceled = cancel?.();
 		if (canceled) {
-			if (request.operation === "start" && !cancelStartRequest(asyncDir, bridgeRequest)) {
+			if (isDispatchOperation(request.operation) && !cancelDispatchRequest(asyncDir, bridgeRequest)) {
 				await sleep(POLL_INTERVAL_MS);
 				continue;
 			}
-			if (request.operation !== "start") fs.rmSync(requestPath(asyncDir, id), { force: true });
+			if (!isDispatchOperation(request.operation)) fs.rmSync(requestPath(asyncDir, id), { force: true });
 			throw canceled;
 		}
 		if (deadline !== undefined && Date.now() >= deadline) {

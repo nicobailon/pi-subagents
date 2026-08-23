@@ -275,6 +275,7 @@ import { registerExternalJobProvider } from "pi-subagents/external-job-provider"
 const dispose = registerExternalJobProvider({
   name: "surf-oracle",
   start: ({ prompt, promptDigest, cwd, runId, stepIndex, agent, options }) => startSurfJob({ prompt, promptDigest, cwd, runId, stepIndex, agent, options }),
+  followUp: ({ prompt, parentProviderJobId, requestId, requestDigest, options }) => followUpSurfJob({ prompt, parentProviderJobId, requestId, requestDigest, options }),
   status: (providerJobId) => getSurfJobStatus(providerJobId),
   result: (providerJobId) => getSurfJobResult(providerJobId),
   reattach: (providerJobId) => reattachSurfJob(providerJobId),
@@ -283,7 +284,9 @@ const dispose = registerExternalJobProvider({
 
 The provider returns handles with `providerJobId`, `state`, optional `handleUrl`/`conversationUrl`, optional `failureCode`/`failureMessage`, and optional `blockingJobId` for capacity conflicts. `result` can also return `output` and/or `artifactPath`.
 
-The async runner process does not import provider internals. It writes operation requests into its async run directory. The parent Pi process services those requests against the registered provider and writes operation responses. If the provider is not registered, the bridge fails closed with an actionable error. If a run is recovered after provider job metadata exists, the runner calls `reattach` and `result`; it does not call `start` again.
+`followUp(input)` is optional. When it is present, a completed external-job run can be continued with `subagent({ action: "resume", id: "<run>", message: "..." })`. Pi sends the completed parent provider job id plus a stable `requestId` and `requestDigest`. The provider must continue that parent conversation or fail closed. It must not open a fresh thread when the parent conversation is missing.
+
+The async runner process does not import provider internals. It writes operation requests into its async run directory. The parent Pi process services those requests against the registered provider and writes operation responses. If the provider is not registered, the bridge fails closed with an actionable error. If a run is recovered after provider job metadata exists, the runner calls `reattach` and `result`; it does not call `start` or `follow-up` again.
 
 ## Herdr integration
 

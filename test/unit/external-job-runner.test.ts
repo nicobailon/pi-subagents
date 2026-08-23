@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, ExternalJobProviderError, registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
 import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, requestExternalJobOperation, serviceExternalJobBridgeRequestFile, serviceExternalJobBridgeRequests } from "../../src/runs/shared/external-job-bridge.ts";
-import { externalJobPromptDigest, runExternalJob } from "../../src/runs/shared/external-job-runner.ts";
+import { externalJobFollowUpRequestDigest, externalJobFollowUpRequestId, externalJobPromptDigest, runExternalJob } from "../../src/runs/shared/external-job-runner.ts";
 
 const tempDirs: string[] = [];
 
@@ -26,7 +26,7 @@ function tempDir(prefix: string): string {
 
 async function serviceUntil<T>(asyncDir: string, promise: Promise<T>): Promise<T> {
 	let done = false;
-	void promise.finally(() => { done = true; });
+	promise.then(() => { done = true; }, () => { done = true; });
 	while (!done) {
 		serviceExternalJobBridgeRequests(asyncDir);
 		await new Promise((resolve) => setTimeout(resolve, 10));
@@ -734,5 +734,181 @@ describe("external-job runner bridge", () => {
 
 		assert.equal(result.providerJobId, "job-extra");
 		assert.equal(result.state, "completed");
+	});
+
+	it("dispatches a provider follow-up and persists source lineage", async () => {
+		const dir = tempDir("pi-external-job-follow-up-");
+		const prompt = "ask a follow-up";
+		const promptDigest = externalJobPromptDigest(prompt);
+		const requestDigest = externalJobFollowUpRequestDigest({ provider: "surf-oracle", parentProviderJobId: "job-parent", promptDigest, options: { tier: "pro" } });
+		let followUpInput: { parentProviderJobId: string; requestId: string; requestDigest: string; promptDigest: string } | undefined;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { throw new Error("start must not be called"); },
+			followUp: (input) => {
+				followUpInput = { parentProviderJobId: input.parentProviderJobId, requestId: input.requestId, requestDigest: input.requestDigest, promptDigest: input.promptDigest };
+				return { providerJobId: "job-child", state: "completed", conversationUrl: "https://surf.example/jobs/job-child" };
+			},
+			status: (providerJobId) => ({ providerJobId, state: "completed" }),
+			reattach: (providerJobId) => ({ providerJobId, state: "completed" }),
+			result: (providerJobId) => ({ providerJobId, state: "completed", output: "follow-up result" }),
+		});
+
+		const result = await serviceUntil(dir, runExternalJob({
+			provider: "surf-oracle",
+			options: { tier: "pro" },
+			cwd: dir,
+			prompt,
+			asyncDir: dir,
+			stepIndex: 0,
+			runId: "run-follow-up",
+			agent: "gpt-pro",
+			followUp: { sourceRunId: "run-parent", sourceStepIndex: 0, parentProviderJobId: "job-parent", requestId: externalJobFollowUpRequestId(requestDigest), requestDigest },
+		}));
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.output, "follow-up result");
+		assert.deepEqual(followUpInput, { parentProviderJobId: "job-parent", requestId: externalJobFollowUpRequestId(requestDigest), requestDigest, promptDigest });
+		assert.equal(result.externalJob.operation, "follow-up");
+		assert.equal(result.externalJob.sourceRunId, "run-parent");
+		assert.equal(result.externalJob.sourceStepIndex, 0);
+		assert.equal(result.externalJob.parentProviderJobId, "job-parent");
+		assert.equal(result.externalJob.requestDigest, requestDigest);
+		assert.equal(result.externalJob.providerJobId, "job-child");
+	});
+
+	it("fails closed when a provider does not support follow-up", async () => {
+		const dir = tempDir("pi-external-job-follow-up-unsupported-");
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => ({ providerJobId: "job-start", state: "completed" }),
+			status: (providerJobId) => ({ providerJobId, state: "completed" }),
+			reattach: (providerJobId) => ({ providerJobId, state: "completed" }),
+			result: (providerJobId) => ({ providerJobId, state: "completed" }),
+		});
+
+		const responsePromise = requestExternalJobOperation(dir, {
+			operation: "follow-up",
+			provider: "surf-oracle",
+			followUp: {
+				prompt: "prompt",
+				promptDigest: externalJobPromptDigest("prompt"),
+				cwd: dir,
+				runId: "run-follow-up-unsupported",
+				stepIndex: 0,
+				agent: "gpt-pro",
+				options: {},
+				sourceRunId: "run-parent",
+				sourceStepIndex: 0,
+				parentProviderJobId: "job-parent",
+				requestId: "request-unsupported",
+				requestDigest: "digest-unsupported",
+			},
+		});
+		await assert.rejects(serviceUntil(dir, responsePromise), /does not support follow-up/);
+	});
+
+	it("fails closed with the blocking provider job on follow-up capacity conflicts", async () => {
+		const dir = tempDir("pi-external-job-follow-up-capacity-");
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { throw new Error("start must not be called"); },
+			followUp: () => { throw new ExternalJobProviderError("Surf capacity is occupied", { code: "capacity", blockingJobId: "job-blocking" }); },
+			status: () => ({ providerJobId: "unused", state: "failed" }),
+			reattach: () => ({ providerJobId: "unused", state: "failed" }),
+			result: () => ({ providerJobId: "unused", state: "failed" }),
+		});
+
+		const result = await serviceUntil(dir, runExternalJob({
+			provider: "surf-oracle",
+			cwd: dir,
+			prompt: "prompt",
+			asyncDir: dir,
+			stepIndex: 0,
+			runId: "run-follow-up-capacity",
+			agent: "gpt-pro",
+			followUp: { sourceRunId: "run-parent", sourceStepIndex: 0, parentProviderJobId: "job-parent", requestId: "request-capacity", requestDigest: "digest-capacity" },
+		}));
+
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.externalJob.state, "blocked");
+		assert.equal(result.externalJob.blockingJobId, "job-blocking");
+		assert.match(result.error ?? "", /job-blocking/);
+	});
+
+	it("does not redispatch an ambiguous follow-up without a provider job id", async () => {
+		const dir = tempDir("pi-external-job-follow-up-in-doubt-");
+		fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify({
+			steps: [{
+				externalJob: {
+					provider: "surf-oracle",
+					promptDigest: externalJobPromptDigest("prompt"),
+					operation: "follow-up",
+					sourceRunId: "run-parent",
+					sourceStepIndex: 0,
+					parentProviderJobId: "job-parent",
+					requestId: "request-in-doubt",
+					requestDigest: "digest-in-doubt",
+					options: {},
+					state: "failed",
+					failureCode: "in-doubt",
+					failureMessage: "Browser submission became ambiguous.",
+				},
+			}],
+		}), "utf-8");
+		let followUps = 0;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { throw new Error("start must not be called"); },
+			followUp: () => { followUps += 1; return { providerJobId: "job-child", state: "completed" }; },
+			status: () => ({ providerJobId: "unused", state: "completed" }),
+			reattach: () => ({ providerJobId: "unused", state: "completed" }),
+			result: () => ({ providerJobId: "unused", state: "completed" }),
+		});
+
+		const result = await runExternalJob({
+			provider: "surf-oracle",
+			cwd: dir,
+			prompt: "prompt",
+			asyncDir: dir,
+			stepIndex: 0,
+			runId: "run-follow-up-in-doubt",
+			agent: "gpt-pro",
+			followUp: { sourceRunId: "run-parent", sourceStepIndex: 0, parentProviderJobId: "job-parent", requestId: "request-in-doubt", requestDigest: "digest-in-doubt" },
+		});
+
+		assert.equal(followUps, 0);
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.externalJob.failureCode, "dispatch-redispatch-blocked");
+		assert.match(result.error ?? "", /Refusing to redispatch/);
+	});
+
+	it("fails closed when the parent provider thread is missing", async () => {
+		const dir = tempDir("pi-external-job-follow-up-parent-missing-");
+		let starts = 0;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { starts += 1; return { providerJobId: "fresh-thread", state: "completed" }; },
+			followUp: () => { throw new ExternalJobProviderError("Parent conversation is unavailable", { code: "parent-missing" }); },
+			status: () => ({ providerJobId: "unused", state: "completed" }),
+			reattach: () => ({ providerJobId: "unused", state: "completed" }),
+			result: () => ({ providerJobId: "unused", state: "completed" }),
+		});
+
+		const result = await serviceUntil(dir, runExternalJob({
+			provider: "surf-oracle",
+			cwd: dir,
+			prompt: "prompt",
+			asyncDir: dir,
+			stepIndex: 0,
+			runId: "run-follow-up-parent-missing",
+			agent: "gpt-pro",
+			followUp: { sourceRunId: "run-parent", sourceStepIndex: 0, parentProviderJobId: "job-parent", requestId: "request-parent-missing", requestDigest: "digest-parent-missing" },
+		}));
+
+		assert.equal(starts, 0);
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.externalJob.failureCode, "parent-missing");
+		assert.match(result.error ?? "", /Parent conversation is unavailable/);
 	});
 });

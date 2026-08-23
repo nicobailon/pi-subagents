@@ -110,6 +110,8 @@ import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { isStoppableAsyncStatusStep, resolveAsyncStatusChild } from "../shared/child-identity.ts";
 import { inspectSubagentStatus } from "../background/run-status.ts";
+import { getExternalJobProvider } from "../../api/external-job-provider.ts";
+import { externalJobFollowUpRequestDigest, externalJobFollowUpRequestId, externalJobFollowUpRunId, externalJobPromptDigest } from "../shared/external-job-runner.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import { handleMissionAction, MISSION_ACTIONS } from "../../missions/actions.ts";
 import { attachMissionToLaunchResult, prepareMissionLaunch, writeMissionAsyncBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
@@ -1466,6 +1468,38 @@ async function steerNestedRun(input: { target: ResolvedSubagentRunId & { kind: "
 	return { content: [{ type: "text", text: `Nested run ${run.id} is not a live async Pi child session with a steering inbox. action='steer' cannot target foreground nested runs.` }], isError: true, details: { mode: "management", results: [] } };
 }
 
+function stableJson(value: unknown): string {
+	if (value === null || typeof value !== "object") return JSON.stringify(value);
+	if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+	const record = value as Record<string, unknown>;
+	return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+}
+
+function externalJobOptionsEqual(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+	return stableJson(left) === stableJson(right);
+}
+
+function providerFollowUpSupport(providerName: string): { ok: true } | { ok: false; message: string } {
+	try {
+		const provider = getExternalJobProvider(providerName);
+		if (!provider) return { ok: false, message: `External-job provider '${providerName}' is not registered. Load the provider package, then retry action='resume'.` };
+		if (typeof provider.followUp !== "function") return { ok: false, message: `External-job provider '${providerName}' does not support follow-up. Update or reload the provider package, then retry action='resume'.` };
+		return { ok: true };
+	} catch (error) {
+		return { ok: false, message: `External-job provider registry unavailable: ${error instanceof Error ? error.message : String(error)}` };
+	}
+}
+
+function externalJobFollowUpStarted(input: { sourceRunId: string; runId: string; asyncDir: string; duplicate?: boolean; interactive: boolean }): AgentToolResult<Details> {
+	const lines = [
+		input.duplicate ? `External-job follow-up already exists for ${input.sourceRunId}.` : `Started external-job follow-up for ${input.sourceRunId}.`,
+		`Follow-up run: ${input.runId}`,
+		`Async dir: ${input.asyncDir}`,
+		`Status if needed: subagent({ action: "status", id: "${input.runId}" })`,
+	];
+	return { content: [{ type: "text", text: formatAsyncStartedMessage(lines.join("\n"), input.interactive) }], details: { mode: "single", results: [], asyncId: input.runId, asyncDir: input.asyncDir } };
+}
+
 function externalRunnerControlError(asyncDir: string, action: "steer" | "resume"): AgentToolResult<Details> | undefined {
 	const status = readStatus(asyncDir);
 	if (!status?.steps?.length || !status.steps.every((step) => step.runner?.type === "external-cli" || step.runner?.type === "external-job")) return undefined;
@@ -1473,6 +1507,116 @@ function externalRunnerControlError(asyncDir: string, action: "steer" | "resume"
 		? "External runners do not accept live steer messages."
 		: "External runners do not persist Pi sessions and cannot be resumed.";
 	return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
+}
+
+async function resumeExternalJobFollowUp(input: {
+	target: AsyncResumeSourceTarget;
+	followUp: string;
+	baseAgentConfig: AgentConfig;
+	effectiveCwd: string;
+	requestCwd: string;
+	ctx: ExtensionContext;
+	deps: ExecutorDeps;
+	parentModel?: ParentModel;
+	modelScope?: ModelScopeConfig;
+	intercomBridge: IntercomBridgeState;
+	parentSessionFile: string | null;
+	absoluteDeadlineAt?: number;
+}): Promise<AgentToolResult<Details>> {
+	if (input.target.kind === "live" || input.target.state === "running" || input.target.state === "queued") {
+		return { content: [{ type: "text", text: `External-job run '${input.target.runId}' is still running. Wait for completion, then use subagent({ action: "resume", id: "${input.target.runId}", message: "..." }).` }], isError: true, details: { mode: "management", results: [] } };
+	}
+	const runner = input.target.runner;
+	const externalJob = input.target.externalJob;
+	if (runner?.type !== "external-job") return { content: [{ type: "text", text: "Internal error: external-job follow-up was requested for a non-external-job runner." }], isError: true, details: { mode: "management", results: [] } };
+	if (!externalJob) return { content: [{ type: "text", text: `External-job run '${input.target.runId}' has no persisted provider metadata. Cannot follow up without the parent provider job id.` }], isError: true, details: { mode: "management", results: [] } };
+	if (externalJob.provider !== runner.provider) return { content: [{ type: "text", text: `External-job run '${input.target.runId}' has mismatched provider metadata. Refusing to follow up.` }], isError: true, details: { mode: "management", results: [] } };
+	if (!externalJobOptionsEqual(externalJob.options, runner.options)) return { content: [{ type: "text", text: `External-job run '${input.target.runId}' has mismatched provider options. Refusing to follow up.` }], isError: true, details: { mode: "management", results: [] } };
+	if (!externalJob.providerJobId) return { content: [{ type: "text", text: `External-job run '${input.target.runId}' has no parent provider job id. Cannot follow up without reopening or redispatching, so this fails closed.` }], isError: true, details: { mode: "management", results: [] } };
+	if (externalJob.state !== "completed") return { content: [{ type: "text", text: `External-job run '${input.target.runId}' provider state is ${externalJob.state}. Wait for completion, then use action='resume'.` }], isError: true, details: { mode: "management", results: [] } };
+	const support = providerFollowUpSupport(runner.provider);
+	if (!support.ok) return { content: [{ type: "text", text: support.message }], isError: true, details: { mode: "management", results: [] } };
+
+	const promptDigest = externalJobPromptDigest(input.followUp);
+	const requestDigest = externalJobFollowUpRequestDigest({ provider: runner.provider, parentProviderJobId: externalJob.providerJobId, promptDigest, options: runner.options });
+	const requestId = externalJobFollowUpRequestId(requestDigest);
+	const runId = externalJobFollowUpRunId(requestDigest);
+	const asyncDir = path.join(DIRS.async, runId);
+	const currentSessionId = input.deps.state.currentSessionId;
+	if (!currentSessionId) return { content: [{ type: "text", text: "External-job follow-up requires an active parent session." }], isError: true, details: { mode: "management", results: [] } };
+	if (fs.existsSync(asyncDir) || fs.existsSync(resultFilePath(DIRS.results, runId))) {
+		return externalJobFollowUpStarted({ sourceRunId: input.target.runId, runId, asyncDir, duplicate: true, interactive: input.ctx.hasUI });
+	}
+
+	const depthState = checkSubagentDepth(input.deps.config.maxSubagentDepth);
+	if (depthState.blocked) {
+		return { content: [{ type: "text", text: `Nested subagent resume blocked (depth=${depthState.depth}, max=${depthState.maxDepth}). Complete the follow-up directly instead.` }], isError: true, details: { mode: "management", results: [] } };
+	}
+	const topLevelResume = depthState.depth === 0 && !resolveInheritedNestedRouteFromEnv() && !input.deps.state.workflowControllers?.has(input.target.runId);
+	let activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined;
+	try {
+		activeAsyncCapacity = topLevelResume ? acquireActiveAsyncCapacity({
+			sessionId: currentSessionId,
+			limit: resolveMaxActiveAsyncRunsPerSession(input.deps.config.maxActiveAsyncRunsPerSession),
+			runId,
+			kind: "runner",
+			asyncDir,
+		}, { liveWorkflowRunIds: new Set(input.deps.state.workflowControllers?.keys() ?? []) }) : undefined;
+	} catch (error) {
+		if (error instanceof ActiveAsyncCapacityError) return { content: [{ type: "text", text: error.message }], isError: true, details: { mode: "single", results: [], activeAsyncCapacity: error.snapshot } };
+		return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "single", results: [] } };
+	}
+
+	const artifactConfig: ArtifactConfig = omitUndefinedProperties({ ...DEFAULT_ARTIFACT_CONFIG, enabled: true, dir: input.deps.config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir });
+	const artifactsDir = getArtifactsDir(input.parentSessionFile, input.effectiveCwd, artifactConfig.dir);
+	const parentModel = input.parentModel;
+	const agentConfig: AgentConfig = {
+		...input.baseAgentConfig,
+		runner: { type: "external-job", provider: runner.provider, options: runner.options },
+	};
+	const result = executeAsyncSingle(runId, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
+		agent: input.target.agent,
+		task: input.followUp,
+		goal: input.followUp,
+		agentConfig,
+		recoveryAgentConfig: agentConfig,
+		ctx: compactOptional<Parameters<typeof executeAsyncSingle>[1]["ctx"]>({
+			pi: input.deps.pi,
+			cwd: input.requestCwd,
+			currentSessionId,
+			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+			currentModelProvider: parentModel?.provider,
+			currentModel: parentModel,
+			modelScope: input.modelScope,
+			interactive: input.ctx.hasUI,
+			permissions: input.deps.config.permissions,
+		}),
+		cwd: input.effectiveCwd,
+		artifactsDir,
+		artifactConfig,
+		shareEnabled: false,
+		...(input.parentSessionFile ? { sessionRoot: input.deps.getSubagentSessionRoot(input.parentSessionFile) } : {}),
+		maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
+		waitToolEnabled: input.deps.waitToolEnabled,
+		worktreeSetupHook: input.deps.config.worktreeSetupHook,
+		worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
+		worktreeBaseDir: input.deps.config.worktreeBaseDir,
+		controlConfig: resolveControlConfig(input.deps.config.control, undefined),
+		controlIntercomTarget: input.intercomBridge.active ? input.intercomBridge.orchestratorTarget : undefined,
+		childIntercomTarget: input.intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index) : undefined,
+		availableModels: input.ctx.modelRegistry.getAvailable().map(toModelInfo),
+		outputBaseDir: resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId),
+		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
+		capabilityCeiling: resolveCurrentSubagentCapabilityCeiling(currentSessionId),
+		runFanoutBudget: createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(input.deps.config.maxSubagentSpawnsPerRun)),
+		activeAsyncCapacity,
+		externalJobFollowUp: { sourceRunId: input.target.runId, sourceStepIndex: input.target.index, parentProviderJobId: externalJob.providerJobId, requestId, requestDigest },
+	}));
+	if (result.isError) {
+		activeAsyncCapacity?.rollback();
+		return result;
+	}
+	return externalJobFollowUpStarted({ sourceRunId: input.target.runId, runId: result.details.asyncId ?? runId, asyncDir: result.details.asyncDir ?? asyncDir, interactive: input.ctx.hasUI });
 }
 
 async function resumeAsyncRun(input: {
@@ -1539,11 +1683,7 @@ async function resumeAsyncRun(input: {
 			];
 			target = resolveNestedResumeTarget(resolved, trustedSessionRoots);
 		} else {
-			if (resolved?.kind === "async" && resolved.location.asyncDir) {
-				const unsupported = externalRunnerControlError(resolved.location.asyncDir, "resume");
-				if (unsupported) return unsupported;
-			}
-			target = resolveResumeTarget(input.params, input.deps.state, { asyncRequireSessionFile: !attachChain });
+			target = resolveResumeTarget(input.params, input.deps.state, { asyncRequireSessionFile: false });
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -1608,6 +1748,26 @@ async function resumeAsyncRun(input: {
 			isError: true,
 			details: { mode: "management", results: [] },
 		};
+	}
+	if (target.source === "async" && target.runner?.type === "external-cli") {
+		return { content: [{ type: "text", text: "External runners do not persist Pi sessions and cannot be resumed." }], isError: true, details: { mode: "management", results: [] } };
+	}
+	if (target.source === "async" && target.runner?.type === "external-job") {
+		if (attachChain) return { content: [{ type: "text", text: "External-job follow-up does not support chain attachment. Use action='resume' with message instead." }], isError: true, details: { mode: "management", results: [] } };
+		return resumeExternalJobFollowUp({
+			target,
+			followUp,
+			baseAgentConfig,
+			effectiveCwd,
+			requestCwd: input.requestCwd,
+			ctx: input.ctx,
+			deps: input.deps,
+			parentModel: input.parentModel,
+			modelScope,
+			intercomBridge,
+			parentSessionFile,
+			absoluteDeadlineAt: input.absoluteDeadlineAt,
+		});
 	}
 
 	if (attachChain) {
@@ -1715,7 +1875,7 @@ async function resumeAsyncRun(input: {
 	const effectiveFollowUp = [...queuedBriefs.map(({ request }) => request.message), followUp].filter(Boolean).join("\n\n");
 	const revivalSessionFile = target.sessionFile;
 	if (!revivalSessionFile) {
-		return { content: [{ type: "text", text: `Async child '${target.runId}' has no persisted session file to resume.` }], isError: true, details: { mode: "management", results: [] } };
+		return { content: [{ type: "text", text: `Async run '${target.runId}' child ${target.index} does not have a persisted session file to resume from.` }], isError: true, details: { mode: "management", results: [] } };
 	}
 	if (target.source === "async" && asyncReviveRequiresRecoveryDescriptor(target)) {
 		return { content: [{ type: "text", text: `Async child '${target.runId}' is missing its required run fan-out recovery identity. Start a new run instead.` }], isError: true, details: { mode: "management", results: [] } };

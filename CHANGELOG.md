@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- Add external-job follow-ups through `subagent({ action: "resume" })` for
+  completed provider jobs that expose `followUp(input)`, with duplicate request
+  dedupe and durable parent-job lineage (#1381).
 - Add child-scoped stop support and child stop observer events for
   async/workflow runs. Thanks to [@yanqianglu](https://github.com/yanqianglu)
   for #1367.

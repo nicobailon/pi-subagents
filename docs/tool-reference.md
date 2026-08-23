@@ -226,6 +226,7 @@ subagent({ action: "doctor" })
 
 - Multi-child async runs and remembered foreground single, parallel, or chain runs can be revived by passing `index` to choose the child.
 - Nested runs can be resumed by nested id when their live route or persisted nested session metadata is available.
+- Completed external-job runs can use the same `resume` action as a provider follow-up when the registered provider exposes `followUp(input)`. Running external-job parents fail closed with guidance to wait for completion. Unsupported providers fail with an update/reload message.
 - Revive starts a new child process from the old session context; it does not restart the same OS process, and it requires the chosen child to have a persisted `.jsonl` session file.
 - Direct revival takes an exclusive cross-process lease on the canonical session file until the new child finishes. A concurrent attempt fails before Pi is spawned and identifies the owning revived run; dead-owner leases are reclaimed only when staleness can be proved.
 
@@ -343,7 +344,7 @@ Foreground and background children keep running through their normal native Pi o
 
 The observer supports macOS and Linux and is disabled on Windows. It requires executable `orca` on `PATH` (or `PI_SUBAGENT_ORCA_BINARY`) and a running Orca runtime that recognizes the cwd. Availability and tab creation are best-effort: failures never fail, stop, or delay the subagent. When possible, the observer writes a passive manifest under `<worktree>/.pi/subagents/views/orca/`; the manifest is display metadata only, not a lifecycle or control source. Set `orcaProgressTabs.enabled` to `false` to guarantee that no Orca command or tab is created.
 
-Agent profile `runner.type` supports native Pi (the default), `external-cli`, and `external-job`. Orca is intentionally not a profile runner and does not own subagent execution, completion, cancellation, artifacts, or result delivery.
+Agent profile `runner.type` supports native Pi (the default), `external-cli`, and `external-job`. Orca is intentionally not a profile runner and does not own subagent execution, completion, cancellation, artifacts, or result delivery. External-job providers can optionally expose `followUp(input)` so a completed provider job can continue its parent conversation through `subagent({ action: "resume", id: "<run>", message: "..." })`.
 
 ## External CLI agent profiles
 
