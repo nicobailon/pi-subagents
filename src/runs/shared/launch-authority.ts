@@ -368,6 +368,26 @@ function accepted(authorities: AuthorizedLaunchAuthority[] = []): SubagentLaunch
 	return result;
 }
 
+function unrestrictedReservation(sessionId?: string): SubagentLaunchAdmission {
+	let settled = false;
+	const reservation: SubagentLaunchAdmission = {
+		ok: true,
+		authorities: [],
+		async commit() {
+			if (settled) return denied("invalid_permit", "Launch admission reservation is no longer active.");
+			settled = true;
+			const authorityAppeared = sessionId
+				? hasActiveSubagentLaunchAuthority(sessionId)
+				: hasActiveSubagentLaunchAuthority();
+			return authorityAppeared
+				? denied("permit_required", "A launch authority became active before spawn admission committed.")
+				: accepted();
+		},
+		cancel() { settled = true; },
+	};
+	return reservation;
+}
+
 async function validateRevision(registration: Registration, revision: string): Promise<boolean> {
 	if (!registration.validateConfigRevision) return true;
 	const controller = new AbortController();
@@ -397,14 +417,14 @@ export async function authorizeSubagentLaunch(input: {
 }): Promise<SubagentLaunchAdmission> {
 	const store = registry();
 	const sessionId = input.sessionId?.trim();
+	if (classifySubagentLaunchRequest(input.params) === "management") return accepted();
 	if (!sessionId) {
 		return hasActiveSubagentLaunchAuthority()
 			? denied("permit_required", "Launch authority cannot admit a new spawn without an authoritative session id.")
-			: accepted();
+			: unrestrictedReservation();
 	}
 	const session = store.sessions.get(sessionId);
-	if (!session?.registrations.size) return accepted();
-	if (classifySubagentLaunchRequest(input.params) === "management") return accepted();
+	if (!session?.registrations.size) return unrestrictedReservation(sessionId);
 	const requestDigest = digestSubagentLaunchRequest(input.params, input.domain ?? "public");
 	const supplied = input.permits ?? [];
 	if (!Array.isArray(supplied) || supplied.length > MAX_AUTHORITIES || supplied.some((token) => typeof token !== "string" || token.length > 128) || new Set(supplied).size !== supplied.length) {

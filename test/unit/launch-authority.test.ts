@@ -264,6 +264,20 @@ test("bounds outstanding permit storage", () => {
 	authority.dispose();
 });
 
+test("rechecks zero-to-one authority activation before unrestricted commit", async () => {
+	const sessionId = "zero-to-one";
+	const reservation = await authorizeSubagentLaunch({ sessionId, params: workflow() });
+	assert.equal(reservation.ok, true);
+	const authority = registerSubagentLaunchAuthority({ sessionId, source: "ultra", defaultNewSpawnDecision: "deny" });
+	try {
+		const committed = await commit(reservation, []);
+		assert.equal(committed.ok, false);
+		if (!committed.ok) assert.equal(committed.code, "permit_required");
+	} finally {
+		authority.dispose();
+	}
+});
+
 test("rechecks config and registry generation after runtime manifest preflight", async () => {
 	for (const scenario of ["revision", "registration"] as const) {
 		const sessionId = `commit-race-${scenario}`;

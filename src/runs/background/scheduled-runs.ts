@@ -12,6 +12,7 @@ import { validateExecutionAcceptance } from "../shared/acceptance.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { previewSimpleWorkflowRun } from "../../workflows/scripted-workflow.ts";
 import { hasActiveSubagentLaunchAuthority } from "../shared/launch-authority.ts";
+import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 
 export const SCHEDULED_RUN_ACTIONS = [
 	"schedule.create",
@@ -661,12 +662,19 @@ export class ScheduledRunManager {
 
 	private async launch(store: ScheduleStore, schedule: ScheduleRecord, planned: number, dueReason: ScheduleRunRecord["dueReason"], advance: boolean): Promise<ScheduleRunRecord> {
 		const context = this.requireContext(store);
-		const ownerSessionId = context.sessionManager.getSessionId();
+		const ownerSessionId = resolveCurrentSessionId(context.sessionManager);
 		if (hasActiveSubagentLaunchAuthority(ownerSessionId)) {
 			throw new Error("Scheduled subagent firing is disabled while a session launch authority is active.");
 		}
 		const now = this.now();
-		const run: ScheduleRunRecord = { schemaVersion: 1, id: this.randomId(), scheduleId: schedule.id, plannedAt: timestamp(planned), dueReason, state: "running", startedAt: timestamp(now) };
+		const candidateRunId = this.randomId();
+		// now() and randomId() are injectable callbacks. Recheck after both and
+		// immediately before the synchronous bookkeeping section so authority
+		// activation cannot create a run/history/lock side effect.
+		if (hasActiveSubagentLaunchAuthority(ownerSessionId)) {
+			throw new Error("Scheduled subagent firing was blocked because a session launch authority became active.");
+		}
+		const run: ScheduleRunRecord = { schemaVersion: 1, id: candidateRunId, scheduleId: schedule.id, plannedAt: timestamp(planned), dueReason, state: "running", startedAt: timestamp(now) };
 		if (schedule.activeRunId) {
 			run.state = "skipped";
 			run.completedAt = timestamp(now);

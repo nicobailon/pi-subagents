@@ -25,6 +25,7 @@ import { SubagentParams } from "./schemas.ts";
 import { normalizePublicSubagentExecution } from "./public-execution.ts";
 import { ASYNC_STATUS_SNAPSHOT_KIND, ASYNC_STATUS_SNAPSHOT_VERSION, buildAsyncStatusSnapshotForState } from "../runs/background/async-status-snapshot.ts";
 import { isStoppableAsyncStatusStep, resolveAsyncStatusChild, type ResolvedAsyncStatusChild } from "../runs/shared/child-identity.ts";
+import { readCompletionReplay } from "../runs/background/completion-replay.ts";
 import { bindSubagentLaunchPermits, SUBAGENT_LAUNCH_AUTHORITY_VERSION } from "../runs/shared/launch-authority.ts";
 
 export const SUBAGENT_RPC_PROTOCOL_VERSION = 1;
@@ -659,6 +660,9 @@ function replayResult(params: unknown, options: RegisterSubagentRpcBridgeOptions
 	const projectResult = (value: unknown): Record<string, unknown> => {
 		const result = isRecord(value) ? value : {};
 		const artifactPaths = isRecord(result.artifactPaths) ? result.artifactPaths : undefined;
+		const changedFiles = Array.isArray(result.changedFiles)
+			? result.changedFiles.filter((value): value is string => typeof value === "string" && value.length > 0).slice(0, 128).map((value) => displayText(value, 4_096)).filter(Boolean)
+			: undefined;
 		return {
 			...(typeof result.workflowKey === "string" ? { workflowKey: displayText(result.workflowKey, 128) } : {}),
 			...(typeof result.key === "string" ? { key: displayText(result.key, 128) } : {}),
@@ -668,6 +672,7 @@ function replayResult(params: unknown, options: RegisterSubagentRpcBridgeOptions
 			...(typeof result.status === "string" ? { status: displayText(result.status, 64) } : typeof result.success === "boolean" ? { status: result.success ? "completed" : "failed" } : {}),
 			...(typeof result.savedOutputPath === "string" ? { outputPath: displayText(result.savedOutputPath, 4_096) } : artifactPaths && typeof artifactPaths.outputPath === "string" ? { outputPath: displayText(artifactPaths.outputPath, 4_096) } : {}),
 			...(typeof result.sessionFile === "string" ? { sessionPath: displayText(result.sessionFile, 4_096) } : {}),
+			...(changedFiles?.length ? { changedFiles } : {}),
 		};
 	};
 	if (location.resultPath && fs.existsSync(location.resultPath)) {
@@ -690,6 +695,28 @@ function replayResult(params: unknown, options: RegisterSubagentRpcBridgeOptions
 			state,
 			results: Array.isArray(raw.results) ? raw.results.slice(0, 256).map(projectResult) : [],
 		};
+	}
+	const replayRunId = location.resolvedId;
+	if (replayRunId && currentSessionId) {
+		let replay;
+		try {
+			replay = readCompletionReplay(options.resultsDir ?? DIRS.results, replayRunId, { sessionId: currentSessionId });
+		} catch (error) {
+			throw new SubagentRpcError("execution_failed", `Could not read durable result replay: ${error instanceof Error ? error.message : String(error)}`);
+		}
+		if (replay) {
+			const completion = replay.completion;
+			const state = completion.state ?? (completion.success === true ? "complete" : completion.success === false ? "failed" : "complete");
+			return {
+				version: 1,
+				found: true,
+				terminal: true,
+				runId: replay.runId,
+				state,
+				results: (completion.results ?? []).slice(0, 256).map(projectResult),
+				archivePath: replay.archivePath,
+			};
+		}
 	}
 	if (location.asyncDir) {
 		const status = readStatus(location.asyncDir);

@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { consumeStopRequestPayload, stopRequestPath } from "../../src/runs/background/control-channel.ts";
+import { writeCompletionReplay } from "../../src/runs/background/completion-replay.ts";
 import {
 	SUBAGENT_RPC_PROTOCOL_VERSION,
 	SUBAGENT_RPC_READY_EVENT,
@@ -224,6 +225,29 @@ describe("subagent extension RPC bridge", () => {
 				state: "complete",
 				results: [{ workflowKey: "worker", agent: "ultra-worker", model: "openai/test", launchContractDigest: "a".repeat(64), status: "completed", outputPath: "/tmp/output.md" }],
 			});
+
+			fs.rmSync(path.join(resultsDir, `${runId}.json`));
+			const now = Date.now();
+			writeCompletionReplay({
+				resultsDir,
+				runId,
+				sessionId: "/sessions/parent.jsonl",
+				now,
+				ttlMs: 60_000,
+				completion: {
+					runId,
+					state: "complete",
+					success: true,
+					results: [{ workflowKey: "worker", agent: "ultra-worker", model: "openai/test", launchContractDigest: "a".repeat(64), status: "completed", artifactPaths: { outputPath: "/tmp/output.md" } }],
+				},
+				data: { results: [] },
+			});
+			const replay = await request(events, "result-replay", "result", { id: runId });
+			assert.equal(replay.success, true);
+			if (!replay.success) assert.fail(replay.error.message);
+			assert.equal((replay.data as any).terminal, true);
+			assert.equal((replay.data as any).results[0].launchContractDigest, "a".repeat(64));
+			assert.match((replay.data as any).archivePath, /output-archives/);
 		} finally {
 			bridge.dispose();
 			fs.rmSync(root, { recursive: true, force: true });

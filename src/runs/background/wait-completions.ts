@@ -40,19 +40,29 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 			const artifactPaths = child.artifactPaths !== null && typeof child.artifactPaths === "object"
 				? (child.artifactPaths as Partial<ArtifactPaths>)
 				: undefined;
+			const workflowKey = asNonEmptyString(child.workflowKey) ?? asNonEmptyString(child.key);
 			const agent = asNonEmptyString(child.agent);
 			const childRunId = asNonEmptyString(child.runId);
 			const error = asNonEmptyString(child.error);
 			const model = asNonEmptyString(child.model);
+			const status = asNonEmptyString(child.status) ?? (typeof child.success === "boolean" ? child.success ? "completed" : "failed" : undefined);
+			const launchContractDigest = asNonEmptyString(child.launchContractDigest);
+			const changedFiles = Array.isArray(child.changedFiles)
+				? child.changedFiles.filter((value): value is string => typeof value === "string" && value.length > 0).slice(0, 128)
+				: undefined;
 			const contextOverflow = child.contextOverflow === true;
 			return [{
+				...(workflowKey ? { workflowKey } : {}),
 				...(agent ? { agent } : {}),
 				...(childRunId ? { runId: childRunId } : {}),
 				...(typeof child.success === "boolean" ? { success: child.success } : {}),
+				...(status ? { status } : {}),
+				...(launchContractDigest ? { launchContractDigest } : {}),
 				...(outputState ? { outputState } : {}),
 				...(error ? { error } : {}),
 				...(model ? { model } : {}),
 				...(contextOverflow ? { contextOverflow: true } : {}),
+				...(changedFiles?.length ? { changedFiles } : {}),
 				...(artifactPaths ? { artifactPaths } : {}),
 			}];
 		})

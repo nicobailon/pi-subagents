@@ -1064,14 +1064,18 @@ export interface SpawnBudgetSnapshot {
 
 /** Slim per-child projection of a terminal result payload, safe to surface in tool_result details. */
 export interface WaitCompletionChild {
+	workflowKey?: string;
 	agent?: string;
 	/** Child run identity where the producer records one (workflow children); artifact files are keyed by it. */
 	runId?: string;
 	success?: boolean;
+	status?: string;
+	launchContractDigest?: string;
 	outputState?: SubagentOutputState;
 	error?: string;
 	model?: string;
 	contextOverflow?: boolean;
+	changedFiles?: string[];
 	artifactPaths?: Partial<ArtifactPaths>;
 }
 

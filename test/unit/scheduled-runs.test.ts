@@ -648,7 +648,7 @@ describe("recurring schedule execution", () => {
 	it("denies scheduled firing before run ids, history, locks, or launch callbacks when authority is active", async () => {
 		const h = harness({ sessionId: "authority-owner" });
 		await h.manager.handleToolCall({ action: "schedule.create", id: "blocked", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, h.ctx);
-		const authority = registerSubagentLaunchAuthority({ sessionId: "authority-owner", source: "ultra", defaultNewSpawnDecision: "deny" });
+		const authority = registerSubagentLaunchAuthority({ sessionId: h.ctx.sessionManager.getSessionFile()!, source: "ultra", defaultNewSpawnDecision: "deny" });
 		try {
 			const denied = await h.manager.handleToolCall({ action: "schedule.run", id: "blocked" }, h.ctx);
 			assert.match(text(denied), /launch authority|disabled/i);
@@ -657,6 +657,28 @@ describe("recurring schedule execution", () => {
 			assert.equal(fs.existsSync(path.join(h.root, "stores", "active.lock")), false);
 		} finally {
 			authority.dispose();
+		}
+	});
+
+	it("rechecks authority activation from injected callbacks before schedule bookkeeping", async () => {
+		let authority: ReturnType<typeof registerSubagentLaunchAuthority> | undefined;
+		let ownerSession = "";
+		const h = harness({
+			sessionId: "activation-owner",
+			randomId: () => {
+				authority = registerSubagentLaunchAuthority({ sessionId: ownerSession, source: "ultra", defaultNewSpawnDecision: "deny" });
+				return "candidate-run";
+			},
+		});
+		ownerSession = h.ctx.sessionManager.getSessionFile()!;
+		await h.manager.handleToolCall({ action: "schedule.create", id: "activation", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, h.ctx);
+		try {
+			const denied = await h.manager.handleToolCall({ action: "schedule.run", id: "activation" }, h.ctx);
+			assert.match(text(denied), /launch authority|blocked/i);
+			assert.equal(h.launches.length, 0);
+			assert.match(text(await h.manager.handleToolCall({ action: "schedule.history", id: "activation" }, h.ctx)), /No runs recorded/i);
+		} finally {
+			authority?.dispose();
 		}
 	});
 
