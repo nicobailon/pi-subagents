@@ -2,7 +2,6 @@
 .pi/subagents/
 .pi-subagents/
 .DS_Store
-AGENTS.md
 node_modules/
 .fallow/
 tmp/
