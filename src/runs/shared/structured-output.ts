@@ -180,7 +180,7 @@ export async function readStructuredOutput(runtime: StructuredOutputRuntime): Pr
 export function readStructuredOutputAcceptanceReport(runtime: StructuredOutputRuntime): { value?: unknown; error?: string } {
 	if (!runtime.acceptanceReportPath || !fs.existsSync(runtime.acceptanceReportPath)) return {};
 	try {
-		return { value: JSON.parse(fs.readFileSync(runtime.acceptanceReportPath, "utf-8")) as unknown };
+		return { value: JSON.parse(fs.readFileSync(runtime.acceptanceReportPath, "utf-8")) };
 	} catch (error) {
 		return { error: `Failed to read structured output acceptance report: ${error instanceof Error ? error.message : String(error)}` };
 	}

@@ -170,6 +170,30 @@ Project prompt.
 		if (!invalid.ok) assert.equal(invalid.code, "invalid_extension_bindings");
 	});
 
+	it("binds fast mode runtime extension into public preflight provenance", async () => {
+		const cwd = path.join(tempDir, "fast-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "fast-worker.md"), `---
+name: fast-worker
+description: Fast worker
+model: openai-codex/gpt-5.6-luna
+fast: true
+---
+Worker.
+`);
+		const availableModels = [{ provider: "openai-codex", id: "gpt-5.6-luna", fullId: "openai-codex/gpt-5.6-luna" }];
+		const enabled = await resolveSubagentLaunchContract({ agent: "fast-worker", cwd, task: "Run", availableModels });
+		const disabled = await resolveSubagentLaunchContract({ agent: "fast-worker", cwd, task: "Run", availableModels, fast: false });
+
+		assert.equal(enabled.ok, true);
+		assert.equal(disabled.ok, true);
+		if (enabled.ok && disabled.ok) {
+			assert.ok(enabled.contract.tools.runtimeExtensions.some((entry) => entry.endsWith("fast-mode-extension.ts")));
+			assert.equal(disabled.contract.tools.runtimeExtensions.some((entry) => entry.endsWith("fast-mode-extension.ts")), false);
+			assert.notEqual(enabled.contract.launchContractDigest, disabled.contract.launchContractDigest);
+		}
+	});
+
 	it("enforces maxThinking before a child launch and accepts levels at the ceiling", async () => {
 		const cwd = path.join(tempDir, "thinking-repo");
 		fs.mkdirSync(cwd, { recursive: true });

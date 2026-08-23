@@ -6,6 +6,7 @@ import {
 	MAX_EXTENSION_BINDING_NAMESPACES,
 	MAX_EXTENSION_BINDINGS_BYTES,
 	PI_SUBAGENT_EXTENSION_BINDINGS_ENV,
+	type ExtensionBindings,
 	normalizeExtensionBindings,
 	omitExtensionBindingsEnv,
 } from "../../src/runs/shared/extension-bindings.ts";
@@ -20,14 +21,15 @@ afterEach(() => {
 	for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function childEnv(extensionBindings?: Record<string, unknown>): Record<string, string | undefined> {
+function childEnv(extensionBindings?: ExtensionBindings): Record<string, string | undefined> {
+	const normalizedExtensionBindings = normalizeExtensionBindings(extensionBindings)?.value;
 	const result = buildPiArgs({
 		baseArgs: [],
 		task: "test",
 		sessionEnabled: false,
 		inheritProjectContext: false,
 		inheritSkills: false,
-		extensionBindings: extensionBindings as never,
+		extensionBindings: normalizedExtensionBindings,
 	});
 	if (result.tempDir) tempDirs.push(result.tempDir);
 	return result.env;

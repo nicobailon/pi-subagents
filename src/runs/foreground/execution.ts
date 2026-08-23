@@ -439,6 +439,7 @@ async function runSingleAttempt(
 		task: shared.originalTask ?? task,
 		...(modelArg ? { model: modelArg } : {}),
 		modelCandidates: shared.modelCandidates,
+		...((options.fast ?? agent.fast) !== undefined ? { fast: options.fast ?? agent.fast } : {}),
 		...(resolvedThinking ? { thinking: resolvedThinking } : {}),
 		...(options.thinkingCeiling ? { thinkingCeiling: options.thinkingCeiling } : {}),
 		systemPrompt: effectiveSystemPrompt,

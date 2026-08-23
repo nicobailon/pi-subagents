@@ -1645,6 +1645,7 @@ async function runSingleStepInner(
 				task: step.launchBindingTask ?? task,
 				...(candidate ? { model: candidate } : {}),
 				modelCandidates: candidates as string[],
+				...(step.fast !== undefined ? { fast: step.fast } : {}),
 				...(resolveEffectiveThinking(candidate, step.thinking) ? { thinking: resolveEffectiveThinking(candidate, step.thinking) } : {}),
 				...(step.thinkingCeiling ? { thinkingCeiling: step.thinkingCeiling } : {}),
 				systemPrompt: appendTurnBudgetSystemPrompt(step.systemPrompt ?? "", ctx.turnBudget),

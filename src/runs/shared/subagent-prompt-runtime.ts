@@ -650,7 +650,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 			name: "structured_output",
 			label: "Structured Output",
 			description: "Submit the required final structured output for this subagent step. This terminates the step.",
-			parameters: parameters as never,
+			parameters,
 			async execute(_id: string, params: { value: unknown; acceptanceReport?: unknown }) {
 				const validation = await validateStructuredOutputValue(schema, params.value);
 				if (validation.status === "invalid") {

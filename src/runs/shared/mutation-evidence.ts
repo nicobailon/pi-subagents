@@ -1,15 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import type { ArtifactPaths, TimeoutRecoverySummary, TrackedMutationEvidence, TrackedMutationSnapshot } from "../../shared/types.ts";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import type { ArtifactPaths, TimeoutRecoverySummary, TrackedMutationEvidence, TrackedMutationFingerprint, TrackedMutationSnapshot } from "../../shared/types.ts";
 
 const MAX_TRACKED_PATHS = 500;
 const MAX_HASH_BYTES = 1024 * 1024;
 const MAX_TIMEOUT_FILES = 20;
-
-interface FileFingerprint {
-	kind: "diff" | "oversize";
-	digest?: string;
-}
 
 function gitOutput(cwd: string, args: string[], maxBuffer = MAX_HASH_BYTES): string {
 	return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], maxBuffer });
@@ -19,29 +17,52 @@ function splitNul(output: string): string[] {
 	return output.split("\0").filter((part) => part.length > 0);
 }
 
+function hashLargeDiff(cwd: string, relativePath: string): string {
+	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tracked-diff-"));
+	const diffPath = path.join(tempDir, "diff.patch");
+	try {
+		execFileSync("git", ["diff", "--no-ext-diff", "--binary", `--output=${diffPath}`, "HEAD", "--", relativePath], { cwd, stdio: "ignore" });
+		const hash = createHash("sha256");
+		const buffer = Buffer.allocUnsafe(64 * 1024);
+		const fd = fs.openSync(diffPath, "r");
+		try {
+			for (;;) {
+				const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+				if (bytesRead === 0) break;
+				hash.update(buffer.subarray(0, bytesRead));
+			}
+		} finally {
+			fs.closeSync(fd);
+		}
+		return hash.digest("hex");
+	} finally {
+		fs.rmSync(tempDir, { recursive: true, force: true });
+	}
+}
+
 function listChangedTrackedFiles(cwd: string): { paths: string[]; truncated: boolean } {
 	const paths = splitNul(gitOutput(cwd, ["diff", "--no-ext-diff", "--name-only", "-z", "HEAD", "--"], MAX_HASH_BYTES));
 	return { paths: paths.slice(0, MAX_TRACKED_PATHS), truncated: paths.length > MAX_TRACKED_PATHS };
 }
 
-function fingerprintPath(cwd: string, relativePath: string): FileFingerprint {
+function fingerprintPath(cwd: string, relativePath: string): TrackedMutationFingerprint {
 	try {
 		const diff = gitOutput(cwd, ["diff", "--no-ext-diff", "--binary", "HEAD", "--", relativePath], MAX_HASH_BYTES);
 		return { kind: "diff", digest: createHash("sha256").update(diff).digest("hex") };
 	} catch {
-		return { kind: "oversize" };
+		return { kind: "diff", digest: hashLargeDiff(cwd, relativePath) };
 	}
 }
 
-function sameFingerprint(left: FileFingerprint | undefined, right: FileFingerprint): boolean {
-	return left?.kind === right.kind
-		&& left.digest === right.digest;
+function sameFingerprint(left: TrackedMutationFingerprint | undefined, right: TrackedMutationFingerprint): boolean {
+	if (!left || left.kind !== "diff" || right.kind !== "diff") return false;
+	return left.digest === right.digest;
 }
 
 export function snapshotTrackedMutations(cwd: string): TrackedMutationSnapshot {
 	try {
 		const changed = listChangedTrackedFiles(cwd);
-		const fingerprints: Record<string, FileFingerprint> = {};
+		const fingerprints: Record<string, TrackedMutationFingerprint> = {};
 		for (const file of changed.paths) fingerprints[file] = fingerprintPath(cwd, file);
 		return { source: "tracked-files", trackedOnly: true, cwd, dirtyFiles: changed.paths, fingerprints, truncated: changed.truncated };
 	} catch (error) {
@@ -63,7 +84,7 @@ export function collectTrackedMutationEvidence(snapshot: TrackedMutationSnapshot
 				if (!snapshot.truncated) changedFiles.push(file);
 				continue;
 			}
-			if (!sameFingerprint(snapshot.fingerprints[file] as FileFingerprint | undefined, fingerprintPath(cwd, file))) changedFiles.push(file);
+			if (!sameFingerprint(snapshot.fingerprints[file], fingerprintPath(cwd, file))) changedFiles.push(file);
 		}
 		changedFiles.sort();
 		return {

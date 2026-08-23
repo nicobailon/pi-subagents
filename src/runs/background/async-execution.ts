@@ -1595,6 +1595,7 @@ export function executeAsyncSingle(
 		task,
 		...(model ? { model } : {}),
 		modelCandidates,
+		...((params.fast ?? agentConfig.fast) !== undefined ? { fast: params.fast ?? agentConfig.fast } : {}),
 		...(resolveEffectiveThinking(model, effectiveThinking) ? { thinking: resolveEffectiveThinking(model, effectiveThinking) } : {}),
 		...(thinkingCeiling ? { thinkingCeiling } : {}),
 		systemPrompt: effectiveSystemPrompt,

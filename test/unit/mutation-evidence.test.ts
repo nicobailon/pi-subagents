@@ -69,6 +69,25 @@ describe("tracked mutation evidence", () => {
 		});
 	});
 
+	it("distinguishes unchanged and changed tracked diffs that exceed the fast buffer", () => {
+		withRepo((repo) => {
+			const largeBefore = `${"before\n".repeat(180_000)}before-tail\n`;
+			const largeAfter = `${"after\n".repeat(180_000)}after-tail\n`;
+			fs.writeFileSync(path.join(repo, "tracked.txt"), largeBefore, "utf-8");
+			const snapshot = snapshotTrackedMutations(repo);
+			const unchangedEvidence = collectTrackedMutationEvidence(snapshot, repo);
+
+			assert.equal(unchangedEvidence.attemptedMutation, false);
+			assert.deepEqual(unchangedEvidence.changedFiles, []);
+
+			fs.writeFileSync(path.join(repo, "tracked.txt"), largeAfter, "utf-8");
+			const evidence = collectTrackedMutationEvidence(snapshot, repo);
+
+			assert.equal(evidence.attemptedMutation, true);
+			assert.deepEqual(evidence.changedFiles, ["tracked.txt"]);
+		});
+	});
+
 	it("uses tracked evidence as completion guard mutation proof", () => {
 		const guard = evaluateCompletionMutationGuard({
 			agent: "worker",

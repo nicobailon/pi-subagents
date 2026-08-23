@@ -55,6 +55,7 @@ export interface SubagentLaunchContractInput {
 	agentScope?: AgentScope;
 	context?: "fresh" | "fork";
 	model?: string;
+	fast?: boolean;
 	thinking?: string | false;
 	thinkingCeiling?: ThinkingLevel;
 	inheritedThinkingCeiling?: ThinkingLevel;
@@ -325,6 +326,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	}
 	let toolPlan: PiLaunchToolPlan;
 	const permissionRules = resolvePermissionRules(loadConfig().permissions, agent.permissions);
+	const fast = input.fast ?? agent.fast;
 	try {
 		toolPlan = resolvePiLaunchToolPlan({
 			tools: agent.tools,
@@ -334,6 +336,9 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			cwd: effectiveCwd,
 			requireReadTool: resolvedSkills.resolved.length > 0,
 			structuredOutput: Boolean(input.outputSchema),
+			fast,
+			model,
+			modelCandidates,
 			capabilityCeiling: effectiveCapabilityCeiling,
 			agentName: agent.name,
 			permissionRules,
@@ -445,6 +450,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			definitionDigest,
 			...(model ? { model } : {}),
 			modelCandidates,
+			...(fast !== undefined ? { fast } : {}),
 			...(resolveEffectiveThinking(model, effectiveThinkingConfig) ? { thinking: resolveEffectiveThinking(model, effectiveThinkingConfig) } : {}),
 			systemPrompt: effectiveSystemPrompt,
 			systemPromptMode: agent.systemPromptMode,

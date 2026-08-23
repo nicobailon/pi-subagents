@@ -47,6 +47,7 @@ export function projectAgentDefinition(agent: AgentConfig): Record<string, unkno
 		model: agent.model,
 		modelProvider: agent.modelProvider,
 		fallbackModels: agent.fallbackModels,
+		fast: agent.fast,
 		thinking: agent.thinking,
 		tools: agent.tools,
 		mcpDirectTools: agent.mcpDirectTools,
@@ -81,6 +82,7 @@ export interface LaunchBindingInput {
 	task?: string;
 	model?: string;
 	modelCandidates?: string[];
+	fast?: boolean;
 	thinking?: string;
 	systemPrompt?: string | null;
 	systemPromptMode?: AgentConfig["systemPromptMode"];
@@ -106,6 +108,7 @@ export function projectLaunchBinding(input: LaunchBindingInput): Record<string, 
 		// The ordered candidate set already contains each attempted model; keeping only
 		// this set makes retries correlate to the same preflight binding.
 		modelCandidates: input.modelCandidates,
+		fast: input.fast,
 		thinking: input.thinking,
 		systemPromptDigest: input.systemPrompt === undefined || input.systemPrompt === null ? undefined : stableJsonDigest(input.systemPrompt),
 		systemPromptMode: input.systemPromptMode,

@@ -362,10 +362,12 @@ export interface TrackedMutationSnapshot {
 	cwd: string;
 	gitRoot?: string;
 	dirtyFiles: string[];
-	fingerprints: Record<string, unknown>;
+	fingerprints: Record<string, TrackedMutationFingerprint>;
 	truncated?: boolean;
 	unavailable?: string;
 }
+
+export type TrackedMutationFingerprint = { kind: "diff"; digest: string };
 
 export interface TrackedMutationEvidence {
 	source: "tracked-files";
