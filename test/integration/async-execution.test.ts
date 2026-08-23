@@ -3795,9 +3795,10 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			output: "Implemented second sibling change.",
 		});
 		const repo = createRepo("pi-subagents-shared-cwd-mutation-guard-");
+		const id = `async-parallel-shared-cwd-mutation-${Date.now().toString(36)}`;
+		let runnerStarted = false;
 		try {
-			const id = `async-parallel-shared-cwd-mutation-${Date.now().toString(36)}`;
-			executeAsyncChain(id, {
+			const launch = executeAsyncChain(id, {
 				chain: [{
 					parallel: [
 						{ agent: "first", task: "Edit tracked file" },
@@ -3812,6 +3813,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				shareEnabled: false,
 				maxSubagentDepth: 2,
 			});
+			runnerStarted = !launch.isError;
 
 			const payload = await readAsyncPayload(id);
 			assert.equal(payload.results[0]?.success, true);
@@ -3821,6 +3823,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.equal(payload.results[1]?.effects?.fileMutation?.attempted, false);
 			assert.match(payload.results[1]?.error ?? "", /completed without making edits/);
 		} finally {
+			if (runnerStarted) await waitForAsyncEvent(id, "subagent.run.process_terminal");
 			fs.rmSync(repo, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		}
 	});
