@@ -1080,7 +1080,7 @@ async function runSingleAttempt(
 					if (evt.message.model) {
 						progress.model = evt.message.model;
 						if (!result.model) result.model = evt.message.model;
-						if (expectedModelForVerification) {
+						if (expectedModelForVerification && !hasToolCall) {
 							const modelVerificationError = formatSubagentModelVerificationError(expectedModelForVerification, evt.message.model, options.availableModels);
 							if (modelVerificationError && !result.error) result.error = modelVerificationError;
 						}

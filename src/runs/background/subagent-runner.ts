@@ -723,9 +723,10 @@ function runPiStreaming(
 				if (text) writeOutputText(text);
 
 				if (event.type !== "message_end" || event.message.role !== "assistant") return;
+				const hasToolCall = assistantStartsToolCall(event.message);
 				if (event.message.model) {
 					model = event.message.model;
-					if (expectedModelForVerification) {
+					if (expectedModelForVerification && !hasToolCall) {
 						const modelVerificationError = formatSubagentModelVerificationError(expectedModelForVerification, event.message.model, modelVerificationRegistry);
 						if (modelVerificationError && !error) error = modelVerificationError;
 					}

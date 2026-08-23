@@ -35,6 +35,13 @@ describe("model fallback helpers", () => {
 		);
 	});
 
+	it("accepts child-reported bare model ids for the expected registry entry", () => {
+		assert.equal(
+			formatSubagentModelVerificationError("openai/gpt-5-mini:high", "gpt-5-mini", availableModels),
+			undefined,
+		);
+	});
+
 	it("resolves unique owner/name ids when the owner is not a registered provider", () => {
 		const registry = [
 			...availableModels,

@@ -27,6 +27,8 @@ export function formatSubagentModelVerificationError(expectedModel: string, obse
 	const expectedBase = splitThinkingSuffix(expectedModel).baseModel;
 	const observedBase = splitThinkingSuffix(observedModel).baseModel;
 	if (expectedBase === observedBase) return undefined;
+	const expectedEntry = availableModels.find((entry) => entry.fullId === expectedBase);
+	if (expectedEntry && expectedEntry.id === observedBase) return undefined;
 	return `model_verification_failed: child reported a different model than the launch candidate. Expected '${expectedModel}' but observed '${observedModel}'.`;
 }
 

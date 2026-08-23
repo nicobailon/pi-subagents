@@ -103,13 +103,20 @@ function claimNextResponse(dir, args) {
 	return responseMatchesArgs(fallback, args) ? fallback : undefined;
 }
 
-function defaultAssistantMessage(output) {
+function requestedModelArg(args) {
+	for (let i = 0; i < args.length; i++) {
+		if (args[i] === "--model" && typeof args[i + 1] === "string") return args[i + 1];
+	}
+	return "mock/test-model";
+}
+
+function defaultAssistantMessage(output, args) {
 	return {
 		type: "message_end",
 		message: {
 			role: "assistant",
 			content: [{ type: "text", text: output }],
-			model: "mock/test-model",
+			model: requestedModelArg(args),
 			stopReason: "stop",
 			usage: {
 				input: 100,
@@ -388,11 +395,11 @@ async function main() {
 		} else if (Array.isArray(response.echoEnv) && response.echoEnv.length > 0) {
 			const envSnapshot = Object.fromEntries(response.echoEnv.map((key) => [key, process.env[key] ?? null]));
 				const output = withAcceptanceReport(JSON.stringify(envSnapshot), args);
-				if (jsonMode) await writeJsonlLine(defaultAssistantMessage(output));
+				if (jsonMode) await writeJsonlLine(defaultAssistantMessage(output, args));
 				else await writeStdout(`${output}\n`);
 			} else if (typeof response.output === "string") {
 				const output = withAcceptanceReport(response.output, args);
-				if (jsonMode) await writeJsonlLine(defaultAssistantMessage(output));
+				if (jsonMode) await writeJsonlLine(defaultAssistantMessage(output, args));
 				else await writeStdout(`${output}\n`);
 			}
 		await maybeWriteStructuredOutput(response, jsonMode);
