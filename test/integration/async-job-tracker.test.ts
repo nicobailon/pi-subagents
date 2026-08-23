@@ -253,6 +253,34 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("rebuilds the async widget on quiet animation ticks without a UI requestRender bridge", async () => {
+		const asyncRoot = createTempDir("pi-async-job-widget-animation-");
+		try {
+			const state = createState();
+			const ui = createUiContext();
+			const recorder = createEventRecorder();
+			const tracker = createTracker(recorder.pi, state as never, asyncRoot, { pollIntervalMs: 10 });
+			const ctx = {
+				...ui.ctx,
+				ui: {
+					...ui.ctx.ui,
+					requestRender: undefined,
+				},
+			};
+
+			tracker.resetJobs(ctx as never);
+			tracker.handleStarted({ id: "run-animating", asyncDir: path.join(asyncRoot, "run-animating"), agent: "worker" });
+			await waitForCondition(() => state.asyncJobs.get("run-animating")?.status === "running", "initial running status refresh");
+			const widgetCount = ui.widgets.length;
+
+			await waitForCondition(() => ui.widgets.length > widgetCount, "animation tick widget rebuild", 1300);
+			assert.equal(ui.renderRequests, 0, "test fixture requestRender bridge must stay unavailable");
+			assert.notEqual(ui.widgets.at(-1), undefined, "running widget should be rebuilt, not cleared");
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("restores active async runs into the widget after reset", async () => {
 		const asyncRoot = createTempDir("pi-async-job-restore-");
 		try {
@@ -804,7 +832,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("repaints unchanged running widgets without rebuilding them and stops at terminal status", async () => {
+	it("rebuilds unchanged running widgets for quiet animation ticks and stops at terminal status", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
 		try {
@@ -849,8 +877,8 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				},
 			})}\n`, "utf-8");
 			await waitForCondition(() => recorder.events.some((event) => event.channel === "subagent:control-event"), "control event delivery");
-			await waitForCondition(() => ui.renderRequests > requestsAfterStatusLoaded, "running widget cadence repaint");
-			assert.equal(ui.widgets.length, widgetsAfterStatusLoaded, "unchanged running status must not replace the widget component");
+			await waitForCondition(() => ui.widgets.length > widgetsAfterStatusLoaded, "running widget cadence rebuild");
+			assert.ok(ui.renderRequests > requestsAfterStatusLoaded, "running widget cadence rebuild should request a repaint when the bridge supports it");
 
 			writeStatus(3000, 1);
 			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.toolCount === 1, "changed status load");
@@ -858,8 +886,10 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 
 			writeStatus(4000, 1, "complete");
 			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.status === "complete", "terminal status load");
+			const widgetsAfterTerminal = ui.widgets.length;
 			const requestsAfterTerminal = ui.renderRequests;
 			await new Promise((resolve) => setTimeout(resolve, 35));
+			assert.equal(ui.widgets.length, widgetsAfterTerminal, "terminal-only jobs must not rebuild on the cadence");
 			assert.equal(ui.renderRequests, requestsAfterTerminal, "terminal-only jobs must not request cadence repaints");
 		} finally {
 			tracker?.resetJobs();

@@ -24,6 +24,9 @@
   severity labels so first-pass reviews do not default to `blockers only`.
 
 ### Fixed
+- Keep the async widget spinner and elapsed timer moving while the parent is
+  idle by routing animation ticks through the live widget rebuild path. Thanks
+  to [@0xFlo](https://github.com/0xFlo) for #1390.
 - Let read-only reviewer acceptance rely on the parent-side staged-file check
   instead of requiring child-reported `noStagedFiles` evidence.
 - Slow async widget animation rerenders to 1 Hz so quiet running jobs do not
