@@ -20,16 +20,16 @@ export function externalJobPromptDigest(prompt: string): string {
 	return createHash("sha256").update(prompt).digest("hex");
 }
 
-function stableJson(value: unknown): string {
+export function externalJobStableJson(value: unknown): string {
 	if (value === null || typeof value !== "object") return JSON.stringify(value);
-	if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+	if (Array.isArray(value)) return `[${value.map(externalJobStableJson).join(",")}]`;
 	const record = value as Record<string, unknown>;
-	return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+	return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${externalJobStableJson(record[key])}`).join(",")}}`;
 }
 
 export function externalJobFollowUpRequestDigest(input: { provider: string; parentProviderJobId: string; promptDigest: string; options: Record<string, unknown> }): string {
 	return createHash("sha256")
-		.update(stableJson({ provider: input.provider, parentProviderJobId: input.parentProviderJobId, promptDigest: input.promptDigest, options: input.options }))
+		.update(externalJobStableJson({ provider: input.provider, parentProviderJobId: input.parentProviderJobId, promptDigest: input.promptDigest, options: input.options }))
 		.digest("hex");
 }
 
@@ -342,20 +342,20 @@ export async function runExternalJob(input: {
 					},
 				}, undefined, localCancellation);
 			} else {
-			handle = await requestExternalJobOperation<ExternalJobHandle>(input.asyncDir, {
-				operation: "start",
-				provider,
-				start: {
-					prompt: input.prompt,
-					promptDigest,
-					cwd: input.cwd,
-					runId: input.runId,
-					stepIndex: input.stepIndex,
-					agent: input.agent,
-					options,
-					...(input.sessionId ? { sessionId: input.sessionId } : {}),
-				},
-			}, undefined, localCancellation);
+				handle = await requestExternalJobOperation<ExternalJobHandle>(input.asyncDir, {
+					operation: "start",
+					provider,
+					start: {
+						prompt: input.prompt,
+						promptDigest,
+						cwd: input.cwd,
+						runId: input.runId,
+						stepIndex: input.stepIndex,
+						agent: input.agent,
+						options,
+						...(input.sessionId ? { sessionId: input.sessionId } : {}),
+					},
+				}, undefined, localCancellation);
 			}
 		}
 		publish(statusFromHandle({ provider, promptDigest, options, followUp: input.followUp, startedAt, previous: current, handle }));

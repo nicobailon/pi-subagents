@@ -567,7 +567,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 					externalJob: { provider: "surf-oracle", providerJobId: "job-parent", promptDigest: externalJobPromptDigest("original prompt"), options: { tier: "pro" }, state: "completed" },
 				}],
 			}, null, 2), "utf-8");
-			const { executor } = makeExecutor({ agents: [makeAgent("gpt-pro", { runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } } as never)] });
+			const { executor } = makeExecutor({ agents: [makeAgent("gpt-pro", { runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } })] });
 
 			const first = await executor.execute("resume-external-job-first", { action: "resume", id: sourceRunId, message: followUpMessage }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.equal(first.isError, undefined, first.content[0]?.text ?? "follow-up failed");
@@ -648,7 +648,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 					externalJob: { provider: "surf-oracle", providerJobId: "job-second", promptDigest: externalJobPromptDigest("original prompt"), options: { tier: "pro" }, state: "completed" },
 				}],
 			}, null, 2), "utf-8");
-			const { executor } = makeExecutor({ agents: [makeAgent("gpt-pro", { runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } } as never)] });
+			const { executor } = makeExecutor({ agents: [makeAgent("gpt-pro", { runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } })] });
 
 			const first = await executor.execute("resume-external-job-indexed", { action: "resume", id: sourceRunId, index: 1, message: followUpMessage }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.equal(first.isError, undefined, first.content[0]?.text ?? "follow-up failed");
@@ -706,7 +706,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 						externalJob: { provider: "surf-oracle", providerJobId: "job-parent", promptDigest: externalJobPromptDigest("original prompt"), options: suffix === "mismatch" ? { tier: "old" } : { tier: "pro" }, state: providerState },
 					}],
 				}, null, 2), "utf-8");
-				const { executor, events } = makeExecutor({ agents: [makeAgent("gpt-pro", { runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } } as never)] });
+				const { executor, events } = makeExecutor({ agents: [makeAgent("gpt-pro", { runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } })] });
 
 				const result = await executor.execute(`resume-external-job-${suffix}`, { action: "resume", id: sourceRunId, message: "Follow up" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 				assert.equal(result.isError, true);

@@ -6,7 +6,7 @@ import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import type { Details, HerdrProjectPaneSnapshot, SubagentState } from "../../shared/types.ts";
 import { createHerdrClient, detectHerdr, type HerdrClient, type HerdrErrorCode } from "./client.ts";
-import { focusHerdrPane, herdrPaneFocusTarget } from "./focus.ts";
+import { focusHerdrPane, herdrPaneFocusTarget, herdrPaneRecord } from "./focus.ts";
 import { formatShellCommand } from "./shell-command.ts";
 
 export const HERDR_PROJECT_PANE_ACTIONS = ["project.open", "project.status", "project.close"] as const;
@@ -308,14 +308,6 @@ export function restoreHerdrProjectPaneSnapshots(state: SubagentState, projectRo
 	state.herdrProjectPanes = restored;
 }
 
-function paneRecord(value: unknown): Record<string, unknown> | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	const record = value as Record<string, unknown>;
-	return record.pane && typeof record.pane === "object" && !Array.isArray(record.pane)
-		? record.pane as Record<string, unknown>
-		: record;
-}
-
 function sanitizedSummary(value: unknown): string | undefined {
 	if (typeof value !== "string") return undefined;
 	const cleaned = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
@@ -339,7 +331,7 @@ function paneSummary(pane: Record<string, unknown>): string | undefined {
 }
 
 function projectPaneRuntime(value: unknown): ProjectPaneRuntime | undefined {
-	const pane = paneRecord(value);
+	const pane = herdrPaneRecord(value);
 	const focusTarget = herdrPaneFocusTarget(value);
 	const paneId = focusTarget.paneId;
 	if (!pane || !paneId) return undefined;

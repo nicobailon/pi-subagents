@@ -6,7 +6,7 @@ export type HerdrPaneFocusResult =
 	| { ok: true; data: { paneId: string; tabId?: string; workspaceId?: string } }
 	| { ok: false; error: { code: HerdrFocusErrorCode; message: string; details?: unknown } };
 
-function paneRecord(value: unknown): Record<string, unknown> | undefined {
+export function herdrPaneRecord(value: unknown): Record<string, unknown> | undefined {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
 	const record = value as Record<string, unknown>;
 	return record.pane && typeof record.pane === "object" && !Array.isArray(record.pane)
@@ -20,7 +20,7 @@ function text(record: Record<string, unknown>, ...keys: string[]): string | unde
 }
 
 export function herdrPaneFocusTarget(value: unknown): { paneId?: string; tabId?: string; workspaceId?: string } {
-	const pane = paneRecord(value);
+	const pane = herdrPaneRecord(value);
 	if (!pane) return {};
 	return {
 		paneId: text(pane, "pane_id", "paneId", "id"),

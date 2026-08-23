@@ -123,6 +123,20 @@ describe("control channel: request file", () => {
 		}
 	});
 
+	it("drops invalid child-scoped stop fields instead of widening to a run stop", () => {
+		const asyncDir = tmpAsyncDir("pi-control-stop-invalid-child-");
+		try {
+			fs.mkdirSync(stopRequestsDir(asyncDir), { recursive: true });
+			const requestPath = path.join(stopRequestsDir(asyncDir), "0000000001234-bad-child.json");
+			fs.writeFileSync(requestPath, JSON.stringify({ type: "stop", targetIndex: -1, childId: "bad\nchild" }), "utf-8");
+
+			assert.deepEqual(consumeStopRequestPayloads(asyncDir), []);
+			assert.equal(fs.existsSync(requestPath), false);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
 	it("keeps the request type authoritative even for untyped callers", () => {
 		const asyncDir = tmpAsyncDir("pi-control-write-type-");
 		try {

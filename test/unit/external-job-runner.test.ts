@@ -308,6 +308,53 @@ describe("external-job runner bridge", () => {
 		assert.equal(fs.existsSync(claimDir), false);
 	});
 
+	it("reports abandoned follow-up claims with follow-up context", () => {
+		const dir = tempDir("pi-external-job-abandoned-follow-up-");
+		let followUps = 0;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { throw new Error("start must not be called"); },
+			followUp: () => { followUps += 1; return { providerJobId: "job-duplicate", state: "completed" }; },
+			status: () => ({ providerJobId: "unused", state: "completed" }),
+			reattach: () => ({ providerJobId: "unused", state: "completed" }),
+			result: () => ({ providerJobId: "unused", state: "completed" }),
+		});
+		const requestDir = path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+		const claimDir = path.join(requestDir, "follow-up-abandoned.claim");
+		fs.mkdirSync(claimDir, { recursive: true });
+		fs.writeFileSync(path.join(claimDir, "owner.json"), JSON.stringify({ version: 1, pid: 9_999_999, hostname: os.hostname(), claimedAt: 1 }), "utf-8");
+		fs.writeFileSync(path.join(claimDir, "request.json"), JSON.stringify({
+			id: "follow-up-abandoned",
+			operation: "follow-up",
+			provider: "surf-oracle",
+			createdAt: 1,
+			claimedAt: 2,
+			followUp: {
+				prompt: "prompt",
+				promptDigest: externalJobPromptDigest("prompt"),
+				cwd: dir,
+				runId: "run-abandoned-follow-up",
+				stepIndex: 0,
+				agent: "gpt-pro",
+				options: {},
+				sourceRunId: "run-parent",
+				sourceStepIndex: 0,
+				parentProviderJobId: "job-parent",
+				requestId: "request-abandoned-follow-up",
+				requestDigest: "digest-abandoned-follow-up",
+			},
+		}), "utf-8");
+
+		serviceExternalJobBridgeRequests(dir);
+
+		assert.equal(followUps, 0);
+		const response = JSON.parse(fs.readFileSync(path.join(dir, "external-job-responses", "follow-up-abandoned.json"), "utf-8"));
+		assert.equal(response.ok, false);
+		assert.equal(response.code, "follow-up-dispatch-abandoned");
+		assert.match(response.message, /External-job follow-up/);
+		assert.equal(fs.existsSync(claimDir), false);
+	});
+
 	it("recovers a persisted start handle from a dead owner claim", () => {
 		const dir = tempDir("pi-external-job-dead-owner-handle-");
 		let starts = 0;

@@ -550,14 +550,17 @@ export function consumeStopRequest(
 }
 
 function parseStopRequest(raw: unknown): StopRequest | undefined {
-	const parsed = raw as Partial<StopRequest> | undefined;
-	if (parsed?.type !== "stop") return undefined;
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+	const parsed = raw as Partial<StopRequest>;
+	if (parsed.type !== "stop") return undefined;
+	if (Object.hasOwn(parsed, "targetIndex") && !(Number.isInteger(parsed.targetIndex) && parsed.targetIndex! >= 0 && parsed.targetIndex! <= 1_000_000)) return undefined;
+	if (Object.hasOwn(parsed, "childId") && !validStopChildId(parsed.childId)) return undefined;
 	return {
 		type: "stop",
 		...(typeof parsed.ts === "number" ? { ts: parsed.ts } : {}),
 		...(typeof parsed.source === "string" ? { source: parsed.source } : {}),
 		...(typeof parsed.reason === "string" ? { reason: parsed.reason } : {}),
-		...(Number.isInteger(parsed.targetIndex) && parsed.targetIndex! >= 0 && parsed.targetIndex! <= 1_000_000 ? { targetIndex: parsed.targetIndex } : {}),
+		...(parsed.targetIndex !== undefined ? { targetIndex: parsed.targetIndex } : {}),
 		...(validStopChildId(parsed.childId) ? { childId: parsed.childId } : {}),
 	};
 }

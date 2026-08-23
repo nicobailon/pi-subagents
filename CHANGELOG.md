@@ -27,6 +27,8 @@
   severity labels so first-pass reviews do not default to `blockers only`.
 
 ### Fixed
+- Tighten unreleased model verification, child stop request parsing, and
+  external-job follow-up diagnostics found during deslop.
 - Keep the async widget spinner and elapsed timer moving while the parent is
   idle by routing animation ticks through the live widget rebuild path. Thanks
   to [@0xFlo](https://github.com/0xFlo) for #1390.

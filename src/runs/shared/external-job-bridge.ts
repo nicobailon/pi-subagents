@@ -419,8 +419,8 @@ function serviceExternalJobStartClaim(asyncDir: string, file: string): void {
 		ok: false,
 		operation: request.operation,
 		provider: request.provider,
-		code: "start-dispatch-abandoned",
-		message: `External-job start for provider '${request.provider}' was claimed by a host process that is no longer alive before a provider job id was committed. Refusing to redispatch the prompt automatically.`,
+		code: `${request.operation}-dispatch-abandoned`,
+		message: `External-job ${request.operation} for provider '${request.provider}' was claimed by a host process that is no longer alive before a provider job id was committed. Refusing to redispatch the prompt automatically.`,
 		completedAt: Date.now(),
 	} satisfies ExternalJobBridgeResponse);
 	fs.rmSync(claimDir, { recursive: true, force: true });
