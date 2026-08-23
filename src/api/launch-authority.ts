@@ -1,0 +1,15 @@
+export {
+	SUBAGENT_LAUNCH_AUTHORITY_REGISTRY_KEY,
+	SUBAGENT_LAUNCH_AUTHORITY_VERSION,
+	authorizeSubagentLaunch,
+	classifySubagentLaunchRequest,
+	digestSubagentLaunchRequest,
+	registerSubagentLaunchAuthority,
+	type AuthorizedLaunchAuthority,
+	type LaunchAuthorityLane,
+	type LaunchAuthorityPermitInput,
+	type RegisterSubagentLaunchAuthorityOptions,
+	type SubagentLaunchAdmission,
+	type SubagentLaunchAuthorityHandle,
+	type SubagentLaunchRequestKind,
+} from "../runs/shared/launch-authority.ts";
