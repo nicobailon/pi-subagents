@@ -40,6 +40,7 @@ export function applyDetachedChildToPausedWorkflow(
 		?? (input.workflowKey ? next.steps?.find((candidate) => candidate.workflowKey === input.workflowKey) : undefined);
 	if (!step) return undefined;
 	const succeeded = childSucceeded(input.result);
+	const failedSiblingError = next.steps?.find((candidate) => candidate !== step && candidate.status === "failed" && candidate.error)?.error;
 	const updatedAt = Date.now();
 	step.status = succeeded ? "completed" : "failed";
 	step.endedAt = updatedAt;
@@ -52,8 +53,8 @@ export function applyDetachedChildToPausedWorkflow(
 	else if (input.result.error) step.error = input.result.error;
 	next.lastUpdate = updatedAt;
 	const promoted = promotePausedWorkflowIfSettled(next);
-	if (promoted?.state === "failed" && input.result.interrupted) promoted.error = input.result.error ?? INTERRUPTED_DETACHED_CHILD;
-	if (promoted?.state === "failed" && input.result.error) promoted.error = input.result.error;
+	if (promoted?.state === "failed" && input.result.interrupted && !failedSiblingError) promoted.error = input.result.error ?? INTERRUPTED_DETACHED_CHILD;
+	else if (promoted?.state === "failed" && input.result.error) promoted.error = input.result.error;
 	return promoted ?? next;
 }
 
