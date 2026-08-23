@@ -933,6 +933,27 @@ describe("scripted workflow runtime", () => {
 		assert.equal(result.value, "helper all output");
 	});
 
+	it("accepts awaited Promise.all over then chains that return child launches", async () => {
+		const result = await runWorkflowScript({
+			script: `
+				function patchLane(key) {
+					return runs.run(key + "-writer", { agent: "worker", task: "write " + key })
+						.then((writer) => runs.run(key + "-review", { agent: "reviewer", task: "review " + writer.output }));
+				}
+				const reviews = await Promise.all([patchLane("alpha"), patchLane("beta")]);
+				return reviews.map((review) => review.key);
+			`,
+			timeoutMs: 2_000,
+			async launch(key, params) {
+				if (key.endsWith("-review")) assert.match(String(params.task), /review .* writer output/);
+				return { key, ok: true, output: key + " writer output", artifactPaths: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.deepEqual(result.value, ["alpha-review", "beta-review"]);
+		assert.deepEqual(result.children.map((child) => child.key), ["alpha-writer", "beta-writer", "alpha-review", "beta-review"]);
+	});
+
 	it("accepts awaited and returned handlers on portable plain helper wrappers", async () => {
 		const handlers = [
 			{ name: "then", chain: "then((value) => value)" },

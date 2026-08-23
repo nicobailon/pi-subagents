@@ -150,7 +150,15 @@ function trackObservationTracker(tracker, promise, allowFutureObservations = fal
     get(promiseTarget, prop) {
       if (prop === "then") return function promiseThen(onFulfilled, onRejected) {
         consumeTrackedObservations(tracker);
-        return trackObservationTracker({ observations: tracker.observations, consumed: false, dependencies: [tracker] }, promiseTarget.then(onFulfilled, onRejected), true);
+        const chainTracker = { observations: tracker.observations, consumed: false, dependencies: [tracker] };
+        const wrapHandler = (handler) => typeof handler === "function"
+          ? function trackedThenHandler(...args) {
+            const value = handler.apply(this, args);
+            addTrackerDependency(chainTracker, promiseObservationTracker(value));
+            return trackedPromiseTarget(value);
+          }
+          : handler;
+        return trackObservationTracker(chainTracker, promiseTarget.then(wrapHandler(onFulfilled), wrapHandler(onRejected)), true);
       };
       if (prop === "catch") return function promiseCatch(onRejected) {
         consumeTrackedObservations(tracker);
