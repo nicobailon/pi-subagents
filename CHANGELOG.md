@@ -4,6 +4,7 @@
 
 ### Fixed
 - Render workflow child results as useful text when scripts stringify `runs.all` or awaited `runs.run` result objects.
+- Keep checked acceptance compatible with strict workflow child `outputSchema` results. Thanks to [@rtbe](https://github.com/rtbe) for #1406.
 
 ## [0.55.0] - 2026-08-23
 

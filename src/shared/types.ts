@@ -1963,6 +1963,7 @@ export interface RunSyncOptions {
 		schema: JsonSchemaObject;
 		schemaPath: string;
 		outputPath: string;
+		acceptanceReportPath?: string;
 	};
 	agentContract?: AgentContract;
 	acceptance?: AcceptanceInput;

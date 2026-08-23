@@ -3968,6 +3968,94 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		if (child?.artifactPaths?.outputPath) assert.match(fs.readFileSync(child.artifactPaths.outputPath, "utf-8"), /"note": "captured"/);
 	});
 
+	it("workflow children with outputSchema can satisfy inherited checked acceptance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const acceptanceReport = {
+			criteriaSatisfied: [{ id: "proof", status: "satisfied", evidence: "structured output returned ok true" }],
+			changedFiles: ["none"],
+			testsAddedOrUpdated: ["none"],
+			commandsRun: [{ command: "not run", result: "not-run", summary: "mock structured-output child" }],
+			validationOutput: ["mock output validated"],
+			residualRisks: ["none"],
+			noStagedFiles: true,
+			diffSummary: "no file changes",
+		};
+		mockPi.onCall({
+			stdoutRaw: [
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true }, acceptanceReport } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+			structuredOutputCapture: { ok: true },
+			structuredOutputAcceptanceReport: acceptanceReport,
+		});
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"workflow-schema-acceptance-sidecar",
+			{
+				async: false,
+				acceptance: { level: "checked", criteria: [{ id: "proof", must: "Return required proof" }] },
+				workflowScript: `
+					const child = await runs.run("schema", {
+						agent: "echo",
+						task: "Return structured data",
+						outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }
+					});
+					if (!child.ok) throw new Error(child.error);
+					return child;
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const child = result.details.results[0];
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.deepEqual(child?.structuredOutput, { ok: true });
+		assert.equal(child?.acceptance?.status, "checked");
+		assert.equal(child?.acceptance?.runtimeChecks.some((check) => check.status === "failed"), false);
+	});
+
+	it("rejects workflow outputSchema children that omit checked acceptance sidecars", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({
+			stdoutRaw: [
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+			structuredOutputCapture: { ok: true },
+		});
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"workflow-schema-acceptance-missing-sidecar",
+			{
+				async: false,
+				acceptance: { level: "checked", criteria: [{ id: "proof", must: "Return required proof" }] },
+				workflowScript: `
+					const child = await runs.run("schema", {
+						agent: "echo",
+						task: "Return structured data",
+						outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }
+					});
+					if (!child.ok) throw new Error(child.error);
+					return child;
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const child = result.details.results[0];
+		assert.equal(result.isError, true);
+		assert.equal(child?.exitCode, 1);
+		assert.equal(child?.structuredOutput?.ok, true);
+		assert.equal(child?.acceptance?.status, "rejected");
+		assert.match(result.content[0]?.text ?? "", /acceptance/i);
+	});
+
 	it("accepts recovered tool errors before valid structured output but rejects later errors", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const recoveredError = { type: "tool_result_end", message: { role: "toolResult", toolName: "read", isError: true, content: [{ type: "text", text: "EISDIR" }] } };
 		const structuredEvents = [

@@ -30,6 +30,7 @@ interface MockPiResponse {
 	writeFiles?: Array<{ path: string; content: string }>;
 	/** Writes the structured-output capture file without emitting a structured_output tool event. */
 	structuredOutputCapture?: unknown;
+	structuredOutputAcceptanceReport?: unknown;
 	runtimeAcknowledgedExtensions?: unknown;
 }
 

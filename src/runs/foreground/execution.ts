@@ -67,7 +67,7 @@ import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledge
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
-import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput } from "../shared/structured-output.ts";
+import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
 import { formatProcessSignalError, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
@@ -1448,6 +1448,7 @@ async function runSingleAttempt(
 				result.structuredOutputFailed = true;
 			} else {
 				result.structuredOutput = structured.value;
+				(result as SingleResult & { structuredAcceptanceReport?: unknown }).structuredAcceptanceReport = readStructuredOutputAcceptanceReport(options.structuredOutput).value;
 				validatedStructuredOutput = true;
 			}
 		}
@@ -1708,7 +1709,7 @@ async function runSyncCompletionInner(
 		dynamicGroup: options.acceptanceContext?.dynamicGroup,
 		agentContract: options.agentContract,
 	});
-	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, { reportOptional: isAgentContractV1(options.agentContract) });
+	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, { reportOptional: isAgentContractV1(options.agentContract), structuredOutput: Boolean(options.structuredOutput?.acceptanceReportPath) });
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
 	options.onEffectivePrompt?.(taskWithAcceptance);
 	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
@@ -2045,6 +2046,7 @@ async function runSyncCompletionInner(
 			result.acceptance = await evaluateAcceptance({
 				acceptance: effectiveAcceptance,
 				output: acceptanceOutputByResult.get(result) ?? result.finalOutput ?? "",
+				report: (result as SingleResult & { structuredAcceptanceReport?: import("../../shared/types.ts").AcceptanceReport }).structuredAcceptanceReport,
 				fileOutput: childWrittenOutput !== undefined && options.outputPath
 					? { content: childWrittenOutput, path: options.outputPath, authoritative: options.outputMode === "file-only" }
 					: undefined,

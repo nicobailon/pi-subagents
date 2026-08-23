@@ -15,6 +15,7 @@ import {
 import { resolvePiPackageRoot } from "./pi-spawn.ts";
 import { RUNTIME_EXTENSION_ACK_PATH_ENV } from "./runtime-acknowledged-extensions.ts";
 import {
+	STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV,
 	STRUCTURED_OUTPUT_CAPTURE_ENV,
 	STRUCTURED_OUTPUT_SCHEMA_ENV,
 } from "./structured-output.ts";
@@ -173,6 +174,7 @@ export interface BuildPiArgsInput {
 		schema: JsonSchemaObject;
 		schemaPath: string;
 		outputPath: string;
+		acceptanceReportPath?: string;
 	};
 	toolBudget?: ResolvedToolBudget;
 	allowZeroToolBudget?: boolean;
@@ -838,6 +840,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	if (input.structuredOutput) {
 		env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
 		env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;
+		if (input.structuredOutput.acceptanceReportPath) env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV] = input.structuredOutput.acceptanceReportPath;
 	}
 	if (input.steerInboxDir) {
 		env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;

@@ -8,7 +8,7 @@ import { decodePermissionRules, permissionDecision, PERMISSION_AUDIT_PATH_ENV, P
 import { consumeSteerRequestsFromDir, MAX_STEER_QUEUE_SIZE, steerAckPathFromDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type SteerDeliveryStatus, type SteerRequest } from "../background/control-channel.ts";
 import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV, isRuntimeAcknowledgedExtensionId, writeRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
-import { createStructuredOutputToolParameters, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
+import { createStructuredOutputToolParameters, STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
 import {
 	CHILD_TOOL_DIAGNOSTIC_PATH_ENV,
 	formatChildToolDiagnostic,
@@ -634,29 +634,33 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		await drainOutstandingWork({ state: waitState, events: pi.events });
 	});
 	const structuredOutputPath = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
+	const structuredAcceptanceReportPath = process.env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV];
 	const structuredSchemaPath = process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
 	if (structuredOutputPath && structuredSchemaPath) {
 		const schema = JSON.parse(fs.readFileSync(structuredSchemaPath, "utf-8")) as JsonSchemaObject;
-		const parameters = createStructuredOutputToolParameters(schema);
+		const parameters = createStructuredOutputToolParameters(schema, { acceptanceReport: Boolean(structuredAcceptanceReportPath) });
 		const registerTool = pi.registerTool as unknown as (tool: {
 			name: string;
 			label: string;
 			description: string;
 			parameters: unknown;
-			execute: (_id: string, params: { value: unknown }) => Promise<unknown>;
+			execute: (_id: string, params: { value: unknown; acceptanceReport?: unknown }) => Promise<unknown>;
 		}) => void;
 		registerTool({
 			name: "structured_output",
 			label: "Structured Output",
 			description: "Submit the required final structured output for this subagent step. This terminates the step.",
 			parameters: parameters as never,
-			async execute(_id: string, params: { value: unknown }) {
+			async execute(_id: string, params: { value: unknown; acceptanceReport?: unknown }) {
 				const validation = await validateStructuredOutputValue(schema, params.value);
 				if (validation.status === "invalid") {
 					throw new Error(`Structured output validation failed: ${validation.message}`);
 				}
 				fs.mkdirSync(path.dirname(structuredOutputPath), { recursive: true });
 				fs.writeFileSync(structuredOutputPath, JSON.stringify(params.value), { mode: 0o600 });
+				if (structuredAcceptanceReportPath && params.acceptanceReport !== undefined) {
+					fs.writeFileSync(structuredAcceptanceReportPath, JSON.stringify(params.acceptanceReport), { mode: 0o600 });
+				}
 				return {
 					content: [{ type: "text", text: "Structured output captured." }],
 					details: { path: structuredOutputPath },

@@ -404,7 +404,7 @@ function acceptanceRequiresChildReport(acceptance: ResolvedAcceptanceConfig): bo
 	return acceptance.criteria.length > 0 || acceptance.evidence.length > 0;
 }
 
-export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, options: { reportOptional?: boolean } = {}): string {
+export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, options: { reportOptional?: boolean; structuredOutput?: boolean } = {}): string {
 	if (acceptance.level === "none") return "";
 	if (options.reportOptional && !acceptanceRequiresChildReport(acceptance)) return "";
 	const lines = [
@@ -431,13 +431,15 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, opt
 	}
 	lines.push(
 		"",
-		"Finish with a fenced JSON block tagged `acceptance-report` in this shape:",
+		options.structuredOutput
+			? "Include an `acceptanceReport` object in your final `structured_output` tool call in this shape:"
+			: "Finish with a fenced JSON block tagged `acceptance-report` in this shape:",
 		"Use empty arrays when no items apply; array fields contain strings unless object entries are shown.",
 		"Empty-string entries (`[\"\"]`) are ignored; use `[]` when nothing applies.",
 		"`criteriaSatisfied[].status` must be exactly one of: satisfied, not-satisfied, not-applicable.",
 		"`commandsRun[].result` must be exactly one of: passed, failed, not-run.",
 		"`manualNotes` and `notes` are optional strings; an empty string means no note and does not satisfy `manual-notes` evidence.",
-		"```acceptance-report",
+		...(options.structuredOutput ? [] : ["```acceptance-report"]),
 		JSON.stringify({
 			criteriaSatisfied: acceptance.criteria
 				.filter((criterion) => criterion.severity !== "recommended")
@@ -452,7 +454,7 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, opt
 			reviewFindings: ["blocker: file.ts:12 - issue found, or no blockers"],
 			manualNotes: "anything else the parent should know",
 		}, null, 2),
-		"```",
+		...(options.structuredOutput ? [] : ["```"]),
 	);
 	return lines.join("\n");
 }

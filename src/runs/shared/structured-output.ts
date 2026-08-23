@@ -8,12 +8,14 @@ import type { JsonSchemaObject } from "../../shared/types.ts";
 
 export const STRUCTURED_OUTPUT_SCHEMA_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA";
 export const STRUCTURED_OUTPUT_CAPTURE_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE";
+export const STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE";
 export const MISSING_STRUCTURED_OUTPUT_CALL_ERROR = "Missing structured_output call; this step has outputSchema and must finish by calling structured_output.";
 
 export interface StructuredOutputRuntime {
 	schema: JsonSchemaObject;
 	schemaPath: string;
 	outputPath: string;
+	acceptanceReportPath?: string;
 }
 
 const SCHEMA_MAP_KEYWORDS = ["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"] as const;
@@ -59,10 +61,13 @@ function rewriteLocalJsonPointerRefs(schema: unknown, pointerPrefix: string, inh
 	return rewritten;
 }
 
-export function createStructuredOutputToolParameters(schema: JsonSchemaObject): JsonSchemaObject {
+export function createStructuredOutputToolParameters(schema: JsonSchemaObject, options: { acceptanceReport?: boolean } = {}): JsonSchemaObject {
 	return {
 		type: "object",
-		properties: { value: rewriteLocalJsonPointerRefs(schema, "#/properties/value") },
+		properties: {
+			value: rewriteLocalJsonPointerRefs(schema, "#/properties/value"),
+			...(options.acceptanceReport ? { acceptanceReport: { type: "object" } } : {}),
+		},
 		required: ["value"],
 		additionalProperties: false,
 	};
@@ -124,7 +129,7 @@ export function assertJsonSchemaObject(schema: unknown, label = "outputSchema"):
 	}
 }
 
-export function createStructuredOutputRuntime(schema: JsonSchemaObject, baseDir?: string): StructuredOutputRuntime {
+export function createStructuredOutputRuntime(schema: JsonSchemaObject, baseDir?: string, options: { captureAcceptanceReport?: boolean } = {}): StructuredOutputRuntime {
 	assertJsonSchemaObject(schema);
 	const rootDir = baseDir ?? os.tmpdir();
 	fs.mkdirSync(rootDir, { recursive: true });
@@ -132,7 +137,7 @@ export function createStructuredOutputRuntime(schema: JsonSchemaObject, baseDir?
 	const schemaPath = path.join(dir, "schema.json");
 	const outputPath = path.join(dir, "output.json");
 	fs.writeFileSync(schemaPath, JSON.stringify(schema), { mode: 0o600 });
-	return { schema, schemaPath, outputPath };
+	return { schema, schemaPath, outputPath, ...(options.captureAcceptanceReport ? { acceptanceReportPath: path.join(dir, "acceptance-report.json") } : {}) };
 }
 
 export async function validateStructuredOutputValue(schema: JsonSchemaObject, value: unknown): Promise<{ status: "valid" } | { status: "invalid"; message: string }> {
@@ -170,6 +175,15 @@ export async function readStructuredOutput(runtime: StructuredOutputRuntime): Pr
 		return { error: `Failed to validate structured output: ${error instanceof Error ? error.message : String(error)}` };
 	}
 	return { value };
+}
+
+export function readStructuredOutputAcceptanceReport(runtime: StructuredOutputRuntime): { value?: unknown; error?: string } {
+	if (!runtime.acceptanceReportPath || !fs.existsSync(runtime.acceptanceReportPath)) return {};
+	try {
+		return { value: JSON.parse(fs.readFileSync(runtime.acceptanceReportPath, "utf-8")) as unknown };
+	} catch (error) {
+		return { error: `Failed to read structured output acceptance report: ${error instanceof Error ? error.message : String(error)}` };
+	}
 }
 
 export function cleanupStructuredOutputRuntime(runtime: StructuredOutputRuntime | undefined): void {
