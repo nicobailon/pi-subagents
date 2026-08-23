@@ -105,6 +105,14 @@ const FANOUT_CHILD_EXTENSION_PATH = path.join(
 	"extension",
 	"fanout-child.ts",
 );
+const FAST_MODE_EXTENSION_PATH = path.join(
+	path.dirname(fileURLToPath(import.meta.url)),
+	"fast-mode-extension.ts",
+);
+const FAST_MODE_ALLOWED_MODELS = new Set([
+	"openai-codex/gpt-5.6-luna",
+	"openai-codex/gpt-5.6-sol",
+]);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 export const SUBAGENT_ORCHESTRATOR_TARGET_ENV =
 	"PI_SUBAGENT_ORCHESTRATOR_TARGET";
@@ -176,6 +184,8 @@ export interface BuildPiArgsInput {
 		outputPath: string;
 		acceptanceReportPath?: string;
 	};
+	fast?: boolean;
+	modelCandidates?: readonly string[];
 	toolBudget?: ResolvedToolBudget;
 	allowZeroToolBudget?: boolean;
 	permissionRules?: PermissionRules;
@@ -239,6 +249,28 @@ export function applyThinkingSuffix(
 	return `${model}:${thinking}`;
 }
 
+function stripThinkingSuffix(model: string): string {
+	const colonIdx = model.lastIndexOf(":");
+	if (colonIdx === -1) return model;
+	return THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1))
+		? model.slice(0, colonIdx)
+		: model;
+}
+
+function resolveFastModeExtension(input: Pick<ResolvePiLaunchToolPlanInput, "fast" | "model" | "modelCandidates" | "agentName">): string[] {
+	if (!input.fast) return [];
+	const candidates = (input.modelCandidates?.length ? input.modelCandidates : input.model ? [input.model] : [])
+		.map(stripThinkingSuffix);
+	if (candidates.length === 0) {
+		throw new Error(`fast mode requires an explicit supported native OpenAI-Codex model${input.agentName ? ` for agent '${input.agentName}'` : ""}.`);
+	}
+	const unsupported = candidates.filter((model) => !FAST_MODE_ALLOWED_MODELS.has(model));
+	if (unsupported.length > 0) {
+		throw new Error(`fast mode supports only ${[...FAST_MODE_ALLOWED_MODELS].join(", ")}; unsupported model${unsupported.length === 1 ? "" : "s"}: ${unsupported.join(", ")}.`);
+	}
+	return [FAST_MODE_EXTENSION_PATH];
+}
+
 export interface ResolvePiLaunchToolPlanInput {
 	tools?: string[];
 	extensions?: string[];
@@ -253,6 +285,9 @@ export interface ResolvePiLaunchToolPlanInput {
 				schemaPath: string;
 				outputPath: string;
 		  };
+	fast?: boolean;
+	model?: string;
+	modelCandidates?: readonly string[];
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	inheritedCapabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	agentName?: string;
@@ -466,8 +501,11 @@ export function resolvePiLaunchToolPlan(
 		: hasPermissionRules(input.permissionRules)
 			? resolvePermissionSystemExtension()
 			: undefined;
+	if (input.fast && capabilityCeiling?.denyExtensions) throw new Error("fast mode requires a child runtime extension, but this launch denies extensions.");
+	const fastModeExtensions = resolveFastModeExtension({ fast: input.fast, model: input.model, modelCandidates: input.modelCandidates, agentName: input.agentName });
 	const runtimeExtensions = [
 		PROMPT_RUNTIME_EXTENSION_PATH,
+		...fastModeExtensions,
 		...(fanoutAuthorized ? [FANOUT_CHILD_EXTENSION_PATH] : []),
 		...(permSystemExt ? [permSystemExt] : []),
 	];
@@ -607,6 +645,9 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		cwd: input.cwd,
 		requireReadTool: input.requireReadTool,
 		structuredOutput: input.structuredOutput,
+		fast: input.fast,
+		model: modelArg,
+		modelCandidates: input.modelCandidates,
 		capabilityCeiling: input.capabilityCeiling,
 		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(
 			process.env[SUBAGENT_CAPABILITY_CEILING_ENV],

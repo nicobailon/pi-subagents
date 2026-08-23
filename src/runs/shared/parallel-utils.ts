@@ -29,6 +29,7 @@ export interface RunnerSubagentStep {
 	structured?: boolean;
 	cwd?: string;
 	model?: string;
+	fast?: boolean;
 	thinking?: string;
 	thinkingCeiling?: import("../../shared/model-info.ts").ThinkingLevel;
 	modelCandidates?: string[];

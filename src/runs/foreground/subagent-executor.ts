@@ -264,6 +264,7 @@ interface TaskParam {
 	reads?: string[] | boolean;
 	progress?: boolean;
 	model?: string;
+	fast?: boolean;
 	skill?: string | string[] | boolean;
 	outputSchema?: JsonSchemaObject;
 	acceptance?: AcceptanceInput;
@@ -340,6 +341,7 @@ export interface SubagentParamsLike {
 	artifacts?: boolean;
 	includeProgress?: boolean;
 	model?: string;
+	fast?: boolean;
 	thinking?: string | false;
 	scope?: string;
 	target?: string;
@@ -1835,6 +1837,7 @@ async function resumeAsyncRun(input: {
 			sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile),
 			chainSkills: normalized === false ? [] : (normalized ?? []),
 			agentContract: input.params.agentContract,
+			fast: input.params.fast,
 			dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
 			maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
 			waitToolEnabled: input.deps.waitToolEnabled,
@@ -1938,6 +1941,7 @@ async function resumeAsyncRun(input: {
 		},
 		context: recoveryContext,
 		modelOverride: recoveryDescriptor?.model ?? target.model,
+		fast: recoveryDescriptor?.fast,
 		modelOverrideFromParent: recoveryDescriptor?.modelOverrideFromParent,
 		thinkingOverride: recoveryDescriptor?.thinking ?? target.thinking,
 		thinkingCeiling: recoveryDescriptor?.thinkingCeiling ?? ("thinkingCeiling" in target ? target.thinkingCeiling : undefined),
@@ -3119,6 +3123,9 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		const externalRunnerWithoutExplicitModel = (a.runner?.type === "external-cli" || a.runner?.type === "external-job")
 			&& params.model === undefined
 			&& (a.model === undefined || (a.modelSource?.type === "subagents.defaultModel" && a.model === a.modelSource.model));
+		if ((a.runner?.type === "external-cli" || a.runner?.type === "external-job") && (params.fast ?? a.fast) === true) {
+			return buildRequestedModeError(params, `Agent '${a.name}' uses runner.type='${a.runner.type}' and does not support fast mode.`);
+		}
 		const modelScopes = resolveModelScopesForAgent(data.modelScope, a.name, parentModel);
 		const modelOverride = a.runner?.type === "external-cli" || a.runner?.type === "external-job"
 			? params.model ?? (externalRunnerWithoutExplicitModel ? undefined : a.model)
@@ -3147,6 +3154,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			...(params.reads !== undefined ? { reads: params.reads } : {}),
 			outputBaseDir: resolveSingleRunOutputBaseDir(deps, artifactsDir, id),
 			modelOverride,
+			fast: params.fast,
 			modelOverrideFromParent,
 			thinkingOverride: externalRunnerWithoutExplicitModel ? undefined : thinkingOverrideForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
 			thinkingCeiling: a.maxThinking,
@@ -3624,6 +3632,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			nestedRoute: foregroundControl?.nestedRoute,
 			index: 0,
 			modelOverride,
+			fast: params.fast,
 			modelOverrideFromParent,
 			thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
 			thinkingCeiling: agentConfig.maxThinking,

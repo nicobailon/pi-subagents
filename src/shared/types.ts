@@ -571,6 +571,7 @@ export interface SteeringRecoveryDescriptor {
 	modelProvider?: string;
 	modelOverrideFromParent?: boolean;
 	fallbackModels?: string[];
+	fast?: boolean;
 	thinking?: string;
 	thinkingCeiling?: ThinkingLevel;
 	tools?: string[];
@@ -1981,6 +1982,8 @@ export interface RunSyncOptions {
 	nestedRoute?: NestedRouteInfo;
 	/** Override the agent's default model (format: "provider/id" or just "id") */
 	modelOverride?: string;
+	/** Opt into priority service tier for supported native OpenAI-Codex launches. */
+	fast?: boolean;
 	/** The override came from the running parent session, not configuration. */
 	modelOverrideFromParent?: boolean;
 	/** LLM intent arbiter for the completion mutation guard (rescues read-only review runs). */

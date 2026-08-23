@@ -139,14 +139,15 @@ describe("dynamic fanout helpers", () => {
 		);
 	});
 
-	it("accepts toolBudget on dynamic parallel templates", () => {
+	it("accepts fast and toolBudget on dynamic parallel templates", () => {
 		const step = {
 			expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
-			parallel: { agent: "reviewer", task: "Review {item.path}", toolBudget: { hard: 3 } },
+			parallel: { agent: "reviewer", task: "Review {item.path}", fast: true, toolBudget: { hard: 3 } },
 			collect: { as: "reviews" },
 		} as unknown as Parameters<typeof validateDynamicStepShape>[0];
 
 		assert.doesNotThrow(() => validateDynamicStepShape(step, 1));
+		assert.deepEqual(materializeDynamicParallelStep(step, outputs, 1).parallel.map((item) => item.fast), [true, true]);
 	});
 
 	it("validates source ordering and collect name collisions", () => {

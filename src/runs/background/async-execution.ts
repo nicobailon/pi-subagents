@@ -175,6 +175,7 @@ interface AsyncChainParams {
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
 	nestedRoute?: NestedRouteInfo;
 	acceptance?: AcceptanceInput;
+	fast?: boolean;
 	timeoutMs?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
@@ -224,6 +225,7 @@ interface AsyncSingleParams {
 	structuredOutputSchema?: JsonSchemaObject;
 	modelOverride?: string;
 	modelOverrideFromParent?: boolean;
+	fast?: boolean;
 	thinkingOverride?: AgentConfig["thinking"];
 	availableModels?: AvailableModelInfo[];
 	maxSubagentDepth: number;
@@ -295,6 +297,7 @@ export interface AsyncRunnerStepBuildParams {
 	asyncDir: string;
 	outputBaseDir?: string;
 	validateOutputBindings?: boolean;
+	fast?: boolean;
 	toolBudget?: ResolvedToolBudget;
 	configToolBudget?: ResolvedToolBudget;
 	/** Optional per-call hard toolTimeoutMs override from the subagent invocation. */
@@ -727,6 +730,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			...(s.progress !== undefined ? { progress: s.progress } : {}),
 			...(stepSkillInput !== undefined ? { skills: stepSkillInput } : {}),
 			...(s.model !== undefined ? { model: s.model } : {}),
+			...(s.fast !== undefined ? { fast: s.fast } : {}),
 		};
 	};
 	const buildSeqStep = (s: SequentialStep, sessionFile?: string, behaviorCwd?: string, progressPrecreated = false, resolvedBehavior?: ResolvedStepBehavior, flatIndex?: number, parallelOutputNamespace?: { stepIndex: number; taskIndex?: number }, runFanoutPath?: string) => {
@@ -739,6 +743,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			if (s.outputSchema !== undefined) unsupported.push("structured output");
 			if (s.acceptance !== undefined || params.agentContract !== undefined || s.agentContract !== undefined) unsupported.push("acceptance/agent contract");
 			if (s.toolBudget !== undefined || params.toolBudget !== undefined || a.toolBudget !== undefined || params.configToolBudget !== undefined) unsupported.push("tool budget");
+			if ((s.fast ?? params.fast ?? a.fast) === true) unsupported.push("fast mode");
 			if (params.contextForAgent?.(s.agent) === "fork") unsupported.push("fork context");
 			if (unsupported.length > 0) throw new AsyncStartValidationError(`Agent '${a.name}' uses runner.type='${externalRunnerType}' and does not support: ${unsupported.join(", ")}.`);
 		}
@@ -831,6 +836,21 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		}
 		const agentContract = s.agentContract ?? params.agentContract;
 		const permissionRules = resolvePermissionRules(ctx.permissions, a.permissions);
+		const modelCandidates = externalRunner ? [] : buildModelCandidates(primaryModel, a.fallbackModels, availableModels, a.modelProvider ?? ctx.currentModelProvider, {
+			scope: modelScopes,
+			primaryModelFromParent,
+		}).flatMap((candidate) => {
+			const resolved = applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined);
+			return resolved ? [resolved] : [];
+		});
+		if (!externalRunner) {
+			try {
+				for (const candidate of modelCandidates) assertThinkingWithinCeiling({ model: candidate, configThinking: effectiveThinking, ceiling: thinkingCeiling, agent: a.name, runId: id });
+			} catch (error) {
+				throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
+			}
+		}
+		const fast = s.fast ?? params.fast ?? a.fast;
 		const toolPlan = resolvePiLaunchToolPlan({
 			tools: a.tools,
 			extensions: a.extensions,
@@ -839,6 +859,9 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			cwd: stepCwd,
 			requireReadTool: Boolean(resolvedSkills.length),
 			structuredOutput: Boolean(s.outputSchema),
+			fast,
+			model,
+			modelCandidates,
 			capabilityCeiling: params.capabilityCeiling,
 			inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 			agentName: a.name,
@@ -862,20 +885,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			});
 			if (contractError) throw new AsyncStartValidationError(contractError);
 		}
-		const modelCandidates = externalRunner ? [] : buildModelCandidates(primaryModel, a.fallbackModels, availableModels, a.modelProvider ?? ctx.currentModelProvider, {
-			scope: modelScopes,
-			primaryModelFromParent,
-		}).flatMap((candidate) => {
-			const resolved = applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined);
-			return resolved ? [resolved] : [];
-		});
-		if (!externalRunner) {
-			try {
-				for (const candidate of modelCandidates) assertThinkingWithinCeiling({ model: candidate, configThinking: effectiveThinking, ceiling: thinkingCeiling, agent: a.name, runId: id });
-			} catch (error) {
-				throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
-			}
-		}
 		return {
 			parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
 			permissionRules,
@@ -892,6 +901,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			structured: Boolean(s.outputSchema),
 			cwd: stepCwd,
 			model,
+			...(fast !== undefined ? { fast } : {}),
 			thinking: resolveEffectiveThinking(model, effectiveThinking),
 			...(thinkingCeiling ? { thinkingCeiling } : {}),
 			launchResolvedExtensions,
@@ -1143,6 +1153,7 @@ export function executeAsyncChain(
 		waitToolEnabled: params.waitToolEnabled,
 		worktreeBaseDir,
 		asyncDir,
+		fast: params.fast,
 		toolBudget: params.toolBudget,
 		configToolBudget: params.configToolBudget,
 		callToolTimeoutMs: params.callToolTimeoutMs,
@@ -1399,6 +1410,7 @@ export function executeAsyncSingle(
 	if (externalRunner) {
 		const unsupported: string[] = [];
 		if (params.modelOverride !== undefined) unsupported.push("model override");
+		if ((params.fast ?? agentConfig.fast) === true) unsupported.push("fast mode");
 		if (params.thinkingOverride !== undefined) unsupported.push("thinking override");
 		if (params.structuredOutputSchema !== undefined) unsupported.push("structured output");
 		if (params.acceptance !== undefined || params.agentContract !== undefined) unsupported.push("acceptance/agent contract");
@@ -1546,6 +1558,9 @@ export function executeAsyncSingle(
 		cwd: runnerCwd,
 		requireReadTool: Boolean(resolvedSkills.length),
 		structuredOutput: Boolean(params.structuredOutputSchema),
+		fast: params.fast ?? agentConfig.fast,
+		model,
+		modelCandidates,
 		capabilityCeiling,
 		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 		agentName: agentConfig.name,
@@ -1606,6 +1621,7 @@ export function executeAsyncSingle(
 		...(sessionFile ? { sessionFile } : {}),
 		cwd: runnerCwd,
 		...(model ? { model } : {}),
+		...(params.fast ?? recoveryAgentConfig.fast ? { fast: params.fast ?? recoveryAgentConfig.fast } : {}),
 		...(recoveryAgentConfig.modelProvider ? { modelProvider: recoveryAgentConfig.modelProvider } : {}),
 		...(params.modelOverrideFromParent ? { modelOverrideFromParent: true } : {}),
 		...(recoveryAgentConfig.fallbackModels ? { fallbackModels: [...recoveryAgentConfig.fallbackModels] } : {}),
@@ -1666,6 +1682,7 @@ export function executeAsyncSingle(
 						...(params.context ? { context: params.context } : {}),
 						cwd: runnerCwd,
 						model,
+						...(params.fast ?? agentConfig.fast ? { fast: params.fast ?? agentConfig.fast } : {}),
 						thinking: resolveEffectiveThinking(model, effectiveThinking),
 						...(thinkingCeiling ? { thinkingCeiling } : {}),
 						modelCandidates,

@@ -57,6 +57,7 @@ export interface BuiltinAgentOverrideBase {
 	model?: string;
 	modelProvider?: string;
 	fallbackModels?: string[];
+	fast?: boolean;
 	thinking?: string | false;
 	systemPromptMode: SystemPromptMode;
 	inheritProjectContext: boolean;
@@ -83,6 +84,7 @@ interface BuiltinAgentOverrideConfig {
 	model?: string | false;
 	defaultProvider?: string | false;
 	fallbackModels?: string[] | false;
+	fast?: boolean;
 	thinking?: string | false;
 	systemPromptMode?: SystemPromptMode;
 	inheritProjectContext?: boolean;
@@ -128,6 +130,7 @@ export interface AgentConfig {
 	model?: string;
 	modelProvider?: string;
 	fallbackModels?: string[];
+	fast?: boolean;
 	thinking?: string | false;
 	systemPromptMode: SystemPromptMode;
 	inheritProjectContext: boolean;
@@ -640,6 +643,7 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		...(agent.model !== undefined ? { model: agent.model } : {}),
 		...(agent.modelProvider !== undefined ? { modelProvider: agent.modelProvider } : {}),
 		...(agent.fallbackModels ? { fallbackModels: [...agent.fallbackModels] } : {}),
+		...(agent.fast !== undefined ? { fast: agent.fast } : {}),
 		...(agent.thinking !== undefined ? { thinking: agent.thinking } : {}),
 		systemPromptMode: agent.systemPromptMode,
 		inheritProjectContext: agent.inheritProjectContext,
@@ -670,6 +674,7 @@ function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentO
 		...(override.fallbackModels !== undefined
 			? { fallbackModels: override.fallbackModels === false ? false : [...override.fallbackModels] }
 			: {}),
+		...(override.fast !== undefined ? { fast: override.fast } : {}),
 		...(override.thinking !== undefined ? { thinking: override.thinking } : {}),
 		...(override.systemPromptMode !== undefined ? { systemPromptMode: override.systemPromptMode } : {}),
 		...(override.inheritProjectContext !== undefined ? { inheritProjectContext: override.inheritProjectContext } : {}),
@@ -862,6 +867,11 @@ function parseBuiltinOverrideEntry(
 	if ("model" in input) {
 		if (typeof input.model === "string" || input.model === false) override.model = input.model;
 		else throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'model'; expected a string or false.`);
+	}
+
+	if ("fast" in input) {
+		if (typeof input.fast === "boolean") override.fast = input.fast;
+		else throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'fast'; expected a boolean.`);
 	}
 
 	if ("thinking" in input) {
@@ -1195,6 +1205,7 @@ function applyBuiltinOverride(
 		else next.modelProvider = override.defaultProvider;
 	}
 	if (override.fallbackModels !== undefined) { if (override.fallbackModels === false) delete next.fallbackModels; else next.fallbackModels = [...override.fallbackModels]; }
+	if (override.fast !== undefined) next.fast = override.fast;
 	if (override.thinking !== undefined) { if (override.thinking === false) delete next.thinking; else next.thinking = override.thinking; }
 	if (override.systemPromptMode !== undefined) next.systemPromptMode = override.systemPromptMode;
 	if (override.inheritProjectContext !== undefined) next.inheritProjectContext = override.inheritProjectContext;
@@ -1332,6 +1343,9 @@ function applyCustomAgentOverride(
 			override.fallbackModels === false ? undefined : [...override.fallbackModels],
 		);
 	}
+	if (override.fast !== undefined) {
+		fill("fast", ["fast"], override.fast);
+	}
 	if (override.thinking !== undefined) {
 		fill("thinking", ["thinking"], override.thinking === false ? undefined : override.thinking);
 	}
@@ -1411,7 +1425,7 @@ function applyCustomAgentOverrides(
 
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
-	draft: Pick<AgentConfig, "model" | "modelProvider" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "extensions" | "subagentOnlyExtensions" | "completionGuard" | "toolBudget"> & Partial<Pick<AgentConfig, "description" | "output" | "outputMode" | "defaultReads">>,
+	draft: Pick<AgentConfig, "model" | "modelProvider" | "fallbackModels" | "fast" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "extensions" | "subagentOnlyExtensions" | "completionGuard" | "toolBudget"> & Partial<Pick<AgentConfig, "description" | "output" | "outputMode" | "defaultReads">>,
 ): BuiltinAgentOverrideConfig | undefined {
 	const override: BuiltinAgentOverrideConfig = {};
 
@@ -1425,6 +1439,7 @@ export function buildBuiltinOverrideConfig(
 	if (draft.model !== base.model) override.model = draft.model ?? false;
 	if (draft.modelProvider !== base.modelProvider) override.defaultProvider = draft.modelProvider ?? false;
 	if (!arraysEqual(draft.fallbackModels, base.fallbackModels)) override.fallbackModels = draft.fallbackModels ? [...draft.fallbackModels] : false;
+	if (draft.fast !== base.fast) override.fast = draft.fast === true;
 	if (draft.thinking !== base.thinking) override.thinking = draft.thinking ?? false;
 	if (draft.systemPromptMode !== base.systemPromptMode) override.systemPromptMode = draft.systemPromptMode;
 	if (draft.inheritProjectContext !== base.inheritProjectContext) override.inheritProjectContext = draft.inheritProjectContext;
@@ -1835,6 +1850,12 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 
 		const extensions = resolveAgentRelativeExtensionPaths(parseFrontmatterList(frontmatter.extensions), filePath);
 		const subagentOnlyExtensions = resolveAgentRelativeExtensionPaths(parseFrontmatterList(frontmatter.subagentOnlyExtensions), filePath);
+		let fast: boolean | undefined;
+		if (frontmatter.fast !== undefined) {
+			if (frontmatter.fast === "true") fast = true;
+			else if (frontmatter.fast === "false") fast = false;
+			else throw new Error(`Agent '${localName}' has invalid fast frontmatter; expected true or false.`);
+		}
 
 		const extraFields: Record<string, string> = {};
 		for (const [key, value] of Object.entries(frontmatter)) {
@@ -1881,6 +1902,7 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			...(mcpDirectTools.length > 0 ? { mcpDirectTools } : {}),
 			...(frontmatter.model !== undefined ? { model: frontmatter.model } : {}),
 			...(fallbackModels?.length ? { fallbackModels } : {}),
+			...(fast !== undefined ? { fast } : {}),
 			...(frontmatter.thinking !== undefined ? { thinking: frontmatter.thinking === "false" ? false : frontmatter.thinking } : {}),
 			systemPromptMode,
 			inheritProjectContext,

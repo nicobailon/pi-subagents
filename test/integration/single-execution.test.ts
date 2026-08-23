@@ -853,6 +853,55 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.rmSync(resultPath, { force: true });
 	});
 
+	it("lets explicit fast false opt out external CLI agents from inherited fast mode", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const markerPath = path.join(tempDir, "external-fast-false-started");
+		const executor = makeExecutor([
+			makeAgent("external", {
+				fast: true,
+				runner: { type: "external-cli", command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started"); process.stdout.write("external fast false result")`] },
+			}),
+		]);
+
+		const rejected = await executor.execute(
+			"external-fast-inherited",
+			{ agent: "external", task: "Run external", async: true },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(rejected.isError, true);
+		assert.match(rejected.content[0]?.text ?? "", /does not support fast mode/);
+		assert.equal(fs.existsSync(markerPath), false);
+
+		const result = await executor.execute(
+			"external-fast-false",
+			{ agent: "external", task: "Run external", async: true, fast: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
+		assert.ok(result.details.asyncId);
+		for (let attempt = 0; attempt < 100 && !fs.existsSync(markerPath); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(fs.readFileSync(markerPath, "utf-8"), "started");
+		assert.equal(mockPi.callCount(), 0);
+
+		const resultPath = path.join(DIRS.results, `${result.details.asyncId}.json`);
+		let runResult: { state?: string } = {};
+		for (let attempt = 0; attempt < 100; attempt++) {
+			if (fs.existsSync(resultPath)) runResult = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+			if (runResult.state === "complete" || runResult.state === "failed") break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(runResult.state, "complete");
+
+		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+		fs.rmSync(resultPath, { force: true });
+	});
+
 	it("runs external CLI agents with fallback models without registry validation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const markerPath = path.join(tempDir, "external-fallback-started");
 		const executor = makeExecutor([

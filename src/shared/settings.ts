@@ -22,6 +22,7 @@ export interface ResolvedStepBehavior {
 	progress: boolean;
 	skills: string[] | false;
 	model?: string;
+	fast?: boolean;
 }
 
 export type OutputOverrideInput = string | boolean;
@@ -33,6 +34,7 @@ export interface StepOverrides {
 	progress?: boolean;
 	skills?: string[] | false;
 	model?: string;
+	fast?: boolean;
 }
 
 function normalizeOutputOverride(output: unknown): string | false | undefined {
@@ -60,6 +62,7 @@ export interface SequentialStep {
 	progress?: boolean;
 	skill?: string | string[] | false;
 	model?: string;
+	fast?: boolean;
 	toolBudget?: ToolBudgetConfig;
 	acceptance?: AcceptanceInput;
 	agentContract?: AgentContract;
@@ -84,6 +87,7 @@ export interface ParallelTaskItem {
 	progress?: boolean;
 	skill?: string | string[] | false;
 	model?: string;
+	fast?: boolean;
 	toolBudget?: ToolBudgetConfig;
 	acceptance?: AcceptanceInput;
 	agentContract?: AgentContract;
@@ -284,7 +288,8 @@ export function resolveStepBehavior(
 
 	const outputMode = stepOverrides.outputMode ?? agentConfig.outputMode ?? "inline";
 	const model = stepOverrides.model ?? agentConfig.model;
-	return { output, outputMode, reads, progress, skills, model };
+	const fast = stepOverrides.fast ?? agentConfig.fast;
+	return { output, outputMode, reads, progress, skills, model, fast };
 }
 
 export function resolveTaskTextForFileUpdatePolicy(task: string | undefined, originalTask?: string): string | undefined {

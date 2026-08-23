@@ -60,6 +60,12 @@ For a persistent role override with a backup model for provider failures:
 
 `subagents.defaultModel` and `subagents.defaultProvider` apply to builtin, package, user, and project agents. `defaultModel` fills only agents that do not set `model` in frontmatter. `defaultProvider` is also applied to frontmatter and override models so bare ids resolve against the intended provider. Per-run model overrides and `agentOverrides.<name>.model` still win, and explicit agent frontmatter still wins over the global default. The same `agentOverrides` block can change `tools`, `skills`, inherited context, prompt text, or disable a builtin (see [agents.md](agents.md)). Matching user and project agents also receive override fields that their frontmatter leaves unset, so a shared project config agent can keep the persona while local settings choose the model or provider.
 
+## Fast mode
+
+Set `fast: true` on a run or in agent frontmatter to request the OpenAI priority service tier for supported native OpenAI-Codex children. This can use a higher quota tier or cost more. It is off by default.
+
+Fast mode fails before launch unless every resolved model candidate is on the allowlist. The current allowlist is `openai-codex/gpt-5.6-luna` and `openai-codex/gpt-5.6-sol`. External runners, Anthropic models, and other providers do not use fast mode.
+
 ## Recommended model tiering (optional)
 
 A setup that works well in practice: route agents by task shape instead of running everything on one model. Four tiers:

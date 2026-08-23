@@ -334,9 +334,10 @@ describe("builtin agent overrides", () => {
 	it("applies user settings overrides to builtin agents", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
 			subagents: {
-				agentOverrides: {
+					agentOverrides: {
 					reviewer: {
 						model: "openai/gpt-5.4",
+						fast: true,
 						thinking: "xhigh",
 						systemPromptMode: "replace",
 						inheritProjectContext: true,
@@ -353,6 +354,7 @@ describe("builtin agent overrides", () => {
 		assert.ok(reviewer);
 		assert.equal(reviewer.source, "builtin");
 		assert.equal(reviewer.model, "openai/gpt-5.4");
+		assert.equal(reviewer.fast, true);
 		assert.equal(reviewer.thinking, "xhigh");
 		assert.equal(reviewer.systemPromptMode, "replace");
 		assert.equal(reviewer.inheritProjectContext, true);
@@ -652,6 +654,7 @@ describe("builtin agent overrides", () => {
 						defaultReads: ["CONTEXT.md", "docs/spec.md"],
 						model: "anthropic/claude-sonnet-4-6",
 						fallbackModels: ["openai/gpt-5-mini"],
+						fast: true,
 						thinking: "high",
 						systemPromptMode: "append",
 						inheritProjectContext: true,
@@ -676,6 +679,7 @@ describe("builtin agent overrides", () => {
 		assert.deepEqual(implementer.defaultReads, ["CONTEXT.md", "docs/spec.md"]);
 		assert.equal(implementer.model, "anthropic/claude-sonnet-4-6");
 		assert.deepEqual(implementer.fallbackModels, ["openai/gpt-5-mini"]);
+		assert.equal(implementer.fast, true);
 		assert.equal(implementer.thinking, "high");
 		assert.equal(implementer.systemPromptMode, "append");
 		assert.equal(implementer.inheritProjectContext, true);
@@ -745,6 +749,7 @@ describe("builtin agent overrides", () => {
 						outputMode: "file-only",
 						defaultReads: ["override.md"],
 						model: "anthropic/claude-sonnet-4-6",
+						fast: true,
 						thinking: "high",
 						tools: ["bash"],
 						skills: ["override-skill"],
@@ -756,7 +761,7 @@ describe("builtin agent overrides", () => {
 				},
 			},
 		});
-		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\noutput: artifacts/explicit.md\noutputMode: inline\ndefaultReads: explicit.md\nmodel: google/gemini-3-pro\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\ndefaultContext: fresh\nacceptanceRole: read-only\ncompletionGuard: false\n---\n\nDrive the failing test first.\n`);
+		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\noutput: artifacts/explicit.md\noutputMode: inline\ndefaultReads: explicit.md\nmodel: google/gemini-3-pro\nfast: false\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\ndefaultContext: fresh\nacceptanceRole: read-only\ncompletionGuard: false\n---\n\nDrive the failing test first.\n`);
 
 		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
 		assert.ok(implementer);
@@ -764,6 +769,7 @@ describe("builtin agent overrides", () => {
 		assert.equal(implementer.outputMode, "inline");
 		assert.deepEqual(implementer.defaultReads, ["explicit.md"]);
 		assert.equal(implementer.model, "google/gemini-3-pro");
+		assert.equal(implementer.fast, false);
 		assert.equal(implementer.thinking, "medium");
 		assert.deepEqual(implementer.tools, ["read"]);
 		assert.deepEqual(implementer.mcpDirectTools, ["local_tool"]);

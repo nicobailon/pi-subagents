@@ -1533,6 +1533,67 @@ Do work
 	});
 });
 
+describe("agent frontmatter fast mode", () => {
+	it("parses and serializes fast mode", () => {
+		const agent: AgentConfig = {
+			name: "worker",
+			description: "Worker",
+			systemPrompt: "Do work",
+			systemPromptMode: "replace",
+			inheritProjectContext: false,
+			inheritSkills: false,
+			source: "project",
+			filePath: "/tmp/worker.md",
+			fast: true,
+		};
+
+		const serialized = serializeAgent(agent);
+		assert.match(serialized, /fast: true/);
+
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-fast-mode-"));
+		tempDirs.push(dir);
+		const agentsDir = path.join(dir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "worker.md"), `---
+name: worker
+description: Worker
+model: openai-codex/gpt-5.6-luna
+fast: true
+---
+
+Do work
+`, "utf-8");
+
+		const result = discoverAgents(dir, "project");
+		const worker = result.agents.find((candidate) => candidate.name === "worker");
+		assert.equal(worker?.fast, true);
+		assert.equal(worker?.extraFields?.fast, undefined);
+	});
+
+	it("adds the fast extension only for allowlisted native models", () => {
+		const allowed = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			model: "openai-codex/gpt-5.6-luna:low",
+			fast: true,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		assert.ok(allowed.args.some((arg) => arg.endsWith("fast-mode-extension.ts")));
+		assert.throws(() => buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			model: "anthropic/claude-sonnet-4",
+			fast: true,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		}), /fast mode supports only/);
+	});
+});
+
 describe("agent frontmatter prompt assembly defaults", () => {
 	it("defaults ordinary agents to replace mode with no inherited context or skills", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-default-prompt-settings-"));
