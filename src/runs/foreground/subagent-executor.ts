@@ -2831,7 +2831,7 @@ function resolveStaticLaunchSummary(input: {
 			agentConfig?.model,
 			input.parentModel,
 			input.availableModels,
-			input.currentProvider,
+			agentConfig?.modelProvider ?? input.currentProvider,
 			modelScopes.length === 0 ? {} : { scope: modelScopes },
 		);
 	const thinkingOverride = externalRunner ? undefined : input.thinkingOverrideForTask(input.agent, input.index, model);
@@ -3126,7 +3126,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		const modelScopes = resolveModelScopesForAgent(data.modelScope, a.name, parentModel);
 		const modelOverride = a.runner?.type === "external-cli" || a.runner?.type === "external-job"
 			? params.model ?? (externalRunnerWithoutExplicitModel ? undefined : a.model)
-			: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, currentProvider, modelScopes.length === 0 ? {} : { scope: modelScopes });
+			: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, a.modelProvider ?? currentProvider, modelScopes.length === 0 ? {} : { scope: modelScopes });
 		const modelOverrideFromParent = inheritsParentModel(params.model as string | undefined, a.model, parentModel);
 		const asyncResult = executeAsyncSingle(id, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
 			agent: params.agent!,
@@ -3489,7 +3489,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		agentConfig.model,
 		parentModel,
 		availableModels,
-		currentProvider,
+		agentConfig.modelProvider ?? currentProvider,
 		modelScopes.length === 0 ? {} : { scope: modelScopes },
 	);
 	const modelOverrideFromParent = inheritsParentModel(params.model as string | undefined, agentConfig.model, parentModel);
@@ -5652,13 +5652,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						agentConfig?.model,
 						parentModel,
 						forkAvailableModels,
-						parentModel?.provider,
+						agentConfig?.modelProvider ?? parentModel?.provider,
 					);
 				const candidates = buildModelCandidates(
 					primaryModel,
 					agentConfig?.fallbackModels,
 					forkAvailableModels,
-					parentModel?.provider,
+					agentConfig?.modelProvider ?? parentModel?.provider,
 					{ primaryModelFromParent: modelOverrideFromParent ?? inheritsParentModel(modelOverride, agentConfig?.model, parentModel) },
 				);
 				forkThinkingRequirements.set(

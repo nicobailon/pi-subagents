@@ -220,6 +220,35 @@ Project prompt.
 		assert.deepEqual(result.contract.modelCandidates, ["gateway/parent-model"]);
 	});
 
+	it("uses subagents.defaultProvider when resolving launch model ids", async () => {
+		const cwd = path.join(tempDir, "repo-default-provider");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeJson(path.join(process.env.HOME!, ".pi", "agent", "settings.json"), {
+			subagents: { defaultProvider: "gpu-b" },
+		});
+		writeAgent(path.join(cwd, ".pi", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+model: gpt-5-mini
+---
+Project prompt.
+`);
+
+		const result = await resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			parentModel: { provider: "openai", id: "gpt-5-mini" },
+			availableModels: [
+				{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
+				{ provider: "gpu-b", id: "gpt-5-mini", fullId: "gpu-b/gpt-5-mini" },
+			],
+		});
+
+		assert.equal(result.ok, true);
+		assert.equal(result.contract.model, "gpu-b/gpt-5-mini");
+		assert.deepEqual(result.contract.modelCandidates, ["gpu-b/gpt-5-mini"]);
+	});
+
 	it("bypasses native model validation for external CLI runners", async () => {
 		const cwd = path.join(tempDir, "repo-external-model");
 		fs.mkdirSync(cwd, { recursive: true });

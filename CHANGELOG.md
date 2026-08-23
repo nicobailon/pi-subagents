@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Add `subagents.defaultProvider` and per-agent `defaultProvider` overrides so bare subagent model ids can prefer a configured provider. Thanks to [@swingtempo](https://github.com/swingtempo) for #1393.
 - Add external-job follow-ups through `subagent({ action: "resume" })` for
   completed provider jobs that expose `followUp(input)`, with duplicate request
   dedupe and durable parent-job lineage (#1381).

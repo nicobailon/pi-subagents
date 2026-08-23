@@ -532,6 +532,7 @@ export interface SteeringRecoveryDescriptor {
 	sessionFile?: string;
 	cwd: string;
 	model?: string;
+	modelProvider?: string;
 	modelOverrideFromParent?: boolean;
 	fallbackModels?: string[];
 	thinking?: string;

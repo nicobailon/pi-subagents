@@ -289,7 +289,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 
 	const externalRunner = agent.runner?.type === "external-cli" || agent.runner?.type === "external-job";
 	const availableModels = normalizeAvailableModels(input.availableModels);
-	const preferredProvider = input.preferredProvider ?? input.parentModel?.provider;
+	const preferredProvider = agent.modelProvider ?? input.preferredProvider ?? input.parentModel?.provider;
 	const modelScopes = resolveModelScopesForAgent(discovered.modelScope, agent.name, input.parentModel);
 	const primaryModel = externalRunner
 		? undefined

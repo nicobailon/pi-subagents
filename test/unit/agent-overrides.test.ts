@@ -178,6 +178,42 @@ describe("builtin agent overrides", () => {
 		assert.equal(worker.model, "deepseek-v4-pro");
 	});
 
+	it("applies default providers with per-agent overrides", () => {
+		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: {
+				defaultModel: "llama-3",
+				defaultProvider: "gpu-a",
+				agentOverrides: {
+					worker: { defaultProvider: "gpu-b" },
+					reviewer: { defaultProvider: false },
+				},
+			},
+		});
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: { defaultProvider: "gpu-project" },
+		});
+
+		const builtins = discoverAgentsAll(tempProject).builtin;
+		const scout = builtins.find((agent) => agent.name === "scout");
+		assert.equal(scout?.model, "llama-3");
+		assert.equal(scout?.modelProvider, "gpu-project");
+		assert.equal(scout?.modelSource?.defaultProvider, "gpu-project");
+		assert.equal(builtins.find((agent) => agent.name === "worker")?.modelProvider, "gpu-b");
+		assert.equal(builtins.find((agent) => agent.name === "reviewer")?.modelProvider, undefined);
+	});
+
+	it("applies default providers to custom agent frontmatter models", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { defaultProvider: "gpu-a" },
+		});
+		writeProjectAgent(tempProject, "worker", `---\nname: worker\ndescription: Project worker\nmodel: llama-3\n---\n\nWork.\n`);
+
+		const worker = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "worker");
+		assert.equal(worker?.model, "llama-3");
+		assert.equal(worker?.modelProvider, "gpu-a");
+	});
+
 	it("applies subagents.defaultThinking only when thinking is unset", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
 			subagents: {
@@ -237,6 +273,27 @@ describe("builtin agent overrides", () => {
 					&& error.message.includes("defaultThinking"),
 			);
 		}
+	});
+
+	it("surfaces malformed default provider settings", () => {
+		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+		for (const defaultProvider of ["", 42]) {
+			writeJson(settingsPath, { subagents: { defaultProvider } });
+			assert.throws(
+				() => discoverAgents(tempProject, "both"),
+				(error: unknown) => error instanceof Error
+					&& error.message.includes(settingsPath)
+					&& error.message.includes("defaultProvider"),
+			);
+		}
+		writeJson(settingsPath, { subagents: { agentOverrides: { worker: { defaultProvider: "" } } } });
+		assert.throws(
+			() => discoverAgents(tempProject, "both"),
+			(error: unknown) => error instanceof Error
+				&& error.message.includes(settingsPath)
+				&& error.message.includes("worker")
+				&& error.message.includes("defaultProvider"),
+		);
 	});
 
 	it("applies subagents.defaultModel to custom agents without a frontmatter model", () => {

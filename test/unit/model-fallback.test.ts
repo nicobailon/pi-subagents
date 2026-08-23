@@ -320,6 +320,18 @@ describe("resolveEffectiveSubagentModel", () => {
 		);
 		assert.equal(warnings.length, 1);
 	});
+
+	it("uses the preferred provider for an ambiguous agent model", () => {
+		const registry = [
+			...availableModels,
+			{ provider: "gpu-b", id: "gpt-5-mini", fullId: "gpu-b/gpt-5-mini" },
+		];
+
+		assert.equal(
+			resolveEffectiveSubagentModel(undefined, "gpt-5-mini", undefined, registry, "gpu-b"),
+			"gpu-b/gpt-5-mini",
+		);
+	});
 });
 
 describe("fuzzyResolveModel / normalizeModelSegment", () => {

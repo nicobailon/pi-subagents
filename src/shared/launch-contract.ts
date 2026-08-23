@@ -44,6 +44,7 @@ export function projectAgentDefinition(agent: AgentConfig): Record<string, unkno
 		inheritProjectContext: agent.inheritProjectContext,
 		inheritSkills: agent.inheritSkills,
 		model: agent.model,
+		modelProvider: agent.modelProvider,
 		fallbackModels: agent.fallbackModels,
 		thinking: agent.thinking,
 		tools: agent.tools,
