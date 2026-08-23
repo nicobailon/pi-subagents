@@ -70,6 +70,7 @@ import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCe
 import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
 import { formatProcessSignalError, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
+import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	buildModelCandidates,
@@ -524,6 +525,7 @@ async function runSingleAttempt(
 		return result;
 	}
 	const spawnEnv = { ...process.env, ...sharedEnv, ...getSubagentDepthEnv(options.maxSubagentDepth) };
+	const mutationSnapshot = snapshotTrackedMutations(options.cwd ?? runtimeCwd);
 	let observedMutationAttempt = false;
 	let structuredOutputToolInvoked = false;
 	let structuredOutputMessageStartIndex: number | undefined;
@@ -1488,6 +1490,7 @@ async function runSingleAttempt(
 		tokens: progress.tokens,
 		durationMs: progress.durationMs,
 	};
+	const mutationEvidence = collectTrackedMutationEvidence(mutationSnapshot, options.cwd ?? runtimeCwd);
 
 	const acceptanceOutput = getFinalOutput(result.messages ?? []);
 	let fullOutput = stripAcceptanceReport(acceptanceOutput);
@@ -1495,9 +1498,19 @@ async function runSingleAttempt(
 	result.outputState = fullOutput.trim() || result.structuredOutput !== undefined ? "present" : "absent";
 	if (result.timedOut) {
 		const timeoutMessage = formatTimeoutMessage(options.timeoutMs ?? 0);
+		result.timeoutRecovery = buildTimeoutRecoverySummary({
+			termination: "timed-out",
+			evidence: mutationEvidence,
+			currentTool: progress.currentTool,
+			currentToolArgs: progress.currentToolArgs,
+			currentPath: progress.currentPath,
+			sessionFile: options.sessionFile,
+			transcriptPath: shared.transcriptWriter ? shared.artifactPaths?.transcriptPath : undefined,
+			artifactPaths: shared.artifactPaths,
+		});
 		fullOutput = fullOutput.trim()
-			? `${timeoutMessage}\n\nPartial output before timeout:\n${fullOutput}`
-			: timeoutMessage;
+			? `${timeoutMessage}\n\n${result.timeoutRecovery.message}\n\nPartial output before timeout:\n${fullOutput}`
+			: `${timeoutMessage}\n\n${result.timeoutRecovery.message}`;
 	} else if (result.turnBudgetExceeded && result.turnBudget) {
 		fullOutput = formatTurnBudgetOutput(turnBudgetExceededMessage(result.turnBudget, result.turnBudget.turnCount), fullOutput);
 	} else if (result.turnBudget?.outcome === "termination-deferred") {
@@ -1516,9 +1529,11 @@ async function runSingleAttempt(
 			tools: contractTools,
 			mcpDirectTools: toolPlan.effectiveMcpTools,
 			toolAvailabilityError,
+			mutationEvidence,
 		})
 		: undefined;
-	let completionGuardTriggered = completionGuard?.triggered === true && !observedMutationAttempt;
+	const mutationAttemptObserved = observedMutationAttempt || mutationEvidence.attemptedMutation;
+	let completionGuardTriggered = completionGuard?.triggered === true && !mutationAttemptObserved;
 	const completionGuardBlocked = completionGuard?.blocked === true;
 	// The classifier is deliberately narrow, so a read-only review task can
 	// still be misread as implementation. Arbitrate BEFORE any failure side
@@ -1550,7 +1565,8 @@ async function runSingleAttempt(
 							: "observed"
 					: "not-applicable",
 				expected: completionGuard.expectedMutation,
-				attempted: completionGuardBlocked ? false : completionGuard.attemptedMutation || observedMutationAttempt,
+				attempted: completionGuardBlocked ? false : completionGuard.attemptedMutation || mutationAttemptObserved,
+				evidence: mutationEvidence,
 				...(completionGuardBlocked && completionGuard.message ? { message: completionGuard.message } : {}),
 				...(completionGuardTriggered ? { message: "Subagent completed without making edits for an implementation task." } : {}),
 				...(arbiterRescued ? { resolvedBy: "llm-intent-arbiter" } : {}),

@@ -348,10 +348,45 @@ export interface FileMutationEffect {
 	attempted: boolean;
 	message?: string;
 	resolvedBy?: "llm-intent-arbiter";
+	evidence?: TrackedMutationEvidence;
 }
 
 export interface EffectsProjection {
 	fileMutation?: FileMutationEffect;
+}
+
+export interface TrackedMutationSnapshot {
+	source: "tracked-files";
+	trackedOnly: true;
+	cwd: string;
+	gitRoot?: string;
+	dirtyFiles: string[];
+	fingerprints: Record<string, unknown>;
+	truncated?: boolean;
+	unavailable?: string;
+}
+
+export interface TrackedMutationEvidence {
+	source: "tracked-files";
+	trackedOnly: true;
+	changedFiles: string[];
+	attemptedMutation: boolean;
+	truncated?: boolean;
+	unavailable?: string;
+}
+
+export interface TimeoutRecoverySummary {
+	termination: "timed-out" | "stopped";
+	changedFiles: string[];
+	truncated?: boolean;
+	currentTool?: string;
+	currentToolArgs?: string;
+	currentPath?: string;
+	sessionFile?: string;
+	transcriptPath?: string;
+	artifactPaths?: ArtifactPaths;
+	warning: string;
+	message: string;
 }
 
 export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 3;
@@ -941,6 +976,7 @@ export interface SingleResult {
 	context?: "fresh" | "fork";
 	exitCode: number;
 	processSignal?: string | null;
+	timeoutRecovery?: TimeoutRecoverySummary;
 	detached?: boolean;
 	detachedReason?: string;
 	interrupted?: boolean;
@@ -1505,6 +1541,7 @@ export interface AsyncStatus {
 		durationMs?: number;
 		exitCode?: number | null;
 		timedOut?: boolean;
+		timeoutRecovery?: TimeoutRecoverySummary;
 		stopped?: boolean;
 		turnBudget?: TurnBudgetState;
 		turnBudgetExceeded?: boolean;

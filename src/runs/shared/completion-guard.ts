@@ -1,5 +1,5 @@
 import type { Message } from "@earendil-works/pi-ai";
-import type { AcceptanceRole } from "../../shared/types.ts";
+import type { AcceptanceRole, TrackedMutationEvidence } from "../../shared/types.ts";
 import { isMutatingTool } from "./long-running-guard.ts";
 import { classifyTaskMutationIntent, expectsImplementationMutation, taskMayMutate } from "./task-intent.ts";
 
@@ -48,6 +48,7 @@ interface CompletionMutationGuardInput {
 	tools?: string[];
 	mcpDirectTools?: string[];
 	toolAvailabilityError?: string;
+	mutationEvidence?: TrackedMutationEvidence;
 }
 
 interface CompletionMutationGuardResult {
@@ -238,7 +239,7 @@ export function evaluateCompletionMutationGuard(input: CompletionMutationGuardIn
 	const expectedMutation = hasMutationToolCapability(input.tools, input.mcpDirectTools)
 		? expectsImplementationMutation(input.agent, input.task)
 		: false;
-	const attemptedMutation = hasMutationToolCall(input.messages);
+	const attemptedMutation = hasMutationToolCall(input.messages) || input.mutationEvidence?.attemptedMutation === true;
 	const noEditChallengeComplete = isImplementationChallengeTask(input.task)
 		&& reportsNoBetterChallengeChange(input.messages);
 	return {
