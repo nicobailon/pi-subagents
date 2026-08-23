@@ -28,6 +28,7 @@ import { buildModelCandidates, inheritsParentModel, resolveEffectiveSubagentMode
 import { resolveToolTimeoutMs, toolTimeoutFromEnv } from "../shared/tool-timeout.ts";
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
+import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV, type ThinkingLevel } from "../../shared/thinking-ceiling.ts";
 import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.ts";
@@ -188,6 +189,7 @@ interface AsyncChainParams {
 	/** Global cap on simultaneously-running subagent tasks within the async run. */
 	globalConcurrencyLimit?: number;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	thinkingCeiling?: ThinkingLevel;
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
@@ -250,6 +252,7 @@ interface AsyncSingleParams {
 	toolTimeoutMsEnv?: string | undefined;
 	allowZeroToolBudget?: boolean;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	thinkingCeiling?: ThinkingLevel;
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
@@ -301,6 +304,7 @@ export interface AsyncRunnerStepBuildParams {
 	/** PI_SUBAGENT_TOOL_TIMEOUT_MS override (lowest precedence). */
 	toolTimeoutMsEnv?: string | undefined;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	thinkingCeiling?: ThinkingLevel;
 }
 
 export type AsyncRunnerStepBuildResult =
@@ -813,6 +817,18 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
 		const effectiveThinking = externalRunner ? undefined : thinkingOverride ?? a.thinking;
 		const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined);
+		const thinkingCeiling = externalRunner ? undefined : intersectThinkingCeilings(
+			params.thinkingCeiling,
+			a.maxThinking,
+			decodeThinkingCeiling(process.env[SUBAGENT_THINKING_CEILING_ENV]),
+		);
+		if (!externalRunner) {
+			try {
+				assertThinkingWithinCeiling({ model, configThinking: effectiveThinking, ceiling: thinkingCeiling, agent: a.name, runId: id });
+			} catch (error) {
+				throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
+			}
+		}
 		const agentContract = s.agentContract ?? params.agentContract;
 		const permissionRules = resolvePermissionRules(ctx.permissions, a.permissions);
 		const toolPlan = resolvePiLaunchToolPlan({
@@ -846,6 +862,20 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			});
 			if (contractError) throw new AsyncStartValidationError(contractError);
 		}
+		const modelCandidates = externalRunner ? [] : buildModelCandidates(primaryModel, a.fallbackModels, availableModels, a.modelProvider ?? ctx.currentModelProvider, {
+			scope: modelScopes,
+			primaryModelFromParent,
+		}).flatMap((candidate) => {
+			const resolved = applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined);
+			return resolved ? [resolved] : [];
+		});
+		if (!externalRunner) {
+			try {
+				for (const candidate of modelCandidates) assertThinkingWithinCeiling({ model: candidate, configThinking: effectiveThinking, ceiling: thinkingCeiling, agent: a.name, runId: id });
+			} catch (error) {
+				throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
+			}
+		}
 		return {
 			parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
 			permissionRules,
@@ -863,13 +893,9 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			cwd: stepCwd,
 			model,
 			thinking: resolveEffectiveThinking(model, effectiveThinking),
+			...(thinkingCeiling ? { thinkingCeiling } : {}),
 			launchResolvedExtensions,
-			modelCandidates: externalRunner ? undefined : buildModelCandidates(primaryModel, a.fallbackModels, availableModels, a.modelProvider ?? ctx.currentModelProvider, {
-				scope: modelScopes,
-				primaryModelFromParent,
-			}).map((candidate) =>
-				applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined),
-			),
+			modelCandidates: externalRunner ? undefined : modelCandidates,
 			...(primaryModelFromParent ? { skipPrimaryModelVerification: true } : {}),
 			...(availableModels && availableModels.length > 0 ? { modelVerificationRegistry: availableModels } : {}),
 			tools: a.tools,
@@ -988,6 +1014,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 					acceptanceRole: agent.acceptanceRole,
 					...(s.agentContract ?? params.agentContract ? { agentContract: s.agentContract ?? params.agentContract } : {}),
 					...(s.gateOn ? { gateOn: s.gateOn } : {}),
+					...(parallel.thinkingCeiling ? { thinkingCeiling: parallel.thinkingCeiling } : {}),
 				};
 			}
 			const sequential = s as SequentialStep;
@@ -1122,6 +1149,7 @@ export function executeAsyncChain(
 		configToolTimeoutMs: params.configToolTimeoutMs,
 		toolTimeoutMsEnv: params.toolTimeoutMsEnv ?? toolTimeoutFromEnv(),
 		capabilityCeiling,
+		thinkingCeiling: params.thinkingCeiling,
 	});
 	if ("error" in built) {
 		try {
@@ -1458,6 +1486,18 @@ export function executeAsyncSingle(
 		);
 	const effectiveThinking = externalRunner ? undefined : params.thinkingOverride ?? agentConfig.thinking;
 	const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinking, params.thinkingOverride !== undefined);
+	const thinkingCeiling = externalRunner ? undefined : intersectThinkingCeilings(
+		params.thinkingCeiling,
+		agentConfig.maxThinking,
+		decodeThinkingCeiling(process.env[SUBAGENT_THINKING_CEILING_ENV]),
+	);
+	if (!externalRunner) {
+		try {
+			assertThinkingWithinCeiling({ model, configThinking: effectiveThinking, ceiling: thinkingCeiling, agent: agentConfig.name, runId: id });
+		} catch (error) {
+			return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
+		}
+	}
 	const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget ?? params.configToolBudget;
 	const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, params.toolBudget ? "toolBudget" : agentConfig.toolBudget ? "agent.toolBudget" : "config.toolBudget");
 	if (resolvedToolBudget.error) return formatAsyncStartError("single", resolvedToolBudget.error);
@@ -1490,6 +1530,13 @@ export function executeAsyncSingle(
 				const resolved = applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined);
 				return resolved ? [resolved] : [];
 			});
+	if (!externalRunner) {
+		try {
+			for (const candidate of modelCandidates) assertThinkingWithinCeiling({ model: candidate, configThinking: effectiveThinking, ceiling: thinkingCeiling, agent: agentConfig.name, runId: id });
+		} catch (error) {
+			return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
+		}
+	}
 	const effectiveSystemPrompt = appendTurnBudgetSystemPrompt(systemPrompt, params.turnBudget);
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: agentConfig.tools,
@@ -1525,6 +1572,7 @@ export function executeAsyncSingle(
 		...(model ? { model } : {}),
 		modelCandidates,
 		...(resolveEffectiveThinking(model, effectiveThinking) ? { thinking: resolveEffectiveThinking(model, effectiveThinking) } : {}),
+		...(thinkingCeiling ? { thinkingCeiling } : {}),
 		systemPrompt: effectiveSystemPrompt,
 		systemPromptMode: agentConfig.systemPromptMode,
 		inheritProjectContext: agentConfig.inheritProjectContext,
@@ -1562,6 +1610,7 @@ export function executeAsyncSingle(
 		...(params.modelOverrideFromParent ? { modelOverrideFromParent: true } : {}),
 		...(recoveryAgentConfig.fallbackModels ? { fallbackModels: [...recoveryAgentConfig.fallbackModels] } : {}),
 		...(effectiveThinking ? { thinking: resolveEffectiveThinking(model, effectiveThinking) } : {}),
+		...(thinkingCeiling ? { thinkingCeiling } : {}),
 		...(recoveryAgentConfig.tools ? { tools: [...recoveryAgentConfig.tools] } : {}),
 		...(recoveryAgentConfig.extensions ? { extensions: [...recoveryAgentConfig.extensions] } : {}),
 		...(recoveryAgentConfig.subagentOnlyExtensions ? { subagentOnlyExtensions: [...recoveryAgentConfig.subagentOnlyExtensions] } : {}),
@@ -1618,6 +1667,7 @@ export function executeAsyncSingle(
 						cwd: runnerCwd,
 						model,
 						thinking: resolveEffectiveThinking(model, effectiveThinking),
+						...(thinkingCeiling ? { thinkingCeiling } : {}),
 						modelCandidates,
 						...(params.modelOverrideFromParent ? { skipPrimaryModelVerification: true } : {}),
 						...(availableModels && availableModels.length > 0 ? { modelVerificationRegistry: availableModels } : {}),

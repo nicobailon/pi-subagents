@@ -26,6 +26,7 @@ import {
 	type RunFanoutBudgetDescriptor,
 } from "../../shared/types.ts";
 import { THINKING_LEVELS } from "../../shared/model-info.ts";
+import { decodeThinkingCeiling, encodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
 import { encodeRunFanoutBudgetDescriptor, RUN_FANOUT_BUDGET_ENV } from "./run-fanout-budget.ts";
 import {
 	TOOL_BUDGET_ENV,
@@ -186,6 +187,7 @@ export interface BuildPiArgsInput {
 	taskDelivery?: SubagentTaskDelivery;
 	waitToolEnabled?: boolean;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	thinkingCeiling?: import("../../shared/model-info.ts").ThinkingLevel;
 }
 
 export interface BuildPiArgsResult {
@@ -834,6 +836,12 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	const encodedCapabilityCeiling = encodeSubagentCapabilityCeiling(
 		toolPlan.capabilityCeiling,
 	);
+	const thinkingCeiling = intersectThinkingCeilings(
+		input.thinkingCeiling,
+		decodeThinkingCeiling(process.env[SUBAGENT_THINKING_CEILING_ENV]),
+	);
+	const encodedThinkingCeiling = encodeThinkingCeiling(thinkingCeiling);
+	if (encodedThinkingCeiling) env[SUBAGENT_THINKING_CEILING_ENV] = encodedThinkingCeiling;
 	if (encodedCapabilityCeiling)
 		env[SUBAGENT_CAPABILITY_CEILING_ENV] = encodedCapabilityCeiling;
 	if (encodedPermissionRules)

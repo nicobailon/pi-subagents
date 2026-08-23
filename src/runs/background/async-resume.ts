@@ -11,6 +11,7 @@ import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import { resultFilePath, resultPayloadPathForIndexedRun } from "./result-files.ts";
 import { canScanAsyncRunPrefix, MIN_SAFE_ASYNC_RUN_PREFIX_LENGTH } from "./run-id-query.ts";
 import { parallelHandoffPath, resolveRetainedWorktreeCwd } from "../shared/parallel-handoff.ts";
+import { intersectThinkingCeilings, parseThinkingLevel, type ThinkingLevel } from "../../shared/thinking-ceiling.ts";
 
 export interface AsyncResumeParams {
 	id?: string;
@@ -43,6 +44,7 @@ export type AsyncResumeTarget = {
 	sessionFile?: string;
 	model?: string;
 	thinking?: string;
+	thinkingCeiling?: ThinkingLevel;
 	recoveryDescriptor?: SteeringRecoveryDescriptor;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	launchContractDigest?: string;
@@ -267,6 +269,7 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
 			if (stepRecord.sessionFile !== undefined && typeof stepRecord.sessionFile !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].sessionFile must be a string.`);
 			if (stepRecord.model !== undefined && typeof stepRecord.model !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].model must be a string.`);
 			if (stepRecord.thinking !== undefined && typeof stepRecord.thinking !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].thinking must be a string.`);
+			if (stepRecord.thinkingCeiling !== undefined) stepRecord.thinkingCeiling = parseThinkingLevel(stepRecord.thinkingCeiling, `async status '${source}' steps[${index}].thinkingCeiling`);
 			if (stepRecord.launchContractDigest !== undefined && typeof stepRecord.launchContractDigest !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].launchContractDigest must be a string.`);
 			if (stepRecord.capabilityCeiling !== undefined) stepRecord.capabilityCeiling = parseSubagentCapabilityCeiling(stepRecord.capabilityCeiling, `async status '${source}' steps[${index}].capabilityCeiling`);
 		});
@@ -320,7 +323,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': expected an object.`);
 	const parsed = value as Record<string, unknown>;
 	const allowedFields = new Set([
-		"version", "launchContractDigest", "sourceRunId", "agentContract", "agent", "sessionFile", "cwd", "model", "modelProvider", "modelOverrideFromParent", "fallbackModels", "thinking", "tools", "extensions",
+		"version", "launchContractDigest", "sourceRunId", "agentContract", "agent", "sessionFile", "cwd", "model", "modelProvider", "modelOverrideFromParent", "fallbackModels", "thinking", "thinkingCeiling", "tools", "extensions",
 		"subagentOnlyExtensions", "mcpDirectTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritSkills", "skills",
 		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "context", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
@@ -340,6 +343,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${error instanceof Error ? error.message : String(error)}`);
 	}
 	if (parsed.capabilityCeiling !== undefined) parsed.capabilityCeiling = parseSubagentCapabilityCeiling(parsed.capabilityCeiling, `async recovery descriptor '${descriptorPath}' capabilityCeiling`);
+	if (parsed.thinkingCeiling !== undefined) parsed.thinkingCeiling = parseThinkingLevel(parsed.thinkingCeiling, `async recovery descriptor '${descriptorPath}' thinkingCeiling`);
 	if (parsed.agentContract !== undefined) {
 		if (!parsed.agentContract || typeof parsed.agentContract !== "object" || Array.isArray(parsed.agentContract)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': agentContract must be an object.`);
 		const contract = parsed.agentContract as Record<string, unknown>;
@@ -492,6 +496,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 					...(selectedStep.runner ? { runner: selectedStep.runner } : {}),
 					...(selectedStep.externalJob ? { externalJob: selectedStep.externalJob } : {}),
 					...(capabilityCeiling ? { capabilityCeiling } : {}),
+					...(selectedStep.thinkingCeiling ? { thinkingCeiling: selectedStep.thinkingCeiling } : {}),
 					...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 				};
 			}
@@ -522,6 +527,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 				...(selected.step.runner ? { runner: selected.step.runner } : {}),
 				...(selected.step.externalJob ? { externalJob: selected.step.externalJob } : {}),
 				...(capabilityCeiling ? { capabilityCeiling } : {}),
+				...(selected.step.thinkingCeiling ? { thinkingCeiling: selected.step.thinkingCeiling } : {}),
 				...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 			};
 		}
@@ -543,6 +549,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const resolvedSessionFile = sessionFile ? validateResumeSessionFile(runId, sessionFile) : undefined;
 	const stepModel = statusSteps[index]?.model ?? resultSteps[index]?.model ?? (stepCount === 1 ? result?.model : undefined);
 	const stepThinking = statusSteps[index]?.thinking ?? resultSteps[index]?.thinking ?? (stepCount === 1 ? result?.thinking : undefined);
+	const thinkingCeiling = statusSteps[index]?.thinkingCeiling ?? (stepCount === 1 ? recoveryDescriptor?.thinkingCeiling : undefined);
 	const capabilityCeiling = intersectSubagentCapabilityCeilings(status?.capabilityCeiling, statusSteps[index]?.capabilityCeiling, result?.capabilityCeiling, resultSteps[index]?.capabilityCeiling);
 	const managedWorktreeCwd = location.asyncDir
 		? resolveRetainedWorktreeCwd(parallelHandoffPath(location.asyncDir), runId, index)
@@ -565,6 +572,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		...(statusSteps[index]?.runner ? { runner: statusSteps[index]!.runner } : {}),
 		...(statusSteps[index]?.externalJob ? { externalJob: statusSteps[index]!.externalJob } : {}),
 		...(capabilityCeiling ? { capabilityCeiling } : {}),
+		...(thinkingCeiling ? { thinkingCeiling } : {}),
 		...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 	};
 }
@@ -576,6 +584,7 @@ export function applySteeringRecoveryAgentConfig(agentConfig: AgentConfig, descr
 		modelProvider: descriptor.modelProvider,
 		fallbackModels: descriptor.fallbackModels ? [...descriptor.fallbackModels] : undefined,
 		thinking: descriptor.thinking,
+		maxThinking: intersectThinkingCeilings(descriptor.thinkingCeiling, agentConfig.maxThinking),
 		tools: descriptor.tools ? [...descriptor.tools] : undefined,
 		extensions: descriptor.extensions ? [...descriptor.extensions] : undefined,
 		subagentOnlyExtensions: descriptor.subagentOnlyExtensions ? [...descriptor.subagentOnlyExtensions] : undefined,

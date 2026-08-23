@@ -173,6 +173,37 @@ describe("steering lifecycle ledger", () => {
 		}
 	});
 
+	it("intersects persisted thinking ceilings with the current agent ceiling", () => {
+		const current = {
+			name: "worker",
+			description: "current",
+			thinking: "high",
+			maxThinking: "low",
+			systemPrompt: "current prompt",
+			systemPromptMode: "replace",
+			inheritProjectContext: false,
+			inheritSkills: false,
+			source: "project",
+			filePath: "/current/agent.md",
+		} as AgentConfig;
+		const recovered = applySteeringRecoveryAgentConfig(current, {
+			version: 1,
+			sourceRunId: "source",
+			agent: "worker",
+			cwd: "/original",
+			thinking: "xhigh",
+			thinkingCeiling: "xhigh",
+			systemPromptMode: "replace",
+			inheritProjectContext: false,
+			inheritSkills: false,
+			outputMode: "inline",
+			maxSubagentDepth: 2,
+			share: false,
+		});
+		assert.equal(recovered.thinking, "xhigh");
+		assert.equal(recovered.maxThinking, "low");
+	});
+
 	it("rejects recovery when any configured hard budget is exhausted", () => {
 		assert.throws(() => remainingSteeringRecoveryLimits({ absoluteDeadlineAt: 5 }, {}, 5), /deadline budget/);
 		assert.throws(() => remainingSteeringRecoveryLimits({ initialTurnBudget: { maxTurns: 2, graceTurns: 1 } }, { turnCount: 3 }), /turn budget/);

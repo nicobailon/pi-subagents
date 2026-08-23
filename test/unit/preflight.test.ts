@@ -154,6 +154,22 @@ Project prompt.
 		}
 	});
 
+	it("enforces maxThinking before a child launch and accepts levels at the ceiling", async () => {
+		const cwd = path.join(tempDir, "thinking-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeJson(path.join(cwd, ".pi", "settings.json"), { subagents: { maxThinking: "xhigh" } });
+		writeAgent(path.join(cwd, ".pi", "agents", "worker.md"), `---\nname: worker\ndescription: Project worker\nmodel: test/worker\nthinking: xhigh\n---\nWorker.\n`);
+		const accepted = await resolveSubagentLaunchContract({ agent: "worker", cwd, task: "Inspect", availableModels: [{ provider: "test", id: "worker", fullId: "test/worker" }] });
+		assert.equal(accepted.ok, true);
+		if (accepted.ok) assert.equal(accepted.contract.thinkingCeiling, "xhigh");
+		const rejected = await resolveSubagentLaunchContract({ agent: "worker", cwd, task: "Inspect", thinking: "max", availableModels: [{ provider: "test", id: "worker", fullId: "test/worker" }] });
+		assert.equal(rejected.ok, false);
+		if (!rejected.ok) {
+			assert.equal(rejected.code, "thinking_ceiling");
+			assert.match(rejected.message, /max.*xhigh.*worker/);
+		}
+	});
+
 	it("binds the resolved agent outputMode into the launch digest", async () => {
 		const cwd = path.join(tempDir, "repo-output-mode");
 		fs.mkdirSync(cwd, { recursive: true });

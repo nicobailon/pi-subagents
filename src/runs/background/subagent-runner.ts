@@ -124,6 +124,7 @@ import {
 	type WorktreeSetup,
 } from "../shared/worktree.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
+import { assertThinkingWithinCeiling, decodeThinkingCeiling, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
 import { launchBindingDigest } from "../../shared/launch-contract.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
@@ -1515,6 +1516,12 @@ async function runSingleStepInner(
 		if (ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break;
 		const candidate = candidates[modelIndex];
 		const expectedModelForVerification = candidate && !(step.skipPrimaryModelVerification && modelIndex === 0) ? candidate : undefined;
+		try {
+			assertThinkingWithinCeiling({ model: candidate, configThinking: step.thinking, ceiling: step.thinkingCeiling ?? decodeThinkingCeiling(process.env[SUBAGENT_THINKING_CEILING_ENV]), agent: step.agent, runId: ctx.id });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return omitUndefinedProperties({ agent: step.agent, output: message, error: message, exitCode: 1, context: step.context, thinkingCeiling: step.thinkingCeiling });
+		}
 		ctx.onAttemptStart?.(omitUndefinedProperties({ model: candidate, thinking: resolveEffectiveThinking(candidate, step.thinking) }));
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
 		if (effectiveStructuredOutput) {
@@ -1578,6 +1585,7 @@ async function runSingleStepInner(
 				: undefined,
 			childWatchdog,
 			waitToolEnabled: step.waitToolEnabled,
+			thinkingCeiling: step.thinkingCeiling,
 		}));
 		if (!launchWarningsEmitted && warnings.length > 0) {
 			for (const warning of warnings) console.warn(`[pi-subagents] ${warning}`);
@@ -1603,6 +1611,7 @@ async function runSingleStepInner(
 				...(candidate ? { model: candidate } : {}),
 				modelCandidates: candidates as string[],
 				...(resolveEffectiveThinking(candidate, step.thinking) ? { thinking: resolveEffectiveThinking(candidate, step.thinking) } : {}),
+				...(step.thinkingCeiling ? { thinkingCeiling: step.thinkingCeiling } : {}),
 				systemPrompt: appendTurnBudgetSystemPrompt(step.systemPrompt ?? "", ctx.turnBudget),
 				systemPromptMode: step.systemPromptMode,
 				inheritProjectContext: step.inheritProjectContext,
@@ -2328,6 +2337,7 @@ async function runSubagent(
 					...(task.launchContractDigest ? { launchContractDigest: task.launchContractDigest } : {}),
 					...(task.launchResolvedExtensions ? { launchResolvedExtensions: task.launchResolvedExtensions } : {}),
 					...(task.capabilityCeiling ? { capabilityCeiling: task.capabilityCeiling } : {}),
+					...(task.thinkingCeiling ? { thinkingCeiling: task.thinkingCeiling } : {}),
 					status: "pending",
 					...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
 					...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
@@ -2353,6 +2363,7 @@ async function runSubagent(
 				structured: Boolean(step.collect.outputSchema),
 				...(step.agentContract ? { agentContract: step.agentContract } : {}),
 				...(step.capabilityCeiling ? { capabilityCeiling: step.capabilityCeiling } : {}),
+				...(step.thinkingCeiling ? { thinkingCeiling: step.thinkingCeiling } : {}),
 				status: "pending",
 				...(step.parallel.toolBudget ? { toolBudget: initialToolBudgetState(step.parallel.toolBudget) } : {}),
 				recentTools: [],
@@ -2375,6 +2386,7 @@ async function runSubagent(
 				...(step.launchContractDigest ? { launchContractDigest: step.launchContractDigest } : {}),
 				...(step.launchResolvedExtensions ? { launchResolvedExtensions: step.launchResolvedExtensions } : {}),
 				...(step.capabilityCeiling ? { capabilityCeiling: step.capabilityCeiling } : {}),
+				...(step.thinkingCeiling ? { thinkingCeiling: step.thinkingCeiling } : {}),
 				status: "pending",
 				...(step.toolBudget ? { toolBudget: initialToolBudgetState(step.toolBudget) } : {}),
 				...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
@@ -3708,6 +3720,19 @@ async function runSubagent(
 				if (materialized.parallel.length > 1 && step.parallel.outputPath && !step.parallel.namespaceOutputPath) {
 					throw new DynamicFanoutError(`Dynamic chain step ${stepIndex + 1} materialized ${materialized.parallel.length} items that resolve output to the same path: ${step.parallel.outputPath}. Remove the explicit output path or use an inherited relative agent output so each item can be isolated.`);
 				}
+				for (const [itemIndex] of materialized.parallel.entries()) {
+					const thinkingOverride = step.thinkingOverrides?.[itemIndex];
+					const model = thinkingOverride ? applyThinkingSuffix(step.parallel.model, thinkingOverride, true) : step.parallel.model;
+					const configThinking = thinkingOverride ? thinkingOverride : step.parallel.thinking;
+					const candidates = step.parallel.modelCandidates !== undefined
+						? step.parallel.modelCandidates.length > 0
+							? step.parallel.modelCandidates.map((candidate) => thinkingOverride ? applyThinkingSuffix(candidate, thinkingOverride, true) ?? candidate : candidate)
+							: [undefined]
+						: model ? [model] : [undefined];
+					for (const candidate of candidates) {
+						assertThinkingWithinCeiling({ model: candidate, configThinking, ceiling: step.parallel.thinkingCeiling ?? decodeThinkingCeiling(process.env[SUBAGENT_THINKING_CEILING_ENV]), agent: step.parallel.agent, runId: id });
+					}
+				}
 				if (materialized.collectedOnEmpty) await validateDynamicCollection(step.collect.outputSchema, materialized.collectedOnEmpty);
 				if (!config.runFanoutBudget) throw new Error("Async runner is missing its run fan-out budget identity.");
 				const runFanoutBudget = claimRunFanoutBatch(config.runFanoutBudget, materialized.parallel.map((_, itemIndex) => `chain[${stepIndex}].expand[${itemIndex}]`));
@@ -3864,6 +3889,7 @@ async function runSubagent(
 					...(task.skills ? { skills: task.skills } : {}),
 					...(task.model ? { model: task.model } : {}),
 					...(task.thinking ? { thinking: task.thinking } : {}),
+					...(task.thinkingCeiling ? { thinkingCeiling: task.thinkingCeiling } : {}),
 					...(task.modelCandidates && task.modelCandidates.length > 0 ? { attemptedModels: task.modelCandidates } : task.model ? { attemptedModels: [task.model] } : {}),
 					recentTools: [],
 					recentOutput: [],

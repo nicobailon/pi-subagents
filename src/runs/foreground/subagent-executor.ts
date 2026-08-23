@@ -392,7 +392,7 @@ interface ExecutorDeps {
 	tempArtifactsDir: string;
 	getSubagentSessionRoot: (parentSessionFile: string | null) => string;
 	expandTilde: (p: string) => string;
-	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig };
+	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig; maxThinking?: AgentConfig["maxThinking"] };
 	allowMutatingManagementActions?: boolean;
 	activateSupervisorTransport?: () => void;
 	refreshResultDelivery?: () => void;
@@ -1741,6 +1741,7 @@ async function resumeAsyncRun(input: {
 		inheritSkills: recoveryDescriptor.inheritSkills,
 		source: "project",
 		filePath: recoveryDescriptor.agentFilePath ?? path.join(getProjectSubagentsDir(recoveryDescriptor.cwd), "recovery-agent"),
+		...(discovered.maxThinking ? { maxThinking: discovered.maxThinking } : {}),
 	} : undefined);
 	if (!baseAgentConfig) {
 		return {
@@ -1853,6 +1854,7 @@ async function resumeAsyncRun(input: {
 			globalConcurrencyLimit: input.deps.config.globalConcurrencyLimit,
 			runFanoutBudget: createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(input.deps.config.maxSubagentSpawnsPerRun)),
 			capabilityCeiling: intersectSubagentCapabilityCeilings("capabilityCeiling" in target ? target.capabilityCeiling : undefined, resolveCurrentSubagentCapabilityCeiling(input.deps.state.currentSessionId)),
+			thinkingCeiling: target.thinkingCeiling,
 			activeAsyncCapacity,
 		}));
 		if (result.isError) {
@@ -1945,6 +1947,7 @@ async function resumeAsyncRun(input: {
 		modelOverride: recoveryDescriptor?.model ?? target.model,
 		modelOverrideFromParent: recoveryDescriptor?.modelOverrideFromParent,
 		thinkingOverride: recoveryDescriptor?.thinking ?? target.thinking,
+		thinkingCeiling: recoveryDescriptor?.thinkingCeiling ?? ("thinkingCeiling" in target ? target.thinkingCeiling : undefined),
 		outputBaseDir: resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId),
 		maxSubagentDepth: recoveryDescriptor?.maxSubagentDepth ?? resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
 		waitToolEnabled: input.deps.waitToolEnabled,
@@ -3153,6 +3156,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			modelOverride,
 			modelOverrideFromParent,
 			thinkingOverride: externalRunnerWithoutExplicitModel ? undefined : thinkingOverrideForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
+			thinkingCeiling: a.maxThinking,
 			maxSubagentDepth,
 			waitToolEnabled: deps.waitToolEnabled,
 			...(params.worktree === true ? { worktree: true } : {}),
@@ -3631,6 +3635,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			modelOverride,
 			modelOverrideFromParent,
 			thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
+			thinkingCeiling: agentConfig.maxThinking,
 			availableModels,
 			preferredModelProvider: currentProvider,
 			modelScope: modelScopes,

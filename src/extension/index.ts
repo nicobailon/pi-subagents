@@ -503,7 +503,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			...all.user,
 			...all.project,
 		];
-		return mergeRuntimeAgents(pi, discovered, configuredAgents);
+		const merged = mergeRuntimeAgents(pi, discovered, configuredAgents);
+		if (discovered.maxThinking === undefined) return merged;
+		return {
+			...merged,
+			agents: merged.agents.map((agent) => agent.maxThinking === discovered.maxThinking ? agent : { ...agent, maxThinking: discovered.maxThinking }),
+		};
 	};
 	const { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs, dispose: disposeAsyncJobTracker } = createAsyncJobTracker(pi, state, DIRS.async, {
 		widgetEnabled: asyncWidgetEnabled,

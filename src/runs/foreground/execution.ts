@@ -66,6 +66,7 @@ import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolved
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
+import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
 import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput } from "../shared/structured-output.ts";
 import { formatProcessSignalError, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
@@ -316,6 +317,7 @@ async function runSingleAttempt(
 ): Promise<SingleResult> {
 	const effectiveThinking = options.thinkingOverride ?? agent.thinking;
 	const modelArg = applyThinkingSuffix(model, effectiveThinking, options.thinkingOverride !== undefined);
+	assertThinkingWithinCeiling({ model: modelArg, configThinking: effectiveThinking, ceiling: options.thinkingCeiling, agent: agent.name, runId: options.runId });
 	const expectedModelForVerification = shared.verifyModel ? modelArg : undefined;
 	const resolvedThinking = resolveEffectiveThinking(modelArg, effectiveThinking);
 	const watchdogConfig = resolveWatchdogConfig(options.cwd ?? runtimeCwd);
@@ -373,6 +375,7 @@ async function runSingleAttempt(
 		childWatchdog,
 		waitToolEnabled: options.waitToolEnabled,
 		capabilityCeiling: options.capabilityCeiling,
+		thinkingCeiling: options.thinkingCeiling,
 	});
 	if (!shared.launchWarnings.emitted && warnings.length > 0) {
 		for (const warning of warnings) console.warn(`[pi-subagents] ${warning}`);
@@ -430,6 +433,7 @@ async function runSingleAttempt(
 		...(modelArg ? { model: modelArg } : {}),
 		modelCandidates: shared.modelCandidates,
 		...(resolvedThinking ? { thinking: resolvedThinking } : {}),
+		...(options.thinkingCeiling ? { thinkingCeiling: options.thinkingCeiling } : {}),
 		systemPrompt: effectiveSystemPrompt,
 		systemPromptMode: agent.systemPromptMode,
 		inheritProjectContext: agent.inheritProjectContext,
@@ -1626,6 +1630,14 @@ async function runSyncCompletionInner(
 			error: `Unknown agent: ${agentName}`,
 		}, options.context));
 	}
+	options = {
+		...options,
+		thinkingCeiling: intersectThinkingCeilings(
+			options.thinkingCeiling,
+			agent.maxThinking,
+			decodeThinkingCeiling(process.env[SUBAGENT_THINKING_CEILING_ENV]),
+		),
+	};
 	try {
 		assertAgentAllowedByCapabilityCeiling(agent.name, options.capabilityCeiling);
 	} catch (error) {
@@ -1742,6 +1754,22 @@ async function runSyncCompletionInner(
 		agent.modelProvider ?? options.preferredModelProvider,
 		{ scope: options.modelScope, primaryModelFromParent: options.modelOverrideFromParent },
 	);
+	try {
+		for (const candidate of candidates) {
+			const model = applyThinkingSuffix(candidate, options.thinkingOverride ?? agent.thinking, options.thinkingOverride !== undefined);
+			assertThinkingWithinCeiling({ model, configThinking: options.thinkingOverride ?? agent.thinking, ceiling: options.thinkingCeiling, agent: agent.name, runId: options.runId });
+		}
+	} catch (error) {
+		return redactResultPrompt(withRunContext({
+			index: options.index ?? 0,
+			agent: agent.name,
+			task,
+			exitCode: 1,
+			messages: [],
+			usage: emptyUsage(),
+			error: error instanceof Error ? error.message : String(error),
+		}, options.context));
+	}
 	const attemptedModels: string[] = [];
 	const modelAttempts: ModelAttempt[] = [];
 	const aggregateUsage = emptyUsage();

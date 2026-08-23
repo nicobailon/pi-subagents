@@ -22,6 +22,7 @@ import { parseMemoryFrontmatter } from "./agent-memory.ts";
 import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
+import { parseThinkingLevel, type ThinkingLevel } from "../shared/thinking-ceiling.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -161,6 +162,7 @@ export interface AgentConfig {
 	extraFields?: Record<string, string>;
 	override?: BuiltinAgentOverrideInfo;
 	modelSource?: AgentModelSourceInfo;
+	maxThinking?: ThinkingLevel;
 }
 
 type ProjectRootResolution = "nearest" | "git-root";
@@ -170,6 +172,7 @@ interface SubagentSettings {
 	defaultModel?: string;
 	defaultProvider?: string;
 	defaultThinking?: string;
+	maxThinking?: ThinkingLevel;
 	defaultExtensions?: string[];
 	disableBuiltins?: boolean;
 	disableThinking?: boolean;
@@ -261,6 +264,7 @@ interface AgentDiscoveryResult {
 	agentDiagnostics?: AgentDiscoveryDiagnostic[];
 	projectAgentsDir: string | null;
 	modelScope?: ModelScopeConfig;
+	maxThinking?: ThinkingLevel;
 }
 
 function getUserChainDir(): string {
@@ -1010,6 +1014,14 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 			throw new Error(`Subagent settings in '${filePath}' have invalid 'defaultThinking'; expected a non-empty string.`);
 		}
 	}
+	let maxThinking: ThinkingLevel | undefined;
+	if ("maxThinking" in subagentsObject) {
+		try {
+			maxThinking = parseThinkingLevel(subagentsObject.maxThinking, `'${filePath}' subagents.maxThinking`);
+		} catch (error) {
+			throw new Error(`Subagent settings in '${filePath}' have invalid 'maxThinking'; expected one of off, minimal, low, medium, high, xhigh, or max.`, { cause: error instanceof Error ? error : undefined });
+		}
+	}
 	let defaultExtensions: string[] | undefined;
 	if ("defaultExtensions" in subagentsObject) {
 		if (!Array.isArray(subagentsObject.defaultExtensions)
@@ -1027,6 +1039,7 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		...(defaultModel !== undefined ? { defaultModel } : {}),
 		...(defaultProvider !== undefined ? { defaultProvider } : {}),
 		...(defaultThinking !== undefined ? { defaultThinking } : {}),
+		...(maxThinking !== undefined ? { maxThinking } : {}),
 		...(defaultExtensions !== undefined ? { defaultExtensions } : {}),
 		...(disableBuiltins !== undefined ? { disableBuiltins } : {}),
 		...(disableThinking !== undefined ? { disableThinking } : {}),
@@ -1107,6 +1120,20 @@ function applySubagentDefaultThinking(agents: AgentConfig[], defaultThinking: st
 		if (frontmatterFields) agentFrontmatterFields.set(next, frontmatterFields);
 		return next;
 	});
+}
+
+function resolveSubagentMaxThinking(
+	userSettings: SubagentSettings,
+	projectSettings: SubagentSettings,
+	projectSettingsPath: string | null,
+): ThinkingLevel | undefined {
+	if (projectSettingsPath && projectSettings.maxThinking !== undefined) return projectSettings.maxThinking;
+	return userSettings.maxThinking;
+}
+
+function applySubagentMaxThinking(agents: AgentConfig[], maxThinking: ThinkingLevel | undefined): AgentConfig[] {
+	if (maxThinking === undefined) return agents;
+	return agents.map((agent) => agent.maxThinking === maxThinking ? agent : { ...agent, maxThinking });
 }
 
 function resolveSubagentDefaultExtensions(
@@ -2013,6 +2040,7 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	const defaultProvider = resolveSubagentDefaultProvider(userSettings, projectSettings, projectSettingsPath);
 	const defaultModel = resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath, defaultProvider);
 	const defaultThinking = resolveSubagentDefaultThinking(userSettings, projectSettings, projectSettingsPath);
+	const maxThinking = resolveSubagentMaxThinking(userSettings, projectSettings, projectSettingsPath);
 	const defaultExtensions = resolveSubagentDefaultExtensions(userSettings, projectSettings, projectSettingsPath);
 	const modelScope = projectSettings.modelScope ?? userSettings.modelScope;
 	const packageSubagentPaths = collectPackageSubagentPaths(cwd, {
@@ -2061,8 +2089,11 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 		userSettingsPath,
 		projectSettingsPath,
 	);
-	const agents = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents, packageAgents)
-		.filter((agent) => agent.disabled !== true);
+	const agents = applySubagentMaxThinking(
+		mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents, packageAgents)
+			.filter((agent) => agent.disabled !== true),
+		maxThinking,
+	);
 
 	const agentDiagnostics = [
 		...builtinLoaded.diagnostics,
@@ -2070,7 +2101,7 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 		...projectLoaded.flatMap((loaded) => loaded.diagnostics),
 		...packageLoaded.flatMap((loaded) => loaded.diagnostics),
 	];
-	return { agents, agentDiagnostics, projectAgentsDir, ...(modelScope !== undefined ? { modelScope } : {}) };
+	return { agents, agentDiagnostics, projectAgentsDir, ...(modelScope !== undefined ? { modelScope } : {}), ...(maxThinking !== undefined ? { maxThinking } : {}) };
 }
 
 export function discoverAgentsAll(cwd: string): {
@@ -2087,6 +2118,7 @@ export function discoverAgentsAll(cwd: string): {
 	projectChainDir: string | null;
 	userSettingsPath: string;
 	projectSettingsPath: string | null;
+	maxThinking?: ThinkingLevel;
 } {
 	const userDirOld = path.join(getAgentDir(), "agents");
 	const userDirNew = path.join(os.homedir(), ".agents");
@@ -2100,6 +2132,7 @@ export function discoverAgentsAll(cwd: string): {
 	const defaultProvider = resolveSubagentDefaultProvider(userSettings, projectSettings, projectSettingsPath);
 	const defaultModel = resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath, defaultProvider);
 	const defaultThinking = resolveSubagentDefaultThinking(userSettings, projectSettings, projectSettingsPath);
+	const maxThinking = resolveSubagentMaxThinking(userSettings, projectSettings, projectSettingsPath);
 	const defaultExtensions = resolveSubagentDefaultExtensions(userSettings, projectSettings, projectSettingsPath);
 	const packageSubagentPaths = collectPackageSubagentPaths(cwd);
 
@@ -2191,5 +2224,20 @@ export function discoverAgentsAll(cwd: string): {
 
 	const userDir = process.env.PI_CODING_AGENT_DIR ? userDirOld : fs.existsSync(userDirNew) ? userDirNew : userDirOld;
 
-	return { builtin, package: packageAgents, user, project, agentDiagnostics, chains, chainDiagnostics, userDir, projectDir, userChainDir, projectChainDir, userSettingsPath, projectSettingsPath };
+	return {
+		builtin: applySubagentMaxThinking(builtin, maxThinking),
+		package: applySubagentMaxThinking(packageAgents, maxThinking),
+		user: applySubagentMaxThinking(user, maxThinking),
+		project: applySubagentMaxThinking(project, maxThinking),
+		agentDiagnostics,
+		chains,
+		chainDiagnostics,
+		userDir,
+		projectDir,
+		userChainDir,
+		projectChainDir,
+		userSettingsPath,
+		projectSettingsPath,
+		...(maxThinking !== undefined ? { maxThinking } : {}),
+	};
 }

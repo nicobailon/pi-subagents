@@ -11,6 +11,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ModelScopeRule } from "../runs/shared/model-scope.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
 import type { AuthorityPolicyConfig } from "../policy/authority.ts";
+import type { ThinkingLevel } from "./model-info.ts";
 import type { GlobalMissionIndexRecord, MissionRecord, MissionStoreConfig } from "../missions/types.ts";
 
 // ============================================================================
@@ -536,6 +537,7 @@ export interface SteeringRecoveryDescriptor {
 	modelOverrideFromParent?: boolean;
 	fallbackModels?: string[];
 	thinking?: string;
+	thinkingCeiling?: ThinkingLevel;
 	tools?: string[];
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
@@ -1513,6 +1515,7 @@ export interface AsyncStatus {
 		skills?: string[];
 		model?: string;
 		thinking?: string;
+		thinkingCeiling?: ThinkingLevel;
 		attemptedModels?: string[];
 		modelAttempts?: ModelAttempt[];
 		/** True when the child input exceeded the model context window. */
@@ -1947,6 +1950,7 @@ export interface RunSyncOptions {
 	llmIntentArbiter?: import("../runs/shared/llm-intent-arbiter.ts").TaskMutationArbiter;
 	/** Override the agent's default thinking level for this run */
 	thinkingOverride?: AgentConfig["thinking"];
+	thinkingCeiling?: ThinkingLevel;
 	/** Registry models available for heuristic bare-model resolution */
 	availableModels?: Array<{ provider: string; id: string; fullId: string }>;
 	/** Current parent-session provider to prefer for ambiguous bare model ids */

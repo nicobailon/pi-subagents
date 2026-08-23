@@ -12,6 +12,7 @@ import { applyThinkingSuffix, resolvePiLaunchToolPlan, type PiLaunchToolPlan } f
 import { injectOutputPathSystemPrompt, normalizeSingleOutputOverride, resolveSingleOutputPath } from "../runs/shared/single-output.ts";
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveEffectiveThinking } from "../shared/model-info.ts";
+import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV, type ThinkingLevel } from "../shared/thinking-ceiling.ts";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, type ArtifactDirPreference, type ArtifactPaths, type JsonSchemaObject, type OutputMode } from "../shared/types.ts";
 import { capabilityCeilingAgentRestrictionMessage, intersectSubagentCapabilityCeilings, type ResolvedSubagentCapabilityCeiling, type SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
 import { appendTurnBudgetSystemPrompt } from "../runs/shared/turn-budget.ts";
@@ -37,7 +38,8 @@ export type SubagentLaunchContractReasonCode =
 	| "invalid_artifact_dir"
 	| "invalid_cwd"
 	| "unsupported_mode"
-	| "restricted_agent";
+	| "restricted_agent"
+	| "thinking_ceiling";
 
 export interface SubagentLaunchContractDiagnostic {
 	code: SubagentLaunchContractReasonCode | "host_required" | "snapshot_warning";
@@ -53,6 +55,8 @@ export interface SubagentLaunchContractInput {
 	context?: "fresh" | "fork";
 	model?: string;
 	thinking?: string | false;
+	thinkingCeiling?: ThinkingLevel;
+	inheritedThinkingCeiling?: ThinkingLevel;
 	parentModel?: ParentModel;
 	availableModels?: ReadonlyArray<AvailableModelInfo | { provider: string; id: string; fullId?: string; reasoning?: boolean }>;
 	preferredProvider?: string;
@@ -147,6 +151,7 @@ export interface SubagentLaunchContract {
 	model?: string;
 	modelCandidates: string[];
 	thinking?: string;
+	thinkingCeiling?: ThinkingLevel;
 	systemPromptMode: AgentConfig["systemPromptMode"];
 	inheritProjectContext: boolean;
 	inheritSkills: boolean;
@@ -295,6 +300,12 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		? undefined
 		: resolveEffectiveSubagentModel(input.model, agent.model, input.parentModel, availableModels, preferredProvider, { scope: modelScopes });
 	const effectiveThinkingConfig = input.thinking !== undefined ? input.thinking : agent.thinking;
+	const thinkingCeiling = externalRunner ? undefined : intersectThinkingCeilings(
+		discovered.maxThinking,
+		input.thinkingCeiling,
+		input.inheritedThinkingCeiling,
+		decodeThinkingCeiling(process.env[SUBAGENT_THINKING_CEILING_ENV]),
+	);
 	const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinkingConfig, input.thinking !== undefined);
 	const modelCandidates = externalRunner
 		? []
@@ -303,6 +314,16 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			primaryModelFromParent: inheritsParentModel(input.model, agent.model, input.parentModel),
 		})
 			.map((candidate) => applyThinkingSuffix(candidate, effectiveThinkingConfig, input.thinking !== undefined) ?? candidate);
+	if (!externalRunner) {
+		try {
+			assertThinkingWithinCeiling({ model, configThinking: effectiveThinkingConfig, ceiling: thinkingCeiling, agent: agent.name, runId });
+			for (const candidate of modelCandidates) assertThinkingWithinCeiling({ model: candidate, configThinking: effectiveThinkingConfig, ceiling: thinkingCeiling, agent: agent.name, runId });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			diagnostics.push({ code: "thinking_ceiling", severity: "error", message });
+			return { ok: false, code: "thinking_ceiling", message, diagnostics };
+		}
+	}
 	let toolPlan: PiLaunchToolPlan;
 	const permissionRules = resolvePermissionRules(loadConfig().permissions, agent.permissions);
 	try {
@@ -372,6 +393,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		...(model ? { model } : {}),
 		modelCandidates,
 		...(resolveEffectiveThinking(model, effectiveThinkingConfig) ? { thinking: resolveEffectiveThinking(model, effectiveThinkingConfig) } : {}),
+		...(thinkingCeiling ? { thinkingCeiling } : {}),
 		systemPromptMode: agent.systemPromptMode,
 		inheritProjectContext: agent.inheritProjectContext,
 		inheritSkills: agent.inheritSkills,
@@ -425,6 +447,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			...(model ? { model } : {}),
 			modelCandidates,
 			...(resolveEffectiveThinking(model, effectiveThinkingConfig) ? { thinking: resolveEffectiveThinking(model, effectiveThinkingConfig) } : {}),
+			...(thinkingCeiling ? { thinkingCeiling } : {}),
 			systemPrompt: effectiveSystemPrompt,
 			systemPromptMode: agent.systemPromptMode,
 			inheritProjectContext: agent.inheritProjectContext,

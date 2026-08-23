@@ -102,6 +102,21 @@ Set `subagents.defaultThinking` to give builtin, package, user, and project agen
 
 If your provider rejects model IDs with thinking suffixes, set `subagents.disableThinking: true` in user or project settings. That clears bundled builtin thinking defaults in one place. An explicit higher-precedence `agentOverrides.<name>.thinking` value can opt a role back in. Existing custom-agent frontmatter remains authoritative.
 
+### Thinking ceiling
+
+Set `subagents.maxThinking` to enforce a hard maximum for every native Pi child. The supported levels, from least to most thinking, are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`:
+
+```json
+{
+  "subagents": {
+    "defaultThinking": "medium",
+    "maxThinking": "xhigh"
+  }
+}
+```
+
+Requests above the ceiling fail before child startup; the setting covers frontmatter, `agentOverrides`, per-run overrides, fallback models, parallel/chain children, nested launches, and resumed children. Project settings take precedence over user settings. External runners retain their existing behavior.
+
 ## Extension defaults
 
 Set `subagents.defaultExtensions` to give builtin, package, user, and project agents without an `extensions` field a shared extension allowlist:

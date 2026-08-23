@@ -716,6 +716,23 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(readMockPiRequiredTools(mockPi, 0), ["read"]);
 	});
 
+	it("rejects async thinking above maxThinking before child startup", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
+		const launch = executeAsyncSingle(`async-thinking-ceiling-${Date.now().toString(36)}`, {
+			agent: "worker",
+			task: "Use the strongest available reasoning.",
+			agentConfig: makeAgent("worker", { model: "mock/test-model", maxThinking: "xhigh", completionGuard: false }),
+			thinkingOverride: "max",
+			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model" }],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			acceptance: false,
+		});
+		assert.equal(launch.isError, true);
+		assert.match(launch.content[0]?.text ?? "", /max.*xhigh.*worker/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("rejects implementation workers without mutation-capable tools before spawn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
 		const id = `async-readonly-worker-contract-${Date.now().toString(36)}`;
 		mockPi.onCall({ output: "should not spawn" });

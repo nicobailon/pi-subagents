@@ -30,6 +30,7 @@ export interface RunnerSubagentStep {
 	cwd?: string;
 	model?: string;
 	thinking?: string;
+	thinkingCeiling?: import("../../shared/model-info.ts").ThinkingLevel;
 	modelCandidates?: string[];
 	/** The primary model is inherited from the parent session and should not be verified against the child-reported active registry model. */
 	skipPrimaryModelVerification?: boolean;
@@ -103,6 +104,7 @@ export interface DynamicRunnerGroup {
 	gateOn?: import("../../shared/types.ts").ChainGateLayer;
 	capabilityCeiling?: import("./capability-ceiling.ts").ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: import("./capability-ceiling.ts").SubagentCapabilityAudit;
+	thinkingCeiling?: import("../../shared/model-info.ts").ThinkingLevel;
 }
 
 export type RunnerStep = RunnerSubagentStep | ParallelStepGroup | DynamicRunnerGroup;
