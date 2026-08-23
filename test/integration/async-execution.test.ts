@@ -3750,7 +3750,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.equal(payload.results[1]?.effects?.fileMutation?.attempted, false);
 			assert.match(payload.results[1]?.error ?? "", /completed without making edits/);
 		} finally {
-			fs.rmSync(repo, { recursive: true, force: true });
+			fs.rmSync(repo, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		}
 	});
 
