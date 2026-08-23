@@ -3708,6 +3708,52 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.doesNotMatch(eventsText, /Interrupt:/);
 	});
 
+	it("does not use shared-cwd sibling tracked edits as parallel completion-guard proof", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			matchArgIncludes: "Edit tracked file",
+			delay: 50,
+			writeFiles: [{ path: "input.md", content: "changed by first sibling\n" }],
+			jsonl: [
+				...events.completedWrite("input.md", "changed by first sibling\n"),
+				events.assistantMessage("Implemented first sibling change."),
+			],
+		});
+		mockPi.onCall({
+			matchArgIncludes: "Implement second sibling change",
+			delay: 500,
+			output: "Implemented second sibling change.",
+		});
+		const repo = createRepo("pi-subagents-shared-cwd-mutation-guard-");
+		try {
+			const id = `async-parallel-shared-cwd-mutation-${Date.now().toString(36)}`;
+			executeAsyncChain(id, {
+				chain: [{
+					parallel: [
+						{ agent: "first", task: "Edit tracked file" },
+						{ agent: "second", task: "Implement second sibling change" },
+					],
+					concurrency: 2,
+				}],
+				resultMode: "parallel",
+				agents: [makeAgent("first"), makeAgent("second")],
+				ctx: { pi: { events: { emit() {} } }, cwd: repo, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+			});
+
+			const payload = await readAsyncPayload(id);
+			assert.equal(payload.results[0]?.success, true);
+			assert.equal(payload.results[0]?.effects?.fileMutation?.status, "observed");
+			assert.equal(payload.results[1]?.success, false);
+			assert.equal(payload.results[1]?.effects?.fileMutation?.status, "missing");
+			assert.equal(payload.results[1]?.effects?.fileMutation?.attempted, false);
+			assert.match(payload.results[1]?.error ?? "", /completed without making edits/);
+		} finally {
+			fs.rmSync(repo, { recursive: true, force: true });
+		}
+	});
+
 	it("background implementation challenges keep explicit no-change reports successful", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: [
 			"Kept the current implementation. No new code or test changes were made in this challenge pass.",

@@ -1224,6 +1224,8 @@ interface SingleStepContext {
 	onExternalProcess?: (process: ExternalProcessStatus) => void;
 	onExternalJob?: (status: ExternalJobStatus) => void;
 	skipAcceptance?: () => boolean;
+	/** False when sibling work in the same Git worktree could have caused the tracked diff. */
+	trackedMutationEvidenceForCompletionGuard?: boolean;
 	orcaProgressTab?: OrcaProgressTab;
 }
 
@@ -1750,6 +1752,7 @@ async function runSingleStepInner(
 		const completionToolPlan = resolvedTaskToolPlan;
 		const mutationEvidence = collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
 		finalMutationEvidence = mutationEvidence;
+		const completionMutationEvidence = ctx.trackedMutationEvidenceForCompletionGuard === false ? undefined : mutationEvidence;
 		const completionGuard = run.exitCode === 0 && !run.error && !structuredError && !hiddenError?.hasError && !emptyOutputError && completionGuardEnabled
 			? evaluateCompletionMutationGuard(omitUndefinedProperties({
 				agent: step.agent,
@@ -1758,10 +1761,10 @@ async function runSingleStepInner(
 				tools: completionToolPlan ? (completionToolPlan.explicitToolAllowlist ? completionToolPlan.effectiveToolAllowlist : undefined) : step.tools,
 				mcpDirectTools: completionToolPlan?.effectiveMcpTools ?? step.mcpDirectTools,
 				toolAvailabilityError,
-				mutationEvidence,
+				mutationEvidence: completionMutationEvidence,
 			}))
 			: undefined;
-		const mutationAttemptObserved = run.observedMutationAttempt === true || mutationEvidence.attemptedMutation;
+		const mutationAttemptObserved = run.observedMutationAttempt === true || completionMutationEvidence?.attemptedMutation === true;
 		const completionGuardTriggered = completionGuard?.triggered === true && !mutationAttemptObserved;
 		const completionGuardBlocked = completionGuard?.blocked === true;
 		const fileMutationEffect = completionGuard
@@ -1769,7 +1772,7 @@ async function runSingleStepInner(
 				status: completionGuardBlocked ? "blocked" as const : completionGuard.expectedMutation ? completionGuardTriggered ? "missing" as const : "observed" as const : "not-applicable" as const,
 				expected: completionGuard.expectedMutation,
 				attempted: completionGuardBlocked ? false : completionGuard.attemptedMutation || mutationAttemptObserved,
-				evidence: mutationEvidence,
+				...(completionMutationEvidence ? { evidence: completionMutationEvidence } : {}),
 				...(completionGuardBlocked && completionGuard.message ? { message: completionGuard.message } : {}),
 				...(completionGuardTriggered ? { message: "Subagent completed without making edits for an implementation task." } : {}),
 			}
@@ -4060,6 +4063,7 @@ async function runSubagent(
 					registerTurnBudgetAbort: (abort) => registerStepTurnBudgetAbort(fi, abort),
 					timeoutSignal: timeoutAbortController.signal,
 					stopSignal: stopAbortController.signal,
+					trackedMutationEvidenceForCompletionGuard: false,
 					timeoutMessage,
 					stopMessage,
 					turnBudget: config.turnBudget,
@@ -4455,6 +4459,7 @@ async function runSubagent(
 							registerTurnBudgetAbort: (abort) => registerStepTurnBudgetAbort(fi, abort),
 							timeoutSignal: timeoutAbortController.signal,
 							stopSignal: stopAbortController.signal,
+							trackedMutationEvidenceForCompletionGuard: Boolean(worktreeSetup),
 							timeoutMessage,
 							stopMessage,
 							turnBudget: config.turnBudget,
