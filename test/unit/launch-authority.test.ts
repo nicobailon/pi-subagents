@@ -3,11 +3,14 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import {
-	authorizeSubagentLaunch,
-	classifySubagentLaunchRequest,
 	digestSubagentLaunchRequest,
 	registerSubagentLaunchAuthority,
 } from "../../src/api/launch-authority.ts";
+import {
+	authorizeSubagentLaunch,
+	classifySubagentLaunchRequest,
+	verifyAuthorizedLaunchManifest,
+} from "../../src/runs/shared/launch-authority.ts";
 
 const workflow = (task = "Inspect A") => ({
 	workflowScript: `return await runs.all([{key:"a",agent:"reviewer",task:${JSON.stringify(task)}}]);`,
@@ -52,10 +55,10 @@ test("request digests are deterministic, field-sensitive, and reject secret or n
 });
 
 test("classifies only explicit read/control actions as management", () => {
-	for (const action of ["list", "status", "stop", "interrupt", "steer", "children.list", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.delete"]) {
-		assert.equal(classifySubagentLaunchRequest({ action }), "management", action);
+	for (const params of [{ action: "list" }, { action: "status" }, { action: "stop" }, { action: "interrupt" }, { action: "steer", steeringRecovery: false }, { action: "children.list" }, { action: "schedule.list" }, { action: "schedule.show" }, { action: "schedule.history" }, { action: "schedule.pause" }, { action: "schedule.delete" }]) {
+		assert.equal(classifySubagentLaunchRequest(params), "management", JSON.stringify(params));
 	}
-	for (const params of [workflow(), { agent: "worker" }, { action: "resume" }, { action: "schedule.create" }, { action: "schedule.resume" }, { action: "schedule.run" }, { action: "unknown" }]) {
+	for (const params of [workflow(), { agent: "worker" }, { action: "steer" }, { action: "steer", steeringRecovery: true }, { action: "resume" }, { action: "schedule.create" }, { action: "schedule.resume" }, { action: "schedule.run" }, { action: "unknown" }]) {
 		assert.equal(classifySubagentLaunchRequest(params), "new-spawn", JSON.stringify(params));
 	}
 });
@@ -180,6 +183,89 @@ test("reserves a permit before awaiting revision validation", async () => {
 	release(true);
 	assert.equal((await first).ok, true);
 	authority.dispose();
+});
+
+test("rejects missing session identity and surplus or unknown tokens while any authority is active", async () => {
+	const sessionId = "token-exactness";
+	const authority = registerSubagentLaunchAuthority({ sessionId, source: "ultra", defaultNewSpawnDecision: "deny" });
+	const params = workflow();
+	const missingSession = await authorizeSubagentLaunch({ params });
+	assert.equal(missingSession.ok, false);
+	const token = authority.issueOnce(permitInput(params));
+	const surplus = await authorizeSubagentLaunch({ sessionId, params, permits: [token, "unknown-token"] });
+	assert.equal(surplus.ok, false);
+	if (!surplus.ok) assert.equal(surplus.code, "invalid_permit");
+	assert.equal((await authorizeSubagentLaunch({ sessionId, params, permits: [token] })).ok, false);
+	authority.dispose();
+});
+
+test("rechecks registry generation, revocation, disposal, expiry, and validator deadline before commit", async () => {
+	for (const scenario of ["register", "revoke", "dispose", "expire"] as const) {
+		const sessionId = `linear-${scenario}`;
+		let release!: (value: boolean) => void;
+		const pending = new Promise<boolean>((resolve) => { release = resolve; });
+		const authority = registerSubagentLaunchAuthority({
+			sessionId,
+			source: "ultra",
+			defaultNewSpawnDecision: "deny",
+			validationTimeoutMs: 100,
+			validateConfigRevision: () => pending,
+		});
+		const params = workflow();
+		const token = authority.issueOnce({ ...permitInput(params), ...(scenario === "expire" ? { expiresInMs: 2 } : {}) });
+		const admission = authorizeSubagentLaunch({ sessionId, params, permits: [token] });
+		await Promise.resolve();
+		let second: ReturnType<typeof registerSubagentLaunchAuthority> | undefined;
+		if (scenario === "register") second = registerSubagentLaunchAuthority({ sessionId, source: "second", defaultNewSpawnDecision: "deny" });
+		if (scenario === "revoke") authority.revokeUnused();
+		if (scenario === "dispose") authority.dispose();
+		if (scenario === "expire") await new Promise((resolve) => setTimeout(resolve, 5));
+		release(true);
+		assert.equal((await admission).ok, false, scenario);
+		second?.dispose();
+		authority.dispose();
+	}
+
+	const timeoutId = "validator-timeout";
+	const timeoutAuthority = registerSubagentLaunchAuthority({
+		sessionId: timeoutId,
+		source: "ultra",
+		defaultNewSpawnDecision: "deny",
+		validationTimeoutMs: 5,
+		validateConfigRevision: () => new Promise(() => {}),
+	});
+	const timeoutToken = timeoutAuthority.issueOnce(permitInput());
+	const started = Date.now();
+	const timedOut = await authorizeSubagentLaunch({ sessionId: timeoutId, params: workflow(), permits: [timeoutToken] });
+	assert.equal(timedOut.ok, false);
+	assert.ok(Date.now() - started < 100, "validator timeout must be bounded");
+	timeoutAuthority.dispose();
+});
+
+test("bounds outstanding permit storage", () => {
+	const authority = registerSubagentLaunchAuthority({ sessionId: "capacity", source: "ultra", defaultNewSpawnDecision: "deny" });
+	for (let index = 0; index < 64; index += 1) authority.issueOnce(permitInput(workflow(`task-${index}`)));
+	assert.throws(() => authority.issueOnce(permitInput(workflow("overflow"))), /outstanding permit/i);
+	authority.revokeUnused();
+	assert.doesNotThrow(() => authority.issueOnce(permitInput(workflow("after-prune"))));
+	authority.dispose();
+});
+
+test("requires every authority manifest to match exact resolved lanes", () => {
+	const actual = [lane];
+	const matching = [{ source: "ultra", configRevision: "r", minLanes: 1, maxLanes: 1, lanes: [lane] }];
+	assert.doesNotThrow(() => verifyAuthorizedLaunchManifest(matching, actual));
+	for (const changed of [
+		[],
+		[{ ...lane, key: "b" }],
+		[{ ...lane, agent: "worker" }],
+		[{ ...lane, modelCandidates: ["openai/other"] }],
+		[{ ...lane, launchContractDigest: "b".repeat(64) }],
+	]) assert.throws(() => verifyAuthorizedLaunchManifest(matching, changed), /manifest|lane|authority/i);
+	assert.throws(() => verifyAuthorizedLaunchManifest([
+		...matching,
+		{ source: "other", configRevision: "r", minLanes: 1, maxLanes: 1, lanes: [{ ...lane, agent: "worker" }] },
+	], actual), /other|manifest/i);
 });
 
 test("disposing the final authority restores ordinary launch behavior", async () => {

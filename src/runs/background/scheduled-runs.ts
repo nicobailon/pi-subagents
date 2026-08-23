@@ -11,6 +11,7 @@ import type { SubagentParamsLike } from "../foreground/subagent-executor.ts";
 import { validateExecutionAcceptance } from "../shared/acceptance.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { previewSimpleWorkflowRun } from "../../workflows/scripted-workflow.ts";
+import { hasActiveSubagentLaunchAuthority } from "../shared/launch-authority.ts";
 
 export const SCHEDULED_RUN_ACTIONS = [
 	"schedule.create",
@@ -659,6 +660,11 @@ export class ScheduledRunManager {
 	}
 
 	private async launch(store: ScheduleStore, schedule: ScheduleRecord, planned: number, dueReason: ScheduleRunRecord["dueReason"], advance: boolean): Promise<ScheduleRunRecord> {
+		const context = this.requireContext(store);
+		const ownerSessionId = context.sessionManager.getSessionId();
+		if (hasActiveSubagentLaunchAuthority(ownerSessionId)) {
+			throw new Error("Scheduled subagent firing is disabled while a session launch authority is active.");
+		}
 		const now = this.now();
 		const run: ScheduleRunRecord = { schemaVersion: 1, id: this.randomId(), scheduleId: schedule.id, plannedAt: timestamp(planned), dueReason, state: "running", startedAt: timestamp(now) };
 		if (schedule.activeRunId) {
@@ -700,7 +706,7 @@ export class ScheduledRunManager {
 		store.write(schedule);
 		store.writeRun(schedule, run, "schedule.run.started");
 		try {
-			const result = await this.deps.launch(executionParams(schedule), this.requireContext(store), new AbortController().signal);
+			const result = await this.deps.launch(executionParams(schedule), context, new AbortController().signal);
 			const asyncId = result.details?.asyncId ?? result.details?.runId;
 			if (result.isError || !asyncId) throw new Error(result.content.find((item) => item.type === "text")?.text ?? "Scheduled launch failed.");
 			run.asyncId = asyncId;

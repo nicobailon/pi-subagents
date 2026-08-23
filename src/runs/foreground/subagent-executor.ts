@@ -72,6 +72,9 @@ import { claimRunFanoutBatch, claimRunFanoutBatchWithCommit, createRunFanoutBudg
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
+import { authorizeSubagentLaunch, takeBoundSubagentLaunchAuthorization, verifyAuthorizedLaunchManifest, type AuthorizedLaunchAuthority, type LaunchAuthorityLane } from "../shared/launch-authority.ts";
+import { resolveSubagentLaunchContract } from "../../api/preflight.ts";
+import { parseStaticRunsAllWorkflow } from "../../workflows/static-workflow-manifest.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
@@ -6181,17 +6184,99 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 	};
 
-	const executePublic = (
+	const verifyAuthorityManifest = async (
+		params: SubagentParamsLike,
+		ctx: ExtensionContext,
+		authorities: readonly AuthorizedLaunchAuthority[],
+	): Promise<void> => {
+		if (authorities.length === 0) return;
+		const defaults = { ...params } as Record<string, unknown>;
+		delete defaults.workflowScript;
+		delete defaults.action;
+		delete defaults.agent;
+		delete defaults.task;
+		const calls = typeof params.workflowScript === "string"
+			? parseStaticRunsAllWorkflow(params.workflowScript)
+			: [{ key: authorities[0]?.lanes[0]?.key ?? "direct", params: params as Record<string, unknown> }];
+		const currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+		const capabilityCeiling = resolveCurrentSubagentCapabilityCeiling(currentSessionId);
+		const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
+		const plainRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+		const actual: LaunchAuthorityLane[] = [];
+		for (const call of calls) {
+			const child = { ...defaults, ...call.params } as Record<string, unknown>;
+			const agent = child.agent;
+			if (typeof agent !== "string" || !agent.trim()) throw new Error(`Authorized workflow lane '${call.key}' has no agent.`);
+			const requestedCwd = typeof child.cwd === "string" ? child.cwd : typeof params.cwd === "string" ? params.cwd : undefined;
+			const childCwd = resolveRequestedCwd(ctx.cwd, requestedCwd);
+			const contract = await resolveSubagentLaunchContract({
+				agent: agent.trim(),
+				cwd: childCwd,
+				...(typeof child.task === "string" ? { task: child.task } : {}),
+				...(child.context === "fresh" || child.context === "fork" ? { context: child.context } : {}),
+				...(typeof child.model === "string" ? { model: child.model } : {}),
+				...(typeof child.thinking === "string" || child.thinking === false ? { thinking: child.thinking } : {}),
+				...(typeof child.agentScope === "string" ? { agentScope: child.agentScope as AgentScope } : {}),
+				...(typeof child.skill === "string" || Array.isArray(child.skill) || typeof child.skill === "boolean" ? { skill: child.skill as string | string[] | boolean } : {}),
+				...(typeof child.output === "string" || typeof child.output === "boolean" ? { output: child.output } : {}),
+				...(child.outputMode === "inline" || child.outputMode === "file-only" ? { outputMode: child.outputMode } : {}),
+				...(plainRecord(child.outputSchema) ? { outputSchema: child.outputSchema as JsonSchemaObject } : {}),
+				...(plainRecord(child.extensionBindings) ? { extensionBindings: child.extensionBindings as ExtensionBindings } : {}),
+				...(plainRecord(child.turnBudget) ? { turnBudget: child.turnBudget as unknown as ResolvedTurnBudget } : {}),
+				...(typeof child.artifacts === "boolean" ? { artifacts: child.artifacts } : {}),
+				parentModel: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
+				availableModels,
+				parentSessionFile: ctx.sessionManager.getSessionFile() ?? null,
+				parentLeafId: ctx.sessionManager.getLeafId?.() ?? null,
+				capabilityCeiling,
+			});
+			if (!contract.ok) throw new Error(`Authorized workflow lane '${call.key}' failed runtime preflight (${contract.code}): ${contract.message}`);
+			actual.push({
+				key: call.key,
+				agent: contract.contract.agent.name,
+				modelCandidates: [...contract.contract.modelCandidates],
+				launchContractDigest: contract.contract.launchContractDigest,
+			});
+		}
+		verifyAuthorizedLaunchManifest(authorities, actual);
+	};
+
+	const authorizeBoundary = async (
+		params: SubagentParamsLike,
+		ctx: ExtensionContext,
+		authorization: { permits: readonly string[]; domain: string },
+	): Promise<{ rejected?: AgentToolResult<Details>; authorities: AuthorizedLaunchAuthority[] }> => {
+		try {
+			const admission = await authorizeSubagentLaunch({
+				sessionId: resolveCurrentSessionId(ctx.sessionManager),
+				params: params as Record<string, unknown>,
+				permits: authorization.permits,
+				domain: authorization.domain,
+			});
+			if (!admission.ok) {
+				return { authorities: [], rejected: buildRequestedModeError(params, `Launch authority rejected the request (${admission.code}): ${admission.message}`) };
+			}
+			await verifyAuthorityManifest(params, ctx, admission.authorities);
+			return { authorities: admission.authorities };
+		} catch (error) {
+			return { authorities: [], rejected: buildRequestedModeError(params, `Launch authority rejected the request: ${error instanceof Error ? error.message : String(error)}`) };
+		}
+	};
+
+	const executePublic = async (
 		id: string,
 		params: SubagentParamsLike,
 		signal: AbortSignal,
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	): Promise<AgentToolResult<Details>> => {
+		const authorization = takeBoundSubagentLaunchAuthorization(params, "public");
 		const normalized = normalizePublicSubagentExecution(params, { asyncByDefault: deps.asyncByDefault });
 		if (!normalized.ok) {
-			return Promise.resolve({ content: [{ type: "text", text: normalized.error }], isError: true, details: { mode: normalized.mode, results: [] } });
+			return { content: [{ type: "text", text: normalized.error }], isError: true, details: { mode: normalized.mode, results: [] } };
 		}
+		const admission = await authorizeBoundary(normalized.params, ctx, authorization);
+		if (admission.rejected) return admission.rejected;
 		return executeWithSingleDispatchGuard(id, normalized.params, signal, onUpdate, ctx);
 	};
 
@@ -6202,6 +6287,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	): Promise<AgentToolResult<Details>> => {
+		const authorization = takeBoundSubagentLaunchAuthorization(params, "delegated");
+		const admission = await authorizeBoundary(params, ctx, authorization);
+		if (admission.rejected) return admission.rejected;
 		const delegatedParams = { ...params };
 		const privateParams = delegatedParams as SubagentParamsLike & {
 			delegatedThinkingOverride?: AgentConfig["thinking"];
@@ -6217,12 +6305,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		return execute(id, delegatedParams, signal, onUpdate, ctx);
 	};
 
-	const executeScheduled = (
+	const executeScheduled = async (
 		id: string,
 		params: SubagentParamsLike,
 		signal: AbortSignal,
 		ctx: ExtensionContext,
 	) => {
+		const authorization = takeBoundSubagentLaunchAuthorization(params, "scheduled");
+		const admission = await authorizeBoundary(params, ctx, authorization);
+		if (admission.rejected) return admission.rejected;
 		const ownerSessionId = resolveCurrentSessionId(ctx.sessionManager);
 		let ownerExecutor = scheduledOwnerExecutors.get(ownerSessionId);
 		if (!ownerExecutor) {

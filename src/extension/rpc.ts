@@ -24,6 +24,7 @@ import { SubagentParams } from "./schemas.ts";
 import { normalizePublicSubagentExecution } from "./public-execution.ts";
 import { ASYNC_STATUS_SNAPSHOT_KIND, ASYNC_STATUS_SNAPSHOT_VERSION, buildAsyncStatusSnapshotForState } from "../runs/background/async-status-snapshot.ts";
 import { isStoppableAsyncStatusStep, resolveAsyncStatusChild, type ResolvedAsyncStatusChild } from "../runs/shared/child-identity.ts";
+import { bindSubagentLaunchPermits, SUBAGENT_LAUNCH_AUTHORITY_VERSION } from "../runs/shared/launch-authority.ts";
 
 export const SUBAGENT_RPC_PROTOCOL_VERSION = 1;
 export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
@@ -38,6 +39,9 @@ export interface SubagentRpcRequestEnvelope {
 	requestId: string;
 	method: SubagentRpcMethod;
 	params?: unknown;
+	authorization?: {
+		launchPermits: string[];
+	};
 	source?: {
 		extension?: string;
 		[key: string]: unknown;
@@ -393,6 +397,7 @@ function pingData(ctx: ExtensionContext | null) {
 			managementActions: [...SUBAGENT_RPC_MANAGEMENT_ACTIONS],
 			fleetStatus: { version: 1 },
 			asyncStatusSnapshot: { kind: ASYNC_STATUS_SNAPSHOT_KIND, version: ASYNC_STATUS_SNAPSHOT_VERSION },
+			launchAuthority: { version: SUBAGENT_LAUNCH_AUTHORITY_VERSION },
 			asyncSpawn: true,
 			steer: true,
 			nonRecoveringSteer: true,
@@ -421,8 +426,10 @@ async function executeChecked(
 	requestId: string,
 	method: SubagentRpcMethod,
 	params: SubagentParamsLike,
+	launchPermits: readonly string[] = [],
 ): Promise<{ text: string; details?: Details; isError?: boolean }> {
 	assertSubagentParams(params, `RPC ${method} params`);
+	if (launchPermits.length > 0) bindSubagentLaunchPermits(params, launchPermits, "rpc.spawn");
 	const controller = new AbortController();
 	const result = await options.execute(`rpc-${method}-${requestId}`, params, controller.signal, undefined, ctx);
 	failIfToolError(result);
@@ -650,7 +657,7 @@ async function handleRequest(
 		return executeChecked(options, ctx, request.requestId, request.method, manageParams(request.params));
 	}
 	if (request.method === "spawn") {
-		return executeChecked(options, ctx, request.requestId, request.method, spawnParams(request.params));
+		return executeChecked(options, ctx, request.requestId, request.method, spawnParams(request.params), request.authorization?.launchPermits);
 	}
 	if (request.method === "status") {
 		const status = await executeChecked(
@@ -686,6 +693,25 @@ async function handleRequest(
 	throw new SubagentRpcError("unsupported_method", `Unsupported subagent RPC method: ${String(request.method)}`);
 }
 
+function parseAuthorization(value: unknown, method: SubagentRpcMethod): SubagentRpcRequestEnvelope["authorization"] {
+	if (value === undefined) return undefined;
+	if (method !== "spawn") throw new SubagentRpcError("invalid_request", "RPC authorization is supported only for spawn.");
+	if (!isRecord(value) || Object.keys(value).some((key) => key !== "launchPermits")) {
+		throw new SubagentRpcError("invalid_request", "RPC authorization must contain only launchPermits.");
+	}
+	if (!Array.isArray(value.launchPermits) || value.launchPermits.length < 1 || value.launchPermits.length > 16) {
+		throw new SubagentRpcError("invalid_request", "RPC authorization launchPermits must contain 1..16 tokens.");
+	}
+	const launchPermits = value.launchPermits.map((token) => {
+		if (typeof token !== "string" || !token || token.length > 128 || /[\u0000-\u001f\u007f]/u.test(token)) {
+			throw new SubagentRpcError("invalid_request", "RPC authorization contains an invalid launch permit.");
+		}
+		return token;
+	});
+	if (new Set(launchPermits).size !== launchPermits.length) throw new SubagentRpcError("invalid_request", "RPC authorization launch permits must be unique.");
+	return { launchPermits };
+}
+
 function parseRequest(raw: unknown): SubagentRpcRequestEnvelope {
 	if (!isRecord(raw)) throw new SubagentRpcError("invalid_request", "Subagent RPC request must be an object.");
 	const requestId = assertRequestId(raw.requestId);
@@ -695,11 +721,14 @@ function parseRequest(raw: unknown): SubagentRpcRequestEnvelope {
 	if (typeof raw.method !== "string" || !(SUBAGENT_RPC_METHODS as readonly string[]).includes(raw.method)) {
 		throw new SubagentRpcError("unsupported_method", `Unsupported subagent RPC method: ${String(raw.method)}.`);
 	}
+	const method = raw.method as SubagentRpcMethod;
+	const authorization = parseAuthorization(raw.authorization, method);
 	return {
 		version: SUBAGENT_RPC_PROTOCOL_VERSION,
 		requestId,
-		method: raw.method as SubagentRpcMethod,
+		method,
 		...(raw.params !== undefined ? { params: raw.params } : {}),
+		...(authorization ? { authorization } : {}),
 		...(isRecord(raw.source) ? { source: raw.source as SubagentRpcRequestEnvelope["source"] } : {}),
 	};
 }

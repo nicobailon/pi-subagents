@@ -22,6 +22,8 @@ import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts"
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
 import { SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
 import { registerSubagentCapabilityCeiling } from "../../src/api/capability-ceiling.ts";
+import { digestSubagentLaunchRequest, registerSubagentLaunchAuthority } from "../../src/api/launch-authority.ts";
+import { bindSubagentLaunchPermits } from "../../src/runs/shared/launch-authority.ts";
 import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
@@ -244,6 +246,9 @@ interface TypesModule {
 interface ExecutorModule {
 	createSubagentExecutor?: (...args: unknown[]) => {
 		execute: (...args: unknown[]) => Promise<{ content: Array<{ text?: string }>; isError?: boolean; details?: { asyncId?: string } }>;
+		executePublic: (...args: unknown[]) => Promise<{ content: Array<{ text?: string }>; isError?: boolean; details?: { asyncId?: string } }>;
+		executeDelegated: (...args: unknown[]) => Promise<{ content: Array<{ text?: string }>; isError?: boolean; details?: { asyncId?: string } }>;
+		executeScheduled: (...args: unknown[]) => Promise<{ content: Array<{ text?: string }>; isError?: boolean; details?: { asyncId?: string } }>;
 	};
 }
 
@@ -499,6 +504,79 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	it("reports jiti availability as boolean", () => {
 		const result = isAsyncAvailable();
 		assert.equal(typeof result, "boolean");
+	});
+
+	it("enforces launch authority at public, delegated, and scheduled executor ingress", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+		const sessionId = `authority-${Date.now().toString(36)}`;
+		const agentPath = path.join(tempDir, ".pi", "agents", "authority-worker.md");
+		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+		fs.writeFileSync(agentPath, "---\nname: authority-worker\ndescription: Authority test worker\ncompletionGuard: false\n---\n", "utf-8");
+		const agents = discoverAgents(tempDir).agents;
+		const executor = makeAsyncExecutor(agents);
+		const context = makeMinimalCtx(tempDir);
+		context.sessionManager.getSessionId = () => sessionId;
+		context.modelRegistry.getAvailable = () => [{ provider: "mock", id: "test-model" }];
+		const authority = registerSubagentLaunchAuthority({ sessionId, source: "ultra", defaultNewSpawnDecision: "deny" });
+		const signal = new AbortController().signal;
+		try {
+			const child = { key: "a", agent: "authority-worker", task: "authorized", model: "mock/test-model", context: "fresh", output: true };
+			const workflowParams = { workflowScript: `return await runs.all(${JSON.stringify([child])});`, async: false };
+			for (const [label, launch] of [
+				["public", () => executor.executePublic("public-denied", workflowParams, signal, undefined, context)],
+				["delegated", () => executor.executeDelegated("delegated-denied", { agent: "worker", task: "denied" }, signal, undefined, context)],
+				["scheduled", () => executor.executeScheduled("scheduled-denied", workflowParams, signal, context)],
+			] as const) {
+				const denied = await launch();
+				assert.equal(denied.isError, true, label);
+				assert.match(denied.content.map(({ text }) => text ?? "").join("\n"), /launch authority|permit/i, label);
+				assert.equal(denied.details?.asyncId, undefined, label);
+			}
+
+			const preflight = await resolveSubagentLaunchContract({
+				agent: child.agent,
+				task: child.task,
+				model: child.model,
+				context: child.context as "fresh",
+				output: child.output,
+				cwd: tempDir,
+				availableModels: context.modelRegistry.getAvailable(),
+			});
+			assert.equal(preflight.ok, true);
+			if (!preflight.ok) assert.fail(preflight.message);
+			const token = authority.issueOnce({
+				configRevision: "revision-1",
+				expiresInMs: 1_000,
+				requestDigest: digestSubagentLaunchRequest(workflowParams),
+				minLanes: 1,
+				maxLanes: 1,
+				lanes: [{ key: "a", agent: preflight.contract.agent.name, modelCandidates: preflight.contract.modelCandidates, launchContractDigest: preflight.contract.launchContractDigest }],
+			});
+			mockPi.onCall({ output: "authority admitted" });
+			bindSubagentLaunchPermits(workflowParams, [token]);
+			const admitted = await executor.executePublic("public-admitted", workflowParams, signal, undefined, context);
+			assert.equal(admitted.isError, undefined);
+			assert.doesNotMatch(admitted.content.map(({ text }) => text ?? "").join("\n"), /launch authority|permit required/i);
+			const replay = await executor.executePublic("public-replay", workflowParams, signal, undefined, context);
+			assert.equal(replay.isError, true);
+			assert.match(replay.content.map(({ text }) => text ?? "").join("\n"), /permit/i);
+
+			const staleToken = authority.issueOnce({
+				configRevision: "revision-1",
+				expiresInMs: 1_000,
+				requestDigest: digestSubagentLaunchRequest(workflowParams),
+				minLanes: 1,
+				maxLanes: 1,
+				lanes: [{ key: "a", agent: preflight.contract.agent.name, modelCandidates: preflight.contract.modelCandidates, launchContractDigest: preflight.contract.launchContractDigest }],
+			});
+			fs.appendFileSync(agentPath, "\nChanged after permit issuance.\n", "utf-8");
+			bindSubagentLaunchPermits(workflowParams, [staleToken]);
+			const stale = await executor.executePublic("public-stale-contract", workflowParams, signal, undefined, context);
+			assert.equal(stale.isError, true);
+			assert.equal(stale.details?.asyncId, undefined);
+			assert.match(stale.content.map(({ text }) => text ?? "").join("\n"), /launch manifest|launch authority/i);
+		} finally {
+			authority.dispose();
+		}
 	});
 
 	it("does not persist terminal async workflow status when the result index write fails", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {

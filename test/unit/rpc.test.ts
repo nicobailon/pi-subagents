@@ -14,6 +14,7 @@ import {
 	type SubagentRpcReplyEnvelope,
 } from "../../src/extension/rpc.ts";
 import { SUBAGENT_CHILD_STATUS_EVENT, type Details, type SubagentChildStatusEvent, type SubagentState } from "../../src/shared/types.ts";
+import { takeBoundSubagentLaunchPermits } from "../../src/runs/shared/launch-authority.ts";
 
 class FakeEvents {
 	readonly emitted: Array<{ event: string; data: unknown }> = [];
@@ -54,13 +55,20 @@ function ctx(sessionId = "session-123", sessionFile = "/sessions/parent.jsonl") 
 	} as any;
 }
 
-async function request(events: FakeEvents, requestId: string, method: string, params?: unknown): Promise<SubagentRpcReplyEnvelope> {
+async function request(
+	events: FakeEvents,
+	requestId: string,
+	method: string,
+	params?: unknown,
+	authorization?: unknown,
+): Promise<SubagentRpcReplyEnvelope> {
 	const reply = once(events, subagentRpcReplyEvent(requestId)) as Promise<SubagentRpcReplyEnvelope>;
 	events.emit(SUBAGENT_RPC_REQUEST_EVENT, {
 		version: SUBAGENT_RPC_PROTOCOL_VERSION,
 		requestId,
 		method,
 		...(params !== undefined ? { params } : {}),
+		...(authorization !== undefined ? { authorization } : {}),
 	});
 	return reply;
 }
@@ -113,6 +121,10 @@ describe("subagent extension RPC bridge", () => {
 			(reply as { data: { capabilities?: { asyncStatusSnapshot?: unknown } } }).data.capabilities?.asyncStatusSnapshot,
 			{ kind: "pi-subagents.async-status-snapshot", version: 1 },
 		);
+		assert.deepEqual(
+			(reply as { data: { capabilities?: { launchAuthority?: unknown } } }).data.capabilities?.launchAuthority,
+			{ version: 1 },
+		);
 
 		bridge.dispose();
 	});
@@ -139,6 +151,38 @@ describe("subagent extension RPC bridge", () => {
 		assert.equal((reply as { error: { code: string } }).error.code, "invalid_request");
 		assert.equal(events.emitted.some((entry) => entry.event === subagentRpcReplyEvent(unsafeRequestId)), false);
 
+		bridge.dispose();
+	});
+
+	it("binds bounded spawn authorization outside executor params and rejects malformed metadata", async () => {
+		const events = new FakeEvents();
+		const seen: unknown[] = [];
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx(),
+			execute: async (_id, params) => {
+				seen.push({ params: { ...params }, permits: takeBoundSubagentLaunchPermits(params) });
+				return { content: [{ type: "text", text: "started" }], details: { mode: "workflow", results: [] } } as any;
+			},
+		});
+		const params = { workflowScript: "return runs.run('a',{agent:'worker'})", async: true };
+		const accepted = await request(events, "authorized", "spawn", params, { launchPermits: ["opaque-token"] });
+		assert.equal(accepted.success, true);
+		assert.deepEqual(seen, [{ params, permits: ["opaque-token"] }]);
+		assert.equal(JSON.stringify(accepted).includes("opaque-token"), false);
+
+		for (const [id, authorization] of [
+			["auth-array", []],
+			["auth-extra", { launchPermits: ["token"], extra: true }],
+			["auth-empty", { launchPermits: [""] }],
+			["auth-many", { launchPermits: Array.from({ length: 17 }, () => "token") }],
+		] as const) {
+			const denied = await request(events, id, "spawn", params, authorization);
+			assert.equal(denied.success, false, id);
+			if (!denied.success) assert.equal(denied.error.code, "invalid_request", id);
+		}
+		const statusAuth = await request(events, "auth-status", "status", {}, { launchPermits: ["token"] });
+		assert.equal(statusAuth.success, false);
 		bridge.dispose();
 	});
 

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 export const SUBAGENT_LAUNCH_AUTHORITY_VERSION = 1 as const;
-export const SUBAGENT_LAUNCH_AUTHORITY_REGISTRY_KEY = "pi-subagents.launch-authority.v1";
+const REGISTRY_SYMBOL = Symbol.for("pi-subagents.launch-authority.v1");
 
 const MAX_REQUEST_BYTES = 1_048_576;
 const MAX_DEPTH = 32;
@@ -11,22 +11,21 @@ const MAX_LANES = 256;
 const MAX_MODELS = 16;
 const MAX_TEXT_BYTES = 256;
 const MAX_EXPIRY_MS = 60_000;
+const MAX_OUTSTANDING_PERMITS = 64;
+const MAX_TOMBSTONES = 256;
+const DEFAULT_VALIDATION_TIMEOUT_MS = 1_500;
+const MAX_VALIDATION_TIMEOUT_MS = 5_000;
 const DIGEST = /^[a-f0-9]{64}$/u;
 const KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const NAME = /^[A-Za-z0-9_.:/-]{1,128}$/u;
 
 const SAFE_MANAGEMENT_ACTIONS = new Set([
-	"list",
-	"status",
-	"stop",
-	"interrupt",
-	"steer",
-	"children.list",
-	"schedule.list",
-	"schedule.show",
-	"schedule.history",
-	"schedule.pause",
-	"schedule.delete",
+	"list", "get", "models", "guide", "doctor", "debug.run",
+	"status", "stop", "interrupt", "children.list",
+	"mission.list", "mission.show", "refine.show",
+	"inspector.status", "project.status",
+	"watchdog.status", "watchdog.check", "watchdog.recommend-model",
+	"schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.delete",
 ]);
 
 export type SubagentLaunchRequestKind = "management" | "new-spawn";
@@ -51,7 +50,8 @@ export interface RegisterSubagentLaunchAuthorityOptions {
 	sessionId: string;
 	source: string;
 	defaultNewSpawnDecision: "deny";
-	validateConfigRevision?(revision: string): boolean | Promise<boolean>;
+	validationTimeoutMs?: number;
+	validateConfigRevision?(revision: string, signal: AbortSignal): boolean | Promise<boolean>;
 }
 
 export interface SubagentLaunchAuthorityHandle {
@@ -79,25 +79,59 @@ export type SubagentLaunchAdmission =
 interface PermitRecord extends LaunchAuthorityPermitInput {
 	token: string;
 	expiresAt: number;
-	state: "issued" | "validating" | "consumed";
+	state: "issued" | "validating";
 }
 
 interface Registration {
+	id: symbol;
 	source: string;
 	validateConfigRevision?: RegisterSubagentLaunchAuthorityOptions["validateConfigRevision"];
+	validationTimeoutMs: number;
 	permits: Map<string, PermitRecord>;
+	tombstones: Set<string>;
+	tombstoneOrder: string[];
 	disposed: boolean;
 }
 
-type Registry = Map<string, Map<symbol, Registration>>;
+interface SessionRegistry {
+	generation: number;
+	registrations: Map<symbol, Registration>;
+}
+
+interface Registry {
+	sessions: Map<string, SessionRegistry>;
+}
+
+interface BoundAuthorization {
+	permits: string[];
+	domain: string;
+}
+
+const boundAuthorizations = new WeakMap<object, BoundAuthorization>();
+
+/** Bind opaque transport metadata to normalized params without making it schema/model-visible. */
+export function bindSubagentLaunchPermits(params: object, permits: readonly string[], domain = "public"): void {
+	boundAuthorizations.set(params, { permits: [...permits], domain: validateDomain(domain) });
+}
+
+/** Consume transport metadata exactly once at an execution admission boundary. */
+export function takeBoundSubagentLaunchAuthorization(params: object, fallbackDomain = "public"): BoundAuthorization {
+	const authorization = boundAuthorizations.get(params) ?? { permits: [], domain: validateDomain(fallbackDomain) };
+	boundAuthorizations.delete(params);
+	return { permits: [...authorization.permits], domain: authorization.domain };
+}
+
+/** Compatibility helper for transport tests that need only the opaque token list. */
+export function takeBoundSubagentLaunchPermits(params: object): string[] {
+	return takeBoundSubagentLaunchAuthorization(params).permits;
+}
 
 function registry(): Registry {
-	const key = Symbol.for(SUBAGENT_LAUNCH_AUTHORITY_REGISTRY_KEY);
 	const root = globalThis as unknown as Record<symbol, unknown>;
-	const existing = root[key];
-	if (existing instanceof Map) return existing as Registry;
-	const created: Registry = new Map();
-	root[key] = created;
+	const existing = root[REGISTRY_SYMBOL];
+	if (existing && typeof existing === "object" && (existing as Registry).sessions instanceof Map) return existing as Registry;
+	const created: Registry = { sessions: new Map() };
+	root[REGISTRY_SYMBOL] = created;
 	return created;
 }
 
@@ -108,6 +142,12 @@ function text(value: unknown, field: string, maxBytes = MAX_TEXT_BYTES): string 
 	const normalized = value.trim();
 	if (Buffer.byteLength(normalized, "utf8") > maxBytes) throw new Error(`${field} exceeds ${maxBytes} UTF-8 bytes.`);
 	return normalized;
+}
+
+function validateDomain(value: unknown): string {
+	const domain = text(value, "launch request domain", 64);
+	if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u.test(domain)) throw new Error("launch request domain is invalid.");
+	return domain;
 }
 
 function safeInteger(value: unknown, field: string, min: number, max: number): number {
@@ -163,7 +203,7 @@ function stableJson(value: unknown, state: { depth: number; properties: number; 
 		if (!Number.isFinite(value)) throw new Error(`${path} must contain only finite JSON numbers.`);
 		return JSON.stringify(value);
 	}
-	if (value === undefined) return "undefined";
+	if (value === undefined) throw new Error(`${path} must not be undefined.`);
 	if (typeof value !== "object") throw new Error(`${path} must be JSON-compatible.`);
 	if (state.depth >= MAX_DEPTH) throw new Error(`${path} exceeds maximum depth ${MAX_DEPTH}.`);
 	if (state.seen.has(value)) throw new Error(`${path} contains a cycle.`);
@@ -171,16 +211,15 @@ function stableJson(value: unknown, state: { depth: number; properties: number; 
 	state.depth += 1;
 	let result: string;
 	if (Array.isArray(value)) {
-		result = `[${value.map((entry, index) => {
-			if (entry === undefined) throw new Error(`${path}[${index}] must not be undefined.`);
-			return stableJson(entry, state, `${path}[${index}]`);
-		}).join(",")}]`;
+		result = `[${value.map((entry, index) => stableJson(entry, state, `${path}[${index}]`)).join(",")}]`;
 	} else {
 		const prototype = Object.getPrototypeOf(value);
 		if (prototype !== Object.prototype && prototype !== null) throw new Error(`${path} must contain only plain objects.`);
-		const entries = Object.entries(value as Record<string, unknown>)
-			.filter(([, entry]) => entry !== undefined)
-			.sort(([left], [right]) => left.localeCompare(right));
+		const descriptors = Object.getOwnPropertyDescriptors(value);
+		for (const [key, descriptor] of Object.entries(descriptors)) {
+			if (descriptor.get || descriptor.set) throw new Error(`${path}.${key} must not be an accessor.`);
+		}
+		const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right));
 		state.properties += entries.length;
 		if (state.properties > MAX_PROPERTIES) throw new Error(`${path} exceeds ${MAX_PROPERTIES} properties.`);
 		result = `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry, state, `${path}.${key}`)}`).join(",")}}`;
@@ -190,19 +229,46 @@ function stableJson(value: unknown, state: { depth: number; properties: number; 
 	return result;
 }
 
-export function digestSubagentLaunchRequest(params: Record<string, unknown>): string {
+export function digestSubagentLaunchRequest(params: Record<string, unknown>, domain = "public"): string {
 	if (!params || typeof params !== "object" || Array.isArray(params)) throw new Error("launch params must be a plain object.");
 	for (const forbidden of ["authorization", "launchPermit", "launchPermits"]) {
 		if (Object.hasOwn(params, forbidden)) throw new Error(`launch params must not contain authorization field '${forbidden}'.`);
 	}
-	const canonical = stableJson(params, { depth: 0, properties: 0, seen: new Set() }, "launch params");
+	const canonical = stableJson({ version: SUBAGENT_LAUNCH_AUTHORITY_VERSION, domain: validateDomain(domain), params }, { depth: 0, properties: 0, seen: new Set() }, "launch request");
 	if (Buffer.byteLength(canonical, "utf8") > MAX_REQUEST_BYTES) throw new Error(`launch params exceed the ${MAX_REQUEST_BYTES}-byte size limit.`);
 	return createHash("sha256").update(canonical).digest("hex");
 }
 
 export function classifySubagentLaunchRequest(params: Record<string, unknown>): SubagentLaunchRequestKind {
 	const action = typeof params.action === "string" ? params.action.trim() : undefined;
+	if (action === "steer") return params.steeringRecovery === false ? "management" : "new-spawn";
 	return action && SAFE_MANAGEMENT_ACTIONS.has(action) ? "management" : "new-spawn";
+}
+
+function rememberTombstone(registration: Registration, token: string): void {
+	registration.tombstones.add(token);
+	registration.tombstoneOrder.push(token);
+	while (registration.tombstoneOrder.length > MAX_TOMBSTONES) {
+		const oldest = registration.tombstoneOrder.shift();
+		if (oldest) registration.tombstones.delete(oldest);
+	}
+}
+
+function consume(registration: Registration, permit: PermitRecord): void {
+	registration.permits.delete(permit.token);
+	rememberTombstone(registration, permit.token);
+}
+
+function pruneExpired(registration: Registration, now = Date.now()): void {
+	for (const permit of [...registration.permits.values()]) {
+		if (permit.expiresAt <= now && permit.state === "issued") consume(registration, permit);
+	}
+}
+
+export function hasActiveSubagentLaunchAuthority(sessionId?: string | null): boolean {
+	const store = registry();
+	if (sessionId?.trim()) return Boolean(store.sessions.get(sessionId.trim())?.registrations.size);
+	return [...store.sessions.values()].some((session) => session.registrations.size > 0);
 }
 
 export function registerSubagentLaunchAuthority(options: RegisterSubagentLaunchAuthorityOptions): SubagentLaunchAuthorityHandle {
@@ -210,80 +276,170 @@ export function registerSubagentLaunchAuthority(options: RegisterSubagentLaunchA
 	const source = text(options.source, "launch authority source");
 	if (options.defaultNewSpawnDecision !== "deny") throw new Error("launch authority defaultNewSpawnDecision must be 'deny'.");
 	if (options.validateConfigRevision !== undefined && typeof options.validateConfigRevision !== "function") throw new Error("validateConfigRevision must be a function.");
+	const validationTimeoutMs = options.validationTimeoutMs === undefined
+		? DEFAULT_VALIDATION_TIMEOUT_MS
+		: safeInteger(options.validationTimeoutMs, "validationTimeoutMs", 1, MAX_VALIDATION_TIMEOUT_MS);
 	const store = registry();
-	let session = store.get(sessionId);
+	let session = store.sessions.get(sessionId);
 	if (!session) {
-		session = new Map();
-		store.set(sessionId, session);
+		session = { generation: 0, registrations: new Map() };
+		store.sessions.set(sessionId, session);
 	}
-	if (session.size >= MAX_AUTHORITIES) throw new Error(`A session supports at most ${MAX_AUTHORITIES} launch authorities.`);
+	if (session.registrations.size >= MAX_AUTHORITIES) throw new Error(`A session supports at most ${MAX_AUTHORITIES} launch authorities.`);
 	const id = Symbol(source);
 	const registration: Registration = {
+		id,
 		source,
 		...(options.validateConfigRevision ? { validateConfigRevision: options.validateConfigRevision } : {}),
+		validationTimeoutMs,
 		permits: new Map(),
+		tombstones: new Set(),
+		tombstoneOrder: [],
 		disposed: false,
 	};
-	session.set(id, registration);
+	session.registrations.set(id, registration);
+	session.generation += 1;
 	return {
 		issueOnce(input) {
 			if (registration.disposed) throw new Error("Cannot issue from a disposed launch authority.");
+			pruneExpired(registration);
+			if (registration.permits.size >= MAX_OUTSTANDING_PERMITS) throw new Error(`Launch authority has reached its ${MAX_OUTSTANDING_PERMITS} outstanding permit limit.`);
 			const normalized = normalizePermit(input);
 			let token: string;
-			do token = randomBytes(32).toString("base64url"); while (registration.permits.has(token));
-			registration.permits.set(token, {
-				...normalized,
-				token,
-				expiresAt: Date.now() + normalized.expiresInMs,
-				state: "issued",
-			});
+			do token = randomBytes(32).toString("base64url"); while (registration.permits.has(token) || registration.tombstones.has(token));
+			registration.permits.set(token, { ...normalized, token, expiresAt: Date.now() + normalized.expiresInMs, state: "issued" });
 			return token;
 		},
 		revokeUnused() {
 			if (registration.disposed) return;
-			for (const permit of registration.permits.values()) if (permit.state === "issued") permit.state = "consumed";
+			for (const permit of [...registration.permits.values()]) consume(registration, permit);
+			session!.generation += 1;
 		},
 		dispose() {
 			if (registration.disposed) return;
 			registration.disposed = true;
-			registration.permits.clear();
-			session!.delete(id);
-			if (session!.size === 0) store.delete(sessionId);
+			for (const permit of [...registration.permits.values()]) consume(registration, permit);
+			session!.registrations.delete(id);
+			session!.generation += 1;
+			if (session!.registrations.size === 0) store.sessions.delete(sessionId);
 		},
 	};
+}
+
+export function verifyAuthorizedLaunchManifest(
+	authorities: readonly AuthorizedLaunchAuthority[],
+	actualLanes: readonly LaunchAuthorityLane[],
+): void {
+	for (const authority of authorities) {
+		if (actualLanes.length < authority.minLanes || actualLanes.length > authority.maxLanes || actualLanes.length !== authority.lanes.length) {
+			throw new Error(`Launch manifest does not satisfy authority '${authority.source}' lane bounds or cardinality.`);
+		}
+		for (let index = 0; index < actualLanes.length; index += 1) {
+			const expected = authority.lanes[index]!;
+			const actual = actualLanes[index]!;
+			if (actual.key !== expected.key
+				|| actual.agent !== expected.agent
+				|| actual.launchContractDigest !== expected.launchContractDigest
+				|| actual.modelCandidates.length !== expected.modelCandidates.length
+				|| actual.modelCandidates.some((model, modelIndex) => model !== expected.modelCandidates[modelIndex])) {
+				throw new Error(`Launch manifest lane ${index} does not match authority '${authority.source}'.`);
+			}
+		}
+	}
 }
 
 function denied(code: Exclude<SubagentLaunchAdmission, { ok: true }>["code"], message: string): SubagentLaunchAdmission {
 	return { ok: false, code, message };
 }
 
+async function validateRevision(registration: Registration, revision: string): Promise<boolean> {
+	if (!registration.validateConfigRevision) return true;
+	const controller = new AbortController();
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			Promise.resolve(registration.validateConfigRevision(revision, controller.signal)).then((value) => value === true),
+			new Promise<boolean>((resolve) => {
+				timer = setTimeout(() => {
+					controller.abort(new Error("Launch authority revision validation timed out."));
+					resolve(false);
+				}, registration.validationTimeoutMs);
+			}),
+		]);
+	} catch {
+		return false;
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
+
 export async function authorizeSubagentLaunch(input: {
 	sessionId?: string | null;
 	params: Record<string, unknown>;
 	permits?: readonly string[];
+	domain?: string;
 }): Promise<SubagentLaunchAdmission> {
+	const store = registry();
 	const sessionId = input.sessionId?.trim();
-	const registrations = sessionId ? registry().get(sessionId) : undefined;
-	if (!registrations?.size) return { ok: true, authorities: [] };
+	if (!sessionId) {
+		return hasActiveSubagentLaunchAuthority()
+			? denied("permit_required", "Launch authority cannot admit a new spawn without an authoritative session id.")
+			: { ok: true, authorities: [] };
+	}
+	const session = store.sessions.get(sessionId);
+	if (!session?.registrations.size) return { ok: true, authorities: [] };
 	if (classifySubagentLaunchRequest(input.params) === "management") return { ok: true, authorities: [] };
-	const requestDigest = digestSubagentLaunchRequest(input.params);
+	const requestDigest = digestSubagentLaunchRequest(input.params, input.domain ?? "public");
 	const supplied = input.permits ?? [];
-	if (!Array.isArray(supplied) || supplied.length > MAX_AUTHORITIES || supplied.some((token) => typeof token !== "string" || token.length > 128)) {
+	if (!Array.isArray(supplied) || supplied.length > MAX_AUTHORITIES || supplied.some((token) => typeof token !== "string" || token.length > 128) || new Set(supplied).size !== supplied.length) {
 		return denied("invalid_permit", "Launch authorization contains invalid permit tokens.");
 	}
+	const generation = session.generation;
+	const registrations = [...session.registrations.values()].sort((left, right) => left.source.localeCompare(right.source));
 	const selected: Array<{ registration: Registration; permit: PermitRecord }> = [];
-	const consumeSelected = () => { for (const entry of selected) entry.permit.state = "consumed"; };
-	for (const registration of [...registrations.values()].sort((left, right) => left.source.localeCompare(right.source))) {
-		const permit = supplied.map((token) => registration.permits.get(token)).find((candidate) => candidate !== undefined);
-		if (!permit) {
-			consumeSelected();
-			return denied("permit_required", `Launch authority '${registration.source}' requires a permit.`);
+	const consumeSelected = () => { for (const { registration, permit } of selected) consume(registration, permit); };
+	const consumeSuppliedIssued = () => {
+		for (const registration of registrations) {
+			for (const token of supplied) {
+				const permit = registration.permits.get(token);
+				if (permit?.state === "issued") consume(registration, permit);
+			}
 		}
-		selected.push({ registration, permit });
-		if (permit.state !== "issued") {
+	};
+	for (const token of supplied) {
+		const owners = registrations.filter((registration) => registration.permits.has(token) || registration.tombstones.has(token));
+		if (owners.length !== 1) {
+			consumeSuppliedIssued();
+			return denied("invalid_permit", "Launch authorization contains an unknown or ambiguous permit.");
+		}
+	}
+	if (supplied.length !== registrations.length) {
+		for (const registration of registrations) {
+			for (const token of supplied) {
+				const permit = registration.permits.get(token);
+				if (permit && !selected.some((entry) => entry.permit === permit)) selected.push({ registration, permit });
+			}
+		}
+		consumeSelected();
+		return denied(supplied.length < registrations.length ? "permit_required" : "invalid_permit", "Every active launch authority requires exactly one permit.");
+	}
+	for (const registration of registrations) {
+		const ownedTokens = supplied.filter((token) => registration.permits.has(token) || registration.tombstones.has(token));
+		if (ownedTokens.length !== 1) {
+			consumeSelected();
+			return denied("invalid_permit", `Launch authority '${registration.source}' requires exactly one owned permit.`);
+		}
+		const token = ownedTokens[0]!;
+		if (registration.tombstones.has(token)) {
 			consumeSelected();
 			return denied("invalid_permit", `Launch permit for '${registration.source}' is not reusable.`);
 		}
+		const permit = registration.permits.get(token)!;
+		if (permit.state !== "issued") {
+			consumeSelected();
+			return denied("invalid_permit", `Launch permit for '${registration.source}' is already being validated.`);
+		}
+		selected.push({ registration, permit });
 		if (permit.expiresAt <= Date.now()) {
 			consumeSelected();
 			return denied("expired_permit", `Launch permit for '${registration.source}' expired.`);
@@ -294,26 +450,26 @@ export async function authorizeSubagentLaunch(input: {
 		}
 	}
 	for (const entry of selected) entry.permit.state = "validating";
-	let revisions: boolean[];
-	try {
-		revisions = await Promise.all(selected.map(async ({ registration, permit }) =>
-			registration.validateConfigRevision ? await registration.validateConfigRevision(permit.configRevision) : true));
-	} catch {
-		revisions = selected.map(() => false);
+	const revisions = await Promise.all(selected.map(({ registration, permit }) => validateRevision(registration, permit.configRevision)));
+	const registryStable = store.sessions.get(sessionId) === session
+		&& session.generation === generation
+		&& selected.every(({ registration, permit }) =>
+			!registration.disposed
+			&& session.registrations.get(registration.id) === registration
+			&& registration.permits.get(permit.token) === permit
+			&& permit.state === "validating"
+			&& permit.expiresAt > Date.now());
+	if (!registryStable || revisions.some((valid) => !valid)) {
+		consumeSelected();
+		return denied("config_revision_mismatch", "Launch authority state or config revision changed before admission committed.");
 	}
+	const authorities = selected.map(({ registration, permit }) => ({
+		source: registration.source,
+		configRevision: permit.configRevision,
+		minLanes: permit.minLanes,
+		maxLanes: permit.maxLanes,
+		lanes: permit.lanes.map((lane) => ({ ...lane, modelCandidates: [...lane.modelCandidates] })),
+	}));
 	consumeSelected();
-	const invalidIndex = revisions.findIndex((valid) => valid !== true);
-	if (invalidIndex !== -1) {
-		return denied("config_revision_mismatch", `Launch permit config revision is no longer valid for '${selected[invalidIndex]!.registration.source}'.`);
-	}
-	return {
-		ok: true,
-		authorities: selected.map(({ registration, permit }) => ({
-			source: registration.source,
-			configRevision: permit.configRevision,
-			minLanes: permit.minLanes,
-			maxLanes: permit.maxLanes,
-			lanes: permit.lanes.map((lane) => ({ ...lane, modelCandidates: [...lane.modelCandidates] })),
-		})),
-	};
+	return { ok: true, authorities };
 }

@@ -16,6 +16,7 @@ import {
 	type ScheduledRunManager,
 } from "../../src/runs/background/scheduled-runs.ts";
 import type { ExtensionConfig } from "../../src/shared/types.ts";
+import { registerSubagentLaunchAuthority } from "../../src/api/launch-authority.ts";
 
 type Timer = { callback: () => void; delay: number };
 class FakeTimers {
@@ -642,6 +643,21 @@ describe("recurring schedule execution", () => {
 		none.manager.handleAsyncCompletion({ runId: "none-long-run", success: true });
 		assert.match(text(await none.manager.handleToolCall({ action: "schedule.history", id: "none-overlap" }, none.ctx)), /skipped/);
 		assert.match(text(await none.manager.handleToolCall({ action: "schedule.show", id: "none-overlap" }, none.ctx)), /2030-01-01T05:00:00.000Z/);
+	});
+
+	it("denies scheduled firing before run ids, history, locks, or launch callbacks when authority is active", async () => {
+		const h = harness({ sessionId: "authority-owner" });
+		await h.manager.handleToolCall({ action: "schedule.create", id: "blocked", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, h.ctx);
+		const authority = registerSubagentLaunchAuthority({ sessionId: "authority-owner", source: "ultra", defaultNewSpawnDecision: "deny" });
+		try {
+			const denied = await h.manager.handleToolCall({ action: "schedule.run", id: "blocked" }, h.ctx);
+			assert.match(text(denied), /launch authority|disabled/i);
+			assert.equal(h.launches.length, 0);
+			assert.match(text(await h.manager.handleToolCall({ action: "schedule.history", id: "blocked" }, h.ctx)), /No runs recorded/i);
+			assert.equal(fs.existsSync(path.join(h.root, "stores", "active.lock")), false);
+		} finally {
+			authority.dispose();
+		}
 	});
 
 	it("manual run uses the normal async target and overlap skip prevents a second launch", async () => {

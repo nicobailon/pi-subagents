@@ -109,6 +109,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./external-runs": "./src/api/external-runs.ts",
 		"./capability-ceiling": "./src/api/capability-ceiling.ts",
 		"./delegation": "./src/api/delegation.ts",
+		"./launch-authority": "./src/api/launch-authority.ts",
 		"./preflight": "./src/api/preflight.ts",
 		"./control-channel": "./src/api/control-channel.ts",
 		"./intercom-bridge": "./src/api/intercom-bridge.ts",
@@ -134,6 +135,11 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_REGISTRY_KEY, "pi-subagents.capability-ceiling.v1");
 	const delegation = await import("pi-subagents/delegation");
 	assert.equal(delegation.SUBAGENT_DELEGATION_REQUEST_EVENT, "prompt-template:subagent:request");
+	const launchAuthority = await import("pi-subagents/launch-authority");
+	assert.equal(launchAuthority.SUBAGENT_LAUNCH_AUTHORITY_VERSION, 1);
+	assert.equal(typeof launchAuthority.registerSubagentLaunchAuthority, "function");
+	assert.equal(typeof launchAuthority.digestSubagentLaunchRequest, "function");
+	assert.equal("authorizeSubagentLaunch" in launchAuthority, false);
 	const preflight = await import("pi-subagents/preflight");
 	assert.equal(preflight.SUBAGENT_LAUNCH_CONTRACT_VERSION, 2);
 	assert.equal(typeof preflight.resolveSubagentLaunchContract, "function");
