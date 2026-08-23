@@ -394,12 +394,7 @@ export function buildModelCandidates(
 		seen.add(normalized);
 		candidates.push(normalized);
 	}
-	const filtered = filterFallbackCandidates(candidates);
-	// Exclusions suppress fallback retries, not an explicitly/configurationally
-	// selected primary. Policy callers may require that exact primary as the sole
-	// candidate, and execution still reports its failure normally.
-	const primary = candidates[0];
-	return primary && !filtered.includes(primary) ? [primary, ...filtered] : filtered;
+	return filterFallbackCandidates(candidates);
 }
 
 const RETRYABLE_MODEL_FAILURE_PATTERNS = [

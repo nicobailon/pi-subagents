@@ -6243,10 +6243,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				capabilityCeiling,
 			});
 			if (!contract.ok) throw new Error(`Authorized workflow lane '${call.key}' failed runtime preflight (${contract.code}): ${contract.message}`);
+			const authorityModelCandidates = contract.contract.modelCandidates.length > 0
+				? contract.contract.modelCandidates
+				: contract.contract.model ? [contract.contract.model] : [];
 			actual.push({
 				key: call.key,
 				agent: contract.contract.agent.name,
-				modelCandidates: [...contract.contract.modelCandidates],
+				modelCandidates: [...authorityModelCandidates],
 				launchContractDigest: contract.contract.launchContractDigest,
 			});
 		}
