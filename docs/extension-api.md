@@ -43,6 +43,7 @@ Capability advertisements on `ping`:
 - `nonRecoveringSteer` — RPC steering never pauses-and-revives.
 - `resume` — the revival seam described above.
 - `fleetStatus: { version: 1 }` — successful `status` replies additionally include `data.fleet`.
+- `currentWork: { kind: "subagents.current-work", version: 1 }` — successful `status` replies include a bounded, current-session, read-only direct-work hierarchy.
 
 Structured delegation progress updates carry `runId` as soon as foreground execution allocates it, so a caller can retain the package-owned revival target even if its own tool turn is interrupted before the terminal response. Foreground `details.results[]` rows also include a numeric `index` that is unique within the run and stable across partial progress snapshots and the final result; use `(runId, index)` instead of row position to correlate single, counted parallel, and chain children.
 
@@ -53,6 +54,16 @@ When `ping.capabilities.fleetStatus` is `{ version: 1 }`, successful `status` re
 Entries are bounded, current-session public display records with an opaque reconciliation `key`, resolved `agent`, optional `role`, `model`, `effort`, caller-facing `goal`, safe `startedAt`, and `{ input, output, total }` tokens. `totalActive` and `omitted` preserve overflow information beyond the bounded entry window.
 
 The DTO intentionally never exposes run, async, or tool IDs. Clients must ignore unknown fields and fall back to status text when the capability is absent.
+
+### Current-work DTO
+
+When `ping.capabilities.currentWork` advertises `{ kind: "subagents.current-work", version: 1 }`, successful `status` replies include `data.currentWork`. The same constants and TypeScript contract are exported from `pi-subagents/current-work`.
+
+The projection contains bounded `roots` for direct foreground and async work in the current native session. Each node has an opaque session-local `key`, `mode`, authoritative lifecycle `state`, optional caller-facing `goal`, agent/role, timestamps, safe attention/current-tool activity, bounded token usage, and bounded child nodes for chain or parallel structure. `caps` records the active limits and `omitted` reports root, child, or serialized-byte truncation.
+
+Active, attention-requiring, and bounded recent terminal direct work are represented so a read-only host can reconcile completion, failure, pause, stop, or rejection without parsing status prose. Workflow runs and workflow-owned children are excluded at the source. The projection never contains internal run, async, tool, session, or workflow IDs; filesystem or transcript paths; prompt/reasoning/output text; current-tool arguments; credentials; or control callbacks.
+
+Consumers must derive display state only from the projection, ignore unknown fields, honor `caps` and `omitted`, and treat a missing root in a later snapshot as removal. The projection is observational and adds no execution controls.
 
 ### Scope
 

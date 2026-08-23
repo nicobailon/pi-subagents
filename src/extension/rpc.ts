@@ -24,6 +24,8 @@ import { SubagentParams } from "./schemas.ts";
 import { normalizePublicSubagentExecution } from "./public-execution.ts";
 import { ASYNC_STATUS_SNAPSHOT_KIND, ASYNC_STATUS_SNAPSHOT_VERSION, buildAsyncStatusSnapshotForState } from "../runs/background/async-status-snapshot.ts";
 import { isStoppableAsyncStatusStep, resolveAsyncStatusChild, type ResolvedAsyncStatusChild } from "../runs/shared/child-identity.ts";
+import { CURRENT_WORK_PROJECTION_KIND, CURRENT_WORK_PROJECTION_VERSION } from "../api/current-work.ts";
+import { buildCurrentWorkProjection, type CurrentWorkKeyState } from "./current-work.ts";
 
 export const SUBAGENT_RPC_PROTOCOL_VERSION = 1;
 export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
@@ -392,6 +394,7 @@ function pingData(ctx: ExtensionContext | null) {
 			status: true,
 			managementActions: [...SUBAGENT_RPC_MANAGEMENT_ACTIONS],
 			fleetStatus: { version: 1 },
+			currentWork: { kind: CURRENT_WORK_PROJECTION_KIND, version: CURRENT_WORK_PROJECTION_VERSION },
 			asyncStatusSnapshot: { kind: ASYNC_STATUS_SNAPSHOT_KIND, version: ASYNC_STATUS_SNAPSHOT_VERSION },
 			asyncSpawn: true,
 			steer: true,
@@ -641,6 +644,7 @@ async function handleRequest(
 	request: SubagentRpcRequestEnvelope,
 	options: RegisterSubagentRpcBridgeOptions,
 	fleetKeys: FleetKeyState,
+	currentWorkKeys: CurrentWorkKeyState,
 ): Promise<unknown> {
 	const ctx = options.getContext();
 	if (request.method === "ping") return pingData(ctx);
@@ -669,6 +673,7 @@ async function handleRequest(
 				sessionId,
 			),
 			asyncSnapshot: buildAsyncStatusSnapshotForState(options.state, sessionId),
+			currentWork: buildCurrentWorkProjection(options.state, sessionId, { keys: currentWorkKeys }),
 		};
 	}
 	if (request.method === "steer") {
@@ -737,11 +742,12 @@ export function registerSubagentRpcBridge(options: RegisterSubagentRpcBridgeOpti
 	dispose: () => void;
 } {
 	const fleetKeys: FleetKeyState = { sessionId: null, next: 0, keys: new Map() };
+	const currentWorkKeys: CurrentWorkKeyState = { sessionId: null, next: 0, keys: new Map() };
 	const unsubscribe = options.events.on(SUBAGENT_RPC_REQUEST_EVENT, async (raw) => {
 		let request: SubagentRpcRequestEnvelope | undefined;
 		try {
 			request = parseRequest(raw);
-			const data = await handleRequest(request, options, fleetKeys);
+			const data = await handleRequest(request, options, fleetKeys, currentWorkKeys);
 			options.events.emit(subagentRpcReplyEvent(request.requestId), {
 				version: SUBAGENT_RPC_PROTOCOL_VERSION,
 				requestId: request.requestId,

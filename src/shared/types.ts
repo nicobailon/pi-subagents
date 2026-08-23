@@ -1656,6 +1656,10 @@ export interface ForegroundResumeChild {
 
 export interface ForegroundResumeRun {
 	runId: string;
+	/** Workflow shell that owned this run; retained so public projections can exclude it after restart. */
+	parentWorkflowRunId?: string;
+	/** Stable workflow lane key retained with terminal history. */
+	workflowKey?: string;
 	mode: SubagentRunMode;
 	cwd: string;
 	/** Originating parent session. Detached exits can outlive the active session. */

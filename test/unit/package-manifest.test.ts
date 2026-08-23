@@ -115,7 +115,11 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./pi-args": "./src/api/pi-args.ts",
 		"./shared-types": "./src/api/shared-types.ts",
 		"./project-panes": "./src/api/project-panes.ts",
+		"./current-work": "./src/api/current-work.ts",
 	});
+	const currentWork = await import("pi-subagents/current-work");
+	assert.equal(currentWork.CURRENT_WORK_PROJECTION_KIND, "subagents.current-work");
+	assert.equal(currentWork.CURRENT_WORK_PROJECTION_VERSION, 1);
 	const backgroundWork = await import("pi-subagents/background-work");
 	assert.equal(backgroundWork.BACKGROUND_WORK_PROTOCOL_VERSION, 1);
 	assert.equal(backgroundWork.BACKGROUND_WORK_REGISTRY_KEY, "pi-subagents.background-work.v1");

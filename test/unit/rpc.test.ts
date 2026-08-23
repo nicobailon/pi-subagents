@@ -110,6 +110,10 @@ describe("subagent extension RPC bridge", () => {
 			{ version: 1 },
 		);
 		assert.deepEqual(
+			(reply as { data: { capabilities?: { currentWork?: unknown } } }).data.capabilities?.currentWork,
+			{ kind: "subagents.current-work", version: 1 },
+		);
+		assert.deepEqual(
 			(reply as { data: { capabilities?: { asyncStatusSnapshot?: unknown } } }).data.capabilities?.asyncStatusSnapshot,
 			{ kind: "pi-subagents.async-status-snapshot", version: 1 },
 		);
@@ -145,9 +149,13 @@ describe("subagent extension RPC bridge", () => {
 	it("delegates status through the existing executor action", async () => {
 		const events = new FakeEvents();
 		let executedParams: unknown;
+		const state = { currentSessionId: "/sessions/parent.jsonl", foregroundControls: new Map(), asyncJobs: new Map([[
+			"private-run", { asyncId: "private-run", sessionId: "/sessions/parent.jsonl", mode: "single", status: "running", startedAt: 1, agents: ["worker"] },
+		]]) } as any;
 		const bridge = registerSubagentRpcBridge({
 			events,
 			getContext: () => ctx(),
+			state,
 			execute: async (_id, params) => {
 				executedParams = params;
 				return { content: [{ type: "text", text: "Run: abc123" }], details: { mode: "management", results: [] } } as any;
@@ -160,8 +168,13 @@ describe("subagent extension RPC bridge", () => {
 		assert.deepEqual(executedParams, { action: "status", id: "abc123" });
 		assert.equal((reply as { data: { text?: string } }).data.text, "Run: abc123");
 		assert.deepEqual((reply as { data: { fleet?: unknown } }).data.fleet, {
-			version: 1, entries: [], totalActive: 0, topLevelAsyncCapacity: { used: 0, limit: 0 }, omitted: 0,
+			version: 1, entries: [{ key: "fleet-1", agent: "worker", startedAt: 1, tokens: { input: 0, output: 0, total: 0 } }], totalActive: 1, topLevelAsyncCapacity: { used: 0, limit: 0 }, omitted: 0,
 		});
+		const currentWork = (reply as any).data.currentWork;
+		assert.equal(currentWork.kind, "subagents.current-work");
+		assert.equal(currentWork.roots.length, 1);
+		assert.equal(currentWork.roots[0].agent, "worker");
+		assert.equal(JSON.stringify(currentWork).includes("private-run"), false);
 
 		bridge.dispose();
 	});

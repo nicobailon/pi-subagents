@@ -18,7 +18,8 @@
     "./intercom-bridge": "./src/api/intercom-bridge.ts",
     "./pi-args": "./src/api/pi-args.ts",
     "./shared-types": "./src/api/shared-types.ts",
-    "./project-panes": "./src/api/project-panes.ts"
+    "./project-panes": "./src/api/project-panes.ts",
+    "./current-work": "./src/api/current-work.ts"
   },
   "repository": {
     "type": "git",

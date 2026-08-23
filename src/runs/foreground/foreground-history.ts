@@ -66,6 +66,8 @@ function compactRun(run: ForegroundResumeRun): ForegroundResumeRun | undefined {
 	if (run.children.length === 0 || !run.children.every((child) => isRestorableForegroundStatus(child.status))) return undefined;
 	return {
 		runId: run.runId,
+		...(run.parentWorkflowRunId ? { parentWorkflowRunId: run.parentWorkflowRunId } : {}),
+		...(run.workflowKey ? { workflowKey: run.workflowKey } : {}),
 		mode: run.mode,
 		cwd: run.cwd,
 		sessionId: run.sessionId,
@@ -92,6 +94,8 @@ function isRestorableRun(value: unknown): value is ForegroundResumeRun {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
 	const run = value as Partial<ForegroundResumeRun>;
 	return typeof run.runId === "string" && Boolean(run.runId)
+		&& (run.parentWorkflowRunId === undefined || typeof run.parentWorkflowRunId === "string")
+		&& (run.workflowKey === undefined || typeof run.workflowKey === "string")
 		&& (run.mode === "single" || run.mode === "parallel" || run.mode === "chain")
 		&& typeof run.cwd === "string" && Boolean(run.cwd)
 		&& typeof run.sessionId === "string" && Boolean(run.sessionId)
