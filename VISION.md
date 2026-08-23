@@ -31,8 +31,14 @@ When behavior cannot be proven, the system fails closed instead of reporting opt
 
 Existing primitives come first.
 A new mode, runner, or abstraction is justified only when current primitives cannot honestly express the needed behavior.
-Performance and token cost are first-class product constraints.
-A feature that slows status, common workflows, or orchestration hot paths needs proof that the cost is worth it.
+
+## Performance is a product constraint
+
+Delegation must stay fast enough that one parent session can keep several children moving without the operator waiting on the tool.
+Status, progress, watchers, TUI refresh, filesystem scans, and orchestration setup are hot paths.
+Token cost is part of the same constraint: extra context, extra children, and extra layers have to earn their keep.
+A change that makes those paths slower needs proof or explicit owner approval.
+Unmeasured risk in a hot path is a reason to refuse the change.
 
 ## Background work stays visible
 
@@ -54,10 +60,12 @@ It does not own CI, merge policy, or release policy; it reports evidence into th
 It does not add integrations for niche tools without clear demand.
 It does not treat external agents as native Pi children before their capabilities are proven.
 It does not run background reviewers on every edit by default; delegation happens because the operator asked for it, directly or through their instructions.
+It does not accept a slower status loop, watcher, or common workflow just to make the machinery look richer.
 
 ## How to judge a change
 
 A change fits when it gives one operator more leverage with the same or better control, visibility, and evidence.
 A change fits when it composes from existing primitives or honestly shows why it cannot.
+A change fits when it keeps or improves speed and token cost, or proves why a cost is worth paying.
 A change does not fit when it adds hot-path cost without proof, hides running work, accepts confidence in place of evidence, widens authority beyond the operator's instructions, or grows scope toward general project management.
 When a proposal is in doubt, ask whether it makes delegation more trustworthy for the person whose name it runs under.
