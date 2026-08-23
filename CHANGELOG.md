@@ -10,7 +10,7 @@
 - Child launches fail fast with clear reasons when requested models or write tools are unavailable.
 
 ### Added
-- Add a bounded `currentWork` v1 RPC projection for SDK hosts, covering current-session direct foreground and async lifecycle, activity, timing, usage, and hierarchy while excluding workflow-owned work and private runtime data (#1404).
+- Add a bounded `currentWork` v1 RPC projection for SDK hosts, covering current-session direct foreground and async lifecycle, activity, timing, usage, and hierarchy while excluding workflow-owned work and private runtime data. Thanks to [@Tom2906](https://github.com/Tom2906) for #1405 (tracking issue #1404).
 - Add `subagents.maxThinking` to enforce a thinking ceiling across native subagent launches. Thanks to [@alex-real14](https://github.com/alex-real14) for #1397.
 - Add `subagents.defaultProvider` and per-agent `defaultProvider` overrides so bare subagent model ids can prefer a configured provider. Thanks to [@swingtempo](https://github.com/swingtempo) for #1393.
 - Add external-job follow-ups through `subagent({ action: "resume" })` for completed provider jobs that expose `followUp(input)`, with duplicate request dedupe, durable parent-job lineage (#1381), and clearer errors when a follow-up cannot start.
