@@ -29,6 +29,8 @@
   for #1377.
 - Render detached workflow supervisor handoffs as paused/waiting and include
   workflow and child run ids in completion notifications.
+- Report implementation runs blocked by missing child tools as blocked mutation
+  effects instead of no-edit completion guard failures.
 - Report helpful workflow errors when `runs.all(...)` results are read as keyed
   objects instead of ordered arrays. Thanks to [@ravshansbox](https://github.com/ravshansbox) for #1351.
 - Fail child launch attempts when the runtime lacks requested core write tools or

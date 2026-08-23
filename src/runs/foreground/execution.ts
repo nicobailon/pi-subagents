@@ -523,6 +523,7 @@ async function runSingleAttempt(
 	let observedMutationAttempt = false;
 	let structuredOutputToolInvoked = false;
 	let structuredOutputMessageStartIndex: number | undefined;
+	let toolAvailabilityError: string | undefined;
 
 	const exitCode = await new Promise<number>((resolve) => {
 		const spawnSpec = getPiSpawnCommand(args);
@@ -1304,6 +1305,7 @@ async function runSingleAttempt(
 				// JSONL artifact flush is best effort.
 			});
 			const toolDiagnosticError = readChildToolDiagnosticError(toolDiagnosticPath);
+			toolAvailabilityError = toolDiagnosticError;
 			result.runtimeAcknowledgedExtensions = readRuntimeAcknowledgedExtensions(runtimeAcknowledgedExtensionsPath);
 			cleanupTempDir(tempDir);
 			stdoutReader.end();
@@ -1499,16 +1501,18 @@ async function runSingleAttempt(
 		fullOutput = fullOutput.trim() ? `${note}\n\n${fullOutput}` : note;
 	}
 	const completionGuardEnabled = isAgentContractV1(options.agentContract) ? agent.completionGuard === true : agent.completionGuard !== false;
-	const completionGuard = result.exitCode === 0 && !result.error && completionGuardEnabled
+	const completionGuard = ((result.exitCode === 0 && !result.error) || toolAvailabilityError) && completionGuardEnabled
 		? evaluateCompletionMutationGuard({
 			agent: agent.name,
 			task: shared.originalTask ?? task,
 			messages: result.messages ?? [],
-			tools: agent.tools,
-			mcpDirectTools: agent.mcpDirectTools,
+			tools: contractTools,
+			mcpDirectTools: toolPlan.effectiveMcpTools,
+			toolAvailabilityError,
 		})
 		: undefined;
 	let completionGuardTriggered = completionGuard?.triggered === true && !observedMutationAttempt;
+	const completionGuardBlocked = completionGuard?.blocked === true;
 	// The classifier is deliberately narrow, so a read-only review task can
 	// still be misread as implementation. Arbitrate BEFORE any failure side
 	// effect is published (effects, exit code, progress, notifications,
@@ -1529,7 +1533,9 @@ async function runSingleAttempt(
 		result.effects = {
 			...(result.effects ?? {}),
 			fileMutation: {
-				status: completionGuard.expectedMutation
+				status: completionGuardBlocked
+					? "blocked"
+					: completionGuard.expectedMutation
 					? completionGuardTriggered
 						? "missing"
 						: arbiterRescued
@@ -1537,7 +1543,8 @@ async function runSingleAttempt(
 							: "observed"
 					: "not-applicable",
 				expected: completionGuard.expectedMutation,
-				attempted: completionGuard.attemptedMutation || observedMutationAttempt,
+				attempted: completionGuardBlocked ? false : completionGuard.attemptedMutation || observedMutationAttempt,
+				...(completionGuardBlocked && completionGuard.message ? { message: completionGuard.message } : {}),
 				...(completionGuardTriggered ? { message: "Subagent completed without making edits for an implementation task." } : {}),
 				...(arbiterRescued ? { resolvedBy: "llm-intent-arbiter" } : {}),
 			},

@@ -40,6 +40,7 @@ test("implementation task with no mutation triggers the completion guard", () =>
 			expectedMutation: true,
 			attemptedMutation: false,
 			triggered: true,
+			blocked: false,
 		});
 	}
 });
@@ -103,6 +104,7 @@ test("implementation challenges may complete with explicit no-change reports", (
 			expectedMutation: true,
 			attemptedMutation: false,
 			triggered: false,
+			blocked: false,
 		});
 	}
 });
@@ -204,6 +206,7 @@ test("revived implementation tasks that mention implementation challenge remain 
 			expectedMutation: true,
 			attemptedMutation: false,
 			triggered: true,
+			blocked: false,
 		}, followUp);
 	}
 });
@@ -250,6 +253,7 @@ test("declared read-only builtin tools suppress implementation-word false positi
 		expectedMutation: false,
 		attemptedMutation: false,
 		triggered: false,
+		blocked: false,
 	});
 });
 
@@ -264,6 +268,7 @@ test("hyphenated fix adjectives in review tasks do not trigger the completion gu
 		expectedMutation: false,
 		attemptedMutation: false,
 		triggered: false,
+		blocked: false,
 	});
 	assert.equal(
 		expectsImplementationMutation("worker", "Return a review with the top 2-3 must-fix items."),
@@ -284,6 +289,7 @@ test("read-only issue drafting tasks do not trigger on suggested fix wording", (
 		expectedMutation: false,
 		attemptedMutation: false,
 		triggered: false,
+		blocked: false,
 	});
 	assert.equal(expectsImplementationMutation("worker", task), false);
 	assert.equal(
@@ -319,6 +325,25 @@ test("worker with mutating-capable tools still triggers when no mutation is obse
 		expectedMutation: true,
 		attemptedMutation: false,
 		triggered: true,
+		blocked: false,
+	});
+});
+
+test("missing child tools block mutation effects instead of triggering no-edit blame", () => {
+	const result = evaluateCompletionMutationGuard({
+		agent: "worker",
+		task: "Implement the requested source fix",
+		messages: [assistantText("I cannot edit because tools are missing.")],
+		tools: ["read", "fixture_search"],
+		toolAvailabilityError: "Agent 'worker' requested unavailable child tools: fixture_search.",
+	});
+
+	assert.deepEqual(result, {
+		expectedMutation: true,
+		attemptedMutation: false,
+		triggered: false,
+		blocked: true,
+		message: "Agent 'worker' requested unavailable child tools: fixture_search.",
 	});
 });
 
@@ -373,6 +398,7 @@ test("oracle review tasks with bash available do not require mutation", () => {
 		expectedMutation: false,
 		attemptedMutation: false,
 		triggered: false,
+		blocked: false,
 	});
 });
 
@@ -606,6 +632,7 @@ test("implementation task with Cursor edit thinking does not trigger", () => {
 		expectedMutation: true,
 		attemptedMutation: true,
 		triggered: false,
+		blocked: false,
 	});
 });
 

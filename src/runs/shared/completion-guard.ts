@@ -47,12 +47,15 @@ interface CompletionMutationGuardInput {
 	messages: Message[];
 	tools?: string[];
 	mcpDirectTools?: string[];
+	toolAvailabilityError?: string;
 }
 
 interface CompletionMutationGuardResult {
 	expectedMutation: boolean;
 	attemptedMutation: boolean;
 	triggered: boolean;
+	blocked: boolean;
+	message?: string;
 }
 
 interface ReportSentence {
@@ -223,6 +226,15 @@ function reportsNoBetterChallengeChange(messages: Message[]): boolean {
 }
 
 export function evaluateCompletionMutationGuard(input: CompletionMutationGuardInput): CompletionMutationGuardResult {
+	if (input.toolAvailabilityError && expectsImplementationMutation(input.agent, input.task)) {
+		return {
+			expectedMutation: true,
+			attemptedMutation: false,
+			triggered: false,
+			blocked: true,
+			message: input.toolAvailabilityError,
+		};
+	}
 	const expectedMutation = hasMutationToolCapability(input.tools, input.mcpDirectTools)
 		? expectsImplementationMutation(input.agent, input.task)
 		: false;
@@ -233,5 +245,6 @@ export function evaluateCompletionMutationGuard(input: CompletionMutationGuardIn
 		expectedMutation,
 		attemptedMutation,
 		triggered: expectedMutation && !attemptedMutation && !noEditChallengeComplete,
+		blocked: false,
 	};
 }

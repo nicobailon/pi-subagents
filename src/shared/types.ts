@@ -342,7 +342,7 @@ export interface ReviewProjection {
 }
 
 export interface FileMutationEffect {
-	status: "not-requested" | "not-applicable" | "observed" | "missing";
+	status: "not-requested" | "not-applicable" | "observed" | "missing" | "blocked";
 	expected: boolean;
 	attempted: boolean;
 	message?: string;

@@ -1712,21 +1712,25 @@ async function runSingleStepInner(
 			? "Subagent produced no output (possible model cold-start or empty response)."
 			: undefined;
 		const completionGuardEnabled = isAgentContractV1(step.agentContract) ? step.completionGuard === true : step.completionGuard !== false;
-		const completionGuard = run.exitCode === 0 && !run.error && !toolAvailabilityError && !structuredError && !hiddenError?.hasError && !emptyOutputError && completionGuardEnabled
+		const completionToolPlan = resolvedTaskToolPlan;
+		const completionGuard = run.exitCode === 0 && !run.error && !structuredError && !hiddenError?.hasError && !emptyOutputError && completionGuardEnabled
 			? evaluateCompletionMutationGuard(omitUndefinedProperties({
 				agent: step.agent,
 				task: taskForCompletionGuard,
 				messages: run.messages,
-				tools: step.tools,
-				mcpDirectTools: step.mcpDirectTools,
+				tools: completionToolPlan ? (completionToolPlan.explicitToolAllowlist ? completionToolPlan.effectiveToolAllowlist : undefined) : step.tools,
+				mcpDirectTools: completionToolPlan?.effectiveMcpTools ?? step.mcpDirectTools,
+				toolAvailabilityError,
 			}))
 			: undefined;
 		const completionGuardTriggered = completionGuard?.triggered === true && !run.observedMutationAttempt;
+		const completionGuardBlocked = completionGuard?.blocked === true;
 		const fileMutationEffect = completionGuard
 			? {
-				status: completionGuard.expectedMutation ? completionGuardTriggered ? "missing" as const : "observed" as const : "not-applicable" as const,
+				status: completionGuardBlocked ? "blocked" as const : completionGuard.expectedMutation ? completionGuardTriggered ? "missing" as const : "observed" as const : "not-applicable" as const,
 				expected: completionGuard.expectedMutation,
-				attempted: completionGuard.attemptedMutation || run.observedMutationAttempt === true,
+				attempted: completionGuardBlocked ? false : completionGuard.attemptedMutation || run.observedMutationAttempt === true,
+				...(completionGuardBlocked && completionGuard.message ? { message: completionGuard.message } : {}),
 				...(completionGuardTriggered ? { message: "Subagent completed without making edits for an implementation task." } : {}),
 			}
 			: undefined;
