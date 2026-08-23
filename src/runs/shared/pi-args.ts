@@ -275,12 +275,7 @@ export interface PiLaunchToolPlan {
 	extensionArgs: string[];
 	disableAmbientExtensions: boolean;
 	capabilityAudit?: SubagentCapabilityAudit;
-	/**
-	 * Non-fatal footguns surfaced during plan resolution (currently: an agent
-	 * `extensions: []` override, which disables ALL ambient extensions for the
-	 * child rather than "adding nothing" — see the empty-extensions-override
-	 * warning below). Callers may log these; they never change behavior.
-	 */
+	/** Non-fatal launch warnings; they do not change behavior. */
 	warnings: string[];
 }
 
@@ -478,12 +473,7 @@ export function resolvePiLaunchToolPlan(
 		capabilityCeiling?.denyExtensions === true ||
 		input.extensions !== undefined;
 	const warnings: string[] = [];
-	// An agent override that sets `extensions: []` reads like "add nothing", but
-	// any *defined* extensions list (including an empty one) disables every
-	// ambient extension for this child — not just skips adding extras. That
-	// silently strips load-bearing ambient extensions (e.g. a model provider
-	// extension), so a provider-qualified model pin becomes unresolvable in the
-	// child with no error pointing back at the override that caused it.
+	// An explicit empty list disables ambient extensions, including model providers.
 	if (capabilityCeiling?.denyExtensions !== true && Array.isArray(input.extensions) && input.extensions.length === 0) {
 		const agentLabel = input.agentName ? ` for agent '${input.agentName}'` : "";
 		warnings.push(

@@ -1082,20 +1082,12 @@ function resolveSubagentDefaultModel(
 function applySubagentDefaultModel(agents: AgentConfig[], defaultModel: AgentModelSourceInfo | undefined, defaultProvider: string | undefined): AgentConfig[] {
 	if (!defaultModel && !defaultProvider) return agents;
 	return agents.map((agent) => {
-		if (agent.model !== undefined) {
-			if (agent.modelProvider !== undefined || !defaultProvider) return agent;
-			const next = { ...agent, modelProvider: defaultProvider };
-			const frontmatterFields = agentFrontmatterFields.get(agent);
-			if (frontmatterFields) agentFrontmatterFields.set(next, frontmatterFields);
-			return next;
-		}
-		if (!defaultModel) {
-			const next = { ...agent, ...(defaultProvider ? { modelProvider: defaultProvider } : {}) };
-			const frontmatterFields = agentFrontmatterFields.get(agent);
-			if (frontmatterFields) agentFrontmatterFields.set(next, frontmatterFields);
-			return next;
-		}
-		const next = { ...agent, model: defaultModel.model, ...(defaultProvider ? { modelProvider: defaultProvider } : {}), modelSource: defaultModel };
+		if (agent.model !== undefined && (agent.modelProvider !== undefined || !defaultProvider)) return agent;
+		const next = {
+			...agent,
+			...(agent.model === undefined && defaultModel ? { model: defaultModel.model, modelSource: defaultModel } : {}),
+			...(defaultProvider ? { modelProvider: defaultProvider } : {}),
+		};
 		const frontmatterFields = agentFrontmatterFields.get(agent);
 		if (frontmatterFields) agentFrontmatterFields.set(next, frontmatterFields);
 		return next;
@@ -1359,17 +1351,7 @@ function applyCustomAgentOverride(
 		fill("acceptanceRole", ["acceptanceRole"], override.acceptanceRole === false ? undefined : override.acceptanceRole);
 	}
 	if (override.disabled !== undefined) {
-		// Unconditional, matching applyBuiltinOverride: custom agents have no
-		// frontmatter concept of `disabled` to protect (unlike model/thinking/
-		// etc., which use `fill()` + agentHasFrontmatterField to defer to the
-		// agent's own file). A guard here previously read `agent.disabled ===
-		// undefined`, which was a no-op before user+project layering existed
-		// (this function only ever ran once, against the pristine base agent,
-		// whose `.disabled` is always undefined for custom agents) but became a
-		// real bug once a user-scope override could run first: the guard then
-		// silently blocked a later project-scope override from ever changing
-		// `disabled`, breaking this PR's own "project wins" precedence for this
-		// one field.
+		// Custom agent files cannot set `disabled`, so project overrides replace user overrides.
 		mutable().disabled = override.disabled;
 		anyFilled = true;
 	}
@@ -1411,13 +1393,7 @@ function applyCustomAgentOverrides(
 	userSettingsPath: string,
 	projectSettingsPath: string | null,
 ): AgentConfig[] {
-	// Both scopes are applied, user first then project, so a project override that
-	// only sets a subset of fields (e.g. just `extensions`) layers on top of the
-	// user's override instead of silently discarding it (#1341 / issue writeup:
-	// "agentOverrides project override drops user-only fields for custom agents").
-	// Per-field precedence still favors project over user: applyCustomAgentOverride
-	// only fills fields present in the override it's given, and project is applied
-	// last, so any field set at both scopes ends up with the project's value.
+	// Apply user then project so project fields win without dropping user-only fields.
 	return agents.map((agent) => {
 		const userOverride = userSettings.overrides[agent.name];
 		const withUserOverride = userOverride

@@ -17,7 +17,7 @@ function stableJson(value: unknown): string {
 	return JSON.stringify(value);
 }
 
-function sha256(value: unknown): string {
+export function stableJsonDigest(value: unknown): string {
 	return createHash("sha256").update(stableJson(value)).digest("hex");
 }
 
@@ -71,7 +71,7 @@ export function projectAgentDefinition(agent: AgentConfig): Record<string, unkno
 }
 
 export function agentDefinitionDigest(agent: AgentConfig): string {
-	return sha256(projectAgentDefinition(agent));
+	return stableJsonDigest(projectAgentDefinition(agent));
 }
 
 export interface LaunchBindingInput {
@@ -100,12 +100,12 @@ export function projectLaunchBinding(input: LaunchBindingInput): Record<string, 
 	return {
 		version: LAUNCH_BINDING_PROJECTION_VERSION,
 		definitionDigest: input.definitionDigest,
-		taskDigest: input.task === undefined ? undefined : sha256(input.task),
+		taskDigest: input.task === undefined ? undefined : stableJsonDigest(input.task),
 		// The ordered candidate set already contains each attempted model; keeping only
 		// this set makes retries correlate to the same preflight binding.
 		modelCandidates: input.modelCandidates,
 		thinking: input.thinking,
-		systemPromptDigest: input.systemPrompt === undefined || input.systemPrompt === null ? undefined : sha256(input.systemPrompt),
+		systemPromptDigest: input.systemPrompt === undefined || input.systemPrompt === null ? undefined : stableJsonDigest(input.systemPrompt),
 		systemPromptMode: input.systemPromptMode,
 		inheritProjectContext: input.inheritProjectContext,
 		inheritSkills: input.inheritSkills,
@@ -121,5 +121,5 @@ export function projectLaunchBinding(input: LaunchBindingInput): Record<string, 
 }
 
 export function launchBindingDigest(input: LaunchBindingInput): string {
-	return sha256(projectLaunchBinding(input));
+	return stableJsonDigest(projectLaunchBinding(input));
 }

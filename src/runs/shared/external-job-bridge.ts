@@ -78,32 +78,32 @@ function isDispatchOperation(operation: ExternalJobOperation): boolean {
 	return operation === "start" || operation === "follow-up";
 }
 
-function startClaimDir(asyncDir: string, id: string): string {
+function dispatchClaimDir(asyncDir: string, id: string): string {
 	return path.join(requestDir(asyncDir), `${id}.claim`);
 }
 
-function startClaimTempDir(asyncDir: string, id: string): string {
+function dispatchClaimTempDir(asyncDir: string, id: string): string {
 	return path.join(requestDir(asyncDir), `${id}.claim.tmp-${randomUUID()}`);
 }
 
-function startClaimCompletedPath(claimDir: string): string {
+function dispatchClaimCompletedPath(claimDir: string): string {
 	return path.join(claimDir, "completed.json");
 }
 
-function startClaimHandlePath(claimDir: string): string {
+function dispatchClaimHandlePath(claimDir: string): string {
 	return path.join(claimDir, "handle.json");
 }
 
 function completedDispatchClaimExists(asyncDir: string, id: string): boolean {
-	return fs.existsSync(startClaimCompletedPath(startClaimDir(asyncDir, id)));
+	return fs.existsSync(dispatchClaimCompletedPath(dispatchClaimDir(asyncDir, id)));
 }
 
 function cancelDispatchRequest(asyncDir: string, request: ExternalJobBridgeRequest): boolean {
-	const claimDir = startClaimDir(asyncDir, request.id);
-	const tempClaimDir = startClaimTempDir(asyncDir, request.id);
+	const claimDir = dispatchClaimDir(asyncDir, request.id);
+	const tempClaimDir = dispatchClaimTempDir(asyncDir, request.id);
 	try {
 		fs.mkdirSync(tempClaimDir);
-		writeAtomicJson(startClaimCompletedPath(tempClaimDir), { completedAt: Date.now() });
+		writeAtomicJson(dispatchClaimCompletedPath(tempClaimDir), { completedAt: Date.now() });
 		fs.renameSync(tempClaimDir, claimDir);
 	} catch (error) {
 		fs.rmSync(tempClaimDir, { recursive: true, force: true });
@@ -242,7 +242,7 @@ async function executeBridgeRequest(request: ExternalJobBridgeRequest, claimDir?
 		const result = request.operation === "result"
 			? validateExternalJobResult(provider.name, raw, "External-job bridge result")
 			: validateExternalJobHandle(provider.name, raw, "External-job bridge handle");
-		if (isDispatchOperation(request.operation) && claimDir) writeAtomicJson(startClaimHandlePath(claimDir), result);
+		if (isDispatchOperation(request.operation) && claimDir) writeAtomicJson(dispatchClaimHandlePath(claimDir), result);
 		return { id: request.id, ok: true, operation: request.operation, provider: request.provider, result, completedAt: Date.now() };
 	} catch (error) {
 		const details = bridgeError(error);
@@ -257,11 +257,11 @@ async function executeBridgeRequest(request: ExternalJobBridgeRequest, claimDir?
 	}
 }
 
-function claimStartRequest(asyncDir: string, filePath: string, request: ExternalJobBridgeRequest): { request: ExternalJobBridgeRequest; filePath: string } | undefined {
+function claimDispatchRequest(asyncDir: string, filePath: string, request: ExternalJobBridgeRequest): { request: ExternalJobBridgeRequest; filePath: string } | undefined {
 	const owner = currentClaimOwner();
 	const claimed: ExternalJobBridgeRequest = { ...request, claimedAt: owner.claimedAt };
-	const claimDir = startClaimDir(asyncDir, request.id);
-	const tempClaimDir = startClaimTempDir(asyncDir, request.id);
+	const claimDir = dispatchClaimDir(asyncDir, request.id);
+	const tempClaimDir = dispatchClaimTempDir(asyncDir, request.id);
 	try {
 		fs.mkdirSync(tempClaimDir);
 		writeAtomicJson(path.join(tempClaimDir, "owner.json"), owner);
@@ -303,7 +303,7 @@ function readClaimOwner(claimDir: string): ExternalJobClaimOwner | undefined {
 
 function readClaimHandle(provider: string, claimDir: string): ExternalJobHandle | undefined {
 	try {
-		return validateExternalJobHandle(provider, readJson(startClaimHandlePath(claimDir)), "External-job bridge recovered start handle");
+		return validateExternalJobHandle(provider, readJson(dispatchClaimHandlePath(claimDir)), "External-job bridge recovered dispatch handle");
 	} catch {
 		return undefined;
 	}
@@ -313,7 +313,7 @@ export function serviceExternalJobBridgeRequests(asyncDir: string): void {
 	let files: string[];
 	try {
 		files = fs.readdirSync(requestDir(asyncDir), { withFileTypes: true })
-			.filter((entry) => (entry.isFile() && entry.name.endsWith(".json") && !completedDispatchClaimExists(asyncDir, entry.name.replace(/\.json$/, ""))) || (entry.isDirectory() && entry.name.endsWith(".claim") && !fs.existsSync(startClaimCompletedPath(path.join(requestDir(asyncDir), entry.name)))))
+			.filter((entry) => (entry.isFile() && entry.name.endsWith(".json") && !completedDispatchClaimExists(asyncDir, entry.name.replace(/\.json$/, ""))) || (entry.isDirectory() && entry.name.endsWith(".claim") && !fs.existsSync(dispatchClaimCompletedPath(path.join(requestDir(asyncDir), entry.name)))))
 			.map((entry) => entry.name)
 			.slice(0, MAX_REQUESTS_PER_SWEEP);
 	} catch (error) {
@@ -329,7 +329,7 @@ export function serviceExternalJobBridgeRequests(asyncDir: string): void {
 export function serviceExternalJobBridgeRequestFile(asyncDir: string, file: string): void {
 	fs.mkdirSync(responseDir(asyncDir), { recursive: true });
 	if (file.endsWith(".claim")) {
-		serviceExternalJobStartClaim(asyncDir, file);
+		serviceExternalJobDispatchClaim(asyncDir, file);
 		return;
 	}
 	const filePath = path.join(requestDir(asyncDir), file);
@@ -357,14 +357,14 @@ export function serviceExternalJobBridgeRequestFile(asyncDir: string, file: stri
 	}
 	if (inFlight.has(request.id) || fs.existsSync(responsePath(asyncDir, request.id))) return;
 	if (isDispatchOperation(request.operation) && request.claimedAt !== undefined) return;
-	const claimed = isDispatchOperation(request.operation) ? claimStartRequest(asyncDir, filePath, request) : { request, filePath };
+	const claimed = isDispatchOperation(request.operation) ? claimDispatchRequest(asyncDir, filePath, request) : { request, filePath };
 	if (!claimed) return;
 	const claimedRequest = claimed.request;
 	inFlight.add(claimedRequest.id);
 	void executeBridgeRequest(claimedRequest, isDispatchOperation(claimedRequest.operation) ? claimed.filePath : undefined).then((response) => {
 		writeAtomicJson(responsePath(asyncDir, claimedRequest.id), response);
 		if (isDispatchOperation(claimedRequest.operation)) {
-			writeAtomicJson(startClaimCompletedPath(claimed.filePath), { completedAt: Date.now() });
+			writeAtomicJson(dispatchClaimCompletedPath(claimed.filePath), { completedAt: Date.now() });
 		} else {
 			fs.rmSync(claimed.filePath, { recursive: true, force: true });
 		}
@@ -378,15 +378,15 @@ export function serviceExternalJobBridgeRequestFile(asyncDir: string, file: stri
 			message: error instanceof Error ? error.message : String(error),
 			completedAt: Date.now(),
 		} satisfies ExternalJobBridgeResponse);
-		if (isDispatchOperation(claimedRequest.operation)) writeAtomicJson(startClaimCompletedPath(claimed.filePath), { completedAt: Date.now() });
+		if (isDispatchOperation(claimedRequest.operation)) writeAtomicJson(dispatchClaimCompletedPath(claimed.filePath), { completedAt: Date.now() });
 	}).finally(() => {
 		inFlight.delete(claimedRequest.id);
 	});
 }
 
-function serviceExternalJobStartClaim(asyncDir: string, file: string): void {
+function serviceExternalJobDispatchClaim(asyncDir: string, file: string): void {
 	const claimDir = path.join(requestDir(asyncDir), file);
-	if (fs.existsSync(startClaimCompletedPath(claimDir))) return;
+	if (fs.existsSync(dispatchClaimCompletedPath(claimDir))) return;
 	const owner = readClaimOwner(claimDir);
 	if (!owner && fs.existsSync(requestPath(asyncDir, file.replace(/\.claim$/, ""))) && !fs.existsSync(responsePath(asyncDir, file.replace(/\.claim$/, "")))) {
 		fs.rmSync(claimDir, { recursive: true, force: true });
@@ -410,7 +410,7 @@ function serviceExternalJobStartClaim(asyncDir: string, file: string): void {
 			result: handle,
 			completedAt: Date.now(),
 		} satisfies ExternalJobBridgeResponse);
-		writeAtomicJson(startClaimCompletedPath(claimDir), { completedAt: Date.now() });
+		writeAtomicJson(dispatchClaimCompletedPath(claimDir), { completedAt: Date.now() });
 		fs.rmSync(requestPath(asyncDir, request.id), { force: true });
 		return;
 	}

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +21,7 @@ import type { ResolvedMcpDirectToolSelection } from "../runs/shared/mcp-direct-t
 import { resolveStepBehavior } from "../shared/settings.ts";
 import { canPreferForkFromSnapshot, resolveSubagentLaunchContext } from "../shared/fork-context.ts";
 import { loadConfig } from "../extension/config.ts";
-import { agentDefinitionDigest, AGENT_DEFINITION_PROJECTION_VERSION, launchBindingDigest } from "../shared/launch-contract.ts";
+import { agentDefinitionDigest, AGENT_DEFINITION_PROJECTION_VERSION, launchBindingDigest, stableJsonDigest } from "../shared/launch-contract.ts";
 import { DIRS, TEMP_ROOT_DIR } from "../shared/types.ts";
 import { processTerminalCandidatePath, processTerminalPath } from "../runs/background/process-terminal.ts";
 import { resultFilePath } from "../runs/background/result-files.ts";
@@ -181,20 +180,8 @@ function packageVersion(): string {
 	return parsed.version;
 }
 
-function stableJson(value: unknown): string {
-	if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-	if (value && typeof value === "object") {
-		return `{${Object.entries(value as Record<string, unknown>)
-			.filter(([, entry]) => entry !== undefined)
-			.sort(([a], [b]) => a.localeCompare(b))
-			.map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
-			.join(",")}}`;
-	}
-	return JSON.stringify(value);
-}
-
 function digestContract(contract: Omit<SubagentLaunchContract, "digest">): string {
-	return createHash("sha256").update(stableJson(contract)).digest("hex");
+	return stableJsonDigest(contract);
 }
 
 function normalizeAvailableModels(models: SubagentLaunchContractInput["availableModels"]): AvailableModelInfo[] {
@@ -447,7 +434,6 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			...(model ? { model } : {}),
 			modelCandidates,
 			...(resolveEffectiveThinking(model, effectiveThinkingConfig) ? { thinking: resolveEffectiveThinking(model, effectiveThinkingConfig) } : {}),
-			...(thinkingCeiling ? { thinkingCeiling } : {}),
 			systemPrompt: effectiveSystemPrompt,
 			systemPromptMode: agent.systemPromptMode,
 			inheritProjectContext: agent.inheritProjectContext,

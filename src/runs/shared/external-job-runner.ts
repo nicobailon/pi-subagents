@@ -154,6 +154,25 @@ function readExistingExternalJob(asyncDir: string, stepIndex: number): ExternalJ
 	return parseExternalJobStatus(step.externalJob, statusPath);
 }
 
+function externalJobLineage(followUp: ExternalJobFollowUpDescriptor | undefined, previous: ExternalJobStatus | undefined) {
+	return {
+		operation: followUp ? "follow-up" as const : previous?.operation,
+		...(followUp ? {
+			sourceRunId: followUp.sourceRunId,
+			sourceStepIndex: followUp.sourceStepIndex,
+			parentProviderJobId: followUp.parentProviderJobId,
+			requestId: followUp.requestId,
+			requestDigest: followUp.requestDigest,
+		} : {
+			...(previous?.sourceRunId ? { sourceRunId: previous.sourceRunId } : {}),
+			...(previous?.sourceStepIndex !== undefined ? { sourceStepIndex: previous.sourceStepIndex } : {}),
+			...(previous?.parentProviderJobId ? { parentProviderJobId: previous.parentProviderJobId } : {}),
+			...(previous?.requestId ? { requestId: previous.requestId } : {}),
+			...(previous?.requestDigest ? { requestDigest: previous.requestDigest } : {}),
+		}),
+	};
+}
+
 function statusFromHandle(input: {
 	provider: string;
 	promptDigest: string;
@@ -168,20 +187,7 @@ function statusFromHandle(input: {
 		provider: input.provider,
 		providerJobId: input.handle.providerJobId,
 		promptDigest: input.promptDigest,
-		operation: input.followUp ? "follow-up" : input.previous?.operation,
-		...(input.followUp ? {
-			sourceRunId: input.followUp.sourceRunId,
-			sourceStepIndex: input.followUp.sourceStepIndex,
-			parentProviderJobId: input.followUp.parentProviderJobId,
-			requestId: input.followUp.requestId,
-			requestDigest: input.followUp.requestDigest,
-		} : {
-			...(input.previous?.sourceRunId ? { sourceRunId: input.previous.sourceRunId } : {}),
-			...(input.previous?.sourceStepIndex !== undefined ? { sourceStepIndex: input.previous.sourceStepIndex } : {}),
-			...(input.previous?.parentProviderJobId ? { parentProviderJobId: input.previous.parentProviderJobId } : {}),
-			...(input.previous?.requestId ? { requestId: input.previous.requestId } : {}),
-			...(input.previous?.requestDigest ? { requestDigest: input.previous.requestDigest } : {}),
-		}),
+		...externalJobLineage(input.followUp, input.previous),
 		options: input.options,
 		handleUrl: input.handle.handleUrl ?? input.previous?.handleUrl,
 		conversationUrl: input.handle.conversationUrl ?? input.previous?.conversationUrl,
@@ -209,20 +215,7 @@ function failureStatus(input: {
 		provider: input.provider,
 		providerJobId: input.previous?.providerJobId,
 		promptDigest: input.promptDigest,
-		operation: input.followUp ? "follow-up" : input.previous?.operation,
-		...(input.followUp ? {
-			sourceRunId: input.followUp.sourceRunId,
-			sourceStepIndex: input.followUp.sourceStepIndex,
-			parentProviderJobId: input.followUp.parentProviderJobId,
-			requestId: input.followUp.requestId,
-			requestDigest: input.followUp.requestDigest,
-		} : {
-			...(input.previous?.sourceRunId ? { sourceRunId: input.previous.sourceRunId } : {}),
-			...(input.previous?.sourceStepIndex !== undefined ? { sourceStepIndex: input.previous.sourceStepIndex } : {}),
-			...(input.previous?.parentProviderJobId ? { parentProviderJobId: input.previous.parentProviderJobId } : {}),
-			...(input.previous?.requestId ? { requestId: input.previous.requestId } : {}),
-			...(input.previous?.requestDigest ? { requestDigest: input.previous.requestDigest } : {}),
-		}),
+		...externalJobLineage(input.followUp, input.previous),
 		options: input.options,
 		handleUrl: input.previous?.handleUrl,
 		conversationUrl: input.previous?.conversationUrl,

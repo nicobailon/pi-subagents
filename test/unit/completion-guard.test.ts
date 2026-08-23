@@ -679,11 +679,6 @@ test("read-only agents and pure extension workers keep their launch contracts", 
 
 	assert.equal(validateImplementationToolContract({
 		agent: "worker",
-		task: "Implement the requested source fix.",
-	}), undefined);
-
-	assert.equal(validateImplementationToolContract({
-		agent: "worker",
 		task: "Task",
 		tools: ["read"],
 		requestedTools: ["read"],

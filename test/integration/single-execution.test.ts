@@ -2269,9 +2269,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 						{ key: "length", agent: "echo", task: "Length task" },
 						{ key: "map", agent: "echo", task: "Map task" }
 					]);
+					const [, second] = children;
 					return {
 						length: children.length,
 						first: children[0].output,
+						second: second.output,
 						outputs: children.map((child) => child.output),
 						children
 					};
@@ -2284,9 +2286,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
 		assert.equal(mockPi.callCount(), 2);
-		const value = result.details.workflow?.value as { length?: number; first?: string; outputs?: string[]; children?: Array<{ key?: string; ok?: boolean; output?: string }> } | undefined;
+		const value = result.details.workflow?.value as { length?: number; first?: string; second?: string; outputs?: string[]; children?: Array<{ key?: string; ok?: boolean; output?: string }> } | undefined;
 		assert.equal(value?.length, 2);
 		assert.equal(value?.first, "length child completed");
+		assert.equal(value?.second, "map child completed");
 		assert.deepEqual(value?.outputs, ["length child completed", "map child completed"]);
 		assert.deepEqual(value?.children?.map(({ key, ok, output }) => ({ key, ok, output })), [
 			{ key: "length", ok: true, output: "length child completed" },
@@ -2324,39 +2327,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			{ key: "second", output: "second child completed" },
 		]);
 		assert.deepEqual(result.details.workflow?.value, ["first child completed", "second child completed"]);
-	});
-
-	it("keeps normal runs.all array usage working", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ output: "first child completed", matchArgIncludes: "First task" });
-		mockPi.onCall({ output: "second child completed", matchArgIncludes: "Second task" });
-		const executor = makeExecutor([makeAgent("echo")]);
-
-		const result = await executor.execute(
-			"scripted-workflow-runs-all-array-result-access",
-			{
-				async: false,
-				workflowScript: `
-					const children = await runs.all([
-						{ key: "first", agent: "echo", task: "First task" },
-						{ key: "second", agent: "echo", task: "Second task" }
-					]);
-					const [first, second] = children;
-					return { length: children.length, first: children[0].output, second: second.output, outputs: children.map((child) => child.output) };
-				`,
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
-		assert.equal(mockPi.callCount(), 2);
-		assert.deepEqual(result.details.workflow?.value, {
-			length: 2,
-			first: "first child completed",
-			second: "second child completed",
-			outputs: ["first child completed", "second child completed"],
-		});
 	});
 
 	it("rejects an over-limit runs.all batch before launching any workflow child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

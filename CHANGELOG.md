@@ -65,8 +65,8 @@
   `surf-oracle`, with text JSON reports instead of `outputSchema`.
 
 ### Changed
-- Simplify unreleased Herdr snapshot and thinking-ceiling internals by removing
-  unused helpers and exports.
+- Simplify launch-contract and external-job internals, and remove unused Herdr
+  snapshot and thinking-ceiling helpers while preserving released behavior.
 
 ## [0.54.0] - 2026-08-21
 
