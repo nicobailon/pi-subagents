@@ -1448,7 +1448,9 @@ async function runSingleAttempt(
 				result.structuredOutputFailed = true;
 			} else {
 				result.structuredOutput = structured.value;
-				(result as SingleResult & { structuredAcceptanceReport?: unknown }).structuredAcceptanceReport = readStructuredOutputAcceptanceReport(options.structuredOutput).value;
+				const acceptanceReport = readStructuredOutputAcceptanceReport(options.structuredOutput);
+				(result as SingleResult & { structuredAcceptanceReport?: unknown; structuredAcceptanceReportError?: string }).structuredAcceptanceReport = acceptanceReport.value;
+				(result as SingleResult & { structuredAcceptanceReport?: unknown; structuredAcceptanceReportError?: string }).structuredAcceptanceReportError = acceptanceReport.error;
 				validatedStructuredOutput = true;
 			}
 		}
@@ -2046,7 +2048,8 @@ async function runSyncCompletionInner(
 			result.acceptance = await evaluateAcceptance({
 				acceptance: effectiveAcceptance,
 				output: acceptanceOutputByResult.get(result) ?? result.finalOutput ?? "",
-				report: (result as SingleResult & { structuredAcceptanceReport?: import("../../shared/types.ts").AcceptanceReport }).structuredAcceptanceReport,
+				report: (result as SingleResult & { structuredAcceptanceReport?: import("../../shared/types.ts").AcceptanceReport; structuredAcceptanceReportError?: string }).structuredAcceptanceReport,
+				reportError: (result as SingleResult & { structuredAcceptanceReport?: import("../../shared/types.ts").AcceptanceReport; structuredAcceptanceReportError?: string }).structuredAcceptanceReportError,
 				fileOutput: childWrittenOutput !== undefined && options.outputPath
 					? { content: childWrittenOutput, path: options.outputPath, authoritative: options.outputMode === "file-only" }
 					: undefined,

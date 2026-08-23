@@ -31,6 +31,7 @@ interface MockPiResponse {
 	/** Writes the structured-output capture file without emitting a structured_output tool event. */
 	structuredOutputCapture?: unknown;
 	structuredOutputAcceptanceReport?: unknown;
+	structuredOutputAcceptanceReportRaw?: string;
 	runtimeAcknowledgedExtensions?: unknown;
 }
 

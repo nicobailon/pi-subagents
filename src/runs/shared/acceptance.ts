@@ -1274,6 +1274,7 @@ export async function evaluateAcceptance(input: {
 	 */
 	fileOutput?: { content: string; path: string; authoritative?: boolean };
 	report?: AcceptanceReport;
+	reportError?: string;
 	reviewResult?: AcceptanceReviewResult;
 	signal?: AbortSignal;
 	abortMessage?: string;
@@ -1295,7 +1296,9 @@ export async function evaluateAcceptance(input: {
 	};
 	if (acceptance.level === "none") return ledger;
 
-	const parsed = input.report
+	const parsed = input.reportError
+		? { error: input.reportError }
+		: input.report
 		? (() => {
 			const validation = validateAcceptanceReport(input.report);
 			return validation.report

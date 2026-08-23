@@ -194,6 +194,10 @@ function writeStructuredOutputCapture(response) {
 		const acceptancePath = process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE;
 		if (acceptancePath) fs.writeFileSync(acceptancePath, JSON.stringify(response.structuredOutputAcceptanceReport), "utf-8");
 	}
+	if (Object.prototype.hasOwnProperty.call(response, "structuredOutputAcceptanceReportRaw")) {
+		const acceptancePath = process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE;
+		if (acceptancePath) fs.writeFileSync(acceptancePath, response.structuredOutputAcceptanceReportRaw, "utf-8");
+	}
 }
 
 function writeRuntimeAcknowledgedExtensions(response) {

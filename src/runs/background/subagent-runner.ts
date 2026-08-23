@@ -1501,6 +1501,7 @@ async function runSingleStepInner(
 	let finalResult: RunPiStreamingResult | undefined;
 	let finalOutputSnapshot: SingleOutputSnapshot | undefined;
 	let structuredAcceptanceReport: unknown;
+	let structuredAcceptanceReportError: string | undefined;
 	let completionGuardTriggeredFinal = false;
 	let turnBudget = ctx.turnBudget ? initialTurnBudgetState(ctx.turnBudget) : undefined;
 	let toolBudget = step.toolBudget ? initialToolBudgetState(step.toolBudget) : undefined;
@@ -1704,7 +1705,9 @@ async function runSingleStepInner(
 				if (structured.error) structuredError = structured.error;
 				else {
 					structuredOutput = structured.value;
-					structuredAcceptanceReport = readStructuredOutputAcceptanceReport(effectiveStructuredOutput).value;
+					const acceptanceReport = readStructuredOutputAcceptanceReport(effectiveStructuredOutput);
+					structuredAcceptanceReport = acceptanceReport.value;
+					structuredAcceptanceReportError = acceptanceReport.error;
 					validatedStructuredOutput = true;
 				}
 			}
@@ -1907,6 +1910,7 @@ async function runSingleStepInner(
 			acceptance: step.effectiveAcceptance,
 			output: outputForAcceptance,
 			report: structuredAcceptanceReport as import("../../shared/types.ts").AcceptanceReport | undefined,
+			reportError: structuredAcceptanceReportError,
 			fileOutput: childWrittenOutput !== undefined && step.outputPath
 				? { content: childWrittenOutput, path: step.outputPath, authoritative: step.outputMode === "file-only" }
 				: undefined,

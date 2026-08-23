@@ -4056,6 +4056,45 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /acceptance/i);
 	});
 
+	it("surfaces corrupt outputSchema acceptance sidecar read errors", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({
+			stdoutRaw: [
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+			structuredOutputCapture: { ok: true },
+			structuredOutputAcceptanceReportRaw: "{not-json",
+		});
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"workflow-schema-acceptance-corrupt-sidecar",
+			{
+				async: false,
+				acceptance: { level: "checked", criteria: [{ id: "proof", must: "Return required proof" }] },
+				workflowScript: `
+					const child = await runs.run("schema", {
+						agent: "echo",
+						task: "Return structured data",
+						outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }
+					});
+					if (!child.ok) throw new Error(child.error);
+					return child;
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const child = result.details.results[0];
+		assert.equal(result.isError, true);
+		assert.equal(child?.structuredOutput?.ok, true);
+		assert.match(child?.error ?? "", /Failed to read structured output acceptance report/);
+		assert.doesNotMatch(child?.error ?? "", /Structured acceptance report not found/);
+	});
+
 	it("accepts recovered tool errors before valid structured output but rejects later errors", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const recoveredError = { type: "tool_result_end", message: { role: "toolResult", toolName: "read", isError: true, content: [{ type: "text", text: "EISDIR" }] } };
 		const structuredEvents = [
