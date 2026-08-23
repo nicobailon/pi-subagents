@@ -1,4 +1,4 @@
-import type { ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
+import { splitKnownThinkingSuffix, type ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
 import type { Usage } from "../../shared/types.ts";
 import { filterFallbackCandidates, parseModelKey, recordModelFailure } from "./model-exclusions.ts";
 import { checkModelScope, type ModelScopeCheckRule, type ModelScopeViolation, type ModelSource } from "./model-scope.ts";
@@ -14,12 +14,7 @@ interface ModelAttemptSummary {
 }
 
 export function splitThinkingSuffix(model: string): { baseModel: string; thinkingSuffix: string } {
-	const colonIdx = model.lastIndexOf(":");
-	if (colonIdx === -1) return { baseModel: model, thinkingSuffix: "" };
-	return {
-		baseModel: model.substring(0, colonIdx),
-		thinkingSuffix: model.substring(colonIdx),
-	};
+	return splitKnownThinkingSuffix(model);
 }
 
 export function formatSubagentModelVerificationError(expectedModel: string, observedModel: string, availableModels: AvailableModelInfo[] | undefined): string | undefined {

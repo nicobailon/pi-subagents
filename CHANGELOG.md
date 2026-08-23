@@ -9,6 +9,7 @@
 - Add timeout recovery summaries with changed tracked files, active child state, and session/artifact paths. Thanks to [@rtbe](https://github.com/rtbe) for #1409.
 - Fail closed when reviewer runs are interrupted or detached workflow children settle without persisted top-level continuation proof. Thanks to [@rtbe](https://github.com/rtbe) for #1408.
 - Stop flagging awaited `.then()` workflow chains as unawaited when a handler returns another child launch.
+- Preserve variant-tagged model ids during verification and fallback exclusion parsing. Thanks to [@rafafortes](https://github.com/rafafortes) for #1420.
 
 ## [0.55.0] - 2026-08-23
 

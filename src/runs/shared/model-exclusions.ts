@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { splitKnownThinkingSuffix } from "../../shared/model-info.ts";
 import { TEMP_ROOT_DIR } from "../../shared/types.ts";
 
 export const EXCLUSIONS_PATH_ENV = "PI_MODEL_EXCLUSIONS_PATH";
@@ -194,7 +195,7 @@ export function getExcludedCount(): number {
  * {@link recordModelFailure} is later recognised by the candidate filter.
  */
 export function parseModelKey(fullId: string): { provider?: string; modelId: string } {
-	const base = fullId.includes(":") ? fullId.substring(0, fullId.lastIndexOf(":")) : fullId;
+	const base = splitKnownThinkingSuffix(fullId).baseModel;
 	if (!base.includes("/")) return { modelId: base };
 	const slash = base.indexOf("/");
 	return { provider: base.slice(0, slash), modelId: base.slice(slash + 1) };

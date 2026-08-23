@@ -42,6 +42,17 @@ describe("model fallback helpers", () => {
 		);
 	});
 
+	it("preserves variant tags when verifying provider-qualified model ids", () => {
+		assert.equal(
+			formatSubagentModelVerificationError(
+				"ollama-cloud/deepseek-v4-flash:0731:high",
+				"deepseek-v4-flash:0731",
+				[{ provider: "ollama-cloud", id: "deepseek-v4-flash:0731", fullId: "ollama-cloud/deepseek-v4-flash:0731" }],
+			),
+			undefined,
+		);
+	});
+
 	it("resolves unique owner/name ids when the owner is not a registered provider", () => {
 		const registry = [
 			...availableModels,

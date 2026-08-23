@@ -80,6 +80,13 @@ describe("model exclusions — parseModelKey", () => {
 		assert.deepEqual(parseModelKey("openai/gpt-5:high"), { provider: "openai", modelId: "gpt-5" });
 	});
 
+	it("preserves variant tags before stripping a known thinking suffix", () => {
+		assert.deepEqual(parseModelKey("ollama-cloud/deepseek-v4-flash:0731:high"), {
+			provider: "ollama-cloud",
+			modelId: "deepseek-v4-flash:0731",
+		});
+	});
+
 	it("keeps slashes inside the modelId", () => {
 		assert.deepEqual(parseModelKey("openrouter/google/gemini-flash"), {
 			provider: "openrouter",
