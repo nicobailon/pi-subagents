@@ -761,7 +761,7 @@ describe("native subagent fleet", () => {
 				cwd,
 				sessionId: "session-current",
 				updatedAt: 200,
-				children: [{ agent: "worker", index: 0, status: "completed", finalOutput: "do not persist this when an artifact exists", savedOutputPath: outputPath }],
+				children: [{ agent: "worker", index: 0, status: "completed", finalOutput: "do not persist this when an artifact exists", savedOutputPath: outputPath, extensionBindings: { "shepherd.dispatch/1": { role: "coder" } } }],
 			});
 			state.foregroundRuns!.set("other-session", {
 				runId: "other-session",
@@ -772,11 +772,14 @@ describe("native subagent fleet", () => {
 				children: [{ agent: "outsider", index: 0, status: "completed", savedOutputPath: outputPath }],
 			});
 			persistForegroundRunHistory(state, { resultsDir });
+			const historyFile = path.join(resultsDir, "foreground-history.json");
+			if (process.platform !== "win32") assert.equal(fs.statSync(historyFile).mode & 0o777, 0o600);
 
 			const restored = stateForTest();
 			restored.baseCwd = cwd;
 			restored.artifactDirPreference = "project";
 			assert.equal(restoreForegroundRunHistory(restored, { resultsDir }), 1);
+			assert.deepEqual(restored.foregroundRuns?.get("restored")?.children[0]?.extensionBindings, { "shepherd.dispatch/1": { role: "coder" } });
 			const snapshot = collectFleetSnapshot(restored);
 			assert.deepEqual(snapshot.items.map((item) => item.key), ["foreground-recent:restored:0"]);
 

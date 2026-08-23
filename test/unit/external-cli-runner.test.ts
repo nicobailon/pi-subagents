@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { buildExternalCliPrompt, runExternalCli } from "../../src/runs/shared/external-cli-runner.ts";
+import { PI_SUBAGENT_EXTENSION_BINDINGS_ENV } from "../../src/runs/shared/extension-bindings.ts";
 
 const tempDirs: string[] = [];
 function tempDir(): string {
@@ -16,6 +17,27 @@ afterEach(() => {
 });
 
 describe("external CLI runner", () => {
+	it("clears ambient extension bindings from the external process", async () => {
+		const dir = tempDir();
+		const previous = process.env[PI_SUBAGENT_EXTENSION_BINDINGS_ENV];
+		process.env[PI_SUBAGENT_EXTENSION_BINDINGS_ENV] = '{"shepherd.dispatch/1":{"role":"coder"}}';
+		try {
+			const result = await runExternalCli({
+				command: process.execPath,
+				args: ["-e", `process.stdout.write(process.env.${PI_SUBAGENT_EXTENSION_BINDINGS_ENV} ?? "unset")`],
+				cwd: dir,
+				prompt: "x",
+				asyncDir: dir,
+				stepIndex: 0,
+			});
+			assert.equal(result.exitCode, 0);
+			assert.equal(result.output, "unset");
+		} finally {
+			if (previous === undefined) delete process.env[PI_SUBAGENT_EXTENSION_BINDINGS_ENV];
+			else process.env[PI_SUBAGENT_EXTENSION_BINDINGS_ENV] = previous;
+		}
+	});
+
 	it("delivers the combined prompt only through stdin and preserves argv", async () => {
 		const dir = tempDir();
 		const prompt = buildExternalCliPrompt("Follow exactly.", "Review $HOME; echo nope");

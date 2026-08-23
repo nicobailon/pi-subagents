@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import registerFanoutChildSubagentExtension from "../../src/extension/fanout-child.ts";
-import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
+import { createSubagentExecutor, readNestedRecoveryDescriptor } from "../../src/runs/foreground/subagent-executor.ts";
 import { createNestedRoute, findNestedControlResult, projectNestedEvents, readNestedControlRequests, readNestedControlResults, snapshotNestedEventFiles, writeNestedControlRequest, writeNestedControlResult, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import {
 	SUBAGENT_CHILD_ENV,
@@ -17,6 +17,7 @@ import {
 	SUBAGENT_PARENT_RUN_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import { ASYNC_DIR, type SubagentState } from "../../src/shared/types.ts";
+import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 
 const routeRoots: string[] = [];
 const fanoutListenerCleanupKey = "__piSubagentFanoutChildNestedControlInboxCleanups";
@@ -374,6 +375,32 @@ describe("nested control routing", () => {
 
 			assert.equal(result.isError, true);
 			assert.match(text(result), /session file does not exist/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("restores the original extension bindings for terminal nested revival", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-binding-recovery-"));
+		try {
+			const descriptor = {
+				version: 1,
+				runFanoutBudget: createRunFanoutBudget("nested-bound", 64),
+				sourceRunId: "nested-bound",
+				agent: "worker",
+				cwd: root,
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 2,
+				share: false,
+				extensionBindings: { "shepherd.dispatch/1": { role: "coder" } },
+			};
+			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify(descriptor));
+			assert.deepEqual(readNestedRecoveryDescriptor(root, "nested-bound", "worker")?.extensionBindings, descriptor.extensionBindings);
+			assert.throws(() => readNestedRecoveryDescriptor(root, "other-run", "worker"), /different source run/);
+			assert.throws(() => readNestedRecoveryDescriptor(root, "nested-bound", "reviewer"), /different agent/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

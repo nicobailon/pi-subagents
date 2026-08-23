@@ -145,6 +145,13 @@ describe("workflow launch params", () => {
 		assert.equal(prepareWorkflowLaunchParams({}, { agent: "worker", task: "Run" }, "workflow-run", "sibling").intercomBridge, undefined);
 	});
 
+	it("canonicalizes child extension bindings without leaking them to siblings", () => {
+		const bindings = { "shepherd.dispatch/1": { writeScope: ["src/a.ts"], role: "coder" } };
+		const child = prepareWorkflowLaunchParams({ extensionBindings: { "defaults.policy/1": true } }, { agent: "worker", task: "Run", extensionBindings: bindings }, "workflow-run", "bound");
+		assert.deepEqual(child.extensionBindings, bindings);
+		assert.equal(prepareWorkflowLaunchParams({}, { agent: "worker", task: "Run" }, "workflow-run", "plain").extensionBindings, undefined);
+	});
+
 	it("keeps managed worktree children on the single-run contract", () => {
 		assert.deepEqual(
 			prepareWorkflowLaunchParams(
@@ -241,6 +248,15 @@ describe("workflow launch params", () => {
 			),
 			/gate is not supported with retained resume/,
 		);
+	});
+
+	it("rejects extension binding amendments on retained resume items", () => {
+		assert.throws(() => prepareWorkflowLaunchParams(
+			{ extensionBindings: { "defaults.policy/1": true } },
+			{ resume: "retained-run", task: "Continue" },
+			"workflow-run",
+			"continue",
+		), /original retained child binding/);
 	});
 
 	it("preserves execution limits and fan-out identity when routing retained resume items", () => {

@@ -299,6 +299,28 @@ function decorateWorkflowChildResult(result) {
 
 let runFingerprints = new Map();
 
+function validateExtensionBindings(value, label) {
+  if (value === undefined) return;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(label + " extensionBindings must be a plain JSON object.");
+  const keys = Object.keys(value);
+  if (keys.length > 16) throw new Error(label + " extensionBindings supports at most 16 namespaces.");
+  for (const key of keys) if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62})\/[1-9][0-9]{0,8}$/.test(key)) throw new Error(label + " extensionBindings namespace '" + key + "' must use a package-like name followed by '/<positive-version>'.");
+  assertJsonValue(value, label + " extensionBindings");
+  let propertyCount = 0;
+  function visit(entry, depth) {
+    if (!entry || typeof entry !== "object") return;
+    if (depth > 16) throw new Error(label + " extensionBindings exceeds the maximum nesting depth of 16.");
+    if (Array.isArray(entry)) { for (const item of entry) visit(item, depth + 1); return; }
+    for (const child of Object.values(entry)) {
+      propertyCount++;
+      if (propertyCount > 256) throw new Error(label + " extensionBindings exceeds 256 total properties.");
+      visit(child, depth + 1);
+    }
+  }
+  visit(value, 0);
+  if (new TextEncoder().encode(stableRunJson(value)).byteLength > 16384) throw new Error(label + " extensionBindings canonical JSON exceeds 16384 bytes.");
+}
+
 function validateRunCall(key, params, label, fingerprints) {
   if (typeof key !== "string" || !runKeyPattern.test(key)) throw new Error(label + " has an invalid key.");
   if (!params || typeof params !== "object" || Array.isArray(params)) throw new Error(label + " requires a params object.");
@@ -311,6 +333,7 @@ function validateRunCall(key, params, label, fingerprints) {
   if (params.gate !== undefined && (typeof params.gate !== "string" || !params.gate.trim())) throw new Error(label + " gate must be a non-empty command string.");
   if (params.gate !== undefined && params.acceptance !== undefined) throw new Error(label + " gate cannot be combined with acceptance; use one gate command or acceptance.verify.");
   if (params.gate !== undefined && params.resume !== undefined) throw new Error(label + " gate is not supported with retained resume.");
+  if (params.extensionBindings !== undefined && params.resume !== undefined) throw new Error(label + " extensionBindings is not supported with retained resume; resume uses the original retained child binding.");
   if (params.resume !== undefined && typeof params.resume !== "string") {
     const reference = params.resume;
     if (!reference || typeof reference !== "object" || Array.isArray(reference)) throw new Error(label + " resume must be a retained run id or keyed workflow receipt reference.");
@@ -323,6 +346,7 @@ function validateRunCall(key, params, label, fingerprints) {
   if (typeof params.resume === "string" && !params.resume.trim()) throw new Error(label + " resume must be a non-empty retained run id.");
   if (params.resume !== undefined && params.agent !== undefined) throw new Error(label + " resume and agent are mutually exclusive.");
   if (params.resume !== undefined && (typeof params.task !== "string" || !params.task.trim())) throw new Error(label + " resume requires a non-empty task follow-up.");
+  validateExtensionBindings(params.extensionBindings, label);
   assertJsonValue(params, label + " params");
   const fingerprint = stableRunJson(params);
   const existing = fingerprints.get(key);

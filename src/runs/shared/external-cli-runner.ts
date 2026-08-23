@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { finished } from "node:stream/promises";
 import { trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import type { ExternalProcessStatus } from "../../shared/types.ts";
+import { omitExtensionBindingsEnv } from "./extension-bindings.ts";
 
 const HARD_KILL_DELAY_MS = 2_000;
 const MAX_OUTPUT_TAIL_BYTES = 64 * 1024;
@@ -54,6 +55,7 @@ export function runExternalCli(input: {
 		let hardKillTimer: NodeJS.Timeout | undefined;
 		const child = spawn(input.command, input.args ?? [], {
 			cwd: input.cwd,
+			env: omitExtensionBindingsEnv(process.env),
 			stdio: ["pipe", "pipe", "pipe"],
 			shell: false,
 			windowsHide: true,

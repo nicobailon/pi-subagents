@@ -154,6 +154,22 @@ Project prompt.
 		}
 	});
 
+	it("binds canonical extension metadata into public preflight provenance", async () => {
+		const cwd = path.join(tempDir, "bindings-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "binding-worker.md"), `---\nname: binding-worker\ndescription: Binding worker\n---\nWorker.\n`);
+		const omitted = await resolveSubagentLaunchContract({ agent: "binding-worker", cwd, task: "Inspect" });
+		const bound = await resolveSubagentLaunchContract({ agent: "binding-worker", cwd, task: "Inspect", extensionBindings: { "shepherd.dispatch/1": { writeScope: ["src/a.ts"], role: "coder" } } });
+		assert.equal(omitted.ok, true);
+		assert.equal(bound.ok, true);
+		if (omitted.ok && bound.ok) {
+			assert.notEqual(bound.contract.launchContractDigest, omitted.contract.launchContractDigest);
+		}
+		const invalid = await resolveSubagentLaunchContract({ agent: "binding-worker", cwd, extensionBindings: { invalid: true } });
+		assert.equal(invalid.ok, false);
+		if (!invalid.ok) assert.equal(invalid.code, "invalid_extension_bindings");
+	});
+
 	it("enforces maxThinking before a child launch and accepts levels at the ceiling", async () => {
 		const cwd = path.join(tempDir, "thinking-repo");
 		fs.mkdirSync(cwd, { recursive: true });

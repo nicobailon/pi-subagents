@@ -132,6 +132,7 @@ import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts
 import { acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
+import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests, statusStepDescription } from "./chain-append.ts";
 import { asyncStatusChildIdentity } from "../shared/child-identity.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
@@ -1559,6 +1560,7 @@ async function runSingleStepInner(
 			}
 		}
 		const watchdogConfig = resolveWatchdogConfig(step.cwd ?? ctx.cwd);
+		const extensionBindings = normalizeExtensionBindings(step.extensionBindings)?.value;
 		const childWatchdog = watchdogConfig.ok
 			? resolveChildWatchdogConfig({
 				config: watchdogConfig.config,
@@ -1615,6 +1617,7 @@ async function runSingleStepInner(
 			childWatchdog,
 			waitToolEnabled: step.waitToolEnabled,
 			thinkingCeiling: step.thinkingCeiling,
+			extensionBindings,
 		}));
 		if (!launchWarningsEmitted && warnings.length > 0) {
 			for (const warning of warnings) console.warn(`[pi-subagents] ${warning}`);
@@ -1655,6 +1658,7 @@ async function runSingleStepInner(
 				...(step.outputPath ? { outputPath: step.outputPath } : {}),
 				...(step.outputMode ? { outputMode: step.outputMode } : {}),
 				...(step.structuredOutputSchema ? { structuredOutputSchema: step.structuredOutputSchema } : {}),
+				...(extensionBindings ? { extensionBindings } : {}),
 			}));
 		}
 		capabilityAudit = attemptCapabilityAudit;

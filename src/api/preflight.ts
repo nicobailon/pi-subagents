@@ -26,6 +26,7 @@ import { DIRS, TEMP_ROOT_DIR } from "../shared/types.ts";
 import { processTerminalCandidatePath, processTerminalPath } from "../runs/background/process-terminal.ts";
 import { resultFilePath } from "../runs/background/result-files.ts";
 import { nestedResultsPath } from "../runs/shared/nested-events.ts";
+import { normalizeExtensionBindings, type ExtensionBindings } from "../runs/shared/extension-bindings.ts";
 
 export const SUBAGENT_LAUNCH_CONTRACT_VERSION = 2 as const;
 
@@ -38,7 +39,8 @@ export type SubagentLaunchContractReasonCode =
 	| "invalid_cwd"
 	| "unsupported_mode"
 	| "restricted_agent"
-	| "thinking_ceiling";
+	| "thinking_ceiling"
+	| "invalid_extension_bindings";
 
 export interface SubagentLaunchContractDiagnostic {
 	code: SubagentLaunchContractReasonCode | "host_required" | "snapshot_warning";
@@ -63,6 +65,7 @@ export interface SubagentLaunchContractInput {
 	output?: string | boolean;
 	outputMode?: OutputMode;
 	outputSchema?: JsonSchemaObject;
+	extensionBindings?: ExtensionBindings;
 	turnBudget?: ResolvedTurnBudget;
 	artifacts?: boolean;
 	artifactDir?: ArtifactDirPreference;
@@ -250,6 +253,15 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		return { ok: false, code: "missing_agent", message: `Unknown agent: ${input.agent}`, diagnostics };
 	}
 	const agent = resolvedAgent.agent;
+	let extensionBindings: ExtensionBindings | undefined;
+	try {
+		extensionBindings = normalizeExtensionBindings(input.extensionBindings)?.value;
+	} catch (error) {
+		return { ok: false, code: "invalid_extension_bindings", message: error instanceof Error ? error.message : String(error), diagnostics };
+	}
+	if (extensionBindings !== undefined && (agent.runner?.type === "external-cli" || agent.runner?.type === "external-job")) {
+		return { ok: false, code: "unsupported_mode", message: `extensionBindings is not supported for runner.type='${agent.runner.type}'.`, diagnostics };
+	}
 	const context = resolveLaunchContractContext(input, agent);
 	if (context === "fork") {
 		diagnostics.push({ code: "host_required", severity: "host-required", message: "Exact fork session branching and fork-thinking downgrade checks require Pi host session and model-registry snapshots." });
@@ -445,6 +457,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			...(outputPath ? { outputPath } : {}),
 			outputMode: behavior.outputMode,
 			...(input.outputSchema ? { structuredOutputSchema: input.outputSchema } : {}),
+			...(extensionBindings ? { extensionBindings } : {}),
 		}),
 	};
 	return { ok: true, contract: { ...contractBase, digest: digestContract(contractBase) } };

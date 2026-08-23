@@ -4,6 +4,7 @@
 
 ### Added
 - Add opt-in `fast: true` launches for allowlisted native OpenAI-Codex subagents, using OpenAI's priority service tier.
+- Add bounded namespaced extension bindings to child launch contracts. Thanks to [@FL03](https://github.com/FL03) for #1410.
 
 ### Fixed
 - Render workflow child results as useful text when scripts stringify `runs.all` or awaited `runs.run` result objects.

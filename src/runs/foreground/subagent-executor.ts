@@ -73,6 +73,7 @@ import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
+import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
@@ -88,7 +89,7 @@ import {
 	resolveSubagentResultStatus,
 	stripDetailsOutputsForIntercomReceipt,
 } from "../../intercom/result-intercom.ts";
-import { applySteeringRecoveryAgentConfig, asyncReviveRequiresRecoveryDescriptor, buildRevivedAsyncTask, resolveAsyncResumeTarget, resolveAsyncRunLocation } from "../background/async-resume.ts";
+import { applySteeringRecoveryAgentConfig, asyncReviveRequiresRecoveryDescriptor, buildRevivedAsyncTask, readAsyncRecoveryDescriptor, resolveAsyncResumeTarget, resolveAsyncRunLocation } from "../background/async-resume.ts";
 import { deliverInterruptRequest, readRevivalBriefs, requestAsyncSteer, type SteerDeliveryMode } from "../background/control-channel.ts";
 import { updateSteeringTarget, waitForSteeringAction } from "../background/steering.ts";
 import { canQueueRetainedAsyncFollowUp, steerAsyncRun } from "./async-steering-action.ts";
@@ -156,6 +157,7 @@ import {
 	type ResolvedTurnBudget,
 	type ResolvedToolBudget,
 	type RunFanoutBudgetDescriptor,
+	type SteeringRecoveryDescriptor,
 	type SingleResult,
 	type SubagentChildStatusEvent,
 	type ToolBudgetConfig,
@@ -289,6 +291,7 @@ export interface SubagentParamsLike {
 	type?: string;
 	agent?: string;
 	task?: string;
+	extensionBindings?: ExtensionBindings;
 	/** Retained async child run id. Valid only on workflow runs.run items. */
 	resume?: string;
 	message?: string;
@@ -646,7 +649,7 @@ function foregroundChildActivityFromProgress(progress: SingleResult["progress"] 
 	};
 }
 
-function rememberForegroundRun(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; results: SingleResult[] }): void {
+function rememberForegroundRun(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; results: SingleResult[]; extensionBindings?: ExtensionBindings }): void {
 	state.foregroundRuns ??= new Map();
 	const previous = state.foregroundRuns.get(input.runId);
 	const updatedAt = Date.now();
@@ -688,6 +691,7 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 				...(result.detachedReason ? { detachedReason: result.detachedReason } : {}),
 				...(result.acceptance ? { acceptance: result.acceptance } : {}),
 				...(result.launchContractDigest ? { launchContractDigest: result.launchContractDigest } : {}),
+				...(input.extensionBindings ? { extensionBindings: input.extensionBindings } : {}),
 				...(result.launchResolvedExtensions ? { launchResolvedExtensions: result.launchResolvedExtensions } : {}),
 				...(result.runtimeAcknowledgedExtensions ? { runtimeAcknowledgedExtensions: result.runtimeAcknowledgedExtensions } : {}),
 				...(result.capabilityCeiling ? { capabilityCeiling: result.capabilityCeiling } : {}),
@@ -806,7 +810,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 	});
 }
 
-function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { exactOnly?: boolean } = {}): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
+function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { exactOnly?: boolean } = {}): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; extensionBindings?: ExtensionBindings; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
 	const requested = (params.id ?? params.runId)?.trim();
 	if (!requested || !state.foregroundRuns?.size || !state.currentSessionId) return undefined;
 	const direct = state.foregroundRuns.get(requested);
@@ -837,6 +841,7 @@ function resolveForegroundResumeTarget(params: SubagentParamsLike, state: Subage
 		...(child.model ? { model: child.model } : {}),
 		...(child.thinking ? { thinking: child.thinking } : {}),
 		...(child.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}),
+		...(child.extensionBindings ? { extensionBindings: normalizeExtensionBindings(child.extensionBindings)!.value } : {}),
 		...(child.capabilityCeiling ? { capabilityCeiling: child.capabilityCeiling } : {}),
 	};
 }
@@ -856,6 +861,7 @@ type NestedResumeSourceTarget = {
 	thinking?: AgentConfig["thinking"];
 	launchContractDigest?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	recoveryDescriptor?: SteeringRecoveryDescriptor;
 };
 type ResumeSourceTarget = AsyncResumeSourceTarget | ForegroundResumeSourceTarget | NestedResumeSourceTarget;
 
@@ -1341,6 +1347,14 @@ function validateNestedSessionFile(run: NestedRunSummary, trustedSessionRoots: s
 	return realSessionFile;
 }
 
+export function readNestedRecoveryDescriptor(asyncDir: string | undefined, runId: string, agent: string): SteeringRecoveryDescriptor | undefined {
+	const recoveryDescriptor = readAsyncRecoveryDescriptor(asyncDir);
+	if (!recoveryDescriptor) return undefined;
+	if (recoveryDescriptor.sourceRunId !== runId) throw new Error(`Nested run '${runId}' has a recovery descriptor for a different source run.`);
+	if (recoveryDescriptor.agent !== agent) throw new Error(`Nested run '${runId}' has a recovery descriptor for a different agent.`);
+	return recoveryDescriptor;
+}
+
 function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "nested" }, trustedSessionRoots: string[]): NestedResumeSourceTarget {
 	const run = match.match.run;
 	if (run.state === "running" || run.state === "queued") throw new Error(`Nested run '${run.id}' is live; route the follow-up to the owner process instead.`);
@@ -1349,6 +1363,7 @@ function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "neste
 	if (!agent) throw new Error(`Could not determine child agent for nested run '${run.id}'.`);
 	const state = run.state === "complete" || run.state === "failed" || run.state === "paused" ? run.state : "failed";
 	const asyncDir = resolveNestedAsyncDir(match.match.rootRunId, run);
+	const recoveryDescriptor = readNestedRecoveryDescriptor(asyncDir, run.id, agent);
 	return compactOptional<NestedResumeSourceTarget>({
 		kind: "revive",
 		source: "nested",
@@ -1359,6 +1374,7 @@ function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "neste
 		cwd: asyncDir ? path.dirname(asyncDir) : undefined,
 		sessionFile: validateNestedSessionFile(run, trustedSessionRoots),
 		...(run.capabilityCeiling ? { capabilityCeiling: run.capabilityCeiling } : {}),
+		...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 	});
 }
 
@@ -1945,6 +1961,7 @@ async function resumeAsyncRun(input: {
 		modelOverrideFromParent: recoveryDescriptor?.modelOverrideFromParent,
 		thinkingOverride: recoveryDescriptor?.thinking ?? target.thinking,
 		thinkingCeiling: recoveryDescriptor?.thinkingCeiling ?? ("thinkingCeiling" in target ? target.thinkingCeiling : undefined),
+		extensionBindings: recoveryDescriptor?.extensionBindings ?? ("extensionBindings" in target ? target.extensionBindings : undefined),
 		outputBaseDir: resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId),
 		maxSubagentDepth: recoveryDescriptor?.maxSubagentDepth ?? resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
 		waitToolEnabled: input.deps.waitToolEnabled,
@@ -2227,6 +2244,15 @@ function canonicalizeExecutionParams(params: SubagentParamsLike, agents: AgentCo
 		const result = resolve(params.agent);
 		if (result.error) return { error: result.error };
 		params = omitUndefinedProperties({ ...params, agent: result.name });
+		const agent = agents.find((candidate) => candidate.name === result.name);
+		if (params.extensionBindings !== undefined && (agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job")) return { error: `extensionBindings is not supported for runner.type='${agent.runner.type}'.` };
+	}
+	if (params.extensionBindings !== undefined) {
+		try {
+			params = { ...params, extensionBindings: normalizeExtensionBindings(params.extensionBindings)!.value };
+		} catch (error) {
+			return { error: error instanceof Error ? error.message : String(error) };
+		}
 	}
 	if (params.tasks) {
 		const tasks: TaskParam[] = [];
@@ -3171,6 +3197,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			nestedRoute,
 			agentContract: params.agentContract,
 			structuredOutputSchema: params.outputSchema,
+			extensionBindings: params.extensionBindings,
 			acceptance: params.acceptance,
 			timeoutMs: data.timeoutMs,
 			turnBudget: data.turnBudget,
@@ -3636,6 +3663,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			modelOverrideFromParent,
 			thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
 			thinkingCeiling: agentConfig.maxThinking,
+			extensionBindings: params.extensionBindings,
 			availableModels,
 			preferredModelProvider: currentProvider,
 			modelScope: modelScopes,
@@ -3748,7 +3776,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		usageBudget: usageBudgetState(data.usageBudget, totalCost),
 		...(worktreeHandoff?.reference ? { parallelHandoff: worktreeHandoff.reference } : {}),
 	}));
-	rememberForegroundRun(deps.state, { runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, results: details.results });
+	rememberForegroundRun(deps.state, { runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, results: details.results, extensionBindings: params.extensionBindings });
 
 	const suppressRoutineResultIntercom = shouldSuppressRoutineResultIntercom({ suppressRoutineResultIntercom: params.suppressRoutineResultIntercom, results: [r] });
 	if (!r.detached && !r.interrupted && !suppressRoutineResultIntercom) {
@@ -4082,6 +4110,9 @@ export function prepareWorkflowLaunchParams(
 		? undefined
 		: Math.max(1, options.parentDeadlineAt - Date.now());
 	if (typeof childParams.resume === "string") {
+		if (childParams.extensionBindings !== undefined || workflowDefaults.extensionBindings !== undefined) {
+			throw new Error("extensionBindings is not supported with retained resume; resume uses the original retained child binding.");
+		}
 		if (childParams.gate !== undefined || workflowDefaults.gate !== undefined) {
 			throw new Error("gate is not supported with retained resume; resume uses the retained child contract.");
 		}
@@ -4120,6 +4151,7 @@ export function prepareWorkflowLaunchParams(
 		...(options.suppressRoutineResultIntercom ? { suppressRoutineResultIntercom: true } : {}),
 		...(capabilityCeiling ? { capabilityCeiling } : {}),
 	} as SubagentParamsLike;
+	if (launchParams.extensionBindings !== undefined) launchParams.extensionBindings = normalizeExtensionBindings(launchParams.extensionBindings)!.value;
 	const normalizedGate = normalizeGateParams(launchParams);
 	if (!normalizedGate.ok) throw new Error(normalizedGate.error);
 	return normalizedGate.params;
@@ -4255,7 +4287,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (!normalizedGate.ok) return buildRequestedModeError(params, normalizedGate.error);
 		const requestParams = normalizedGate.params;
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
+		if (normalizedAction === "resume" && requestParams.extensionBindings !== undefined) return buildRequestedModeError(requestParams, "extensionBindings is not supported with action='resume'; resume uses the original retained child binding.");
 		if (requestParams.workflowScript !== undefined && normalizedAction === undefined) {
+			if (requestParams.extensionBindings !== undefined) {
+				try {
+					requestParams.extensionBindings = normalizeExtensionBindings(requestParams.extensionBindings)!.value;
+				} catch (error) {
+					return buildRequestedModeError(requestParams, error instanceof Error ? error.message : String(error));
+				}
+			}
 			const parentCwd = ctx.cwd;
 			const timeout = requestParams.timeoutMs ?? requestParams.maxRuntimeMs ?? (requestParams.async === false ? resolveConfigDefaultTimeoutMs(deps.config.timeoutMs) ?? DEFAULT_FOREGROUND_TIMEOUT_MS : undefined);
 			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");

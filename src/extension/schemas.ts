@@ -258,6 +258,7 @@ const ControlOverrides = Type.Object({
 const SubagentParamProperties = {
 	agent: Type.Optional(Type.String({ description: "Agent for one-child execution, or target for agent management actions." })),
 	task: Type.Optional(Type.String({ description: "Optional one-child task. Requires agent; cannot combine with action or workflowScript." })),
+	extensionBindings: Type.Optional(Type.Unsafe({ type: "object", maxProperties: 16, additionalProperties: true, description: "Namespaced, bounded plain-JSON metadata delivered only to the child runtime. Namespace keys use package.name/1 syntax." })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({ minLength: 1,
 		description: "Optional management/control action. Omit this field for structured single-child or workflowScript execution; use it only for management/control actions."

@@ -13,6 +13,7 @@ import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from 
 import type { AuthorityPolicyConfig } from "../policy/authority.ts";
 import type { ThinkingLevel } from "./model-info.ts";
 import type { GlobalMissionIndexRecord, MissionRecord, MissionStoreConfig } from "../missions/types.ts";
+import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
 
 // ============================================================================
 // Basic Types
@@ -561,6 +562,7 @@ export interface RunFanoutRejection extends RunFanoutBudgetSnapshot {
 export interface SteeringRecoveryDescriptor {
 	version: 1;
 	launchContractDigest?: string;
+	extensionBindings?: ExtensionBindings;
 	runFanoutBudget: RunFanoutBudgetDescriptor;
 	sourceRunId: string;
 	agentContract?: AgentContract;
@@ -1682,6 +1684,8 @@ export interface ForegroundResumeChild {
 	acceptance?: AcceptanceLedger;
 	agentContract?: AgentContract;
 	launchContractDigest?: string;
+	/** Private retained launch authority. Never project into status or result output. */
+	extensionBindings?: ExtensionBindings;
 	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 	execution?: ExecutionProjection;
@@ -1991,6 +1995,7 @@ export interface RunSyncOptions {
 	/** Override the agent's default thinking level for this run */
 	thinkingOverride?: AgentConfig["thinking"];
 	thinkingCeiling?: ThinkingLevel;
+	extensionBindings?: ExtensionBindings;
 	/** Registry models available for heuristic bare-model resolution */
 	availableModels?: Array<{ provider: string; id: string; fullId: string }>;
 	/** Current parent-session provider to prefer for ambiguous bare model ids */

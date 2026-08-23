@@ -370,6 +370,7 @@ describe("scripted workflow runtime", () => {
 			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, { key: "legacy", agent: "worker", task: "run", parallel: [{ task: "nested" }] }]);`,
 			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, { key: "undefined-action", agent: "worker", task: "run", action: undefined }]);`,
 			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, { key: "uncloneable", agent: "worker", task: () => "run" }]);`,
+			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, { key: "bad-binding", agent: "worker", task: "run", extensionBindings: { invalid: true } }]);`,
 			`const items = []; items[1] = { key: "valid", agent: "worker", task: "run" }; return await runs.all(items);`,
 		];
 		for (const script of malformedScripts) {
@@ -541,6 +542,26 @@ describe("scripted workflow runtime", () => {
 			{ key: "one", worktree: true },
 			{ key: "two", worktree: true },
 			{ key: "three", worktree: false },
+		]);
+	});
+
+	it("passes distinct namespaced bindings to parallel children", async () => {
+		const launches: Array<{ key: string; bindings: unknown }> = [];
+		await runWorkflowScript({
+			script: `return runs.all([
+				{ key: "coder", agent: "worker", task: "code", extensionBindings: { "shepherd.dispatch/1": { role: "coder" } } },
+				{ key: "reviewer", agent: "reviewer", task: "review", extensionBindings: { "shepherd.dispatch/1": { role: "reviewer" } } }
+			]);`,
+			timeoutMs: 2_000,
+			async launch(key, params) {
+				launches.push({ key, bindings: params.extensionBindings });
+				return { key, ok: true, output: key, artifactPaths: [], results: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.deepEqual(launches, [
+			{ key: "coder", bindings: { "shepherd.dispatch/1": { role: "coder" } } },
+			{ key: "reviewer", bindings: { "shepherd.dispatch/1": { role: "reviewer" } } },
 		]);
 	});
 

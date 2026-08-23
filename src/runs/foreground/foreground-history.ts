@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ForegroundResumeChild, ForegroundResumeRun, SubagentState } from "../../shared/types.ts";
 import { DIRS } from "../../shared/types.ts";
-import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { utf8Tail } from "../../shared/utf8.ts";
 
 export const MAX_REMEMBERED_FOREGROUND_RUNS = 50;
@@ -52,6 +52,7 @@ function compactChild(child: ForegroundResumeChild): ForegroundResumeChild {
 		...(child.transcriptError ? { transcriptError: child.transcriptError } : {}),
 		...(child.acceptance ? { acceptance: child.acceptance } : {}),
 		...(child.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}),
+		...(child.extensionBindings ? { extensionBindings: child.extensionBindings } : {}),
 		...(child.capabilityCeiling ? { capabilityCeiling: child.capabilityCeiling } : {}),
 		...(child.updatedAt !== undefined ? { updatedAt: child.updatedAt } : {}),
 	};
@@ -118,7 +119,7 @@ export function persistForegroundRunHistory(state: SubagentState, options: { res
 		if (compact) merged.set(compact.runId, compact);
 	}
 	const runs = sortAndBound([...merged.values()], limit);
-	writeAtomicJson(historyPath(resultsDir), { version: HISTORY_VERSION, runs });
+	writePrivateAtomicJson(historyPath(resultsDir), { version: HISTORY_VERSION, runs });
 }
 
 export function restoreForegroundRunHistory(state: SubagentState, options: { resultsDir?: string; sessionId?: string | null; limit?: number } = {}): number {

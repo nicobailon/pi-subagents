@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import type { AgentConfig } from "../agents/agents.ts";
+import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
 
 export const AGENT_DEFINITION_PROJECTION_VERSION = 1 as const;
 export const LAUNCH_BINDING_PROJECTION_VERSION = 1 as const;
@@ -93,6 +94,7 @@ export interface LaunchBindingInput {
 	outputPath?: string;
 	outputMode?: string;
 	structuredOutputSchema?: unknown;
+	extensionBindings?: ExtensionBindings;
 }
 
 /** Canonical projection of the resolved inputs handed to the child. */
@@ -117,6 +119,7 @@ export function projectLaunchBinding(input: LaunchBindingInput): Record<string, 
 		outputPath: input.outputPath,
 		outputMode: input.outputMode,
 		structuredOutputSchema: input.structuredOutputSchema,
+		extensionBindings: input.extensionBindings,
 	};
 }
 

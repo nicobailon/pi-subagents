@@ -74,6 +74,7 @@ import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../shared/types.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
 import { resolvePermissionRules, type PermissionConfig } from "../shared/permissions.ts";
+import { normalizeExtensionBindings, omitExtensionBindingsEnv, type ExtensionBindings } from "../shared/extension-bindings.ts";
 
 const require = createRequire(import.meta.url);
 const piPackageRoot = resolvePiPackageRoot();
@@ -267,6 +268,7 @@ interface AsyncSingleParams {
 		requestId: string;
 		requestDigest: string;
 	};
+	extensionBindings?: ExtensionBindings;
 }
 
 interface AsyncExecutionResult {
@@ -509,7 +511,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 	const cfgPath = getAsyncConfigPath(suffix);
 	const runnerProcessInstanceId = randomUUID();
 	const launchConfig = { ...cfg, runnerProcessInstanceId };
-	fs.writeFileSync(cfgPath, JSON.stringify(launchConfig));
+	writePrivateAtomicJson(cfgPath, launchConfig);
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 	const nodeCommand = resolveNodeExecutable();
 	const launchForStartup = launchConfig as typeof launchConfig & { asyncDir?: unknown; id?: unknown; sessionId?: unknown; completionOwnerId?: unknown; revivalLease?: unknown };
@@ -541,7 +543,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 			stdio: ["ignore", stdoutFd ?? "ignore", stderrFd ?? "ignore"],
 			windowsHide: true,
 			env: {
-				...process.env,
+				...omitExtensionBindingsEnv(process.env),
 				...(piPackageRoot ? { [PI_CODING_AGENT_PACKAGE_ROOT_ENV]: piPackageRoot } : {}),
 			},
 		});
@@ -1402,6 +1404,12 @@ export function executeAsyncSingle(
 		nestedRoute,
 	} = params;
 	const task = params.task ?? "";
+	let extensionBindings: ExtensionBindings | undefined;
+	try {
+		extensionBindings = normalizeExtensionBindings(params.extensionBindings)?.value;
+	} catch (error) {
+		return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
+	}
 	const acceptanceErrors = validateAcceptanceInput(params.acceptance);
 	if (acceptanceErrors.length > 0) return formatAsyncStartError("single", acceptanceErrors.join(" "));
 	const externalRunner = agentConfig.runner?.type === "external-cli" || agentConfig.runner?.type === "external-job";
@@ -1418,6 +1426,7 @@ export function executeAsyncSingle(
 		if (params.context === "fork") unsupported.push("fork context");
 		if ((params.skills?.length ?? 0) > 0) unsupported.push("skills");
 		if (permissionRules) unsupported.push("native Pi child permissions");
+		if (extensionBindings !== undefined) unsupported.push("extension bindings");
 		if (unsupported.length > 0) return formatAsyncStartError("single", `Agent '${agentConfig.name}' uses runner.type='${externalRunnerType}' and does not support: ${unsupported.join(", ")}.`);
 	}
 	const capabilityCeiling = intersectSubagentCapabilityCeilings(params.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(ctx.currentSessionId), decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]));
@@ -1599,6 +1608,7 @@ export function executeAsyncSingle(
 		...(outputPath ? { outputPath } : {}),
 		outputMode,
 		...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
+		...(extensionBindings ? { extensionBindings } : {}),
 	});
 	const resolvedAcceptance = resolveEffectiveAcceptance({
 		explicit: params.acceptance,
@@ -1613,6 +1623,7 @@ export function executeAsyncSingle(
 	const recoveryDescriptor: SteeringRecoveryDescriptor = {
 		version: 1,
 		launchContractDigest,
+		...(extensionBindings ? { extensionBindings } : {}),
 		runFanoutBudget,
 		sourceRunId: id,
 		...(params.agentContract ? { agentContract: params.agentContract } : {}),
@@ -1707,6 +1718,7 @@ export function executeAsyncSingle(
 						definitionDigest: agentDefinitionDigest(agentConfig),
 						launchBindingTask: task,
 						launchContractDigest,
+						...(extensionBindings ? { extensionBindings } : {}),
 						launchResolvedExtensions,
 						effectiveAcceptance: resolvedAcceptance,
 						...(structuredOutput ? { structuredOutput } : {}),

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { DIRS, type AcceptanceInput, type AsyncStatus, type ResolvedTurnBudget, type SteeringRecoveryDescriptor, type SubagentRunMode } from "../../shared/types.ts";
 import type { AgentConfig } from "../../agents/agents.ts";
+import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import { validateAcceptanceInput } from "../shared/acceptance.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { intersectSubagentCapabilityCeilings, parseSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
@@ -328,6 +329,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "context", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
 		"launchResolvedExtensions", "runFanoutBudget",
+		"extensionBindings",
 	]);
 	for (const field of Object.keys(parsed)) {
 		if (!allowedFields.has(field)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': unknown field '${field}'.`);
@@ -344,6 +346,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	}
 	if (parsed.capabilityCeiling !== undefined) parsed.capabilityCeiling = parseSubagentCapabilityCeiling(parsed.capabilityCeiling, `async recovery descriptor '${descriptorPath}' capabilityCeiling`);
 	if (parsed.thinkingCeiling !== undefined) parsed.thinkingCeiling = parseThinkingLevel(parsed.thinkingCeiling, `async recovery descriptor '${descriptorPath}' thinkingCeiling`);
+	if (parsed.extensionBindings !== undefined) parsed.extensionBindings = normalizeExtensionBindings(parsed.extensionBindings)!.value;
 	if (parsed.agentContract !== undefined) {
 		if (!parsed.agentContract || typeof parsed.agentContract !== "object" || Array.isArray(parsed.agentContract)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': agentContract must be an object.`);
 		const contract = parsed.agentContract as Record<string, unknown>;

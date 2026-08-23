@@ -379,6 +379,7 @@ async function runSingleAttempt(
 		waitToolEnabled: options.waitToolEnabled,
 		capabilityCeiling: options.capabilityCeiling,
 		thinkingCeiling: options.thinkingCeiling,
+		extensionBindings: options.extensionBindings,
 	});
 	if (!shared.launchWarnings.emitted && warnings.length > 0) {
 		for (const warning of warnings) console.warn(`[pi-subagents] ${warning}`);
@@ -451,6 +452,7 @@ async function runSingleAttempt(
 		...(options.outputPath ? { outputPath: options.outputPath } : {}),
 		outputMode: options.outputMode ?? "inline",
 		...(options.structuredOutput ? { structuredOutputSchema: options.structuredOutput.schema } : {}),
+		...(options.extensionBindings ? { extensionBindings: options.extensionBindings } : {}),
 	});
 	const result: SingleResult = withRunContext({
 		index: options.index ?? 0,

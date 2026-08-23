@@ -13,6 +13,7 @@ import {
 	type ResolvedMcpDirectToolSelection,
 } from "./mcp-direct-tool-allowlist.ts";
 import { resolvePiPackageRoot } from "./pi-spawn.ts";
+import { encodeExtensionBindings, PI_SUBAGENT_EXTENSION_BINDINGS_ENV, type ExtensionBindings } from "./extension-bindings.ts";
 import { RUNTIME_EXTENSION_ACK_PATH_ENV } from "./runtime-acknowledged-extensions.ts";
 import {
 	STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV,
@@ -200,6 +201,7 @@ export interface BuildPiArgsInput {
 	waitToolEnabled?: boolean;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	thinkingCeiling?: import("../../shared/model-info.ts").ThinkingLevel;
+	extensionBindings?: ExtensionBindings;
 }
 
 export interface BuildPiArgsResult {
@@ -711,6 +713,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	}
 
 	const env: Record<string, string | undefined> = {};
+	env[PI_SUBAGENT_EXTENSION_BINDINGS_ENV] = encodeExtensionBindings(input.extensionBindings);
 	const piPackageRoot =
 		process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] ?? resolvePiPackageRoot();
 	if (piPackageRoot) env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = piPackageRoot;
