@@ -1074,7 +1074,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const sessionId = `session-capability-${Date.now().toString(36)}`;
 		const handle = registerSubagentCapabilityCeiling({ sessionId, ceiling: { allowedTools: ["read"], denyExtensions: true }, source: "test" });
 		try {
-			const executor = makeAsyncExecutor([makeAgent("worker", { tools: ["read", "write"], completionGuard: false })]);
+			const executor = makeAsyncExecutor([makeAgent("worker", { tools: ["read", "write", "subagent"], completionGuard: false })]);
 			const id = `async-capability-${Date.now().toString(36)}`;
 			const ctx = makeMinimalCtx(tempDir);
 			ctx.sessionManager.getSessionId = () => sessionId;
@@ -1096,16 +1096,16 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.deepEqual(status.capabilityCeiling, payload.capabilityCeiling);
 			assert.deepEqual(status.steps?.[0]?.capabilityCeiling, payload.capabilityCeiling);
 			assert.deepEqual(payload.capabilityAudit?.effectiveTools, ["read"]);
-			assert.deepEqual(payload.capabilityAudit?.removedTools, ["write", "contact_supervisor"]);
+			assert.deepEqual(payload.capabilityAudit?.removedTools, ["write", "subagent", "contact_supervisor"]);
 			assert.equal(payload.capabilityAudit?.extensionsDenied, true);
 			const events = fs.readFileSync(path.join(ASYNC_DIR, asyncId, "events.jsonl"), "utf-8").trim().split("\n").map((line) => JSON.parse(line));
-			assert.ok(events.some((event) => event.type === "subagent.capability-ceiling.applied" && event.stepIndex === 0 && event.capabilityAudit?.removedTools?.includes("write")));
+			assert.ok(events.some((event) => event.type === "subagent.capability-ceiling.applied" && event.stepIndex === 0 && event.capabilityAudit?.removedTools?.includes("subagent")));
 			const metadataPath = payload.results[0]?.artifactPaths?.metadataPath;
 			assert.ok(metadataPath);
 			const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as { launchContractDigest?: string; capabilityCeiling?: unknown; capabilityAudit?: { removedTools?: string[] } };
 			assert.equal(metadata.launchContractDigest, payload.results[0]?.launchContractDigest);
 			assert.deepEqual(metadata.capabilityCeiling, payload.capabilityCeiling);
-			assert.deepEqual(metadata.capabilityAudit?.removedTools, ["write", "contact_supervisor"]);
+			assert.deepEqual(metadata.capabilityAudit?.removedTools, ["write", "subagent", "contact_supervisor"]);
 		} finally {
 			handle.dispose();
 		}

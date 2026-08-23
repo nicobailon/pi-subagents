@@ -72,7 +72,7 @@ import { claimRunFanoutBatch, claimRunFanoutBatchWithCommit, createRunFanoutBudg
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
-import { authorizeSubagentLaunch, takeBoundSubagentLaunchAuthorization, verifyAuthorizedLaunchManifest, type AuthorizedLaunchAuthority, type LaunchAuthorityLane } from "../shared/launch-authority.ts";
+import { authorizeSubagentLaunch, takeBoundSubagentLaunchAuthorization, type AuthorizedLaunchAuthority, type LaunchAuthorityLane } from "../shared/launch-authority.ts";
 import { resolveSubagentLaunchContract } from "../../api/preflight.ts";
 import { parseStaticRunsAllWorkflow } from "../../workflows/static-workflow-manifest.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
@@ -6184,12 +6184,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 	};
 
-	const verifyAuthorityManifest = async (
+	const resolveAuthorityManifest = async (
 		params: SubagentParamsLike,
 		ctx: ExtensionContext,
 		authorities: readonly AuthorizedLaunchAuthority[],
-	): Promise<void> => {
-		if (authorities.length === 0) return;
+	): Promise<LaunchAuthorityLane[]> => {
+		if (authorities.length === 0) return [];
 		const defaults = { ...params } as Record<string, unknown>;
 		delete defaults.workflowScript;
 		delete defaults.action;
@@ -6238,7 +6238,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				launchContractDigest: contract.contract.launchContractDigest,
 			});
 		}
-		verifyAuthorizedLaunchManifest(authorities, actual);
+		return actual;
 	};
 
 	const authorizeBoundary = async (
@@ -6256,8 +6256,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (!admission.ok) {
 				return { authorities: [], rejected: buildRequestedModeError(params, `Launch authority rejected the request (${admission.code}): ${admission.message}`) };
 			}
-			await verifyAuthorityManifest(params, ctx, admission.authorities);
-			return { authorities: admission.authorities };
+			try {
+				const actual = await resolveAuthorityManifest(params, ctx, admission.authorities);
+				const committed = await admission.commit(actual);
+				if (!committed.ok) {
+					return { authorities: [], rejected: buildRequestedModeError(params, `Launch authority rejected the request (${committed.code}): ${committed.message}`) };
+				}
+				return { authorities: committed.authorities };
+			} catch (error) {
+				admission.cancel();
+				throw error;
+			}
 		} catch (error) {
 			return { authorities: [], rejected: buildRequestedModeError(params, `Launch authority rejected the request: ${error instanceof Error ? error.message : String(error)}`) };
 		}

@@ -37,6 +37,12 @@ function permitInput(params = workflow(), revision = "revision-1") {
 	};
 }
 
+async function commit(admission: Awaited<ReturnType<typeof authorizeSubagentLaunch>>, actual = [lane]) {
+	assert.equal(admission.ok, true);
+	if (!admission.ok) return admission;
+	return admission.commit(actual);
+}
+
 test("package exports the public launch-authority API", () => {
 	const pkg = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../../package.json"), "utf8")) as { exports?: Record<string, string> };
 	assert.equal(pkg.exports?.["./launch-authority"], "./src/api/launch-authority.ts");
@@ -74,9 +80,13 @@ test("validates authority registration and permit manifests", () => {
 });
 
 test("allows launches with no authority and management with an active authority", async () => {
-	assert.deepEqual(await authorizeSubagentLaunch({ sessionId: "none", params: workflow() }), { ok: true, authorities: [] });
+	const unrestricted = await authorizeSubagentLaunch({ sessionId: "none", params: workflow() });
+	assert.equal(unrestricted.ok, true);
+	if (unrestricted.ok) assert.deepEqual(unrestricted.authorities, []);
 	const authority = registerSubagentLaunchAuthority({ sessionId: "management", source: "ultra", defaultNewSpawnDecision: "deny" });
-	assert.deepEqual(await authorizeSubagentLaunch({ sessionId: "management", params: { action: "status" } }), { ok: true, authorities: [] });
+	const management = await authorizeSubagentLaunch({ sessionId: "management", params: { action: "status" } });
+	assert.equal(management.ok, true);
+	if (management.ok) assert.deepEqual(management.authorities, []);
 	authority.dispose();
 });
 
@@ -94,6 +104,7 @@ test("denies without a permit, accepts one exact request once, and rejects repla
 		assert.equal(accepted.authorities.length, 1);
 		assert.deepEqual(accepted.authorities[0]?.lanes, [lane]);
 	}
+	assert.equal((await commit(accepted)).ok, true);
 	const replay = await authorizeSubagentLaunch({ sessionId, params, permits: [token] });
 	assert.equal(replay.ok, false);
 	if (!replay.ok) assert.equal(replay.code, "invalid_permit");
@@ -159,6 +170,7 @@ test("all active authorities must contribute a permit", async () => {
 	const accepted = await authorizeSubagentLaunch({ sessionId, params, permits: [nextFirst, secondToken] });
 	assert.equal(accepted.ok, true);
 	if (accepted.ok) assert.deepEqual(accepted.authorities.map(({ source }) => source), ["first", "second"]);
+	assert.equal((await commit(accepted)).ok, true);
 	first.dispose();
 	second.dispose();
 });
@@ -181,7 +193,8 @@ test("reserves a permit before awaiting revision validation", async () => {
 	assert.equal(concurrent.ok, false);
 	if (!concurrent.ok) assert.equal(concurrent.code, "invalid_permit");
 	release(true);
-	assert.equal((await first).ok, true);
+	const reserved = await first;
+	assert.equal((await commit(reserved)).ok, true);
 	authority.dispose();
 });
 
@@ -251,6 +264,31 @@ test("bounds outstanding permit storage", () => {
 	authority.dispose();
 });
 
+test("rechecks config and registry generation after runtime manifest preflight", async () => {
+	for (const scenario of ["revision", "registration"] as const) {
+		const sessionId = `commit-race-${scenario}`;
+		let current = true;
+		const authority = registerSubagentLaunchAuthority({
+			sessionId,
+			source: "ultra",
+			defaultNewSpawnDecision: "deny",
+			validateConfigRevision: () => current,
+		});
+		const params = workflow();
+		const token = authority.issueOnce(permitInput(params));
+		const reservation = await authorizeSubagentLaunch({ sessionId, params, permits: [token] });
+		assert.equal(reservation.ok, true);
+		let second: ReturnType<typeof registerSubagentLaunchAuthority> | undefined;
+		if (scenario === "revision") current = false;
+		else second = registerSubagentLaunchAuthority({ sessionId, source: "second", defaultNewSpawnDecision: "deny" });
+		const committed = await commit(reservation);
+		assert.equal(committed.ok, false, scenario);
+		if (!committed.ok) assert.equal(committed.code, "config_revision_mismatch");
+		second?.dispose();
+		authority.dispose();
+	}
+});
+
 test("requires every authority manifest to match exact resolved lanes", () => {
 	const actual = [lane];
 	const matching = [{ source: "ultra", configRevision: "r", minLanes: 1, maxLanes: 1, lanes: [lane] }];
@@ -274,5 +312,7 @@ test("disposing the final authority restores ordinary launch behavior", async ()
 	authority.dispose();
 	authority.dispose();
 	assert.throws(() => authority.issueOnce(permitInput()), /disposed/i);
-	assert.deepEqual(await authorizeSubagentLaunch({ sessionId, params: workflow() }), { ok: true, authorities: [] });
+	const result = await authorizeSubagentLaunch({ sessionId, params: workflow() });
+	assert.equal(result.ok, true);
+	if (result.ok) assert.deepEqual(result.authorities, []);
 });

@@ -288,11 +288,12 @@ Semantics:
 - Capability ping advertises `capabilities.launchAuthority = { version: 1 }`.
 - All active authorities for the exact session intersect; the request must supply exactly one owned permit per authority.
 - Tokens are bounded, opaque, one-use, short-lived, never returned in receipts/status, and consumed on success or mismatch.
-- Admission snapshots registry generation, awaits revision validation with a deadline, then rechecks registration ownership, revocation, disposal, and expiry before commit.
-- Authorized workflows must be one static literal `return await runs.all([...])`. pi-subagents re-preflights every child and compares ordered keys, agents, model candidate lists, bounds, and launch-contract digests before any run ID, storage, mission, capacity reservation, worktree, or child process is created.
+- Admission snapshots registry generation and reserves every token, then returns an internal two-phase reservation. The executor re-preflights the runtime manifest, calls `commit(actualLanes)`, repeats revision validation, and rechecks generation, registration ownership, revocation, disposal, request digest, and expiry before consuming permits.
+- Authorized workflows must be one static literal `return await runs.all([...])`. pi-subagents compares ordered keys, agents, model candidate lists, bounds, and launch-contract digests before final admission commit and before any run ID, storage, mission, capacity reservation, worktree, or child process is created.
 - Dynamic workflows, conflicting authority manifests, unknown session identity, recovery-capable steer, resume, and schedule creation/manual firing fail closed while authority is active. Unattended schedule firing is denied before run/history/lock bookkeeping.
 - Proven read-only/status/stop/interrupt actions and `steer` with `steeringRecovery:false` remain available without a permit.
 - Call `revokeUnused()` after an abandoned request and `dispose()` on session shutdown.
+- RPC capability metadata also advertises `resultReplay: { version: 1 }`. `method: "result"` returns a bounded structured terminal/active projection (`runId`, `state`, lane bindings, status, and artifact references) so policy extensions can recover a missed completion event without parsing rendered status text.
 
 The registry uses process-local shared state so separately resolved copies of the same compatible package can cooperate. Pi packages are trusted same-realm code; launch authority governs supported ingress paths and is not a sandbox against a deliberately malicious extension that mutates process internals.
 

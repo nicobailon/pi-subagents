@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -31,7 +32,7 @@ export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
 export const SUBAGENT_RPC_READY_EVENT = "subagents:rpc:v1:ready";
 export const SUBAGENT_RPC_REPLY_EVENT_PREFIX = "subagents:rpc:v1:reply:";
 
-export const SUBAGENT_RPC_METHODS = ["ping", "status", "manage", "spawn", "steer", "interrupt", "stop", "resume"] as const;
+export const SUBAGENT_RPC_METHODS = ["ping", "status", "result", "manage", "spawn", "steer", "interrupt", "stop", "resume"] as const;
 export type SubagentRpcMethod = typeof SUBAGENT_RPC_METHODS[number];
 
 export interface SubagentRpcRequestEnvelope {
@@ -397,6 +398,7 @@ function pingData(ctx: ExtensionContext | null) {
 			managementActions: [...SUBAGENT_RPC_MANAGEMENT_ACTIONS],
 			fleetStatus: { version: 1 },
 			asyncStatusSnapshot: { kind: ASYNC_STATUS_SNAPSHOT_KIND, version: ASYNC_STATUS_SNAPSHOT_VERSION },
+			resultReplay: { version: 1 },
 			launchAuthority: { version: SUBAGENT_LAUNCH_AUTHORITY_VERSION },
 			asyncSpawn: true,
 			steer: true,
@@ -644,6 +646,66 @@ function stopAsyncRun(
 	};
 }
 
+function replayResult(params: unknown, options: RegisterSubagentRpcBridgeOptions, ctx: ExtensionContext): Record<string, unknown> {
+	const target = normalizeTargetParams(params, "result");
+	if (!target.id && !target.runId && !target.dir) throw new SubagentRpcError("invalid_params", "RPC result requires id, runId, or dir.");
+	let location;
+	try {
+		location = resolveAsyncRunLocation(target, options.asyncDirRoot ?? DIRS.async, options.resultsDir ?? DIRS.results);
+	} catch (error) {
+		throw new SubagentRpcError("invalid_params", error instanceof Error ? error.message : String(error));
+	}
+	const currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+	const projectResult = (value: unknown): Record<string, unknown> => {
+		const result = isRecord(value) ? value : {};
+		const artifactPaths = isRecord(result.artifactPaths) ? result.artifactPaths : undefined;
+		return {
+			...(typeof result.workflowKey === "string" ? { workflowKey: displayText(result.workflowKey, 128) } : {}),
+			...(typeof result.key === "string" ? { key: displayText(result.key, 128) } : {}),
+			...(typeof result.agent === "string" ? { agent: displayText(result.agent, 96) } : {}),
+			...(typeof result.model === "string" ? { model: displayText(result.model, 128) } : {}),
+			...(typeof result.launchContractDigest === "string" ? { launchContractDigest: displayText(result.launchContractDigest, 128) } : {}),
+			...(typeof result.status === "string" ? { status: displayText(result.status, 64) } : typeof result.success === "boolean" ? { status: result.success ? "completed" : "failed" } : {}),
+			...(typeof result.savedOutputPath === "string" ? { outputPath: displayText(result.savedOutputPath, 4_096) } : artifactPaths && typeof artifactPaths.outputPath === "string" ? { outputPath: displayText(artifactPaths.outputPath, 4_096) } : {}),
+			...(typeof result.sessionFile === "string" ? { sessionPath: displayText(result.sessionFile, 4_096) } : {}),
+		};
+	};
+	if (location.resultPath && fs.existsSync(location.resultPath)) {
+		let raw: unknown;
+		try {
+			if (fs.statSync(location.resultPath).size > 16 * 1024 * 1024) throw new Error("result file exceeds 16 MiB");
+			raw = JSON.parse(fs.readFileSync(location.resultPath, "utf-8"));
+		} catch (error) {
+			throw new SubagentRpcError("execution_failed", `Could not read terminal result replay: ${error instanceof Error ? error.message : String(error)}`);
+		}
+		if (!isRecord(raw)) throw new SubagentRpcError("execution_failed", "Terminal result replay is malformed.");
+		if (!currentSessionId || raw.sessionId !== currentSessionId) throw new SubagentRpcError("not_found", "Run was not found in the active session.");
+		const runId = typeof raw.runId === "string" ? raw.runId : typeof raw.id === "string" ? raw.id : location.resolvedId;
+		const state = typeof raw.state === "string" ? raw.state : raw.success === true ? "complete" : "failed";
+		return {
+			version: 1,
+			found: true,
+			terminal: state === "complete" || state === "failed" || state === "stopped",
+			runId,
+			state,
+			results: Array.isArray(raw.results) ? raw.results.slice(0, 256).map(projectResult) : [],
+		};
+	}
+	if (location.asyncDir) {
+		const status = readStatus(location.asyncDir);
+		if (!status || !currentSessionId || status.sessionId !== currentSessionId) throw new SubagentRpcError("not_found", "Run was not found in the active session.");
+		return {
+			version: 1,
+			found: true,
+			terminal: false,
+			runId: status.runId,
+			state: status.state,
+			results: (status.steps ?? []).slice(0, 256).map((step) => projectResult({ ...step, workflowKey: step.workflowKey ?? step.label })),
+		};
+	}
+	return { version: 1, found: false, terminal: false, runId: location.resolvedId, state: "not_found", results: [] };
+}
+
 async function handleRequest(
 	request: SubagentRpcRequestEnvelope,
 	options: RegisterSubagentRpcBridgeOptions,
@@ -659,6 +721,7 @@ async function handleRequest(
 	if (request.method === "spawn") {
 		return executeChecked(options, ctx, request.requestId, request.method, spawnParams(request.params), request.authorization?.launchPermits);
 	}
+	if (request.method === "result") return replayResult(request.params, options, ctx);
 	if (request.method === "status") {
 		const status = await executeChecked(
 			options,

@@ -69,7 +69,12 @@ export interface AuthorizedLaunchAuthority {
 }
 
 export type SubagentLaunchAdmission =
-	| { ok: true; authorities: AuthorizedLaunchAuthority[] }
+	| {
+		ok: true;
+		authorities: AuthorizedLaunchAuthority[];
+		commit(actualLanes: readonly LaunchAuthorityLane[]): Promise<SubagentLaunchAdmission>;
+		cancel(): void;
+	}
 	| {
 		ok: false;
 		code: "permit_required" | "invalid_permit" | "expired_permit" | "request_mismatch" | "config_revision_mismatch";
@@ -352,6 +357,17 @@ function denied(code: Exclude<SubagentLaunchAdmission, { ok: true }>["code"], me
 	return { ok: false, code, message };
 }
 
+function accepted(authorities: AuthorizedLaunchAuthority[] = []): SubagentLaunchAdmission {
+	let result: SubagentLaunchAdmission;
+	result = {
+		ok: true,
+		authorities,
+		commit: async () => result,
+		cancel() {},
+	};
+	return result;
+}
+
 async function validateRevision(registration: Registration, revision: string): Promise<boolean> {
 	if (!registration.validateConfigRevision) return true;
 	const controller = new AbortController();
@@ -384,11 +400,11 @@ export async function authorizeSubagentLaunch(input: {
 	if (!sessionId) {
 		return hasActiveSubagentLaunchAuthority()
 			? denied("permit_required", "Launch authority cannot admit a new spawn without an authoritative session id.")
-			: { ok: true, authorities: [] };
+			: accepted();
 	}
 	const session = store.sessions.get(sessionId);
-	if (!session?.registrations.size) return { ok: true, authorities: [] };
-	if (classifySubagentLaunchRequest(input.params) === "management") return { ok: true, authorities: [] };
+	if (!session?.registrations.size) return accepted();
+	if (classifySubagentLaunchRequest(input.params) === "management") return accepted();
 	const requestDigest = digestSubagentLaunchRequest(input.params, input.domain ?? "public");
 	const supplied = input.permits ?? [];
 	if (!Array.isArray(supplied) || supplied.length > MAX_AUTHORITIES || supplied.some((token) => typeof token !== "string" || token.length > 128) || new Set(supplied).size !== supplied.length) {
@@ -470,6 +486,51 @@ export async function authorizeSubagentLaunch(input: {
 		maxLanes: permit.maxLanes,
 		lanes: permit.lanes.map((lane) => ({ ...lane, modelCandidates: [...lane.modelCandidates] })),
 	}));
-	consumeSelected();
-	return { ok: true, authorities };
+	let settled = false;
+	const expiryTimer = setTimeout(() => {
+		if (settled) return;
+		settled = true;
+		consumeSelected();
+	}, Math.max(1, Math.min(...selected.map(({ permit }) => permit.expiresAt - Date.now()))));
+	expiryTimer.unref?.();
+	const cancel = () => {
+		if (settled) return;
+		settled = true;
+		clearTimeout(expiryTimer);
+		consumeSelected();
+	};
+	const reservation: SubagentLaunchAdmission = {
+		ok: true,
+		authorities,
+		async commit(actualLanes) {
+			if (settled) return denied("invalid_permit", "Launch admission reservation is no longer active.");
+			try {
+				verifyAuthorizedLaunchManifest(authorities, actualLanes);
+			} catch (error) {
+				cancel();
+				return denied("request_mismatch", error instanceof Error ? error.message : String(error));
+			}
+			const finalRevisions = await Promise.all(selected.map(({ registration, permit }) => validateRevision(registration, permit.configRevision)));
+			const finalStable = !settled
+				&& store.sessions.get(sessionId) === session
+				&& session.generation === generation
+				&& selected.every(({ registration, permit }) =>
+					!registration.disposed
+					&& session.registrations.get(registration.id) === registration
+					&& registration.permits.get(permit.token) === permit
+					&& permit.state === "validating"
+					&& permit.expiresAt > Date.now()
+					&& permit.requestDigest === requestDigest);
+			if (!finalStable || finalRevisions.some((valid) => !valid)) {
+				cancel();
+				return denied("config_revision_mismatch", "Launch authority state or config revision changed during runtime manifest preflight.");
+			}
+			settled = true;
+			clearTimeout(expiryTimer);
+			consumeSelected();
+			return accepted(authorities);
+		},
+		cancel,
+	};
+	return reservation;
 }

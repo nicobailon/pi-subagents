@@ -125,6 +125,10 @@ describe("subagent extension RPC bridge", () => {
 			(reply as { data: { capabilities?: { launchAuthority?: unknown } } }).data.capabilities?.launchAuthority,
 			{ version: 1 },
 		);
+		assert.deepEqual(
+			(reply as { data: { capabilities?: { resultReplay?: unknown } } }).data.capabilities?.resultReplay,
+			{ version: 1 },
+		);
 
 		bridge.dispose();
 	});
@@ -184,6 +188,46 @@ describe("subagent extension RPC bridge", () => {
 		const statusAuth = await request(events, "auth-status", "status", {}, { launchPermits: ["token"] });
 		assert.equal(statusAuth.success, false);
 		bridge.dispose();
+	});
+
+	it("replays bounded structured terminal results for missed completion recovery", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-result-"));
+		const asyncDirRoot = path.join(root, "async");
+		const resultsDir = path.join(root, "results");
+		fs.mkdirSync(asyncDirRoot, { recursive: true });
+		fs.mkdirSync(resultsDir, { recursive: true });
+		const runId = "result-run-12345678";
+		fs.writeFileSync(path.join(resultsDir, `${runId}.json`), JSON.stringify({
+			runId,
+			sessionId: "/sessions/parent.jsonl",
+			state: "complete",
+			success: true,
+			results: [{ workflowKey: "worker", agent: "ultra-worker", model: "openai/test", launchContractDigest: "a".repeat(64), success: true, artifactPaths: { outputPath: "/tmp/output.md" } }],
+		}));
+		const events = new FakeEvents();
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx(),
+			execute: async () => assert.fail("result replay must not invoke executor"),
+			asyncDirRoot,
+			resultsDir,
+		});
+		try {
+			const reply = await request(events, "result-1", "result", { id: runId });
+			assert.equal(reply.success, true);
+			if (!reply.success) assert.fail(reply.error.message);
+			assert.deepEqual(reply.data, {
+				version: 1,
+				found: true,
+				terminal: true,
+				runId,
+				state: "complete",
+				results: [{ workflowKey: "worker", agent: "ultra-worker", model: "openai/test", launchContractDigest: "a".repeat(64), status: "completed", outputPath: "/tmp/output.md" }],
+			});
+		} finally {
+			bridge.dispose();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("delegates status through the existing executor action", async () => {
