@@ -25,6 +25,8 @@ import { SubagentParams } from "./schemas.ts";
 import { normalizePublicSubagentExecution } from "./public-execution.ts";
 import { ASYNC_STATUS_SNAPSHOT_KIND, ASYNC_STATUS_SNAPSHOT_VERSION, buildAsyncStatusSnapshotForState } from "../runs/background/async-status-snapshot.ts";
 import { isStoppableAsyncStatusStep, resolveAsyncStatusChild, type ResolvedAsyncStatusChild } from "../runs/shared/child-identity.ts";
+import { resolveSubagentLaunchContract } from "../api/preflight.ts";
+import { resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
 import { readCompletionReplay } from "../runs/background/completion-replay.ts";
 import { bindSubagentLaunchPermits, SUBAGENT_LAUNCH_AUTHORITY_VERSION } from "../runs/shared/launch-authority.ts";
 
@@ -33,7 +35,7 @@ export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
 export const SUBAGENT_RPC_READY_EVENT = "subagents:rpc:v1:ready";
 export const SUBAGENT_RPC_REPLY_EVENT_PREFIX = "subagents:rpc:v1:reply:";
 
-export const SUBAGENT_RPC_METHODS = ["ping", "status", "result", "manage", "spawn", "steer", "interrupt", "stop", "resume"] as const;
+export const SUBAGENT_RPC_METHODS = ["ping", "preflight", "status", "result", "manage", "spawn", "steer", "interrupt", "stop", "resume"] as const;
 export type SubagentRpcMethod = typeof SUBAGENT_RPC_METHODS[number];
 
 export interface SubagentRpcRequestEnvelope {
@@ -400,6 +402,7 @@ function pingData(ctx: ExtensionContext | null) {
 			fleetStatus: { version: 1 },
 			asyncStatusSnapshot: { kind: ASYNC_STATUS_SNAPSHOT_KIND, version: ASYNC_STATUS_SNAPSHOT_VERSION },
 			resultReplay: { version: 1 },
+			launchPreflight: { version: 1 },
 			launchAuthority: { version: SUBAGENT_LAUNCH_AUTHORITY_VERSION },
 			asyncSpawn: true,
 			steer: true,
@@ -647,6 +650,32 @@ function stopAsyncRun(
 	};
 }
 
+async function preflightResult(params: unknown, ctx: ExtensionContext): Promise<Record<string, unknown>> {
+	const input = assertRecordParams(params, "preflight");
+	const allowed = new Set(["agent", "task", "cwd", "context", "model"]);
+	for (const field of Object.keys(input)) if (!allowed.has(field)) throw new SubagentRpcError("invalid_params", `RPC preflight contains unsupported field '${field}'.`);
+	if (typeof input.agent !== "string" || !input.agent.trim() || input.agent.length > 128) throw new SubagentRpcError("invalid_params", "RPC preflight agent must be a non-empty string of at most 128 characters.");
+	if (input.task !== undefined && (typeof input.task !== "string" || input.task.length > 16_384)) throw new SubagentRpcError("invalid_params", "RPC preflight task must be a string of at most 16384 characters.");
+	if (input.cwd !== undefined && (typeof input.cwd !== "string" || !input.cwd.trim() || input.cwd.length > 4_096)) throw new SubagentRpcError("invalid_params", "RPC preflight cwd must be a non-empty string of at most 4096 characters.");
+	if (input.context !== undefined && input.context !== "fresh" && input.context !== "fork") throw new SubagentRpcError("invalid_params", "RPC preflight context must be fresh or fork.");
+	if (input.model !== undefined && (typeof input.model !== "string" || !input.model.trim() || input.model.length > 256)) throw new SubagentRpcError("invalid_params", "RPC preflight model must be a non-empty string of at most 256 characters.");
+	const sessionId = resolveCurrentSessionId(ctx.sessionManager);
+	const result = await resolveSubagentLaunchContract({
+		agent: input.agent.trim(),
+		cwd: typeof input.cwd === "string" ? input.cwd : ctx.cwd,
+		...(typeof input.task === "string" ? { task: input.task } : {}),
+		...(input.context === "fresh" || input.context === "fork" ? { context: input.context } : {}),
+		...(typeof input.model === "string" ? { model: input.model.trim() } : {}),
+		availableModels: ctx.modelRegistry.getAvailable().map((model) => ({ provider: model.provider, id: model.id, fullId: `${model.provider}/${model.id}`, reasoning: model.reasoning })),
+		parentModel: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
+		parentSessionFile: ctx.sessionManager.getSessionFile() ?? null,
+		parentLeafId: ctx.sessionManager.getLeafId(),
+		capabilityCeiling: resolveCurrentSubagentCapabilityCeiling(sessionId),
+	});
+	if (!result.ok) throw new SubagentRpcError("execution_failed", `Launch preflight failed (${result.code}): ${result.message}`);
+	return result.contract as unknown as Record<string, unknown>;
+}
+
 function replayResult(params: unknown, options: RegisterSubagentRpcBridgeOptions, ctx: ExtensionContext): Record<string, unknown> {
 	const target = normalizeTargetParams(params, "result");
 	if (!target.id && !target.runId && !target.dir) throw new SubagentRpcError("invalid_params", "RPC result requires id, runId, or dir.");
@@ -742,6 +771,7 @@ async function handleRequest(
 	if (request.method === "ping") return pingData(ctx);
 	if (!ctx) throw new SubagentRpcError("no_active_session", "No active extension context for subagent RPC.");
 
+	if (request.method === "preflight") return preflightResult(request.params, ctx);
 	if (request.method === "manage") {
 		return executeChecked(options, ctx, request.requestId, request.method, manageParams(request.params));
 	}

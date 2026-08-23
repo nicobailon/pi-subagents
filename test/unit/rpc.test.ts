@@ -191,6 +191,32 @@ describe("subagent extension RPC bridge", () => {
 		bridge.dispose();
 	});
 
+	it("resolves launch preflight inside the active extension package", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-preflight-"));
+		fs.mkdirSync(path.join(root, ".pi", "agents"), { recursive: true });
+		fs.writeFileSync(path.join(root, ".pi", "agents", "rpc-scout.md"), "---\nname: rpc-scout\ndescription: RPC scout\ntools: read, grep, find, ls\ndefaultContext: fresh\n---\n");
+		const events = new FakeEvents();
+		const context: any = {
+			...ctx("preflight-session", "/sessions/preflight.jsonl"),
+			cwd: root,
+			model: { provider: "openai", id: "test" },
+			modelRegistry: { getAvailable: () => [{ provider: "openai", id: "test", reasoning: false }] },
+		};
+		context.sessionManager.getLeafId = () => "leaf";
+		const bridge = registerSubagentRpcBridge({ events, getContext: () => context, execute: async () => assert.fail("preflight must not invoke executor") });
+		try {
+			const reply = await request(events, "preflight-1", "preflight", { agent: "rpc-scout", task: "Inspect", cwd: root, context: "fresh", model: "openai/test" });
+			assert.equal(reply.success, true);
+			if (!reply.success) assert.fail(reply.error.message);
+			assert.equal((reply.data as any).agent.name, "rpc-scout");
+			assert.equal((reply.data as any).model, "openai/test");
+			assert.match((reply.data as any).launchContractDigest, /^[a-f0-9]{64}$/);
+		} finally {
+			bridge.dispose();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("replays bounded structured terminal results for missed completion recovery", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-result-"));
 		const asyncDirRoot = path.join(root, "async");
