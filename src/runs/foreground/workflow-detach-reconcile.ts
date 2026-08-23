@@ -28,6 +28,7 @@ function childSucceeded(result: Pick<SingleResult, "exitCode" | "error" | "inter
 }
 
 const UNSUPPORTED_DETACHED_WORKFLOW_CONTINUATION = "unsupported-continuation: detached workflow child settled, but JavaScript workflow continuation was not persisted. Resume the workflow explicitly instead of treating the completed child as top-level workflow completion.";
+const INTERRUPTED_DETACHED_CHILD = "Interrupted. Waiting for explicit next action.";
 
 export function applyDetachedChildToPausedWorkflow(
 	status: AsyncStatus,
@@ -47,9 +48,11 @@ export function applyDetachedChildToPausedWorkflow(
 	delete step.currentToolStartedAt;
 	if (input.result.sessionFile) step.sessionFile = input.result.sessionFile;
 	if (succeeded) delete step.error;
+	else if (input.result.interrupted) step.error = input.result.error ?? INTERRUPTED_DETACHED_CHILD;
 	else if (input.result.error) step.error = input.result.error;
 	next.lastUpdate = updatedAt;
 	const promoted = promotePausedWorkflowIfSettled(next);
+	if (promoted?.state === "failed" && input.result.interrupted) promoted.error = input.result.error ?? INTERRUPTED_DETACHED_CHILD;
 	if (promoted?.state === "failed" && input.result.error) promoted.error = input.result.error;
 	return promoted ?? next;
 }

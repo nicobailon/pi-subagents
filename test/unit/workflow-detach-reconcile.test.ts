@@ -51,6 +51,17 @@ describe("applyDetachedChildToPausedWorkflow", () => {
 		assert.equal(next?.steps?.[0]?.error, "boom");
 	});
 
+	it("replaces stale detach errors when a detached child is interrupted", () => {
+		const next = applyDetachedChildToPausedWorkflow(pausedWorkflow("child-1"), {
+			childRunId: "child-1",
+			result: { exitCode: 0, interrupted: true },
+		});
+		assert.equal(next?.state, "failed");
+		assert.equal(next?.error, "Interrupted. Waiting for explicit next action.");
+		assert.equal(next?.steps?.[0]?.status, "failed");
+		assert.equal(next?.steps?.[0]?.error, "Interrupted. Waiting for explicit next action.");
+	});
+
 	it("keeps the workflow paused while another detached child still needs attention", () => {
 		const status = pausedWorkflow("child-1");
 		status.steps!.push({
