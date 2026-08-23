@@ -74,7 +74,8 @@ export function createHerdrClient(options: { bin?: string; spawn?: SpawnHerdr } 
 					try { child.kill(); } catch {}
 					finish(error("TIMEOUT", `Herdr command '${args.join(" ")}' timed out after ${runOptions.timeoutMs ?? 15_000}ms.`));
 				}, runOptions.timeoutMs ?? 15_000);
-				timer.unref?.();
+				// A caller awaiting this promise must receive the timeout even when a
+				// test double or failed child contributes no other event-loop handle.
 				if (runOptions.signal?.aborted) abort();
 				else runOptions.signal?.addEventListener("abort", abort, { once: true });
 				child.stdout?.on("data", (chunk) => { stdout += chunk.toString(); });
