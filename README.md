@@ -99,6 +99,12 @@ Details, keybindings, and the machine-readable run artifacts are in [Observabili
 
 For bounded orchestration, `maxSubagentSpawnsPerRun` limits cumulative logical children in one run tree. It defaults to 64 and stays separate from active concurrency and the session-wide cumulative spawn budget. See [Configuration](https://github.com/nicobailon/pi-subagents/blob/main/docs/configuration.md#maxsubagentspawnsperrun).
 
+## Extension launch authority
+
+Version `0.55.1-ultra.0` adds `pi-subagents/launch-authority` for trusted policy extensions such as pi-ultra. Authorities deny new session spawns by default and issue exact, short-lived, one-use permits for static workflows. The executor repeats launch preflight and matches lane keys, agents, model candidates, and launch-contract digests before creating run state or child processes. Direct tools, RPC, structured delegation, and scheduled execution share the guarded boundary; recovery, nested, and unattended execution can be denied while policy is active.
+
+See [Extension API](docs/extension-api.md#launch-authority) for the contract and threat model.
+
 ## If something feels off
 
 ```text

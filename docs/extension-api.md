@@ -212,7 +212,7 @@ Parent extensions can enforce an out-of-band, session-scoped capability ceiling 
 import { registerSubagentCapabilityCeiling } from "pi-subagents/capability-ceiling";
 
 const restriction = registerSubagentCapabilityCeiling({
-  sessionId: ctx.sessionManager.getSessionId(),
+  sessionId: ctx.sessionManager.getSessionFile() ?? ctx.sessionManager.getSessionId(),
   source: "plan-mode",
   ceiling: {
     allowedAgents: ["plan-scout", "plan-researcher", "plan-reviewer"],
@@ -237,6 +237,64 @@ Semantics:
 `denyExtensions` suppresses ambient, configured, and MCP provider extensions while retaining the package runtime needed for child protocol enforcement. This is a same-process policy boundary, not a sandbox against malicious code already running in the parent process.
 
 Schedules created while a ceiling is active are rejected until durable schedule persistence is available; unrestricted schedules remain subject to any policy active when they fire. Public status exposes bounded audit counts and sources, never full extension paths.
+
+## Launch authority
+
+Trusted parent extensions can deny every new public/delegated/scheduled spawn unless the exact request carries a short-lived one-use permit:
+
+```ts
+import {
+  digestSubagentLaunchRequest,
+  registerSubagentLaunchAuthority,
+} from "pi-subagents/launch-authority";
+
+const authority = registerSubagentLaunchAuthority({
+  sessionId: ctx.sessionManager.getSessionFile() ?? ctx.sessionManager.getSessionId(),
+  source: "my-policy",
+  defaultNewSpawnDecision: "deny",
+  validateConfigRevision: async (revision, signal) => currentRevision(signal) === revision,
+});
+
+const requestDigest = digestSubagentLaunchRequest(normalizedSpawnParams, "rpc.spawn");
+const permit = authority.issueOnce({
+  configRevision,
+  expiresInMs: 5_000,
+  requestDigest,
+  minLanes: 2,
+  maxLanes: 4,
+  lanes: resolvedLaunchContracts.map((contract) => ({
+    key: contract.key,
+    agent: contract.agent.name,
+    modelCandidates: contract.modelCandidates,
+    launchContractDigest: contract.launchContractDigest,
+  })),
+});
+```
+
+For RPC `spawn`, pass the opaque token outside `params`:
+
+```ts
+{
+  version: 1,
+  requestId,
+  method: "spawn",
+  params: normalizedSpawnParams,
+  authorization: { launchPermits: [permit] }
+}
+```
+
+Semantics:
+
+- Capability ping advertises `capabilities.launchAuthority = { version: 1 }`.
+- All active authorities for the exact session intersect; the request must supply exactly one owned permit per authority.
+- Tokens are bounded, opaque, one-use, short-lived, never returned in receipts/status, and consumed on success or mismatch.
+- Admission snapshots registry generation, awaits revision validation with a deadline, then rechecks registration ownership, revocation, disposal, and expiry before commit.
+- Authorized workflows must be one static literal `return await runs.all([...])`. pi-subagents re-preflights every child and compares ordered keys, agents, model candidate lists, bounds, and launch-contract digests before any run ID, storage, mission, capacity reservation, worktree, or child process is created.
+- Dynamic workflows, conflicting authority manifests, unknown session identity, recovery-capable steer, resume, and schedule creation/manual firing fail closed while authority is active. Unattended schedule firing is denied before run/history/lock bookkeeping.
+- Proven read-only/status/stop/interrupt actions and `steer` with `steeringRecovery:false` remain available without a permit.
+- Call `revokeUnused()` after an abandoned request and `dispose()` on session shutdown.
+
+The registry uses process-local shared state so separately resolved copies of the same compatible package can cooperate. Pi packages are trusted same-realm code; launch authority governs supported ingress paths and is not a sandbox against a deliberately malicious extension that mutates process internals.
 
 ## Background-work provider API
 
