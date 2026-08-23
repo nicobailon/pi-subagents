@@ -4,7 +4,7 @@
 
 ### Highlights
 - Stop a single stuck child in an async workflow without stopping the whole run.
-- Continue finished external jobs, like Surf's `gpt-pro`, with follow-up requests through `resume`.
+- Continue finished external jobs, like `gpt-pro` from [Surf](https://github.com/nicobailon/surf-cli/), with follow-up requests through `resume`.
 - Cap child thinking with `subagents.maxThinking` and set a preferred default provider for bare model ids.
 - Scripted workflow outputs now land in the run's managed artifact directory instead of the repository root.
 - Child launches fail fast with clear reasons when requested models or write tools are unavailable.
@@ -31,10 +31,10 @@
 - Fail child launch attempts when the runtime lacks requested core write tools or an implementation worker has only read-only launch tools, including workflow children that inherit a read-only capability ceiling.
 - Let read-only reviewer acceptance rely on the parent-side staged-file check instead of requiring child-reported `noStagedFiles` evidence.
 - Run public single-child launches directly instead of wrapping them in a workflow, so async external-job agents do not show a completed workflow before the real provider job finishes.
-- Start omitted-`async` public external-runner single-child launches in the supported background mode, so package agents such as Surf's `gpt-pro` do not fail as foreground requests.
+- Start omitted-`async` public external-runner single-child launches in the supported background mode, so package agents such as `gpt-pro` from [Surf](https://github.com/nicobailon/surf-cli/) do not fail as foreground requests.
 - Let workflow scripts await omitted-`async` external-runner children by launching them in the background internally and returning their terminal result.
 - Report helpful workflow errors when `runs.all(...)` results are read as keyed objects instead of ordered arrays. Thanks to [@ravshansbox](https://github.com/ravshansbox) for #1351.
-- Clarify that Council Mode can include installed external-runner advisors such as Surf's `gpt-pro` when the `surf-cli` Pi extension has registered `surf-oracle`, with text JSON reports instead of `outputSchema`.
+- Clarify that Council Mode can include installed external-runner advisors such as `gpt-pro` from [Surf](https://github.com/nicobailon/surf-cli/) when the `surf-cli` Pi extension has registered `surf-oracle`, with text JSON reports instead of `outputSchema`.
 
 ## [0.54.0] - 2026-08-21
 
