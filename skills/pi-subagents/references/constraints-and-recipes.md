@@ -62,6 +62,15 @@ user explicitly requests forked context.
 Give subagents specific tasks rather than vague mandates.
 `Review auth.ts for null-check gaps` works better than `Review everything`.
 
+Before fanout, assign each child a lightweight task profile in the parent prompt:
+work kind, required input, expected output, acceptance check, and context mode.
+Keep the profile prose-only; do not invent runtime fields. Use coarse kinds such
+as `code-write`, `code-read`, `transform`, `summarize`, and `search` only to
+shape the task and choose an existing agent/model setting. If a child task is not
+standalone enough for fresh context, add the missing facts to the prompt, switch
+to forked context, or ask the user. Do not launch vague tasks and rely on
+supervisor round-trips to recover missing context.
+
 ### Escalate decisions upward
 
 If a subagent encounters an unapproved product, architecture, scope, merge, release, credential, or authority choice, it should use `contact_supervisor` and wait for the reply instead of deciding alone. Generic `intercom` is external or provider-supplied only. Use it only when external bridge instructions provide an explicit safe target. External checks, receipts, and review bots provide evidence only; they do not grant authority.

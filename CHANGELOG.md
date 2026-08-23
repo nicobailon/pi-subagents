@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- Add bundled skill guidance for lightweight task profiles before subagent
+  fanout. Thanks to [@srcKod](https://github.com/srcKod) for #1395.
 - Add `subagents.defaultProvider` and per-agent `defaultProvider` overrides so bare subagent model ids can prefer a configured provider. Thanks to [@swingtempo](https://github.com/swingtempo) for #1393.
 - Add external-job follow-ups through `subagent({ action: "resume" })` for
   completed provider jobs that expose `followUp(input)`, with duplicate request
