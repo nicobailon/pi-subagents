@@ -7,6 +7,7 @@
 - Keep checked acceptance compatible with strict workflow child `outputSchema` results. Thanks to [@rtbe](https://github.com/rtbe) for #1406.
 - Use bounded tracked-file mutation evidence for implementation completion guards, including files that were already dirty when the child started. Thanks to [@rtbe](https://github.com/rtbe) for #1407.
 - Add timeout recovery summaries with changed tracked files, active child state, and session/artifact paths. Thanks to [@rtbe](https://github.com/rtbe) for #1409.
+- Fail closed when reviewer runs are interrupted or detached workflow children settle without persisted top-level continuation proof. Thanks to [@rtbe](https://github.com/rtbe) for #1408.
 
 ## [0.55.0] - 2026-08-23
 

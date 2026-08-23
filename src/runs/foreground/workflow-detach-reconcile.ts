@@ -23,13 +23,15 @@ function cloneWorkflowStatus(status: AsyncStatus): AsyncStatus {
 	};
 }
 
-function childSucceeded(result: Pick<SingleResult, "exitCode" | "error">): boolean {
-	return result.exitCode === 0 && !result.error;
+function childSucceeded(result: Pick<SingleResult, "exitCode" | "error" | "interrupted">): boolean {
+	return result.exitCode === 0 && !result.error && !result.interrupted;
 }
+
+const UNSUPPORTED_DETACHED_WORKFLOW_CONTINUATION = "unsupported-continuation: detached workflow child settled, but JavaScript workflow continuation was not persisted. Resume the workflow explicitly instead of treating the completed child as top-level workflow completion.";
 
 export function applyDetachedChildToPausedWorkflow(
 	status: AsyncStatus,
-	input: { childRunId: string; result: Pick<SingleResult, "exitCode" | "error" | "sessionFile">; workflowKey?: string },
+	input: { childRunId: string; result: Pick<SingleResult, "exitCode" | "error" | "interrupted" | "sessionFile">; workflowKey?: string },
 ): AsyncStatus | undefined {
 	if (status.mode !== "workflow" || status.state !== "paused") return undefined;
 	const next = cloneWorkflowStatus(status);
@@ -63,10 +65,11 @@ export function promotePausedWorkflowIfSettled(status: AsyncStatus): AsyncStatus
 	const failed = next.steps.some((candidate) => candidate.status === "failed");
 	const updatedAt = Date.now();
 	next.lastUpdate = updatedAt;
-	next.state = failed ? "failed" : "complete";
+	next.state = "failed";
 	next.endedAt = updatedAt;
 	delete next.activityState;
-	if (!failed) delete next.error;
+	if (failed) return next;
+	next.error = UNSUPPORTED_DETACHED_WORKFLOW_CONTINUATION;
 	return next;
 }
 
@@ -83,6 +86,7 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 				output,
 				outputState: output.trim() ? "present" : "absent",
 				detached: undefined,
+				...(result.interrupted ? { interrupted: true } : {}),
 				...(result.error ? { error: result.error } : {}),
 			};
 		});
@@ -94,6 +98,7 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 		success: step.status === "completed" || step.status === "complete",
 		output: step.runId === childRunId ? output : "",
 		outputState: step.runId === childRunId && output.trim() ? "present" : "absent",
+		...(step.runId === childRunId && result.interrupted ? { interrupted: true } : {}),
 		...(step.error ? { error: step.error } : {}),
 	}));
 }

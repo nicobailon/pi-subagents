@@ -27,14 +27,14 @@ function pausedWorkflow(childRunId: string, extra?: Partial<NonNullable<AsyncSta
 }
 
 describe("applyDetachedChildToPausedWorkflow", () => {
-	it("completes a paused workflow when its detached child succeeds", () => {
+	it("fails closed when a detached child succeeds without persisted workflow continuation", () => {
 		const next = applyDetachedChildToPausedWorkflow(pausedWorkflow("child-1"), {
 			childRunId: "child-1",
 			result: { exitCode: 0, sessionFile: "/tmp/child.jsonl" },
 		});
-		assert.equal(next?.state, "complete");
+		assert.equal(next?.state, "failed");
 		assert.equal(next?.activityState, undefined);
-		assert.equal(next?.error, undefined);
+		assert.match(next?.error ?? "", /unsupported-continuation/);
 		assert.equal(next?.steps?.[0]?.status, "completed");
 		assert.equal(next?.steps?.[0]?.activityState, undefined);
 		assert.equal(next?.steps?.[0]?.sessionFile, "/tmp/child.jsonl");
@@ -81,7 +81,7 @@ describe("applyDetachedChildToPausedWorkflow", () => {
 		}), undefined);
 	});
 
-	it("completes a paused workflow when the matching step already settled", () => {
+	it("fails closed when the matching step already settled", () => {
 		const status = pausedWorkflow("child-1");
 		status.steps![0]!.status = "completed";
 		delete status.steps![0]!.activityState;
@@ -89,11 +89,12 @@ describe("applyDetachedChildToPausedWorkflow", () => {
 			childRunId: "child-1",
 			result: { exitCode: 0, sessionFile: "/tmp/child.jsonl" },
 		});
-		assert.equal(next?.state, "complete");
-		assert.equal(promotePausedWorkflowIfSettled(status)?.state, "complete");
+		assert.equal(next?.state, "failed");
+		assert.match(next?.error ?? "", /unsupported-continuation/);
+		assert.equal(promotePausedWorkflowIfSettled(status)?.state, "failed");
 	});
 
-	it("completes after a detached child settles when an aborted sibling is stopped", () => {
+	it("fails closed after a detached child settles when an aborted sibling is stopped", () => {
 		const status = pausedWorkflow("child-1");
 		status.steps!.push({
 			agent: "other",
@@ -106,7 +107,8 @@ describe("applyDetachedChildToPausedWorkflow", () => {
 			childRunId: "child-1",
 			result: { exitCode: 0 },
 		});
-		assert.equal(next?.state, "complete");
+		assert.equal(next?.state, "failed");
+		assert.match(next?.error ?? "", /unsupported-continuation/);
 		assert.equal(next?.steps?.[1]?.status, "stopped");
 	});
 });
@@ -143,16 +145,17 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			childRunId: "child-1",
 			result: { index: 0, agent: "worker", task: "t", exitCode: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
 		}), true);
-		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; sessionId?: string; workflowReceipt?: { receipt?: { state?: string; entries?: Record<string, { resumability?: { state?: string; reason?: string } }> } } };
-		assert.equal(published.state, "complete");
-		assert.equal(published.success, true);
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; error?: string; sessionId?: string; workflowReceipt?: { receipt?: { state?: string; entries?: Record<string, { resumability?: { state?: string; reason?: string } }> } } };
+		assert.equal(published.state, "failed");
+		assert.equal(published.success, false);
+		assert.match(published.error ?? "", /unsupported-continuation/);
 		assert.equal(published.sessionId, "session-1");
-		assert.equal(published.workflowReceipt?.receipt?.state, "complete");
+		assert.equal(published.workflowReceipt?.receipt?.state, "failed");
 		assert.equal(published.workflowReceipt?.receipt?.entries?.detaches?.resumability?.state, "not-resumable");
 		assert.match(published.workflowReceipt?.receipt?.entries?.detaches?.resumability?.reason ?? "", /not found|Status file|too short/);
 		const events = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
 		assert.match(events, /"type":"subagent.workflow.completed"/);
-		assert.match(events, /"state":"complete"/);
+		assert.match(events, /"state":"failed"/);
 	});
 
 	it("publishes detached completion when the workflow receipt is malformed", () => {
@@ -174,9 +177,10 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			result: { index: 0, agent: "worker", task: "t", exitCode: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
 		}), true);
 
-		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; workflowReceipt?: unknown };
-		assert.equal(published.state, "complete");
-		assert.equal(published.success, true);
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; error?: string; workflowReceipt?: unknown };
+		assert.equal(published.state, "failed");
+		assert.equal(published.success, false);
+		assert.match(published.error ?? "", /unsupported-continuation/);
 		assert.equal(published.workflowReceipt, undefined);
 		const events = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
 		assert.match(events, /"type":"subagent.workflow.receipt_write_failed"/);
@@ -211,9 +215,10 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			console.error = originalConsoleError;
 		}
 
-		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; workflowReceipt?: unknown; reconciledFromDetachedChild?: string };
-		assert.equal(published.state, "complete");
-		assert.equal(published.success, true);
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; error?: string; workflowReceipt?: unknown; reconciledFromDetachedChild?: string };
+		assert.equal(published.state, "failed");
+		assert.equal(published.success, false);
+		assert.match(published.error ?? "", /unsupported-continuation/);
 		assert.equal(published.workflowReceipt, undefined);
 		assert.equal(published.reconciledFromDetachedChild, "child-1");
 		assert.equal(emitted?.name, "subagent:async-complete");
@@ -223,9 +228,9 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			source: "async",
 			mode: "workflow",
 			agent: "workflow",
-			success: true,
-			state: "complete",
-			summary: "Workflow completed after detached child child-1 finished.",
+			success: false,
+			state: "failed",
+			summary: "unsupported-continuation: detached workflow child settled, but JavaScript workflow continuation was not persisted. Resume the workflow explicitly instead of treating the completed child as top-level workflow completion.",
 			reconciledFromDetachedChild: "child-1",
 			results: [{ workflowKey: "detaches", agent: "worker", runId: "child-1", success: true, output: "", outputState: "absent" }],
 			sessionId: "session-1",

@@ -613,6 +613,7 @@ export interface WorkflowScriptChildResult {
 	output: string;
 	error?: string;
 	detached?: boolean;
+	interrupted?: boolean;
 	structuredOutput?: unknown;
 	requestedContext?: "fresh" | "fork";
 	resolvedContext?: "fresh" | "fork" | "mixed";

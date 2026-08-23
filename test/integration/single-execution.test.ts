@@ -2777,15 +2777,17 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			if (reconciled.state === "complete" || reconciled.state === "failed") break;
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
-		assert.equal(reconciled?.state, "complete", reconciled?.error);
+		assert.equal(reconciled?.state, "failed", reconciled?.error);
+		assert.match(reconciled?.error ?? "", /unsupported-continuation/);
 		assert.equal(reconciled?.activityState, undefined);
 		assert.equal(reconciled?.steps?.[0]?.status, "completed");
 		assert.equal(reconciled?.steps?.[0]?.activityState, undefined);
-		assert.equal(asyncJobs.get(workflowRunId)?.status, "complete");
+		assert.equal(asyncJobs.get(workflowRunId)?.status, "failed");
 
 		persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
-		assert.equal(persistedResult.state, "complete");
+		assert.equal(persistedResult.state, "failed");
 		assert.equal(persistedResult.activityState, undefined);
+		assert.match(persistedResult.error ?? "", /unsupported-continuation/);
 		execFileSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: tempDir });
 		execFileSync("git", ["branch", "-D", branch], { cwd: tempDir, stdio: "ignore" });
 		fs.rmSync(started.details.asyncDir, { recursive: true, force: true });
@@ -2888,7 +2890,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.rmSync(resultPath, { force: true });
 	});
 
-	it("completes a paused async workflow after a detached child finishes while a sibling is aborted", { skip: !createSubagentExecutor ? "executor unavailable" : undefined }, async () => {
+	it("fails closed after a detached child finishes while a sibling is aborted", { skip: !createSubagentExecutor ? "executor unavailable" : undefined }, async () => {
 		mockPi.onCall({
 			matchArgIncludes: "Ask then continue",
 			steps: [
@@ -2958,10 +2960,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			if (reconciled.state === "complete" || reconciled.state === "failed") break;
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
-		assert.equal(reconciled?.state, "complete", reconciled?.error);
+		assert.equal(reconciled?.state, "failed", reconciled?.error);
+		assert.match(reconciled?.error ?? "", /unsupported-continuation/);
 		assert.equal(reconciled?.steps?.find((step) => step.workflowKey === "detaches")?.status, "completed");
 		assert.equal(reconciled?.steps?.find((step) => step.workflowKey === "slow")?.status, "stopped");
-		assert.equal(asyncJobs.get(workflowRunId)?.status, "complete");
+		assert.equal(asyncJobs.get(workflowRunId)?.status, "failed");
 		fs.rmSync(started.details.asyncDir, { recursive: true, force: true });
 		fs.rmSync(path.join(DIRS.results, `${workflowRunId}.json`), { force: true });
 	});
