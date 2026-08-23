@@ -18,9 +18,9 @@ Use one writer per repo/cwd or worktree. Mutation lanes need distinct isolation 
 
 For Pi extension repositories, keep lane worktrees outside auto-discovered extension directories such as `~/.pi/agent/extensions`. A stale extension worktree there can auto-load duplicate tools and shortcuts. Remove or move it only after its handoff is durable, the worktree is clean, and no run owns it.
 
-Partition fanout by repository, source seam, decision, or review angle. Each run needs a stable key, lane-specific task, and durable output path. Do not launch prompts that differ only by item name or broad file glob.
+Partition fanout by repository, source seam, decision, or review angle. Each run needs a stable key, lane-specific task, and a managed output path when a file is needed. Do not launch prompts that differ only by item name or broad file glob.
 
-Use one async `workflowScript` for a coordinated wave. Use `runs.all` for independent lanes and `runs.run` for dependent lane stages. Give cross-repository runs explicit `cwd` values and lane-qualified outputs. Use `outputMode: "file-only"` when a report must survive the run or feed a later stage.
+Use one async `workflowScript` for a coordinated wave. Use `runs.all` for independent lanes and `runs.run` for dependent lane stages. Give cross-repository runs explicit `cwd` values and lane-qualified outputs. Use `outputMode: "file-only"` when a report must survive the run or feed a later stage. Keep scratch outputs relative so they live under subagent artifacts; use absolute paths only for durable memory, approved docs paths, or final handoff files.
 
 ## Keep independent work moving
 
@@ -32,7 +32,7 @@ After a writer produces a candidate, run the required fresh-context, read-only r
 
 ## Handoff, cleanup, and recovery
 
-Use stable lane-qualified paths for reports and review output. A handoff states the lane status, repository and worktree, changed files, validation, open decisions, next action, and artifact or receipt paths.
+Use stable lane-qualified artifact paths for reports and review output. A handoff states the lane status, repository and worktree, changed files, validation, open decisions, next action, and artifact or receipt paths. Copy only the final evidence to memory, a mission record, or a PR/comment, then remove scratch files from the active worktree before closing the lane.
 
 Keep a worktree until its handoff is durable, no run owns it, and no later gate needs it. Clean up only inside the recorded authority boundary. If a run stops or needs attention, preserve its worktree and artifacts, record the last known state and recovery owner, then resume that run or create one replacement lane from the handoff. Do not start another writer while worktree ownership is uncertain.
 

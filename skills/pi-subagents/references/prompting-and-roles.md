@@ -134,20 +134,20 @@ subagent({
 
     // Stage 2: single writer — the only child allowed to edit the active worktree.
     // Under outputMode "file-only" the awaited .output is the saved-output
-    // reference, so pass the durable paths declared above to the writer.
+    // reference, so pass those managed artifact references to the writer.
     const worker = await runs.run("apply-fixes", {
       agent: "worker",
       phase: "Implementation",
       label: "Apply accepted fixes",
-      task: "Apply only the accepted fixes from these planning summaries. You are the sole writer for the active worktree. Run focused validation and report changed files, commands, failures, and remaining issues.\\n\\nDeploy plan: plans/deploy.md\\n\\nScheduler plan: plans/scheduler.md\\n\\nSandbox plan: plans/sandbox.md",
+      task: "Apply only the accepted fixes from these planning summaries. You are the sole writer for the active worktree. Run focused validation and report changed files, commands, failures, and remaining issues.\\n\\nDeploy plan: " + plans[0].output + "\\n\\nScheduler plan: " + plans[1].output + "\\n\\nSandbox plan: " + plans[2].output,
       output: "worker/fixes.md",
       outputMode: "file-only"
     });
 
     // Stage 3: parallel read-only validation fanout
     const validations = await runs.all([
-      { key: "validate-deploy-scheduler", agent: "reviewer", phase: "Validation", label: "Deploy/scheduler validation", task: "Validate the post-worker diff for deploy and scheduler fixes. Start from the worker result: " + worker.output + " (also worker/fixes.md). Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/deploy-scheduler.md", outputMode: "file-only" },
-      { key: "validate-sandbox", agent: "reviewer", phase: "Validation", label: "Sandbox validation", task: "Validate the post-worker diff for sandbox/security fixes. Start from the worker result: " + worker.output + " (also worker/fixes.md). Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/sandbox.md", outputMode: "file-only" }
+      { key: "validate-deploy-scheduler", agent: "reviewer", phase: "Validation", label: "Deploy/scheduler validation", task: "Validate the post-worker diff for deploy and scheduler fixes. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/deploy-scheduler.md", outputMode: "file-only" },
+      { key: "validate-sandbox", agent: "reviewer", phase: "Validation", label: "Sandbox validation", task: "Validate the post-worker diff for sandbox/security fixes. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/sandbox.md", outputMode: "file-only" }
     ]);
 
     return { worker: worker.output, validations: validations.map(v => v.output) };
@@ -208,7 +208,7 @@ A strong subagent prompt usually includes:
 - **Success criteria**: what must be true before the child can finish.
 - **Hard constraints**: true invariants only, such as no edits for review-only tasks, one writer thread, child must not run subagents unless it is an explicitly assigned `tools: subagent` fanout child, or escalation for unapproved decisions.
 - **Validation**: targeted checks to run, or the next-best check when validation is impossible.
-- **Output**: the expected summary shape, artifact path, or finding format. Use repo-qualified durable output paths for cross-codebase waves.
+- **Output**: the expected summary shape, artifact path, or finding format. Use managed artifact paths for scratch reports; reserve repo-qualified absolute paths for durable handoffs that the user approved.
 - **Stop rules**: when to ask via `intercom` or `contact_supervisor`, when to stop after enough evidence, and when not to keep searching.
 
 Give each role useful discovery anchors. Name source roots, filenames, symbols, types, methods, and paths for scouts. Give workers context files, plans, task paths, and named source seams before asking them to search. Give reviewers changed files, contracts, and any exhaustive-verification target. Tell oracle whether current source behavior, product/policy documents, plans, or inherited decisions are the evidence that matters.

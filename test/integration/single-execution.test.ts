@@ -1838,7 +1838,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
-		assert.equal(fs.readFileSync(path.join(appDir, "app-report.md"), "utf-8"), "app report");
+		assert.equal(fs.existsSync(path.join(appDir, "app-report.md")), false);
+		assert.ok(result.details.results[0]?.savedOutputPath && pathContainsSegments(result.details.results[0].savedOutputPath, "artifacts", "outputs", "scripted-workflow-child-cwd-omitted-output-default"));
+		assert.equal(path.basename(result.details.results[0]?.savedOutputPath ?? ""), "app-report.md");
+		assert.equal(fs.readFileSync(result.details.results[0]?.savedOutputPath ?? "", "utf-8"), "app report");
 		assert.equal(fs.existsSync(path.join(tempDir, "root-report.md")), false);
 	});
 
@@ -1862,7 +1865,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
-		assert.equal(fs.readFileSync(path.join(appDir, "app-report.md"), "utf-8"), "app report");
+		assert.equal(fs.existsSync(path.join(appDir, "app-report.md")), false);
+		assert.ok(result.details.results[0]?.savedOutputPath && pathContainsSegments(result.details.results[0].savedOutputPath, "artifacts", "outputs", "scripted-workflow-child-cwd-output-default"));
+		assert.equal(path.basename(result.details.results[0]?.savedOutputPath ?? ""), "app-report.md");
+		assert.equal(fs.readFileSync(result.details.results[0]?.savedOutputPath ?? "", "utf-8"), "app report");
 		assert.equal(fs.existsSync(path.join(tempDir, "root-report.md")), false);
 	});
 
@@ -1885,6 +1891,32 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /Workflow completed\./);
 		assert.match(result.content[0]?.text ?? "", /Output file error:/);
 		assert.match(result.content[0]?.text ?? "", new RegExp(escapeRegExp(outputDir)));
+	});
+
+	it("routes workflow relative outputs to the run output artifact directory", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "child report" });
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"scripted-workflow-relative-output-base",
+			{
+				async: false,
+				output: "workflow-summary.md",
+				workflowScript: `return await runs.run("review", { agent: "echo", task: "Review", output: "plans/review.md" });`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.equal(fs.existsSync(path.join(tempDir, "workflow-summary.md")), false);
+		assert.equal(fs.existsSync(path.join(tempDir, "plans", "review.md")), false);
+		const workflowOutputPath = path.join(TEMP_ARTIFACTS_DIR, "outputs", "scripted-workflow-relative-output-base", "workflow-summary.md");
+		assert.match(fs.readFileSync(workflowOutputPath, "utf-8"), /Workflow completed\./);
+		assert.ok(result.details.results[0]?.savedOutputPath && pathContainsSegments(result.details.results[0].savedOutputPath, "artifacts", "outputs", "scripted-workflow-relative-output-base", "plans"));
+		assert.equal(path.basename(result.details.results[0]?.savedOutputPath ?? ""), "review.md");
+		assert.equal(fs.readFileSync(result.details.results[0]?.savedOutputPath ?? "", "utf-8"), "child report");
 	});
 
 	it("rejects workflow child output collisions before launch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -1934,7 +1966,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(relativeDuplicateChildren.map(({ ok }) => ok), [false, false]);
 		for (const child of relativeDuplicateChildren) {
 			assert.match(child.error ?? "", /Workflow children 'review' and 'monitor' resolve output to the same path/);
-			assert.match(child.error ?? "", new RegExp(escapeRegExp(path.join(tempDir, relativeDuplicateOutput))));
+			assert.match(child.error ?? "", new RegExp(`${escapeRegExp(TEMP_ARTIFACTS_DIR)}.*outputs.*${escapeRegExp(relativeDuplicateOutput)}`));
 		}
 		assert.equal(mockPi.callCount(), 0);
 	});
@@ -2027,7 +2059,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.equal(fs.readFileSync(retainedOutputPath, "utf-8"), "resumed report");
 			const outputPaths = result.details.results.map(({ savedOutputPath }) => savedOutputPath ?? "");
 			const inheritedOutputPaths = outputPaths.filter((outputPath) => outputPath && outputPath !== retainedOutputPath).sort();
-			assert.deepEqual(inheritedOutputPaths.map((outputPath) => path.basename(outputPath)), ["review.md"]);
+			assert.deepEqual(inheritedOutputPaths.map((outputPath) => path.basename(outputPath)), ["context.md"]);
 			assert.ok(inheritedOutputPaths.every((outputPath) => pathContainsSegments(outputPath, "artifacts", "outputs")));
 		} finally {
 			fs.rmSync(retainedAsyncDir, { recursive: true, force: true });
@@ -2056,9 +2088,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
 		const children = result.details.workflow?.value as Array<{ ok: boolean }>;
 		assert.deepEqual(children.map(({ ok }) => ok), [true, true]);
-		assert.equal(fs.readFileSync(path.join(tempDir, "context.md"), "utf-8"), "first report");
+		assert.equal(fs.existsSync(path.join(tempDir, "context.md")), false);
 		const outputPaths = result.details.results.map(({ savedOutputPath }) => savedOutputPath ?? "");
-		assert.equal(outputPaths[0], path.join(tempDir, "context.md"));
+		assert.ok(pathContainsSegments(outputPaths[0]!, "artifacts", "outputs"));
+		assert.equal(path.basename(outputPaths[0]!), "context.md");
+		assert.equal(fs.readFileSync(outputPaths[0]!, "utf-8"), "first report");
 		assert.ok(pathContainsSegments(outputPaths[1]!, "artifacts", "outputs"));
 		assert.equal(path.basename(outputPaths[1]!), "second.md");
 		assert.equal(fs.readFileSync(outputPaths[1]!, "utf-8"), "second report");

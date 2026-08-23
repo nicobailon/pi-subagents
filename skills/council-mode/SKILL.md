@@ -84,7 +84,10 @@ be settled by evidence an advisor can produce. Never run an unbounded loop.
    is known, omit `context` and disclose the unknown runtime default in the memo.
    Each advisor is read-only and must not spawn children, edit files, run mutating
    commands, commit, or push. Set `output: false` unless separate advisor artifacts
-   are explicitly requested or useful for the decision. For installed
+   are explicitly requested or useful for the decision. When separate artifacts are
+   useful, give advisors relative output paths so the runtime stores them under its
+   managed artifact directory; do not ask them to write root-level council report
+   files. For installed
    external-runner advisors such as Surf `gpt-pro` after `surf-oracle` is
    registered, do not pass `outputSchema`; put the schema request in the task text
    and accept `result.output` as the report.
@@ -226,10 +229,11 @@ const pass2OutputSchema = {
 ```
 
 Use stable resume keys such as `cross-oracle`, `phase: "Council pass 2"`, concise
-labels, and `output: false` unless separate artifacts are requested or useful. Do
-not pass `outputSchema` to external-runner fallback launches; ask for compact JSON
-text instead. The aggregate Pass 2 receipt uses the same row shape as Pass 1, with
-the new `runId` and `structuredOutput ?? output`.
+labels, and `output: false` unless separate artifacts are requested or useful. Keep
+any artifact outputs under the managed run artifact directory. Do not pass
+`outputSchema` to external-runner fallback launches; ask for compact JSON text
+instead. The aggregate Pass 2 receipt uses the same row shape as Pass 1, with the
+new `runId` and `structuredOutput ?? output`.
 
 ## Stop and memo
 

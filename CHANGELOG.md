@@ -30,6 +30,8 @@
   severity labels so first-pass reviews do not default to `blockers only`.
 
 ### Fixed
+- Route relative `workflowScript` output paths through managed artifacts instead
+  of creating lane report files in the repository root.
 - Tighten unreleased model verification, child stop request parsing, and
   external-job follow-up diagnostics found during deslop.
 - Keep the async widget spinner and elapsed timer moving while the parent is
@@ -65,6 +67,8 @@
   `surf-oracle`, with text JSON reports instead of `outputSchema`.
 
 ### Changed
+- Route ad-hoc lane, council, review, and gate report guidance toward managed
+  artifacts instead of repository-root scratch files.
 - Simplify launch-contract and external-job internals, and remove unused Herdr
   snapshot and thinking-ceiling helpers while preserving released behavior.
 

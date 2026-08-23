@@ -76,7 +76,7 @@ subagent({
 })
 ```
 
-Scripts run in a timed worker with only `runs.run`, `runs.all`, `runs.status`, `runs.ref/refs`, `emit`, captured `console`, and standard JavaScript. Pass explicit task text to `runs.run`. Mission-attached workflows also get `await state.get(key)` and `await state.set(key, value)` for durable JSON state shared across workflows on the same mission; `mission: false` workflows have no `state` global. Stable keys are required. Child launches follow ordinary single-agent execution controls. Give each child a distinct decision and output path when reports must outlive the workflow, then consume the aggregate workflow result before opening individual reports.
+Scripts run in a timed worker with only `runs.run`, `runs.all`, `runs.status`, `runs.ref/refs`, `emit`, captured `console`, and standard JavaScript. Pass explicit task text to `runs.run`. Mission-attached workflows also get `await state.get(key)` and `await state.set(key, value)` for durable JSON state shared across workflows on the same mission; `mission: false` workflows have no `state` global. Stable keys are required. Child launches follow ordinary single-agent execution controls. Give each child a distinct decision and output path when reports must outlive the workflow, then consume the aggregate workflow result before opening individual reports. Do not ask children to write `reports/...` or other repo-root scratch paths in task text.
 
 If `runs.all` is missing in a running session, reload or update `pi-subagents` before retrying. The current runtime supports `runs.all`; `await Promise.all([runs.run(...)])` is also supported for advanced dynamic fanout.
 
@@ -116,7 +116,7 @@ subagent({
 })
 ```
 
-File-only output mode works for workflowScript child launches. Use distinct absolute or durable output paths when later script steps need stable references. For cross-codebase waves, include the repo slug or lane key in each output path so reports from different repositories cannot collide.
+File-only output mode works for workflowScript child launches. Use relative child output paths for scratch reports so the runtime stores them under the run artifact directory and age-based cleanup can remove them. Use absolute paths only for user-approved durable destinations, such as session memory, a docs folder outside the repo, or a known handoff path. For cross-codebase waves, include the repo slug or lane key in each output path so reports from different repositories cannot collide.
 
 For review fanout where the parent continues a local audit:
 

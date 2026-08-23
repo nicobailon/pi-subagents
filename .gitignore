@@ -6,3 +6,13 @@ AGENTS.md
 node_modules/
 .fallow/
 tmp/
+
+# Fallback ignores for local ad-hoc agent and lane reports.
+/reports/
+/*-report*.json
+/issue-*-council-*.json
+/council-*.md
+/oracle-council-*.md
+/perf-*.md
+/pr-*-gate*.json
+/pr-*-review*.md
