@@ -3855,6 +3855,7 @@ function duplicateSubagentCallResult(params: SubagentParamsLike): AgentToolResul
 }
 
 const workflowLaunchObservers = new WeakMap<object, (launch: { agent: string; sessionFile?: string; async: boolean; runId?: string }) => void>();
+const launchAuthorityBindings = new WeakMap<object, AuthorizedLaunchAuthority[]>();
 
 /**
  * Terminal-mission retention can remove a mission while its children still
@@ -4283,6 +4284,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		preserveActiveSession = false,
 	): Promise<AgentToolResult<Details>> => {
 		const workflowLaunchObserver = workflowLaunchObservers.get(params);
+		const launchAuthorities = launchAuthorityBindings.get(params) ?? [];
+		launchAuthorityBindings.delete(params);
+		const authorityDigestByKey = new Map(launchAuthorities[0]?.lanes.map((lane) => [lane.key, lane.launchContractDigest]) ?? []);
 		const delegatedThinkingOverride = delegatedThinkingOverrides.get(params);
 		const allowZeroToolBudget = delegatedZeroToolBudgets.has(params);
 		const delegatedExecution = delegatedExecutions.has(params);
@@ -4757,6 +4761,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									if (childResult.savedOutputPath) producedChildOutputPaths.add(childResult.savedOutputPath);
 								}
 								const child = workflowChildResult(key, result, childParams, deps.state);
+								const authorityDigest = authorityDigestByKey.get(key);
+								if (authorityDigest) child.authorityLaunchContractDigest = authorityDigest;
 								if (child.runId) workflowChildRunIds.set(key, child.runId);
 								const step = status.steps?.find((candidate) => candidate.workflowKey === key);
 								if (step) {
@@ -4798,7 +4804,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						} catch (receiptError) {
 							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
 						}
-						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.model ? { model: child.model } : {}), ...(child.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.model ? { model: child.model } : {}), ...(child.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}), ...(child.authorityLaunchContractDigest ? { authorityLaunchContractDigest: child.authorityLaunchContractDigest } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						persist();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(status.error ? { error: status.error } : {}) });
@@ -4838,7 +4844,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						} catch (receiptError) {
 							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
 						}
-						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.model ? { model: child.model } : {}), ...(child.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.detached && status.state !== "complete" ? { detached: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.model ? { model: child.model } : {}), ...(child.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}), ...(child.authorityLaunchContractDigest ? { authorityLaunchContractDigest: child.authorityLaunchContractDigest } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.detached && status.state !== "complete" ? { detached: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						persist();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(status.error ? { error: status.error } : {}), ...(status.activityState ? { activityState: status.activityState } : {}) });
@@ -4932,6 +4938,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						}
 						if (result.details.asyncDir && missionBinding) writeMissionAsyncBinding(result.details.asyncDir, missionBinding);
 						const child = workflowChildResult(key, result, childParams, deps.state);
+						const authorityDigest = authorityDigestByKey.get(key);
+						if (authorityDigest) child.authorityLaunchContractDigest = authorityDigest;
 						if (child.runId) workflowChildRunIds.set(key, child.runId);
 						const childStatus = missionWorkflowChildStatus(result);
 						recordMissionWorkflowChild(missionBinding, _id, key, {
@@ -6290,6 +6298,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 		const admission = await authorizeBoundary(normalized.params, ctx, authorization);
 		if (admission.rejected) return admission.rejected;
+		if (admission.authorities.length > 0) launchAuthorityBindings.set(normalized.params, admission.authorities);
 		return executeWithSingleDispatchGuard(id, normalized.params, signal, onUpdate, ctx);
 	};
 
@@ -6304,6 +6313,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const admission = await authorizeBoundary(params, ctx, authorization);
 		if (admission.rejected) return admission.rejected;
 		const delegatedParams = { ...params };
+		if (admission.authorities.length > 0) launchAuthorityBindings.set(delegatedParams, admission.authorities);
 		const privateParams = delegatedParams as SubagentParamsLike & {
 			delegatedThinkingOverride?: AgentConfig["thinking"];
 			delegatedAllowZeroToolBudget?: true;
@@ -6327,6 +6337,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const authorization = takeBoundSubagentLaunchAuthorization(params, "scheduled");
 		const admission = await authorizeBoundary(params, ctx, authorization);
 		if (admission.rejected) return admission.rejected;
+		if (admission.authorities.length > 0) launchAuthorityBindings.set(params, admission.authorities);
 		const ownerSessionId = resolveCurrentSessionId(ctx.sessionManager);
 		let ownerExecutor = scheduledOwnerExecutors.get(ownerSessionId);
 		if (!ownerExecutor) {

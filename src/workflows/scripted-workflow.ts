@@ -643,6 +643,7 @@ export interface WorkflowScriptChildResult {
 	agent?: string;
 	model?: string;
 	launchContractDigest?: string;
+	authorityLaunchContractDigest?: string;
 	runId?: string;
 	output: string;
 	error?: string;

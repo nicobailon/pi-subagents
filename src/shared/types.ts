@@ -1071,6 +1071,7 @@ export interface WaitCompletionChild {
 	success?: boolean;
 	status?: string;
 	launchContractDigest?: string;
+	authorityLaunchContractDigest?: string;
 	outputState?: SubagentOutputState;
 	error?: string;
 	model?: string;

@@ -698,6 +698,7 @@ function replayResult(params: unknown, options: RegisterSubagentRpcBridgeOptions
 			...(typeof result.agent === "string" ? { agent: displayText(result.agent, 96) } : {}),
 			...(typeof result.model === "string" ? { model: displayText(result.model, 128) } : {}),
 			...(typeof result.launchContractDigest === "string" ? { launchContractDigest: displayText(result.launchContractDigest, 128) } : {}),
+			...(typeof result.authorityLaunchContractDigest === "string" ? { authorityLaunchContractDigest: displayText(result.authorityLaunchContractDigest, 128) } : {}),
 			...(typeof result.status === "string" ? { status: displayText(result.status, 64) } : typeof result.success === "boolean" ? { status: result.success ? "completed" : "failed" } : {}),
 			...(typeof result.savedOutputPath === "string" ? { outputPath: displayText(result.savedOutputPath, 4_096) } : artifactPaths && typeof artifactPaths.outputPath === "string" ? { outputPath: displayText(artifactPaths.outputPath, 4_096) } : {}),
 			...(typeof result.sessionFile === "string" ? { sessionPath: displayText(result.sessionFile, 4_096) } : {}),

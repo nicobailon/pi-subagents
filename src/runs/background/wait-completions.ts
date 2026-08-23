@@ -47,6 +47,7 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 			const model = asNonEmptyString(child.model);
 			const status = asNonEmptyString(child.status) ?? (typeof child.success === "boolean" ? child.success ? "completed" : "failed" : undefined);
 			const launchContractDigest = asNonEmptyString(child.launchContractDigest);
+			const authorityLaunchContractDigest = asNonEmptyString(child.authorityLaunchContractDigest);
 			const changedFiles = Array.isArray(child.changedFiles)
 				? child.changedFiles.filter((value): value is string => typeof value === "string" && value.length > 0).slice(0, 128)
 				: undefined;
@@ -58,6 +59,7 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 				...(typeof child.success === "boolean" ? { success: child.success } : {}),
 				...(status ? { status } : {}),
 				...(launchContractDigest ? { launchContractDigest } : {}),
+				...(authorityLaunchContractDigest ? { authorityLaunchContractDigest } : {}),
 				...(outputState ? { outputState } : {}),
 				...(error ? { error } : {}),
 				...(model ? { model } : {}),
