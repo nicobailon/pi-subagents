@@ -889,6 +889,59 @@ Plan the work.
 		assert.equal(agent.source, "package");
 	}));
 
+	it("loads bare HTTPS git packages from project Pi settings", () => withTempHome(() => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-settings-bare-git-package-"));
+		tempDirs.push(dir);
+		const packageRoot = path.join(dir, ".pi", "git", "github.com", "user", "repo");
+		writeJson(path.join(dir, ".pi", "settings.json"), {
+			packages: ["https://github.com/user/repo.git"],
+		});
+		writeJson(path.join(packageRoot, "package.json"), {
+			name: "bare-git-workflow",
+			"pi-subagents": { agents: ["./agents"] },
+		});
+		writeAgent(path.join(packageRoot, "agents", "planner.md"), `---
+name: planner
+package: bare-git-workflow
+description: Plan from a bare HTTPS git package.
+---
+
+Plan the work.
+`);
+
+		const agent = discoverAgents(dir, "both").agents.find((candidate) => candidate.name === "bare-git-workflow.planner");
+		assert.ok(agent);
+		assert.equal(agent.source, "package");
+		assert.equal(agent.packageSourceRoot, packageRoot);
+	}));
+
+	it("loads bare HTTP git packages from user Pi settings", () => withTempHome((home) => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-user-settings-bare-git-package-"));
+		tempDirs.push(dir);
+		const agentDir = path.join(home, ".pi", "agent");
+		const packageRoot = path.join(agentDir, "git", "git.example.com", "team", "repo");
+		writeJson(path.join(agentDir, "settings.json"), {
+			packages: ["http://git.example.com/team/repo.git"],
+		});
+		writeJson(path.join(packageRoot, "package.json"), {
+			name: "user-bare-git-workflow",
+			"pi-subagents": { agents: ["./agents"] },
+		});
+		writeAgent(path.join(packageRoot, "agents", "reviewer.md"), `---
+name: reviewer
+package: user-bare-git-workflow
+description: Review from a bare HTTP git package.
+---
+
+Review the work.
+`);
+
+		const agent = discoverAgents(dir, "both").agents.find((candidate) => candidate.name === "user-bare-git-workflow.reviewer");
+		assert.ok(agent);
+		assert.equal(agent.source, "package");
+		assert.equal(agent.packageSourceRoot, packageRoot);
+	}));
+
 	it("discovers project package agents when cwd is nested below the project root", () => withTempHome(() => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-nested-package-discovery-"));
 		tempDirs.push(dir);

@@ -4,6 +4,7 @@
 
 ### Fixed
 - Keep inline workflow children resumable from their foreground runs without mistaking a missing async directory for lost state. Thanks to [@lancegui](https://github.com/lancegui) for #1442.
+- Resolve package subagents from bare HTTP(S) Git URLs stored in Pi settings. Thanks to [@trancikk](https://github.com/trancikk) for #1452.
 
 ### Added
 - Add `modelExclusions.defaultTtlMs` configuration for controlling the lifetime of model exclusions, including shorter limits for active cached entries, with launch diagnostics for excluded candidates. Thanks to [@mithyer](https://github.com/mithyer) for #1439 and #1438.

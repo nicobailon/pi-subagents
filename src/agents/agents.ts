@@ -382,6 +382,10 @@ function resolveSettingsPackageRoot(source: string, baseDir: string): string | u
 	if (normalized === "." || normalized === ".." || normalized.startsWith("./") || normalized.startsWith("../")) {
 		return path.resolve(baseDir, normalized);
 	}
+	if (/^https?:\/\//i.test(trimmed)) {
+		const parsed = parseGitPackagePath(`git:${trimmed}`);
+		return parsed ? path.join(baseDir, "git", parsed.host, parsed.repoPath) : undefined;
+	}
 	return undefined;
 }
 
