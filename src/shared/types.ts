@@ -1752,6 +1752,14 @@ export interface ForegroundResumeChild {
 	detachedReason?: string;
 	acceptance?: AcceptanceLedger;
 	agentContract?: AgentContract;
+	/** Private bounded launch fields needed to preserve the child contract on resume. */
+	resumeContract?: {
+		outputSchema?: JsonSchemaObject;
+		agentContract?: AgentContract;
+		acceptance?: AcceptanceInput;
+		output?: string | boolean;
+		outputMode?: OutputMode;
+	};
 	launchContractDigest?: string;
 	/** Private retained launch authority. Never project into status or result output. */
 	extensionBindings?: ExtensionBindings;
