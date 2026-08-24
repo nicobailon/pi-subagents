@@ -146,6 +146,8 @@ test("running single-subagent cards show the configured detach shortcut", () => 
 		undefined,
 		"ctrl+b",
 	));
+	assert.match(configured, /task: reviewer task/);
+	assert.match(configured, /Ctrl\+Alt\+F Fleet/);
 	assert.match(configured, /Ctrl\+B to run in background/);
 
 	const unconfigured = componentText(renderSubagentResult(toolResult as never, { expanded: false }, theme as any));
@@ -170,6 +172,33 @@ test("running single-subagent cards show the configured detach shortcut", () => 
 		"ctrl+b",
 	));
 	assert.doesNotMatch(pendingBackground, /run in background/);
+});
+
+test("compact multi-result cards prefer bounded workflow labels over raw tasks", () => {
+	const longLabel = `Review auth flow\n${"x".repeat(140)}`;
+	const running = {
+		...result("reviewer", ""),
+		task: "raw task that should not win",
+		progress: { status: "running", index: 0, agent: "reviewer", toolCount: 0, tokens: 0, durationMs: 0 },
+	};
+	const text = componentText(renderSubagentResult({
+		content: [{ type: "text", text: "running" }],
+		details: {
+			mode: "parallel",
+			results: [running],
+			workflowGraph: {
+				runId: "workflow-task-label",
+				mode: "parallel",
+				phases: [],
+				nodes: [{ id: "review", kind: "agent", agent: "reviewer", label: longLabel, status: "running", flatIndex: 0 }],
+			},
+		},
+	}, { expanded: false }, theme as any));
+
+	assert.match(text, /task: Review auth flow x+/);
+	assert.doesNotMatch(text, /raw task that should not win/);
+	assert.match(text, /\.\.\.$/m);
+	assert.match(text, /Ctrl\+Alt\+F Fleet/);
 });
 
 test("compact chain rendering uses workflow graph spans for dynamic fanout results", () => {

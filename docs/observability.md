@@ -6,9 +6,9 @@ Where running subagents show up, how to inspect them, and the files and events t
 
 Foreground runs stream progress in the conversation while they run. They default to a generous 30-minute wall-clock timeout when neither the call nor the selected agent provides a timeout; a global [`timeoutMs`](configuration.md#timeoutms) config replaces that default, and explicit `timeoutMs`/`maxRuntimeMs` and agent defaults win.
 
-Live progress shows compact detail for single, chain, and parallel modes: current tool, recent output, token counts, aggregate cost, duration, activity freshness, current-tool duration, and chain graph metadata when available.
+Live progress shows compact detail for single, chain, and parallel modes: a bounded one-line task, current tool, recent output, token counts, aggregate cost, duration, activity freshness, current-tool duration, and chain graph metadata when available. Workflow `label` metadata wins over raw task text in compact multi-child cards.
 
-Press Pi's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step.
+Press Pi's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step. Running-card hints also advertise `Ctrl+Alt+F` for the Fleet inspector.
 
 Sequential chains show a flow line like `done scout → running worker`. Chains with parallel steps show per-step cards instead. Chain status uses `label` and `phase` metadata when present, while falling back to agent names for older chains.
 
@@ -29,8 +29,9 @@ The under-editor async widget gives a short view while work runs. Its expand key
 async subagent worker · background
 ● worker
   ● Step 1/1: worker · running
+    task: Review authentication boundaries
     ⎿  read: src/auth.ts | 2.0s
-    Press configured-expand-key for live detail
+    Press configured-expand-key for live detail · Ctrl+Alt+F Fleet
 ```
 
 To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.

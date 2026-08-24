@@ -82,6 +82,7 @@ describe("Herdr status bridge", () => {
 			status: "running",
 			mode: "workflow",
 			agents: ["workflow"],
+			steps: [{ agent: "reviewer", status: "running", label: "Review auth" }],
 		});
 		state.foregroundControls.set("child-1", {
 			runId: "child-1",
@@ -102,6 +103,7 @@ describe("Herdr status bridge", () => {
 		assert.deepEqual(projectActiveHerdrRuns(state), [{
 			id: "workflow-1",
 			agents: ["reviewer"],
+			taskLabel: "Review auth",
 			needsAttention: true,
 		}]);
 	});
@@ -424,6 +426,72 @@ describe("Herdr status bridge", () => {
 		assert.ok(commands[2]?.includes("title-suffix=⏳2⚠"));
 		assert.ok(commands.at(-1)?.includes("--clear-token"));
 		assert.ok(commands.at(-1)?.includes("title-suffix"));
+
+		bridge.dispose();
+	});
+
+	it("publishes bounded workflow labels without leaking raw prompts and restores the previous overlapping task", async () => {
+		const events = new FakeEvents();
+		const commands: string[][] = [];
+		const bridge = registerHerdrStatusBridge({
+			events,
+			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+			runHerdr: (args) => commands.push([...args]),
+			refreshMs: 0,
+		});
+		bridge.sessionStarted({ hasUI: true, runs: [] });
+
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
+			id: "run-1",
+			agent: "worker",
+			goal: "raw secret prompt",
+			workflowGraph: {
+				currentNodeId: "build",
+				nodes: [{ id: "build", status: "running", label: "Build auth\nflow\u001b[31m" }],
+			},
+		});
+		await bridge.flush();
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
+			id: "run-2",
+			agent: "reviewer",
+			task: "another raw prompt",
+			workflowGraph: {
+				nodes: [{ id: "review", status: "pending", label: `Review ${"x".repeat(120)}` }],
+			},
+		});
+		await bridge.flush();
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-2" });
+		await bridge.flush();
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-1" });
+		await bridge.flush();
+
+		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (worker) · Build auth flow"));
+		assert.ok(commands[0]?.includes("title-suffix=⏳Build auth flow"));
+		assert.ok(commands[1]?.some((argument) => argument.startsWith("summary=⏳ 2 subagents") && argument.length < 180));
+		assert.ok(commands[1]?.some((argument) => argument.startsWith("title-suffix=⏳Review ") && argument.length < 70));
+		assert.ok(commands[2]?.includes("title-suffix=⏳Build auth flow"));
+		assert.ok(commands[3]?.includes("--clear-state-labels"));
+		assert.doesNotMatch(commands.flat().join("\n"), /raw secret prompt|another raw prompt/);
+
+		bridge.dispose();
+	});
+
+	it("omits refreshed task labels when sanitization removes all content", async () => {
+		const events = new FakeEvents();
+		const commands: string[][] = [];
+		const bridge = registerHerdrStatusBridge({
+			events,
+			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+			runHerdr: (args) => commands.push([...args]),
+			refreshMs: 0,
+		});
+
+		bridge.sessionStarted({ hasUI: true, runs: [{ id: "run-1", agent: "worker", taskLabel: "\u001b[31m" }] });
+		await bridge.flush();
+
+		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (worker)"));
+		assert.ok(commands[0]?.includes("title-suffix=⏳worker"));
+		assert.doesNotMatch(commands.flat().join("\n"), /\u001b\[31m/);
 
 		bridge.dispose();
 	});

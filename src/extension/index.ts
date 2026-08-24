@@ -383,9 +383,13 @@ export function projectActiveHerdrRuns(state: SubagentState): HerdrStatusRun[] {
 		.filter((job) => active(job.status))
 		.map((job) => {
 			const children = job.mode === "workflow" ? foregroundChildrenByWorkflow.get(job.asyncId) : undefined;
+			const currentStep = job.steps?.find((step) => step.status === "running")
+				?? (job.currentStep !== undefined ? job.steps?.[job.currentStep] : undefined)
+				?? job.steps?.find((step) => step.status === "pending");
 			return {
 				id: job.asyncId,
 				agents: children?.length ? children.map((child) => child.agent) : job.agents,
+				...(currentStep?.label ? { taskLabel: currentStep.label } : {}),
 				needsAttention: job.activityState === "needs_attention" || children?.some((child) => child.needsAttention),
 			};
 		});

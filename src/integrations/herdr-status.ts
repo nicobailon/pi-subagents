@@ -3,10 +3,15 @@ import {
 	SUBAGENT_ASYNC_STARTED_EVENT,
 	SUBAGENT_CONTROL_EVENT,
 } from "../shared/types.ts";
+import { previewDisplayText, sanitizeDisplayText } from "../shared/display-text.ts";
 
 const DEFAULT_SOURCE = "pi-subagents:herdr";
 const DEFAULT_TTL_MS = 120_000;
 const DEFAULT_REFRESH_MS = 45_000;
+const MAX_TASK_LABEL_CHARS = 80;
+const MAX_TITLE_TASK_CHARS = 42;
+const MAX_WORKFLOW_LABEL_NODES = 128;
+const MAX_WORKFLOW_LABEL_DEPTH = 8;
 
 let metadataReportSeq = Date.now() * 1000;
 
@@ -24,6 +29,8 @@ export interface HerdrStatusRun {
 	id: string;
 	agent?: string;
 	agents?: string[];
+	/** Explicit launch/workflow label only; raw prompts never enter pane metadata. */
+	taskLabel?: string;
 	needsAttention?: boolean;
 	attentionLabel?: string;
 }
@@ -61,12 +68,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function boundedTaskLabel(value: unknown, maxChars = MAX_TASK_LABEL_CHARS): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const normalized = sanitizeDisplayText(value).trim();
+	if (!normalized) return undefined;
+	return previewDisplayText(normalized, maxChars);
+}
+
+function workflowTaskLabel(data: Record<string, unknown>): string | undefined {
+	const explicit = boundedTaskLabel(data.taskLabel);
+	if (explicit) return explicit;
+	if (!isRecord(data.workflowGraph) || !Array.isArray(data.workflowGraph.nodes)) return undefined;
+	const currentNodeId = typeof data.workflowGraph.currentNodeId === "string" ? data.workflowGraph.currentNodeId : undefined;
+	const nodes: Record<string, unknown>[] = [];
+	const collect = (values: unknown[], depth: number): void => {
+		if (depth > MAX_WORKFLOW_LABEL_DEPTH || nodes.length >= MAX_WORKFLOW_LABEL_NODES) return;
+		for (const value of values) {
+			if (nodes.length >= MAX_WORKFLOW_LABEL_NODES) return;
+			if (!isRecord(value)) continue;
+			nodes.push(value);
+			if (Array.isArray(value.children)) collect(value.children, depth + 1);
+		}
+	};
+	collect(data.workflowGraph.nodes, 0);
+	const current = currentNodeId ? nodes.find((node) => node.id === currentNodeId) : undefined;
+	const active = current ?? nodes.find((node) => node.status === "running") ?? nodes.find((node) => node.status === "pending");
+	return boundedTaskLabel(active?.label);
+}
+
 function startedRun(data: unknown): HerdrStatusRun | undefined {
 	if (!isRecord(data) || typeof data.id !== "string" || !data.id) return undefined;
+	const taskLabel = workflowTaskLabel(data);
 	return {
 		id: data.id,
 		...(typeof data.agent === "string" ? { agent: data.agent } : {}),
 		...(Array.isArray(data.agents) && data.agents.every((agent) => typeof agent === "string") ? { agents: data.agents as string[] } : {}),
+		...(taskLabel ? { taskLabel } : {}),
 	};
 }
 
@@ -113,6 +150,7 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 
 	const activeAgentNames = (): string[] => [...new Set([...runs.values()].flatMap((run) => run.agents?.length ? run.agents : run.agent ? [run.agent] : []))];
 	const activeSubagentCount = (): number => [...runs.values()].reduce((total, run) => total + Math.max(1, run.agents?.length ?? (run.agent ? 1 : 0)), 0);
+	const activeTaskLabel = (): string | undefined => [...runs.values()].reverse().find((run) => run.taskLabel)?.taskLabel;
 
 	const label = (includeAttention = false): string => {
 		const agents = activeAgentNames();
@@ -122,15 +160,18 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 			: "";
 		const panes = Math.max(0, options.getProjectPaneCount?.() ?? 0);
 		const paneText = panes > 0 ? ` · ${panes} pane${panes === 1 ? "" : "s"}` : "";
+		const task = activeTaskLabel();
+		const taskText = task ? ` · ${task}` : "";
 		const attention = includeAttention && attentionLabels.size > 0 ? " ⚠" : "";
-		return `⏳ ${activeCount} subagent${activeCount === 1 ? "" : "s"}${who}${paneText}${attention}`;
+		return `⏳ ${activeCount} subagent${activeCount === 1 ? "" : "s"}${who}${paneText}${taskText}${attention}`;
 	};
 
 	const titleSuffix = (): string | undefined => {
 		if (runs.size === 0) return undefined;
 		const agentNames = activeAgentNames();
 		const activeCount = activeSubagentCount();
-		const target = activeCount === 1 && agentNames.length === 1 ? agentNames[0]! : String(activeCount);
+		const task = boundedTaskLabel(activeTaskLabel(), MAX_TITLE_TASK_CHARS);
+		const target = task ?? (activeCount === 1 && agentNames.length === 1 ? agentNames[0]! : String(activeCount));
 		return `⏳${target}${attentionLabels.size > 0 ? "⚠" : ""}`;
 	};
 
@@ -255,11 +296,14 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 	const replaceRuns = (nextRuns: Iterable<HerdrStatusRun>): void => {
 		const nextAttention = new Map<string, string>();
 		const activeIds = new Set<string>();
+		const previousRuns = new Map(runs);
 		runs.clear();
 		for (const run of nextRuns) {
 			if (!run || typeof run.id !== "string" || !run.id) continue;
 			activeIds.add(run.id);
-			runs.set(run.id, { ...run });
+			const taskLabel = boundedTaskLabel(run.taskLabel) ?? previousRuns.get(run.id)?.taskLabel;
+			const { taskLabel: _rawTaskLabel, ...sanitizedRun } = run;
+			runs.set(run.id, { ...sanitizedRun, ...(taskLabel ? { taskLabel } : {}) });
 			if (!run.needsAttention) {
 				acknowledgedAttention.delete(run.id);
 			} else if (!acknowledgedAttention.has(run.id)) {

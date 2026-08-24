@@ -22,6 +22,7 @@ import { listAsyncRuns, formatAsyncRunProgressLabel, type AsyncRunSummary } from
 import { encodeInspectReply, handleInspectRpcArgs, INSPECT_WIDGET_KEY } from "../runs/background/inspect-rpc.ts";
 import { listScheduledRunSummaries } from "../runs/background/scheduled-runs.ts";
 import { SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
+import { FLEET_OPEN_SHORTCUT } from "../shared/shortcuts.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import { registerPromptWorkflowCommands } from "./prompt-workflows.ts";
 import { openSubagentsAdmin } from "./subagents-admin.ts";
@@ -776,7 +777,7 @@ export function registerSlashCommands(
 		handler: async (_args, ctx) => showFleet(ctx),
 	});
 
-	pi.registerShortcut(Key.ctrlAlt("f"), {
+	pi.registerShortcut(FLEET_OPEN_SHORTCUT, {
 		description: "Open subagent fleet inspector",
 		handler: async (ctx) => showFleet(ctx),
 	});

@@ -295,7 +295,7 @@ When Pi runs inside [Herdr](https://herdr.dev), pi-subagents automatically repor
 - The bridge is enabled only when Herdr supplies `HERDR_ENV=1` and `HERDR_PANE_ID`; outside Herdr it registers no listeners or timers.
 - It restores current-session active runs after `/reload` or `/resume`, refreshes metadata while work is active, and clears it on completion or shutdown.
 - The bridge uses Herdr's existing `herdr:blocked` sibling event when an async child needs attention, and emits `herdr:busy` while async work remains. Herdr versions that support the sibling event keep the pane's semantic state `working`; older versions ignore it safely and still display the metadata label while the Pi integration remains the lifecycle authority.
-- The owning Pi session is the only publisher for its own pane metadata. While active subagents exist, it reports a compact `title-suffix` token: one active run uses that agent name, two or more use the active-run count, and attention adds `⚠`. The suffix is cleared when active work reaches zero.
+- The owning Pi session is the only publisher for its own pane metadata. When an active workflow has an explicit bounded `label`, the newest active label appears in the summary and compact `title-suffix`; overlapping completion restores the previous active label. Raw task and goal prompts never enter Herdr metadata. Without a label, one active run uses its agent name and two or more use the active-run count. Attention adds `⚠`, and the suffix is cleared when active work reaches zero.
 
 To show the reported label in the expanded Agent sidebar, include `state_text` or `$summary` in its row layout:
 

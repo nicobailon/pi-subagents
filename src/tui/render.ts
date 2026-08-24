@@ -21,9 +21,10 @@ import {
 	WIDGET_ANIMATION_INTERVAL_MS,
 	WIDGET_KEY,
 } from "../shared/types.ts";
-import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
+import { previewDisplayText, sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
+import { FLEET_OPEN_SHORTCUT, formatShortcutLabel } from "../shared/shortcuts.ts";
 import { formatTokens, formatUsage, formatDuration, formatModelThinking, formatToolCall, formatTokenUsage, shortenPath } from "../shared/formatters.ts";
-import { getDisplayItems, getSingleResultOutput } from "../shared/utils.ts";
+import { getDisplayItems, getSingleResultOutput, PROMPT_REDACTED } from "../shared/utils.ts";
 import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
 import { formatNestedAggregate } from "../runs/shared/nested-render.ts";
 import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
@@ -69,23 +70,13 @@ function liveDetailKeyText(): string {
 	return keyText("app.tools.expand");
 }
 
-function liveDetailHintText(): string {
-	return `Press ${liveDetailKeyText()} for live detail`;
+export function liveDetailHintText(): string {
+	return `Press ${liveDetailKeyText()} for live detail · ${formatShortcutLabel(FLEET_OPEN_SHORTCUT)} Fleet`;
 }
 
 function foregroundSingleHintText(shortcut?: string): string {
 	if (!shortcut) return liveDetailHintText();
-	const label = shortcut
-		.split("+")
-		.map((part) => {
-			const normalized = part.trim().toLowerCase();
-			if (normalized === "ctrl") return "Ctrl";
-			if (normalized === "alt") return "Alt";
-			if (normalized === "shift") return "Shift";
-			if (normalized === "super") return "Super";
-			return normalized.length === 1 ? normalized.toUpperCase() : part.trim();
-		})
-		.join("+");
+	const label = formatShortcutLabel(shortcut);
 	return `${liveDetailHintText()} · ${label} to run in background`;
 }
 
@@ -271,6 +262,29 @@ const liveOutputCodeSignalPattern = /\bE[A-Z0-9_]{2,}\b/;
 
 function oneLine(text: string): string {
 	return text.replace(ansiEscapePattern, "").replace(/\s+/g, " ").trim();
+}
+
+const COMPACT_TASK_MAX_CHARS = 96;
+
+export function compactTaskText(task: string | undefined, label?: string): string | undefined {
+	const source = label?.trim() || task?.trim();
+	if (!source || source === PROMPT_REDACTED) return undefined;
+	const normalized = oneLine(source);
+	if (!normalized) return undefined;
+	return previewDisplayText(normalized, COMPACT_TASK_MAX_CHARS);
+}
+
+function workflowLabelForResult(details: Details, resultIndex: number): string | undefined {
+	const flatIndex = details.results[resultIndex]?.progress?.index ?? resultIndex;
+	const visit = (nodes: NonNullable<Details["workflowGraph"]>["nodes"]): string | undefined => {
+		for (const node of nodes) {
+			if (node.flatIndex === flatIndex && node.label.trim()) return node.label;
+			const nested = node.children ? visit(node.children) : undefined;
+			if (nested) return nested;
+		}
+		return undefined;
+	};
+	return details.workflowGraph ? visit(details.workflowGraph.nodes) : undefined;
 }
 
 function hasLiveOutputSignal(line: string): boolean {
@@ -1259,6 +1273,8 @@ function foregroundStyleWidgetStepLines(
 	const stats = widgetStepStats(theme, step);
 	const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
 	const lines = [`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame)} ${itemTitle} ${index}/${total}: ${themeBold(theme, step.agent)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
+	const task = compactTaskText(step.description, step.label);
+	if (task) lines.push(`    ${theme.fg("dim", `task: ${task}`)}`);
 	const activity = widgetStepActivityLine(step, width, expanded, job.updatedAt);
 	if (activity) lines.push(`    ${theme.fg("dim", `⎿  ${activity}`)}`);
 	for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 12 : 6)) {
@@ -1329,7 +1345,9 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 		const stepStats = widgetStepStats(theme, step);
 		const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
 		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
-		lines.push(`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame)} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
+		const task = compactTaskText(step.description, step.label);
+		const taskSuffix = task ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", `task: ${task}`)}` : "";
+		lines.push(`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame)} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${taskSuffix}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, false, job.updatedAt, 6)) lines.push(`    ${nestedLine}`);
 	}
 	if (job.steps.some((step) => step.status === "running")) lines.push(theme.fg("accent", `  ${liveDetailHintText()}`));
@@ -1703,6 +1721,8 @@ function renderSingleCompact(
 	c.addChild(new Text(truncLine(`${resultGlyph(r, output, theme, isRunning, undefined, frame)} ${theme.fg("toolTitle", theme.bold(r.agent))}${modelDisplay}${contextBadge}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`, width), 0, 0));
 
 	if (isRunning && r.progress) {
+		const task = compactTaskText(r.task);
+		if (task) c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}task: ${task}`), width), 0, 0));
 		const progressSnapshotNow = snapshotNowForProgress(r.progress);
 		const activity = compactCurrentActivity(r.progress);
 		c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}⎿  ${activity}`), width), 0, 0));
@@ -1872,6 +1892,10 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 		const rowModelDisplay = modelThinkingBadge(theme, r.model ?? rowProgressModel?.model, r.thinking ?? rowProgressModel?.thinking);
 		const line = `${glyph} ${stepLabel}: ${themeBold(theme, agentName)}${contextModeBadge(theme, r.context)}${rowModelDisplay}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}${pendingLabel}`;
 		c.addChild(new Text(truncLine(`${rowIndent}${line}`, width), 0, 0));
+		if (rRunning || rPending) {
+			const task = compactTaskText(r.task, workflowLabelForResult(d, i));
+			if (task) c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}task: ${task}`), width), 0, 0));
+		}
 		if (rRunning && rProg && "status" in rProg) {
 			const liveProgress = rProg as AgentProgress;
 			const activity = compactCurrentActivity(liveProgress);
