@@ -8,6 +8,14 @@ Chaining is code-driven through `workflowScript`. Use `await runs.run(...)` for 
 
 Use `{ action: "validate", workflowScript }` to check statically decidable syntax and structure without launching children. It returns `{ ok, errors }` and fails the tool call when `ok` is false. Dynamic keys and values remain valid because runtime-only cases are not guessed.
 
+Use `workflowScriptPath` instead of `workflowScript` to load the same JavaScript statement body from a file. The two fields are mutually exclusive. Relative paths resolve against the request `cwd`, and absolute paths pass through. The host reads the file before validation, scheduling, or sandbox execution. The workflow sandbox still has no filesystem access. Missing, unreadable, and empty files fail as file input errors.
+
+```js
+{ workflowScriptPath: "workflows/review.js", cwd: "/path/to/project" }
+{ action: "validate", workflowScriptPath: "workflows/review.js" }
+{ action: "schedule.create", every: "6h", workflowScriptPath: "workflows/review.js" }
+```
+
 ```js
 // One child; return the child promise explicitly
 { workflowScript: `return runs.run("main", { agent: "scout", task: "Analyze the auth flow" })` }

@@ -302,6 +302,7 @@ export interface SubagentParamsLike {
 	steeringRecovery?: boolean;
 	mode?: SteerDeliveryMode;
 	workflowScript?: string;
+	workflowScriptPath?: string;
 	chatProgress?: "auto" | "off" | "live-card";
 	isolation?: "none" | "worktree";
 	step?: ChainStep;
@@ -457,6 +458,20 @@ interface ExecutionContextData {
 
 function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefined): string {
 	return requestedCwd ? path.resolve(runtimeCwd, requestedCwd) : runtimeCwd;
+}
+
+function loadWorkflowScriptPath(params: SubagentParamsLike, runtimeCwd: string): { params?: SubagentParamsLike; error?: string } {
+	if (params.workflowScriptPath === undefined) return { params };
+	const scriptPath = path.resolve(resolveRequestedCwd(runtimeCwd, params.cwd), params.workflowScriptPath);
+	let workflowScript: string;
+	try {
+		workflowScript = fs.readFileSync(scriptPath, "utf8");
+	} catch (error) {
+		return { error: `Failed to read workflowScriptPath '${scriptPath}': ${error instanceof Error ? error.message : String(error)}` };
+	}
+	if (!workflowScript.trim()) return { error: `workflowScriptPath file '${scriptPath}' is empty.` };
+	const { workflowScriptPath: _workflowScriptPath, ...rest } = params;
+	return { params: { ...rest, workflowScript } };
 }
 
 function removeForegroundControlIfIdle(state: SubagentState, runId: string): boolean {
@@ -6273,7 +6288,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (!normalized.ok) {
 			return Promise.resolve({ content: [{ type: "text", text: normalized.error }], isError: true, details: { mode: normalized.mode, results: [] } });
 		}
-		return executeWithSingleDispatchGuard(id, normalized.params, signal, onUpdate, ctx);
+		const loaded = loadWorkflowScriptPath(normalized.params, ctx.cwd);
+		if (loaded.error) {
+			return Promise.resolve({ content: [{ type: "text", text: loaded.error }], isError: true, details: { mode: normalized.params.action ? "management" : "workflow", results: [] } });
+		}
+		return executeWithSingleDispatchGuard(id, loaded.params!, signal, onUpdate, ctx);
 	};
 
 	const executeDelegated = async (

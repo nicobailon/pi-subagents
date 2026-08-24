@@ -630,16 +630,17 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 1);
 	});
 
-	it("allows schedule.create to carry the required workflowScript target", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("allows schedule.create to load its workflowScript target from a path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		let forwarded;
 		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, async (params) => {
 			forwarded = params;
 			return { content: [{ type: "text", text: "created" }], details: { mode: "management", results: [] } };
 		});
+		fs.writeFileSync(path.join(tempDir, "scheduled.js"), "return runs.run('main', { agent: 'echo' })");
 
-		const result = await executor.execute(
+		const result = await executor.executePublic(
 			"schedule-create",
-			{ action: "schedule.create", id: "nightly", every: "1h", workflowScript: "return runs.run('main', { agent: 'echo' })" },
+			{ action: "schedule.create", id: "nightly", every: "1h", workflowScriptPath: "scheduled.js" },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -671,6 +672,65 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 		assert.equal(mockPi.callCount(), 0);
 		assert.deepEqual(fs.readdirSync(tempDir).sort(), before);
+	});
+
+	it("loads workflowScriptPath from the request cwd for validation without launching", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const requestCwd = path.join(tempDir, "request-cwd");
+		fs.mkdirSync(requestCwd);
+		fs.writeFileSync(path.join(requestCwd, "workflow.js"), `return runs.run("bad key", { agent: "echo" });`);
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), () => {
+			throw new Error("validate must not discover or launch agents");
+		});
+
+		const result = await executor.executePublic(
+			"file-validation",
+			{ action: "validate", cwd: "request-cwd", workflowScriptPath: "workflow.js" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.deepEqual(JSON.parse(result.content[0]?.text ?? "null"), {
+			ok: false,
+			errors: [{ message: "runs.run key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.", line: 1, column: 17 }],
+		});
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("reports missing and empty workflowScriptPath files before validation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		fs.writeFileSync(path.join(tempDir, "empty.js"), " \n");
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), () => {
+			throw new Error("file input errors must not discover or launch agents");
+		});
+
+		const missing = await executor.executePublic("missing-file", { action: "validate", workflowScriptPath: "missing.js" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(missing.isError, true);
+		assert.match(missing.content[0]?.text ?? "", /Failed to read workflowScriptPath.*missing\.js/);
+		assert.doesNotMatch(missing.content[0]?.text ?? "", /validation failed|valid JavaScript/);
+
+		const empty = await executor.executePublic("empty-file", { action: "validate", workflowScriptPath: "empty.js" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(empty.isError, true);
+		assert.match(empty.content[0]?.text ?? "", /workflowScriptPath file .*empty\.js.* is empty/);
+		assert.doesNotMatch(empty.content[0]?.text ?? "", /validation failed|valid JavaScript/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("executes a workflow loaded from workflowScriptPath", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		fs.writeFileSync(path.join(tempDir, "workflow.js"), `return runs.run("main", { agent: "echo", task: "from file" });`);
+		mockPi.onCall({ output: "loaded workflow" });
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.executePublic(
+			"file-execution",
+			{ async: false, workflowScriptPath: path.join(tempDir, "workflow.js") },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "file workflow failed");
+		assert.equal(mockPi.callCount(), 1);
 	});
 
 	it("starts workflow scripts asynchronously with a portable internal run id", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

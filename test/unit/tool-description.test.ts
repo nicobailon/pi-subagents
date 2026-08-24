@@ -36,7 +36,9 @@ describe("registered subagent tool description", () => {
 		const description = buildSubagentToolDescription();
 		const metadata = buildSubagentToolPromptMetadata();
 		assert.equal(description, DEFAULT_SUBAGENT_TOOL_DESCRIPTION);
-		assert.equal(Buffer.byteLength(description), 797);
+		assert.equal(Buffer.byteLength(description), 890);
+		assert.match(description, /workflowScriptPath.*request cwd/i);
+		assert.match(description, /script inputs are mutually exclusive/i);
 		assert.equal(metadata.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
 		assert.equal(Buffer.byteLength(metadata.promptSnippet!), 62);
 		assert.deepEqual(metadata.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
@@ -53,9 +55,10 @@ describe("registered subagent tool description", () => {
 	it("keeps the full description when configured", () => {
 		const description = buildSubagentToolDescription({ toolDescriptionMode: "full" });
 		assert.equal(buildSubagentToolPromptMetadata({ toolDescriptionMode: "full" }).promptSnippet, undefined);
-		assert.match(description, /^Run one child with \{ agent, task\? \}; use \{ workflowScript \} for orchestration/i);
+		assert.match(description, /^Run one child with \{ agent, task\? \}; use \{ workflowScript \} for inline orchestration or \{ workflowScriptPath \}/i);
+		assert.match(description, /workflowScriptPath:"workflows\/review\.js".*host reads the file.*sandbox/i);
 		assert.match(description, /SINGLE CHILD:.*starts exactly one direct child/i);
-		assert.match(description, /Do not combine agent\/task with action or workflowScript/i);
+		assert.match(description, /Do not combine agent\/task with action, workflowScript, or workflowScriptPath/i);
 		assert.match(description, /runs\.run for one child and await runs\.all.*ordinary parallel children/i);
 		assert.match(description, /do not read \.output from unawaited runs\.run launches/i);
 		assert.match(description, /runs\.steer\(key, message, \{mode\?, index\?, ackTimeoutMs\?\}\).*prior keyed child.*without exposing its run id/i);
@@ -84,7 +87,8 @@ describe("registered subagent tool description", () => {
 	it("offers a compact mode that keeps the two-tier contract and safety guidance", () => {
 		const description = buildSubagentToolDescription({ toolDescriptionMode: "compact" });
 		assert.equal(description, COMPACT_SUBAGENT_TOOL_DESCRIPTION);
-		assert.match(description, /^Run one child with \{ agent, task\? \}; use \{ workflowScript \} for orchestration/i);
+		assert.match(description, /^Run one child with \{ agent, task\? \}; use \{ workflowScript \} for inline orchestration or \{ workflowScriptPath \}/i);
+		assert.match(description, /workflowScriptPath:"workflows\/review\.js".*request cwd.*sandbox/i);
 		assert.match(description, /SINGLE .*starts exactly one direct child/i);
 		assert.match(description, /runs\.run for one child and await runs\.all.*ordinary parallel work/i);
 		assert.match(description, /do not read \.output from unawaited runs\.run launches/i);

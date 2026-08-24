@@ -29,6 +29,11 @@ interface SubagentParamsSchema {
 			minLength?: number;
 			description?: string;
 		};
+		workflowScriptPath?: {
+			type?: string;
+			minLength?: number;
+			description?: string;
+		};
 		chatProgress?: {
 			type?: string;
 			enum?: string[];
@@ -176,7 +181,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(description, /else fresh/);
 	});
 
-	it("exposes a concise trusted inline workflow script mode", () => {
+	it("exposes trusted inline and file workflow script modes", () => {
 		const workflowScript = SubagentParams?.properties?.workflowScript;
 		assert.equal(workflowScript?.type, "string");
 		assert.equal(workflowScript?.minLength, 1);
@@ -187,6 +192,12 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(String(workflowScript?.description ?? ""), /sequential and parallel phases dynamically/i);
 		assert.match(String(workflowScript?.description ?? ""), /worktree:true/i);
 		assert.match(String(workflowScript?.description ?? ""), /no filesystem, shell, Pi tools, or host globals/i);
+		const workflowScriptPath = SubagentParams?.properties?.workflowScriptPath;
+		assert.equal(workflowScriptPath?.type, "string");
+		assert.equal(workflowScriptPath?.minLength, 1);
+		assert.match(String(workflowScriptPath?.description ?? ""), /mutually exclusive with workflowScript/i);
+		assert.match(String(workflowScriptPath?.description ?? ""), /request cwd/i);
+		assert.match(String(workflowScriptPath?.description ?? ""), /host reads the file/i);
 		const chatProgress = SubagentParams?.properties?.chatProgress;
 		assert.equal(chatProgress?.type, "string");
 		assert.deepEqual(chatProgress?.enum, ["auto", "off", "live-card"]);
@@ -227,7 +238,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(actionSchema.enum, undefined);
 		const description = String(actionSchema.description ?? "");
 		assert.match(description, /Optional management\/control action/);
-		assert.match(description, /Omit this field for structured single-child or workflowScript execution/);
+		assert.match(description, /Omit this field for structured single-child or workflow execution/);
 		assert.match(description, /use it only for management\/control actions/);
 		assert.doesNotMatch(description, /orchestration\./);
 	});
@@ -524,6 +535,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const validValues = [
 			{ skill: "review" },
 			{ workflowScript: "return await runs.run(\"one\", {agent: \"reviewer\", task: \"check\"})" },
+			{ workflowScriptPath: "workflows/review.js" },
 			{ skill: false },
 			{ action: "get", agent: "worker" },
 			{ workflowScript: "return runs.run('main', { agent: 'worker', task: 'Fix', acceptance: false })", timeoutMs: 1000 },
