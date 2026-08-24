@@ -17,6 +17,20 @@ const UNSUPPORTED = {
 
 const CAPABILITY_KEYS = new Set(Object.keys(UNSUPPORTED));
 
+export function validateClaudeCodeProfileRunner(
+	agent: {
+		name: string;
+		localName?: string;
+		aliases?: readonly string[];
+		runner?: { type: string; adapter?: string };
+	},
+): string | undefined {
+	const selectionNames = [agent.name, ...(agent.localName ? [agent.localName] : []), ...(agent.aliases ?? [])];
+	if (!selectionNames.includes("claude-code")) return undefined;
+	if (agent.runner?.type === "external-cli" && agent.runner.adapter === "claude-code") return undefined;
+	return "Selection name 'claude-code' is reserved for the read-only 'claude-code' adapter. Use 'claude-code-writer' for explicit file-write access.";
+}
+
 export function parseExternalCliCapabilityNarrowing(value: unknown, label: string): ExternalCliCapabilityNarrowing | undefined {
 	if (value === undefined) return undefined;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object.`);
@@ -30,20 +44,24 @@ export function parseExternalCliCapabilityNarrowing(value: unknown, label: strin
 }
 
 export function resolveExternalCliRunnerStatus(input: {
-	adapter?: "codex-exec";
+	adapter?: "codex-exec" | "claude-code" | "claude-code-writer";
 	command: string;
 	args?: string[];
 	promptDelivery?: "stdin";
 	capabilities?: ExternalCliCapabilityNarrowing;
 }): ExternalCliRunnerStatus {
 	const codexExec = input.adapter === "codex-exec";
+	const claudeCode = input.adapter === "claude-code";
+	const claudeCodeWriter = input.adapter === "claude-code-writer";
 	return {
 		type: "external-cli",
 		command: input.command,
 		args: input.args ?? [],
 		promptDelivery: input.promptDelivery ?? "stdin",
-		adapter: { id: codexExec ? "codex-exec" : "external-cli", version: 1, executionMode: "one-shot-stdin" },
+		adapter: { id: input.adapter ?? "external-cli", version: 1, executionMode: "one-shot-stdin" },
 		...(codexExec ? { safety: { sandbox: "read-only" as const, approvalPolicy: "never" as const, ephemeral: true as const } } : {}),
+		...(claudeCode ? { safety: { access: "read-only" as const, authentication: "existing-cli-required" as const, permissionMode: "plan" as const, tools: "none" as const, mcp: "empty-strict" as const, settingSources: "user" as const, userSettingsTrust: "required" as const, sessionPersistence: false as const } } : {}),
+		...(claudeCodeWriter ? { safety: { access: "workspace-write" as const, authentication: "existing-cli-required" as const, permissionMode: "acceptEdits" as const, tools: "Read,Write,Edit,Glob,Grep" as const, mcp: "empty-strict" as const, settingSources: "user" as const, userSettingsTrust: "required" as const, sessionPersistence: false as const } } : {}),
 		capabilities: {
 			stop: true,
 			steer: false,
@@ -67,9 +85,10 @@ export function normalizeExternalCliRunnerStatus(value: unknown): ExternalCliRun
 		? input.args
 		: undefined;
 	const promptDelivery = input.promptDelivery === "stdin" ? "stdin" : undefined;
-	const adapter = input.adapter && typeof input.adapter === "object" && !Array.isArray(input.adapter) && (input.adapter as Record<string, unknown>).id === "codex-exec"
-		? "codex-exec" as const
+	const adapterId = input.adapter && typeof input.adapter === "object" && !Array.isArray(input.adapter)
+		? (input.adapter as Record<string, unknown>).id
 		: undefined;
+	const adapter = adapterId === "codex-exec" || adapterId === "claude-code" || adapterId === "claude-code-writer" ? adapterId : undefined;
 	return resolveExternalCliRunnerStatus({ ...(adapter ? { adapter } : {}), command: input.command, ...(args ? { args } : {}), ...(promptDelivery ? { promptDelivery } : {}) });
 }
 

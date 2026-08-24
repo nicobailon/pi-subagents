@@ -1378,7 +1378,7 @@ export type AgentRunnerConfig =
 	| { type: "pi" }
 	| {
 		type: "external-cli";
-		adapter?: "codex-exec";
+		adapter?: "codex-exec" | "claude-code" | "claude-code-writer";
 		command: string;
 		args?: string[];
 		promptDelivery?: "stdin";
@@ -1404,9 +1404,13 @@ export interface ExternalCliCapabilities {
 }
 
 export interface ExternalCliReceiptMetadata {
-	adapter: { id: "external-cli" | "codex-exec"; version: 1; executionMode: "one-shot-stdin" };
+	adapter: { id: "external-cli" | "codex-exec" | "claude-code" | "claude-code-writer"; version: 1; executionMode: "one-shot-stdin" };
 	capabilities: ExternalCliCapabilities;
-	safety?: { sandbox: "read-only"; approvalPolicy: "never"; ephemeral: true };
+	safety?:
+		| { sandbox: "read-only"; approvalPolicy: "never"; ephemeral: true }
+		| { permissionMode: "plan"; tools: "none"; mcp: "empty-strict"; settingSources: "none"; sessionPersistence: false }
+		| { access: "read-only"; authentication: "existing-cli-required"; permissionMode: "plan"; tools: "none"; mcp: "empty-strict"; settingSources: "user"; userSettingsTrust: "required"; sessionPersistence: false }
+		| { access: "workspace-write"; authentication: "existing-cli-required"; permissionMode: "acceptEdits"; tools: "Read,Write,Edit,Glob,Grep"; mcp: "empty-strict"; settingSources: "user"; userSettingsTrust: "required"; sessionPersistence: false };
 	outputArtifacts?: { stdoutPath?: string; stderrPath?: string; finalOutputPath?: string };
 	handoff: { mode: "fresh" };
 	supervisor: { mode: "unsupported"; reason: string };

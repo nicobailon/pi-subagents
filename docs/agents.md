@@ -55,23 +55,6 @@ If you disabled the old bundled `gpt-pro` workaround with `agentOverrides.gpt-pr
 
 The Pi async run remains the source of truth for status, artifacts, wake/wait, mission attachment, retention, and diagnostics.
 
-Claude Code can be configured as a read-only advisor with `runner.type: external-cli` when the Claude Code CLI is installed and you have verified the flags for your local version. pi-subagents does not ship or enforce Claude Code flags. Use a project or user agent like this only after checking your CLI help:
-
-```yaml
----
-name: claude-advisor
-description: Read-only Claude Code advisor through the local CLI
-runner:
-  type: external-cli
-  command: claude
-  args: ["<verified-read-only-flags>"]
-  promptDelivery: stdin
-async: true
----
-
-Review the task and return advice only. Do not edit files.
-```
-
 ### Advisory runner data boundary
 
 The built-in `codex-exec` profile is the supported Codex one-shot mode. It requires an installed and authenticated Codex CLI. The adapter owns its argv and runs `codex exec --json` with the read-only sandbox, approval policy `never`, ephemeral sessions, ignored exec rules, and a final-message artifact. User profiles cannot add argv to this adapter or select a wider sandbox.
@@ -95,7 +78,42 @@ node --experimental-strip-types --import ./test/support/register-loader.mjs \
 
 The smoke asks Codex to attempt a write canary under the packaged read-only policy. Review the JSON report and confirm `writeCanaryExists` is `false`. The report contains paths and compact process metadata, but no raw protocol output or credentials.
 
-Native `oracle` runs inside Pi and can use its configured read tools. `claude-advisor` sends the assembled prompt to the configured local external CLI through stdin. An external-job agent sends the assembled prompt to its registered provider. Provider options and a prompt digest are persisted in Pi run state. The prompt text is delivered through the local host bridge to the provider and is not stored in the public result payload. Do not place secrets in advisory prompts unless the target provider is approved to receive them.
+The built-in `claude-code` and `claude-code-writer` profiles are the supported Claude Code one-shot modes. Both require an installed Claude Code CLI that is already authenticated through its normal local login. Claude Code 2.1.150 needs the user setting source for normal OAuth/keychain authentication, so both adapters load user settings but exclude project and local settings. User-level Claude Code settings and hooks are therefore an operator-trusted prerequisite. Review or disable unsafe user hooks before using either profile.
+
+| Profile | Access | Permission mode | Built-in tools |
+|---|---|---|---|
+| `claude-code` | Handoff-only read-only advice | `plan` | none |
+| `claude-code-writer` | Explicit workspace file edits | `acceptEdits` | `Read,Write,Edit,Glob,Grep` |
+
+Both adapters own `claude -p` argv with stream JSON, strict empty MCP configuration, user-only setting sources, no session persistence, disabled slash commands, and disabled Chrome integration. The writer mode does not include Bash or any permission bypass. Neither mode uses `--bare`, which does not read normal OAuth/keychain authentication. Neither mode requires `--safe-mode`, which is absent from the installed 2.1.150 help. User profiles cannot add argv. Selecting the code-owned `claude-code-writer` adapter identity is the only way to opt into its write tools; the read-only adapter cannot be widened with user argv.
+
+Run it asynchronously:
+
+```text
+Use claude-code to analyze this handoff without editing files.
+
+Use claude-code-writer to make the requested file changes.
+```
+
+The adapter validates `claude --version` and `claude --help` only when a run launches. Discovery, list, status, and native Pi launches do not probe Claude Code or authentication. JSONL, stderr, and stdout are untrusted. A run succeeds only after bounded valid JSONL contains exactly one successful terminal `result` with non-empty final text. Missing or revoked local authentication, limit stops, malformed JSON, duplicate terminal results, and EOF before a terminal result fail closed.
+
+Maintainers can opt in to separate read-only and writer canaries:
+
+```bash
+PI_SUBAGENTS_CLAUDE_CODE_SMOKE=1 \
+PI_SUBAGENTS_CLAUDE_CODE_SMOKE_REPORT=/tmp/pi-subagents-claude-code-smoke.json \
+node --experimental-strip-types --import ./test/support/register-loader.mjs \
+  --test test/integration/claude-code-smoke.test.ts
+
+PI_SUBAGENTS_CLAUDE_CODE_WRITER_SMOKE=1 \
+PI_SUBAGENTS_CLAUDE_CODE_WRITER_SMOKE_REPORT=/tmp/pi-subagents-claude-code-writer-smoke.json \
+node --experimental-strip-types --import ./test/support/register-loader.mjs \
+  --test test/integration/claude-code-writer-smoke.test.ts
+```
+
+Both smoke reports record `authentication: "existing-cli-required"`, `settingSources: "user"`, and `userSettingsTrust: "required"` without recording credential details. For read-only, confirm `terminalState` is `completed` and `writeCanaryExists` is `false`. For writer, confirm `terminalState` is `completed` and `writeCanaryMatches` is `true`. `durationMs` records cold process time. If authentication is missing or revoked, repair the normal local Claude Code login and rerun the smoke. Reports do not contain raw protocol output or credentials.
+
+Native `oracle` runs inside Pi and can use its configured read tools. The Claude profiles send the assembled prompt to the local Claude Code CLI through stdin. An external-job agent sends the assembled prompt to its registered provider. Provider options and a prompt digest are persisted in Pi run state. The prompt text is delivered through the local host bridge to the provider and is not stored in the public result payload. Do not place secrets in advisory prompts unless the target provider is approved to receive them.
 
 ### External-job state table
 

@@ -60,6 +60,36 @@ describe("agent management config parsing", () => {
 		assert.doesNotMatch(readText(result), /- scout \(builtin/);
 	});
 
+	it("rejects management attempts to widen the reserved read-only Claude profile", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const writerRunner = { type: "external-cli", adapter: "claude-code-writer", command: "claude" };
+		const unsafeCreate = handleCreate({ config: { name: "claude-code", description: "Unsafe shadow", scope: "project", runner: writerRunner } }, ctx);
+		assert.equal(unsafeCreate.isError, true);
+		assert.match(readText(unsafeCreate), /reserved for the read-only 'claude-code' adapter/);
+		const unsafeLocalName = handleCreate({ config: { name: "claude-code", package: "custom", description: "Unsafe local name", scope: "project", runner: writerRunner } }, ctx);
+		assert.equal(unsafeLocalName.isError, true);
+		assert.match(readText(unsafeLocalName), /Selection name 'claude-code' is reserved/);
+		const unsafeAlias = handleCreate({ config: { name: "aliased-writer", aliases: ["claude-code"], description: "Unsafe alias", scope: "project", runner: writerRunner } }, ctx);
+		assert.equal(unsafeAlias.isError, true);
+		assert.match(readText(unsafeAlias), /Selection name 'claude-code' is reserved/);
+
+		const readOnlyCreate = handleCreate({ config: { name: "claude-code", description: "Narrow shadow", scope: "project", runner: { type: "external-cli", adapter: "claude-code", command: "claude" } } }, ctx);
+		assert.equal(readOnlyCreate.isError, false);
+		const unsafeUpdate = handleUpdate({ agent: "claude-code", agentScope: "project", config: { runner: writerRunner } }, ctx);
+		assert.equal(unsafeUpdate.isError, true);
+		assert.match(readText(unsafeUpdate), /reserved for the read-only 'claude-code' adapter/);
+		assert.match(fs.readFileSync(path.join(tempDir, ".pi", "agents", "claude-code.md"), "utf-8"), /adapter: claude-code\n/);
+
+		const writerCreate = handleCreate({ config: { name: "custom-writer", description: "Writer", scope: "project", runner: writerRunner } }, ctx);
+		assert.equal(writerCreate.isError, false);
+		const unsafeAliasUpdate = handleUpdate({ agent: "custom-writer", agentScope: "project", config: { aliases: ["claude-code"] } }, ctx);
+		assert.equal(unsafeAliasUpdate.isError, true);
+		assert.match(readText(unsafeAliasUpdate), /Selection name 'claude-code' is reserved/);
+		const unsafeRename = handleUpdate({ agent: "custom-writer", agentScope: "project", config: { name: "claude-code" } }, ctx);
+		assert.equal(unsafeRename.isError, true);
+		assert.match(readText(unsafeRename), /reserved for the read-only 'claude-code' adapter/);
+	});
+
 	it("lists valid agents and diagnoses malformed agent definitions", () => {
 		const agentsDir = path.join(tempDir, ".pi", "agents");
 		fs.mkdirSync(agentsDir, { recursive: true });

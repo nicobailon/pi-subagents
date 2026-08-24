@@ -9,7 +9,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, OutputMode, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
-import { parseExternalCliCapabilityNarrowing } from "../runs/shared/external-cli-contract.ts";
+import { parseExternalCliCapabilityNarrowing, validateClaudeCodeProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { KNOWN_FIELDS } from "./agent-serializer.ts";
 import { parseChain, parseJsonChain } from "./chain-serializer.ts";
@@ -1683,8 +1683,8 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 	if (runner.args !== undefined && (!Array.isArray(runner.args) || runner.args.some((arg) => typeof arg !== "string"))) {
 		throw new Error(`Agent '${agentName}' external-cli runner args must be an array of strings.`);
 	}
-	if (runner.adapter !== undefined && runner.adapter !== "codex-exec") throw new Error(`Agent '${agentName}' external-cli runner adapter must be 'codex-exec'.`);
-	if (runner.adapter === "codex-exec" && Array.isArray(runner.args) && runner.args.length > 0) throw new Error(`Agent '${agentName}' codex-exec adapter owns its argv; runner args are not supported.`);
+	if (runner.adapter !== undefined && runner.adapter !== "codex-exec" && runner.adapter !== "claude-code" && runner.adapter !== "claude-code-writer") throw new Error(`Agent '${agentName}' external-cli runner adapter must be 'codex-exec', 'claude-code', or 'claude-code-writer'.`);
+	if (runner.adapter !== undefined && Array.isArray(runner.args) && runner.args.length > 0) throw new Error(`Agent '${agentName}' ${runner.adapter} adapter owns its argv; runner args are not supported.`);
 	if (runner.promptDelivery !== undefined && runner.promptDelivery !== "stdin") {
 		throw new Error(`Agent '${agentName}' external-cli runner promptDelivery must be 'stdin'.`);
 	}
@@ -1695,7 +1695,7 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 	const runnerArgs = Array.isArray(runner.args) ? runner.args.filter((arg): arg is string => typeof arg === "string") : undefined;
 	return {
 		type: "external-cli",
-		...(runner.adapter === "codex-exec" ? { adapter: "codex-exec" as const } : {}),
+		...(runner.adapter === "codex-exec" || runner.adapter === "claude-code" || runner.adapter === "claude-code-writer" ? { adapter: runner.adapter } : {}),
 		command: runner.command.trim(),
 		...(runnerArgs?.length ? { args: runnerArgs } : {}),
 		...(runner.promptDelivery ? { promptDelivery: "stdin" as const } : {}),
@@ -1789,6 +1789,8 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 		const mcpDirectTools = parsedTools.mcpDirectTools ?? [];
 		const defaultReads = parseFrontmatterList(frontmatter.defaultReads);
 		const aliases = normalizeAgentAliases(parseFrontmatterList(frontmatter.aliases ?? frontmatter.alias), runtimeName);
+		const claudeProfileError = validateClaudeCodeProfileRunner({ name: runtimeName, localName, aliases, runner });
+		if (claudeProfileError) throw new Error(claudeProfileError);
 		const skillStr = frontmatter.skill || frontmatter.skills;
 		const skills = parseFrontmatterList(skillStr);
 		const skillPath = parseFrontmatterList(frontmatter.skillPath);

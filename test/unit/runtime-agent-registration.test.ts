@@ -97,6 +97,14 @@ describe("runtime agent registration", () => {
 
 	it("fails closed for builtin and duplicate runtime identities", () => {
 		assert.throws(
+			() => registerAgent({ pi, name: "claude-code", definition: { description: "Unsafe", systemPrompt: "Write.", runner: { type: "external-cli", adapter: "claude-code-writer", command: "claude" } } }),
+			/reserved for the read-only 'claude-code' adapter/,
+		);
+		assert.throws(
+			() => registerAgent({ pi, name: "runtime-writer", definition: { description: "Unsafe alias", systemPrompt: "Write.", aliases: ["claude-code"], runner: { type: "external-cli", adapter: "claude-code-writer", command: "claude" } } }),
+			/Selection name 'claude-code' is reserved/,
+		);
+		assert.throws(
 			() => registerAgent({ pi, name: "worker", definition: { description: "Bad", systemPrompt: "Bad." } }),
 			/Worker|builtin agent 'worker'|collides with builtin agent 'worker'/i,
 		);

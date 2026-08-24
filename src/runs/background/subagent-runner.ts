@@ -144,6 +144,7 @@ import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
 import { buildExternalCliPrompt, runExternalCli } from "../shared/external-cli-runner.ts";
+import { resolveClaudeCodeLaunch } from "../shared/claude-code-adapter.ts";
 import { resolveCodexExecLaunch } from "../shared/codex-exec-adapter.ts";
 import { resolveExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { runExternalJob } from "../shared/external-job-runner.ts";
@@ -1385,7 +1386,9 @@ async function runSingleStepInner(
 	if (step.runner?.type === "external-cli") {
 		const adapterLaunch = step.runner.adapter === "codex-exec"
 			? resolveCodexExecLaunch({ command: step.runner.command, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
-			: undefined;
+			: step.runner.adapter === "claude-code" || step.runner.adapter === "claude-code-writer"
+				? resolveClaudeCodeLaunch({ adapter: step.runner.adapter, command: step.runner.command })
+				: undefined;
 		const runner = resolveExternalCliRunnerStatus({ ...step.runner, ...(adapterLaunch ? { args: adapterLaunch.args } : {}) });
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
 		const external = await runExternalCli(omitUndefinedProperties({
