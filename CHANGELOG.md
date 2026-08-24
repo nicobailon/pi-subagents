@@ -16,6 +16,7 @@
 ### Fixed
 - Make workflow validation and return serialization failures easier to recover from with no-child-launch diagnostics, portable rewrite guidance, workflow ids, and completed-child output references (#1432, #1434).
 - Report child processes that exit during tool execution as mid-tool failures instead of cold starts, even when earlier assistant text exists. Thanks to [@cyzlmh](https://github.com/cyzlmh) for #1437.
+- Keep unaddressable legacy result aliases and overlong public result filenames from blocking canonical hashed or pending fallbacks. Thanks to [@LeonardBode](https://github.com/LeonardBode) for #1440.
 
 ## [0.56.0] - 2026-08-23
 

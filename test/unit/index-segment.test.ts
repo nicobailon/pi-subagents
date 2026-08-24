@@ -21,6 +21,7 @@ describe("bounded index segments", () => {
 		assert.equal(first, encodeIndexSegment(longId));
 		assert.match(first, /^~sha256-[a-f0-9]{64}$/);
 		assert.ok(Buffer.byteLength(first, "utf-8") <= MAX_INDEX_SEGMENT_BYTES);
+		assert.deepEqual(indexSegmentAliases(longId), [first]);
 		assert.notEqual(first, encodeIndexSegment(`${longId}other`));
 	});
 

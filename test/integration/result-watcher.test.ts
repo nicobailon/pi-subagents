@@ -8,6 +8,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildCompletionKey } from "../../src/runs/background/completion-dedupe.ts";
 import { createResultWatcher as createRawResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
+import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
 import { createScheduledRunManager, scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
 import { prepareMissionLaunch, writeMissionAsyncBinding } from "../../src/missions/lifecycle.ts";
 import { readMission, updateMission } from "../../src/missions/store.ts";
@@ -209,7 +210,7 @@ describe("result watcher", () => {
 				on() { return fakeWatcher; },
 				close() {},
 				unref() {},
-			} as fs.FSWatcher;
+			} as unknown as fs.FSWatcher;
 			const writeResult = (id: string, sessionId: string) => {
 				writeIndexedResult(path.join(resultsDir, `${id}.json`), {
 					id,
@@ -247,11 +248,11 @@ describe("result watcher", () => {
 				timers: {
 					setTimeout,
 					clearTimeout,
-					setInterval(handler: () => void, delay?: number) {
+					setInterval: ((handler: () => void, delay?: number) => {
 						safetyScan = handler;
 						safetyScanIntervalMs = delay;
 						return { unref() {} } as NodeJS.Timeout;
-					},
+					}) as typeof setInterval,
 					clearInterval() { safetyScan = undefined; },
 				},
 			});
@@ -353,6 +354,82 @@ describe("result watcher", () => {
 			assert.ok(child?.artifactPaths.includes(outputPath));
 			assert.ok(child?.artifactPaths.includes(path.join(asyncDir, "status.json")));
 		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("observes a hash-only mission result once when its public alias is unaddressable", async (t) => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-mission-enametoolong-"));
+		const resultsDir = path.join(root, "results");
+		const project = path.join(root, "project");
+		const asyncDir = path.join(root, "async-child");
+		fs.mkdirSync(resultsDir, { recursive: true });
+		fs.mkdirSync(project, { recursive: true });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		const originalError = console.error;
+		const errors: unknown[][] = [];
+		try {
+			const runId = `mission-${"x".repeat(250)}`;
+			const publicResultPath = path.join(resultsDir, `${runId}.json`);
+			assert.ok(Buffer.byteLength(`${runId}.json`, "utf-8") > MAX_INDEX_SEGMENT_BYTES);
+			const originalRenameSync = fsDefault.renameSync;
+			const nameTooLong = new Error("public result alias is too long") as NodeJS.ErrnoException;
+			nameTooLong.code = "ENAMETOOLONG";
+			t.mock.method(fsDefault, "renameSync", ((source: fs.PathLike, destination: fs.PathLike) => {
+				if (String(destination) === publicResultPath) throw nameTooLong;
+				return originalRenameSync(source, destination);
+			}) as typeof fsDefault.renameSync);
+			syncBuiltinESMExports();
+			const binding = prepareMissionLaunch({
+				params: { mission: { title: "Long result mission" }, task: "Run async child" },
+				projectRoot: project,
+				config: { directory: path.join(root, "missions"), globalIndexDir: path.join(root, "global-index") },
+				ownerSessionId: "session-owner",
+			});
+			assert.ok(binding);
+			writeMissionAsyncBinding(asyncDir, binding);
+			console.error = (...args: unknown[]) => { errors.push(args); };
+			writeIndexedResult(publicResultPath, {
+				id: runId,
+				runId,
+				sessionId: "session-owner",
+				asyncDir,
+				state: "complete",
+				success: true,
+				summary: "Long mission result completed",
+			});
+			const pendingPath = path.join(resultsDir, "result-pending", encodeIndexSegment("session-owner"), `${encodeIndexSegment(runId, MAX_INDEX_SEGMENT_BYTES - Buffer.byteLength(".json"))}.json`);
+			assert.equal(fs.existsSync(pendingPath), true);
+			const state = createState();
+			state.currentSessionId = "different-session";
+			let parsed = 0;
+			let observed = 0;
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				parseResult(raw) {
+					parsed += 1;
+					return JSON.parse(raw);
+				},
+				observeCompletion() { observed += 1; },
+			});
+			try {
+				watcher.primeExistingResults();
+				assert.equal(await waitForPredicate(() => observed === 1), true);
+				watcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 25));
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			assert.equal(parsed, 1);
+			assert.equal(observed, 1);
+			assert.equal(fs.existsSync(pendingPath), true);
+			assert.equal((JSON.parse(fs.readFileSync(pendingPath, "utf-8")) as { notificationDeliveredAt?: unknown }).notificationDeliveredAt, undefined);
+			assert.equal(readMission(binding.location, binding.missionId).runs.some((run) => run.runId === runId), true);
+			assert.equal(errors.some((entry) => /Failed to (?:promote|inspect|process).*result/i.test(String(entry[0] ?? ""))), false);
+		} finally {
+			console.error = originalError;
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
@@ -907,6 +984,39 @@ describe("result watcher", () => {
 		}
 	});
 
+	it("diagnoses non-filesystem ENAMETOOLONG from parser and notifier callbacks", async () => {
+		for (const source of ["parser", "notifier"] as const) {
+			const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), `pi-result-watcher-${source}-enametoolong-`));
+			const originalError = console.error;
+			const logged: unknown[][] = [];
+			try {
+				const runId = `${source}-enametoolong`;
+				const resultPath = path.join(resultsDir, `${runId}.json`);
+				writeIndexedResult(resultPath, { id: runId, runId, sessionId: "session-current", success: true, summary: "done" });
+				const state = createState();
+				state.currentSessionId = "session-current";
+				const failure = new Error(`${source} rejected payload`) as NodeJS.ErrnoException;
+				failure.code = "ENAMETOOLONG";
+				console.error = (...args: unknown[]) => { logged.push(args); };
+				const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, source === "parser"
+					? { parseResult: () => { throw failure; } }
+					: { notifier: { deliver: async () => { throw failure; } } });
+				try {
+					watcher.primeExistingResults();
+					assert.equal(await waitForPredicate(() => logged.some((entry) => entry[1] === failure)), true);
+				} finally {
+					watcher.stopResultWatcher();
+				}
+
+				assert.equal(fs.existsSync(resultPath), true);
+				assert.equal(logged.some((entry) => entry[1] === failure && /Failed to process subagent result file/.test(String(entry[0] ?? ""))), true);
+			} finally {
+				console.error = originalError;
+				fs.rmSync(resultsDir, { recursive: true, force: true });
+			}
+		}
+	});
+
 	it("normalizes the native fs.watch path before watching result files", () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-"));
 		try {
@@ -925,7 +1035,7 @@ describe("result watcher", () => {
 				},
 				close() {},
 				unref() {},
-			} as fs.FSWatcher;
+			} as unknown as fs.FSWatcher;
 			const realpathSync = ((target: fs.PathLike, options?: unknown) => fs.realpathSync(target, options as BufferEncoding)) as typeof fs.realpathSync;
 			realpathSync.native = ((target: fs.PathLike) => target === resultsDir ? nativeResultsDir : fs.realpathSync.native(target)) as typeof fs.realpathSync.native;
 			const watcher = createResultWatcher(pi, state, resultsDir, 60_000, {
@@ -971,17 +1081,17 @@ describe("result watcher", () => {
 				},
 				close() {},
 				unref() {},
-			} as fs.FSWatcher;
+			} as unknown as fs.FSWatcher;
 			const watcher = createResultWatcher(pi, state, resultsDir, 60_000, {
 				fs: { ...fs, watch: () => fakeWatcher },
 				deliverIntercomResults: false,
 				timers: {
 					setTimeout,
 					clearTimeout,
-					setInterval(handler: () => void) {
+					setInterval: ((handler: () => void) => {
 						scan = handler;
 						return { unref() {} } as NodeJS.Timeout;
-					},
+					}) as typeof setInterval,
 					clearInterval() {
 						scan = undefined;
 					},
@@ -2101,7 +2211,7 @@ describe("result watcher", () => {
 				on() { return fakeWatcher; },
 				close() {},
 				unref() {},
-			} as fs.FSWatcher;
+			} as unknown as fs.FSWatcher;
 			let watchEvent: ((event: string, file: string | Buffer | null) => void) | undefined;
 			const resultPath = path.join(resultsDir, "index-retry.json");
 			writeIndexedResult(resultPath, { id: "index-retry", runId: "index-retry", sessionId: "session-1", agent: "worker", success: true, summary: "done", timestamp: 1 });
@@ -2120,7 +2230,7 @@ describe("result watcher", () => {
 			syncBuiltinESMExports();
 
 			const watcher = createResultWatcher({ events: { on: () => () => {}, emit(event) { emitted.push(event); } } }, state, resultsDir, 60_000, {
-				fs: { ...fs, watch: (_path, callback) => { watchEvent = callback; return fakeWatcher; } },
+				fs: { ...fs, watch: (_path, callback) => { watchEvent = callback as typeof watchEvent; return fakeWatcher; } },
 			});
 			try {
 				watcher.startResultWatcher();

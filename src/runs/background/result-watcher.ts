@@ -148,6 +148,10 @@ function isNotFound(error: unknown): boolean {
 	return errorCode(error) === "ENOENT";
 }
 
+function isAbsentResultCandidate(error: unknown): boolean {
+	return isNotFound(error) || errorCode(error) === "ENAMETOOLONG";
+}
+
 function isAccessDenied(error: unknown): boolean {
 	const code = errorCode(error);
 	return code === "EPERM" || code === "EACCES";
@@ -235,7 +239,7 @@ export function createResultWatcher(
 		try {
 			return fsApi.statSync(publicResultPath(file)).isFile();
 		} catch (error) {
-			if (!isNotFound(error)) console.error(`Failed to inspect subagent result file '${publicResultPath(file)}':`, error);
+			if (!isAbsentResultCandidate(error)) console.error(`Failed to inspect subagent result file '${publicResultPath(file)}':`, error);
 			return false;
 		}
 	};
@@ -265,7 +269,7 @@ export function createResultWatcher(
 		} catch (error) {
 			identityCache.delete(file);
 			if (isAccessDenied(error)) throw error;
-			if (!isNotFound(error)) console.error(`Failed to inspect subagent result file '${resultPath}':`, error);
+			if (!isAbsentResultCandidate(error)) console.error(`Failed to inspect subagent result file '${resultPath}':`, error);
 			return undefined;
 		}
 	};
@@ -283,7 +287,7 @@ export function createResultWatcher(
 		} catch (error) {
 			identityCache.delete(file);
 			if (isAccessDenied(error)) throw error;
-			if (!isNotFound(error)) console.error(`Failed to inspect subagent result file '${resultPath}':`, error);
+			if (!isAbsentResultCandidate(error)) console.error(`Failed to inspect subagent result file '${resultPath}':`, error);
 			return undefined;
 		}
 	};
@@ -317,7 +321,7 @@ export function createResultWatcher(
 			removeResultIndex(resultsDir, sessionId, runId, toolCallId);
 			return true;
 		} catch (error) {
-			if (!isNotFound(error)) {
+			if (!isAbsentResultCandidate(error)) {
 				console.error(`Failed to remove delivered subagent result '${publicResultPath(file)}'; will retry:`, error);
 				return false;
 			}
@@ -384,7 +388,7 @@ export function createResultWatcher(
 					if (!resultPayloadWasReplaced(data, readPublicResultIdentity())) return false;
 				} catch (error) {
 					if (isAccessDenied(error)) throw error;
-					if (isNotFound(error)) return false;
+					if (isAbsentResultCandidate(error)) return false;
 					console.error(`Failed to re-read subagent result file '${publicResultPath(file)}':`, error);
 				}
 				identityCache.delete(file);
