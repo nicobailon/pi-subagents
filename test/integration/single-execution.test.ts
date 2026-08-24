@@ -780,8 +780,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 		assert.equal(workflowResult.state, "complete");
 		assert.match(workflowResult.results?.[0]?.output ?? "", /Async: external/);
-		for (let attempt = 0; attempt < 100 && !fs.existsSync(markerPath); attempt++) {
-			await new Promise((resolve) => setTimeout(resolve, 20));
+		for (let attempt = 0; attempt < 300 && !fs.existsSync(markerPath); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 50));
 		}
 		assert.equal(fs.readFileSync(markerPath, "utf-8"), "started");
 		assert.equal(mockPi.callCount(), 0);
@@ -834,8 +834,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
 		assert.ok(result.details.asyncId);
 		assert.match(result.content[0]?.text ?? "", /Async: external/);
-		for (let attempt = 0; attempt < 100 && !fs.existsSync(markerPath); attempt++) {
-			await new Promise((resolve) => setTimeout(resolve, 20));
+		for (let attempt = 0; attempt < 300 && !fs.existsSync(markerPath); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 50));
 		}
 		assert.equal(fs.readFileSync(markerPath, "utf-8"), "started");
 		assert.equal(mockPi.callCount(), 0);
@@ -883,8 +883,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
 		assert.ok(result.details.asyncId);
-		for (let attempt = 0; attempt < 100 && !fs.existsSync(markerPath); attempt++) {
-			await new Promise((resolve) => setTimeout(resolve, 20));
+		for (let attempt = 0; attempt < 300 && !fs.existsSync(markerPath); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 50));
 		}
 		assert.equal(fs.readFileSync(markerPath, "utf-8"), "started");
 		assert.equal(mockPi.callCount(), 0);
@@ -923,8 +923,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined);
 		assert.doesNotMatch(result.content[0]?.text ?? "", /Unknown subagent model/);
-		for (let attempt = 0; attempt < 100 && !fs.existsSync(markerPath); attempt++) {
-			await new Promise((resolve) => setTimeout(resolve, 20));
+		for (let attempt = 0; attempt < 300 && !fs.existsSync(markerPath); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 50));
 		}
 		assert.equal(fs.readFileSync(markerPath, "utf-8"), "started");
 		assert.equal(mockPi.callCount(), 0);

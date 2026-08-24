@@ -1466,6 +1466,10 @@ export interface ExternalProcessStatus {
 	processSignal?: string | null;
 	stdoutPath: string;
 	stderrPath: string;
+	stdoutBytes?: number;
+	stderrBytes?: number;
+	stdoutTruncated?: boolean;
+	stderrTruncated?: boolean;
 }
 
 export interface AsyncStatus {

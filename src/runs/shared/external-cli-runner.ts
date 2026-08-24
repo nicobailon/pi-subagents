@@ -1,17 +1,45 @@
-import { spawn } from "node:child_process";
+import assert from "node:assert/strict";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { finished } from "node:stream/promises";
-import { trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import type { ExternalProcessStatus } from "../../shared/types.ts";
+import { createOwnedProcessTreeController, type OwnedProcessTreeController } from "../background/owned-process-tree.ts";
 import { omitExtensionBindingsEnv } from "./extension-bindings.ts";
+import {
+	invalidateExternalCliPreflight,
+	preflightExternalCli,
+	type ExternalCliPreflightResult,
+	type ExternalCliPreflightSpec,
+} from "./external-cli-preflight.ts";
 
-const HARD_KILL_DELAY_MS = 2_000;
 const MAX_OUTPUT_TAIL_BYTES = 64 * 1024;
 const MAX_ERROR_TAIL_BYTES = 64 * 1024;
+const MAX_RAW_LOG_BYTES = 8 * 1024 * 1024;
+const MAX_PARSER_LINE_BYTES = 256 * 1024;
+const MAX_PARSER_STREAM_BYTES = 32 * 1024 * 1024;
+const MAX_PARSER_OUTPUT_BYTES = 1024 * 1024;
+const PARSER_PROGRESS_INTERVAL_MS = 100;
 
 export function buildExternalCliPrompt(systemInstructions: string, task: string): string {
 	return `<System instructions>\n${systemInstructions.trim()}\n\n<Task>\n${task}`;
+}
+
+export interface ExternalCliParserProgress {
+	phase: string;
+	eventCount: number;
+	message?: string;
+}
+
+export interface ExternalCliParserTerminal {
+	state: "completed" | "failed";
+	output?: string;
+	error?: string;
+}
+
+export interface ExternalCliParser {
+	parseLine(line: string): ExternalCliParserProgress | undefined;
+	finish(): ExternalCliParserTerminal | undefined;
 }
 
 export interface ExternalCliRunResult {
@@ -22,6 +50,87 @@ export interface ExternalCliRunResult {
 	stopped?: boolean;
 	processSignal?: string | null;
 	externalProcess: ExternalProcessStatus;
+	parserTerminal?: ExternalCliParserTerminal;
+	preflight?: ExternalCliPreflightResult;
+}
+
+interface StreamLimits {
+	stdoutLogBytes?: number;
+	stderrLogBytes?: number;
+	parserLineBytes?: number;
+	parserStreamBytes?: number;
+	parserOutputBytes?: number;
+}
+
+function narrowLimit(value: number | undefined, ceiling: number, label: string): number {
+	if (value === undefined) return ceiling;
+	assert(Number.isInteger(value) && value > 0 && value <= ceiling, `${label} may only narrow the code-owned ${ceiling}-byte limit.`);
+	return value;
+}
+
+function externalEnvironment(allowlist: readonly string[] | undefined, values: Readonly<Record<string, string>> | undefined): NodeJS.ProcessEnv {
+	if (!allowlist) return omitExtensionBindingsEnv(process.env);
+	const allowed = new Set(allowlist);
+	const env: NodeJS.ProcessEnv = {};
+	for (const key of allowed) {
+		if (!key || key.includes("=") || key.includes("\0")) throw new Error(`Invalid external CLI environment key: ${JSON.stringify(key)}.`);
+		if (process.env[key] !== undefined) env[key] = process.env[key];
+	}
+	for (const [key, value] of Object.entries(values ?? {})) {
+		if (!allowed.has(key)) throw new Error(`External CLI environment value '${key}' is not in the adapter allowlist.`);
+		env[key] = value;
+	}
+	return omitExtensionBindingsEnv(env);
+}
+
+function createByteTail(maxBytes: number): { push(chunk: Buffer): void; text(): string } {
+	const chunks: Buffer[] = [];
+	let bytes = 0;
+	return {
+		push(chunk) {
+			chunks.push(chunk);
+			bytes += chunk.length;
+			while (bytes > maxBytes && chunks.length > 0) {
+				const first = chunks[0]!;
+				const excess = bytes - maxBytes;
+				if (first.length <= excess) {
+					chunks.shift();
+					bytes -= first.length;
+				} else {
+					chunks[0] = first.subarray(excess);
+					bytes -= excess;
+				}
+			}
+		},
+		text: () => Buffer.concat(chunks, bytes).toString("utf-8"),
+	};
+}
+
+function writeBoundedLog(source: NodeJS.ReadableStream, stream: fs.WriteStream, chunk: Buffer, state: { bytes: number; total: number }, limit: number): void {
+	state.total += chunk.length;
+	const remaining = limit - state.bytes;
+	if (remaining <= 0) return;
+	const bytes = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+	state.bytes += bytes.length;
+	if (!stream.write(bytes)) {
+		source.pause();
+		stream.once("drain", () => source.resume());
+	}
+}
+
+function classifyInvalidation(error: string): "auth" | "permission" | "launch" {
+	if (/auth|unauthori[sz]ed|credential|login/i.test(error)) return "auth";
+	if (/permission|forbidden|denied|read.?only/i.test(error)) return "permission";
+	return "launch";
+}
+
+function terminateExternalProcessTree(pid: number, controller: OwnedProcessTreeController): Promise<unknown> {
+	if (process.platform !== "win32") return controller.terminate();
+	return new Promise((resolve) => {
+		const cleanup = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+		cleanup.once("error", () => { void controller.terminate().then(resolve); });
+		cleanup.once("close", () => { void controller.terminate().then(resolve); });
+	});
 }
 
 export function runExternalCli(input: {
@@ -31,14 +140,26 @@ export function runExternalCli(input: {
 	prompt: string;
 	asyncDir: string;
 	stepIndex: number;
+	environment?: { allowlist: readonly string[]; values?: Readonly<Record<string, string>> };
+	preflight?: ExternalCliPreflightSpec;
+	parser?: ExternalCliParser;
+	limits?: StreamLimits;
 	registerTimeout?: (stop: (() => void) | undefined) => void;
 	registerStop?: (stop: (() => void) | undefined) => void;
 	timeoutMessage?: string;
 	stopMessage?: string;
 	onProcess?: (process: ExternalProcessStatus) => void;
+	onParserProgress?: (progress: ExternalCliParserProgress) => void;
 	onStdout?: (chunk: Buffer) => void;
 	onStderr?: (chunk: Buffer) => void;
 }): Promise<ExternalCliRunResult> {
+	const limits = {
+		stdoutLogBytes: narrowLimit(input.limits?.stdoutLogBytes, MAX_RAW_LOG_BYTES, "stdoutLogBytes"),
+		stderrLogBytes: narrowLimit(input.limits?.stderrLogBytes, MAX_RAW_LOG_BYTES, "stderrLogBytes"),
+		parserLineBytes: narrowLimit(input.limits?.parserLineBytes, MAX_PARSER_LINE_BYTES, "parserLineBytes"),
+		parserStreamBytes: narrowLimit(input.limits?.parserStreamBytes, MAX_PARSER_STREAM_BYTES, "parserStreamBytes"),
+		parserOutputBytes: narrowLimit(input.limits?.parserOutputBytes, MAX_PARSER_OUTPUT_BYTES, "parserOutputBytes"),
+	};
 	return new Promise((resolve, reject) => {
 		const startedAt = Date.now();
 		const stdoutPath = path.join(input.asyncDir, `external-${input.stepIndex}.stdout.log`);
@@ -47,19 +168,106 @@ export function runExternalCli(input: {
 		const stdoutStream = fs.createWriteStream(stdoutPath, { flags: "w" });
 		const stderrStream = fs.createWriteStream(stderrPath, { flags: "w" });
 		const streamsFinished = Promise.allSettled([finished(stdoutStream), finished(stderrStream)]);
-		let stdoutTail = Buffer.alloc(0);
-		let stderrTail = Buffer.alloc(0);
+		const env = externalEnvironment(input.environment?.allowlist, input.environment?.values);
+		let preflight: ExternalCliPreflightResult | undefined;
+		try {
+			if (input.preflight) preflight = preflightExternalCli(input.command, input.preflight, env);
+		} catch (error) {
+			const endedAt = Date.now();
+			const externalProcess = { startedAt, endedAt, durationMs: endedAt - startedAt, exitCode: 1, processSignal: null, stdoutPath, stderrPath } satisfies ExternalProcessStatus;
+			stdoutStream.end();
+			stderrStream.end();
+			void streamsFinished.then((streamResults) => {
+				const streamFailure = streamResults.find((streamResult) => streamResult.status === "rejected");
+				if (streamFailure?.status === "rejected") reject(streamFailure.reason);
+				else resolve({ output: "", exitCode: 1, error: error instanceof Error ? error.message : String(error), processSignal: null, externalProcess });
+			});
+			return;
+		}
+		const stdoutTail = createByteTail(MAX_OUTPUT_TAIL_BYTES);
+		const stderrTail = createByteTail(MAX_ERROR_TAIL_BYTES);
+		const stdoutLog = { bytes: 0, total: 0 };
+		const stderrLog = { bytes: 0, total: 0 };
+		let parserBytes = 0;
+		let pendingLine = Buffer.alloc(0);
+		let parserError: Error | undefined;
+		let parserTerminal: ExternalCliParserTerminal | undefined;
+		let latestProgress: ExternalCliParserProgress | undefined;
+		let progressTimer: NodeJS.Timeout | undefined;
 		let timedOut = false;
 		let stopped = false;
 		let settled = false;
-		let hardKillTimer: NodeJS.Timeout | undefined;
-		const child = spawn(input.command, input.args ?? [], {
+		let processTree: OwnedProcessTreeController | undefined;
+		let processPid: number | undefined;
+		let termination: Promise<unknown> | undefined;
+		const flushProgress = () => {
+			if (!latestProgress) return;
+			input.onParserProgress?.(latestProgress);
+			latestProgress = undefined;
+		};
+		const reportProgress = (progress: ExternalCliParserProgress) => {
+			if (!progress.phase || progress.phase.length > 64 || !Number.isSafeInteger(progress.eventCount) || progress.eventCount < 0) {
+				failParser(new Error("External CLI parser returned invalid progress metadata."));
+				return;
+			}
+			latestProgress = { ...progress, ...(progress.message ? { message: progress.message.slice(0, 512) } : {}) };
+			if (progressTimer) return;
+			progressTimer = setTimeout(() => {
+				progressTimer = undefined;
+				flushProgress();
+			}, PARSER_PROGRESS_INTERVAL_MS);
+			progressTimer.unref?.();
+		};
+		const terminate = (reason: "timeout" | "stop") => {
+			if (settled || timedOut || stopped || parserError) return;
+			timedOut = reason === "timeout";
+			stopped = reason === "stop";
+			if (processTree && processPid !== undefined) termination = terminateExternalProcessTree(processPid, processTree);
+		};
+		const failParser = (error: unknown) => {
+			if (parserError) return;
+			parserError = error instanceof Error ? error : new Error(String(error));
+			if (input.preflight) invalidateExternalCliPreflight(input.command, input.preflight, "parser");
+			if (processTree && processPid !== undefined) termination = terminateExternalProcessTree(processPid, processTree);
+		};
+		const parseLine = (line: Buffer) => {
+			if (!input.parser || parserError) return;
+			try {
+				const progress = input.parser.parseLine(line.toString("utf-8"));
+				if (progress) reportProgress(progress);
+			} catch (error) { failParser(error); }
+		};
+		const parseChunk = (chunk: Buffer) => {
+			if (!input.parser || parserError) return;
+			parserBytes += chunk.length;
+			if (parserBytes > limits.parserStreamBytes) {
+				failParser(new Error("External CLI parser stream exceeded its byte limit."));
+				return;
+			}
+			let start = 0;
+			for (let index = 0; index < chunk.length; index++) {
+				if (chunk[index] !== 0x0a) continue;
+				pendingLine = Buffer.concat([pendingLine, chunk.subarray(start, index)]);
+				if (pendingLine.length > limits.parserLineBytes) return failParser(new Error("External CLI parser line exceeded its byte limit."));
+				parseLine(pendingLine);
+				pendingLine = Buffer.alloc(0);
+				start = index + 1;
+			}
+			pendingLine = Buffer.concat([pendingLine, chunk.subarray(start)]);
+			if (pendingLine.length > limits.parserLineBytes) failParser(new Error("External CLI parser line exceeded its byte limit."));
+		};
+		const child = spawn(preflight?.binaryPath ?? input.command, input.args ?? [], {
 			cwd: input.cwd,
-			env: omitExtensionBindingsEnv(process.env),
+			env,
 			stdio: ["pipe", "pipe", "pipe"],
 			shell: false,
 			windowsHide: true,
-		});
+			detached: process.platform !== "win32",
+		}) as ChildProcessWithoutNullStreams;
+		if (typeof child.pid === "number") {
+			processPid = child.pid;
+			processTree = createOwnedProcessTreeController(child.pid, { termGraceMs: 2_000 });
+		}
 		const initialProcess: ExternalProcessStatus = {
 			...(typeof child.pid === "number" ? { pid: child.pid } : {}),
 			startedAt,
@@ -68,69 +276,80 @@ export function runExternalCli(input: {
 		};
 		input.onProcess?.(initialProcess);
 		child.stdout.on("data", (chunk: Buffer) => {
-			stdoutStream.write(chunk);
+			parseChunk(chunk);
+			writeBoundedLog(child.stdout, stdoutStream, chunk, stdoutLog, limits.stdoutLogBytes);
 			input.onStdout?.(chunk);
-			stdoutTail = Buffer.concat([stdoutTail, chunk]);
-			if (stdoutTail.length > MAX_OUTPUT_TAIL_BYTES) stdoutTail = stdoutTail.subarray(stdoutTail.length - MAX_OUTPUT_TAIL_BYTES);
+			stdoutTail.push(chunk);
 		});
 		child.stderr.on("data", (chunk: Buffer) => {
-			stderrStream.write(chunk);
+			writeBoundedLog(child.stderr, stderrStream, chunk, stderrLog, limits.stderrLogBytes);
 			input.onStderr?.(chunk);
-			stderrTail = Buffer.concat([stderrTail, chunk]);
-			if (stderrTail.length > MAX_ERROR_TAIL_BYTES) stderrTail = stderrTail.subarray(stderrTail.length - MAX_ERROR_TAIL_BYTES);
+			stderrTail.push(chunk);
 		});
-		const terminate = (reason: "timeout" | "stop") => {
-			if (settled || timedOut || stopped) return;
-			timedOut = reason === "timeout";
-			stopped = reason === "stop";
-			trySignalChild(child, "SIGTERM");
-			hardKillTimer = setTimeout(() => {
-				if (!settled) trySignalChild(child, "SIGKILL");
-			}, HARD_KILL_DELAY_MS);
-			hardKillTimer.unref?.();
-		};
 		input.registerTimeout?.(() => terminate("timeout"));
 		input.registerStop?.(() => terminate("stop"));
 		child.stdin.on("error", () => {});
 		child.stdin.end(input.prompt);
 		let spawnError: Error | undefined;
 		child.once("error", (error) => { spawnError = error; });
+		child.stdout.once("end", () => {
+			if (!input.parser || parserError) return;
+			if (pendingLine.length > 0) parseLine(pendingLine);
+			try {
+				parserTerminal = input.parser.finish();
+				if (!parserTerminal) failParser(new Error("External CLI parser did not produce a terminal state."));
+				else if (Buffer.byteLength(parserTerminal.output ?? "", "utf-8") > limits.parserOutputBytes) failParser(new Error("External CLI parser terminal output exceeded its byte limit."));
+				else if (Buffer.byteLength(parserTerminal.error ?? "", "utf-8") > 4 * 1024) failParser(new Error("External CLI parser terminal error exceeded its byte limit."));
+			} catch (error) { failParser(error); }
+		});
 		child.once("close", (exitCode, signal) => {
 			settled = true;
-			if (hardKillTimer) clearTimeout(hardKillTimer);
+			if (progressTimer) clearTimeout(progressTimer);
+			flushProgress();
 			input.registerTimeout?.(undefined);
 			input.registerStop?.(undefined);
-			const endedAt = Date.now();
-			const externalProcess: ExternalProcessStatus = {
-				...initialProcess,
-				endedAt,
-				durationMs: endedAt - startedAt,
-				exitCode,
-				processSignal: signal,
-			};
-			input.onProcess?.(externalProcess);
-			const stderr = stderrTail.toString("utf-8").trim();
-			const error = stopped
-				? input.stopMessage ?? "Subagent stopped by user."
-				: timedOut
-					? input.timeoutMessage ?? "Subagent timed out."
-					: spawnError?.message ?? (exitCode === 0 ? undefined : stderr || `External CLI exited with code ${exitCode}.`);
-			const result: ExternalCliRunResult = {
-				output: stdoutTail.toString("utf-8").trim(),
-				exitCode: timedOut || stopped || spawnError ? 1 : exitCode,
-				...(error ? { error } : {}),
-				...(timedOut ? { timedOut: true } : {}),
-				...(stopped ? { stopped: true } : {}),
-				processSignal: signal,
-				externalProcess,
-			};
-			stdoutStream.end();
-			stderrStream.end();
-			void streamsFinished.then((streamResults) => {
+			void (async () => {
+				if (termination) await termination;
+				else if (processTree) await processTree.finishAfterWriterClose();
+				const endedAt = Date.now();
+				const externalProcess: ExternalProcessStatus = {
+					...initialProcess,
+					endedAt,
+					durationMs: endedAt - startedAt,
+					exitCode,
+					processSignal: signal,
+					stdoutBytes: stdoutLog.total,
+					stderrBytes: stderrLog.total,
+					...(stdoutLog.total > stdoutLog.bytes ? { stdoutTruncated: true } : {}),
+					...(stderrLog.total > stderrLog.bytes ? { stderrTruncated: true } : {}),
+				};
+				input.onProcess?.(externalProcess);
+				const stderr = stderrTail.text().trim();
+				const parserFailure = parserError?.message ?? (parserTerminal?.state === "failed" ? parserTerminal.error ?? "External CLI parser reported terminal failure." : undefined);
+				const error = stopped
+					? input.stopMessage ?? "Subagent stopped by user."
+					: timedOut
+						? input.timeoutMessage ?? "Subagent timed out."
+						: spawnError?.message ?? parserFailure ?? (exitCode === 0 ? undefined : stderr || `External CLI exited with code ${exitCode}.`);
+				if (error && input.preflight && !parserError) invalidateExternalCliPreflight(input.command, input.preflight, classifyInvalidation(error));
+				const result: ExternalCliRunResult = {
+					output: (!parserError && parserTerminal?.state === "completed" ? parserTerminal.output ?? "" : stdoutTail.text()).trim(),
+					exitCode: timedOut || stopped || spawnError || parserFailure ? 1 : exitCode,
+					...(error ? { error } : {}),
+					...(timedOut ? { timedOut: true } : {}),
+					...(stopped ? { stopped: true } : {}),
+					processSignal: signal,
+					externalProcess,
+					...(parserTerminal ? { parserTerminal } : {}),
+					...(preflight ? { preflight } : {}),
+				};
+				stdoutStream.end();
+				stderrStream.end();
+				const streamResults = await streamsFinished;
 				const streamFailure = streamResults.find((streamResult) => streamResult.status === "rejected");
 				if (streamFailure?.status === "rejected") reject(streamFailure.reason);
 				else resolve(result);
-			});
+			})();
 		});
 	});
 }

@@ -4,6 +4,7 @@
 
 ### Added
 - External CLI runs now publish code-owned capability limits and compact workflow receipt metadata for adapter identity, artifacts, handoff mode, supervisor support, and resumability.
+- External one-shot runners now support bounded parser hooks and logs, environment allowlists, cached launch preflight, coalesced parser progress, and process-tree cleanup.
 
 ## [0.56.0] - 2026-08-23
 
