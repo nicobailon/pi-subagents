@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
 	clearExclusions,
+	DEFAULT_MODEL_EXCLUSION_TTL_MS,
 	filterFallbackCandidates,
 	flushPersist,
 	getExcludedCount,
@@ -11,13 +12,16 @@ import {
 	parseModelKey,
 	recordModelFailure,
 	reloadFromDisk,
+	MAX_MODEL_EXCLUSION_TTL_MS,
 	setDefaultTTL,
+	type ModelExclusion,
 } from "../../src/runs/shared/model-exclusions.ts";
 
 // The exclusion store is a process-wide singleton persisted under TEMP_ROOT_DIR
 // (isolated per test run by test/support/isolated-temp-root.mjs). Clear it
 // before/after each test so cases don't leak state into each other.
 beforeEach(() => {
+	setDefaultTTL(DEFAULT_MODEL_EXCLUSION_TTL_MS);
 	fs.rmSync(getExclusionsFilePath(), { force: true });
 	clearExclusions();
 });
@@ -61,6 +65,16 @@ describe("model exclusions — TTL expiry", () => {
 	it("rejects invalid default TTLs", () => {
 		assert.throws(() => setDefaultTTL(0), /finite positive/);
 		assert.throws(() => setDefaultTTL(Number.POSITIVE_INFINITY), /finite positive/);
+		assert.throws(() => setDefaultTTL(MAX_MODEL_EXCLUSION_TTL_MS + 1), /no greater than/);
+	});
+
+	it("keeps the maximum configured expiry representable", () => {
+		setDefaultTTL(MAX_MODEL_EXCLUSION_TTL_MS);
+		recordModelFailure({ modelId: "gpt-4", provider: "openai" });
+		reloadFromDisk();
+		const entry = JSON.parse(fs.readFileSync(getExclusionsFilePath(), "utf-8")).exclusions[0] as ModelExclusion;
+		assert.doesNotThrow(() => new Date(entry.expiresAt).toISOString());
+		assert.equal(isExcluded("gpt-4", "openai"), true);
 	});
 
 	it("drops an exclusion after its TTL elapses", async () => {
@@ -68,6 +82,23 @@ describe("model exclusions — TTL expiry", () => {
 		assert.equal(isExcluded("gpt-4", "openai"), true);
 		await new Promise((r) => setTimeout(r, 150));
 		assert.equal(isExcluded("gpt-4", "openai"), false);
+	});
+
+	it("shortens active exclusions without synchronously persisting or extending expiries", () => {
+		recordModelFailure({ modelId: "gpt-4", provider: "openai", reason: "503", ttlMs: 60_000 });
+		const before = JSON.parse(fs.readFileSync(getExclusionsFilePath(), "utf-8")).exclusions[0] as ModelExclusion;
+		setDefaultTTL(30_000, { shortenExisting: true });
+		const beforeFlush = JSON.parse(fs.readFileSync(getExclusionsFilePath(), "utf-8")).exclusions[0] as ModelExclusion;
+		assert.equal(beforeFlush.expiresAt, before.expiresAt);
+		flushPersist();
+		const shortened = JSON.parse(fs.readFileSync(getExclusionsFilePath(), "utf-8")).exclusions[0] as ModelExclusion;
+		assert.equal(shortened.expiresAt, shortened.recordedAt + 30_000);
+
+		setDefaultTTL(120_000, { shortenExisting: true });
+		flushPersist();
+		const notExtended = JSON.parse(fs.readFileSync(getExclusionsFilePath(), "utf-8")).exclusions[0] as ModelExclusion;
+		assert.equal(notExtended.expiresAt, shortened.expiresAt);
+		assert.ok(shortened.expiresAt < before.expiresAt);
 	});
 });
 
@@ -119,6 +150,18 @@ describe("model exclusions — filtering fallback candidates", () => {
 		const filtered = filterFallbackCandidates(candidates);
 		assert.deepEqual(filtered, ["anthropic/claude-3", "openai/gpt-4"]);
 	});
+
+	it("reports the cached reason and expiry for skipped candidates", () => {
+		const skipped: Array<{ candidate: string; exclusion: Readonly<ModelExclusion> }> = [];
+		recordModelFailure({ modelId: "gpt-4", provider: "openai", reason: "503 unavailable" });
+		const filtered = filterFallbackCandidates(["openai/gpt-4", "anthropic/claude-3"], {
+			onExcluded: (candidate, exclusion) => skipped.push({ candidate, exclusion }),
+		});
+		assert.deepEqual(filtered, ["anthropic/claude-3"]);
+		assert.equal(skipped[0]?.candidate, "openai/gpt-4");
+		assert.equal(skipped[0]?.exclusion.reason, "503 unavailable");
+		assert.ok((skipped[0]?.exclusion.expiresAt ?? 0) > Date.now());
+	});
 });
 
 describe("model exclusions — persistence", () => {
@@ -163,5 +206,53 @@ describe("model exclusions — persistence", () => {
 		assert.equal(getExcludedCount(), 0);
 		assert.equal(errors.length, 1);
 		assert.match(String(errors[0]?.[0]), /Failed to load exclusions/);
+	});
+
+	it("rejects persisted exclusions with invalid timestamps", () => {
+		for (const [field, value] of [
+			["expiresAt", null],
+			["expiresAt", 0],
+			["expiresAt", 9_000_000_000_000_000],
+			["recordedAt", null],
+			["recordedAt", -1],
+			["recordedAt", 9_000_000_000_000_000],
+		] as const) {
+			const now = Date.now();
+			const entry = { modelId: "gpt-4", provider: "openai", reason: "503", recordedAt: now, expiresAt: now + 60_000, [field]: value };
+			fs.writeFileSync(getExclusionsFilePath(), JSON.stringify({ version: 1, exclusions: [entry] }), "utf-8");
+			const originalError = console.error;
+			const errors: unknown[][] = [];
+			console.error = (...args: unknown[]) => errors.push(args);
+			try {
+				reloadFromDisk();
+			} finally {
+				console.error = originalError;
+			}
+			assert.equal(getExcludedCount(), 0);
+			assert.equal(errors.length, 1);
+			assert.match(String(errors[0]?.[1]), new RegExp(`invalid ${field}`));
+		}
+	});
+
+	it("rejects persisted exclusions with non-string reasons", () => {
+		for (const reason of [null, 503, { bad: true }, ["503"]]) {
+			const now = Date.now();
+			fs.writeFileSync(getExclusionsFilePath(), JSON.stringify({
+				version: 1,
+				exclusions: [{ modelId: "gpt-4", provider: "openai", reason, recordedAt: now, expiresAt: now + 60_000 }],
+			}), "utf-8");
+			const originalError = console.error;
+			const errors: unknown[][] = [];
+			console.error = (...args: unknown[]) => errors.push(args);
+			try {
+				reloadFromDisk();
+			} finally {
+				console.error = originalError;
+			}
+			assert.equal(getExcludedCount(), 0);
+			assert.equal(errors.length, 1);
+			assert.match(String(errors[0]?.[1]), /invalid reason/);
+			assert.deepEqual(filterFallbackCandidates(["openai/gpt-4", "anthropic/claude-3"]), ["openai/gpt-4", "anthropic/claude-3"]);
+		}
 	});
 });

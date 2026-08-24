@@ -20,14 +20,30 @@ type RecordModelFailureOptions = ModelExclusionTarget & {
 
 let exclusions: ModelExclusion[] = [];
 let loaded = false;
-let defaultTTLMs = 24 * 60 * 60_000; // 24 hours, overridable via setDefaultTTL
+/** Default duration for a new model exclusion when no per-record TTL is supplied. */
+export const DEFAULT_MODEL_EXCLUSION_TTL_MS = 24 * 60 * 60_000;
+/** Keeps a new expiry safely below JavaScript's maximum Date timestamp. */
+export const MAX_MODEL_EXCLUSION_TTL_MS = 8_000_000_000_000_000;
+const MAX_DATE_TIMESTAMP_MS = 8_640_000_000_000_000;
+let defaultTTLMs = DEFAULT_MODEL_EXCLUSION_TTL_MS;
+let loadedTTLCeilingMs: number | undefined;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let persistSeq = 0;
 
-/** Override the default exclusion TTL. */
-export function setDefaultTTL(ms: number): void {
-	if (!Number.isFinite(ms) || ms <= 0) throw new Error("Default model exclusion TTL must be a finite positive number.");
+/**
+ * Override the default TTL applied to newly recorded model exclusions.
+ *
+ * @param ms Duration in milliseconds. Must be finite and positive.
+ * @returns Nothing.
+ */
+// TEST:test/unit/model-exclusions.test.ts[model exclusions — TTL expiry]
+export function setDefaultTTL(ms: number, options?: { shortenExisting?: boolean }): void {
+	if (!Number.isFinite(ms) || ms <= 0 || ms > MAX_MODEL_EXCLUSION_TTL_MS) {
+		throw new Error(`Default model exclusion TTL must be a finite positive number no greater than ${MAX_MODEL_EXCLUSION_TTL_MS}.`);
+	}
 	defaultTTLMs = ms;
+	loadedTTLCeilingMs = options?.shortenExisting ? ms : undefined;
+	if (loaded && loadedTTLCeilingMs !== undefined && shortenExclusionsToTTL(exclusions, loadedTTLCeilingMs, Date.now())) schedulePersist();
 }
 
 /**
@@ -78,9 +94,23 @@ function ensureLoaded(): void {
 		const raw = fs.readFileSync(getExclusionsFilePath(), "utf-8");
 		const data = JSON.parse(raw);
 		if (data.version === 1) {
+			if (!Array.isArray(data.exclusions)) throw new Error("Model exclusion store version 1 must contain an exclusions array.");
+			for (let index = 0; index < data.exclusions.length; index++) {
+				const entry = data.exclusions[index];
+				if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error(`Model exclusion store entry ${index} must be an object.`);
+				if (entry.reason !== undefined && typeof entry.reason !== "string") throw new Error(`Model exclusion store entry ${index} has an invalid reason.`);
+				for (const field of ["recordedAt", "expiresAt"] as const) {
+					const timestamp = entry[field];
+					if (typeof timestamp !== "number" || !Number.isFinite(timestamp) || timestamp <= 0 || timestamp > MAX_DATE_TIMESTAMP_MS) {
+						throw new Error(`Model exclusion store entry ${index} has an invalid ${field}.`);
+					}
+				}
+			}
 			const now = Date.now();
 			exclusions = (data.exclusions ?? []).filter((e: ModelExclusion) => e.expiresAt > now);
+			const shortened = loadedTTLCeilingMs !== undefined && shortenExclusionsToTTL(exclusions, loadedTTLCeilingMs, now);
 			exclusions = deduplicate(exclusions);
+			if (shortened) schedulePersist();
 		}
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -205,7 +235,10 @@ export function parseModelKey(fullId: string): { provider?: string; modelId: str
  * Filter a list of candidate fullIds, removing excluded models/providers and
  * duplicates while preserving order.
  */
-export function filterFallbackCandidates(candidates: string[], opts?: { now?: number }): string[] {
+export function filterFallbackCandidates(candidates: string[], opts?: {
+	now?: number;
+	onExcluded?: (candidate: string, exclusion: Readonly<ModelExclusion>) => void;
+}): string[] {
 	ensureLoaded();
 	const timestamp = opts?.now ?? Date.now();
 	const seen = new Set<string>();
@@ -213,8 +246,11 @@ export function filterFallbackCandidates(candidates: string[], opts?: { now?: nu
 	for (const raw of candidates) {
 		if (!raw || seen.has(raw)) continue;
 		const { provider: candidateProvider, modelId: candidateModelId } = parseModelKey(raw);
-		const excluded = exclusions.some((entry) => entryMatches(entry, candidateModelId, candidateProvider, timestamp));
-		if (excluded) continue;
+		const exclusion = exclusions.find((entry) => entryMatches(entry, candidateModelId, candidateProvider, timestamp));
+		if (exclusion) {
+			opts?.onExcluded?.(raw, exclusion);
+			continue;
+		}
 		seen.add(raw);
 		filtered.push(raw);
 	}
@@ -240,4 +276,18 @@ function prune(items: ModelExclusion[], now: number): void {
 		}
 	}
 	items.length = write;
+}
+
+function shortenExclusionsToTTL(items: ModelExclusion[], ttlMs: number, now: number): boolean {
+	let changed = false;
+	for (const entry of items) {
+		const configuredExpiry = entry.recordedAt + ttlMs;
+		if (entry.expiresAt > configuredExpiry) {
+			entry.expiresAt = configuredExpiry;
+			changed = true;
+		}
+	}
+	const previousLength = items.length;
+	prune(items, now);
+	return changed || items.length !== previousLength;
 }

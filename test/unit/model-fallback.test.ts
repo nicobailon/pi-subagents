@@ -125,12 +125,21 @@ describe("model fallback helpers", () => {
 	});
 
 	it("excludes a candidate after a retryable model failure is recorded", () => {
-		recordRetryableModelFailure("openai/gpt-5-mini", "rate limit exceeded");
-
-		assert.deepEqual(
-			buildModelCandidates("gpt-5-mini", ["anthropic/claude-sonnet-4"], availableModels),
-			["anthropic/claude-sonnet-4"],
-		);
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message: unknown) => warnings.push(String(message));
+		try {
+			recordRetryableModelFailure("openai/gpt-5-mini", "rate limit exceeded for Bearer secret-token-value");
+			assert.deepEqual(
+				buildModelCandidates("gpt-5-mini", ["anthropic/claude-sonnet-4"], availableModels),
+				["anthropic/claude-sonnet-4"],
+			);
+		} finally {
+			console.warn = originalWarn;
+		}
+		assert.equal(warnings.length, 1);
+		assert.match(warnings[0]!, /Skipping model 'openai\/gpt-5-mini'.*reason: rate limit exceeded for \[redacted\]; expires: \d{4}-\d{2}-\d{2}T/);
+		assert.doesNotMatch(warnings[0]!, /secret-token-value/);
 	});
 
 	it("does not exclude a candidate after a task or tool failure", () => {

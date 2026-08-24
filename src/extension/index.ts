@@ -56,7 +56,7 @@ import { formatSteeringNotice, handleSubagentSteeringNotice, SUBAGENT_STEERING_M
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
-import { loadConfig, resolveAsyncByDefault, resolveScheduledStoreRoot } from "./config.ts";
+import { applyModelExclusionsConfig, loadConfig, resolveAsyncByDefault, resolveScheduledStoreRoot } from "./config.ts";
 import { buildSubagentToolDescription, buildSubagentToolPromptMetadata } from "./tool-description.ts";
 import { finalizeToolResult } from "./tool-result.ts";
 import { collectGoalContinuationNotices } from "../missions/goal-driver.ts";
@@ -401,6 +401,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	cleanupOldChainDirs();
 
 	const config = loadConfig();
+	// Apply the process-wide exclusion TTL before any child launch can record a model failure.
+	applyModelExclusionsConfig(config);
 	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
 	const asyncByDefault = resolveAsyncByDefault(config);
 	const fleetViewEnabled = config.fleetView !== false;

@@ -6,6 +6,7 @@
 - Keep inline workflow children resumable from their foreground runs without mistaking a missing async directory for lost state. Thanks to [@lancegui](https://github.com/lancegui) for #1442.
 
 ### Added
+- Add `modelExclusions.defaultTtlMs` configuration for controlling the lifetime of model exclusions, including shorter limits for active cached entries, with launch diagnostics for excluded candidates. Thanks to [@mithyer](https://github.com/mithyer) for #1439 and #1438.
 - Add code-owned `cursor-agent` read-only and `cursor-agent-writer` workspace-writing profiles with private prompt-file handoff, bounded stream-JSON terminal proof, and opt-in mode-specific smoke evidence.
 - Add code-owned `claude-code` read-only and `claude-code-writer` file-editing profiles for an existing authenticated CLI with trusted user settings, bounded stream-JSON result proof, and opt-in mode-specific smoke evidence.
 - Add code-owned `codex-exec` read-only and `codex-exec-writer` workspace-writing profiles with bounded JSONL terminal proof, final-message artifacts, and opt-in mode-specific smoke evidence.

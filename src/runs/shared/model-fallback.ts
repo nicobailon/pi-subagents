@@ -2,6 +2,7 @@ import { splitKnownThinkingSuffix, type ModelInfo as AvailableModelInfo } from "
 import type { Usage } from "../../shared/types.ts";
 import { filterFallbackCandidates, parseModelKey, recordModelFailure } from "./model-exclusions.ts";
 import { checkModelScope, type ModelScopeCheckRule, type ModelScopeViolation, type ModelSource } from "./model-scope.ts";
+import { redactSecretValues } from "./permissions.ts";
 
 export type { AvailableModelInfo };
 
@@ -394,7 +395,12 @@ export function buildModelCandidates(
 		seen.add(normalized);
 		candidates.push(normalized);
 	}
-	return filterFallbackCandidates(candidates);
+	return filterFallbackCandidates(candidates, {
+		onExcluded(candidate, exclusion) {
+			const reason = redactSecretValues((exclusion.reason ?? "runtime-failure").replace(/[\u0000-\u001f\u007f]+/g, " ")).slice(0, 240);
+			console.warn(`[pi-subagents] Skipping model '${candidate}' due to a cached exclusion (reason: ${reason}; expires: ${new Date(exclusion.expiresAt).toISOString()}).`);
+		},
+	});
 }
 
 const RETRYABLE_MODEL_FAILURE_PATTERNS = [
