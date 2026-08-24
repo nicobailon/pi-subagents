@@ -144,9 +144,12 @@ function errorCode(error: unknown): string | undefined {
 	return typeof error === "object" && error !== null && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
 }
 
+function isNotFound(error: unknown): boolean {
+	return errorCode(error) === "ENOENT";
+}
+
 function isAbsentResultCandidate(error: unknown): boolean {
-	const code = errorCode(error);
-	return code === "ENOENT" || code === "ENAMETOOLONG";
+	return isNotFound(error) || errorCode(error) === "ENAMETOOLONG";
 }
 
 function isAccessDenied(error: unknown): boolean {
@@ -591,7 +594,7 @@ export function createResultWatcher(
 			if (isAccessDenied(error)) {
 				console.error(`Failed to process subagent result file '${resultPath}'; will retry:`, error);
 				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
-			} else if (!isAbsentResultCandidate(error)) console.error(`Failed to process subagent result file '${resultPath}':`, error);
+			} else if (!isNotFound(error)) console.error(`Failed to process subagent result file '${resultPath}':`, error);
 		} finally {
 			processing.delete(file);
 			if (rereadReplacedPayload) scheduleResult(file, triggerTurn);
@@ -641,7 +644,7 @@ export function createResultWatcher(
 			}
 			logScanStats(stats);
 		} catch (error) {
-			if (!isAbsentResultCandidate(error)) console.error(`Failed to scan subagent result index in '${resultsDir}':`, error);
+			if (!isNotFound(error)) console.error(`Failed to scan subagent result index in '${resultsDir}':`, error);
 		}
 	};
 
