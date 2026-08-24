@@ -382,6 +382,13 @@ function resolveSettingsPackageRoot(source: string, baseDir: string): string | u
 	if (normalized === "." || normalized === ".." || normalized.startsWith("./") || normalized.startsWith("../")) {
 		return path.resolve(baseDir, normalized);
 	}
+	// Pi stores git-installed packages as bare HTTPS/HTTP URLs (e.g.
+	// "https://github.com/user/repo.git"). Treat those as git package roots so
+	// they resolve to the same git cache directory as "git:" prefixed sources.
+	const parsedGit = parseGitPackagePath(`git:${trimmed}`);
+	if (parsedGit) {
+		return path.join(baseDir, "git", parsedGit.host, parsedGit.repoPath);
+	}
 	return undefined;
 }
 
