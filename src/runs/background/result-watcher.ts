@@ -144,8 +144,9 @@ function errorCode(error: unknown): string | undefined {
 	return typeof error === "object" && error !== null && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
 }
 
-function isNotFound(error: unknown): boolean {
-	return errorCode(error) === "ENOENT";
+function isAbsentResultCandidate(error: unknown): boolean {
+	const code = errorCode(error);
+	return code === "ENOENT" || code === "ENAMETOOLONG";
 }
 
 function isAccessDenied(error: unknown): boolean {
@@ -235,7 +236,7 @@ export function createResultWatcher(
 		try {
 			return fsApi.statSync(publicResultPath(file)).isFile();
 		} catch (error) {
-			if (!isNotFound(error)) console.error(`Failed to inspect subagent result file '${publicResultPath(file)}':`, error);
+			if (!isAbsentResultCandidate(error)) console.error(`Failed to inspect subagent result file '${publicResultPath(file)}':`, error);
 			return false;
 		}
 	};
@@ -265,7 +266,7 @@ export function createResultWatcher(
 		} catch (error) {
 			identityCache.delete(file);
 			if (isAccessDenied(error)) throw error;
-			if (!isNotFound(error)) console.error(`Failed to inspect subagent result file '${resultPath}':`, error);
+			if (!isAbsentResultCandidate(error)) console.error(`Failed to inspect subagent result file '${resultPath}':`, error);
 			return undefined;
 		}
 	};
@@ -283,7 +284,7 @@ export function createResultWatcher(
 		} catch (error) {
 			identityCache.delete(file);
 			if (isAccessDenied(error)) throw error;
-			if (!isNotFound(error)) console.error(`Failed to inspect subagent result file '${resultPath}':`, error);
+			if (!isAbsentResultCandidate(error)) console.error(`Failed to inspect subagent result file '${resultPath}':`, error);
 			return undefined;
 		}
 	};
@@ -317,7 +318,7 @@ export function createResultWatcher(
 			removeResultIndex(resultsDir, sessionId, runId, toolCallId);
 			return true;
 		} catch (error) {
-			if (!isNotFound(error)) {
+			if (!isAbsentResultCandidate(error)) {
 				console.error(`Failed to remove delivered subagent result '${publicResultPath(file)}'; will retry:`, error);
 				return false;
 			}
@@ -384,7 +385,7 @@ export function createResultWatcher(
 					if (!resultPayloadWasReplaced(data, readPublicResultIdentity())) return false;
 				} catch (error) {
 					if (isAccessDenied(error)) throw error;
-					if (isNotFound(error)) return false;
+					if (isAbsentResultCandidate(error)) return false;
 					console.error(`Failed to re-read subagent result file '${publicResultPath(file)}':`, error);
 				}
 				identityCache.delete(file);
@@ -590,7 +591,7 @@ export function createResultWatcher(
 			if (isAccessDenied(error)) {
 				console.error(`Failed to process subagent result file '${resultPath}'; will retry:`, error);
 				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
-			} else if (!isNotFound(error)) console.error(`Failed to process subagent result file '${resultPath}':`, error);
+			} else if (!isAbsentResultCandidate(error)) console.error(`Failed to process subagent result file '${resultPath}':`, error);
 		} finally {
 			processing.delete(file);
 			if (rereadReplacedPayload) scheduleResult(file, triggerTurn);
@@ -640,7 +641,7 @@ export function createResultWatcher(
 			}
 			logScanStats(stats);
 		} catch (error) {
-			if (!isNotFound(error)) console.error(`Failed to scan subagent result index in '${resultsDir}':`, error);
+			if (!isAbsentResultCandidate(error)) console.error(`Failed to scan subagent result index in '${resultsDir}':`, error);
 		}
 	};
 

@@ -8,6 +8,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildCompletionKey } from "../../src/runs/background/completion-dedupe.ts";
 import { createResultWatcher as createRawResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
+import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
 import { createScheduledRunManager, scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
 import { prepareMissionLaunch, writeMissionAsyncBinding } from "../../src/missions/lifecycle.ts";
 import { readMission, updateMission } from "../../src/missions/store.ts";
@@ -353,6 +354,71 @@ describe("result watcher", () => {
 			assert.ok(child?.artifactPaths.includes(outputPath));
 			assert.ok(child?.artifactPaths.includes(path.join(asyncDir, "status.json")));
 		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("observes a hash-only mission result once when its public alias is unaddressable", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-mission-enametoolong-"));
+		const resultsDir = path.join(root, "results");
+		const project = path.join(root, "project");
+		const asyncDir = path.join(root, "async-child");
+		fs.mkdirSync(resultsDir, { recursive: true });
+		fs.mkdirSync(project, { recursive: true });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		const originalError = console.error;
+		const errors: unknown[][] = [];
+		try {
+			const runId = `mission-${"x".repeat(250)}`;
+			assert.ok(Buffer.byteLength(`${runId}.json`, "utf-8") > MAX_INDEX_SEGMENT_BYTES);
+			const binding = prepareMissionLaunch({
+				params: { mission: { title: "Long result mission" }, task: "Run async child" },
+				projectRoot: project,
+				config: { directory: path.join(root, "missions"), globalIndexDir: path.join(root, "global-index") },
+				ownerSessionId: "session-owner",
+			});
+			assert.ok(binding);
+			writeMissionAsyncBinding(asyncDir, binding);
+			console.error = (...args: unknown[]) => { errors.push(args); };
+			writeIndexedResult(path.join(resultsDir, `${runId}.json`), {
+				id: runId,
+				runId,
+				sessionId: "session-owner",
+				asyncDir,
+				state: "complete",
+				success: true,
+				summary: "Long mission result completed",
+			});
+			const pendingPath = path.join(resultsDir, "result-pending", encodeIndexSegment("session-owner"), `${encodeIndexSegment(runId, MAX_INDEX_SEGMENT_BYTES - Buffer.byteLength(".json"))}.json`);
+			assert.equal(fs.existsSync(pendingPath), true);
+			const state = createState();
+			state.currentSessionId = "different-session";
+			let parsed = 0;
+			let observed = 0;
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				parseResult(raw) {
+					parsed += 1;
+					return JSON.parse(raw);
+				},
+				observeCompletion() { observed += 1; },
+			});
+			try {
+				watcher.primeExistingResults();
+				assert.equal(await waitForPredicate(() => observed === 1), true);
+				watcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 25));
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			assert.equal(parsed, 1);
+			assert.equal(observed, 1);
+			assert.equal(fs.existsSync(pendingPath), true);
+			assert.equal((JSON.parse(fs.readFileSync(pendingPath, "utf-8")) as { notificationDeliveredAt?: unknown }).notificationDeliveredAt, undefined);
+			assert.equal(readMission(binding.location, binding.missionId).runs.some((run) => run.runId === runId), true);
+			assert.equal(errors.some((entry) => /Failed to (?:promote|inspect|process).*result/i.test(String(entry[0] ?? ""))), false);
+		} finally {
+			console.error = originalError;
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
