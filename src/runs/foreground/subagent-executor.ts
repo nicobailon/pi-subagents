@@ -4046,6 +4046,15 @@ function terminalWorkflowReceipt(
 	return buildWorkflowReceipt({ workflowRunId, state, children });
 }
 
+function workflowFailureMessage(error: unknown, workflowRunId: string, children: WorkflowScriptChildResult[]): string {
+	const text = error instanceof Error ? error.message : String(error);
+	const validationPrefix = "workflowScript validation failed before child launch; no children launched.";
+	if (children.length === 0 && text.includes(validationPrefix)) {
+		return `Workflow '${workflowRunId}' validation failed before child launch; no children launched.${text.slice(text.indexOf(validationPrefix) + validationPrefix.length)}`;
+	}
+	return text;
+}
+
 export async function steerWorkflowChildByKey(input: {
 	state: SubagentState;
 	workflowRunId: string;
@@ -4833,7 +4842,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								delete step.activityState;
 							}
 						}
-						status = compactOptional<AsyncStatus>({ ...status, state, stopped: stopped || undefined, activityState: pauseForDetached ? "needs_attention" : undefined, error: error instanceof Error ? error.message : String(error), endedAt: Date.now(), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console } });
+						status = compactOptional<AsyncStatus>({ ...status, state, stopped: stopped || undefined, activityState: pauseForDetached ? "needs_attention" : undefined, error: workflowFailureMessage(error, workflowRunId, partial.children), endedAt: Date.now(), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console } });
 						if (pauseForDetached) {
 							const promoted = promotePausedWorkflowIfSettled(status);
 							if (promoted) status = promoted;
@@ -4977,7 +4986,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}, workflowFanoutBudget));
 			} catch (error) {
 				const partial = error instanceof WorkflowScriptError ? error.partial : { trace: [], emits: [], console: [], children: [] };
-				const text = error instanceof Error ? error.message : String(error);
+				const text = workflowFailureMessage(error, _id, partial.children);
 				const traceLines = partial.trace.map((entry) => `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.error ? ` — ${entry.error}` : ""}`);
 				const sections = [`Workflow failed: ${text}`];
 				if (partial.emits.length > 0) sections.push(`Emitted:\n${partial.emits.map(formatWorkflowValue).join("\n")}`);

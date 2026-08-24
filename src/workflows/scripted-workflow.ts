@@ -440,7 +440,7 @@ function isSyntaxError(error) {
   return error instanceof SyntaxError || error?.name === "SyntaxError";
 }
 
-const NESTED_ASYNC_WORKFLOW_ERROR = "workflowScript does not support nested async functions. Use top-level await, plain helper functions that return runs.run(...), or explicit Promise chains so workflows stay portable across Node and Bun.";
+const NESTED_ASYNC_WORKFLOW_ERROR = "workflowScript validation failed before child launch; no children launched. workflowScript does not support nested async functions. Use top-level await, plain helper functions that return runs.run(...), or explicit Promise chains so workflows stay portable across Node and Bun. Parallel plus sequential rewrite: const a = runs.run(\"a\", { agent: \"worker\", task: \"A\" }); const writer = await runs.run(\"writer\", { agent: \"worker\", task: \"Write\" }); const review = await runs.run(\"review\", { agent: \"reviewer\", task: writer.output }); const [aResult] = await Promise.all([a]); return { a: aResult.output, issue: { writerRunId: writer.runId, reviewRunId: review.runId } };";
 const AST_SCALAR_KEYS = new Set(["type", "start", "end"]);
 
 function assertPortableWorkflowScript(source) {
@@ -627,7 +627,12 @@ parentPort.on("message", async (message) => {
       }
     }
     const persistedValue = value === undefined ? null : omitUndefinedWorkflowValues(value);
-    assertJsonValue(persistedValue, "return");
+    try {
+      assertJsonValue(persistedValue, "return");
+    } catch (error) {
+      parentPort.postMessage({ type: "error", errorPhase: "return-serialization", error: formatWorkflowScriptError(error) });
+      return;
+    }
     parentPort.postMessage({ type: "complete", value: persistedValue });
   } catch (error) {
     parentPort.postMessage({ type: "error", error: isSyntaxError(error) ? formatWorkflowScriptSyntaxError(error) : formatWorkflowScriptError(error), ...(error && error.workflowErrorKind === "detached-child" ? { errorKind: "detached-child" } : {}) });
@@ -826,6 +831,15 @@ export function formatWorkflowJsonPreview(value: unknown, maxLength: number): st
 	} catch {
 		return undefined;
 	}
+}
+
+function workflowReturnRecoveryHint(children: WorkflowScriptChildResult[]): string {
+	if (children.length === 0) return " Return only plain JSON data. For a child result, select fields such as { runId: child.runId, ok: child.ok, outputReference: child.outputReference }.";
+	const references = children.slice(0, 10).map((child) => {
+		const fields = [child.runId ? `runId=${child.runId.slice(0, 500)}` : undefined, child.outputReference ? `outputReference=${child.outputReference.slice(0, 500)}` : undefined, child.artifactPaths[0] ? `artifact=${child.artifactPaths[0].slice(0, 500)}` : undefined].filter((field): field is string => field !== undefined);
+		return `'${child.key}'${fields.length > 0 ? ` (${fields.join(", ")})` : ""}`;
+	});
+	return ` Child work completed before return serialization failed. Recover outputs from: ${references.join(", ")}${children.length > references.length ? `, and ${children.length - references.length} more` : ""}. Return a plain projection such as { runId: child.runId, ok: child.ok, outputReference: child.outputReference }.`;
 }
 
 export interface SimpleWorkflowRunPreview {
@@ -1050,7 +1064,9 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				return finish({ value: message.value });
 			}
 			if (message.type === "error") {
-				const workflowError = new Error(typeof message.error === "string" ? message.error : "Workflow script failed.") as Error & { workflowErrorKind?: "detached-child" };
+				const rawError = typeof message.error === "string" ? message.error : "Workflow script failed.";
+				const text = message.errorPhase === "return-serialization" ? `${rawError}${workflowReturnRecoveryHint(partial().children)}` : rawError;
+				const workflowError = new Error(text) as Error & { workflowErrorKind?: "detached-child" };
 				if (message.errorKind === "detached-child") workflowError.workflowErrorKind = "detached-child";
 				return finish({ error: workflowError });
 			}

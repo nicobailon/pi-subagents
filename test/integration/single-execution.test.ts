@@ -2238,6 +2238,26 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(fs.readFileSync(sharedOutput), Buffer.from(usefulReport));
 	});
 
+	it("identifies validation failures before any workflow child launches", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("worker")]);
+		const workflowId = "scripted-workflow-invalid-nested-async";
+		const result = await executor.execute(
+			workflowId,
+			{
+				async: false,
+				workflowScript: `const lane = async () => runs.run("writer", { agent: "worker", task: "write" }); return lane();`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", new RegExp(`Workflow '${workflowId}' validation failed before child launch; no children launched`));
+		assert.match(result.content[0]?.text ?? "", /Parallel plus sequential rewrite/);
+		assert.deepEqual(result.details.results, []);
+	});
+
 	it("replaces stale workflow output when a child claims its path but writes no report", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const sharedOutput = path.join(tempDir, "failed-review.md");
 		fs.writeFileSync(sharedOutput, "stale workflow output", "utf-8");

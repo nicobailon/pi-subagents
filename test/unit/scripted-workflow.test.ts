@@ -469,6 +469,23 @@ describe("scripted workflow runtime", () => {
 		assert.deepEqual(result.value, [{ key: "review", output: "completed", values: [null] }]);
 	});
 
+	it("reports completed child references when return serialization fails", async () => {
+		await assert.rejects(
+			runWorkflowScript({
+				script: `const child = await runs.run("writer", { agent: "worker", task: "write" }); return { child, invalid: new Map([["key", "value"]]) };`,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: true, runId: "run-writer", output: "saved", outputReference: "/tmp/writer-output.md", artifactPaths: ["/tmp/writer-artifact.md"] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError
+				&& error.message.includes("return.invalid must contain only plain JSON objects")
+				&& error.message.includes("Child work completed before return serialization failed")
+				&& error.message.includes("'writer' (runId=run-writer, outputReference=/tmp/writer-output.md, artifact=/tmp/writer-artifact.md)")
+				&& error.message.includes("Return a plain projection")
+				&& error.partial.children[0]?.runId === "run-writer",
+		);
+	});
+
 	it("omits non-JSON child result metadata before returning reused runs.run results", async () => {
 		let launches = 0;
 		const result = await runWorkflowScript({
@@ -892,6 +909,9 @@ describe("scripted workflow runtime", () => {
 			}),
 			(error: unknown) => error instanceof WorkflowScriptError
 				&& error.message.includes("does not support nested async functions")
+				&& error.message.includes("validation failed before child launch; no children launched")
+				&& error.message.includes("Parallel plus sequential rewrite")
+				&& error.message.includes("const [aResult] = await Promise.all([a])")
 				&& error.partial.children.length === 0,
 		);
 		assert.equal(launches, 0);
