@@ -1683,16 +1683,19 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 	if (runner.args !== undefined && (!Array.isArray(runner.args) || runner.args.some((arg) => typeof arg !== "string"))) {
 		throw new Error(`Agent '${agentName}' external-cli runner args must be an array of strings.`);
 	}
+	if (runner.adapter !== undefined && runner.adapter !== "codex-exec") throw new Error(`Agent '${agentName}' external-cli runner adapter must be 'codex-exec'.`);
+	if (runner.adapter === "codex-exec" && Array.isArray(runner.args) && runner.args.length > 0) throw new Error(`Agent '${agentName}' codex-exec adapter owns its argv; runner args are not supported.`);
 	if (runner.promptDelivery !== undefined && runner.promptDelivery !== "stdin") {
 		throw new Error(`Agent '${agentName}' external-cli runner promptDelivery must be 'stdin'.`);
 	}
 	const capabilities = parseExternalCliCapabilityNarrowing(runner.capabilities, `Agent '${agentName}' external-cli runner capabilities`);
-	const supported = new Set(["type", "command", "args", "promptDelivery", "capabilities"]);
+	const supported = new Set(["type", "adapter", "command", "args", "promptDelivery", "capabilities"]);
 	const unknown = Object.keys(runner).filter((key) => !supported.has(key));
 	if (unknown.length > 0) throw new Error(`Agent '${agentName}' external-cli runner has unsupported fields: ${unknown.join(", ")}.`);
 	const runnerArgs = Array.isArray(runner.args) ? runner.args.filter((arg): arg is string => typeof arg === "string") : undefined;
 	return {
 		type: "external-cli",
+		...(runner.adapter === "codex-exec" ? { adapter: "codex-exec" as const } : {}),
 		command: runner.command.trim(),
 		...(runnerArgs?.length ? { args: runnerArgs } : {}),
 		...(runner.promptDelivery ? { promptDelivery: "stdin" as const } : {}),

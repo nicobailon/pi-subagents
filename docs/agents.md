@@ -74,6 +74,27 @@ Review the task and return advice only. Do not edit files.
 
 ### Advisory runner data boundary
 
+The built-in `codex-exec` profile is the supported Codex one-shot mode. It requires an installed and authenticated Codex CLI. The adapter owns its argv and runs `codex exec --json` with the read-only sandbox, approval policy `never`, ephemeral sessions, ignored exec rules, and a final-message artifact. User profiles cannot add argv to this adapter or select a wider sandbox.
+
+Run it asynchronously:
+
+```text
+Use codex-exec to analyze this change without editing files.
+```
+
+The adapter validates `codex --version` and `codex exec --help` only when a run launches. Discovery, list, status, and native Pi launches do not probe Codex. JSONL, stderr, and stdout are untrusted. A run succeeds only after bounded valid JSONL contains one `turn.completed` event and the bounded final-message artifact is present.
+
+Maintainers can collect real smoke evidence without making it part of the normal test suite:
+
+```bash
+PI_SUBAGENTS_CODEX_EXEC_SMOKE=1 \
+PI_SUBAGENTS_CODEX_EXEC_SMOKE_REPORT=/tmp/pi-subagents-codex-exec-smoke.json \
+node --experimental-strip-types --import ./test/support/register-loader.mjs \
+  --test test/integration/codex-exec-smoke.test.ts
+```
+
+The smoke asks Codex to attempt a write canary under the packaged read-only policy. Review the JSON report and confirm `writeCanaryExists` is `false`. The report contains paths and compact process metadata, but no raw protocol output or credentials.
+
 Native `oracle` runs inside Pi and can use its configured read tools. `claude-advisor` sends the assembled prompt to the configured local external CLI through stdin. An external-job agent sends the assembled prompt to its registered provider. Provider options and a prompt digest are persisted in Pi run state. The prompt text is delivered through the local host bridge to the provider and is not stored in the public result payload. Do not place secrets in advisory prompts unless the target provider is approved to receive them.
 
 ### External-job state table

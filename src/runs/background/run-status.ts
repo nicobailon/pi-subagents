@@ -541,6 +541,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 					if (runner) {
 						lines.push(`  Runner: external-cli (${runner.command}${runner.args.length ? ` ${runner.args.join(" ")}` : ""})`);
 						lines.push(`  Adapter: ${runner.adapter.id} v${runner.adapter.version} (${runner.adapter.executionMode})`);
+						if (runner.safety) lines.push(`  Safety: sandbox=${runner.safety.sandbox}, approval=${runner.safety.approvalPolicy}, ephemeral=${runner.safety.ephemeral}`);
 						lines.push(`  Capabilities: stop=${runner.capabilities.stop}, steer=false, resume=false, structuredOutput=false, toolEvents=false, supervisor=unsupported, forkContext=false, extensionBindings=false`);
 						lines.push(`  Unsupported steer: ${runner.unsupportedReasons.steer}`);
 						lines.push(`  Unsupported resume: ${runner.nonResumableReason}`);
@@ -550,7 +551,10 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 						lines.push("  Runner: external-cli (invalid persisted runner metadata)");
 					}
 					if (step.externalProcess?.pid !== undefined) lines.push(`  Process: ${step.externalProcess.pid}`);
-					if (step.externalProcess) lines.push(`  Stdout: ${step.externalProcess.stdoutPath}`, `  Stderr: ${step.externalProcess.stderrPath}`);
+					if (step.externalProcess) {
+						lines.push(`  Stdout: ${step.externalProcess.stdoutPath}`, `  Stderr: ${step.externalProcess.stderrPath}`);
+						if (step.externalProcess.finalOutputPath) lines.push(`  Final output: ${step.externalProcess.finalOutputPath}`);
+					}
 				} else if (step.runner?.type === "external-job") {
 					lines.push(`  Runner: external-job (${step.runner.provider})`);
 					if (step.externalJob?.providerJobId) lines.push(`  Provider job: ${step.externalJob.providerJobId}`);

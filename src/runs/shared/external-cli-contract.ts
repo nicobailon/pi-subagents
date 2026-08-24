@@ -30,17 +30,20 @@ export function parseExternalCliCapabilityNarrowing(value: unknown, label: strin
 }
 
 export function resolveExternalCliRunnerStatus(input: {
+	adapter?: "codex-exec";
 	command: string;
 	args?: string[];
 	promptDelivery?: "stdin";
 	capabilities?: ExternalCliCapabilityNarrowing;
 }): ExternalCliRunnerStatus {
+	const codexExec = input.adapter === "codex-exec";
 	return {
 		type: "external-cli",
 		command: input.command,
 		args: input.args ?? [],
 		promptDelivery: input.promptDelivery ?? "stdin",
-		adapter: { id: "external-cli", version: 1, executionMode: "one-shot-stdin" },
+		adapter: { id: codexExec ? "codex-exec" : "external-cli", version: 1, executionMode: "one-shot-stdin" },
+		...(codexExec ? { safety: { sandbox: "read-only" as const, approvalPolicy: "never" as const, ephemeral: true as const } } : {}),
 		capabilities: {
 			stop: true,
 			steer: false,
@@ -64,7 +67,10 @@ export function normalizeExternalCliRunnerStatus(value: unknown): ExternalCliRun
 		? input.args
 		: undefined;
 	const promptDelivery = input.promptDelivery === "stdin" ? "stdin" : undefined;
-	return resolveExternalCliRunnerStatus({ command: input.command, ...(args ? { args } : {}), ...(promptDelivery ? { promptDelivery } : {}) });
+	const adapter = input.adapter && typeof input.adapter === "object" && !Array.isArray(input.adapter) && (input.adapter as Record<string, unknown>).id === "codex-exec"
+		? "codex-exec" as const
+		: undefined;
+	return resolveExternalCliRunnerStatus({ ...(adapter ? { adapter } : {}), command: input.command, ...(args ? { args } : {}), ...(promptDelivery ? { promptDelivery } : {}) });
 }
 
 export function externalCliReceiptMetadata(input: {
@@ -76,11 +82,12 @@ export function externalCliReceiptMetadata(input: {
 	return {
 		adapter: { ...runner.adapter },
 		capabilities: { ...runner.capabilities },
+		...(runner.safety ? { safety: { ...runner.safety } } : {}),
 		...(input.externalProcess ? {
 			outputArtifacts: {
 				stdoutPath: input.externalProcess.stdoutPath,
 				stderrPath: input.externalProcess.stderrPath,
-				...(input.outputReference ? { finalOutputPath: input.outputReference } : {}),
+				...(input.outputReference || input.externalProcess.finalOutputPath ? { finalOutputPath: input.outputReference ?? input.externalProcess.finalOutputPath } : {}),
 			},
 		} : input.outputReference ? { outputArtifacts: { finalOutputPath: input.outputReference } } : {}),
 		handoff: { mode: "fresh" },

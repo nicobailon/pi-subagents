@@ -1378,6 +1378,7 @@ export type AgentRunnerConfig =
 	| { type: "pi" }
 	| {
 		type: "external-cli";
+		adapter?: "codex-exec";
 		command: string;
 		args?: string[];
 		promptDelivery?: "stdin";
@@ -1403,8 +1404,9 @@ export interface ExternalCliCapabilities {
 }
 
 export interface ExternalCliReceiptMetadata {
-	adapter: { id: "external-cli"; version: 1; executionMode: "one-shot-stdin" };
+	adapter: { id: "external-cli" | "codex-exec"; version: 1; executionMode: "one-shot-stdin" };
 	capabilities: ExternalCliCapabilities;
+	safety?: { sandbox: "read-only"; approvalPolicy: "never"; ephemeral: true };
 	outputArtifacts?: { stdoutPath?: string; stderrPath?: string; finalOutputPath?: string };
 	handoff: { mode: "fresh" };
 	supervisor: { mode: "unsupported"; reason: string };
@@ -1417,6 +1419,7 @@ export interface ExternalCliRunnerStatus {
 	args: string[];
 	promptDelivery: "stdin";
 	adapter: ExternalCliReceiptMetadata["adapter"];
+	safety?: ExternalCliReceiptMetadata["safety"];
 	capabilities: ExternalCliCapabilities;
 	unsupportedReasons: Record<Exclude<keyof ExternalCliCapabilities, "stop">, string>;
 	nonResumableReason: string;
@@ -1466,6 +1469,7 @@ export interface ExternalProcessStatus {
 	processSignal?: string | null;
 	stdoutPath: string;
 	stderrPath: string;
+	finalOutputPath?: string;
 	stdoutBytes?: number;
 	stderrBytes?: number;
 	stdoutTruncated?: boolean;

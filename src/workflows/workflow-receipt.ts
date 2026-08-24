@@ -81,14 +81,14 @@ function parseExternalCliReceiptMetadata(value: unknown, key: string, source: st
 	const label = `Invalid workflow receipt '${source}': entry '${key}' externalAdapter`;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object.`);
 	const metadata = value as Record<string, unknown>;
-	const unknownMetadata = Object.keys(metadata).filter((field) => !["adapter", "capabilities", "outputArtifacts", "handoff", "supervisor", "nonResumableReason"].includes(field));
+	const unknownMetadata = Object.keys(metadata).filter((field) => !["adapter", "capabilities", "safety", "outputArtifacts", "handoff", "supervisor", "nonResumableReason"].includes(field));
 	if (unknownMetadata.length > 0) throw new Error(`${label} has unsupported fields: ${unknownMetadata.join(", ")}.`);
 	const adapter = metadata.adapter;
 	if (!adapter || typeof adapter !== "object" || Array.isArray(adapter)) throw new Error(`${label}.adapter must be an object.`);
 	const adapterRecord = adapter as Record<string, unknown>;
 	const unknownAdapter = Object.keys(adapterRecord).filter((field) => !["id", "version", "executionMode"].includes(field));
 	if (unknownAdapter.length > 0) throw new Error(`${label}.adapter has unsupported fields: ${unknownAdapter.join(", ")}.`);
-	if (adapterRecord.id !== "external-cli" || adapterRecord.version !== 1 || adapterRecord.executionMode !== "one-shot-stdin") throw new Error(`${label}.adapter is invalid.`);
+	if ((adapterRecord.id !== "external-cli" && adapterRecord.id !== "codex-exec") || adapterRecord.version !== 1 || adapterRecord.executionMode !== "one-shot-stdin") throw new Error(`${label}.adapter is invalid.`);
 	const capabilities = metadata.capabilities;
 	if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) throw new Error(`${label}.capabilities must be an object.`);
 	const capabilityRecord = capabilities as Record<string, unknown>;
@@ -97,6 +97,14 @@ function parseExternalCliReceiptMetadata(value: unknown, key: string, source: st
 	for (const [capability, expected] of Object.entries(EXTERNAL_CLI_CAPABILITIES)) {
 		if (capabilityRecord[capability] !== expected) throw new Error(`${label}.capabilities.${capability} is invalid.`);
 	}
+	const safety = metadata.safety;
+	if (adapterRecord.id === "codex-exec") {
+		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
+		const safetyRecord = safety as Record<string, unknown>;
+		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["sandbox", "approvalPolicy", "ephemeral"].includes(field));
+		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
+		if (safetyRecord.sandbox !== "read-only" || safetyRecord.approvalPolicy !== "never" || safetyRecord.ephemeral !== true) throw new Error(`${label}.safety is invalid.`);
+	} else if (safety !== undefined) throw new Error(`${label}.safety is invalid for the generic adapter.`);
 	const handoff = metadata.handoff;
 	if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) throw new Error(`${label}.handoff must be an object.`);
 	const handoffRecord = handoff as Record<string, unknown>;

@@ -143,6 +143,7 @@ export function runExternalCli(input: {
 	environment?: { allowlist: readonly string[]; values?: Readonly<Record<string, string>> };
 	preflight?: ExternalCliPreflightSpec;
 	parser?: ExternalCliParser;
+	finalOutputPath?: string;
 	limits?: StreamLimits;
 	registerTimeout?: (stop: (() => void) | undefined) => void;
 	registerStop?: (stop: (() => void) | undefined) => void;
@@ -174,7 +175,7 @@ export function runExternalCli(input: {
 			if (input.preflight) preflight = preflightExternalCli(input.command, input.preflight, env);
 		} catch (error) {
 			const endedAt = Date.now();
-			const externalProcess = { startedAt, endedAt, durationMs: endedAt - startedAt, exitCode: 1, processSignal: null, stdoutPath, stderrPath } satisfies ExternalProcessStatus;
+			const externalProcess = { startedAt, endedAt, durationMs: endedAt - startedAt, exitCode: 1, processSignal: null, stdoutPath, stderrPath, ...(input.finalOutputPath ? { finalOutputPath: input.finalOutputPath } : {}) } satisfies ExternalProcessStatus;
 			stdoutStream.end();
 			stderrStream.end();
 			void streamsFinished.then((streamResults) => {
@@ -273,6 +274,7 @@ export function runExternalCli(input: {
 			startedAt,
 			stdoutPath,
 			stderrPath,
+			...(input.finalOutputPath ? { finalOutputPath: input.finalOutputPath } : {}),
 		};
 		input.onProcess?.(initialProcess);
 		child.stdout.on("data", (chunk: Buffer) => {
