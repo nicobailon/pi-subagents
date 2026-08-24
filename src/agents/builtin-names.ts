@@ -4,6 +4,7 @@ export const BUILTIN_AGENT_NAMES = [
 	"claude-code-writer",
 	"codex-exec",
 	"delegate",
+	"grok-build",
 	"oracle",
 	"researcher",
 	"reviewer",

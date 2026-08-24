@@ -88,6 +88,8 @@ export function resolveClaudeCodeLaunch(input: {
 	command: string;
 	args: string[];
 	finalOutputPath?: undefined;
+	promptFilePath?: undefined;
+	temporaryDirectories?: undefined;
 	environment: { allowlist: readonly string[] };
 	preflight: ExternalCliPreflightSpec;
 	parser: ExternalCliParser;

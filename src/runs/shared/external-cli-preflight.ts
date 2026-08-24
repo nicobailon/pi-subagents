@@ -12,6 +12,8 @@ export interface ExternalCliPreflightSpec {
 	id: string;
 	versionArgs: readonly string[];
 	helpArgs: readonly string[];
+	evidenceArgs?: readonly string[];
+	evidenceLabel?: string;
 	probeTimeoutMs?: number;
 	validate?: (result: ExternalCliPreflightResult) => void;
 }
@@ -21,6 +23,7 @@ export interface ExternalCliPreflightResult {
 	binaryMtimeMs: number;
 	version: string;
 	help: string;
+	evidence?: string;
 	cacheHit: boolean;
 }
 
@@ -49,8 +52,9 @@ function resolveBinary(command: string, env: NodeJS.ProcessEnv): string {
 	throw new Error(`External CLI binary '${command}' was not found on PATH.`);
 }
 
-function probeWithTimeout(binaryPath: string, args: readonly string[], env: NodeJS.ProcessEnv, label: string, timeoutMs: number): string {
+function probeWithTimeout(binaryPath: string, args: readonly string[], env: NodeJS.ProcessEnv, label: string, timeoutMs: number, cwd?: string): string {
 	const result = spawnSync(binaryPath, [...args], {
+		cwd,
 		env,
 		encoding: "utf-8",
 		killSignal: "SIGKILL",
@@ -70,28 +74,36 @@ function narrowPositiveInteger(value: number | undefined, ceiling: number, label
 }
 
 function specKey(spec: ExternalCliPreflightSpec): string {
-	return JSON.stringify([spec.id, spec.versionArgs, spec.helpArgs, spec.probeTimeoutMs]);
+	return JSON.stringify([spec.id, spec.versionArgs, spec.helpArgs, spec.evidenceArgs, spec.evidenceLabel, spec.probeTimeoutMs]);
 }
 
-export function preflightExternalCli(command: string, spec: ExternalCliPreflightSpec, env: NodeJS.ProcessEnv): ExternalCliPreflightResult {
+export function preflightExternalCli(command: string, spec: ExternalCliPreflightSpec, env: NodeJS.ProcessEnv, cwd?: string): ExternalCliPreflightResult {
 	const binaryPath = resolveBinary(command, env);
 	const binaryMtimeMs = fs.statSync(binaryPath).mtimeMs;
 	const lookupKey = JSON.stringify([binaryPath, binaryMtimeMs, specKey(spec)]);
 	const cachedKey = lookup.get(lookupKey);
 	const cached = cachedKey ? cache.get(cachedKey) : undefined;
-	if (cached) return { binaryPath: cached.binaryPath, binaryMtimeMs: cached.binaryMtimeMs, version: cached.version, help: cached.help, cacheHit: true };
 	const probeTimeoutMs = narrowPositiveInteger(spec.probeTimeoutMs, MAX_PROBE_TIMEOUT_MS, "probeTimeoutMs");
-	const version = probeWithTimeout(binaryPath, spec.versionArgs, env, "version", probeTimeoutMs);
-	const help = probeWithTimeout(binaryPath, spec.helpArgs, env, "help", probeTimeoutMs);
-	const result = { binaryPath, binaryMtimeMs, version, help, cacheHit: false };
+	const base = cached ?? {
+		binaryPath,
+		binaryMtimeMs,
+		version: probeWithTimeout(binaryPath, spec.versionArgs, env, "version", probeTimeoutMs, cwd),
+		help: probeWithTimeout(binaryPath, spec.helpArgs, env, "help", probeTimeoutMs, cwd),
+	};
+	const evidence = spec.evidenceArgs
+		? probeWithTimeout(binaryPath, spec.evidenceArgs, env, spec.evidenceLabel ?? "evidence", probeTimeoutMs, cwd)
+		: undefined;
+	const result = { ...base, ...(evidence !== undefined ? { evidence } : {}), cacheHit: Boolean(cached) };
 	spec.validate?.(result);
-	const cacheKey = JSON.stringify([binaryPath, version, binaryMtimeMs, specKey(spec)]);
-	cache.set(cacheKey, { binaryPath, binaryMtimeMs, version, help });
-	lookup.set(lookupKey, cacheKey);
-	while (cache.size > MAX_CACHE_ENTRIES) {
-		const oldest = cache.keys().next().value as string;
-		cache.delete(oldest);
-		for (const [candidateLookup, candidateCache] of lookup) if (candidateCache === oldest) lookup.delete(candidateLookup);
+	if (!cached) {
+		const cacheKey = JSON.stringify([binaryPath, base.version, binaryMtimeMs, specKey(spec)]);
+		cache.set(cacheKey, base);
+		lookup.set(lookupKey, cacheKey);
+		while (cache.size > MAX_CACHE_ENTRIES) {
+			const oldest = cache.keys().next().value as string;
+			cache.delete(oldest);
+			for (const [candidateLookup, candidateCache] of lookup) if (candidateCache === oldest) lookup.delete(candidateLookup);
+		}
 	}
 	return result;
 }

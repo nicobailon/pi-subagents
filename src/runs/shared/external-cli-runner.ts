@@ -144,6 +144,8 @@ export function runExternalCli(input: {
 	preflight?: ExternalCliPreflightSpec;
 	parser?: ExternalCliParser;
 	finalOutputPath?: string;
+	promptFilePath?: string;
+	temporaryDirectories?: readonly string[];
 	limits?: StreamLimits;
 	registerTimeout?: (stop: (() => void) | undefined) => void;
 	registerStop?: (stop: (() => void) | undefined) => void;
@@ -169,16 +171,34 @@ export function runExternalCli(input: {
 		const stdoutStream = fs.createWriteStream(stdoutPath, { flags: "w" });
 		const stderrStream = fs.createWriteStream(stderrPath, { flags: "w" });
 		const streamsFinished = Promise.allSettled([finished(stdoutStream), finished(stderrStream)]);
+		const createdDirectories: string[] = [];
+		let promptFileCreated = false;
+		const cleanupTemporaryPaths = () => {
+			if (input.promptFilePath && promptFileCreated) fs.rmSync(input.promptFilePath, { force: true });
+			for (const directory of createdDirectories.reverse()) fs.rmSync(directory, { recursive: true, force: true });
+		};
 		const env = externalEnvironment(input.environment?.allowlist, input.environment?.values);
 		let preflight: ExternalCliPreflightResult | undefined;
 		try {
-			if (input.preflight) preflight = preflightExternalCli(input.command, input.preflight, env);
+			for (const directory of input.temporaryDirectories ?? []) {
+				fs.mkdirSync(directory, { mode: 0o700 });
+				createdDirectories.push(directory);
+			}
+			if (input.promptFilePath) {
+				const promptDescriptor = fs.openSync(input.promptFilePath, "wx", 0o600);
+				promptFileCreated = true;
+				try { fs.writeFileSync(promptDescriptor, input.prompt, { encoding: "utf-8" }); }
+				finally { fs.closeSync(promptDescriptor); }
+			}
+			if (input.preflight) preflight = preflightExternalCli(input.command, input.preflight, env, input.cwd);
 		} catch (error) {
 			const endedAt = Date.now();
 			const externalProcess = { startedAt, endedAt, durationMs: endedAt - startedAt, exitCode: 1, processSignal: null, stdoutPath, stderrPath, ...(input.finalOutputPath ? { finalOutputPath: input.finalOutputPath } : {}) } satisfies ExternalProcessStatus;
 			stdoutStream.end();
 			stderrStream.end();
 			void streamsFinished.then((streamResults) => {
+				try { cleanupTemporaryPaths(); }
+				catch (cleanupError) { reject(cleanupError); return; }
 				const streamFailure = streamResults.find((streamResult) => streamResult.status === "rejected");
 				if (streamFailure?.status === "rejected") reject(streamFailure.reason);
 				else resolve({ output: "", exitCode: 1, error: error instanceof Error ? error.message : String(error), processSignal: null, externalProcess });
@@ -291,7 +311,7 @@ export function runExternalCli(input: {
 		input.registerTimeout?.(() => terminate("timeout"));
 		input.registerStop?.(() => terminate("stop"));
 		child.stdin.on("error", () => {});
-		child.stdin.end(input.prompt);
+		child.stdin.end(input.promptFilePath ? undefined : input.prompt);
 		let spawnError: Error | undefined;
 		child.once("error", (error) => { spawnError = error; });
 		child.stdout.once("end", () => {
@@ -349,6 +369,8 @@ export function runExternalCli(input: {
 				stderrStream.end();
 				const streamResults = await streamsFinished;
 				const streamFailure = streamResults.find((streamResult) => streamResult.status === "rejected");
+				try { cleanupTemporaryPaths(); }
+				catch (cleanupError) { reject(cleanupError); return; }
 				if (streamFailure?.status === "rejected") reject(streamFailure.reason);
 				else resolve(result);
 			})();

@@ -87,6 +87,8 @@ export function resolveCodexExecLaunch(input: {
 	command: string;
 	args: string[];
 	finalOutputPath: string;
+	promptFilePath?: undefined;
+	temporaryDirectories?: undefined;
 	environment: { allowlist: readonly string[] };
 	preflight: ExternalCliPreflightSpec;
 	parser: ExternalCliParser;

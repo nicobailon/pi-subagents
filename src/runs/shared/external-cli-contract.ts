@@ -16,8 +16,13 @@ const UNSUPPORTED = {
 } as const;
 
 const CAPABILITY_KEYS = new Set(Object.keys(UNSUPPORTED));
+const GROK_UNSUPPORTED = {
+	...UNSUPPORTED,
+	steer: "The one-shot prompt-file adapter closes input after launch and cannot accept live steer messages.",
+	resume: "The one-shot prompt-file adapter does not retain a durable external session identity.",
+} as const;
 
-export function validateClaudeCodeProfileRunner(
+export function validateCodeOwnedProfileRunner(
 	agent: {
 		name: string;
 		localName?: string;
@@ -26,9 +31,13 @@ export function validateClaudeCodeProfileRunner(
 	},
 ): string | undefined {
 	const selectionNames = [agent.name, ...(agent.localName ? [agent.localName] : []), ...(agent.aliases ?? [])];
-	if (!selectionNames.includes("claude-code")) return undefined;
-	if (agent.runner?.type === "external-cli" && agent.runner.adapter === "claude-code") return undefined;
-	return "Selection name 'claude-code' is reserved for the read-only 'claude-code' adapter. Use 'claude-code-writer' for explicit file-write access.";
+	if (selectionNames.includes("claude-code") && !(agent.runner?.type === "external-cli" && agent.runner.adapter === "claude-code")) {
+		return "Selection name 'claude-code' is reserved for the read-only 'claude-code' adapter. Use 'claude-code-writer' for explicit file-write access.";
+	}
+	if (selectionNames.includes("grok-build") && !(agent.runner?.type === "external-cli" && agent.runner.adapter === "grok-build")) {
+		return "Selection name 'grok-build' is reserved for the read-only 'grok-build' adapter.";
+	}
+	return undefined;
 }
 
 export function parseExternalCliCapabilityNarrowing(value: unknown, label: string): ExternalCliCapabilityNarrowing | undefined {
@@ -44,7 +53,7 @@ export function parseExternalCliCapabilityNarrowing(value: unknown, label: strin
 }
 
 export function resolveExternalCliRunnerStatus(input: {
-	adapter?: "codex-exec" | "claude-code" | "claude-code-writer";
+	adapter?: "codex-exec" | "claude-code" | "claude-code-writer" | "grok-build";
 	command: string;
 	args?: string[];
 	promptDelivery?: "stdin";
@@ -53,15 +62,18 @@ export function resolveExternalCliRunnerStatus(input: {
 	const codexExec = input.adapter === "codex-exec";
 	const claudeCode = input.adapter === "claude-code";
 	const claudeCodeWriter = input.adapter === "claude-code-writer";
+	const grokBuild = input.adapter === "grok-build";
+	const unsupported = grokBuild ? GROK_UNSUPPORTED : UNSUPPORTED;
 	return {
 		type: "external-cli",
 		command: input.command,
 		args: input.args ?? [],
-		promptDelivery: input.promptDelivery ?? "stdin",
-		adapter: { id: input.adapter ?? "external-cli", version: 1, executionMode: "one-shot-stdin" },
+		promptDelivery: grokBuild ? "prompt-file" : input.promptDelivery ?? "stdin",
+		adapter: { id: input.adapter ?? "external-cli", version: 1, executionMode: grokBuild ? "one-shot-prompt-file" : "one-shot-stdin" },
 		...(codexExec ? { safety: { sandbox: "read-only" as const, approvalPolicy: "never" as const, ephemeral: true as const } } : {}),
 		...(claudeCode ? { safety: { access: "read-only" as const, authentication: "existing-cli-required" as const, permissionMode: "plan" as const, tools: "none" as const, mcp: "empty-strict" as const, settingSources: "user" as const, userSettingsTrust: "required" as const, sessionPersistence: false as const } } : {}),
 		...(claudeCodeWriter ? { safety: { access: "workspace-write" as const, authentication: "existing-cli-required" as const, permissionMode: "acceptEdits" as const, tools: "Read,Write,Edit,Glob,Grep" as const, mcp: "empty-strict" as const, settingSources: "user" as const, userSettingsTrust: "required" as const, sessionPersistence: false as const } } : {}),
+		...(grokBuild ? { safety: { access: "read-only" as const, authentication: "xai-api-key-required" as const, permissionMode: "plan" as const, tools: "read_file,grep,list_dir" as const, deniedTools: "run_terminal_cmd,search_replace,Agent,Bash,Edit,Write,MCPTool" as const, sandbox: "read-only" as const, webSearch: false as const, subagents: false as const, config: "temporary-home" as const, updates: "disabled" as const, sessionPersistence: false as const } } : {}),
 		capabilities: {
 			stop: true,
 			steer: false,
@@ -72,8 +84,8 @@ export function resolveExternalCliRunnerStatus(input: {
 			forkContext: false,
 			extensionBindings: false,
 		},
-		unsupportedReasons: UNSUPPORTED,
-		nonResumableReason: UNSUPPORTED.resume,
+		unsupportedReasons: unsupported,
+		nonResumableReason: unsupported.resume,
 	};
 }
 
@@ -88,7 +100,7 @@ export function normalizeExternalCliRunnerStatus(value: unknown): ExternalCliRun
 	const adapterId = input.adapter && typeof input.adapter === "object" && !Array.isArray(input.adapter)
 		? (input.adapter as Record<string, unknown>).id
 		: undefined;
-	const adapter = adapterId === "codex-exec" || adapterId === "claude-code" || adapterId === "claude-code-writer" ? adapterId : undefined;
+	const adapter = adapterId === "codex-exec" || adapterId === "claude-code" || adapterId === "claude-code-writer" || adapterId === "grok-build" ? adapterId : undefined;
 	return resolveExternalCliRunnerStatus({ ...(adapter ? { adapter } : {}), command: input.command, ...(args ? { args } : {}), ...(promptDelivery ? { promptDelivery } : {}) });
 }
 

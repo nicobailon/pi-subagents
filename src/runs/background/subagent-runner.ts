@@ -146,6 +146,7 @@ import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session
 import { buildExternalCliPrompt, runExternalCli } from "../shared/external-cli-runner.ts";
 import { resolveClaudeCodeLaunch } from "../shared/claude-code-adapter.ts";
 import { resolveCodexExecLaunch } from "../shared/codex-exec-adapter.ts";
+import { resolveGrokBuildLaunch } from "../shared/grok-build-adapter.ts";
 import { resolveExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { runExternalJob } from "../shared/external-job-runner.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
@@ -1384,17 +1385,20 @@ async function runSingleStepInner(
 	transcriptWriter?.writeInitialUserMessage(`${PROMPT_REDACTED}; live Prompt Audit only.`);
 
 	if (step.runner?.type === "external-cli") {
+		const externalCwd = step.cwd ?? ctx.cwd;
 		const adapterLaunch = step.runner.adapter === "codex-exec"
 			? resolveCodexExecLaunch({ command: step.runner.command, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
 			: step.runner.adapter === "claude-code" || step.runner.adapter === "claude-code-writer"
 				? resolveClaudeCodeLaunch({ adapter: step.runner.adapter, command: step.runner.command })
+				: step.runner.adapter === "grok-build"
+					? resolveGrokBuildLaunch({ command: step.runner.command, cwd: externalCwd, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
 				: undefined;
 		const runner = resolveExternalCliRunnerStatus({ ...step.runner, ...(adapterLaunch ? { args: adapterLaunch.args } : {}) });
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
 		const external = await runExternalCli(omitUndefinedProperties({
 			command: adapterLaunch?.command ?? runner.command,
 			args: adapterLaunch?.args ?? runner.args,
-			cwd: step.cwd ?? ctx.cwd,
+			cwd: externalCwd,
 			prompt: buildExternalCliPrompt(step.systemPrompt ?? "", task),
 			asyncDir: path.dirname(ctx.outputFile),
 			stepIndex: ctx.flatIndex,
@@ -1402,6 +1406,8 @@ async function runSingleStepInner(
 			preflight: adapterLaunch?.preflight,
 			parser: adapterLaunch?.parser,
 			finalOutputPath: adapterLaunch?.finalOutputPath,
+			promptFilePath: adapterLaunch?.promptFilePath,
+			temporaryDirectories: adapterLaunch?.temporaryDirectories,
 			registerTimeout: ctx.registerTimeout,
 			registerStop: ctx.registerStop,
 			timeoutMessage: ctx.timeoutMessage,

@@ -113,6 +113,24 @@ node --experimental-strip-types --import ./test/support/register-loader.mjs \
 
 Both smoke reports record `authentication: "existing-cli-required"`, `settingSources: "user"`, and `userSettingsTrust: "required"` without recording credential details. For read-only, confirm `terminalState` is `completed` and `writeCanaryExists` is `false`. For writer, confirm `terminalState` is `completed` and `writeCanaryMatches` is `true`. `durationMs` records cold process time. If authentication is missing or revoked, repair the normal local Claude Code login and rerun the smoke. Reports do not contain raw protocol output or credentials.
 
+The built-in `grok-build` profile is the supported Grok Build one-shot baseline. It requires an installed Grok Build CLI and `XAI_API_KEY`. The adapter sends the handoff through a private prompt file because Grok headless mode does not read the prompt from stdin. It uses the same private temporary directory for `HOME`, `USERPROFILE`, and `GROK_HOME`, disables Claude, Cursor, and Codex compatibility scanners, and removes that home and the prompt file at process completion. Grok sessions are therefore fresh and are not retained or resumable through Pi.
+
+The adapter owns `grok --prompt-file` argv with native streaming JSON, permission mode `plan`, only `read_file,grep,list_dir`, explicit write/terminal/MCP/subagent denials, the read-only sandbox, disabled web search, disabled subagents, and a fixed 16-turn limit. It also sets `GROK_DISABLE_AUTOUPDATER=1`, `GROK_MEMORY=0`, `GROK_SUBAGENTS=0`, and `GROK_WRITE_FILE=0`. User profiles cannot add argv or select another adapter under the reserved `grok-build` name.
+
+Launch preflight validates `grok --version` and `grok --help`, then runs `grok inspect --json` in the target directory with the isolated Grok home. Version and help evidence is cached. Inspect evidence runs for each launch and must show no hooks, plugins, MCP servers, LSP servers, or enabled external compatibility cells. Its content is not copied into status or receipts. Discovery, list, status, and native Pi launches do not execute Grok or probe authentication. A run succeeds only when bounded valid JSONL ends with `end.stopReason === "end_turn"` after non-empty `text.data` output. Error events, other stop reasons, malformed JSON, and EOF before `end` fail closed.
+
+Maintainers can collect authenticated terminal, read-only canary, inspect, and cold-start evidence:
+
+```bash
+PI_SUBAGENTS_GROK_BUILD_SMOKE=1 \
+PI_SUBAGENTS_GROK_BUILD_SMOKE_REPORT=/tmp/pi-subagents-grok-build-smoke.json \
+XAI_API_KEY=... \
+node --experimental-strip-types --import ./test/support/register-loader.mjs \
+  --test test/integration/grok-build-smoke.test.ts
+```
+
+Confirm `terminalState` is `completed`, `writeCanaryExists` is `false`, and `inspectValidated` is `true`. `durationMs` records cold process time. The report does not contain the API key, prompt, raw protocol output, or inspected configuration. Process stop uses the shared process-tree termination and reaping path. `grok agent stdio` ACP is not a supported profile yet because its installed permission, terminal, cancellation, and session contract has not passed a current protocol smoke.
+
 Native `oracle` runs inside Pi and can use its configured read tools. The Claude profiles send the assembled prompt to the local Claude Code CLI through stdin. An external-job agent sends the assembled prompt to its registered provider. Provider options and a prompt digest are persisted in Pi run state. The prompt text is delivered through the local host bridge to the provider and is not stored in the public result payload. Do not place secrets in advisory prompts unless the target provider is approved to receive them.
 
 ### External-job state table
