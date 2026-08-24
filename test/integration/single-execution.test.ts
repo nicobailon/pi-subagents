@@ -720,7 +720,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			{ key: "work", state: "completed" },
 		]);
 		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
-		const persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { id?: string; runId?: string; toolCallId?: string; agent?: string; cwd?: string; summary?: string; workflow?: { value?: unknown; receipt?: unknown }; workflowReceipt?: { path?: string; receipt?: { workflowRunId?: string; entries?: Record<string, { key?: string; agent?: string; latestRunId?: string; resumability?: { state?: string }; continuation?: { runIds?: string[] } }> } }; results?: Array<{ agent?: string; workflowKey?: string; runId?: string; output?: string }> };
+		const persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { id?: string; runId?: string; toolCallId?: string; agent?: string; cwd?: string; summary?: string; workflow?: { value?: unknown; receipt?: unknown }; workflowReceipt?: { path?: string; receipt?: { workflowRunId?: string; entries?: Record<string, { key?: string; agent?: string; latestRunId?: string; resumability?: { state?: string; reason?: string }; continuation?: { runIds?: string[] } }> } }; results?: Array<{ agent?: string; workflowKey?: string; runId?: string; output?: string }> };
 		assert.equal(persistedResult.id, workflowRunId);
 		assert.equal(persistedResult.runId, workflowRunId);
 		assert.equal(persistedResult.toolCallId, toolCallId);
@@ -744,7 +744,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(persistedResult.workflowReceipt?.receipt?.entries?.work?.latestRunId, persistedResult.results?.[0]?.runId);
 		assert.equal(fs.existsSync(path.join(DIRS.async, persistedResult.results?.[0]?.runId ?? "missing")), false);
 		assert.deepEqual(persistedResult.workflowReceipt?.receipt?.entries?.work?.continuation?.runIds, [persistedResult.results?.[0]?.runId]);
-		assert.equal(persistedResult.workflowReceipt?.receipt?.entries?.work?.resumability?.state, "resumable");
+		assert.deepEqual(persistedResult.workflowReceipt?.receipt?.entries?.work?.resumability, { state: "resumable" });
 		assert.deepEqual(JSON.parse(fs.readFileSync(persistedResult.workflowReceipt!.path!, "utf-8")), persistedResult.workflowReceipt?.receipt);
 		assert.equal(fs.existsSync(path.join(DIRS.results, `${toolCallId}.json`)), false);
 		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true });
