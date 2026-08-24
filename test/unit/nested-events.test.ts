@@ -333,7 +333,7 @@ describe("nested event parsing and projection", () => {
 			ts: 100,
 			parentRunId: "root-run",
 			parentStepIndex: 1,
-			child: { ...child("nested-valid-tokens", "running", 100), totalTokens: { input: 10, output: 15, total: 25 } },
+			child: { ...child("nested-valid-tokens", "running", 100), totalTokens: { input: 10, output: 15, total: 25, window: 30, windowPeak: 40 } },
 		});
 		fs.writeFileSync(path.join(route.eventSink, "0000000000200-invalid-tokens.json"), `${JSON.stringify({
 			type: "subagent.nested.updated",
@@ -347,7 +347,7 @@ describe("nested event parsing and projection", () => {
 
 		const registry = projectNestedEvents(route);
 
-		assert.deepEqual(registry.children.find((item) => item.id === "nested-valid-tokens")?.totalTokens, { input: 10, output: 15, total: 25 });
+		assert.deepEqual(registry.children.find((item) => item.id === "nested-valid-tokens")?.totalTokens, { input: 10, output: 15, total: 25, window: 30, windowPeak: 40 });
 		assert.equal(registry.children.find((item) => item.id === "nested-invalid-tokens")?.totalTokens, undefined);
 	});
 

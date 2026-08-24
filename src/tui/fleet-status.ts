@@ -25,6 +25,7 @@ type FleetStatusEntry = {
 	description?: string;
 	startedAt: number;
 	tokens: number;
+	window?: number;
 	state: string;
 	external?: true;
 	projectPane?: HerdrProjectPaneSnapshot;
@@ -39,6 +40,7 @@ type FleetWorkflowRow = {
 	activity?: string;
 	startedAt?: number;
 	tokens?: number;
+	window?: number;
 	overflow?: number;
 };
 
@@ -72,12 +74,15 @@ export function formatFleetElapsed(ms: number): string {
 	return `${Math.max(0, Math.round(ms / 1000))}s`;
 }
 
-export function formatFleetTokens(count: number): string {
-	let compact: string;
-	if (count >= 1_000_000) compact = `${(count / 1_000_000).toFixed(1)}M`;
-	else if (count >= 1_000) compact = `${(count / 1_000).toFixed(1)}k`;
-	else compact = `${Math.max(0, Math.round(count))}`;
-	return `↓ ${compact} tokens`;
+export function formatFleetTokens(count: number, window?: number): string {
+	const compact = (value: number): string => value >= 1_000_000
+		? `${(value / 1_000_000).toFixed(1)}M`
+		: value >= 1_000
+			? `${(value / 1_000).toFixed(1)}k`
+			: `${Math.max(0, Math.round(value))}`;
+	return window !== undefined
+		? `↓ ${compact(window)} window · ${compact(count)} spent`
+		: `↓ ${compact(count)} tokens`;
 }
 
 function rightAlign(left: string, right: string, width: number): string {
@@ -134,6 +139,7 @@ function workflowFleetRows(steps: AsyncJobStep[] | undefined): FleetWorkflowRow[
 			...(activity ? { activity } : {}),
 			...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
 			...(step.tokens?.total !== undefined ? { tokens: step.tokens.total } : {}),
+			...(step.tokens?.window !== undefined ? { window: step.tokens.window } : {}),
 		};
 	});
 }
@@ -332,7 +338,8 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 					...(modelThinking ? { modelThinking } : {}),
 					description: foregroundDescription(control, child.description),
 					startedAt: child.startedAt,
-					tokens: child.tokens ?? 0,
+				tokens: child.tokens ?? 0,
+				...(child.window !== undefined ? { window: child.window } : {}),
 					state: "running",
 					...((control.nestedChildren?.filter((nested) => nested.parentStepIndex === child.index).length ?? 0) > 0
 						? { nestedChildren: control.nestedChildren!.filter((nested) => nested.parentStepIndex === child.index) }
@@ -350,6 +357,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 			description: foregroundDescription(control, control.description),
 			startedAt: control.startedAt,
 			tokens: control.tokens ?? 0,
+			...(control.window !== undefined ? { window: control.window } : {}),
 			state: "running",
 			...(control.nestedChildren?.length ? { nestedChildren: control.nestedChildren } : {}),
 		});
@@ -367,6 +375,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 				description: latestEmit !== undefined ? `latest emit: ${latestEmit}` : job.description,
 				startedAt,
 				tokens: job.totalTokens?.total ?? 0,
+				...(job.totalTokens?.window !== undefined ? { window: job.totalTokens.window } : {}),
 				state: job.status,
 				...(job.steps?.length ? { workflowRows: workflowFleetRows(job.steps) } : {}),
 				...(job.nestedChildren?.length ? { nestedChildren: job.nestedChildren } : {}),
@@ -387,6 +396,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 				description: job.description,
 				startedAt,
 				tokens: job.totalTokens?.total ?? 0,
+				...(job.totalTokens?.window !== undefined ? { window: job.totalTokens.window } : {}),
 				state: job.status,
 				...(job.nestedChildren?.length ? { nestedChildren: job.nestedChildren } : {}),
 			});
@@ -404,6 +414,9 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 				description: step.description ?? job.description,
 				startedAt: step.startedAt ?? startedAt,
 				tokens: step.tokens?.total ?? (steps.length === 1 ? job.totalTokens?.total ?? 0 : 0),
+				...((step.tokens?.window ?? (steps.length === 1 ? job.totalTokens?.window : undefined)) !== undefined
+					? { window: step.tokens?.window ?? job.totalTokens?.window }
+					: {}),
 				state: step.status,
 				...((step.children?.length ?? 0) > 0
 					? { nestedChildren: step.children }
@@ -611,6 +624,10 @@ export class SubagentFleetStatus {
 			const workEntries = this.entries.filter((entry) => !entry.surface);
 			const projectEntries = this.entries.filter((entry) => entry.surface === "project-pane");
 			const tokens = workEntries.reduce((total, entry) => total + entry.tokens, 0);
+			const nativeEntries = workEntries.filter((entry) => !entry.external);
+			const window = nativeEntries.length > 0 && nativeEntries.every((entry) => entry.window !== undefined)
+				? nativeEntries.reduce((total, entry) => total + entry.window!, 0)
+				: undefined;
 			const capacity = this.state.activeAsyncCapacity;
 			const hasNativeRows = workEntries.some((entry) => !entry.external);
 			const showNativeSummary = hasNativeRows || Boolean(capacity?.used);
@@ -621,7 +638,7 @@ export class SubagentFleetStatus {
 			const paneAttention = projectEntries.filter((entry) => entry.projectPane && projectPaneNeedsAttention(entry.projectPane)).length;
 			const panes = projectEntries.length > 0 ? `${projectEntries.length} pane${projectEntries.length === 1 ? "" : "s"}${paneAttention ? ` (${paneAttention} ⚠)` : ""}` : "";
 			const label = [agents, asyncRuns, panes].filter(Boolean).join(" · ");
-			const detail = [showNativeSummary ? formatFleetTokens(tokens) : undefined, "↓/← to inspect"].filter(Boolean).join(" · ");
+			const detail = [showNativeSummary ? formatFleetTokens(tokens, window) : undefined, "↓/← to inspect"].filter(Boolean).join(" · ");
 			return [truncateToWidth(`  ${theme.fg("muted", label)}${label && detail ? " · " : ""}${theme.fg("dim", detail)}`, width)];
 		}
 		const roster = this.rosterKeys();
@@ -670,7 +687,7 @@ export class SubagentFleetStatus {
 		const elapsed = Date.now() - entry.startedAt;
 		const rightText = entry.projectPane
 			? `${entry.projectPane.summary ?? "—"} · ${formatFleetElapsed(Date.now() - entry.projectPane.refreshedAt)} ago`
-				: entry.external ? formatFleetElapsed(elapsed) : `${formatFleetElapsed(elapsed)} · ${formatFleetTokens(entry.tokens)}`;
+				: entry.external ? formatFleetElapsed(elapsed) : `${formatFleetElapsed(elapsed)} · ${formatFleetTokens(entry.tokens, entry.window)}`;
 		const right = theme.fg("dim", rightText);
 		return rightAlign(left, right, width);
 	}
@@ -695,7 +712,7 @@ export class SubagentFleetStatus {
 		const left = `${indent}${marker} ${nestedStatusGlyph(row.state, theme)} ${theme.fg("muted", `${row.name}${modelThinking}`)} · ${row.state}${activity}`;
 		const details = [
 			row.startedAt !== undefined ? formatFleetElapsed(Date.now() - row.startedAt) : undefined,
-			row.tokens !== undefined ? formatFleetTokens(row.tokens) : undefined,
+			row.tokens !== undefined ? formatFleetTokens(row.tokens, row.window) : undefined,
 		].filter(Boolean).join(" · ");
 		return truncateToWidth(`${left}${details ? theme.fg("dim", ` · ${details}`) : ""}`, width);
 	}

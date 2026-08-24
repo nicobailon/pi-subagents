@@ -40,7 +40,7 @@ To inspect one background child in text, use `subagent({ action: "status", id: "
 In the TUI, a persistent FleetView below the editor keeps active work visible as a compact summary. Set `fleetViewPlacement` to `"aboveEditor"` to move it above the editor.
 
 ```text
-2 active agents · 1 pane · ↓ 4.2k tokens · ↓/← to inspect
+2 active agents · 1 pane · ↓ 3.1k window · 4.2k spent · ↓/← to inspect
 ```
 
 After you expand it:
@@ -49,11 +49,11 @@ After you expand it:
 ↑↓/jk select · enter inspect · esc back
 
 > main
-    scout · running                  1m 12s · ↓ 2.8k tokens
-    reviewer · running                 38s · ↓ 1.4k tokens
+    scout · running         1m 12s · ↓ 2.0k window · 2.8k spent
+    reviewer · running        38s · ↓ 1.1k window · 1.4k spent
 ```
 
-When the focused editor is empty, press `↓` or `←` to expand the summary into `main` plus active children with agent name, state, elapsed time, and token totals. The compact line counts active current-session work and Herdr project panes. Then use `↑`/`↓` or `j`/`k` to select a child and `Enter` to inspect it. Printable navigation keys are never intercepted before activation.
+When the focused editor is empty, press `↓` or `←` to expand the summary into `main` plus active children with agent name, state, elapsed time, and token usage. When providers report usage, `window` is the latest assistant turn's input plus cache-read tokens, while `spent` keeps the cumulative input-plus-output total. Old run artifacts without window data keep the existing token-total label. The compact line counts active current-session work and Herdr project panes. Then use `↑`/`↓` or `j`/`k` to select a child and `Enter` to inspect it. Printable navigation keys are never intercepted before activation.
 
 FleetView replaces the legacy above-editor async widget by default. Successful background completions stay quiet so inactive Pi tabs are not marked unread, while failed or paused completions still notify the originating session. Parallel runs show every active child independently. Chains with parallel groups keep their grouped shape in progress and results, so failed or paused agents stay visible next to completed ones. When a child is explicitly allowed to fan out with `tools: subagent`, its nested runs appear under that parent child in the main status tree instead of being hidden inside the child process.
 

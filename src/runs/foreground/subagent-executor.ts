@@ -647,6 +647,8 @@ function foregroundChildActivityFromProgress(progress: SingleResult["progress"] 
 		...(progress?.currentPath ? { currentPath: progress.currentPath } : {}),
 		...(progress?.turnCount !== undefined ? { turnCount: progress.turnCount } : {}),
 		...(progress?.tokens !== undefined ? { tokens: progress.tokens } : {}),
+		...(progress?.window !== undefined ? { window: progress.window } : {}),
+		...(progress?.windowPeak !== undefined ? { windowPeak: progress.windowPeak } : {}),
 		...(progress?.toolCount !== undefined ? { toolCount: progress.toolCount } : {}),
 	};
 }

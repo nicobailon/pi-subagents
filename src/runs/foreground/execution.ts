@@ -1079,6 +1079,7 @@ async function runSingleAttempt(
 					updateTurnBudget(result.usage.turns, terminalAssistantStop || terminalStructuredOutputCall, hasToolCall || Boolean(progress.currentTool));
 					const u = evt.message.usage;
 					if (u) {
+						const window = (u.input || 0) + (u.cacheRead || 0);
 						result.usage.input += u.input || 0;
 						result.usage.output += u.output || 0;
 						result.usage.cacheRead += u.cacheRead || 0;
@@ -1087,6 +1088,8 @@ async function runSingleAttempt(
 						progress.tokens = result.usage.input + result.usage.output;
 						progress.inputTokens = result.usage.input;
 						progress.outputTokens = result.usage.output;
+						progress.window = window;
+						progress.windowPeak = Math.max(progress.windowPeak ?? 0, window);
 					}
 					if (evt.message.model) {
 						progress.model = evt.message.model;

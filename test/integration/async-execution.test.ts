@@ -3014,7 +3014,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 					content: [{ type: "text", text: "primary failed" }],
 					model: "openai/gpt-5-mini",
 					errorMessage: "rate limit exceeded",
-					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+					usage: { input: 10, output: 5, cacheRead: 300, cacheWrite: 0, cost: { total: 0.01 } },
 				},
 			}],
 			exitCode: 1,
@@ -3097,6 +3097,10 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(statusPayload.steps[0]?.thinking, "low");
 		assert.ok(statusPayload.totalTokens!.total > 0);
 		assert.ok(statusPayload.steps[0]?.tokens!.total > 0);
+		assert.equal(statusPayload.totalTokens!.window, 100);
+		assert.equal(statusPayload.totalTokens!.windowPeak, 310);
+		assert.equal(statusPayload.steps[0]?.tokens!.window, 100);
+		assert.equal(statusPayload.steps[0]?.tokens!.windowPeak, 310);
 		assert.deepEqual(statusPayload.steps[0]?.totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
 		assert.deepEqual(statusPayload.totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
 		const events = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8").trim().split("\n").map((line) => JSON.parse(line));

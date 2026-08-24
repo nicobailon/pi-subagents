@@ -184,6 +184,10 @@ export interface TokenUsage {
 	input: number;
 	output: number;
 	total: number;
+	/** Input plus cache-read tokens for the latest assistant turn. */
+	window?: number;
+	/** Largest window observed in this usage scope. */
+	windowPeak?: number;
 }
 
 export type ActivityState = "active_long_running" | "needs_attention";
@@ -721,6 +725,8 @@ export interface AgentProgress {
 	thinking?: string;
 	inputTokens?: number;
 	outputTokens?: number;
+	window?: number;
+	windowPeak?: number;
 	durationMs: number;
 	error?: string;
 	failedTool?: string;
@@ -1730,6 +1736,8 @@ export interface ForegroundResumeChild {
 	currentPath?: string;
 	turnCount?: number;
 	tokens?: number;
+	window?: number;
+	windowPeak?: number;
 	toolCount?: number;
 	exitCode?: number;
 	error?: string;
@@ -1782,6 +1790,8 @@ export interface ForegroundChildControl {
 	tokens?: number;
 	inputTokens?: number;
 	outputTokens?: number;
+	window?: number;
+	windowPeak?: number;
 	model?: string;
 	thinking?: string;
 	toolCount?: number;
@@ -1817,6 +1827,8 @@ export interface ForegroundRunControl {
 	tokens?: number;
 	inputTokens?: number;
 	outputTokens?: number;
+	window?: number;
+	windowPeak?: number;
 	model?: string;
 	thinking?: string;
 	toolCount?: number;

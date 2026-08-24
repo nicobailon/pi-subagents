@@ -203,7 +203,7 @@ describe("subagent extension RPC bridge", () => {
 			asyncJobs: new Map([["async-private-id", {
 				asyncId: "async-private-id", sessionId: "/sessions/parent.jsonl", status: "running", mode: "single",
 				description: ["Review", "\u001b]8;;hostile\u0007", "the diff"].join("\n"),
-				startedAt: 100, steps: [{ agent: "reviewer", label: "opaque label", status: "running", startedAt: 120, model: "anthropic/claude-opus-4-8:high", thinking: "high", tokens: { input: 12, output: 34, total: 46 } }],
+				startedAt: 100, steps: [{ agent: "reviewer", label: "opaque label", status: "running", startedAt: 120, model: "anthropic/claude-opus-4-8:high", thinking: "high", tokens: { input: 12, output: 34, total: 46, window: 40, windowPeak: 44 } }],
 			}]]),
 		} as any;
 		const bridge = registerSubagentRpcBridge({
@@ -217,7 +217,7 @@ describe("subagent extension RPC bridge", () => {
 		assert.equal((fleet as { omitted?: number }).omitted, 0);
 		assert.deepEqual(fleet.entries[0], {
 			key: "fleet-1", agent: "reviewer", role: "opaque label", model: "anthropic/claude-opus-4-8:high", effort: "high",
-			startedAt: 120, tokens: { input: 12, output: 34, total: 46 },
+			startedAt: 120, tokens: { input: 12, output: 34, total: 46, window: 40, windowPeak: 44 },
 		});
 		assert.equal(JSON.stringify(fleet).includes("Review the diff"), false);
 		assert.equal(JSON.stringify(fleet).includes("async-private-id"), false);

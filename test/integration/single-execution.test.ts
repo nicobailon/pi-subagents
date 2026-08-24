@@ -5193,6 +5193,27 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok((runningUpdates.at(-1)?.durationMs ?? 0) > (runningUpdates[0]?.durationMs ?? 0), "expected heartbeat duration to advance");
 	});
 
+	it("reports foreground context window usage without changing cumulative spend", async () => {
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "Done" }],
+					model: "mock/test-model",
+					stopReason: "stop",
+					usage: { input: 11, output: 7, cacheRead: 30, cacheWrite: 0, cost: { total: 0.001 } },
+				},
+			}],
+		});
+
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {});
+
+		assert.equal(result.progress.tokens, 18);
+		assert.equal(result.progress.window, 41);
+		assert.equal(result.progress.windowPeak, 41);
+	});
+
 	it("tracks live activity updates and exposes artifact paths while running", async () => {
 		const updates: Array<{ details?: { results?: Array<{ artifactPaths?: ArtifactPaths }>; progress?: ProgressSummary[] } }> = [];
 		mockPi.onCall({

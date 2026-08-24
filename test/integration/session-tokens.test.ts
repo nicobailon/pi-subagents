@@ -5,7 +5,7 @@ import { describe, it } from "node:test";
 import { createTempDir, removeTempDir, tryImport } from "../support/helpers.ts";
 
 interface SessionTokensModule {
-	parseSessionTokens(sessionDir: string): { input: number; output: number; total: number } | null;
+	parseSessionTokens(sessionDir: string): { input: number; output: number; total: number; window?: number; windowPeak?: number } | null;
 }
 
 const tokensMod = await tryImport<SessionTokensModule>("./src/shared/session-tokens.ts");
@@ -21,21 +21,21 @@ describe("session tokens", { skip: !available ? "pi packages not available" : un
 					type: "message",
 					message: {
 						role: "assistant",
-						usage: { input: 120, output: 30 },
+						usage: { input: 120, output: 30, cacheRead: 500 },
 					},
 				}),
 				JSON.stringify({
 					type: "message",
 					message: {
 						role: "assistant",
-						usage: { inputTokens: 80, outputTokens: 20 },
+						usage: { inputTokens: 80, outputTokens: 20, cacheReadTokens: 30 },
 					},
 				}),
 			].join("\n");
 			fs.writeFileSync(sessionFile, lines + "\n", "utf-8");
 
 			const tokens = tokensMod!.parseSessionTokens(sessionDir);
-			assert.deepEqual(tokens, { input: 200, output: 50, total: 250 });
+			assert.deepEqual(tokens, { input: 200, output: 50, total: 250, window: 110, windowPeak: 620 });
 		} finally {
 			removeTempDir(sessionDir);
 		}
@@ -54,7 +54,7 @@ describe("session tokens", { skip: !available ? "pi packages not available" : un
 			fs.utimesSync(newerFile, newerTime, newerTime);
 
 			const tokens = tokensMod!.parseSessionTokens(sessionDir);
-			assert.deepEqual(tokens, { input: 90, output: 10, total: 100 });
+			assert.deepEqual(tokens, { input: 90, output: 10, total: 100, window: 90, windowPeak: 90 });
 		} finally {
 			removeTempDir(sessionDir);
 		}

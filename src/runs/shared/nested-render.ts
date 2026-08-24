@@ -1,4 +1,4 @@
-import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
+import { formatDuration, formatModelThinking, formatTokenUsage, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
 import type { ActivityState, NestedRunSummary, NestedStepSummary } from "../../shared/types.ts";
 
@@ -68,7 +68,7 @@ function formatNestedActivity(input: {
 	if (input.currentPath) facts.push(shortenPath(input.currentPath));
 	if (input.turnCount !== undefined) facts.push(`${input.turnCount} turns`);
 	if (input.toolCount !== undefined) facts.push(`${input.toolCount} tools`);
-	if (input.totalTokens) facts.push(`${formatTokens(input.totalTokens.total)} tok`);
+	if (input.totalTokens) facts.push(formatTokenUsage(input.totalTokens));
 	const activity = formatActivityLabel(input.lastActivityAt, input.activityState as ActivityState | undefined);
 	return activity || facts.length ? [activity, ...facts].filter(Boolean).join(" | ") : undefined;
 }

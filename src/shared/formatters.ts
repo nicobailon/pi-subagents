@@ -4,7 +4,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { Usage, SingleResult } from "./types.ts";
+import type { Usage, SingleResult, TokenUsage } from "./types.ts";
 import type { ChainStep } from "./settings.ts";
 import { isDynamicParallelStep, isParallelStep } from "./settings.ts";
 import { previewDisplayText, sanitizeDisplayText } from "./display-text.ts";
@@ -15,6 +15,12 @@ import { splitKnownThinkingSuffix, THINKING_LEVELS } from "./model-info.ts";
  */
 export function formatTokens(n: number): string {
 	return n < 1000 ? String(n) : n < 10000 ? `${(n / 1000).toFixed(1)}k` : `${Math.round(n / 1000)}k`;
+}
+
+export function formatTokenUsage(usage: TokenUsage, legacyLabel = "tok"): string {
+	return usage.window !== undefined
+		? `${formatTokens(usage.window)} window · ${formatTokens(usage.total)} spent`
+		: `${formatTokens(usage.total)} ${legacyLabel}`;
 }
 
 export function formatModelThinking(model?: string, thinking?: string): string {

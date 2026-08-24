@@ -22,7 +22,7 @@ import {
 	WIDGET_KEY,
 } from "../shared/types.ts";
 import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
-import { formatTokens, formatUsage, formatDuration, formatModelThinking, formatToolCall, shortenPath } from "../shared/formatters.ts";
+import { formatTokens, formatUsage, formatDuration, formatModelThinking, formatToolCall, formatTokenUsage, shortenPath } from "../shared/formatters.ts";
 import { getDisplayItems, getSingleResultOutput } from "../shared/utils.ts";
 import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
 import { formatNestedAggregate } from "../runs/shared/nested-render.ts";
@@ -740,7 +740,7 @@ function widgetStepActivity(step: NonNullable<AsyncJobState["steps"]>[number], s
 	if (step.currentPath) facts.push(shortenPath(step.currentPath));
 	if (step.turnCount !== undefined) facts.push(`${step.turnCount} turns`);
 	if (step.toolCount !== undefined) facts.push(`${step.toolCount} tools`);
-	if (step.tokens?.total) facts.push(formatTokenStat(step.tokens.total));
+	if (step.tokens?.total) facts.push(formatTokenUsage(step.tokens, "token"));
 	const activity = buildLiveStatusLine(step, snapshotNow);
 	if (activity && facts.length) return `${activity} · ${facts.join(" · ")}`;
 	if (activity) return activity;
@@ -1058,7 +1058,7 @@ function widgetStats(job: AsyncJobState, theme: Theme): string {
 		parts.push(`steps ${stepsTotal}`);
 	}
 	if (job.toolCount !== undefined) parts.push(formatToolUseStat(job.toolCount));
-	if (job.totalTokens?.total) parts.push(formatTokenStat(job.totalTokens.total));
+	if (job.totalTokens?.total) parts.push(formatTokenUsage(job.totalTokens, "token"));
 	if (job.startedAt !== undefined && job.updatedAt !== undefined) parts.push(formatDuration(Math.max(0, job.updatedAt - job.startedAt)));
 	return statJoin(theme, parts);
 }
@@ -1067,7 +1067,7 @@ function widgetStepStats(theme: Theme, step: NonNullable<AsyncJobState["steps"]>
 	return statJoin(theme, [
 		step.turnCount !== undefined ? `${step.turnCount} turns` : "",
 		step.toolCount !== undefined ? formatToolUseStat(step.toolCount) : "",
-		step.tokens?.total ? formatTokenStat(step.tokens.total) : "",
+		step.tokens?.total ? formatTokenUsage(step.tokens, "token") : "",
 		step.durationMs !== undefined ? formatDuration(step.durationMs) : "",
 	]);
 }

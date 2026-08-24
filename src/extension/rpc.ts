@@ -11,6 +11,7 @@ import {
 	type AsyncJobStep,
 	type Details,
 	type SubagentState,
+	type TokenUsage,
 	DIRS,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_CHILD_STATUS_EVENT,
@@ -97,7 +98,7 @@ export interface SubagentRpcFleetEntry {
 	model?: string;
 	effort?: string;
 	startedAt: number;
-	tokens: { input: number; output: number; total: number };
+	tokens: TokenUsage;
 	goal?: string;
 }
 
@@ -122,7 +123,7 @@ function displayText(value: unknown, maxLength: number): string | undefined {
 	return normalized ? truncateDisplayText(normalized, maxLength) : undefined;
 }
 
-function publicTokens(value: unknown): { input: number; output: number; total: number } {
+function publicTokens(value: unknown): TokenUsage {
 	const record = isRecord(value) ? value : {};
 	const count = (field: "input" | "output" | "total") => {
 		const raw = record[field];
@@ -133,7 +134,21 @@ function publicTokens(value: unknown): { input: number; output: number; total: n
 	const input = count("input");
 	const output = count("output");
 	const sum = Math.min(Number.MAX_SAFE_INTEGER, input + output);
-	return { input, output, total: Math.max(sum, count("total")) };
+	const optionalCount = (field: "window" | "windowPeak") => {
+		const raw = record[field];
+		return typeof raw === "number" && Number.isFinite(raw) && raw >= 0
+			? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(raw))
+			: undefined;
+	};
+	const window = optionalCount("window");
+	const windowPeak = optionalCount("windowPeak");
+	return {
+		input,
+		output,
+		total: Math.max(sum, count("total")),
+		...(window !== undefined ? { window } : {}),
+		...(windowPeak !== undefined ? { windowPeak } : {}),
+	};
 }
 
 function activeState(value: unknown): boolean {
@@ -188,7 +203,7 @@ function buildFleetStatus(
 				model: child.model,
 				effort: child.thinking,
 				startedAt: child.startedAt,
-				tokens: { input: child.inputTokens ?? 0, output: child.outputTokens ?? 0, total: child.tokens ?? 0 },
+				tokens: { input: child.inputTokens ?? 0, output: child.outputTokens ?? 0, total: child.tokens ?? 0, ...(child.window !== undefined ? { window: child.window } : {}), ...(child.windowPeak !== undefined ? { windowPeak: child.windowPeak } : {}) },
 			});
 		} else {
 			addCandidate({
@@ -197,7 +212,7 @@ function buildFleetStatus(
 				model: control.model,
 				effort: control.thinking,
 				startedAt: control.startedAt,
-				tokens: { input: control.inputTokens ?? 0, output: control.outputTokens ?? 0, total: control.tokens ?? 0 },
+				tokens: { input: control.inputTokens ?? 0, output: control.outputTokens ?? 0, total: control.tokens ?? 0, ...(control.window !== undefined ? { window: control.window } : {}), ...(control.windowPeak !== undefined ? { windowPeak: control.windowPeak } : {}) },
 			});
 		}
 	}

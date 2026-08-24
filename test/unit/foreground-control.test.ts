@@ -25,6 +25,8 @@ function progress(index: number, agent: string, tokens: number): AgentProgress {
 		thinking: "high",
 		inputTokens: tokens - 20,
 		outputTokens: 20,
+		window: 75,
+		windowPeak: 90,
 		durationMs: 10,
 	};
 }
@@ -70,6 +72,8 @@ describe("foreground child control", () => {
 		assert.equal(control.tokens, 120);
 		assert.equal(control.inputTokens, 100);
 		assert.equal(control.outputTokens, 20);
+		assert.equal(control.window, 75);
+		assert.equal(control.windowPeak, 90);
 		assert.equal(control.model, "openai/gpt-5.6-terra:high");
 		assert.equal(control.thinking, "high");
 		assert.equal(control.activeChildren?.get(1)?.tokens, undefined);
@@ -92,6 +96,8 @@ describe("foreground child control", () => {
 		assert.equal(control.model, undefined);
 		assert.equal(control.inputTokens, undefined);
 		assert.equal(control.outputTokens, undefined);
+		assert.equal(control.window, undefined);
+		assert.equal(control.windowPeak, undefined);
 		assert.equal(control.interrupt, undefined);
 		assert.equal(control.detach, undefined);
 	});

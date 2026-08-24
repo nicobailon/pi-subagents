@@ -23,20 +23,31 @@ export function parseSessionTokens(sessionDir: string): TokenUsage | null {
 		const content = fs.readFileSync(sessionFile, "utf-8");
 		let input = 0;
 		let output = 0;
+		let window: number | undefined;
+		let windowPeak: number | undefined;
 		for (const line of content.split("\n")) {
 			if (!line.trim()) continue;
 			try {
 				const entry = JSON.parse(line);
 				const usage = entry.usage ?? entry.message?.usage;
 				if (usage) {
-					input += usage.inputTokens ?? usage.input ?? 0;
-					output += usage.outputTokens ?? usage.output ?? 0;
+					const inputValue = usage.inputTokens ?? usage.input;
+					const outputValue = usage.outputTokens ?? usage.output;
+					const cacheReadValue = usage.cacheReadTokens ?? usage.cacheRead;
+					const turnInput = typeof inputValue === "number" && Number.isFinite(inputValue) ? inputValue : 0;
+					const turnOutput = typeof outputValue === "number" && Number.isFinite(outputValue) ? outputValue : 0;
+					const cacheRead = typeof cacheReadValue === "number" && Number.isFinite(cacheReadValue) ? cacheReadValue : 0;
+					const turnWindow = turnInput + cacheRead;
+					input += turnInput;
+					output += turnOutput;
+					window = turnWindow;
+					windowPeak = Math.max(windowPeak ?? 0, turnWindow);
 				}
 			} catch {
 				// Ignore malformed lines while scanning usage entries.
 			}
 		}
-		return { input, output, total: input + output };
+		return { input, output, total: input + output, ...(window !== undefined ? { window, windowPeak } : {}) };
 	} catch {
 		// Usage extraction should not fail the run.
 		return null;

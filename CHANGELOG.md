@@ -9,6 +9,7 @@
 
 ### Added
 - Expose a bounded, versioned workflow-child summary across workflow results, status, receipts, and completion replay. Thanks to [@rochecompaan](https://github.com/rochecompaan) for #1453.
+- Show live context-window usage separately from cumulative token spend in status and Fleet views. Thanks to [@nazzeDe](https://github.com/nazzeDe) for #1444.
 - Add `modelExclusions.defaultTtlMs` configuration for controlling the lifetime of model exclusions, including shorter limits for active cached entries, with launch diagnostics for excluded candidates. Thanks to [@mithyer](https://github.com/mithyer) for #1439 and #1438.
 - Add code-owned `cursor-agent` read-only and `cursor-agent-writer` workspace-writing profiles with private prompt-file handoff, bounded stream-JSON terminal proof, and opt-in mode-specific smoke evidence.
 - Add code-owned `claude-code` read-only and `claude-code-writer` file-editing profiles for an existing authenticated CLI with trusted user settings, bounded stream-JSON result proof, and opt-in mode-specific smoke evidence.

@@ -50,6 +50,7 @@ describe("below-editor subagent FleetView", () => {
 		assert.equal(formatFleetTokens(999), "↓ 999 tokens");
 		assert.equal(formatFleetTokens(13_100), "↓ 13.1k tokens");
 		assert.equal(formatFleetTokens(1_250_000), "↓ 1.3M tokens");
+		assert.equal(formatFleetTokens(484_000, 129_000), "↓ 129.0k window · 484.0k spent");
 	});
 
 	it("renders cached external jobs with an external marker and elapsed time", () => {
@@ -230,7 +231,7 @@ describe("below-editor subagent FleetView", () => {
 			mode: "single",
 			startedAt: 10,
 			updatedAt: 20,
-			totalTokens: { input: 40, output: 2, total: 42 },
+			totalTokens: { input: 40, output: 2, total: 42, window: 30, windowPeak: 35 },
 		});
 		let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
 		const ctx = {
@@ -250,7 +251,7 @@ describe("below-editor subagent FleetView", () => {
 			const lines = widgetFactory!({ requestRender() {} }, theme).render(50);
 			assert.equal(lines.length, 1);
 			assert.ok(lines[0]!.includes("1 active agent"));
-			assert.ok(lines[0]!.includes("↓ 42 tokens"));
+			assert.ok(lines[0]!.includes("↓ 30 window · 42 spent"));
 			assert.ok(visibleWidth(lines[0]!) <= 50);
 		} finally {
 			fleet.dispose();

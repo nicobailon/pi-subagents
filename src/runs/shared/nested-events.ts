@@ -199,8 +199,10 @@ function sanitizeTokenUsage(value: unknown): NestedRunSummary["totalTokens"] | u
 	const input = clampNumber(raw.input);
 	const output = clampNumber(raw.output);
 	const total = clampNumber(raw.total);
+	const window = clampNumber(raw.window);
+	const windowPeak = clampNumber(raw.windowPeak);
 	return input !== undefined && output !== undefined && total !== undefined
-		? { input, output, total }
+		? { input, output, total, ...(window !== undefined ? { window } : {}), ...(windowPeak !== undefined ? { windowPeak } : {}) }
 		: undefined;
 }
 

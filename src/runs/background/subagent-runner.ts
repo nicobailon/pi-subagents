@@ -500,6 +500,7 @@ interface ChildUsage {
 	output?: number;
 	outputTokens?: number;
 	cacheRead?: number;
+	cacheReadTokens?: number;
 	cacheWrite?: number;
 	cost?: { total?: number };
 }
@@ -3585,12 +3586,13 @@ async function runSubagent(
 			if (usage) {
 				const input = usage.input ?? usage.inputTokens ?? 0;
 				const output = usage.output ?? usage.outputTokens ?? 0;
+				const window = input + (usage.cacheRead ?? usage.cacheReadTokens ?? 0);
 				const previousInput = step.tokens?.input ?? 0;
 				const previousOutput = step.tokens?.output ?? 0;
-				step.tokens = { input: previousInput + input, output: previousOutput + output, total: previousInput + previousOutput + input + output };
+				step.tokens = { input: previousInput + input, output: previousOutput + output, total: previousInput + previousOutput + input + output, window, windowPeak: Math.max(step.tokens?.windowPeak ?? 0, window) };
 				const totalInput = statusPayload.totalTokens?.input ?? 0;
 				const totalOutput = statusPayload.totalTokens?.output ?? 0;
-				statusPayload.totalTokens = { input: totalInput + input, output: totalOutput + output, total: totalInput + totalOutput + input + output };
+				statusPayload.totalTokens = { input: totalInput + input, output: totalOutput + output, total: totalInput + totalOutput + input + output, window, windowPeak: Math.max(statusPayload.totalTokens?.windowPeak ?? 0, window) };
 				refreshUsageBudget();
 			}
 			statusPayload.turnCount = Math.max(statusPayload.turnCount ?? 0, step.turnCount);
@@ -4649,13 +4651,21 @@ async function runSubagent(
 					const sessionTokens = config.sessionDir
 						? parseSessionTokens(path.join(config.sessionDir, `parallel-${t}`))
 						: null;
-					const taskTokens = sessionTokens ?? tokenUsageFromAttempts(parallelResults[t]?.modelAttempts);
+					const fallbackTokens = tokenUsageFromAttempts(parallelResults[t]?.modelAttempts);
+					const observedTokens = requiredStatusStep(statusPayload, fi).tokens;
+					const taskTokens = sessionTokens ?? (fallbackTokens
+						? { ...fallbackTokens, ...(observedTokens?.window !== undefined ? { window: observedTokens.window } : {}), ...(observedTokens?.windowPeak !== undefined ? { windowPeak: observedTokens.windowPeak } : {}) }
+						: null);
 					if (!taskTokens) continue;
 					requiredStatusStep(statusPayload, fi).tokens = taskTokens;
 					previousCumulativeTokens = {
 						input: previousCumulativeTokens.input + taskTokens.input,
 						output: previousCumulativeTokens.output + taskTokens.output,
 						total: previousCumulativeTokens.total + taskTokens.total,
+						...(taskTokens.window !== undefined ? { window: taskTokens.window } : {}),
+						...(previousCumulativeTokens.windowPeak !== undefined || taskTokens.windowPeak !== undefined
+							? { windowPeak: Math.max(previousCumulativeTokens.windowPeak ?? 0, taskTokens.windowPeak ?? 0) }
+							: {}),
 					};
 				}
 				statusPayload.totalTokens = { ...previousCumulativeTokens };
@@ -4972,17 +4982,27 @@ async function runSubagent(
 						input: cumulativeTokens.input - previousCumulativeTokens.input,
 						output: cumulativeTokens.output - previousCumulativeTokens.output,
 						total: cumulativeTokens.total - previousCumulativeTokens.total,
+						...(cumulativeTokens.window !== undefined ? { window: cumulativeTokens.window } : {}),
+						...(cumulativeTokens.windowPeak !== undefined ? { windowPeak: cumulativeTokens.windowPeak } : {}),
 					}
 				: null;
 			if (cumulativeTokens) {
 				previousCumulativeTokens = cumulativeTokens;
 			} else {
-				stepTokens = tokenUsageFromAttempts(singleResult.modelAttempts);
+				const fallbackTokens = tokenUsageFromAttempts(singleResult.modelAttempts);
+				const observedTokens = requiredStatusStep(statusPayload, flatIndex).tokens;
+				stepTokens = fallbackTokens
+					? { ...fallbackTokens, ...(observedTokens?.window !== undefined ? { window: observedTokens.window } : {}), ...(observedTokens?.windowPeak !== undefined ? { windowPeak: observedTokens.windowPeak } : {}) }
+					: null;
 				if (stepTokens) {
 					previousCumulativeTokens = {
 						input: previousCumulativeTokens.input + stepTokens.input,
 						output: previousCumulativeTokens.output + stepTokens.output,
 						total: previousCumulativeTokens.total + stepTokens.total,
+						...(stepTokens.window !== undefined ? { window: stepTokens.window } : {}),
+						...(previousCumulativeTokens.windowPeak !== undefined || stepTokens.windowPeak !== undefined
+							? { windowPeak: Math.max(previousCumulativeTokens.windowPeak ?? 0, stepTokens.windowPeak ?? 0) }
+							: {}),
 					};
 				}
 			}

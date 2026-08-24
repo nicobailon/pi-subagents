@@ -5,7 +5,7 @@ import { getMarkdownTheme, type ExtensionContext } from "@earendil-works/pi-codi
 import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { snapshotExternalRuns, type ExternalRun } from "../api/external-runs.ts";
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
-import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../shared/formatters.ts";
+import { formatDuration, formatModelThinking, formatTokens, formatTokenUsage, shortenPath } from "../shared/formatters.ts";
 import { DIRS, type AsyncJobState, type AsyncJobStep, type Details, type FleetKeybindingAction, type FleetKeybindingsConfig, type ForegroundChildControl, type ForegroundResumeChild, type ForegroundResumeRun, type ForegroundRunControl, type SubagentState } from "../shared/types.ts";
 import { decodeUtf8Tail } from "../shared/utf8.ts";
 import { readStatus } from "../shared/utils.ts";
@@ -403,7 +403,9 @@ function foregroundActiveDetail(item: Extract<FleetItem, { kind: "foreground-act
 		live.currentTool ? `Current tool: ${live.currentTool}${live.currentPath ? ` · ${shortenPath(live.currentPath)}` : ""}` : undefined,
 		live.turnCount !== undefined ? `Turns: ${live.turnCount}` : undefined,
 		live.toolCount !== undefined ? `Tools: ${live.toolCount}` : undefined,
-		live.tokens !== undefined ? `Tokens: ${formatTokens(live.tokens)}` : undefined,
+		live.tokens !== undefined
+			? `Tokens: ${formatTokenUsage({ input: live.inputTokens ?? 0, output: live.outputTokens ?? 0, total: live.tokens, ...(live.window !== undefined ? { window: live.window } : {}), ...(live.windowPeak !== undefined ? { windowPeak: live.windowPeak } : {}) }, "tokens")}`
+			: undefined,
 		promptAuditCount > 0 ? `Prompt audit: ${promptAuditCount} live · 3 views · p opens` : undefined,
 		"",
 		"Transcript",
@@ -533,7 +535,7 @@ function workflowProgressLines(steps: AsyncJobStep[] | undefined): string[] {
 		}
 		const activity = workflowStepActivity(row.step);
 		const context = contextModeLabel(row.step.context);
-		const details = [row.step.status, activity, context, row.step.tokens?.total !== undefined ? formatTokens(row.step.tokens.total) : undefined].filter(Boolean).join(" · ");
+		const details = [row.step.status, activity, context, row.step.tokens ? formatTokenUsage(row.step.tokens) : undefined].filter(Boolean).join(" · ");
 		lines.push(`  ${row.index + 1}. ${workflowStepLabel(row.step, row.index)}${details ? ` — ${details}` : ""}`);
 	}
 	return lines;
@@ -692,23 +694,27 @@ function itemSource(item: FleetItem): string {
 function itemStats(item: FleetItem): string[] {
 	let model: string | undefined;
 	let tokens: number | undefined;
+	let tokenUsage: AsyncJobStep["tokens"];
 	let tools: number | undefined;
 	let durationMs: number | undefined;
 	if (item.kind === "foreground-active") {
 		const live = item.activeChild ?? item.control;
 		model = formatModelThinking(live.model, live.thinking) || undefined;
 		tokens = live.tokens;
+		if (tokens !== undefined) tokenUsage = { input: live.inputTokens ?? 0, output: live.outputTokens ?? 0, total: tokens, ...(live.window !== undefined ? { window: live.window } : {}), ...(live.windowPeak !== undefined ? { windowPeak: live.windowPeak } : {}) };
 		tools = live.toolCount;
 		durationMs = Math.max(0, Date.now() - live.startedAt);
 	} else if (item.kind === "foreground-recent") {
 		model = formatModelThinking(item.child.model, item.child.thinking) || undefined;
 		tokens = item.child.tokens;
+		if (tokens !== undefined) tokenUsage = { input: 0, output: 0, total: tokens, ...(item.child.window !== undefined ? { window: item.child.window } : {}), ...(item.child.windowPeak !== undefined ? { windowPeak: item.child.windowPeak } : {}) };
 		tools = item.child.toolCount;
 	} else if (item.kind === "external") {
 		durationMs = Math.max(0, externalElapsedEnd(item.run) - item.run.startedAt);
 	} else {
 		model = formatModelThinking(item.step?.model, item.step?.thinking) || undefined;
-		tokens = item.step?.tokens?.total ?? (item.index === undefined ? item.run.totalTokens?.total : undefined);
+		tokenUsage = item.step?.tokens ?? (item.index === undefined ? item.run.totalTokens : undefined);
+		tokens = tokenUsage?.total;
 		tools = item.step?.toolCount ?? (item.index === undefined ? item.run.toolCount : undefined);
 		const terminalRun = item.state !== "queued" && item.state !== "running" && item.state !== "pending";
 		const endTime = item.run.endedAt ?? (terminalRun ? item.run.lastUpdate : undefined) ?? Date.now();
@@ -716,7 +722,7 @@ function itemStats(item: FleetItem): string[] {
 	}
 	return [
 		model,
-		tokens !== undefined ? `${formatTokens(tokens)} tok` : undefined,
+		tokenUsage ? formatTokenUsage(tokenUsage) : tokens !== undefined ? `${formatTokens(tokens)} tok` : undefined,
 		tools !== undefined ? `${tools} tool${tools === 1 ? "" : "s"}` : undefined,
 		durationMs !== undefined ? formatDuration(durationMs) : undefined,
 	].filter((value): value is string => Boolean(value));
