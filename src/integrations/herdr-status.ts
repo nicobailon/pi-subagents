@@ -296,12 +296,11 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 	const replaceRuns = (nextRuns: Iterable<HerdrStatusRun>): void => {
 		const nextAttention = new Map<string, string>();
 		const activeIds = new Set<string>();
-		const previousRuns = new Map(runs);
 		runs.clear();
 		for (const run of nextRuns) {
 			if (!run || typeof run.id !== "string" || !run.id) continue;
 			activeIds.add(run.id);
-			const taskLabel = boundedTaskLabel(run.taskLabel) ?? previousRuns.get(run.id)?.taskLabel;
+			const taskLabel = boundedTaskLabel(run.taskLabel);
 			const { taskLabel: _rawTaskLabel, ...sanitizedRun } = run;
 			runs.set(run.id, { ...sanitizedRun, ...(taskLabel ? { taskLabel } : {}) });
 			if (!run.needsAttention) {

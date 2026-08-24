@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
 	registerHerdrStatusBridge,
 	type HerdrStatusBridgeEvents,
+	type HerdrStatusRun,
 } from "../../src/integrations/herdr-status.ts";
 import { projectActiveHerdrRuns } from "../../src/extension/index.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
@@ -492,6 +493,34 @@ describe("Herdr status bridge", () => {
 		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (worker)"));
 		assert.ok(commands[0]?.includes("title-suffix=⏳worker"));
 		assert.doesNotMatch(commands.flat().join("\n"), /\u001b\[31m/);
+
+		bridge.dispose();
+	});
+
+	it("clears a completed step label when the authoritative active step is unlabeled", async () => {
+		const events = new FakeEvents();
+		const commands: string[][] = [];
+		const intervals = new FakeIntervals();
+		let authoritativeRuns: HerdrStatusRun[] = [{ id: "run-1", agent: "worker", taskLabel: "Build auth" }];
+		const bridge = registerHerdrStatusBridge({
+			events,
+			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+			getRuns: () => authoritativeRuns,
+			runHerdr: (args) => commands.push([...args]),
+			refreshMs: 45_000,
+			timers: intervals.timers,
+		});
+		bridge.sessionStarted({ hasUI: true, runs: authoritativeRuns });
+		await bridge.flush();
+
+		authoritativeRuns = [{ id: "run-1", agent: "worker" }];
+		intervals.fireAll();
+		await bridge.flush();
+
+		assert.ok(commands[0]?.includes("title-suffix=⏳Build auth"));
+		assert.ok(commands[1]?.includes("summary=⏳ 1 subagent (worker)"));
+		assert.ok(commands[1]?.includes("title-suffix=⏳worker"));
+		assert.doesNotMatch(commands[1]?.join("\n") ?? "", /Build auth/);
 
 		bridge.dispose();
 	});
