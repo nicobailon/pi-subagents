@@ -884,8 +884,16 @@ function resolveResumeTarget(params: SubagentParamsLike, state: SubagentState, o
 		foregroundError = error;
 	}
 	try {
-		const asyncParams = options.exactOnly && requested && !params.dir
-			? { ...params, dir: path.join(DIRS.async, requested) }
+		// exactOnly pins the async probe to one directory so a short id cannot prefix-match a
+		// different run. A directory that does not exist pins nothing: injecting it turns a plain
+		// "Async run not found." into "Status file not found for async run 'X'", which reads as an
+		// async run whose state was lost and, through isExactResumeError, outranks a foreground run
+		// that resolved perfectly well. A run that never ran async has no such directory.
+		const exactAsyncDir = options.exactOnly && requested && !params.dir
+			? path.join(DIRS.async, requested)
+			: undefined;
+		const asyncParams = exactAsyncDir !== undefined && fs.existsSync(exactAsyncDir)
+			? { ...params, dir: exactAsyncDir }
 			: params;
 		asyncTarget = {
 			source: "async",
@@ -3638,6 +3646,18 @@ export function bindMissionWorkflowChildAsyncLaunch(
 	return { ...params, workflowChildAsyncId: id };
 }
 
+/**
+ * A workflow child that ran inline never had an async run of its own, so "Async run not found."
+ * is about a run that was never supposed to exist. Carried verbatim into the receipt it reads as
+ * lost state; what the receipt has to say is that this child retained nothing to resume from.
+ * Every other failure — including a real async run whose status file is missing — is reported as
+ * written, because those name something that genuinely went wrong.
+ */
+function workflowChildResumeFailureReason(error: unknown): string {
+	if (isAsyncRunNotFound(error)) return "child ran inline in the workflow and retained no separately resumable run";
+	return error instanceof Error ? error.message : String(error);
+}
+
 function workflowChildResult(
 	key: string,
 	result: AgentToolResult<Details>,
@@ -3672,7 +3692,7 @@ function workflowChildResult(
 				? { state: "resumable" }
 				: { state: "not-resumable", reason: "child is still running" };
 		} catch (error) {
-			resumability = { state: "not-resumable", reason: error instanceof Error ? error.message : String(error) };
+			resumability = { state: "not-resumable", reason: workflowChildResumeFailureReason(error) };
 		}
 	}
 	const requestedContext = childParams.context === "fresh" || childParams.context === "fork" ? childParams.context : undefined;
