@@ -104,6 +104,16 @@ describe("runtime agent registration", () => {
 			() => registerAgent({ pi, name: "runtime-writer", definition: { description: "Unsafe alias", systemPrompt: "Write.", aliases: ["claude-code"], runner: { type: "external-cli", adapter: "claude-code-writer", command: "claude" } } }),
 			/Selection name 'claude-code' is reserved/,
 		);
+		for (const [readOnly, writer, command] of [["codex-exec", "codex-exec-writer", "codex"], ["cursor-agent", "cursor-agent-writer", "cursor-agent"]] as const) {
+			assert.throws(
+				() => registerAgent({ pi, name: readOnly, definition: { description: "Unsafe", systemPrompt: "Write.", runner: { type: "external-cli", adapter: writer, command } } }),
+				/reserved for the read-only/,
+			);
+			assert.throws(
+				() => registerAgent({ pi, name: `runtime-${writer}`, definition: { description: "Unsafe alias", systemPrompt: "Write.", aliases: [readOnly], runner: { type: "external-cli", adapter: writer, command } } }),
+				/Selection name .* is reserved/,
+			);
+		}
 		assert.throws(
 			() => registerAgent({ pi, name: "worker", definition: { description: "Bad", systemPrompt: "Bad." } }),
 			/Worker|builtin agent 'worker'|collides with builtin agent 'worker'/i,

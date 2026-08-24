@@ -53,6 +53,34 @@ describe("workflow receipts", () => {
 		assert.equal(readWorkflowReceipt(asyncRoot, "workflow-old").entries.advisor?.externalAdapter, undefined);
 	});
 
+	it("reads legacy Grok receipt metadata after the active profile is removed", () => {
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-old-grok");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		const reason = "The legacy prompt-file adapter has no durable external session identity.";
+		fs.writeFileSync(path.join(asyncDir, "workflow-receipt.json"), JSON.stringify({
+			version: 1,
+			workflowRunId: "workflow-old-grok",
+			state: "complete",
+			createdAt: 10,
+			entries: { grok: {
+				key: "grok",
+				resumability: { state: "not-resumable", reason },
+				continuation: { runIds: [] },
+				externalAdapter: {
+					adapter: { id: "grok-build", version: 1, executionMode: "one-shot-prompt-file" },
+					capabilities: { stop: true, steer: false, resume: false, structuredOutput: false, toolEvents: false, supervisor: "unsupported", forkContext: false, extensionBindings: false },
+					safety: { access: "read-only", authentication: "xai-api-key-required", permissionMode: "plan", tools: "read_file,grep,list_dir", deniedTools: "run_terminal_cmd,search_replace,Agent,Bash,Edit,Write,MCPTool", sandbox: "read-only", webSearch: false, subagents: false, config: "temporary-home", updates: "disabled", sessionPersistence: false },
+					handoff: { mode: "fresh" },
+					supervisor: { mode: "unsupported", reason: "Legacy adapter has no supervisor transport." },
+					nonResumableReason: reason,
+				},
+			} },
+		}));
+
+		assert.equal(readWorkflowReceipt(asyncRoot, "workflow-old-grok").entries.grok?.externalAdapter?.adapter.id, "grok-build");
+	});
+
 	it("builds one metadata-only entry per workflow child", () => {
 		const children = Array.from({ length: 1_000 }, (_, index) => child(`child-${index}`));
 		const receipt = buildWorkflowReceipt({ workflowRunId: "workflow-1", state: "complete", children, createdAt: 10 });

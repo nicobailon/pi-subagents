@@ -379,17 +379,17 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 			if (runner.type === "pi" && Object.keys(runner).every((key) => key === "type")) target.runner = { type: "pi" };
 			else if (runner.type === "external-cli" && typeof runner.command === "string" && runner.command.trim()
 				&& (runner.args === undefined || (Array.isArray(runner.args) && runner.args.every((arg) => typeof arg === "string")))
-				&& (runner.adapter === undefined || runner.adapter === "codex-exec" || runner.adapter === "claude-code" || runner.adapter === "claude-code-writer" || runner.adapter === "grok-build")
+				&& (runner.adapter === undefined || runner.adapter === "codex-exec" || runner.adapter === "codex-exec-writer" || runner.adapter === "claude-code" || runner.adapter === "claude-code-writer" || runner.adapter === "cursor-agent" || runner.adapter === "cursor-agent-writer")
 				&& (runner.adapter === undefined || runner.args === undefined || runner.args.length === 0)
 				&& (runner.promptDelivery === undefined || runner.promptDelivery === "stdin")
 				&& Object.keys(runner).every((key) => ["type", "adapter", "command", "args", "promptDelivery"].includes(key))) {
 				const runnerArgs = Array.isArray(runner.args) ? runner.args.filter((arg): arg is string => typeof arg === "string") : undefined;
-				target.runner = { type: "external-cli", ...(runner.adapter === "codex-exec" || runner.adapter === "claude-code" || runner.adapter === "claude-code-writer" || runner.adapter === "grok-build" ? { adapter: runner.adapter } : {}), command: runner.command.trim(), ...(runnerArgs?.length ? { args: runnerArgs } : {}), ...(runner.promptDelivery ? { promptDelivery: "stdin" } : {}) };
+				target.runner = { type: "external-cli", ...(runner.adapter === "codex-exec" || runner.adapter === "codex-exec-writer" || runner.adapter === "claude-code" || runner.adapter === "claude-code-writer" || runner.adapter === "cursor-agent" || runner.adapter === "cursor-agent-writer" ? { adapter: runner.adapter } : {}), command: runner.command.trim(), ...(runnerArgs?.length ? { args: runnerArgs } : {}), ...(runner.promptDelivery ? { promptDelivery: "stdin" } : {}) };
 			} else if (runner.type === "external-job" && typeof runner.provider === "string" && runner.provider.trim() === runner.provider && runner.provider
 				&& (runner.options === undefined || (runner.options && typeof runner.options === "object" && !Array.isArray(runner.options) && isJsonSerializable(runner.options)))
 				&& Object.keys(runner).every((key) => ["type", "provider", "options"].includes(key))) {
 				target.runner = { type: "external-job", provider: runner.provider, ...(runner.options ? { options: runner.options as Record<string, unknown> } : {}) };
-			} else return "config.runner must be { type: 'pi' }, { type: 'external-cli', adapter?: 'codex-exec' | 'claude-code' | 'claude-code-writer' | 'grok-build', command: string, args?: string[], promptDelivery?: 'stdin' }, or { type: 'external-job', provider: string, options?: object }.";
+			} else return "config.runner must be { type: 'pi' }, { type: 'external-cli', adapter?: 'codex-exec' | 'codex-exec-writer' | 'claude-code' | 'claude-code-writer' | 'cursor-agent' | 'cursor-agent-writer', command: string, args?: string[], promptDelivery?: 'stdin' }, or { type: 'external-job', provider: string, options?: object }.";
 		} else return "config.runner must be an object, false, or empty string when provided.";
 	}
 	if (hasKey(cfg, "model")) {

@@ -88,7 +88,7 @@ function parseExternalCliReceiptMetadata(value: unknown, key: string, source: st
 	const adapterRecord = adapter as Record<string, unknown>;
 	const unknownAdapter = Object.keys(adapterRecord).filter((field) => !["id", "version", "executionMode"].includes(field));
 	if (unknownAdapter.length > 0) throw new Error(`${label}.adapter has unsupported fields: ${unknownAdapter.join(", ")}.`);
-	if ((adapterRecord.id !== "external-cli" && adapterRecord.id !== "codex-exec" && adapterRecord.id !== "claude-code" && adapterRecord.id !== "claude-code-writer" && adapterRecord.id !== "grok-build") || adapterRecord.version !== 1 || adapterRecord.executionMode !== (adapterRecord.id === "grok-build" ? "one-shot-prompt-file" : "one-shot-stdin")) throw new Error(`${label}.adapter is invalid.`);
+	if ((adapterRecord.id !== "external-cli" && adapterRecord.id !== "codex-exec" && adapterRecord.id !== "codex-exec-writer" && adapterRecord.id !== "claude-code" && adapterRecord.id !== "claude-code-writer" && adapterRecord.id !== "cursor-agent" && adapterRecord.id !== "cursor-agent-writer" && adapterRecord.id !== "grok-build") || adapterRecord.version !== 1 || adapterRecord.executionMode !== (adapterRecord.id === "cursor-agent" || adapterRecord.id === "cursor-agent-writer" || adapterRecord.id === "grok-build" ? "one-shot-prompt-file" : "one-shot-stdin")) throw new Error(`${label}.adapter is invalid.`);
 	const capabilities = metadata.capabilities;
 	if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) throw new Error(`${label}.capabilities must be an object.`);
 	const capabilityRecord = capabilities as Record<string, unknown>;
@@ -104,6 +104,12 @@ function parseExternalCliReceiptMetadata(value: unknown, key: string, source: st
 		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["sandbox", "approvalPolicy", "ephemeral"].includes(field));
 		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
 		if (safetyRecord.sandbox !== "read-only" || safetyRecord.approvalPolicy !== "never" || safetyRecord.ephemeral !== true) throw new Error(`${label}.safety is invalid.`);
+	} else if (adapterRecord.id === "codex-exec-writer") {
+		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
+		const safetyRecord = safety as Record<string, unknown>;
+		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["access", "sandbox", "approvalPolicy", "ephemeral"].includes(field));
+		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
+		if (safetyRecord.access !== "workspace-write" || safetyRecord.sandbox !== "workspace-write" || safetyRecord.approvalPolicy !== "never" || safetyRecord.ephemeral !== true) throw new Error(`${label}.safety is invalid.`);
 	} else if (adapterRecord.id === "claude-code") {
 		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
 		const safetyRecord = safety as Record<string, unknown>;
@@ -121,6 +127,13 @@ function parseExternalCliReceiptMetadata(value: unknown, key: string, source: st
 		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["access", "authentication", "permissionMode", "tools", "mcp", "settingSources", "userSettingsTrust", "sessionPersistence"].includes(field));
 		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
 		if (safetyRecord.access !== "workspace-write" || safetyRecord.authentication !== "existing-cli-required" || safetyRecord.permissionMode !== "acceptEdits" || safetyRecord.tools !== "Read,Write,Edit,Glob,Grep" || safetyRecord.mcp !== "empty-strict" || safetyRecord.settingSources !== "user" || safetyRecord.userSettingsTrust !== "required" || safetyRecord.sessionPersistence !== false) throw new Error(`${label}.safety is invalid.`);
+	} else if (adapterRecord.id === "cursor-agent" || adapterRecord.id === "cursor-agent-writer") {
+		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
+		const safetyRecord = safety as Record<string, unknown>;
+		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["access", "authentication", "mode", "sandbox", "workspaceTrust", "sessionReuse"].includes(field));
+		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
+		const writer = adapterRecord.id === "cursor-agent-writer";
+		if (safetyRecord.access !== (writer ? "workspace-write" : "read-only") || safetyRecord.authentication !== "cursor-api-key-or-existing-login" || safetyRecord.mode !== (writer ? "print" : "ask") || safetyRecord.sandbox !== "enabled" || safetyRecord.workspaceTrust !== "existing-required" || safetyRecord.sessionReuse !== false) throw new Error(`${label}.safety is invalid.`);
 	} else if (adapterRecord.id === "grok-build") {
 		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
 		const safetyRecord = safety as Record<string, unknown>;

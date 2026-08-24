@@ -3,9 +3,9 @@
 ## [Unreleased]
 
 ### Added
-- Add the built-in `grok-build` read-only prompt-file profile with isolated temporary state, update suppression, inspect evidence, bounded streaming-JSON terminal proof, and opt-in write-canary smoke evidence.
+- Add code-owned `cursor-agent` read-only and `cursor-agent-writer` workspace-writing profiles with private prompt-file handoff, bounded stream-JSON terminal proof, and opt-in mode-specific smoke evidence.
 - Add code-owned `claude-code` read-only and `claude-code-writer` file-editing profiles for an existing authenticated CLI with trusted user settings, bounded stream-JSON result proof, and opt-in mode-specific smoke evidence.
-- Add the built-in `codex-exec` profile with code-owned read-only argv, bounded JSONL terminal proof, and a final-message artifact.
+- Add code-owned `codex-exec` read-only and `codex-exec-writer` workspace-writing profiles with bounded JSONL terminal proof, final-message artifacts, and opt-in mode-specific smoke evidence.
 - External CLI runs now publish code-owned capability limits and compact workflow receipt metadata for adapter identity, artifacts, handoff mode, supervisor support, and resumability.
 - External one-shot runners now support bounded parser hooks and logs, environment allowlists, cached launch preflight, coalesced parser progress, and process-tree cleanup.
 

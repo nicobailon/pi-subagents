@@ -57,12 +57,21 @@ The Pi async run remains the source of truth for status, artifacts, wake/wait, m
 
 ### Advisory runner data boundary
 
-The built-in `codex-exec` profile is the supported Codex one-shot mode. It requires an installed and authenticated Codex CLI. The adapter owns its argv and runs `codex exec --json` with the read-only sandbox, approval policy `never`, ephemeral sessions, ignored exec rules, and a final-message artifact. User profiles cannot add argv to this adapter or select a wider sandbox.
+The built-in `codex-exec` and `codex-exec-writer` profiles are the supported Codex one-shot modes. Both require an installed and authenticated Codex CLI. The adapters own `codex exec --json` argv with ignored user config and rules, ephemeral sessions, approval policy `never`, and a final-message artifact.
+
+| Profile | Access | Sandbox |
+|---|---|---|
+| `codex-exec` | Read-only analysis | `read-only` |
+| `codex-exec-writer` | Explicit workspace edits | `workspace-write` |
+
+Neither adapter uses full access, approval or sandbox bypasses, automatic approval review, or additional writable roots. User profiles cannot add argv. The `codex-exec` selection identity is reserved for the read-only adapter.
 
 Run it asynchronously:
 
 ```text
 Use codex-exec to analyze this change without editing files.
+
+Use codex-exec-writer to make the requested workspace changes.
 ```
 
 The adapter validates `codex --version` and `codex exec --help` only when a run launches. Discovery, list, status, and native Pi launches do not probe Codex. JSONL, stderr, and stdout are untrusted. A run succeeds only after bounded valid JSONL contains one `turn.completed` event and the bounded final-message artifact is present.
@@ -74,9 +83,14 @@ PI_SUBAGENTS_CODEX_EXEC_SMOKE=1 \
 PI_SUBAGENTS_CODEX_EXEC_SMOKE_REPORT=/tmp/pi-subagents-codex-exec-smoke.json \
 node --experimental-strip-types --import ./test/support/register-loader.mjs \
   --test test/integration/codex-exec-smoke.test.ts
+
+PI_SUBAGENTS_CODEX_EXEC_WRITER_SMOKE=1 \
+PI_SUBAGENTS_CODEX_EXEC_WRITER_SMOKE_REPORT=/tmp/pi-subagents-codex-exec-writer-smoke.json \
+node --experimental-strip-types --import ./test/support/register-loader.mjs \
+  --test test/integration/codex-exec-writer-smoke.test.ts
 ```
 
-The smoke asks Codex to attempt a write canary under the packaged read-only policy. Review the JSON report and confirm `writeCanaryExists` is `false`. The report contains paths and compact process metadata, but no raw protocol output or credentials.
+The read-only smoke must report `writeCanaryExists: false`. The writer smoke must report `writeCanaryMatches: true`. Both reports include startup duration and terminal proof without raw protocol output, prompts, or credentials.
 
 The built-in `claude-code` and `claude-code-writer` profiles are the supported Claude Code one-shot modes. Both require an installed Claude Code CLI that is already authenticated through its normal local login. Claude Code 2.1.150 needs the user setting source for normal OAuth/keychain authentication, so both adapters load user settings but exclude project and local settings. User-level Claude Code settings and hooks are therefore an operator-trusted prerequisite. Review or disable unsafe user hooks before using either profile.
 
@@ -113,23 +127,34 @@ node --experimental-strip-types --import ./test/support/register-loader.mjs \
 
 Both smoke reports record `authentication: "existing-cli-required"`, `settingSources: "user"`, and `userSettingsTrust: "required"` without recording credential details. For read-only, confirm `terminalState` is `completed` and `writeCanaryExists` is `false`. For writer, confirm `terminalState` is `completed` and `writeCanaryMatches` is `true`. `durationMs` records cold process time. If authentication is missing or revoked, repair the normal local Claude Code login and rerun the smoke. Reports do not contain raw protocol output or credentials.
 
-The built-in `grok-build` profile is the supported Grok Build one-shot baseline. It requires an installed Grok Build CLI and `XAI_API_KEY`. The adapter sends the handoff through a private prompt file because Grok headless mode does not read the prompt from stdin. It uses the same private temporary directory for `HOME`, `USERPROFILE`, and `GROK_HOME`, disables Claude, Cursor, and Codex compatibility scanners, and removes that home and the prompt file at process completion. Grok sessions are therefore fresh and are not retained or resumable through Pi.
+The built-in `cursor-agent` and `cursor-agent-writer` profiles are the supported Cursor CLI one-shot modes. Both require an installed Cursor CLI and either `CURSOR_API_KEY` or an existing local login.
 
-The adapter owns `grok --prompt-file` argv with native streaming JSON, permission mode `plan`, only `read_file,grep,list_dir`, explicit write/terminal/MCP/subagent denials, the read-only sandbox, disabled web search, disabled subagents, and a fixed 16-turn limit. It also sets `GROK_DISABLE_AUTOUPDATER=1`, `GROK_MEMORY=0`, `GROK_SUBAGENTS=0`, and `GROK_WRITE_FILE=0`. User profiles cannot add argv or select another adapter under the reserved `grok-build` name.
+| Profile | Access | Cursor mode |
+|---|---|---|
+| `cursor-agent` | Read-only analysis | `ask` |
+| `cursor-agent-writer` | Explicit workspace edits | non-interactive print |
 
-Launch preflight validates `grok --version` and `grok --help`, then runs `grok inspect --json` in the target directory with the isolated Grok home. Version and help evidence is cached. Inspect evidence runs for each launch and must show no hooks, plugins, MCP servers, LSP servers, or enabled external compatibility cells. Its content is not copied into status or receipts. Discovery, list, status, and native Pi launches do not execute Grok or probe authentication. A run succeeds only when bounded valid JSONL ends with `end.stopReason === "end_turn"` after non-empty `text.data` output. Error events, other stop reasons, malformed JSON, and EOF before `end` fail closed.
+Both adapters use stream JSON, the enabled sandbox, and the primary workspace. They write the full handoff to a private `0600` file in a private temporary directory. Process argv contains only a short instruction with that path. The temporary directory is added as a workspace root only when it is outside the primary workspace. The prompt file and directory are removed after completion, failure, or stop.
 
-Maintainers can collect authenticated terminal, read-only canary, inspect, and cold-start evidence:
+The adapters do not pass force, yolo, auto-review, MCP approval, plugin, session resume, continue, worktree, or workspace trust flags. User profiles cannot add argv or workspace roots. The `cursor-agent` selection identity is reserved for the read-only adapter.
+
+Launch preflight validates `cursor-agent --version` and `cursor-agent --help` only when a run starts. Discovery, list, status, and native Pi launches do not execute Cursor or probe authentication. A run succeeds only when bounded valid JSONL ends with one successful `result` event that has non-empty final text. Error events, failed results, malformed JSON, output after the terminal event, and EOF before a result fail closed.
+
+Maintainers can run separate read-only and writer canaries:
 
 ```bash
-PI_SUBAGENTS_GROK_BUILD_SMOKE=1 \
-PI_SUBAGENTS_GROK_BUILD_SMOKE_REPORT=/tmp/pi-subagents-grok-build-smoke.json \
-XAI_API_KEY=... \
+PI_SUBAGENTS_CURSOR_AGENT_SMOKE=1 \
+PI_SUBAGENTS_CURSOR_AGENT_SMOKE_REPORT=/tmp/pi-subagents-cursor-agent-smoke.json \
 node --experimental-strip-types --import ./test/support/register-loader.mjs \
-  --test test/integration/grok-build-smoke.test.ts
+  --test test/integration/cursor-agent-smoke.test.ts
+
+PI_SUBAGENTS_CURSOR_AGENT_WRITER_SMOKE=1 \
+PI_SUBAGENTS_CURSOR_AGENT_WRITER_SMOKE_REPORT=/tmp/pi-subagents-cursor-agent-writer-smoke.json \
+node --experimental-strip-types --import ./test/support/register-loader.mjs \
+  --test test/integration/cursor-agent-writer-smoke.test.ts
 ```
 
-Confirm `terminalState` is `completed`, `writeCanaryExists` is `false`, and `inspectValidated` is `true`. `durationMs` records cold process time. The report does not contain the API key, prompt, raw protocol output, or inspected configuration. Process stop uses the shared process-tree termination and reaping path. `grok agent stdio` ACP is not a supported profile yet because its installed permission, terminal, cancellation, and session contract has not passed a current protocol smoke.
+The read-only smoke must report `writeCanaryExists: false`. The writer smoke must report `writeCanaryMatches: true`. Both reports include startup duration and terminal proof without raw protocol output, prompts, or credentials.
 
 Native `oracle` runs inside Pi and can use its configured read tools. The Claude profiles send the assembled prompt to the local Claude Code CLI through stdin. An external-job agent sends the assembled prompt to its registered provider. Provider options and a prompt digest are persisted in Pi run state. The prompt text is delivered through the local host bridge to the provider and is not stored in the public result payload. Do not place secrets in advisory prompts unless the target provider is approved to receive them.
 

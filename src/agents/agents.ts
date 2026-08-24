@@ -1683,7 +1683,7 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 	if (runner.args !== undefined && (!Array.isArray(runner.args) || runner.args.some((arg) => typeof arg !== "string"))) {
 		throw new Error(`Agent '${agentName}' external-cli runner args must be an array of strings.`);
 	}
-	if (runner.adapter !== undefined && runner.adapter !== "codex-exec" && runner.adapter !== "claude-code" && runner.adapter !== "claude-code-writer" && runner.adapter !== "grok-build") throw new Error(`Agent '${agentName}' external-cli runner adapter must be 'codex-exec', 'claude-code', 'claude-code-writer', or 'grok-build'.`);
+	if (runner.adapter !== undefined && runner.adapter !== "codex-exec" && runner.adapter !== "codex-exec-writer" && runner.adapter !== "claude-code" && runner.adapter !== "claude-code-writer" && runner.adapter !== "cursor-agent" && runner.adapter !== "cursor-agent-writer") throw new Error(`Agent '${agentName}' external-cli runner adapter must be 'codex-exec', 'codex-exec-writer', 'claude-code', 'claude-code-writer', 'cursor-agent', or 'cursor-agent-writer'.`);
 	if (runner.adapter !== undefined && Array.isArray(runner.args) && runner.args.length > 0) throw new Error(`Agent '${agentName}' ${runner.adapter} adapter owns its argv; runner args are not supported.`);
 	if (runner.promptDelivery !== undefined && runner.promptDelivery !== "stdin") {
 		throw new Error(`Agent '${agentName}' external-cli runner promptDelivery must be 'stdin'.`);
@@ -1695,7 +1695,7 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 	const runnerArgs = Array.isArray(runner.args) ? runner.args.filter((arg): arg is string => typeof arg === "string") : undefined;
 	return {
 		type: "external-cli",
-		...(runner.adapter === "codex-exec" || runner.adapter === "claude-code" || runner.adapter === "claude-code-writer" || runner.adapter === "grok-build" ? { adapter: runner.adapter } : {}),
+		...(runner.adapter === "codex-exec" || runner.adapter === "codex-exec-writer" || runner.adapter === "claude-code" || runner.adapter === "claude-code-writer" || runner.adapter === "cursor-agent" || runner.adapter === "cursor-agent-writer" ? { adapter: runner.adapter } : {}),
 		command: runner.command.trim(),
 		...(runnerArgs?.length ? { args: runnerArgs } : {}),
 		...(runner.promptDelivery ? { promptDelivery: "stdin" as const } : {}),
