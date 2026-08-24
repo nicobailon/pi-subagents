@@ -81,7 +81,7 @@ import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolved
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
-import { formatProcessSignalError, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
+import { formatMidToolExitError, formatProcessSignalError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
@@ -624,6 +624,47 @@ function runPiStreaming(
 		let currentToolArgs: string | undefined;
 		let currentPath: string | undefined;
 		let toolCount = 0;
+		type ActiveToolCall = { key: string; tool: string; args?: string; path?: string };
+		let activeToolSequence = 0;
+		const activeToolCalls = new Map<string, ActiveToolCall>();
+		const activeToolKeysByName = new Map<string, string[]>();
+		const refreshCurrentTool = (): void => {
+			const active = [...activeToolCalls.values()].at(-1);
+			currentTool = active?.tool;
+			currentToolArgs = active?.args;
+			currentPath = active?.path;
+		};
+		const recordActiveToolCall = (event: { toolCallId?: unknown; toolName: string; args?: Record<string, unknown> }): void => {
+			const key = toolTimeoutCallKey(event, ++activeToolSequence);
+			const active = omitUndefinedProperties({
+				key,
+				tool: event.toolName,
+				args: extractToolArgsPreview(event.args ?? {}),
+				path: resolveCurrentPath(event.toolName, event.args),
+			});
+			activeToolCalls.set(key, active);
+			const keys = activeToolKeysByName.get(active.tool) ?? [];
+			keys.push(key);
+			activeToolKeysByName.set(active.tool, keys);
+			refreshCurrentTool();
+		};
+		const removeActiveToolCall = (event: { toolCallId?: unknown; toolName?: unknown }): void => {
+			const key = typeof event.toolCallId === "string" && event.toolCallId.length > 0
+				? `id:${event.toolCallId}`
+				: typeof event.toolName === "string"
+					? activeToolKeysByName.get(event.toolName)?.[0]
+					: activeToolCalls.size === 1
+						? [...activeToolCalls.keys()][0]
+						: undefined;
+			if (!key) return;
+			const active = activeToolCalls.get(key);
+			if (!active) return;
+			activeToolCalls.delete(key);
+			const keys = activeToolKeysByName.get(active.tool)?.filter((candidate) => candidate !== key) ?? [];
+			if (keys.length > 0) activeToolKeysByName.set(active.tool, keys);
+			else activeToolKeysByName.delete(active.tool);
+			refreshCurrentTool();
+		};
 		const childWatchdogConfig = decodeChildWatchdogConfig(env?.[CHILD_WATCHDOG_CONFIG_ENV]);
 		let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
 		let applyChildLifecycle = (_action: ChildLifecycleAction): void => {};
@@ -714,18 +755,14 @@ function runPiStreaming(
 
 			if (event.type === "tool_execution_end") {
 				clearActiveToolTimeout(event);
-				currentTool = undefined;
-				currentToolArgs = undefined;
-				currentPath = undefined;
+				removeActiveToolCall(event);
 				return;
 			}
 
 			if (event.type === "tool_execution_start" && event.toolName) {
 				toolCount += 1;
 				armToolTimeout({ toolCallId: (event as { toolCallId?: unknown }).toolCallId, toolName: event.toolName });
-				currentTool = event.toolName;
-				currentToolArgs = extractToolArgsPreview(event.args ?? {});
-				currentPath = resolveCurrentPath(event.toolName, event.args);
+				recordActiveToolCall({ toolCallId: (event as { toolCallId?: unknown }).toolCallId, toolName: event.toolName, args: event.args });
 				if (event.toolName === "structured_output") {
 					structuredOutputToolInvoked = true;
 					structuredOutputMessageStartIndex = messages.length;
@@ -737,6 +774,13 @@ function runPiStreaming(
 			}
 
 			if ((event.type === "message_end" || event.type === "tool_result_end") && event.message) {
+				if (event.type === "tool_result_end") {
+					clearActiveToolTimeout(event);
+					removeActiveToolCall({
+						toolCallId: (event.message as { toolCallId?: unknown }).toolCallId ?? (event as { toolCallId?: unknown }).toolCallId,
+						toolName: (event.message as { toolName?: unknown }).toolName ?? event.toolName,
+					});
+				}
 				messages.push(event.message);
 				const text = extractTextFromContent(event.message.content);
 				if (text) writeOutputText(text);
@@ -763,6 +807,10 @@ function runPiStreaming(
 				if (isTerminalAssistantStop(event.message)) {
 					if (!event.message.errorMessage && extractTextFromContent(event.message.content).trim()) assistantError = undefined;
 					cleanTerminalAssistantStopReceived ||= !event.message.errorMessage;
+					clearAllToolTimeouts();
+					activeToolCalls.clear();
+					activeToolKeysByName.clear();
+					refreshCurrentTool();
 					applyChildLifecycle(projectChildLifecycle(event, true));
 				}
 			}
@@ -1735,11 +1783,25 @@ async function runSingleStepInner(
 			: undefined;
 		const runtimeAcknowledgedExtensions = readRuntimeAcknowledgedExtensions(runtimeAcknowledgedExtensionsPath);
 		cleanupTempDir(tempDir);
+		const midToolExitError = run.currentTool
+			&& isOrdinaryToolForMidToolExit(run.currentTool)
+			&& !run.interrupted
+			&& !run.timedOut
+			&& !run.stopped
+			&& !run.turnBudgetExceeded
+			&& !run.protocolError
+			&& !toolAvailabilityError
+			? formatMidToolExitError({
+				toolName: run.currentTool,
+				exitCode: run.exitCode,
+				processSignal: run.processSignal,
+			})
+			: undefined;
 
 		let structuredOutput: unknown;
 		let structuredError: string | undefined;
 		let validatedStructuredOutput = false;
-		if (effectiveStructuredOutput && run.exitCode === 0 && !run.error && !toolAvailabilityError) {
+		if (effectiveStructuredOutput && run.exitCode === 0 && !run.error && !toolAvailabilityError && !midToolExitError) {
 			if (!run.structuredOutputToolInvoked) {
 				structuredError = MISSING_STRUCTURED_OUTPUT_CALL_ERROR;
 			} else {
@@ -1761,7 +1823,7 @@ async function runSingleStepInner(
 		const errorMessages = validatedStructuredOutput
 			? run.messages.slice(run.structuredOutputMessageStartIndex ?? run.messages.length)
 			: run.messages;
-		const hiddenError = run.exitCode === 0 && !run.error && !toolAvailabilityError && !structuredError
+		const hiddenError = run.exitCode === 0 && !run.error && !toolAvailabilityError && !structuredError && !midToolExitError
 			? detectSubagentError(errorMessages)
 			: null;
 		const emptyOutputError = run.exitCode === 0
@@ -1778,7 +1840,7 @@ async function runSingleStepInner(
 		const mutationEvidence = collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
 		finalMutationEvidence = mutationEvidence;
 		const completionMutationEvidence = ctx.trackedMutationEvidenceForCompletionGuard === false ? undefined : mutationEvidence;
-		const completionGuard = run.exitCode === 0 && !run.error && !structuredError && !hiddenError?.hasError && !emptyOutputError && completionGuardEnabled
+		const completionGuard = run.exitCode === 0 && !run.error && !structuredError && !hiddenError?.hasError && !midToolExitError && !emptyOutputError && completionGuardEnabled
 			? evaluateCompletionMutationGuard(omitUndefinedProperties({
 				agent: step.agent,
 				task: taskForCompletionGuard,
@@ -1805,7 +1867,7 @@ async function runSingleStepInner(
 		const completionGuardError = completionGuardTriggered && !isAgentContractV1(step.agentContract)
 			? "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes."
 			: undefined;
-		const effectiveExitCode = toolAvailabilityError || (completionGuardTriggered && !isAgentContractV1(step.agentContract)) || structuredError || emptyOutputError
+		const effectiveExitCode = toolAvailabilityError || (completionGuardTriggered && !isAgentContractV1(step.agentContract)) || midToolExitError || structuredError || emptyOutputError
 			? 1
 			: hiddenError?.hasError
 				? (hiddenError.exitCode ?? 1)
@@ -1822,6 +1884,7 @@ async function runSingleStepInner(
 		const error = formatSubagentExtensionConflictError(
 			toolAvailabilityError
 				?? completionGuardError
+				?? midToolExitError
 				?? structuredError
 				?? emptyOutputError
 				?? (hiddenError?.hasError

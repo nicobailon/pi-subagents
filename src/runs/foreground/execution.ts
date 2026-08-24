@@ -68,7 +68,7 @@ import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling,
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
 import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
-import { formatProcessSignalError, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
+import { formatMidToolExitError, formatProcessSignalError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
@@ -538,6 +538,7 @@ async function runSingleAttempt(
 	let structuredOutputToolInvoked = false;
 	let structuredOutputMessageStartIndex: number | undefined;
 	let toolAvailabilityError: string | undefined;
+	let abortedBySignal = options.signal?.aborted === true;
 
 	const exitCode = await new Promise<number>((resolve) => {
 		const spawnSpec = getPiSpawnCommand(args);
@@ -1102,6 +1103,10 @@ async function runSingleAttempt(
 					if (terminalAssistantStop) {
 						if (!evt.message.errorMessage && assistantText.trim()) assistantError = undefined;
 						cleanTerminalAssistantStopReceived ||= !evt.message.errorMessage;
+						clearAllToolTimeouts();
+						activeToolCalls.clear();
+						activeToolKeysByName.clear();
+						refreshCurrentTool();
 						applyChildLifecycle(projectChildLifecycle(evt, true));
 					}
 				}
@@ -1369,6 +1374,7 @@ async function runSingleAttempt(
 		if (options.signal) {
 			const kill = () => {
 				if (processClosed || lifecycleFinished) return;
+				abortedBySignal = true;
 				proc.kill("SIGTERM");
 				setTimeout(() => !proc.killed && proc.kill("SIGKILL"), 3000);
 			};
@@ -1430,6 +1436,22 @@ async function runSingleAttempt(
 			durationMs: progress.durationMs,
 		};
 		return result;
+	}
+	if (progress.currentTool
+		&& isOrdinaryToolForMidToolExit(progress.currentTool)
+		&& !abortedBySignal
+		&& !result.timedOut
+		&& !result.stopped
+		&& !result.turnBudgetExceeded
+		&& !result.protocolError
+		&& !toolAvailabilityError) {
+		const processExitCode = result.exitCode;
+		result.exitCode = 1;
+		result.error = formatMidToolExitError({
+			toolName: progress.currentTool,
+			exitCode: processExitCode,
+			processSignal: result.processSignal,
+		});
 	}
 	result.error = formatSubagentExtensionConflictError(result.error, {
 		agent: agent.name,

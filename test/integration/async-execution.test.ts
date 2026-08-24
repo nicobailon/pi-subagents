@@ -1556,6 +1556,36 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		}
 	});
 
+	it("background keeps a terminal answer authoritative over an earlier tool timeout", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("bash")] },
+				{ delay: 50, jsonl: [events.assistantMessage("Done")] },
+			],
+			keepAliveAfterFinalMessageMs: 1_500,
+		});
+		const id = `async-terminal-tool-timeout-${Date.now().toString(36)}`;
+		process.env.PI_SUBAGENT_TOOL_TIMEOUT_MS = "600";
+		try {
+			executeAsyncChain(id, {
+				chain: [{ agent: "one", task: "Do work" }],
+				agents: [makeAgent("one")],
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+				timeoutMs: 5_000,
+			});
+
+			const payload = await readAsyncPayload(id);
+			assert.equal(payload.success, true);
+			assert.equal(payload.results[0]?.timedOut, undefined);
+			assert.equal(payload.results[0]?.output, "Done");
+		} finally {
+			delete process.env.PI_SUBAGENT_TOOL_TIMEOUT_MS;
+		}
+	});
+
 	it("keeps an earlier wedged tool armed when another tool starts and ends", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [
@@ -3341,6 +3371,68 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(payload.results[0]?.modelAttempts?.[0]?.error ?? "", /no output/i);
 		assert.deepEqual(payload.results[0]?.modelAttempts?.map((attempt) => attempt.success), [false, true]);
 		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("background fails a zero-exit child that stops during a tool after earlier assistant output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			jsonl: [
+				events.assistantMessage("Work is in progress"),
+				events.toolStart("bash", { command: "write files" }),
+			],
+			exitCode: 0,
+		});
+		const id = `async-mid-tool-exit-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini" }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, false);
+		assert.equal(payload.results[0]?.success, false);
+		assert.match(payload.results[0]?.error ?? "", /exited during 'bash' tool execution \(exit 0\)/);
+		assert.match(payload.results[0]?.error ?? "", /Earlier assistant output is not a terminal result/);
+		assert.doesNotMatch(payload.results[0]?.error ?? "", /cold-start/);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("background retains an earlier open tool when a later overlapping tool completes", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			jsonl: [
+				{ type: "tool_execution_start", toolCallId: "bash-1", toolName: "bash", args: { command: "wait" } },
+				{ type: "tool_execution_start", toolCallId: "read-1", toolName: "read", args: { path: "README.md" } },
+				{ type: "tool_execution_end", toolCallId: "read-1", toolName: "read" },
+			],
+			exitCode: 0,
+		});
+		const id = `async-overlap-mid-tool-exit-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini" }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, false);
+		assert.match(payload.results[0]?.error ?? "", /exited during 'bash' tool execution \(exit 0\)/);
 	});
 
 	it("background runs prefer empty-output fallback over an earlier tool error", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

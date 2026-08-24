@@ -157,6 +157,58 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 		assert.ok(result.error?.includes("connection refused"));
 	});
 
+	it("fails a zero-exit child that stops during a tool after earlier assistant output", async () => {
+		mockPi.onCall({
+			jsonl: [
+				events.assistantMessage("Work is in progress"),
+				events.toolStart("bash", { command: "write files" }),
+			],
+			exitCode: 0,
+		});
+		const agents = makeAgentConfigs(["worker"]);
+
+		const result = await runSync(tempDir, agents, "worker", "Do work", {});
+
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /exited during 'bash' tool execution \(exit 0\)/);
+		assert.match(result.error ?? "", /Earlier assistant output is not a terminal result/);
+		assert.doesNotMatch(result.error ?? "", /cold-start/);
+	});
+
+	it("includes an unexpected process signal in a mid-tool exit diagnosis", { skip: process.platform === "win32" ? "signal delivery differs on Windows" : undefined }, async () => {
+		mockPi.onCall({
+			jsonl: [events.toolStart("bash", { command: "wait" })],
+			signal: "SIGTERM",
+		});
+		const agents = makeAgentConfigs(["worker"]);
+
+		const result = await runSync(tempDir, agents, "worker", "Do work", {});
+
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /exited during 'bash' tool execution/);
+		assert.match(result.error ?? "", /signal SIGTERM/);
+	});
+
+	it("keeps a terminal answer authoritative over an earlier tool timeout", async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("bash")] },
+				{ delay: 50, jsonl: [events.assistantMessage("Done")] },
+			],
+			keepAliveAfterFinalMessageMs: 1_500,
+		});
+		const agents = makeAgentConfigs(["worker"]);
+
+		const result = await runSync(tempDir, agents, "worker", "Do work", {
+			toolTimeoutMs: 600,
+			timeoutMs: 5_000,
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.timedOut, undefined);
+		assert.equal(result.finalOutput, "Done");
+	});
+
 	it("kills a wedged foreground tool at the configured per-tool timeout", { skip: process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [
@@ -207,7 +259,10 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 	});
 
 	it("handles abort signal (completes faster than delay)", async () => {
-		mockPi.onCall({ delay: 10000 });
+		mockPi.onCall({ steps: [
+			{ jsonl: [events.toolStart("bash", { command: "wait" })] },
+			{ delay: 10000 },
+		] });
 		const agents = makeAgentConfigs(["slow"]);
 		const controller = new AbortController();
 
@@ -221,5 +276,6 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 
 		// Key: should complete much faster than the 10s delay
 		assert.ok(elapsed < 5000, `should abort early, took ${elapsed}ms`);
+		assert.doesNotMatch(result.error ?? "", /exited during 'bash' tool execution/);
 	});
 });
