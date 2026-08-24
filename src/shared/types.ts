@@ -75,6 +75,22 @@ export interface WorkflowGraphSnapshot {
 
 export type WorkflowReceiptState = "complete" | "failed" | "paused" | "stopped";
 
+export interface WorkflowChildSummaryV1 {
+	version: 1;
+	parentToolCallId: string;
+	workflowRunId: string;
+	inventoryComplete: boolean;
+	workflowState: "queued" | "running" | "completed" | "failed" | "paused" | "stopped";
+	children: Array<{
+		childId: string;
+		runId?: string;
+		agent?: string;
+		model?: string;
+		thinking?: string;
+		state: "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "rejected" | "detached";
+	}>;
+}
+
 type WorkflowReceiptEntryResumability =
 	| { latestRunId: string; resumability: { state: "resumable" } }
 	| { latestRunId?: string; resumability: { state: "not-resumable"; reason: string } };
@@ -95,6 +111,7 @@ export interface WorkflowReceipt {
 	state: WorkflowReceiptState;
 	createdAt: number;
 	entries: Record<string, WorkflowReceiptEntry>;
+	workflowChildren?: WorkflowChildSummaryV1;
 }
 
 export interface SavedOutputReference {
@@ -1093,6 +1110,7 @@ export interface WaitCompletion {
 	/** Versioned bounded output archive retained with the durable completion replay. */
 	archivePath?: string;
 	results?: WaitCompletionChild[];
+	workflowChildren?: WorkflowChildSummaryV1;
 }
 
 export interface Details {
@@ -1103,6 +1121,7 @@ export interface Details {
 	/** Run-level context summary. "mixed" when children resolved to different modes. */
 	context?: "fresh" | "fork" | "mixed";
 	results: SingleResult[];
+	workflowChildren?: WorkflowChildSummaryV1;
 	/**
 	 * Terminal completion payloads for runs this subagent_wait call observed
 	 * finishing. Async completions travel as result files that are consumed and
@@ -1537,6 +1556,7 @@ export interface AsyncStatus {
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
 	workflow?: Details["workflow"];
+	workflowChildren?: WorkflowChildSummaryV1;
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
 	/** Set when a durable schedule launched this run, so completions can name their origin. */
@@ -1692,6 +1712,7 @@ export interface AsyncJobState {
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
 	workflow?: Details["workflow"];
+	workflowChildren?: WorkflowChildSummaryV1;
 }
 
 export interface ForegroundResumeChild {

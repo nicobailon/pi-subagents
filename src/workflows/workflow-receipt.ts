@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
 import type { ExternalCliReceiptMetadata, WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState } from "../shared/types.ts";
 import type { WorkflowReceiptResumeReference, WorkflowScriptChildResult } from "./scripted-workflow.ts";
+import { parseWorkflowChildSummary } from "./workflow-child-summary.ts";
 
 export type { WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState } from "../shared/types.ts";
 
@@ -32,9 +33,11 @@ export function buildWorkflowReceipt(input: {
 	workflowRunId: string;
 	state: WorkflowReceiptState;
 	children: WorkflowScriptChildResult[];
+	workflowChildren?: WorkflowReceipt["workflowChildren"];
 	createdAt?: number;
 }): WorkflowReceipt {
 	const workflowRunId = assertSafeRunId(input.workflowRunId, "workflowRunId");
+	if (input.workflowChildren?.workflowRunId !== undefined && input.workflowChildren.workflowRunId !== workflowRunId) throw new Error("workflowChildren workflowRunId does not match its receipt.");
 	const entries: Record<string, WorkflowReceiptEntry> = Object.create(null) as Record<string, WorkflowReceiptEntry>;
 	for (const child of input.children) {
 		const key = assertKey(child.key, "workflow receipt child key");
@@ -56,7 +59,7 @@ export function buildWorkflowReceipt(input: {
 			? { ...base, latestRunId: latestRunId!, resumability }
 			: { ...base, ...(latestRunId ? { latestRunId } : {}), resumability };
 	}
-	return { version: WORKFLOW_RECEIPT_VERSION, workflowRunId, state: input.state, createdAt: input.createdAt ?? Date.now(), entries };
+	return { version: WORKFLOW_RECEIPT_VERSION, workflowRunId, state: input.state, createdAt: input.createdAt ?? Date.now(), entries, ...(input.workflowChildren ? { workflowChildren: input.workflowChildren } : {}) };
 }
 
 export function writeWorkflowReceipt(asyncDir: string, receipt: WorkflowReceipt): string {
@@ -211,7 +214,9 @@ export function readWorkflowReceipt(asyncDirRoot: string, workflowRunId: string)
 	if (!receipt.entries || typeof receipt.entries !== "object" || Array.isArray(receipt.entries)) throw new Error(`Invalid workflow receipt '${receiptPath}': entries must be an object.`);
 	const entries: Record<string, WorkflowReceiptEntry> = Object.create(null) as Record<string, WorkflowReceiptEntry>;
 	for (const [key, entry] of Object.entries(receipt.entries as Record<string, unknown>)) entries[assertKey(key, "workflow receipt key")] = parseEntry(entry, key, receiptPath);
-	return { version: 1, workflowRunId, state: receipt.state, createdAt: receipt.createdAt, entries };
+	const workflowChildren = parseWorkflowChildSummary(receipt.workflowChildren);
+	if (workflowChildren && workflowChildren.workflowRunId !== workflowRunId) throw new Error(`Workflow receipt '${receiptPath}' is stale: workflowChildren.workflowRunId does not match.`);
+	return { version: 1, workflowRunId, state: receipt.state, createdAt: receipt.createdAt, entries, ...(workflowChildren ? { workflowChildren } : {}) };
 }
 
 export function resolveWorkflowReceiptResumeEntry(input: {

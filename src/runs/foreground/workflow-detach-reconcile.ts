@@ -15,6 +15,7 @@ import { resultFilePath, writeAsyncResultFile } from "../background/result-files
 import { resolveAsyncResumeTarget } from "../background/async-resume.ts";
 import { externalCliReceiptMetadata, normalizeExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { readWorkflowReceipt, workflowReceiptPath, writeWorkflowReceipt, type WorkflowReceipt } from "../../workflows/workflow-receipt.ts";
+import { workflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 
 function cloneWorkflowStatus(status: AsyncStatus): AsyncStatus {
 	return {
@@ -56,7 +57,10 @@ export function applyDetachedChildToPausedWorkflow(
 	const promoted = promotePausedWorkflowIfSettled(next);
 	if (promoted?.state === "failed" && input.result.interrupted && !failedSiblingError) promoted.error = input.result.error ?? INTERRUPTED_DETACHED_CHILD;
 	else if (promoted?.state === "failed" && input.result.error) promoted.error = input.result.error;
-	return promoted ?? next;
+	const resolved = promoted ?? next;
+	const workflowState = resolved.state === "complete" ? "completed" : resolved.state === "paused" ? "paused" : resolved.state === "stopped" ? "stopped" : "failed";
+	resolved.workflowChildren = workflowChildSummary({ parentToolCallId: resolved.toolCallId ?? resolved.runId, workflowRunId: resolved.runId, workflowState, inventoryComplete: true, trace: resolved.workflow?.trace, steps: resolved.steps });
+	return resolved;
 }
 
 export function promotePausedWorkflowIfSettled(status: AsyncStatus): AsyncStatus | undefined {
@@ -129,6 +133,7 @@ function publishedWorkflowResult(status: AsyncStatus, childRunId: string, result
 		timestamp: Date.now(),
 		results: workflowResultChildren(status, childRunId, result, existing?.results),
 		workflow: status.workflow,
+		workflowChildren: status.workflowChildren,
 		reconciledFromDetachedChild: childRunId,
 		...(receipt ? { workflowReceipt: { path: path.join(asyncDir, "workflow-receipt.json"), receipt } } : {}),
 		asyncDir,
@@ -186,6 +191,7 @@ function reconcileWorkflowReceipt(status: AsyncStatus, childRunId: string, resul
 			...receipt.entries,
 			[key]: updatedEntry,
 		},
+		workflowChildren: status.workflowChildren,
 	};
 	writeWorkflowReceipt(asyncDir, next);
 	return next;

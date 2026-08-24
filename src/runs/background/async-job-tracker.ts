@@ -24,6 +24,7 @@ import { findNestedRouteForRootId, hasLiveNestedDescendants, updateAsyncJobNeste
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, serviceExternalJobBridgeRequests } from "../shared/external-job-bridge.ts";
 import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
+import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 
 interface AsyncJobTrackerOptions {
 	completionRetentionMs?: number;
@@ -171,6 +172,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			parentWorkflowRunId: run.parentWorkflowRunId,
 			workflowKey: run.workflowKey,
 			workflow: run.workflow,
+			workflowChildren: parseWorkflowChildSummary(run.workflowChildren),
 		};
 	};
 	const cancelCleanup = (asyncId: string) => {
@@ -398,6 +400,9 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				job.parentWorkflowRunId = status.parentWorkflowRunId ?? job.parentWorkflowRunId;
 				job.workflowKey = status.workflowKey ?? job.workflowKey;
 				job.workflow = status.workflow ?? job.workflow;
+				const workflowChildren = parseWorkflowChildSummary(status.workflowChildren);
+				if (workflowChildren && workflowChildren.workflowRunId !== status.runId) throw new Error("workflowChildren.workflowRunId does not match async status runId.");
+				job.workflowChildren = workflowChildren ?? job.workflowChildren;
 				job.currentStep = status.currentStep ?? job.currentStep;
 				job.chainStepCount = status.chainStepCount ?? job.chainStepCount;
 				job.startedAt = status.startedAt ?? job.startedAt;

@@ -6,6 +6,7 @@ import { afterEach, describe, it } from "node:test";
 import { buildWorkflowReceipt, readWorkflowReceipt, resolveWorkflowReceiptResume, workflowReceiptPath, writeWorkflowReceipt } from "../../src/workflows/workflow-receipt.ts";
 import { externalCliReceiptMetadata, resolveExternalCliRunnerStatus } from "../../src/runs/shared/external-cli-contract.ts";
 import type { WorkflowScriptChildResult } from "../../src/workflows/scripted-workflow.ts";
+import { workflowChildSummary } from "../../src/workflows/workflow-child-summary.ts";
 
 const roots: string[] = [];
 
@@ -99,6 +100,51 @@ describe("workflow receipts", () => {
 		const serialized = JSON.stringify(receipt);
 		assert.doesNotMatch(serialized, /structuredOutput|artifactPaths|"output"/);
 		assert.ok(serialized.length < 400_000, `receipt metadata unexpectedly large: ${serialized.length}`);
+	});
+
+	it("persists a bounded terminal workflow-child summary without payload data", () => {
+		const trace = Array.from({ length: 64 }, (_, index) => ({ operation: "run" as const, key: `child-${index}`, state: "started" as const }));
+		const started = performance.now();
+		let summary = workflowChildSummary({ parentToolCallId: "tool-call", workflowRunId: "workflow-1", workflowState: "failed", inventoryComplete: true, trace });
+		for (let index = 0; index < 999; index += 1) summary = workflowChildSummary({ parentToolCallId: "tool-call", workflowRunId: "workflow-1", workflowState: "failed", inventoryComplete: true, trace });
+		const elapsedMs = performance.now() - started;
+		assert.equal(summary.children.length, 64);
+		assert.equal(summary.children[0]?.childId, "child-0");
+		assert.equal(summary.children[0]?.state, "failed");
+		const serialized = JSON.stringify(summary);
+		assert.ok(Buffer.byteLength(serialized) < 8_000, `max-fanout summary too large: ${Buffer.byteLength(serialized)}`);
+		assert.ok(elapsedMs < 500, `1,000 max-fanout projections took ${elapsedMs.toFixed(1)}ms`);
+		assert.doesNotMatch(serialized, /task|prompt|output|artifact|transcript|secret/);
+
+		const receipt = buildWorkflowReceipt({ workflowRunId: "workflow-1", state: "failed", children: [], workflowChildren: summary, createdAt: 10 });
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-1");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		writeWorkflowReceipt(asyncDir, receipt);
+		assert.deepEqual(readWorkflowReceipt(asyncRoot, "workflow-1").workflowChildren, summary);
+	});
+
+	it("uses workflow keys when flattened child indexes collide", () => {
+		const summary = workflowChildSummary({
+			parentToolCallId: "tool-call",
+			workflowRunId: "workflow-1",
+			workflowState: "completed",
+			inventoryComplete: true,
+			children: [
+				child("review", { results: [{ index: 0, model: "provider/reviewer", thinking: "high" }] }),
+				child("tests", { results: [{ index: 0, model: "provider/tester", thinking: "low" }] }),
+			],
+		});
+
+		assert.deepEqual(summary.children.map(({ childId, model }) => ({ childId, model })), [
+			{ childId: "review", model: "provider/reviewer" },
+			{ childId: "tests", model: "provider/tester" },
+		]);
+	});
+
+	it("rejects a summary bound to a different workflow", () => {
+		const summary = workflowChildSummary({ parentToolCallId: "tool", workflowRunId: "other", workflowState: "completed", inventoryComplete: true });
+		assert.throws(() => buildWorkflowReceipt({ workflowRunId: "workflow-1", state: "complete", children: [], workflowChildren: summary }), /does not match its receipt/);
 	});
 
 	it("adds bounded external adapter metadata without raw output or handoff content", () => {

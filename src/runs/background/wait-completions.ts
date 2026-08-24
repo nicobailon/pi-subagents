@@ -3,6 +3,7 @@ import type { ArtifactPaths, SubagentState, WaitCompletion, WaitCompletionChild 
 import type { AsyncRunSummary } from "./async-status.ts";
 import { readCompletionReplay, writeCompletionReplay } from "./completion-replay.ts";
 import { fallbackResultPayloadPathForSessionRun, resultFilePath, resultPayloadPathForSessionRun } from "./result-files.ts";
+import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 
 function asNonEmptyString(value: unknown): string | undefined {
 	return typeof value === "string" && value ? value : undefined;
@@ -60,6 +61,8 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 	const agent = asNonEmptyString(data.agent);
 	const mode = asNonEmptyString(data.mode);
 	const state = asNonEmptyString(data.state);
+	const workflowChildren = parseWorkflowChildSummary(data.workflowChildren);
+	if (workflowChildren && workflowChildren.workflowRunId !== runId) throw new Error("workflowChildren.workflowRunId does not match its completion run id.");
 	return {
 		runId,
 		...(agent ? { agent } : {}),
@@ -67,6 +70,7 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 		...(state ? { state } : {}),
 		...(typeof data.success === "boolean" ? { success: data.success } : {}),
 		...(results && results.length > 0 ? { results } : {}),
+		...(workflowChildren ? { workflowChildren } : {}),
 	};
 }
 
