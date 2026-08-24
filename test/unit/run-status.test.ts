@@ -117,6 +117,36 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("normalizes old external-cli runner status before rendering adapter details", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-old-external-cli-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-old-external-cli");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-old-external-cli",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{
+					agent: "external",
+					status: "complete",
+					runner: { type: "external-cli", command: "review-cli", args: [], promptDelivery: "stdin", capabilities: { stop: true, steer: false, resume: false, structuredOutput: false, toolEvents: false } },
+				}],
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-old-external-cli" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.match(text, /Adapter: external-cli v1 \(one-shot-stdin\)/);
+			assert.match(text, /Unsupported resume: The one-shot stdin adapter has no durable external session identity/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("shows parallel mode and aggregate progress for top-level async parallel runs", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-parallel-"));
 		try {

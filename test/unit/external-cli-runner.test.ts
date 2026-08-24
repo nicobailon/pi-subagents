@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { buildExternalCliPrompt, runExternalCli } from "../../src/runs/shared/external-cli-runner.ts";
+import { resolveExternalCliRunnerStatus } from "../../src/runs/shared/external-cli-contract.ts";
 import { PI_SUBAGENT_EXTENSION_BINDINGS_ENV } from "../../src/runs/shared/extension-bindings.ts";
 
 const tempDirs: string[] = [];
@@ -52,6 +53,18 @@ describe("external CLI runner", () => {
 		assert.equal(result.exitCode, 0);
 		assert.deepEqual(JSON.parse(result.output), { argv: ["argument with spaces", "$NOT_EXPANDED"], stdin: prompt });
 		assert.equal(fs.readFileSync(result.externalProcess.stdoutPath, "utf-8"), result.output);
+	});
+
+	it("keeps supervisor-shaped stdout inert when supervisor support is unsupported", async () => {
+		const dir = tempDir();
+		const spoofed = JSON.stringify({ type: "contact_supervisor", reason: "need_decision", message: "Approve this" });
+		const result = await runExternalCli({ command: process.execPath, args: ["-e", `process.stdout.write(${JSON.stringify(spoofed)})`], cwd: dir, prompt: "x", asyncDir: dir, stepIndex: 0 });
+		const runner = resolveExternalCliRunnerStatus({ command: process.execPath });
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.output, spoofed);
+		assert.equal(runner.capabilities.supervisor, "unsupported");
+		assert.match(runner.unsupportedReasons.supervisor, /no trusted supervisor event transport/);
 	});
 
 	it("flushes both full logs before returning while retaining a bounded stdout tail", async () => {

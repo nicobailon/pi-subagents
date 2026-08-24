@@ -215,6 +215,28 @@ Review carefully.`.replace(" description:", "description:"));
 		assert.deepEqual(discoverAgents(project, "project").agents.find((agent) => agent.name === "external")?.runner, external.runner);
 	}));
 
+	it("keeps external-cli stop code-owned while refusing capability widening", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-runner-capabilities-"));
+		tempDirs.push(project);
+		const agentPath = path.join(project, ".pi", "agents", "external.md");
+		writeAgent(agentPath, `---\nname: external\ndescription: External runner\nrunner:\n  type: external-cli\n  command: node\n  capabilities:\n    steer: false\n---\nReview.`);
+		assert.deepEqual(discoverAgents(project, "project").agents.find((agent) => agent.name === "external")?.runner, {
+			type: "external-cli",
+			command: "node",
+			capabilities: { steer: false },
+		});
+
+		writeAgent(agentPath, `---\nname: external\ndescription: External runner\nrunner:\n  type: external-cli\n  command: node\n  capabilities:\n    stop: false\n---\nReview.`);
+		const narrowedStop = discoverAgents(project, "project");
+		assert.equal(narrowedStop.agents.some((agent) => agent.name === "external"), false);
+		assert.match(narrowedStop.agentDiagnostics?.[0]?.error ?? "", /capabilities has unsupported fields: stop/);
+
+		writeAgent(agentPath, `---\nname: external\ndescription: External runner\nrunner:\n  type: external-cli\n  command: node\n  capabilities:\n    steer: true\n---\nReview.`);
+		const widened = discoverAgents(project, "project");
+		assert.equal(widened.agents.some((agent) => agent.name === "external"), false);
+		assert.match(widened.agentDiagnostics?.[0]?.error ?? "", /steer may only be false; user config cannot widen code-owned external adapter capabilities/);
+	}));
+
 	it("parses and serializes an external-job runner", () => withTempHome(() => {
 		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-external-job-agent-"));
 		tempDirs.push(project);

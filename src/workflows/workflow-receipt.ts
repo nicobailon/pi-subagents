@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
-import type { WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState } from "../shared/types.ts";
+import type { ExternalCliReceiptMetadata, WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState } from "../shared/types.ts";
 import type { WorkflowReceiptResumeReference, WorkflowScriptChildResult } from "./scripted-workflow.ts";
 
 export type { WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState } from "../shared/types.ts";
@@ -49,6 +49,7 @@ export function buildWorkflowReceipt(input: {
 			...(child.requestedContext ? { requestedContext: child.requestedContext } : {}),
 			...(child.resolvedContext ? { resolvedContext: child.resolvedContext } : {}),
 			...(child.outputReference ? { outputReference: child.outputReference } : {}),
+			...(child.externalAdapter ? { externalAdapter: child.externalAdapter } : {}),
 			continuation: { runIds },
 		};
 		entries[key] = resumability.state === "resumable"
@@ -62,6 +63,64 @@ export function writeWorkflowReceipt(asyncDir: string, receipt: WorkflowReceipt)
 	const receiptPath = path.join(asyncDir, WORKFLOW_RECEIPT_FILE);
 	writePrivateAtomicJson(receiptPath, receipt);
 	return receiptPath;
+}
+
+const EXTERNAL_CLI_CAPABILITIES = {
+	stop: true,
+	steer: false,
+	resume: false,
+	structuredOutput: false,
+	toolEvents: false,
+	supervisor: "unsupported",
+	forkContext: false,
+	extensionBindings: false,
+} as const;
+
+function parseExternalCliReceiptMetadata(value: unknown, key: string, source: string): ExternalCliReceiptMetadata | undefined {
+	if (value === undefined) return undefined;
+	const label = `Invalid workflow receipt '${source}': entry '${key}' externalAdapter`;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object.`);
+	const metadata = value as Record<string, unknown>;
+	const unknownMetadata = Object.keys(metadata).filter((field) => !["adapter", "capabilities", "outputArtifacts", "handoff", "supervisor", "nonResumableReason"].includes(field));
+	if (unknownMetadata.length > 0) throw new Error(`${label} has unsupported fields: ${unknownMetadata.join(", ")}.`);
+	const adapter = metadata.adapter;
+	if (!adapter || typeof adapter !== "object" || Array.isArray(adapter)) throw new Error(`${label}.adapter must be an object.`);
+	const adapterRecord = adapter as Record<string, unknown>;
+	const unknownAdapter = Object.keys(adapterRecord).filter((field) => !["id", "version", "executionMode"].includes(field));
+	if (unknownAdapter.length > 0) throw new Error(`${label}.adapter has unsupported fields: ${unknownAdapter.join(", ")}.`);
+	if (adapterRecord.id !== "external-cli" || adapterRecord.version !== 1 || adapterRecord.executionMode !== "one-shot-stdin") throw new Error(`${label}.adapter is invalid.`);
+	const capabilities = metadata.capabilities;
+	if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) throw new Error(`${label}.capabilities must be an object.`);
+	const capabilityRecord = capabilities as Record<string, unknown>;
+	const unknownCapabilities = Object.keys(capabilityRecord).filter((field) => !(field in EXTERNAL_CLI_CAPABILITIES));
+	if (unknownCapabilities.length > 0) throw new Error(`${label}.capabilities has unsupported fields: ${unknownCapabilities.join(", ")}.`);
+	for (const [capability, expected] of Object.entries(EXTERNAL_CLI_CAPABILITIES)) {
+		if (capabilityRecord[capability] !== expected) throw new Error(`${label}.capabilities.${capability} is invalid.`);
+	}
+	const handoff = metadata.handoff;
+	if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) throw new Error(`${label}.handoff must be an object.`);
+	const handoffRecord = handoff as Record<string, unknown>;
+	const unknownHandoff = Object.keys(handoffRecord).filter((field) => field !== "mode");
+	if (unknownHandoff.length > 0) throw new Error(`${label}.handoff has unsupported fields: ${unknownHandoff.join(", ")}.`);
+	if (handoffRecord.mode !== "fresh") throw new Error(`${label}.handoff is invalid.`);
+	const supervisor = metadata.supervisor;
+	if (!supervisor || typeof supervisor !== "object" || Array.isArray(supervisor)) throw new Error(`${label}.supervisor must be an object.`);
+	const supervisorRecord = supervisor as Record<string, unknown>;
+	const unknownSupervisor = Object.keys(supervisorRecord).filter((field) => !["mode", "reason"].includes(field));
+	if (unknownSupervisor.length > 0) throw new Error(`${label}.supervisor has unsupported fields: ${unknownSupervisor.join(", ")}.`);
+	if (supervisorRecord.mode !== "unsupported" || typeof supervisorRecord.reason !== "string" || !supervisorRecord.reason.trim()) throw new Error(`${label}.supervisor is invalid.`);
+	if (typeof metadata.nonResumableReason !== "string" || !metadata.nonResumableReason.trim()) throw new Error(`${label}.nonResumableReason is missing.`);
+	const outputArtifacts = metadata.outputArtifacts;
+	if (outputArtifacts !== undefined) {
+		if (!outputArtifacts || typeof outputArtifacts !== "object" || Array.isArray(outputArtifacts)) throw new Error(`${label}.outputArtifacts must be an object.`);
+		const unknownArtifacts = Object.keys(outputArtifacts).filter((field) => !["stdoutPath", "stderrPath", "finalOutputPath"].includes(field));
+		if (unknownArtifacts.length > 0) throw new Error(`${label}.outputArtifacts has unsupported fields: ${unknownArtifacts.join(", ")}.`);
+		for (const field of ["stdoutPath", "stderrPath", "finalOutputPath"] as const) {
+			const artifactPath = (outputArtifacts as Record<string, unknown>)[field];
+			if (artifactPath !== undefined && (typeof artifactPath !== "string" || !artifactPath.trim())) throw new Error(`${label}.outputArtifacts.${field} must be a non-empty string.`);
+		}
+	}
+	return value as ExternalCliReceiptMetadata;
 }
 
 function parseEntry(value: unknown, key: string, source: string): WorkflowReceiptEntry {
@@ -84,6 +143,7 @@ function parseEntry(value: unknown, key: string, source: string): WorkflowReceip
 	const reason = (resumability as Record<string, unknown>).reason;
 	if (state === "resumable" && latestRunId === undefined) throw new Error(`Invalid workflow receipt '${source}': entry '${key}' resumable entry has no retained run id.`);
 	if (state === "not-resumable" && (typeof reason !== "string" || !reason.trim())) throw new Error(`Invalid workflow receipt '${source}': entry '${key}' non-resumable reason is missing.`);
+	parseExternalCliReceiptMetadata(entry.externalAdapter, key, source);
 	return value as WorkflowReceiptEntry;
 }
 

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- External CLI runs now publish code-owned capability limits and compact workflow receipt metadata for adapter identity, artifacts, handoff mode, supervisor support, and resumability.
+
 ## [0.56.0] - 2026-08-23
 
 ### Highlights

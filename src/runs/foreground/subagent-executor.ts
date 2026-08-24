@@ -113,6 +113,7 @@ import { isStoppableAsyncStatusStep, resolveAsyncStatusChild } from "../shared/c
 import { inspectSubagentStatus } from "../background/run-status.ts";
 import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 import { externalJobFollowUpRequestDigest, externalJobFollowUpRequestId, externalJobFollowUpRunId, externalJobPromptDigest, externalJobStableJson } from "../shared/external-job-runner.ts";
+import { externalCliReceiptMetadata, normalizeExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import { handleMissionAction, MISSION_ACTIONS } from "../../missions/actions.ts";
 import { attachMissionToLaunchResult, prepareMissionLaunch, writeMissionAsyncBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
@@ -1514,9 +1515,14 @@ function externalJobFollowUpStarted(input: { sourceRunId: string; runId: string;
 function externalRunnerControlError(asyncDir: string, action: "steer" | "resume"): AgentToolResult<Details> | undefined {
 	const status = readStatus(asyncDir);
 	if (!status?.steps?.length || !status.steps.every((step) => step.runner?.type === "external-cli" || step.runner?.type === "external-job")) return undefined;
-	const message = action === "steer"
-		? "External runners do not accept live steer messages."
-		: "External runners do not persist Pi sessions and cannot be resumed.";
+	const externalCli = normalizeExternalCliRunnerStatus(status.steps.find((step) => step.runner?.type === "external-cli")?.runner);
+	const message = externalCli
+		? action === "steer"
+			? `External adapter '${externalCli.adapter.id}' does not support runs.steer: ${externalCli.unsupportedReasons.steer}`
+			: `External adapter '${externalCli.adapter.id}' cannot resume: ${externalCli.nonResumableReason}`
+		: action === "steer"
+			? "External runners do not accept live steer messages."
+			: "External runners do not persist Pi sessions and cannot be resumed.";
 	return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
 }
 
@@ -1762,7 +1768,11 @@ async function resumeAsyncRun(input: {
 		};
 	}
 	if (target.source === "async" && target.runner?.type === "external-cli") {
-		return { content: [{ type: "text", text: "External runners do not persist Pi sessions and cannot be resumed." }], isError: true, details: { mode: "management", results: [] } };
+		const runner = normalizeExternalCliRunnerStatus(target.runner);
+		const message = runner
+			? `External adapter '${runner.adapter.id}' cannot resume: ${runner.nonResumableReason}`
+			: "External runners do not persist Pi sessions and cannot be resumed.";
+		return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
 	}
 	if (target.source === "async" && target.runner?.type === "external-job") {
 		if (attachChain) return { content: [{ type: "text", text: "External-job follow-up does not support chain attachment. Use action='resume' with message instead." }], isError: true, details: { mode: "management", results: [] } };
@@ -3965,6 +3975,13 @@ function workflowChildResult(
 	const continuationRunIds = [...new Set([resumeSourceRunId, runId].filter((value): value is string => Boolean(value)))];
 	const outputReference = result.details.results.find((child) => child.savedOutputPath)?.savedOutputPath
 		?? result.details.results.find((child) => child.outputReference?.path)?.outputReference?.path;
+	const externalResult = result.details.results.length === 1 && result.details.results[0]?.runner?.type === "external-cli" ? result.details.results[0] : undefined;
+	const externalStatus = result.details.asyncDir ? readStatus(result.details.asyncDir) : undefined;
+	const externalStatusStep = externalStatus?.steps?.length === 1 && externalStatus.steps[0]?.runner?.type === "external-cli" ? externalStatus.steps[0] : undefined;
+	const externalRunner = normalizeExternalCliRunnerStatus(externalResult?.runner ?? externalStatusStep?.runner);
+	const externalProcess = externalResult?.externalProcess ?? externalStatusStep?.externalProcess;
+	const externalAdapter = externalRunner ? externalCliReceiptMetadata({ runner: externalRunner, externalProcess, outputReference }) : undefined;
+	if (externalAdapter) resumability = { state: "not-resumable", reason: externalAdapter.nonResumableReason };
 	return {
 		key,
 		ok,
@@ -3979,6 +3996,7 @@ function workflowChildResult(
 		...(requestedContext ? { requestedContext } : {}),
 		...(resolvedContext ? { resolvedContext } : {}),
 		...(outputReference ? { outputReference } : {}),
+		...(externalAdapter ? { externalAdapter } : {}),
 		resumability,
 		continuation: { runIds: continuationRunIds },
 		artifactPaths: [...artifactPaths],
@@ -4068,6 +4086,8 @@ export async function steerWorkflowChildByKey(input: {
 				return { key: input.key, state: "missed", error: `Workflow child '${input.key}' is ${childStatus.state}.` };
 			}
 			if (childStatus) {
+				const unsupported = externalRunnerControlError(asyncDir, "steer");
+				if (unsupported) return workflowSteerReceipt(input.key, unsupported);
 				const result = await steerAsyncRun({
 					state: input.state,
 					runId: childRunId,

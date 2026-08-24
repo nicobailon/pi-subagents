@@ -144,6 +144,7 @@ import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
 import { buildExternalCliPrompt, runExternalCli } from "../shared/external-cli-runner.ts";
+import { resolveExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { runExternalJob } from "../shared/external-job-runner.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import { decodeSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
@@ -1381,13 +1382,7 @@ async function runSingleStepInner(
 	transcriptWriter?.writeInitialUserMessage(`${PROMPT_REDACTED}; live Prompt Audit only.`);
 
 	if (step.runner?.type === "external-cli") {
-		const runner: ExternalCliRunnerStatus = {
-			type: "external-cli",
-			command: step.runner.command,
-			args: step.runner.args ?? [],
-			promptDelivery: step.runner.promptDelivery ?? "stdin",
-			capabilities: { stop: true, steer: false, resume: false, structuredOutput: false, toolEvents: false },
-		};
+		const runner = resolveExternalCliRunnerStatus(step.runner);
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
 		const external = await runExternalCli(omitUndefinedProperties({
 			command: runner.command,
@@ -2098,13 +2093,7 @@ type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
 
 function externalRunnerStatus(runner: SubagentStep["runner"]): ExternalCliRunnerStatus | ExternalJobRunnerStatus | undefined {
 	if (runner?.type === "external-cli") {
-		return {
-			type: "external-cli",
-			command: runner.command,
-			args: runner.args ?? [],
-			promptDelivery: runner.promptDelivery ?? "stdin",
-			capabilities: { stop: true, steer: false, resume: false, structuredOutput: false, toolEvents: false },
-		};
+		return resolveExternalCliRunnerStatus(runner);
 	}
 	if (runner?.type === "external-job") {
 		return {

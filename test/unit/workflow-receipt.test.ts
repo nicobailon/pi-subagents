@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { buildWorkflowReceipt, readWorkflowReceipt, resolveWorkflowReceiptResume, workflowReceiptPath, writeWorkflowReceipt } from "../../src/workflows/workflow-receipt.ts";
+import { externalCliReceiptMetadata, resolveExternalCliRunnerStatus } from "../../src/runs/shared/external-cli-contract.ts";
 import type { WorkflowScriptChildResult } from "../../src/workflows/scripted-workflow.ts";
 
 const roots: string[] = [];
@@ -37,6 +38,21 @@ function child(key: string, overrides: Partial<WorkflowScriptChildResult> = {}):
 }
 
 describe("workflow receipts", () => {
+	it("reads old receipt-v1 files without external adapter metadata", () => {
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-old");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "workflow-receipt.json"), JSON.stringify({
+			version: 1,
+			workflowRunId: "workflow-old",
+			state: "complete",
+			createdAt: 10,
+			entries: { advisor: { key: "advisor", latestRunId: "run-old", resumability: { state: "resumable" }, continuation: { runIds: ["run-old"] } } },
+		}));
+
+		assert.equal(readWorkflowReceipt(asyncRoot, "workflow-old").entries.advisor?.externalAdapter, undefined);
+	});
+
 	it("builds one metadata-only entry per workflow child", () => {
 		const children = Array.from({ length: 1_000 }, (_, index) => child(`child-${index}`));
 		const receipt = buildWorkflowReceipt({ workflowRunId: "workflow-1", state: "complete", children, createdAt: 10 });
@@ -55,6 +71,58 @@ describe("workflow receipts", () => {
 		const serialized = JSON.stringify(receipt);
 		assert.doesNotMatch(serialized, /structuredOutput|artifactPaths|"output"/);
 		assert.ok(serialized.length < 400_000, `receipt metadata unexpectedly large: ${serialized.length}`);
+	});
+
+	it("adds bounded external adapter metadata without raw output or handoff content", () => {
+		const runner = resolveExternalCliRunnerStatus({ command: "review-cli" });
+		const externalAdapter = externalCliReceiptMetadata({
+			runner,
+			externalProcess: { startedAt: 1, stdoutPath: "/tmp/stdout.log", stderrPath: "/tmp/stderr.log" },
+			outputReference: "/tmp/final.md",
+		});
+		const receipt = buildWorkflowReceipt({
+			workflowRunId: "workflow-external",
+			state: "complete",
+			children: [child("advisor", { resumability: { state: "not-resumable", reason: externalAdapter.nonResumableReason }, externalAdapter })],
+		});
+		const serialized = JSON.stringify(receipt);
+
+		assert.equal(receipt.entries.advisor?.externalAdapter?.adapter.id, "external-cli");
+		assert.equal(receipt.entries.advisor?.externalAdapter?.capabilities.stop, true);
+		assert.equal(receipt.entries.advisor?.externalAdapter?.capabilities.supervisor, "unsupported");
+		assert.equal(receipt.entries.advisor?.externalAdapter?.handoff.mode, "fresh");
+		assert.match(receipt.entries.advisor?.resumability.state === "not-resumable" ? receipt.entries.advisor.resumability.reason : "", /no durable external session identity/);
+		assert.doesNotMatch(serialized, /artifactPaths|rawOutput|handoffText|contact_supervisor/);
+		assert.ok(Buffer.byteLength(serialized) < 2_000, `external receipt metadata unexpectedly large: ${Buffer.byteLength(serialized)}`);
+	});
+
+	it("fails closed for malformed external adapter receipt metadata", () => {
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-external-bad");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		const runner = resolveExternalCliRunnerStatus({ command: "review-cli" });
+		const externalAdapter = externalCliReceiptMetadata({ runner });
+		fs.writeFileSync(path.join(asyncDir, "workflow-receipt.json"), JSON.stringify({
+			version: 1,
+			workflowRunId: "workflow-external-bad",
+			state: "complete",
+			createdAt: 10,
+			entries: {
+				advisor: {
+					key: "advisor",
+					latestRunId: "run-advisor",
+					resumability: { state: "not-resumable", reason: externalAdapter.nonResumableReason },
+					continuation: { runIds: ["run-advisor"] },
+					externalAdapter: { ...externalAdapter, nonResumableReason: "" },
+				},
+			},
+		}));
+
+		assert.throws(() => readWorkflowReceipt(asyncRoot, "workflow-external-bad"), /externalAdapter\.nonResumableReason is missing/);
+		const badRaw = JSON.parse(fs.readFileSync(path.join(asyncDir, "workflow-receipt.json"), "utf-8"));
+		badRaw.entries.advisor.externalAdapter = { ...externalAdapter, rawOutput: "do not persist" };
+		fs.writeFileSync(path.join(asyncDir, "workflow-receipt.json"), JSON.stringify(badRaw));
+		assert.throws(() => readWorkflowReceipt(asyncRoot, "workflow-external-bad"), /externalAdapter has unsupported fields: rawOutput/);
 	});
 
 	it("writes and resolves one exact terminal receipt", () => {
@@ -108,6 +176,24 @@ describe("workflow receipts", () => {
 		assert.throws(
 			() => resolveWorkflowReceiptResume({ reference: { workflowRunId: "workflow-1", key: "advisor", latest: false } as never, asyncDirRoot: asyncRoot }),
 			/requires latest: true/,
+		);
+	});
+
+	it("refuses keyed resume for a one-shot external CLI with its adapter reason", () => {
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-external");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		const runner = resolveExternalCliRunnerStatus({ command: "review-cli" });
+		const externalAdapter = externalCliReceiptMetadata({ runner });
+		writeWorkflowReceipt(asyncDir, buildWorkflowReceipt({
+			workflowRunId: "workflow-external",
+			state: "complete",
+			children: [child("advisor", { externalAdapter, resumability: { state: "not-resumable", reason: externalAdapter.nonResumableReason } })],
+		}));
+
+		assert.throws(
+			() => resolveWorkflowReceiptResume({ reference: { workflowRunId: "workflow-external", key: "advisor", latest: true }, asyncDirRoot: asyncRoot }),
+			/not resumable: The one-shot stdin adapter has no durable external session identity/,
 		);
 	});
 });

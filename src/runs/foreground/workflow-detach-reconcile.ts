@@ -13,6 +13,7 @@ import {
 import { updateActiveRunIndex } from "../background/active-run-index.ts";
 import { resultFilePath, writeAsyncResultFile } from "../background/result-files.ts";
 import { resolveAsyncResumeTarget } from "../background/async-resume.ts";
+import { externalCliReceiptMetadata, normalizeExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { readWorkflowReceipt, workflowReceiptPath, writeWorkflowReceipt, type WorkflowReceipt } from "../../workflows/workflow-receipt.ts";
 
 function cloneWorkflowStatus(status: AsyncStatus): AsyncStatus {
@@ -154,6 +155,12 @@ function reconcileWorkflowReceipt(status: AsyncStatus, childRunId: string, resul
 		resumability = { state: "not-resumable", reason: error instanceof Error ? error.message : String(error) };
 	}
 	const outputReference = result.savedOutputPath ?? result.outputReference?.path ?? entry.outputReference;
+	const childStatus = readStatus(path.join(DIRS.async, childRunId));
+	const externalStep = childStatus?.steps?.length === 1 && childStatus.steps[0]?.runner?.type === "external-cli" ? childStatus.steps[0] : undefined;
+	const externalRunner = normalizeExternalCliRunnerStatus(result.runner?.type === "external-cli" ? result.runner : externalStep?.runner);
+	const externalProcess = result.externalProcess ?? externalStep?.externalProcess;
+	const externalAdapter = externalRunner ? externalCliReceiptMetadata({ runner: externalRunner, externalProcess, outputReference }) : entry.externalAdapter;
+	if (externalAdapter) resumability = { state: "not-resumable", reason: externalAdapter.nonResumableReason };
 	const updatedEntry: WorkflowReceipt["entries"][string] = resumability.state === "resumable"
 		? {
 			...entry,
@@ -162,6 +169,7 @@ function reconcileWorkflowReceipt(status: AsyncStatus, childRunId: string, resul
 			latestRunId: entry.latestRunId ?? childRunId,
 			resumability,
 			...(outputReference ? { outputReference } : {}),
+			...(externalAdapter ? { externalAdapter } : {}),
 		}
 		: {
 			...entry,
@@ -169,6 +177,7 @@ function reconcileWorkflowReceipt(status: AsyncStatus, childRunId: string, resul
 			...(step.context ? { resolvedContext: step.context } : {}),
 			resumability,
 			...(outputReference ? { outputReference } : {}),
+			...(externalAdapter ? { externalAdapter } : {}),
 		};
 	const next: WorkflowReceipt = {
 		...receipt,

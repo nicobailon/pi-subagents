@@ -270,6 +270,91 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		});
 	});
 
+	it("normalizes old external-cli child status while reconciling workflow receipts", () => {
+		const workflowRunId = "workflow-old-external-receipt";
+		const childRunId = "child-old-external";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		const childDir = path.join(DIRS.async, childRunId);
+		fs.rmSync(asyncDir, { recursive: true, force: true });
+		fs.rmSync(childDir, { recursive: true, force: true });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(childDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		const status = { ...pausedWorkflow(childRunId), runId: workflowRunId, sessionId: "session-1" };
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+		fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify({
+			runId: childRunId,
+			mode: "single",
+			state: "complete",
+			startedAt: 1,
+			lastUpdate: 2,
+			steps: [{ agent: "external", status: "complete", runner: { type: "external-cli", command: "review-cli", args: [], promptDelivery: "stdin", capabilities: { stop: true, steer: false, resume: false, structuredOutput: false, toolEvents: false } } }],
+		}), "utf-8");
+		writeWorkflowReceipt(asyncDir, buildWorkflowReceipt({
+			workflowRunId,
+			state: "paused",
+			children: [{ key: "detaches", ok: false, agent: "external", runId: childRunId, output: "paused", detached: true, artifactPaths: [], resumability: { state: "not-resumable", reason: "child detached" }, continuation: { runIds: [childRunId] } }],
+		}));
+		const state = { asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]) } as SubagentState;
+
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId,
+			result: { index: 0, agent: "external", task: "t", exitCode: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+		}), true);
+
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { workflowReceipt?: { receipt?: { entries?: Record<string, { externalAdapter?: { adapter?: { id?: string }; nonResumableReason?: string } }> } } };
+		assert.equal(published.workflowReceipt?.receipt?.entries?.detaches?.externalAdapter?.adapter?.id, "external-cli");
+		assert.match(published.workflowReceipt?.receipt?.entries?.detaches?.externalAdapter?.nonResumableReason ?? "", /no durable external session identity/);
+		assert.doesNotMatch(fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8"), /receipt_write_failed/);
+	});
+
+	it("keeps mixed Pi and external workflow receipt entries on their computed resumability", () => {
+		const workflowRunId = "workflow-mixed-receipt";
+		const childRunId = "child-mixed";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		const childDir = path.join(DIRS.async, childRunId);
+		fs.rmSync(asyncDir, { recursive: true, force: true });
+		fs.rmSync(childDir, { recursive: true, force: true });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(childDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		const status = { ...pausedWorkflow(childRunId), runId: workflowRunId, sessionId: "session-1" };
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+		const sessionFile = path.join(childDir, "pi-session.jsonl");
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify({
+			runId: childRunId,
+			mode: "parallel",
+			state: "complete",
+			startedAt: 1,
+			lastUpdate: 2,
+			steps: [
+				{ agent: "worker", status: "complete", sessionFile },
+				{ agent: "external", status: "complete", runner: { type: "external-cli", command: "review-cli", args: [], promptDelivery: "stdin" } },
+			],
+		}), "utf-8");
+		writeWorkflowReceipt(asyncDir, buildWorkflowReceipt({
+			workflowRunId,
+			state: "paused",
+			children: [{ key: "detaches", ok: false, agent: "worker", runId: childRunId, output: "paused", detached: true, artifactPaths: [], resumability: { state: "not-resumable", reason: "child detached" }, continuation: { runIds: [childRunId] } }],
+		}));
+		const state = { asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]) } as SubagentState;
+
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId,
+			result: { index: 0, agent: "worker", task: "t", exitCode: 0, sessionFile, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+		}), true);
+
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { workflowReceipt?: { receipt?: { entries?: Record<string, { resumability?: { state?: string; reason?: string }; externalAdapter?: unknown }> } } };
+		assert.equal(published.workflowReceipt?.receipt?.entries?.detaches?.resumability?.state, "not-resumable");
+		assert.doesNotMatch(published.workflowReceipt?.receipt?.entries?.detaches?.resumability?.reason ?? "", /no durable external session identity/);
+		assert.equal(published.workflowReceipt?.receipt?.entries?.detaches?.externalAdapter, undefined);
+	});
+
 	it("does not log workflow completion while another detached child is still open", () => {
 		const workflowRunId = "workflow-still-paused";
 		const asyncDir = path.join(DIRS.async, workflowRunId);
