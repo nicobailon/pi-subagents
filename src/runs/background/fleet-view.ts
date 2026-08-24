@@ -18,6 +18,7 @@ import { readStatus } from "../../shared/utils.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { contextModeLabel, summarizeContextModes } from "../shared/context-mode.ts";
 import { formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
+import { isTrustedRecordedSessionFile } from "../../shared/session-file-trust.ts";
 
 const DEFAULT_TRANSCRIPT_LINES = 80;
 const MAX_TRANSCRIPT_LINES = 500;
@@ -43,6 +44,8 @@ interface TranscriptOptions {
 	index?: number;
 	lines?: number;
 	sessionRoots?: string[];
+	trustedSessionFiles?: string[];
+	trustedSessionFileRoot?: string;
 }
 
 interface TextTailResult {
@@ -120,10 +123,13 @@ function readTextTail(filePath: string, maxLines: number): TextTailResult {
 	}
 }
 
-function readContainedTextTail(filePath: string, maxLines: number, trustedRoots: string[], label: string): TextTailResult {
-	if (trustedRoots.length === 0) return { path: filePath, lines: [], truncated: false, error: `Refusing to read ${label} transcript path without a trusted root: ${filePath}` };
+function readContainedTextTail(filePath: string, maxLines: number, trustedRoots: string[], label: string, trustedFiles: string[] = [], trustedFileRoot?: string): TextTailResult {
+	if (trustedRoots.length === 0 && (!trustedFileRoot || trustedFiles.length === 0)) return { path: filePath, lines: [], truncated: false, error: `Refusing to read ${label} transcript path without a trusted root: ${filePath}` };
 	const resolvedPath = path.resolve(filePath);
-	if (!trustedRoots.some((root) => pathWithin(root, resolvedPath))) {
+	const recordedCandidate = trustedFileRoot
+		&& pathWithin(trustedFileRoot, resolvedPath)
+		&& trustedFiles.some((file) => path.resolve(file) === resolvedPath);
+	if (!trustedRoots.some((root) => pathWithin(root, resolvedPath)) && !recordedCandidate) {
 		return { path: filePath, lines: [], truncated: false, error: `Refusing to read ${label} transcript path outside trusted roots: ${filePath}` };
 	}
 	let lstat: fs.Stats;
@@ -143,7 +149,7 @@ function readContainedTextTail(filePath: string, maxLines: number, trustedRoots:
 	} catch (error) {
 		return { path: filePath, lines: [], truncated: false, error: getErrorMessage(error) };
 	}
-	if (!realRoots.some((root) => pathWithin(root, realPath))) {
+	if (!realRoots.some((root) => pathWithin(root, realPath)) && !isTrustedRecordedSessionFile(realPath, trustedFiles, trustedFileRoot)) {
 		return { path: filePath, lines: [], truncated: false, error: `Refusing to read ${label} transcript path outside trusted roots: ${filePath}` };
 	}
 	return readTextTail(resolvedPath, maxLines);
@@ -213,8 +219,8 @@ function sessionMessageLine(record: unknown): string | undefined {
 
 /** Structured session tail: parsed content parts, newest last, bounded by
  *  maxMessages. Same trusted-root containment as the prose transcript tail. */
-export function readSessionMessagesTail(sessionFile: string, maxMessages: number, trustedRoots: string[]): { messages: SessionTranscriptMessage[]; warnings: string[]; truncated: boolean } {
-	const tail = readContainedTextTail(sessionFile, Math.max(maxMessages * 4, maxMessages), trustedRoots, "session");
+export function readSessionMessagesTail(sessionFile: string, maxMessages: number, trustedRoots: string[], trustedFiles: string[] = [], trustedFileRoot?: string): { messages: SessionTranscriptMessage[]; warnings: string[]; truncated: boolean } {
+	const tail = readContainedTextTail(sessionFile, Math.max(maxMessages * 4, maxMessages), trustedRoots, "session", trustedFiles, trustedFileRoot);
 	const warnings: string[] = [];
 	if (tail.error) warnings.push(`Session read failed for ${sessionFile}: ${tail.error}`);
 	const parsedMessages: SessionTranscriptMessage[] = [];
@@ -235,8 +241,8 @@ export function readSessionMessagesTail(sessionFile: string, maxMessages: number
 	return { messages, warnings, truncated: tail.truncated || parsedMessages.length > messages.length };
 }
 
-function readSessionTranscriptTail(sessionFile: string, maxLines: number, trustedRoots: string[]): { lines: string[]; warnings: string[] } {
-	const tail = readContainedTextTail(sessionFile, Math.max(maxLines * 4, maxLines), trustedRoots, "session");
+function readSessionTranscriptTail(sessionFile: string, maxLines: number, trustedRoots: string[], trustedFiles: string[] = [], trustedFileRoot?: string): { lines: string[]; warnings: string[] } {
+	const tail = readContainedTextTail(sessionFile, Math.max(maxLines * 4, maxLines), trustedRoots, "session", trustedFiles, trustedFileRoot);
 	const warnings: string[] = [];
 	if (tail.error) warnings.push(`Session read failed for ${sessionFile}: ${tail.error}`);
 	const lines: string[] = [];
@@ -523,7 +529,7 @@ export function formatAsyncRunTranscript(status: AsyncStatus, asyncDir: string, 
 		transcriptSource = "Recent output from status.json";
 	}
 	if (transcriptLines.length === 0 && sessionFile) {
-		const sessionTail = readSessionTranscriptTail(sessionFile, lineLimit, options.sessionRoots ?? []);
+		const sessionTail = readSessionTranscriptTail(sessionFile, lineLimit, options.sessionRoots ?? [], options.trustedSessionFiles, options.trustedSessionFileRoot);
 		transcriptLines = sessionTail.lines;
 		warnings.push(...sessionTail.warnings);
 		if (transcriptLines.length > 0) transcriptSource = `Session transcript tail from ${sessionFile}`;
@@ -554,7 +560,7 @@ export function formatNestedRunTranscript(run: NestedRunSummary, options: Transc
 		appendTranscriptBody(lines, "Transcript tail", [], false);
 		return safeTranscriptLines(lines);
 	}
-	const sessionTail = readSessionTranscriptTail(run.sessionFile, lineLimit, options.sessionRoots ?? []);
+	const sessionTail = readSessionTranscriptTail(run.sessionFile, lineLimit, options.sessionRoots ?? [], options.trustedSessionFiles, options.trustedSessionFileRoot);
 	if (sessionTail.warnings.length) {
 		lines.push("Warnings:");
 		for (const warning of sessionTail.warnings) lines.push(`  ${warning}`);

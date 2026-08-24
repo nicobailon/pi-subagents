@@ -363,7 +363,8 @@ describe("Fleet inspector structured transcript", () => {
 			assert.deepEqual(directLink.events, []);
 			assert.match(directLink.warning ?? "", /refused a symlink/);
 
-			const parentLink = readFleetTranscript(path.join(trustedRoot, "directory-link", path.basename(outsideTranscript)), { trustedRoots: [trustedRoot] });
+			const linkedPath = path.join(trustedRoot, "directory-link", path.basename(outsideTranscript));
+			const parentLink = readFleetTranscript(linkedPath, { trustedRoots: [trustedRoot], trustedFiles: [linkedPath], trustedFileRoot: trustedRoot });
 			assert.deepEqual(parentLink.events, []);
 			assert.match(parentLink.warning ?? "", /resolves outside trusted roots/);
 		} finally {
@@ -383,6 +384,33 @@ describe("Fleet inspector structured transcript", () => {
 		} finally {
 			fs.rmSync(trustedRoot, { recursive: true, force: true });
 			fs.rmSync(outsideRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("trusts only the recorded session file inside the Pi sessions base", () => {
+		const sessionsBase = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-recorded-session-"));
+		const outsideBase = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-recorded-outside-"));
+		try {
+			const projectDir = path.join(sessionsBase, "project");
+			fs.mkdirSync(projectDir);
+			const recorded = writeTranscript(projectDir, [{ recordType: "message", role: "assistant", text: "recorded child" }]);
+			const sibling = path.join(projectDir, "sibling.jsonl");
+			fs.copyFileSync(recorded, sibling);
+
+			const trusted = readFleetTranscript(recorded, { trustedRoots: [], trustedFiles: [recorded], trustedFileRoot: sessionsBase });
+			assert.equal(trusted.events.find((event) => event.kind === "assistant")?.text, "recorded child");
+
+			const refused = readFleetTranscript(sibling, { trustedRoots: [], trustedFiles: [recorded], trustedFileRoot: sessionsBase });
+			assert.deepEqual(refused.events, []);
+			assert.match(refused.warning ?? "", /outside trusted roots/);
+
+			const outside = writeTranscript(outsideBase, [{ recordType: "message", role: "assistant", text: "outside" }]);
+			const outsideRefused = readFleetTranscript(outside, { trustedRoots: [], trustedFiles: [outside], trustedFileRoot: sessionsBase });
+			assert.deepEqual(outsideRefused.events, []);
+			assert.match(outsideRefused.warning ?? "", /outside trusted roots/);
+		} finally {
+			fs.rmSync(sessionsBase, { recursive: true, force: true });
+			fs.rmSync(outsideBase, { recursive: true, force: true });
 		}
 	});
 

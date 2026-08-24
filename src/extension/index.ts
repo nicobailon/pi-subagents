@@ -24,6 +24,7 @@ import { clearRuntimeAgentsForPi, listRuntimeAgentConfigs, mergeRuntimeAgents } 
 import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
+import { getAgentDir } from "../shared/utils.ts";
 import { currentCompletionOwnerId } from "../shared/completion-owner.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderSubagentResult, renderSubagentSummary } from "../tui/render.ts";
@@ -848,6 +849,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		goalTurnId = 0;
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 		state.parentSessionFile = ctx.sessionManager.getSessionFile();
+		state.trustedSessionFileRoot = state.parentSessionFile ? path.join(getAgentDir(), "sessions") : undefined;
 		state.trustedSessionRoots = [...new Set([
 			...(config.defaultSessionDir ? [path.resolve(expandTilde(config.defaultSessionDir))] : []),
 			...(state.parentSessionFile ? [getSubagentSessionRoot(state.parentSessionFile)] : []),

@@ -146,6 +146,27 @@ describe("inspect-rpc resolution and ownership", () => {
 });
 
 describe("inspect-rpc reply content", () => {
+	it("reads an exact runtime-recorded session under the Pi sessions base", () => {
+		const sessionsBase = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-recorded-session-"));
+		const root = path.join(sessionsBase, "project");
+		try {
+			fs.mkdirSync(root);
+			const { resultsDir } = makeRun(root, {
+				runId: "run-recorded",
+				sessionMessages: [userMessage("recorded task"), assistantMessage("recorded answer")],
+				resultPayload: { summary: "done", results: [{ agent: "worker", output: "recorded answer", success: true }] },
+			});
+			const state = makeState(path.join(sessionsBase, "unrelated"));
+			state.trustedSessionFileRoot = sessionsBase;
+			const reply = buildInspectReply({ requestId: "r-recorded", asyncId: "run-recorded" }, makeDeps(root, resultsDir, state));
+			assert.equal(reply.error, undefined);
+			assert.equal(reply.task, "recorded task");
+			assert.equal(reply.messages?.at(-1)?.text, "recorded answer");
+		} finally {
+			fs.rmSync(sessionsBase, { recursive: true, force: true });
+		}
+	});
+
 	it("returns task, messages, and final output without leaking paths", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-full-"));
 		const sessionFile = path.join(root, "run-1-session.jsonl");

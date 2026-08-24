@@ -218,19 +218,19 @@ function readOutputArtifact(outputPath: string): { output?: string; errorText?: 
 	}
 }
 
-function readSessionBackedOutput(sessionPath: string, trustedRoots: string[]): { output?: string } {
-	if (trustedRoots.length === 0) return {};
+function readSessionBackedOutput(sessionPath: string, trustedRoots: string[], trustedSessionFileRoot?: string): { output?: string } {
+	if (trustedRoots.length === 0 && !trustedSessionFileRoot) return {};
 	// The archive retains the child's session file as its output record. The
 	// final answer is the terminal assistant message's text — all text parts
 	// of that one session record, not just the last part.
-	const tail = readSessionMessagesTail(sessionPath, MAX_MESSAGE_LINES, trustedRoots);
+	const tail = readSessionMessagesTail(sessionPath, MAX_MESSAGE_LINES, trustedRoots, [sessionPath], trustedSessionFileRoot);
 	const last = tail.messages.findLast((message) => message.role === "assistant" && message.kind === "text");
 	if (!last) return {};
 	const parts = tail.messages.filter((message) => message.recordIndex === last.recordIndex && message.kind === "text");
 	return { output: parts.map((part) => part.text).join("\n") };
 }
 
-function readResultOutput(resultsDir: string, sessionId: string, runId: string, stepIndex: number | undefined, trustedRoots: string[], stepAgent: string | undefined, now: () => number): { output?: string; errorText?: string } {
+function readResultOutput(resultsDir: string, sessionId: string, runId: string, stepIndex: number | undefined, trustedRoots: string[], stepAgent: string | undefined, now: () => number, trustedSessionFileRoot?: string): { output?: string; errorText?: string } {
 	const resultPath = resultPayloadPathForSessionRun(resultsDir, sessionId, runId);
 	if (resultPath) return resultOutput(JSON.parse(fs.readFileSync(resultPath, "utf-8")) as unknown, stepIndex);
 	// Read the raw record first: readCompletionReplay best-effort deletes
@@ -284,7 +284,7 @@ function readResultOutput(resultsDir: string, sessionId: string, runId: string, 
 	if (artifactPath) return readOutputArtifact(artifactPath);
 	const sessionEntry = archive?.entries.find((entry) => entry.source === "session" && matches(entry));
 	const sessionPath = sessionEntry?.source === "session" ? sessionEntry.path : undefined;
-	if (sessionPath) return readSessionBackedOutput(sessionPath, trustedRoots);
+	if (sessionPath) return readSessionBackedOutput(sessionPath, trustedRoots, trustedSessionFileRoot);
 	const output = archive?.entries.find((entry) => entry.source === "result-tail" && matches(entry))?.text;
 	return output ? { output } : {};
 }
@@ -377,8 +377,8 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 
 		let messages: InspectReplyMessage[] | undefined;
 		let task: string | undefined;
-		if (sessionFile && trustedRoots.length > 0) {
-			const tail = readSessionMessagesTail(sessionFile, lineLimit, trustedRoots);
+		if (sessionFile && (trustedRoots.length > 0 || deps.state?.trustedSessionFileRoot)) {
+			const tail = readSessionMessagesTail(sessionFile, lineLimit, trustedRoots, [sessionFile], deps.state?.trustedSessionFileRoot);
 			if (tail.messages.length > 0) {
 				messages = tail.messages.map(toReplyMessage);
 				// The delegated task is the child session's first user message, but
@@ -393,7 +393,7 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 			}
 		}
 
-		const result = readResultOutput(resultsDir, currentSessionId, node.status.runId, node.stepIndex, trustedRoots, step?.agent, deps.now ?? Date.now);
+		const result = readResultOutput(resultsDir, currentSessionId, node.status.runId, node.stepIndex, trustedRoots, step?.agent, deps.now ?? Date.now, deps.state?.trustedSessionFileRoot);
 		const failedText = step?.error ?? node.status.error;
 		if (result.output === undefined && result.errorText === undefined && failedText !== undefined) {
 			return errorReply(request, "internal", "Inspection could not read the async run artifacts.");

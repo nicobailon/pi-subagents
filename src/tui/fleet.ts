@@ -547,6 +547,8 @@ function asyncDetail(item: Extract<FleetItem, { kind: "async" }>, state: Subagen
 			index: item.index,
 			lines: TRANSCRIPT_LINES,
 			sessionRoots: uniquePaths([...(state.trustedSessionRoots ?? []), trackedJob?.sessionRoot]),
+			trustedSessionFiles: [item.step?.sessionFile ?? item.run.sessionFile].filter((value): value is string => Boolean(value)),
+			trustedSessionFileRoot: state.trustedSessionFileRoot,
 		}).split("\n");
 		if (status.mode === "workflow" && item.index === undefined) {
 			const progress = workflowProgressLines((status.steps ?? item.run.steps) as AsyncJobStep[]);
@@ -628,7 +630,7 @@ function fleetArtifactsRoot(state: SubagentState, cwd: string): string {
 	);
 }
 
-function transcriptTarget(item: FleetItem, state: SubagentState): { path: string; trustedRoots: string[] } | undefined {
+function transcriptTarget(item: FleetItem, state: SubagentState): { path: string; trustedRoots: string[]; trustedFiles?: string[]; trustedFileRoot?: string } | undefined {
 	if (item.kind === "external") return undefined;
 	if (item.kind === "foreground-active") {
 		const artifactsRoot = fleetArtifactsRoot(state, item.control.cwd ?? state.baseCwd);
@@ -651,10 +653,12 @@ function transcriptTarget(item: FleetItem, state: SubagentState): { path: string
 		};
 	}
 	const step = item.step ?? (item.run.steps.length === 1 ? item.run.steps[0] : undefined);
-	if (!step?.transcriptPath) return undefined;
-	const transcriptPath = path.isAbsolute(step.transcriptPath)
-		? step.transcriptPath
-		: path.resolve(item.run.asyncDir, step.transcriptPath);
+	const recordedSessionFile = step?.sessionFile ?? item.run.sessionFile;
+	const recordedPath = step?.transcriptPath ?? recordedSessionFile;
+	if (!recordedPath) return undefined;
+	const transcriptPath = path.isAbsolute(recordedPath)
+		? recordedPath
+		: path.resolve(item.run.asyncDir, recordedPath);
 	const trackedJob = state.fleetJobs?.get(item.runId) ?? state.asyncJobs.get(item.runId);
 	return {
 		path: transcriptPath,
@@ -664,6 +668,7 @@ function transcriptTarget(item: FleetItem, state: SubagentState): { path: string
 			trackedJob?.cwd ? fleetArtifactsRoot(state, trackedJob.cwd) : undefined,
 			item.run.sessionFile ? getArtifactsDir(item.run.sessionFile, item.run.cwd ?? state.baseCwd, state.artifactDirPreference) : undefined,
 		]),
+		...(!step?.transcriptPath && recordedSessionFile ? { trustedFiles: [recordedSessionFile], trustedFileRoot: state.trustedSessionFileRoot } : {}),
 	};
 }
 
@@ -1201,8 +1206,8 @@ export class SubagentFleetComponent implements Component {
 		});
 	}
 
-	private renderedTranscript(target: { path: string; trustedRoots: string[] }, width: number): { transcript: FleetTranscript; body: string[] } {
-		const fingerprint = `${target.trustedRoots.join("\0")}|${transcriptFingerprint(target.path)}`;
+	private renderedTranscript(target: { path: string; trustedRoots: string[]; trustedFiles?: string[]; trustedFileRoot?: string }, width: number): { transcript: FleetTranscript; body: string[] } {
+		const fingerprint = `${target.trustedRoots.join("\0")}|${target.trustedFiles?.join("\0") ?? ""}|${target.trustedFileRoot ?? ""}|${transcriptFingerprint(target.path)}`;
 		if (this.transcriptCache
 			&& this.transcriptCache.path === target.path
 			&& this.transcriptCache.fingerprint === fingerprint
@@ -1210,7 +1215,11 @@ export class SubagentFleetComponent implements Component {
 			&& this.transcriptCache.expandedTools === this.expandedTools) {
 			return { transcript: this.transcriptCache.transcript, body: [...this.transcriptCache.body] };
 		}
-		const transcript = readFleetTranscript(target.path, { trustedRoots: target.trustedRoots });
+		const transcript = readFleetTranscript(target.path, {
+			trustedRoots: target.trustedRoots,
+			...(target.trustedFiles ? { trustedFiles: target.trustedFiles } : {}),
+			...(target.trustedFileRoot ? { trustedFileRoot: target.trustedFileRoot } : {}),
+		});
 		const body = transcript.events.length > 0
 			? renderFleetTranscript(transcript, width, this.theme, this.markdownTheme, { expandedTools: this.expandedTools })
 			: [];

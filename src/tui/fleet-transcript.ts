@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { getLanguageFromPath, highlightCode, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { safeTerminalText as safeDisplayText } from "../shared/display-text.ts";
+import { isTrustedRecordedSessionFile } from "../shared/session-file-trust.ts";
 
 const DEFAULT_MAX_RECORDS = 240;
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
@@ -61,6 +62,8 @@ export interface FleetTranscript {
 
 interface FleetTranscriptReadOptions {
 	trustedRoots: string[];
+	trustedFiles?: string[];
+	trustedFileRoot?: string;
 	maxRecords?: number;
 	maxBytes?: number;
 }
@@ -109,10 +112,13 @@ function isNotFoundError(error: unknown): boolean {
 	return Boolean(objectValue(error)?.code === "ENOENT");
 }
 
-function validateTranscriptPath(filePath: string, trustedRoots: string[]): { resolvedPath?: string; warning?: string } {
-	if (trustedRoots.length === 0) return { warning: `Transcript preview has no trusted root: ${filePath}` };
+function validateTranscriptPath(filePath: string, trustedRoots: string[], trustedFiles: string[] = [], trustedFileRoot?: string): { resolvedPath?: string; warning?: string } {
+	if (trustedRoots.length === 0 && (!trustedFileRoot || trustedFiles.length === 0)) return { warning: `Transcript preview has no trusted root: ${filePath}` };
 	const resolvedPath = path.resolve(filePath);
-	if (!trustedRoots.some((root) => pathWithin(root, resolvedPath))) {
+	const recordedCandidate = trustedFileRoot
+		&& pathWithin(trustedFileRoot, resolvedPath)
+		&& trustedFiles.some((file) => path.resolve(file) === resolvedPath);
+	if (!trustedRoots.some((root) => pathWithin(root, resolvedPath)) && !recordedCandidate) {
 		return { warning: `Transcript is outside trusted roots: ${filePath}` };
 	}
 	let stat: fs.Stats;
@@ -129,7 +135,7 @@ function validateTranscriptPath(filePath: string, trustedRoots: string[]): { res
 		const realRoots = trustedRoots
 			.filter((root) => fs.existsSync(root))
 			.map((root) => fs.realpathSync(root));
-		if (!realRoots.some((root) => pathWithin(root, realPath))) {
+		if (!realRoots.some((root) => pathWithin(root, realPath)) && !isTrustedRecordedSessionFile(realPath, trustedFiles, trustedFileRoot)) {
 			return { warning: `Transcript resolves outside trusted roots: ${filePath}` };
 		}
 		return { resolvedPath: realPath };
@@ -335,7 +341,7 @@ function parseTranscriptLines(lines: string[], conversationStarted = false): { e
 }
 
 export function readFleetTranscript(filePath: string, options: FleetTranscriptReadOptions): FleetTranscript {
-	const validated = validateTranscriptPath(filePath, options.trustedRoots);
+	const validated = validateTranscriptPath(filePath, options.trustedRoots, options.trustedFiles, options.trustedFileRoot);
 	if (!validated.resolvedPath) {
 		return { path: filePath, events: [], truncated: false, ...(validated.warning ? { warning: safeDisplayText(validated.warning) } : {}) };
 	}

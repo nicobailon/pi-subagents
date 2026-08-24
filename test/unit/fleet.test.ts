@@ -978,6 +978,44 @@ describe("native subagent fleet", () => {
 		}
 	});
 
+	it("previews an exact runtime-recorded workflow session under the Pi sessions base", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-recorded-session-"));
+		try {
+			const asyncDir = writeAsyncRun(root, { id: "async-recorded-session" });
+			const sessionsBase = path.join(root, "sessions");
+			const projectDir = path.join(sessionsBase, "project");
+			fs.mkdirSync(projectDir, { recursive: true });
+			const sessionFile = path.join(projectDir, "workflow-child.jsonl");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ role: "assistant", content: "RECORDED WORKFLOW SESSION" })}\n`, "utf-8");
+			const statusPath = path.join(asyncDir, "status.json");
+			const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as { sessionFile?: string; steps?: Array<{ sessionFile?: string; transcriptPath?: string }> };
+			status.sessionFile = sessionFile;
+			status.steps![0]!.sessionFile = sessionFile;
+			delete status.steps![0]!.transcriptPath;
+			fs.writeFileSync(statusPath, JSON.stringify(status, null, 2), "utf-8");
+
+			const state = stateForTest();
+			state.trustedSessionRoots = [];
+			state.trustedSessionFileRoot = sessionsBase;
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 32, columns: 100 }, requestRender() {} } as never,
+				theme as never,
+				state,
+				() => {},
+				{ asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 60_000 },
+			);
+			try {
+				const rendered = component.render(100).join("\n");
+				assert.match(rendered, /RECORDED WORKFLOW SESSION/);
+				assert.doesNotMatch(rendered, /without a trusted root|Session read failed/);
+			} finally {
+				component.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("renders structured tool activity and assistant Markdown when a child transcript is available", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-structured-"));
 		try {
