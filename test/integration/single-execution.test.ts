@@ -650,6 +650,29 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(forwarded?.workflowScript, "return runs.run('main', { agent: 'echo' })");
 	});
 
+	it("validates workflow scripts without launching children or creating artifacts", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const before = fs.readdirSync(tempDir).sort();
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), () => {
+			throw new Error("validate must not discover or launch agents");
+		});
+
+		const result = await executor.executePublic(
+			"offline-validation",
+			{ action: "validate", workflowScript: `return runs.run("bad key", { agent: "echo" });` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.deepEqual(JSON.parse(result.content[0]?.text ?? "null"), {
+			ok: false,
+			errors: [{ message: "runs.run key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.", line: 1, column: 17 }],
+		});
+		assert.equal(mockPi.callCount(), 0);
+		assert.deepEqual(fs.readdirSync(tempDir).sort(), before);
+	});
+
 	it("starts workflow scripts asynchronously with a portable internal run id", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ echoEnv: [SUBAGENT_STEER_INBOX_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_ACK_DIR_ENV] });
 		const asyncJobs: SubagentState["asyncJobs"] = new Map();

@@ -261,7 +261,7 @@ const SubagentParamProperties = {
 	extensionBindings: Type.Optional(Type.Unsafe({ type: "object", maxProperties: 16, additionalProperties: true, description: "Namespaced, bounded plain-JSON metadata delivered only to the child runtime. Namespace keys use package.name/1 syntax." })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({ minLength: 1,
-		description: "Optional management/control action. Omit this field for structured single-child or workflowScript execution; use it only for management/control actions."
+		description: "Optional management/control action. Use action='validate' with workflowScript for offline checks. Omit this field for structured single-child or workflowScript execution; otherwise, use it only for management/control actions."
 	})),
 	name: Type.Optional(Type.String({ description: "Human-readable name for action='schedule.create'." })),
 	id: Type.Optional(Type.String({

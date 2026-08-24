@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { Worker } from "node:worker_threads";
-import { formatWorkflowJsonPreview, previewSimpleWorkflowRun, runWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
+import { formatWorkflowJsonPreview, previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
 
 describe("scripted workflow runtime", () => {
 	it("uses ordinary statement-body return semantics", async () => {
@@ -61,6 +61,78 @@ describe("scripted workflow runtime", () => {
 				&& error.message.includes("Unexpected token")
 				&& error.message.includes("SyntaxError"),
 		);
+	});
+
+	it("validates workflow syntax and portable structure offline", () => {
+		const syntax = validateWorkflowScript(["const value = 1;", "return (;"].join("\n"));
+		assert.equal(syntax.ok, false);
+		assert.equal(syntax.errors[0]?.line, 2);
+		assert.ok((syntax.errors[0]?.column ?? 0) > 0);
+		assert.doesNotMatch(syntax.errors[0]?.message ?? "", /\(3:\d+\)$/);
+
+		const structural = validateWorkflowScript([
+			`const results = await runs.all([{ key: "bad key", agent: "worker" }, { key: "someChild", agent: "reviewer" }]);`,
+			`async function helper() { return "no"; }`,
+			`return results.someChild;`,
+		].join("\n"));
+		assert.equal(structural.ok, false);
+		assert.ok(structural.errors.some((error) => error.message.includes("runs.all item key")));
+		assert.ok(structural.errors.some((error) => error.message.includes("nested async functions")));
+		assert.ok(structural.errors.some((error) => error.message.includes("ordered array")));
+
+		const invalidRunKey = validateWorkflowScript(`return runs.run("bad key", { agent: "worker" });`);
+		assert.equal(invalidRunKey.ok, false);
+		assert.ok(invalidRunKey.errors.some((error) => error.message.includes("runs.run key")));
+
+		for (const script of [
+			`return runs.run("single", { agent: "worker", task: undefined });`,
+			`return runs.all([{ key: "same", agent: "worker", task: undefined }]);`,
+		]) {
+			const invalidParams = validateWorkflowScript(script);
+			assert.equal(invalidParams.ok, false);
+			assert.ok(invalidParams.errors.some((error) => error.message.includes("undefined is not JSON-representable")));
+		}
+		assert.deepEqual(validateWorkflowScript(`return runs.run("single", { agent: "worker", task: undefined, task: "real" });`), { ok: true, errors: [] });
+
+		assert.deepEqual(validateWorkflowScript(`return runs.all([{ ...{ key: "bad key" }, agent: "worker" }]);`), { ok: true, errors: [] });
+		assert.deepEqual(validateWorkflowScript(`return runs.run("same", { agent: selectedAgent });`), { ok: true, errors: [] });
+	});
+
+	it("keeps dynamic workflow keys silent during offline validation", () => {
+		const result = validateWorkflowScript([
+			`const prefix = "lane";`,
+			`const child = await runs.run(prefix + "-writer", { agent: selectedAgent, task: taskText });`,
+			`const results = await runs.all(items.map((item) => ({ key: item.key, agent: item.agent, task: item.task })));`,
+			`return { child: child.output, outputs: results.map((entry) => entry.output) };`,
+		].join("\n"));
+		assert.deepEqual(result, { ok: true, errors: [] });
+	});
+
+	it("allows Array properties that match runs.all child keys", () => {
+		const valid = validateWorkflowScript([
+			`const mapResults = await runs.all([{ key: "map", agent: "reviewer", task: "Review" }]);`,
+			`const lengthResults = await runs.all([{ key: "length", agent: "reviewer", task: "Review" }]);`,
+			`return { outputs: mapResults.map((result) => result.output), count: lengthResults.length };`,
+		].join("\n"));
+		assert.deepEqual(valid, { ok: true, errors: [] });
+
+		const keyed = validateWorkflowScript([
+			`const results = await runs.all([{ key: "someChild", agent: "reviewer", task: "Review" }]);`,
+			`return results.someChild;`,
+		].join("\n"));
+		assert.equal(keyed.ok, false);
+		assert.ok(keyed.errors.some((error) => error.message.includes("'results.someChild' is keyed access")));
+	});
+
+	it("rejects statically non-JSON workflow boundary values", () => {
+		assert.deepEqual(validateWorkflowScript(`return void 0;`), { ok: true, errors: [] });
+		assert.deepEqual(validateWorkflowScript(`return undefined;`), { ok: true, errors: [] });
+		assert.deepEqual(validateWorkflowScript(`return [void 0, { value: void 0 }];`), { ok: true, errors: [] });
+		assert.deepEqual(validateWorkflowScript(`return [undefined, { value: undefined }];`), { ok: true, errors: [] });
+		const result = validateWorkflowScript(`emit(void 0); emit(undefined); state.set("void", void 0); state.set("undefined", undefined); return [1, , 2];`);
+		assert.equal(result.ok, false);
+		assert.equal(result.errors.filter((error) => error.message.includes("undefined is not JSON-representable")).length, 4);
+		assert.ok(result.errors.some((error) => error.message.includes("sparse arrays")));
 	});
 
 	it("previews only simple explicit-return child scripts", () => {

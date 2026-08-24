@@ -6,6 +6,17 @@ import { Worker } from "node:worker_threads";
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const requireFromPackage = createRequire(import.meta.url);
 
+export interface WorkflowScriptValidationError {
+	message: string;
+	line?: number;
+	column?: number;
+}
+
+export interface WorkflowScriptValidationResult {
+	ok: boolean;
+	errors: WorkflowScriptValidationError[];
+}
+
 const WORKER_SOURCE = String.raw`
 const { parentPort, workerData } = require("node:worker_threads");
 const vm = require("node:vm");
@@ -879,6 +890,194 @@ function validateKey(value: unknown, owner = "runs.run"): string {
 	return value;
 }
 
+type AstNode = {
+	type: string;
+	loc?: { start: { line: number; column: number } };
+	[key: string]: unknown;
+};
+
+const AST_LOCATION_KEYS = new Set(["type", "start", "end", "loc", "range"]);
+
+function astNode(value: unknown): value is AstNode {
+	return Boolean(value) && typeof value === "object" && typeof (value as { type?: unknown }).type === "string";
+}
+
+function literalString(node: unknown): string | undefined {
+	if (!astNode(node)) return undefined;
+	if (node.type === "Literal" && typeof node.value === "string") return node.value;
+	if (node.type === "TemplateLiteral" && Array.isArray(node.expressions) && node.expressions.length === 0 && Array.isArray(node.quasis)) {
+		const first = node.quasis[0] as { value?: { cooked?: unknown } } | undefined;
+		if (typeof first?.value?.cooked === "string") return first.value.cooked;
+	}
+	return undefined;
+}
+
+function directRunsCall(node: unknown, method: "run" | "all"): node is AstNode {
+	if (!astNode(node) || node.type !== "CallExpression" || !astNode(node.callee) || node.callee.type !== "MemberExpression") return false;
+	const property = node.callee.computed === true ? literalString(node.callee.property) : astNode(node.callee.property) && node.callee.property.type === "Identifier" ? node.callee.property.name : undefined;
+	return property === method && astNode(node.callee.object) && node.callee.object.type === "Identifier" && node.callee.object.name === "runs";
+}
+
+function nodeLocation(node: AstNode): Pick<WorkflowScriptValidationError, "line" | "column"> {
+	return node.loc ? { line: Math.max(1, node.loc.start.line - 1), column: node.loc.start.column + 1 } : {};
+}
+
+function walkAst(node: unknown, visit: (node: AstNode) => void, includeNestedFunctions = true): void {
+	if (Array.isArray(node)) {
+		for (const item of node) walkAst(item, visit, includeNestedFunctions);
+		return;
+	}
+	if (!astNode(node)) return;
+	visit(node);
+	if (!includeNestedFunctions && (node.type === "FunctionDeclaration" || node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression")) return;
+	for (const [key, child] of Object.entries(node)) {
+		if (!AST_LOCATION_KEYS.has(key)) walkAst(child, visit, includeNestedFunctions);
+	}
+}
+
+function definitelyNonJson(node: AstNode, normalizeUndefined = false): string | undefined {
+	if (node.type === "Literal") {
+		if (typeof node.bigint === "string") return "BigInt values are not JSON-representable";
+		if (node.regex !== undefined) return "regular expressions are not JSON-representable";
+		return undefined;
+	}
+	if (node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression") return "functions are not JSON-representable";
+	if (node.type === "Identifier" && node.name === "undefined") return normalizeUndefined ? undefined : "undefined is not JSON-representable";
+	if (node.type === "UnaryExpression" && node.operator === "void") return normalizeUndefined ? undefined : "undefined is not JSON-representable";
+	if (node.type === "ArrayExpression" && Array.isArray(node.elements)) {
+		if (node.elements.some((entry) => entry === null)) return "sparse arrays are not JSON-representable";
+		for (const entry of node.elements) if (astNode(entry)) {
+			const error = definitelyNonJson(entry, normalizeUndefined);
+			if (error) return error;
+		}
+	}
+	if (node.type === "ObjectExpression" && Array.isArray(node.properties)) {
+		const values = new Map<string, AstNode>();
+		for (const property of node.properties) {
+			if (!astNode(property) || property.type !== "Property" || !astNode(property.value)) return undefined;
+			const key = staticPropertyKey(property);
+			if (key === undefined) return undefined;
+			values.set(key, property.value);
+		}
+		for (const value of values.values()) {
+			const error = definitelyNonJson(value, normalizeUndefined);
+			if (error) return error;
+		}
+	}
+	return undefined;
+}
+
+function staticPropertyKey(property: AstNode): string | undefined {
+	return property.computed === true
+		? literalString(property.key)
+		: literalString(property.key) ?? (astNode(property.key) && property.key.type === "Identifier" ? property.key.name as string : undefined);
+}
+
+function directObjectPropertyValue(node: AstNode, name: string): AstNode | undefined {
+	if (node.type !== "ObjectExpression" || !Array.isArray(node.properties)) return undefined;
+	let value: AstNode | undefined;
+	for (const property of node.properties) {
+		if (!astNode(property) || property.type !== "Property" || !astNode(property.value)) continue;
+		if (staticPropertyKey(property) === name) value = property.value;
+	}
+	return value;
+}
+
+function directRunsAllKeys(call: AstNode): Array<{ key: string; node: AstNode }> {
+	const args = Array.isArray(call.arguments) ? call.arguments : [];
+	const items = astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements) ? args[0].elements : [];
+	return items.flatMap((item) => {
+		if (!astNode(item)) return [];
+		const keyNode = directObjectPropertyValue(item, "key");
+		const key = literalString(keyNode);
+		return keyNode && key !== undefined ? [{ key, node: keyNode }] : [];
+	});
+}
+
+/** Parse a workflowScript and apply only rules that are decidable from its local syntax. */
+export function validateWorkflowScript(script: string): WorkflowScriptValidationResult {
+	const errors: WorkflowScriptValidationError[] = [];
+	if (!script.trim()) return { ok: false, errors: [{ message: "workflowScript must not be empty." }] };
+	let root: AstNode;
+	try {
+		const parser = requireFromPackage(resolveWorkflowParserEntry()) as { parse(source: string, options: Record<string, unknown>): unknown };
+		root = parser.parse(`(async () => {\n${script}\n})()`, { ecmaVersion: "latest", sourceType: "script", locations: true }) as AstNode;
+	} catch (error) {
+		const location = error && typeof error === "object" && "loc" in error && error.loc && typeof error.loc === "object"
+			? error.loc as { line?: unknown; column?: unknown }
+			: undefined;
+		const message = (error instanceof Error ? error.message : String(error)).replace(/\s+\(\d+:\d+\)$/, "");
+		return { ok: false, errors: [{ message, ...(typeof location?.line === "number" ? { line: Math.max(1, location.line - 1) } : {}), ...(typeof location?.column === "number" ? { column: location.column + 1 } : {}) }] };
+	}
+
+	const wrapper = astNode(root.body) ? undefined : Array.isArray(root.body) && astNode(root.body[0]) && astNode(root.body[0].expression) && astNode(root.body[0].expression.callee)
+		? root.body[0].expression.callee
+		: undefined;
+	const workflowBody = wrapper && astNode(wrapper.body) ? wrapper.body : root;
+	walkAst(workflowBody, (node) => {
+		if (node !== wrapper && node.async === true && (node.type === "FunctionDeclaration" || node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression")) {
+			errors.push({ message: "workflowScript does not support nested async functions. Use top-level await, plain helper functions that return runs.run(...), or explicit Promise chains.", ...nodeLocation(node) });
+		}
+		if (directRunsCall(node, "run")) {
+			const args = Array.isArray(node.arguments) ? node.arguments : [];
+			const keyNode = astNode(args[0]) ? args[0] : undefined;
+			const key = literalString(keyNode);
+			if (keyNode && key !== undefined && !KEY_PATTERN.test(key)) errors.push({ message: "runs.run key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.", ...nodeLocation(keyNode) });
+			if (astNode(args[1])) {
+				const message = definitelyNonJson(args[1]);
+				if (message) errors.push({ message: `runs.run params are invalid: ${message}.`, ...nodeLocation(args[1]) });
+			}
+		}
+		if (directRunsCall(node, "all")) {
+			for (const entry of directRunsAllKeys(node)) if (!KEY_PATTERN.test(entry.key)) errors.push({ message: "runs.all item key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.", ...nodeLocation(entry.node) });
+			const args = Array.isArray(node.arguments) ? node.arguments : [];
+			if (astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements)) {
+				for (const item of args[0].elements) if (astNode(item)) {
+					const message = definitelyNonJson(item);
+					if (message) errors.push({ message: `runs.all item params are invalid: ${message}.`, ...nodeLocation(item) });
+				}
+			}
+		}
+		const boundaryValue = node.type === "CallExpression" && astNode(node.callee) && node.callee.type === "Identifier" && node.callee.name === "emit" && Array.isArray(node.arguments) && astNode(node.arguments[0])
+			? node.arguments[0]
+			: node.type === "CallExpression" && astNode(node.callee) && node.callee.type === "MemberExpression" && astNode(node.callee.object) && node.callee.object.type === "Identifier" && node.callee.object.name === "state" && astNode(node.callee.property) && node.callee.property.type === "Identifier" && node.callee.property.name === "set" && Array.isArray(node.arguments) && astNode(node.arguments[1])
+				? node.arguments[1]
+				: undefined;
+		if (boundaryValue) {
+			const message = definitelyNonJson(boundaryValue);
+			if (message) errors.push({ message: `workflowScript boundary value is invalid: ${message}.`, ...nodeLocation(boundaryValue) });
+		}
+	});
+	walkAst(workflowBody, (node) => {
+		if (node.type !== "ReturnStatement" || !astNode(node.argument)) return;
+		const message = definitelyNonJson(node.argument, true);
+		if (message) errors.push({ message: `workflowScript boundary value is invalid: ${message}.`, ...nodeLocation(node.argument) });
+	}, false);
+
+	if (workflowBody.type === "BlockStatement" && Array.isArray(workflowBody.body)) {
+		for (let statementIndex = 0; statementIndex < workflowBody.body.length; statementIndex++) {
+			const statement = workflowBody.body[statementIndex];
+			if (!astNode(statement) || statement.type !== "VariableDeclaration" || !Array.isArray(statement.declarations)) continue;
+			for (const declaration of statement.declarations) {
+				if (!astNode(declaration) || !astNode(declaration.id) || declaration.id.type !== "Identifier" || !astNode(declaration.init) || declaration.init.type !== "AwaitExpression" || !directRunsCall(declaration.init.argument, "all")) continue;
+				const name = declaration.id.name as string;
+				const keys = new Set(directRunsAllKeys(declaration.init.argument).map((entry) => entry.key));
+				if (keys.size === 0) continue;
+				const args = Array.isArray(declaration.init.argument.arguments) ? declaration.init.argument.arguments : [];
+				const itemCount = astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements) ? args[0].elements.length : 0;
+				const arrayResultShape = Array.from({ length: itemCount });
+				for (const later of workflowBody.body.slice(statementIndex + 1)) walkAst(later, (node) => {
+					if (node.type !== "MemberExpression" || !astNode(node.object) || node.object.type !== "Identifier" || node.object.name !== name) return;
+					const property = node.computed === true ? literalString(node.property) : astNode(node.property) && node.property.type === "Identifier" ? node.property.name as string : undefined;
+					if (property && keys.has(property) && !(property in arrayResultShape)) errors.push({ message: `runs.all returns an ordered array; '${name}.${property}' is keyed access. Use an index, destructuring, or map(...).`, ...nodeLocation(node) });
+				}, false);
+			}
+		}
+	}
+
+	const unique = errors.filter((error, index) => errors.findIndex((candidate) => candidate.message === error.message && candidate.line === error.line && candidate.column === error.column) === index);
+	return { ok: unique.length === 0, errors: unique };
+}
 function workflowStringMetadata(params: Record<string, unknown>): Pick<WorkflowScriptTraceEntry, "phase" | "label" | "agent"> {
 	return {
 		...(typeof params.phase === "string" && params.phase.trim() ? { phase: params.phase.trim() } : {}),
