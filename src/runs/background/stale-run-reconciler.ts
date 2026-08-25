@@ -351,8 +351,17 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 	const now = options.now?.() ?? Date.now();
 	const status = readStatus(asyncDir);
 	const startedStatus = !status && options.startedRun ? buildStartedStatus(asyncDir, options.startedRun, now) : undefined;
-	const effectiveStatus = status ?? startedStatus;
-	if (!effectiveStatus) return { status: null, repaired: false };
+	const started = status ?? startedStatus;
+	if (!started) return { status: null, repaired: false };
+	// A result file is addressed by session, so a repair without a sessionId
+	// cannot be written - and the completion notification is delivered from that
+	// file. A runner that died before its child session existed has no sessionId
+	// in status.json yet, which silently swallowed exactly the failures that
+	// most need reporting: the earlier the crash, the less it recorded. The
+	// session that started the run is known independently, so it stands in.
+	const effectiveStatus: AsyncStatus = started.sessionId || !options.startedRun?.sessionId
+		? started
+		: { ...started, sessionId: options.startedRun.sessionId };
 	const statusPath = path.join(asyncDir, "status.json");
 	for (const [index, step] of (effectiveStatus.steps ?? []).entries()) {
 		const stepRecord = step as Record<string, unknown>;

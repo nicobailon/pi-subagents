@@ -29,6 +29,47 @@ describe("async stale-run reconciliation", () => {
 		assert.equal(checkPidLiveness(123, () => { throw new Error("boom"); }), "unknown");
 	});
 
+	it("still writes a result when the runner died before recording its session", () => {
+		// The reported failure: a runner that exits during startup has written a
+		// status with a pid but no sessionId yet. Result files are addressed by
+		// session and the completion notification is delivered from that file, so
+		// the run was marked failed and nobody was ever told - the earlier the
+		// crash, the more completely it was swallowed.
+		const root = tempRoot("pi-stale-run-early-death-");
+		try {
+			const asyncDir = path.join(root, "run-early");
+			const resultsDir = path.join(root, "results");
+			writeStatus(asyncDir, {
+				runId: "run-early",
+				mode: "single",
+				state: "running",
+				pid: 85090,
+				startedAt: 1000,
+				lastUpdate: 1000,
+				currentStep: 0,
+				steps: [{ agent: "reviewer", status: "running", startedAt: 1000 }],
+			});
+
+			const result = reconcileAsyncRun(asyncDir, {
+				resultsDir,
+				kill: () => { throw errno("ESRCH"); },
+				now: () => 2000,
+				startedRun: { runId: "run-early", pid: 85090, sessionId: "session-parent" },
+			});
+
+			assert.equal(result.repaired, true);
+			assert.equal(result.status?.state, "failed");
+			// The session that started the run stands in, so the failure is
+			// deliverable rather than merely recorded.
+			assert.equal(result.resultPath !== undefined, true);
+			const resultJson = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-early.json"), "utf-8"));
+			assert.equal(resultJson.success, false);
+			assert.equal(resultJson.sessionId, "session-parent");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("marks a running async run failed when the runner pid is dead and no result exists", () => {
 		const root = tempRoot("pi-stale-run-");
 		try {
