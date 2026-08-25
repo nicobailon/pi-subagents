@@ -176,6 +176,37 @@ describe("subagent async widget rendering", () => {
 		assert.doesNotMatch(text, /reviewer → reviewer → reviewer/);
 	});
 
+	it("distinguishes same-agent parallel rows with explicit labels", () => {
+		const lines = buildWidgetLines([{
+			asyncId: "run-labels",
+			asyncDir: "/tmp/labels",
+			status: "running",
+			mode: "parallel",
+			agents: ["reviewer", "reviewer"],
+			activeParallelGroup: true,
+			runningSteps: 2,
+			completedSteps: 0,
+			stepsTotal: 2,
+			steps: [
+				{ index: 0, agent: "reviewer", label: "Review auth", description: "private auth task", status: "running" },
+				{ index: 1, agent: "reviewer", label: "Review billing", description: "private billing task", status: "running" },
+			],
+		}, {
+			asyncId: "done",
+			asyncDir: "/tmp/done",
+			status: "complete",
+			mode: "single",
+			agents: ["worker"],
+			startedAt: 0,
+			updatedAt: 1,
+		}], theme, 120);
+
+		const text = lines.join("\n");
+		assert.match(text, /Agent 1\/2: Review auth \(reviewer\) · running/);
+		assert.match(text, /Agent 2\/2: Review billing \(reviewer\) · running/);
+		assert.doesNotMatch(text, /private auth task|private billing task/);
+	});
+
 	it("renders a compact component widget for three active parallel agents without core truncation", () => {
 		const now = Date.now();
 		const ui = createUiContext();
