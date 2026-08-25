@@ -138,7 +138,7 @@ function listDir(dir: string): fs.Dirent[] {
 
 function readJson(filePath: string): Record<string, unknown> | undefined {
 	try {
-		const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown;
+		const parsed = JSON.parse(fs.readFileSync(filePath).toString("utf8")) as unknown;
 		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
 	} catch {
 		return undefined;
@@ -323,7 +323,7 @@ function readCursor(root: string): RetentionCursor {
 function processStartIdentity(pid: number): string | undefined {
 	if (process.platform === "linux") {
 		try {
-			const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf-8");
+			const stat = fs.readFileSync(`/proc/${pid}/stat`).toString("utf8");
 			const commandEnd = stat.lastIndexOf(")");
 			if (commandEnd === -1) return undefined;
 			const fields = stat.slice(commandEnd + 1).trim().split(/\s+/);
