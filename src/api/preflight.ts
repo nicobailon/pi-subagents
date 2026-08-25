@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, resolveAgentName, type AgentConfig, type AgentScope, type AgentSource } from "../agents/agents.ts";
+import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentScope, type AgentSource } from "../agents/agents.ts";
 import { resolveExecutionAgentScope } from "../agents/agent-scope.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../agents/agent-memory.ts";
@@ -251,7 +251,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		return { ok: false, code: "ambiguous_agent", message: resolvedAgent.error, diagnostics };
 	}
 	if (!resolvedAgent.agent) {
-		return { ok: false, code: "missing_agent", message: `Unknown agent: ${input.agent}`, diagnostics };
+		return { ok: false, code: "missing_agent", message: formatUnknownAgentError(input.agent, unknownAgentDiagnosticContext(discovered)), diagnostics };
 	}
 	const agent = resolvedAgent.agent;
 	let extensionBindings: ExtensionBindings | undefined;

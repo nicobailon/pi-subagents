@@ -2013,6 +2013,8 @@ export interface SubagentChildStatusEvent {
 // ============================================================================
 
 export interface RunSyncOptions {
+	/** Exact discovery provenance for an unknown-agent error; omission uses defensive fallback discovery. */
+	unknownAgentDiagnosticContext?: import("../agents/agents.ts").UnknownAgentDiagnosticContext;
 	/** Opt-in global permission rules; missing tools remain allowed. */
 	permissions?: import("../runs/shared/permissions.ts").PermissionConfig;
 	/** Session id of the direct parent session for permission-system ask forwarding. */

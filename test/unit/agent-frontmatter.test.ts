@@ -7,7 +7,7 @@ import { afterEach, describe, it } from "node:test";
 import { handleManagementAction } from "../../src/agents/agent-management.ts";
 import { serializeAgent } from "../../src/agents/agent-serializer.ts";
 import { parseChain, serializeChain } from "../../src/agents/chain-serializer.ts";
-import { discoverAgents, discoverAgentsAll, type AgentConfig } from "../../src/agents/agents.ts";
+import { discoverAgents, discoverAgentsAll, inspectAgentDefinitionDirectory, type AgentConfig } from "../../src/agents/agents.ts";
 import { parseFrontmatter } from "../../src/agents/frontmatter.ts";
 import { buildPiArgs } from "../../src/runs/shared/pi-args.ts";
 import { THINKING_LEVELS } from "../../src/shared/model-info.ts";
@@ -99,6 +99,38 @@ afterEach(() => {
 		if (!dir) continue;
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
+});
+
+describe("agent definition directory inspection", () => {
+	it("distinguishes absent, empty, candidates, unreadable, and non-directory paths", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-inspection-"));
+		tempDirs.push(root);
+		const empty = path.join(root, "empty");
+		const candidates = path.join(root, "candidates");
+		const file = path.join(root, "not-directory");
+		fs.mkdirSync(empty);
+		fs.mkdirSync(candidates);
+		fs.writeFileSync(path.join(candidates, "worker.md"), "---\nname: worker\ndescription: Worker\n---\n", "utf-8");
+		fs.writeFileSync(file, "not a directory", "utf-8");
+		assert.equal(inspectAgentDefinitionDirectory(path.join(root, "absent")).state, "absent");
+		assert.equal(inspectAgentDefinitionDirectory(empty).state, "empty");
+		assert.deepEqual(inspectAgentDefinitionDirectory(candidates), { state: "candidates", files: [path.join(candidates, "worker.md")] });
+		assert.equal(inspectAgentDefinitionDirectory(file).state, "not-directory");
+		assert.equal(inspectAgentDefinitionDirectory(path.join(root, "blocked"), {
+			existsSync: () => true,
+			statSync: () => ({ isDirectory: () => true }),
+			readdirSync: () => { throw new Error("permission denied"); },
+		}).state, "unreadable");
+	});
+
+	it("reports cached builtin and configured project definition paths without synthesizing a root", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-report-"));
+		tempDirs.push(project);
+		writeJson(path.join(project, ".pi", "settings.json"), { subagents: { projectRootResolution: "nearest" } });
+		const discovered = discoverAgents(project, "project");
+		assert.ok(discovered.directories.some((entry) => entry.source === "builtin"));
+		assert.deepEqual(discovered.directories.filter((entry) => entry.source === "project").map((entry) => entry.path), [path.join(project, ".agents"), path.join(project, ".pi", "agents")]);
+	}));
 });
 
 describe("folded frontmatter blocks", () => {

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { findBlockingAgentDiagnostic, resolveAgentName, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope } from "../../agents/agents.ts";
+import { discoverAgents, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
 import { getArtifactsDir, getChainRunsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
@@ -403,7 +403,7 @@ interface ExecutorDeps {
 	tempArtifactsDir: string;
 	getSubagentSessionRoot: (parentSessionFile: string | null) => string;
 	expandTilde: (p: string) => string;
-	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig; maxThinking?: AgentConfig["maxThinking"] };
+	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig; maxThinking?: AgentConfig["maxThinking"]; cwd?: string; scope?: AgentScope; directories?: UnknownAgentDiagnosticContext["directories"] };
 	allowMutatingManagementActions?: boolean;
 	activateSupervisorTransport?: () => void;
 	refreshResultDelivery?: () => void;
@@ -421,6 +421,8 @@ interface ExecutionContextData {
 	signal: AbortSignal;
 	onUpdate?: (r: AgentToolResult<Details>) => void;
 	agents: AgentConfig[];
+	/** Exact filesystem discovery provenance retained through defensive execution backstops. */
+	unknownAgentDiagnosticContext: UnknownAgentDiagnosticContext;
 	/** Discovered agent definitions before per-run bridge injection. */
 	recoveryAgents: AgentConfig[];
 	runId: string;
@@ -1271,6 +1273,7 @@ function appendStepToAsyncChain(input: {
 		agents,
 		ctx: asyncCtx,
 		availableModels: input.ctx.modelRegistry.getAvailable().map(toModelInfo),
+		unknownAgentDiagnosticContext: diagnosticContextFromDiscovery(discoveredForAppend, input.requestCwd, scope),
 		cwd: status.cwd ?? input.requestCwd,
 		chainSkills,
 		dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
@@ -1766,6 +1769,7 @@ async function resumeAsyncRun(input: {
 	const scope: AgentScope = resolveExecutionAgentScope(input.params.agentScope);
 	const discovered = input.deps.discoverAgents(effectiveCwd, scope);
 	const discoveredAgents = discovered.agents;
+	const unknownAgentDiagnosticContext = diagnosticContextFromDiscovery(discovered, effectiveCwd, scope);
 	const modelScope = discovered.modelScope;
 	const sessionName = resolveIntercomSessionTarget(input.deps.pi.getSessionName(), input.ctx.sessionManager.getSessionId());
 	const recoveryDescriptor = "recoveryDescriptor" in target ? target.recoveryDescriptor : undefined;
@@ -1793,7 +1797,7 @@ async function resumeAsyncRun(input: {
 	} : undefined);
 	if (!baseAgentConfig) {
 		return {
-			content: [{ type: "text", text: `Unknown agent for resume: ${target.agent}` }],
+			content: [{ type: "text", text: formatUnknownAgentError(target.agent, unknownAgentDiagnosticContext, "Unknown agent for resume") }],
 			isError: true,
 			details: { mode: "management", results: [] },
 		};
@@ -1874,6 +1878,7 @@ async function resumeAsyncRun(input: {
 				label: `Attached ${target.runId}`,
 			},
 			agents,
+			unknownAgentDiagnosticContext,
 			ctx: compactOptional<Parameters<typeof executeAsyncSingle>[1]["ctx"]>({
 				pi: input.deps.pi,
 				cwd: input.requestCwd,
@@ -2269,19 +2274,28 @@ async function maybeBuildForegroundIntercomReceipt(input: {
 	};
 }
 
-function canonicalizeAgentName(name: string, agents: AgentConfig[], diagnostics?: AgentDiscoveryDiagnostic[]): { name?: string; error?: string } {
+function diagnosticContextFromDiscovery(
+	discovered: { agents: AgentConfig[]; cwd?: string; scope?: AgentScope; directories?: UnknownAgentDiagnosticContext["directories"] },
+	cwd: string,
+	scope: AgentScope,
+): UnknownAgentDiagnosticContext {
+	if (discovered.cwd && discovered.scope && discovered.directories) return unknownAgentDiagnosticContext({ ...discovered, cwd: discovered.cwd, scope: discovered.scope, directories: discovered.directories });
+	return unknownAgentDiagnosticContext(discoverAgents(path.resolve(cwd), scope));
+}
+
+function canonicalizeAgentName(name: string, agents: AgentConfig[], diagnostics: AgentDiscoveryDiagnostic[] | undefined, context: UnknownAgentDiagnosticContext): { name?: string; error?: string } {
 	const resolved = resolveAgentName(name, agents);
 	const candidates = resolved.error ? agents.filter((agent) => resolveAgentName(name, [agent]).agent) : resolved.agent;
 	const diagnostic = findBlockingAgentDiagnostic(name, candidates, diagnostics);
 	if (diagnostic) return { error: `Agent '${name}' has invalid configuration: ${diagnostic.error}` };
 	if (resolved.error) return { error: resolved.error };
-	if (!resolved.agent) return { error: `Unknown agent: ${name}` };
+	if (!resolved.agent) return { error: formatUnknownAgentError(name, context) };
 	return { name: resolved.agent.name };
 }
 
-function canonicalizeExecutionParams(params: SubagentParamsLike, agents: AgentConfig[], diagnostics?: AgentDiscoveryDiagnostic[]): { params?: SubagentParamsLike; error?: string } {
+function canonicalizeExecutionParams(params: SubagentParamsLike, agents: AgentConfig[], diagnostics: AgentDiscoveryDiagnostic[] | undefined, context: UnknownAgentDiagnosticContext): { params?: SubagentParamsLike; error?: string } {
 	const resolve = (name: string, location?: string): { name?: string; error?: string } => {
-		const result = canonicalizeAgentName(name, agents, diagnostics);
+		const result = canonicalizeAgentName(name, agents, diagnostics, context);
 		return result.error && location ? { error: `${result.error} (${location})` } : result;
 	};
 	if (params.agent) {
@@ -2349,6 +2363,7 @@ function validateExecutionInput(
 	hasTasks: boolean,
 	hasSingle: boolean,
 	allowClarifyTaskPrompt: boolean,
+	context: UnknownAgentDiagnosticContext,
 ): AgentToolResult<Details> | null {
 	if (Number(hasChain) + Number(hasTasks) + Number(hasSingle) !== 1) {
 		return {
@@ -2374,7 +2389,7 @@ function validateExecutionInput(
 
 	if (hasSingle && params.agent && !agents.find((agent) => agent.name === params.agent)) {
 		return {
-			content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
+			content: [{ type: "text", text: formatUnknownAgentError(params.agent, context) }],
 			isError: true,
 			details: { mode: "single" as const, results: [] },
 		};
@@ -2385,7 +2400,7 @@ function validateExecutionInput(
 			const task = params.tasks[i]!;
 			if (!agents.find((agent) => agent.name === task.agent)) {
 				return {
-					content: [{ type: "text", text: `Unknown agent: ${task.agent} (task ${i + 1})` }],
+					content: [{ type: "text", text: `${formatUnknownAgentError(task.agent, context)} (task ${i + 1})` }],
 					isError: true,
 					details: { mode: "parallel" as const, results: [] },
 				};
@@ -2430,7 +2445,7 @@ function validateExecutionInput(
 			for (const agentName of stepAgents) {
 				if (!agents.find((a) => a.name === agentName)) {
 					return {
-						content: [{ type: "text", text: `Unknown agent: ${agentName} (step ${i + 1})` }],
+						content: [{ type: "text", text: `${formatUnknownAgentError(agentName, context)} (step ${i + 1})` }],
 						isError: true,
 						details: { mode: "chain" as const, results: [] },
 					};
@@ -3141,6 +3156,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		intercomBridge,
 		nestedRoute,
 		contextPolicy,
+		unknownAgentDiagnosticContext,
 	} = data;
 	const hasChain = (params.chain?.length ?? 0) > 0;
 	const hasTasks = (params.tasks?.length ?? 0) > 0;
@@ -3179,7 +3195,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		const a = agents.find((x) => x.name === params.agent);
 		if (!a) {
 			return {
-				content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
+				content: [{ type: "text", text: formatUnknownAgentError(params.agent!, unknownAgentDiagnosticContext) }],
 				isError: true,
 				details: { mode: "single" as const, results: [] },
 			};
@@ -3545,7 +3561,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const agentConfig = agents.find((a) => a.name === params.agent);
 	if (!agentConfig) {
 		return {
-			content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
+			content: [{ type: "text", text: formatUnknownAgentError(params.agent!, data.unknownAgentDiagnosticContext) }],
 			isError: true,
 			details: { mode: "single", results: [] },
 		};
@@ -3678,6 +3694,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			llmIntentArbiter: createTaskMutationArbiter(ctx),
 			...workflowForegroundSteeringLaunchOptions(foregroundControl, 0),
 			context: data.contextPolicy.contextForAgent(params.agent!),
+			unknownAgentDiagnosticContext: data.unknownAgentDiagnosticContext,
 			runFanoutBudget: params.runFanoutAdmitted ? data.runFanoutBudget : { ...data.runFanoutBudget, parentPath: `${data.runFanoutBudget.parentPath ? `${data.runFanoutBudget.parentPath}/` : ""}single` },
 			cwd: singleCwd,
 			signal,
@@ -5727,7 +5744,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
 		const discovered = deps.discoverAgents(effectiveCwd, scope);
 		const discoveredAgents = discovered.agents;
-		const canonicalParams = canonicalizeExecutionParams(effectiveParams, discoveredAgents, discovered.agentDiagnostics);
+		const unknownAgentDiagnosticContext = diagnosticContextFromDiscovery(discovered, effectiveCwd, scope);
+		const canonicalParams = canonicalizeExecutionParams(effectiveParams, discoveredAgents, discovered.agentDiagnostics, unknownAgentDiagnosticContext);
 		if (canonicalParams.error) return buildRequestedModeError(effectiveParams, canonicalParams.error);
 		effectiveParams = canonicalParams.params!;
 		const modelScope = discovered.modelScope;
@@ -5776,6 +5794,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			hasTasks,
 			hasSingle,
 			allowClarifyTaskPrompt,
+			unknownAgentDiagnosticContext,
 		);
 		if (validationError) return validationError;
 
@@ -6032,6 +6051,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			signal,
 			onUpdate: onUpdateWithContext,
 			agents,
+			unknownAgentDiagnosticContext,
 			recoveryAgents: discoveredAgents,
 			runId,
 			shareEnabled,

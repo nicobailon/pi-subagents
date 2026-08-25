@@ -215,6 +215,14 @@ describe("resolveParallelBehaviors", { skip: !available ? "pi packages not avail
 
 		assert.equal(behaviors[0]?.output, false);
 	});
+
+	it("requires truthful context or explicit fallback for missing parallel agents", () => {
+		assert.throws(() => resolveParallelBehaviors([{ agent: "missing", task: "Review" }], [], 0), /requires unknown-agent diagnostic context/);
+		assert.throws(() => resolveParallelBehaviors(
+			[{ agent: "missing", task: "Review" }], [], 0, undefined,
+			{ cwd: process.cwd(), scope: "both" },
+		), /Unknown agent: missing[\s\S]*Effective cwd:[\s\S]*Consulted agent-definition directories/);
+	});
 });
 
 describe("read-only progress suppression", { skip: !available ? "pi packages not available" : undefined }, () => {

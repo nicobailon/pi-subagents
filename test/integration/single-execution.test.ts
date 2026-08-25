@@ -4591,7 +4591,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const result = await runSync(tempDir, agents, "nonexistent", sentinel, {});
 
 		assert.equal(result.exitCode, 1);
-		assert.ok(result.error?.includes("Unknown agent"));
+		assert.match(result.error ?? "", /^Unknown agent: nonexistent\nEffective cwd: /);
+		assert.match(result.error ?? "", /Consulted agent-definition directories:[\s\S]*Discovered agents:/);
+		assert.doesNotMatch(result.error ?? "", /echo \(project\)/);
 		assert.equal(result.task, "[prompt redacted]");
 		assert.doesNotMatch(JSON.stringify(result), new RegExp(sentinel));
 	});

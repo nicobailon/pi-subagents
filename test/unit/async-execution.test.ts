@@ -27,6 +27,41 @@ const ctx = {
 };
 
 describe("async runner execution", () => {
+	it("uses supplied discovery context for missing async agents", () => {
+		const result = buildAsyncRunnerSteps("missing-agent", {
+			chain: [{ agent: "missing", task: "Do not launch" }],
+			agents: [agent("arbitrary")],
+			unknownAgentDiagnosticContext: {
+				cwd: path.resolve(ctx.cwd),
+				scope: "both",
+				directories: [{ source: "project", path: path.join(ctx.cwd, ".pi", "agents"), state: "empty" }],
+				agents: [agent("discovered")],
+			},
+			ctx,
+			maxSubagentDepth: 1,
+			asyncDir: path.join(process.cwd(), ".tmp-missing-agent"),
+		});
+		assert.ok("error" in result);
+		assert.match(result.error, /^Unknown agent: missing\nEffective cwd: /);
+		assert.match(result.error, /discovered \(project\)/);
+		assert.doesNotMatch(result.error, /arbitrary \(project\)/);
+	});
+
+	it("uses the resolved cwd override for no-context missing-agent fallback discovery", () => {
+		const override = path.join("diagnostic-cwd-override", "nested");
+		const result = buildAsyncRunnerSteps("missing-agent-cwd", {
+			chain: [{ agent: "missing", task: "Do not launch" }],
+			agents: [agent("arbitrary")],
+			ctx,
+			cwd: override,
+			maxSubagentDepth: 1,
+			asyncDir: path.join(process.cwd(), ".tmp-missing-agent-cwd"),
+		});
+		assert.ok("error" in result);
+		assert.ok(result.error.startsWith(`Unknown agent: missing\nEffective cwd: ${path.resolve(ctx.cwd, override)}`));
+		assert.doesNotMatch(result.error, /arbitrary \(project\)/);
+	});
+
 	it("formats interactive yield and headless auto-drain guidance separately", () => {
 		const interactive = formatAsyncStartedMessage("Async: worker [interactive]", true);
 		assert.match(interactive, /interactive session[\s\S]*return control/i);

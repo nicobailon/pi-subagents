@@ -446,7 +446,13 @@ Project prompt.
 `);
 
 		const missingAgent = await resolveSubagentLaunchContract({ agent: "missing", cwd });
-		assert.deepEqual(missingAgent, { ok: false, code: "missing_agent", message: "Unknown agent: missing", diagnostics: [] });
+		assert.equal(missingAgent.ok, false);
+		assert.equal(missingAgent.code, "missing_agent");
+		assert.deepEqual(missingAgent.diagnostics, []);
+		assert.match(missingAgent.message, /^Unknown agent: missing\nEffective cwd: /);
+		assert.match(missingAgent.message, /Consulted agent-definition directories:/);
+		assert.match(missingAgent.message, /project: .*\.pi[\\/]agents \(1 candidate\)/);
+		assert.match(missingAgent.message, /Discovered agents:\n[\s\S]*worker \(project\)/);
 		writeAgent(path.join(cwd, ".pi", "agents", "broken.md"), `---
 name: broken
 description: Broken worker

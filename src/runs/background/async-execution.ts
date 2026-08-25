@@ -10,7 +10,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { AgentConfig } from "../../agents/agents.ts";
+import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
 import { appendAgentRefinementOverlay } from "../../agents/agent-refinements.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
@@ -153,6 +153,8 @@ interface AsyncChainParams {
 	attachRoot?: ImportedAsyncRoot & { agent: string; outputName?: string; label?: string };
 	resultMode?: SubagentRunMode;
 	agents: AgentConfig[];
+	/** Original discovery provenance, retained by normal callers for unknown-agent diagnostics. */
+	unknownAgentDiagnosticContext?: UnknownAgentDiagnosticContext;
 	ctx: AsyncExecutionContext;
 	availableModels?: AvailableModelInfo[];
 	cwd?: string;
@@ -285,6 +287,8 @@ export interface AsyncRunnerStepBuildParams {
 	attachRoot?: ImportedAsyncRoot & { agent: string; outputName?: string; label?: string };
 	resultMode?: SubagentRunMode;
 	agents: AgentConfig[];
+	/** Exact discovery provenance for failed resolution; omission triggers defensive fallback discovery. */
+	unknownAgentDiagnosticContext?: UnknownAgentDiagnosticContext;
 	ctx: AsyncExecutionContext;
 	availableModels?: AvailableModelInfo[];
 	cwd?: string;
@@ -749,6 +753,8 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 	}
 	const workflowGraph = buildWorkflowGraphSnapshot({ runId: id, mode: resultMode, steps: graphChain });
 
+	const diagnosticContext = params.unknownAgentDiagnosticContext
+		?? unknownAgentDiagnosticContext(discoverAgents(path.resolve(runnerCwd), "both"));
 	for (const s of chain) {
 		const stepAgents = isParallelStep(s)
 			? s.parallel.map((t) => t.agent)
@@ -756,9 +762,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				? [s.parallel.agent]
 				: [(s as SequentialStep).agent];
 		for (const agentName of stepAgents) {
-			if (!agents.find((x) => x.name === agentName)) {
-				return { error: `Unknown agent: ${agentName}` };
-			}
+			if (!agents.find((x) => x.name === agentName)) return { error: formatUnknownAgentError(agentName, diagnosticContext) };
 		}
 	}
 
@@ -1180,6 +1184,7 @@ export function executeAsyncChain(
 		attachRoot: params.attachRoot,
 		resultMode,
 		agents,
+		unknownAgentDiagnosticContext: params.unknownAgentDiagnosticContext,
 		ctx,
 		availableModels: params.availableModels,
 		cwd,

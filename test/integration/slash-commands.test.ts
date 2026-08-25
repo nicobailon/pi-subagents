@@ -653,6 +653,16 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		assert.equal(sessionManager.flushed, true);
 	});
 
+	it("/run reports discovery evidence for a missing agent", async () => {
+		await withTempProject("pi-slash-missing-agent-", async (root) => {
+			fs.writeFileSync(path.join(root, ".pi", "agents", "worker.md"), "---\nname: worker\ndescription: Worker\n---\n", "utf-8");
+			const run = await captureSlashCommandParams("run", "missing", root);
+			assert.equal(run.params, undefined);
+			assert.match(run.notifications[0] ?? "", /^Unknown agent: missing\nEffective cwd: /);
+			assert.match(run.notifications[0] ?? "", /Consulted agent-definition directories:[\s\S]*worker \(project\)/);
+		});
+	});
+
 	it("/run reports malformed agent configuration", async () => {
 		await withTempProject("pi-slash-invalid-agent-", async (root) => {
 			fs.writeFileSync(path.join(root, ".pi", "agents", "broken.md"), "---\nname: broken\ndescription: Broken\nrunner:\n  type: unknown\n---\nBroken agent.\n");
