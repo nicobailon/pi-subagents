@@ -4225,6 +4225,43 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.readFileSync(configuredOutput, "utf-8"), "resumed report");
 	});
 
+	it("preserves failed foreground resume errors and transcript metadata", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		mockPi.onCall({ output: "first report" });
+		const firstResult = await executor.execute(
+			"workflow-resume-failure-first",
+			{ async: false, workflowScript: `return runs.run("first", { agent: "echo", task: "First" });` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(firstResult.isError, undefined, firstResult.content[0]?.text ?? "workflow failed");
+		const first = firstResult.details.workflow?.value as { runId?: string };
+		assert.ok(first.runId);
+
+		const partialOutput = "I’ll re-read the current implementation before changing it.";
+		mockPi.onCall({ output: partialOutput });
+		const resumedResult = await executor.execute(
+			"workflow-resume-failure-resumed",
+			{ async: false, workflowScript: `return runs.run("resumed", { resume: ${JSON.stringify(first.runId)}, task: "Implement the approved file changes" });` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(resumedResult.isError, true);
+		const resumedText = resumedResult.content.map((part) => part.type === "text" ? part.text : "").join("\n");
+		assert.match(resumedText, /Subagent completed without making edits for an implementation task/);
+		assert.doesNotMatch(resumedText, new RegExp(`^${escapeRegExp(partialOutput)}`));
+		const child = resumedResult.details.results[0];
+		assert.equal(child?.finalOutput, partialOutput);
+		assert.match(child?.error ?? "", /Subagent completed without making edits for an implementation task/);
+		assert.ok(child?.transcriptPath);
+		assert.equal(child?.transcriptPath, child?.artifactPaths?.transcriptPath);
+		assert.ok(child?.artifactPaths?.outputPath);
+		assert.match(fs.readFileSync(child.transcriptPath, "utf-8"), /first|re-read|implementation/i);
+	});
+
 	it("fails closed on an invalid explicit foreground resume output schema", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "first result" });
 		const result = await makeExecutor([makeAgent("echo")]).execute(

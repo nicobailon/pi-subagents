@@ -2107,9 +2107,13 @@ async function resumeAsyncRun(input: {
 			...(completed.structuredOutputPath ? { structuredOutputPath: completed.structuredOutputPath } : {}),
 			...(completed.structuredOutputSchemaPath ? { structuredOutputSchemaPath: completed.structuredOutputSchemaPath } : {}),
 			...(completed.acceptance ? { acceptance: completed.acceptance } : {}),
+			...(completed.artifactPaths ? { artifactPaths: completed.artifactPaths } : {}),
+			...(completed.outputSaveError ? { outputSaveError: completed.outputSaveError } : {}),
+			...(completed.transcriptPath ? { transcriptPath: completed.transcriptPath } : {}),
+			...(completed.transcriptError ? { transcriptError: completed.transcriptError } : {}),
 		};
 		return {
-			content: [{ type: "text", text: completed.output || completed.error || `Revived ${target.source} subagent ${revivedId} completed without output.` }],
+			content: [{ type: "text", text: completed.success ? completed.output || completed.error || `Revived ${target.source} subagent ${revivedId} completed without output.` : completed.error || completed.output || `Revived ${target.source} subagent ${revivedId} completed without output.` }],
 			...(completed.success ? {} : { isError: true }),
 			details: {
 				...result.details,
@@ -3126,9 +3130,13 @@ async function waitForWorkflowAsyncSingleResult(
 		...(completed.structuredOutputPath ? { structuredOutputPath: completed.structuredOutputPath } : {}),
 		...(completed.structuredOutputSchemaPath ? { structuredOutputSchemaPath: completed.structuredOutputSchemaPath } : {}),
 		...(completed.acceptance ? { acceptance: completed.acceptance } : {}),
+		...(completed.artifactPaths ? { artifactPaths: completed.artifactPaths } : {}),
+		...(completed.outputSaveError ? { outputSaveError: completed.outputSaveError } : {}),
+		...(completed.transcriptPath ? { transcriptPath: completed.transcriptPath } : {}),
+		...(completed.transcriptError ? { transcriptError: completed.transcriptError } : {}),
 	});
 	return {
-		content: [{ type: "text", text: completed.output || completed.error || `Async workflow child ${options.runId} completed without output.` }],
+		content: [{ type: "text", text: completed.success ? completed.output || completed.error || `Async workflow child ${options.runId} completed without output.` : completed.error || completed.output || `Async workflow child ${options.runId} completed without output.` }],
 		...(completed.success ? {} : { isError: true }),
 		details: {
 			...launchResult.details,
@@ -3991,6 +3999,10 @@ function workflowChildResult(
 	const output = result.details.results.length === 1 && result.details.results[0]?.finalOutput !== undefined
 		? result.details.results[0].finalOutput
 		: receiptOutput;
+	const childError = result.details.results.map((child) => child.error).find((error): error is string => Boolean(error));
+	const failureError = childError && receiptOutput && receiptOutput !== childError
+		? `${childError}\n\n${receiptOutput}`
+		: childError || receiptOutput || output || "Child run failed.";
 	const detached = result.details.results.some((child) => child.detached);
 	const interrupted = result.details.results.some((child) => child.interrupted);
 	const stopped = result.details.results.some((child) => child.stopped);
@@ -4039,7 +4051,7 @@ function workflowChildResult(
 		...(resolvedAgents.length === 1 ? { agent: resolvedAgents[0] } : {}),
 		...(runId ? { runId } : {}),
 		output,
-		...(!ok ? { error: receiptOutput || output || "Child run failed." } : {}),
+		...(!ok ? { error: failureError } : {}),
 		...(detached ? { detached: true } : {}),
 		...(interrupted ? { interrupted: true } : {}),
 		...(stopped ? { stopped: true } : {}),

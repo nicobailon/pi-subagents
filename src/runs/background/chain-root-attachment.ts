@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import { resultFilePath } from "./result-files.ts";
-import type { AcceptanceLedger, AsyncStatus, CostSummary, ModelAttempt } from "../../shared/types.ts";
+import type { AcceptanceLedger, ArtifactPaths, AsyncStatus, CostSummary, ModelAttempt } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 
 export interface ImportedAsyncRoot {
@@ -27,6 +27,10 @@ export interface ImportedAsyncRootResult {
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
 	acceptance?: AcceptanceLedger;
+	artifactPaths?: ArtifactPaths;
+	outputSaveError?: string;
+	transcriptPath?: string;
+	transcriptError?: string;
 	timedOut?: boolean;
 	stopped?: boolean;
 }
@@ -56,6 +60,10 @@ interface AsyncResultFile {
 		structuredOutputPath?: string;
 		structuredOutputSchemaPath?: string;
 		acceptance?: AcceptanceLedger;
+		artifactPaths?: ArtifactPaths;
+		outputSaveError?: string;
+		transcriptPath?: string;
+		transcriptError?: string;
 	}>;
 }
 
@@ -118,6 +126,7 @@ function outputFromTerminalStatus(root: ImportedAsyncRoot, status: AsyncStatus, 
 		...(step?.structuredOutputPath ? { structuredOutputPath: step.structuredOutputPath } : {}),
 		...(step?.structuredOutputSchemaPath ? { structuredOutputSchemaPath: step.structuredOutputSchemaPath } : {}),
 		...(step?.acceptance ? { acceptance: step.acceptance } : {}),
+		...(step?.transcriptPath ? { transcriptPath: step.transcriptPath } : {}),
 	};
 }
 
@@ -136,6 +145,7 @@ function outputFromTimeout(root: ImportedAsyncRoot, status: AsyncStatus | null, 
 		...(step?.modelAttempts ? { modelAttempts: step.modelAttempts } : {}),
 		...(step?.contextOverflow ? { contextOverflow: true } : {}),
 		...(step?.totalCost ? { totalCost: step.totalCost } : {}),
+		...(step?.transcriptPath ? { transcriptPath: step.transcriptPath } : {}),
 	};
 }
 
@@ -168,6 +178,10 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 		...(child?.structuredOutputPath ?? step?.structuredOutputPath ? { structuredOutputPath: child?.structuredOutputPath ?? step?.structuredOutputPath } : {}),
 		...(child?.structuredOutputSchemaPath ?? step?.structuredOutputSchemaPath ? { structuredOutputSchemaPath: child?.structuredOutputSchemaPath ?? step?.structuredOutputSchemaPath } : {}),
 		...(child?.acceptance ?? step?.acceptance ? { acceptance: child?.acceptance ?? step?.acceptance } : {}),
+		...(child?.artifactPaths ? { artifactPaths: child.artifactPaths } : {}),
+		...(child?.outputSaveError ? { outputSaveError: child.outputSaveError } : {}),
+		...(child?.transcriptPath ?? step?.transcriptPath ? { transcriptPath: child?.transcriptPath ?? step?.transcriptPath } : {}),
+		...(child?.transcriptError ? { transcriptError: child.transcriptError } : {}),
 	};
 }
 
