@@ -127,7 +127,7 @@ function resolveJitiCliPath(): string | undefined {
 
 const jitiCliPath = resolveJitiCliPath();
 
-interface AsyncExecutionContext {
+export interface AsyncExecutionContext {
 	pi: ExtensionAPI;
 	cwd: string;
 	currentSessionId: string;
@@ -495,6 +495,30 @@ interface SpawnRunnerResult {
 	startupDidNotProceed?: boolean;
 }
 
+function isStaleExtensionContextError(error: unknown): boolean {
+	if (!(error instanceof Error)) return false;
+	return /extension ctx is stale|stale after session replacement or reload|extension context no longer active/i.test(error.message);
+}
+
+/**
+ * Emit the runner process-terminal proof as an advisory in-process event.
+ * The proof is already persisted to disk by the runner close handler before
+ * this runs, and the captured ctx is stale if the session was replaced
+ * (newSession/fork/switchSession) or reloaded while the async runner was
+ * still running. Dropping the event in that case is safe: the replacement
+ * session's extension instance reconciles run state from disk. Non-stale
+ * emit failures are logged instead of thrown so the detached child-process
+ * close path can never take down the host as an uncaught exception.
+ */
+export function emitProcessTerminalEvent(ctx: AsyncExecutionContext, proof: unknown): void {
+	try {
+		ctx.pi.events.emit(SUBAGENT_PROCESS_TERMINAL_EVENT, proof);
+	} catch (error) {
+		if (isStaleExtensionContextError(error)) return;
+		console.error("Failed to emit subagent process-terminal event:", error);
+	}
+}
+
 function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Omit<AsyncStatus, "pid" | "processTerminal">, initialStatusPath: string, onProcessTerminal?: (proof: unknown) => void): SpawnRunnerResult {
 	if (!jitiCliPath) {
 		return { error: "upstream jiti for TypeScript execution could not be found; ensure package dependencies are installed" };
@@ -606,7 +630,11 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 					console.error("Failed to emit final nested process-terminal status:", error);
 				}
 			}
-			onProcessTerminal?.(persisted);
+			try {
+				onProcessTerminal?.(persisted);
+			} catch (error) {
+				console.error("Failed to handle async runner process terminal:", error);
+			}
 		});
 		if (typeof proc.pid !== "number") {
 			return { error: `async runner did not produce a pid for cwd: ${cwd}` };
@@ -1297,7 +1325,7 @@ export function executeAsyncChain(
 				steps: initialStatusSteps,
 			},
 			path.join(asyncDir, "status.json"),
-			(proof) => ctx.pi.events.emit(SUBAGENT_PROCESS_TERMINAL_EVENT, proof),
+			(proof) => emitProcessTerminalEvent(ctx, proof),
 		);
 	} catch (error) {
 		params.activeAsyncCapacity?.rollback();
@@ -1846,7 +1874,7 @@ export function executeAsyncSingle(
 				steps: [{ agent, status: "pending" }],
 			},
 			path.join(asyncDir, "status.json"),
-			(proof) => ctx.pi.events.emit(SUBAGENT_PROCESS_TERMINAL_EVENT, proof),
+			(proof) => emitProcessTerminalEvent(ctx, proof),
 		);
 	} catch (error) {
 		params.activeAsyncCapacity?.rollback();

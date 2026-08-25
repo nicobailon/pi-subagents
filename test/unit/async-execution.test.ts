@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { buildAsyncRunnerSteps, DEFAULT_ASYNC_TIMEOUT_MS, formatAsyncStartedMessage, resolveAsyncRunnerLogPaths } from "../../src/runs/background/async-execution.ts";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { buildAsyncRunnerSteps, DEFAULT_ASYNC_TIMEOUT_MS, emitProcessTerminalEvent, formatAsyncStartedMessage, resolveAsyncRunnerLogPaths } from "../../src/runs/background/async-execution.ts";
+import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../src/shared/types.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 
 const agent = (name: string, toolBudget?: AgentConfig["toolBudget"]): AgentConfig => ({
@@ -146,5 +148,45 @@ describe("async runner execution", () => {
 
 		assert.ok("steps" in result, "expected successful step build");
 		assert.deepEqual(result.steps[0]?.toolBudget, { hard: 5, block: ["ls"] });
+	});
+});
+
+describe("async runner process terminal events", () => {
+	const proof = { version: 1, runId: "run-terminal", runnerProcessInstanceId: "runner-1", state: "unknown", reason: "writer-close-unverified" };
+	const staleSessionMessage = "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload().";
+
+	const makeCtx = (emit: (name: string, payload?: unknown) => unknown) => ({
+		cwd: process.cwd(),
+		currentSessionId: "session-1",
+		pi: { events: { emit } } as unknown as ExtensionAPI,
+	});
+
+	it("emits the process terminal proof on the event bus for a live session ctx", () => {
+		const emitted: Array<[string, unknown]> = [];
+		const ctx = makeCtx((name, payload) => { emitted.push([name, payload]); });
+		emitProcessTerminalEvent(ctx, proof);
+		assert.deepEqual(emitted, [[SUBAGENT_PROCESS_TERMINAL_EVENT, proof]]);
+	});
+
+	it("drops the process terminal proof without throwing when the session ctx is stale after replacement or reload", () => {
+		const ctx = makeCtx(() => {
+			throw new Error(staleSessionMessage);
+		});
+		assert.doesNotThrow(() => emitProcessTerminalEvent(ctx, proof));
+	});
+
+	it("logs instead of throwing when the event bus fails with a non-stale error", () => {
+		const ctx = makeCtx(() => {
+			throw new Error("event bus unavailable");
+		});
+		const originalError = console.error;
+		let logged: unknown[] | undefined;
+		console.error = (...args: unknown[]) => { logged = args; };
+		try {
+			assert.doesNotThrow(() => emitProcessTerminalEvent(ctx, proof));
+		} finally {
+			console.error = originalError;
+		}
+		assert.ok(logged?.some((arg) => arg instanceof Error && arg.message === "event bus unavailable"), "expected the bus failure to be logged");
 	});
 });

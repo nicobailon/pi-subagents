@@ -7,6 +7,7 @@
 - Repair bounded dead async run candidates before retention classifies them, so existing terminal retention guards can reclaim stale run directories without deleting ambiguous worktrees or branches. Thanks to [@rafafortes](https://github.com/rafafortes) for #1477.
 - Make async runs visible to exact status lookup as soon as launch succeeds, and deliver one completion when a runner dies before its normal status write. Thanks to [@rafafortes](https://github.com/rafafortes) for #1471 and [@VincentHanxiaoDu](https://github.com/VincentHanxiaoDu) for #1480.
 - Record explicit completed, failed, timed-out, stopped, and interrupted outcomes in run history. Thanks to [@rafafortes](https://github.com/rafafortes) for #1474.
+- Keep async runner process-terminal event delivery from crashing the session when the captured extension context is stale after a session replacement or reload; the terminal proof is already persisted to the run directory before the event, and the replacement session reconciles run state from disk. Thanks to [@AdrianAcala](https://github.com/AdrianAcala) for #1485.
 - Preserve the local user identity and temporary-directory environment needed by authenticated Claude Code adapter runs.
 - Preserve structured-output and related bounded child contract fields when foreground workflow children resume. Thanks to [@Livan-pro](https://github.com/Livan-pro) for #1460.
 - Preview runtime-recorded workflow child sessions in Fleet and inspect without trusting sibling transcripts. Thanks to [@JHa13y](https://github.com/JHa13y) for #1441.
