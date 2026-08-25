@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { discoverAgents, discoverAgentsAll, resolveAgentName } from "../../src/agents/agents.ts";
-import { CLAUDE_CODE_ADAPTER_ID, CLAUDE_CODE_WRITER_ADAPTER_ID, CLAUDE_CODE_WRITER_TOOLS, createClaudeCodeJsonlParser, resolveClaudeCodeLaunch } from "../../src/runs/shared/claude-code-adapter.ts";
+import { CLAUDE_CODE_ADAPTER_ID, CLAUDE_CODE_ENV_ALLOWLIST, CLAUDE_CODE_WRITER_ADAPTER_ID, CLAUDE_CODE_WRITER_TOOLS, createClaudeCodeJsonlParser, resolveClaudeCodeLaunch } from "../../src/runs/shared/claude-code-adapter.ts";
 import { externalCliReceiptMetadata, resolveExternalCliRunnerStatus } from "../../src/runs/shared/external-cli-contract.ts";
 import { clearExternalCliPreflightCacheForTests } from "../../src/runs/shared/external-cli-preflight.ts";
 import { runExternalCli } from "../../src/runs/shared/external-cli-runner.ts";
@@ -70,6 +70,12 @@ describe("Claude Code adapter", () => {
 		assert.equal(result.output, "trusted final result");
 		assert.equal(result.parserTerminal?.state, "completed");
 		assert.equal(result.preflight?.version, "2.1.150 (Claude Code)");
+	});
+
+	it("passes the local identity and temporary-directory keys required by CLI login", () => {
+		assert.equal(CLAUDE_CODE_ENV_ALLOWLIST.includes("USER"), true);
+		assert.equal(CLAUDE_CODE_ENV_ALLOWLIST.includes("LOGNAME"), true);
+		assert.equal(CLAUDE_CODE_ENV_ALLOWLIST.includes("TMPDIR"), true);
 	});
 
 	it("owns explicit file writer argv without permission bypass or MCP", async () => {

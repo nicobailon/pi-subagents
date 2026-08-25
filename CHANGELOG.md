@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Preserve the local user identity and temporary-directory environment needed by authenticated Claude Code adapter runs.
 - Preserve structured-output and related bounded child contract fields when foreground workflow children resume. Thanks to [@Livan-pro](https://github.com/Livan-pro) for #1460.
 - Preview runtime-recorded workflow child sessions in Fleet and inspect without trusting sibling transcripts. Thanks to [@JHa13y](https://github.com/JHa13y) for #1441.
 - Keep inline workflow children resumable from their foreground runs without mistaking a missing async directory for lost state. Thanks to [@lancegui](https://github.com/lancegui) for #1442.
