@@ -219,6 +219,20 @@ describe("workflow receipts", () => {
 		assert.equal(validations, 1);
 	});
 
+	it("explains a missing receipt when workflow status or events remain visible", () => {
+		const asyncRoot = tempRoot();
+		const workflowRunId = "workflow-active";
+		const asyncDir = path.join(asyncRoot, workflowRunId);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: workflowRunId, state: "running" }));
+		fs.writeFileSync(path.join(asyncDir, "events.jsonl"), `${JSON.stringify({ type: "subagent.workflow.child.completed", runId: workflowRunId, childRunId: "run-advisor" })}\n`);
+
+		assert.throws(
+			() => resolveWorkflowReceiptResume({ reference: { workflowRunId, key: "advisor", latest: true }, asyncDirRoot: asyncRoot }),
+			/Workflow receipt 'workflow-active' is not available because the workflow may still be active or terminal receipt writing failed\. Use direct child run IDs from status\/events for direct resume after the normal retained-child checks\./,
+		);
+	});
+
 	it("fails closed for missing, non-resumable, and stale receipt references", () => {
 		const asyncRoot = tempRoot();
 		assert.throws(

@@ -93,7 +93,7 @@ return runs.run("cross-oracle", {
 });
 ```
 
-Keyed resume reads that one exact receipt and revalidates the retained run at launch. It fails when the workflow or key is missing, the receipt is stale, `latest` is not `true`, or the recorded child is no longer resumable. Foreground workflow results expose the same receipt in `details.workflow.receipt`, but cross-workflow keyed lookup requires the durable receipt from an async workflow.
+Keyed resume reads that one exact receipt and revalidates the retained run at launch. It fails when the workflow or key is missing, the receipt is stale, `latest` is not `true`, or the recorded child is no longer resumable. The receipt is terminal-only: if `status.json` or `events.jsonl` exists without it, the workflow may still be active or terminal receipt writing may have failed. Use direct child run IDs from status/events for direct resume after the normal retained-child checks; do not reconstruct keyed entries from those files. Foreground workflow results expose the same receipt in `details.workflow.receipt`, but cross-workflow keyed lookup requires the durable receipt from an async workflow.
 
 ### Async/background
 

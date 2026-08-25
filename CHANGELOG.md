@@ -4,6 +4,7 @@
 
 ### Fixed
 - Resolve the `advisor` builtin alias through the bundled `oracle` definition in model listings. Thanks to [@smileBeda](https://github.com/smileBeda) for #1502.
+- Clarify terminal keyed workflow-resume failures when `workflow-receipt.json` is unavailable, including direct child-run recovery from status and event logs (#1512).
 - Follow symlinked directories during agent discovery without revisiting recursive links. Thanks to [@robsdudeson](https://github.com/robsdudeson) for #1505 and #1510.
 - Explain unknown-agent failures with the effective cwd and discovery inputs. Thanks to [@genkikadomatsu](https://github.com/genkikadomatsu) for #1511.
 - Retry fallback models for transient provider connection failures. Thanks to [@genkikadomatsu](https://github.com/genkikadomatsu) for #1508.

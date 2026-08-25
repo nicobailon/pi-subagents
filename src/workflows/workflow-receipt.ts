@@ -200,7 +200,13 @@ export function readWorkflowReceipt(asyncDirRoot: string, workflowRunId: string)
 	try {
 		value = JSON.parse(fs.readFileSync(receiptPath, "utf-8")) as unknown;
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`Workflow receipt '${workflowRunId}' was not found.`);
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+			const workflowDir = path.dirname(receiptPath);
+			if (fs.existsSync(path.join(workflowDir, "status.json")) || fs.existsSync(path.join(workflowDir, "events.jsonl"))) {
+				throw new Error(`Workflow receipt '${workflowRunId}' is not available because the workflow may still be active or terminal receipt writing failed. Use direct child run IDs from status/events for direct resume after the normal retained-child checks.`);
+			}
+			throw new Error(`Workflow receipt '${workflowRunId}' was not found.`);
+		}
 		throw new Error(`Workflow receipt '${workflowRunId}' could not be read: ${error instanceof Error ? error.message : String(error)}`, { cause: error instanceof Error ? error : undefined });
 	}
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid workflow receipt '${receiptPath}': expected an object.`);
