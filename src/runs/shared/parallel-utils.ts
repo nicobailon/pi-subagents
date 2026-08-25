@@ -67,6 +67,8 @@ export interface RunnerSubagentStep {
 	definitionDigest?: string;
 	launchBindingTask?: string;
 	launchContractDigest?: string;
+	/** Exact prompt-free attempt approvals for a package-owned detached runner. */
+	launchAuthorization?: import("./launch-authorization.ts").DetachedSubagentLaunchAuthorizationContext;
 	extensionBindings?: import("./extension-bindings.ts").ExtensionBindings;
 	launchResolvedExtensions?: import("../../shared/types.ts").LaunchResolvedChildExtensionsV1;
 	runtimeAcknowledgedExtensions?: import("../../shared/types.ts").RuntimeAcknowledgedChildExtensionsV1;

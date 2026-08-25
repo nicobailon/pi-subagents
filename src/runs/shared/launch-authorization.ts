@@ -6,6 +6,7 @@ export const SUBAGENT_LAUNCH_AUTHORIZATION_ENV = "PI_SUBAGENT_LAUNCH_AUTHORIZATI
 
 const MAX_PROVIDERS = 100;
 const MAX_AGENTS_PER_PROVIDER = 256;
+const MAX_DETACHED_APPROVALS = 256;
 const MAX_ENV_BYTES = 64 * 1024;
 const MAX_ID_BYTES = 512;
 const MAX_PATH_BYTES = 16 * 1024;
@@ -71,6 +72,45 @@ export interface SubagentLaunchAuthorizationReservation {
 export interface ResolvedSubagentLaunchAuthorizationReservations {
 	version: typeof SUBAGENT_LAUNCH_AUTHORIZATION_VERSION;
 	providers: readonly SubagentLaunchAuthorizationReservation[];
+}
+
+/** Package-owned proof that every matching provider allowed one exact detached attempt. */
+export interface ResolvedSubagentLaunchAuthorizationApproval {
+	version: typeof SUBAGENT_LAUNCH_AUTHORIZATION_VERSION;
+	request: Readonly<SubagentLaunchAuthorizationRequest>;
+	providers: readonly string[];
+}
+
+/** Prompt-free authorization state serialized only to the package-owned detached runner config. */
+export interface DetachedSubagentLaunchAuthorizationContext {
+	version: typeof SUBAGENT_LAUNCH_AUTHORIZATION_VERSION;
+	sessionId?: string;
+	invocation: SubagentLaunchAuthorizationInvocation;
+	agent: {
+		source: SubagentLaunchAuthorizationAgentSource;
+		filePath: string;
+	};
+	approvals: readonly ResolvedSubagentLaunchAuthorizationApproval[];
+}
+
+export interface DetachedSubagentLaunchAuthorizationAttempt {
+	run: {
+		id: string;
+		childIndex: number;
+		modelAttempt: number;
+		startupAttempt: number;
+	};
+	agent: {
+		name: string;
+		definitionDigest: string;
+		runner: SubagentLaunchAuthorizationRunner;
+	};
+	contract: {
+		launchContractDigest: string;
+		context?: "fresh" | "fork";
+		model?: string;
+		modelCandidates: readonly string[];
+	};
 }
 
 interface RegisteredProvider {
@@ -262,6 +302,103 @@ function validateDecision(value: unknown, provider: string): SubagentLaunchAutho
 	throw new Error(`Launch-authorization provider '${provider}' returned an invalid decision.`);
 }
 
+function matchingProviderNames(
+	reservations: ResolvedSubagentLaunchAuthorizationReservations | undefined,
+	agent: string,
+): readonly string[] {
+	return Object.freeze((reservations?.providers ?? [])
+		.filter((reservation) => reservation.agents.includes(agent))
+		.map((reservation) => reservation.provider));
+}
+
+function launchAuthorizationRequestKey(request: Readonly<SubagentLaunchAuthorizationRequest>): string {
+	return JSON.stringify(request);
+}
+
+function launchAuthorizationRequestCommonKey(request: Readonly<SubagentLaunchAuthorizationRequest>): string {
+	return JSON.stringify({
+		version: request.version,
+		sessionId: request.sessionId,
+		invocation: request.invocation,
+		run: {
+			id: request.run.id,
+			childIndex: request.run.childIndex,
+			async: request.run.async,
+		},
+		agent: request.agent,
+		contract: {
+			context: request.contract.context,
+			modelCandidates: request.contract.modelCandidates,
+		},
+	});
+}
+
+function normalizeApproval(value: unknown, index: number): ResolvedSubagentLaunchAuthorizationApproval {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Detached launch authorization approval ${index} must be an object.`);
+	const input = value as Record<string, unknown>;
+	const unknown = Object.keys(input).filter((key) => !["version", "request", "providers"].includes(key));
+	if (unknown.length > 0) throw new Error(`Detached launch authorization approval ${index} has unknown fields: ${unknown.join(", ")}.`);
+	if (input.version !== SUBAGENT_LAUNCH_AUTHORIZATION_VERSION) throw new Error(`Detached launch authorization approval ${index} has an invalid version.`);
+	if (!Array.isArray(input.providers) || input.providers.length === 0 || input.providers.length > MAX_PROVIDERS) {
+		throw new Error(`Detached launch authorization approval ${index} must contain between 1 and ${MAX_PROVIDERS} providers.`);
+	}
+	const providers = input.providers.map((provider, providerIndex) => validateProviderName(provider, `Detached launch authorization approval ${index} providers[${providerIndex}]`));
+	if (new Set(providers).size !== providers.length) throw new Error(`Detached launch authorization approval ${index} contains duplicate providers.`);
+	return Object.freeze({
+		version: SUBAGENT_LAUNCH_AUTHORIZATION_VERSION,
+		request: normalizeRequest(input.request as SubagentLaunchAuthorizationRequest),
+		providers: Object.freeze([...providers].sort()),
+	});
+}
+
+function normalizeDetachedContext(value: unknown): DetachedSubagentLaunchAuthorizationContext {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Reserved agent has no exact detached launch authorization approval context.");
+	const input = value as Record<string, unknown>;
+	const unknown = Object.keys(input).filter((key) => !["version", "sessionId", "invocation", "agent", "approvals"].includes(key));
+	if (unknown.length > 0) throw new Error(`Detached launch authorization context has unknown fields: ${unknown.join(", ")}.`);
+	if (input.version !== SUBAGENT_LAUNCH_AUTHORIZATION_VERSION) throw new Error("Detached launch authorization context has an invalid version.");
+	if (!input.agent || typeof input.agent !== "object" || Array.isArray(input.agent)) throw new Error("Detached launch authorization context agent must be an object.");
+	const rawAgent = input.agent as Record<string, unknown>;
+	const unknownAgent = Object.keys(rawAgent).filter((key) => key !== "source" && key !== "filePath");
+	if (unknownAgent.length > 0) throw new Error(`Detached launch authorization context agent has unknown fields: ${unknownAgent.join(", ")}.`);
+	const sources = new Set<SubagentLaunchAuthorizationAgentSource>(["builtin", "package", "user", "project", "runtime"]);
+	if (!sources.has(rawAgent.source as SubagentLaunchAuthorizationAgentSource)) throw new Error("Detached launch authorization context agent source is invalid.");
+	if (!Array.isArray(input.approvals) || input.approvals.length === 0 || input.approvals.length > MAX_DETACHED_APPROVALS) {
+		throw new Error(`Detached launch authorization context must contain between 1 and ${MAX_DETACHED_APPROVALS} approvals.`);
+	}
+	const context = Object.freeze({
+		version: SUBAGENT_LAUNCH_AUTHORIZATION_VERSION,
+		...(input.sessionId !== undefined ? { sessionId: validateText(input.sessionId, "Detached launch authorization context sessionId") } : {}),
+		invocation: normalizeInvocation(input.invocation as SubagentLaunchAuthorizationInvocation),
+		agent: Object.freeze({
+			source: rawAgent.source as SubagentLaunchAuthorizationAgentSource,
+			filePath: validateText(rawAgent.filePath, "Detached launch authorization context agent filePath", MAX_PATH_BYTES),
+		}),
+		approvals: Object.freeze(input.approvals.map((approval, index) => normalizeApproval(approval, index))),
+	});
+	const first = context.approvals[0]!;
+	const commonKey = launchAuthorizationRequestCommonKey(first.request);
+	const contextIdentity = JSON.stringify({
+		sessionId: context.sessionId,
+		invocation: context.invocation,
+		agent: context.agent,
+	});
+	const requestKeys = new Set<string>();
+	for (const approval of context.approvals) {
+		if (!approval.request.run.async) throw new Error("Detached launch authorization approvals must bind async child attempts.");
+		if (launchAuthorizationRequestCommonKey(approval.request) !== commonKey) throw new Error("Detached launch authorization approvals must bind one exact logical child.");
+		if (JSON.stringify({
+			sessionId: approval.request.sessionId,
+			invocation: approval.request.invocation,
+			agent: { source: approval.request.agent.source, filePath: approval.request.agent.filePath },
+		}) !== contextIdentity) throw new Error("Detached launch authorization approval identity does not match its context.");
+		const requestKey = launchAuthorizationRequestKey(approval.request);
+		if (requestKeys.has(requestKey)) throw new Error("Detached launch authorization context contains a duplicate exact attempt approval.");
+		requestKeys.add(requestKey);
+	}
+	return context;
+}
+
 /**
  * Register or replace one exact-session launch-authorization provider. The old
  * disposer cannot remove a newer replacement registered under the same name.
@@ -280,7 +417,9 @@ export function registerSubagentLaunchAuthorizationProvider(provider: SubagentLa
 	session.set(validated.name, validated);
 	return () => {
 		if (session!.get(validated.name) === validated) session!.delete(validated.name);
-		if (session!.size === 0) current.bySession.delete(validated.sessionId);
+		if (session!.size === 0 && current.bySession.get(validated.sessionId) === session) {
+			current.bySession.delete(validated.sessionId);
+		}
 	};
 }
 
@@ -330,26 +469,19 @@ export function resolveSubagentLaunchAuthorizationReservations(
 	}, "launch authorization");
 }
 
-/** Authorize one fully resolved child contract immediately before launch. */
-export function authorizeSubagentLaunch(input: SubagentLaunchAuthorizationRequest): { providers: readonly string[] } {
-	const inherited = process.env[SUBAGENT_LAUNCH_AUTHORIZATION_ENV];
-	const current = existingRegistry();
-	const local = typeof input?.sessionId === "string" ? current?.bySession.get(input.sessionId) : undefined;
-	if (!inherited && !local?.size) return { providers: [] };
-	const reservations = resolveSubagentLaunchAuthorizationReservations(input.sessionId);
-	const rawAgentName = input?.agent?.name;
-	const rawMatching = typeof rawAgentName === "string"
-		? reservations?.providers.filter((reservation) => reservation.agents.includes(rawAgentName)) ?? []
-		: [];
-	if (rawMatching.length === 0) return { providers: [] };
+function authorizeSubagentLaunchAgainstReservations(
+	input: SubagentLaunchAuthorizationRequest,
+	reservations: ResolvedSubagentLaunchAuthorizationReservations | undefined,
+): { request: Readonly<SubagentLaunchAuthorizationRequest>; providers: readonly string[] } {
 	const request = normalizeRequest(input);
-	const matching = reservations?.providers.filter((reservation) => reservation.agents.includes(request.agent.name)) ?? [];
+	const matching = matchingProviderNames(reservations, request.agent.name);
+	const current = existingRegistry();
 	const sessionProviders = request.sessionId ? current?.bySession.get(request.sessionId) : undefined;
 	const authorized: string[] = [];
-	for (const reservation of matching) {
-		const provider = sessionProviders?.get(reservation.provider);
+	for (const providerName of matching) {
+		const provider = sessionProviders?.get(providerName);
 		if (!provider || !provider.agents.includes(request.agent.name)) {
-			throw new Error(`Launch-authorization provider '${reservation.provider}' is unavailable for reserved agent '${request.agent.name}'.`);
+			throw new Error(`Launch-authorization provider '${providerName}' is unavailable for reserved agent '${request.agent.name}'.`);
 		}
 		let rawDecision: unknown;
 		try {
@@ -363,5 +495,119 @@ export function authorizeSubagentLaunch(input: SubagentLaunchAuthorizationReques
 		}
 		authorized.push(provider.name);
 	}
-	return { providers: Object.freeze(authorized) };
+	return { request, providers: Object.freeze(authorized) };
+}
+
+/** Authorize one fully resolved child contract immediately before launch. */
+export function authorizeSubagentLaunch(input: SubagentLaunchAuthorizationRequest): { providers: readonly string[] } {
+	const inherited = process.env[SUBAGENT_LAUNCH_AUTHORIZATION_ENV];
+	const current = existingRegistry();
+	const local = typeof input?.sessionId === "string" ? current?.bySession.get(input.sessionId) : undefined;
+	if (!inherited && !local?.size) return { providers: [] };
+	const reservations = resolveSubagentLaunchAuthorizationReservations(input.sessionId);
+	const rawAgentName = input?.agent?.name;
+	if (typeof rawAgentName !== "string" || matchingProviderNames(reservations, rawAgentName).length === 0) return { providers: [] };
+	const authorized = authorizeSubagentLaunchAgainstReservations(input, reservations);
+	return { providers: authorized.providers };
+}
+
+/** Internal detached-runner handoff: authorize one exact request against one fixed reservation snapshot. */
+export function createSubagentLaunchAuthorizationApproval(
+	input: SubagentLaunchAuthorizationRequest,
+	reservations: ResolvedSubagentLaunchAuthorizationReservations | undefined,
+): ResolvedSubagentLaunchAuthorizationApproval | undefined {
+	const normalizedReservations = reservations ? normalizeReservations(reservations, "detached launch authorization reservations") : undefined;
+	const rawAgentName = input?.agent?.name;
+	if (typeof rawAgentName !== "string" || matchingProviderNames(normalizedReservations, rawAgentName).length === 0) return undefined;
+	const authorized = authorizeSubagentLaunchAgainstReservations(input, normalizedReservations);
+	return Object.freeze({
+		version: SUBAGENT_LAUNCH_AUTHORIZATION_VERSION,
+		request: authorized.request,
+		providers: authorized.providers,
+	});
+}
+
+/** Build the bounded, prompt-free approval manifest written to one detached runner config. */
+export function createDetachedSubagentLaunchAuthorizationContext(
+	approvals: readonly ResolvedSubagentLaunchAuthorizationApproval[],
+): DetachedSubagentLaunchAuthorizationContext {
+	if (!Array.isArray(approvals) || approvals.length === 0) throw new Error("Detached launch authorization requires at least one exact attempt approval.");
+	const first = normalizeApproval(approvals[0], 0);
+	return normalizeDetachedContext({
+		version: SUBAGENT_LAUNCH_AUTHORIZATION_VERSION,
+		...(first.request.sessionId ? { sessionId: first.request.sessionId } : {}),
+		invocation: first.request.invocation,
+		agent: {
+			source: first.request.agent.source,
+			filePath: first.request.agent.filePath,
+		},
+		approvals,
+	});
+}
+
+/**
+ * Validate and consume package-owned approvals in a detached runner. Provider
+ * callbacks and provider-owned receipts never cross the process boundary.
+ */
+export function createDetachedSubagentLaunchAuthorizationGate(input: {
+	agentName: string;
+	context?: DetachedSubagentLaunchAuthorizationContext;
+	reservations?: ResolvedSubagentLaunchAuthorizationReservations;
+}): {
+	reserved: boolean;
+	authorizeAttempt(attempt: DetachedSubagentLaunchAuthorizationAttempt): void;
+} {
+	const agentName = validateAgentName(input.agentName, "Detached launch authorization agent name");
+	const reservations = input.reservations
+		? normalizeReservations(input.reservations, "detached launch authorization reservations")
+		: decodeSubagentLaunchAuthorizationReservations(process.env[SUBAGENT_LAUNCH_AUTHORIZATION_ENV]);
+	const expectedProviders = matchingProviderNames(reservations, agentName);
+	if (expectedProviders.length === 0) {
+		return Object.freeze({ reserved: false, authorizeAttempt() {} });
+	}
+	const context = normalizeDetachedContext(input.context);
+	const approvals = new Map<string, ResolvedSubagentLaunchAuthorizationApproval>();
+	for (const approval of context.approvals) {
+		if (approval.request.agent.name !== agentName) {
+			throw new Error(`Detached launch authorization approval targets '${approval.request.agent.name}' instead of reserved agent '${agentName}'.`);
+		}
+		if (JSON.stringify(approval.providers) !== JSON.stringify(expectedProviders)) {
+			throw new Error(`Detached launch authorization approval providers do not match the reservations for agent '${agentName}'.`);
+		}
+		approvals.set(launchAuthorizationRequestKey(approval.request), approval);
+	}
+	return Object.freeze({
+		reserved: true,
+		authorizeAttempt(attempt: DetachedSubagentLaunchAuthorizationAttempt): void {
+			const request = normalizeRequest({
+				version: SUBAGENT_LAUNCH_AUTHORIZATION_VERSION,
+				...(context.sessionId ? { sessionId: context.sessionId } : {}),
+				invocation: context.invocation,
+				run: {
+					id: attempt.run.id,
+					childIndex: attempt.run.childIndex,
+					modelAttempt: attempt.run.modelAttempt,
+					startupAttempt: attempt.run.startupAttempt,
+					async: true,
+				},
+				agent: {
+					name: attempt.agent.name,
+					source: context.agent.source,
+					filePath: context.agent.filePath,
+					definitionDigest: attempt.agent.definitionDigest,
+					runner: attempt.agent.runner,
+				},
+				contract: {
+					launchContractDigest: attempt.contract.launchContractDigest,
+					...(attempt.contract.context ? { context: attempt.contract.context } : {}),
+					...(attempt.contract.model ? { model: attempt.contract.model } : {}),
+					modelCandidates: attempt.contract.modelCandidates,
+				},
+			});
+			const key = launchAuthorizationRequestKey(request);
+			if (!approvals.delete(key)) {
+				throw new Error(`Reserved agent '${agentName}' has no exact detached launch authorization approval for model attempt ${request.run.modelAttempt}, startup attempt ${request.run.startupAttempt}.`);
+			}
+		},
+	});
 }

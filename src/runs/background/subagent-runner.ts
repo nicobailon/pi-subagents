@@ -151,6 +151,7 @@ import { resolveExternalCliRunnerStatus } from "../shared/external-cli-contract.
 import { runExternalJob } from "../shared/external-job-runner.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import { decodeSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
+import { createDetachedSubagentLaunchAuthorizationGate, type SubagentLaunchAuthorizationRunner } from "../shared/launch-authorization.ts";
 import {
 	CHILD_WATCHDOG_CONFIG_ENV,
 	acceptChildWatchdogEvent,
@@ -1357,6 +1358,48 @@ async function runSingleStepInner(
 		}
 	}
 
+	let launchAuthorizationGate: ReturnType<typeof createDetachedSubagentLaunchAuthorizationGate>;
+	try {
+		launchAuthorizationGate = createDetachedSubagentLaunchAuthorizationGate({
+			agentName: step.agent,
+			...(step.launchAuthorization ? { context: step.launchAuthorization } : {}),
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return omitUndefinedProperties({ agent: step.agent, context: step.context, output: message, error: message, exitCode: 1 });
+	}
+	const authorizeDetachedAttempt = (input: {
+		modelAttempt: number;
+		startupAttempt: number;
+		model?: string;
+		launchContractDigest?: string;
+		runner: SubagentLaunchAuthorizationRunner;
+	}): void => {
+		if (!launchAuthorizationGate.reserved) return;
+		if (!step.definitionDigest || !input.launchContractDigest) {
+			throw new Error(`Reserved agent '${step.agent}' is missing its exact detached launch contract.`);
+		}
+		launchAuthorizationGate.authorizeAttempt({
+			run: {
+				id: ctx.id,
+				childIndex: ctx.flatIndex,
+				modelAttempt: input.modelAttempt,
+				startupAttempt: input.startupAttempt,
+			},
+			agent: {
+				name: step.agent,
+				definitionDigest: step.definitionDigest,
+				runner: input.runner,
+			},
+			contract: {
+				launchContractDigest: input.launchContractDigest,
+				...(step.context ? { context: step.context } : {}),
+				...(input.model ? { model: input.model } : {}),
+				modelCandidates: step.modelCandidates ?? [],
+			},
+		});
+	};
+
 	const effectiveStructuredOutput = step.structuredOutput ?? (step.structuredOutputSchema
 		? createStructuredOutputRuntime(step.structuredOutputSchema, path.join(path.dirname(ctx.outputFile), "structured-output"))
 		: undefined);
@@ -1444,6 +1487,12 @@ async function runSingleStepInner(
 				: undefined;
 		const runner = resolveExternalCliRunnerStatus({ ...step.runner, ...(adapterLaunch ? { args: adapterLaunch.args } : {}) });
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
+		try {
+			authorizeDetachedAttempt({ modelAttempt: 0, startupAttempt: 0, launchContractDigest: step.launchContractDigest, runner: "external-cli" });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return omitUndefinedProperties({ agent: step.agent, context: step.context, output: message, error: message, exitCode: 1, runner });
+		}
 		const external = await runExternalCli(omitUndefinedProperties({
 			command: adapterLaunch?.command ?? runner.command,
 			args: adapterLaunch?.args ?? runner.args,
@@ -1513,6 +1562,12 @@ async function runSingleStepInner(
 			capabilities: { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false },
 		};
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
+		try {
+			authorizeDetachedAttempt({ modelAttempt: 0, startupAttempt: 0, launchContractDigest: step.launchContractDigest, runner: "external-job" });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return omitUndefinedProperties({ agent: step.agent, context: step.context, output: message, error: message, exitCode: 1, runner });
+		}
 		const external = await runExternalJob(omitUndefinedProperties({
 			provider: runner.provider,
 			options: runner.options,
@@ -1722,6 +1777,27 @@ async function runSingleStepInner(
 				...(step.structuredOutputSchema ? { structuredOutputSchema: step.structuredOutputSchema } : {}),
 				...(extensionBindings ? { extensionBindings } : {}),
 			}));
+		}
+		try {
+			authorizeDetachedAttempt({
+				modelAttempt: modelIndex,
+				startupAttempt: startupAttemptIndex,
+				...(candidate ? { model: candidate } : {}),
+				launchContractDigest: actualLaunchContractDigest,
+				runner: "native",
+			});
+		} catch (error) {
+			cleanupTempDir(tempDir);
+			const message = error instanceof Error ? error.message : String(error);
+			return omitUndefinedProperties({
+				agent: step.agent,
+				context: step.context,
+				output: message,
+				error: message,
+				exitCode: 1,
+				model: candidate,
+				launchContractDigest: actualLaunchContractDigest,
+			});
 		}
 		capabilityAudit = attemptCapabilityAudit;
 		writerAttemptCount += 1;

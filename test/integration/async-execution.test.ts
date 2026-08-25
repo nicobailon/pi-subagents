@@ -661,15 +661,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	it("authorizes an async single before runner spawn and propagates reservations to its child", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const sessionId = `async-authorization-session-${Date.now()}-${Math.random()}`;
 		const id = `async-authorization-${Date.now().toString(36)}`;
-		let seen: Readonly<SubagentLaunchAuthorizationRequest> | undefined;
-		let dispose = () => {};
-		dispose = registerSubagentLaunchAuthorizationProvider({
+		const seen: Readonly<SubagentLaunchAuthorizationRequest>[] = [];
+		const dispose = registerSubagentLaunchAuthorizationProvider({
 			name: "test.async/1",
 			sessionId,
 			agents: ["worker"],
 			authorize(request) {
-				seen = request;
-				dispose();
+				seen.push(request);
 				return { decision: "allow" };
 			},
 		});
@@ -688,10 +686,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				launchAuthorization: { id: "rpc-spawn-authorized", origin: "rpc" },
 			});
 			assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "async launch failed");
-			assert.equal(seen?.invocation.id, "rpc-spawn-authorized");
-			assert.equal(seen?.run.id, id);
-			assert.equal(seen?.run.async, true);
-			assert.equal(seen?.contract.launchContractDigest, launch.details.launchContractDigest);
+			assert.deepEqual(seen.map((request) => request.run.startupAttempt), [0, 1, 2, 3]);
+			assert.equal(seen[0]?.invocation.id, "rpc-spawn-authorized");
+			assert.equal(seen[0]?.run.id, id);
+			assert.equal(seen[0]?.run.async, true);
+			assert.equal(seen[0]?.contract.launchContractDigest, launch.details.launchContractDigest);
 			const payload = await readAsyncPayload(id);
 			const childEnv = JSON.parse(payload.results[0]?.output ?? "{}") as Record<string, string | null>;
 			const reservations = decodeSubagentLaunchAuthorizationReservations(childEnv[SUBAGENT_LAUNCH_AUTHORIZATION_ENV] ?? undefined);
@@ -728,6 +727,149 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.match(launch.content[0]?.text ?? "", /async receipt missing/);
 			assert.equal(mockPi.callCount(), 0);
 			assert.equal(fs.existsSync(path.join(ASYNC_DIR, id)), false);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("preauthorizes every bounded native async startup and fallback attempt", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const sessionId = `async-attempt-authorization-${Date.now()}-${Math.random()}`;
+		const id = `async-attempt-authorization-${Date.now().toString(36)}`;
+		const seen: Readonly<SubagentLaunchAuthorizationRequest>[] = [];
+		const dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "test.async-attempts/1",
+			sessionId,
+			agents: ["worker"],
+			authorize(request) {
+				seen.push(request);
+				return { decision: "allow" };
+			},
+		});
+		try {
+			mockPi.onCall({
+				jsonl: [{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "primary failed" }],
+						model: "openai/gpt-5-mini",
+						errorMessage: "rate limit exceeded",
+					},
+				}],
+				exitCode: 1,
+			});
+			mockPi.onCall({ output: "authorized fallback completed" });
+			const launch = executeAsyncSingle(id, {
+				agent: "worker",
+				task: "Exercise every bounded async authorization attempt",
+				agentConfig: makeAgent("worker", {
+					completionGuard: false,
+					model: "openai/gpt-5-mini:high",
+					fallbackModels: ["anthropic/claude-sonnet-4:low"],
+				}),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: `${sessionId}.jsonl`, parentSessionId: sessionId },
+				availableModels: [
+					{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
+					{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+				],
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+				acceptance: false,
+				launchAuthorization: { id: "rpc-all-async-attempts", origin: "rpc" },
+			});
+			assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "async launch failed");
+			const payload = await readAsyncPayload(id);
+			assert.equal(payload.success, true);
+			assert.equal(mockPi.callCount(), 2);
+			assert.deepEqual(seen.map((request) => [request.run.modelAttempt, request.run.startupAttempt, request.contract.model]), [
+				[0, 0, "openai/gpt-5-mini:high"],
+				[0, 1, "openai/gpt-5-mini:high"],
+				[0, 2, "openai/gpt-5-mini:high"],
+				[0, 3, "openai/gpt-5-mini:high"],
+				[1, 0, "anthropic/claude-sonnet-4:low"],
+				[1, 1, "anthropic/claude-sonnet-4:low"],
+				[1, 2, "anthropic/claude-sonnet-4:low"],
+				[1, 3, "anthropic/claude-sonnet-4:low"],
+			]);
+			assert.equal(new Set(seen.slice(0, 4).map((request) => request.contract.launchContractDigest)).size, 1);
+			assert.equal(new Set(seen.slice(4).map((request) => request.contract.launchContractDigest)).size, 1);
+			assert.notEqual(seen[0]?.contract.launchContractDigest, seen[4]?.contract.launchContractDigest);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("denies an async single before runner spawn when a later startup attempt is unauthorized", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const sessionId = `async-late-attempt-denial-${Date.now()}-${Math.random()}`;
+		const id = `async-late-attempt-denial-${Date.now().toString(36)}`;
+		const seen: Array<[number, number]> = [];
+		const dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "test.async-late-deny/1",
+			sessionId,
+			agents: ["worker"],
+			authorize(request) {
+				seen.push([request.run.modelAttempt, request.run.startupAttempt]);
+				return request.run.startupAttempt === 1
+					? { decision: "deny", reason: "retry receipt missing" }
+					: { decision: "allow" };
+			},
+		});
+		try {
+			mockPi.onCall({ exitCode: 1 });
+			mockPi.onCall({ output: "must not reach unauthorized retry" });
+			const launch = executeAsyncSingle(id, {
+				agent: "worker",
+				task: "Deny a later startup attempt",
+				agentConfig: makeAgent("worker", { completionGuard: false, model: "openai/gpt-5-mini" }),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: `${sessionId}.jsonl`, parentSessionId: sessionId },
+				availableModels: [{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" }],
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+				acceptance: false,
+				launchAuthorization: { id: "rpc-deny-late-async-attempt", origin: "rpc" },
+			});
+			if (!launch.isError) await readAsyncPayload(id);
+			assert.equal(launch.isError, true);
+			assert.match(launch.content[0]?.text ?? "", /retry receipt missing/);
+			assert.deepEqual(seen, [[0, 0], [0, 1]]);
+			assert.equal(mockPi.callCount(), 0);
+			assert.equal(fs.existsSync(path.join(ASYNC_DIR, id)), false);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("fails closed when a detached runner has a reservation without exact attempt approvals", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const sessionId = `async-missing-approval-${Date.now()}-${Math.random()}`;
+		const id = `async-missing-approval-${Date.now().toString(36)}`;
+		let providerCalls = 0;
+		const dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "test.async-missing-approval/1",
+			sessionId,
+			agents: ["worker"],
+			authorize() {
+				providerCalls += 1;
+				return { decision: "allow" };
+			},
+		});
+		try {
+			mockPi.onCall({ output: "must not bypass detached authorization" });
+			const launch = executeAsyncChain(id, {
+				chain: [{ agent: "worker", task: "Attempt an unapproved detached launch" }],
+				agents: [makeAgent("worker", { completionGuard: false })],
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: sessionId },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+			});
+			assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "async chain launch failed");
+			const payload = await readAsyncPayload(id);
+			assert.equal(payload.success, false);
+			assert.match(payload.results[0]?.error ?? payload.error ?? "", /exact detached launch authorization approval/i);
+			assert.equal(providerCalls, 0);
+			assert.equal(mockPi.callCount(), 0);
 		} finally {
 			dispose();
 		}

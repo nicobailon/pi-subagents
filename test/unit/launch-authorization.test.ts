@@ -9,6 +9,11 @@ import {
 	resolveSubagentLaunchAuthorizationReservations,
 	type SubagentLaunchAuthorizationRequest,
 } from "../../src/api/launch-authorization.ts";
+import {
+	createDetachedSubagentLaunchAuthorizationContext,
+	createDetachedSubagentLaunchAuthorizationGate,
+	createSubagentLaunchAuthorizationApproval,
+} from "../../src/runs/shared/launch-authorization.ts";
 
 const originalAuthorizationEnv = process.env[SUBAGENT_LAUNCH_AUTHORIZATION_ENV];
 
@@ -208,6 +213,29 @@ describe("subagent launch authorization", () => {
 		}
 	});
 
+	it("keeps a recreated session registry when an older disposer runs again", () => {
+		const sessionId = `recreated-${Date.now()}-${Math.random()}`;
+		const staleDispose = registerSubagentLaunchAuthorizationProvider({
+			name: "policy.recreated/1",
+			sessionId,
+			agents: ["package.protected"],
+			authorize: () => ({ decision: "deny", reason: "stale" }),
+		});
+		staleDispose();
+		const currentDispose = registerSubagentLaunchAuthorizationProvider({
+			name: "policy.recreated/1",
+			sessionId,
+			agents: ["package.protected"],
+			authorize: () => ({ decision: "allow" }),
+		});
+		try {
+			staleDispose();
+			assert.deepEqual(authorizeSubagentLaunch(request(sessionId)), { providers: ["policy.recreated/1"] });
+		} finally {
+			currentDispose();
+		}
+	});
+
 	it("propagates reservations and rejects an inherited provider that is unavailable locally", () => {
 		const sessionId = `inherited-${Date.now()}-${Math.random()}`;
 		const dispose = registerSubagentLaunchAuthorizationProvider({
@@ -225,6 +253,47 @@ describe("subagent launch authorization", () => {
 				() => authorizeSubagentLaunch(request(`${sessionId}-child`)),
 				/provider 'policy\.inherited\/1' is unavailable for reserved agent 'package\.protected'/,
 			);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("consumes exact detached attempt approvals once and rejects missing manifests", () => {
+		const sessionId = `detached-${Date.now()}-${Math.random()}`;
+		const dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "policy.detached/1",
+			sessionId,
+			agents: ["package.protected"],
+			authorize: () => ({ decision: "allow" }),
+		});
+		try {
+			const reservations = resolveSubagentLaunchAuthorizationReservations(sessionId);
+			assert.throws(
+				() => createDetachedSubagentLaunchAuthorizationGate({ agentName: "package.protected", reservations }),
+				/no exact detached launch authorization approval context/,
+			);
+			const base = request(sessionId);
+			const detached = (startupAttempt: number): SubagentLaunchAuthorizationRequest => ({
+				...base,
+				run: { ...base.run, startupAttempt, async: true },
+			});
+			const approvals = [0, 1].map((startupAttempt) => createSubagentLaunchAuthorizationApproval(detached(startupAttempt), reservations));
+			assert.ok(approvals.every((approval) => approval !== undefined));
+			const context = createDetachedSubagentLaunchAuthorizationContext(approvals as NonNullable<(typeof approvals)[number]>[]);
+			const gate = createDetachedSubagentLaunchAuthorizationGate({ agentName: "package.protected", context, reservations });
+			const attempt = (startupAttempt: number) => ({
+				run: { id: base.run.id, childIndex: 0, modelAttempt: 0, startupAttempt },
+				agent: { name: base.agent.name, definitionDigest: base.agent.definitionDigest, runner: base.agent.runner },
+				contract: {
+					launchContractDigest: base.contract.launchContractDigest,
+					context: "fresh" as const,
+					model: "provider/model",
+					modelCandidates: base.contract.modelCandidates,
+				},
+			});
+			gate.authorizeAttempt(attempt(0));
+			assert.throws(() => gate.authorizeAttempt(attempt(0)), /no exact detached launch authorization approval/);
+			gate.authorizeAttempt(attempt(1));
 		} finally {
 			dispose();
 		}

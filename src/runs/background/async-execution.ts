@@ -66,6 +66,7 @@ import { resultFilePath } from "./result-files.ts";
 import { appendTurnBudgetSystemPrompt, initialTurnBudgetState } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetState } from "../shared/usage-budget.ts";
+import { SUBAGENT_STARTUP_RETRY_DELAYS_MS } from "../shared/subagent-startup-retry.ts";
 import type { ImportedAsyncRoot } from "./chain-root-attachment.ts";
 import type { SessionLeaseRequest } from "../shared/session-lease.ts";
 import { finalizeProcessTerminal, readProcessTerminal } from "./process-terminal.ts";
@@ -77,9 +78,12 @@ import { resolvePermissionRules, type PermissionConfig } from "../shared/permiss
 import { normalizeExtensionBindings, omitExtensionBindingsEnv, type ExtensionBindings } from "../shared/extension-bindings.ts";
 import {
 	SUBAGENT_LAUNCH_AUTHORIZATION_ENV,
-	authorizeSubagentLaunch,
+	createDetachedSubagentLaunchAuthorizationContext,
+	createSubagentLaunchAuthorizationApproval,
 	encodeSubagentLaunchAuthorizationReservations,
 	resolveSubagentLaunchAuthorizationReservations,
+	type DetachedSubagentLaunchAuthorizationContext,
+	type ResolvedSubagentLaunchAuthorizationApproval,
 	type ResolvedSubagentLaunchAuthorizationReservations,
 	type SubagentLaunchAuthorizationInvocation,
 } from "../shared/launch-authorization.ts";
@@ -1609,13 +1613,13 @@ export function executeAsyncSingle(
 		if (contractError) return formatAsyncStartError("single", contractError);
 	}
 	const definitionDigest = agentDefinitionDigest(agentConfig);
-	const launchContractDigest = launchBindingDigest({
+	const launchContractDigestForModel = (selectedModel: string | undefined): string => launchBindingDigest({
 		definitionDigest,
 		task,
-		...(model ? { model } : {}),
+		...(selectedModel ? { model: selectedModel } : {}),
 		modelCandidates,
 		...((params.fast ?? agentConfig.fast) !== undefined ? { fast: params.fast ?? agentConfig.fast } : {}),
-		...(resolveEffectiveThinking(model, effectiveThinking) ? { thinking: resolveEffectiveThinking(model, effectiveThinking) } : {}),
+		...(resolveEffectiveThinking(selectedModel, effectiveThinking) ? { thinking: resolveEffectiveThinking(selectedModel, effectiveThinking) } : {}),
 		...(thinkingCeiling ? { thinkingCeiling } : {}),
 		systemPrompt: effectiveSystemPrompt,
 		systemPromptMode: agentConfig.systemPromptMode,
@@ -1630,35 +1634,52 @@ export function executeAsyncSingle(
 		...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
 		...(extensionBindings ? { extensionBindings } : {}),
 	});
+	const launchContractDigest = launchContractDigestForModel(model);
 	const launchAuthorizationSessionId = ctx.parentSessionId ?? ctx.currentSessionId;
+	const launchAuthorizationInvocation = params.launchAuthorization ?? { id, origin: "internal" };
+	const launchAuthorizationRunner = externalRunnerType === "external-cli" || externalRunnerType === "external-job" ? externalRunnerType : "native";
 	let launchAuthorizationReservations: ResolvedSubagentLaunchAuthorizationReservations | undefined;
+	let launchAuthorizationContext: DetachedSubagentLaunchAuthorizationContext | undefined;
 	try {
 		launchAuthorizationReservations = resolveSubagentLaunchAuthorizationReservations(launchAuthorizationSessionId);
-		authorizeSubagentLaunch({
-			version: 1,
-			...(launchAuthorizationSessionId ? { sessionId: launchAuthorizationSessionId } : {}),
-			invocation: params.launchAuthorization ?? { id, origin: "internal" },
-			run: {
-				id,
-				childIndex: 0,
-				modelAttempt: 0,
-				startupAttempt: 0,
-				async: true,
-			},
-			agent: {
-				name: agentConfig.name,
-				source: agentConfig.source ?? "runtime",
-				filePath: agentConfig.filePath ?? `<runtime:${agentConfig.name}>`,
-				definitionDigest,
-				runner: externalRunnerType === "external-cli" || externalRunnerType === "external-job" ? externalRunnerType : "native",
-			},
-			contract: {
-				launchContractDigest,
-				...(params.context ? { context: params.context } : {}),
-				...(model ? { model } : {}),
-				modelCandidates,
-			},
-		});
+		const candidates: Array<string | undefined> = externalRunner
+			? [undefined]
+			: modelCandidates.length > 0 ? modelCandidates : [undefined];
+		const startupAttemptCount = externalRunner ? 1 : SUBAGENT_STARTUP_RETRY_DELAYS_MS.length + 1;
+		const approvals: ResolvedSubagentLaunchAuthorizationApproval[] = [];
+		authorizationAttempts: for (let modelAttempt = 0; modelAttempt < candidates.length; modelAttempt++) {
+			const selectedModel = candidates[modelAttempt];
+			for (let startupAttempt = 0; startupAttempt < startupAttemptCount; startupAttempt++) {
+				const approval = createSubagentLaunchAuthorizationApproval({
+					version: 1,
+					...(launchAuthorizationSessionId ? { sessionId: launchAuthorizationSessionId } : {}),
+					invocation: launchAuthorizationInvocation,
+					run: {
+						id,
+						childIndex: 0,
+						modelAttempt,
+						startupAttempt,
+						async: true,
+					},
+					agent: {
+						name: agentConfig.name,
+						source: agentConfig.source ?? "runtime",
+						filePath: agentConfig.filePath ?? `<runtime:${agentConfig.name}>`,
+						definitionDigest,
+						runner: launchAuthorizationRunner,
+					},
+					contract: {
+						launchContractDigest: launchContractDigestForModel(selectedModel),
+						...(params.context ? { context: params.context } : {}),
+						...(selectedModel ? { model: selectedModel } : {}),
+						modelCandidates,
+					},
+				}, launchAuthorizationReservations);
+				if (!approval) break authorizationAttempts;
+				approvals.push(approval);
+			}
+		}
+		if (approvals.length > 0) launchAuthorizationContext = createDetachedSubagentLaunchAuthorizationContext(approvals);
 	} catch (error) {
 		try {
 			fs.rmSync(asyncDir, { recursive: true, force: true });
@@ -1775,6 +1796,7 @@ export function executeAsyncSingle(
 						definitionDigest: agentDefinitionDigest(agentConfig),
 						launchBindingTask: task,
 						launchContractDigest,
+						...(launchAuthorizationContext ? { launchAuthorization: launchAuthorizationContext } : {}),
 						...(extensionBindings ? { extensionBindings } : {}),
 						launchResolvedExtensions,
 						effectiveAcceptance: resolvedAcceptance,

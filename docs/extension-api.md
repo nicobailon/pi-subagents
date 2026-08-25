@@ -170,21 +170,23 @@ const dispose = registerSubagentLaunchAuthorizationProvider({
 });
 ```
 
-The provider callback is synchronous and must return exactly `{ decision: "allow" }` or `{ decision: "deny", reason }`. Throwing, returning a promise, returning malformed data, or disappearing while its reservation remains inherited all fail closed before child startup. Multiple providers may reserve the same agent; every matching provider must allow it. A reload-safe replacement with the same provider name supersedes the old callback, and the old disposer cannot remove the replacement.
+The provider callback is synchronous and must return exactly `{ decision: "allow" }` or `{ decision: "deny", reason }`. Throwing, returning a promise, returning malformed data, or disappearing while its reservation remains inherited all fail closed before child startup. Multiple providers may reserve the same agent; every matching provider must allow it. A reload-safe replacement with the same provider name supersedes the old callback, and an old or repeatedly called disposer cannot remove either that replacement or a later registry recreated for the same session.
 
 The request contains no task, system prompt, conversation, or tool output. It carries:
 
 - the exact session and root invocation identity;
 - `workflowRunId` and `workflowKey` for dynamic `runs.run` / `runs.all` children;
-- child run/index and foreground attempt indexes;
+- child run/index plus model and startup attempt indexes;
 - canonical agent name, source, file path, parsed-definition digest, and runner kind;
 - the immutable `launchContractDigest`, context, selected model, and complete model-candidate list.
 
 A model-facing `subagent` tool call uses its tool-call id as `invocation.id`. RPC spawn uses `rpc-spawn-<requestId>`. Every child selected dynamically inside `workflowScript` retains that root invocation id and adds its workflow identity, so constructing an agent name in JavaScript cannot bypass the provider. Structured delegation uses its correlated request identity.
 
-For detached async singles, authorization runs in the owning Pi process after the exact contract is resolved and before the runner process is spawned. Foreground fallback/startup attempts are authorized separately. Reservation descriptors—not callbacks or approval receipts—propagate to async and nested child environments. If a nested Pi process tries to launch a reserved agent without loading the matching provider, it fails closed; ordinary unreserved agents are unaffected. The already-authorized detached runner may execute its bound child, while any later nested launch still sees the inherited reservations.
+For detached async singles, the owning Pi process resolves the bounded matrix of candidate models and startup attempts and authorizes every exact request before spawning the runner. A denial or unavailable provider for any potential attempt blocks the async launch, even when that retry or fallback would not ultimately have been needed. The package writes only a prompt-free, bounded exact-attempt manifest to its private runner config; provider callbacks and provider-owned receipts never cross the process boundary. The detached runner consumes one matching manifest entry immediately before each actual child spawn, so fallback, startup retry, a missing entry, and replay all fail closed.
 
-Providers should first use `resolveSubagentLaunchContract()` to mint invocation-scoped receipts, then compare each `launchContractDigest` and any stricter local invariants in `authorize()`. Key receipts by the full invocation/workflow/child/attempt tuple, not only the root invocation id: one workflow can launch several reserved children, and foreground startup or model fallback creates distinct attempts. The callback owns receipt consumption and replay policy. Do not use a session-global boolean or temporarily widen an agent allowlist: concurrent workflows can overlap that window.
+Reservation descriptors—not the attempt manifest, callbacks, or provider-owned receipts—propagate into async child and nested environments. If a nested Pi process tries to launch a reserved agent without loading the matching provider, it fails closed; ordinary unreserved agents are unaffected. Detached chain paths without an owning-process attempt manifest also fail closed for reserved agents.
+
+Providers should first use `resolveSubagentLaunchContract()` to mint invocation-scoped receipts, then compare each `launchContractDigest` and any stricter local invariants in `authorize()`. Key receipts by the full invocation/workflow/child/attempt tuple, not only the root invocation id: one workflow can launch several reserved children, foreground attempts are authorized as they occur, and detached async singles present every bounded startup/fallback possibility before runner spawn. The callback owns receipt consumption and replay policy. Do not use a session-global boolean or temporarily widen an agent allowlist: concurrent workflows can overlap that window.
 
 With no matching reservation, launch semantics are unchanged; the no-provider path returns before request normalization or provider callbacks. This is a same-process extension policy boundary, not an operating-system sandbox; other code already executing with the user's permissions remains outside it.
 
