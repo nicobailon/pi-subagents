@@ -425,6 +425,7 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/overloaded/i,
 	/service unavailable/i,
 	/temporar(?:ily)? unavailable/i,
+	/connection\s+(?:error|reset|closed|aborted)/i,
 	/connection refused/i,
 	/fetch failed/i,
 	/network error/i,

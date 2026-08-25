@@ -4686,6 +4686,36 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(result.error?.includes("Something went wrong"));
 	});
 
+	it("surfaces a non-retryable provider failure when the child produced no output", async () => {
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [],
+					model: "openai/gpt-5-mini",
+					errorMessage: "Invalid request: malformed payload",
+					usage: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+				},
+			}],
+			exitCode: 1,
+		});
+		const executor = makeExecutor([makeAgent("echo", { model: "openai/gpt-5-mini" })]);
+
+		const result = await executor.execute(
+			"non-retryable-provider-failure",
+			{ agent: "echo", task: "Task", async: false, acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /Invalid request: malformed payload/u);
+		assert.match(result.details.results[0]?.error ?? "", /Invalid request: malformed payload/u);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
 	it("retries a zero-activity startup exit on the same model", async () => {
 		mockPi.onCall({ exitCode: 1 });
 		mockPi.onCall({ output: "Recovered after startup race" });

@@ -199,6 +199,9 @@ describe("model fallback helpers", () => {
 		assert.equal(isRetryableModelFailure("Subagent produced no output (possible model cold-start or empty response)."), true);
 		assert.equal(isRetryableModelFailure("model load failed"), true);
 		assert.equal(isRetryableModelFailure("Stream ended without finish_reason"), true);
+		assert.equal(isRetryableModelFailure("Connection error"), true);
+		assert.equal(isRetryableModelFailure("APIConnectionError: Connection closed."), true);
+		assert.equal(isRetryableModelFailure("Connection reset by peer"), true);
 		assert.equal(isRetryableModelFailure("Request timed out."), true);
 	});
 
