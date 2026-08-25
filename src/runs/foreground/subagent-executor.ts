@@ -4280,10 +4280,12 @@ function createScheduledOwnerState(source: SubagentState, ownerSessionId: string
 			grantHistory: [...(source.subagentSpawns.grantHistory ?? [])],
 		}
 		: undefined;
+	const ownerParentModel = source.currentSessionId === ownerSessionId ? source.lastParentModel : undefined;
 	return {
 		...source,
 		baseCwd: ctx.cwd,
 		currentSessionId: ownerSessionId,
+		lastParentModel: ownerParentModel,
 		parentSessionFile: ctx.sessionManager.getSessionFile() ?? null,
 		subagentInProgress: false,
 		...(ownerSpawns ? { subagentSpawns: ownerSpawns } : { subagentSpawns: undefined }),
@@ -4353,6 +4355,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 		preserveActiveSession = false,
+		parentModelOverride?: ParentModel | null,
 	): Promise<AgentToolResult<Details>> => {
 		if (params.action?.trim() === "validate") {
 			const validation = validateWorkflowScript(params.workflowScript ?? "");
@@ -4376,6 +4379,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
 		if (normalizedAction === "resume" && requestParams.extensionBindings !== undefined) return buildRequestedModeError(requestParams, "extensionBindings is not supported with action='resume'; resume uses the original retained child binding.");
 		if (requestParams.workflowScript !== undefined && normalizedAction === undefined) {
+			const workflowParentModel = parentModelOverride !== undefined
+				? parentModelOverride
+				: (() => {
+					const currentParentModel = normalizeParentModel(ctx.model);
+					return (preserveActiveSession
+						? currentParentModel
+						: rememberParentModel(deps.state, resolveCurrentSessionId(ctx.sessionManager), currentParentModel)) ?? null;
+				})();
 			if (requestParams.extensionBindings !== undefined) {
 				try {
 					requestParams.extensionBindings = normalizeExtensionBindings(requestParams.extensionBindings)!.value;
@@ -4834,7 +4845,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 											status: step.status,
 											heartbeat: { status: step.status, ...(childPhase ? { phase: childPhase } : {}) },
 										});
-									}, ctx, preserveActiveSession);
+									}, ctx, preserveActiveSession, workflowParentModel);
 								});
 								workflowResults.push(...result.details.results);
 								for (const childResult of result.details.results) {
@@ -4864,7 +4875,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								}
 								return child;
 							},
-							status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx, preserveActiveSession)),
+							status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx, preserveActiveSession, workflowParentModel)),
 							resolveResume: (reference) => resolveKeyedWorkflowResume(reference, deps.state),
 							steer: (key, message, options, workflowSignal) => steerWorkflowChildByKey({ state: deps.state, workflowRunId, key, message, options, signal: workflowSignal, resolveRunId: () => workflowChildRunIds.get(key) }),
 						});
@@ -5013,7 +5024,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									status: progressStatus,
 									heartbeat: { status: progressStatus, ...(childPhase ? { phase: childPhase } : {}) },
 								});
-							}, ctx, preserveActiveSession);
+							}, ctx, preserveActiveSession, workflowParentModel);
 						});
 						workflowResults.push(...result.details.results);
 						for (const childResult of result.details.results) {
@@ -5034,7 +5045,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						});
 						return child;
 					},
-					status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx, preserveActiveSession)),
+					status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx, preserveActiveSession, workflowParentModel)),
 					resolveResume: (reference) => resolveKeyedWorkflowResume(reference, deps.state),
 					steer: (key, message, options, workflowSignal) => steerWorkflowChildByKey({ state: deps.state, workflowRunId: _id, key, message, options, signal: workflowSignal, resolveRunId: () => workflowChildRunIds.get(key) }),
 				});
@@ -5082,9 +5093,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		try {
 			requestSessionId = resolveCurrentSessionId(ctx.sessionManager);
 			requestPiSessionId = ctx.sessionManager.getSessionId() ?? undefined;
-			requestParentModel = preserveActiveSession
-				? normalizeParentModel(ctx.model)
-				: rememberParentModel(deps.state, requestSessionId, ctx.model);
+			requestParentModel = parentModelOverride !== undefined
+				? parentModelOverride ?? undefined
+				: preserveActiveSession
+					? normalizeParentModel(ctx.model)
+					: rememberParentModel(deps.state, requestSessionId, ctx.model);
 		} catch (error) {
 			if (action?.toLowerCase() !== "doctor" && action?.toLowerCase() !== "guide") throw error;
 			requestParentModel = normalizeParentModel(ctx.model);

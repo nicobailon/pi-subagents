@@ -4259,6 +4259,50 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		await readAsyncPayload(launch.details.asyncId);
 	});
 
+	it("scheduled owners without a model do not inherit the live session model", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Scheduled owner work completed" });
+		const liveCwd = path.join(tempDir, "live-model-project");
+		fs.mkdirSync(liveCwd);
+		const state = {
+			baseCwd: liveCwd,
+			currentSessionId: "session-live",
+			lastParentModel: { provider: "router", id: "live-model" },
+			asyncJobs: new Map(),
+			fleetJobs: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+		};
+		const executor = createSubagentExecutor!({
+			pi: { events: createEventBus(), getSessionName: () => undefined },
+			state,
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
+			expandTilde: (p: string) => p,
+			discoverAgents: () => ({ agents: [makeAgent("worker")] }),
+		});
+		const retainedCtx = makeMinimalCtx(tempDir);
+		retainedCtx.sessionManager.getSessionId = () => "session-scheduled-owner";
+
+		const launch = await executor.executeScheduled(
+			`scheduled-owner-no-model-${Date.now().toString(36)}`,
+			{ agent: "worker", task: "Run owner without model", async: true, acceptance: false },
+			new AbortController().signal,
+			retainedCtx,
+		) as AsyncExecutionResult;
+		assert.equal(launch.isError, undefined);
+		assert.ok(launch.details.asyncId);
+
+		const payload = await readAsyncPayload(launch.details.asyncId);
+		assert.equal(payload.success, true);
+		assert.equal(state.currentSessionId, "session-live");
+		assert.deepEqual(state.lastParentModel, { provider: "router", id: "live-model" });
+		const args = readMockPiArgsMatching(mockPi, "Run owner without model");
+		assert.equal(args.includes("router/live-model"), false);
+		assert.equal(args.includes("--model"), false);
+	});
+
 	it("scheduled workflows keep owner status and registries isolated from the live session", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		const liveCwd = path.join(tempDir, "live-workflow-project");
 		fs.mkdirSync(liveCwd);
@@ -4345,7 +4389,51 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
 	});
 
+	it("async workflows snapshot the parent model before workflow setup reads session data", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Inherited model work" });
+		mockPi.onCall({ output: "Explicit model work" });
+		const state = {
+			baseCwd: tempDir,
+			currentSessionId: null,
+			asyncJobs: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+		};
+		const executor = createSubagentExecutor!({
+			pi: { events: createEventBus(), getSessionName: () => undefined },
+			state,
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
+			expandTilde: (p: string) => p,
+			discoverAgents: () => ({ agents: [makeAgent("worker")] }),
+		});
+		const context = makeMinimalCtx(tempDir);
+		context.sessionManager.getSessionId = () => "session-workflow-parent-model";
+		context.model = { provider: "router", id: "openai-personal" };
+		context.sessionManager.getSessionFile = () => {
+			context.model = undefined;
+			return null;
+		};
 
+		const launch = await executor.execute(
+			"workflow-parent-model",
+			{ workflowScript: `await runs.run("inherited", { agent: "worker", task: "Do inherited work" }); return runs.run("explicit", { agent: "worker", task: "Do explicit work", model: "openai/gpt-5-mini" });`, async: true },
+			new AbortController().signal,
+			undefined,
+			context,
+		) as AsyncExecutionResult;
+		assert.equal(launch.isError, undefined);
+		assert.ok(launch.details.asyncId);
+
+		const payload = await readAsyncPayload(launch.details.asyncId);
+		assert.equal(payload.success, true);
+		const inheritedArgs = readMockPiArgsMatching(mockPi, "Do inherited work");
+		const explicitArgs = readMockPiArgsMatching(mockPi, "Do explicit work");
+		assert.equal(inheritedArgs[inheritedArgs.indexOf("--model") + 1], "router/openai-personal");
+		assert.equal(explicitArgs[explicitArgs.indexOf("--model") + 1], "openai/gpt-5-mini");
+	});
 
 	it("background single runs inherit the parent session model when no model is set", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Done asynchronously" });
