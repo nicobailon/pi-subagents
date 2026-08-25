@@ -9,6 +9,7 @@ import { formatAsyncRunTranscript } from "../../runs/background/fleet-view.ts";
 import { steeringReceipt } from "../../runs/background/steering.ts";
 import type { AsyncStatus } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
+import { decodeSessionRoots } from "./session-roots-codec.ts";
 
 export interface RunnerOptions {
 	asyncDir: string;
@@ -60,16 +61,7 @@ function parseArgs(argv: string[]): RunnerOptions {
 	const childIndex = indexRaw === undefined ? undefined : Number(indexRaw);
 	if (childIndex !== undefined && (!Number.isInteger(childIndex) || childIndex < 0)) throw new Error("--index must be a non-negative integer.");
 	const sessionRootsRaw = values.get("--session-roots");
-	let sessionRoots: string[] = [];
-	if (sessionRootsRaw !== undefined) {
-		try {
-			const parsed = JSON.parse(sessionRootsRaw) as unknown;
-			if (!Array.isArray(parsed) || parsed.some((root) => typeof root !== "string")) throw new Error();
-			sessionRoots = parsed;
-		} catch {
-			throw new Error("--session-roots must be a JSON array of strings.");
-		}
-	}
+	const sessionRoots = sessionRootsRaw === undefined ? [] : decodeSessionRoots(sessionRootsRaw);
 	const refreshRaw = values.get("--refresh-ms");
 	const refreshMs = refreshRaw === undefined ? 1_500 : Number(refreshRaw);
 	if (!Number.isInteger(refreshMs) || refreshMs < 250) throw new Error("--refresh-ms must be an integer >= 250.");

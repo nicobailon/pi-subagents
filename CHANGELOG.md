@@ -5,6 +5,7 @@
 ### Fixed
 - Bypass repository fsmonitor hooks when collecting mutation evidence. Thanks to [@jpriverar](https://github.com/jpriverar) for #1497.
 - Preserve bounded async child failure context after compaction, including missing file-only output, instead of leaving failed run summaries empty. See #1495.
+- Base64-encode the `--session-roots` argument passed to the Herdr inspector runner so `inspector.open` no longer corrupts session roots on Windows, where PowerShell's `\"` is not a recognized quote escape and truncates the JSON-stringified array mid-argument. Thanks to [@stavg91](https://github.com/stavg91) for #1499.
 - Distinguish same-agent parallel children in Fleet with their explicit task labels. Thanks to [@ljie-PI](https://github.com/ljie-PI) for #1487.
 - Keep async runner process-terminal event delivery from crashing the session when the captured extension context is stale after a session replacement or reload. Thanks to [@AdrianAcala](https://github.com/AdrianAcala) for #1485.
 - Preserve parent model inheritance for workflow children when workflow setup reads session data before launch, and avoid carrying a stale live-session model into scheduled owners. Thanks to [@alexei-led](https://github.com/alexei-led) for #1489 and #1490.

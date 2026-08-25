@@ -9,9 +9,19 @@ import { handleHerdrInspectorAction, readHerdrInspectorBinding } from "../../src
 import { createHerdrClient, detectHerdr, parseHerdrVersion, supportsRawPanes, type HerdrClient } from "../../src/inspectors/herdr/client.ts";
 import { formatInspectorDashboard, submitInspectorControl } from "../../src/inspectors/herdr/inspector-runner.ts";
 import { createProjectPaneManager, handleHerdrProjectPaneAction, listHerdrProjectPaneRoots, readHerdrProjectPaneBinding, restoreHerdrProjectPaneSnapshots } from "../../src/inspectors/herdr/project-panes.ts";
+import { decodeSessionRoots } from "../../src/inspectors/herdr/session-roots-codec.ts";
 import { consumeSteerRequests, consumeStopRequest } from "../../src/runs/background/control-channel.ts";
 import { PI_SUBAGENT_PI_BINARY_ENV } from "../../src/runs/shared/pi-spawn.ts";
 import type { AsyncStatus, SubagentState } from "../../src/shared/types.ts";
+
+// `pane run` commands quote the whole --session-roots value (base64, so it has
+// no spaces/quotes of its own); pull it back out and decode it the same way
+// the inspector runner does, rather than pattern-matching on the raw text.
+function sessionRootsFromRunCommand(command: string): string[] {
+	const match = /--session-roots\S*\s+['"]?([A-Za-z0-9+/=]+)/.exec(command);
+	assert.ok(match, `--session-roots argument not found in command: ${command}`);
+	return decodeSessionRoots(match[1]);
+}
 
 function fakeChild(): EventEmitter & { stdout: PassThrough; stderr: PassThrough; kill(): boolean } {
 	const child = new EventEmitter() as EventEmitter & { stdout: PassThrough; stderr: PassThrough; kill(): boolean };
@@ -120,7 +130,7 @@ describe("Herdr inspector", () => {
 				assert.ok(!/^[']/.test(runCall[3] ?? ""), `pane run command must not open with a quoted executable; Nushell parses it as a string expression: ${runCall[3]}`);
 			}
 			assert.match(runCall[3] ?? "", /--allow-steer.*true.*--allow-stop.*true/);
-			assert.match(runCall[3] ?? "", /--session-roots.*sessions/);
+			assert.deepEqual(sessionRootsFromRunCommand(runCall[3] ?? ""), [sessionRoot]);
 
 			const closed = await handleHerdrInspectorAction("inspector.close", { dir: asyncDir }, { cwd: root, asyncDirRoot: root, client });
 			assert.equal(closed.isError, undefined, text(closed));
@@ -180,8 +190,7 @@ describe("Herdr inspector", () => {
 			});
 			assert.equal(opened.isError, undefined, text(opened));
 			const runCall = calls.find((args) => args[0] === "pane" && args[1] === "run" && args[2] === "w1:p11");
-			assert.match(runCall?.[3] ?? "", /--session-roots/);
-			assert.match(runCall?.[3] ?? "", /custom-sessions/);
+			assert.deepEqual(sessionRootsFromRunCommand(runCall?.[3] ?? ""), [sessionRoot]);
 
 			state.asyncJobs.clear();
 			fs.rmSync(path.join(asyncDir, "inspectors"), { recursive: true, force: true });
@@ -195,7 +204,7 @@ describe("Herdr inspector", () => {
 			});
 			assert.equal(reopened.isError, undefined, text(reopened));
 			const untrustedRunCall = calls.find((args) => args[0] === "pane" && args[1] === "run" && args[2] === "w1:p11");
-			assert.doesNotMatch(untrustedRunCall?.[3] ?? "", /custom-sessions/);
+			assert.deepEqual(sessionRootsFromRunCommand(untrustedRunCall?.[3] ?? ""), []);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
