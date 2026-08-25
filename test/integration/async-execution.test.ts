@@ -1197,6 +1197,20 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(Date.now() - startedAt >= 1200, "background runner must not terminate during the retry delay");
 	});
 
+	it("background does not drain on settlement from a compaction attempt that will retry", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ steps: [
+			{ jsonl: [{ type: "compaction_end", willRetry: true }, { type: "agent_settled" }] },
+			{ delay: 1400, jsonl: [events.assistantMessage("settled after compaction retry"), { type: "agent_start" }, { type: "agent_end", willRetry: false }, { type: "agent_settled" }] },
+		] });
+		const id = `async-lifecycle-compaction-retry-${Date.now().toString(36)}`;
+		const startedAt = Date.now();
+		launchProtocolTest(id);
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.output, "settled after compaction retry");
+		assert.ok(Date.now() - startedAt >= 1200, "background runner must not terminate during compaction retry");
+	});
+
 	it("background treats agent_settled as a clean terminal watermark", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ jsonl: [mockAssistantMessage("settled async without a terminal assistant stop", "tool_use"), { type: "agent_settled" }], keepAliveAfterFinalMessageMs: 15_000 });
 		const id = `async-lifecycle-settled-${Date.now().toString(36)}`;

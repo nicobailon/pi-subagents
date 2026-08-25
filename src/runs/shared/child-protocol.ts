@@ -218,6 +218,7 @@ function createPiAggregateProjection(): OversizedLineProjection {
 			if (!valid || token || stack.length !== 0 || rootState !== "end") return undefined;
 			if (eventType === "turn_end") return '{"type":"turn_end"}';
 			if (eventType === "agent_end" && typeof willRetry === "boolean") return JSON.stringify({ type: "agent_end", willRetry });
+			if (eventType === "compaction_end" && typeof willRetry === "boolean") return JSON.stringify({ type: "compaction_end", willRetry });
 			return undefined;
 		},
 	};
@@ -225,14 +226,15 @@ function createPiAggregateProjection(): OversizedLineProjection {
 
 /**
  * Pi JSON mode emits granular message/tool events followed by aggregate
- * `turn_end` and `agent_end` events that duplicate those payloads. Parallel
- * image reads can make one aggregate record exceed the child line limit even
- * though every granular event was valid. Replace only syntactically valid,
- * redundant records with the lifecycle fields the runners consume.
+ * `turn_end`, `agent_end`, and `compaction_end` events that can duplicate
+ * large payloads. Parallel image reads can make one aggregate record exceed
+ * the child line limit even though every granular event was valid. Replace
+ * only syntactically valid, redundant records with the lifecycle fields the
+ * runners consume.
  */
 export const PI_AGGREGATE_EVENT_PROJECTOR: OversizedLineProjector = {
 	accepts(prefix) {
-		return prefix.startsWith('{"type":"turn_end"') || prefix.startsWith('{"type":"agent_end"');
+		return prefix.startsWith('{"type":"turn_end"') || prefix.startsWith('{"type":"agent_end"') || prefix.startsWith('{"type":"compaction_end"');
 	},
 	create: createPiAggregateProjection,
 };
@@ -393,9 +395,21 @@ export function createBoundedByteTail(maxBytes = MAX_CHILD_STDERR_BYTES): {
 
 export type ChildLifecycleAction = "start-drain" | "cancel-drain" | "none";
 
-export function projectChildLifecycle(event: { type?: string; willRetry?: unknown }, terminalAssistantStop = false): ChildLifecycleAction {
+export interface ChildLifecycleState {
+	compactionRetryActive: boolean;
+}
+
+export function projectChildLifecycle(event: { type?: string; willRetry?: unknown }, terminalAssistantStop = false, state?: ChildLifecycleState): ChildLifecycleAction {
+	if (event.type === "compaction_end") {
+		if (state) state.compactionRetryActive = event.willRetry === true;
+		return event.willRetry === true ? "cancel-drain" : "none";
+	}
+	if (event.type === "agent_start" || event.type === "auto_retry_start") {
+		if (state) state.compactionRetryActive = false;
+	}
 	if (event.type === "agent_end" && event.willRetry === true) return "cancel-drain";
-	if (event.type === "agent_settled") return "start-drain";
+	if (event.type === "agent_end" && state) state.compactionRetryActive = false;
+	if (event.type === "agent_settled") return state?.compactionRetryActive ? "none" : "start-drain";
 	if (terminalAssistantStop) return "start-drain";
 	return "none";
 }

@@ -141,7 +141,7 @@ import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } 
 import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
 import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
-import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
+import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleState, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
 import { buildExternalCliPrompt, runExternalCli } from "../shared/external-cli-runner.ts";
 import { resolveClaudeCodeLaunch } from "../shared/claude-code-adapter.ts";
@@ -688,6 +688,7 @@ function runPiStreaming(
 		};
 		const childWatchdogConfig = decodeChildWatchdogConfig(env?.[CHILD_WATCHDOG_CONFIG_ENV]);
 		let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
+		const childLifecycleState: ChildLifecycleState = { compactionRetryActive: false };
 		let applyChildLifecycle = (_action: ChildLifecycleAction): void => {};
 		const updateChildWatchdogState = (snapshot: ChildWatchdogStateSnapshot): void => {
 			childWatchdogState = snapshot;
@@ -739,8 +740,9 @@ function runPiStreaming(
 			appendChildEvent(event as unknown as Record<string, unknown>);
 			transcriptWriter?.writeChildEvent(event);
 			if (event.type === "compaction_start") compactionStartedReceived = true;
-			if (event.type === "agent_settled") agentSettledReceived = true;
-			applyChildLifecycle(projectChildLifecycle(event));
+			const lifecycleAction = projectChildLifecycle(event, false, childLifecycleState);
+			if (event.type === "agent_settled" && lifecycleAction === "start-drain") agentSettledReceived = true;
+			applyChildLifecycle(lifecycleAction);
 
 			if (isChildWatchdogStatusEvent(event)) {
 				if (!childWatchdogConfig) return;
@@ -833,7 +835,7 @@ function runPiStreaming(
 					activeToolCalls.clear();
 					activeToolKeysByName.clear();
 					refreshCurrentTool();
-					applyChildLifecycle(projectChildLifecycle(event, true));
+					applyChildLifecycle(projectChildLifecycle(event, true, childLifecycleState));
 				}
 			}
 		};

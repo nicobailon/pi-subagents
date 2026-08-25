@@ -4983,6 +4983,18 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(Date.now() - startedAt >= 1200, "foreground runner must not terminate during the retry delay");
 	});
 
+	it("does not drain on settlement from a compaction attempt that will retry", async () => {
+		mockPi.onCall({ steps: [
+			{ jsonl: [{ type: "compaction_end", willRetry: true }, { type: "agent_settled" }] },
+			{ delay: 1400, jsonl: [events.assistantMessage("settled after compaction retry"), { type: "agent_start" }, { type: "agent_end", willRetry: false }, { type: "agent_settled" }] },
+		] });
+		const startedAt = Date.now();
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Retry after compaction", { acceptance: false });
+		assert.equal(result.exitCode, 0);
+		assert.equal(getFinalOutput(result.messages), "settled after compaction retry");
+		assert.ok(Date.now() - startedAt >= 1200, "foreground runner must not terminate during compaction retry");
+	});
+
 	it("treats agent_settled as a clean terminal watermark", async () => {
 		const nonTerminalMessage = events.assistantMessage("settled without a terminal assistant stop") as { message: { stopReason: string } };
 		nonTerminalMessage.message.stopReason = "length";

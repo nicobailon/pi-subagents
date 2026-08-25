@@ -7,6 +7,7 @@
 - Bypass repository fsmonitor hooks when collecting mutation evidence. Thanks to [@jpriverar](https://github.com/jpriverar) for #1497.
 - Avoid the fatal Node `ReadFileUtf8` retention path. Thanks to [@pgoodjohn](https://github.com/pgoodjohn) for #1501.
 - Preserve bounded async child failure context after compaction, including missing file-only output, instead of leaving failed run summaries empty. See #1495.
+- Ignore stale `agent_settled` events from child attempts that report a retrying compaction, so resumed children are not aborted before their replacement attempt can finish. See #1504.
 - Base64-encode the `--session-roots` argument passed to the Herdr inspector runner so `inspector.open` no longer corrupts session roots on Windows, where PowerShell's `\"` is not a recognized quote escape and truncates the JSON-stringified array mid-argument. Thanks to [@stavg91](https://github.com/stavg91) for #1499.
 - Distinguish same-agent parallel children in Fleet with their explicit task labels. Thanks to [@ljie-PI](https://github.com/ljie-PI) for #1487.
 - Keep async runner process-terminal event delivery from crashing the session when the captured extension context is stale after a session replacement or reload. Thanks to [@AdrianAcala](https://github.com/AdrianAcala) for #1485.

@@ -76,6 +76,19 @@ describe("bounded child protocol reader", () => {
 		}
 	});
 
+	it("projects oversized compaction_end aggregates without losing retry lifecycle metadata", () => {
+		const lines: string[] = [];
+		const reader = createBoundedLineReader({
+			maxPendingLineBytes: 64,
+			oversizedLineProjector: PI_AGGREGATE_EVENT_PROJECTOR,
+			onLine: (line) => lines.push(line),
+			onLimit: () => assert.fail("valid compaction_end aggregate must not fail"),
+		});
+		reader.push(`${JSON.stringify({ type: "compaction_end", result: { summary: "x".repeat(256) }, willRetry: true })}\n`);
+		reader.end();
+		assert.deepEqual(lines.map((line) => JSON.parse(line)), [{ type: "compaction_end", willRetry: true }]);
+	});
+
 	it("fails closed when an oversized agent_end aggregate lacks lifecycle metadata", () => {
 		let failure: ProtocolOutputLimit | undefined;
 		const reader = createBoundedLineReader({
@@ -177,5 +190,13 @@ describe("child lifecycle projection", () => {
 		assert.equal(projectChildLifecycle({ type: "agent_end", willRetry: false }), "none");
 		assert.equal(projectChildLifecycle({ type: "agent_settled" }), "start-drain");
 		assert.equal(projectChildLifecycle({ type: "tool_execution_start" }), "none");
+	});
+
+	it("ignores settlement from a compaction attempt that will retry", () => {
+		const state = { compactionRetryActive: false };
+		assert.equal(projectChildLifecycle({ type: "compaction_end", willRetry: true }, false, state), "cancel-drain");
+		assert.equal(projectChildLifecycle({ type: "agent_settled" }, false, state), "none");
+		assert.equal(projectChildLifecycle({ type: "agent_start" }, false, state), "none");
+		assert.equal(projectChildLifecycle({ type: "agent_settled" }, false, state), "start-drain");
 	});
 });

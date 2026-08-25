@@ -106,7 +106,7 @@ import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudget
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
-import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
+import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleState, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import {
 	acceptChildWatchdogEvent,
 	childWatchdogIsActive,
@@ -708,6 +708,7 @@ async function runSingleAttempt(
 			}
 			if (action === "start-drain") startFinalDrain();
 		};
+		const childLifecycleState: ChildLifecycleState = { compactionRetryActive: false };
 
 		const unsubscribeIntercomDetach = options.intercomEvents?.on?.(INTERCOM_DETACH_REQUEST_EVENT, (payload) => {
 			if (!options.allowIntercomDetach || processClosed) return;
@@ -995,8 +996,9 @@ async function runSingleAttempt(
 			}
 			shared.transcriptWriter?.writeChildEvent(evt);
 			shared.orcaProgressTab?.event(evt);
-			if (evt.type === "agent_settled") agentSettledReceived = true;
-			applyChildLifecycle(projectChildLifecycle(evt));
+			const lifecycleAction = projectChildLifecycle(evt, false, childLifecycleState);
+			if (evt.type === "agent_settled" && lifecycleAction === "start-drain") agentSettledReceived = true;
+			applyChildLifecycle(lifecycleAction);
 
 			if (isChildWatchdogStatusEvent(evt)) {
 				if (!childWatchdog) return;
@@ -1110,7 +1112,7 @@ async function runSingleAttempt(
 						activeToolCalls.clear();
 						activeToolKeysByName.clear();
 						refreshCurrentTool();
-						applyChildLifecycle(projectChildLifecycle(evt, true));
+						applyChildLifecycle(projectChildLifecycle(evt, true, childLifecycleState));
 					}
 				}
 				updateActivityState(now);
