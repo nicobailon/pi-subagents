@@ -1603,9 +1603,22 @@ function shouldPruneDiscoveryDir(rootDir: string, dir: string, dirName: string):
 	return path.resolve(dir) !== path.resolve(rootDir) && isDiscoveryNestedProjectRoot(dir);
 }
 
-function listFilesRecursive(dir: string, predicate: (fileName: string) => boolean, rootDir = dir): string[] {
+function listFilesRecursive(
+	dir: string,
+	predicate: (fileName: string) => boolean,
+	rootDir = dir,
+	visitedDirectories = new Set<string>(),
+): string[] {
 	const files: string[] = [];
 	if (!fs.existsSync(dir)) return files;
+	let realDir: string;
+	try {
+		realDir = fs.realpathSync(dir);
+	} catch {
+		return files;
+	}
+	if (visitedDirectories.has(realDir)) return files;
+	visitedDirectories.add(realDir);
 
 	let entries: fs.Dirent[];
 	try {
@@ -1616,9 +1629,17 @@ function listFilesRecursive(dir: string, predicate: (fileName: string) => boolea
 
 	for (const entry of entries) {
 		const filePath = path.join(dir, entry.name);
-		if (entry.isDirectory()) {
+		let isDirectory = entry.isDirectory();
+		if (entry.isSymbolicLink()) {
+			try {
+				isDirectory = fs.statSync(filePath).isDirectory();
+			} catch {
+				isDirectory = false;
+			}
+		}
+		if (isDirectory) {
 			if (!shouldPruneDiscoveryDir(rootDir, filePath, entry.name)) {
-				files.push(...listFilesRecursive(filePath, predicate, rootDir));
+				files.push(...listFilesRecursive(filePath, predicate, rootDir, visitedDirectories));
 			}
 			continue;
 		}

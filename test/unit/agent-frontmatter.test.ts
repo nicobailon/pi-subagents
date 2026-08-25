@@ -292,6 +292,25 @@ Review carefully.`);
 		assert.equal(discovered.agentDiagnostics?.[0]?.name, "broken");
 	}));
 
+	it("follows symlinked agent directories once without hiding diagnostics", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-symlinked-agent-dir-"));
+		tempDirs.push(project);
+		const legacyAgentsRoot = path.join(project, ".agents");
+		const sharedAgents = path.join(project, "shared-agents");
+		const linkedAgents = path.join(legacyAgentsRoot, "agents");
+		fs.mkdirSync(legacyAgentsRoot, { recursive: true });
+		fs.mkdirSync(sharedAgents, { recursive: true });
+		writeAgent(path.join(sharedAgents, "linked.md"), "---\nname: linked\ndescription: Linked agent\n---\nBody");
+		writeAgent(path.join(sharedAgents, "broken.md"), "---\nname: broken\ndescription: Broken\nrunner:\n  type: unknown\n---\nBody");
+		fs.symlinkSync(sharedAgents, linkedAgents, process.platform === "win32" ? "junction" : "dir");
+		fs.symlinkSync(path.join(sharedAgents, "missing"), path.join(sharedAgents, "dangling"), process.platform === "win32" ? "junction" : "dir");
+		if (process.platform !== "win32") fs.symlinkSync(sharedAgents, path.join(sharedAgents, "loop"), "dir");
+
+		const discovered = discoverAgents(project, "project");
+		assert.equal(discovered.agents.find((agent) => agent.name === "linked")?.filePath, path.join(linkedAgents, "linked.md"));
+		assert.equal(discovered.agentDiagnostics?.find((diagnostic) => diagnostic.name === "broken")?.filePath, path.join(linkedAgents, "broken.md"));
+	}));
+
 	it("keeps a lower-priority agent available when a project override is malformed", () => withTempHome(() => {
 		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-invalid-agent-shadow-"));
 		tempDirs.push(project);
