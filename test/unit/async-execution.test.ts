@@ -169,10 +169,12 @@ describe("async runner process terminal events", () => {
 	});
 
 	it("drops the process terminal proof without throwing when the session ctx is stale after replacement or reload", () => {
-		const ctx = makeCtx(() => {
-			throw new Error(staleSessionMessage);
-		});
-		assert.doesNotThrow(() => emitProcessTerminalEvent(ctx, proof));
+		for (const message of [staleSessionMessage, "Extension context no longer active."]) {
+			const ctx = makeCtx(() => {
+				throw new Error(message);
+			});
+			assert.doesNotThrow(() => emitProcessTerminalEvent(ctx, proof));
+		}
 	});
 
 	it("logs instead of throwing when the event bus fails with a non-stale error", () => {
