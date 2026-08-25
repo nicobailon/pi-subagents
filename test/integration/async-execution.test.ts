@@ -5317,6 +5317,70 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0].error, "provider exploded");
 	});
 
+	it("reports bounded compaction failure context when file-only output is missing", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const terminalError = `This operation was aborted${"x".repeat(12_000)}`;
+		mockPi.onCall({
+			jsonl: [
+				{ type: "compaction_start" },
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [],
+						model: "mock/test-model",
+						stopReason: "error",
+						errorMessage: terminalError,
+						usage: { input: 100, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+					},
+				},
+				{ type: "agent_settled" },
+			],
+			exitCode: 0,
+		});
+
+		const id = `async-compaction-file-only-error-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, id);
+		const outputPath = path.join(tempDir, "missing-oracle-report.md");
+		executeAsyncSingle(id, {
+			agent: "oracle",
+			task: "Write a report",
+			agentConfig: makeAgent("oracle"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			output: outputPath,
+			outputMode: "file-only",
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const child = payload.results[0] as (AsyncResultPayload["results"][number] & Record<string, unknown>) | undefined;
+		const diagnostic = child?.error ?? "";
+		assert.equal(payload.success, false);
+		assert.equal(child?.success, false);
+		assert.match(diagnostic, /^This operation was aborted/);
+		assert.match(diagnostic, /failure followed session compaction and agent settlement/);
+		assert.match(diagnostic, /Required file-only output was not produced/);
+		assert.ok(diagnostic.length <= 8_192);
+		assert.equal(fs.existsSync(outputPath), false);
+		assert.equal(child?.output, "");
+		assert.equal("savedOutputPath" in (child ?? {}), false);
+		assert.equal("outputReference" in (child ?? {}), false);
+		assert.equal(payload.summary, `oracle:\n${diagnostic}`);
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
+		assert.equal(status.steps?.[0]?.exitCode, 1);
+		assert.equal(status.steps?.[0]?.error, diagnostic);
+		const logPath = path.join(asyncDir, `subagent-log-${id}.md`);
+		const deadline = Date.now() + 10_000;
+		while (!fs.existsSync(logPath)) {
+			if (Date.now() > deadline) assert.fail(`Timed out waiting for async run log: ${logPath}`);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		assert.ok(fs.readFileSync(logPath, "utf-8").includes(`## Summary\noracle:\n${diagnostic}`));
+	});
+
 	it("background runs emit active-long-running control events from child turns", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [

@@ -552,6 +552,25 @@ interface RunPiStreamingResult {
 	currentTool?: string;
 	currentToolArgs?: string;
 	currentPath?: string;
+	afterCompactionSettlement?: boolean;
+}
+
+const MAX_CHILD_FAILURE_DIAGNOSTIC_CHARS = 8_192;
+
+function formatChildFailureDiagnostic(input: {
+	error: string | undefined;
+	afterCompactionSettlement?: boolean;
+	missingFileOnlyOutput?: string;
+}): string | undefined {
+	if (!input.error) return undefined;
+	const notes = [
+		input.afterCompactionSettlement ? "Child failure followed session compaction and agent settlement." : undefined,
+		input.missingFileOnlyOutput ? `Required file-only output was not produced: ${input.missingFileOnlyOutput.slice(0, 2_048)}` : undefined,
+	].filter((note): note is string => Boolean(note));
+	if (notes.length === 0) return input.error;
+	const context = notes.join("\n");
+	const errorLimit = MAX_CHILD_FAILURE_DIAGNOSTIC_CHARS - (context ? context.length + 1 : 0);
+	return `${input.error.slice(0, Math.max(0, errorLimit))}${context ? `\n${context}` : ""}`;
 }
 
 function runPiStreaming(
@@ -719,6 +738,7 @@ function runPiStreaming(
 
 			appendChildEvent(event as unknown as Record<string, unknown>);
 			transcriptWriter?.writeChildEvent(event);
+			if (event.type === "compaction_start") compactionStartedReceived = true;
 			if (event.type === "agent_settled") agentSettledReceived = true;
 			applyChildLifecycle(projectChildLifecycle(event));
 
@@ -826,6 +846,7 @@ function runPiStreaming(
 		let forcedTerminationSignal = false;
 		let cleanTerminalAssistantStopReceived = false;
 		let agentSettledReceived = false;
+		let compactionStartedReceived = false;
 		let finalDrainTimer: NodeJS.Timeout | undefined;
 		let finalHardKillTimer: NodeJS.Timeout | undefined;
 		let watchdogTailTimer: NodeJS.Timeout | undefined;
@@ -1101,6 +1122,7 @@ function runPiStreaming(
 				currentTool,
 				currentToolArgs,
 				currentPath,
+				afterCompactionSettlement: (compactionStartedReceived && agentSettledReceived) || undefined,
 			}));
 		});
 
@@ -2070,7 +2092,7 @@ async function runSingleStepInner(
 	const acceptanceCanFailRun = acceptanceFailure && effectiveAcceptance?.explicit && (finalResult?.exitCode ?? 1) === 0 && !finalResult?.interrupted && !timedOutAfterAcceptance && !stoppedAfterAcceptance && !turnBudgetExceeded && !isAgentContractV1(step.agentContract);
 	const effectiveFinalExitCode = timedOutAfterAcceptance || stoppedAfterAcceptance || turnBudgetExceeded ? 1 : acceptanceCanFailRun ? 1 : finalResult?.exitCode ?? 1;
 	const intercomDetachReceipt = finalResult?.finalOutput === INTERCOM_DETACH_RECEIPT;
-	const effectiveFinalError = stoppedAfterAcceptance
+	const baseFinalError = stoppedAfterAcceptance
 		? ctx.stopMessage ?? "Subagent stopped by user."
 		: timedOutAfterAcceptance
 			? finalResult?.error ?? ctx.timeoutMessage ?? "Subagent timed out."
@@ -2079,6 +2101,17 @@ async function runSingleStepInner(
 				: acceptanceCanFailRun
 					? (finalResult?.error ? `${finalResult.error}\n${acceptanceFailure}` : acceptanceFailure)
 					: finalResult?.error ?? (intercomDetachReceipt ? INTERCOM_DETACH_RECEIPT : undefined);
+	const effectiveFinalError = formatChildFailureDiagnostic({
+		error: baseFinalError,
+		afterCompactionSettlement: finalResult?.afterCompactionSettlement,
+		missingFileOnlyOutput: effectiveFinalExitCode !== 0
+			&& finalResult?.afterCompactionSettlement
+			&& step.outputMode === "file-only"
+			&& step.outputPath
+			&& !fs.existsSync(step.outputPath)
+			? step.outputPath
+			: undefined,
+	});
 
 	const artifactErrors = artifactPaths && ctx.artifactConfig?.enabled !== false
 		? persistStepArtifacts({
@@ -5138,7 +5171,7 @@ async function runSubagent(
 		}
 	}
 
-	let summary = results.map((r) => `${r.agent}:\n${r.output}`).join("\n\n");
+	let summary = results.map((r) => `${r.agent}:\n${r.output || (r.exitCode !== 0 ? r.error : undefined) || "(no output)"}`).join("\n\n");
 	let truncated = false;
 
 	if (maxOutput) {
