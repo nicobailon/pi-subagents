@@ -88,6 +88,27 @@ describe("tracked mutation evidence", () => {
 		});
 	});
 
+	it("does not invoke repository fsmonitor while collecting mutation evidence", () => {
+		withRepo((repo) => {
+			const marker = path.join(repo, "fsmonitor-invoked");
+			const hook = path.join(repo, "fsmonitor-hook.cjs");
+			fs.writeFileSync(hook, `require("node:fs").appendFileSync(${JSON.stringify(marker)}, "invoked\\n");\n`, "utf-8");
+			git(repo, ["config", "core.fsmonitor", `${JSON.stringify(process.execPath)} ${JSON.stringify(hook)}`]);
+			git(repo, ["status", "--short"]);
+			assert.equal(fs.existsSync(marker), true);
+			fs.rmSync(marker);
+			fs.writeFileSync(path.join(repo, "tracked.txt"), "dirty before child\n", "utf-8");
+
+			const snapshot = snapshotTrackedMutations(repo);
+			fs.writeFileSync(path.join(repo, "tracked.txt"), "dirty after child\n", "utf-8");
+			const evidence = collectTrackedMutationEvidence(snapshot, repo);
+
+			assert.equal(snapshot.unavailable, undefined);
+			assert.equal(evidence.attemptedMutation, true);
+			assert.equal(fs.existsSync(marker), false);
+		});
+	});
+
 	it("uses tracked evidence as completion guard mutation proof", () => {
 		const guard = evaluateCompletionMutationGuard({
 			agent: "worker",

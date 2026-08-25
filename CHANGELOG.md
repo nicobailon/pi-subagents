@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Bypass repository fsmonitor hooks when collecting mutation evidence. Thanks to [@jpriverar](https://github.com/jpriverar) for #1497.
 - Preserve bounded async child failure context after compaction, including missing file-only output, instead of leaving failed run summaries empty. See #1495.
 - Distinguish same-agent parallel children in Fleet with their explicit task labels. Thanks to [@ljie-PI](https://github.com/ljie-PI) for #1487.
 - Keep async runner process-terminal event delivery from crashing the session when the captured extension context is stale after a session replacement or reload. Thanks to [@AdrianAcala](https://github.com/AdrianAcala) for #1485.

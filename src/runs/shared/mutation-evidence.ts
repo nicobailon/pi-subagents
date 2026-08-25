@@ -9,8 +9,13 @@ const MAX_TRACKED_PATHS = 500;
 const MAX_HASH_BYTES = 1024 * 1024;
 const MAX_TIMEOUT_FILES = 20;
 
+function gitArguments(args: string[]): string[] {
+	// Mutation evidence must not block child startup on a stale fsmonitor daemon.
+	return ["-c", "core.fsmonitor=false", ...args];
+}
+
 function gitOutput(cwd: string, args: string[], maxBuffer = MAX_HASH_BYTES): string {
-	return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], maxBuffer });
+	return execFileSync("git", gitArguments(args), { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], maxBuffer });
 }
 
 function splitNul(output: string): string[] {
@@ -21,7 +26,7 @@ function hashLargeDiff(cwd: string, relativePath: string): string {
 	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tracked-diff-"));
 	const diffPath = path.join(tempDir, "diff.patch");
 	try {
-		execFileSync("git", ["diff", "--no-ext-diff", "--binary", `--output=${diffPath}`, "HEAD", "--", relativePath], { cwd, stdio: "ignore" });
+		execFileSync("git", gitArguments(["diff", "--no-ext-diff", "--binary", `--output=${diffPath}`, "HEAD", "--", relativePath]), { cwd, stdio: "ignore" });
 		const hash = createHash("sha256");
 		const buffer = Buffer.allocUnsafe(64 * 1024);
 		const fd = fs.openSync(diffPath, "r");
