@@ -121,6 +121,23 @@ Sets `fresh` or `fork` for every subagent launch that omits `context`. This glob
 
 With `"fork"`, the setting uses the existing implicit-fork behavior. A launch starts fresh when the parent session file or current leaf is not available. `"fresh"` starts fresh even when the selected agent defaults to fork. Scheduled runs continue to set fresh context explicitly. A runner or provider that does not support fork context keeps its existing rejection behavior.
 
+## `forkContext`
+
+```json
+{
+  "forkContext": {
+    "mode": "pruned",
+    "model": "openai-codex/gpt-5.6-luna:max"
+  }
+}
+```
+
+Controls how resolved fork launches prepare the inherited session. The default `"full"` mode keeps the complete fork. `"pruned"` mode keeps inherited context exact while it fits the code-owned 64 KiB session budget. On overflow, the required `model` returns short JSON summaries keyed by stable item ids. Tool results spill first, then older assistant and tool context, and user text only when required. It applies to explicit `context: "fork"`, global and agent fork defaults, and `context: "profile"` when the selected profile resolves to fork.
+
+Child-visible spilled items contain only the model summary and a stable `{ batchId, itemId }` recovery ref. Raw bodies and their digests, source entry ids, labels, sizes, and tool metadata go to a private `0600` sidecar next to the child session. This release does not add a recovery command or expose that payload to the child model.
+
+Pruned forks keep the normal `parentSession` link, child cwd alignment, and fork thinking-block sanitization. Missing model or auth, invalid or incomplete summary JSON, budget overflow, recovery validation failure, and raw overflow leakage all stop the launch before child spawn. The extension never falls back to a full fork or refs-only context after a prune failure.
+
 ## `fleetView`
 
 ```json

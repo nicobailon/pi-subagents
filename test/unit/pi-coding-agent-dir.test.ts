@@ -102,6 +102,15 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
 		assert.equal(config.artifactConfig?.cleanupDays, Number.MAX_SAFE_INTEGER);
 	});
 
+	it("requires a pruning model when pruned fork mode is enabled", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ forkContext: { mode: "pruned" } }));
+		assert.throws(() => loadConfig(), /forkContext\.model is required/);
+
+		writeFile(configPath, JSON.stringify({ forkContext: { mode: "pruned", model: "openai-codex/gpt-5.6-luna:max" } }));
+		assert.deepEqual(loadConfig().forkContext, { mode: "pruned", model: "openai-codex/gpt-5.6-luna:max" });
+	});
+
 	it("discovers user agents, chains, and settings under the configured agent dir", () => {
 		const settingsPath = path.join(agentDir, "settings.json");
 		writeFile(path.join(agentDir, "agents", "env-agent.md"), `---

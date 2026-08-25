@@ -2183,10 +2183,19 @@ export interface MainWindowRendererConfig {
 	compactResultMaxLines?: number;
 }
 
+export interface ForkContextConfig {
+	/** Keep the complete fork by default, or summarize large text-only tool results before launch. */
+	mode?: "full" | "pruned";
+	/** Required pruning model when mode is "pruned". */
+	model?: string;
+}
+
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
 	/** Set the context for launches that omit an explicit context. */
 	defaultSubagentContext?: "fresh" | "fork";
+	/** Configure how every resolved fork session is prepared before child spawn. */
+	forkContext?: ForkContextConfig;
 	/** Optional shortcut that detaches the active foreground single-subagent run. */
 	foregroundDetachShortcut?: string;
 	/** Show the Claude Code-style navigable fleet. Defaults to true. */

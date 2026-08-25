@@ -9,7 +9,7 @@
  * Toggle: async parameter (default: true; set asyncByDefault:false in config.json to opt out)
  *
  * Config file: ~/.pi/agent/extensions/subagent/config.json
- *   { "asyncByDefault": true, "defaultSubagentContext": "fork", "forceTopLevelAsync": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" }, "worktreeSetupHook": "./scripts/setup-worktree.mjs" }
+ *   { "asyncByDefault": true, "defaultSubagentContext": "fork", "forkContext": { "mode": "pruned", "model": "provider/model" }, "forceTopLevelAsync": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" }, "worktreeSetupHook": "./scripts/setup-worktree.mjs" }
  */
 
 import { randomUUID } from "node:crypto";

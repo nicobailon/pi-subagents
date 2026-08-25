@@ -10,6 +10,7 @@
 - Resolve package subagents from bare HTTP(S) Git URLs stored in Pi settings. Thanks to [@trancikk](https://github.com/trancikk) for #1452.
 
 ### Added
+- Add configured pruned fork sessions with budgeted transcript-overflow summaries, stable child-visible recovery refs, and private validated recovery sidecars while preserving normal fork links and safety behavior.
 - Load `workflowScript` from `workflowScriptPath` for execution, offline validation, and schedule creation. Thanks to [@elecnix](https://github.com/elecnix) for #1464.
 - Add offline `workflowScript` syntax and structural validation through the public subagent tool. Thanks to [@elecnix](https://github.com/elecnix) for #1462.
 - Expose a bounded, versioned workflow-child summary across workflow results, status, receipts, and completion replay. Thanks to [@rochecompaan](https://github.com/rochecompaan) for #1453.

@@ -37,6 +37,8 @@ interface ForkableSessionManager {
 
 interface ForkContextResolverOptions {
 	openSession?: (path: string, sessionDir?: string) => BranchSessionManager;
+	/** Rewrite a created fork before its path can be used to spawn a child. */
+	pruneSession?: (sessionFile: string) => Promise<void>;
 	/** Decide per child index whether a sanitized transcript must also disable the child's
 	 * thinking. Defaults to true (the pre-existing conservative behavior) when omitted. */
 	forceThinkingOffForIndex?: (index: number) => boolean;
@@ -48,6 +50,7 @@ interface ForkContextResolution {
 }
 
 interface ForkContextResolver {
+	prepareSessionForIndex(index?: number): Promise<void>;
 	sessionFileForIndex(index?: number): string | undefined;
 	thinkingOverrideForIndex(index?: number): "off" | undefined;
 }
@@ -190,6 +193,7 @@ export function createForkContextResolver(
 ): ForkContextResolver {
 	if (resolveSubagentContext(requestedContext) !== "fork") {
 		return {
+			prepareSessionForIndex: async () => {},
 			sessionFileForIndex: () => undefined,
 			thinkingOverrideForIndex: () => undefined,
 		};
@@ -226,6 +230,8 @@ export function createForkContextResolver(
 		"forks",
 	);
 	const cachedResolutions = new Map<number, ForkContextResolution>();
+	const preparedIndexes = new Set<number>();
+	const preparationPromises = new Map<number, Promise<void>>();
 
 	const resolveFork = (index = 0): ForkContextResolution => {
 		const cached = cachedResolutions.get(index);
@@ -274,7 +280,22 @@ export function createForkContextResolver(
 	};
 
 	return {
+		async prepareSessionForIndex(index = 0): Promise<void> {
+			const resolution = resolveFork(index);
+			if (!options.pruneSession || preparedIndexes.has(index)) return;
+			let preparation = preparationPromises.get(index);
+			if (!preparation) {
+				preparation = options.pruneSession(resolution.sessionFile).then(() => {
+					preparedIndexes.add(index);
+				});
+				preparationPromises.set(index, preparation);
+			}
+			await preparation;
+		},
 		sessionFileForIndex(index = 0): string | undefined {
+			if (options.pruneSession && !preparedIndexes.has(index)) {
+				throw new Error(`Pruned fork session ${index} was used before pruning completed.`);
+			}
 			return resolveFork(index).sessionFile;
 		},
 		thinkingOverrideForIndex(index = 0): "off" | undefined {

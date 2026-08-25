@@ -319,7 +319,7 @@ const SubagentParamProperties = {
 	worktree: Type.Optional(Type.Boolean({ description: "Managed child isolation. true gives each workflow child a separate git worktree; an individual runs.run/runs.all item can override a workflow default with worktree:false." })),
 	context: Type.Optional(Type.String({
 		enum: ["fresh", "fork", "profile"],
-		description: "'fresh' or 'fork' to branch from parent session, or 'profile' to require the selected agent's declared defaultContext. Explicit fresh/fork overrides every child; profile ignores config defaultSubagentContext and fails when an agent has no defaultContext. If omitted, config defaultSubagentContext wins over each agent defaultContext; implicit fork needs a persisted parent session and leaf, else fresh.",
+		description: "'fresh' or 'fork' to branch from parent session, or 'profile' to require the selected agent's declared defaultContext. Explicit fresh/fork overrides every child; profile ignores config defaultSubagentContext and fails when an agent has no defaultContext. If omitted, config defaultSubagentContext wins over each agent defaultContext; implicit fork needs a persisted parent session and leaf, else fresh. Config forkContext may prune resolved forks before spawn without adding another context value.",
 	})),
 	async: Type.Optional(Type.Boolean({ description: "Run in background unless asyncByDefault:false. Set false only when the parent must block until completion." })),
 	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Timeout. Foreground and single async runs use config timeoutMs, else 30m; async composites have no default parent deadline. Alias maxRuntimeMs." })),

@@ -62,6 +62,7 @@ import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOu
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
 import { normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
 import { canPreferFork, createForkContextResolver, forkedChildRequiresThinkingOff, resolveSubagentLaunchContext } from "../../shared/fork-context.ts";
+import { createPrunedForkSessionWriter } from "../../shared/pruned-fork.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
@@ -410,6 +411,7 @@ interface ExecutorDeps {
 }
 
 type ForkSessionFileForTask = (agentName: string, idx?: number, modelOverride?: string, modelOverrideFromParent?: boolean) => string | undefined;
+type PrepareForkSessionForTask = (agentName: string, idx?: number, modelOverride?: string, modelOverrideFromParent?: boolean) => Promise<void>;
 type ForkThinkingOverrideForTask = (agentName: string, idx?: number, modelOverride?: string, modelOverrideFromParent?: boolean) => AgentConfig["thinking"] | undefined;
 
 interface ExecutionContextData {
@@ -3019,21 +3021,21 @@ function wrapChainTasksForFork(chain: ChainStep[], contextPolicy: AgentDefaultCo
 	});
 }
 
-function preflightForkSessionsForStaticTasks(
+async function preflightForkSessionsForStaticTasks(
 	params: SubagentParamsLike,
 	contextPolicy: AgentDefaultContextPolicy,
-	sessionFileForTask: ForkSessionFileForTask,
+	prepareSessionForTask: PrepareForkSessionForTask,
 	dynamicFanoutMaxItems?: number,
-): void {
+): Promise<void> {
 	if (!contextPolicy.usesFork) return;
 	if (params.agent) {
-		if (shouldForkAgent(contextPolicy, params.agent)) sessionFileForTask(params.agent, 0, params.model);
+		if (shouldForkAgent(contextPolicy, params.agent)) await prepareSessionForTask(params.agent, 0, params.model);
 		return;
 	}
 	if (params.tasks) {
-		params.tasks.forEach((task, index) => {
-			if (shouldForkAgent(contextPolicy, task.agent)) sessionFileForTask(task.agent, index, task.model);
-		});
+		for (const [index, task] of params.tasks.entries()) {
+			if (shouldForkAgent(contextPolicy, task.agent)) await prepareSessionForTask(task.agent, index, task.model);
+		}
 		return;
 	}
 	if (!params.chain?.length) return;
@@ -3041,7 +3043,7 @@ function preflightForkSessionsForStaticTasks(
 	for (const step of params.chain) {
 		if (isParallelStep(step)) {
 			for (const task of step.parallel) {
-				if (shouldForkAgent(contextPolicy, task.agent)) sessionFileForTask(task.agent, flatIndex, task.model);
+				if (shouldForkAgent(contextPolicy, task.agent)) await prepareSessionForTask(task.agent, flatIndex, task.model);
 				flatIndex++;
 			}
 			continue;
@@ -3049,13 +3051,13 @@ function preflightForkSessionsForStaticTasks(
 		if (isDynamicParallelStep(step)) {
 			const maxItems = step.expand.maxItems ?? dynamicFanoutMaxItems ?? 0;
 			if (shouldForkAgent(contextPolicy, step.parallel.agent)) {
-				for (let itemIndex = 0; itemIndex < maxItems; itemIndex++) sessionFileForTask(step.parallel.agent, flatIndex + itemIndex, step.parallel.model);
+				for (let itemIndex = 0; itemIndex < maxItems; itemIndex++) await prepareSessionForTask(step.parallel.agent, flatIndex + itemIndex, step.parallel.model);
 			}
 			flatIndex += maxItems;
 			continue;
 		}
 		const sequential = step as SequentialStep;
-		if (shouldForkAgent(contextPolicy, sequential.agent)) sessionFileForTask(sequential.agent, flatIndex, sequential.model);
+		if (shouldForkAgent(contextPolicy, sequential.agent)) await prepareSessionForTask(sequential.agent, flatIndex, sequential.model);
 		flatIndex++;
 	}
 }
@@ -5775,6 +5777,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (spawnPreflight.error) return spawnBudgetErrorResult(spawnPreflight.error, foregroundMode);
 
 		let forkSessionFileForIndex: (idx?: number) => string | undefined = () => undefined;
+		let prepareForkSessionForIndex: (idx?: number) => Promise<void> = async () => {};
 		let forkThinkingOverrideForIndex: (idx?: number) => AgentConfig["thinking"] | undefined = () => undefined;
 		let prepareForkThinking = (_agentName: string, _index: number, _modelOverride?: string, _modelOverrideFromParent?: boolean): void => {};
 		const forkThinkingRequirements = new Map<number, boolean>();
@@ -5810,9 +5813,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						|| candidates.some((candidate) => forkedChildRequiresThinkingOff(candidate, forkAvailableModels, parentModel?.provider)),
 				);
 			};
+			const pruneSession = contextPolicy.usesFork && deps.config.forkContext?.mode === "pruned"
+				? await createPrunedForkSessionWriter(ctx, deps.config.forkContext, signal)
+				: undefined;
 			const forkContextResolver = createForkContextResolver(ctx.sessionManager, contextPolicy.usesFork ? "fork" : undefined, {
 				forceThinkingOffForIndex: (index) => forkThinkingRequirements.get(index) ?? true,
+				...(pruneSession ? { pruneSession } : {}),
 			});
+			prepareForkSessionForIndex = forkContextResolver.prepareSessionForIndex;
 			forkSessionFileForIndex = forkContextResolver.sessionFileForIndex;
 			forkThinkingOverrideForIndex = forkContextResolver.thinkingOverrideForIndex;
 		} catch (error) {
@@ -5920,6 +5928,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			prepareForkThinking(agentName, idx, modelOverride, modelOverrideFromParent);
 			return forkSessionFileForIndex(idx);
 		};
+		const prepareForkSessionForTask: PrepareForkSessionForTask = async (agentName, idx = 0, modelOverride, modelOverrideFromParent) => {
+			if (!shouldForkAgent(contextPolicy, agentName)) return;
+			prepareForkThinking(agentName, idx, modelOverride, modelOverrideFromParent);
+			await prepareForkSessionForIndex(idx);
+		};
 		const forkThinkingOverrideForTask: ForkThinkingOverrideForTask = (agentName, idx = 0, modelOverride, modelOverrideFromParent) => {
 			if (!shouldForkAgent(contextPolicy, agentName)) return delegatedThinkingOverride;
 			prepareForkThinking(agentName, idx, modelOverride, modelOverrideFromParent);
@@ -5932,8 +5945,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const childSessionFileForIndex = (idx?: number) =>
 			path.join(sessionDirForIndex(idx), "session.jsonl");
 		try {
-			if (!(effectiveParams.clarify === true && ctx.hasUI)) {
-				preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, forkSessionFileForTask, deps.config.chain?.dynamicFanout?.maxItems);
+			if (!(effectiveParams.clarify === true && ctx.hasUI) || deps.config.forkContext?.mode === "pruned") {
+				await preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, prepareForkSessionForTask, deps.config.chain?.dynamicFanout?.maxItems);
 			}
 		} catch (error) {
 			activeAsyncCapacity?.rollback();

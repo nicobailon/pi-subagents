@@ -317,6 +317,26 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.ok((args.at(-1) ?? "").startsWith("Task: \n\n## Acceptance Contract"));
 	});
 
+	it("fails pruned fork model auth before child spawn", async () => {
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		const { manager } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
+		const executor = makeExecutorWithConfig({ forkContext: { mode: "pruned", model: "test/pruner" } });
+		const model = { provider: "test", id: "pruner", api: "test-api", maxTokens: 1024 };
+		const ctx = {
+			...makeCtx(manager),
+			modelRegistry: {
+				getAvailable: () => [model],
+				find: () => model,
+				getApiKeyAndHeaders: async () => ({ ok: false as const, error: "credentials unavailable" }),
+			},
+		};
+
+		const result = await executor.execute("id", { agent: "echo", task: "test", context: "fork" }, new AbortController().signal, undefined, ctx);
+		assert.equal(result.isError, true);
+		assert.match(result.content.map((block) => block.text).join("\n"), /Pruned fork model auth failed.*credentials unavailable/);
+		assert.equal(fs.readdirSync(mockPi.dir).some((name) => name.startsWith("call-") && name.endsWith(".json")), false);
+	});
+
 
 
 	it("falls back to fresh when an implicit default fork has no persisted parent session", async () => {
