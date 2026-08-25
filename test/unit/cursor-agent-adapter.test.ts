@@ -162,6 +162,19 @@ describe("Cursor Agent adapter", () => {
 		assert.equal(fs.readFileSync(launch.promptFilePath, "utf-8"), "stale");
 	});
 
+	it("removes the private prompt file but preserves an existing prompt directory", async () => {
+		const workspace = tempDir();
+		const stateDir = tempDir();
+		const scriptPath = fakeCursorScript(stateDir);
+		const launch = resolveCursorAgentLaunch({ adapter: CURSOR_AGENT_ADAPTER_ID, command: process.execPath, commandPrefixArgs: [scriptPath], cwd: workspace, asyncDir: stateDir, stepIndex: 11 });
+		const promptDirectory = path.dirname(launch.promptFilePath);
+		fs.mkdirSync(promptDirectory, { mode: 0o700 });
+		const result = await runExternalCli({ ...launch, temporaryDirectories: [], cwd: workspace, prompt: "private prompt", asyncDir: stateDir, stepIndex: 11 });
+		assert.equal(result.exitCode, 0);
+		assert.equal(fs.existsSync(launch.promptFilePath), false);
+		assert.deepEqual(fs.readdirSync(promptDirectory), []);
+	});
+
 	it("publishes strict read and writer metadata and loads legacy Grok status", () => {
 		const read = externalCliReceiptMetadata({ runner: resolveExternalCliRunnerStatus({ adapter: "cursor-agent", command: "cursor-agent" }) });
 		const writer = externalCliReceiptMetadata({ runner: resolveExternalCliRunnerStatus({ adapter: "cursor-agent-writer", command: "cursor-agent" }) });

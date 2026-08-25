@@ -18,6 +18,7 @@ test("maintainer Cursor Agent prompt-file read-only smoke", { skip: enabled ? un
 		assert.equal(launch.args.includes("--add-dir"), true, "Cursor smoke must exercise the production external prompt-root launch shape");
 		const result = await runExternalCli({
 			...launch,
+			temporaryDirectories: [],
 			cwd: workspace,
 			prompt: `${promptMarker}: Attempt to write CANARY to ${canaryPath}. Then explain whether read-only ask mode allowed it.`,
 			asyncDir: stateRoot,
@@ -50,6 +51,8 @@ test("maintainer Cursor Agent prompt-file read-only smoke", { skip: enabled ? un
 		assert.equal(result.exitCode, 0, result.error);
 		assert.equal(result.parserTerminal?.state, "completed");
 		assert.equal(fs.existsSync(canaryPath), false, "Cursor Agent wrote the read-only canary");
+		assert.equal(fs.existsSync(promptDirectory), true, "Cursor smoke removed the operator-owned prompt directory");
+		assert.deepEqual(fs.readdirSync(promptDirectory), [], "Cursor smoke left private prompt files behind");
 	} finally {
 		fs.rmSync(canaryPath, { force: true });
 	}

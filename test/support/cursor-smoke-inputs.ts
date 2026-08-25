@@ -37,6 +37,15 @@ export function cursorSmokeInputs(env: NodeJS.ProcessEnv): CursorSmokeInputs {
 	const canaryPath = path.join(workspace, "pi-subagents-cursor-write-canary.txt");
 	const promptDirectory = path.join(stateRoot, "external-0.cursor-prompt");
 	if (fs.existsSync(canaryPath)) throw new Error(`Cursor smoke canary path must not exist before launch: ${canaryPath}`);
-	if (fs.existsSync(promptDirectory)) throw new Error(`Cursor smoke prompt directory must not exist before launch: ${promptDirectory}`);
+	let promptDirectoryStatus: fs.Stats;
+	try { promptDirectoryStatus = fs.lstatSync(promptDirectory); }
+	catch (error) { throw new Error(`Cursor smoke prompt directory must be an existing operator-trusted directory: ${promptDirectory}`, { cause: error }); }
+	if (promptDirectoryStatus.isSymbolicLink() || !promptDirectoryStatus.isDirectory()) {
+		throw new Error(`Cursor smoke prompt directory must be an existing directory, not a symlink: ${promptDirectory}`);
+	}
+	if (process.getuid && promptDirectoryStatus.uid !== process.getuid()) {
+		throw new Error(`Cursor smoke prompt directory must be owned by the current operator: ${promptDirectory}`);
+	}
+	if (fs.readdirSync(promptDirectory).length > 0) throw new Error(`Cursor smoke prompt directory must be empty before launch: ${promptDirectory}`);
 	return { workspace, stateRoot, canaryPath, promptDirectory };
 }

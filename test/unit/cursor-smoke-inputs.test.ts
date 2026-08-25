@@ -11,6 +11,7 @@ function roots(): { root: string; workspace: string; stateRoot: string } {
 	const stateRoot = path.join(root, "state");
 	fs.mkdirSync(workspace);
 	fs.mkdirSync(stateRoot);
+	fs.mkdirSync(path.join(stateRoot, "external-0.cursor-prompt"));
 	return { root, workspace, stateRoot };
 }
 
@@ -49,15 +50,27 @@ test("requires disposable attestation and separate existing roots", () => {
 	}
 });
 
-test("refuses pre-existing harness-owned Cursor smoke paths", () => {
+test("refuses pre-existing Cursor smoke handoff and canary paths", () => {
 	const input = roots();
 	try {
 		const values = env(input.workspace, input.stateRoot);
 		fs.writeFileSync(path.join(input.workspace, "pi-subagents-cursor-write-canary.txt"), "existing");
 		assert.throws(() => cursorSmokeInputs(values), /canary path must not exist/);
 		fs.rmSync(path.join(input.workspace, "pi-subagents-cursor-write-canary.txt"));
-		fs.mkdirSync(path.join(input.stateRoot, "external-0.cursor-prompt"));
-		assert.throws(() => cursorSmokeInputs(values), /prompt directory must not exist/);
+		fs.writeFileSync(path.join(input.stateRoot, "external-0.cursor-prompt", "handoff.txt"), "existing");
+		assert.throws(() => cursorSmokeInputs(values), /prompt directory must be empty/);
+	} finally {
+		fs.rmSync(input.root, { recursive: true, force: true });
+	}
+});
+
+test("refuses a symlink as the trusted Cursor prompt directory", { skip: process.platform === "win32" }, () => {
+	const input = roots();
+	try {
+		const promptDirectory = path.join(input.stateRoot, "external-0.cursor-prompt");
+		fs.rmSync(promptDirectory, { recursive: true });
+		fs.symlinkSync(input.workspace, promptDirectory, "dir");
+		assert.throws(() => cursorSmokeInputs(env(input.workspace, input.stateRoot)), /not a symlink/);
 	} finally {
 		fs.rmSync(input.root, { recursive: true, force: true });
 	}

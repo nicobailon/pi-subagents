@@ -140,7 +140,7 @@ The adapters do not pass force, yolo, auto-review, MCP approval, plugin, session
 
 Launch preflight validates `cursor-agent --version` and `cursor-agent --help` only when a run starts. Discovery, list, status, and native Pi launches do not execute Cursor or probe authentication. A run succeeds only when bounded valid JSONL ends with one successful `result` event that has non-empty final text. Error events, failed results, malformed JSON, output after the terminal event, and EOF before a result fail closed.
 
-These headless smokes rely on saved workspace trust. Cursor documents no passive command that checks workspace trust, so the smoke cannot verify it before launch. The operator must use Cursor's interactive trust flow for the exact disposable workspace and the exact derived prompt directory, `<state-root>/external-0.cursor-prompt`. Create that prompt directory for the trust step, then remove it before the smoke so pi-subagents can create it privately and remove it after the run. Cursor does not document saved-trust behavior for an added directory that is removed and recreated, so only a successful smoke proves this setup for the installed CLI. Repeat the trust setup if either exact path changes.
+These headless smokes rely on saved workspace trust. Cursor documents no passive command that checks workspace trust, so the smoke cannot verify it before launch. The operator must use Cursor's interactive trust flow for the exact disposable workspace and the exact derived prompt directory, `<state-root>/external-0.cursor-prompt`. Keep that prompt directory after the trust step. It must be empty, owned by the operator who runs the smoke, and must not be a symlink. The harness preserves this directory but creates its private handoff with exclusive `0600` access and removes the handoff after every run. Repeat the trust setup if either exact path changes.
 
 The smoke requires two existing, separate operator-managed directories and an explicit disposable-workspace attestation:
 
@@ -149,9 +149,10 @@ export PI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE=/tmp/pi-subagents-cursor-smoke-worksp
 export PI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT=/tmp/pi-subagents-cursor-smoke-state
 export PI_SUBAGENTS_CURSOR_SMOKE_DISPOSABLE=1
 mkdir -p "$PI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE" "$PI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT"
+mkdir -p "$PI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT/external-0.cursor-prompt"
 ```
 
-Do not place other files at `pi-subagents-cursor-write-canary.txt` in the workspace or `external-0.cursor-prompt` in the state root. The harness refuses those pre-existing paths. It does not delete the workspace or state root. It removes only its canary and the adapter-owned private prompt directory.
+Do not place a file at `pi-subagents-cursor-write-canary.txt` in the workspace or any file, including `handoff.txt`, in the prompt directory. The harness refuses the pre-existing canary and any non-empty prompt directory. It does not delete the workspace, state root, or operator-owned prompt directory. It removes only its canary and private handoff file.
 
 Maintainers can then run separate read-only and writer canaries:
 

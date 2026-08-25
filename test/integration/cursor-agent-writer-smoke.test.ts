@@ -18,6 +18,7 @@ test("maintainer Cursor Agent prompt-file writer smoke", { skip: enabled ? undef
 		assert.equal(launch.args.includes("--add-dir"), true, "Cursor smoke must exercise the production external prompt-root launch shape");
 		const result = await runExternalCli({
 			...launch,
+			temporaryDirectories: [],
 			cwd: workspace,
 			prompt: `${promptMarker}: Write exactly CANARY to ${canaryPath}. Then report completion.`,
 			asyncDir: stateRoot,
@@ -53,6 +54,8 @@ test("maintainer Cursor Agent prompt-file writer smoke", { skip: enabled ? undef
 		assert.equal(result.exitCode, 0, result.error);
 		assert.equal(result.parserTerminal?.state, "completed");
 		assert.equal(writeCanaryMatches, true, "Cursor Agent did not write the expected canary");
+		assert.equal(fs.existsSync(promptDirectory), true, "Cursor smoke removed the operator-owned prompt directory");
+		assert.deepEqual(fs.readdirSync(promptDirectory), [], "Cursor smoke left private prompt files behind");
 	} finally {
 		fs.rmSync(canaryPath, { force: true });
 	}
