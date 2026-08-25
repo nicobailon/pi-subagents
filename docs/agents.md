@@ -140,7 +140,20 @@ The adapters do not pass force, yolo, auto-review, MCP approval, plugin, session
 
 Launch preflight validates `cursor-agent --version` and `cursor-agent --help` only when a run starts. Discovery, list, status, and native Pi launches do not execute Cursor or probe authentication. A run succeeds only when bounded valid JSONL ends with one successful `result` event that has non-empty final text. Error events, failed results, malformed JSON, output after the terminal event, and EOF before a result fail closed.
 
-Maintainers can run separate read-only and writer canaries:
+These headless smokes rely on saved workspace trust. Cursor documents no passive command that checks workspace trust, so the smoke cannot verify it before launch. The operator must use Cursor's interactive trust flow for the exact disposable workspace and the exact derived prompt directory, `<state-root>/external-0.cursor-prompt`. Create that prompt directory for the trust step, then remove it before the smoke so pi-subagents can create it privately and remove it after the run. Cursor does not document saved-trust behavior for an added directory that is removed and recreated, so only a successful smoke proves this setup for the installed CLI. Repeat the trust setup if either exact path changes.
+
+The smoke requires two existing, separate operator-managed directories and an explicit disposable-workspace attestation:
+
+```bash
+export PI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE=/tmp/pi-subagents-cursor-smoke-workspace
+export PI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT=/tmp/pi-subagents-cursor-smoke-state
+export PI_SUBAGENTS_CURSOR_SMOKE_DISPOSABLE=1
+mkdir -p "$PI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE" "$PI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT"
+```
+
+Do not place other files at `pi-subagents-cursor-write-canary.txt` in the workspace or `external-0.cursor-prompt` in the state root. The harness refuses those pre-existing paths. It does not delete the workspace or state root. It removes only its canary and the adapter-owned private prompt directory.
+
+Maintainers can then run separate read-only and writer canaries:
 
 ```bash
 PI_SUBAGENTS_CURSOR_AGENT_SMOKE=1 \
@@ -154,7 +167,7 @@ node --experimental-strip-types --import ./test/support/register-loader.mjs \
   --test test/integration/cursor-agent-writer-smoke.test.ts
 ```
 
-The read-only smoke must report `writeCanaryExists: false`. The writer smoke must report `writeCanaryMatches: true`. Both reports include startup duration and terminal proof without raw protocol output, prompts, or credentials.
+The read-only smoke must report `writeCanaryExists: false`. The writer smoke must report `writeCanaryMatches: true`. Both reports record `workspaceTrust: "operator-managed-saved"`, confirm that the external prompt root was added, and include startup duration and terminal proof without raw protocol output, prompts, or credentials. A trust-required error remains terminal; the harness does not retry with a trust, force, or yolo flag.
 
 Native `oracle` runs inside Pi and can use its configured read tools. The Claude profiles send the assembled prompt to the local Claude Code CLI through stdin. An external-job agent sends the assembled prompt to its registered provider. Provider options and a prompt digest are persisted in Pi run state. The prompt text is delivered through the local host bridge to the provider and is not stored in the public result payload. Do not place secrets in advisory prompts unless the target provider is approved to receive them.
 
