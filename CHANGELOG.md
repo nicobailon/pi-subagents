@@ -3,7 +3,6 @@
 ## [Unreleased]
 
 ### Fixed
-- Preserve the parent model across workflow handoffs so delayed children cannot fall back to a different provider. Thanks to [@alexei-led](https://github.com/alexei-led) for #1489.
 - Exclude completed one-shot schedules from the pending schedule limit without deleting their durable history. Thanks to [@rafafortes](https://github.com/rafafortes) for #1478.
 - Repair bounded dead async run candidates before retention classifies them, so existing terminal retention guards can reclaim stale run directories without deleting ambiguous worktrees or branches. Thanks to [@rafafortes](https://github.com/rafafortes) for #1477.
 - Make async runs visible to exact status lookup as soon as launch succeeds, and deliver one completion when a runner dies before its normal status write. Thanks to [@rafafortes](https://github.com/rafafortes) for #1471 and [@VincentHanxiaoDu](https://github.com/VincentHanxiaoDu) for #1480.
