@@ -6,6 +6,7 @@ import {
 	formatSubagentModelVerificationError,
 	isContextOverflow,
 	isRetryableModelFailure,
+	isRetryableModelFailureAttempt,
 	normalizeModelSegment,
 	recordRetryableModelFailure,
 	resolveEffectiveSubagentModel,
@@ -199,6 +200,9 @@ describe("model fallback helpers", () => {
 		assert.equal(isRetryableModelFailure("Subagent produced no output (possible model cold-start or empty response)."), true);
 		assert.equal(isRetryableModelFailure("model load failed"), true);
 		assert.equal(isRetryableModelFailure("Stream ended without finish_reason"), true);
+		assert.equal(isRetryableModelFailure("Connection error"), true);
+		assert.equal(isRetryableModelFailure("APIConnectionError: Connection closed."), true);
+		assert.equal(isRetryableModelFailure("Connection reset by peer"), true);
 		assert.equal(isRetryableModelFailure("Request timed out."), true);
 	});
 
@@ -216,6 +220,13 @@ describe("model fallback helpers", () => {
 		assert.equal(isRetryableModelFailure("mcp:tools.search failed with exit code 1"), false);
 		assert.equal(isRetryableModelFailure("Provider error: bash failed (exit 1): request timed out"), true);
 		assert.equal(isRetryableModelFailure("bash failed (exit unknown): request timed out"), true);
+	});
+
+	it("does not retry raw process stderr after child activity", () => {
+		assert.equal(isRetryableModelFailureAttempt({ error: "APIConnectionError: Connection closed.", messages: [{ role: "assistant" }], toolCount: 0 }), false);
+		assert.equal(isRetryableModelFailureAttempt({ error: "APIConnectionError: Connection closed.", messages: [{ role: "assistant", errorMessage: "APIConnectionError: Connection closed." }], toolCount: 0 }), true);
+		assert.equal(isRetryableModelFailureAttempt({ error: "APIConnectionError: Connection closed.", messages: [], toolCount: 0 }), true);
+		assert.equal(isRetryableModelFailureAttempt({ error: "APIConnectionError: Connection closed.", messages: [{ role: "assistant", errorMessage: "APIConnectionError: Connection closed." }], toolCount: 1 }), false);
 	});
 });
 

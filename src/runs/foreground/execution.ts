@@ -77,7 +77,7 @@ import {
 	formatSubagentModelVerificationError,
 	formatModelAttemptNote,
 	isContextOverflow,
-	isRetryableModelFailure,
+	isRetryableModelFailureAttempt,
 	recordRetryableModelFailure,
 } from "../shared/model-fallback.ts";
 import {
@@ -2015,7 +2015,7 @@ async function runSyncCompletionInner(
 				attempt.error = startupError;
 				break modelAttemptsLoop;
 			}
-			const retryableModelFailure = isRetryableModelFailure(result.error);
+			const retryableModelFailure = isRetryableModelFailureAttempt({ error: result.error, messages: result.messages, toolCount: result.progressSummary?.toolCount });
 			if (retryableModelFailure) recordRetryableModelFailure(result.model ?? candidate, result.error);
 			if (isContextOverflow(result.error)) {
 				result.contextOverflow = true;

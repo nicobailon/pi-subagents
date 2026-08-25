@@ -425,6 +425,7 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/overloaded/i,
 	/service unavailable/i,
 	/temporar(?:ily)? unavailable/i,
+	/connection\s+(?:error|reset|closed|aborted)/i,
 	/connection refused/i,
 	/fetch failed/i,
 	/network error/i,
@@ -455,6 +456,21 @@ export function isRetryableModelFailure(error: string | undefined): boolean {
 	if (!error) return false;
 	if (TOOL_FAILURE_PREFIX.test(error.trim())) return false;
 	return RETRYABLE_MODEL_FAILURE_PATTERNS.some((pattern) => pattern.test(error));
+}
+
+function messageError(message: unknown): string | undefined {
+	if (!message || typeof message !== "object") return undefined;
+	const value = (message as { errorMessage?: unknown }).errorMessage;
+	return typeof value === "string" ? value : undefined;
+}
+
+export function isRetryableModelFailureAttempt(input: { error: string | undefined; messages?: readonly unknown[]; toolCount?: number }): boolean {
+	if (!isRetryableModelFailure(input.error)) return false;
+	if ((input.toolCount ?? 0) > 0) return false;
+	if (input.error === "Subagent produced no output (possible model cold-start or empty response).") return true;
+	if ((input.toolCount ?? 0) === 0 && (input.messages?.length ?? 0) === 0) return true;
+	const error = input.error?.trim();
+	return Boolean(error && input.messages?.some((message) => messageError(message)?.trim() === error));
 }
 
 export function recordRetryableModelFailure(model: string | undefined, error: string | undefined): void {

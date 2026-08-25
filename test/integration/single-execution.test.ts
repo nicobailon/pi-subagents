@@ -4688,6 +4688,36 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(result.error?.includes("Something went wrong"));
 	});
 
+	it("surfaces a non-retryable provider failure when the child produced no output", async () => {
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [],
+					model: "openai/gpt-5-mini",
+					errorMessage: "Invalid request: malformed payload",
+					usage: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+				},
+			}],
+			exitCode: 1,
+		});
+		const executor = makeExecutor([makeAgent("echo", { model: "openai/gpt-5-mini" })]);
+
+		const result = await executor.execute(
+			"non-retryable-provider-failure",
+			{ agent: "echo", task: "Task", async: false, acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /Invalid request: malformed payload/u);
+		assert.match(result.details.results[0]?.error ?? "", /Invalid request: malformed payload/u);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
 	it("retries a zero-activity startup exit on the same model", async () => {
 		mockPi.onCall({ exitCode: 1 });
 		mockPi.onCall({ output: "Recovered after startup race" });
@@ -5372,6 +5402,65 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.exitCode, 127);
 		assert.equal(result.modelAttempts?.length, 1);
 		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("does not retry raw connection stderr after child activity", async () => {
+		mockPi.onCall({
+			jsonl: [events.assistantMessage("completed side effect", "openai/gpt-5-mini")],
+			stderr: "APIConnectionError: Connection closed.",
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "fallback must not run" });
+		const agents = [makeAgent("echo", {
+			model: "openai/gpt-5-mini",
+			fallbackModels: ["anthropic/claude-sonnet-4"],
+		})];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "no-fallback-raw-stderr",
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /Connection closed/u);
+		assert.equal(result.modelAttempts?.length, 1);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("does not retry provider connection errors after completed tool work", async () => {
+		mockPi.onCall({
+			jsonl: [
+				events.toolStart("write", { path: "side-effect.txt", content: "done" }),
+				events.toolEnd("write"),
+				events.toolResult("write", "Wrote side-effect.txt"),
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [],
+						model: "openai/gpt-5-mini",
+						errorMessage: "Connection error.",
+						usage: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+					},
+				},
+			],
+			writeFiles: [{ path: "side-effect.txt", content: "done" }],
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "fallback must not run" });
+		const agents = [makeAgent("echo", {
+			model: "openai/gpt-5-mini",
+			fallbackModels: ["anthropic/claude-sonnet-4"],
+		})];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "no-fallback-provider-after-tool",
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /Connection error/u);
+		assert.equal(result.modelAttempts?.length, 1);
+		assert.equal(mockPi.callCount(), 1);
+		assert.equal(fs.readFileSync(path.join(tempDir, "side-effect.txt"), "utf-8"), "done");
 	});
 
 	it("tracks progress during execution", async () => {
