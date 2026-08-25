@@ -106,6 +106,7 @@ import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudget
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
+import { consumeWorkflowChildPermit } from "../../shared/workflow-child-permit.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleState, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import {
 	acceptChildWatchdogEvent,
@@ -540,8 +541,27 @@ async function runSingleAttempt(
 	let toolAvailabilityError: string | undefined;
 	let abortedBySignal = options.signal?.aborted === true;
 
+	const spawnSpec = getPiSpawnCommand(args);
+	if (options.workflowChildPermitLaunch) {
+		const permitError = consumeWorkflowChildPermit(options.workflowChildPermitLaunch.permit, {
+			workflowRunId: options.workflowChildPermitLaunch.workflowRunId,
+			childKey: options.workflowChildPermitLaunch.childKey,
+			agent: agent.name,
+			launchContractDigest,
+			context: options.context ?? "fresh",
+			runner: "pi",
+		});
+		if (permitError) {
+			cleanupTempDir(tempDir);
+			result.exitCode = 1;
+			result.error = permitError;
+			result.finalOutput = permitError;
+			progress.status = "failed";
+			progress.error = permitError;
+			return result;
+		}
+	}
 	const exitCode = await new Promise<number>((resolve) => {
-		const spawnSpec = getPiSpawnCommand(args);
 		const proc = spawn(spawnSpec.command, spawnSpec.args, {
 			cwd: options.cwd ?? runtimeCwd,
 			env: spawnEnv,
@@ -1810,6 +1830,18 @@ async function runSyncCompletionInner(
 		agent.modelProvider ?? options.preferredModelProvider,
 		{ scope: options.modelScope, primaryModelFromParent: options.modelOverrideFromParent },
 	);
+	if (options.workflowChildPermitLaunch && candidates.length > 1) {
+		const error = "Workflow child permit does not support model fallback.";
+		return redactResultPrompt(withRunContext({
+			index: options.index ?? 0,
+			agent: agent.name,
+			task,
+			exitCode: 1,
+			messages: [],
+			usage: emptyUsage(),
+			error,
+		}, options.context));
+	}
 	try {
 		for (const candidate of candidates) {
 			const model = applyThinkingSuffix(candidate, options.thinkingOverride ?? agent.thinking, options.thinkingOverride !== undefined);
@@ -1943,6 +1975,7 @@ async function runSyncCompletionInner(
 				usage: { ...result.usage },
 			};
 			modelAttempts.push(attempt);
+			if (options.workflowChildPermitLaunch && !attemptSucceeded) break modelAttemptsLoop;
 			// Preserve the legacy intercom handoff contract: once this logical run has
 			// been handed to a supervisor, terminating that attempt must not launch a
 			// startup retry or model fallback. Explicit user detach retains fallback.

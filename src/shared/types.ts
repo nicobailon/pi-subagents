@@ -14,6 +14,7 @@ import type { AuthorityPolicyConfig } from "../policy/authority.ts";
 import type { ThinkingLevel } from "./model-info.ts";
 import type { GlobalMissionIndexRecord, MissionRecord, MissionStoreConfig } from "../missions/types.ts";
 import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
+import type { WorkflowChildPermitContext } from "./workflow-child-permit.ts";
 
 // ============================================================================
 // Basic Types
@@ -2081,6 +2082,8 @@ export interface RunSyncOptions {
 	thinkingOverride?: AgentConfig["thinking"];
 	thinkingCeiling?: ThinkingLevel;
 	extensionBindings?: ExtensionBindings;
+	/** Package-internal one-use authorization for one foreground workflow child. */
+	workflowChildPermitLaunch?: WorkflowChildPermitContext;
 	/** Registry models available for heuristic bare-model resolution */
 	availableModels?: Array<{ provider: string; id: string; fullId: string }>;
 	/** Current parent-session provider to prefer for ambiguous bare model ids */

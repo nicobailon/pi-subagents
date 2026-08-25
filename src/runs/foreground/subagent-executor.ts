@@ -128,6 +128,7 @@ import { previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, Wo
 import { buildWorkflowReceipt, resolveWorkflowReceiptResumeEntry, writeWorkflowReceipt, type WorkflowReceipt, type WorkflowReceiptState } from "../../workflows/workflow-receipt.ts";
 import { workflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 import { resolveWorkflowChatProgress, type WorkflowChatProgressProjection } from "../../workflows/chat-progress.ts";
+import { claimWorkflowChildPermit, validateWorkflowChildPermitRoot, type WorkflowChildPermit, type WorkflowChildPermitContext } from "../../shared/workflow-child-permit.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
@@ -458,6 +459,7 @@ interface ExecutionContextData {
 	runFanoutBudget: RunFanoutBudgetDescriptor;
 	topLevelAsyncCapacityEligible: boolean;
 	activeAsyncCapacity?: ActiveAsyncCapacityHandle;
+	workflowChildPermitLaunch?: WorkflowChildPermitContext;
 }
 
 function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefined): string {
@@ -3741,6 +3743,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			agentContract: params.agentContract,
 			acceptance: params.acceptance,
 			acceptanceContext: { mode: "single" },
+			workflowChildPermitLaunch: data.workflowChildPermitLaunch,
 			onEffectivePrompt: foregroundControl ? (prompt) => updateLiveEffectivePrompt(foregroundControl, 0, prompt) : undefined,
 			onDetachReady: (detach) => {
 				detachForeground = detach;
@@ -4375,6 +4378,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	const delegatedThinkingOverrides = new WeakMap<object, AgentConfig["thinking"]>();
 	const delegatedZeroToolBudgets = new WeakSet<object>();
 	const delegatedExecutions = new WeakSet<object>();
+	const workflowPermitContexts = new WeakMap<object, { root: WorkflowChildPermit } | { child: WorkflowChildPermitContext }>();
 	const warnedArtifactPackageDirs = new Set<string>();
 	const scheduledOwnerExecutors = new Map<string, ReturnType<typeof createSubagentExecutor>>();
 	const execute = async (
@@ -4398,6 +4402,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const delegatedThinkingOverride = delegatedThinkingOverrides.get(params);
 		const allowZeroToolBudget = delegatedZeroToolBudgets.has(params);
 		const delegatedExecution = delegatedExecutions.has(params);
+		const workflowPermitContext = workflowPermitContexts.get(params);
+		const delegatedWorkflowPermit = workflowPermitContext && "root" in workflowPermitContext ? workflowPermitContext.root : undefined;
+		const workflowChildPermitLaunch = workflowPermitContext && "child" in workflowPermitContext ? workflowPermitContext.child : undefined;
 		if (!preserveActiveSession) deps.state.baseCwd = ctx.cwd;
 		deps.state.foregroundRuns ??= new Map();
 		deps.state.foregroundControls ??= new Map();
@@ -4408,6 +4415,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
 		if (normalizedAction === "resume" && requestParams.extensionBindings !== undefined) return buildRequestedModeError(requestParams, "extensionBindings is not supported with action='resume'; resume uses the original retained child binding.");
 		if (requestParams.workflowScript !== undefined && normalizedAction === undefined) {
+			if (delegatedWorkflowPermit) {
+				const permitError = validateWorkflowChildPermitRoot(delegatedWorkflowPermit, _id);
+				if (permitError) return buildRequestedModeError(requestParams, permitError);
+				if (requestParams.async !== false) return buildRequestedModeError(requestParams, "Workflow child permit supports foreground workflow roots only; set async:false.");
+			}
 			const workflowParentModel = parentModelOverride !== undefined
 				? parentModelOverride
 				: (() => {
@@ -5002,6 +5014,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			try {
 				const workflow = await runWorkflowScript({
 					script: requestParams.workflowScript,
+					...(delegatedWorkflowPermit ? { oneUsePermit: { claim: (key: string) => claimWorkflowChildPermit(delegatedWorkflowPermit, _id, key) } } : {}),
 					timeoutMs: timeout,
 					signal,
 					...(workflowState ? { state: workflowState } : {}),
@@ -5022,6 +5035,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						sendWorkflowProgress();
 					},
 					launch: async (key, childParams, workflowSignal, admission) => {
+						if (delegatedWorkflowPermit && admission.batch) throw new Error("Workflow child permit does not support runs.all.");
+						if (delegatedWorkflowPermit && childParams.resume !== undefined) throw new Error("Workflow child permit does not support retained resume.");
+						if (delegatedWorkflowPermit && childParams.async === true) throw new Error("Workflow child permit supports one foreground child only.");
 						if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."), childParams, deps.state);
 						const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 						if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)), childParams, deps.state);
@@ -5040,6 +5056,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								missionBinding,
 								deps.asyncByDefault,
 							);
+							if (delegatedWorkflowPermit) {
+								if (childRequest.async !== false) throw new Error("Workflow child permit supports one foreground child only.");
+								const childCwd = resolveRequestedCwd(workflowCwd, childRequest.cwd);
+								const childAgent = typeof childRequest.agent === "string"
+									? resolveAgentName(childRequest.agent, deps.discoverAgents(childCwd, resolveExecutionAgentScope(childRequest.agentScope)).agents).agent
+									: undefined;
+								if (childAgent?.runner?.type === "external-cli" || childAgent?.runner?.type === "external-job") throw new Error("Workflow child permit supports native Pi children only.");
+								workflowPermitContexts.set(childRequest, { child: { permit: delegatedWorkflowPermit, workflowRunId: _id, childKey: key } });
+							}
 							workflowLaunchObservers.set(childRequest, (launch) => recordMissionWorkflowChild(missionBinding, _id, key, {
 								status: "running",
 								agent: launch.agent,
@@ -6096,6 +6121,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			runFanoutBudget,
 			topLevelAsyncCapacityEligible,
 			activeAsyncCapacity,
+			workflowChildPermitLaunch,
 		});
 
 		const foregroundDescription = selectedAgentNames.length === 1
@@ -6364,13 +6390,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const privateParams = delegatedParams as SubagentParamsLike & {
 			delegatedThinkingOverride?: AgentConfig["thinking"];
 			delegatedAllowZeroToolBudget?: true;
+			delegatedWorkflowPermit?: WorkflowChildPermit;
 		};
 		const thinkingOverride = privateParams.delegatedThinkingOverride;
 		const allowZeroToolBudget = privateParams.delegatedAllowZeroToolBudget === true;
+		const workflowPermit = privateParams.delegatedWorkflowPermit;
 		delete privateParams.delegatedThinkingOverride;
 		delete privateParams.delegatedAllowZeroToolBudget;
+		delete privateParams.delegatedWorkflowPermit;
 		if (thinkingOverride !== undefined) delegatedThinkingOverrides.set(delegatedParams, thinkingOverride);
 		if (allowZeroToolBudget) delegatedZeroToolBudgets.add(delegatedParams);
+		if (workflowPermit) workflowPermitContexts.set(delegatedParams, { root: workflowPermit });
 		delegatedExecutions.add(delegatedParams);
 		return execute(id, delegatedParams, signal, onUpdate, ctx);
 	};

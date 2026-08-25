@@ -734,10 +734,12 @@ export class WorkflowScriptError extends Error {
 
 export interface RunWorkflowScriptOptions {
 	script: string;
+	/** Host-only first-slice admission context. It is never sent to the workflow worker. */
+	oneUsePermit?: { claim: (key: string) => string | undefined };
 	timeoutMs?: number;
 	signal?: AbortSignal;
 	admit?: (calls: Array<{ key: string; params: Record<string, unknown> }>) => void | Promise<void>;
-	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal, admission: { admitted: boolean }) => Promise<WorkflowScriptChildResult>;
+	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal, admission: { admitted: boolean; batch: boolean }) => Promise<WorkflowScriptChildResult>;
 	resolveResume?: (reference: WorkflowReceiptResumeReference, signal: AbortSignal) => string | WorkflowResolvedResumeReference | Promise<string | WorkflowResolvedResumeReference>;
 	status: (keyOrRunId: string, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
 	steer?: (key: string, message: string, options: WorkflowSteerOptions, signal: AbortSignal) => Promise<WorkflowSteerResult>;
@@ -1381,6 +1383,31 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			}
 			const params = message.args.params;
 			if (!isRecord(params)) return respond(Promise.reject(new Error(`runs.run('${key}', params) requires a params object.`)));
+			const collectFailure = message.args.collectFailure === true;
+			const callObserved = observedRunCalls.delete(message.callId);
+			const deliver = (promise: Promise<WorkflowScriptChildResult>) => collectFailure
+				? promise
+				: promise.then((result) => {
+					if (!result.ok && !result.stopped) {
+						const childError = new Error(result.detached ? `Run '${key}' detached: ${result.error ?? result.output}` : `Run '${key}' failed: ${result.error ?? result.output}`) as Error & { workflowErrorKind?: "detached-child" };
+						if (result.detached) childError.workflowErrorKind = "detached-child";
+						throw childError;
+					}
+					return result;
+				});
+			const fingerprint = stableJson(params);
+			const existing = launches.get(key);
+			if (existing) {
+				if (existing.fingerprint !== fingerprint) return respond(Promise.reject(new Error(`Duplicate workflow key '${key}' used with incompatible launch params.`)));
+				if (callObserved) existing.observed = true;
+				trace.push({ operation: "run", key, state: "reused", ...workflowStringMetadata(params) });
+				traceChanged();
+				return respond(deliver(existing.promise), `runs.run('${key}') result`);
+			}
+			const permitError = options.oneUsePermit?.claim(key);
+			if (permitError) return respond(Promise.reject(new Error(permitError)));
+			if (options.oneUsePermit && message.args.batch !== undefined) return respond(Promise.reject(new Error("Workflow child permit does not support runs.all.")));
+			if (options.oneUsePermit && params.resume !== undefined) return respond(Promise.reject(new Error("Workflow child permit does not support retained resume.")));
 			if (params.action !== undefined) return respond(Promise.reject(new Error(`runs.run('${key}') accepts execution params only; management action is not allowed.`)));
 			if (params.workflowScript !== undefined) return respond(Promise.reject(new Error(`runs.run('${key}') cannot start a nested workflow script.`)));
 			if (params.tasks !== undefined || params.chain !== undefined || params.parallel !== undefined || params.concurrency !== undefined || params.chainDir !== undefined) {
@@ -1411,28 +1438,6 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (params.resume !== undefined && (typeof params.task !== "string" || !params.task.trim())) {
 				return respond(Promise.reject(new Error(`runs.run('${key}') resume requires a non-empty task follow-up.`)));
 			}
-			const collectFailure = message.args.collectFailure === true;
-			const callObserved = observedRunCalls.delete(message.callId);
-			const deliver = (promise: Promise<WorkflowScriptChildResult>) => collectFailure
-				? promise
-				: promise.then((result) => {
-					if (!result.ok && !result.stopped) {
-						const childError = new Error(result.detached ? `Run '${key}' detached: ${result.error ?? result.output}` : `Run '${key}' failed: ${result.error ?? result.output}`) as Error & { workflowErrorKind?: "detached-child" };
-						if (result.detached) childError.workflowErrorKind = "detached-child";
-						throw childError;
-					}
-					return result;
-				});
-			const fingerprint = stableJson(params);
-			const existing = launches.get(key);
-			if (existing) {
-				if (existing.fingerprint !== fingerprint) return respond(Promise.reject(new Error(`Duplicate workflow key '${key}' used with incompatible launch params.`)));
-				if (callObserved) existing.observed = true;
-				trace.push({ operation: "run", key, state: "reused", ...workflowStringMetadata(params) });
-				traceChanged();
-				return respond(deliver(existing.promise), `runs.run('${key}') result`);
-			}
-
 			const startedAt = Date.now();
 			const batch = isRecord(message.args.batch) && typeof message.args.batch.id === "string" && Array.isArray(message.args.batch.calls)
 				? { id: message.args.batch.id, calls: message.args.batch.calls.filter((call): call is { key: string; params: Record<string, unknown> } => isRecord(call) && typeof call.key === "string" && isRecord(call.params)) }
@@ -1482,7 +1487,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					if (resolvedResumeLineage.at(-1) !== resolvedResumeId) resolvedResumeLineage.push(resolvedResumeId!);
 				}
 				const launchParams = resolvedResumeId ? { ...params, resume: resolvedResumeId } : params;
-				return options.launch(key, launchParams, childSignal, { admitted: true });
+				return options.launch(key, launchParams, childSignal, { admitted: true, batch: batch !== undefined });
 			}).then((result) => {
 				let normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
 				if (resolvedResumeLineage?.length && normalized.runId) {

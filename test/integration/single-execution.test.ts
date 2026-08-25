@@ -64,6 +64,7 @@ import { missionStatePath } from "../../src/missions/workflow-state.ts";
 import { discardPreservedWorktrees } from "../../src/runs/shared/parallel-handoff.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
+import { createWorkflowChildPermit, workflowChildPermitConsumed } from "../../src/shared/workflow-child-permit.ts";
 
 interface ModelAttempt {
 	success?: boolean;
@@ -514,6 +515,83 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
 		assert.doesNotMatch(readCallArgs().join("\n"), /This path is authoritative for this run/);
+	});
+
+	it("consumes one exact host-only workflow child permit before spawn", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo"), makeAgent("other"), makeAgent("external", { runner: { type: "external-cli", command: "external" } })]);
+		const ctx = makeMinimalCtx(tempDir);
+		const script = `return runs.run("main", { agent: "echo", task: "Exact task", acceptance: false });`;
+		mockPi.onCall({ output: "projection probe" });
+		const probe = await executor.execute("probe", { async: false, workflowScript: script }, new AbortController().signal, undefined, ctx);
+		const launchContractDigest = (probe.details as { results?: Array<{ launchContractDigest?: string }> }).results?.[0]?.launchContractDigest;
+		assert.ok(launchContractDigest);
+
+		const permitFor = (workflowRunId: string, overrides: Partial<Parameters<typeof createWorkflowChildPermit>[0]> = {}) => createWorkflowChildPermit({
+			issuerPackage: "permit-secret-package",
+			workflowRunId,
+			childKey: "main",
+			agent: "echo",
+			launchContractDigest,
+			context: "fresh",
+			...overrides,
+		});
+		const run = (id: string, workflowScript: string, permit: ReturnType<typeof permitFor>, async = false) => executor.executeDelegated(
+			id,
+			{ async, workflowScript, delegatedWorkflowPermit: permit },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+
+		mockPi.onCall({ output: "permitted child" });
+		const permit = permitFor("permitted");
+		const allowed = await run("permitted", script, permit);
+		assert.equal(allowed.isError, undefined, allowed.content[0]?.text ?? "permitted workflow failed");
+		assert.equal(workflowChildPermitConsumed(permit), true);
+		assert.equal(mockPi.callCount(), 2);
+		assert.doesNotMatch(JSON.stringify(allowed), /permit-secret-package|__workflowChildPermit/);
+
+		const reused = await run("permitted", script, permit);
+		assert.equal(reused.isError, true);
+		assert.match(reused.content[0]?.text ?? "", /already consumed/);
+		assert.equal(mockPi.callCount(), 2);
+
+		mockPi.onCall({ stderr: "spawned child failed", exitCode: 1 });
+		const failedPermit = permitFor("spawn-failure");
+		const spawnFailure = await run("spawn-failure", script, failedPermit);
+		assert.equal(spawnFailure.isError, true);
+		assert.equal(workflowChildPermitConsumed(failedPermit), true);
+		assert.equal(mockPi.callCount(), 3, "a consumed permit must not start a retry");
+
+		const denied = [
+			await run("wrong-key", `return runs.run("other", { agent: "echo", task: "Exact task", acceptance: false });`, permitFor("wrong-key")),
+			await run("wrong-agent", `return runs.run("main", { agent: "other", task: "Exact task", acceptance: false });`, permitFor("wrong-agent")),
+			await run("wrong-task", `return runs.run("main", { agent: "echo", task: "Changed task", acceptance: false });`, permitFor("wrong-task")),
+			await run("runs-all", `return runs.all([{ key: "main", agent: "echo", task: "Exact task", acceptance: false }]);`, permitFor("runs-all")),
+			await run("resume", `return runs.run("main", { resume: "retained-run", task: "Continue" });`, permitFor("resume")),
+			await run("external", `return runs.run("main", { agent: "external", task: "Exact task", async: false });`, permitFor("external")),
+			await run("async-root", script, permitFor("async-root"), true),
+		];
+		const denialText = denied.map((result) => result.content[0]?.text ?? "").join("\n");
+		assert.match(denialText, /child key mismatch.*agent mismatch.*final launch projection.*runs\.all.*retained resume.*native Pi children.*foreground workflow roots/s);
+		const wrongThenRightPermit = permitFor("wrong-then-right");
+		const wrongThenRight = await run("wrong-then-right", `
+			try { await runs.run("other", { agent: "echo", task: "Exact task", acceptance: false }); } catch {}
+			return runs.run("main", { agent: "echo", task: "Exact task", acceptance: false });
+		`, wrongThenRightPermit);
+		assert.equal(wrongThenRight.isError, true);
+		assert.match(wrongThenRight.content[0]?.text ?? "", /already consumed/);
+		assert.equal(workflowChildPermitConsumed(wrongThenRightPermit), true);
+		assert.equal(mockPi.callCount(), 3, "wrong-then-right must not spawn");
+		const fallback = await makeExecutor([makeAgent("echo", { model: "mock/primary", fallbackModels: ["mock/backup"] })]).executeDelegated(
+			"fallback",
+			{ async: false, workflowScript: script, delegatedWorkflowPermit: permitFor("fallback") },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+		assert.match(fallback.content[0]?.text ?? "", /does not support model fallback/);
+		assert.equal(mockPi.callCount(), 3);
 	});
 
 	it("resolves workflow child profile context from its agent default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
