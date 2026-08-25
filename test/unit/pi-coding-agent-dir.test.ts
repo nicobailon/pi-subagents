@@ -222,6 +222,21 @@ Package skill content.
 		assert.equal(fs.existsSync(artifactPath), false);
 	});
 
+	it("records explicit run outcomes without guessing legacy outcomes", () => {
+		const historyPath = path.join(agentDir, "run-history.jsonl");
+		writeFile(historyPath, `${JSON.stringify({ agent: "outcome-agent", task: "[redacted]", ts: 1, status: "error", duration: 1, exit: 143 })}\n`);
+		recordRun("outcome-agent", "failed", 1, 2);
+		recordRun("outcome-agent", "timed out", 1, 3, { timedOut: true });
+		recordRun("outcome-agent", "interrupted", 1, 4, { interrupted: true });
+		recordRun("outcome-agent", "stopped", 1, 5, { stopped: true });
+		recordRun("outcome-agent", "completed", 0, 6);
+		recordRun("outcome-agent", "signalled", 143, 7, { processSignal: "SIGTERM" });
+
+		const history = loadRunsForAgent("outcome-agent");
+		assert.deepEqual(history.map((entry) => entry.outcome), ["stopped", "completed", "stopped", "interrupted", "timed_out", "failed", undefined]);
+		assert.equal(history.at(-1)?.exit, 143);
+	});
+
 	it("resolves configured artifact directory preferences", () => {
 		const sessionFile = path.join(agentDir, "sessions", "session-1", "session.jsonl");
 

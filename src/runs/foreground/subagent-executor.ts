@@ -3749,7 +3749,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 						}
 					}
 				}
-				recordRun(params.agent!, cleanTask, result.exitCode, result.progressSummary?.durationMs ?? 0);
+				recordRun(params.agent!, cleanTask, result.exitCode, result.progressSummary?.durationMs ?? 0, result);
 			},
 			timeoutMs: data.timeoutMs,
 			deadlineAt,
@@ -3774,7 +3774,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		}
 	}
 	if (!r.detached) {
-		recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
+		recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0, r);
 	}
 
 	let worktreeHandoff: ReturnType<typeof finalizeSingleWorktreeHandoff> | undefined;

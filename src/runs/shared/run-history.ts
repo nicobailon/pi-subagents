@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir } from "../../shared/utils.ts";
+import { isUnexplainedProcessSignal } from "./process-signal.ts";
+
+export type RunOutcome = "completed" | "failed" | "timed_out" | "stopped" | "interrupted";
 
 export interface RunEntry {
 	agent: string;
@@ -9,6 +12,7 @@ export interface RunEntry {
 	taskHash?: string;
 	ts: number;
 	status: "ok" | "error";
+	outcome?: RunOutcome;
 	duration: number;
 	exit?: number;
 }
@@ -129,14 +133,30 @@ function appendPrivateHistoryLine(historyPath: string, line: string): void {
 	}
 }
 
-export function recordRun(agent: string, task: string, exitCode: number, durationMs: number): void {
+export function recordRun(
+	agent: string,
+	task: string,
+	exitCode: number,
+	durationMs: number,
+	terminal: { interrupted?: boolean; processSignal?: string | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean } = {},
+): void {
 	try {
+		const outcome: RunOutcome = terminal.stopped
+			? "stopped"
+			: terminal.interrupted
+				? "interrupted"
+				: terminal.timedOut
+					? "timed_out"
+					: exitCode !== 0 && isUnexplainedProcessSignal(terminal)
+						? "stopped"
+						: exitCode === 0 ? "completed" : "failed";
 		const entry: RunEntry = {
 			agent,
 			task: REDACTED_TASK,
 			taskHash: hashTask(task),
 			ts: Math.floor(Date.now() / 1000),
 			status: exitCode === 0 ? "ok" : "error",
+			outcome,
 			duration: durationMs,
 			...(exitCode !== 0 ? { exit: exitCode } : {}),
 		};
