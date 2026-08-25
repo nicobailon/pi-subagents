@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { buildAsyncRunnerSteps, DEFAULT_ASYNC_TIMEOUT_MS, formatAsyncStartedMessage, resolveAsyncRunnerLogPaths } from "../../src/runs/background/async-execution.ts";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { buildAsyncRunnerSteps, DEFAULT_ASYNC_TIMEOUT_MS, emitProcessTerminalEvent, formatAsyncStartedMessage, resolveAsyncRunnerLogPaths } from "../../src/runs/background/async-execution.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
+import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../src/shared/types.ts";
 
 const agent = (name: string, toolBudget?: AgentConfig["toolBudget"]): AgentConfig => ({
 	name,
@@ -146,5 +148,43 @@ describe("async runner execution", () => {
 
 		assert.ok("steps" in result, "expected successful step build");
 		assert.deepEqual(result.steps[0]?.toolBudget, { hard: 5, block: ["ls"] });
+	});
+});
+
+describe("async runner process terminal events", () => {
+	const proof = { version: 1, runId: "run-terminal", runnerProcessInstanceId: "runner-1", state: "unknown", reason: "writer-close-unverified" };
+	const staleMessage = "This extension ctx is stale after session replacement or reload.";
+
+	const makeCtx = (emit: (name: string, payload?: unknown) => unknown) => ({
+		...ctx,
+		pi: { events: { emit } } as unknown as ExtensionAPI,
+	});
+
+	it("emits the process terminal proof on a live event bus", () => {
+		const emitted: Array<[string, unknown]> = [];
+		emitProcessTerminalEvent(makeCtx((name, payload) => { emitted.push([name, payload]); }), proof);
+
+		assert.deepEqual(emitted, [[SUBAGENT_PROCESS_TERMINAL_EVENT, proof]]);
+	});
+
+	it("drops stale extension ctx failures without throwing", () => {
+		assert.doesNotThrow(() => emitProcessTerminalEvent(makeCtx(() => {
+			throw new Error(staleMessage);
+		}), proof));
+	});
+
+	it("logs non-stale event bus failures without throwing", () => {
+		const originalError = console.error;
+		let logged: unknown[] | undefined;
+		console.error = (...args: unknown[]) => { logged = args; };
+		try {
+			assert.doesNotThrow(() => emitProcessTerminalEvent(makeCtx(() => {
+				throw new Error("event bus unavailable");
+			}), proof));
+		} finally {
+			console.error = originalError;
+		}
+
+		assert.ok(logged?.some((arg) => arg instanceof Error && arg.message === "event bus unavailable"));
 	});
 });

@@ -495,6 +495,19 @@ interface SpawnRunnerResult {
 	startupDidNotProceed?: boolean;
 }
 
+function isStaleExtensionContextError(error: unknown): boolean {
+	return error instanceof Error && /extension ctx is stale|stale after session replacement or reload/i.test(error.message);
+}
+
+export function emitProcessTerminalEvent(ctx: AsyncExecutionContext, proof: unknown): void {
+	try {
+		ctx.pi.events.emit(SUBAGENT_PROCESS_TERMINAL_EVENT, proof);
+	} catch (error) {
+		if (isStaleExtensionContextError(error)) return;
+		console.error("Failed to emit subagent process-terminal event:", error);
+	}
+}
+
 function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Omit<AsyncStatus, "pid" | "processTerminal">, initialStatusPath: string, onProcessTerminal?: (proof: unknown) => void): SpawnRunnerResult {
 	if (!jitiCliPath) {
 		return { error: "upstream jiti for TypeScript execution could not be found; ensure package dependencies are installed" };
@@ -1297,7 +1310,7 @@ export function executeAsyncChain(
 				steps: initialStatusSteps,
 			},
 			path.join(asyncDir, "status.json"),
-			(proof) => ctx.pi.events.emit(SUBAGENT_PROCESS_TERMINAL_EVENT, proof),
+			(proof) => emitProcessTerminalEvent(ctx, proof),
 		);
 	} catch (error) {
 		params.activeAsyncCapacity?.rollback();
@@ -1846,7 +1859,7 @@ export function executeAsyncSingle(
 				steps: [{ agent, status: "pending" }],
 			},
 			path.join(asyncDir, "status.json"),
-			(proof) => ctx.pi.events.emit(SUBAGENT_PROCESS_TERMINAL_EVENT, proof),
+			(proof) => emitProcessTerminalEvent(ctx, proof),
 		);
 	} catch (error) {
 		params.activeAsyncCapacity?.rollback();
