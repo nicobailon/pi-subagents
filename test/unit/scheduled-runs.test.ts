@@ -153,6 +153,28 @@ describe("project schedule management", () => {
 		assert.match(text(shown), /Night review/);
 	});
 
+	it("does not let completed one-shot schedules consume maxPending capacity", async () => {
+		const h = harness({ config: { scheduledRuns: { enabled: true, maxPending: 1 } } });
+		await h.manager.handleToolCall({ action: "schedule.create", id: "completed", at: "+1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, h.ctx);
+		h.clock.now += 3_600_000;
+		h.timers.fireAll();
+		await flush();
+		assert.equal(h.launches.length, 1);
+		const activeResult = await h.manager.handleToolCall({ action: "schedule.create", id: "active-blocked", at: "+2h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, h.ctx);
+		assert.equal(activeResult.isError, true);
+		h.launches[0]!.resolve({ content: [{ type: "text", text: "Async" }], details: { mode: "single", results: [], asyncId: "completed-async" } });
+		await flush();
+		h.manager.handleAsyncCompletion({ runId: "completed-async", success: true });
+
+		const result = await h.manager.handleToolCall({ action: "schedule.create", id: "replacement", at: "+2h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, h.ctx);
+		assert.equal(result.isError, undefined);
+		const completedDir = path.join(scheduledRunStorePath(h.ctx.cwd, undefined, path.join(h.root, "stores")), "completed");
+		assert.equal(fs.existsSync(path.join(completedDir, "history.json")), true);
+		assert.equal(fs.existsSync(path.join(completedDir, "events.jsonl")), true);
+		const completedHistory = await h.manager.handleToolCall({ action: "schedule.history", id: "completed" }, h.ctx);
+		assert.match(text(completedHistory), /completed.*async completed-async/);
+	});
+
 	it("stores explicit cwd schedules in the target project", async () => {
 		const h = harness();
 		const target = path.join(h.root, "other-project");

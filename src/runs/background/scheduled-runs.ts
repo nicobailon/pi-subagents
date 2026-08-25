@@ -294,6 +294,10 @@ function resolveMaxPending(config: ExtensionConfig): number {
 	return typeof value === "number" && Number.isInteger(value) && value >= 1 ? value : DEFAULT_MAX_PENDING;
 }
 
+function hasPendingScheduleWork(schedule: ScheduleRecord): boolean {
+	return schedule.activeRunId !== undefined || schedule.trigger.nextRunAt !== undefined;
+}
+
 function nextAfter(trigger: ScheduleTrigger, plannedAt: number, now: number): string | undefined {
 	if (trigger.kind === "once") return undefined;
 	let next = plannedAt + trigger.everyMs;
@@ -479,7 +483,9 @@ export class ScheduledRunManager {
 		if (params.on !== undefined || params.timezone !== undefined || every === "day" || every === "week" || every === "month" || every === "year") return textResult("Calendar schedules are deferred from this first safe slice. Use a fixed interval such as every:'24h' or every:'7d'.", undefined, undefined, true);
 		const sessionId = ctx.sessionManager.getSessionId() ?? "unknown";
 		if (this.deps.resolveCapabilityCeiling?.(sessionId)) return textResult("Cannot persist a schedule while a capability ceiling is active.", undefined, undefined, true);
-		if (store.list().length >= resolveMaxPending(this.deps.config)) return textResult(`Schedule limit reached (${resolveMaxPending(this.deps.config)}).`, undefined, undefined, true);
+		const pendingCount = store.list().filter(hasPendingScheduleWork).length;
+		const maxPending = resolveMaxPending(this.deps.config);
+		if (pendingCount >= maxPending) return textResult(`Schedule limit reached (${maxPending}).`, undefined, undefined, true);
 		const id = validateScheduleId((params.id?.trim() || this.randomId()));
 		if (store.ids().includes(id)) return textResult(`Schedule '${id}' already exists.`, undefined, undefined, true);
 		const now = this.now();
