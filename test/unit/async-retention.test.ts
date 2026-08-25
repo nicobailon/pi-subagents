@@ -47,6 +47,12 @@ function writeOldResult(resultsDir: string, runId: string, overrides: Record<str
 	return resultPath;
 }
 
+function errno(code: string): NodeJS.ErrnoException {
+	const error = new Error(code) as NodeJS.ErrnoException;
+	error.code = code;
+	return error;
+}
+
 function cleanupOptions(roots: ReturnType<typeof makeRoots>) {
 	return {
 		...roots,
@@ -64,6 +70,53 @@ function writeRunTombstoneMarker(roots: ReturnType<typeof makeRoots>, runId: str
 }
 
 describe("async retention cleanup", () => {
+	it("repairs bounded dead running candidates before retention classification", async () => {
+		const roots = makeRoots();
+		try {
+			const runDir = writeOldRun(roots.asyncDirRoot, "dead-running", {
+				state: "running",
+				endedAt: undefined,
+				lastUpdate: OLD,
+				pid: 12345,
+				sessionId: "session-a",
+				steps: [{ agent: "worker", status: "running" }],
+			});
+			fs.mkdirSync(path.join(roots.asyncDirRoot, ".active-runs"));
+			fs.writeFileSync(path.join(roots.asyncDirRoot, ".active-runs", "dead-running"), "");
+			const protectedDir = writeOldRun(roots.asyncDirRoot, "protected-running", {
+				state: "running",
+				endedAt: undefined,
+				lastUpdate: OLD,
+				pid: 12346,
+				steps: [{ agent: "worker", status: "running" }],
+			});
+
+			const repaired = await cleanupAsyncRetention({
+				...cleanupOptions(roots),
+				protectedRunIds: ["protected-running"],
+				reconcileKill: () => { throw errno("ESRCH"); },
+			});
+
+			assert.equal(repaired.repairedRuns, 1);
+			assert.equal(repaired.deletedRuns, 0);
+			assert.equal(repaired.skipped.recent, 1);
+			assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, "status.json"), "utf-8")).state, "failed");
+			assert.equal(fs.existsSync(path.join(roots.asyncDirRoot, ".active-runs", "dead-running")), false);
+			assert.equal(fs.existsSync(path.join(roots.resultsDir, "dead-running.json")), true);
+			assert.equal(JSON.parse(fs.readFileSync(path.join(protectedDir, "status.json"), "utf-8")).state, "running");
+			assert.equal(repaired.skipped["runtime-reference"], 1);
+
+			const retained = await cleanupAsyncRetention({
+				...cleanupOptions(roots),
+				now: () => NOW + 45 * DAY_MS,
+			});
+			assert.equal(retained.deletedRuns, 1);
+			assert.equal(fs.existsSync(runDir), false);
+		} finally {
+			fs.rmSync(roots.root, { recursive: true, force: true });
+		}
+	});
+
 	it("deletes old proven-terminal runs and orphan results through tombstones", async () => {
 		const roots = makeRoots();
 		try {

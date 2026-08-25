@@ -9,6 +9,7 @@ import type { AsyncStatus } from "../../shared/types.ts";
 import { MISSION_BINDING_FILE } from "../../missions/lifecycle.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "./active-run-index.ts";
 import { encodeIndexSegment } from "./index-segment.ts";
+import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 
 export const ASYNC_RETENTION_DAYS = 30;
 export const ASYNC_RETENTION_BATCH_SIZE = 100;
@@ -96,11 +97,13 @@ export interface AsyncRetentionOptions {
 	lstatSync?: typeof fs.lstatSync;
 	signal?: AbortSignal;
 	discoveryWorkerUrl?: URL;
+	reconcileKill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 }
 
 export interface AsyncRetentionResult {
 	acquired: boolean;
 	scanned: number;
+	repairedRuns: number;
 	deletedRuns: number;
 	deletedResults: number;
 	reapedTombstones: number;
@@ -504,6 +507,7 @@ function appendMaintenanceLog(root: string, result: AsyncRetentionResult, now: n
 		at: new Date(now).toISOString(),
 		acquired: result.acquired,
 		scanned: result.scanned,
+		repairedRuns: result.repairedRuns,
 		deletedRuns: result.deletedRuns,
 		deletedResults: result.deletedResults,
 		reapedTombstones: result.reapedTombstones,
@@ -654,6 +658,7 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 	const result: AsyncRetentionResult = {
 		acquired: false,
 		scanned: 0,
+		repairedRuns: 0,
 		deletedRuns: 0,
 		deletedResults: 0,
 		reapedTombstones: 0,
@@ -750,7 +755,19 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 					increment(result.skipped, "unsafe-run-path");
 					continue;
 				}
-				const status = readStatus(runDir);
+				let status = readStatus(runDir);
+				if (status?.state === "running"
+					&& validRunId(status.runId)
+					&& path.basename(runDir) === status.runId
+					&& !protectedRunIds.has(status.runId)) {
+					const reconciliation = reconcileAsyncRun(runDir, {
+						resultsDir: options.resultsDir,
+						kill: options.reconcileKill,
+						now,
+					});
+					status = reconciliation.status ?? undefined;
+					if (reconciliation.repaired) result.repairedRuns += 1;
+				}
 				const initialReason = runSkipReason({ runDir, status, asyncDirRoot: options.asyncDirRoot, resultsDir: options.resultsDir, cutoff, protectedRunIds, waitRunIds: waitReferences.runIds });
 				if (initialReason) {
 					increment(result.skipped, initialReason);
