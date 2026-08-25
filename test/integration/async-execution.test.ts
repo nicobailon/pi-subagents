@@ -4347,6 +4347,53 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 
 
+	it("async workflows snapshot the parent model before the workflow child launches", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Done asynchronously" });
+		const events = createEventBus();
+		const state = {
+			baseCwd: tempDir,
+			currentSessionId: null,
+			asyncJobs: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+		};
+		const executor = createSubagentExecutor!({
+			pi: { events, getSessionName: () => undefined },
+			state,
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
+			expandTilde: (p: string) => p,
+			discoverAgents: () => ({ agents: [makeAgent("worker")] }),
+		});
+		const context = makeMinimalCtx(tempDir);
+		context.sessionManager.getSessionId = () => "session-workflow-parent-model";
+		context.model = { provider: "router", id: "openai-personal" };
+		context.sessionManager.getSessionFile = () => {
+			// Simulate the parent model leaving the live context during the async workflow handoff.
+			context.model = undefined;
+			return null;
+		};
+
+		const launch = await executor.execute(
+			"workflow-parent-model",
+			{ workflowScript: `return runs.run("child", { agent: "worker", task: "Do work" })`, async: true },
+			new AbortController().signal,
+			undefined,
+			context,
+		) as AsyncExecutionResult;
+		assert.equal(launch.isError, undefined);
+		assert.ok(launch.details.asyncId);
+
+		const payload = await readAsyncPayload(launch.details.asyncId);
+		assert.equal(payload.success, true);
+		const args = readMockPiArgs(mockPi, 0);
+		const modelIndex = args.indexOf("--model");
+		assert.notEqual(modelIndex, -1);
+		assert.equal(args[modelIndex + 1], "router/openai-personal");
+	});
+
 	it("background single runs inherit the parent session model when no model is set", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Done asynchronously" });
 
