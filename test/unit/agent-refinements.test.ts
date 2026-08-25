@@ -68,6 +68,24 @@ describe("agent refinements", () => {
 		assert.throws(() => getAgentRefinementPath(tempDir, "../worker"), /cannot be used/);
 	});
 
+	it("reports discovery evidence and does not launch or write for a missing refinement target", async () => {
+		let launched = false;
+		const result = await handleRefinementAction("refine", { agent: "missing" }, {
+			cwd: tempDir,
+			state: state(),
+			signal: new AbortController().signal,
+			launchProposalChild: async () => {
+				launched = true;
+				return { details: { results: [] } };
+			},
+		});
+		assert.equal(result.isError, true);
+		assert.equal(launched, false);
+		assert.match(firstText(result), /^Unknown agent: missing\nEffective cwd: /);
+		assert.match(firstText(result), /Consulted agent-definition directories:[\s\S]*Discovered agents:/);
+		assert.equal(fs.existsSync(getAgentRefinementPath(tempDir, "missing")), false);
+	});
+
 	it("does not launch or write when no bounded evidence exists", async () => {
 		writeProjectAgent();
 		let launched = false;

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { discoverAgents, resolveAgentName, type AgentConfig } from "./agents.ts";
+import { discoverAgents, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig } from "./agents.ts";
 import { getProjectSubagentsDir } from "../shared/artifacts.ts";
 import type { Details, JsonSchemaObject, SingleResult, SubagentState } from "../shared/types.ts";
 
@@ -536,10 +536,10 @@ function guidanceFromProposal(proposal: RefinementProposal): string {
 }
 
 function resolveOneAgent(cwd: string, agentName: string): { ok: true; agent: AgentConfig } | { ok: false; error: string } {
-	const agents = discoverAgents(cwd, "both").agents;
-	const resolved = resolveAgentName(agentName, agents);
+	const discovered = discoverAgents(cwd, "both");
+	const resolved = resolveAgentName(agentName, discovered.agents);
 	if (resolved.error) return { ok: false, error: resolved.error };
-	if (!resolved.agent) return { ok: false, error: `Unknown agent: ${agentName}` };
+	if (!resolved.agent) return { ok: false, error: formatUnknownAgentError(agentName, unknownAgentDiagnosticContext(discovered)) };
 	return { ok: true, agent: resolved.agent };
 }
 

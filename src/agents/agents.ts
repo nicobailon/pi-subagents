@@ -263,12 +263,70 @@ export function findBlockingAgentDiagnostic(name: string, agent: AgentConfig | r
 	return !agents.length || (match && agentDefinitionPriority(match) > highestPriority) ? match : undefined;
 }
 
-interface AgentDiscoveryResult {
+export type AgentDefinitionDirectoryState = "absent" | "empty" | "candidates" | "unreadable" | "not-directory";
+
+/** A definition directory actually inspected during one agent-discovery operation. */
+export interface AgentDefinitionDirectoryReport {
+	source: AgentSource;
+	path: string;
+	state: AgentDefinitionDirectoryState;
+	candidateCount?: number;
+}
+
+/**
+ * Filesystem provenance for a failed agent resolution. Context is created from
+ * the discovery result that supplied the effective agents; callers must not
+ * pair arbitrary agent arrays with these directory reports.
+ */
+export interface UnknownAgentDiagnosticContext {
+	cwd: string;
+	scope: AgentScope;
+	directories: readonly AgentDefinitionDirectoryReport[];
+	agents: readonly AgentConfig[];
+}
+
+export interface AgentDiscoveryResult {
 	agents: AgentConfig[];
 	agentDiagnostics?: AgentDiscoveryDiagnostic[];
 	projectAgentsDir: string | null;
+	cwd: string;
+	scope: AgentScope;
+	directories: readonly AgentDefinitionDirectoryReport[];
 	modelScope?: ModelScopeConfig;
 	maxThinking?: ThinkingLevel;
+}
+
+/** Create formatter input from the exact discovery operation used for resolution. */
+export function unknownAgentDiagnosticContext(discovered: Pick<AgentDiscoveryResult, "cwd" | "scope" | "directories" | "agents">): UnknownAgentDiagnosticContext {
+	return {
+		cwd: discovered.cwd,
+		scope: discovered.scope,
+		directories: discovered.directories,
+		agents: discovered.agents,
+	};
+}
+
+/** Render local discovery evidence without exposing filesystem error details. */
+export function formatUnknownAgentError(name: string, context: UnknownAgentDiagnosticContext, prefix = "Unknown agent"): string {
+	const directories = context.directories.map((directory) => {
+		const state = directory.state === "candidates"
+			? `${directory.candidateCount ?? 0} candidate${directory.candidateCount === 1 ? "" : "s"}`
+			: directory.state === "empty" ? "present but empty"
+				: directory.state === "not-directory" ? "not a directory"
+					: directory.state;
+		return `- ${directory.source}: ${directory.path} (${state})`;
+	});
+	const agents = [...context.agents]
+		.sort((left, right) => left.name.localeCompare(right.name) || left.source.localeCompare(right.source))
+		.map((agent) => `- ${agent.name} (${agent.source})`);
+	return [
+		`${prefix}: ${name}`,
+		`Effective cwd: ${path.resolve(context.cwd)}`,
+		"Consulted agent-definition directories:",
+		...(directories.length ? directories : ["- (none)"]),
+		"Discovered agents:",
+		...(agents.length ? agents : ["- (none)"]),
+	].join("\n");
 }
 
 function getUserChainDir(): string {
@@ -1650,6 +1708,81 @@ function listFilesRecursive(
 	return files;
 }
 
+export interface AgentDefinitionInspection {
+	files: string[];
+	state: AgentDefinitionDirectoryState;
+}
+
+/** Narrow filesystem seam so unavailable paths can be tested without permissions. */
+export interface AgentDefinitionInspectionFs {
+	existsSync(filePath: string): boolean;
+	realpathSync?(filePath: string): string;
+	statSync(filePath: string): { isDirectory(): boolean };
+	readdirSync(dir: string): fs.Dirent[];
+}
+
+const DEFAULT_AGENT_DEFINITION_INSPECTION_FS: AgentDefinitionInspectionFs = {
+	existsSync: fs.existsSync,
+	realpathSync: fs.realpathSync,
+	statSync: fs.statSync,
+	readdirSync: (dir) => fs.readdirSync(dir, { withFileTypes: true }),
+};
+
+/**
+ * Inspect one agent-definition directory while retaining traversal failure
+ * state. A nested unreadable directory makes the whole inspection unavailable,
+ * preventing a partial traversal from being reported as empty or complete.
+ */
+export function inspectAgentDefinitionDirectory(dir: string, operations: AgentDefinitionInspectionFs = DEFAULT_AGENT_DEFINITION_INSPECTION_FS): AgentDefinitionInspection {
+	const root = path.resolve(dir);
+	try {
+		if (!operations.existsSync(root)) return { files: [], state: "absent" };
+		if (!operations.statSync(root).isDirectory()) return { files: [], state: "not-directory" };
+	} catch {
+		return { files: [], state: "unreadable" };
+	}
+	const files: string[] = [];
+	let unreadable = false;
+	const visitedDirectories = new Set<string>();
+	const visit = (current: string): void => {
+		let realDir: string;
+		try {
+			realDir = operations.realpathSync?.(current) ?? path.resolve(current);
+		} catch {
+			unreadable = true;
+			return;
+		}
+		if (visitedDirectories.has(realDir)) return;
+		visitedDirectories.add(realDir);
+
+		let entries: fs.Dirent[];
+		try {
+			entries = operations.readdirSync(current).sort((a, b) => a.name.localeCompare(b.name));
+		} catch {
+			unreadable = true;
+			return;
+		}
+		for (const entry of entries) {
+			const filePath = path.join(current, entry.name);
+			let isDirectory = entry.isDirectory();
+			if (entry.isSymbolicLink()) {
+				try {
+					isDirectory = operations.statSync(filePath).isDirectory();
+				} catch {
+					isDirectory = false;
+				}
+			}
+			if (isDirectory) {
+				if (!shouldPruneDiscoveryDir(root, filePath, entry.name)) visit(filePath);
+				continue;
+			}
+			if ((entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".md") && !entry.name.endsWith(".chain.md") && !isLegacyAgentSkillPath(root, filePath)) files.push(filePath);
+		}
+	};
+	visit(root);
+	return { files, state: unreadable ? "unreadable" : files.length ? "candidates" : "empty" };
+}
+
 function isLegacyAgentSkillPath(rootDir: string, filePath: string): boolean {
 	const relative = path.relative(rootDir, filePath);
 	const parts = relative.split(path.sep).map((part) => part.toLowerCase());
@@ -1755,9 +1888,9 @@ interface AgentDefinitionFile {
 	content: string;
 }
 
-function readAgentDefinitionFiles(dir: string): AgentDefinitionFile[] {
+function readAgentDefinitionFiles(dir: string, inspection = inspectAgentDefinitionDirectory(dir)): AgentDefinitionFile[] {
 	const files: AgentDefinitionFile[] = [];
-	for (const filePath of listFilesRecursive(dir, (fileName) => fileName.endsWith(".md") && !fileName.endsWith(".chain.md"))) {
+	for (const filePath of inspection.files) {
 		if (isLegacyAgentSkillPath(dir, filePath)) {
 			continue;
 		}
@@ -1977,8 +2110,17 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 	return { agents, diagnostics };
 }
 
-function loadAgentsFromDir(dir: string, source: AgentSource, discoveryPriority?: number, packageSource?: Omit<PackageSubagentPath, "dir">): { agents: AgentConfig[]; diagnostics: AgentDiscoveryDiagnostic[] } {
-	return loadAgentsFromDefinitionFiles(readAgentDefinitionFiles(dir), source, discoveryPriority, packageSource);
+function loadAgentsFromDir(dir: string, source: AgentSource, discoveryPriority?: number, packageSource?: Omit<PackageSubagentPath, "dir">, inspection = inspectAgentDefinitionDirectory(dir)): { agents: AgentConfig[]; diagnostics: AgentDiscoveryDiagnostic[] } {
+	return loadAgentsFromDefinitionFiles(readAgentDefinitionFiles(dir, inspection), source, discoveryPriority, packageSource);
+}
+
+function reportAgentDefinitionDirectory(source: AgentSource, dir: string, inspection: AgentDefinitionInspection): AgentDefinitionDirectoryReport {
+	return {
+		source,
+		path: path.resolve(dir),
+		state: inspection.state,
+		...(inspection.state === "candidates" ? { candidateCount: inspection.files.length } : {}),
+	};
 }
 
 function loadChainsFromDir(dir: string, source: AgentSource): { chains: ChainConfig[]; diagnostics: ChainDiscoveryDiagnostic[] } {
@@ -2015,20 +2157,18 @@ function isDirectory(p: string): boolean {
 	}
 }
 
-function resolveNearestProjectAgentDirs(cwd: string): { readDirs: string[]; preferredDir: string | null } {
+function resolveNearestProjectAgentDirs(cwd: string): { readDirs: string[]; candidateDirs: string[]; preferredDir: string | null } {
 	const projectRoot = findConfiguredProjectRoot(cwd);
-	if (!projectRoot) return { readDirs: [], preferredDir: null };
+	if (!projectRoot) return { readDirs: [], candidateDirs: [], preferredDir: null };
 
 	const legacyDir = path.join(projectRoot, ".agents");
 	const preferredDir = path.join(getProjectConfigDir(projectRoot), "agents");
+	const candidateDirs = [legacyDir, preferredDir];
 	const readDirs: string[] = [];
 	if (isDirectory(legacyDir)) readDirs.push(legacyDir);
 	if (isDirectory(preferredDir)) readDirs.push(preferredDir);
 
-	return {
-		readDirs,
-		preferredDir,
-	};
+	return { readDirs, candidateDirs, preferredDir };
 }
 
 function resolveNearestProjectChainDirs(cwd: string): { readDirs: string[]; preferredDir: string | null } {
@@ -2042,7 +2182,9 @@ function resolveNearestProjectChainDirs(cwd: string): { readDirs: string[]; pref
 	};
 }
 const BUILTIN_AGENTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "agents");
-const BUILTIN_AGENT_DEFINITION_FILES = readAgentDefinitionFiles(BUILTIN_AGENTS_DIR);
+// Candidate files and inspection state must describe the same cached builtin scan.
+const BUILTIN_AGENT_DEFINITION_INSPECTION = inspectAgentDefinitionDirectory(BUILTIN_AGENTS_DIR);
+const BUILTIN_AGENT_DEFINITION_FILES = readAgentDefinitionFiles(BUILTIN_AGENTS_DIR, BUILTIN_AGENT_DEFINITION_INSPECTION);
 
 export const EXTRA_AGENT_DIRS_ENV = "PI_SUBAGENT_EXTRA_AGENT_DIRS";
 
@@ -2061,11 +2203,12 @@ function extraUserAgentDirs(): string[] {
 }
 
 export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
+	const effectiveCwd = path.resolve(cwd);
 	const userDirOld = path.join(getAgentDir(), "agents");
 	const userDirNew = path.join(os.homedir(), ".agents");
-	const { readDirs: projectAgentDirs, preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(cwd);
+	const { readDirs: projectAgentDirs, candidateDirs: projectCandidateDirs, preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(effectiveCwd);
 	const userSettingsPath = getUserAgentSettingsPath();
-	const projectSettingsPath = getProjectAgentSettingsPath(cwd);
+	const projectSettingsPath = getProjectAgentSettingsPath(effectiveCwd);
 	const userSettings = scope === "project" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(userSettingsPath);
 	const projectSettings = scope === "user" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(projectSettingsPath);
 	const defaultProvider = resolveSubagentDefaultProvider(userSettings, projectSettings, projectSettingsPath);
@@ -2074,65 +2217,60 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	const maxThinking = resolveSubagentMaxThinking(userSettings, projectSettings, projectSettingsPath);
 	const defaultExtensions = resolveSubagentDefaultExtensions(userSettings, projectSettings, projectSettingsPath);
 	const modelScope = projectSettings.modelScope ?? userSettings.modelScope;
-	const packageSubagentPaths = collectPackageSubagentPaths(cwd, {
+	const packageSubagentPaths = collectPackageSubagentPaths(effectiveCwd, {
 		includeUser: scope !== "project",
 		includeProject: scope !== "user",
 	});
+	const directories: AgentDefinitionDirectoryReport[] = [reportAgentDefinitionDirectory("builtin", BUILTIN_AGENTS_DIR, BUILTIN_AGENT_DEFINITION_INSPECTION)];
 
 	const builtinLoaded = loadAgentsFromDefinitionFiles(BUILTIN_AGENT_DEFINITION_FILES, "builtin");
 	const builtinAgents = applyBuiltinOverrides(
 		applySubagentDefaults(builtinLoaded.agents, defaultModel, defaultProvider, defaultThinking, defaultExtensions),
-		userSettings,
-		projectSettings,
-		userSettingsPath,
-		projectSettingsPath,
+		userSettings, projectSettings, userSettingsPath, projectSettingsPath,
 	);
 
-	const userLoaded = scope === "project" ? [] : [...extraUserAgentDirs(), userDirOld, userDirNew]
-		.map((dir, discoveryPriority) => loadAgentsFromDir(dir, "user", discoveryPriority));
+	const userLoaded = scope === "project" ? [] : [...extraUserAgentDirs(), userDirOld, userDirNew].map((dir, discoveryPriority) => {
+		const inspection = inspectAgentDefinitionDirectory(dir);
+		directories.push(reportAgentDefinitionDirectory("user", dir, inspection));
+		return loadAgentsFromDir(dir, "user", discoveryPriority, undefined, inspection);
+	});
 	const userAgents = applyCustomAgentOverrides(
 		applySubagentDefaults(userLoaded.flatMap((loaded) => loaded.agents), defaultModel, defaultProvider, defaultThinking, defaultExtensions),
-		userSettings,
-		projectSettings,
-		userSettingsPath,
-		projectSettingsPath,
+		userSettings, projectSettings, userSettingsPath, projectSettingsPath,
 	);
 
-	const projectLoaded = scope === "user" ? [] : projectAgentDirs.map((dir) => loadAgentsFromDir(dir, "project", dir === projectAgentsDir ? 1 : 0));
+	// Report both legacy and preferred project definition paths only after the
+	// existing configured-root resolver found a root; never synthesize cwd paths.
+	const projectInspections = scope === "user" ? new Map<string, AgentDefinitionInspection>() : new Map(projectCandidateDirs.map((dir) => [dir, inspectAgentDefinitionDirectory(dir)]));
+	if (scope !== "user") for (const dir of projectCandidateDirs) directories.push(reportAgentDefinitionDirectory("project", dir, projectInspections.get(dir)!));
+	const projectLoaded = scope === "user" ? [] : projectAgentDirs.map((dir) => loadAgentsFromDir(dir, "project", dir === projectAgentsDir ? 1 : 0, undefined, projectInspections.get(dir)!));
 	const projectAgents = applyCustomAgentOverrides(
 		applySubagentDefaults(projectLoaded.flatMap((loaded) => loaded.agents), defaultModel, defaultProvider, defaultThinking, defaultExtensions),
-		userSettings,
-		projectSettings,
-		userSettingsPath,
-		projectSettingsPath,
-	);
-	const packageLoaded = packageSubagentPaths.agents.map((entry, index) => loadAgentsFromDir(entry.dir, "package", packageSubagentPaths.agents.length - index, entry));
-	const packageMap = new Map<string, AgentConfig>();
-	for (const loaded of packageLoaded) {
-		for (const agent of loaded.agents) {
-			if (!packageMap.has(agent.name)) packageMap.set(agent.name, agent);
-		}
-	}
-	const packageAgents = applyCustomAgentOverrides(
-		applySubagentDefaults(Array.from(packageMap.values()), defaultModel, defaultProvider, defaultThinking, defaultExtensions),
-		userSettings,
-		projectSettings,
-		userSettingsPath,
-		projectSettingsPath,
-	);
-	const agents = applySubagentMaxThinking(
-		mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents, packageAgents)
-			.filter((agent) => agent.disabled !== true),
-		maxThinking,
+		userSettings, projectSettings, userSettingsPath, projectSettingsPath,
 	);
 
+	const packageLoaded = packageSubagentPaths.agents.map((entry, index) => {
+		const inspection = inspectAgentDefinitionDirectory(entry.dir);
+		directories.push(reportAgentDefinitionDirectory("package", entry.dir, inspection));
+		return loadAgentsFromDir(entry.dir, "package", packageSubagentPaths.agents.length - index, entry, inspection);
+	});
+	const packageMap = new Map<string, AgentConfig>();
+	for (const loaded of packageLoaded) for (const agent of loaded.agents) if (!packageMap.has(agent.name)) packageMap.set(agent.name, agent);
+	const packageAgents = applyCustomAgentOverrides(
+		applySubagentDefaults(Array.from(packageMap.values()), defaultModel, defaultProvider, defaultThinking, defaultExtensions),
+		userSettings, projectSettings, userSettingsPath, projectSettingsPath,
+	);
+	const agents = applySubagentMaxThinking(
+		mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents, packageAgents).filter((agent) => agent.disabled !== true),
+		maxThinking,
+	);
 	const agentDiagnostics = [
 		...builtinLoaded.diagnostics,
 		...userLoaded.flatMap((loaded) => loaded.diagnostics),
 		...projectLoaded.flatMap((loaded) => loaded.diagnostics),
 		...packageLoaded.flatMap((loaded) => loaded.diagnostics),
 	];
-	return { agents, agentDiagnostics, projectAgentsDir, ...(modelScope !== undefined ? { modelScope } : {}), ...(maxThinking !== undefined ? { maxThinking } : {}) };
+	return { agents, agentDiagnostics, projectAgentsDir, cwd: effectiveCwd, scope, directories, ...(modelScope !== undefined ? { modelScope } : {}), ...(maxThinking !== undefined ? { maxThinking } : {}) };
 }
 
 export function discoverAgentsAll(cwd: string): {

@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
-import type { AgentConfig } from "../../agents/agents.ts";
+import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig } from "../../agents/agents.ts";
 import { appendAgentRefinementOverlay } from "../../agents/agent-refinements.ts";
 import { alignForkedSessionCwd } from "../../shared/fork-context.ts";
 import {
@@ -1674,6 +1674,8 @@ async function runSyncCompletionInner(
 	};
 	const agent = agents.find((a) => a.name === agentName);
 	if (!agent) {
+		const diagnosticContext = options.unknownAgentDiagnosticContext
+			?? unknownAgentDiagnosticContext(discoverAgents(path.resolve(options.cwd ?? runtimeCwd), "both"));
 		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
 			agent: agentName,
@@ -1681,7 +1683,7 @@ async function runSyncCompletionInner(
 			exitCode: 1,
 			messages: [],
 			usage: emptyUsage(),
-			error: `Unknown agent: ${agentName}`,
+			error: formatUnknownAgentError(agentName, diagnosticContext),
 		}, options.context));
 	}
 	options = {

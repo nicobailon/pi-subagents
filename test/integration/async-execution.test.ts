@@ -470,7 +470,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		removeTempDir(tempDir);
 	});
 
-	function makeAsyncExecutor(agents: ReturnType<typeof makeAgent>[], config: Record<string, unknown> = {}) {
+	function makeAsyncExecutor(
+		agents: ReturnType<typeof makeAgent>[],
+		config: Record<string, unknown> = {},
+		discoverOverride?: (cwd: string) => { agents: ReturnType<typeof makeAgent>[]; cwd?: string; scope?: "user" | "project" | "both"; directories?: Array<{ source: "builtin" | "package" | "user" | "project" | "runtime"; path: string; state: "absent" | "empty" | "candidates" | "unreadable" | "not-directory"; candidateCount?: number }> },
+	) {
 		return createSubagentExecutor!({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
 			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
@@ -479,7 +483,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (p: string) => p,
-			discoverAgents: () => ({ agents }),
+			discoverAgents: (cwd: string) => discoverOverride ? discoverOverride(cwd) : ({ agents }),
 		});
 	}
 
@@ -4552,6 +4556,91 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(result.details.asyncId);
 		const payload = await readAsyncPayload(result.details.asyncId);
 		assert.equal(payload.results[0]?.model, "gateway/parent-model");
+	});
+
+	it("reports the retained discovery context when a resumed target agent is missing", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+		const runId = `resume-missing-agent-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const sessionFile = path.join(tempDir, "missing-agent-session.jsonl");
+		const visible = makeAgent("visible");
+		visible.source = "project";
+		const evidenceDir = path.join(tempDir, "request-discovery", "agents");
+		try {
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId,
+				sessionId: "session-123",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				cwd: tempDir,
+				sessionFile,
+				steps: [{ agent: "vanished", status: "complete" }],
+			}, null, 2), "utf-8");
+			const executor = makeAsyncExecutor([visible], {}, (cwd) => ({
+				agents: [visible],
+				cwd: path.resolve(cwd),
+				scope: "both",
+				directories: [{ source: "project", path: evidenceDir, state: "empty" }],
+			}));
+			const result = await executor.execute(
+				"resume-missing-agent",
+				{ action: "resume", id: runId, message: "Continue" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			) as AsyncExecutionResult;
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /^Unknown agent for resume: vanished\nEffective cwd: /);
+			assert.match(result.content[0]?.text ?? "", new RegExp(evidenceDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+			assert.match(result.content[0]?.text ?? "", /visible \(project\)/);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
+	});
+
+	it("uses the append request discovery context for a missing appended agent", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+		const runId = `append-missing-agent-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const visible = makeAgent("visible");
+		visible.source = "project";
+		const evidenceDir = path.join(tempDir, "append-request", "agents");
+		const storedCwd = path.join(tempDir, "stored-run-cwd");
+		try {
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId,
+				sessionId: "session-123",
+				mode: "chain",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				cwd: storedCwd,
+				steps: [{ agent: "visible", status: "running" }],
+			}, null, 2), "utf-8");
+			const executor = makeAsyncExecutor([visible], {}, (cwd) => ({
+				agents: [visible],
+				cwd: path.resolve(cwd),
+				scope: "both",
+				directories: [{ source: "project", path: evidenceDir, state: "empty" }],
+			}));
+			const result = await executor.execute(
+				"append-missing-agent",
+				{ action: "append-step", id: runId, step: { agent: "vanished", task: "Review" } },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			) as AsyncExecutionResult;
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /^Unknown agent: vanished\nEffective cwd: /);
+			assert.match(result.content[0]?.text ?? "", new RegExp(evidenceDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+			assert.match(result.content[0]?.text ?? "", /visible \(project\)/);
+			assert.doesNotMatch(result.content[0]?.text ?? "", new RegExp(storedCwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
 	});
 
 	it("background chains inherit the parent session model when no step or agent model is set", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
