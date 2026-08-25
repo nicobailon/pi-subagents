@@ -1616,7 +1616,17 @@ function listFilesRecursive(dir: string, predicate: (fileName: string) => boolea
 
 	for (const entry of entries) {
 		const filePath = path.join(dir, entry.name);
-		if (entry.isDirectory()) {
+		// isDirectory() does not follow symlinks; resolve the target so a symlinked
+		// directory recurses like a real one (matches skill discovery, cf. #262).
+		let isDir = entry.isDirectory();
+		if (entry.isSymbolicLink()) {
+			try {
+				isDir = fs.statSync(filePath).isDirectory();
+			} catch {
+				// dangling symlink: leave isDir false and fall through to the file branch
+			}
+		}
+		if (isDir) {
 			if (!shouldPruneDiscoveryDir(rootDir, filePath, entry.name)) {
 				files.push(...listFilesRecursive(filePath, predicate, rootDir));
 			}
