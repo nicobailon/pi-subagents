@@ -75,6 +75,14 @@ import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling,
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
 import { resolvePermissionRules, type PermissionConfig } from "../shared/permissions.ts";
 import { normalizeExtensionBindings, omitExtensionBindingsEnv, type ExtensionBindings } from "../shared/extension-bindings.ts";
+import {
+	SUBAGENT_LAUNCH_AUTHORIZATION_ENV,
+	authorizeSubagentLaunch,
+	encodeSubagentLaunchAuthorizationReservations,
+	resolveSubagentLaunchAuthorizationReservations,
+	type ResolvedSubagentLaunchAuthorizationReservations,
+	type SubagentLaunchAuthorizationInvocation,
+} from "../shared/launch-authorization.ts";
 
 const require = createRequire(import.meta.url);
 const piPackageRoot = resolvePiPackageRoot();
@@ -261,6 +269,8 @@ interface AsyncSingleParams {
 	workflowKey?: string;
 	workflowAwaitAsync?: boolean;
 	activeAsyncCapacity?: ActiveAsyncCapacityHandle;
+	/** Process-local, non-model-visible root invocation identity for launch authorization. */
+	launchAuthorization?: SubagentLaunchAuthorizationInvocation;
 	externalJobFollowUp?: {
 		sourceRunId: string;
 		sourceStepIndex: number;
@@ -493,7 +503,13 @@ interface SpawnRunnerResult {
 	startupDidNotProceed?: boolean;
 }
 
-function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal?: (proof: unknown) => void): SpawnRunnerResult {
+function spawnRunner(
+	cfg: object,
+	suffix: string,
+	cwd: string,
+	onProcessTerminal?: (proof: unknown) => void,
+	launchAuthorizationReservations?: ResolvedSubagentLaunchAuthorizationReservations,
+): SpawnRunnerResult {
 	if (!jitiCliPath) {
 		return { error: "upstream jiti for TypeScript execution could not be found; ensure package dependencies are installed" };
 	}
@@ -544,6 +560,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 			windowsHide: true,
 			env: {
 				...omitExtensionBindingsEnv(process.env),
+				[SUBAGENT_LAUNCH_AUTHORIZATION_ENV]: encodeSubagentLaunchAuthorizationReservations(launchAuthorizationReservations),
 				...(piPackageRoot ? { [PI_CODING_AGENT_PACKAGE_ROOT_ENV]: piPackageRoot } : {}),
 			},
 		});
@@ -1241,6 +1258,7 @@ export function executeAsyncChain(
 			id,
 			runnerCwd,
 			(proof) => ctx.pi.events.emit(SUBAGENT_PROCESS_TERMINAL_EVENT, proof),
+			resolveSubagentLaunchAuthorizationReservations(ctx.parentSessionId ?? ctx.currentSessionId),
 		);
 	} catch (error) {
 		params.activeAsyncCapacity?.rollback();
@@ -1590,8 +1608,9 @@ export function executeAsyncSingle(
 		});
 		if (contractError) return formatAsyncStartError("single", contractError);
 	}
+	const definitionDigest = agentDefinitionDigest(agentConfig);
 	const launchContractDigest = launchBindingDigest({
-		definitionDigest: agentDefinitionDigest(agentConfig),
+		definitionDigest,
 		task,
 		...(model ? { model } : {}),
 		modelCandidates,
@@ -1611,6 +1630,43 @@ export function executeAsyncSingle(
 		...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
 		...(extensionBindings ? { extensionBindings } : {}),
 	});
+	const launchAuthorizationSessionId = ctx.parentSessionId ?? ctx.currentSessionId;
+	let launchAuthorizationReservations: ResolvedSubagentLaunchAuthorizationReservations | undefined;
+	try {
+		launchAuthorizationReservations = resolveSubagentLaunchAuthorizationReservations(launchAuthorizationSessionId);
+		authorizeSubagentLaunch({
+			version: 1,
+			...(launchAuthorizationSessionId ? { sessionId: launchAuthorizationSessionId } : {}),
+			invocation: params.launchAuthorization ?? { id, origin: "internal" },
+			run: {
+				id,
+				childIndex: 0,
+				modelAttempt: 0,
+				startupAttempt: 0,
+				async: true,
+			},
+			agent: {
+				name: agentConfig.name,
+				source: agentConfig.source ?? "runtime",
+				filePath: agentConfig.filePath ?? `<runtime:${agentConfig.name}>`,
+				definitionDigest,
+				runner: externalRunnerType === "external-cli" || externalRunnerType === "external-job" ? externalRunnerType : "native",
+			},
+			contract: {
+				launchContractDigest,
+				...(params.context ? { context: params.context } : {}),
+				...(model ? { model } : {}),
+				modelCandidates,
+			},
+		});
+	} catch (error) {
+		try {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+		} catch {
+			// Authorization remains denied even when best-effort launch-state cleanup fails.
+		}
+		return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
+	}
 	const resolvedAcceptance = resolveEffectiveAcceptance({
 		explicit: params.acceptance,
 		agentName: agent,
@@ -1774,6 +1830,7 @@ export function executeAsyncSingle(
 			id,
 			runnerCwd,
 			(proof) => ctx.pi.events.emit(SUBAGENT_PROCESS_TERMINAL_EVENT, proof),
+			launchAuthorizationReservations,
 		);
 	} catch (error) {
 		params.activeAsyncCapacity?.rollback();

@@ -66,6 +66,12 @@ import {
 	type ResolvedSubagentCapabilityCeiling,
 	type SubagentCapabilityAudit,
 } from "./capability-ceiling.ts";
+import {
+	SUBAGENT_LAUNCH_AUTHORIZATION_ENV,
+	decodeSubagentLaunchAuthorizationReservations,
+	encodeSubagentLaunchAuthorizationReservations,
+	type ResolvedSubagentLaunchAuthorizationReservations,
+} from "./launch-authorization.ts";
 
 const TASK_ARG_LIMIT = 8000;
 
@@ -202,6 +208,7 @@ export interface BuildPiArgsInput {
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	thinkingCeiling?: import("../../shared/model-info.ts").ThinkingLevel;
 	extensionBindings?: ExtensionBindings;
+	launchAuthorizationReservations?: ResolvedSubagentLaunchAuthorizationReservations;
 }
 
 export interface BuildPiArgsResult {
@@ -714,6 +721,9 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 
 	const env: Record<string, string | undefined> = {};
 	env[PI_SUBAGENT_EXTENSION_BINDINGS_ENV] = encodeExtensionBindings(input.extensionBindings);
+	env[SUBAGENT_LAUNCH_AUTHORIZATION_ENV] = encodeSubagentLaunchAuthorizationReservations(
+		input.launchAuthorizationReservations ?? decodeSubagentLaunchAuthorizationReservations(process.env[SUBAGENT_LAUNCH_AUTHORIZATION_ENV]),
+	);
 	const piPackageRoot =
 		process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] ?? resolvePiPackageRoot();
 	if (piPackageRoot) env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = piPackageRoot;

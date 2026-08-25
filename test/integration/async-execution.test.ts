@@ -26,6 +26,12 @@ import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey } from "../../src/runs/background/active-async-capacity.ts";
+import {
+	SUBAGENT_LAUNCH_AUTHORIZATION_ENV,
+	decodeSubagentLaunchAuthorizationReservations,
+	registerSubagentLaunchAuthorizationProvider,
+	type SubagentLaunchAuthorizationRequest,
+} from "../../src/api/launch-authorization.ts";
 
 interface LaunchResolvedExtensions {
 	version?: number;
@@ -547,6 +553,46 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		}
 	});
 
+	it("denies dynamically selected reserved agents inside an async workflow", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "must not spawn" });
+		let seen: Readonly<SubagentLaunchAuthorizationRequest> | undefined;
+		const dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "test.async-workflow-deny/1",
+			sessionId: "session-123",
+			agents: ["worker"],
+			authorize(request) {
+				seen = request;
+				return { decision: "deny", reason: "async workflow receipt missing" };
+			},
+		});
+		try {
+			const launch = await makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]).execute(
+				"async-workflow-authorization-tool-call",
+				{
+					async: true,
+					workflowScript: `const agent = ["wor", "ker"].join(""); return runs.run("protected-review", { agent, task: "Review" });`,
+				},
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "async workflow launch failed");
+			const workflowRunId = launch.details?.asyncId;
+			assert.ok(workflowRunId, "expected async workflow run id");
+			const payload = await readAsyncPayload(workflowRunId);
+			assert.equal(payload.success, false);
+			assert.match(payload.error ?? payload.summary ?? "", /async workflow receipt missing/);
+			assert.equal(seen?.invocation.id, "async-workflow-authorization-tool-call");
+			assert.equal(seen?.invocation.origin, "workflow");
+			assert.equal(seen?.invocation.parentId, "async-workflow-authorization-tool-call");
+			assert.equal(seen?.invocation.workflowRunId, workflowRunId);
+			assert.equal(seen?.invocation.workflowKey, "protected-review");
+			assert.equal(mockPi.callCount(), 0);
+		} finally {
+			dispose();
+		}
+	});
+
 	it("background parses split UTF-8 JSON and a final unterminated protocol line", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const line = Buffer.from(JSON.stringify(events.assistantMessage("你好 from fragmented async JSON")));
 		const unicodeStart = line.indexOf(Buffer.from("你"));
@@ -610,6 +656,81 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.success, false);
 		assert.equal(payload.results[0]?.outputState, "present");
 		assert.equal(payload.results[0]?.output, "usable partial answer");
+	});
+
+	it("authorizes an async single before runner spawn and propagates reservations to its child", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const sessionId = `async-authorization-session-${Date.now()}-${Math.random()}`;
+		const id = `async-authorization-${Date.now().toString(36)}`;
+		let seen: Readonly<SubagentLaunchAuthorizationRequest> | undefined;
+		let dispose = () => {};
+		dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "test.async/1",
+			sessionId,
+			agents: ["worker"],
+			authorize(request) {
+				seen = request;
+				dispose();
+				return { decision: "allow" };
+			},
+		});
+		try {
+			mockPi.onCall({ echoEnv: [SUBAGENT_LAUNCH_AUTHORIZATION_ENV] });
+			const launch = executeAsyncSingle(id, {
+				agent: "worker",
+				task: "Exercise async launch authorization",
+				agentConfig: makeAgent("worker", { completionGuard: false }),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: `${sessionId}.jsonl`, parentSessionId: sessionId },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				sessionRoot: path.join(tempDir, "sessions"),
+				maxSubagentDepth: 2,
+				acceptance: false,
+				launchAuthorization: { id: "rpc-spawn-authorized", origin: "rpc" },
+			});
+			assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "async launch failed");
+			assert.equal(seen?.invocation.id, "rpc-spawn-authorized");
+			assert.equal(seen?.run.id, id);
+			assert.equal(seen?.run.async, true);
+			assert.equal(seen?.contract.launchContractDigest, launch.details.launchContractDigest);
+			const payload = await readAsyncPayload(id);
+			const childEnv = JSON.parse(payload.results[0]?.output ?? "{}") as Record<string, string | null>;
+			const reservations = decodeSubagentLaunchAuthorizationReservations(childEnv[SUBAGENT_LAUNCH_AUTHORIZATION_ENV] ?? undefined);
+			assert.deepEqual(reservations?.providers, [{ provider: "test.async/1", agents: ["worker"] }]);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("denies an async single before spawning its detached runner", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
+		const sessionId = `async-denial-session-${Date.now()}-${Math.random()}`;
+		const id = `async-denial-${Date.now().toString(36)}`;
+		const dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "test.async-deny/1",
+			sessionId,
+			agents: ["worker"],
+			authorize: () => ({ decision: "deny", reason: "async receipt missing" }),
+		});
+		try {
+			mockPi.onCall({ output: "must not spawn" });
+			const launch = executeAsyncSingle(id, {
+				agent: "worker",
+				task: "Exercise async denial",
+				agentConfig: makeAgent("worker", { completionGuard: false }),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: `${sessionId}.jsonl`, parentSessionId: sessionId },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				sessionRoot: path.join(tempDir, "sessions"),
+				maxSubagentDepth: 2,
+				acceptance: false,
+				launchAuthorization: { id: "rpc-spawn-denied", origin: "rpc" },
+			});
+			assert.equal(launch.isError, true);
+			assert.match(launch.content[0]?.text ?? "", /async receipt missing/);
+			assert.equal(mockPi.callCount(), 0);
+			assert.equal(fs.existsSync(path.join(ASYNC_DIR, id)), false);
+		} finally {
+			dispose();
+		}
 	});
 
 	it("matches preflight launch digest in equivalent foreground and async execution", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

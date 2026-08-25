@@ -75,6 +75,7 @@ import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
+import type { SubagentLaunchAuthorizationInvocation } from "../shared/launch-authorization.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { assertJsonSchemaObject, cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
@@ -424,6 +425,7 @@ interface ExecutionContextData {
 	/** Discovered agent definitions before per-run bridge injection. */
 	recoveryAgents: AgentConfig[];
 	runId: string;
+	launchAuthorization: SubagentLaunchAuthorizationInvocation;
 	shareEnabled: boolean;
 	sessionRoot: string;
 	sessionDirForIndex: (idx?: number) => string;
@@ -1570,6 +1572,7 @@ async function resumeExternalJobFollowUp(input: {
 	intercomBridge: IntercomBridgeState;
 	parentSessionFile: string | null;
 	absoluteDeadlineAt?: number;
+	launchAuthorization: SubagentLaunchAuthorizationInvocation;
 }): Promise<AgentToolResult<Details>> {
 	if (input.target.kind === "live" || input.target.state === "running" || input.target.state === "queued") {
 		return { content: [{ type: "text", text: `External-job run '${input.target.runId}' is still running. Wait for completion, then use subagent({ action: "resume", id: "${input.target.runId}", message: "..." }).` }], isError: true, details: { mode: "management", results: [] } };
@@ -1658,6 +1661,7 @@ async function resumeExternalJobFollowUp(input: {
 		capabilityCeiling: resolveCurrentSubagentCapabilityCeiling(currentSessionId),
 		runFanoutBudget: createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(input.deps.config.maxSubagentSpawnsPerRun)),
 		activeAsyncCapacity,
+		launchAuthorization: input.launchAuthorization,
 		externalJobFollowUp: { sourceRunId: input.target.runId, sourceStepIndex: input.target.index, parentProviderJobId: externalJob.providerJobId, requestId, requestDigest },
 	}));
 	if (result.isError) {
@@ -1675,6 +1679,7 @@ async function resumeAsyncRun(input: {
 	parentModel?: ParentModel;
 	absoluteDeadlineAt?: number;
 	signal?: AbortSignal;
+	launchAuthorization: SubagentLaunchAuthorizationInvocation;
 }): Promise<AgentToolResult<Details>> {
 	const followUp = (input.params.message ?? input.params.task ?? "").trim();
 	const attachChain = (input.params.chain?.length ?? 0) > 0 ? input.params.chain as ChainStep[] : undefined;
@@ -1820,6 +1825,7 @@ async function resumeAsyncRun(input: {
 			intercomBridge,
 			parentSessionFile,
 			absoluteDeadlineAt: input.absoluteDeadlineAt,
+			launchAuthorization: input.launchAuthorization,
 		});
 	}
 
@@ -2006,6 +2012,7 @@ async function resumeAsyncRun(input: {
 		thinkingOverride: recoveryDescriptor?.thinking ?? target.thinking,
 		thinkingCeiling: recoveryDescriptor?.thinkingCeiling ?? ("thinkingCeiling" in target ? target.thinkingCeiling : undefined),
 		extensionBindings: recoveryDescriptor?.extensionBindings ?? ("extensionBindings" in target ? target.extensionBindings : undefined),
+		launchAuthorization: input.launchAuthorization,
 		outputBaseDir: resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId),
 		maxSubagentDepth: recoveryDescriptor?.maxSubagentDepth ?? resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
 		waitToolEnabled: input.deps.waitToolEnabled,
@@ -3242,6 +3249,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			agentContract: params.agentContract,
 			structuredOutputSchema: params.outputSchema,
 			extensionBindings: params.extensionBindings,
+			launchAuthorization: data.launchAuthorization,
 			acceptance: params.acceptance,
 			timeoutMs: data.timeoutMs,
 			turnBudget: data.turnBudget,
@@ -3708,6 +3716,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
 			thinkingCeiling: agentConfig.maxThinking,
 			extensionBindings: params.extensionBindings,
+			launchAuthorization: data.launchAuthorization,
 			availableModels,
 			preferredModelProvider: currentProvider,
 			modelScope: modelScopes,
@@ -4305,6 +4314,8 @@ function createScheduledOwnerState(source: SubagentState, ownerSessionId: string
 	};
 }
 
+const launchAuthorizationInvocations = new WeakMap<object, SubagentLaunchAuthorizationInvocation>();
+
 export function createSubagentExecutor(deps: ExecutorDeps): {
 	execute: (
 		id: string,
@@ -4366,6 +4377,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const delegatedThinkingOverride = delegatedThinkingOverrides.get(params);
 		const allowZeroToolBudget = delegatedZeroToolBudgets.has(params);
 		const delegatedExecution = delegatedExecutions.has(params);
+		const launchAuthorization = launchAuthorizationInvocations.get(params) ?? {
+			id: _id,
+			origin: delegatedExecution ? "delegation" : _id.startsWith("rpc-") ? "rpc" : "tool",
+		};
 		if (!preserveActiveSession) deps.state.baseCwd = ctx.cwd;
 		deps.state.foregroundRuns ??= new Map();
 		deps.state.foregroundControls ??= new Map();
@@ -4810,6 +4825,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										}
 										recordMissionWorkflowChild(missionBinding, workflowRunId, key, { status: "running", agent: launch.agent, ...(launch.sessionFile ? { sessionPath: launch.sessionFile } : {}) });
 									});
+									launchAuthorizationInvocations.set(childRequest, {
+										id: launchAuthorization.id,
+										origin: "workflow",
+										parentId: launchAuthorization.id,
+										workflowRunId,
+										workflowKey: key,
+									});
 									return execute(randomUUID(), childRequest, workflowSignal, (update) => {
 										const progress = update.details.progress?.[0];
 										const step = status.steps?.find((candidate) => candidate.workflowKey === key);
@@ -5005,6 +5027,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								agent: launch.agent,
 								...(launch.sessionFile ? { sessionPath: launch.sessionFile } : {}),
 							}));
+							launchAuthorizationInvocations.set(childRequest, {
+								id: launchAuthorization.id,
+								origin: "workflow",
+								parentId: launchAuthorization.id,
+								workflowRunId: _id,
+								workflowKey: key,
+							});
 							return execute(randomUUID(), childRequest, workflowSignal, (update) => {
 								const progress = update.details.progress?.[0];
 								if (!progress) return;
@@ -5391,7 +5420,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots })));
 			}
 			if (action === "resume") {
-				return resumeAsyncRun(omitUndefinedProperties({ params: paramsWithResolvedCwd, requestCwd, ctx, deps, parentModel: requestParentModel, signal }));
+				return resumeAsyncRun(omitUndefinedProperties({ params: paramsWithResolvedCwd, requestCwd, ctx, deps, parentModel: requestParentModel, signal, launchAuthorization }));
 			}
 			if (action === "steer") {
 				deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
@@ -5425,7 +5454,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								? {}
 								: {
 										recover: ({ absoluteDeadlineAt, ...limits }) =>
-											resumeAsyncRun(omitUndefinedProperties({ params: { ...limits, action: "resume", id: runId, message }, requestCwd, ctx, deps, parentModel: requestParentModel, absoluteDeadlineAt })),
+											resumeAsyncRun(omitUndefinedProperties({ params: { ...limits, action: "resume", id: runId, message }, requestCwd, ctx, deps, parentModel: requestParentModel, absoluteDeadlineAt, launchAuthorization })),
 									}
 							),
 						}));
@@ -5479,6 +5508,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										deps,
 										parentModel: requestParentModel,
 										absoluteDeadlineAt,
+										launchAuthorization,
 									})),
 							}
 					),
@@ -6021,6 +6051,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			agents,
 			recoveryAgents: discoveredAgents,
 			runId,
+			launchAuthorization,
 			shareEnabled,
 			sessionRoot,
 			sessionDirForIndex,
@@ -6345,6 +6376,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			});
 			scheduledOwnerExecutors.set(ownerSessionId, ownerExecutor);
 		}
+		launchAuthorizationInvocations.set(params, { id, origin: "schedule" });
 		return ownerExecutor.execute(id, params, signal, undefined, ctx);
 	};
 

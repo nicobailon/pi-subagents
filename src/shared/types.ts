@@ -2079,6 +2079,8 @@ export interface RunSyncOptions {
 	thinkingOverride?: AgentConfig["thinking"];
 	thinkingCeiling?: ThinkingLevel;
 	extensionBindings?: ExtensionBindings;
+	/** Process-local, non-model-visible root invocation identity for launch authorization. */
+	launchAuthorization?: import("../runs/shared/launch-authorization.ts").SubagentLaunchAuthorizationInvocation;
 	/** Registry models available for heuristic bare-model resolution */
 	availableModels?: Array<{ provider: string; id: string; fullId: string }>;
 	/** Current parent-session provider to prefer for ambiguous bare model ids */

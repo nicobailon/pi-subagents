@@ -106,6 +106,7 @@ import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudget
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
+import { authorizeSubagentLaunch, resolveSubagentLaunchAuthorizationReservations } from "../shared/launch-authorization.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import {
 	acceptChildWatchdogEvent,
@@ -314,6 +315,8 @@ async function runSingleAttempt(
 		orcaProgressTab?: OrcaProgressTab;
 		launchWarnings: { emitted: boolean };
 		verifyModel: boolean;
+		modelAttempt: number;
+		startupAttempt: number;
 	},
 ): Promise<SingleResult> {
 	const effectiveThinking = options.thinkingOverride ?? agent.thinking;
@@ -380,6 +383,7 @@ async function runSingleAttempt(
 		capabilityCeiling: options.capabilityCeiling,
 		thinkingCeiling: options.thinkingCeiling,
 		extensionBindings: options.extensionBindings,
+		launchAuthorizationReservations: resolveSubagentLaunchAuthorizationReservations(options.parentSessionId),
 	});
 	if (!shared.launchWarnings.emitted && warnings.length > 0) {
 		for (const warning of warnings) console.warn(`[pi-subagents] ${warning}`);
@@ -434,8 +438,9 @@ async function runSingleAttempt(
 		};
 	}
 	const launchResolvedExtensions = projectLaunchResolvedChildExtensions(toolPlan);
+	const definitionDigest = agentDefinitionDigest(agent);
 	const launchContractDigest = launchBindingDigest({
-		definitionDigest: agentDefinitionDigest(agent),
+		definitionDigest,
 		task: shared.originalTask ?? task,
 		...(modelArg ? { model: modelArg } : {}),
 		modelCandidates: shared.modelCandidates,
@@ -455,6 +460,51 @@ async function runSingleAttempt(
 		...(options.structuredOutput ? { structuredOutputSchema: options.structuredOutput.schema } : {}),
 		...(options.extensionBindings ? { extensionBindings: options.extensionBindings } : {}),
 	});
+	try {
+		authorizeSubagentLaunch({
+			version: 1,
+			...(options.parentSessionId ? { sessionId: options.parentSessionId } : {}),
+			invocation: options.launchAuthorization ?? { id: options.runId, origin: "internal" },
+			run: {
+				id: options.runId,
+				childIndex: options.index ?? 0,
+				modelAttempt: shared.modelAttempt,
+				startupAttempt: shared.startupAttempt,
+				async: false,
+			},
+			agent: {
+				name: agent.name,
+				source: agent.source ?? "runtime",
+				filePath: agent.filePath ?? `<runtime:${agent.name}>`,
+				definitionDigest,
+				runner: "native",
+			},
+			contract: {
+				launchContractDigest,
+				...(options.context ? { context: options.context } : {}),
+				...(modelArg ? { model: modelArg } : {}),
+				modelCandidates: shared.modelCandidates ?? [],
+			},
+		});
+	} catch (error) {
+		cleanupTempDir(tempDir);
+		const message = error instanceof Error ? error.message : String(error);
+		return withRunContext({
+			index: options.index ?? 0,
+			agent: agent.name,
+			task,
+			launchContractDigest,
+			exitCode: 1,
+			messages: [],
+			finalOutput: message,
+			error: message,
+			usage: emptyUsage(),
+			model: modelArg,
+			modelAttempts: [],
+			attemptedModels: [],
+			progressSummary: { status: "failed", toolCount: 0, tokens: 0, durationMs: 0 },
+		}, options.context);
+	}
 	const result: SingleResult = withRunContext({
 		index: options.index ?? 0,
 		agent: agent.name,
@@ -1921,6 +1971,8 @@ async function runSyncCompletionInner(
 				orcaProgressTab,
 				launchWarnings,
 				verifyModel,
+				modelAttempt: modelIndex,
+				startupAttempt: startupAttemptIndex,
 			});
 			lastResult = result;
 			if (startupAttemptIndex === 0) {

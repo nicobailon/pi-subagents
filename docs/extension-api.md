@@ -1,6 +1,6 @@
 # Extension and integration APIs
 
-Public seams for other Pi extensions and host integrations: the in-process RPC, the structured delegation API, launch preflight, capability ceilings, the background-work provider contract, and the Herdr integration.
+Public seams for other Pi extensions and host integrations: the in-process RPC, the structured delegation API, launch preflight and authorization, capability ceilings, the background-work provider contract, and the Herdr integration.
 
 ## In-process event-bus RPC
 
@@ -135,6 +135,58 @@ Boundaries:
 - It is side-effect-free for launch state: it does not create child sessions, temp prompt files, structured-output runtimes, tool-diagnostic files, or run artifacts.
 - Some host-owned facts, such as exact fork snapshots, nested async roots, and live model registries, can only be proven by the Pi host; those appear as `host_required` diagnostics instead of silently pretending to be exact.
 - Preflight reads the extension config, so `defaultSubagentContext: "fresh"` or `"fork"` affects omitted context in the same way as execution. Explicit `context` still wins.
+
+## Launch authorization providers
+
+Use `pi-subagents/launch-authorization` when an extension owns agent identities that must not launch from an unreviewed model-facing or workflow request. A provider reserves exact canonical agent names for one Pi session and receives a prompt-free, fully resolved contract immediately before each matching child launch:
+
+```ts
+import {
+  registerSubagentLaunchAuthorizationProvider,
+} from "pi-subagents/launch-authorization";
+
+const receiptKey = (request) => JSON.stringify([
+  request.invocation.id,
+  request.invocation.workflowRunId ?? "",
+  request.invocation.workflowKey ?? "",
+  request.run.childIndex,
+  request.run.modelAttempt,
+  request.run.startupAttempt,
+]);
+const approved = new Map<string, string>();
+const dispose = registerSubagentLaunchAuthorizationProvider({
+  name: "my-extension.protected-agents/1",
+  sessionId: ctx.sessionManager.getSessionId(),
+  agents: ["my-package.security-reviewer"],
+  authorize(request) {
+    const key = receiptKey(request);
+    const expectedDigest = approved.get(key);
+    if (expectedDigest !== request.contract.launchContractDigest) {
+      return { decision: "deny", reason: "no exact launch receipt" };
+    }
+    approved.delete(key);
+    return { decision: "allow" };
+  },
+});
+```
+
+The provider callback is synchronous and must return exactly `{ decision: "allow" }` or `{ decision: "deny", reason }`. Throwing, returning a promise, returning malformed data, or disappearing while its reservation remains inherited all fail closed before child startup. Multiple providers may reserve the same agent; every matching provider must allow it. A reload-safe replacement with the same provider name supersedes the old callback, and the old disposer cannot remove the replacement.
+
+The request contains no task, system prompt, conversation, or tool output. It carries:
+
+- the exact session and root invocation identity;
+- `workflowRunId` and `workflowKey` for dynamic `runs.run` / `runs.all` children;
+- child run/index and foreground attempt indexes;
+- canonical agent name, source, file path, parsed-definition digest, and runner kind;
+- the immutable `launchContractDigest`, context, selected model, and complete model-candidate list.
+
+A model-facing `subagent` tool call uses its tool-call id as `invocation.id`. RPC spawn uses `rpc-spawn-<requestId>`. Every child selected dynamically inside `workflowScript` retains that root invocation id and adds its workflow identity, so constructing an agent name in JavaScript cannot bypass the provider. Structured delegation uses its correlated request identity.
+
+For detached async singles, authorization runs in the owning Pi process after the exact contract is resolved and before the runner process is spawned. Foreground fallback/startup attempts are authorized separately. Reservation descriptors—not callbacks or approval receipts—propagate to async and nested child environments. If a nested Pi process tries to launch a reserved agent without loading the matching provider, it fails closed; ordinary unreserved agents are unaffected. The already-authorized detached runner may execute its bound child, while any later nested launch still sees the inherited reservations.
+
+Providers should first use `resolveSubagentLaunchContract()` to mint invocation-scoped receipts, then compare each `launchContractDigest` and any stricter local invariants in `authorize()`. Key receipts by the full invocation/workflow/child/attempt tuple, not only the root invocation id: one workflow can launch several reserved children, and foreground startup or model fallback creates distinct attempts. The callback owns receipt consumption and replay policy. Do not use a session-global boolean or temporarily widen an agent allowlist: concurrent workflows can overlap that window.
+
+With no matching reservation, launch semantics are unchanged; the no-provider path returns before request normalization or provider callbacks. This is a same-process extension policy boundary, not an operating-system sandbox; other code already executing with the user's permissions remains outside it.
 
 ## Structured delegation API
 

@@ -64,6 +64,12 @@ import { missionStatePath } from "../../src/missions/workflow-state.ts";
 import { discardPreservedWorktrees } from "../../src/runs/shared/parallel-handoff.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
+import {
+	SUBAGENT_LAUNCH_AUTHORIZATION_ENV,
+	decodeSubagentLaunchAuthorizationReservations,
+	registerSubagentLaunchAuthorizationProvider,
+	type SubagentLaunchAuthorizationRequest,
+} from "../../src/api/launch-authorization.ts";
 
 interface ModelAttempt {
 	success?: boolean;
@@ -266,6 +272,7 @@ interface ExecutorModule {
 	createSubagentExecutor?: (...args: unknown[]) => {
 		execute: (...args: unknown[]) => Promise<ExecutorToolResult>;
 		executeDelegated: (...args: unknown[]) => Promise<ExecutorToolResult>;
+		executeScheduled: (...args: unknown[]) => Promise<ExecutorToolResult>;
 	};
 	DEFAULT_FOREGROUND_TIMEOUT_MS?: number;
 }
@@ -406,6 +413,123 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(output, "Hello from mock agent");
 	});
 
+	it("authorizes a reserved foreground child after binding the exact launch contract", async () => {
+		mockPi.onCall({ echoEnv: [SUBAGENT_LAUNCH_AUTHORIZATION_ENV] });
+		const agents = makeAgentConfigs(["echo"]);
+		const sessionId = `foreground-authorization-${Date.now()}-${Math.random()}`;
+		let seen: Readonly<SubagentLaunchAuthorizationRequest> | undefined;
+		let dispose = () => {};
+		dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "test.foreground/1",
+			sessionId,
+			agents: ["echo"],
+			authorize(request) {
+				seen = request;
+				dispose();
+				return { decision: "allow" };
+			},
+		});
+		try {
+			const result = await runSync(tempDir, agents, "echo", "Run authorized work", {
+				runId: "authorized-foreground-run",
+				parentSessionId: sessionId,
+				context: "fresh",
+				launchAuthorization: { id: "tool-call-authorized", origin: "tool" },
+			});
+			assert.equal(result.exitCode, 0);
+			assert.equal(seen?.invocation.id, "tool-call-authorized");
+			assert.equal(seen?.run.id, "authorized-foreground-run");
+			assert.equal(seen?.run.async, false);
+			assert.equal(seen?.agent.name, "echo");
+			assert.match(seen?.contract.launchContractDigest ?? "", /^[a-f0-9]{64}$/);
+			const childEnv = JSON.parse(result.finalOutput ?? "{}") as Record<string, string | null>;
+			const reservations = decodeSubagentLaunchAuthorizationReservations(childEnv[SUBAGENT_LAUNCH_AUTHORIZATION_ENV] ?? undefined);
+			assert.deepEqual(reservations?.providers, [{ provider: "test.foreground/1", agents: ["echo"] }]);
+			assert.equal(readAllCallArgs().length, 1);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("denies a reserved foreground child before spawning Pi", async () => {
+		mockPi.onCall({ output: "must not spawn" });
+		const sessionId = `foreground-denial-${Date.now()}-${Math.random()}`;
+		const dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "test.foreground-deny/1",
+			sessionId,
+			agents: ["echo"],
+			authorize: () => ({ decision: "deny", reason: "no matching invocation receipt" }),
+		});
+		try {
+			const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Run denied work", {
+				runId: "denied-foreground-run",
+				parentSessionId: sessionId,
+				launchAuthorization: { id: "tool-call-denied", origin: "tool" },
+			});
+			assert.equal(result.exitCode, 1);
+			assert.match(result.error ?? "", /no matching invocation receipt/);
+			assert.equal(readAllCallArgs().length, 0);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("binds the model-facing tool call id into direct structured authorization", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Structured authorized child completed" });
+		let seen: Readonly<SubagentLaunchAuthorizationRequest> | undefined;
+		const dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "test.structured/1",
+			sessionId: "session-123",
+			agents: ["echo"],
+			authorize(request) {
+				seen = request;
+				return { decision: "allow" };
+			},
+		});
+		try {
+			const result = await makeExecutor([makeAgent("echo")]).executePublic(
+				"structured-authorization-tool-call",
+				{ agent: "echo", task: "Run authorized structured child", async: false, context: "fresh" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "structured launch failed");
+			assert.equal(seen?.invocation.id, "structured-authorization-tool-call");
+			assert.equal(seen?.invocation.origin, "tool");
+		} finally {
+			dispose();
+		}
+	});
+
+	it("binds structured delegation request identity outside model-visible params", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Delegated authorized child completed" });
+		let seen: Readonly<SubagentLaunchAuthorizationRequest> | undefined;
+		const dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "test.delegation/1",
+			sessionId: "session-123",
+			agents: ["echo"],
+			authorize(request) {
+				seen = request;
+				return { decision: "allow" };
+			},
+		});
+		try {
+			const result = await makeExecutor([makeAgent("echo")]).executeDelegated(
+				"delegation-request-identity",
+				{ agent: "echo", task: "Run authorized delegation", async: false, context: "fresh" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "delegated launch failed");
+			assert.equal(seen?.invocation.id, "delegation-request-identity");
+			assert.equal(seen?.invocation.origin, "delegation");
+		} finally {
+			dispose();
+		}
+	});
+
 	it("runs public structured single-child requests directly", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Structured child completed" });
 		const executor = makeExecutor([makeAgent("echo")]);
@@ -514,6 +638,41 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
 		assert.doesNotMatch(readCallArgs().join("\n"), /This path is authoritative for this run/);
+	});
+
+	it("cannot bypass reserved-agent authorization with a dynamically constructed workflow agent", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "must not spawn" });
+		let seen: Readonly<SubagentLaunchAuthorizationRequest> | undefined;
+		const dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "test.workflow-deny/1",
+			sessionId: "session-123",
+			agents: ["echo"],
+			authorize(request) {
+				seen = request;
+				return { decision: "deny", reason: "workflow receipt missing" };
+			},
+		});
+		try {
+			const result = await makeExecutor([makeAgent("echo")]).executePublic(
+				"workflow-authorization-tool-call",
+				{
+					async: false,
+					workflowScript: `const agent = ["ec", "ho"].join(""); return runs.run("protected-review", { agent, task: "Review" });`,
+				},
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /workflow receipt missing/);
+			assert.equal(seen?.invocation.id, "workflow-authorization-tool-call");
+			assert.equal(seen?.invocation.origin, "workflow");
+			assert.equal(seen?.invocation.parentId, "workflow-authorization-tool-call");
+			assert.equal(seen?.invocation.workflowKey, "protected-review");
+			assert.equal(readAllCallArgs().length, 0);
+		} finally {
+			dispose();
+		}
 	});
 
 	it("resolves workflow child profile context from its agent default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -731,6 +890,35 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "file workflow failed");
 		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("binds schedule identity and denies a reserved scheduled child before spawn", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "must not spawn" });
+		let seen: Readonly<SubagentLaunchAuthorizationRequest> | undefined;
+		const dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "test.schedule-deny/1",
+			sessionId: "session-123",
+			agents: ["echo"],
+			authorize(request) {
+				seen = request;
+				return { decision: "deny", reason: "scheduled receipt missing" };
+			},
+		});
+		try {
+			const result = await makeExecutor([makeAgent("echo")]).executeScheduled(
+				"scheduled-invocation-1",
+				{ agent: "echo", task: "Run scheduled child", async: false, context: "fresh" },
+				new AbortController().signal,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /scheduled receipt missing/);
+			assert.equal(seen?.invocation.id, "scheduled-invocation-1");
+			assert.equal(seen?.invocation.origin, "schedule");
+			assert.equal(mockPi.callCount(), 0);
+		} finally {
+			dispose();
+		}
 	});
 
 	it("starts workflow scripts asynchronously with a portable internal run id", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -4159,6 +4347,49 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(resumed.savedOutputPath, undefined);
 	});
 
+	it("authorizes a resumed foreground child with the resume invocation identity", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		mockPi.onCall({ output: "first result" });
+		const firstResult = await executor.execute(
+			"workflow-resume-authorization-first",
+			{ async: false, workflowScript: `return runs.run("first", { agent: "echo", task: "First", acceptance: false });` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(firstResult.isError, undefined, firstResult.content[0]?.text ?? "first workflow failed");
+		const first = firstResult.details.workflow?.value as { runId?: string };
+		assert.ok(first.runId);
+
+		let seen: Readonly<SubagentLaunchAuthorizationRequest> | undefined;
+		const dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "test.resume-deny/1",
+			sessionId: "session-123",
+			agents: ["echo"],
+			authorize(request) {
+				seen = request;
+				return { decision: "deny", reason: "resume receipt missing" };
+			},
+		});
+		try {
+			mockPi.onCall({ output: "must not spawn" });
+			const resumed = await executor.execute(
+				"resume-authorization-tool-call",
+				{ action: "resume", id: first.runId, message: "Resume" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(resumed.isError, true);
+			assert.match(resumed.content[0]?.text ?? "", /resume receipt missing/);
+			assert.equal(seen?.invocation.id, "resume-authorization-tool-call");
+			assert.equal(seen?.invocation.origin, "tool");
+			assert.equal(mockPi.callCount(), 1);
+		} finally {
+			dispose();
+		}
+	});
+
 	it("preserves the structured-output contract when resume fields are omitted", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const schema = { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } };
 		const structuredEvents = [
@@ -4709,6 +4940,41 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 2);
 	});
 
+	it("authorizes each foreground startup attempt with stable invocation identity", async () => {
+		mockPi.onCall({ exitCode: 1 });
+		mockPi.onCall({ output: "Recovered after authorized retry" });
+		const sessionId = `startup-authorization-${Date.now()}-${Math.random()}`;
+		const attempts: Array<{ invocationId: string; modelAttempt: number; startupAttempt: number }> = [];
+		const dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "test.startup-attempt/1",
+			sessionId,
+			agents: ["worker"],
+			authorize(request) {
+				attempts.push({
+					invocationId: request.invocation.id,
+					modelAttempt: request.run.modelAttempt,
+					startupAttempt: request.run.startupAttempt,
+				});
+				return { decision: "allow" };
+			},
+		});
+		try {
+			const result = await runSync(tempDir, [makeAgent("worker", { model: "openai/gpt-5-mini" })], "worker", "Do work", {
+				runId: "authorized-startup-retry",
+				parentSessionId: sessionId,
+				launchAuthorization: { id: "tool-call-startup-retry", origin: "tool" },
+				acceptance: false,
+			});
+			assert.equal(result.exitCode, 0);
+			assert.deepEqual(attempts, [
+				{ invocationId: "tool-call-startup-retry", modelAttempt: 0, startupAttempt: 0 },
+				{ invocationId: "tool-call-startup-retry", modelAttempt: 0, startupAttempt: 1 },
+			]);
+		} finally {
+			dispose();
+		}
+	});
+
 	it("escalates to file task delivery after a zero-activity SIGKILL startup exit", { skip: process.platform === "win32" ? "POSIX child signal reporting is unavailable on Windows" : false }, async () => {
 		mockPi.onCall({ signal: "SIGKILL" });
 		mockPi.onCall({ output: "Recovered via file delivery" });
@@ -5074,6 +5340,59 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.modelAttempts?.[1]?.success, true);
 		assert.equal(result.usage.turns, 2);
 		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("authorizes complete child and model-attempt identity across fallback", async () => {
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "temporary provider failure" }],
+					model: "openai/gpt-5-mini",
+					errorMessage: "rate limit exceeded",
+					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+				},
+			}],
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "Recovered on authorized fallback" });
+		const sessionId = `fallback-authorization-${Date.now()}-${Math.random()}`;
+		const attempts: Array<{ childIndex: number; modelAttempt: number; startupAttempt: number; model?: string; digest: string }> = [];
+		const dispose = registerSubagentLaunchAuthorizationProvider({
+			name: "test.fallback-attempt/1",
+			sessionId,
+			agents: ["echo"],
+			authorize(request) {
+				attempts.push({
+					childIndex: request.run.childIndex,
+					modelAttempt: request.run.modelAttempt,
+					startupAttempt: request.run.startupAttempt,
+					model: request.contract.model,
+					digest: request.contract.launchContractDigest,
+				});
+				return { decision: "allow" };
+			},
+		});
+		try {
+			const result = await runSync(tempDir, [makeAgent("echo", {
+				model: "openai/gpt-5-mini",
+				fallbackModels: ["anthropic/claude-sonnet-4"],
+			})], "echo", "Task", {
+				runId: "authorized-fallback-run",
+				index: 3,
+				parentSessionId: sessionId,
+				launchAuthorization: { id: "tool-call-fallback", origin: "tool" },
+			});
+			assert.equal(result.exitCode, 0);
+			assert.deepEqual(attempts.map(({ childIndex, modelAttempt, startupAttempt, model }) => ({ childIndex, modelAttempt, startupAttempt, model })), [
+				{ childIndex: 3, modelAttempt: 0, startupAttempt: 0, model: "openai/gpt-5-mini" },
+				{ childIndex: 3, modelAttempt: 1, startupAttempt: 0, model: "anthropic/claude-sonnet-4" },
+			]);
+			assert.equal(attempts[0]?.digest, attempts[1]?.digest, "fallback attempts share the candidate-set launch binding");
+		} finally {
+			dispose();
+		}
 	});
 
 	it("retries with fallback models when provider errors exit zero", async () => {
