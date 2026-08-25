@@ -137,6 +137,27 @@ describe("external CLI runner", () => {
 		assert.equal(oversized.exitCode, 1);
 		assert.match(oversized.error ?? "", /line exceeded/);
 
+		let settleTimer: NodeJS.Timeout | undefined;
+		try {
+			const unterminated = await Promise.race([
+				runExternalCli({
+					command: process.execPath,
+					args: ["-e", "process.stdout.write('x'.repeat(128));setInterval(()=>{},1000)"],
+					cwd: dir,
+					prompt: "x",
+					asyncDir: dir,
+					stepIndex: 16,
+					limits: { parserLineBytes: 64 },
+					parser: { parseLine() { return undefined; }, finish() { return { state: "completed" }; } },
+				}),
+				new Promise<never>((_, reject) => { settleTimer = setTimeout(() => reject(new Error("unterminated oversized line did not fail promptly")), 1_000); }),
+			]);
+			assert.equal(unterminated.exitCode, 1);
+			assert.match(unterminated.error ?? "", /line exceeded/);
+		} finally {
+			if (settleTimer) clearTimeout(settleTimer);
+		}
+
 		const missing = await runExternalCli({
 			command: process.execPath, args: ["-e", "process.stdout.write('event\\n')"], cwd: dir, prompt: "x", asyncDir: dir, stepIndex: 11,
 			parser: { parseLine() { return undefined; }, finish() { return undefined; } },

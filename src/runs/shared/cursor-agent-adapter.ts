@@ -4,6 +4,7 @@ import type { ExternalCliPreflightSpec } from "./external-cli-preflight.ts";
 
 const MAX_EVENT_TYPE_LENGTH = 128;
 const MAX_ERROR_LENGTH = 4_096;
+const MAX_OVERSIZED_TOOL_CALL_BYTES = 1024 * 1024;
 
 export const CURSOR_AGENT_ADAPTER_ID = "cursor-agent" as const;
 export const CURSOR_AGENT_WRITER_ADAPTER_ID = "cursor-agent-writer" as const;
@@ -50,6 +51,11 @@ export function createCursorAgentJsonlParser(): ExternalCliParser {
 				} else terminal = { state: "failed", error: terminalError(event) };
 			}
 			return { phase: terminal ? terminal.state : "streaming", eventCount };
+		},
+		skipOversizedLine(prefix, byteLength): ExternalCliParserProgress | undefined {
+			if (terminal || byteLength > MAX_OVERSIZED_TOOL_CALL_BYTES || !/^\s*\{\s*"type"\s*:\s*"tool_call"\s*,/.test(prefix)) return undefined;
+			eventCount += 1;
+			return { phase: "streaming", eventCount };
 		},
 		finish(): ExternalCliParserTerminal | undefined {
 			return terminal;
