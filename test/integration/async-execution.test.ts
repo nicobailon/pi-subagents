@@ -4373,7 +4373,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		context.sessionManager.getSessionFile = () => {
 			// Simulate the parent model leaving the live context during the async workflow handoff.
 			context.model = undefined;
-			return null;
+			return path.join(tempDir, "parent-session.jsonl");
 		};
 
 		const launch = await executor.execute(

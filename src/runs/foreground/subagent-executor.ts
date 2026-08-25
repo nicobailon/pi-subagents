@@ -4380,15 +4380,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowParentModel = parentModelOverride !== undefined
 				? parentModelOverride
 				: (() => {
-					try {
-						const parentModel = normalizeParentModel(ctx.model);
-						const sessionId = resolveCurrentSessionId(ctx.sessionManager);
-						return (preserveActiveSession
-							? parentModel
-							: rememberParentModel(deps.state, sessionId, parentModel)) ?? null;
-					} catch {
-						return normalizeParentModel(ctx.model) ?? null;
-					}
+					const parentModel = normalizeParentModel(ctx.model);
+					const sessionId = resolveCurrentSessionId(ctx.sessionManager);
+					return (preserveActiveSession
+						? parentModel
+						: rememberParentModel(deps.state, sessionId, parentModel)) ?? null;
 				})();
 			if (requestParams.extensionBindings !== undefined) {
 				try {
