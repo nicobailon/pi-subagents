@@ -17,6 +17,19 @@ function writeAgent(dir: string, name: string): string {
 	return filePath;
 }
 
+const SYMLINK_TYPE = process.platform === "win32" ? "junction" : "dir";
+
+function symlinkDir(target: string, linkPath: string): boolean {
+	try {
+		fs.symlinkSync(target, linkPath, SYMLINK_TYPE);
+		return true;
+	} catch (error) {
+		// Windows without Developer Mode/elevation rejects symlink creation (EPERM).
+		if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") return false;
+		throw error;
+	}
+}
+
 describe("agent discovery through symlinked directories (#1505)", () => {
 	beforeEach(() => {
 		for (const key of MANAGED_ENV) saved[key] = process.env[key];
@@ -46,7 +59,7 @@ describe("agent discovery through symlinked directories (#1505)", () => {
 
 		const projectAgentsRoot = path.join(cwd, ".agents");
 		fs.mkdirSync(projectAgentsRoot, { recursive: true });
-		fs.symlinkSync(toolkitAgents, path.join(projectAgentsRoot, "agents"), "dir");
+		if (!symlinkDir(toolkitAgents, path.join(projectAgentsRoot, "agents"))) return;
 
 		const found = discoverAgents(cwd, "project").agents.find((a) => a.name === "shared-reviewer");
 		assert.ok(found, "expected agent inside symlinked directory to be discovered");
@@ -58,7 +71,7 @@ describe("agent discovery through symlinked directories (#1505)", () => {
 
 		const projectAgents = path.join(cwd, ".agents", "agents");
 		fs.mkdirSync(projectAgents, { recursive: true });
-		fs.symlinkSync(toolkitTeam, path.join(projectAgents, "team"), "dir");
+		if (!symlinkDir(toolkitTeam, path.join(projectAgents, "team"))) return;
 
 		const found = discoverAgents(cwd, "project").agents.find((a) => a.name === "team-agent");
 		assert.ok(found, "expected agent inside nested symlinked directory to be discovered");
@@ -68,9 +81,20 @@ describe("agent discovery through symlinked directories (#1505)", () => {
 		const projectAgents = path.join(cwd, ".agents", "agents");
 		fs.mkdirSync(projectAgents, { recursive: true });
 		writeAgent(projectAgents, "real-agent");
-		fs.symlinkSync(path.join(tempDir, "missing-target"), path.join(projectAgents, "gone"), "dir");
+		if (!symlinkDir(path.join(tempDir, "missing-target"), path.join(projectAgents, "gone"))) return;
 
 		const agents = discoverAgents(cwd, "project").agents;
 		assert.ok(agents.find((a) => a.name === "real-agent"), "real agent should still resolve");
+	});
+
+	it("terminates when a symlink points back to an ancestor directory", () => {
+		const projectAgents = path.join(cwd, ".agents", "agents");
+		fs.mkdirSync(projectAgents, { recursive: true });
+		writeAgent(projectAgents, "loop-agent");
+		// A symlink back to an ancestor would loop forever without cycle detection.
+		if (!symlinkDir(projectAgents, path.join(projectAgents, "self"))) return;
+
+		const agents = discoverAgents(cwd, "project").agents;
+		assert.ok(agents.find((a) => a.name === "loop-agent"), "real agent should still resolve despite the cycle");
 	});
 });

@@ -1603,9 +1603,20 @@ function shouldPruneDiscoveryDir(rootDir: string, dir: string, dirName: string):
 	return path.resolve(dir) !== path.resolve(rootDir) && isDiscoveryNestedProjectRoot(dir);
 }
 
-function listFilesRecursive(dir: string, predicate: (fileName: string) => boolean, rootDir = dir): string[] {
+function listFilesRecursive(dir: string, predicate: (fileName: string) => boolean, rootDir = dir, visited = new Set<string>()): string[] {
 	const files: string[] = [];
 	if (!fs.existsSync(dir)) return files;
+
+	// Track canonical paths so symlinks that point back to an ancestor cannot
+	// send recursion into an infinite loop.
+	let canonicalDir: string;
+	try {
+		canonicalDir = fs.realpathSync(dir);
+	} catch {
+		canonicalDir = path.resolve(dir);
+	}
+	if (visited.has(canonicalDir)) return files;
+	visited.add(canonicalDir);
 
 	let entries: fs.Dirent[];
 	try {
@@ -1628,7 +1639,7 @@ function listFilesRecursive(dir: string, predicate: (fileName: string) => boolea
 		}
 		if (isDir) {
 			if (!shouldPruneDiscoveryDir(rootDir, filePath, entry.name)) {
-				files.push(...listFilesRecursive(filePath, predicate, rootDir));
+				files.push(...listFilesRecursive(filePath, predicate, rootDir, visited));
 			}
 			continue;
 		}
