@@ -658,7 +658,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.output, "usable partial answer");
 	});
 
-	it("authorizes an async single before runner spawn and propagates reservations to its child", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("authorizes an async single with no model candidates and propagates reservations to its child", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const sessionId = `async-authorization-session-${Date.now()}-${Math.random()}`;
 		const id = `async-authorization-${Date.now().toString(36)}`;
 		const seen: Readonly<SubagentLaunchAuthorizationRequest>[] = [];
@@ -687,11 +687,15 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			});
 			assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "async launch failed");
 			assert.deepEqual(seen.map((request) => request.run.startupAttempt), [0, 1, 2, 3]);
+			assert.deepEqual(seen.map((request) => request.contract.modelCandidates), [[], [], [], []]);
+			assert.equal(seen.every((request) => request.contract.model === undefined), true);
 			assert.equal(seen[0]?.invocation.id, "rpc-spawn-authorized");
 			assert.equal(seen[0]?.run.id, id);
 			assert.equal(seen[0]?.run.async, true);
 			assert.equal(seen[0]?.contract.launchContractDigest, launch.details.launchContractDigest);
 			const payload = await readAsyncPayload(id);
+			assert.equal(payload.success, true);
+			assert.equal(payload.results[0]?.launchContractDigest, launch.details.launchContractDigest);
 			const childEnv = JSON.parse(payload.results[0]?.output ?? "{}") as Record<string, string | null>;
 			const reservations = decodeSubagentLaunchAuthorizationReservations(childEnv[SUBAGENT_LAUNCH_AUTHORIZATION_ENV] ?? undefined);
 			assert.deepEqual(reservations?.providers, [{ provider: "test.async/1", agents: ["worker"] }]);

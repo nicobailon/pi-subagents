@@ -1760,7 +1760,7 @@ async function runSingleStepInner(
 				definitionDigest: step.definitionDigest,
 				task: step.launchBindingTask ?? task,
 				...(candidate ? { model: candidate } : {}),
-				modelCandidates: candidates as string[],
+				modelCandidates: step.modelCandidates ?? [],
 				...(step.fast !== undefined ? { fast: step.fast } : {}),
 				...(resolveEffectiveThinking(candidate, step.thinking) ? { thinking: resolveEffectiveThinking(candidate, step.thinking) } : {}),
 				...(step.thinkingCeiling ? { thinkingCeiling: step.thinkingCeiling } : {}),
