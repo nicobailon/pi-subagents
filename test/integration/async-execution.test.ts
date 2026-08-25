@@ -230,6 +230,10 @@ interface AsyncExecutionModule {
 	executeAsyncChain(id: string, params: Record<string, unknown>): AsyncExecutionResult;
 }
 
+interface AsyncStatusModule {
+	resolveTargetedAsyncRun(root: string, id: string, sessionId?: string): { kind: string };
+}
+
 interface UtilsModule {
 	readStatus(dir: string): { runId: string; state: string; mode: string } | null;
 	pruneStatusCacheForAsyncRoot(root: string, runIds: Iterable<string>): number;
@@ -248,6 +252,7 @@ interface ExecutorModule {
 }
 
 const asyncMod = await tryImport<AsyncExecutionModule>("./src/runs/background/async-execution.ts");
+const asyncStatusMod = await tryImport<AsyncStatusModule>("./src/runs/background/async-status.ts");
 const utils = await tryImport<UtilsModule>("./src/shared/utils.ts");
 const typesMod = await tryImport<TypesModule>("./src/shared/types.ts");
 const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
@@ -256,6 +261,7 @@ const available = !!(asyncMod && utils && typesMod);
 const isAsyncAvailable = asyncMod?.isAsyncAvailable;
 const executeAsyncSingle = asyncMod?.executeAsyncSingle;
 const executeAsyncChain = asyncMod?.executeAsyncChain;
+const resolveTargetedAsyncRun = asyncStatusMod?.resolveTargetedAsyncRun;
 const readStatus = utils?.readStatus;
 const pruneStatusCacheForAsyncRoot = utils?.pruneStatusCacheForAsyncRoot;
 const ASYNC_DIR = typesMod?.ASYNC_DIR;
@@ -566,6 +572,27 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(status.state, "complete");
 		assert.equal(status.endedAt !== undefined, true);
+	});
+
+	it("makes a launched async run immediately visible to exact status lookup", { skip: !isAsyncAvailable() || !resolveTargetedAsyncRun ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ delay: 500, output: "visible async done" });
+		const id = `async-initial-status-${Date.now().toString(36)}`;
+		const launch = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Remain visible while starting",
+			agentConfig: makeAgent("worker", { completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-initial-status" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(launch.isError, undefined);
+		assert.equal(resolveTargetedAsyncRun(ASYNC_DIR, id, "session-initial-status").kind, "exact");
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(status.sessionId, "session-initial-status");
+		assert.equal(status.pid !== undefined, true);
+		await waitForAsyncResultFile(id);
 	});
 
 	it("persists intercom detach receipts on failed async steps", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -4829,6 +4856,35 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(result.isError, true);
 		assert.match(result.content[0]?.text ?? "", /Failed to start async run/);
 		assert.match(result.content[0]?.text ?? "", /async-cfg-/);
+	});
+
+	it("does not start child work when initial async status cannot be written", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const id = `async-status-write-fail-${Date.now().toString(36)}`;
+		fs.mkdirSync(path.join(ASYNC_DIR, id, "status.json"), { recursive: true });
+		mockPi.onCall({ output: "must not run" });
+
+		const result = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do not start",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /Failed to persist initial async status/);
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		assert.equal(mockPi.callCount(), 0);
 	});
 
 	it("returns a tool error when an async run uses a missing cwd", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {

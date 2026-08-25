@@ -39,6 +39,7 @@ import { validateImplementationToolContract } from "../shared/completion-guard.t
 import {
 	type AcceptanceInput,
 	type AgentContract,
+	type AsyncParallelGroupStatus,
 	type AsyncStatus,
 	type ArtifactConfig,
 	type Details,
@@ -70,6 +71,7 @@ import type { ImportedAsyncRoot } from "./chain-root-attachment.ts";
 import type { SessionLeaseRequest } from "../shared/session-lease.ts";
 import { finalizeProcessTerminal, readProcessTerminal } from "./process-terminal.ts";
 import type { ActiveAsyncCapacityHandle } from "./active-async-capacity.ts";
+import { statusStepDescription } from "./chain-append.ts";
 import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../shared/types.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
@@ -493,7 +495,7 @@ interface SpawnRunnerResult {
 	startupDidNotProceed?: boolean;
 }
 
-function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal?: (proof: unknown) => void): SpawnRunnerResult {
+function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Omit<AsyncStatus, "pid" | "processTerminal">, initialStatusPath: string, onProcessTerminal?: (proof: unknown) => void): SpawnRunnerResult {
 	if (!jitiCliPath) {
 		return { error: "upstream jiti for TypeScript execution could not be found; ensure package dependencies are installed" };
 	}
@@ -510,7 +512,9 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 	fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
 	const cfgPath = getAsyncConfigPath(suffix);
 	const runnerProcessInstanceId = randomUUID();
-	const launchConfig = { ...cfg, runnerProcessInstanceId };
+	const hasRevivalLease = typeof (cfg as { revivalLease?: unknown }).revivalLease === "object";
+	const launchBarrierToken = hasRevivalLease ? undefined : runnerProcessInstanceId;
+	const launchConfig = { ...cfg, runnerProcessInstanceId, ...(launchBarrierToken ? { launchBarrierToken } : {}) };
 	writePrivateAtomicJson(cfgPath, launchConfig);
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 	const nodeCommand = resolveNodeExecutable();
@@ -523,7 +527,9 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 		? path.join(launchAsyncDir, "runner-startup.json")
 		: undefined;
 	const startupAckPath = startupPath ? path.join(path.dirname(startupPath), "runner-startup-ack.json") : undefined;
-	const startupProceedPath = startupPath ? path.join(path.dirname(startupPath), "runner-startup-proceed.json") : undefined;
+	const startupProceedPath = launchAsyncDir && (startupPath || launchBarrierToken)
+		? path.join(launchAsyncDir, "runner-startup-proceed.json")
+		: undefined;
 	if (startupPath) fs.rmSync(startupPath, { force: true });
 	if (startupAckPath) fs.rmSync(startupAckPath, { force: true });
 	if (startupProceedPath) fs.rmSync(startupProceedPath, { force: true });
@@ -604,6 +610,27 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 		});
 		if (typeof proc.pid !== "number") {
 			return { error: `async runner did not produce a pid for cwd: ${cwd}` };
+		}
+		try {
+			writePrivateAtomicJson(initialStatusPath, {
+				...initialStatus,
+				pid: proc.pid,
+				processTerminal: { version: 1, state: "pending", runId: initialStatus.runId, runnerProcessInstanceId },
+			});
+		} catch (error) {
+			const message = `Failed to persist initial async status: ${error instanceof Error ? error.message : String(error)}`;
+			const terminationObserved = terminateRunnerBeforeProceed(proc.pid);
+			return { pid: proc.pid, runnerProcessInstanceId, error: message, terminationObserved, startupDidNotProceed: true };
+		}
+		if (launchBarrierToken && startupProceedPath) {
+			try {
+				writeRunnerStartupControl(startupProceedPath, { action: "proceed", token: launchBarrierToken });
+			} catch (error) {
+				const message = `Failed to authorize async runner startup: ${error instanceof Error ? error.message : String(error)}`;
+				if (launchAsyncDir) persistPreProceedStartupFailure(launchAsyncDir, launchRunId, runnerProcessInstanceId, launchSessionId, launchCompletionOwnerId, message);
+				const terminationObserved = terminateRunnerBeforeProceed(proc.pid);
+				return { pid: proc.pid, runnerProcessInstanceId, error: message, terminationObserved, startupDidNotProceed: true };
+			}
 		}
 		proc.unref();
 		if (startupPath && startupAckPath && startupProceedPath) {
@@ -1191,6 +1218,21 @@ export function executeAsyncChain(
 		}
 		return "agent" in step ? [childIntercomTarget(step.agent, childTargetIndex++)] : [undefined];
 	}) : undefined;
+	const initialStatusSteps = eventChain.flatMap((step) => isParallelStep(step)
+		? step.parallel.map((task) => ({ agent: task.agent, ...(statusStepDescription(task.task) ? { description: statusStepDescription(task.task) } : {}), ...(task.label ? { label: task.label } : {}), ...(task.as ? { outputName: task.as } : {}), status: "pending" as const }))
+		: isDynamicParallelStep(step)
+			? [{ agent: `expand:${step.parallel.agent}`, label: step.label ?? step.parallel.label ?? `Dynamic fanout (${step.collect.as})`, outputName: step.collect.as, status: "pending" as const }]
+			: [{ agent: (step as SequentialStep).agent, ...(statusStepDescription((step as SequentialStep).task) ? { description: statusStepDescription((step as SequentialStep).task) } : {}), ...((step as SequentialStep).label ? { label: (step as SequentialStep).label } : {}), ...((step as SequentialStep).as ? { outputName: (step as SequentialStep).as } : {}), status: "pending" as const }]);
+	const initialParallelGroups: AsyncParallelGroupStatus[] = [];
+	let initialFlatIndex = 0;
+	for (let stepIndex = 0; stepIndex < eventChain.length; stepIndex++) {
+		const step = eventChain[stepIndex]!;
+		if (isParallelStep(step)) initialParallelGroups.push({ start: initialFlatIndex, count: step.parallel.length, stepIndex });
+		else if (isDynamicParallelStep(step)) initialParallelGroups.push({ start: initialFlatIndex, count: 1, stepIndex });
+		initialFlatIndex += isParallelStep(step) ? step.parallel.length : 1;
+	}
+	const initialStatusAt = Date.now();
+	const initialCompletionOwnerId = ctx.completionOwnerId ?? currentCompletionOwnerId();
 
 	let spawnResult: SpawnRunnerResult = {};
 	try {
@@ -1240,6 +1282,21 @@ export function executeAsyncChain(
 			},
 			id,
 			runnerCwd,
+			{
+				lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+				runId: id,
+				...(ctx.currentSessionId ? { sessionId: ctx.currentSessionId } : {}),
+				...(initialCompletionOwnerId ? { completionOwnerId: initialCompletionOwnerId } : {}),
+				mode: resultMode,
+				state: "running",
+				startedAt: initialStatusAt,
+				lastUpdate: initialStatusAt,
+				currentStep: 0,
+				chainStepCount: eventChain.length,
+				...(initialParallelGroups.length ? { parallelGroups: initialParallelGroups } : {}),
+				steps: initialStatusSteps,
+			},
+			path.join(asyncDir, "status.json"),
 			(proof) => ctx.pi.events.emit(SUBAGENT_PROCESS_TERMINAL_EVENT, proof),
 		);
 	} catch (error) {
@@ -1678,6 +1735,8 @@ export function executeAsyncSingle(
 		}
 	}
 	let spawnResult: SpawnRunnerResult = {};
+	const initialStatusAt = Date.now();
+	const initialCompletionOwnerId = ctx.completionOwnerId ?? currentCompletionOwnerId();
 	try {
 		spawnResult = spawnRunner(
 			{
@@ -1773,6 +1832,20 @@ export function executeAsyncSingle(
 			},
 			id,
 			runnerCwd,
+			{
+				lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+				runId: id,
+				...(ctx.currentSessionId ? { sessionId: ctx.currentSessionId } : {}),
+				...(initialCompletionOwnerId ? { completionOwnerId: initialCompletionOwnerId } : {}),
+				mode: "single",
+				state: "running",
+				startedAt: initialStatusAt,
+				lastUpdate: initialStatusAt,
+				currentStep: 0,
+				chainStepCount: 1,
+				steps: [{ agent, status: "pending" }],
+			},
+			path.join(asyncDir, "status.json"),
 			(proof) => ctx.pi.events.emit(SUBAGENT_PROCESS_TERMINAL_EVENT, proof),
 		);
 	} catch (error) {

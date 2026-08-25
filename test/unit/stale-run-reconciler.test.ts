@@ -29,18 +29,20 @@ describe("async stale-run reconciliation", () => {
 		assert.equal(checkPidLiveness(123, () => { throw new Error("boom"); }), "unknown");
 	});
 
-	it("marks a running async run failed when the runner pid is dead and no result exists", () => {
+	it("marks a dead runner failed and writes exactly one completion result", () => {
 		const root = tempRoot("pi-stale-run-");
 		try {
 			const asyncDir = path.join(root, "run-dead");
 			const resultsDir = path.join(root, "results");
 			writeStatus(asyncDir, {
+				lifecycleArtifactVersion: 3,
 				runId: "run-dead",
 				sessionId: "session-current",
 				completionOwnerId: "owner-current",
 				mode: "single",
 				state: "running",
 				pid: 12345,
+				processTerminal: { version: 1, state: "pending", runId: "run-dead", runnerProcessInstanceId: "runner-dead" },
 				startedAt: 1000,
 				lastUpdate: 1000,
 				currentStep: 0,
@@ -71,6 +73,15 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(resultJson.results[0].contextOverflow, true);
 			assert.match(resultJson.summary, /process 12345 exited or disappeared/);
 			assert.match(fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8"), /subagent\.run\.repaired_stale/);
+
+			const resultText = fs.readFileSync(path.join(resultsDir, "run-dead.json"), "utf-8");
+			const second = reconcileAsyncRun(asyncDir, {
+				resultsDir,
+				kill: () => { throw errno("ESRCH"); },
+				now: () => 3000,
+			});
+			assert.equal(second.repaired, false);
+			assert.equal(fs.readFileSync(path.join(resultsDir, "run-dead.json"), "utf-8"), resultText);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

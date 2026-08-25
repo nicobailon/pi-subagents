@@ -5,6 +5,7 @@
 ### Fixed
 - Exclude completed one-shot schedules from the pending schedule limit without deleting their durable history. Thanks to [@rafafortes](https://github.com/rafafortes) for #1478.
 - Repair bounded dead async run candidates before retention classifies them, so existing terminal retention guards can reclaim stale run directories without deleting ambiguous worktrees or branches. Thanks to [@rafafortes](https://github.com/rafafortes) for #1477.
+- Make async runs visible to exact status lookup as soon as launch succeeds, and deliver one completion when a runner dies before its normal status write. Thanks to [@rafafortes](https://github.com/rafafortes) for #1471 and [@VincentHanxiaoDu](https://github.com/VincentHanxiaoDu) for #1480.
 - Preserve the local user identity and temporary-directory environment needed by authenticated Claude Code adapter runs.
 - Preserve structured-output and related bounded child contract fields when foreground workflow children resume. Thanks to [@Livan-pro](https://github.com/Livan-pro) for #1460.
 - Preview runtime-recorded workflow child sessions in Fleet and inspect without trusting sibling transcripts. Thanks to [@JHa13y](https://github.com/JHa13y) for #1441.

@@ -210,6 +210,7 @@ interface SubagentRunConfig {
 	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 	runnerProcessInstanceId?: string;
+	launchBarrierToken?: string;
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
 }
@@ -5448,7 +5449,7 @@ async function waitForStartupControl(
 			} catch (error) {
 				throw new Error(`Failed to read runner startup control '${controlPath}': ${error instanceof Error ? error.message : String(error)}`);
 			}
-			if (payload.token !== token) throw new Error("Runner startup control token does not match the acquired session lease.");
+			if (payload.token !== token) throw new Error("Runner startup control token does not match.");
 			if (payload.action === action) return;
 			if (payload.action !== "ack" && payload.action !== "proceed") throw new Error("Runner startup control action is invalid.");
 		}
@@ -5459,7 +5460,7 @@ async function waitForStartupControl(
 
 async function runConfiguredSubagent(config: SubagentRunConfig): Promise<void> {
 	let lease: ReturnType<typeof acquireSessionLease> | undefined;
-	let startupCommitted = config.revivalLease === undefined;
+	let startupCommitted = config.revivalLease === undefined && config.launchBarrierToken === undefined;
 	const startupPath = path.join(config.asyncDir, "runner-startup.json");
 	const startupAckPath = path.join(config.asyncDir, "runner-startup-ack.json");
 	const startupProceedPath = path.join(config.asyncDir, "runner-startup-proceed.json");
@@ -5472,7 +5473,15 @@ async function runConfiguredSubagent(config: SubagentRunConfig): Promise<void> {
 	};
 	process.once("exit", releaseOnExit);
 	try {
-		if (config.revivalLease) {
+		if (config.launchBarrierToken) {
+			await waitForStartupControl(startupProceedPath, config.launchBarrierToken, "proceed");
+			startupCommitted = true;
+			try {
+				fs.rmSync(startupProceedPath, { force: true });
+			} catch {
+				// Startup control cleanup is best effort after the parent commits the run.
+			}
+		} else if (config.revivalLease) {
 			lease = acquireSessionLease(config.revivalLease);
 			config.revivalLeaseToken = lease.owner.token;
 			writeAtomicJson(startupPath, { state: "ready", token: lease.owner.token, pid: process.pid, owner: lease.owner });
@@ -5490,7 +5499,7 @@ async function runConfiguredSubagent(config: SubagentRunConfig): Promise<void> {
 		}
 		await runSubagent(config, lease ? (writer) => lease!.updateWriter(writer) : undefined);
 	} catch (error) {
-		if (config.revivalLease && !startupCommitted) {
+		if (!startupCommitted) {
 			try {
 				writeAtomicJson(startupPath, { state: "error", pid: process.pid, error: error instanceof Error ? error.message : String(error) });
 			} catch {
