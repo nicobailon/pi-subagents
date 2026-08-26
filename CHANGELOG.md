@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Auto-resume workflow children once after setup-phase aborts that produce zero usage, preserving the retained transcript instead of rerunning the whole task.
+
 ## [0.57.0] - 2026-08-26
 
 ### Highlights

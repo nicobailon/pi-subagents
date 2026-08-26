@@ -1109,6 +1109,41 @@ function resolveWorkflowParserEntry(): string {
 	}
 }
 
+const AUTO_RESUME_PARAM_KEYS = ["acceptance", "agentContract", "index", "intercomBridge", "label", "maxRuntimeMs", "output", "outputMode", "outputSchema", "phase", "skill", "skills", "task", "timeoutMs", "toolBudget", "turnBudget", "worktree"] as const;
+
+function isZeroUsage(usage: unknown): boolean {
+	if (!isRecord(usage)) return false;
+	const cost = usage.cost;
+	return (usage.input ?? 0) === 0
+		&& (usage.output ?? 0) === 0
+		&& (usage.cacheRead ?? 0) === 0
+		&& (usage.cacheWrite ?? 0) === 0
+		&& (!isRecord(cost) || (cost.total ?? 0) === 0);
+}
+
+function setupAbortResumeParams(params: Record<string, unknown>, result: WorkflowScriptChildResult, signal: AbortSignal): Record<string, unknown> | undefined {
+	if (signal.aborted || result.ok || result.stopped || result.interrupted || !result.runId) return undefined;
+	const childResult = Array.isArray(result.results) && result.results.length === 1 && isRecord(result.results[0]) ? result.results[0] : undefined;
+	const error = typeof childResult?.error === "string" ? childResult.error : result.error;
+	if (error !== "This operation was aborted" || !isZeroUsage(childResult?.usage)) return undefined;
+	const messages = Array.isArray(childResult?.messages) ? childResult.messages : [];
+	const message = messages.findLast((entry) => isRecord(entry) && entry.role === "assistant");
+	if (message !== undefined) {
+		if (!isRecord(message)) return undefined;
+		if (message.stopReason !== "error" || message.errorMessage !== error) return undefined;
+		if (!Array.isArray(message.content) || message.content.length > 0 || !isZeroUsage(message.usage)) return undefined;
+		if (Object.hasOwn(message, "diagnostics") || Object.hasOwn(message, "responseId")) return undefined;
+	}
+	const task = typeof params.task === "string" && params.task.trim() ? params.task.trim() : "Continue after the setup abort.";
+	const resumeParams: Record<string, unknown> = { resume: result.runId, task };
+	for (const key of AUTO_RESUME_PARAM_KEYS) {
+		if (Object.hasOwn(params, key)) resumeParams[key] = params[key];
+	}
+	resumeParams.resume = result.runId;
+	resumeParams.task = task;
+	return resumeParams;
+}
+
 export async function runWorkflowScript(options: RunWorkflowScriptOptions): Promise<WorkflowScriptResult> {
 	if (!options.script.trim()) throw new Error("workflowScript must not be empty.");
 	if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 1)) throw new Error("workflow script timeout must be a positive integer.");
@@ -1487,7 +1522,13 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					if (resolvedResumeLineage.at(-1) !== resolvedResumeId) resolvedResumeLineage.push(resolvedResumeId!);
 				}
 				const launchParams = resolvedResumeId ? { ...params, resume: resolvedResumeId } : params;
-				return options.launch(key, launchParams, childSignal, { admitted: true, batch: batch !== undefined });
+				const result = await options.launch(key, launchParams, childSignal, { admitted: true, batch: batch !== undefined });
+				const autoResumeParams = setupAbortResumeParams(params, result, childSignal);
+				if (!autoResumeParams) return result;
+				resolvedResumeLineage = [...new Set([...(resolvedResumeLineage ?? []), result.runId!])];
+				trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(autoResumeParams), phase: "auto-resume", runId: result.runId });
+				traceChanged();
+				return options.launch(key, autoResumeParams, childSignal, { admitted: true, batch: batch !== undefined });
 			}).then((result) => {
 				let normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
 				if (resolvedResumeLineage?.length && normalized.runId) {

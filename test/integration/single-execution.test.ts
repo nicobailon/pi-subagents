@@ -4306,6 +4306,47 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(resumed.structuredOutput, { ok: true });
 	});
 
+	it("auto-resumes a workflow child after a setup abort", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({
+			jsonl: [
+				events.toolStart("read", { path: "src/index.ts" }),
+				events.toolEnd("read"),
+				events.toolResult("read", "file contents"),
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [],
+						model: "openai-codex/gpt-5.6-luna",
+						stopReason: "error",
+						errorMessage: "This operation was aborted",
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+			],
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "Recovered after workflow auto-resume" });
+
+		const result = await makeExecutor([makeAgent("echo")]).execute(
+			"workflow-auto-resume-setup-abort",
+			{
+				async: false,
+				workflowScript: `return runs.run("review", { agent: "echo", task: "Review the current diff", acceptance: false });`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		const child = result.details.workflow?.value as { ok?: boolean; output?: string; continuation?: { runIds?: string[] } };
+		assert.equal(child.ok, true);
+		assert.match(child.output ?? "", /Recovered after workflow auto-resume/u);
+		assert.equal(child.continuation?.runIds?.length, 2);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
 	it("preserves an agent default output contract when foreground workflow resume omits output", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const configuredOutput = path.join(tempDir, "configured-resume-output.md");
 		const agent = makeAgent("echo", { output: configuredOutput, outputMode: "file-only" });
