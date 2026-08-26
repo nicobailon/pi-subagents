@@ -23,7 +23,7 @@ import {
 } from "../shared/types.ts";
 import { previewDisplayText, sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
 import { FLEET_OPEN_SHORTCUT, formatShortcutLabel } from "../shared/shortcuts.ts";
-import { formatTokens, formatUsage, formatDuration, formatModelThinking, formatToolCall, formatTokenUsage, shortenPath } from "../shared/formatters.ts";
+import { formatContextUsage, formatTokens, formatUsage, formatDuration, formatModelThinking, formatToolCall, formatTokenUsage, shortenPath } from "../shared/formatters.ts";
 import { getDisplayItems, getSingleResultOutput, PROMPT_REDACTED } from "../shared/utils.ts";
 import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
 import { formatNestedAggregate } from "../runs/shared/nested-render.ts";
@@ -267,9 +267,13 @@ function oneLine(text: string): string {
 const COMPACT_TASK_MAX_CHARS = 96;
 
 export function compactTaskText(task: string | undefined, label?: string): string | undefined {
-	const source = label?.trim() || task?.trim();
-	if (!source || source === PROMPT_REDACTED) return undefined;
-	const normalized = oneLine(source);
+	const taskText = task?.trim();
+	const labelText = label?.trim();
+	const normalizedTask = taskText && taskText !== PROMPT_REDACTED ? oneLine(taskText) : "";
+	const normalizedLabel = labelText && labelText !== PROMPT_REDACTED ? oneLine(labelText) : "";
+	const normalized = normalizedLabel && normalizedTask && normalizedLabel !== normalizedTask
+		? `${normalizedLabel} — ${normalizedTask}`
+		: normalizedLabel || normalizedTask;
 	if (!normalized) return undefined;
 	return previewDisplayText(normalized, COMPACT_TASK_MAX_CHARS);
 }
@@ -794,7 +798,7 @@ function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme, expanded =
 		const activity = widgetStepActivity(step, job.updatedAt);
 		const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
 		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
-		const label = compactTaskText(undefined, step.label);
+		const label = compactTaskText(step.description, step.label);
 		const display = label ? `${label} (${step.agent})` : step.agent;
 		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame)} ${itemTitle} ${index + 1}/${total}: ${display} · ${widgetStepStatus(step.status, theme)}${modelDisplay}${activity ? ` · ${activity}` : ""}`)}`);
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 8 : 6)) lines.push(`    ${nestedLine}`);
@@ -1083,7 +1087,11 @@ function widgetStepStats(theme: Theme, step: NonNullable<AsyncJobState["steps"]>
 	return statJoin(theme, [
 		step.turnCount !== undefined ? `${step.turnCount} turns` : "",
 		step.toolCount !== undefined ? formatToolUseStat(step.toolCount) : "",
-		step.tokens?.total ? formatTokenUsage(step.tokens, "token") : "",
+		step.tokens
+			? step.contextLimit !== undefined
+				? formatContextUsage(step.tokens, step.contextLimit) ?? formatTokenUsage(step.tokens, "token")
+				: step.tokens.total ? formatTokenUsage(step.tokens, "token") : ""
+			: "",
 		step.durationMs !== undefined ? formatDuration(step.durationMs) : "",
 	]);
 }

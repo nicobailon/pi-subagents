@@ -48,6 +48,7 @@ interface AsyncRunStepSummary {
 	totalCost?: CostSummary;
 	skills?: string[];
 	model?: string;
+	contextLimit?: number;
 	thinking?: string;
 	attemptedModels?: string[];
 	sessionFile?: string;
@@ -287,6 +288,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.totalCost ? { totalCost: step.totalCost } : {}),
 			...(step.skills ? { skills: step.skills } : {}),
 			...(step.model ? { model: step.model } : {}),
+			...(step.contextLimit !== undefined ? { contextLimit: step.contextLimit } : {}),
 			...(step.thinking ? { thinking: step.thinking } : {}),
 			...(step.thinkingCeiling ? { thinkingCeiling: step.thinkingCeiling } : {}),
 			...(step.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),

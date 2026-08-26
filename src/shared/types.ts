@@ -1641,6 +1641,7 @@ export interface AsyncStatus {
 		skills?: string[];
 		model?: string;
 		thinking?: string;
+		contextLimit?: number;
 		thinkingCeiling?: ThinkingLevel;
 		attemptedModels?: string[];
 		modelAttempts?: ModelAttempt[];
@@ -2106,7 +2107,7 @@ export interface RunSyncOptions {
 	/** Package-internal one-use authorization for one foreground workflow child. */
 	workflowChildPermitLaunch?: WorkflowChildPermitContext;
 	/** Registry models available for heuristic bare-model resolution */
-	availableModels?: Array<{ provider: string; id: string; fullId: string }>;
+	availableModels?: Array<{ provider: string; id: string; fullId: string; contextWindow?: number }>;
 	/** Current parent-session provider to prefer for ambiguous bare model ids */
 	preferredModelProvider?: string;
 	/** Optional subagent model-scope enforcement for fallback candidates */

@@ -22,6 +22,12 @@ export function formatTokenUsage(usage: TokenUsage, legacyLabel = "tok"): string
 		? `${formatTokens(usage.window)} window · ${formatTokens(usage.total)} spent`
 		: `${formatTokens(usage.total)} ${legacyLabel}`;
 }
+export function formatContextUsage(usage: Pick<TokenUsage, "window" | "windowPeak">, contextLimit: number): string | undefined {
+	if (usage.window === undefined || !Number.isFinite(usage.window) || !Number.isFinite(contextLimit) || contextLimit <= 0) return undefined;
+	const peak = usage.windowPeak !== undefined && Number.isFinite(usage.windowPeak) ? usage.windowPeak : usage.window;
+	const used = Math.max(0, usage.window, peak);
+	return `ctx ${formatTokens(used)}/${formatTokens(contextLimit)} (${Math.round((used / contextLimit) * 100)}%)`;
+}
 
 export function formatModelThinking(model?: string, thinking?: string): string {
 	const parsed = model ? splitKnownThinkingSuffix(model) : undefined;

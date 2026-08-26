@@ -108,6 +108,19 @@ describe("async runner execution", () => {
 		assert.equal(result.steps[0]?.waitToolEnabled, false);
 		assert.deepEqual(result.steps[1]?.toolBudget, { hard: 2, block: ["grep"] });
 	});
+	it("carries the resolved model context window into async runner steps", () => {
+		const result = buildAsyncRunnerSteps("context-limit-run", {
+			chain: [{ agent: "worker", task: "inspect context" }],
+			agents: [{ ...agent("worker"), model: "mock/context" }],
+			availableModels: [{ provider: "mock", id: "context", fullId: "mock/context", contextWindow: 128_000 }],
+			ctx,
+			asyncDir: path.join(process.cwd(), ".tmp-async-context-limit-test"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.ok("steps" in result, "expected successful step build");
+		assert.equal(result.steps[0]?.contextLimit, 128_000);
+	});
 
 	it("assigns default and agent-level deadlines to async serial and parallel children", () => {
 		const result = buildAsyncRunnerSteps("timeout-run", {
