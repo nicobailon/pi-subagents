@@ -557,7 +557,7 @@ function stopAsyncRun(
 			childId: stoppedChild.id,
 			status: "stopping",
 			ts,
-			reason: "user",
+			reason: "rpc",
 			source: "rpc",
 			asyncDir,
 			stepIndex: stoppedChild.index,

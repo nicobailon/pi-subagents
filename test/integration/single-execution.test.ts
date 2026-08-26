@@ -1655,6 +1655,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 		assert.equal(result.isError, undefined);
 		assert.equal(controller.signal.aborted, true);
+		assert.equal(controller.signal.reason instanceof Error ? controller.signal.reason.message : String(controller.signal.reason), "Workflow stopped.");
 		assert.match(result.content[0]?.text ?? "", /Stop requested for async workflow workflow-stop/);
 	});
 
@@ -1700,10 +1701,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
 		}
 		assert.equal(status.state, "stopped");
-		assert.equal(status.error, "Workflow stopped by user.");
+		assert.equal(status.error, "Workflow stopped.");
 		assert.equal(status.steps?.[0]?.status, "stopped");
 		assert.equal(status.steps?.[0]?.stopped, true);
-		assert.equal(status.steps?.[0]?.error, "Workflow stopped by user.");
+		assert.equal(status.steps?.[0]?.error, "Workflow stopped.");
 		assert.equal(status.workflow?.trace.some((entry) => entry.key === "review" && entry.state === "stopped"), true);
 		assert.equal(status.workflow?.trace.some((entry) => entry.key === "review" && entry.state === "failed"), false);
 
@@ -1725,7 +1726,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
 		assert.equal(status.steps?.[0]?.status, "stopped");
 		assert.equal(status.steps?.[0]?.stopped, true);
-		assert.equal(status.steps?.[0]?.error, "Workflow stopped by user.");
+		assert.equal(status.steps?.[0]?.error, "Workflow stopped.");
 
 		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		fs.rmSync(path.join(DIRS.results, `${workflowRunId}.json`), { force: true });
@@ -1783,6 +1784,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(status.stopped, undefined);
 		assert.equal(status.steps?.find((step) => step.workflowKey === "slow")?.status, "stopped");
 		assert.equal(status.steps?.find((step) => step.workflowKey === "slow")?.stopped, true);
+		assert.equal(status.steps?.find((step) => step.workflowKey === "slow")?.error, "Workflow child 'slow' stopped.");
 		assert.equal(status.steps?.find((step) => step.workflowKey === "fast")?.status, "completed");
 		assert.equal(status.steps?.find((step) => step.workflowKey === "fast")?.stopped, undefined);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { state?: string; stopped?: boolean; results?: Array<{ workflowKey?: string; success?: boolean; stopped?: boolean }> };
@@ -1793,9 +1795,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const childStatusEvents = fs.readFileSync(path.join(started.details.asyncDir, "events.jsonl"), "utf-8")
 			.trim()
 			.split("\n")
-			.map((line) => JSON.parse(line) as { type?: string; childId?: string; status?: string });
+			.map((line) => JSON.parse(line) as { type?: string; childId?: string; status?: string; reason?: string });
 		assert.ok(childStatusEvents.some((event) => event.type === "subagent.child-status" && event.childId === "slow" && event.status === "stopping"));
-		assert.ok(childStatusEvents.some((event) => event.type === "subagent.child-status" && event.childId === "slow" && event.status === "stopped"));
+		const stoppedChildStatus = childStatusEvents.findLast((event) => event.type === "subagent.child-status" && event.childId === "slow" && event.status === "stopped");
+		assert.equal(stoppedChildStatus?.reason, "subagent-action");
 		fs.rmSync(started.details.asyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		fs.rmSync(resultPath, { force: true });
 	});

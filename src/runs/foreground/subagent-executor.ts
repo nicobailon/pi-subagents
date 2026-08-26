@@ -4818,7 +4818,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									version: 1,
 									childId: entry.key,
 									status: "stopped",
-									reason: "user",
+									reason: "subagent-action",
 									source: "async",
 									stepIndex: status.steps?.indexOf(projectedStep),
 									agent: projectedStep.agent,
@@ -5646,7 +5646,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						if (!isStoppableAsyncStatusStep(resolution.child.step)) return { content: [{ type: "text", text: `Child '${paramsWithResolvedCwd.childId}' in async run '${targetRunId}' is ${resolution.child.step.status}; stop only supports pending or running children.` }], isError: true, details: { mode: "management", results: [] } };
 						const stopChild = deps.state.workflowChildStops?.get(targetRunId!);
 						if (!stopChild) return { content: [{ type: "text", text: `Workflow ${targetRunId} child stop is unavailable in this extension runtime.` }], isError: true, details: { mode: "management", results: [] } };
-						if (!stopChild(resolution.child.id)) return { content: [{ type: "text", text: `Child '${paramsWithResolvedCwd.childId}' in workflow ${workflowRunId} is not available to stop.` }], isError: true, details: { mode: "management", results: [] } };
+						if (!stopChild(resolution.child.id, `Workflow child '${resolution.child.id}' stopped.`)) return { content: [{ type: "text", text: `Child '${paramsWithResolvedCwd.childId}' in workflow ${workflowRunId} is not available to stop.` }], isError: true, details: { mode: "management", results: [] } };
 						try {
 							fs.appendFileSync(path.join(asyncJob.asyncDir, "events.jsonl"), `${JSON.stringify({
 								type: "subagent.child-status",
@@ -5655,7 +5655,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								childId: resolution.child.id,
 								status: "stopping",
 								ts: Date.now(),
-								reason: "user",
+								reason: "subagent-action",
 								source: "async",
 								stepIndex: resolution.child.index,
 								agent: resolution.child.step.agent,
@@ -5669,7 +5669,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						}
 						return { content: [{ type: "text", text: `Stop requested for child ${resolution.child.id} in async workflow ${workflowRunId}.` }], details: { mode: "management", results: [] } };
 					}
-					workflowController.abort(new Error("Workflow stopped by user."));
+					workflowController.abort(new Error("Workflow stopped."));
 					return { content: [{ type: "text", text: `Stop requested for async workflow ${targetRunId}.` }], details: { mode: "management", results: [] } };
 				}
 				let resolved: ResolvedSubagentRunId | undefined;

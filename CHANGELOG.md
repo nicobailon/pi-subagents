@@ -9,6 +9,7 @@
 ### Fixed
 - Classify workflow budget and timeout stops as partial terminal outcomes while preserving settled child evidence. Thanks to [@yceachan](https://github.com/yceachan) for #1530.
 - Show task intent and context-window use in compact in-progress async status rows.
+- Avoid attributing assistant-issued workflow stops to the user.
 - Publish a deterministic terminal handoff with settled child evidence and keyed recovery actions when detached workflow lanes settle. Thanks to [@yceachan](https://github.com/yceachan) for #1530.
 - Resolve direct MCP tool selections from Pi package manifests and Agent Plugin configs. Thanks to [@fmoda3](https://github.com/fmoda3) for #1541.
 - Auto-resume workflow children once after setup-phase aborts that produce zero usage, preserving the retained transcript instead of rerunning the whole task.

@@ -779,7 +779,7 @@ describe("subagent extension RPC bridge", () => {
 				childId: "review",
 				status: "stopping",
 				ts: 150,
-				reason: "user",
+				reason: "rpc",
 				source: "rpc",
 				asyncDir,
 				stepIndex: 1,
@@ -835,6 +835,7 @@ describe("subagent extension RPC bridge", () => {
 			assert.equal(childStatus?.runId, "workflow-stop-child");
 			assert.equal(childStatus?.childId, "slow");
 			assert.equal(childStatus?.status, "stopping");
+			assert.equal(childStatus?.reason, "rpc");
 			assert.equal(childStatus?.source, "rpc");
 			assert.equal(childStatus?.workflowKey, "slow");
 
