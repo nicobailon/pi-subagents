@@ -189,7 +189,6 @@ describe("public subagent delegation contract", () => {
 			enforceHardTurnLimit: true,
 			toolBudget: { soft: 3, hard: 5, block: "*" },
 			skill: ["review"],
-			output: false,
 			acceptance: false,
 			artifacts: true,
 			delegatedThinkingOverride: "high",

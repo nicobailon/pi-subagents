@@ -65,6 +65,7 @@ import { discardPreservedWorktrees } from "../../src/runs/shared/parallel-handof
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
 import { createWorkflowChildPermit, workflowChildPermitConsumed } from "../../src/shared/workflow-child-permit.ts";
+import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-adapters.ts";
 
 interface ModelAttempt {
 	success?: boolean;
@@ -501,6 +502,45 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(configuredTask, new RegExp(escapeRegExp(configuredPath)));
 		assert.match(configuredTask, /This path is authoritative for this run/);
 		assert.equal(fs.readFileSync(configuredPath, "utf-8"), "Agent report");
+	});
+
+	it("preserves agent output defaults for structured prompt-template delegation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const configuredPath = path.join(tempDir, "delegated-agent-report.md");
+		mockPi.onCall({
+			stdoutRaw: [
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+			structuredOutputCapture: { ok: true },
+		});
+		const executor = makeExecutor([makeAgent("echo", { output: configuredPath, outputMode: "file-only" })]);
+		const request: SubagentDelegationRequest = {
+			requestId: "delegated-output-default",
+			ownerRunId: "owner-1",
+			nodeId: "node-1",
+			agent: "echo",
+			task: "Return structured data",
+			context: "fresh",
+			cwd: tempDir,
+			model: "mock/model",
+			result: { kind: "structured", schema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } } },
+		};
+
+		const result = await executor.executeDelegated(
+			request.requestId,
+			toSubagentDelegationExecutionParams(request),
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "delegated execution failed");
+		const child = result.details?.results?.[0];
+		assert.equal(child?.savedOutputPath, configuredPath);
+		assert.equal(child?.outputMode, "file-only");
+		assert.deepEqual(child?.structuredOutput, { ok: true });
+		assert.deepEqual(JSON.parse(fs.readFileSync(configuredPath, "utf-8")), { ok: true });
 	});
 
 	it("does not inject a workflow child output without an aggregate or explicit output", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

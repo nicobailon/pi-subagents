@@ -298,7 +298,6 @@ export function toSubagentDelegationExecutionParams(request: SubagentDelegationR
 		enforceHardTurnLimit: true,
 		toolBudget: request.toolBudget,
 		skill: request.skill,
-		output: false,
 		...(request.result.kind === "structured" ? { outputSchema: request.result.schema } : {}),
 		acceptance: false,
 		artifacts: request.artifacts,

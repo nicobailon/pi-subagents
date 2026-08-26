@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Preserve agent frontmatter output defaults for prompt-template delegated leaves. Thanks to [@ashlineldridge](https://github.com/ashlineldridge) for #1521.
 - Reclaim failed async capacity slots after a configurable abandoned timeout when the runner PID is gone, while preserving honest unknown process-proof diagnostics. Thanks to [@rafafortes](https://github.com/rafafortes) for #1472.
 - Reject non-string workflow-child summary identifiers when reading receipt metadata.
 - Resolve the `advisor` builtin alias through the bundled `oracle` definition in model listings. Thanks to [@smileBeda](https://github.com/smileBeda) for #1502.
