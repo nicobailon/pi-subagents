@@ -43,6 +43,7 @@ export function projectAgentDefinition(agent: AgentConfig): Record<string, unkno
 		systemPrompt: agent.systemPrompt,
 		systemPromptMode: agent.systemPromptMode,
 		inheritProjectContext: agent.inheritProjectContext,
+		inheritGlobalContext: agent.inheritGlobalContext,
 		inheritSkills: agent.inheritSkills,
 		model: agent.model,
 		modelProvider: agent.modelProvider,
@@ -88,6 +89,7 @@ export interface LaunchBindingInput {
 	systemPrompt?: string | null;
 	systemPromptMode?: AgentConfig["systemPromptMode"];
 	inheritProjectContext: boolean;
+	inheritGlobalContext: boolean;
 	inheritSkills: boolean;
 	skills?: string[];
 	tools?: string[];
@@ -114,6 +116,7 @@ export function projectLaunchBinding(input: LaunchBindingInput): Record<string, 
 		systemPromptDigest: input.systemPrompt === undefined || input.systemPrompt === null ? undefined : stableJsonDigest(input.systemPrompt),
 		systemPromptMode: input.systemPromptMode,
 		inheritProjectContext: input.inheritProjectContext,
+		inheritGlobalContext: input.inheritGlobalContext,
 		inheritSkills: input.inheritSkills,
 		skills: input.skills,
 		tools: input.tools,

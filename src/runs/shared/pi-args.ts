@@ -142,6 +142,7 @@ export const SUBAGENT_STEER_CAPABILITY_ENV = "PI_SUBAGENT_STEER_CAPABILITY";
 export const SUBAGENT_STEER_ACK_DIR_ENV = "PI_SUBAGENT_STEER_ACK_DIR";
 export const PI_INTERCOM_STABLE_ID_ENV = "PI_INTERCOM_STABLE_ID";
 export const PI_INTERCOM_SESSION_ID_ENV = "PI_INTERCOM_SESSION_ID";
+export const SUBAGENT_INHERIT_GLOBAL_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_GLOBAL_CONTEXT";
 
 export interface BuildPiArgsInput {
 	parentSessionId?: string;
@@ -154,6 +155,7 @@ export interface BuildPiArgsInput {
 	thinking?: string | false;
 	systemPromptMode?: "append" | "replace";
 	inheritProjectContext: boolean;
+	inheritGlobalContext: boolean;
 	inheritSkills: boolean;
 	requireReadTool?: boolean;
 	tools?: string[];
@@ -822,6 +824,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = input.inheritProjectContext
 		? "1"
 		: "0";
+	env[SUBAGENT_INHERIT_GLOBAL_CONTEXT_ENV] = input.inheritGlobalContext ? "1" : "0";
 	env.PI_SUBAGENT_INHERIT_SKILLS = input.inheritSkills ? "1" : "0";
 	env[PI_INTERCOM_STABLE_ID_ENV] = input.intercomSessionName || undefined;
 	env[PI_INTERCOM_SESSION_ID_ENV] = undefined;

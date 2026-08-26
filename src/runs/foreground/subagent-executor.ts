@@ -1795,6 +1795,7 @@ async function resumeAsyncRun(input: {
 		systemPrompt: "",
 		systemPromptMode: recoveryDescriptor.systemPromptMode,
 		inheritProjectContext: recoveryDescriptor.inheritProjectContext,
+		inheritGlobalContext: recoveryDescriptor.inheritGlobalContext,
 		inheritSkills: recoveryDescriptor.inheritSkills,
 		source: "project",
 		filePath: recoveryDescriptor.agentFilePath ?? path.join(getProjectSubagentsDir(recoveryDescriptor.cwd), "recovery-agent"),

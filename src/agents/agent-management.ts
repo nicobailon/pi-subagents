@@ -230,6 +230,7 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		thinking: _thinking,
 		systemPromptMode: _systemPromptMode,
 		inheritProjectContext: _inheritProjectContext,
+		inheritGlobalContext: _inheritGlobalContext,
 		inheritSkills: _inheritSkills,
 		defaultContext: _defaultContext,
 		acceptanceRole: _acceptanceRole,
@@ -261,6 +262,7 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		...(base.thinking !== undefined ? { thinking: base.thinking } : {}),
 		systemPromptMode: base.systemPromptMode,
 		inheritProjectContext: base.inheritProjectContext,
+		inheritGlobalContext: base.inheritGlobalContext,
 		inheritSkills: base.inheritSkills,
 		...(base.defaultContext !== undefined ? { defaultContext: base.defaultContext } : {}),
 		...(base.acceptanceRole !== undefined ? { acceptanceRole: base.acceptanceRole } : {}),
@@ -317,6 +319,10 @@ export function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<
 	if (hasKey(cfg, "inheritProjectContext")) {
 		changed("inheritProjectContext");
 		fields.add("inheritProjectContext");
+	}
+	if (hasKey(cfg, "inheritGlobalContext")) {
+		changed("inheritGlobalContext");
+		fields.add("inheritGlobalContext");
 	}
 	if (hasKey(cfg, "inheritSkills")) {
 		changed("inheritSkills");
@@ -481,6 +487,10 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 	if (hasKey(cfg, "inheritProjectContext")) {
 		if (typeof cfg.inheritProjectContext !== "boolean") return "config.inheritProjectContext must be a boolean when provided.";
 		target.inheritProjectContext = cfg.inheritProjectContext;
+	}
+	if (hasKey(cfg, "inheritGlobalContext")) {
+		if (typeof cfg.inheritGlobalContext !== "boolean") return "config.inheritGlobalContext must be a boolean when provided.";
+		target.inheritGlobalContext = cfg.inheritGlobalContext;
 	}
 	if (hasKey(cfg, "inheritSkills")) {
 		if (typeof cfg.inheritSkills !== "boolean") return "config.inheritSkills must be a boolean when provided.";
@@ -709,6 +719,7 @@ function formatAgentDetail(agent: AgentConfig): string {
 		if (agent.runner?.type === "external-job" && agent.runner.options) lines.push(`Runner options: ${JSON.stringify(agent.runner.options)}`);
 	}
 	lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
+	lines.push(`Inherit global context: ${agent.inheritGlobalContext ? "true" : "false"}`);
 	lines.push(`Inherit skills: ${agent.inheritSkills ? "true" : "false"}`);
 	if (agent.defaultContext) lines.push(`Default context: ${agent.defaultContext}`);
 	if (agent.defaultAsync !== undefined) lines.push(`Async: ${agent.defaultAsync ? "true" : "false"}`);
@@ -926,6 +937,7 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 		systemPrompt: "",
 		systemPromptMode: defaultSystemPromptMode(name),
 		inheritProjectContext: defaultInheritProjectContext(name),
+		inheritGlobalContext: false,
 		inheritSkills: defaultInheritSkills(),
 	};
 	const applyError = applyAgentConfig(agent, cfg);

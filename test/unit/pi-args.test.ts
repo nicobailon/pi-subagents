@@ -662,6 +662,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			task: "hello",
 			sessionEnabled: false,
 			inheritProjectContext: false,
+			inheritGlobalContext: false,
 			inheritSkills: true,
 		});
 
@@ -678,7 +679,21 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.ok(args.includes("--no-context-files"));
 		assert.equal(env.PI_SUBAGENT_CHILD, "1");
 		assert.equal(env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT, "0");
+		assert.equal(env.PI_SUBAGENT_INHERIT_GLOBAL_CONTEXT, "0");
 		assert.equal(env.PI_SUBAGENT_INHERIT_SKILLS, "1");
+	});
+
+	it("propagates the global context inheritance flag through env", () => {
+		const { env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: true,
+			inheritGlobalContext: true,
+			inheritSkills: true,
+		});
+		assert.equal(env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT, "1");
+		assert.equal(env.PI_SUBAGENT_INHERIT_GLOBAL_CONTEXT, "1");
 	});
 
 	it("keeps context file loading enabled when project context is inherited", () => {

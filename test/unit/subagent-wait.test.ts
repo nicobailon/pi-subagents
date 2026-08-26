@@ -41,6 +41,7 @@ function writeRecoveryDescriptor(asyncRoot: string, runId: string, agent: string
 		cwd,
 		systemPromptMode: "append",
 		outputMode: "inline",
+		inheritGlobalContext: false,
 		inheritProjectContext: false,
 		inheritSkills: false,
 		maxSubagentDepth: 0,

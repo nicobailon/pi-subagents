@@ -75,6 +75,7 @@ export function makeAgentConfigs(names: string[]): AgentConfig[] {
 		description: `Test agent: ${name}`,
 		systemPrompt: "",
 		systemPromptMode: "replace",
+		inheritGlobalContext: false,
 		inheritProjectContext: false,
 		inheritSkills: false,
 	}));
@@ -86,6 +87,7 @@ export function makeAgent(name: string, overrides: Partial<AgentConfig> = {}): A
 		description: `Test agent: ${name}`,
 		systemPrompt: "",
 		systemPromptMode: "replace",
+		inheritGlobalContext: false,
 		inheritProjectContext: false,
 		inheritSkills: false,
 		...overrides,

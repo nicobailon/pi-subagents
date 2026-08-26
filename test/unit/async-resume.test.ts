@@ -277,7 +277,7 @@ describe("async resume lookup", () => {
 			});
 			const descriptor = {
 				version: 1, runFanoutBudget: createRunFanoutBudget("run-descriptor", 64), sourceRunId: "run-descriptor", agent: "worker", cwd: root, systemPromptMode: "replace",
-				inheritProjectContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
+				inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
 			};
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, token: "must-not-be-accepted" });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /unknown field 'token'/);
@@ -332,6 +332,7 @@ describe("async resume lookup", () => {
 				agent: "worker",
 				cwd: root,
 				systemPromptMode: "replace",
+				inheritGlobalContext: false,
 				inheritProjectContext: false,
 				inheritSkills: false,
 				outputMode: "inline",
@@ -387,6 +388,7 @@ describe("async resume lookup", () => {
 				agent: "worker",
 				cwd: root,
 				systemPromptMode: "replace",
+				inheritGlobalContext: false,
 				inheritProjectContext: false,
 				inheritSkills: false,
 				outputMode: "inline",
@@ -435,6 +437,7 @@ describe("async resume lookup", () => {
 				agent: "worker",
 				cwd: root,
 				systemPromptMode: "replace",
+				inheritGlobalContext: false,
 				inheritProjectContext: false,
 				inheritSkills: false,
 				outputMode: "inline",
@@ -478,6 +481,7 @@ describe("async resume lookup", () => {
 				agent: "worker",
 				cwd: root,
 				systemPromptMode: "replace",
+				inheritGlobalContext: false,
 				inheritProjectContext: false,
 				inheritSkills: false,
 				outputMode: "inline",

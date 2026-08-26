@@ -239,7 +239,7 @@ Direct settings example:
 ```
 
 Useful override fields: `description`, `model`, `fallbackModels`, `thinking`,
-`systemPromptMode`, `inheritProjectContext`, `inheritSkills`, `defaultContext`,
+`systemPromptMode`, `inheritProjectContext`, `inheritGlobalContext`, `inheritSkills`, `defaultContext`,
 `acceptanceRole`, `disabled`, `skills`, `tools`, `extensions`, and `systemPrompt`.
 `description` replaces the discovered description for builtin and custom agents
 in `list` output, which is useful for deployment-specific routing notes.

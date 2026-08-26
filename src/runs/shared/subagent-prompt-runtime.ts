@@ -6,7 +6,7 @@ import { registerNativeSupervisorClient } from "../../intercom/native-supervisor
 import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import { decodePermissionRules, permissionDecision, PERMISSION_AUDIT_PATH_ENV, PERMISSION_POLICY_ENV } from "./permissions.ts";
 import { consumeSteerRequestsFromDir, MAX_STEER_QUEUE_SIZE, steerAckPathFromDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type SteerDeliveryStatus, type SteerRequest } from "../background/control-channel.ts";
-import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
+import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_INHERIT_GLOBAL_CONTEXT_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV, isRuntimeAcknowledgedExtensionId, writeRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
 import { createStructuredOutputToolParameters, STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
 import {
@@ -20,7 +20,7 @@ import {
 import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge } from "./tool-budget.ts";
 import type { JsonSchemaObject, ResolvedToolBudget, SubagentState } from "../../shared/types.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
-import { resolveWatchPath } from "../../shared/utils.ts";
+import { getAgentDir, resolveWatchPath } from "../../shared/utils.ts";
 import { registerChildWatchdog } from "../../watchdog/register-child.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV, decodeChildWatchdogConfig } from "../../watchdog/child-status.ts";
 import { requestWatchdogPermission, type WatchdogPermissionRequest, type WatchdogPermissionResult } from "../../watchdog/permission-arbiter.ts";
@@ -68,7 +68,8 @@ const PARENT_ONLY_CUSTOM_MESSAGE_TYPES = new Set([
 	"subagent-control-notice",
 ]);
 const SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN = /<name>\s*pi-subagents\s*<\/name>/;
-const PROJECT_CONTEXT_HEADER = "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n";
+const PROJECT_CONTEXT_XML_HEADER = "\n\n<project_context>\n\n";
+const PROJECT_CONTEXT_LEGACY_HEADER = "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n";
 const SKILLS_HEADER = "\n\nThe following skills provide specialized instructions for specific tasks.";
 const DATE_HEADER = "\nCurrent date:";
 
@@ -148,10 +149,51 @@ function findSectionEnd(prompt: string, startIndex: number, nextHeaders: string[
 }
 
 export function stripProjectContext(prompt: string): string {
-	const startIndex = prompt.indexOf(PROJECT_CONTEXT_HEADER);
-	if (startIndex === -1) return prompt;
-	const endIndex = findSectionEnd(prompt, startIndex + PROJECT_CONTEXT_HEADER.length, [SKILLS_HEADER, DATE_HEADER]);
-	return `${prompt.slice(0, startIndex)}${prompt.slice(endIndex)}`;
+	const xmlStartIndex = prompt.indexOf(PROJECT_CONTEXT_XML_HEADER);
+	if (xmlStartIndex !== -1) {
+		const closingTag = "</project_context>";
+		const closingIndex = prompt.indexOf(closingTag, xmlStartIndex + PROJECT_CONTEXT_XML_HEADER.length);
+		if (closingIndex !== -1) {
+			return `${prompt.slice(0, xmlStartIndex)}${prompt.slice(closingIndex + closingTag.length)}`;
+		}
+	}
+	const legacyStartIndex = prompt.indexOf(PROJECT_CONTEXT_LEGACY_HEADER);
+	if (legacyStartIndex === -1) return prompt;
+	const endIndex = findSectionEnd(prompt, legacyStartIndex + PROJECT_CONTEXT_LEGACY_HEADER.length, [SKILLS_HEADER, DATE_HEADER]);
+	return `${prompt.slice(0, legacyStartIndex)}${prompt.slice(endIndex)}`;
+}
+
+const GLOBAL_CONTEXT_FILE_NAMES = new Set(["agents.md", "agents.override.md", "claude.md"]);
+
+function canonicalDirectory(dir: string): string {
+	try {
+		return fs.realpathSync(dir);
+	} catch {
+		return path.resolve(dir);
+	}
+}
+
+function isGlobalContextFile(filePath: string): boolean {
+	const home = process.env.HOME ?? process.env.USERPROFILE;
+	const expanded = filePath === "~"
+		? home ?? filePath
+		: /^~[\\/]/.test(filePath)
+			? path.join(home ?? "~", filePath.slice(2))
+			: filePath;
+	if (!GLOBAL_CONTEXT_FILE_NAMES.has(path.basename(expanded).toLowerCase())) return false;
+	return canonicalDirectory(path.dirname(expanded)) === canonicalDirectory(getAgentDir());
+}
+
+function stripGlobalInstructionsFromXmlContext(context: string): string {
+	const block = /<project_instructions\s+path=(["'])(.*?)\1\s*>[\s\S]*?<\/project_instructions>\s*/gi;
+	return context.replace(block, (match, _quote: string, filePath: string) => isGlobalContextFile(filePath) ? "" : match);
+}
+
+export function stripGlobalContext(prompt: string): string {
+	return prompt.replace(/<project_context>[\s\S]*?<\/project_context>/gi, (context) => {
+		const rewritten = stripGlobalInstructionsFromXmlContext(context);
+		return /<project_instructions\b/i.test(rewritten) ? rewritten : "";
+	});
 }
 
 export function stripInheritedSkills(prompt: string): string {
@@ -177,11 +219,14 @@ function stripChildBoundaryInstructions(prompt: string): string {
 
 export function rewriteSubagentPrompt(
 	prompt: string,
-	options: { inheritProjectContext: boolean; inheritSkills: boolean; fanoutChild?: boolean },
+	options: { inheritProjectContext: boolean; inheritGlobalContext: boolean; inheritSkills: boolean; fanoutChild?: boolean },
 ): string {
 	let rewritten = prompt;
 	if (!options.inheritProjectContext) {
 		rewritten = stripProjectContext(rewritten);
+	}
+	if (!options.inheritGlobalContext) {
+		rewritten = stripGlobalContext(rewritten);
 	}
 	if (!options.inheritSkills) {
 		rewritten = stripInheritedSkills(rewritten);
@@ -688,12 +733,14 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		}
 
 		const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);
+		const inheritGlobalContext = readBooleanEnv(SUBAGENT_INHERIT_GLOBAL_CONTEXT_ENV);
 		const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);
 		const fanoutChild = readBooleanEnv(SUBAGENT_FANOUT_CHILD_ENV);
 		let rewritten = event.systemPrompt;
-		if (inheritProjectContext !== undefined || inheritSkills !== undefined || fanoutChild !== undefined) {
+		if (inheritProjectContext !== undefined || inheritGlobalContext !== undefined || inheritSkills !== undefined || fanoutChild !== undefined) {
 			rewritten = rewriteSubagentPrompt(event.systemPrompt, {
 				inheritProjectContext: inheritProjectContext ?? true,
+				inheritGlobalContext: inheritGlobalContext ?? true,
 				inheritSkills: inheritSkills ?? true,
 				fanoutChild: fanoutChild === true,
 			});

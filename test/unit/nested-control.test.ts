@@ -390,6 +390,7 @@ describe("nested control routing", () => {
 				agent: "worker",
 				cwd: root,
 				systemPromptMode: "replace",
+				inheritGlobalContext: false,
 				inheritProjectContext: false,
 				inheritSkills: false,
 				outputMode: "inline",

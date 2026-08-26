@@ -159,6 +159,7 @@ Agent definitions are not loaded into context by default. Management actions let
   systemPrompt: "You are a code scout...",
   systemPromptMode: "replace",
   inheritProjectContext: false,
+  inheritGlobalContext: false,
   inheritSkills: false,
   model: "anthropic/claude-sonnet-4",
   fallbackModels: ["openai-codex/gpt-5.6-luna:low", "anthropic/claude-haiku-4-5"],

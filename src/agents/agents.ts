@@ -62,6 +62,7 @@ export interface BuiltinAgentOverrideBase {
 	thinking?: string | false;
 	systemPromptMode: SystemPromptMode;
 	inheritProjectContext: boolean;
+	inheritGlobalContext: boolean;
 	inheritSkills: boolean;
 	defaultContext?: AgentDefaultContext;
 	acceptanceRole?: AcceptanceRole;
@@ -90,6 +91,7 @@ interface BuiltinAgentOverrideConfig {
 	thinking?: string | false;
 	systemPromptMode?: SystemPromptMode;
 	inheritProjectContext?: boolean;
+	inheritGlobalContext?: boolean;
 	inheritSkills?: boolean;
 	defaultContext?: AgentDefaultContext | false;
 	acceptanceRole?: AcceptanceRole | false;
@@ -137,6 +139,7 @@ export interface AgentConfig {
 	thinking?: string | false;
 	systemPromptMode: SystemPromptMode;
 	inheritProjectContext: boolean;
+	inheritGlobalContext: boolean;
 	inheritSkills: boolean;
 	defaultContext?: AgentDefaultContext;
 	defaultAsync?: boolean;
@@ -713,6 +716,7 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		...(agent.thinking !== undefined ? { thinking: agent.thinking } : {}),
 		systemPromptMode: agent.systemPromptMode,
 		inheritProjectContext: agent.inheritProjectContext,
+		inheritGlobalContext: agent.inheritGlobalContext,
 		inheritSkills: agent.inheritSkills,
 		...(agent.defaultContext !== undefined ? { defaultContext: agent.defaultContext } : {}),
 		...(agent.acceptanceRole !== undefined ? { acceptanceRole: agent.acceptanceRole } : {}),
@@ -745,6 +749,7 @@ function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentO
 		...(override.thinking !== undefined ? { thinking: override.thinking } : {}),
 		...(override.systemPromptMode !== undefined ? { systemPromptMode: override.systemPromptMode } : {}),
 		...(override.inheritProjectContext !== undefined ? { inheritProjectContext: override.inheritProjectContext } : {}),
+		...(override.inheritGlobalContext !== undefined ? { inheritGlobalContext: override.inheritGlobalContext } : {}),
 		...(override.inheritSkills !== undefined ? { inheritSkills: override.inheritSkills } : {}),
 		...(override.defaultContext !== undefined ? { defaultContext: override.defaultContext } : {}),
 		...(override.acceptanceRole !== undefined ? { acceptanceRole: override.acceptanceRole } : {}),
@@ -960,6 +965,14 @@ function parseBuiltinOverrideEntry(
 			override.inheritProjectContext = input.inheritProjectContext;
 		} else {
 			throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'inheritProjectContext'; expected a boolean.`);
+		}
+	}
+
+	if ("inheritGlobalContext" in input) {
+		if (typeof input.inheritGlobalContext === "boolean") {
+			override.inheritGlobalContext = input.inheritGlobalContext;
+		} else {
+			throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'inheritGlobalContext'; expected a boolean.`);
 		}
 	}
 
@@ -1280,6 +1293,7 @@ function applyBuiltinOverride(
 	if (override.thinking !== undefined) { if (override.thinking === false) delete next.thinking; else next.thinking = override.thinking; }
 	if (override.systemPromptMode !== undefined) next.systemPromptMode = override.systemPromptMode;
 	if (override.inheritProjectContext !== undefined) next.inheritProjectContext = override.inheritProjectContext;
+	if (override.inheritGlobalContext !== undefined) next.inheritGlobalContext = override.inheritGlobalContext;
 	if (override.inheritSkills !== undefined) next.inheritSkills = override.inheritSkills;
 	if (override.defaultContext !== undefined) { if (override.defaultContext === false) delete next.defaultContext; else next.defaultContext = override.defaultContext; }
 	if (override.acceptanceRole !== undefined) { if (override.acceptanceRole === false) delete next.acceptanceRole; else next.acceptanceRole = override.acceptanceRole; }
@@ -1427,6 +1441,9 @@ function applyCustomAgentOverride(
 	if (override.inheritProjectContext !== undefined) {
 		fill("inheritProjectContext", ["inheritProjectContext"], override.inheritProjectContext);
 	}
+	if (override.inheritGlobalContext !== undefined) {
+		fill("inheritGlobalContext", ["inheritGlobalContext"], override.inheritGlobalContext);
+	}
 	if (override.inheritSkills !== undefined) {
 		fill("inheritSkills", ["inheritSkills"], override.inheritSkills);
 	}
@@ -1500,7 +1517,7 @@ function applyCustomAgentOverrides(
 
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
-	draft: Pick<AgentConfig, "model" | "modelProvider" | "fallbackModels" | "fast" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "extensions" | "subagentOnlyExtensions" | "mutationTools" | "completionGuard" | "toolBudget"> & Partial<Pick<AgentConfig, "description" | "output" | "outputMode" | "defaultReads">>,
+	draft: Pick<AgentConfig, "model" | "modelProvider" | "fallbackModels" | "fast" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritGlobalContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "extensions" | "subagentOnlyExtensions" | "mutationTools" | "completionGuard" | "toolBudget"> & Partial<Pick<AgentConfig, "description" | "output" | "outputMode" | "defaultReads">>,
 ): BuiltinAgentOverrideConfig | undefined {
 	const override: BuiltinAgentOverrideConfig = {};
 
@@ -1518,6 +1535,7 @@ export function buildBuiltinOverrideConfig(
 	if (draft.thinking !== base.thinking) override.thinking = draft.thinking ?? false;
 	if (draft.systemPromptMode !== base.systemPromptMode) override.systemPromptMode = draft.systemPromptMode;
 	if (draft.inheritProjectContext !== base.inheritProjectContext) override.inheritProjectContext = draft.inheritProjectContext;
+	if (draft.inheritGlobalContext !== base.inheritGlobalContext) override.inheritGlobalContext = draft.inheritGlobalContext;
 	if (draft.inheritSkills !== base.inheritSkills) override.inheritSkills = draft.inheritSkills;
 	if (draft.defaultContext !== base.defaultContext) override.defaultContext = draft.defaultContext ?? false;
 	if (draft.acceptanceRole !== base.acceptanceRole) override.acceptanceRole = draft.acceptanceRole ?? false;
@@ -1976,6 +1994,7 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			: frontmatter.inheritProjectContext === "false"
 				? false
 				: defaultInheritProjectContext(localName);
+		const inheritGlobalContext = frontmatter.inheritGlobalContext === "true";
 		const inheritSkills = frontmatter.inheritSkills === "true"
 			? true
 			: frontmatter.inheritSkills === "false"
@@ -2086,6 +2105,7 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			...(frontmatter.thinking !== undefined ? { thinking: frontmatter.thinking === "false" ? false : frontmatter.thinking } : {}),
 			systemPromptMode,
 			inheritProjectContext,
+			inheritGlobalContext,
 			inheritSkills,
 			...(defaultContext !== undefined ? { defaultContext } : {}),
 			...(defaultAsync !== undefined ? { defaultAsync } : {}),

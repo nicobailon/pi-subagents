@@ -15,6 +15,7 @@ export const KNOWN_FIELDS = new Set([
 	"thinking",
 	"systemPromptMode",
 	"inheritProjectContext",
+	"inheritGlobalContext",
 	"inheritSkills",
 	"defaultContext",
 	"async",
@@ -79,6 +80,7 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	}
 	if (!preservingExistingFrontmatter || preserve("systemPromptMode")) lines.push(`systemPromptMode: ${config.systemPromptMode}`);
 	if (!preservingExistingFrontmatter || preserve("inheritProjectContext")) lines.push(`inheritProjectContext: ${config.inheritProjectContext ? "true" : "false"}`);
+	if (config.inheritGlobalContext || preserve("inheritGlobalContext")) lines.push(`inheritGlobalContext: ${config.inheritGlobalContext ? "true" : "false"}`);
 	if (!preservingExistingFrontmatter || preserve("inheritSkills")) lines.push(`inheritSkills: ${config.inheritSkills ? "true" : "false"}`);
 	if (config.defaultContext || preserve("defaultContext")) lines.push(`defaultContext: ${config.defaultContext ?? ""}`);
 	if (config.runner || preserve("runner")) {

@@ -3,9 +3,13 @@
 ## [Unreleased]
 
 ### Added
+- Add `inheritGlobalContext` agent configuration so children can inherit repository context without repeating the operator's global context file.
 - Add process-local event registration so independent Pi extensions can register runtime agents through the installed owner. Thanks to [@fmoda3](https://github.com/fmoda3) for #1533.
 - Add advisory launch preflight diagnostics for likely workspace scope and authority mismatches.
 - Document unsupported native child options for external CLI agents in the subagent tool help, packaged guide, and packaged skill.
+
+### Changed
+- Agents now omit the operator's global context file by default, including existing agents with `inheritProjectContext: true`; set `inheritGlobalContext: true` to preserve the previous behavior.
 
 ### Fixed
 - Fail explicitly requested models closed when a cached model exclusion is active, instead of silently selecting a fallback. Thanks to [@harpsychord](https://github.com/harpsychord) for #1556.

@@ -159,6 +159,7 @@ export interface SubagentLaunchContract {
 	thinkingCeiling?: ThinkingLevel;
 	systemPromptMode: AgentConfig["systemPromptMode"];
 	inheritProjectContext: boolean;
+	inheritGlobalContext: boolean;
 	inheritSkills: boolean;
 	skills: SubagentLaunchContractSkills;
 	tools: SubagentLaunchContractTools;
@@ -422,6 +423,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		...(thinkingCeiling ? { thinkingCeiling } : {}),
 		systemPromptMode: agent.systemPromptMode,
 		inheritProjectContext: agent.inheritProjectContext,
+		inheritGlobalContext: agent.inheritGlobalContext,
 		inheritSkills: agent.inheritSkills,
 		skills: {
 			requested: requestedSkills,
@@ -477,6 +479,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			systemPrompt: effectiveSystemPrompt,
 			systemPromptMode: agent.systemPromptMode,
 			inheritProjectContext: agent.inheritProjectContext,
+			inheritGlobalContext: agent.inheritGlobalContext,
 			inheritSkills: agent.inheritSkills,
 			skills: requestedSkills,
 			tools: toolPlan.effectiveToolAllowlist,

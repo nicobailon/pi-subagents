@@ -70,6 +70,7 @@ function writeRetainedRun(root: string, index: number, options: WriteRunOptions 
 			agent: options.recoveryAgent ?? "worker",
 			cwd: options.recoveryCwd ?? root,
 			systemPromptMode: "replace",
+			inheritGlobalContext: false,
 			inheritProjectContext: false,
 			inheritSkills: false,
 			outputMode: "inline",

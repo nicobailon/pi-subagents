@@ -27,6 +27,7 @@ export interface RuntimeAgentDefinition {
 	thinking?: string | false;
 	systemPromptMode?: "append" | "replace";
 	inheritProjectContext?: boolean;
+	inheritGlobalContext?: boolean;
 	inheritSkills?: boolean;
 	defaultContext?: AgentDefaultContext;
 	defaultAsync?: boolean;
@@ -205,7 +206,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 	const definition = value as Record<string, unknown>;
 	const supported = new Set([
 		"description", "systemPrompt", "aliases", "tools", "mcpDirectTools", "model", "fallbackModels", "thinking",
-		"systemPromptMode", "inheritProjectContext", "inheritSkills", "defaultContext", "defaultAsync", "defaultTimeoutMs",
+		"systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "defaultContext", "defaultAsync", "defaultTimeoutMs",
 		"defaultToolTimeoutMs", "defaultTurnBudget", "defaultAcceptance", "acceptanceRole", "runner", "skills", "skillPath",
 		"extensions", "subagentOnlyExtensions", "mutationTools", "output", "outputMode", "defaultReads", "defaultProgress", "interactive",
 		"maxSubagentDepth", "completionGuard", "toolBudget", "permissions",
@@ -228,6 +229,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 	const model = validateOptionalString(definition.model, "Runtime agent definition model");
 	const fallbackModels = validateStringList(definition.fallbackModels, "Runtime agent definition fallbackModels");
 	const inheritProjectContext = validateBoolean(definition.inheritProjectContext, "Runtime agent definition inheritProjectContext");
+	const inheritGlobalContext = validateBoolean(definition.inheritGlobalContext, "Runtime agent definition inheritGlobalContext");
 	const inheritSkills = validateBoolean(definition.inheritSkills, "Runtime agent definition inheritSkills");
 	const defaultAsync = validateBoolean(definition.defaultAsync, "Runtime agent definition defaultAsync");
 	const defaultTimeoutMs = validatePositiveInteger(definition.defaultTimeoutMs, "Runtime agent definition defaultTimeoutMs");
@@ -259,6 +261,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 		...(thinking !== undefined ? { thinking: thinking as string | false } : {}),
 		...(systemPromptMode !== undefined ? { systemPromptMode: systemPromptMode as "append" | "replace" } : {}),
 		...(inheritProjectContext !== undefined ? { inheritProjectContext } : {}),
+		...(inheritGlobalContext !== undefined ? { inheritGlobalContext } : {}),
 		...(inheritSkills !== undefined ? { inheritSkills } : {}),
 		...(defaultContext !== undefined ? { defaultContext: defaultContext as AgentDefaultContext } : {}),
 		...(defaultAsync !== undefined ? { defaultAsync } : {}),
@@ -337,6 +340,7 @@ function toAgentConfig(name: string, definition: RuntimeAgentDefinition): AgentC
 		...(definition.thinking !== undefined ? { thinking: definition.thinking } : {}),
 		systemPromptMode: definition.systemPromptMode ?? defaultSystemPromptMode(name),
 		inheritProjectContext: definition.inheritProjectContext ?? defaultInheritProjectContext(name),
+		inheritGlobalContext: definition.inheritGlobalContext ?? false,
 		inheritSkills: definition.inheritSkills ?? defaultInheritSkills(),
 		...(definition.defaultContext !== undefined ? { defaultContext: definition.defaultContext } : {}),
 		...(definition.defaultAsync !== undefined ? { defaultAsync: definition.defaultAsync } : {}),

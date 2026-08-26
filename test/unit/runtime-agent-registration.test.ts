@@ -103,6 +103,26 @@ describe("runtime agent registration", () => {
 		registration.dispose();
 	});
 
+	it("accepts inheritGlobalContext in a runtime agent definition", () => {
+		const registration = registerAgent({
+			pi,
+			name: "runtime-global-helper",
+			definition: {
+				description: "Runtime global helper",
+				systemPrompt: "Help at runtime.",
+				inheritProjectContext: true,
+				inheritGlobalContext: true,
+			},
+		});
+
+		const agents = mergeRuntimeAgents(pi, discoverAgents(tempProject, "both")).agents;
+		const agent = agents.find((candidate) => candidate.name === "runtime-global-helper");
+		assert.equal(agent?.inheritProjectContext, true);
+		assert.equal(agent?.inheritGlobalContext, true);
+
+		registration.dispose();
+	});
+
 	it("registers through the owner runtime when consumer and owner API objects differ", () => {
 		const events = makeEventBus();
 		const ownerPi = makePiWithEvents(events);

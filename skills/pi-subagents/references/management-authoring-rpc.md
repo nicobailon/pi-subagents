@@ -102,6 +102,7 @@ thinking: high
 tools: read, grep, find, ls, bash
 systemPromptMode: replace
 inheritProjectContext: true
+inheritGlobalContext: false
 inheritSkills: false
 skills: safe-bash, review-checklist
 skillPath: ./skills, ../shared-skills

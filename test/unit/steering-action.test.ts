@@ -106,6 +106,7 @@ function recoveryDescriptor(runId: string): SteeringRecoveryDescriptor {
 		agent: "worker-0",
 		cwd: os.tmpdir(),
 		systemPromptMode: "replace",
+		inheritGlobalContext: false,
 		inheritProjectContext: false,
 		inheritSkills: false,
 		outputMode: "inline",

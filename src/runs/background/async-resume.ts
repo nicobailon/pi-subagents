@@ -325,7 +325,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	const parsed = value as Record<string, unknown>;
 	const allowedFields = new Set([
 		"version", "launchContractDigest", "sourceRunId", "agentContract", "agent", "sessionFile", "cwd", "model", "modelProvider", "modelOverrideFromParent", "fallbackModels", "thinking", "thinkingCeiling", "tools", "extensions",
-		"subagentOnlyExtensions", "mcpDirectTools", "mutationTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritSkills", "skills",
+		"subagentOnlyExtensions", "mcpDirectTools", "mutationTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "skills",
 		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "context", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
 		"launchResolvedExtensions", "runFanoutBudget",
@@ -359,6 +359,8 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	for (const field of ["inheritProjectContext", "inheritSkills", "share"] as const) {
 		if (typeof parsed[field] !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must be a boolean.`);
 	}
+	if (parsed.inheritGlobalContext === undefined) parsed.inheritGlobalContext = false;
+	else if (typeof parsed.inheritGlobalContext !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': inheritGlobalContext must be a boolean.`);
 	if (!Number.isInteger(parsed.maxSubagentDepth) || (parsed.maxSubagentDepth as number) < 0) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': maxSubagentDepth must be a non-negative integer.`);
 	for (const field of ["fallbackModels", "tools", "extensions", "subagentOnlyExtensions", "mcpDirectTools", "mutationTools", "skills", "skillPath"] as const) {
 		const item = parsed[field];
@@ -596,6 +598,7 @@ export function applySteeringRecoveryAgentConfig(agentConfig: AgentConfig, descr
 		systemPrompt: descriptor.systemPrompt ?? agentConfig.systemPrompt,
 		systemPromptMode: descriptor.systemPromptMode,
 		inheritProjectContext: descriptor.inheritProjectContext,
+		inheritGlobalContext: descriptor.inheritGlobalContext,
 		inheritSkills: descriptor.inheritSkills,
 		skills: descriptor.skills ? [...descriptor.skills] : undefined,
 		skillPath: descriptor.skillPath ? [...descriptor.skillPath] : undefined,

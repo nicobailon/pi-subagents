@@ -1589,6 +1589,7 @@ describe("agent frontmatter prompt inheritance flags", () => {
 			systemPrompt: "Do work",
 			systemPromptMode: "replace",
 			inheritProjectContext: true,
+			inheritGlobalContext: true,
 			inheritSkills: true,
 			source: "project",
 			filePath: "/tmp/worker.md",
@@ -1596,6 +1597,7 @@ describe("agent frontmatter prompt inheritance flags", () => {
 
 		const serialized = serializeAgent(agent);
 		assert.match(serialized, /inheritProjectContext: true/);
+		assert.match(serialized, /inheritGlobalContext: true/);
 		assert.match(serialized, /inheritSkills: true/);
 	});
 
@@ -1608,6 +1610,7 @@ describe("agent frontmatter prompt inheritance flags", () => {
 name: worker
 description: Worker
 inheritProjectContext: true
+inheritGlobalContext: true
 inheritSkills: true
 ---
 
@@ -1617,7 +1620,26 @@ Do work
 		const result = discoverAgents(dir, "project");
 		const worker = result.agents.find((agent) => agent.name === "worker");
 		assert.equal(worker?.inheritProjectContext, true);
+		assert.equal(worker?.inheritGlobalContext, true);
 		assert.equal(worker?.inheritSkills, true);
+	});
+
+	it("defaults inheritGlobalContext to false when frontmatter omits it", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-prompt-inheritance-frontmatter-"));
+		tempDirs.push(dir);
+		const agentsDir = path.join(dir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "worker.md"), `---
+name: worker
+description: Worker
+---
+
+Do work
+`, "utf-8");
+
+		const result = discoverAgents(dir, "project");
+		const worker = result.agents.find((agent) => agent.name === "worker");
+		assert.equal(worker?.inheritGlobalContext, false);
 	});
 });
 

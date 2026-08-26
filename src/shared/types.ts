@@ -643,6 +643,7 @@ export interface SteeringRecoveryDescriptor {
 	systemPrompt?: string;
 	systemPromptMode: "append" | "replace";
 	inheritProjectContext: boolean;
+	inheritGlobalContext: boolean;
 	inheritSkills: boolean;
 	skills?: string[];
 	skillPath?: string[];
