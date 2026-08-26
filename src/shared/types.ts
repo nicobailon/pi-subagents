@@ -78,6 +78,11 @@ export type WorkflowReceiptState = "complete" | "failed" | "paused" | "stopped";
 
 export type WorkflowTerminalResolution = "settled-awaiting-resume" | "failed-child" | "interrupted-child";
 
+export interface WorkflowTerminalOutcome {
+	state: "partial";
+	reason: "budget_exhausted" | "timeout";
+}
+
 export interface WorkflowRecoveryAction {
 	key: string;
 	call: "runs.run";
@@ -107,6 +112,7 @@ type WorkflowReceiptEntryResumability =
 
 export type WorkflowReceiptEntry = WorkflowReceiptEntryResumability & {
 	key: string;
+	terminalOutcome?: WorkflowTerminalOutcome;
 	agent?: string;
 	requestedContext?: "fresh" | "fork";
 	resolvedContext?: "fresh" | "fork" | "mixed";
@@ -123,6 +129,7 @@ export interface WorkflowReceipt {
 	entries: Record<string, WorkflowReceiptEntry>;
 	workflowChildren?: WorkflowChildSummaryV1;
 	workflowResolution?: WorkflowTerminalResolution;
+	terminalOutcome?: WorkflowTerminalOutcome;
 	recovery?: WorkflowRecoveryAction[];
 }
 

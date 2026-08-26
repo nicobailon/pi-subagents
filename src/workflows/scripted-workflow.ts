@@ -654,6 +654,7 @@ parentPort.on("message", async (message) => {
 export interface WorkflowScriptChildResult {
 	key: string;
 	ok: boolean;
+	terminalOutcome?: import("../shared/types.ts").WorkflowTerminalOutcome;
 	stopped?: boolean;
 	/** Canonical child agent name when launch resolution produced one. */
 	agent?: string;
@@ -723,9 +724,9 @@ export interface WorkflowScriptResult {
 
 export class WorkflowScriptError extends Error {
 	readonly partial: Omit<WorkflowScriptResult, "value">;
-	readonly errorKind?: "detached-child";
+	readonly errorKind?: "detached-child" | "timeout";
 
-	constructor(message: string, partial: Omit<WorkflowScriptResult, "value">, errorKind?: "detached-child") {
+	constructor(message: string, partial: Omit<WorkflowScriptResult, "value">, errorKind?: "detached-child" | "timeout") {
 		super(message);
 		this.name = "WorkflowScriptError";
 		this.partial = partial;
@@ -1230,7 +1231,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 							return unobservedSteers.length > 0 ? new Error(`workflowScript completed with unawaited runs.steer call(s): ${unobservedSteers.map((key) => `'${key}'`).join(", ")}. Await or return each call.`) : undefined;
 						})()
 						: undefined;
-				if ("error" in outcome) reject(new WorkflowScriptError(outcome.error.message, partial(), outcome.error.workflowErrorKind === "detached-child" ? "detached-child" : undefined));
+				if ("error" in outcome) reject(new WorkflowScriptError(outcome.error.message, partial(), outcome.error.workflowErrorKind === "detached-child" || outcome.error.workflowErrorKind === "timeout" ? outcome.error.workflowErrorKind : undefined));
 				else if (completionError) reject(new WorkflowScriptError(completionError.message, partial()));
 				else resolve({ value: outcome.value, ...partial() });
 			});
@@ -1261,7 +1262,11 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		};
 		const timer = options.timeoutMs === undefined
 			? undefined
-			: setTimeout(() => finish({ error: new Error(`Workflow script timed out after ${options.timeoutMs}ms.`) }), options.timeoutMs);
+			: setTimeout(() => {
+				const error = new Error(`Workflow script timed out after ${options.timeoutMs}ms.`) as Error & { workflowErrorKind: "timeout" };
+				error.workflowErrorKind = "timeout";
+				finish({ error });
+			}, options.timeoutMs);
 		options.signal?.addEventListener("abort", onAbort, { once: true });
 		if (options.signal?.aborted) return onAbort();
 

@@ -382,6 +382,52 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		assert.equal(published.results?.find((child) => child.workflowKey === "stopped")?.stopped, true);
 	});
 
+	it("keeps a detached timeout outcome local after fail-closed workflow settlement", () => {
+		const workflowRunId = "workflow-child-timeout-handoff";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		const outcome = { state: "partial" as const, reason: "timeout" as const };
+		const status = { ...pausedWorkflow("child-timeout"), runId: workflowRunId, sessionId: "session-1" };
+		status.steps!.push({ agent: "worker", workflowKey: "still-open", runId: "child-open", status: "paused", activityState: "needs_attention" });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+		writeWorkflowReceipt(asyncDir, buildWorkflowReceipt({
+			workflowRunId,
+			state: "paused",
+			children: [
+				{ key: "detaches", ok: false, agent: "worker", runId: "child-timeout", output: "paused", detached: true, artifactPaths: [], resumability: { state: "not-resumable", reason: "child detached" }, continuation: { runIds: ["child-timeout"] } },
+				{ key: "still-open", ok: false, agent: "worker", runId: "child-open", output: "paused", detached: true, artifactPaths: [], resumability: { state: "not-resumable", reason: "child detached" }, continuation: { runIds: ["child-open"] } },
+			],
+		}));
+		const state = { asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]) } as SubagentState;
+
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "child-timeout",
+			result: { index: 0, agent: "worker", task: "t", exitCode: 1, timedOut: true, error: "Subagent timed out after 50ms." },
+		}), true);
+		const paused = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; terminalOutcome?: unknown; results?: Array<{ workflowKey?: string; terminalOutcome?: unknown }>; workflowReceipt?: { receipt?: { terminalOutcome?: unknown; entries?: Record<string, { terminalOutcome?: unknown }> } } };
+		assert.equal(paused.state, "paused");
+		assert.equal(paused.terminalOutcome, undefined);
+		assert.equal(paused.workflowReceipt?.receipt?.terminalOutcome, undefined);
+		assert.deepEqual(paused.results?.find((child) => child.workflowKey === "detaches")?.terminalOutcome, outcome);
+		assert.deepEqual(paused.workflowReceipt?.receipt?.entries?.detaches?.terminalOutcome, outcome);
+
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "child-open",
+			result: { index: 1, agent: "worker", task: "t", exitCode: 0 },
+		}), true);
+		const terminal = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; terminalOutcome?: unknown; results?: Array<{ workflowKey?: string; terminalOutcome?: unknown }>; workflowReceipt?: { receipt?: { terminalOutcome?: unknown; entries?: Record<string, { terminalOutcome?: unknown }> } } };
+		assert.equal(terminal.state, "failed");
+		assert.equal(terminal.terminalOutcome, undefined);
+		assert.equal(terminal.workflowReceipt?.receipt?.terminalOutcome, undefined);
+		assert.deepEqual(terminal.results?.find((child) => child.workflowKey === "detaches")?.terminalOutcome, outcome);
+		assert.deepEqual(terminal.workflowReceipt?.receipt?.entries?.detaches?.terminalOutcome, outcome);
+	});
+
 	it("preserves sibling output path mappings when rebuilding from workflow status", () => {
 		const workflowRunId = "workflow-sibling-mappings";
 		const asyncDir = path.join(DIRS.async, workflowRunId);

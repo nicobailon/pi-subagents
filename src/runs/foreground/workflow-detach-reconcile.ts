@@ -10,6 +10,7 @@ import {
 	type SingleResult,
 	type SubagentState,
 	type WorkflowRecoveryAction,
+	type WorkflowTerminalOutcome,
 	type WorkflowTerminalResolution,
 } from "../../shared/types.ts";
 import { updateActiveRunIndex } from "../background/active-run-index.ts";
@@ -131,10 +132,17 @@ function workflowRecovery(receipt: WorkflowReceipt | undefined): WorkflowRecover
 		: []);
 }
 
+function resultTerminalOutcome(result: Pick<SingleResult, "timedOut" | "turnBudgetExceeded" | "toolBudgetBlocked">): WorkflowTerminalOutcome | undefined {
+	if (result.timedOut) return { state: "partial", reason: "timeout" };
+	if (result.turnBudgetExceeded || result.toolBudgetBlocked) return { state: "partial", reason: "budget_exhausted" };
+	return undefined;
+}
+
 function workflowResultChildren(status: AsyncStatus, childRunId: string, result: SingleResult, existingResults: unknown, receipt?: WorkflowReceipt): unknown {
 	const output = getSingleResultOutput(result);
 	const outputReference = result.savedOutputPath ?? result.outputReference?.path;
 	const outputPathMapping = outputPathMappingFromTask(result.task, outputReference);
+	const terminalOutcome = resultTerminalOutcome(result);
 	if (Array.isArray(existingResults)) {
 		return existingResults.map((entry) => {
 			if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
@@ -149,6 +157,7 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 				...(outputReference ? { outputReference } : {}),
 				...(outputPathMapping ? { outputPathMapping } : {}),
 				...(result.interrupted ? { interrupted: true } : {}),
+				...(terminalOutcome ? { terminalOutcome } : {}),
 				...(result.error ? { error: result.error } : {}),
 			};
 		});
@@ -163,6 +172,7 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 		...(step.runId === childRunId && outputReference ? { outputReference } : step.workflowKey && receipt?.entries[step.workflowKey]?.outputReference ? { outputReference: receipt.entries[step.workflowKey]!.outputReference } : {}),
 		...(step.runId === childRunId && outputPathMapping ? { outputPathMapping } : step.outputPathMapping ? { outputPathMapping: step.outputPathMapping } : {}),
 		...(step.interrupted ? { interrupted: true } : {}),
+		...(step.runId === childRunId && terminalOutcome ? { terminalOutcome } : step.workflowKey && receipt?.entries[step.workflowKey]?.terminalOutcome ? { terminalOutcome: receipt.entries[step.workflowKey]!.terminalOutcome } : {}),
 		...(step.stopped ? { stopped: true } : {}),
 		...(step.error ? { error: step.error } : {}),
 	}));
@@ -210,6 +220,7 @@ function publishedWorkflowResult(status: AsyncStatus, childRunId: string, result
 		results,
 		workflow: status.workflow,
 		workflowChildren: status.workflowChildren,
+		...(receipt?.terminalOutcome ? { terminalOutcome: receipt.terminalOutcome } : {}),
 		...(resolution ? { workflowResolution: resolution, recovery } : {}),
 		reconciledFromDetachedChild: childRunId,
 		...(receipt ? { workflowReceipt: { path: path.join(asyncDir, "workflow-receipt.json"), receipt } } : {}),
@@ -242,6 +253,7 @@ function reconcileWorkflowReceipt(status: AsyncStatus, childRunId: string, resul
 	const externalRunner = normalizeExternalCliRunnerStatus(result.runner?.type === "external-cli" ? result.runner : externalStep?.runner);
 	const externalProcess = result.externalProcess ?? externalStep?.externalProcess;
 	const externalAdapter = externalRunner ? externalCliReceiptMetadata({ runner: externalRunner, externalProcess, outputReference }) : entry.externalAdapter;
+	const childTerminalOutcome = resultTerminalOutcome(result) ?? entry.terminalOutcome;
 	if (externalAdapter) resumability = { state: "not-resumable", reason: externalAdapter.nonResumableReason };
 	const updatedEntry: WorkflowReceipt["entries"][string] = resumability.state === "resumable"
 		? {
@@ -251,6 +263,7 @@ function reconcileWorkflowReceipt(status: AsyncStatus, childRunId: string, resul
 			latestRunId: entry.latestRunId ?? childRunId,
 			resumability,
 			...(outputReference ? { outputReference } : {}),
+			...(childTerminalOutcome ? { terminalOutcome: childTerminalOutcome } : {}),
 			...(externalAdapter ? { externalAdapter } : {}),
 		}
 		: {
@@ -259,6 +272,7 @@ function reconcileWorkflowReceipt(status: AsyncStatus, childRunId: string, resul
 			...(step.context ? { resolvedContext: step.context } : {}),
 			resumability,
 			...(outputReference ? { outputReference } : {}),
+			...(childTerminalOutcome ? { terminalOutcome: childTerminalOutcome } : {}),
 			...(externalAdapter ? { externalAdapter } : {}),
 		};
 	const next: WorkflowReceipt = {
@@ -269,6 +283,7 @@ function reconcileWorkflowReceipt(status: AsyncStatus, childRunId: string, resul
 			[key]: updatedEntry,
 		},
 		workflowChildren: status.workflowChildren,
+		...(receipt.terminalOutcome ? { terminalOutcome: receipt.terminalOutcome } : {}),
 		...(resolution ? { workflowResolution: resolution } : {}),
 	};
 	if (resolution) next.recovery = workflowRecovery(next);
@@ -355,6 +370,7 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 			type: "subagent.workflow.completed",
 			state: next.state,
 			workflowResolution: resolution,
+			...(receipt?.terminalOutcome ? { terminalOutcome: receipt.terminalOutcome } : {}),
 			recovery: workflowRecovery(receipt),
 			...(next.error ? { error: next.error } : {}),
 			reconciledFromDetachedChild: input.childRunId,
@@ -368,6 +384,7 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 			success: next.state === "complete",
 			state: next.state,
 			workflowResolution: resolution,
+			...(receipt?.terminalOutcome ? { terminalOutcome: receipt.terminalOutcome } : {}),
 			recovery: workflowRecovery(receipt),
 			summary: typeof published.summary === "string" ? published.summary : (next.state === "complete" ? "Workflow completed." : next.error),
 			reconciledFromDetachedChild: input.childRunId,

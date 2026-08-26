@@ -57,6 +57,30 @@ subagent({ action: "validate", workflowScriptPath: "workflows/review.js" });
 
 The fields are mutually exclusive. Relative paths resolve against the request `cwd`; absolute paths pass through. The host reads the file before validation, schedule creation, or workflow sandbox execution. The sandbox still has no filesystem access. Missing, unreadable, and empty files return file input errors instead of script syntax errors.
 
+### Opt-in bounded workflows
+
+Composite workflows have no default parent deadline. Add bounds only when the workflow contract calls for them:
+
+```js
+subagent({
+  workflowScript: `
+    const scan = await runs.run("scan", { agent: "scout", task: "Inspect the named files." });
+    return runs.run("review", { agent: "reviewer", task: "Review:\n" + scan.output });
+  `,
+  timeoutMs: 900000,
+  turnBudget: { maxTurns: 30, graceTurns: 2 },
+  toolBudget: { soft: 40, hard: 60 },
+  usageBudget: { tokens: { soft: 100000, hard: 150000 } }
+});
+```
+
+- `timeoutMs` sets the workflow deadline and bounds child deadlines to the remaining time.
+- `turnBudget` and `toolBudget` become defaults for each child unless that child supplies a narrower value.
+- `usageBudget` accounts for reported usage across completed workflow children. Once exhausted, it rejects later child launches but does not stop children that are already running.
+- Budget and timeout stops return a structured `terminalOutcome` with `state: "partial"` and reason `budget_exhausted` or `timeout`. Workflow receipts keep settled child evidence for recovery.
+
+These controls are opt-in. Avoid tight hard budgets for mutation-capable workers unless the workflow has an explicit checkpoint and handoff path.
+
 The result is `{ ok, errors }`. Invalid scripts return a tool error and include line and column data when available. Validation checks syntax, portable nested-async rules, literal `runs.run` and `runs.all` keys, duplicate literal keys in one `runs.all` group, direct keyed access to a known `runs.all` result, and statically clear non-JSON boundary values. Dynamic keys and other runtime-only values are accepted without a warning. Validation does not discover agents, launch children, or create run artifacts.
 
 ```js

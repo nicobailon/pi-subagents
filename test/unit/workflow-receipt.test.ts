@@ -102,6 +102,25 @@ describe("workflow receipts", () => {
 		assert.ok(serialized.length < 400_000, `receipt metadata unexpectedly large: ${serialized.length}`);
 	});
 
+	it("persists structured partial outcomes for workflows and children", () => {
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-budget");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		const terminalOutcome = { state: "partial" as const, reason: "budget_exhausted" as const };
+		writeWorkflowReceipt(asyncDir, buildWorkflowReceipt({
+			workflowRunId: "workflow-budget",
+			state: "failed",
+			children: [child("first"), child("second", { ok: false, terminalOutcome })],
+			terminalOutcome,
+			createdAt: 10,
+		}));
+		const receipt = readWorkflowReceipt(asyncRoot, "workflow-budget");
+
+		assert.deepEqual(receipt.terminalOutcome, terminalOutcome);
+		assert.deepEqual(receipt.entries.second?.terminalOutcome, terminalOutcome);
+		assert.equal(receipt.entries.first?.terminalOutcome, undefined);
+	});
+
 	it("persists a bounded terminal workflow-child summary without payload data", () => {
 		const trace = Array.from({ length: 64 }, (_, index) => ({ operation: "run" as const, key: `child-${index}`, state: "started" as const }));
 		const started = performance.now();

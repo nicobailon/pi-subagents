@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
-import type { ExternalCliReceiptMetadata, WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState, WorkflowRecoveryAction, WorkflowTerminalResolution } from "../shared/types.ts";
+import type { ExternalCliReceiptMetadata, WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState, WorkflowRecoveryAction, WorkflowTerminalOutcome, WorkflowTerminalResolution } from "../shared/types.ts";
 import type { WorkflowReceiptResumeReference, WorkflowScriptChildResult } from "./scripted-workflow.ts";
 import { parseWorkflowChildSummary } from "./workflow-child-summary.ts";
 
@@ -34,6 +34,7 @@ export function buildWorkflowReceipt(input: {
 	state: WorkflowReceiptState;
 	children: WorkflowScriptChildResult[];
 	workflowChildren?: WorkflowReceipt["workflowChildren"];
+	terminalOutcome?: WorkflowTerminalOutcome;
 	createdAt?: number;
 }): WorkflowReceipt {
 	const workflowRunId = assertSafeRunId(input.workflowRunId, "workflowRunId");
@@ -48,6 +49,7 @@ export function buildWorkflowReceipt(input: {
 		if (resumability.state === "resumable" && !latestRunId) throw new Error(`Workflow receipt child '${key}' is resumable but has no retained run id.`);
 		const base = {
 			key,
+			...(child.terminalOutcome ? { terminalOutcome: child.terminalOutcome } : {}),
 			...(child.agent ? { agent: child.agent } : {}),
 			...(child.requestedContext ? { requestedContext: child.requestedContext } : {}),
 			...(child.resolvedContext ? { resolvedContext: child.resolvedContext } : {}),
@@ -59,7 +61,7 @@ export function buildWorkflowReceipt(input: {
 			? { ...base, latestRunId: latestRunId!, resumability }
 			: { ...base, ...(latestRunId ? { latestRunId } : {}), resumability };
 	}
-	return { version: WORKFLOW_RECEIPT_VERSION, workflowRunId, state: input.state, createdAt: input.createdAt ?? Date.now(), entries, ...(input.workflowChildren ? { workflowChildren: input.workflowChildren } : {}) };
+	return { version: WORKFLOW_RECEIPT_VERSION, workflowRunId, state: input.state, createdAt: input.createdAt ?? Date.now(), entries, ...(input.workflowChildren ? { workflowChildren: input.workflowChildren } : {}), ...(input.terminalOutcome ? { terminalOutcome: input.terminalOutcome } : {}) };
 }
 
 export function writeWorkflowReceipt(asyncDir: string, receipt: WorkflowReceipt): string {
@@ -170,6 +172,14 @@ function parseExternalCliReceiptMetadata(value: unknown, key: string, source: st
 	return value as ExternalCliReceiptMetadata;
 }
 
+function parseTerminalOutcome(value: unknown, label: string): WorkflowTerminalOutcome | undefined {
+	if (value === undefined) return undefined;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object.`);
+	const outcome = value as Record<string, unknown>;
+	if (outcome.state !== "partial" || (outcome.reason !== "budget_exhausted" && outcome.reason !== "timeout")) throw new Error(`${label} is invalid.`);
+	return { state: "partial", reason: outcome.reason };
+}
+
 function parseEntry(value: unknown, key: string, source: string): WorkflowReceiptEntry {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid workflow receipt '${source}': entry '${key}' must be an object.`);
 	const entry = value as Record<string, unknown>;
@@ -190,6 +200,7 @@ function parseEntry(value: unknown, key: string, source: string): WorkflowReceip
 	const reason = (resumability as Record<string, unknown>).reason;
 	if (state === "resumable" && latestRunId === undefined) throw new Error(`Invalid workflow receipt '${source}': entry '${key}' resumable entry has no retained run id.`);
 	if (state === "not-resumable" && (typeof reason !== "string" || !reason.trim())) throw new Error(`Invalid workflow receipt '${source}': entry '${key}' non-resumable reason is missing.`);
+	parseTerminalOutcome(entry.terminalOutcome, `Invalid workflow receipt '${source}': entry '${key}' terminalOutcome`);
 	parseExternalCliReceiptMetadata(entry.externalAdapter, key, source);
 	return value as WorkflowReceiptEntry;
 }
@@ -244,8 +255,9 @@ export function readWorkflowReceipt(asyncDirRoot: string, workflowRunId: string)
 	const workflowChildren = parseWorkflowChildSummary(receipt.workflowChildren);
 	if (workflowChildren && workflowChildren.workflowRunId !== workflowRunId) throw new Error(`Workflow receipt '${receiptPath}' is stale: workflowChildren.workflowRunId does not match.`);
 	const workflowResolution = parseWorkflowResolution(receipt.workflowResolution, receiptPath);
+	const terminalOutcome = parseTerminalOutcome(receipt.terminalOutcome, `Invalid workflow receipt '${receiptPath}': terminalOutcome`);
 	const recovery = parseRecovery(receipt.recovery, workflowRunId, entries, receiptPath);
-	return { version: 1, workflowRunId, state: receipt.state, createdAt: receipt.createdAt, entries, ...(workflowChildren ? { workflowChildren } : {}), ...(workflowResolution ? { workflowResolution } : {}), ...(recovery ? { recovery } : {}) };
+	return { version: 1, workflowRunId, state: receipt.state, createdAt: receipt.createdAt, entries, ...(workflowChildren ? { workflowChildren } : {}), ...(workflowResolution ? { workflowResolution } : {}), ...(terminalOutcome ? { terminalOutcome } : {}), ...(recovery ? { recovery } : {}) };
 }
 
 export function resolveWorkflowReceiptResumeEntry(input: {

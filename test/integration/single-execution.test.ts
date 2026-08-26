@@ -3490,6 +3490,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.details.mode, "workflow");
 		assert.equal(mockPi.callCount(), 1);
 		assert.equal(result.details.usageBudget?.exhausted, true);
+		assert.deepEqual(result.details.workflow?.receipt?.terminalOutcome, { state: "partial", reason: "budget_exhausted" });
+		assert.equal(result.details.workflow?.receipt?.entries.first?.terminalOutcome, undefined);
+		assert.deepEqual(result.details.workflow?.receipt?.entries.second?.terminalOutcome, { state: "partial", reason: "budget_exhausted" });
 	});
 
 	it("admits a zero run-level tool budget only for marked structured delegated execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -6459,6 +6462,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 		assert.equal(configResult.isError, true);
 		assert.match(configResult.content[0]?.text ?? "", /Workflow script timed out after 250ms/);
+		assert.deepEqual(configResult.details.workflow?.receipt?.terminalOutcome, { state: "partial", reason: "timeout" });
 
 		const explicitResult = await executor.execute(
 			"workflow-config-timeout-explicit",
@@ -6469,6 +6473,31 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 		assert.equal(explicitResult.isError, true);
 		assert.match(explicitResult.content[0]?.text ?? "", /Workflow script timed out after 150ms/);
+		assert.deepEqual(explicitResult.details.workflow?.receipt?.terminalOutcome, { state: "partial", reason: "timeout" });
+
+		const childLocalExecutor = makeExecutor([makeAgent("echo")], { timeoutMs: 10_000 });
+		mockPi.onCall({ matchArgIncludes: "Fail normally", stderr: "upstream request timed out", exitCode: 1 });
+		const ordinaryFailure = await childLocalExecutor.execute(
+			"workflow-child-timeout-prose",
+			{ async: false, workflowScript: `return await runs.run("failed", { agent: "echo", task: "Fail normally" });` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(ordinaryFailure.isError, true);
+		assert.equal(ordinaryFailure.details.workflow?.receipt?.terminalOutcome, undefined);
+
+		mockPi.onCall({ matchArgIncludes: "Child local timeout", delay: 5_000, output: "too late" });
+		const childTimeout = await childLocalExecutor.execute(
+			"workflow-child-local-timeout",
+			{ async: false, workflowScript: `return await runs.run("slow-child", { agent: "echo", task: "Child local timeout", timeoutMs: 150 });` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(childTimeout.isError, true);
+		assert.equal(childTimeout.details.workflow?.receipt?.terminalOutcome, undefined);
+		assert.deepEqual(childTimeout.details.workflow?.receipt?.entries["slow-child"]?.terminalOutcome, { state: "partial", reason: "timeout" });
 	});
 
 	it("runs omitted async launches in the background when the global default is enabled", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
