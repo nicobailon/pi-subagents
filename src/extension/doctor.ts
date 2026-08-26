@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { discoverAgentsAll, type AgentSource } from "../agents/agents.ts";
 import { isAsyncAvailable } from "../runs/background/async-execution.ts";
 import { formatSpawnBudgetSummary, getSpawnBudgetSnapshot } from "../runs/shared/spawn-budget.ts";
-import { getActiveAsyncCapacitySnapshot, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
+import { getActiveAsyncCapacitySnapshot, resolveAbandonedSlotReleaseAfterMs, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
 import { decodeRunFanoutBudgetDescriptor, formatRunFanoutBudget, getRunFanoutBudgetSnapshot, RUN_FANOUT_BUDGET_ENV } from "../runs/shared/run-fanout-budget.ts";
 import { diagnoseIntercomBridge, type IntercomBridgeDiagnostic } from "../intercom/intercom-bridge.ts";
 import { discoverAvailableSkills, type SkillSource } from "../agents/skills.ts";
@@ -197,13 +197,13 @@ function formatActiveAsyncCapacitySection(input: DoctorReportInput): string[] {
 	const limit = resolveMaxActiveAsyncRunsPerSession(input.config.maxActiveAsyncRunsPerSession);
 	const sessionId = input.currentSessionId ?? input.state.currentSessionId;
 	const snapshot = sessionId
-		? getActiveAsyncCapacitySnapshot(sessionId, limit, { liveWorkflowRunIds: new Set(input.state.workflowControllers?.keys() ?? []) })
+		? getActiveAsyncCapacitySnapshot(sessionId, limit, { liveWorkflowRunIds: new Set(input.state.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(input.config.capacity?.abandonedSlotReleaseAfterMs) })
 		: { used: 0, limit: limit ?? 0 };
 	input.state.activeAsyncCapacity = snapshot;
 	return [
 		`- usage: ${snapshot.used}/${snapshot.limit || "unlimited"} used`,
 		"- scope: top-level async runs in the current parent session; foreground and nested workflow children are not charged again",
-		"- release: terminal logical state plus verified process exit; missing or unknown cleanup proof retains capacity",
+		"- release: terminal state plus matching observed process-terminal proof, or abandoned-timeout for failed runs with a dead runner PID and stale activity when enabled; false keeps unknown-proof slots",
 	];
 }
 

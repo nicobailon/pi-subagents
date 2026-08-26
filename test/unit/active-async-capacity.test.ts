@@ -364,4 +364,52 @@ describe("active async capacity", () => {
 			fs.rmSync(rootDir, { recursive: true, force: true });
 		}
 	});
+
+	it("reclaims only old failed runs with dead runners under the abandoned-timeout policy", () => {
+		const cases = [
+			{ name: "dead old", state: "failed", pidLiveness: "dead" as const, lastActivityAt: 0, threshold: 1_000, releases: true },
+			{ name: "dead recent", state: "failed", pidLiveness: "dead" as const, lastActivityAt: 9_500, threshold: 1_000, releases: false },
+			{ name: "alive old", state: "failed", pidLiveness: "alive" as const, lastActivityAt: 0, threshold: 1_000, releases: false },
+			{ name: "unknown old", state: "failed", pidLiveness: "unknown" as const, lastActivityAt: 0, threshold: 1_000, releases: false },
+			{ name: "strict mode", state: "failed", pidLiveness: "dead" as const, lastActivityAt: 0, threshold: false as const, releases: false },
+			{ name: "successful old", state: "complete", pidLiveness: "dead" as const, lastActivityAt: 0, threshold: 1_000, releases: false },
+		];
+		for (const [index, testCase] of cases.entries()) {
+			const rootDir = tempRoot();
+			const asyncDir = path.join(rootDir, "runs", `run-${index}`);
+			try {
+				const handle = acquireActiveAsyncCapacity({ sessionId: "session-policy", limit: 1, runId: `run-${index}`, kind: "runner", asyncDir }, { rootDir });
+				assert.ok(handle);
+				handle.markStarted(`runner-${index}`);
+				writeJson(path.join(asyncDir, "status.json"), {
+					runId: `run-${index}`,
+					sessionId: "session-policy",
+					mode: "single",
+					state: testCase.state,
+					pid: 50_000 + index,
+					startedAt: 0,
+					lastActivityAt: testCase.lastActivityAt,
+					processTerminal: { version: 1, state: "unknown", runId: `run-${index}`, runnerProcessInstanceId: `runner-${index}`, reason: "stale-repair" },
+				});
+				const options = {
+					rootDir,
+					now: () => 10_000,
+					pidLiveness: () => testCase.pidLiveness,
+					abandonedSlotReleaseAfterMs: testCase.threshold,
+				};
+				const inspection = inspectActiveAsyncCapacityOwner({ runId: `run-${index}`, sessionId: "session-policy", asyncDir }, options);
+				assert.equal(inspection.release.state, testCase.releases ? "releasable" : "retained", testCase.name);
+				if (testCase.releases) {
+					assert.match(inspection.release.reason, /abandoned-timeout/);
+					assert.match(inspection.release.reason, /process proof unknown/);
+					assert.deepEqual(getActiveAsyncCapacitySnapshot("session-policy", 1, options), { used: 0, limit: 1 });
+					assert.match(fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8"), /"releasedBy":"abandoned-timeout"/);
+				} else {
+					assert.deepEqual(getActiveAsyncCapacitySnapshot("session-policy", 1, options), { used: 1, limit: 1 });
+				}
+			} finally {
+				fs.rmSync(rootDir, { recursive: true, force: true });
+			}
+		}
+	});
 });

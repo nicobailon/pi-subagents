@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Reclaim failed async capacity slots after a configurable abandoned timeout when the runner PID is gone, while preserving honest unknown process-proof diagnostics. Thanks to [@rafafortes](https://github.com/rafafortes) for #1472.
 - Resolve the `advisor` builtin alias through the bundled `oracle` definition in model listings. Thanks to [@smileBeda](https://github.com/smileBeda) for #1502.
 - Clarify terminal keyed workflow-resume failures when `workflow-receipt.json` is unavailable, including direct child-run recovery from status and event logs (#1512).
 - Follow symlinked directories during agent discovery without revisiting recursive links. Thanks to [@robsdudeson](https://github.com/robsdudeson) for #1505 and #1510.

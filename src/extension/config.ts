@@ -8,6 +8,7 @@ import { validateAuthorityPolicy } from "../policy/authority.ts";
 import { getAgentDir } from "../shared/utils.ts";
 import { DEFAULT_MODEL_EXCLUSION_TTL_MS, MAX_MODEL_EXCLUSION_TTL_MS, setDefaultTTL } from "../runs/shared/model-exclusions.ts";
 import { validatePermissionConfig } from "../runs/shared/permissions.ts";
+import { MAX_ABANDONED_SLOT_RELEASE_AFTER_MS, MIN_ABANDONED_SLOT_RELEASE_AFTER_MS } from "../runs/background/active-async-capacity.ts";
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
 const FLEET_KEYBINDING_ACTION_SET = new Set<string>(FLEET_KEYBINDING_ACTIONS);
@@ -80,6 +81,20 @@ function validateArtifactConfig(value: unknown): void {
 	}
 }
 
+function validateCapacityConfig(value: unknown): void {
+	if (value === undefined) return;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.capacity must be a JSON object");
+	const abandonedSlotReleaseAfterMs = (value as Record<string, unknown>).abandonedSlotReleaseAfterMs;
+	if (abandonedSlotReleaseAfterMs !== undefined
+		&& abandonedSlotReleaseAfterMs !== false
+		&& (typeof abandonedSlotReleaseAfterMs !== "number"
+			|| !Number.isInteger(abandonedSlotReleaseAfterMs)
+			|| abandonedSlotReleaseAfterMs < MIN_ABANDONED_SLOT_RELEASE_AFTER_MS
+			|| abandonedSlotReleaseAfterMs > MAX_ABANDONED_SLOT_RELEASE_AFTER_MS)) {
+		throw new Error(`config.capacity.abandonedSlotReleaseAfterMs must be false or an integer from ${MIN_ABANDONED_SLOT_RELEASE_AFTER_MS} to ${MAX_ABANDONED_SLOT_RELEASE_AFTER_MS}`);
+	}
+}
+
 /** Validate the user-controlled TTL policy before it reaches the exclusion store. */
 // TEST:test/unit/pi-coding-agent-dir.test.ts[loads and applies model exclusion TTL config]
 function validateModelExclusionsConfig(value: unknown): void {
@@ -149,6 +164,7 @@ function validateConfig(config: Record<string, unknown>): void {
 	validateScheduledRunsConfig(config.scheduledRuns);
 	validateFleetKeybindingsConfig(config.fleetKeybindings);
 	validateArtifactConfig(config.artifactConfig);
+	validateCapacityConfig(config.capacity);
 	validateModelExclusionsConfig(config.modelExclusions);
 	validateMainWindowRendererConfig(config.mainWindowRenderer);
 	validateOrcaProgressTabsConfig(config.orcaProgressTabs);

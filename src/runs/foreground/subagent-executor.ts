@@ -56,7 +56,7 @@ import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skill
 import { buildAsyncRunnerSteps, DEFAULT_ASYNC_TIMEOUT_MS, executeAsyncChain, executeAsyncSingle, formatAsyncStartedMessage, isAsyncAvailable, workflowAwaitedAsyncResultPath } from "../background/async-execution.ts";
 import { updateActiveRunIndex } from "../background/active-run-index.ts";
 import { steeringReceipt } from "../background/steering.ts";
-import { acquireActiveAsyncCapacity, ActiveAsyncCapacityError, getActiveAsyncCapacitySnapshot, resolveMaxActiveAsyncRunsPerSession, transferActiveAsyncCapacity, type ActiveAsyncCapacityHandle } from "../background/active-async-capacity.ts";
+import { acquireActiveAsyncCapacity, ActiveAsyncCapacityError, getActiveAsyncCapacitySnapshot, resolveAbandonedSlotReleaseAfterMs, resolveMaxActiveAsyncRunsPerSession, transferActiveAsyncCapacity, type ActiveAsyncCapacityHandle } from "../background/active-async-capacity.ts";
 import { isScheduledRunAction, type ScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
@@ -568,6 +568,7 @@ function withSpawnBudgetStatus(
 	const activeAsyncCapacity = sessionId
 		? getActiveAsyncCapacitySnapshot(sessionId, resolveMaxActiveAsyncRunsPerSession(config.maxActiveAsyncRunsPerSession), {
 			liveWorkflowRunIds: new Set(state.workflowControllers?.keys() ?? []),
+			abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(config.capacity?.abandonedSlotReleaseAfterMs),
 		})
 		: { used: 0, limit: resolveMaxActiveAsyncRunsPerSession(config.maxActiveAsyncRunsPerSession) ?? 0 };
 	state.activeAsyncCapacity = activeAsyncCapacity;
@@ -1614,7 +1615,7 @@ async function resumeExternalJobFollowUp(input: {
 			runId,
 			kind: "runner",
 			asyncDir,
-		}, { liveWorkflowRunIds: new Set(input.deps.state.workflowControllers?.keys() ?? []) }) : undefined;
+		}, { liveWorkflowRunIds: new Set(input.deps.state.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(input.deps.config.capacity?.abandonedSlotReleaseAfterMs) }) : undefined;
 	} catch (error) {
 		if (error instanceof ActiveAsyncCapacityError) return { content: [{ type: "text", text: error.message }], isError: true, details: { mode: "single", results: [], activeAsyncCapacity: error.snapshot } };
 		return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "single", results: [] } };
@@ -1854,7 +1855,7 @@ async function resumeAsyncRun(input: {
 				runId,
 				kind: "runner",
 				asyncDir: path.join(DIRS.async, runId),
-			}, { liveWorkflowRunIds: new Set(input.deps.state.workflowControllers?.keys() ?? []) }) : undefined;
+			}, { liveWorkflowRunIds: new Set(input.deps.state.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(input.deps.config.capacity?.abandonedSlotReleaseAfterMs) }) : undefined;
 		} catch (error) {
 			if (error instanceof ActiveAsyncCapacityError) return { content: [{ type: "text", text: error.message }], isError: true, details: { mode: "chain", results: [], activeAsyncCapacity: error.snapshot } };
 			throw error;
@@ -1953,14 +1954,14 @@ async function resumeAsyncRun(input: {
 				sourceRunId: target.runId,
 				runId,
 				asyncDir: path.join(DIRS.async, runId),
-			})
+			}, { abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(input.deps.config.capacity?.abandonedSlotReleaseAfterMs) })
 			: acquireActiveAsyncCapacity({
 				sessionId: input.deps.state.currentSessionId!,
 				limit: resolveMaxActiveAsyncRunsPerSession(input.deps.config.maxActiveAsyncRunsPerSession),
 				runId,
 				kind: "runner",
 				asyncDir: path.join(DIRS.async, runId),
-			});
+			}, { abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(input.deps.config.capacity?.abandonedSlotReleaseAfterMs) });
 	} catch (error) {
 		if (error instanceof ActiveAsyncCapacityError) return { content: [{ type: "text", text: error.message }], isError: true, details: { mode: "single", results: [], activeAsyncCapacity: error.snapshot } };
 		return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "single", results: [] } };
@@ -4479,7 +4480,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						runId: workflowRunId,
 						kind: "workflow",
 						asyncDir: path.join(DIRS.async, workflowRunId),
-					}, { liveWorkflowRunIds: new Set(deps.state.workflowControllers?.keys() ?? []) });
+					}, { liveWorkflowRunIds: new Set(deps.state.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) });
 				} catch (error) {
 					if (error instanceof ActiveAsyncCapacityError) {
 						deps.state.activeAsyncCapacity = error.snapshot;
@@ -4553,7 +4554,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				deps.state.workflowChildStops ??= new Map();
 				deps.state.workflowControllers.set(workflowRunId, controller);
 				workflowCapacity?.markWorkflowStarted();
-				if (workflowCapacity) deps.state.activeAsyncCapacity = getActiveAsyncCapacitySnapshot(currentSessionId, resolveMaxActiveAsyncRunsPerSession(deps.config.maxActiveAsyncRunsPerSession), { liveWorkflowRunIds: new Set(deps.state.workflowControllers.keys()) });
+				if (workflowCapacity) deps.state.activeAsyncCapacity = getActiveAsyncCapacitySnapshot(currentSessionId, resolveMaxActiveAsyncRunsPerSession(deps.config.maxActiveAsyncRunsPerSession), { liveWorkflowRunIds: new Set(deps.state.workflowControllers.keys()), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) });
 				let status: AsyncStatus = {
 					runId: workflowRunId,
 					toolCallId,
@@ -5376,7 +5377,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 				const spawnBudget = getSpawnBudgetSnapshot(deps.state, deps.config, currentSessionId);
 				const activeAsyncCapacity = currentSessionId
-					? getActiveAsyncCapacitySnapshot(currentSessionId, resolveMaxActiveAsyncRunsPerSession(deps.config.maxActiveAsyncRunsPerSession), { liveWorkflowRunIds: new Set(deps.state.workflowControllers?.keys() ?? []) })
+					? getActiveAsyncCapacitySnapshot(currentSessionId, resolveMaxActiveAsyncRunsPerSession(deps.config.maxActiveAsyncRunsPerSession), { liveWorkflowRunIds: new Set(deps.state.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) })
 					: { used: 0, limit: resolveMaxActiveAsyncRunsPerSession(deps.config.maxActiveAsyncRunsPerSession) ?? 0 };
 				deps.state.activeAsyncCapacity = activeAsyncCapacity;
 				return {
@@ -5421,10 +5422,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					if (paramsWithResolvedCwd.view) {
 						return withBudget({ content: [{ type: "text", text: "action='debug.run' does not support status views." }], isError: true, details: { mode: "management", results: [] } });
 					}
-					return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots })));
+					return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots, abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) })));
 				}
 				if (paramsWithResolvedCwd.view === "fleet") {
-					return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots })));
+					return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots, abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) })));
 				}
 				if (targetRunId) {
 					try {
@@ -5455,7 +5456,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						});
 					}
 				}
-				return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots })));
+				return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots, abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) })));
 			}
 			if (action === "resume") {
 				return resumeAsyncRun(omitUndefinedProperties({ params: paramsWithResolvedCwd, requestCwd, ctx, deps, parentModel: requestParentModel, signal }));
@@ -5933,8 +5934,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					runId: asyncRunId,
 					kind: "runner",
 					asyncDir: path.join(DIRS.async, asyncRunId),
-				}, { liveWorkflowRunIds: new Set(deps.state.workflowControllers?.keys() ?? []) });
-				deps.state.activeAsyncCapacity = getActiveAsyncCapacitySnapshot(requestSessionId, activeLimit, { liveWorkflowRunIds: new Set(deps.state.workflowControllers?.keys() ?? []) });
+				}, { liveWorkflowRunIds: new Set(deps.state.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) });
+				deps.state.activeAsyncCapacity = getActiveAsyncCapacitySnapshot(requestSessionId, activeLimit, { liveWorkflowRunIds: new Set(deps.state.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) });
 			} catch (error) {
 				if (error instanceof ActiveAsyncCapacityError) {
 					deps.state.activeAsyncCapacity = error.snapshot;

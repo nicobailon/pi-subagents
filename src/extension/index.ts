@@ -33,7 +33,7 @@ import { SubagentFleetStatus, resolveFleetViewPlacement } from "../tui/fleet-sta
 import { createSubagentParamsSchema } from "./schemas.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
-import { getActiveAsyncCapacitySnapshot, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
+import { getActiveAsyncCapacitySnapshot, resolveAbandonedSlotReleaseAfterMs, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
 import { cleanupResultIndexes, missionObserverResultCandidateFiles } from "../runs/background/result-files.ts";
 import { ASYNC_RETENTION_DELAY_MS, cleanupAsyncRetention } from "../runs/background/async-retention.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
@@ -849,7 +849,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		state.activeAsyncCapacity = getActiveAsyncCapacitySnapshot(
 			state.currentSessionId,
 			resolveMaxActiveAsyncRunsPerSession(config.maxActiveAsyncRunsPerSession),
-			{ liveWorkflowRunIds: new Set(state.workflowControllers?.keys() ?? []) },
+			{ liveWorkflowRunIds: new Set(state.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(config.capacity?.abandonedSlotReleaseAfterMs) },
 		);
 	};
 

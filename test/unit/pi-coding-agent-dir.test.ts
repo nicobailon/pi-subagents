@@ -298,6 +298,20 @@ Package skill content.
 		assert.throws(() => updateConfig((config) => config), /config\.artifactDir must be "project", "session", or "temp"/);
 	});
 
+	it("loads and validates abandoned async capacity cleanup policy", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ capacity: { abandonedSlotReleaseAfterMs: 600_000 } }));
+		assert.equal(loadConfig().capacity?.abandonedSlotReleaseAfterMs, 600_000);
+
+		writeFile(configPath, JSON.stringify({ capacity: { abandonedSlotReleaseAfterMs: false } }));
+		assert.equal(loadConfig().capacity?.abandonedSlotReleaseAfterMs, false);
+
+		for (const invalid of [299_999, 86_400_001, 0, "600000", null]) {
+			writeFile(configPath, JSON.stringify({ capacity: { abandonedSlotReleaseAfterMs: invalid } }));
+			assert.throws(() => updateConfig((config) => config), /config\.capacity\.abandonedSlotReleaseAfterMs must be false or an integer/);
+		}
+	});
+
 	it("loads and validates Fleet keybinding config", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
 		writeFile(configPath, JSON.stringify({ fleetKeybindings: { pageUp: ["u"], pageDown: ["d"] } }));

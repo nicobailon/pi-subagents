@@ -273,6 +273,14 @@ Optionally caps concurrently active top-level async runs owned by one parent ses
 
 Queued, running, paused, and needs-attention runs retain capacity. Runner-backed slots release only after terminal logical state and matching observed process-terminal proof from #1030. Missing, malformed, or unknown cleanup proof retains the slot. A terminal async workflow releases after its controller is gone and every launched child is accounted for: awaited foreground children are covered by workflow settlement, while actual background children still require observed process-terminal proof. Resume transfers the source slot without a second charge. Dismissal and history cleanup do not release capacity.
 
+When the runner is gone but process cleanup proof remains unknown, configure a bounded policy reclaim under `capacity.abandonedSlotReleaseAfterMs`:
+
+```json
+{ "maxActiveAsyncRunsPerSession": 4, "capacity": { "abandonedSlotReleaseAfterMs": 1200000 } }
+```
+
+The default is `1200000` milliseconds (20 minutes). The policy releases only a failed terminal run whose runner PID is dead and whose last activity is older than the threshold. A live or unknown PID, a non-failed terminal state, a recent run, or missing activity timestamp retains the slot. Set the value to `false` to keep strict retention. Valid configured durations range from 5 minutes through 24 hours. Policy release is reported as `abandoned-timeout` with `processProof: unknown`; it is not observed process-terminal proof and may reclaim capacity while an orphan child still exists.
+
 This limit bounds current top-level async load. It is separate from cumulative `maxSubagentSpawnsPerSession`, `maxSubagentSpawnsPerRun`, and `globalConcurrencyLimit`.
 
 `subagent({ action: "status" })`, fleet status, and `subagent({ action: "doctor" })` expose used, effective limit, and remaining active capacity. Static chains and parallel calls fail before creating run artifacts or starting partial work when their declared capacity cannot fit. Later retries or unbounded dynamic work are not guaranteed by that preflight.

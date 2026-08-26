@@ -105,6 +105,7 @@ interface RunStatusDeps {
 	nested?: NestedRunResolutionScope;
 	sessionRoots?: string[];
 	activeCapacityRoot?: string;
+	abandonedSlotReleaseAfterMs?: number | false;
 }
 
 function hasExistingSessionFile(value: unknown): value is string {
@@ -407,7 +408,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		if (!status && diskStatus?.displayDismissedAt !== undefined) {
 			if (params.action === "debug.run") {
 				const { sidecar, overlay } = debugProcessTerminal(asyncDir, diskStatus);
-				const capacity = inspectActiveAsyncCapacityOwner({ runId: diskStatus.runId, sessionId: diskStatus.sessionId, asyncDir }, { rootDir: deps.activeCapacityRoot, liveWorkflowRunIds: new Set(deps.state?.workflowControllers?.keys() ?? []) });
+				const capacity = inspectActiveAsyncCapacityOwner({ runId: diskStatus.runId, sessionId: diskStatus.sessionId, asyncDir }, { rootDir: deps.activeCapacityRoot, liveWorkflowRunIds: new Set(deps.state?.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: deps.abandonedSlotReleaseAfterMs });
 				return {
 					content: [{ type: "text", text: formatRunLifecycleDebug({ status: diskStatus, asyncDir, sidecarProcessTerminal: sidecar, overlayProcessTerminal: overlay, capacity }) }],
 					details: { mode: "single", results: [], ...((sidecar ?? overlay) ? { lifecycleStatus: { processTerminal: sidecar ?? overlay } } : {}) },
@@ -434,7 +435,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		if (status) {
 			if (params.action === "debug.run") {
 				const { sidecar, overlay } = debugProcessTerminal(asyncDir, status);
-				const capacity = inspectActiveAsyncCapacityOwner({ runId: status.runId, sessionId: status.sessionId, asyncDir }, { rootDir: deps.activeCapacityRoot, liveWorkflowRunIds: new Set(deps.state?.workflowControllers?.keys() ?? []) });
+				const capacity = inspectActiveAsyncCapacityOwner({ runId: status.runId, sessionId: status.sessionId, asyncDir }, { rootDir: deps.activeCapacityRoot, liveWorkflowRunIds: new Set(deps.state?.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: deps.abandonedSlotReleaseAfterMs });
 				return {
 					content: [{ type: "text", text: formatRunLifecycleDebug({ status, asyncDir, sidecarProcessTerminal: sidecar, overlayProcessTerminal: overlay, capacity }) }],
 					details: { mode: "single", results: [], ...((sidecar ?? overlay) ? { lifecycleStatus: { processTerminal: sidecar ?? overlay } } : {}) },

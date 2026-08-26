@@ -2195,6 +2195,11 @@ export interface ForkContextConfig {
 	model?: string;
 }
 
+export interface ActiveAsyncCapacityConfig {
+	/** Reclaim failed runner slots after this age when process proof is unknown; false keeps strict retention. */
+	abandonedSlotReleaseAfterMs?: number | false;
+}
+
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
 	/** Set the context for launches that omit an explicit context. */
@@ -2232,6 +2237,8 @@ export interface ExtensionConfig {
 	maxSubagentSpawnsPerRun?: number;
 	/** Optional active top-level async run cap per parent session. Unset or 0 means unlimited. */
 	maxActiveAsyncRunsPerSession?: number;
+	/** Active-capacity cleanup policy. */
+	capacity?: ActiveAsyncCapacityConfig;
 	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
 	globalConcurrencyLimit?: number;
 	/**
