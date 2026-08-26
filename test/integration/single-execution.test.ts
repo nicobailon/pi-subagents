@@ -2173,6 +2173,74 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.readFileSync(path.join(tempDir, "workflow-report.monitor.md"), "utf-8"), "second report");
 	});
 
+	it("maps a task-requested report path to the workflow-saved child output", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "review report" });
+		const requestedReport = path.join(tempDir, "requested-review.md");
+		const workflowOutput = path.join(tempDir, "workflow-report.md");
+		const result = await makeExecutor([makeAgent("echo")]).execute(
+			"scripted-workflow-requested-output-mapping",
+			{
+				async: false,
+				output: workflowOutput,
+				workflowScript: `return await runs.run("review", { agent: "echo", task: ${JSON.stringify(`Review the change.\n\nWrite your findings to exactly this path: ${requestedReport}`)} });`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const savedReport = path.join(tempDir, "workflow-report.review.md");
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.equal(fs.existsSync(requestedReport), false);
+		assert.equal(fs.readFileSync(savedReport, "utf-8"), "review report");
+		assert.deepEqual((result.details.workflow?.value as { outputPathMapping?: unknown }).outputPathMapping, {
+			requestedPath: requestedReport,
+			savedPath: savedReport,
+		});
+		assert.match(result.content[0]?.text ?? "", new RegExp(`Output path mappings: 'review': requested ${escapeRegExp(requestedReport)} -> saved ${escapeRegExp(savedReport)}`));
+		assert.match(fs.readFileSync(workflowOutput, "utf-8"), /Output path mappings:/);
+	});
+
+	it("preserves output path mappings when an async workflow fails after a completed child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "review report", matchArgIncludes: "Review first" });
+		mockPi.onCall({ exitCode: 1, stderr: "later child failure", matchArgIncludes: "Fail later" });
+		const requestedReport = path.join(tempDir, "requested-review.md");
+		const workflowOutput = path.join(tempDir, "failed-workflow.md");
+		const started = await makeExecutor([makeAgent("echo")]).execute(
+			"async-workflow-failed-output-mapping",
+			{
+				async: true,
+				output: workflowOutput,
+				workflowScript: `
+					await runs.run("review", { agent: "echo", task: ${JSON.stringify(`Review first.\n\nWrite your findings to exactly this path: ${requestedReport}`)} });
+					await runs.run("fails", { agent: "echo", task: "Fail later" });
+					throw new Error("later workflow failure");
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(started.isError, undefined);
+		assert.ok(started.details.asyncId);
+		assert.ok(started.details.asyncDir);
+		const resultPath = path.join(DIRS.results, `${started.details.asyncId}.json`);
+		for (let attempt = 0; attempt < 150 && !fs.existsSync(resultPath); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		const persisted = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { state?: string; summary?: string };
+		const savedReport = path.join(tempDir, "failed-workflow.review.md");
+		const expectedMapping = `Output path mappings: 'review': requested ${requestedReport} -> saved ${savedReport}`;
+		assert.equal(persisted.state, "failed");
+		assert.match(persisted.summary ?? "", new RegExp(escapeRegExp(expectedMapping)));
+		assert.match(fs.readFileSync(workflowOutput, "utf-8"), new RegExp(escapeRegExp(expectedMapping)));
+		assert.equal(fs.readFileSync(savedReport, "utf-8"), "review report");
+
+		fs.rmSync(started.details.asyncDir, { recursive: true, force: true });
+		fs.rmSync(resultPath, { force: true });
+	});
+
 	it("uses child-cwd agent output defaults for omitted workflow child output", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "app report" });
 		const appDir = path.join(tempDir, "packages", "app");

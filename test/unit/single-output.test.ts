@@ -12,6 +12,7 @@ import {
 	injectOutputPathSystemPrompt,
 	injectSingleOutputInstruction,
 	normalizeSingleOutputOverride,
+	requestedOutputPathFromTask,
 	resolveSingleOutput,
 	resolveSingleOutputPath,
 	validateFileOnlyOutputMode,
@@ -95,6 +96,13 @@ describe("injectSingleOutputInstruction", () => {
 		assert.match(output, /runtime will persist it to exactly this path: \/tmp\/report\.md/);
 		assert.match(output, /Do not call contact_supervisor merely because no write-capable tool is available\./);
 		assert.doesNotMatch(output, /Write your findings to exactly this path/);
+	});
+});
+
+describe("requestedOutputPathFromTask", () => {
+	it("extracts direct-write and runtime-persisted report paths", () => {
+		assert.equal(requestedOutputPathFromTask("Write your findings to exactly this path: /tmp/direct.md"), "/tmp/direct.md");
+		assert.equal(requestedOutputPathFromTask("The runtime will persist it to exactly this path: `/tmp/persisted.md`"), "/tmp/persisted.md");
 	});
 });
 

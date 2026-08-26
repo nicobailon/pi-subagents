@@ -147,6 +147,8 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 	it("publishes a terminal result when the paused result file is already gone", () => {
 		const workflowRunId = "workflow-missing-result";
 		const asyncDir = path.join(DIRS.async, workflowRunId);
+		const requestedPath = path.join(asyncDir, "requested.md");
+		const savedPath = path.join(asyncDir, "saved.md");
 		fs.mkdirSync(asyncDir, { recursive: true });
 		fs.mkdirSync(DIRS.results, { recursive: true });
 		const status = { ...pausedWorkflow("child-1"), runId: workflowRunId, sessionId: "session-1" };
@@ -173,12 +175,14 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			state,
 			workflowRunId,
 			childRunId: "child-1",
-			result: { index: 0, agent: "worker", task: "t", exitCode: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+			result: { index: 0, agent: "worker", task: `Write your findings to exactly this path: ${requestedPath}`, exitCode: 0, savedOutputPath: savedPath, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
 		}), true);
-		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; error?: string; sessionId?: string; workflowReceipt?: { receipt?: { state?: string; entries?: Record<string, { resumability?: { state?: string; reason?: string } }> } } };
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; summary?: string; error?: string; sessionId?: string; results?: Array<{ outputPathMapping?: unknown }>; workflowReceipt?: { receipt?: { state?: string; entries?: Record<string, { resumability?: { state?: string; reason?: string } }> } } };
 		assert.equal(published.state, "failed");
 		assert.equal(published.success, false);
 		assert.match(published.error ?? "", /unsupported-continuation/);
+		assert.ok(published.summary?.includes(`Output path mappings: 'detaches': requested ${requestedPath} -> saved ${savedPath}`));
+		assert.deepEqual(published.results?.[0]?.outputPathMapping, { requestedPath, savedPath });
 		assert.equal(published.sessionId, "session-1");
 		assert.equal(published.workflowReceipt?.receipt?.state, "failed");
 		assert.equal(published.workflowReceipt?.receipt?.entries?.detaches?.resumability?.state, "not-resumable");
@@ -186,6 +190,51 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		const events = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
 		assert.match(events, /"type":"subagent.workflow.completed"/);
 		assert.match(events, /"state":"failed"/);
+	});
+
+	it("preserves sibling output path mappings when rebuilding from workflow status", () => {
+		const workflowRunId = "workflow-sibling-mappings";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		const firstRequestedPath = path.join(asyncDir, "first-requested.md");
+		const firstSavedPath = path.join(asyncDir, "first-saved.md");
+		const secondRequestedPath = path.join(asyncDir, "second-requested.md");
+		const secondSavedPath = path.join(asyncDir, "second-saved.md");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		const status = { ...pausedWorkflow("child-1"), runId: workflowRunId, sessionId: "session-1" };
+		status.steps!.push({
+			agent: "worker",
+			workflowKey: "second",
+			runId: "child-2",
+			status: "paused",
+			activityState: "needs_attention",
+		});
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+		const state = {
+			asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]),
+		} as SubagentState;
+
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "child-1",
+			result: { index: 0, agent: "worker", task: `Write your findings to exactly this path: ${firstRequestedPath}`, exitCode: 0, savedOutputPath: firstSavedPath, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+		}), true);
+		fs.rmSync(path.join(DIRS.results, `${workflowRunId}.json`));
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "child-2",
+			result: { index: 1, agent: "worker", task: `Write your findings to exactly this path: ${secondRequestedPath}`, exitCode: 0, savedOutputPath: secondSavedPath, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+		}), true);
+
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { summary?: string; results?: Array<{ workflowKey?: string; outputPathMapping?: unknown }> };
+		assert.deepEqual(published.results?.map((child) => [child.workflowKey, child.outputPathMapping]), [
+			["detaches", { requestedPath: firstRequestedPath, savedPath: firstSavedPath }],
+			["second", { requestedPath: secondRequestedPath, savedPath: secondSavedPath }],
+		]);
+		assert.ok(published.summary?.includes(`'detaches': requested ${firstRequestedPath} -> saved ${firstSavedPath}`));
+		assert.ok(published.summary?.includes(`'second': requested ${secondRequestedPath} -> saved ${secondSavedPath}`));
 	});
 
 	it("publishes detached completion when the workflow receipt is malformed", () => {

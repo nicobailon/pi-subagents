@@ -75,7 +75,7 @@ import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
-import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, outputPathMappingFromTask, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { assertJsonSchemaObject, cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
@@ -4045,6 +4045,7 @@ function workflowChildResult(
 	const continuationRunIds = [...new Set([resumeSourceRunId, runId].filter((value): value is string => Boolean(value)))];
 	const outputReference = result.details.results.find((child) => child.savedOutputPath)?.savedOutputPath
 		?? result.details.results.find((child) => child.outputReference?.path)?.outputReference?.path;
+	const outputPathMapping = typeof childParams.task === "string" ? outputPathMappingFromTask(childParams.task, outputReference) : undefined;
 	const externalResult = result.details.results.length === 1 && result.details.results[0]?.runner?.type === "external-cli" ? result.details.results[0] : undefined;
 	const externalStatus = result.details.asyncDir ? readStatus(result.details.asyncDir) : undefined;
 	const externalStatusStep = externalStatus?.steps?.length === 1 && externalStatus.steps[0]?.runner?.type === "external-cli" ? externalStatus.steps[0] : undefined;
@@ -4066,12 +4067,20 @@ function workflowChildResult(
 		...(requestedContext ? { requestedContext } : {}),
 		...(resolvedContext ? { resolvedContext } : {}),
 		...(outputReference ? { outputReference } : {}),
+		...(outputPathMapping ? { outputPathMapping } : {}),
 		...(externalAdapter ? { externalAdapter } : {}),
 		resumability,
 		continuation: { runIds: continuationRunIds },
 		artifactPaths: [...artifactPaths],
 		results: result.details.results,
 	};
+}
+
+function workflowOutputPathMappingSummary(children: WorkflowScriptChildResult[]): string {
+	const mappings = children.flatMap((child) => child.outputPathMapping
+		? [`'${child.key}': requested ${child.outputPathMapping.requestedPath} -> saved ${child.outputPathMapping.savedPath}`]
+		: []);
+	return mappings.length > 0 ? ` Output path mappings: ${mappings.join("; ")}.` : "";
 }
 
 function workflowSteerReceipt(key: string, result: AgentToolResult<Details>): WorkflowSteerResult {
@@ -4926,7 +4935,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						});
 						const returnPreview = formatWorkflowValue(workflow.value).slice(0, 1_000);
 						const emitPreview = workflow.emits.length > 0 ? ` Emitted: ${workflow.emits.map(formatWorkflowValue).join(", ").slice(0, 1_000)}` : "";
-						const summary = `Workflow completed with ${workflow.children.length} child run(s). Return: ${returnPreview}${emitPreview} Trace: ${workflow.trace.length} event(s).`;
+						const summary = `Workflow completed with ${workflow.children.length} child run(s). Return: ${returnPreview}${emitPreview} Trace: ${workflow.trace.length} event(s).${workflowOutputPathMappingSummary(workflow.children)}`;
 						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, summary, producedChildOutputPaths);
 						const resultSummary = appendWorkflowOutputWarning(summary, outputWarning);
 						const workflowUsage = sumResultsUsage(workflowResults);
@@ -4939,7 +4948,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						} catch (receiptError) {
 							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
 						}
-						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, workflowChildren, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, workflowChildren, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						persist();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(status.error ? { error: status.error } : {}) });
@@ -4968,9 +4977,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							const promoted = promotePausedWorkflowIfSettled(status);
 							if (promoted) status = promoted;
 						}
-						const terminalSummary = status.state === "complete"
+						const terminalSummary = `${status.state === "complete"
 							? "Workflow completed after detached child finished."
-							: status.error ?? (pauseForDetached ? "Workflow paused." : "Workflow failed.");
+							: status.error ?? (pauseForDetached ? "Workflow paused." : "Workflow failed.")}${workflowOutputPathMappingSummary(partial.children)}`;
 						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, terminalSummary, producedChildOutputPaths);
 						const resultSummary = appendWorkflowOutputWarning(terminalSummary, outputWarning);
 						const receiptState: WorkflowReceiptState = status.state === "complete" ? "complete" : status.state === "paused" ? "paused" : status.state === "stopped" ? "stopped" : "failed";
@@ -4981,7 +4990,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						} catch (receiptError) {
 							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
 						}
-						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, workflowChildren, results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.detached && status.state !== "complete" ? { detached: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, workflowChildren, results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.detached && status.state !== "complete" ? { detached: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						persist();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(status.error ? { error: status.error } : {}), ...(status.activityState ? { activityState: status.activityState } : {}) });
@@ -5114,6 +5123,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (workflow.emits.length > 0) sections.push(`Emitted:\n${workflow.emits.map(formatWorkflowValue).join("\n")}`);
 				if (workflow.console.length > 0) sections.push(`Console:\n${workflow.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n")}`);
 				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
+				const outputMappings = workflowOutputPathMappingSummary(workflow.children).trim();
+				if (outputMappings) sections.push(outputMappings);
 				const workflowText = sections.join("\n\n");
 				const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, workflowText, producedChildOutputPaths);
 				const displayText = appendWorkflowOutputWarning(workflowText, outputWarning);
@@ -5129,6 +5140,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (partial.emits.length > 0) sections.push(`Emitted:\n${partial.emits.map(formatWorkflowValue).join("\n")}`);
 				if (partial.console.length > 0) sections.push(`Console:\n${partial.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n")}`);
 				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
+				const outputMappings = workflowOutputPathMappingSummary(partial.children).trim();
+				if (outputMappings) sections.push(outputMappings);
 				const workflowText = sections.join("\n\n");
 				const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, workflowText, producedChildOutputPaths);
 				const displayText = appendWorkflowOutputWarning(workflowText, outputWarning);

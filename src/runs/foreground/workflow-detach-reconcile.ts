@@ -14,6 +14,7 @@ import { updateActiveRunIndex } from "../background/active-run-index.ts";
 import { resultFilePath, writeAsyncResultFile } from "../background/result-files.ts";
 import { resolveAsyncResumeTarget } from "../background/async-resume.ts";
 import { externalCliReceiptMetadata, normalizeExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
+import { outputPathMappingFromTask } from "../shared/single-output.ts";
 import { readWorkflowReceipt, workflowReceiptPath, writeWorkflowReceipt, type WorkflowReceipt } from "../../workflows/workflow-receipt.ts";
 import { workflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 
@@ -31,6 +32,9 @@ function childSucceeded(result: Pick<SingleResult, "exitCode" | "error" | "inter
 
 const UNSUPPORTED_DETACHED_WORKFLOW_CONTINUATION = "unsupported-continuation: detached workflow child settled, but JavaScript workflow continuation was not persisted. Resume the workflow explicitly instead of treating the completed child as top-level workflow completion.";
 const INTERRUPTED_DETACHED_CHILD = "Interrupted. Waiting for explicit next action.";
+type WorkflowStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
+	outputPathMapping?: { requestedPath: string; savedPath: string };
+};
 
 export function applyDetachedChildToPausedWorkflow(
 	status: AsyncStatus,
@@ -84,6 +88,8 @@ export function promotePausedWorkflowIfSettled(status: AsyncStatus): AsyncStatus
 
 function workflowResultChildren(status: AsyncStatus, childRunId: string, result: SingleResult, existingResults: unknown): unknown {
 	const output = getSingleResultOutput(result);
+	const outputReference = result.savedOutputPath ?? result.outputReference?.path;
+	const outputPathMapping = outputPathMappingFromTask(result.task, outputReference);
 	if (Array.isArray(existingResults)) {
 		return existingResults.map((entry) => {
 			if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
@@ -95,28 +101,46 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 				output,
 				outputState: output.trim() ? "present" : "absent",
 				detached: undefined,
+				...(outputPathMapping ? { outputPathMapping } : {}),
 				...(result.interrupted ? { interrupted: true } : {}),
 				...(result.error ? { error: result.error } : {}),
 			};
 		});
 	}
-	return status.steps?.map((step) => ({
+	return status.steps?.map((step: WorkflowStatusStep) => ({
 		workflowKey: step.workflowKey,
 		agent: step.agent,
 		runId: step.runId,
 		success: step.status === "completed" || step.status === "complete",
 		output: step.runId === childRunId ? output : "",
 		outputState: step.runId === childRunId && output.trim() ? "present" : "absent",
+		...(step.runId === childRunId && outputPathMapping ? { outputPathMapping } : step.outputPathMapping ? { outputPathMapping: step.outputPathMapping } : {}),
 		...(step.runId === childRunId && result.interrupted ? { interrupted: true } : {}),
 		...(step.error ? { error: step.error } : {}),
 	}));
 }
 
+function workflowResultOutputPathMappingSummary(results: unknown): string {
+	if (!Array.isArray(results)) return "";
+	const mappings = results.flatMap((entry) => {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+		const child = entry as Record<string, unknown>;
+		const mapping = child.outputPathMapping;
+		if (!mapping || typeof mapping !== "object" || Array.isArray(mapping)) return [];
+		const { requestedPath, savedPath } = mapping as Record<string, unknown>;
+		if (typeof requestedPath !== "string" || typeof savedPath !== "string") return [];
+		const key = typeof child.workflowKey === "string" ? child.workflowKey : "child";
+		return [`'${key}': requested ${requestedPath} -> saved ${savedPath}`];
+	});
+	return mappings.length > 0 ? ` Output path mappings: ${mappings.join("; ")}.` : "";
+}
+
 function publishedWorkflowResult(status: AsyncStatus, childRunId: string, result: SingleResult, asyncDir: string, existing?: Record<string, unknown>, receipt?: WorkflowReceipt): Record<string, unknown> {
 	const sessionId = status.sessionId ?? (typeof existing?.sessionId === "string" ? existing.sessionId : undefined);
-	const summary = status.state === "complete"
+	const results = workflowResultChildren(status, childRunId, result, existing?.results);
+	const summary = `${status.state === "complete"
 		? `Workflow completed after detached child ${childRunId} finished.`
-		: status.error ?? (typeof existing?.summary === "string" ? existing.summary : undefined);
+		: status.error ?? (typeof existing?.summary === "string" ? existing.summary : "Workflow failed.")}${workflowResultOutputPathMappingSummary(results)}`;
 	return {
 		...(existing ?? {}),
 		id: status.runId,
@@ -131,7 +155,7 @@ function publishedWorkflowResult(status: AsyncStatus, childRunId: string, result
 		activityState: status.activityState,
 		endedAt: status.endedAt,
 		timestamp: Date.now(),
-		results: workflowResultChildren(status, childRunId, result, existing?.results),
+		results,
 		workflow: status.workflow,
 		workflowChildren: status.workflowChildren,
 		reconciledFromDetachedChild: childRunId,
@@ -224,6 +248,10 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 		workflowKey: input.workflowKey,
 	});
 	if (!next) return false;
+	const outputReference = input.result.savedOutputPath ?? input.result.outputReference?.path;
+	const outputPathMapping = outputPathMappingFromTask(input.result.task, outputReference);
+	const settledStep = next.steps?.find((step) => step.runId === input.childRunId || (input.workflowKey && step.workflowKey === input.workflowKey)) as WorkflowStatusStep | undefined;
+	if (settledStep && outputPathMapping) settledStep.outputPathMapping = outputPathMapping;
 	writeAtomicJson(path.join(asyncDir, "status.json"), next);
 	updateActiveRunIndex(asyncDir, next.state, next.toolCallId);
 	if (job) {

@@ -96,6 +96,23 @@ function formatOutputPathInstruction(outputPath: string, capabilities?: OutputIn
 	].join("\n");
 }
 
+export function requestedOutputPathFromTask(task: string): string | undefined {
+	for (const line of task.split(/\r?\n/).reverse()) {
+		const match = line.match(/^\s*(?:Write your findings to(?: exactly this path)?:|The runtime will persist it to exactly this path:)\s*(.+?)\s*$/i);
+		if (!match?.[1]) continue;
+		const requested = match[1].trim();
+		return requested.startsWith("`") && requested.endsWith("`") ? requested.slice(1, -1) : requested;
+	}
+	return undefined;
+}
+
+export function outputPathMappingFromTask(task: string, savedPath: string | undefined): { requestedPath: string; savedPath: string } | undefined {
+	const requestedPath = requestedOutputPathFromTask(task);
+	if (!requestedPath || !savedPath) return undefined;
+	if (path.isAbsolute(requestedPath) && path.normalize(requestedPath) === path.normalize(savedPath)) return undefined;
+	return { requestedPath, savedPath };
+}
+
 export function injectSingleOutputInstruction(task: string, outputPath: string | undefined, capabilities?: OutputInstructionCapabilities): string {
 	if (!outputPath) return task;
 	return `${task}\n\n---\n**Output:**\n${formatOutputPathInstruction(outputPath, capabilities)}`;

@@ -666,6 +666,7 @@ export interface WorkflowScriptChildResult {
 	requestedContext?: "fresh" | "fork";
 	resolvedContext?: "fresh" | "fork" | "mixed";
 	outputReference?: string;
+	outputPathMapping?: { requestedPath: string; savedPath: string };
 	externalAdapter?: import("../shared/types.ts").ExternalCliReceiptMetadata;
 	resumability?: { state: "resumable" } | { state: "not-resumable"; reason: string };
 	continuation?: { runIds: string[] };
