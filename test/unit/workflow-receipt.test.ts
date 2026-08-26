@@ -216,6 +216,8 @@ describe("workflow receipts", () => {
 		const asyncDir = path.join(asyncRoot, "workflow-1");
 		fs.mkdirSync(asyncDir, { recursive: true });
 		const receipt = buildWorkflowReceipt({ workflowRunId: "workflow-1", state: "complete", children: [child("advisor")] });
+		receipt.workflowResolution = "settled-awaiting-resume";
+		receipt.recovery = [{ key: "advisor", call: "runs.run", resume: { workflowRunId: "workflow-1", key: "advisor", latest: true }, taskRequired: true }];
 		assert.equal(writeWorkflowReceipt(asyncDir, receipt), workflowReceiptPath(asyncRoot, "workflow-1"));
 		assert.deepEqual(readWorkflowReceipt(asyncRoot, "workflow-1"), receipt);
 		let validations = 0;
@@ -229,6 +231,9 @@ describe("workflow receipts", () => {
 		});
 		assert.equal(runId, "run-advisor");
 		assert.equal(validations, 1);
+		const invalid = { ...receipt, recovery: [{ ...receipt.recovery[0], resume: { workflowRunId: "other", key: "advisor", latest: true } }] };
+		fs.writeFileSync(workflowReceiptPath(asyncRoot, "workflow-1"), JSON.stringify(invalid));
+		assert.throws(() => readWorkflowReceipt(asyncRoot, "workflow-1"), /recovery\[0\] does not identify a resumable entry/);
 	});
 
 	it("explains a missing receipt when workflow status or events remain visible", () => {

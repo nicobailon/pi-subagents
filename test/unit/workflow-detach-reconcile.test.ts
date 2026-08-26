@@ -147,10 +147,15 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 	it("publishes a terminal result when the paused result file is already gone", () => {
 		const workflowRunId = "workflow-missing-result";
 		const asyncDir = path.join(DIRS.async, workflowRunId);
+		const childDir = path.join(DIRS.async, "child-1");
 		const requestedPath = path.join(asyncDir, "requested.md");
 		const savedPath = path.join(asyncDir, "saved.md");
+		const sessionFile = path.join(childDir, "session.jsonl");
 		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(childDir, { recursive: true });
 		fs.mkdirSync(DIRS.results, { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify({ runId: "child-1", mode: "single", state: "complete", startedAt: 1, lastUpdate: 2, sessionId: "session-1", steps: [{ agent: "worker", status: "complete", sessionFile }] }), "utf-8");
 		const status = { ...pausedWorkflow("child-1"), runId: workflowRunId, sessionId: "session-1" };
 		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
 		writeWorkflowReceipt(asyncDir, buildWorkflowReceipt({
@@ -175,21 +180,206 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			state,
 			workflowRunId,
 			childRunId: "child-1",
-			result: { index: 0, agent: "worker", task: `Write your findings to exactly this path: ${requestedPath}`, exitCode: 0, savedOutputPath: savedPath, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+			result: { index: 0, agent: "worker", task: `Write your findings to exactly this path: ${requestedPath}`, exitCode: 0, sessionFile, savedOutputPath: savedPath, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
 		}), true);
-		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; summary?: string; error?: string; sessionId?: string; results?: Array<{ outputPathMapping?: unknown }>; workflowReceipt?: { receipt?: { state?: string; entries?: Record<string, { resumability?: { state?: string; reason?: string } }> } } };
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; summary?: string; error?: string; sessionId?: string; workflowResolution?: string; recovery?: unknown[]; results?: Array<{ outputReference?: string; outputPathMapping?: unknown }>; workflowReceipt?: { receipt?: { state?: string; workflowResolution?: string; recovery?: unknown[]; entries?: Record<string, { resumability?: { state?: string; reason?: string } }> } } };
 		assert.equal(published.state, "failed");
 		assert.equal(published.success, false);
 		assert.match(published.error ?? "", /unsupported-continuation/);
+		assert.equal(published.workflowResolution, "settled-awaiting-resume");
+		assert.match(published.summary ?? "", /Workflow lanes settled/);
+		assert.deepEqual(published.recovery, [{ key: "detaches", call: "runs.run", resume: { workflowRunId, key: "detaches", latest: true }, taskRequired: true }]);
 		assert.ok(published.summary?.includes(`Output path mappings: 'detaches': requested ${requestedPath} -> saved ${savedPath}`));
+		assert.equal(published.results?.[0]?.outputReference, savedPath);
 		assert.deepEqual(published.results?.[0]?.outputPathMapping, { requestedPath, savedPath });
 		assert.equal(published.sessionId, "session-1");
 		assert.equal(published.workflowReceipt?.receipt?.state, "failed");
-		assert.equal(published.workflowReceipt?.receipt?.entries?.detaches?.resumability?.state, "not-resumable");
-		assert.match(published.workflowReceipt?.receipt?.entries?.detaches?.resumability?.reason ?? "", /not found|Status file|too short/);
+		assert.equal(published.workflowReceipt?.receipt?.workflowResolution, "settled-awaiting-resume");
+		assert.deepEqual(published.workflowReceipt?.receipt?.recovery, published.recovery);
+		assert.equal(published.workflowReceipt?.receipt?.entries?.detaches?.resumability?.state, "resumable");
 		const events = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
 		assert.match(events, /"type":"subagent.workflow.completed"/);
 		assert.match(events, /"state":"failed"/);
+		assert.match(events, /"workflowResolution":"settled-awaiting-resume"/);
+		assert.match(events, /"call":"runs.run"/);
+	});
+
+	it("classifies interrupted detached settlement without losing child details", () => {
+		const workflowRunId = "workflow-interrupted-handoff";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ ...pausedWorkflow("child-interrupted"), runId: workflowRunId, sessionId: "session-1" }), "utf-8");
+		const state = { asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]) } as SubagentState;
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "child-interrupted",
+			result: { index: 0, agent: "worker", task: "t", exitCode: 0, interrupted: true, error: "operator stopped child", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+		}), true);
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { workflowResolution?: string; error?: string; results?: Array<{ interrupted?: boolean; error?: string }> };
+		assert.equal(published.workflowResolution, "interrupted-child");
+		assert.equal(published.error, "operator stopped child");
+		assert.deepEqual(published.results, [{ workflowKey: "detaches", agent: "worker", runId: "child-interrupted", success: false, output: "", outputState: "absent", interrupted: true, error: "operator stopped child" }]);
+	});
+
+	it("prioritizes a failed sibling over interrupted detached evidence", () => {
+		const workflowRunId = "workflow-failed-sibling-handoff";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		const status = { ...pausedWorkflow("child-interrupted"), runId: workflowRunId, sessionId: "session-1" };
+		status.steps!.push({ agent: "worker", workflowKey: "fails", runId: "child-failed", status: "paused", activityState: "needs_attention" });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+		const state = { asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]) } as SubagentState;
+		let emitted: { name: string; payload: { error?: string; summary?: string; workflowResolution?: string } } | undefined;
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "child-failed",
+			result: { index: 1, agent: "worker", task: "t", exitCode: 1, error: "sibling boom", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+		}), true);
+		const paused = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as { state?: string; error?: string; steps?: Array<{ runId?: string; error?: string }> };
+		assert.equal(paused.state, "paused");
+		assert.equal(paused.error, "Run 'worker' detached for intercom coordination.");
+		assert.equal(paused.steps?.find((step) => step.runId === "child-failed")?.error, "sibling boom");
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "child-interrupted",
+			result: { index: 0, agent: "worker", task: "t", exitCode: 0, interrupted: true, error: "operator stopped child", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+			events: { emit: (name, payload) => { emitted = { name, payload: payload as { error?: string; summary?: string; workflowResolution?: string } }; } } as IntercomEventBus,
+		}), true);
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { workflowResolution?: string; error?: string; results?: Array<{ workflowKey?: string; interrupted?: boolean; error?: string }> };
+		assert.equal(published.workflowResolution, "failed-child");
+		assert.equal(published.error, "sibling boom");
+		assert.deepEqual(published.results?.find((child) => child.workflowKey === "detaches"), { workflowKey: "detaches", agent: "worker", runId: "child-interrupted", success: false, output: "", outputState: "absent", interrupted: true, error: "operator stopped child" });
+		assert.deepEqual(published.results?.find((child) => child.workflowKey === "fails"), { workflowKey: "fails", agent: "worker", runId: "child-failed", success: false, output: "", outputState: "absent", error: "sibling boom" });
+		assert.equal(emitted?.name, "subagent:async-complete");
+		assert.equal(emitted?.payload.summary, "sibling boom");
+		assert.equal(emitted?.payload.workflowResolution, "failed-child");
+		const events = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+		assert.match(events, /"workflowResolution":"failed-child"/);
+		assert.match(events, /"error":"sibling boom"/);
+		assert.doesNotMatch(events, /"error":"operator stopped child"/);
+	});
+
+	it("preserves a later failed child error after interruption settles first", () => {
+		const workflowRunId = "workflow-interrupted-first-handoff";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		const status = { ...pausedWorkflow("child-interrupted"), runId: workflowRunId, sessionId: "session-1" };
+		status.steps!.push({ agent: "worker", workflowKey: "fails", runId: "child-failed", status: "paused", activityState: "needs_attention" });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+		const state = { asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]) } as SubagentState;
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "child-interrupted",
+			result: { index: 0, agent: "worker", task: "t", exitCode: 0, interrupted: true, error: "operator stopped child" },
+		}), true);
+		const paused = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as { state?: string; steps?: Array<{ runId?: string; error?: string; interrupted?: boolean }> };
+		assert.equal(paused.state, "paused");
+		assert.equal(paused.steps?.find((step) => step.runId === "child-interrupted")?.interrupted, true);
+		assert.equal(paused.steps?.find((step) => step.runId === "child-interrupted")?.error, "operator stopped child");
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "child-failed",
+			result: { index: 1, agent: "worker", task: "t", exitCode: 1, error: "sibling boom" },
+		}), true);
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { workflowResolution?: string; error?: string; summary?: string; results?: Array<{ workflowKey?: string; error?: string; interrupted?: boolean }> };
+		assert.equal(published.workflowResolution, "failed-child");
+		assert.equal(published.error, "sibling boom");
+		assert.equal(published.summary, "sibling boom");
+		assert.equal(published.results?.find((child) => child.workflowKey === "detaches")?.error, "operator stopped child");
+		assert.equal(published.results?.find((child) => child.workflowKey === "detaches")?.interrupted, true);
+		assert.equal(published.results?.find((child) => child.workflowKey === "fails")?.error, "sibling boom");
+	});
+
+	it("preserves an interrupted child error after a later sibling succeeds", () => {
+		const workflowRunId = "workflow-interrupted-first-success-final";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		const status = { ...pausedWorkflow("child-interrupted"), runId: workflowRunId, sessionId: "session-1" };
+		status.steps!.push({ agent: "worker", workflowKey: "passes", runId: "child-passes", status: "paused", activityState: "needs_attention" });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+		const state = { asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]) } as SubagentState;
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "child-interrupted",
+			result: { index: 0, agent: "worker", task: "t", exitCode: 0, interrupted: true, error: "operator stopped child" },
+		}), true);
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "child-passes",
+			result: { index: 1, agent: "worker", task: "t", exitCode: 0 },
+		}), true);
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { workflowResolution?: string; error?: string; summary?: string; results?: Array<{ workflowKey?: string; error?: string; interrupted?: boolean }> };
+		assert.equal(published.workflowResolution, "interrupted-child");
+		assert.equal(published.error, "operator stopped child");
+		assert.equal(published.summary, "operator stopped child");
+		assert.equal(published.results?.find((child) => child.workflowKey === "detaches")?.error, "operator stopped child");
+		assert.equal(published.results?.find((child) => child.workflowKey === "detaches")?.interrupted, true);
+	});
+
+	it("classifies a stopped detached child as interrupted evidence", () => {
+		const workflowRunId = "workflow-stopped-handoff";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ ...pausedWorkflow("child-stopped"), runId: workflowRunId, sessionId: "session-1" }), "utf-8");
+		const state = { asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]) } as SubagentState;
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "child-stopped",
+			result: { index: 0, agent: "worker", task: "t", exitCode: 1, stopped: true, error: "Subagent stopped by user.", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+		}), true);
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { workflowResolution?: string; error?: string; results?: Array<{ workflowKey?: string; error?: string; interrupted?: boolean; stopped?: boolean }> };
+		assert.equal(published.workflowResolution, "interrupted-child");
+		assert.equal(published.error, "Subagent stopped by user.");
+		assert.deepEqual(published.results, [{ workflowKey: "detaches", agent: "worker", runId: "child-stopped", success: false, output: "", outputState: "absent", interrupted: true, stopped: true, error: "Subagent stopped by user." }]);
+	});
+
+	it("classifies an interrupted workflowKey-matched child as interrupted evidence", () => {
+		const workflowRunId = "workflow-key-interrupted-handoff";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		const status = { ...pausedWorkflow("persisted-child"), runId: workflowRunId, sessionId: "session-1" };
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+		const state = { asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]) } as SubagentState;
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "latest-child-run",
+			workflowKey: "detaches",
+			result: { index: 0, agent: "worker", task: "t", exitCode: 0, interrupted: true, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+		}), true);
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { workflowResolution?: string; error?: string };
+		assert.equal(published.workflowResolution, "interrupted-child");
+		assert.notEqual(published.workflowResolution, "failed-child");
+		assert.equal(published.error, "Interrupted. Waiting for explicit next action.");
+	});
+
+	it("classifies a stopped sibling as interrupted terminal evidence", () => {
+		const workflowRunId = "workflow-stopped-sibling-handoff";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		const status = { ...pausedWorkflow("child-final"), runId: workflowRunId, sessionId: "session-1" };
+		status.steps!.push({ agent: "worker", workflowKey: "stopped", runId: "child-stopped", status: "stopped", stopped: true });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+		const state = { asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]) } as SubagentState;
+		assert.equal(reconcileDetachedWorkflowChildCompletion({ state, workflowRunId, childRunId: "child-final", result: { index: 0, agent: "worker", task: "t", exitCode: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } } }), true);
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { workflowResolution?: string; results?: Array<{ workflowKey?: string; stopped?: boolean }> };
+		assert.equal(published.workflowResolution, "interrupted-child");
+		assert.equal(published.results?.find((child) => child.workflowKey === "stopped")?.stopped, true);
 	});
 
 	it("preserves sibling output path mappings when rebuilding from workflow status", () => {
@@ -309,7 +499,9 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			agent: "workflow",
 			success: false,
 			state: "failed",
-			summary: "unsupported-continuation: detached workflow child settled, but JavaScript workflow continuation was not persisted. Resume the workflow explicitly instead of treating the completed child as top-level workflow completion.",
+			workflowResolution: "settled-awaiting-resume",
+			recovery: [],
+			summary: "Workflow lanes settled after detached child child-1 finished. JavaScript workflow continuation was not persisted. No retained child is resumable.",
 			reconciledFromDetachedChild: "child-1",
 			results: [{ workflowKey: "detaches", agent: "worker", runId: "child-1", success: true, output: "", outputState: "absent" }],
 			sessionId: "session-1",
@@ -430,7 +622,9 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			result: { index: 0, agent: "worker", task: "t", exitCode: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
 		}), true);
 		assert.equal(fs.existsSync(path.join(asyncDir, "events.jsonl")), false);
-		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string };
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; workflowResolution?: string; recovery?: unknown };
 		assert.equal(published.state, "paused");
+		assert.equal(published.workflowResolution, undefined);
+		assert.equal(published.recovery, undefined);
 	});
 });

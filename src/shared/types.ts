@@ -76,6 +76,15 @@ export interface WorkflowGraphSnapshot {
 
 export type WorkflowReceiptState = "complete" | "failed" | "paused" | "stopped";
 
+export type WorkflowTerminalResolution = "settled-awaiting-resume" | "failed-child" | "interrupted-child";
+
+export interface WorkflowRecoveryAction {
+	key: string;
+	call: "runs.run";
+	resume: { workflowRunId: string; key: string; latest: true };
+	taskRequired: true;
+}
+
 export interface WorkflowChildSummaryV1 {
 	version: 1;
 	parentToolCallId: string;
@@ -113,6 +122,8 @@ export interface WorkflowReceipt {
 	createdAt: number;
 	entries: Record<string, WorkflowReceiptEntry>;
 	workflowChildren?: WorkflowChildSummaryV1;
+	workflowResolution?: WorkflowTerminalResolution;
+	recovery?: WorkflowRecoveryAction[];
 }
 
 export interface SavedOutputReference {

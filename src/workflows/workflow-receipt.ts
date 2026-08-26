@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
-import type { ExternalCliReceiptMetadata, WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState } from "../shared/types.ts";
+import type { ExternalCliReceiptMetadata, WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState, WorkflowRecoveryAction, WorkflowTerminalResolution } from "../shared/types.ts";
 import type { WorkflowReceiptResumeReference, WorkflowScriptChildResult } from "./scripted-workflow.ts";
 import { parseWorkflowChildSummary } from "./workflow-child-summary.ts";
 
@@ -194,6 +194,27 @@ function parseEntry(value: unknown, key: string, source: string): WorkflowReceip
 	return value as WorkflowReceiptEntry;
 }
 
+function parseWorkflowResolution(value: unknown, source: string): WorkflowTerminalResolution | undefined {
+	if (value === undefined) return undefined;
+	if (value !== "settled-awaiting-resume" && value !== "failed-child" && value !== "interrupted-child") throw new Error(`Invalid workflow receipt '${source}': workflowResolution is invalid.`);
+	return value;
+}
+
+function parseRecovery(value: unknown, workflowRunId: string, entries: Record<string, WorkflowReceiptEntry>, source: string): WorkflowRecoveryAction[] | undefined {
+	if (value === undefined) return undefined;
+	if (!Array.isArray(value)) throw new Error(`Invalid workflow receipt '${source}': recovery must be an array.`);
+	return value.map((item, index) => {
+		if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error(`Invalid workflow receipt '${source}': recovery[${index}] must be an object.`);
+		const action = item as Record<string, unknown>;
+		const key = action.key;
+		const resume = action.resume;
+		if (typeof key !== "string" || !entries[key] || action.call !== "runs.run" || action.taskRequired !== true || !resume || typeof resume !== "object" || Array.isArray(resume)) throw new Error(`Invalid workflow receipt '${source}': recovery[${index}] is invalid.`);
+		const reference = resume as Record<string, unknown>;
+		if (reference.workflowRunId !== workflowRunId || reference.key !== key || reference.latest !== true || entries[key].resumability.state !== "resumable") throw new Error(`Invalid workflow receipt '${source}': recovery[${index}] does not identify a resumable entry.`);
+		return { key, call: "runs.run", resume: { workflowRunId, key, latest: true }, taskRequired: true };
+	});
+}
+
 export function readWorkflowReceipt(asyncDirRoot: string, workflowRunId: string): WorkflowReceipt {
 	const receiptPath = workflowReceiptPath(asyncDirRoot, workflowRunId);
 	let value: unknown;
@@ -222,7 +243,9 @@ export function readWorkflowReceipt(asyncDirRoot: string, workflowRunId: string)
 	for (const [key, entry] of Object.entries(receipt.entries as Record<string, unknown>)) entries[assertKey(key, "workflow receipt key")] = parseEntry(entry, key, receiptPath);
 	const workflowChildren = parseWorkflowChildSummary(receipt.workflowChildren);
 	if (workflowChildren && workflowChildren.workflowRunId !== workflowRunId) throw new Error(`Workflow receipt '${receiptPath}' is stale: workflowChildren.workflowRunId does not match.`);
-	return { version: 1, workflowRunId, state: receipt.state, createdAt: receipt.createdAt, entries, ...(workflowChildren ? { workflowChildren } : {}) };
+	const workflowResolution = parseWorkflowResolution(receipt.workflowResolution, receiptPath);
+	const recovery = parseRecovery(receipt.recovery, workflowRunId, entries, receiptPath);
+	return { version: 1, workflowRunId, state: receipt.state, createdAt: receipt.createdAt, entries, ...(workflowChildren ? { workflowChildren } : {}), ...(workflowResolution ? { workflowResolution } : {}), ...(recovery ? { recovery } : {}) };
 }
 
 export function resolveWorkflowReceiptResumeEntry(input: {
