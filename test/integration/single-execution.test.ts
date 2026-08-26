@@ -2972,7 +2972,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /handoffs/);
 	});
 
-	it("preserves a workflow worktree when its child detaches for supervisor coordination", { skip: !createSubagentExecutor ? "executor unavailable" : undefined }, async () => {
+	it("finalizes a workflow worktree when its child detaches for supervisor coordination", { skip: !createSubagentExecutor ? "executor unavailable" : undefined }, async () => {
 		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
 		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
 		execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
@@ -2980,6 +2980,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
 		execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
 		mockPi.onCall({
+			writeFiles: [{ path: "feature.txt", content: "feature\n" }],
 			steps: [
 				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
 				{ delay: 500, jsonl: [events.assistantMessage("done after coordination")] },
@@ -3032,8 +3033,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(workflowValue[0]?.ok, false);
 		const handoffPath = workflowValue[0]?.artifactPaths.find((candidate) => candidate.endsWith(".json"));
 		assert.ok(handoffPath, result.content[0]?.text ?? "missing pending handoff");
-		const handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8")) as {
+		let handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8")) as {
 			groups: Array<{
+				children: Array<{ status: string; patch: { changed: boolean; filesChanged: number } }>;
 				cleanup: { state: string; tasks: Array<{ path: string; branch: string; preserved: boolean; worktreeRemoved: boolean; branchRemoved: boolean }> };
 			}>;
 		};
@@ -3048,9 +3050,19 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(branch);
 		assert.equal(fs.existsSync(worktreePath), true, "live detached worktree must remain present");
 
-		await new Promise((resolve) => setTimeout(resolve, 750));
-		execFileSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: tempDir });
-		execFileSync("git", ["branch", "-D", branch], { cwd: tempDir, stdio: "ignore" });
+		for (let attempt = 0; attempt < 150 && handoff.groups[0]?.cleanup.state !== "complete"; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8")) as typeof handoff;
+		}
+		assert.equal(handoff.groups[0]?.children[0]?.status, "completed");
+		assert.equal(handoff.groups[0]?.children[0]?.patch.changed, true);
+		assert.equal(handoff.groups[0]?.children[0]?.patch.filesChanged, 1);
+		assert.equal(handoff.groups[0]?.cleanup.state, "complete");
+		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.preserved, undefined);
+		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.worktreeRemoved, true);
+		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.branchRemoved, true);
+		assert.equal(fs.existsSync(worktreePath), false);
+		assert.equal(fs.existsSync(path.join(tempDir, "feature.txt")), false);
 	});
 
 	it("pauses an async workflow when its child detaches for supervisor coordination", { skip: !createSubagentExecutor ? "executor unavailable" : undefined }, async () => {
@@ -3146,8 +3158,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(persistedResult.results?.[0]?.detached, true);
 		const handoffPath = persistedResult.results?.[0]?.artifactPaths?.outputPath;
 		assert.ok(handoffPath, "missing preserved worktree handoff path");
-		const handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8")) as {
+		let handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8")) as {
 			groups: Array<{
+				children: Array<{ status: string; patch: { changed: boolean; filesChanged: number } }>;
 				cleanup: { state: string; tasks: Array<{ path: string; branch: string; preserved: boolean; worktreeRemoved: boolean; branchRemoved: boolean }> };
 			}>;
 		};
@@ -3179,8 +3192,17 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(persistedResult.state, "failed");
 		assert.equal(persistedResult.activityState, undefined);
 		assert.match(persistedResult.error ?? "", /unsupported-continuation/);
-		execFileSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: tempDir });
-		execFileSync("git", ["branch", "-D", branch], { cwd: tempDir, stdio: "ignore" });
+		for (let attempt = 0; attempt < 150 && handoff.groups[0]?.cleanup.state !== "complete"; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8")) as typeof handoff;
+		}
+		assert.equal(handoff.groups[0]?.children[0]?.status, "completed");
+		assert.equal(handoff.groups[0]?.children[0]?.patch.changed, false);
+		assert.equal(handoff.groups[0]?.children[0]?.patch.filesChanged, 0);
+		assert.equal(handoff.groups[0]?.cleanup.state, "complete");
+		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.worktreeRemoved, true);
+		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.branchRemoved, true);
+		assert.equal(fs.existsSync(worktreePath), false);
 		fs.rmSync(started.details.asyncDir, { recursive: true, force: true });
 		fs.rmSync(resultPath, { force: true });
 	});

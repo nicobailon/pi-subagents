@@ -22,6 +22,7 @@
 - Sync Herdr status after restoring active async jobs, so recovered work appears without waiting for another lifecycle event. Thanks to [@vicocamacho](https://github.com/vicocamacho) for #1553.
 - Report deterministic settlement diagnostics when background children fail before required output handoff.
 - Auto-resume workflow children once after setup-phase aborts that produce zero usage, preserving the retained transcript instead of rerunning the whole task.
+- Finalize detached foreground worktree handoffs after terminal child completion, preserving captured changes before cleanup. Thanks to [@jpriverar](https://github.com/jpriverar) for #1562.
 - Fail native child launches before spawn when the requested local working directory is missing or not a directory, with the requested and resolved paths in the error.
 - Map report paths requested in workflow child tasks to the actual saved child output when workflow output routing overrides them.
 - Stop same-session workflows recovered after extension reload through the durable control channel.
