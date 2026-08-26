@@ -41,7 +41,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /script inputs are mutually exclusive/i);
 		assert.equal(metadata.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
 		assert.equal(Buffer.byteLength(metadata.promptSnippet!), 62);
-		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 1623);
+		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 1897);
 		assert.deepEqual(metadata.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
 		assert.match(metadata.promptGuidelines!.join("\n"), /Use subagent only when delegation is needed/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /action: \"list\".*executable, non-disabled/i);
