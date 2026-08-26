@@ -1,6 +1,6 @@
 import { splitKnownThinkingSuffix, type ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
 import type { Usage } from "../../shared/types.ts";
-import { filterFallbackCandidates, parseModelKey, recordModelFailure } from "./model-exclusions.ts";
+import { filterFallbackCandidates, findModelExclusion, parseModelKey, recordModelFailure } from "./model-exclusions.ts";
 import { checkModelScope, type ModelScopeCheckRule, type ModelScopeViolation, type ModelSource } from "./model-scope.ts";
 import { redactSecretValues } from "./permissions.ts";
 
@@ -279,6 +279,14 @@ function enforceModelScopes(
 	for (const violation of violations) (onWarn ?? defaultScopeWarn)(violation);
 }
 
+function throwForExplicitModelExclusion(model: string): void {
+	const exclusion = findModelExclusion(model);
+	if (!exclusion) return;
+	const reason = redactSecretValues((exclusion.reason ?? "runtime-failure").replace(/[\u0000-\u001f\u007f]+/g, " ")).slice(0, 240);
+	const expiry = Number.isFinite(exclusion.expiresAt) ? `; expires: ${new Date(exclusion.expiresAt).toISOString()}` : "";
+	throw new Error(`Requested subagent model '${model}' is excluded and cannot be replaced by a fallback (reason: ${reason}${expiry}).`);
+}
+
 /**
  * Resolve the `--model` override passed to a spawned subagent.
  *
@@ -313,6 +321,9 @@ export function resolveSubagentModelOverride(
 	} else {
 		resolved = resolveRequiredSubagentModelCandidate(explicit, availableModels, preferredProvider);
 	}
+	if (resolved && explicit !== undefined && options?.source === "explicit") {
+		throwForExplicitModelExclusion(resolved);
+	}
 	if (resolved && options?.scope) {
 		const source: ModelSource = explicit === undefined ? "inherited" : (options.source ?? "inherited");
 		enforceModelScopes(resolved, options.scope, source, options.onWarn);
@@ -326,14 +337,15 @@ export function resolveEffectiveSubagentModel(
 	parentModel: ParentModel | undefined,
 	availableModels: AvailableModelInfo[] | undefined,
 	preferredProvider?: string,
-	options?: Omit<ResolveSubagentModelOverrideOptions, "source">,
+	options?: ResolveSubagentModelOverrideOptions,
 ): string | undefined {
+	const source = options?.source ?? (explicitModel !== undefined ? "explicit" : "inherited");
 	const resolved = resolveSubagentModelOverride(
 		explicitModel ?? agentModel,
 		parentModel,
 		availableModels,
 		preferredProvider,
-		{ ...options, source: explicitModel !== undefined ? "explicit" : "inherited" },
+		{ ...options, source },
 	);
 	if (resolved || explicitModel === undefined) return resolved;
 	return resolveSubagentModelOverride(
@@ -341,7 +353,7 @@ export function resolveEffectiveSubagentModel(
 		parentModel,
 		availableModels,
 		preferredProvider,
-		{ ...options, source: "inherited" },
+		{ ...options, source: options?.source ?? "inherited" },
 	);
 }
 

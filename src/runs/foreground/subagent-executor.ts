@@ -5893,6 +5893,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						parentModel,
 						forkAvailableModels,
 						agentConfig?.modelProvider ?? parentModel?.provider,
+						{ source: "inherited" },
 					);
 				const candidates = buildModelCandidates(
 					primaryModel,

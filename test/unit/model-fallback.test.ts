@@ -13,7 +13,7 @@ import {
 	resolveModelCandidate,
 	resolveSubagentModelOverride,
 } from "../../src/runs/shared/model-fallback.ts";
-import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
+import { clearExclusions, recordModelFailure } from "../../src/runs/shared/model-exclusions.ts";
 import { resolveModelScopesForAgent } from "../../src/runs/shared/model-scope.ts";
 
 beforeEach(() => clearExclusions());
@@ -281,6 +281,17 @@ describe("resolveSubagentModelOverride (cross-session inherit, issue #266)", () 
 		assert.equal(
 			resolveSubagentModelOverride("gpt-5-mini", parentModel, availableModels),
 			"openai/gpt-5-mini",
+		);
+	});
+
+	it("fails visibly when an explicit model is excluded instead of falling back", () => {
+		recordModelFailure({ modelId: "gpt-5-mini", provider: "openai", reason: "rate limit" });
+		assert.throws(
+			() => resolveEffectiveSubagentModel("openai/gpt-5-mini", undefined, parentModel, availableModels),
+			(error: unknown) => {
+				const message = String(error);
+				return message.includes("openai/gpt-5-mini") && message.includes("rate limit") && message.includes("expires:");
+			},
 		);
 	});
 

@@ -206,6 +206,18 @@ export function isExcluded(modelId: string, provider: string): boolean {
 }
 
 /**
+ * Return the active exclusion matching a full model id, if any.
+ *
+ * The caller uses this for hard-fail diagnostics; fallback filtering should
+ * continue to use {@link filterFallbackCandidates}.
+ */
+export function findModelExclusion(fullId: string, now = Date.now()): Readonly<ModelExclusion> | undefined {
+	ensureLoaded();
+	const { provider, modelId } = parseModelKey(fullId);
+	return exclusions.find((entry) => entryMatches(entry, modelId, provider, now));
+}
+
+/**
  * Number of live (non-expired) exclusions.
  */
 export function getExcludedCount(): number {
