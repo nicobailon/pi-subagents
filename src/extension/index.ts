@@ -812,7 +812,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (event.toolName !== "subagent") return;
 		if (!ctx.hasUI) return;
 		state.lastUiContext = ctx;
+		const activeJobCount = state.asyncJobs.size;
 		restoreActiveJobs(ctx);
+		if (state.asyncJobs.size > activeJobCount) herdrStatusBridge.syncRuns();
 		fleetStatus?.setContext(ctx);
 		fleetStatus?.refresh();
 		if (state.asyncJobs.size > 0) {

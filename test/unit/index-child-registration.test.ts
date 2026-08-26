@@ -635,9 +635,13 @@ describe("subagent extension child mode", () => {
 			const handlers = new Map();
 			const events = { on(channel, handler) { eventHandlers.set(channel, handler); return () => {}; }, emit() {} };
 			const widgets = [];
+			const herdrCommands = [];
+			process.env.HERDR_ENV = "1";
+			process.env.HERDR_PANE_ID = "w1:p1";
 			const fakePi = new Proxy({
 				events,
 				on(channel, handler) { handlers.set(channel, handler); },
+				exec(command, args) { herdrCommands.push({ command, args }); return Promise.resolve({ code: 0, stdout: "", stderr: "", killed: false }); },
 				registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
 				sendMessage() {}, getSessionName() { return undefined; },
 			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
@@ -663,6 +667,10 @@ describe("subagent extension child mode", () => {
 			handlers.get("tool_result")({ toolName: "subagent" }, ctx);
 			const fleetWidgets = widgets.filter((entry) => entry.key === "subagent-fleet-status");
 			if (!fleetWidgets.some((entry) => typeof entry.value === "function")) throw new Error("management result did not restore active fleet status: " + JSON.stringify(fleetWidgets));
+			if (!herdrCommands.some(({ args }) => args.includes("summary=⏳ 1 subagent"))) throw new Error("management result did not restore Herdr status: " + JSON.stringify(herdrCommands));
+			const herdrCommandCount = herdrCommands.length;
+			handlers.get("tool_result")({ toolName: "subagent" }, ctx);
+			if (herdrCommands.length !== herdrCommandCount) throw new Error("unchanged active jobs redundantly refreshed Herdr status: " + JSON.stringify(herdrCommands));
 			handlers.get("session_shutdown")();
 			fs.rmSync(asyncDir, { recursive: true, force: true });
 		`;

@@ -59,6 +59,7 @@ export interface HerdrStatusBridge {
 	 * state. Also re-syncs runs that survived a reload/resume.
 	 */
 	sessionStarted(input: { hasUI: boolean; runs: Iterable<HerdrStatusRun> }): void;
+	syncRuns(): void;
 	agentStarted(): void;
 	flush(): Promise<void>;
 	dispose(): void;
@@ -376,6 +377,10 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 			if (!enabled || disposed || hasUI !== true) return;
 			rootSession = true;
 			replaceRuns(restoredRuns);
+		},
+		syncRuns() {
+			if (!enabled || !rootSession || disposed) return;
+			refresh();
 		},
 		async flush() {
 			while (draining || pendingReport) await drainPromise;
