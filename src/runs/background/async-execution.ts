@@ -20,6 +20,7 @@ import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveC
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
+import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { resolveNodeExecutable } from "../../shared/node-executable.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
@@ -212,6 +213,7 @@ interface AsyncSingleParams {
 	recoveryAgentConfig?: AgentConfig;
 	ctx: AsyncExecutionContext;
 	cwd?: string;
+	requestedCwd?: string;
 	maxOutput?: MaxOutputConfig;
 	artifactsDir?: string;
 	artifactConfig: ArtifactConfig;
@@ -512,18 +514,12 @@ export function emitProcessTerminalEvent(ctx: AsyncExecutionContext, proof: unkn
 	}
 }
 
-function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Omit<AsyncStatus, "pid" | "processTerminal">, initialStatusPath: string, onProcessTerminal?: (proof: unknown) => void): SpawnRunnerResult {
+function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Omit<AsyncStatus, "pid" | "processTerminal">, initialStatusPath: string, onProcessTerminal?: (proof: unknown) => void, requestedCwd = cwd): SpawnRunnerResult {
+	const cwdError = preflightLaunchCwd(requestedCwd, cwd);
+	if (cwdError) return { error: cwdError };
+
 	if (!jitiCliPath) {
 		return { error: "upstream jiti for TypeScript execution could not be found; ensure package dependencies are installed" };
-	}
-
-	try {
-		const cwdStats = fs.statSync(cwd);
-		if (!cwdStats.isDirectory()) {
-			return { error: `cwd is not a directory: ${cwd}` };
-		}
-	} catch {
-		return { error: `cwd does not exist: ${cwd}` };
 	}
 
 	fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
@@ -946,6 +942,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			outputName: s.as,
 			structured: Boolean(s.outputSchema),
 			cwd: stepCwd,
+			requestedCwd: s.cwd ?? stepCwd,
 			model,
 			...(fast !== undefined ? { fast } : {}),
 			thinking: resolveEffectiveThinking(model, effectiveThinking),
@@ -1770,6 +1767,7 @@ export function executeAsyncSingle(
 						...(params.externalJobFollowUp ? { externalJobFollowUp: params.externalJobFollowUp } : {}),
 						...(params.context ? { context: params.context } : {}),
 						cwd: runnerCwd,
+						requestedCwd: params.requestedCwd ?? runnerCwd,
 						model,
 						...(params.fast ?? agentConfig.fast ? { fast: params.fast ?? agentConfig.fast } : {}),
 						thinking: resolveEffectiveThinking(model, effectiveThinking),
@@ -1865,6 +1863,7 @@ export function executeAsyncSingle(
 			},
 			path.join(asyncDir, "status.json"),
 			(proof) => emitProcessTerminalEvent(ctx, proof),
+			params.requestedCwd ?? runnerCwd,
 		);
 	} catch (error) {
 		params.activeAsyncCapacity?.rollback();

@@ -2027,6 +2027,8 @@ export interface RunSyncOptions {
 	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	cwd?: string;
+	/** Original cwd input retained for launch diagnostics. */
+	requestedCwd?: string;
 	signal?: AbortSignal;
 	interruptSignal?: AbortSignal;
 	timeoutMs?: number;

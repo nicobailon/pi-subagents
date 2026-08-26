@@ -418,6 +418,7 @@ type ForkThinkingOverrideForTask = (agentName: string, idx?: number, modelOverri
 interface ExecutionContextData {
 	params: SubagentParamsLike;
 	effectiveCwd: string;
+	requestedCwd?: string;
 	ctx: ExtensionContext;
 	signal: AbortSignal;
 	onUpdate?: (r: AgentToolResult<Details>) => void;
@@ -3237,6 +3238,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			ctx: asyncCtx,
 			availableModels,
 			cwd: effectiveCwd,
+			requestedCwd: data.requestedCwd,
 			maxOutput: params.maxOutput,
 			artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 			artifactConfig,
@@ -3708,6 +3710,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			unknownAgentDiagnosticContext: data.unknownAgentDiagnosticContext,
 			runFanoutBudget: params.runFanoutAdmitted ? data.runFanoutBudget : { ...data.runFanoutBudget, parentPath: `${data.runFanoutBudget.parentPath ? `${data.runFanoutBudget.parentPath}/` : ""}single` },
 			cwd: singleCwd,
+			requestedCwd: data.requestedCwd,
 			signal,
 			interruptSignal: interruptController.signal,
 			allowIntercomDetach: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
@@ -5139,6 +5142,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 		}
 		const directParams = requestParams;
+		const requestedCwd = directParams.cwd;
 		const requestCwd = resolveRequestedCwd(ctx.cwd, directParams.cwd);
 		const paramsWithResolvedCwd = directParams.cwd === undefined ? directParams : { ...directParams, cwd: requestCwd };
 		const action = paramsWithResolvedCwd.action;
@@ -6085,6 +6089,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const execData: ExecutionContextData = omitUndefinedProperties({
 			params: effectiveParams,
 			effectiveCwd,
+			requestedCwd,
 			ctx,
 			signal,
 			onUpdate: onUpdateWithContext,

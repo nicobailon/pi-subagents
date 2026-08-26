@@ -408,6 +408,56 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(output, "Hello from mock agent");
 	});
 
+	it("rejects invalid foreground cwd before spawning Pi", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const requestedCwd = "missing-local-cwd";
+		const effectiveCwd = path.resolve(tempDir, requestedCwd);
+
+		const missing = await executor.executePublic(
+			"invalid-foreground-cwd",
+			{ agent: "echo", task: "Do not spawn", async: false, cwd: requestedCwd },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(missing.isError, true);
+		assert.match(missing.content[0]?.text ?? "", new RegExp(`cwd does not exist: ${effectiveCwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+		assert.match(missing.content[0]?.text ?? "", /resolved from "missing-local-cwd"/);
+
+		const fileCwd = path.join(tempDir, "not-a-directory");
+		fs.writeFileSync(fileCwd, "file");
+		const notDirectory = await executor.executePublic(
+			"invalid-foreground-file-cwd",
+			{ agent: "echo", task: "Do not spawn", async: false, cwd: fileCwd },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(notDirectory.isError, true);
+		assert.match(notDirectory.content[0]?.text ?? "", /cwd is not a directory/);
+		assert.match(notDirectory.content[0]?.text ?? "", new RegExp(fileCwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("rejects invalid async cwd before spawning the native runner", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const requestedCwd = "missing-async-cwd";
+		const effectiveCwd = path.resolve(tempDir, requestedCwd);
+
+		const result = await executor.executePublic(
+			"invalid-async-cwd",
+			{ agent: "echo", task: "Do not spawn", async: true, cwd: requestedCwd },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", new RegExp(`cwd does not exist: ${effectiveCwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+		assert.match(result.content[0]?.text ?? "", /resolved from "missing-async-cwd"/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("runs public structured single-child requests directly", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Structured child completed" });
 		const executor = makeExecutor([makeAgent("echo")]);

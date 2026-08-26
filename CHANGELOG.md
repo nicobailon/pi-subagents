@@ -4,6 +4,7 @@
 
 ### Fixed
 - Auto-resume workflow children once after setup-phase aborts that produce zero usage, preserving the retained transcript instead of rerunning the whole task.
+- Fail native child launches before spawn when the requested local working directory is missing or not a directory, with the requested and resolved paths in the error.
 
 ## [0.57.0] - 2026-08-26
 

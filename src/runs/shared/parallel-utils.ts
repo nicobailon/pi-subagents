@@ -28,6 +28,8 @@ export interface RunnerSubagentStep {
 	outputName?: string;
 	structured?: boolean;
 	cwd?: string;
+	/** Original cwd input retained for launch diagnostics. */
+	requestedCwd?: string;
 	model?: string;
 	fast?: boolean;
 	thinking?: string;

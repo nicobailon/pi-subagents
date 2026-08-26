@@ -58,6 +58,7 @@ import { effectiveToolTimeoutMs, formatToolTimeoutMessage, resolveToolTimeoutMs,
 import { evaluateCompletionMutationGuard, validateImplementationToolContract } from "../shared/completion-guard.ts";
 import { arbitrateCompletionGuardRescue } from "../shared/llm-intent-arbiter.ts";
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
+import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
@@ -1688,6 +1689,19 @@ async function runSyncCompletionInner(
 	task: string,
 	options: RunSyncOptions,
 ): Promise<SingleResult> {
+	const effectiveCwd = options.cwd ?? runtimeCwd;
+	const cwdError = preflightLaunchCwd(options.requestedCwd ?? effectiveCwd, effectiveCwd);
+	if (cwdError) {
+		return redactResultPrompt(withRunContext({
+			index: options.index ?? 0,
+			agent: agentName,
+			task,
+			exitCode: 1,
+			messages: [],
+			usage: emptyUsage(),
+			error: cwdError,
+		}, options.context));
+	}
 	options = {
 		...options,
 		capabilityCeiling: intersectSubagentCapabilityCeilings(options.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(options.parentSessionId), decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV])),
