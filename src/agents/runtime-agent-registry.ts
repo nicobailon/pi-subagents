@@ -40,6 +40,7 @@ export interface RuntimeAgentDefinition {
 	skillPath?: readonly string[];
 	extensions?: readonly string[];
 	subagentOnlyExtensions?: readonly string[];
+	mutationTools?: readonly string[];
 	output?: string;
 	outputMode?: OutputMode;
 	defaultReads?: readonly string[];
@@ -206,7 +207,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 		"description", "systemPrompt", "aliases", "tools", "mcpDirectTools", "model", "fallbackModels", "thinking",
 		"systemPromptMode", "inheritProjectContext", "inheritSkills", "defaultContext", "defaultAsync", "defaultTimeoutMs",
 		"defaultToolTimeoutMs", "defaultTurnBudget", "defaultAcceptance", "acceptanceRole", "runner", "skills", "skillPath",
-		"extensions", "subagentOnlyExtensions", "output", "outputMode", "defaultReads", "defaultProgress", "interactive",
+		"extensions", "subagentOnlyExtensions", "mutationTools", "output", "outputMode", "defaultReads", "defaultProgress", "interactive",
 		"maxSubagentDepth", "completionGuard", "toolBudget", "permissions",
 	]);
 	const unknown = Object.keys(definition).filter((key) => !supported.has(key));
@@ -238,6 +239,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 	const skillPath = validateStringList(definition.skillPath, "Runtime agent definition skillPath");
 	const extensions = validateStringList(definition.extensions, "Runtime agent definition extensions");
 	const subagentOnlyExtensions = validateStringList(definition.subagentOnlyExtensions, "Runtime agent definition subagentOnlyExtensions");
+	const mutationTools = validateStringList(definition.mutationTools, "Runtime agent definition mutationTools");
 	const output = validateOptionalString(definition.output, "Runtime agent definition output");
 	const defaultReads = validateStringList(definition.defaultReads, "Runtime agent definition defaultReads");
 	const defaultProgress = validateBoolean(definition.defaultProgress, "Runtime agent definition defaultProgress");
@@ -270,6 +272,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 		...(skillPath ? { skillPath } : {}),
 		...(extensions ? { extensions } : {}),
 		...(subagentOnlyExtensions ? { subagentOnlyExtensions } : {}),
+		...(mutationTools ? { mutationTools } : {}),
 		...(output ? { output } : {}),
 		...(outputMode !== undefined ? { outputMode: outputMode as OutputMode } : {}),
 		...(defaultReads ? { defaultReads } : {}),
@@ -349,6 +352,7 @@ function toAgentConfig(name: string, definition: RuntimeAgentDefinition): AgentC
 		...(definition.skillPath !== undefined ? { skillPath: [...definition.skillPath] } : {}),
 		...(definition.extensions !== undefined ? { extensions: [...definition.extensions] } : {}),
 		...(definition.subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions: [...definition.subagentOnlyExtensions] } : {}),
+		...(definition.mutationTools !== undefined ? { mutationTools: [...definition.mutationTools] } : {}),
 		...(definition.output !== undefined ? { output: definition.output } : {}),
 		...(definition.outputMode !== undefined ? { outputMode: definition.outputMode } : {}),
 		...(definition.defaultReads !== undefined ? { defaultReads: [...definition.defaultReads] } : {}),

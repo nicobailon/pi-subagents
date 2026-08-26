@@ -73,6 +73,7 @@ export interface BuiltinAgentOverrideBase {
 	mcpDirectTools?: string[];
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
+	mutationTools?: string[];
 	completionGuard?: boolean;
 	toolBudget?: ToolBudgetConfig;
 }
@@ -98,6 +99,7 @@ interface BuiltinAgentOverrideConfig {
 	tools?: string[] | false | "inherit";
 	extensions?: string[] | false;
 	subagentOnlyExtensions?: string[] | false;
+	mutationTools?: string[] | false;
 	completionGuard?: boolean;
 	toolBudget?: ToolBudgetConfig | false;
 }
@@ -152,6 +154,7 @@ export interface AgentConfig {
 	extensions?: string[];
 	extensionsFromDefault?: boolean;
 	subagentOnlyExtensions?: string[];
+	mutationTools?: string[];
 	output?: string;
 	outputMode?: OutputMode;
 	defaultReads?: string[];
@@ -721,6 +724,7 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		...(agent.mcpDirectTools ? { mcpDirectTools: [...agent.mcpDirectTools] } : {}),
 		...(!agent.extensionsFromDefault && agent.extensions ? { extensions: [...agent.extensions] } : {}),
 		...(agent.subagentOnlyExtensions ? { subagentOnlyExtensions: [...agent.subagentOnlyExtensions] } : {}),
+		...(agent.mutationTools ? { mutationTools: [...agent.mutationTools] } : {}),
 		...(agent.completionGuard !== undefined ? { completionGuard: agent.completionGuard } : {}),
 		...(agent.toolBudget !== undefined ? { toolBudget: agent.toolBudget } : {}),
 	};
@@ -750,6 +754,7 @@ function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentO
 		...(override.tools !== undefined ? { tools: Array.isArray(override.tools) ? [...override.tools] : override.tools } : {}),
 		...(override.extensions !== undefined ? { extensions: override.extensions === false ? false : [...override.extensions] } : {}),
 		...(override.subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions: override.subagentOnlyExtensions === false ? false : [...override.subagentOnlyExtensions] } : {}),
+		...(override.mutationTools !== undefined ? { mutationTools: override.mutationTools === false ? false : [...override.mutationTools] } : {}),
 		...(override.completionGuard !== undefined ? { completionGuard: override.completionGuard } : {}),
 		...(override.toolBudget !== undefined ? { toolBudget: override.toolBudget === false ? false : { ...override.toolBudget, ...(Array.isArray(override.toolBudget.block) ? { block: [...override.toolBudget.block] } : {}) } } : {}),
 	};
@@ -1037,6 +1042,9 @@ function parseBuiltinOverrideEntry(
 	const subagentOnlyExtensions = parseOverrideStringArrayOrFalse(input.subagentOnlyExtensions, { filePath, name, field: "subagentOnlyExtensions" });
 	if (subagentOnlyExtensions !== undefined) override.subagentOnlyExtensions = subagentOnlyExtensions;
 
+	const mutationTools = parseOverrideStringArrayOrFalse(input.mutationTools, { filePath, name, field: "mutationTools" });
+	if (mutationTools !== undefined) override.mutationTools = mutationTools;
+
 	return Object.keys(override).length > 0 ? override : undefined;
 }
 
@@ -1281,6 +1289,7 @@ function applyBuiltinOverride(
 	if (override.tools !== undefined) applyToolsOverride(next, override.tools);
 	if (override.extensions !== undefined) { if (override.extensions === false) delete next.extensions; else next.extensions = [...override.extensions]; }
 	if (override.subagentOnlyExtensions !== undefined) { if (override.subagentOnlyExtensions === false) delete next.subagentOnlyExtensions; else next.subagentOnlyExtensions = [...override.subagentOnlyExtensions]; }
+	if (override.mutationTools !== undefined) { if (override.mutationTools === false) delete next.mutationTools; else next.mutationTools = [...override.mutationTools]; }
 	if (override.completionGuard !== undefined) next.completionGuard = override.completionGuard;
 	if (override.toolBudget !== undefined) { if (override.toolBudget === false) delete next.toolBudget; else next.toolBudget = override.toolBudget; }
 
@@ -1449,6 +1458,9 @@ function applyCustomAgentOverride(
 			override.subagentOnlyExtensions === false ? undefined : [...override.subagentOnlyExtensions],
 		);
 	}
+	if (override.mutationTools !== undefined) {
+		fill("mutationTools", ["mutationTools"], override.mutationTools === false ? undefined : [...override.mutationTools]);
+	}
 	if (override.completionGuard !== undefined) {
 		fill("completionGuard", ["completionGuard"], override.completionGuard);
 	}
@@ -1488,7 +1500,7 @@ function applyCustomAgentOverrides(
 
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
-	draft: Pick<AgentConfig, "model" | "modelProvider" | "fallbackModels" | "fast" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "extensions" | "subagentOnlyExtensions" | "completionGuard" | "toolBudget"> & Partial<Pick<AgentConfig, "description" | "output" | "outputMode" | "defaultReads">>,
+	draft: Pick<AgentConfig, "model" | "modelProvider" | "fallbackModels" | "fast" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "extensions" | "subagentOnlyExtensions" | "mutationTools" | "completionGuard" | "toolBudget"> & Partial<Pick<AgentConfig, "description" | "output" | "outputMode" | "defaultReads">>,
 ): BuiltinAgentOverrideConfig | undefined {
 	const override: BuiltinAgentOverrideConfig = {};
 
@@ -1520,6 +1532,7 @@ export function buildBuiltinOverrideConfig(
 	if (!arraysEqual(draft.subagentOnlyExtensions, base.subagentOnlyExtensions)) {
 		override.subagentOnlyExtensions = draft.subagentOnlyExtensions ? [...draft.subagentOnlyExtensions] : false;
 	}
+	if (!arraysEqual(draft.mutationTools, base.mutationTools)) override.mutationTools = draft.mutationTools ? [...draft.mutationTools] : false;
 	if ((draft.completionGuard !== false) !== (base.completionGuard !== false)) {
 		override.completionGuard = draft.completionGuard !== false;
 	}
@@ -1863,7 +1876,7 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 
 function validateExternalRunnerProfile(frontmatter: Record<string, string>, agentName: string, runner: AgentRunnerConfig | undefined): void {
 	if (runner?.type !== "external-cli" && runner?.type !== "external-job") return;
-	const unsupported = ["tools", "model", "fallbackModels", "thinking", "extensions", "subagentOnlyExtensions", "maxSubagentDepth", "completionGuard", "skills", "skill", "skillPath", "toolBudget", "permission", "permissions"]
+	const unsupported = ["tools", "model", "fallbackModels", "thinking", "extensions", "subagentOnlyExtensions", "mutationTools", "maxSubagentDepth", "completionGuard", "skills", "skill", "skillPath", "toolBudget", "permission", "permissions"]
 		.filter((field) => frontmatter[field] !== undefined);
 	if (unsupported.length > 0) {
 		throw new Error(`Agent '${agentName}' uses runner.type='${runner.type}' and declares unsupported Pi-only fields: ${unsupported.join(", ")}.`);
@@ -2016,6 +2029,7 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 
 		const extensions = resolveAgentRelativeExtensionPaths(parseFrontmatterList(frontmatter.extensions), filePath);
 		const subagentOnlyExtensions = resolveAgentRelativeExtensionPaths(parseFrontmatterList(frontmatter.subagentOnlyExtensions), filePath);
+		const mutationTools = parseFrontmatterList(frontmatter.mutationTools);
 		let fast: boolean | undefined;
 		if (frontmatter.fast !== undefined) {
 			if (frontmatter.fast === "true") fast = true;
@@ -2088,6 +2102,7 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			...(skillPath?.length ? { skillPath } : {}),
 			...(extensions !== undefined ? { extensions } : {}),
 			...(subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions } : {}),
+			...(mutationTools?.length ? { mutationTools } : {}),
 			...(frontmatter.output !== undefined ? { output: frontmatter.output } : {}),
 			...(outputMode !== undefined ? { outputMode } : {}),
 			...(defaultReads?.length ? { defaultReads } : {}),

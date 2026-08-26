@@ -317,6 +317,7 @@ Field notes:
 | `turnBudget` | JSON object default such as `{"maxTurns":20,"graceTurns":2}` for single-agent launches. An explicit call value wins, followed by this agent default, then global `turnBudget` config. |
 | `acceptance` | Acceptance default for single-agent launches. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. Explicit call values win; chain and parallel acceptance remains task/step configuration. |
 | `acceptanceRole` | Optional `read-only` or `writer` role for automatic acceptance inference. Explicit task mutation or no-edit intent wins; otherwise the declared role replaces agent-name guessing. This does not grant or revoke tools. |
+| `mutationTools` | Comma-separated extension tool names whose calls count as mutation attempts for the completion guard. This declares evidence only; list and load each tool through `tools` and its extension provider as usual. |
 | `completionGuard` | Set `false` only for non-implementation agents that may mention implementation words while using mutation-capable tools such as `bash`. |
 | `interactive` | Parsed for compatibility but not currently enforced. |
 | `maxSubagentDepth` | Tightens nested delegation for this agent's children. |
@@ -385,6 +386,7 @@ More rules:
 - `mcp:` entries are split out and forwarded as direct MCP selections without granting normal builtins unless those builtins are also listed.
 - Path-like `tools` entries, such as extension paths or `.ts`/`.js` files, are treated as tool-extension paths rather than tool names.
 - Internal runtime tools such as `structured_output` are added to an explicit allowlist only when their contract is active.
+- Unknown extension tool calls count as mutation attempts only when their names are listed in `mutationTools`; undeclared unknown tools keep the no-edit guard active.
 - Agents that declare only known read-only builtin tools skip the implementation completion guard. `bash`, unknown tools, and MCP tools stay mutation-capable. Use `completionGuard: false` for bash-enabled validators or advisors that should never be judged as implementation agents.
 
 Examples:

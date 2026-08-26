@@ -98,6 +98,7 @@ function buildBuiltinBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		...(agent.tools !== undefined ? { tools: [...agent.tools] } : {}),
 		...(agent.mcpDirectTools !== undefined ? { mcpDirectTools: [...agent.mcpDirectTools] } : {}),
 		...(agent.subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions: [...agent.subagentOnlyExtensions] } : {}),
+		...(agent.mutationTools !== undefined ? { mutationTools: [...agent.mutationTools] } : {}),
 		...(agent.completionGuard !== undefined ? { completionGuard: agent.completionGuard } : {}),
 		...(agent.toolBudget !== undefined ? { toolBudget: agent.toolBudget } : {}),
 	};

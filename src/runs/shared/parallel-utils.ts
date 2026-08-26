@@ -42,6 +42,7 @@ export interface RunnerSubagentStep {
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
 	mcpDirectTools?: string[];
+	mutationTools?: string[];
 	completionGuard?: boolean;
 	systemPrompt?: string | null;
 	systemPromptMode?: "append" | "replace";

@@ -1065,7 +1065,7 @@ async function runSingleAttempt(
 				if (options.toolBudget) {
 					result.toolBudget = toolBudgetState(options.toolBudget, progress.toolCount);
 				}
-				const mutates = isMutatingTool(evt.toolName, toolArgs);
+				const mutates = isMutatingTool(evt.toolName, toolArgs, agent.mutationTools);
 				observedMutationAttempt = observedMutationAttempt || mutates;
 				pendingToolResult = { tool: evt.toolName ?? "tool", path: activeTool?.path, mutates, startedAt: now };
 				fireUpdate();
@@ -1584,6 +1584,7 @@ async function runSingleAttempt(
 			messages: result.messages ?? [],
 			tools: contractTools,
 			mcpDirectTools: toolPlan.effectiveMcpTools,
+			mutationTools: agent.mutationTools,
 			toolAvailabilityError,
 			mutationEvidence,
 		})

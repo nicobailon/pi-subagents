@@ -344,6 +344,7 @@ describe("builtin agent overrides", () => {
 						inheritSkills: true,
 						acceptanceRole: "writer",
 						subagentOnlyExtensions: ["./tools/child-review.ts"],
+						mutationTools: ["replace", "undo_last_replace"],
 						completionGuard: false,
 					},
 				},
@@ -361,6 +362,7 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer.inheritSkills, true);
 		assert.equal(reviewer.acceptanceRole, "writer");
 		assert.deepEqual(reviewer.subagentOnlyExtensions, ["./tools/child-review.ts"]);
+		assert.deepEqual(reviewer.mutationTools, ["replace", "undo_last_replace"]);
 		assert.equal(reviewer.completionGuard, false);
 		assert.equal(reviewer.override?.scope, "user");
 		assert.equal(reviewer.override?.path, path.join(tempHome, ".pi", "agent", "settings.json"));

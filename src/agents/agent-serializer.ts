@@ -28,6 +28,7 @@ export const KNOWN_FIELDS = new Set([
 	"skillPath",
 	"extensions",
 	"subagentOnlyExtensions",
+	"mutationTools",
 	"output",
 	"outputMode",
 	"defaultReads",
@@ -114,6 +115,8 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 		const subagentOnlyExtensionsValue = joinComma(config.subagentOnlyExtensions);
 		lines.push(`subagentOnlyExtensions: ${subagentOnlyExtensionsValue ?? ""}`);
 	}
+	const mutationToolsValue = joinComma(config.mutationTools);
+	if (mutationToolsValue || preserve("mutationTools")) lines.push(`mutationTools: ${mutationToolsValue ?? ""}`);
 
 	if (config.output || preserve("output")) lines.push(`output: ${config.output ?? ""}`);
 	if (config.outputMode || preserve("outputMode")) lines.push(`outputMode: ${config.outputMode ?? ""}`);

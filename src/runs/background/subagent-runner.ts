@@ -597,6 +597,7 @@ function runPiStreaming(
 	orcaProgressTab?: OrcaProgressTab,
 	expectedModelForVerification?: string,
 	modelVerificationRegistry?: Array<{ provider: string; id: string; fullId: string }>,
+	mutationTools?: readonly string[],
 ): Promise<RunPiStreamingResult> {
 	return new Promise((resolve) => {
 		const startedAt = Date.now();
@@ -792,7 +793,7 @@ function runPiStreaming(
 					structuredOutputToolInvoked = true;
 					structuredOutputMessageStartIndex = messages.length;
 				}
-				observedMutationAttempt = observedMutationAttempt || isMutatingTool(event.toolName, event.args);
+				observedMutationAttempt = observedMutationAttempt || isMutatingTool(event.toolName, event.args, mutationTools);
 				const toolArgs = extractToolArgsPreview(event.args ?? {});
 				writeOutputLine(toolArgs ? `${event.toolName}: ${toolArgs}` : event.toolName);
 				return;
@@ -1778,6 +1779,7 @@ async function runSingleStepInner(
 			ctx.orcaProgressTab,
 			expectedModelForVerification,
 			step.modelVerificationRegistry,
+			step.mutationTools,
 		);
 		if (run.processCloseObservedAt !== undefined) {
 			writerProcesses.push({
@@ -1878,6 +1880,7 @@ async function runSingleStepInner(
 				messages: run.messages,
 				tools: completionToolPlan ? (completionToolPlan.explicitToolAllowlist ? completionToolPlan.effectiveToolAllowlist : undefined) : step.tools,
 				mcpDirectTools: completionToolPlan?.effectiveMcpTools ?? step.mcpDirectTools,
+				mutationTools: step.mutationTools,
 				toolAvailabilityError,
 				mutationEvidence: completionMutationEvidence,
 			}))
@@ -3519,7 +3522,7 @@ async function runSubagent(
 			return;
 		}
 		if (event.type === "tool_execution_start" && event.toolName) {
-			const mutates = isMutatingTool(event.toolName, event.args);
+			const mutates = isMutatingTool(event.toolName, event.args, flatSteps[flatIndex]?.mutationTools);
 			const currentPath = resolveCurrentPath(event.toolName, event.args);
 			const argsPreview = extractToolArgsPreview(event.args ?? {});
 			const blocksSupervisor = isBlockingSupervisorTool(event.toolName, event.args);

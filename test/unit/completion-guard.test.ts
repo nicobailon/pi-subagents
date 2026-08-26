@@ -461,6 +461,27 @@ test("edit and write tool calls count as mutation attempts", () => {
 	assert.equal(hasMutationToolCall([assistantToolCall("write", { path: "a.ts" })]), true);
 });
 
+test("declared extension mutation tools count without weakening unknown tools", () => {
+	const messages = [assistantToolCall("replace", { remove_from: "Liv" })];
+	assert.equal(hasMutationToolCall(messages), false);
+	assert.equal(hasMutationToolCall(messages, ["replace"]), true);
+	assert.equal(evaluateCompletionMutationGuard({
+		agent: "worker",
+		task: "Replace the target line",
+		messages,
+		tools: ["read", "replace"],
+		mutationTools: ["replace"],
+		mutationEvidence: { source: "tracked-files", trackedOnly: true, attemptedMutation: false, changedFiles: [], unavailable: "not a Git worktree" },
+	}).triggered, false);
+	assert.equal(evaluateCompletionMutationGuard({
+		agent: "worker",
+		task: "Replace the target line",
+		messages,
+		tools: ["read", "replace"],
+		mutationEvidence: { source: "tracked-files", trackedOnly: true, attemptedMutation: false, changedFiles: [], unavailable: "not a Git worktree" },
+	}).triggered, true);
+});
+
 test("obvious mutating bash commands count as mutation attempts", () => {
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "mkdir -p src && cat > src/file.ts <<'EOF'\nhi\nEOF" })]), true);
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "cat <<'EOF' > src/file.ts\nhi\nEOF" })]), true);

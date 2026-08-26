@@ -240,6 +240,7 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		tools: _tools,
 		mcpDirectTools: _mcpDirectTools,
 		subagentOnlyExtensions: _subagentOnlyExtensions,
+		mutationTools: _mutationTools,
 		completionGuard: _completionGuard,
 		...editable
 	} = withoutExtensions;
@@ -271,6 +272,7 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		...(base.mcpDirectTools !== undefined ? { mcpDirectTools: [...base.mcpDirectTools] } : {}),
 		...(base.extensions !== undefined ? { extensions: [...base.extensions] } : {}),
 		...(base.subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions: [...base.subagentOnlyExtensions] } : {}),
+		...(base.mutationTools !== undefined ? { mutationTools: [...base.mutationTools] } : {}),
 		...(base.completionGuard !== undefined ? { completionGuard: base.completionGuard } : {}),
 	}, agent.filePath);
 }
@@ -303,6 +305,7 @@ export function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<
 	if (hasKey(cfg, "skillPath")) changed("skillPath");
 	if (hasKey(cfg, "extensions")) changed("extensions");
 	if (hasKey(cfg, "subagentOnlyExtensions")) changed("subagentOnlyExtensions");
+	if (hasKey(cfg, "mutationTools")) changed("mutationTools");
 	if (hasKey(cfg, "thinking")) {
 		changed("thinking");
 		if (cfg.thinking === "off") fields.add("thinking");
@@ -457,6 +460,12 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		else if (typeof cfg.subagentOnlyExtensions === "string") target.subagentOnlyExtensions = parseCsv(cfg.subagentOnlyExtensions);
 		else return "config.subagentOnlyExtensions must be a comma-separated string, empty string, or false when provided.";
 	}
+	if (hasKey(cfg, "mutationTools")) {
+		if (cfg.mutationTools === false) delete target.mutationTools;
+		else if (cfg.mutationTools === "") target.mutationTools = [];
+		else if (typeof cfg.mutationTools === "string") target.mutationTools = parseCsv(cfg.mutationTools);
+		else return "config.mutationTools must be a comma-separated string, empty string, or false when provided.";
+	}
 	if (hasKey(cfg, "thinking")) {
 		if (cfg.thinking === false || cfg.thinking === "") delete target.thinking;
 		else if (typeof cfg.thinking === "string") {
@@ -561,6 +570,7 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 			target.thinking ? "thinking" : undefined,
 			target.extensions?.length ? "extensions" : undefined,
 			target.subagentOnlyExtensions?.length ? "subagentOnlyExtensions" : undefined,
+			target.mutationTools?.length ? "mutationTools" : undefined,
 			target.skills?.length || target.skillPath?.length ? "skills" : undefined,
 			target.maxSubagentDepth !== undefined ? "maxSubagentDepth" : undefined,
 			target.completionGuard !== undefined ? "completionGuard" : undefined,
@@ -709,6 +719,7 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.source === "builtin") lines.push(`Disabled: ${agent.disabled ? "true" : "false"}`);
 	if (agent.extensions !== undefined) lines.push(`Extensions: ${agent.extensions.length ? agent.extensions.join(", ") : "(none)"}`);
 	if (agent.subagentOnlyExtensions !== undefined) lines.push(`Subagent-only extensions: ${agent.subagentOnlyExtensions.length ? agent.subagentOnlyExtensions.join(", ") : "(none)"}`);
+	if (agent.mutationTools !== undefined) lines.push(`Mutation tools: ${agent.mutationTools.length ? agent.mutationTools.join(", ") : "(none)"}`);
 	if (agent.thinking) lines.push(`Thinking: ${agent.thinking}`);
 	if (agent.output) lines.push(`Output: ${agent.output}`);
 	if (agent.outputMode) lines.push(`Output mode: ${agent.outputMode}`);

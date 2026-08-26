@@ -605,6 +605,7 @@ export interface SteeringRecoveryDescriptor {
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
 	mcpDirectTools?: string[];
+	mutationTools?: string[];
 	systemPrompt?: string;
 	systemPromptMode: "append" | "replace";
 	inheritProjectContext: boolean;

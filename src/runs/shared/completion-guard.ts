@@ -47,6 +47,7 @@ interface CompletionMutationGuardInput {
 	messages: Message[];
 	tools?: string[];
 	mcpDirectTools?: string[];
+	mutationTools?: string[];
 	toolAvailabilityError?: string;
 	mutationEvidence?: TrackedMutationEvidence;
 }
@@ -128,7 +129,7 @@ function hasCheckpointMutationEvidence(message: Message): boolean {
 		&& data.beforeCommit !== data.afterCommit;
 }
 
-export function hasMutationToolCall(messages: Message[]): boolean {
+export function hasMutationToolCall(messages: Message[], mutationTools?: readonly string[]): boolean {
 	for (const message of messages) {
 		if (hasCheckpointMutationEvidence(message)) return true;
 		if (message.role !== "assistant") continue;
@@ -138,7 +139,7 @@ export function hasMutationToolCall(messages: Message[]): boolean {
 			const args = typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments)
 				? part.arguments as Record<string, unknown>
 				: {};
-			if (isMutatingTool(part.name, args)) return true;
+			if (isMutatingTool(part.name, args, mutationTools)) return true;
 		}
 	}
 	return false;
@@ -239,7 +240,7 @@ export function evaluateCompletionMutationGuard(input: CompletionMutationGuardIn
 	const expectedMutation = hasMutationToolCapability(input.tools, input.mcpDirectTools)
 		? expectsImplementationMutation(input.agent, input.task)
 		: false;
-	const attemptedMutation = hasMutationToolCall(input.messages) || input.mutationEvidence?.attemptedMutation === true;
+	const attemptedMutation = hasMutationToolCall(input.messages, input.mutationTools) || input.mutationEvidence?.attemptedMutation === true;
 	const noEditChallengeComplete = isImplementationChallengeTask(input.task)
 		&& reportsNoBetterChallengeChange(input.messages);
 	return {
