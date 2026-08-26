@@ -255,7 +255,7 @@ tools: read, grep, find, ls, bash, mcp:chrome-devtools
 extensions:
 subagentOnlyExtensions: ./tools/child-only-search.ts
 model: claude-haiku-4-5
-fallbackModels: openai/gpt-5-mini, anthropic/claude-sonnet-4
+fallbackModels: openai-codex/gpt-5.6-luna:low, anthropic/claude-sonnet-4
 thinking: high
 systemPromptMode: replace
 inheritProjectContext: false
@@ -286,7 +286,7 @@ tools:
   - read
   - mcp:github/search_repositories
 fallbackModels:
-  - openai/gpt-5-mini
+  - openai-codex/gpt-5.6-luna:low
   - anthropic/claude-sonnet-4
 ```
 

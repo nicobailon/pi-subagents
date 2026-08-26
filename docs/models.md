@@ -51,7 +51,7 @@ For a persistent role override with a backup model for provider failures:
       "reviewer": {
         "model": "anthropic/claude-sonnet-4",
         "thinking": "high",
-        "fallbackModels": ["openai/gpt-5-mini"]
+        "fallbackModels": ["openai-codex/gpt-5.6-luna:low"]
       }
     }
   }
@@ -182,9 +182,9 @@ To keep subagents inside a budget or compliance profile, enforce a model scope. 
     "modelScope": {
       "enforce": true,
       "strict": true,
-      "allow": ["inherit", "openai/gpt-5-*"],
+      "allow": ["inherit", "openai/gpt-5-*", "openai-codex/gpt-5.6-*"],
       "agents": {
-        "worker": { "allow": ["openai/gpt-5-mini"] },
+        "worker": { "allow": ["openai-codex/gpt-5.6-luna"] },
         "reviewer": { "allow": ["inherit"] }
       }
     }

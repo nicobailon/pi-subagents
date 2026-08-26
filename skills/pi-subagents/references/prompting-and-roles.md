@@ -230,7 +230,7 @@ Direct settings example:
       "reviewer": {
         "model": "anthropic/claude-sonnet-4",
         "thinking": "high",
-        "fallbackModels": ["openai/gpt-5-mini"],
+        "fallbackModels": ["openai-codex/gpt-5.6-luna:low"],
         "acceptanceRole": "read-only"
       }
     }
