@@ -58,6 +58,45 @@ The DTO intentionally never exposes run, async, or tool IDs. Clients must ignore
 
 `pi.events` is in-process only. It does not reach separate Pi processes or child subagents; use the file lifecycle artifacts or `pi-intercom` for cross-process coordination.
 
+## Runtime agent registration from independent extensions
+
+An independently installed Pi extension can register an agent with the installed `pi-subagents` owner through the process-local `pi-subagents:runtime-agent-register:v1` event. Emit after extension setup, such as during `session_start`. Event delivery is synchronous, so the owner writes the result onto the request before `emit()` returns.
+
+```typescript
+const request: {
+  version: 1;
+  name: string;
+  definition: {
+    description: string;
+    systemPrompt: string;
+    tools?: readonly string[];
+  };
+  result?:
+    | { ok: true; registration: { dispose(): void } }
+    | { ok: false; error: Error };
+} = {
+  version: 1,
+  name: "runtime-probe-agent",
+  definition: {
+    description: "Agent registered by an independent extension",
+    systemPrompt: "Return the words runtime probe.",
+    tools: [],
+  },
+};
+
+pi.events.emit("pi-subagents:runtime-agent-register:v1", request);
+if (!request.result) throw new Error("pi-subagents is not installed or not ready");
+if (!request.result.ok) throw request.result.error;
+const registration = request.result.registration;
+// Call registration.dispose() during your extension cleanup.
+```
+
+If `pi-subagents` is a resolvable dependency of the consumer package, `pi-subagents/agents` exports `RUNTIME_AGENT_REGISTER_EVENT`, the request/result types, and `registerAgentViaEvents()` for the same contract. A separately installed Pi package is not automatically a Node dependency of another package. In that case, use the event contract directly instead of a runtime import. A type-only development dependency is optional.
+
+The installed owner applies the existing runtime-agent validation, collision checks, limits, runtime source metadata, and cleanup. If more than one owner listens, the first handler that writes `request.result` wins. Unsupported versions, malformed requests, and registration failures return `{ ok: false, error }`. No result means no compatible owner handled the event.
+
+This contract is process-local. It does not register agents in child processes or other Pi processes, and it does not change package discovery or package resolution.
+
 ## External jobs in FleetView
 
 Use `pi-subagents/external-runs` to publish display-only current-session jobs owned by another extension:

@@ -116,6 +116,10 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./shared-types": "./src/api/shared-types.ts",
 		"./project-panes": "./src/api/project-panes.ts",
 	});
+	const agents = await import("pi-subagents/agents");
+	assert.equal(agents.RUNTIME_AGENT_REGISTER_EVENT, "pi-subagents:runtime-agent-register:v1");
+	assert.equal(agents.RUNTIME_AGENT_REGISTER_VERSION, 1);
+	assert.equal(typeof agents.registerAgentViaEvents, "function");
 	const backgroundWork = await import("pi-subagents/background-work");
 	assert.equal(backgroundWork.BACKGROUND_WORK_PROTOCOL_VERSION, 1);
 	assert.equal(backgroundWork.BACKGROUND_WORK_REGISTRY_KEY, "pi-subagents.background-work.v1");

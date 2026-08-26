@@ -4,7 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerAgent } from "../../src/api/agents.ts";
+import { RUNTIME_AGENT_REGISTER_EVENT, registerAgent, registerAgentViaEvents, type RuntimeAgentRegistrationRequest } from "../../src/api/agents.ts";
+import { registerRuntimeAgentEventListener } from "../../src/agents/runtime-agent-events.ts";
 import { handleList } from "../../src/agents/agent-management.ts";
 import { discoverAgents, discoverAgentsAll } from "../../src/agents/agents.ts";
 import { clearRuntimeAgentsForPi, mergeRuntimeAgents } from "../../src/agents/runtime-agent-registry.ts";
@@ -22,6 +23,25 @@ function makePi(): ExtensionAPI {
 		on() {},
 		registerTool() {},
 	} as unknown as ExtensionAPI;
+}
+
+function makeEventBus(): ExtensionAPI["events"] {
+	const handlers = new Map<string, Set<(data: unknown) => void>>();
+	return {
+		emit(channel, data) {
+			for (const handler of handlers.get(channel) ?? []) handler(data);
+		},
+		on(channel, handler) {
+			const listeners = handlers.get(channel) ?? new Set();
+			listeners.add(handler);
+			handlers.set(channel, listeners);
+			return () => listeners.delete(handler);
+		},
+	};
+}
+
+function makePiWithEvents(events: ExtensionAPI["events"]): ExtensionAPI {
+	return { on() {}, registerTool() {}, events } as unknown as ExtensionAPI;
 }
 
 function writeProjectAgent(name: string, aliases: string[] = []): void {
@@ -81,6 +101,83 @@ describe("runtime agent registration", () => {
 		registration.dispose();
 		assert.equal(mergeRuntimeAgents(pi, discoverAgents(tempProject, "both")).agents.some((candidate) => candidate.name === "runtime-helper"), false);
 		registration.dispose();
+	});
+
+	it("registers through the owner runtime when consumer and owner API objects differ", () => {
+		const events = makeEventBus();
+		const ownerPi = makePiWithEvents(events);
+		const consumerPi = makePiWithEvents(events);
+		const unsubscribe = registerRuntimeAgentEventListener(ownerPi);
+		const registration = registerAgentViaEvents({
+			pi: consumerPi,
+			name: "runtime-event-helper",
+			definition: { description: "Event helper", systemPrompt: "Help through the owner." },
+		});
+
+		assert.equal(mergeRuntimeAgents(ownerPi, discoverAgents(tempProject, "both")).agents.some((agent) => agent.name === "runtime-event-helper"), true);
+		assert.equal(mergeRuntimeAgents(consumerPi, discoverAgents(tempProject, "both")).agents.some((agent) => agent.name === "runtime-event-helper"), false);
+		assert.throws(
+			() => registerAgentViaEvents({ pi: consumerPi, name: "runtime-event-helper", definition: { description: "Duplicate", systemPrompt: "Duplicate." } }),
+			/collides with runtime agent 'runtime-event-helper'/,
+		);
+
+		registration.dispose();
+		assert.equal(mergeRuntimeAgents(ownerPi, discoverAgents(tempProject, "both")).agents.some((agent) => agent.name === "runtime-event-helper"), false);
+		unsubscribe();
+		clearRuntimeAgentsForPi(ownerPi);
+	});
+
+	it("uses first-handler-wins semantics for duplicate owners", () => {
+		const events = makeEventBus();
+		const firstOwner = makePiWithEvents(events);
+		const secondOwner = makePiWithEvents(events);
+		const consumer = makePiWithEvents(events);
+		const unsubscribeFirst = registerRuntimeAgentEventListener(firstOwner);
+		const unsubscribeSecond = registerRuntimeAgentEventListener(secondOwner);
+
+		const registration = registerAgentViaEvents({
+			pi: consumer,
+			name: "first-owner-agent",
+			definition: { description: "First owner", systemPrompt: "Use the first owner." },
+		});
+		assert.equal(mergeRuntimeAgents(firstOwner, discoverAgents(tempProject, "both")).agents.some((agent) => agent.name === "first-owner-agent"), true);
+		assert.equal(mergeRuntimeAgents(secondOwner, discoverAgents(tempProject, "both")).agents.some((agent) => agent.name === "first-owner-agent"), false);
+
+		registration.dispose();
+		unsubscribeFirst();
+		unsubscribeSecond();
+		clearRuntimeAgentsForPi(firstOwner);
+		clearRuntimeAgentsForPi(secondOwner);
+	});
+
+	it("returns useful event registration errors and detects a missing owner", () => {
+		const events = makeEventBus();
+		const owner = makePiWithEvents(events);
+		const consumer = makePiWithEvents(events);
+		const unsubscribe = registerRuntimeAgentEventListener(owner);
+		const unsupported = { version: 2, name: "bad-version", definition: {} } as unknown as RuntimeAgentRegistrationRequest;
+		events.emit(RUNTIME_AGENT_REGISTER_EVENT, unsupported);
+		assert.equal(unsupported.result?.ok, false);
+		if (unsupported.result?.ok === false) assert.match(unsupported.result.error.message, /Unsupported runtime agent registration event version '2'/);
+
+		const malformed = { version: 1, name: "bad-definition" } as unknown as RuntimeAgentRegistrationRequest;
+		events.emit(RUNTIME_AGENT_REGISTER_EVENT, malformed);
+		assert.equal(malformed.result?.ok, false);
+		if (malformed.result?.ok === false) assert.match(malformed.result.error.message, /definition must be an object/i);
+		unsubscribe();
+		assert.throws(
+			() => registerAgentViaEvents({ pi: consumer, name: "no-owner", definition: { description: "Missing", systemPrompt: "Missing." } }),
+			/not installed, not ready, or does not support/,
+		);
+		const unsubscribeMalformed = events.on(RUNTIME_AGENT_REGISTER_EVENT, (raw) => {
+			(raw as { result?: unknown }).result = {};
+		});
+		assert.throws(
+			() => registerAgentViaEvents({ pi: consumer, name: "malformed-result", definition: { description: "Malformed", systemPrompt: "Malformed." } }),
+			/malformed runtime agent registration result/,
+		);
+		unsubscribeMalformed();
+		clearRuntimeAgentsForPi(owner);
 	});
 
 	it("lists runtime agents for the matching Pi runtime", () => {
