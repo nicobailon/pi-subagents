@@ -1298,6 +1298,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		const fixture = createMcpFixture();
 		process.env.PI_CODING_AGENT_DIR = "~/.pi/agent";
 		process.chdir(fixture.root);
+		fs.mkdirSync(path.join(fixture.projectDir, ".pi"));
 		writeMcpFixture(fixture, {
 			serverName: "project-mcp",
 			configPath: path.join(fixture.projectDir, ".mcp.json"),
@@ -1316,6 +1317,199 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		});
 
 		assert.equal(args[args.indexOf("--tools") + 1], "read,project_mcp_inspect");
+	});
+
+	it("resolves direct MCP tools from Pi package manifests", () => {
+		const fixture = createMcpFixture();
+		const packageRoot = path.join(fixture.agentDir, "npm", "node_modules", "@acme", "tools");
+		const definition = { command: "node", args: ["package-mcp"] };
+		writeJson(path.join(fixture.agentDir, "settings.json"), { packages: ["npm:@acme/tools@1.0.0"] });
+		writeJson(path.join(packageRoot, "package.json"), { name: "@acme/tools", pi: { mcp: "./mcp.json" } });
+		writeJson(path.join(packageRoot, "mcp.json"), { mcpServers: { wiki: definition } });
+		writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
+			version: 1,
+			servers: {
+				"acme_tools__wiki": {
+					configHash: computeMcpServerHash(definition),
+					cachedAt: Date.now(),
+					tools: [{ name: "read_wiki_structure" }],
+				},
+			},
+		});
+
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: ["acme_tools__wiki/read_wiki_structure"],
+			cwd: fixture.projectDir,
+		});
+
+		assert.equal(args[args.indexOf("--tools") + 1], "read,acme_tools__wiki_read_wiki_structure");
+	});
+
+	it("resolves direct MCP tools from the git-root package when child cwd has an incidental .pi directory", () => {
+		const fixture = createMcpFixture();
+		const nestedCwd = path.join(fixture.projectDir, "packages", "app");
+		const packageRoot = path.join(fixture.projectDir, ".pi", "npm", "node_modules", "@acme", "tools");
+		const definition = { command: "node", args: ["package-mcp"] };
+		fs.mkdirSync(nestedCwd, { recursive: true });
+		fs.mkdirSync(path.join(nestedCwd, ".pi"));
+		fs.mkdirSync(path.join(fixture.projectDir, ".git"));
+		writeJson(path.join(fixture.projectDir, ".pi", "settings.json"), {
+			packages: ["npm:@acme/tools@1.0.0"],
+			subagents: { projectRootResolution: "git-root" },
+		});
+		writeJson(path.join(packageRoot, "package.json"), { name: "@acme/tools", pi: { mcp: "./mcp.json" } });
+		writeJson(path.join(packageRoot, "mcp.json"), { mcpServers: { wiki: definition } });
+		writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
+			version: 1,
+			servers: {
+				"acme_tools__wiki": {
+					configHash: computeMcpServerHash(definition),
+					cachedAt: Date.now(),
+					tools: [{ name: "read_wiki_structure" }],
+				},
+			},
+		});
+
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: ["acme_tools__wiki/read_wiki_structure"],
+			cwd: nestedCwd,
+		});
+
+		assert.equal(args[args.indexOf("--tools") + 1], "read,acme_tools__wiki_read_wiki_structure");
+	});
+
+	it("resolves direct MCP tools from pinned Git package manifests", () => {
+		const fixture = createMcpFixture();
+		const packageRoot = path.join(fixture.agentDir, "git", "github.com", "acme", "tools");
+		const definition = { command: "node", args: ["git-package-mcp"] };
+		writeJson(path.join(fixture.agentDir, "settings.json"), { packages: ["git:https://github.com/acme/tools.git#main"] });
+		writeJson(path.join(packageRoot, "package.json"), { name: "@acme/tools", pi: { mcp: "./mcp.json" } });
+		writeJson(path.join(packageRoot, "mcp.json"), { mcpServers: { wiki: definition } });
+		writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
+			version: 1,
+			servers: {
+				"acme_tools__wiki": {
+					configHash: computeMcpServerHash(definition),
+					cachedAt: Date.now(),
+					tools: [{ name: "read_wiki_structure" }],
+				},
+			},
+		});
+
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: ["acme_tools__wiki/read_wiki_structure"],
+			cwd: fixture.projectDir,
+		});
+
+		assert.equal(args[args.indexOf("--tools") + 1], "read,acme_tools__wiki_read_wiki_structure");
+	});
+
+	it("resolves direct MCP tools from Agent Plugin MCP config", () => {
+		const fixture = createMcpFixture();
+		const pluginRoot = path.join(fixture.projectDir, "plugins", "acme-tools");
+		const definition = { url: "https://example.test/mcp", headers: { "X-Tenant": "public" } };
+		fs.mkdirSync(path.join(fixture.projectDir, ".pi"));
+		writeJson(path.join(pluginRoot, "plugin.json"), {
+			$schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+			name: "acme.tools",
+		});
+		writeJson(path.join(pluginRoot, "mcp.json"), {
+			$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+			mcpServers: { wiki: { type: "streamable-http", ...definition } },
+		});
+		writeJson(path.join(fixture.projectDir, ".mcp.json"), {
+			settings: { agentPluginPaths: ["./plugins/acme-tools"] },
+			mcpServers: {},
+		});
+		writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
+			version: 1,
+			servers: {
+				"acme_tools__wiki": {
+					configHash: computeMcpServerHash(definition),
+					cachedAt: Date.now(),
+					tools: [{ name: "read_wiki_structure" }],
+				},
+			},
+		});
+
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: ["acme_tools__wiki/read_wiki_structure"],
+			cwd: fixture.projectDir,
+		});
+
+		assert.equal(args[args.indexOf("--tools") + 1], "read,acme_tools__wiki_read_wiki_structure");
+	});
+
+	it("resolves root Agent Plugin MCP tools when child cwd is nested", () => {
+		const fixture = createMcpFixture();
+		const nestedCwd = path.join(fixture.projectDir, "packages", "app");
+		const pluginRoot = path.join(fixture.projectDir, "plugins", "acme-tools");
+		const definition = { url: "https://example.test/mcp", headers: { "X-Tenant": "public" } };
+		fs.mkdirSync(nestedCwd, { recursive: true });
+		fs.mkdirSync(path.join(nestedCwd, ".pi"));
+		fs.mkdirSync(path.join(fixture.projectDir, ".git"));
+		writeJson(path.join(fixture.projectDir, ".pi", "settings.json"), {
+			subagents: { projectRootResolution: "git-root" },
+		});
+		writeJson(path.join(pluginRoot, "plugin.json"), {
+			$schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+			name: "acme.tools",
+		});
+		writeJson(path.join(pluginRoot, "mcp.json"), {
+			$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+			mcpServers: { wiki: { type: "streamable-http", ...definition } },
+		});
+		writeJson(path.join(fixture.projectDir, ".mcp.json"), {
+			settings: { agentPluginPaths: ["./plugins/acme-tools"] },
+			mcpServers: {},
+		});
+		writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
+			version: 1,
+			servers: {
+				"acme_tools__wiki": {
+					configHash: computeMcpServerHash(definition),
+					cachedAt: Date.now(),
+					tools: [{ name: "read_wiki_structure" }],
+				},
+			},
+		});
+
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: ["acme_tools__wiki/read_wiki_structure"],
+			cwd: nestedCwd,
+		});
+
+		assert.equal(args[args.indexOf("--tools") + 1], "read,acme_tools__wiki_read_wiki_structure");
 	});
 
 	it("keeps tool extension paths when explicit extensions are allowlisted", () => {

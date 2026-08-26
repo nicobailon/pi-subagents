@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { findConfiguredProjectRoot } from "../../agents/agents.ts";
 import { getAgentDir, getProjectConfigDir } from "../../shared/utils.ts";
+import { loadAgentPluginMcpServers, loadPackageMcpServers, type McpServerDefinition } from "./mcp-config-sources.ts";
 
 const CACHE_VERSION = 1;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -24,29 +26,7 @@ const IMPORT_PATHS = {
 type ToolPrefix = "server" | "none" | "short";
 type ImportKind = keyof typeof IMPORT_PATHS;
 
-interface ServerEntry {
-	command?: string;
-	args?: string[];
-	socket?: string;
-	env?: Record<string, string>;
-	cwd?: string;
-	url?: string;
-	headers?: Record<string, string>;
-	requestHeadersCommand?: {
-		command: string;
-		args?: string[];
-		env?: Record<string, string>;
-		timeoutMs?: number;
-	};
-	auth?: "oauth" | "bearer" | false;
-	bearerToken?: string;
-	bearerTokenEnv?: string;
-	exposeResources?: boolean;
-	includeTools?: string[];
-	excludeTools?: string[];
-	protocolVersion?: string;
-	directTools?: boolean | string[];
-}
+type ServerEntry = McpServerDefinition;
 
 interface McpConfig {
 	mcpServers: Record<string, ServerEntry>;
@@ -54,6 +34,7 @@ interface McpConfig {
 	settings?: {
 		toolPrefix?: ToolPrefix;
 		directTools?: boolean;
+		agentPluginPaths?: unknown;
 	};
 }
 
@@ -111,19 +92,30 @@ function loadMetadataCache(): MetadataCache | null {
 }
 
 function loadMcpConfig(cwd: string): McpConfig {
+	const resolvedCwd = path.resolve(cwd);
+	const projectRoot = findConfiguredProjectRoot(resolvedCwd) ?? resolvedCwd;
 	let config: McpConfig = { mcpServers: {} };
-	for (const sourcePath of getConfigPaths(cwd)) {
+	for (const sourcePath of getConfigPaths(projectRoot)) {
 		const loaded = readConfig(sourcePath);
 		if (!loaded) continue;
-		config = mergeConfigs(config, expandImports(loaded, cwd));
+		config = mergeConfigs(config, expandImports(loaded, projectRoot));
 	}
-	return config;
+
+	const packageServers = loadPackageMcpServers(projectRoot);
+	const pluginServers = loadAgentPluginMcpServers(config.settings?.agentPluginPaths, projectRoot);
+	const packageOnlyServers = Object.fromEntries(
+		Object.entries(packageServers).filter(([name]) => !Object.hasOwn(pluginServers, name)),
+	);
+	return mergeConfigs(
+		{ mcpServers: packageOnlyServers },
+		mergeConfigs({ mcpServers: pluginServers }, config),
+	);
 }
 
-function getConfigPaths(cwd: string): string[] {
+function getConfigPaths(projectRoot: string): string[] {
 	const piGlobalPath = path.join(getAgentDir(), "mcp.json");
-	const projectPath = path.resolve(cwd, ".mcp.json");
-	const projectPiPath = path.resolve(getProjectConfigDir(cwd), "mcp.json");
+	const projectPath = path.resolve(projectRoot, ".mcp.json");
+	const projectPiPath = path.resolve(getProjectConfigDir(projectRoot), "mcp.json");
 	const sources: string[] = [];
 	if (GENERIC_GLOBAL_CONFIG_PATH !== piGlobalPath) sources.push(GENERIC_GLOBAL_CONFIG_PATH);
 	sources.push(piGlobalPath);

@@ -96,9 +96,10 @@ export function getProjectConfigDir(projectRoot: string): string {
 
 export function getAgentDir(): string {
 	const configured = process.env.PI_CODING_AGENT_DIR;
-	if (configured === "~") return os.homedir();
-	if (configured?.startsWith("~/")) return path.join(os.homedir(), configured.slice(2));
-	return configured || path.join(os.homedir(), getConfigDirName(), "agent");
+	const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
+	if (configured === "~") return home;
+	if (configured?.startsWith("~/") || configured?.startsWith("~\\")) return path.join(home, configured.slice(2));
+	return configured || path.join(home, getConfigDirName(), "agent");
 }
 
 const statusCache = new Map<string, { mtime: number; ctime: number; size: number; ino: number; status: AsyncStatus }>();

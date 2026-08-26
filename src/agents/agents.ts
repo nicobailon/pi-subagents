@@ -804,7 +804,7 @@ export function findNearestProjectRoot(cwd: string): string | null {
 	return findProjectRootCandidates(cwd)[0] ?? null;
 }
 
-function findConfiguredProjectRoot(cwd: string): string | null {
+export function findConfiguredProjectRoot(cwd: string): string | null {
 	const candidates = findProjectRootCandidates(cwd);
 	const nearestRoot = candidates[0];
 	if (!nearestRoot) return null;
