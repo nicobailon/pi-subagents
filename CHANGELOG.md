@@ -4,6 +4,7 @@
 
 ### Added
 - Support direct MCP tool launches from runtime-registered servers.
+- Document per-run thinking suffixes in model-facing subagent guidance. Thanks to [@yanqianglu](https://github.com/yanqianglu) for #1565.
 - Add `inheritGlobalContext` agent configuration so children can inherit repository context without repeating the operator's global context file. Thanks to [@hknatm](https://github.com/hknatm) for #1560.
 - Add process-local event registration so independent Pi extensions can register runtime agents through the installed owner. Thanks to [@fmoda3](https://github.com/fmoda3) for #1533.
 - Add advisory launch preflight diagnostics for likely workspace scope and authority mismatches.
