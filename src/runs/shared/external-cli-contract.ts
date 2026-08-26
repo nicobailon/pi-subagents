@@ -22,6 +22,29 @@ const PROMPT_FILE_UNSUPPORTED = {
 	resume: "The one-shot prompt-file adapter does not retain a durable external session identity.",
 } as const;
 
+export const CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS = [
+	"codex-exec",
+	"codex-exec-writer",
+	"claude-code",
+	"claude-code-writer",
+	"cursor-agent",
+	"cursor-agent-writer",
+] as const;
+export type CodeOwnedExternalCliAdapterId = typeof CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS[number];
+
+const CODE_OWNED_EXTERNAL_CLI_ADAPTER_ID_SET = new Set<string>(CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS);
+export const CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL = CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS.map((id) => `'${id}'`).join(", ");
+
+export function isCodeOwnedExternalCliAdapterId(value: unknown): value is CodeOwnedExternalCliAdapterId {
+	return typeof value === "string" && CODE_OWNED_EXTERNAL_CLI_ADAPTER_ID_SET.has(value);
+}
+
+const RESERVED_READ_ONLY_ADAPTERS = [
+	{ name: "claude-code", writer: "claude-code-writer", access: "file-write" },
+	{ name: "codex-exec", writer: "codex-exec-writer", access: "workspace-write" },
+	{ name: "cursor-agent", writer: "cursor-agent-writer", access: "workspace-write" },
+] as const;
+
 export function validateCodeOwnedProfileRunner(
 	agent: {
 		name: string;
@@ -31,14 +54,10 @@ export function validateCodeOwnedProfileRunner(
 	},
 ): string | undefined {
 	const selectionNames = [agent.name, ...(agent.localName ? [agent.localName] : []), ...(agent.aliases ?? [])];
-	if (selectionNames.includes("claude-code") && !(agent.runner?.type === "external-cli" && agent.runner.adapter === "claude-code")) {
-		return "Selection name 'claude-code' is reserved for the read-only 'claude-code' adapter. Use 'claude-code-writer' for explicit file-write access.";
-	}
-	if (selectionNames.includes("codex-exec") && !(agent.runner?.type === "external-cli" && agent.runner.adapter === "codex-exec")) {
-		return "Selection name 'codex-exec' is reserved for the read-only 'codex-exec' adapter. Use 'codex-exec-writer' for explicit workspace-write access.";
-	}
-	if (selectionNames.includes("cursor-agent") && !(agent.runner?.type === "external-cli" && agent.runner.adapter === "cursor-agent")) {
-		return "Selection name 'cursor-agent' is reserved for the read-only 'cursor-agent' adapter. Use 'cursor-agent-writer' for explicit workspace-write access.";
+	for (const adapter of RESERVED_READ_ONLY_ADAPTERS) {
+		if (selectionNames.includes(adapter.name) && !(agent.runner?.type === "external-cli" && agent.runner.adapter === adapter.name)) {
+			return `Selection name '${adapter.name}' is reserved for the read-only '${adapter.name}' adapter. Use '${adapter.writer}' for explicit ${adapter.access} access.`;
+		}
 	}
 	return undefined;
 }
@@ -56,7 +75,7 @@ export function parseExternalCliCapabilityNarrowing(value: unknown, label: strin
 }
 
 export function resolveExternalCliRunnerStatus(input: {
-	adapter?: "codex-exec" | "codex-exec-writer" | "claude-code" | "claude-code-writer" | "cursor-agent" | "cursor-agent-writer";
+	adapter?: CodeOwnedExternalCliAdapterId;
 	command: string;
 	args?: string[];
 	promptDelivery?: "stdin";
@@ -120,7 +139,7 @@ export function normalizeExternalCliRunnerStatus(value: unknown): ExternalCliRun
 			nonResumableReason: PROMPT_FILE_UNSUPPORTED.resume,
 		};
 	}
-	const adapter = adapterId === "codex-exec" || adapterId === "codex-exec-writer" || adapterId === "claude-code" || adapterId === "claude-code-writer" || adapterId === "cursor-agent" || adapterId === "cursor-agent-writer" ? adapterId : undefined;
+	const adapter = isCodeOwnedExternalCliAdapterId(adapterId) ? adapterId : undefined;
 	return resolveExternalCliRunnerStatus({ ...(adapter ? { adapter } : {}), command: input.command, ...(args ? { args } : {}), ...(promptDelivery ? { promptDelivery } : {}) });
 }
 

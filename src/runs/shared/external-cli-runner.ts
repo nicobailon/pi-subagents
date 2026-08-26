@@ -46,6 +46,19 @@ export interface ExternalCliParser {
 	finish(): ExternalCliParserTerminal | undefined;
 }
 
+export function parseExternalCliJsonlEvent(line: string, label: string, maxTypeLength: number): Record<string, unknown> {
+	let value: unknown;
+	try {
+		value = JSON.parse(line) as unknown;
+	} catch (error) {
+		throw new Error(`${label} emitted malformed JSONL: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} emitted a JSONL event that is not an object.`);
+	const event = value as Record<string, unknown>;
+	if (typeof event.type !== "string" || !event.type || event.type.length > maxTypeLength) throw new Error(`${label} emitted a JSONL event with an invalid type.`);
+	return event;
+}
+
 export interface ExternalCliRunResult {
 	output: string;
 	exitCode: number | null;

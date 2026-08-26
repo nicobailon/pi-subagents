@@ -4,6 +4,7 @@
 
 ### Fixed
 - Reclaim failed async capacity slots after a configurable abandoned timeout when the runner PID is gone, while preserving honest unknown process-proof diagnostics. Thanks to [@rafafortes](https://github.com/rafafortes) for #1472.
+- Reject non-string workflow-child summary identifiers when reading receipt metadata.
 - Resolve the `advisor` builtin alias through the bundled `oracle` definition in model listings. Thanks to [@smileBeda](https://github.com/smileBeda) for #1502.
 - Clarify terminal keyed workflow-resume failures when `workflow-receipt.json` is unavailable, including direct child-run recovery from status and event logs (#1512).
 - Follow symlinked directories during agent discovery without revisiting recursive links. Thanks to [@robsdudeson](https://github.com/robsdudeson) for #1505 and #1510.
@@ -27,6 +28,9 @@
 - Preview runtime-recorded workflow child sessions in Fleet and inspect without trusting sibling transcripts. Thanks to [@JHa13y](https://github.com/JHa13y) for #1441.
 - Keep inline workflow children resumable from their foreground runs without mistaking a missing async directory for lost state. Thanks to [@lancegui](https://github.com/lancegui) for #1442.
 - Resolve package subagents from bare HTTP(S) Git URLs stored in Pi settings. Thanks to [@trancikk](https://github.com/trancikk) for #1452.
+- Make workflow validation and return serialization failures easier to recover from with no-child-launch diagnostics, portable rewrite guidance, workflow ids, and completed-child output references (#1432, #1434).
+- Report child processes that exit during tool execution as mid-tool failures instead of cold starts, even when earlier assistant text exists. Thanks to [@cyzlmh](https://github.com/cyzlmh) for #1437.
+- Keep unaddressable legacy result aliases and overlong public result filenames from blocking canonical hashed or pending fallbacks. Thanks to [@LeonardBode](https://github.com/LeonardBode) for #1440.
 
 ### Added
 - Add a package-internal one-use permit for one exact native child in a foreground `workflowScript`. Thanks to [@maroffo](https://github.com/maroffo) for #1494.
@@ -42,11 +46,6 @@
 - Add code-owned `codex-exec` read-only and `codex-exec-writer` workspace-writing profiles with bounded JSONL terminal proof, final-message artifacts, and opt-in mode-specific smoke evidence.
 - External CLI runs now publish code-owned capability limits and compact workflow receipt metadata for adapter identity, artifacts, handoff mode, supervisor support, and resumability.
 - External one-shot runners now support bounded parser hooks and logs, environment allowlists, cached launch preflight, coalesced parser progress, and process-tree cleanup.
-
-### Fixed
-- Make workflow validation and return serialization failures easier to recover from with no-child-launch diagnostics, portable rewrite guidance, workflow ids, and completed-child output references (#1432, #1434).
-- Report child processes that exit during tool execution as mid-tool failures instead of cold starts, even when earlier assistant text exists. Thanks to [@cyzlmh](https://github.com/cyzlmh) for #1437.
-- Keep unaddressable legacy result aliases and overlong public result filenames from blocking canonical hashed or pending fallbacks. Thanks to [@LeonardBode](https://github.com/LeonardBode) for #1440.
 
 ## [0.56.0] - 2026-08-23
 

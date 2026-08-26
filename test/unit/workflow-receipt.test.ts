@@ -147,6 +147,18 @@ describe("workflow receipts", () => {
 		assert.throws(() => buildWorkflowReceipt({ workflowRunId: "workflow-1", state: "complete", children: [], workflowChildren: summary }), /does not match its receipt/);
 	});
 
+	it("rejects non-string workflow-child summary identifiers", () => {
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-1");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		writeWorkflowReceipt(asyncDir, {
+			...buildWorkflowReceipt({ workflowRunId: "workflow-1", state: "complete", children: [] }),
+			workflowChildren: { version: 1, parentToolCallId: 123, workflowRunId: true, inventoryComplete: true, workflowState: "completed", children: [] } as never,
+		});
+
+		assert.throws(() => readWorkflowReceipt(asyncRoot, "workflow-1"), /workflowChildren\.parentToolCallId is invalid/);
+	});
+
 	it("adds bounded external adapter metadata without raw output or handoff content", () => {
 		const runner = resolveExternalCliRunnerStatus({ command: "review-cli" });
 		const externalAdapter = externalCliReceiptMetadata({

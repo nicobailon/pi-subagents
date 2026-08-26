@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExternalCliParser, ExternalCliParserProgress, ExternalCliParserTerminal } from "./external-cli-runner.ts";
+import { parseExternalCliJsonlEvent, type ExternalCliParser, type ExternalCliParserProgress, type ExternalCliParserTerminal } from "./external-cli-runner.ts";
 import type { ExternalCliPreflightSpec } from "./external-cli-preflight.ts";
 
 const MAX_FINAL_MESSAGE_BYTES = 1024 * 1024;
@@ -41,12 +41,7 @@ export function createCodexExecJsonlParser(finalMessagePath: string): ExternalCl
 	let terminal: ExternalCliParserTerminal | undefined;
 	return {
 		parseLine(line): ExternalCliParserProgress {
-			let value: unknown;
-			try { value = JSON.parse(line) as unknown; }
-			catch (error) { throw new Error(`Codex exec emitted malformed JSONL: ${error instanceof Error ? error.message : String(error)}`); }
-			if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Codex exec emitted a JSONL event that is not an object.");
-			const event = value as Record<string, unknown>;
-			if (typeof event.type !== "string" || !event.type || event.type.length > MAX_EVENT_TYPE_LENGTH) throw new Error("Codex exec emitted a JSONL event with an invalid type.");
+			const event = parseExternalCliJsonlEvent(line, "Codex exec", MAX_EVENT_TYPE_LENGTH);
 			if (terminal) throw new Error("Codex exec emitted an event after its terminal state.");
 			eventCount += 1;
 			if (event.type === "turn.completed") terminal = { state: "completed" };
