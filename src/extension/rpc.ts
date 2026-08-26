@@ -579,20 +579,21 @@ function stopAsyncRun(
 	if (initialStatus.mode === "workflow" && initialStatus.state === "running") {
 		if (child) {
 			const stopChild = options.state?.workflowChildStops?.get(initialRunId);
-			if (!stopChild) throw new SubagentRpcError("invalid_state", `Workflow ${initialRunId} is not controlled by this extension runtime; child stop is unavailable.`);
-			if (!stopChild(child.id, `Workflow child '${child.id}' stopped by RPC.`)) throw new SubagentRpcError("invalid_state", `Child '${childId}' in workflow ${initialRunId} is not available to stop.`);
-			emitChildStopping(initialRunId, location.asyncDir, child);
-			return {
-				runId: initialRunId,
-				asyncDir: location.asyncDir,
-				previousState: initialStatus.state,
-				state: "stopping",
-				childId: child.id,
-				message: `Stop requested for child ${child.id} in async run ${initialRunId}.`,
-			};
+			if (stopChild) {
+				if (!stopChild(child.id, `Workflow child '${child.id}' stopped by RPC.`)) throw new SubagentRpcError("invalid_state", `Child '${childId}' in workflow ${initialRunId} is not available to stop.`);
+				emitChildStopping(initialRunId, location.asyncDir, child);
+				return {
+					runId: initialRunId,
+					asyncDir: location.asyncDir,
+					previousState: initialStatus.state,
+					state: "stopping",
+					childId: child.id,
+					message: `Stop requested for child ${child.id} in async run ${initialRunId}.`,
+				};
+			}
 		}
 		const workflowController = options.state?.workflowControllers?.get(initialRunId);
-		if (workflowController) {
+		if (workflowController && !child) {
 			workflowController.abort(new Error("Workflow stopped by RPC."));
 			return {
 				runId: initialRunId,
@@ -602,7 +603,27 @@ function stopAsyncRun(
 				message: `Stop requested for async run ${initialRunId}.`,
 			};
 		}
-		throw new SubagentRpcError("invalid_state", `Workflow ${initialRunId} is not controlled by this extension runtime; reload recovery cannot stop it safely.`);
+		try {
+			deliverStopRequest({
+				asyncDir: location.asyncDir,
+				pid: initialStatus.pid,
+				kill: options.kill,
+				now: options.now,
+				source: "rpc-stop",
+				...(child ? { targetIndex: child.index, childId: child.id } : {}),
+			});
+		} catch (error) {
+			throw new SubagentRpcError("execution_failed", error instanceof Error ? error.message : String(error));
+		}
+		if (child) emitChildStopping(initialRunId, location.asyncDir, child);
+		return {
+			runId: initialRunId,
+			asyncDir: location.asyncDir,
+			previousState: initialStatus.state,
+			state: "stopping",
+			...(child ? { childId: child.id } : {}),
+			message: child ? `Stop requested for child ${child.id} in async run ${initialRunId}.` : `Stop requested for async run ${initialRunId}.`,
+		};
 	}
 
 	let status;

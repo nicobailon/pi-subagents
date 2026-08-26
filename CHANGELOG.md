@@ -17,6 +17,7 @@
 - Auto-resume workflow children once after setup-phase aborts that produce zero usage, preserving the retained transcript instead of rerunning the whole task.
 - Fail native child launches before spawn when the requested local working directory is missing or not a directory, with the requested and resolved paths in the error.
 - Map report paths requested in workflow child tasks to the actual saved child output when workflow output routing overrides them.
+- Stop same-session workflows recovered after extension reload through the durable control channel.
 - Let agents declare extension mutation tools so real non-Git or untracked edits satisfy the implementation completion guard. Thanks to [@AlphaGodzilla](https://github.com/AlphaGodzilla) for #1532.
 - Deliver async results from an explicitly replaced predecessor session without accepting unrelated session results. Thanks to [@DresvyanskiyDenis](https://github.com/DresvyanskiyDenis) for #1531.
 

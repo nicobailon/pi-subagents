@@ -932,7 +932,7 @@ describe("subagent extension RPC bridge", () => {
 		}
 	});
 
-	it("rejects stop requests for reload-recovered workflows", async () => {
+	it("stops reload-recovered workflows through the durable control channel", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-stop-workflow-"));
 		try {
 			const events = new FakeEvents();
@@ -966,10 +966,11 @@ describe("subagent extension RPC bridge", () => {
 
 			const reply = await request(events, "stop-workflow", "stop", { id: "workflow-run" });
 
-			assert.equal(reply.success, false);
-			assert.equal((reply as { error: { code: string; message: string } }).error.code, "invalid_state");
-			assert.match((reply as { error: { message: string } }).error.message, /reload recovery cannot stop it safely/);
-			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), false);
+			assert.equal(reply.success, true);
+			assert.equal((reply as { data: { runId?: string; state?: string; message?: string } }).data.runId, "workflow-run");
+			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
+			assert.match((reply as { data: { message?: string } }).data.message ?? "", /Stop requested for async run workflow-run/);
+			assert.equal(consumeStopRequestPayload(asyncDir)?.type, "stop");
 			assert.equal(killCalls, 0);
 
 			bridge.dispose();

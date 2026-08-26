@@ -694,6 +694,27 @@ describe("async interrupt action", () => {
 		}
 	});
 
+	it("stops a reload-recovered workflow through the durable control channel", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `stop-recovered-workflow-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "session", mode: "workflow" });
+		try {
+			const kills: Array<{ pid: number; signal?: NodeJS.Signals | 0 }> = [];
+			const result = await executorWithKill(state, (pid, signal) => {
+				kills.push({ pid, signal });
+				return true;
+			}).execute("stop-recovered-workflow", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, undefined);
+			assert.match(text(result), new RegExp(`Stop requested for async run ${runId}`));
+			assert.equal(consumeStopRequestPayload(asyncDir)?.type, "stop");
+			assert.deepEqual(kills, [{ pid: 12345, signal: 0 }]);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
 	it("writes child-scoped stop requests for a running async run", async () => {
 		const state = createState();
 		state.currentSessionId = "session";

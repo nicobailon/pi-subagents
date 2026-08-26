@@ -5676,10 +5676,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (paramsWithResolvedCwd.dir) {
 					try {
 						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, DIRS.async, DIRS.results);
-						const existingStatus = readStatus(location.asyncDir ?? "");
-						if (existingStatus?.mode === "workflow" && existingStatus.state === "running") {
-							return { content: [{ type: "text", text: `Workflow ${existingStatus.runId} is not controlled by this extension runtime; reload recovery cannot stop it safely.` }], isError: true, details: { mode: "management", results: [] } };
-						}
 						const stopResult = stopAsyncRun(deps.state, location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir), deps.kill, location, paramsWithResolvedCwd.childId);
 						return stopResult ?? { content: [{ type: "text", text: `No running or queued async run was found for '${targetRunId ?? paramsWithResolvedCwd.dir}'.` }], isError: true, details: { mode: "management", results: [] } };
 					} catch (error) {
@@ -5696,12 +5692,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 				if (resolved?.kind === "nested") return { content: [{ type: "text", text: "action='stop' supports current-session top-level async runs only." }], isError: true, details: { mode: "management", results: [] } };
 				if (resolved?.kind === "foreground") return { content: [{ type: "text", text: "action='stop' supports async runs only. Use action='interrupt' for foreground runs." }], isError: true, details: { mode: "management", results: [] } };
-				if (resolved?.kind === "async") {
-					const existingStatus = readStatus(resolved.location.asyncDir ?? "");
-					if (existingStatus?.mode === "workflow" && existingStatus.state === "running") {
-						return { content: [{ type: "text", text: `Workflow ${resolved.id} is not controlled by this extension runtime; reload recovery cannot stop it safely.` }], isError: true, details: { mode: "management", results: [] } };
-					}
-				}
 				const stopResult = stopAsyncRun(
 					deps.state,
 					resolved?.kind === "async" ? resolved.id : targetRunId,
