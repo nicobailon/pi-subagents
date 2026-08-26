@@ -50,6 +50,7 @@ import {
 	type SteeringTargetState,
 	type SteeringTargetStatus,
 	type SubagentChildStatusEvent,
+	type SettlementDiagnostic,
 	DEFAULT_MAX_OUTPUT,
 	type MaxOutputConfig,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
@@ -102,7 +103,7 @@ import { createOwnedProcessTreeController, type OwnedProcessTreeController } fro
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, updateSteeringTarget } from "./steering.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
-import { evaluateCompletionMutationGuard, validateImplementationToolContract } from "../shared/completion-guard.ts";
+import { evaluateCompletionMutationGuard, expectsImplementationMutation, hasMutationToolCapability, validateImplementationToolContract } from "../shared/completion-guard.ts";
 import {
 	createMutatingFailureState,
 	didMutatingToolFail,
@@ -544,6 +545,7 @@ interface RunPiStreamingResult {
 	observedMutationAttempt?: boolean;
 	structuredOutputToolInvoked?: boolean;
 	structuredOutputMessageStartIndex?: number;
+	structuredOutput?: unknown;
 	watchdog?: ChildWatchdogStateSnapshot;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 	processInstanceId: string;
@@ -554,6 +556,7 @@ interface RunPiStreamingResult {
 	currentToolArgs?: string;
 	currentPath?: string;
 	afterCompactionSettlement?: boolean;
+	effects?: import("../../shared/types.ts").EffectsProjection;
 }
 
 const MAX_CHILD_FAILURE_DIAGNOSTIC_CHARS = 8_192;
@@ -562,16 +565,18 @@ function formatChildFailureDiagnostic(input: {
 	error: string | undefined;
 	afterCompactionSettlement?: boolean;
 	missingFileOnlyOutput?: string;
+	missingStructuredOutput?: string;
 }): string | undefined {
-	if (!input.error) return undefined;
 	const notes = [
 		input.afterCompactionSettlement ? "Child failure followed session compaction and agent settlement." : undefined,
 		input.missingFileOnlyOutput ? `Required file-only output was not produced: ${input.missingFileOnlyOutput.slice(0, 2_048)}` : undefined,
+		input.missingStructuredOutput ? `Required structured output was not produced: ${input.missingStructuredOutput.slice(0, 2_048)}` : undefined,
 	].filter((note): note is string => Boolean(note));
 	if (notes.length === 0) return input.error;
 	const context = notes.join("\n");
 	const errorLimit = MAX_CHILD_FAILURE_DIAGNOSTIC_CHARS - (context ? context.length + 1 : 0);
-	return `${input.error.slice(0, Math.max(0, errorLimit))}${context ? `\n${context}` : ""}`;
+	const baseError = input.error || "Subagent failed.";
+	return `${baseError.slice(0, Math.max(0, errorLimit))}${context ? `\n${context}` : ""}`;
 }
 
 function runPiStreaming(
@@ -1874,6 +1879,7 @@ async function runSingleStepInner(
 			: undefined;
 		const completionGuardEnabled = isAgentContractV1(step.agentContract) ? step.completionGuard === true : step.completionGuard !== false;
 		const completionToolPlan = resolvedTaskToolPlan;
+		const completionTools = completionToolPlan ? (completionToolPlan.explicitToolAllowlist ? completionToolPlan.effectiveToolAllowlist : undefined) : step.tools;
 		const mutationEvidence = collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
 		finalMutationEvidence = mutationEvidence;
 		const completionMutationEvidence = ctx.trackedMutationEvidenceForCompletionGuard === false ? undefined : mutationEvidence;
@@ -1882,7 +1888,7 @@ async function runSingleStepInner(
 				agent: step.agent,
 				task: taskForCompletionGuard,
 				messages: run.messages,
-				tools: completionToolPlan ? (completionToolPlan.explicitToolAllowlist ? completionToolPlan.effectiveToolAllowlist : undefined) : step.tools,
+				tools: completionTools,
 				mcpDirectTools: completionToolPlan?.effectiveMcpTools ?? step.mcpDirectTools,
 				mutationTools: step.mutationTools,
 				toolAvailabilityError,
@@ -1892,6 +1898,9 @@ async function runSingleStepInner(
 		const mutationAttemptObserved = run.observedMutationAttempt === true || completionMutationEvidence?.attemptedMutation === true;
 		const completionGuardTriggered = completionGuard?.triggered === true && !mutationAttemptObserved;
 		const completionGuardBlocked = completionGuard?.blocked === true;
+		const mutationExpected = completionGuard?.expectedMutation ?? (completionGuardEnabled
+			&& hasMutationToolCapability(completionTools, completionToolPlan?.effectiveMcpTools ?? step.mcpDirectTools)
+			&& expectsImplementationMutation(step.agent, taskForCompletionGuard));
 		const fileMutationEffect = completionGuard
 			? {
 				status: completionGuardBlocked ? "blocked" as const : completionGuard.expectedMutation ? completionGuardTriggered ? "missing" as const : "observed" as const : "not-applicable" as const,
@@ -1952,7 +1961,24 @@ async function runSingleStepInner(
 			toolBudgetBlocked = Boolean(blockedMessage);
 			toolBudget = toolBudgetState(step.toolBudget, toolMessages.length, blockedMessage ? (blockedMessage as { toolName?: string }).toolName : undefined);
 		}
-		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, runtimeAcknowledgedExtensions, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(fileMutationEffect ? { effects: { fileMutation: fileMutationEffect } } : {}) } as RunPiStreamingResult & { structuredOutput?: unknown; agentContract?: import("../../shared/types.ts").AgentContract; effects?: import("../../shared/types.ts").EffectsProjection };
+		const requiredOutput = step.outputMode === "file-only" && step.outputPath
+			? { kind: "file-only" as const, path: step.outputPath, missing: !fs.existsSync(step.outputPath) }
+			: effectiveStructuredOutput
+				? { kind: "structured" as const, path: effectiveStructuredOutput.outputPath, missing: !fs.existsSync(effectiveStructuredOutput.outputPath) }
+			: undefined;
+		const settlementDiagnostic: SettlementDiagnostic | undefined = effectiveExitCode !== 0 || completionGuardTriggered || completionGuardBlocked
+			? {
+				finalTextPresent: Boolean(stripAcceptanceReport(run.finalOutput).trim()),
+				mutation: {
+					expected: mutationExpected,
+					attempted: completionGuard?.attemptedMutation === true || mutationAttemptObserved,
+					observed: mutationEvidence.attemptedMutation,
+				},
+				...(requiredOutput ? { requiredOutput } : {}),
+				afterCompactionSettlement: run.afterCompactionSettlement === true,
+			}
+			: undefined;
+		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, runtimeAcknowledgedExtensions, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(fileMutationEffect || settlementDiagnostic ? { effects: { ...(fileMutationEffect ? { fileMutation: fileMutationEffect } : {}), ...(settlementDiagnostic ? { settlementDiagnostic } : {}) } } : {}) } as RunPiStreamingResult;
 		if (run.turnBudgetExceeded) break modelAttemptsLoop;
 		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break modelAttemptsLoop;
 		if (attempt.success || completionGuardTriggered) break modelAttemptsLoop;
@@ -2117,13 +2143,12 @@ async function runSingleStepInner(
 					: finalResult?.error ?? (intercomDetachReceipt ? INTERCOM_DETACH_RECEIPT : undefined);
 	const effectiveFinalError = formatChildFailureDiagnostic({
 		error: baseFinalError,
-		afterCompactionSettlement: finalResult?.afterCompactionSettlement,
-		missingFileOnlyOutput: effectiveFinalExitCode !== 0
-			&& finalResult?.afterCompactionSettlement
-			&& step.outputMode === "file-only"
-			&& step.outputPath
-			&& !fs.existsSync(step.outputPath)
-			? step.outputPath
+		afterCompactionSettlement: effectiveFinalExitCode !== 0 ? finalResult?.afterCompactionSettlement : undefined,
+		missingFileOnlyOutput: effectiveFinalExitCode !== 0 && finalResult?.effects?.settlementDiagnostic?.requiredOutput?.kind === "file-only" && finalResult.effects.settlementDiagnostic.requiredOutput.missing
+			? finalResult.effects.settlementDiagnostic.requiredOutput.path
+			: undefined,
+		missingStructuredOutput: effectiveFinalExitCode !== 0 && finalResult?.effects?.settlementDiagnostic?.requiredOutput?.kind === "structured" && finalResult.effects.settlementDiagnostic.requiredOutput.missing
+			? finalResult.effects.settlementDiagnostic.requiredOutput.path
 			: undefined,
 	});
 

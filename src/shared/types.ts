@@ -393,8 +393,24 @@ export interface FileMutationEffect {
 	evidence?: TrackedMutationEvidence;
 }
 
+export interface SettlementDiagnostic {
+	finalTextPresent: boolean;
+	mutation: {
+		expected: boolean;
+		attempted: boolean;
+		observed: boolean;
+	};
+	requiredOutput?: {
+		kind: "file-only" | "structured";
+		path: string;
+		missing: boolean;
+	};
+	afterCompactionSettlement?: boolean;
+}
+
 export interface EffectsProjection {
 	fileMutation?: FileMutationEffect;
+	settlementDiagnostic?: SettlementDiagnostic;
 }
 
 export interface TrackedMutationSnapshot {
