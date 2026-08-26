@@ -10,6 +10,7 @@ import registerSubagentNotify, {
 	type SubagentNotifyDetails,
 } from "../../src/runs/background/notify.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
+import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
 
 const COMPLETION_OWNER_ID = "completion-owner-a";
 
@@ -157,6 +158,47 @@ describe("registerSubagentNotify", () => {
 		assert.equal(await notifier.deliver(completionResult({ id: "missing-owner", completionOwnerId: undefined })), false);
 		assert.equal(await notifier.deliver(completionResult({ id: "different-owner", completionOwnerId: "completion-owner-b" })), false);
 		assert.equal(sent.length, 0);
+	});
+
+	it("accepts only explicitly claimed predecessor-session completions", async () => {
+		const events = createEventBus();
+		const sent: unknown[] = [];
+		const pi = { events, sendMessage(message: unknown) { sent.push(message); } };
+		const state = { currentSessionId: "session-old" as string | null, completionOwnerId: COMPLETION_OWNER_ID };
+		const ownership = createResultDeliveryOwnership(state);
+		assert.equal(ownership.claimPredecessor("session-old", "session-old"), true);
+		state.currentSessionId = "session-new";
+		const notifier = registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false }, ownership });
+		try {
+			assert.equal(await notifier.deliver(completionResult({ id: "predecessor", sessionId: "session-old" })), true);
+			assert.equal(await notifier.deliver(completionResult({ id: "foreign", sessionId: "session-foreign" })), false);
+			assert.equal(await notifier.deliver(completionResult({ id: "wrong-owner", sessionId: "session-old", completionOwnerId: "other-owner" })), false);
+			assert.equal(sent.length, 1);
+		} finally {
+			notifier.dispose();
+		}
+	});
+
+	it("rechecks session ownership before emitting a delayed batch", async () => {
+		const clock = createFakeClock();
+		const events = createEventBus();
+		const sent: unknown[] = [];
+		const pi = { events, sendMessage(message: unknown) { sent.push(message); } };
+		const state = { currentSessionId: "session-a" as string | null, completionOwnerId: COMPLETION_OWNER_ID };
+		const notifier = registerSubagentNotify(pi as never, state, {
+			batchConfig: { enabled: true, debounceMs: 150, maxWaitMs: 1000, stragglerDebounceMs: 75, stragglerMaxWaitMs: 400, stragglerWindowMs: 2000 },
+			timers: clock.api,
+			now: clock.now,
+		});
+		try {
+			const pending = notifier.deliver(completionResult({ id: "delayed-unclaimed" }));
+			state.currentSessionId = "session-b";
+			clock.advance(150);
+			assert.equal(await pending, false);
+			assert.equal(sent.length, 0);
+		} finally {
+			notifier.dispose();
+		}
 	});
 
 	it("does not wake the session when background delivery explicitly disables triggerTurn", async () => {

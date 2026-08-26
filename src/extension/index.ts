@@ -37,6 +37,7 @@ import { getActiveAsyncCapacitySnapshot, resolveAbandonedSlotReleaseAfterMs, res
 import { cleanupResultIndexes, missionObserverResultCandidateFiles } from "../runs/background/result-files.ts";
 import { ASYNC_RETENTION_DELAY_MS, cleanupAsyncRetention } from "../runs/background/async-retention.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
+import { createResultDeliveryOwnership } from "../runs/background/result-delivery-ownership.ts";
 import { createScheduledRunManager } from "../runs/background/scheduled-runs.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
@@ -466,7 +467,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const supervisorChannel = createNativeSupervisorChannel(pi, state);
 	const waitSubscriptionManager = createWaitSubscriptionManager(pi, state);
 	const mainWatchdog = registerMainWatchdog(pi);
-	const completionNotifier = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch });
+	const resultDeliveryOwnership = createResultDeliveryOwnership(state);
+	const completionNotifier = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch, ownership: resultDeliveryOwnership });
 	const fleetStatus = fleetViewEnabled
 		? new SubagentFleetStatus(state, async (itemKey) => {
 			const ctx = state.lastUiContext;
@@ -528,6 +530,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		10 * 60 * 1000,
 		{
 			notifier: completionNotifier,
+			ownership: resultDeliveryOwnership,
 			observeCompletion: (result) => scheduledRunManager.handleAsyncCompletion(result),
 			observedCompletionRunIds: () => scheduledRunManager.observedCompletionRunIds(),
 			hasDeliveryDemand: hasResultDeliveryDemand,
@@ -535,7 +538,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			resultScanLogging: config.resultScanLogging,
 		},
 	);
-	const { startResultWatcher, primeExistingResults, stopResultWatcher } = resultWatcher;
+	const { startResultWatcher, transitionResultDelivery, primeExistingResults, stopResultWatcher } = resultWatcher;
 	refreshResultDelivery = resultWatcher.refreshResultDelivery;
 	const asyncRetentionAbort = new AbortController();
 	const asyncRetentionTimer = setTimeout(async () => {
@@ -853,11 +856,14 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		);
 	};
 
-	const resetSessionState = (ctx: ExtensionContext, recovering: boolean) => {
+	const resetSessionState = (ctx: ExtensionContext, recovering: boolean, previousSessionFile?: string) => {
 		state.widgetsSuspended = false;
 		state.baseCwd = ctx.cwd;
 		goalTurnId = 0;
+		const previousRuntimeSessionId = state.currentSessionId;
+		resultDeliveryOwnership.claimPredecessor(previousSessionFile, previousRuntimeSessionId);
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+		transitionResultDelivery();
 		state.parentSessionFile = ctx.sessionManager.getSessionFile();
 		state.trustedSessionFileRoot = state.parentSessionFile ? path.join(getAgentDir(), "sessions") : undefined;
 		state.trustedSessionRoots = [...new Set([
@@ -934,6 +940,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			clearTimeout(asyncRetentionTimer);
 			asyncRetentionAbort.abort();
 			stopResultWatcher();
+			resultDeliveryOwnership.clear();
 			completionNotifier.dispose();
 			mainWatchdog.dispose();
 			scheduledRunManager.stop();
@@ -1034,7 +1041,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", (event, ctx) => {
 		installRuntime(ctx);
 		const recovering = event.reason === "startup" || event.reason === "reload" || event.reason === "resume";
-		resetSessionState(ctx, recovering);
+		resetSessionState(ctx, recovering, event.previousSessionFile);
 		herdrStatusBridge.sessionStarted({
 			hasUI: ctx.hasUI === true,
 			runs: activeHerdrRuns(),

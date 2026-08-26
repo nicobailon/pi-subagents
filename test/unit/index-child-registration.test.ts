@@ -995,6 +995,58 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
+	it("claims the explicit predecessor session during session replacement", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-session-transition-"));
+		const configDir = path.join(agentDir, "extensions", "subagent");
+		fs.mkdirSync(configDir, { recursive: true });
+		fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ completionBatch: { enabled: false } }), "utf-8");
+		const script = String.raw`
+			import fs from "node:fs";
+			import path from "node:path";
+			import registerSubagentExtension from "./index.ts";
+			import { currentCompletionOwnerId } from "./src/shared/completion-owner.ts";
+			const handlers = new Map();
+			const listeners = new Map();
+			const events = {
+				on(channel, handler) { let set = listeners.get(channel); if (!set) listeners.set(channel, set = new Set()); set.add(handler); return () => set.delete(handler); },
+				emit(channel, payload) { for (const handler of [...(listeners.get(channel) ?? [])]) handler(payload); },
+			};
+			const sent = [];
+			const pi = new Proxy({
+				events,
+				on(channel, handler) { handlers.set(channel, handler); },
+				registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+				sendMessage(message) { sent.push(message); }, getSessionName() { return undefined; },
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			const sessions = path.join(process.env.PI_CODING_AGENT_DIR, "sessions");
+			fs.mkdirSync(sessions, { recursive: true });
+			const oldSession = path.join(sessions, "old.jsonl");
+			const newSession = path.join(sessions, "new.jsonl");
+			fs.writeFileSync(oldSession, "");
+			fs.writeFileSync(newSession, "");
+			let currentSession = oldSession;
+			const sessionManager = { getSessionId() { return path.basename(currentSession); }, getSessionFile() { return currentSession; }, getEntries() { return []; } };
+			const ctx = { cwd: process.cwd(), hasUI: false, ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } }, sessionManager, modelRegistry: { getAvailable() { return []; } } };
+			registerSubagentExtension(pi);
+			handlers.get("session_start")({ reason: "startup" }, ctx);
+			currentSession = newSession;
+			handlers.get("session_start")({ reason: "new", previousSessionFile: oldSession }, ctx);
+			const owner = currentCompletionOwnerId();
+			events.emit("subagent:async-complete", { id: "old-owned", agent: "worker", success: true, summary: "old", timestamp: 1, sessionId: oldSession, completionOwnerId: owner });
+			events.emit("subagent:async-complete", { id: "foreign", agent: "worker", success: true, summary: "foreign", timestamp: 2, sessionId: path.join(sessions, "foreign.jsonl"), completionOwnerId: owner });
+			if (sent.length !== 1) throw new Error("expected only the claimed predecessor completion, got " + sent.length);
+			await handlers.get("session_shutdown")({ reason: "quit" });
+		`;
+
+		try {
+			const env = parentToolEnv();
+			env.PI_CODING_AGENT_DIR = agentDir;
+			execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("registers the main watchdog command and renderer in parent mode", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";

@@ -25,6 +25,7 @@ import { recordWaitCompletion } from "./wait-completions.ts";
 import { MISSION_BINDING_FILE, syncMissionFromAsyncCompletion } from "../../missions/lifecycle.ts";
 import { missionObserverResultCandidateFiles, promotePendingResultFile, removeMissionObserverIndex, removeResultIndex, resultCandidateFilesForSession, resultPayloadPathForIndexedRun, resultPayloadPathForMissionObserverRun, resultPayloadPathForSessionRun, writeAsyncResultFile, writeResultIndexForData } from "./result-files.ts";
 import type { CompletionNotifier, CompletionNotification } from "./notify.ts";
+import type { ResultDeliveryOwnership } from "./result-delivery-ownership.ts";
 
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
@@ -60,6 +61,8 @@ type ResultWatcherDeps = {
 	/** Control how slow result-index scans are logged. Defaults to \"activity\". */
 	resultScanLogging?: "all" | "activity" | "off";
 	platform?: NodeJS.Platform;
+	/** Shared current/predecessor session ownership used by the notifier. */
+	ownership?: Pick<ResultDeliveryOwnership, "owns" | "claimedSessionIds">;
 };
 
 type ResultFileChild = {
@@ -200,6 +203,7 @@ export function createResultWatcher(
 	deps: ResultWatcherDeps = {},
 ): {
 	startResultWatcher: () => void;
+	transitionResultDelivery: () => void;
 	primeExistingResults: (options?: { triggerTurn?: boolean }) => void;
 	refreshResultDelivery: () => void;
 	stopResultWatcher: () => void;
@@ -218,14 +222,16 @@ export function createResultWatcher(
 	// The sole in-memory ownership lease. It is acquired for one active session
 	// and revoked before the watcher, queues, or callbacks are torn down.
 	let activeSessionId: string | null = null;
+	const ownsResult = deps.ownership?.owns
+		?? ((sessionId: string, completionOwnerId: unknown) => sessionId === state.currentSessionId
+			&& typeof completionOwnerId === "string"
+			&& completionOwnerId === state.completionOwnerId);
+	const claimedSessionIds = () => deps.ownership?.claimedSessionIds() ?? [];
 
 	const ownsCompletion = (sessionId: string, completionOwnerId: unknown, epoch: number) => {
 		if (!deliveryActive || epoch !== deliveryEpoch) return false;
 		if (!activeSessionId && state.currentSessionId) activeSessionId = state.currentSessionId;
-		return activeSessionId === sessionId
-			&& state.currentSessionId === sessionId
-			&& typeof completionOwnerId === "string"
-			&& completionOwnerId === state.completionOwnerId;
+		return activeSessionId === state.currentSessionId && ownsResult(sessionId, completionOwnerId);
 	};
 
 	const scheduleResult = (file: string, triggerTurn: boolean, delayMs = 0) => {
@@ -246,8 +252,11 @@ export function createResultWatcher(
 	const resultPayloadPath = (file: string, observed?: ReadonlySet<string>): string | undefined => {
 		if (file !== path.basename(file) || !file.endsWith(".json")) return undefined;
 		const runId = file.replace(/\.json$/i, "");
-		const sessionResult = state.currentSessionId ? resultPayloadPathForSessionRun(resultsDir, state.currentSessionId, runId) : undefined;
-		if (sessionResult) return sessionResult;
+		for (const sessionId of [state.currentSessionId, ...claimedSessionIds()]) {
+			if (!sessionId) continue;
+			const sessionResult = resultPayloadPathForSessionRun(resultsDir, sessionId, runId);
+			if (sessionResult) return sessionResult;
+		}
 		const observerResult = resultPayloadPathForMissionObserverRun(resultsDir, runId);
 		if (observerResult) return observerResult;
 		if (observed?.has(runId)) {
@@ -308,7 +317,7 @@ export function createResultWatcher(
 		// Missing identity stays on the normal parser path so malformed or legacy
 		// files keep their existing diagnostics and compatibility behavior.
 		if (!identity.sessionId) return true;
-		if (identity.sessionId === state.currentSessionId && identity.completionOwnerId === state.completionOwnerId) return true;
+		if (ownsResult(identity.sessionId, identity.completionOwnerId)) return true;
 		if (identity.asyncDir && fsApi.existsSync(path.join(identity.asyncDir, MISSION_BINDING_FILE))) return true;
 		if (identity.runId && (observed ?? observedRunIds()).has(identity.runId)) return true;
 		return Boolean(deps.observeCompletion && !deps.observedCompletionRunIds);
@@ -621,8 +630,9 @@ export function createResultWatcher(
 	};
 	const indexedResultCandidates = (observed: ReadonlySet<string>): string[] => {
 		const files = new Set<string>();
-		if (state.currentSessionId) {
-			for (const file of resultCandidateFilesForSession(resultsDir, state.currentSessionId)) files.add(file);
+		for (const sessionId of [state.currentSessionId, ...claimedSessionIds()]) {
+			if (!sessionId) continue;
+			for (const file of resultCandidateFilesForSession(resultsDir, sessionId)) files.add(file);
 		}
 		for (const runId of state.asyncJobs.keys()) files.add(`${runId}.json`);
 		for (const file of missionObserverResultCandidateFiles(resultsDir)) files.add(file);
@@ -755,6 +765,13 @@ export function createResultWatcher(
 		}
 	};
 
+	const transitionResultDelivery = () => {
+		deliveryActive = true;
+		activeSessionId = state.currentSessionId;
+		deliveryEpoch += 1;
+		identityCache.clear();
+	};
+
 	const stopResultWatcher = () => {
 		deliveryActive = false;
 		activeSessionId = null;
@@ -769,5 +786,5 @@ export function createResultWatcher(
 		identityCache.clear();
 	};
 
-	return { startResultWatcher, primeExistingResults, stopResultWatcher, refreshResultDelivery: () => { primeExistingResults(); startDemandPolling(); } };
+	return { startResultWatcher, transitionResultDelivery, primeExistingResults, stopResultWatcher, refreshResultDelivery: () => { primeExistingResults(); startDemandPolling(); } };
 }

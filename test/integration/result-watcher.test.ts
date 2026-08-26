@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildCompletionKey } from "../../src/runs/background/completion-dedupe.ts";
 import { createResultWatcher as createRawResultWatcher } from "../../src/runs/background/result-watcher.ts";
+import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
 import { createScheduledRunManager, scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
@@ -168,6 +169,43 @@ describe("result watcher", () => {
 
 			assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
 			assert.equal(fs.existsSync(resultPath), false);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("hands predecessor results to the replacement session without widening ownership", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-transition-"));
+		try {
+			const state = createState();
+			state.currentSessionId = "session-old";
+			const ownership = createResultDeliveryOwnership(state);
+			const delivered: string[] = [];
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				deliverIntercomResults: false,
+				ownership,
+				notifier: { async deliver(result) { delivered.push(result.id!); return true; } },
+			});
+			try {
+				watcher.startResultWatcher();
+				assert.equal(ownership.claimPredecessor("session-old", "session-old"), true);
+				state.currentSessionId = "session-new";
+				watcher.transitionResultDelivery();
+				writeIndexedResult(path.join(resultsDir, "old-run.json"), { id: "old-run", sessionId: "session-old", success: true, summary: "old" });
+				writeIndexedResult(path.join(resultsDir, "new-run.json"), { id: "new-run", sessionId: "session-new", success: true, summary: "new" });
+				writeIndexedResult(path.join(resultsDir, "foreign-run.json"), { id: "foreign-run", sessionId: "session-foreign", success: true, summary: "foreign" });
+				writeAsyncResultFile(path.join(resultsDir, "wrong-owner.json"), { id: "wrong-owner", sessionId: "session-old", completionOwnerId: "other-owner", success: true, summary: "wrong" });
+
+				watcher.primeExistingResults();
+				assert.equal(await waitForPredicate(() => delivered.length === 2), true);
+				assert.deepEqual(delivered.sort(), ["new-run", "old-run"]);
+				assert.equal(fs.existsSync(path.join(resultsDir, "old-run.json")), false);
+				assert.equal(fs.existsSync(path.join(resultsDir, "new-run.json")), false);
+				assert.equal(fs.existsSync(path.join(resultsDir, "foreign-run.json")), true);
+				assert.equal(fs.existsSync(path.join(resultsDir, "wrong-owner.json")), true);
+			} finally {
+				watcher.stopResultWatcher();
+			}
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}

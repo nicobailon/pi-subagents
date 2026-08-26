@@ -16,6 +16,7 @@ import {
 } from "./completion-batcher.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type ParallelHandoffReference, type ScheduleOrigin, type SubagentState } from "../../shared/types.ts";
 import { isUnexplainedProcessSignal } from "../shared/process-signal.ts";
+import type { ResultDeliveryOwnership } from "./result-delivery-ownership.ts";
 
 export interface SubagentNotifyDetails {
 	agent: string;
@@ -91,6 +92,7 @@ export interface RegisterSubagentNotifyOptions {
 	batchConfig?: CompletionBatchConfig;
 	timers?: NotifyTimerApi;
 	now?: () => number;
+	ownership?: Pick<ResultDeliveryOwnership, "owns">;
 }
 
 export interface CompletionNotifier {
@@ -228,6 +230,8 @@ export function formatGroupedCompletion(details: SubagentNotifyDetails[]): strin
 interface PendingCompletion {
 	key: string;
 	details: SubagentNotifyDetails;
+	sessionId: string;
+	completionOwnerId: unknown;
 	triggerTurn: boolean;
 	resolve(accepted: boolean): void;
 }
@@ -335,6 +339,10 @@ export default function registerSubagentNotify(
 	const batchConfig = resolveCompletionBatchConfig(options.batchConfig);
 	const batchers = new Map<string, CompletionBatcher<PendingCompletion>>();
 	let disposed = false;
+	const ownsResult = options.ownership?.owns
+		?? ((sessionId: string, completionOwnerId: unknown) => sessionId === state.currentSessionId
+			&& typeof completionOwnerId === "string"
+			&& completionOwnerId === state.completionOwnerId);
 
 	const settle = (items: PendingCompletion[], accepted: boolean) => {
 		for (const item of items) {
@@ -343,7 +351,18 @@ export default function registerSubagentNotify(
 			item.resolve(accepted);
 		}
 	};
-	const emit = (items: PendingCompletion[]) => settle(items, sendCompletion(pi, items));
+	const emit = (items: PendingCompletion[]) => {
+		const accepted: PendingCompletion[] = [];
+		const rejected: PendingCompletion[] = [];
+		for (const item of items) {
+			const owned = item.details.source === "foreground"
+				? item.sessionId === state.currentSessionId
+				: ownsResult(item.sessionId, item.completionOwnerId);
+			(owned ? accepted : rejected).push(item);
+		}
+		settle(rejected, false);
+		settle(accepted, sendCompletion(pi, accepted));
+	};
 	const getBatcher = (result: CompletionNotification) => {
 		const key = completionBatchKey(result);
 		let batcher = batchers.get(key);
@@ -360,8 +379,10 @@ export default function registerSubagentNotify(
 	};
 
 	const deliver = (result: CompletionNotification): Promise<boolean> => {
-		if (disposed || typeof result.sessionId !== "string" || result.sessionId !== state.currentSessionId) return Promise.resolve(false);
-		if (result.source !== "foreground" && (!state.completionOwnerId || result.completionOwnerId !== state.completionOwnerId)) return Promise.resolve(false);
+		if (disposed || typeof result.sessionId !== "string") return Promise.resolve(false);
+		if (result.source === "foreground") {
+			if (result.sessionId !== state.currentSessionId) return Promise.resolve(false);
+		} else if (!ownsResult(result.sessionId, result.completionOwnerId)) return Promise.resolve(false);
 		if (result.intercomDelivered === true) return Promise.resolve(true);
 		const key = buildCompletionKey(result, "notify");
 		const seenAt = seen.get(key);
@@ -376,6 +397,8 @@ export default function registerSubagentNotify(
 		const item: PendingCompletion = {
 			key,
 			details,
+			sessionId: result.sessionId,
+			completionOwnerId: result.completionOwnerId,
 			triggerTurn: result.triggerTurn !== false,
 			resolve,
 		};
