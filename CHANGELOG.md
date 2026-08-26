@@ -5,6 +5,7 @@
 ### Added
 - Add process-local event registration so independent Pi extensions can register runtime agents through the installed owner. Thanks to [@fmoda3](https://github.com/fmoda3) for #1533.
 - Add advisory launch preflight diagnostics for likely workspace scope and authority mismatches.
+- Document unsupported native child options for external CLI agents in the subagent tool help, packaged guide, and packaged skill.
 
 ### Fixed
 - Classify workflow budget and timeout stops as partial terminal outcomes while preserving settled child evidence. Thanks to [@yceachan](https://github.com/yceachan) for #1530.

@@ -5,8 +5,9 @@ import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 
 const CUSTOM_TOOL_DESCRIPTION_FILE = "subagent-tool-description.md";
 const CUSTOM_TOOL_DESCRIPTION_MAX_BYTES = 50 * 1024;
+const EXTERNAL_CLI_RUNNER_GUIDANCE = "External CLI agents (codex-exec, codex-exec-writer, claude-code, claude-code-writer, cursor-agent, cursor-agent-writer) use their own runner contract and do not support native Pi child options such as model override, structured output, acceptance/agent contract, tool budget, fast mode, fork context, skills, or native Pi tools unless the runner explicitly implements them.";
 
-export const DEFAULT_SUBAGENT_TOOL_DESCRIPTION = `Delegate to configured subagents. For execution, omit action and use {agent, task?} for one child, workflowScript for inline orchestration, or workflowScriptPath to load a script from the request cwd. The script inputs are mutually exclusive. Use action:'validate' with either script input to check it without launching children. For multi-step or parallel work, make exactly one top-level subagent call with async:true; launch children only inside that workflow and do not make another top-level call for them. Use runs.run('key',{agent,task}) for one child, await runs.all([{key:'a',agent:'reviewer',task:'...'},{key:'b',agent:'reviewer',task:'...'}]) for ordinary parallel children, and read its ordered array result with indexes, destructuring, or .map(...), not by key property. Use action only for management/control. Use guide or the pi-subagents skill for advanced workflow details.`;
+export const DEFAULT_SUBAGENT_TOOL_DESCRIPTION = `Delegate to configured subagents. For execution, omit action and use {agent, task?} for one child, workflowScript for inline orchestration, or workflowScriptPath to load a script from the request cwd. The script inputs are mutually exclusive. Use action:'validate' with either script input to check it without launching children. For multi-step or parallel work, make exactly one top-level subagent call with async:true; launch children only inside that workflow and do not make another top-level call for them. Use runs.run('key',{agent,task}) for one child, await runs.all([{key:'a',agent:'reviewer',task:'...'},{key:'b',agent:'reviewer',task:'...'}]) for ordinary parallel children, and read its ordered array result with indexes, destructuring, or .map(...), not by key property. ${EXTERNAL_CLI_RUNNER_GUIDANCE} Use action only for management/control. Use guide or the pi-subagents skill for advanced workflow details.`;
 
 export const SUBAGENT_TOOL_PROMPT_SNIPPET = "Delegate to subagents; orchestrate in one workflowScript call.";
 
@@ -17,6 +18,7 @@ export const SUBAGENT_TOOL_PROMPT_GUIDELINES = [
 	"For ordinary parallel work, use await runs.all([{key,agent,task}, ...]); it resolves to an ordered array, not a key map, so use results[0], destructuring, or results.map(...), not results.<key>. Do not read .output from unawaited runs.run launches. Stored runs.run promises are only for advanced rolling fanout and each must later be observed with direct await, Promise.race, or Promise.all.",
 	"Keep one writer per cwd/worktree unless writers run in isolated worktrees.",
 	"To pass an explicit model to a child, first call { action: \"models\" } and copy an exact provider/id (e.g. openai-codex/gpt-5.6-sol); bare ids resolve only when unique in the registry, and agent names (gpt-pro, advisor) are not model ids.",
+	EXTERNAL_CLI_RUNNER_GUIDANCE,
 	"Use guide or the pi-subagents skill for advanced scheduling, missions, steering, and retention.",
 ];
 
@@ -32,6 +34,7 @@ export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 export const FULL_SUBAGENT_TOOL_DESCRIPTION = `Run one child with { agent, task? }; use { workflowScript } for inline orchestration or { workflowScriptPath } to load it from the request cwd. The script inputs are mutually exclusive. Omit action for execution. Use action only for management/control actions.
 
 EXECUTION:
+• ${EXTERNAL_CLI_RUNNER_GUIDANCE}
 • Before executing, use { action: "list" } and run only executable/non-disabled configured agents.
 • When passing an explicit model to a child (on the call or a runs.run/runs.all item), first call { action: "models" } and copy an exact provider/id; bare ids resolve only when unique in the registry, and agent names (e.g. gpt-pro, advisor) are not model ids.
 • SINGLE CHILD: { agent:"worker", task:"..." }. This structured form starts exactly one direct child. Fields such as model, context, cwd, worktree, output, budgets, acceptance, and async apply to that child. Do not combine agent/task with action, workflowScript, or workflowScriptPath.
@@ -52,6 +55,7 @@ ${SUBAGENT_SAFETY_GUIDANCE}`;
 export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = `Run one child with { agent, task? }; use { workflowScript } for inline orchestration or { workflowScriptPath } to load it from the request cwd. The script inputs are mutually exclusive. Omit action for execution. Use action only for management/control actions.
 
 EXECUTE:
+• ${EXTERNAL_CLI_RUNNER_GUIDANCE}
 • Call { action:"list" } first and use only executable/non-disabled agents.
 • Passing an explicit model? Call {action:"models"} first and copy an exact provider/id; bare ids resolve only when unique in the registry; agent names (e.g. gpt-pro, advisor) are not model ids.
 • SINGLE {agent:"worker",task:"..."} starts exactly one direct child. Fields apply to that child. Do not combine agent/task with action, workflowScript, or workflowScriptPath.

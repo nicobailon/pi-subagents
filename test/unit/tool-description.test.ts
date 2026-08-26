@@ -36,13 +36,13 @@ describe("registered subagent tool description", () => {
 		const description = buildSubagentToolDescription();
 		const metadata = buildSubagentToolPromptMetadata();
 		assert.equal(description, DEFAULT_SUBAGENT_TOOL_DESCRIPTION);
-		assert.equal(Buffer.byteLength(description), 890);
+		assert.equal(Buffer.byteLength(description), 1264);
 		assert.match(description, /workflowScriptPath.*request cwd/i);
 		assert.match(description, /script inputs are mutually exclusive/i);
 		assert.equal(metadata.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
 		assert.equal(Buffer.byteLength(metadata.promptSnippet!), 62);
+		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 1623);
 		assert.deepEqual(metadata.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
-		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 1249);
 		assert.match(metadata.promptGuidelines!.join("\n"), /Use subagent only when delegation is needed/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /action: \"list\".*executable, non-disabled/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /workflowScript for multi-step or parallel work/i);
@@ -50,6 +50,8 @@ describe("registered subagent tool description", () => {
 		assert.match(metadata.promptGuidelines!.join("\n"), /Inside it, use runs\.run\/runs\.all to launch children/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /do not make another top-level subagent call for those children/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /await runs\.all.*do not read \.output from unawaited runs\.run launches/i);
+		assert.match(description, /External CLI agents.*model override.*native Pi tools/i);
+		assert.match(metadata.promptGuidelines!.join("\n"), /External CLI agents.*model override.*native Pi tools/i);
 	});
 
 	it("keeps the full description when configured", () => {

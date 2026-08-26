@@ -21,4 +21,9 @@ describe("subagent guide", () => {
 	it("registers the guide action for action recovery", () => {
 		assert.ok(SUBAGENT_ACTIONS.includes("guide"));
 	});
+
+	it("documents external CLI runner limits in packaged guide topics", () => {
+		assert.match(readSubagentGuide("tool-reference"), /External CLI agent profiles[\s\S]*native Pi child options[\s\S]*model override[\s\S]*native Pi tools/);
+		assert.match(readSubagentGuide("agents"), /External CLI agents use their own runner contract[\s\S]*native Pi child options/);
+	});
 });

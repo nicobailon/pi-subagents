@@ -371,7 +371,7 @@ async: true
 
 Supported: status artifacts, stdout/stderr logs, timeout, and stop. Full stdout and stderr are written to log files, while the in-memory final stdout response and stderr error are limited to their last 64 KiB.
 
-Intentionally unsupported: foreground/clarify, steer/resume/interrupt-as-pause, Pi models/tools/extensions, skills, structured output, nested subagents, and fallback models.
+Intentionally unsupported: native Pi child options such as model override, structured output, acceptance/agent contract, tool budgets, fast mode, fork context, skills, or native Pi tools unless the runner explicitly implements them. Foreground/clarify, steer/resume/interrupt-as-pause, nested subagents, and fallback models are also unsupported.
 
 ## Session sharing
 

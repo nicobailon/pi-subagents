@@ -31,6 +31,8 @@ Read the matching reference file before acting. Paths are relative to this `SKIL
 
 For broad or uncertain requests, read more than one reference. For complex work, start with `references/prompting-and-roles.md` and `references/execution-controls.md`, then consult `references/constraints-and-recipes.md` before launching or reviewing child work.
 
+External CLI agents such as `codex-exec`, `codex-exec-writer`, `claude-code`, and `cursor-agent` use their own runner contract. Do not pass native Pi child options such as model override, structured output, acceptance/agent contract, tool budgets, fast mode, fork context, skills, or native Pi tools unless that runner explicitly implements them.
+
 ## Always-on constraints
 
 - Keep the parent as orchestrator and final decision-maker.
