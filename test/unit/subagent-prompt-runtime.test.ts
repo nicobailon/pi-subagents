@@ -822,6 +822,26 @@ describe("subagent prompt runtime", () => {
 		assert.ok(rewritten.includes("</project_context>"));
 	});
 
+	it("strips only global context files from legacy Markdown while preserving repository context", () => {
+		const globalDir = getAgentDir();
+		const prompt = [
+			"You are a subagent.",
+			"\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n",
+			`## ${globalDir}/AGENTS.md\n\nGlobal rules\n\n`,
+			"## /repo/AGENTS.md\n\nRepo rules\n\n",
+			SKILLS_SECTION,
+			"\nCurrent date: 2026-04-16",
+		].join("");
+		const rewritten = rewriteSubagentPrompt(prompt, {
+			inheritProjectContext: true,
+			inheritGlobalContext: false,
+			inheritSkills: true,
+		});
+		assert.ok(!rewritten.includes("Global rules"));
+		assert.ok(rewritten.includes("## /repo/AGENTS.md"));
+		assert.ok(rewritten.includes("Repo rules"));
+	});
+
 	it("recognizes Pi context filenames case-insensitively", () => {
 		const globalDir = getAgentDir();
 		const prompt = [

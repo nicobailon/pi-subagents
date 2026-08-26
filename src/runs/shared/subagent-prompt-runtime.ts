@@ -173,14 +173,22 @@ function canonicalDirectory(dir: string): string {
 	}
 }
 
-function isGlobalContextFile(filePath: string): boolean {
+function expandContextPath(filePath: string): string {
 	const home = process.env.HOME ?? process.env.USERPROFILE;
-	const expanded = filePath === "~"
+	return filePath === "~"
 		? home ?? filePath
 		: /^~[\\/]/.test(filePath)
 			? path.join(home ?? "~", filePath.slice(2))
 			: filePath;
-	if (!GLOBAL_CONTEXT_FILE_NAMES.has(path.basename(expanded).toLowerCase())) return false;
+}
+
+function isContextFilePath(filePath: string): boolean {
+	return GLOBAL_CONTEXT_FILE_NAMES.has(path.basename(expandContextPath(filePath)).toLowerCase());
+}
+
+function isGlobalContextFile(filePath: string): boolean {
+	const expanded = expandContextPath(filePath);
+	if (!isContextFilePath(filePath)) return false;
 	return canonicalDirectory(path.dirname(expanded)) === canonicalDirectory(getAgentDir());
 }
 
@@ -189,11 +197,32 @@ function stripGlobalInstructionsFromXmlContext(context: string): string {
 	return context.replace(block, (match, _quote: string, filePath: string) => isGlobalContextFile(filePath) ? "" : match);
 }
 
+function stripGlobalInstructionsFromLegacyContext(context: string): string {
+	const sections = [...context.matchAll(/^## ([^\r\n]+)(?:\r?\n|$)/gm)]
+		.filter((match) => isContextFilePath(match[1]!.trim()));
+	let rewritten = "";
+	let cursor = 0;
+	for (let index = 0; index < sections.length; index++) {
+		const section = sections[index]!;
+		const start = section.index!;
+		const end = sections[index + 1]?.index ?? context.length;
+		rewritten += context.slice(cursor, start);
+		if (!isGlobalContextFile(section[1]!.trim())) rewritten += context.slice(start, end);
+		cursor = end;
+	}
+	return `${rewritten}${context.slice(cursor)}`;
+}
+
 export function stripGlobalContext(prompt: string): string {
-	return prompt.replace(/<project_context>[\s\S]*?<\/project_context>/gi, (context) => {
+	const rewrittenXml = prompt.replace(/<project_context>[\s\S]*?<\/project_context>/gi, (context) => {
 		const rewritten = stripGlobalInstructionsFromXmlContext(context);
 		return /<project_instructions\b/i.test(rewritten) ? rewritten : "";
 	});
+	const legacyStartIndex = rewrittenXml.indexOf(PROJECT_CONTEXT_LEGACY_HEADER);
+	if (legacyStartIndex === -1) return rewrittenXml;
+	const legacyEndIndex = findSectionEnd(rewrittenXml, legacyStartIndex + PROJECT_CONTEXT_LEGACY_HEADER.length, [SKILLS_HEADER, DATE_HEADER]);
+	const legacyContext = rewrittenXml.slice(legacyStartIndex, legacyEndIndex);
+	return `${rewrittenXml.slice(0, legacyStartIndex)}${stripGlobalInstructionsFromLegacyContext(legacyContext)}${rewrittenXml.slice(legacyEndIndex)}`;
 }
 
 export function stripInheritedSkills(prompt: string): string {

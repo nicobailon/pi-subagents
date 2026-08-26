@@ -49,7 +49,7 @@ describe("async recovery descriptor", () => {
 		}
 	});
 
-	it("defaults inheritGlobalContext to false for descriptors from older versions", () => {
+	it("defaults inheritGlobalContext from inheritProjectContext for descriptors from older versions", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-legacy-global-context-"));
 		try {
 			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({
@@ -68,7 +68,7 @@ describe("async recovery descriptor", () => {
 
 			const descriptor = readAsyncRecoveryDescriptor(root);
 
-			assert.equal(descriptor?.inheritGlobalContext, false);
+			assert.equal(descriptor?.inheritGlobalContext, true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
