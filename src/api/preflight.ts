@@ -42,8 +42,10 @@ export type SubagentLaunchContractReasonCode =
 	| "thinking_ceiling"
 	| "invalid_extension_bindings";
 
+export type SubagentLaunchContractDiagnosticCode = SubagentLaunchContractReasonCode | "host_required" | "snapshot_warning" | "workspace_scope_authority";
+
 export interface SubagentLaunchContractDiagnostic {
-	code: SubagentLaunchContractReasonCode | "host_required" | "snapshot_warning";
+	code: SubagentLaunchContractDiagnosticCode;
 	severity: "error" | "warning" | "host-required";
 	message: string;
 }
@@ -204,6 +206,24 @@ function resolveLaunchContractContext(input: SubagentLaunchContractInput, agent:
 	});
 }
 
+function taskWorkspaceScopeAuthorityDiagnostic(task: string | undefined): SubagentLaunchContractDiagnostic | undefined {
+	if (!task) return undefined;
+	const text = task.replace(/\s+/g, " ").trim();
+	if (!text) return undefined;
+	const createsWorkspacePackage = /\b(?:add|create|introduce|make|set up)\b.{0,80}\b(?:new\s+)?(?:workspace\s+)?package\b/i.test(text)
+		|| /\b(?:new\s+)?package\b.{0,80}\b(?:workspace|monorepo)\b/i.test(text);
+	if (!createsWorkspacePackage) return undefined;
+	const packageOnlyAuthority = /\b(?:only|solely)\b.{0,40}\b(?:edit|change|modify|touch|write(?:\s+to)?)\b.{0,80}\b(?:package(?:\s+directory)?|packages\/[\w.-]+)\b/i.test(text)
+		|| /\b(?:do not|don't|must not)\b.{0,40}\b(?:edit|change|modify|touch|write(?:\s+to)?)\b.{0,80}\b(?:root|workspace|lockfile|metadata)\b/i.test(text)
+		|| /\bwithout\b.{0,40}\b(?:root|workspace|lockfile|metadata)\b.{0,40}\b(?:edit|change|modification|write)s?\b/i.test(text);
+	if (!packageOnlyAuthority) return undefined;
+	return {
+		code: "workspace_scope_authority",
+		severity: "warning",
+		message: "Task asks for a workspace package change while limiting authority to package-scope edits. New workspace packages often need root workspace metadata or lockfile changes, so confirm that authority before launch.",
+	};
+}
+
 function candidateList(inputAgent: string, selected: AgentConfig | undefined, cwd: string): SubagentLaunchContractAgentCandidate[] {
 	const all = discoverAgentsAll(cwd);
 	return [...all.builtin, ...all.package, ...all.user, ...all.project]
@@ -221,6 +241,8 @@ function candidateList(inputAgent: string, selected: AgentConfig | undefined, cw
 
 export async function resolveSubagentLaunchContract(input: SubagentLaunchContractInput): Promise<SubagentLaunchContractResult> {
 	const diagnostics: SubagentLaunchContractDiagnostic[] = [];
+	const authorityDiagnostic = taskWorkspaceScopeAuthorityDiagnostic(input.task);
+	if (authorityDiagnostic) diagnostics.push(authorityDiagnostic);
 	const effectiveCwd = path.resolve(input.cwd);
 	try {
 		if (!fs.statSync(effectiveCwd).isDirectory()) {

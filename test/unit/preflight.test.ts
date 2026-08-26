@@ -170,6 +170,23 @@ Project prompt.
 		if (!invalid.ok) assert.equal(invalid.code, "invalid_extension_bindings");
 	});
 
+	it("warns when workspace package work has package-only authority", async () => {
+		const cwd = path.join(tempDir, "workspace-scope-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "worker.md"), `---\nname: worker\ndescription: Project worker\n---\nWorker.\n`);
+
+		const result = await resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			task: "Create a new workspace package, but only edit files under packages/widget and do not change root workspace metadata.",
+		});
+
+		assert.equal(result.ok, true);
+		if (result.ok) {
+			assert.equal(result.contract.diagnostics.some((diagnostic) => diagnostic.code === "workspace_scope_authority" && diagnostic.severity === "warning"), true);
+		}
+	});
+
 	it("binds fast mode runtime extension into public preflight provenance", async () => {
 		const cwd = path.join(tempDir, "fast-repo");
 		fs.mkdirSync(cwd, { recursive: true });

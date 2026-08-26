@@ -4,6 +4,7 @@
 
 ### Added
 - Add process-local event registration so independent Pi extensions can register runtime agents through the installed owner. Thanks to [@fmoda3](https://github.com/fmoda3) for #1533.
+- Add advisory launch preflight diagnostics for likely workspace scope and authority mismatches.
 
 ### Fixed
 - Auto-resume workflow children once after setup-phase aborts that produce zero usage, preserving the retained transcript instead of rerunning the whole task.
