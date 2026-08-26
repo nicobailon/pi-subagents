@@ -803,4 +803,23 @@ Project prompt.
 		assert.equal(result.code, "denied_required_tool");
 		assert.match(result.message, /excludes required tool 'read'/);
 	});
+
+	it("reports unresolved runtime-style MCP selectors during preflight", async () => {
+		const cwd = path.join(tempDir, "repo-unresolved-runtime-mcp");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+tools:
+  - read
+  - mcp:rt__wiki/read_wiki_structure
+---
+Project prompt.
+`);
+
+		const result = await resolveSubagentLaunchContract({ agent: "worker", cwd, task: "Inspect" });
+		assert.equal(result.ok, false);
+		assert.equal(result.code, "denied_required_tool");
+		assert.match(result.message, /Unresolved MCP direct-tool selectors: rt__wiki\/read_wiki_structure\./);
+	});
 });

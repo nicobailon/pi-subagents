@@ -9,7 +9,8 @@ import {
 	type NestedPathEntry,
 } from "./nested-path.ts";
 import {
-	resolveMcpDirectToolSelections,
+	formatUnresolvedMcpDirectToolSelectors,
+	resolveMcpDirectToolResolution,
 	type ResolvedMcpDirectToolSelection,
 } from "./mcp-direct-tool-allowlist.ts";
 import { resolvePiPackageRoot } from "./pi-spawn.ts";
@@ -461,9 +462,13 @@ export function resolvePiLaunchToolPlan(
 					!requestedBuiltinTools.includes(tool) &&
 					(tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js")),
 			);
-	const resolvedMcpSelections = capabilityCeiling?.denyExtensions
-		? []
-		: resolveMcpDirectToolSelections(input.mcpDirectTools, input.cwd);
+	const mcpResolution = capabilityCeiling?.denyExtensions
+		? { selections: [], unresolvedSelectors: [] }
+		: resolveMcpDirectToolResolution(input.mcpDirectTools, input.cwd);
+	if (mcpResolution.unresolvedSelectors.length > 0) {
+		throw new Error(formatUnresolvedMcpDirectToolSelectors(mcpResolution.unresolvedSelectors));
+	}
+	const resolvedMcpSelections = mcpResolution.selections;
 	const effectiveMcpSelections = resolvedMcpSelections.filter(
 		(selection) => !allowedToolSet || allowedToolSet.has(selection.name),
 	);

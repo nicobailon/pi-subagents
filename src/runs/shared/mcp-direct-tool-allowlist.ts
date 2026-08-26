@@ -61,17 +61,38 @@ interface MetadataCache {
 
 export interface ResolvedMcpDirectToolSelection { name: string; selector: string }
 
-export function resolveMcpDirectToolSelections(mcpDirectTools: string[] | undefined, cwd = process.cwd()): ResolvedMcpDirectToolSelection[] {
-	if (!mcpDirectTools?.length) return [];
+export interface McpDirectToolResolution {
+	selections: ResolvedMcpDirectToolSelection[];
+	unresolvedSelectors: string[];
+}
 
-	try {
-		const config = loadMcpConfig(cwd);
-		const cache = loadMetadataCache();
-		if (!cache) return [];
-		return resolveDirectToolSelections(config, cache, getToolPrefix(config.settings?.toolPrefix), mcpDirectTools);
-	} catch {
-		return [];
-	}
+function normalizeSelectors(selectors: string[] | undefined): string[] {
+	return [...new Set((selectors ?? []).map((selector) => selector.replace(/\/+$/, "")).filter(Boolean))];
+}
+
+export function resolveMcpDirectToolResolution(mcpDirectTools: string[] | undefined, cwd = process.cwd()): McpDirectToolResolution {
+	const selectors = normalizeSelectors(mcpDirectTools);
+	if (selectors.length === 0) return { selections: [], unresolvedSelectors: [] };
+
+	const config = loadMcpConfig(cwd);
+	validateSelectedServerDefinitions(config, selectors);
+	const cache = loadMetadataCache();
+	if (!cache) return { selections: [], unresolvedSelectors: selectors };
+	const selections = resolveDirectToolSelections(config, cache, getToolPrefix(config.settings?.toolPrefix), selectors);
+	const unresolvedSelectors = selectors.filter((selector) =>
+		selector.includes("/")
+			? !selections.some((selection) => selection.selector === selector)
+			: !selections.some((selection) => selection.selector.startsWith(`${selector}/`)),
+	);
+	return { selections, unresolvedSelectors };
+}
+
+export function resolveMcpDirectToolSelections(mcpDirectTools: string[] | undefined, cwd = process.cwd()): ResolvedMcpDirectToolSelection[] {
+	return resolveMcpDirectToolResolution(mcpDirectTools, cwd).selections;
+}
+
+export function formatUnresolvedMcpDirectToolSelectors(selectors: readonly string[]): string {
+	return `Unresolved MCP direct-tool selectors: ${selectors.join(", ")}. Direct MCP tools require a matching configured server and fresh metadata cache; runtime-registered servers require a host/pi-mcp-adapter handoff before child launch.`;
 }
 
 function loadMetadataCache(): MetadataCache | null {
@@ -260,6 +281,14 @@ function parseSelections(selections: string[]): { servers: Set<string>; tools: M
 		}
 	}
 	return { servers, tools };
+}
+
+function validateSelectedServerDefinitions(config: McpConfig, selectors: string[]): void {
+	const { servers, tools } = parseSelections(selectors);
+	for (const serverName of new Set([...servers, ...tools.keys()])) {
+		const definition = config.mcpServers[serverName];
+		if (definition) computeMcpServerHash(definition);
+	}
 }
 
 function isServerCacheValid(entry: ServerCacheEntry | undefined, definition: ServerEntry): entry is ServerCacheEntry {

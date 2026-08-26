@@ -1153,7 +1153,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		}
 	});
 
-	it("fails closed with --no-tools when MCP-only names cannot be resolved", () => {
+	it("fails closed with a deterministic diagnostic when MCP selectors cannot be resolved", () => {
 		for (const requireReadTool of [false, true]) {
 			const fixture = createMcpFixture();
 			writeJson(path.join(fixture.agentDir, "mcp.json"), {
@@ -1162,7 +1162,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 				},
 			});
 
-			const { args, env } = buildPiArgs({
+			assert.throws(() => buildPiArgs({
 				baseArgs: ["-p"],
 				task: "hello",
 				sessionEnabled: false,
@@ -1170,11 +1170,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 				inheritSkills: false,
 				requireReadTool,
 				mcpDirectTools: ["chrome-devtools"],
-			});
-
-			assert.ok(args.includes("--no-tools"));
-			assert.equal(args.includes("--tools"), false);
-			assert.equal(env.MCP_DIRECT_TOOLS, "chrome-devtools");
+			}), /Unresolved MCP direct-tool selectors: chrome-devtools\./);
 		}
 	});
 
@@ -1254,14 +1250,14 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		);
 	});
 
-	it("falls back to explicit builtins when direct MCP cache or config is missing or invalid", () => {
+	it("fails closed when direct MCP cache or config is missing or invalid", () => {
 		const missingFixture = createMcpFixture();
 		writeJson(path.join(missingFixture.agentDir, "mcp.json"), {
 			mcpServers: {
 				"chrome-devtools": { command: "npx", args: ["chrome-devtools-mcp"] },
 			},
 		});
-		const missingCache = buildPiArgs({
+		assert.throws(() => buildPiArgs({
 			baseArgs: ["-p"],
 			task: "hello",
 			sessionEnabled: false,
@@ -1269,17 +1265,13 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			inheritSkills: false,
 			tools: ["read", "bash"],
 			mcpDirectTools: ["chrome-devtools"],
-		});
-		assert.equal(
-			missingCache.args[missingCache.args.indexOf("--tools") + 1],
-			"read,bash",
-		);
+		}), /Unresolved MCP direct-tool selectors: chrome-devtools\./);
 
 		const invalidFixture = createMcpFixture();
 		writeMcpFixture(invalidFixture, {
 			cachedAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
 		});
-		const staleCache = buildPiArgs({
+		assert.throws(() => buildPiArgs({
 			baseArgs: ["-p"],
 			task: "hello",
 			sessionEnabled: false,
@@ -1287,11 +1279,25 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			inheritSkills: false,
 			tools: ["read", "bash"],
 			mcpDirectTools: ["chrome-devtools"],
+		}), /Unresolved MCP direct-tool selectors: chrome-devtools\./);
+	});
+
+	it("preserves MCP configuration errors during direct-tool resolution", () => {
+		const fixture = createMcpFixture();
+		writeJson(path.join(fixture.agentDir, "mcp.json"), {
+			mcpServers: {
+				"remote-mcp": { url: "https://example.test/${MISSING_MCP_TOKEN}" },
+			},
 		});
-		assert.equal(
-			staleCache.args[staleCache.args.indexOf("--tools") + 1],
-			"read,bash",
-		);
+		assert.throws(() => buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: ["remote-mcp"],
+		}), /Missing environment variable in MCP server URL: MISSING_MCP_TOKEN/);
 	});
 
 	it("resolves project MCP config from the child cwd and expands PI_CODING_AGENT_DIR", () => {

@@ -14,6 +14,7 @@
 - Avoid attributing assistant-issued workflow stops to the user.
 - Publish a deterministic terminal handoff with settled child evidence and keyed recovery actions when detached workflow lanes settle. Thanks to [@yceachan](https://github.com/yceachan) for #1530.
 - Resolve direct MCP tool selections from Pi package manifests and Agent Plugin configs. Thanks to [@fmoda3](https://github.com/fmoda3) for #1541.
+- Fail closed with a launch diagnostic when configured runtime-style MCP direct-tool selectors cannot be resolved.
 - Sync Herdr status after restoring active async jobs, so recovered work appears without waiting for another lifecycle event. Thanks to [@vicocamacho](https://github.com/vicocamacho) for #1553.
 - Report deterministic settlement diagnostics when background children fail before required output handoff.
 - Auto-resume workflow children once after setup-phase aborts that produce zero usage, preserving the retained transcript instead of rerunning the whole task.
