@@ -28,13 +28,37 @@ type ImportKind = keyof typeof IMPORT_PATHS;
 
 type ServerEntry = McpServerDefinition;
 
-interface McpConfig {
+export interface McpConfig {
 	mcpServers: Record<string, ServerEntry>;
 	imports?: ImportKind[];
 	settings?: {
 		toolPrefix?: ToolPrefix;
 		directTools?: boolean;
 		agentPluginPaths?: unknown;
+	};
+}
+
+export const MCP_RUNTIME_SNAPSHOT_EVENT = "pi-mcp-adapter:runtime-snapshot:v1" as const;
+export const MCP_RUNTIME_SNAPSHOT_VERSION = 1 as const;
+
+export interface McpRuntimeServerSnapshot {
+	readonly name: string;
+	readonly definition: ServerEntry;
+	readonly runtime: true;
+	readonly persisted: false;
+}
+
+interface McpRuntimeSnapshotRequest {
+	version: typeof MCP_RUNTIME_SNAPSHOT_VERSION;
+	name: string;
+	result?:
+		| { ok: true; snapshot: McpRuntimeServerSnapshot }
+		| { ok: false; error: Error };
+}
+
+export interface McpRuntimeSnapshotHost {
+	events: {
+		emit(event: string, request: McpRuntimeSnapshotRequest): void;
 	};
 }
 
@@ -64,31 +88,55 @@ export interface ResolvedMcpDirectToolSelection { name: string; selector: string
 export interface McpDirectToolResolution {
 	selections: ResolvedMcpDirectToolSelection[];
 	unresolvedSelectors: string[];
+	/** Normal loaded config plus the selected runtime server definitions. */
+	mcpConfig?: McpConfig;
+	runtimeServerNames?: string[];
 }
 
 function normalizeSelectors(selectors: string[] | undefined): string[] {
 	return [...new Set((selectors ?? []).map((selector) => selector.replace(/\/+$/, "")).filter(Boolean))];
 }
 
-export function resolveMcpDirectToolResolution(mcpDirectTools: string[] | undefined, cwd = process.cwd()): McpDirectToolResolution {
+export function resolveMcpDirectToolResolution(
+	mcpDirectTools: string[] | undefined,
+	cwd = process.cwd(),
+	runtimeSnapshotHost?: McpRuntimeSnapshotHost,
+	configOverride?: McpConfig,
+): McpDirectToolResolution {
 	const selectors = normalizeSelectors(mcpDirectTools);
 	if (selectors.length === 0) return { selections: [], unresolvedSelectors: [] };
 
-	const config = loadMcpConfig(cwd);
-	validateSelectedServerDefinitions(config, selectors);
+	const config = configOverride ?? loadMcpConfig(cwd);
+	const { servers: selectedServers, tools: selectedTools } = parseSelections(selectors);
+	const runtimeSelectionServers = new Set([...selectedServers, ...selectedTools.keys()]);
+	const runtimeServers = resolveRuntimeMcpServers(config, runtimeSelectionServers, runtimeSnapshotHost);
+	const resolvedConfig = Object.keys(runtimeServers).length > 0
+		? mergeConfigs(config, { mcpServers: runtimeServers })
+		: config;
+	validateSelectedServerDefinitions(resolvedConfig, selectors);
 	const cache = loadMetadataCache();
 	if (!cache) return { selections: [], unresolvedSelectors: selectors };
-	const selections = resolveDirectToolSelections(config, cache, getToolPrefix(config.settings?.toolPrefix), selectors);
+	const selections = resolveDirectToolSelections(resolvedConfig, cache, getToolPrefix(resolvedConfig.settings?.toolPrefix), selectors);
 	const unresolvedSelectors = selectors.filter((selector) =>
 		selector.includes("/")
 			? !selections.some((selection) => selection.selector === selector)
 			: !selections.some((selection) => selection.selector.startsWith(`${selector}/`)),
 	);
-	return { selections, unresolvedSelectors };
+	return {
+		selections,
+		unresolvedSelectors,
+		...(Object.keys(runtimeServers).length > 0
+			? { mcpConfig: resolvedConfig, runtimeServerNames: Object.keys(runtimeServers) }
+			: {}),
+	};
 }
 
-export function resolveMcpDirectToolSelections(mcpDirectTools: string[] | undefined, cwd = process.cwd()): ResolvedMcpDirectToolSelection[] {
-	return resolveMcpDirectToolResolution(mcpDirectTools, cwd).selections;
+export function resolveMcpDirectToolSelections(
+	mcpDirectTools: string[] | undefined,
+	cwd = process.cwd(),
+	runtimeSnapshotHost?: McpRuntimeSnapshotHost,
+): ResolvedMcpDirectToolSelection[] {
+	return resolveMcpDirectToolResolution(mcpDirectTools, cwd, runtimeSnapshotHost).selections;
 }
 
 export function formatUnresolvedMcpDirectToolSelectors(selectors: readonly string[]): string {
@@ -110,6 +158,51 @@ function loadMetadataCache(): MetadataCache | null {
 		return null;
 	}
 	return raw as unknown as MetadataCache;
+}
+
+function resolveRuntimeMcpServers(
+	config: McpConfig,
+	selectedServers: ReadonlySet<string>,
+	runtimeSnapshotHost: McpRuntimeSnapshotHost | undefined,
+): Record<string, ServerEntry> {
+	if (!runtimeSnapshotHost) return {};
+	const runtimeServers: Record<string, ServerEntry> = {};
+	for (const serverName of selectedServers) {
+		if (Object.hasOwn(config.mcpServers, serverName)) continue;
+		try {
+			const snapshot = getRuntimeMcpServerSnapshot(runtimeSnapshotHost, serverName);
+			runtimeServers[serverName] = snapshot.definition;
+		} catch {
+			// Missing, disposed, or shadowed runtime servers remain unresolved below.
+		}
+	}
+	return runtimeServers;
+}
+
+function getRuntimeMcpServerSnapshot(
+	host: McpRuntimeSnapshotHost,
+	name: string,
+): McpRuntimeServerSnapshot {
+	const request: McpRuntimeSnapshotRequest = {
+		version: MCP_RUNTIME_SNAPSHOT_VERSION,
+		name,
+	};
+	host.events.emit(MCP_RUNTIME_SNAPSHOT_EVENT, request);
+	if (!request.result) throw new Error("pi-mcp-adapter is not installed for this Pi instance");
+	if (!request.result.ok) throw request.result.error;
+	const snapshot = request.result.snapshot;
+	if (
+		!snapshot ||
+		snapshot.name !== name ||
+		snapshot.runtime !== true ||
+		snapshot.persisted !== false ||
+		!snapshot.definition ||
+		typeof snapshot.definition !== "object" ||
+		Array.isArray(snapshot.definition)
+	) {
+		throw new Error(`Invalid MCP runtime snapshot for server "${name}"`);
+	}
+	return snapshot;
 }
 
 function loadMcpConfig(cwd: string): McpConfig {

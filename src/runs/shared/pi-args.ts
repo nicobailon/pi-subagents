@@ -11,6 +11,8 @@ import {
 import {
 	formatUnresolvedMcpDirectToolSelectors,
 	resolveMcpDirectToolResolution,
+	type McpConfig,
+	type McpRuntimeSnapshotHost,
 	type ResolvedMcpDirectToolSelection,
 } from "./mcp-direct-tool-allowlist.ts";
 import { resolvePiPackageRoot } from "./pi-spawn.ts";
@@ -163,6 +165,8 @@ export interface BuildPiArgsInput {
 	subagentOnlyExtensions?: string[];
 	systemPrompt?: string | null;
 	mcpDirectTools?: string[];
+	mcpConfig?: McpConfig;
+	runtimeServerNames?: string[];
 	cwd?: string;
 	promptFileStem?: string;
 	intercomSessionName?: string;
@@ -205,6 +209,7 @@ export interface BuildPiArgsInput {
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	thinkingCeiling?: import("../../shared/model-info.ts").ThinkingLevel;
 	extensionBindings?: ExtensionBindings;
+	runtimeSnapshotHost?: McpRuntimeSnapshotHost;
 }
 
 export interface BuildPiArgsResult {
@@ -281,6 +286,8 @@ export interface ResolvePiLaunchToolPlanInput {
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
 	mcpDirectTools?: string[];
+	mcpConfig?: McpConfig;
+	runtimeServerNames?: string[];
 	cwd?: string;
 	requireReadTool?: boolean;
 	structuredOutput?:
@@ -297,6 +304,7 @@ export interface ResolvePiLaunchToolPlanInput {
 	inheritedCapabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	agentName?: string;
 	permissionRules?: PermissionRules;
+	runtimeSnapshotHost?: McpRuntimeSnapshotHost;
 }
 
 export interface PiLaunchToolPlan {
@@ -319,6 +327,8 @@ export interface PiLaunchToolPlan {
 	capabilityAudit?: SubagentCapabilityAudit;
 	/** Non-fatal launch warnings; they do not change behavior. */
 	warnings: string[];
+	mcpConfig?: McpConfig;
+	runtimeServerNames?: string[];
 }
 
 function extensionIdentifier(value: string): string {
@@ -338,6 +348,21 @@ function boundedExtensionIdentifiers(values: string[]): {
 
 function hasPermissionRules(rules: PermissionRules | undefined): boolean {
 	return rules !== undefined && Object.keys(rules).length > 0;
+}
+
+function filterRuntimeMcpConfig(
+	config: McpConfig,
+	runtimeServerNames: readonly string[],
+	effectiveRuntimeServerNames: readonly string[],
+): McpConfig {
+	const runtimeNames = new Set(runtimeServerNames);
+	const effectiveNames = new Set(effectiveRuntimeServerNames);
+	return {
+		...config,
+		mcpServers: Object.fromEntries(
+			Object.entries(config.mcpServers).filter(([name]) => !runtimeNames.has(name) || effectiveNames.has(name)),
+		),
+	};
 }
 
 export function projectLaunchResolvedChildExtensions(
@@ -466,7 +491,7 @@ export function resolvePiLaunchToolPlan(
 			);
 	const mcpResolution = capabilityCeiling?.denyExtensions
 		? { selections: [], unresolvedSelectors: [] }
-		: resolveMcpDirectToolResolution(input.mcpDirectTools, input.cwd);
+		: resolveMcpDirectToolResolution(input.mcpDirectTools, input.cwd, input.runtimeSnapshotHost, input.mcpConfig);
 	if (mcpResolution.unresolvedSelectors.length > 0) {
 		throw new Error(formatUnresolvedMcpDirectToolSelectors(mcpResolution.unresolvedSelectors));
 	}
@@ -477,6 +502,14 @@ export function resolvePiLaunchToolPlan(
 	const effectiveMcpTools = effectiveMcpSelections.map(
 		(selection) => selection.name,
 	);
+	const runtimeServerNames = mcpResolution.runtimeServerNames ?? input.runtimeServerNames ?? [];
+	const effectiveRuntimeServerNames = runtimeServerNames.filter((serverName) =>
+		effectiveMcpSelections.some((selection) => selection.selector.startsWith(`${serverName}/`)),
+	);
+	const effectiveMcpConfig = mcpResolution.mcpConfig ?? input.mcpConfig;
+	const filteredMcpConfig = effectiveMcpConfig
+		? filterRuntimeMcpConfig(effectiveMcpConfig, runtimeServerNames, effectiveRuntimeServerNames)
+		: undefined;
 	const explicitToolAllowlist =
 		input.tools !== undefined ||
 		(input.mcpDirectTools?.length ?? 0) > 0 ||
@@ -612,6 +645,9 @@ export function resolvePiLaunchToolPlan(
 		extensionArgs,
 		disableAmbientExtensions,
 		warnings,
+		...(effectiveRuntimeServerNames.length > 0 && filteredMcpConfig
+			? { mcpConfig: filteredMcpConfig, runtimeServerNames: effectiveRuntimeServerNames }
+			: {}),
 		...(capabilityAudit ? { capabilityAudit } : {}),
 	};
 }
@@ -651,6 +687,8 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		extensions: input.extensions,
 		subagentOnlyExtensions: input.subagentOnlyExtensions,
 		mcpDirectTools: input.mcpDirectTools,
+		mcpConfig: input.mcpConfig,
+		runtimeServerNames: input.runtimeServerNames,
 		cwd: input.cwd,
 		requireReadTool: input.requireReadTool,
 		structuredOutput: input.structuredOutput,
@@ -663,6 +701,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		),
 		agentName: input.childAgentName,
 		permissionRules: input.permissionRules,
+		runtimeSnapshotHost: input.runtimeSnapshotHost,
 	});
 	if (toolPlan.explicitToolAllowlist) {
 		args.push(
@@ -676,6 +715,14 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	}
 	for (const extPath of toolPlan.extensionArgs)
 		args.push("--extension", extPath);
+	let tempDir: string | undefined;
+	if (toolPlan.mcpConfig && toolPlan.runtimeServerNames?.length) {
+		if (!tempDir)
+			tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+		const mcpConfigPath = path.join(tempDir, "mcp-config.json");
+		fs.writeFileSync(mcpConfigPath, JSON.stringify(toolPlan.mcpConfig, null, 2), { mode: 0o600 });
+		args.push("--mcp-config", mcpConfigPath);
+	}
 
 	if (!input.inheritProjectContext) {
 		args.push("--no-context-files");
@@ -684,9 +731,9 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		args.push("--no-skills");
 	}
 
-	let tempDir: string | undefined;
 	if (input.systemPrompt !== undefined && input.systemPrompt !== null) {
-		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+		if (!tempDir)
+			tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
 		const stem = (input.promptFileStem ?? "prompt").replace(/[^\w.-]/g, "_");
 		const promptPath = path.join(tempDir, `${stem}.md`);
 		// Inject <active_agent> tag so @gotgenes/pi-permission-system can

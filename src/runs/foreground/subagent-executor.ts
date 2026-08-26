@@ -3705,6 +3705,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	try {
 		r = await runSync(ctx.cwd, agents, params.agent!, task, compactOptional<Parameters<typeof runSync>[4]>({
 			permissions: deps.config.permissions,
+			runtimeSnapshotHost: deps.pi,
 			parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 			llmIntentArbiter: createTaskMutationArbiter(ctx),
 			...workflowForegroundSteeringLaunchOptions(foregroundControl, 0),

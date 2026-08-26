@@ -909,6 +909,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 			agentName: a.name,
 			permissionRules,
+			runtimeSnapshotHost: ctx.pi,
 		});
 		const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
 		if (externalRunner && permissionRules) {
@@ -950,6 +951,8 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			thinking: resolveEffectiveThinking(model, effectiveThinking),
 			...(thinkingCeiling ? { thinkingCeiling } : {}),
 			launchResolvedExtensions,
+			...(toolPlan.mcpConfig ? { mcpConfig: toolPlan.mcpConfig } : {}),
+			...(toolPlan.runtimeServerNames ? { runtimeServerNames: toolPlan.runtimeServerNames } : {}),
 			modelCandidates: externalRunner ? undefined : modelCandidates,
 			...(primaryModelFromParent ? { skipPrimaryModelVerification: true } : {}),
 			...(availableModels && availableModels.length > 0 ? { modelVerificationRegistry: availableModels } : {}),
@@ -1652,6 +1655,7 @@ export function executeAsyncSingle(
 		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 		agentName: agentConfig.name,
 		permissionRules: resolvePermissionRules(ctx.permissions, agentConfig.permissions),
+		runtimeSnapshotHost: ctx.pi,
 	});
 	const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
 	if (!externalRunner) {
@@ -1789,6 +1793,8 @@ export function executeAsyncSingle(
 						extensions: agentConfig.extensions,
 						subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,
 						mcpDirectTools: agentConfig.mcpDirectTools,
+						...(toolPlan.mcpConfig ? { mcpConfig: toolPlan.mcpConfig } : {}),
+						...(toolPlan.runtimeServerNames ? { runtimeServerNames: toolPlan.runtimeServerNames } : {}),
 						mutationTools: agentConfig.mutationTools,
 						completionGuard: agentConfig.completionGuard,
 						systemPrompt,

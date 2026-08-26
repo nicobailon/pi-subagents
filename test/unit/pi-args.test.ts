@@ -6,6 +6,11 @@ import { afterEach, describe, it } from "node:test";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { computeMcpServerHash } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
 import {
+	MCP_RUNTIME_SNAPSHOT_EVENT,
+	MCP_RUNTIME_SNAPSHOT_VERSION,
+	type McpRuntimeSnapshotHost,
+} from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
+import {
 	TOOL_BUDGET_ENV,
 	TOOL_BUDGET_ZERO_AUTH_ENV,
 } from "../../src/runs/shared/tool-budget.ts";
@@ -1125,6 +1130,166 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		});
 
 		assert.equal(args[args.indexOf("--tools") + 1], "read,github_search_repositories");
+	});
+
+	it("hands runtime MCP snapshots to child launches for server and server/tool selectors", () => {
+		const fixture = createMcpFixture();
+		const serverName = "runtime-github";
+		const definition = { command: "runtime-github", args: ["--stdio"] };
+		writeJson(path.join(fixture.agentDir, "mcp.json"), { mcpServers: {} });
+		writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
+			version: 1,
+			servers: {
+				[serverName]: {
+					configHash: computeMcpServerHash(definition),
+					cachedAt: Date.now(),
+					tools: [{ name: "search_repositories" }, { name: "create_issue" }],
+				},
+			},
+		});
+		const requestedNames: string[] = [];
+		const runtimeSnapshotHost: McpRuntimeSnapshotHost = {
+			events: {
+				emit(event, request) {
+					assert.equal(event, MCP_RUNTIME_SNAPSHOT_EVENT);
+					assert.equal(request.version, MCP_RUNTIME_SNAPSHOT_VERSION);
+					requestedNames.push(request.name);
+					request.result = {
+						ok: true,
+						snapshot: {
+							name: request.name,
+							definition: structuredClone(definition),
+							runtime: true,
+							persisted: false,
+						},
+					};
+				},
+			},
+		};
+		const serverLaunch = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: [serverName],
+			systemPrompt: "system",
+			runtimeSnapshotHost,
+		});
+		const toolLaunch = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: [`${serverName}/search_repositories`],
+			runtimeSnapshotHost,
+		});
+		assert.deepEqual(requestedNames, [serverName, serverName]);
+		assert.equal(serverLaunch.args[serverLaunch.args.indexOf("--tools") + 1], "read,runtime_github_search_repositories,runtime_github_create_issue");
+		assert.equal(toolLaunch.args[toolLaunch.args.indexOf("--tools") + 1], "read,runtime_github_search_repositories");
+		assert.ok(serverLaunch.args.indexOf("--mcp-config") < serverLaunch.args.indexOf("Task: hello"));
+		for (const launch of [serverLaunch, toolLaunch]) {
+			const configPath = launch.args[launch.args.indexOf("--mcp-config") + 1];
+			assert.ok(configPath);
+			assert.equal(path.dirname(configPath), launch.tempDir);
+			assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf-8")), {
+				mcpServers: { [serverName]: definition },
+			});
+		}
+		assert.deepEqual(
+			[serverLaunch.env.MCP_DIRECT_TOOLS, toolLaunch.env.MCP_DIRECT_TOOLS],
+			[serverName, `${serverName}/search_repositories`],
+		);
+		assert.deepEqual(JSON.parse(serverLaunch.env[MCP_DIRECT_CHILD_TOOLS_ENV]!), [
+			"runtime_github_search_repositories",
+			"runtime_github_create_issue",
+		]);
+		assert.deepEqual(JSON.parse(toolLaunch.env[MCP_DIRECT_CHILD_TOOLS_ENV]!), [
+			"runtime_github_search_repositories",
+		]);
+	});
+
+	it("fails closed when a selected runtime MCP server has no snapshot", () => {
+		const fixture = createMcpFixture();
+		const serverName = "runtime-missing";
+		const definition = { command: "runtime-missing", args: ["--stdio"] };
+		writeJson(path.join(fixture.agentDir, "mcp.json"), { mcpServers: {} });
+		writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
+			version: 1,
+			servers: {
+				[serverName]: {
+					configHash: computeMcpServerHash(definition),
+					cachedAt: Date.now(),
+					tools: [{ name: "search" }],
+				},
+			},
+		});
+		const runtimeSnapshotHost: McpRuntimeSnapshotHost = {
+			events: {
+				emit(_event, request) {
+					request.result = { ok: false, error: new Error("runtime server is unavailable") };
+				},
+			},
+		};
+		assert.throws(() => buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: [serverName],
+			runtimeSnapshotHost,
+		}), /Unresolved MCP direct-tool selectors: runtime-missing\./);
+	});
+
+	it("does not serialize runtime MCP servers denied by a capability ceiling", () => {
+		const fixture = createMcpFixture();
+		const definitions = {
+			"runtime-a": { command: "runtime-a", args: ["--stdio"] },
+			"runtime-b": { command: "runtime-b", args: ["--stdio"] },
+		};
+		writeJson(path.join(fixture.agentDir, "mcp.json"), { mcpServers: {} });
+		writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
+			version: 1,
+			servers: {
+				"runtime-a": { configHash: computeMcpServerHash(definitions["runtime-a"]), cachedAt: Date.now(), tools: [{ name: "search" }] },
+				"runtime-b": { configHash: computeMcpServerHash(definitions["runtime-b"]), cachedAt: Date.now(), tools: [{ name: "secret" }] },
+			},
+		});
+		const runtimeSnapshotHost: McpRuntimeSnapshotHost = {
+			events: {
+				emit(_event, request) {
+					const definition = definitions[request.name as keyof typeof definitions];
+					if (!definition) {
+						request.result = { ok: false, error: new Error(`unknown runtime server ${request.name}`) };
+						return;
+					}
+					request.result = { ok: true, snapshot: { name: request.name, definition, runtime: true, persisted: false } };
+				},
+			},
+		};
+		const launch = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: ["runtime-a", "runtime-b"],
+			capabilityCeiling: { version: 1, allowedTools: ["read", "runtime_a_search"], denyExtensions: false, sources: ["test"] },
+			runtimeSnapshotHost,
+		});
+		assert.equal(launch.args[launch.args.indexOf("--tools") + 1], "read,runtime_a_search");
+		const configPath = launch.args[launch.args.indexOf("--mcp-config") + 1];
+		assert.ok(configPath);
+		assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf-8")), {
+			mcpServers: { "runtime-a": definitions["runtime-a"] },
+		});
+		assert.deepEqual(JSON.parse(launch.env[MCP_DIRECT_CHILD_TOOLS_ENV]!), ["runtime_a_search"]);
 	});
 
 	it("emits --no-tools for explicit empty tool allowlists", () => {

@@ -383,6 +383,7 @@ async function runSingleAttempt(
 		capabilityCeiling: options.capabilityCeiling,
 		thinkingCeiling: options.thinkingCeiling,
 		extensionBindings: options.extensionBindings,
+		runtimeSnapshotHost: options.runtimeSnapshotHost,
 	});
 	if (!shared.launchWarnings.emitted && warnings.length > 0) {
 		for (const warning of warnings) console.warn(`[pi-subagents] ${warning}`);
@@ -405,6 +406,7 @@ async function runSingleAttempt(
 		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 		agentName: agent.name,
 		permissionRules,
+		runtimeSnapshotHost: options.runtimeSnapshotHost,
 	});
 	const contractTools = toolPlan.explicitToolAllowlist ? toolPlan.effectiveToolAllowlist : undefined;
 	const contractError = validateImplementationToolContract({

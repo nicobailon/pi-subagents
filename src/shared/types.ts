@@ -2127,6 +2127,8 @@ export interface RunSyncOptions {
 	availableModels?: Array<{ provider: string; id: string; fullId: string; contextWindow?: number }>;
 	/** Current parent-session provider to prefer for ambiguous bare model ids */
 	preferredModelProvider?: string;
+	/** Parent Pi event host used to snapshot runtime-registered MCP servers before child launch. */
+	runtimeSnapshotHost?: import("../runs/shared/mcp-direct-tool-allowlist.ts").McpRuntimeSnapshotHost;
 	/** Optional subagent model-scope enforcement for fallback candidates */
 	modelScope?: ModelScopeRule | ModelScopeRule[];
 	/** Skills to make available (overrides agent default if provided) */

@@ -43,6 +43,8 @@ export interface RunnerSubagentStep {
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
 	mcpDirectTools?: string[];
+	mcpConfig?: import("./mcp-direct-tool-allowlist.ts").McpConfig;
+	runtimeServerNames?: string[];
 	mutationTools?: string[];
 	completionGuard?: boolean;
 	systemPrompt?: string | null;
