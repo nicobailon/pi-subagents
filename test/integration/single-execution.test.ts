@@ -408,6 +408,19 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(output, "Hello from mock agent");
 	});
 
+	it("derives a child session name and passes it to the child env", async () => {
+		mockPi.onCall({ echoEnv: ["PI_SUBAGENT_SESSION_NAME"] });
+		const agents = makeAgentConfigs(["echo"]);
+
+		const result = await runSync(tempDir, agents, "echo", "Say hello to the world", {});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.sessionName, "echo: Say hello to the world");
+		assert.equal(result.progressSummary?.sessionName, "echo: Say hello to the world");
+		const echoed = JSON.parse(getFinalOutput(result.messages));
+		assert.equal(echoed.PI_SUBAGENT_SESSION_NAME, "echo: Say hello to the world");
+	});
+
 	it("rejects invalid foreground cwd before spawning Pi", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 		const requestedCwd = "missing-local-cwd";
