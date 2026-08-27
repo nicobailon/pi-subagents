@@ -1181,7 +1181,6 @@ export interface Details {
 	deadlineAt?: number;
 	timedOut?: boolean;
 	stopped?: boolean;
-	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
 	usageBudget?: UsageBudgetState;
 	progress?: AgentProgress[];
@@ -2074,10 +2073,7 @@ export interface RunSyncOptions {
 	toolTimeoutMs?: number;
 	/** Raw global config.toolTimeoutMs, used by the per-child resolver. */
 	configToolTimeoutMs?: number;
-	turnBudget?: ResolvedTurnBudget;
 	usageBudget?: UsageBudgetConfig;
-	/** Enforce maxTurns + graceTurns as a hard model-turn boundary. */
-	enforceHardTurnLimit?: boolean;
 	toolBudget?: ResolvedToolBudget;
 	allowZeroToolBudget?: boolean;
 	allowIntercomDetach?: boolean;
@@ -2303,7 +2299,6 @@ export interface ExtensionConfig {
 	toolTimeoutMs?: number;
 	control?: ControlConfig;
 	completionBatch?: CompletionBatchConfig;
-	turnBudget?: TurnBudgetConfig;
 	toolBudget?: ToolBudgetConfig;
 	/** Opt-in native tool permissions. Bash remains outside this policy. */
 	permissions?: import("../runs/shared/permissions.ts").PermissionConfig;

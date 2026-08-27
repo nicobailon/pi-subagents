@@ -254,7 +254,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(version.enum, undefined);
 	});
 
-	it("documents workflow timeout aliases and turn budget", () => {
+	it("documents workflow timeout aliases and omits removed turn budgets", () => {
 		const timeoutSchema = SubagentParams?.properties?.timeoutMs;
 		const maxRuntimeSchema = SubagentParams?.properties?.maxRuntimeMs;
 		const turnBudgetSchema = SubagentParams?.properties?.turnBudget;
@@ -271,8 +271,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(String(maxRuntimeSchema.description ?? ""), /foreground and single async runs/i);
 		assert.match(String(maxRuntimeSchema.description ?? ""), /use config timeoutMs, else 30m/i);
 		assert.match(String(maxRuntimeSchema.description ?? ""), /async composites have no default parent deadline/i);
-		assert.equal(turnBudgetSchema?.properties?.maxTurns?.minimum, 1);
-		assert.equal(turnBudgetSchema?.properties?.graceTurns?.minimum, 0);
+		assert.equal(turnBudgetSchema, undefined);
 		assert.equal(toolBudgetSchema?.properties?.soft?.minimum, 1);
 		assert.equal(toolBudgetSchema?.properties?.hard?.minimum, 1);
 	});
@@ -556,11 +555,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ agent: "worker", task: "Fix", acceptance: true },
 			{ config: [] },
 			{ config: null },
-			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 0 } },
-			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: -1 } },
-			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 1.5 } },
-			{ agent: "worker", task: "Fix", turnBudget: { graceTurns: 1 } },
-			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: 1, extra: true } },
 			{ agent: "worker", task: "Fix", toolBudget: { hard: 0 } },
 			{ agent: "worker", task: "Fix", toolBudget: { hard: 3, soft: 0 } },
 			{ agent: "worker", task: "Fix", toolBudget: { hard: 3, block: [123] } },

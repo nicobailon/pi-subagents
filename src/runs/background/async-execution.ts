@@ -49,7 +49,6 @@ import {
 	type MaxOutputConfig,
 	type NestedRouteInfo,
 	type ResolvedControlConfig,
-	type ResolvedTurnBudget,
 	type ResolvedToolBudget,
 	type RunFanoutBudgetDescriptor,
 	type ToolBudgetConfig,
@@ -65,7 +64,6 @@ import {
 } from "../../shared/types.ts";
 import { nestedResultsPath, nestedSummaryFromAsyncStatus, resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent } from "../shared/nested-events.ts";
 import { resultFilePath } from "./result-files.ts";
-import { appendTurnBudgetSystemPrompt, initialTurnBudgetState } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetState } from "../shared/usage-budget.ts";
 import type { ImportedAsyncRoot } from "./chain-root-attachment.ts";
@@ -183,7 +181,6 @@ interface AsyncChainParams {
 	acceptance?: AcceptanceInput;
 	fast?: boolean;
 	timeoutMs?: number;
-	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
 	usageBudget?: UsageBudgetConfig;
 	configToolBudget?: ResolvedToolBudget;
@@ -251,7 +248,6 @@ interface AsyncSingleParams {
 	absoluteDeadlineAt?: number;
 	/** Optional per-call hard toolTimeoutMs override (highest precedence). */
 	toolTimeoutMs?: number;
-	turnBudget?: { maxTurns: number; graceTurns?: number };
 	toolBudget?: ResolvedToolBudget | ToolBudgetConfig;
 	usageBudget?: UsageBudgetConfig;
 	configToolBudget?: ResolvedToolBudget;
@@ -1224,7 +1220,6 @@ export function executeAsyncChain(
 	}
 	const { steps, runnerCwd, workflowGraph, eventChain } = built;
 	const deadlineAt = params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined;
-	const initialTurnBudget = params.turnBudget ? initialTurnBudgetState(params.turnBudget) : undefined;
 	const initialUsageBudget = usageBudgetState(params.usageBudget, undefined);
 	let childTargetIndex = 0;
 	const childIntercomTargets = childIntercomTarget ? steps.flatMap((step) => {
@@ -1281,7 +1276,6 @@ export function executeAsyncChain(
 				worktreeSetupHookTimeoutMs,
 				worktreeBaseDir,
 				controlConfig,
-				turnBudget: params.turnBudget,
 				toolBudget: params.toolBudget,
 				usageBudget: params.usageBudget,
 				controlIntercomTarget,
@@ -1400,7 +1394,6 @@ export function executeAsyncChain(
 						chainStepCount: eventChain.length,
 						parallelGroups,
 						...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
-						...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 						startedAt: now,
 						lastUpdate: now,
 						...(capabilityCeiling ? { capabilityCeiling } : {}),
@@ -1431,7 +1424,6 @@ export function executeAsyncChain(
 			asyncDir,
 			...(sessionRoot ? { sessionRoot } : {}),
 			...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
-			...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 			...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}),
 			...(capabilityCeiling ? { capabilityCeiling } : {}),
 			...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}),
@@ -1448,7 +1440,7 @@ export function executeAsyncChain(
 
 	return {
 		content: [{ type: "text", text: formatAsyncStartedMessage(`Async ${resultMode}: ${chainDesc} [${id}]`, ctx.interactive === true) }],
-		details: { mode: resultMode, runId: id, results: [], asyncId: id, asyncDir, workflowGraph, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}), ...(params.workflowKey ? { workflowKey: params.workflowKey } : {}), ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}), ...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}) },
+		details: { mode: resultMode, runId: id, results: [], asyncId: id, asyncDir, workflowGraph, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}), ...(params.workflowKey ? { workflowKey: params.workflowKey } : {}), ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}), ...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}) },
 	};
 }
 
@@ -1616,7 +1608,6 @@ export function executeAsyncSingle(
 	});
 	if (resolvedToolTimeout.error) return formatAsyncStartError("single", resolvedToolTimeout.error);
 	const toolTimeoutMs = resolvedToolTimeout.toolTimeoutMs;
-	const initialTurnBudget = params.turnBudget ? initialTurnBudgetState(params.turnBudget) : undefined;
 	const initialUsageBudget = usageBudgetState(params.usageBudget, undefined);
 	const resolvedSessionDir = params.sessionDir ?? (sessionRoot ? path.join(sessionRoot, `async-${id}`) : undefined);
 	const structuredOutput = params.structuredOutputSchema
@@ -1639,7 +1630,6 @@ export function executeAsyncSingle(
 			return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
 		}
 	}
-	const effectiveSystemPrompt = appendTurnBudgetSystemPrompt(systemPrompt, params.turnBudget);
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: agentConfig.tools,
 		extensions: agentConfig.extensions,
@@ -1680,7 +1670,7 @@ export function executeAsyncSingle(
 		...((params.fast ?? agentConfig.fast) !== undefined ? { fast: params.fast ?? agentConfig.fast } : {}),
 		...(resolveEffectiveThinking(model, effectiveThinking) ? { thinking: resolveEffectiveThinking(model, effectiveThinking) } : {}),
 		...(thinkingCeiling ? { thinkingCeiling } : {}),
-		systemPrompt: effectiveSystemPrompt,
+		systemPrompt,
 		systemPromptMode: agentConfig.systemPromptMode,
 		inheritProjectContext: agentConfig.inheritProjectContext,
 		inheritGlobalContext: agentConfig.inheritGlobalContext,
@@ -1745,7 +1735,6 @@ export function executeAsyncSingle(
 		...(params.context ? { context: params.context } : {}),
 		...(params.intercomBridge !== undefined ? { intercomBridge: params.intercomBridge } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
-		...(initialTurnBudget ? { initialTurnBudget: { maxTurns: initialTurnBudget.maxTurns, graceTurns: initialTurnBudget.graceTurns } } : {}),
 		...(resolvedToolBudget.budget ? { initialToolBudget: resolvedToolBudget.budget } : {}),
 		maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, recoveryAgentConfig.maxSubagentDepth),
 		...(maxOutput ? { maxOutput } : {}),
@@ -1844,7 +1833,6 @@ export function executeAsyncSingle(
 				timeoutMs,
 				deadlineAt,
 				toolTimeoutMs,
-				turnBudget: params.turnBudget,
 				toolBudget: params.toolBudget,
 				usageBudget: params.usageBudget,
 				controlIntercomTarget,
@@ -1927,7 +1915,6 @@ export function executeAsyncSingle(
 						agents: [agent],
 						chainStepCount: 1,
 						...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}),
-						...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 						startedAt: now,
 						lastUpdate: now,
 						...(capabilityCeiling ? { capabilityCeiling } : {}),
@@ -1955,7 +1942,6 @@ export function executeAsyncSingle(
 			...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}),
 			...(params.workflowKey ? { workflowKey: params.workflowKey } : {}),
 			...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}),
-			...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 			...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}),
 			...(capabilityCeiling ? { capabilityCeiling } : {}),
 			nestedRoute,
@@ -1964,6 +1950,6 @@ export function executeAsyncSingle(
 
 	return {
 		content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`, ctx.interactive === true) }],
-		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, launchContractDigest, launchResolvedExtensions, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.context ? { context: params.context } : {}), ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: resolvedToolBudget.budget ?? params.toolBudget } : {}), ...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}) } as Details,
+		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, launchContractDigest, launchResolvedExtensions, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.context ? { context: params.context } : {}), ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.toolBudget ? { toolBudget: resolvedToolBudget.budget ?? params.toolBudget } : {}), ...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}) } as Details,
 	};
 }

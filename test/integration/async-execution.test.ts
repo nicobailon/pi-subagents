@@ -365,24 +365,6 @@ async function waitForAsyncState(id: string, predicate: (status: AsyncStatusPayl
 	assert.fail(`Timed out waiting for async status: ${statusPath}`);
 }
 
-async function waitForDeferredTurnBudget(id: string, timeoutMs = 10_000): Promise<AsyncStatusPayload> {
-	const statusPath = path.join(ASYNC_DIR, id, "status.json");
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() <= deadline) {
-		if (fs.existsSync(statusPath)) {
-			const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
-			if (status.state === "running"
-				&& status.turnBudget?.outcome === "termination-deferred"
-				&& status.steps?.[0]?.turnBudget?.outcome === "termination-deferred"
-				&& status.steps[0].currentTool === "bash") {
-				return status;
-			}
-		}
-		await new Promise((resolve) => setTimeout(resolve, 50));
-	}
-	assert.fail(`Timed out waiting for deferred turn-budget status: ${statusPath}`);
-}
-
 async function waitForMockPiCall(mockPi: MockPi, index: number, timeoutMs = 30_000): Promise<{ args: string[]; systemPrompts: NonNullable<MockPiCallRecord["systemPrompts"]> }> {
 	const deadline = Date.now() + timeoutMs;
 	for (;;) {
@@ -649,7 +631,6 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	it("matches preflight launch digest in equivalent foreground and async execution", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const agentName = `contract-worker-${Date.now().toString(36)}`;
 		const task = "Compare the resolved launch inputs.";
-		const turnBudget = { maxTurns: 2, graceTurns: 1 } as const;
 		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 		const agentDir = path.join(tempDir, "agent-home");
 		process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -663,12 +644,12 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		try {
 			const discovered = discoverAgents(tempDir).agents.find((agent) => agent.name === agentName);
 			assert.ok(discovered, "expected temporary agent definition to be discovered");
-			const preflight = await resolveSubagentLaunchContract({ agent: agentName, cwd: tempDir, task, turnBudget, runId: "contract-preflight" });
+			const preflight = await resolveSubagentLaunchContract({ agent: agentName, cwd: tempDir, task, runId: "contract-preflight" });
 			assert.equal(preflight.ok, true);
 			assert.ok(preflight.contract.tools.extensionArgs.some((entry) => entry.endsWith(path.join("pi-permission-system", "src", "index.ts"))));
 
 			mockPi.onCall({ output: "foreground contract comparison" });
-			const foreground = await runSync(tempDir, [discovered], agentName, task, { runId: "contract-foreground", acceptance: false, turnBudget });
+			const foreground = await runSync(tempDir, [discovered], agentName, task, { runId: "contract-foreground", acceptance: false });
 			assert.equal(foreground.exitCode, 0);
 			assert.equal(foreground.launchContractDigest, preflight.contract.launchContractDigest);
 
@@ -684,7 +665,6 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				sessionRoot: path.join(tempDir, "sessions"),
 				maxSubagentDepth: 2,
 				acceptance: false,
-				turnBudget,
 			});
 			const payload = await readAsyncPayload(asyncId);
 			assert.equal(launch.details.launchContractDigest, preflight.contract.launchContractDigest);
@@ -1930,224 +1910,6 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(elapsedMs < timeoutMs + 4_000, `timeout should cancel acceptance verification well before the verify command completes, elapsed ${elapsedMs}ms`);
 	});
 
-	it("async turn budget allows a terminal final grace turn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		mockPi.onCall({
-			jsonl: [
-				mockAssistantMessage("working before wrap-up", "tool_use"),
-				mockAssistantMessage("final wrapped output", "stop"),
-			],
-		});
-		const id = `async-turn-budget-soft-${Date.now().toString(36)}`;
-		executeAsyncSingle(id, {
-			agent: "worker",
-			task: "Use the final grace turn to wrap up.",
-			agentConfig: makeAgent("worker"),
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-			shareEnabled: false,
-			maxSubagentDepth: 2,
-			turnBudget: { maxTurns: 1, graceTurns: 1 },
-		});
-
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
-		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
-		assert.equal(payload.success, true);
-		assert.equal(payload.state, "complete");
-		assert.equal(payload.turnBudgetExceeded, undefined);
-		assert.equal(payload.wrapUpRequested, true);
-		assert.equal(payload.turnBudget?.outcome, "wrap-up-requested");
-		assert.equal(payload.turnBudget?.turnCount, 2);
-		assert.equal(payload.results[0]?.wrapUpRequested, true);
-		assert.equal(payload.results[0]?.turnBudget?.turnCount, 2);
-		assert.match(payload.results[0]?.output ?? "", /Turn budget wrap-up was requested after 1 assistant turn/);
-		assert.match(payload.results[0]?.output ?? "", /final wrapped output/);
-		assert.equal(status.wrapUpRequested, true);
-		assert.equal(status.turnBudgetExceeded, undefined);
-		assert.equal(status.steps?.[0]?.wrapUpRequested, true);
-		assert.equal(status.steps?.[0]?.turnBudget?.turnCount, 2);
-	});
-
-	it("async turn budget preserves a clean terminal response beyond the final grace turn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		mockPi.onCall({
-			jsonl: [
-				mockAssistantMessage("working before wrap-up", "tool_use"),
-				mockAssistantMessage("starting final grace tool work", "tool_use"),
-				mockAssistantMessage("safe assistant boundary after tool work", "stop"),
-			],
-		});
-		const id = `async-turn-budget-hard-${Date.now().toString(36)}`;
-		executeAsyncSingle(id, {
-			agent: "worker",
-			task: "Exceed the turn budget.",
-			agentConfig: makeAgent("worker"),
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-			shareEnabled: false,
-			maxSubagentDepth: 2,
-			turnBudget: { maxTurns: 1, graceTurns: 1 },
-		});
-
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
-		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
-		assert.equal(payload.success, true);
-		assert.equal(payload.state, "complete");
-		assert.equal(payload.exitCode, 0);
-		assert.equal(payload.turnBudgetExceeded, undefined);
-		assert.equal(payload.wrapUpRequested, true);
-		assert.equal(payload.turnBudget?.outcome, "wrap-up-requested");
-		assert.equal(payload.turnBudget?.turnCount, 3);
-		assert.equal(payload.results[0]?.turnBudgetExceeded, undefined);
-		assert.match(payload.results[0]?.output ?? "", /safe assistant boundary after tool work/);
-		assert.equal(status.state, "complete");
-		assert.equal(status.turnBudgetExceeded, undefined);
-		assert.equal(status.steps?.[0]?.turnBudgetExceeded, undefined);
-		assert.equal(status.steps?.[0]?.turnBudget?.outcome, "wrap-up-requested");
-	});
-
-	it("preserves an async clean completion after turn-budget work defers", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		const id = `async-turn-budget-deferred-${Date.now().toString(36)}`;
-		const releasePath = path.join(tempDir, `${id}.release`);
-		mockPi.onCall({
-			steps: [
-				{
-					jsonl: [
-						mockAssistantMessage("starting required tool work", "tool_use"),
-						events.toolStart("bash", { command: "node build.mjs" }),
-					],
-				},
-				{
-					waitForPath: releasePath,
-					jsonl: [
-						events.toolResult("bash", "build completed"),
-						events.toolEnd("bash"),
-						mockAssistantMessage("safe assistant boundary reached", "stop"),
-					],
-				},
-			],
-		});
-		executeAsyncSingle(id, {
-			agent: "worker",
-			task: "Finish active tool work before enforcing the hard limit.",
-			agentConfig: makeAgent("worker"),
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-			shareEnabled: false,
-			maxSubagentDepth: 2,
-			turnBudget: { maxTurns: 1, graceTurns: 0 },
-		});
-
-		let pending: AsyncStatusPayload;
-		try {
-			pending = await waitForDeferredTurnBudget(id);
-		} finally {
-			fs.writeFileSync(releasePath, "release", "utf-8");
-		}
-		assert.equal(pending.error, undefined);
-		assert.equal(pending.turnBudgetExceeded, undefined);
-		assert.equal(pending.turnBudget?.terminationDeferredAtTurn, 1);
-		assert.equal(pending.steps?.[0]?.status, "running");
-		assert.equal(pending.steps?.[0]?.turnBudgetExceeded, undefined);
-
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
-		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
-		assert.equal(payload.state, "complete");
-		assert.equal(payload.turnBudgetExceeded, undefined);
-		assert.equal(payload.turnBudget?.outcome, "wrap-up-requested");
-		assert.equal(payload.turnBudget?.turnCount, 2);
-		assert.equal(payload.results[0]?.turnBudgetExceeded, undefined);
-		assert.match(payload.results[0]?.output ?? "", /safe assistant boundary reached/);
-		assert.equal(status.state, "complete");
-		assert.equal(status.turnBudgetExceeded, undefined);
-		assert.equal(status.steps?.[0]?.turnBudget?.outcome, "wrap-up-requested");
-	});
-
-	it("lets timeout delivery preempt deferred turn-budget termination", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		mockPi.onCall({
-			steps: [
-				{
-					jsonl: [
-						mockAssistantMessage("starting long tool work", "tool_use"),
-						events.toolStart("bash", { command: "node build.mjs" }),
-					],
-				},
-				{ delay: 5_000, jsonl: [events.toolEnd("bash")] },
-			],
-		});
-		const id = `async-turn-budget-timeout-${Date.now().toString(36)}`;
-		executeAsyncSingle(id, {
-			agent: "worker",
-			task: "Timeout while hard termination is deferred.",
-			agentConfig: makeAgent("worker"),
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-			shareEnabled: false,
-			maxSubagentDepth: 2,
-			turnBudget: { maxTurns: 1, graceTurns: 0 },
-			timeoutMs: 30_000,
-		});
-
-		const pending = await waitForDeferredTurnBudget(id);
-		const asyncDir = path.join(ASYNC_DIR, id);
-		deliverTimeoutRequest({ asyncDir, pid: pending.pid, source: "test" });
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
-		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
-		assert.equal(payload.state, "failed");
-		assert.equal(payload.timedOut, true);
-		assert.equal(payload.turnBudgetExceeded, undefined);
-		assert.match(payload.error ?? payload.summary ?? "", /timed out after 30000ms/);
-		assert.equal(payload.results[0]?.timedOut, true);
-		assert.equal(payload.results[0]?.turnBudgetExceeded, undefined);
-		assert.equal(status.timedOut, true);
-		assert.equal(status.turnBudgetExceeded, undefined);
-		assert.equal(status.steps?.[0]?.timedOut, true);
-	});
-
-	it("lets explicit stop preempt deferred turn-budget termination", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		mockPi.onCall({
-			steps: [
-				{
-					jsonl: [
-						mockAssistantMessage("starting long tool work", "tool_use"),
-						events.toolStart("bash", { command: "node build.mjs" }),
-					],
-				},
-				{ delay: 5_000, jsonl: [events.toolEnd("bash")] },
-			],
-		});
-		const id = `async-turn-budget-stop-${Date.now().toString(36)}`;
-		executeAsyncSingle(id, {
-			agent: "worker",
-			task: "Stop while hard termination is deferred.",
-			agentConfig: makeAgent("worker"),
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-			shareEnabled: false,
-			maxSubagentDepth: 2,
-			turnBudget: { maxTurns: 1, graceTurns: 0 },
-		});
-
-		const pending = await waitForDeferredTurnBudget(id);
-		const asyncDir = path.join(ASYNC_DIR, id);
-		deliverStopRequest({ asyncDir, pid: pending.pid, source: "test" });
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
-		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = await waitForAsyncState(id, (candidate) => candidate.state === "stopped");
-		assert.equal(payload.state, "stopped");
-		assert.equal(payload.stopped, true);
-		assert.equal(payload.turnBudgetExceeded, undefined);
-		assert.match(payload.error ?? payload.summary ?? "", /stopped by user/i);
-		assert.equal(payload.results[0]?.stopped, true);
-		assert.equal(payload.results[0]?.turnBudgetExceeded, undefined);
-		assert.equal(status.state, "stopped");
-		assert.equal(status.stopped, true);
-		assert.equal(status.turnBudgetExceeded, undefined);
-		assert.equal(status.steps?.[0]?.status, "stopped");
-	});
-
 	it("async launch messages tell the parent not to sleep-poll", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const artifactConfig = {
 			enabled: false,
@@ -3093,7 +2855,6 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			agent: "worker",
 			task: "Do work",
 			acceptance: { level: "none", reason: "descriptor persistence coverage" },
-			turnBudget: { maxTurns: 8, graceTurns: 2 },
 			agentConfig: makeAgent("worker", {
 				model: "openai/gpt-5-mini:high",
 				fallbackModels: ["anthropic/claude-sonnet-4:low"],
@@ -3135,7 +2896,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(descriptor.cwd, tempDir);
 		assert.equal(descriptor.sessionDir, path.join(sessionRoot, `async-${id}`));
 		assert.deepEqual(descriptor.acceptance, { level: "none", reason: "descriptor persistence coverage" });
-		assert.deepEqual(descriptor.initialTurnBudget, { maxTurns: 8, graceTurns: 2 });
+		assert.equal(descriptor.initialTurnBudget, undefined);
 		assert.equal(Object.hasOwn(descriptor.acceptance, "explicit"), false);
 		assert.equal(Object.hasOwn(descriptor.acceptance, "inferredReason"), false);
 		assert.equal(Object.hasOwn(descriptor, "task"), false);

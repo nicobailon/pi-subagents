@@ -14,9 +14,7 @@ import { resolveEffectiveThinking } from "../shared/model-info.ts";
 import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV, type ThinkingLevel } from "../shared/thinking-ceiling.ts";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, type ArtifactDirPreference, type ArtifactPaths, type JsonSchemaObject, type OutputMode } from "../shared/types.ts";
 import { capabilityCeilingAgentRestrictionMessage, intersectSubagentCapabilityCeilings, type ResolvedSubagentCapabilityCeiling, type SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
-import { appendTurnBudgetSystemPrompt } from "../runs/shared/turn-budget.ts";
 import { resolvePermissionRules } from "../runs/shared/permissions.ts";
-import type { ResolvedTurnBudget } from "../shared/types.ts";
 import type { ResolvedMcpDirectToolSelection } from "../runs/shared/mcp-direct-tool-allowlist.ts";
 import { resolveStepBehavior } from "../shared/settings.ts";
 import { canPreferForkFromSnapshot, resolveSubagentLaunchContext } from "../shared/fork-context.ts";
@@ -69,7 +67,6 @@ export interface SubagentLaunchContractInput {
 	outputMode?: OutputMode;
 	outputSchema?: JsonSchemaObject;
 	extensionBindings?: ExtensionBindings;
-	turnBudget?: ResolvedTurnBudget;
 	artifacts?: boolean;
 	artifactDir?: ArtifactDirPreference;
 	parentSessionFile?: string | null;
@@ -398,8 +395,6 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	const memoryInjection = buildAgentMemoryInjection(agent, effectiveCwd);
 	if (memoryInjection) effectiveSystemPrompt = effectiveSystemPrompt ? `${effectiveSystemPrompt}\n\n${memoryInjection}` : memoryInjection;
 	effectiveSystemPrompt = injectOutputPathSystemPrompt(effectiveSystemPrompt, outputPath, agent);
-	const turnBudget = input.turnBudget ?? agent.defaultTurnBudget;
-	effectiveSystemPrompt = appendTurnBudgetSystemPrompt(effectiveSystemPrompt, turnBudget);
 	const candidates = candidateList(input.agent, agent, effectiveCwd);
 	const shadowedCandidates = candidates.filter((candidate) => !candidate.selected);
 	const definitionDigest = agentDefinitionDigest(agent);

@@ -4812,7 +4812,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const result = await executor.execute(
 			"single-schema-strict-boundary",
-			{ agent: "echo", task: "Return structured data", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, turnBudget: { maxTurns: 1, graceTurns: 0 }, enforceHardTurnLimit: true, acceptance: false },
+			{ agent: "echo", task: "Return structured data", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, acceptance: false },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -4820,7 +4820,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const child = result.details?.results?.[0];
 		assert.equal(result.isError, undefined);
-		assert.equal(child?.turnBudgetExceeded, undefined);
 		assert.deepEqual(child?.structuredOutput, { ok: true });
 	});
 
@@ -6563,7 +6562,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			makeAgent("echo", {
 				defaultAsync: true,
 				defaultTimeoutMs: 2_000,
-				defaultTurnBudget: { maxTurns: 4, graceTurns: 2 },
 			}),
 		]);
 
@@ -6579,7 +6577,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /Async:/);
 		assert.equal(typeof result.details?.asyncId, "string");
 		assert.equal(result.details?.timeoutMs, 2_000);
-		assert.deepEqual(result.details?.turnBudget, { maxTurns: 4, graceTurns: 2 });
 	});
 
 	it("applies agent acceptance defaults and lets explicit calls override them", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -6638,7 +6635,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			makeAgent("echo", {
 				defaultAsync: true,
 				defaultTimeoutMs: 1,
-				defaultTurnBudget: { maxTurns: 1, graceTurns: 0 },
 			}),
 		]);
 
@@ -6649,7 +6645,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 				task: "Task",
 				async: false,
 				timeoutMs: 2_000,
-				turnBudget: { maxTurns: 4, graceTurns: 2 },
 			},
 			new AbortController().signal,
 			undefined,
@@ -7084,85 +7079,27 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.progress.status, "failed");
 	});
 
-	it("allows a foreground run to finish on the final turn-budget grace turn", async () => {
+	it("ignores legacy turn-budget options without prompt injection or termination", async () => {
 		mockPi.onCall({
 			jsonl: [
-				mockAssistantMessage("working before wrap-up", "tool_use"),
-				mockAssistantMessage("final wrapped output", "stop"),
+				mockAssistantMessage("first turn", "tool_use"),
+				mockAssistantMessage("second turn", "tool_use"),
+				mockAssistantMessage("completed normally", "stop"),
 			],
 		});
-		const agents = makeAgentConfigs(["worker"]);
-
-		const result = await runSync(tempDir, agents, "worker", "Use the final grace turn to wrap up.", {
-			turnBudget: { maxTurns: 1, graceTurns: 1 },
-			runId: "foreground-turn-budget-soft",
-		});
-
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.turnBudgetExceeded, undefined);
-		assert.equal(result.wrapUpRequested, true);
-		assert.equal(result.turnBudget?.outcome, "wrap-up-requested");
-		assert.equal(result.turnBudget?.turnCount, 2);
-		assert.match(result.finalOutput ?? "", /Turn budget wrap-up was requested after 1 assistant turn/);
-		assert.match(result.finalOutput ?? "", /final wrapped output/);
-	});
-
-	it("preserves a clean foreground completion after turn-budget work defers", async () => {
-		mockPi.onCall({
-			steps: [
-				{
-					jsonl: [
-						mockAssistantMessage("starting required tool work", "tool_use"),
-						events.toolStart("bash", { command: "node build.mjs" }),
-					],
-				},
-				{
-					delay: 500,
-					jsonl: [
-						events.toolResult("bash", "build completed"),
-						events.toolEnd("bash"),
-						mockAssistantMessage("safe assistant boundary reached", "stop"),
-					],
-				},
-			],
-		});
-		const agents = makeAgentConfigs(["worker"]);
-		const snapshots: Array<{
-			turnBudget?: { outcome?: string; terminationDeferredAtTurn?: number };
-			turnBudgetExceeded?: boolean;
-			error?: string;
-			currentTool?: string;
-			status?: string;
-		}> = [];
-
-		const result = await runSync(tempDir, agents, "worker", "Finish active tool work before enforcing the hard limit.", {
+		const legacyOptions = {
+			runId: "foreground-legacy-turn-budget",
 			turnBudget: { maxTurns: 1, graceTurns: 0 },
-			runId: "foreground-turn-budget-deferred",
-			onUpdate(update: { details?: { results?: Array<{ turnBudget?: { outcome?: string; terminationDeferredAtTurn?: number }; turnBudgetExceeded?: boolean; error?: string }>; progress?: Array<{ currentTool?: string; status?: string }> } }) {
-				const current = update.details?.results?.[0];
-				const progress = update.details?.progress?.[0];
-				snapshots.push({
-					turnBudget: current?.turnBudget,
-					turnBudgetExceeded: current?.turnBudgetExceeded,
-					error: current?.error,
-					currentTool: progress?.currentTool,
-					status: progress?.status,
-				});
-			},
-		});
+			enforceHardTurnLimit: true,
+		} as Parameters<typeof runSync>[4] & { turnBudget: { maxTurns: number; graceTurns: number }; enforceHardTurnLimit: boolean };
 
-		const duringTool = snapshots.find((snapshot) => snapshot.turnBudget?.outcome === "termination-deferred" && snapshot.currentTool === "bash");
-		assert.ok(duringTool, "expected a running snapshot with deferred termination and the active tool");
-		assert.equal(duringTool.turnBudget?.terminationDeferredAtTurn, 1);
-		assert.equal(duringTool.turnBudgetExceeded, undefined);
-		assert.equal(duringTool.error, undefined);
-		assert.equal(duringTool.status, "running");
+		const result = await runSync(tempDir, makeAgentConfigs(["worker"]), "worker", "Complete normally.", legacyOptions);
+
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.turnBudgetExceeded, undefined);
-		assert.equal(result.turnBudget?.outcome, "wrap-up-requested");
-		assert.equal(result.turnBudget?.turnCount, 2);
-		assert.match(result.finalOutput ?? "", /safe assistant boundary reached/);
-		assert.ok(result.messages?.some((message) => message.role === "toolResult" && JSON.stringify(message.content).includes("build completed")));
+		assert.equal(result.wrapUpRequested, undefined);
+		assert.match(result.finalOutput ?? "", /completed normally/);
+		assert.doesNotMatch(readCall().systemPrompts.map((record) => record.text ?? "").join("\n"), /turn budget|wrap up by this budget/i);
 	});
 
 	it("does not run acceptance verification after a foreground timeout", async () => {

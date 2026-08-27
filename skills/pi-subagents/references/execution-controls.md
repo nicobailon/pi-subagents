@@ -32,7 +32,7 @@ An agent may set `runner.type: external-job` with a non-empty `provider` and opt
 
 External job profiles are async-only. The provider owns the remote job and Pi owns the async run record. Status persists provider name, provider job id, prompt digest, provider options, handle/conversation URLs when supplied, result artifact path, last known state, and provider failure code/message. Recovery uses existing provider job metadata to call `reattach` and `result`; it refuses to redispatch a prompt when the persisted provider job does not match the prompt digest.
 
-External job profiles do not support foreground/clarify, steer/resume, Pi models/tools/extensions/skills, tool or turn budgets, structured output, native child permissions, fallbacks, or Pi child sessions. Capacity conflicts fail closed and include the blocking provider job id when the provider supplies it.
+External job profiles do not support foreground/clarify, steer/resume, Pi models/tools/extensions/skills, tool budgets, structured output, native child permissions, fallbacks, or Pi child sessions. Capacity conflicts fail closed and include the blocking provider job id when the provider supplies it.
 
 ### Single agent
 

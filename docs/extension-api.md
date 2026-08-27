@@ -165,7 +165,7 @@ Preflight covers ordinary single-agent launch resolution:
 - Fresh/fork context, effective model and thinking, skill and tool resolution, direct MCP selections, runtime/configured extensions.
 - Artifact/session paths, async lifecycle/status/result/event/process-terminal paths, package/lifecycle versions, capability-ceiling audit data, and stable digests.
 
-`launchContractDigest` is the canonical digest of the caller task, effective system prompt (including the resolved `turnBudget` prompt augmentation when supplied), model candidates, effective tools/extensions/MCP (including inherited capability ceilings), output binding, and structured-output schema that ordinary foreground and async execution report in results/status/events and metadata.
+`launchContractDigest` is the canonical digest of the caller task, effective system prompt, model candidates, effective tools/extensions/MCP (including inherited capability ceilings), output binding, and structured-output schema that ordinary foreground and async execution report in results/status/events and metadata.
 
 Boundaries:
 

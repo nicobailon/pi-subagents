@@ -109,7 +109,7 @@ If an advisor is not resumable, run the same profile in fresh context with its o
 pass-1 report and the challenge packet. Label that response as a fresh-context
 fallback, not a true cross-exam.
 
-Do not set `clarify`, `worktree`, `gate`, turn budgets, tool budgets, or tight usage
+Do not set `clarify`, `worktree`, `gate`, tool budgets, or tight usage
 budgets on advisors. Bound work through the roster, pass cap, and report length.
 
 ## Advisor contracts and pass receipts

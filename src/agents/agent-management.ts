@@ -31,7 +31,6 @@ import { parseFrontmatter, parseFrontmatterList } from "./frontmatter.ts";
 import { toModelInfo } from "../shared/model-info.ts";
 import { resolveSubagentModelOverride, type ParentModel } from "../runs/shared/model-fallback.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
-import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import type { AcceptanceInput, Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
@@ -331,7 +330,6 @@ export function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<
 	if (hasKey(cfg, "defaultContext")) changed("defaultContext");
 	if (hasKey(cfg, "async")) changed("async");
 	if (hasKey(cfg, "timeoutMs")) changed("timeoutMs");
-	if (hasKey(cfg, "turnBudget")) changed("turnBudget");
 	if (hasKey(cfg, "acceptance")) changed("acceptance");
 	if (hasKey(cfg, "acceptanceRole")) changed("acceptanceRole");
 	if (hasKey(cfg, "output")) changed("output");
@@ -510,15 +508,6 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		if (cfg.timeoutMs === false || cfg.timeoutMs === "") delete target.defaultTimeoutMs;
 		else if (typeof cfg.timeoutMs === "number" && Number.isInteger(cfg.timeoutMs) && cfg.timeoutMs > 0) target.defaultTimeoutMs = cfg.timeoutMs;
 		else return "config.timeoutMs must be a positive integer or false when provided.";
-	}
-	if (hasKey(cfg, "turnBudget")) {
-		if (cfg.turnBudget === false || cfg.turnBudget === "") delete target.defaultTurnBudget;
-		else {
-			const resolved = resolveTurnBudgetConfig(cfg.turnBudget, "config.turnBudget");
-			if (resolved.error) return resolved.error;
-			if (resolved.turnBudget !== undefined) target.defaultTurnBudget = resolved.turnBudget;
-			else delete target.defaultTurnBudget;
-		}
 	}
 	if (hasKey(cfg, "acceptance")) {
 		if (cfg.acceptance === "") delete target.defaultAcceptance;
@@ -724,7 +713,6 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.defaultContext) lines.push(`Default context: ${agent.defaultContext}`);
 	if (agent.defaultAsync !== undefined) lines.push(`Async: ${agent.defaultAsync ? "true" : "false"}`);
 	if (agent.defaultTimeoutMs !== undefined) lines.push(`Timeout: ${agent.defaultTimeoutMs}ms`);
-	if (agent.defaultTurnBudget) lines.push(`Turn budget: ${JSON.stringify(agent.defaultTurnBudget)}`);
 	if (agent.defaultAcceptance !== undefined) lines.push(`Acceptance: ${typeof agent.defaultAcceptance === "object" ? JSON.stringify(agent.defaultAcceptance) : String(agent.defaultAcceptance)}`);
 	if (agent.acceptanceRole) lines.push(`Acceptance role: ${agent.acceptanceRole}`);
 	if (agent.source === "builtin") lines.push(`Disabled: ${agent.disabled ? "true" : "false"}`);

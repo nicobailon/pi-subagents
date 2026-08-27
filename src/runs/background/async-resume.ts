@@ -1,13 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DIRS, type AcceptanceInput, type AsyncStatus, type ResolvedTurnBudget, type SteeringRecoveryDescriptor, type SubagentRunMode } from "../../shared/types.ts";
+import { DIRS, type AcceptanceInput, type AsyncStatus, type SteeringRecoveryDescriptor, type SubagentRunMode } from "../../shared/types.ts";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import { validateAcceptanceInput } from "../shared/acceptance.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { intersectSubagentCapabilityCeilings, parseSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { validateRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
-import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import { resultFilePath, resultPayloadPathForIndexedRun } from "./result-files.ts";
 import { canScanAsyncRunPrefix, MIN_SAFE_ASYNC_RUN_PREFIX_LENGTH } from "./run-id-query.ts";
@@ -283,23 +282,6 @@ function normalizeRecoveryAcceptance(value: unknown, descriptorPath: string): Ac
 	return value as AcceptanceInput;
 }
 
-function normalizeRecoveryTurnBudget(value: unknown, descriptorPath: string): ResolvedTurnBudget {
-	if (value && typeof value === "object" && !Array.isArray(value)) {
-		const {
-			outcome: _outcome,
-			turnCount: _turnCount,
-			wrapUpRequestedAtTurn: _wrapUpRequestedAtTurn,
-			terminationDeferredAtTurn: _terminationDeferredAtTurn,
-			exceededAtTurn: _exceededAtTurn,
-			...publicTurnBudget
-		} = value as Record<string, unknown>;
-		value = publicTurnBudget;
-	}
-	const result = resolveTurnBudgetConfig(value, "recoveryDescriptor.initialTurnBudget");
-	if (result.error || !result.turnBudget) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${result.error ?? "recoveryDescriptor.initialTurnBudget is invalid."}`);
-	return result.turnBudget;
-}
-
 export function asyncReviveRequiresRecoveryDescriptor(target: Pick<AsyncResumeTarget, "recoveryDescriptor" | "mode" | "sessionFile">): boolean {
 	if (target.recoveryDescriptor) return false;
 	return !(target.mode === "workflow" && Boolean(target.sessionFile));
@@ -379,7 +361,9 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	}
 	if (parsed.absoluteDeadlineAt !== undefined && (!Number.isFinite(parsed.absoluteDeadlineAt) || (parsed.absoluteDeadlineAt as number) <= 0)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': absoluteDeadlineAt must be a positive timestamp.`);
 	if (parsed.initialTurnBudget !== undefined) {
-		parsed.initialTurnBudget = normalizeRecoveryTurnBudget(parsed.initialTurnBudget, descriptorPath);
+		// Older descriptors may contain the removed turn-budget setting. Accept it
+		// for recovery compatibility, but do not restore or enforce it.
+		delete parsed.initialTurnBudget;
 	}
 	if (parsed.initialToolBudget !== undefined) {
 		const result = validateToolBudgetConfig(parsed.initialToolBudget, "recoveryDescriptor.initialToolBudget");

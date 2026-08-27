@@ -6,7 +6,7 @@ import {
 	type SubagentDelegationUpdate,
 	type SubagentDelegationValue,
 } from "../api/delegation.ts";
-import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, TurnBudgetConfig, Usage } from "../shared/types.ts";
+import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, Usage } from "../shared/types.ts";
 import { cloneJsonWithinByteLimit } from "./delegation-json.ts";
 
 export interface PromptTemplateDelegationRequest {
@@ -82,7 +82,6 @@ export interface PromptTemplateBridgeResult {
 			interrupted?: boolean;
 			timedOut?: boolean;
 			stopped?: boolean;
-			turnBudgetExceeded?: boolean;
 			toolBudgetBlocked?: boolean;
 			structuredOutputFailed?: boolean;
 			savedOutputPath?: string;
@@ -120,9 +119,6 @@ export interface DelegatedSubagentExecutionParams {
 	model?: string;
 	cwd: string;
 	timeoutMs?: number;
-	turnBudget?: TurnBudgetConfig;
-	/** Internal-only strict turn-boundary enforcement for structured foreground delegation. */
-	enforceHardTurnLimit?: boolean;
 	toolBudget?: ToolBudgetConfig;
 	skill?: string | string[] | boolean;
 	output?: string | boolean;
@@ -294,8 +290,6 @@ export function toSubagentDelegationExecutionParams(request: SubagentDelegationR
 		cwd: request.cwd,
 		model: request.model,
 		timeoutMs: request.timeoutMs,
-		turnBudget: request.turnBudget,
-		enforceHardTurnLimit: true,
 		toolBudget: request.toolBudget,
 		skill: request.skill,
 		...(request.result.kind === "structured" ? { outputSchema: request.result.schema } : {}),
@@ -341,7 +335,6 @@ function resolveSubagentDelegationStatus(
 	if (!child) return "failed";
 	if (result.details?.timedOut || child.timedOut) return "timed_out";
 	if (child?.structuredOutputFailed) return "structured_output_failed";
-	if (child?.turnBudgetExceeded) return "turn_budget_exhausted";
 	if (child?.toolBudgetBlocked) return "tool_budget_exhausted";
 	if (child?.acceptance?.status === "rejected" && child.acceptance.explicit) return "acceptance_failed";
 	if (result.details?.stopped || child?.stopped || child?.interrupted) return "interrupted";

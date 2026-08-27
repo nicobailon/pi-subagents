@@ -5,6 +5,7 @@
 ### Changed
 - Extract detached workflow settlement planning into a focused workflow module while preserving fail-closed result handoff.
 - Extract completion evidence planning into a focused module shared by foreground and background execution.
+- Remove assistant turn budgets, including hard termination, wrap-up prompt injection, and launch/configuration surface.
 
 ## [0.58.0] - 2026-08-27
 

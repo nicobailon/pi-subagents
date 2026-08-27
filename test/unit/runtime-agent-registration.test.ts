@@ -245,7 +245,6 @@ describe("runtime agent registration", () => {
 
 	it("rejects malformed nested runtime definition fields at registration", () => {
 		const cases: Array<[string, Record<string, unknown>, RegExp]> = [
-			["defaultTurnBudget", { defaultTurnBudget: { maxTurns: 0 } }, /defaultTurnBudget\.maxTurns must be an integer >= 1/],
 			["defaultAcceptance", { defaultAcceptance: { level: "verified" } }, /defaultAcceptance\.verify must contain at least one runtime command/],
 			["runner", { runner: { type: "external-cli" } }, /external-cli runner requires a non-empty command string/],
 			["toolBudget", { toolBudget: { hard: 0 } }, /toolBudget\.hard must be an integer >= 1/],

@@ -8,7 +8,7 @@ import { parse as parseYaml } from "yaml";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, OutputMode, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
+import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { KNOWN_FIELDS } from "./agent-serializer.ts";
@@ -20,7 +20,6 @@ import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/mod
 export { BUILTIN_AGENT_NAMES } from "./builtin-names.ts";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.ts";
 import { parseMemoryFrontmatter } from "./agent-memory.ts";
-import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
 import { parseThinkingLevel, type ThinkingLevel } from "../shared/thinking-ceiling.ts";
@@ -145,7 +144,6 @@ export interface AgentConfig {
 	defaultAsync?: boolean;
 	defaultTimeoutMs?: number;
 	defaultToolTimeoutMs?: number;
-	defaultTurnBudget?: TurnBudgetConfig;
 	defaultAcceptance?: AcceptanceInput;
 	acceptanceRole?: AcceptanceRole;
 	systemPrompt: string;
@@ -2027,13 +2025,6 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			}
 			defaultToolTimeoutMs = parsed;
 		}
-		let defaultTurnBudget: TurnBudgetConfig | undefined;
-		if (frontmatter.turnBudget !== undefined && frontmatter.turnBudget.trim()) {
-			const parsed = JSON.parse(frontmatter.turnBudget) as unknown;
-			const resolved = resolveTurnBudgetConfig(parsed, `Agent '${localName}' turnBudget frontmatter`);
-			if (resolved.error) throw new Error(resolved.error);
-			defaultTurnBudget = resolved.turnBudget;
-		}
 		const defaultAcceptance = parseAgentAcceptanceFrontmatter(frontmatter.acceptance, localName);
 		let outputMode: OutputMode | undefined;
 		if (frontmatter.outputMode !== undefined) {
@@ -2111,7 +2102,6 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			...(defaultAsync !== undefined ? { defaultAsync } : {}),
 			...(defaultTimeoutMs !== undefined ? { defaultTimeoutMs } : {}),
 			...(defaultToolTimeoutMs !== undefined ? { defaultToolTimeoutMs } : {}),
-			...(defaultTurnBudget !== undefined ? { defaultTurnBudget } : {}),
 			...(defaultAcceptance !== undefined ? { defaultAcceptance } : {}),
 			...(acceptanceRole !== undefined ? { acceptanceRole } : {}),
 			systemPrompt: body,

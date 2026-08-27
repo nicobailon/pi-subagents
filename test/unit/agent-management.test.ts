@@ -548,7 +548,6 @@ Advise only.
 					scope: "project",
 					async: false,
 					timeoutMs: 120_000,
-					turnBudget: { maxTurns: 8, graceTurns: 2 },
 					acceptance: { level: "none", reason: "lightweight reviewer" },
 					outputMode: "file-only",
 				},
@@ -561,7 +560,6 @@ Advise only.
 		let content = fs.readFileSync(filePath, "utf-8");
 		assert.match(content, /^async: false$/m);
 		assert.match(content, /^timeoutMs: 120000$/m);
-		assert.match(content, /^turnBudget: \{"maxTurns":8,"graceTurns":2\}$/m);
 		assert.match(content, /^acceptance: \{"level":"none","reason":"lightweight reviewer"\}$/m);
 		assert.match(content, /^outputMode: file-only$/m);
 
@@ -569,19 +567,17 @@ Advise only.
 		assert.equal(got.isError, false);
 		assert.match(readText(got), /Async: false/);
 		assert.match(readText(got), /Timeout: 120000ms/);
-		assert.match(readText(got), /Turn budget: \{"maxTurns":8,"graceTurns":2\}/);
 		assert.match(readText(got), /Acceptance: \{"level":"none","reason":"lightweight reviewer"\}/);
 		assert.match(readText(got), /Output mode: file-only/);
 
 		const updated = handleUpdate(
-			{ agent: "background-reviewer", config: { async: true, timeoutMs: false, turnBudget: false, acceptance: "", outputMode: "inline" } },
+			{ agent: "background-reviewer", config: { async: true, timeoutMs: false, acceptance: "", outputMode: "inline" } },
 			ctx,
 		);
 		assert.equal(updated.isError, false);
 		content = fs.readFileSync(filePath, "utf-8");
 		assert.match(content, /^async: true$/m);
 		assert.doesNotMatch(content, /^timeoutMs:/m);
-		assert.doesNotMatch(content, /^turnBudget:/m);
 		assert.doesNotMatch(content, /^acceptance:/m);
 		assert.match(content, /^outputMode: inline$/m);
 

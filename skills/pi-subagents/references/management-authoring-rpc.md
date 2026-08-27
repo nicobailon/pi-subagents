@@ -126,7 +126,6 @@ That is only a starting point. Omit `package` for the traditional unqualified ru
 - `acceptanceRole`
 - `async` — single-agent default for background launch (`true`/`false`); explicit tool-call `async` wins
 - `timeoutMs` — single-agent default run-level max runtime in ms; foreground calls use a 30-minute package default only when neither the call nor agent provides one (tool alias `maxRuntimeMs` is also accepted)
-- `turnBudget` — single-agent default `{ maxTurns, graceTurns? }` JSON object
 
 `aliases` is an optional comma-separated or block-list set of alternate names for selecting an agent. Aliases resolve to the canonical `name` for execution, status, persistence, and config. Exact canonical names take precedence over aliases, and alias collisions between distinct canonical agents fail as ambiguous. Management create/update accepts a comma-separated string, string array, or `false`/empty string to clear aliases.
 

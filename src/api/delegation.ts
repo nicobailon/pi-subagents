@@ -7,11 +7,6 @@ export const SUBAGENT_DELEGATION_UPDATE_EVENT = "prompt-template:subagent:update
 export const SUBAGENT_DELEGATION_RESPONSE_EVENT = "prompt-template:subagent:response";
 export const SUBAGENT_DELEGATION_CANCEL_EVENT = "prompt-template:subagent:cancel";
 
-export interface SubagentDelegationTurnBudget {
-	maxTurns: number;
-	graceTurns?: number;
-}
-
 export interface SubagentDelegationToolBudget {
 	soft?: number;
 	hard: number;
@@ -37,7 +32,6 @@ export interface SubagentDelegationRequest {
 	model?: string;
 	thinking?: SubagentDelegationThinking;
 	timeoutMs?: number;
-	turnBudget?: SubagentDelegationTurnBudget;
 	toolBudget?: SubagentDelegationToolBudget;
 	skill?: string | string[] | boolean;
 	artifacts?: boolean;
@@ -69,7 +63,6 @@ export type SubagentDelegationStatus =
 	| "timed_out"
 	| "cancelled"
 	| "interrupted"
-	| "turn_budget_exhausted"
 	| "tool_budget_exhausted"
 	| "structured_output_failed"
 	| "acceptance_failed"

@@ -1,10 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, OutputMode, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
+import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
-import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 import { BUILTIN_AGENT_NAMES } from "./builtin-names.ts";
 import type { AgentConfig, AgentDefaultContext, AgentDiscoveryDiagnostic } from "./agents.ts";
 
@@ -33,7 +32,6 @@ export interface RuntimeAgentDefinition {
 	defaultAsync?: boolean;
 	defaultTimeoutMs?: number;
 	defaultToolTimeoutMs?: number;
-	defaultTurnBudget?: TurnBudgetConfig;
 	defaultAcceptance?: AcceptanceInput;
 	acceptanceRole?: AcceptanceRole;
 	runner?: AgentRunnerConfig;
@@ -183,12 +181,6 @@ function validateRunner(value: unknown): AgentRunnerConfig | undefined {
 	return { type: "external-cli", ...(isCodeOwnedExternalCliAdapterId(runner.adapter) ? { adapter: runner.adapter } : {}), command: runner.command.trim(), ...(args?.length ? { args } : {}), ...(runner.promptDelivery ? { promptDelivery: "stdin" as const } : {}), ...(capabilities ? { capabilities } : {}) };
 }
 
-function validateTurnBudget(value: unknown): TurnBudgetConfig | undefined {
-	const result = resolveTurnBudgetConfig(value, "Runtime agent definition defaultTurnBudget");
-	if (result.error) throw new Error(result.error);
-	return result.turnBudget;
-}
-
 function validateAcceptance(value: unknown): AcceptanceInput | undefined {
 	const errors = validateAcceptanceInput(value, "Runtime agent definition defaultAcceptance");
 	if (errors.length > 0) throw new Error(errors.join(" "));
@@ -207,7 +199,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 	const supported = new Set([
 		"description", "systemPrompt", "aliases", "tools", "mcpDirectTools", "model", "fallbackModels", "thinking",
 		"systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "defaultContext", "defaultAsync", "defaultTimeoutMs",
-		"defaultToolTimeoutMs", "defaultTurnBudget", "defaultAcceptance", "acceptanceRole", "runner", "skills", "skillPath",
+		"defaultToolTimeoutMs", "defaultAcceptance", "acceptanceRole", "runner", "skills", "skillPath",
 		"extensions", "subagentOnlyExtensions", "mutationTools", "output", "outputMode", "defaultReads", "defaultProgress", "interactive",
 		"maxSubagentDepth", "completionGuard", "toolBudget", "permissions",
 	]);
@@ -234,7 +226,6 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 	const defaultAsync = validateBoolean(definition.defaultAsync, "Runtime agent definition defaultAsync");
 	const defaultTimeoutMs = validatePositiveInteger(definition.defaultTimeoutMs, "Runtime agent definition defaultTimeoutMs");
 	const defaultToolTimeoutMs = validatePositiveInteger(definition.defaultToolTimeoutMs, "Runtime agent definition defaultToolTimeoutMs");
-	const defaultTurnBudget = validateTurnBudget(definition.defaultTurnBudget);
 	const defaultAcceptance = validateAcceptance(definition.defaultAcceptance);
 	const runner = validateRunner(definition.runner);
 	const skills = validateStringList(definition.skills, "Runtime agent definition skills");
@@ -267,7 +258,6 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 		...(defaultAsync !== undefined ? { defaultAsync } : {}),
 		...(defaultTimeoutMs !== undefined ? { defaultTimeoutMs } : {}),
 		...(defaultToolTimeoutMs !== undefined ? { defaultToolTimeoutMs } : {}),
-		...(defaultTurnBudget !== undefined ? { defaultTurnBudget } : {}),
 		...(defaultAcceptance !== undefined ? { defaultAcceptance } : {}),
 		...(acceptanceRole !== undefined ? { acceptanceRole: acceptanceRole as AcceptanceRole } : {}),
 		...(runner !== undefined ? { runner } : {}),
@@ -346,7 +336,6 @@ function toAgentConfig(name: string, definition: RuntimeAgentDefinition): AgentC
 		...(definition.defaultAsync !== undefined ? { defaultAsync: definition.defaultAsync } : {}),
 		...(definition.defaultTimeoutMs !== undefined ? { defaultTimeoutMs: definition.defaultTimeoutMs } : {}),
 		...(definition.defaultToolTimeoutMs !== undefined ? { defaultToolTimeoutMs: definition.defaultToolTimeoutMs } : {}),
-		...(definition.defaultTurnBudget !== undefined ? { defaultTurnBudget: definition.defaultTurnBudget } : {}),
 		...(definition.defaultAcceptance !== undefined ? { defaultAcceptance: definition.defaultAcceptance } : {}),
 		...(definition.acceptanceRole !== undefined ? { acceptanceRole: definition.acceptanceRole } : {}),
 		systemPrompt: definition.systemPrompt,

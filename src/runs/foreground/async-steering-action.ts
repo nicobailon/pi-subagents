@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
-import type { AsyncStatus, Details, SubagentState, ToolBudgetConfig, TurnBudgetConfig } from "../../shared/types.ts";
+import type { AsyncStatus, Details, SubagentState, ToolBudgetConfig } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { consumeSteerAcks, deliverInterruptRequest, queueRevivalBrief, requestAsyncSteer, type SteerDeliveryMode, type SteerRequest } from "../background/control-channel.ts";
 import { resolveAsyncResumeTarget } from "../background/async-resume.ts";
@@ -34,7 +34,7 @@ export async function steerAsyncRun(input: {
 	onRequestQueued?: (requestPath: string) => void;
 	onBeforeRecoveryClaim?: (requestId: string, committedAt: number) => void;
 	onRecoveryCommitted?: (requestId: string, committedAt: number) => void;
-	recover?: (limits: { timeoutMs?: number; absoluteDeadlineAt?: number; turnBudget?: TurnBudgetConfig; toolBudget?: ToolBudgetConfig }) => Promise<AgentToolResult<Details>>;
+	recover?: (limits: { timeoutMs?: number; absoluteDeadlineAt?: number; toolBudget?: ToolBudgetConfig }) => Promise<AgentToolResult<Details>>;
 }): Promise<AgentToolResult<Details>> {
 	if (!input.location.asyncDir) {
 		return {

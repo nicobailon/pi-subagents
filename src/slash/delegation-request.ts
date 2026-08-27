@@ -2,7 +2,6 @@ import {
 	type SubagentDelegationRequest,
 } from "../api/delegation.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
-import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 import { cloneJsonWithinByteLimit } from "./delegation-json.ts";
 
 export type SubagentDelegationParseResult =
@@ -20,7 +19,6 @@ const supportedFields = new Set([
 	"model",
 	"thinking",
 	"timeoutMs",
-	"turnBudget",
 	"toolBudget",
 	"skill",
 	"artifacts",
@@ -80,8 +78,6 @@ export function parseSubagentDelegationRequest(data: unknown): SubagentDelegatio
 	if (timeoutMs !== undefined && timeoutMs > 2_147_483_647) {
 		return { ok: false, ...identity, error: "timeoutMs must be <= 2147483647." };
 	}
-	const turnBudget = resolveTurnBudgetConfig(value.turnBudget);
-	if (turnBudget.error) return { ok: false, ...identity, error: turnBudget.error };
 	if (value.toolBudget && typeof value.toolBudget === "object" && !Array.isArray(value.toolBudget)) {
 		const unsupportedToolBudgetField = Object.keys(value.toolBudget).find((key) => key !== "soft" && key !== "hard" && key !== "block");
 		if (unsupportedToolBudgetField) {

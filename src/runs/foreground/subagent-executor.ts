@@ -67,7 +67,6 @@ import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
-import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
 import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightSpawnBudget, preflightSpawnBudgetGrant, reserveSpawnBudget } from "../shared/spawn-budget.ts";
 import { claimRunFanoutBatch, claimRunFanoutBatchWithCommit, createRunFanoutBudget, decodeRunFanoutBudgetDescriptor, formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor, RunFanoutLimitError, RUN_FANOUT_BUDGET_ENV, writeRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
@@ -160,14 +159,12 @@ import {
 	type NestedRunSummary,
 	type OutputMode,
 	type ResolvedControlConfig,
-	type ResolvedTurnBudget,
 	type ResolvedToolBudget,
 	type RunFanoutBudgetDescriptor,
 	type SteeringRecoveryDescriptor,
 	type SingleResult,
 	type SubagentChildStatusEvent,
 	type ToolBudgetConfig,
-	type TurnBudgetConfig,
 	type UsageBudgetConfig,
 	type WorkflowTerminalOutcome,
 	type SubagentRunMode,
@@ -338,9 +335,6 @@ export interface SubagentParamsLike {
 	maxRuntimeMs?: number;
 	/** Optional hard per-tool-call timeout (ms). Known-fast tools also have a default. */
 	toolTimeoutMs?: number;
-	turnBudget?: TurnBudgetConfig;
-	/** Internal-only strict turn-boundary enforcement for versioned foreground delegation. */
-	enforceHardTurnLimit?: boolean;
 	toolBudget?: ToolBudgetConfig;
 	usageBudget?: UsageBudgetConfig;
 	clarify?: boolean;
@@ -447,7 +441,6 @@ interface ExecutionContextData {
 	deadlineAt?: number;
 	/** Raw global config.toolTimeoutMs, for per-step resolution in async runners. */
 	configToolTimeoutMs?: number;
-	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
 	usageBudget?: UsageBudgetConfig;
 	allowZeroToolBudget?: boolean;
@@ -2037,7 +2030,6 @@ async function resumeAsyncRun(input: {
 		...(input.params.acceptance !== undefined ? { acceptance: input.params.acceptance } : foregroundContract?.acceptance !== undefined ? { acceptance: foregroundContract.acceptance } : recoveryDescriptor?.acceptance !== undefined ? { acceptance: recoveryDescriptor.acceptance } : {}),
 		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
-		...(input.params.turnBudget !== undefined ? { turnBudget: input.params.turnBudget } : {}),
 		...(input.params.toolBudget !== undefined ? { toolBudget: input.params.toolBudget } : {}),
 		capabilityCeiling: intersectSubagentCapabilityCeilings("capabilityCeiling" in target ? target.capabilityCeiling : undefined, recoveryDescriptor?.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(input.deps.state.currentSessionId)),
 		runFanoutBudget: input.params.runFanoutBudget ?? recoveryDescriptor?.runFanoutBudget ?? createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(input.deps.config.maxSubagentSpawnsPerRun)),
@@ -2647,9 +2639,6 @@ function applySingleAgentLaunchDefaults(params: SubagentParamsLike, agents: Agen
 			? { timeoutMs: agent.defaultTimeoutMs }
 			: {}),
 		...(parentTimeoutMs !== undefined ? { timeoutMs: parentTimeoutMs } : {}),
-		...(params.turnBudget === undefined && agent.defaultTurnBudget !== undefined
-			? { turnBudget: agent.defaultTurnBudget }
-			: {}),
 		...(params.acceptance === undefined && agent.defaultAcceptance !== undefined
 			? { acceptance: agent.defaultAcceptance }
 			: {}),
@@ -3275,7 +3264,6 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			extensionBindings: params.extensionBindings,
 			acceptance: params.acceptance,
 			timeoutMs: data.timeoutMs,
-			turnBudget: data.turnBudget,
 			toolBudget: data.toolBudget,
 			usageBudget: data.usageBudget,
 			configToolBudget: data.configToolBudget,
@@ -3793,8 +3781,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			deadlineAt,
 			toolTimeoutMs: params.toolTimeoutMs,
 			configToolTimeoutMs: data.configToolTimeoutMs,
-			turnBudget: data.turnBudget,
-			enforceHardTurnLimit: params.enforceHardTurnLimit,
 			toolBudget: effectiveToolBudget.toolBudget,
 			capabilityCeiling: data.capabilityCeiling,
 			allowZeroToolBudget: data.allowZeroToolBudget && effectiveToolBudget.toolBudget === data.toolBudget,
@@ -3848,7 +3834,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		runId,
 		timeoutMs: data.timeoutMs,
 		results: [r],
-		...(data.turnBudget ? { turnBudget: data.turnBudget } : {}),
 		...(effectiveToolBudget.toolBudget ? { toolBudget: effectiveToolBudget.toolBudget } : {}),
 		progress: params.includeProgress ? allProgress : undefined,
 		artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
@@ -4246,7 +4231,6 @@ export function prepareWorkflowLaunchParams(
 			throw new Error("gate is not supported with retained resume; resume uses the retained child contract.");
 		}
 		const timeoutMs = childParams.timeoutMs ?? childParams.maxRuntimeMs ?? workflowDefaults.timeoutMs ?? workflowDefaults.maxRuntimeMs;
-		const turnBudget = childParams.turnBudget ?? workflowDefaults.turnBudget;
 		const toolBudget = childParams.toolBudget ?? workflowDefaults.toolBudget;
 		const intercomBridge = childParams.intercomBridge ?? workflowDefaults.intercomBridge;
 		const worktree = childParams.worktree ?? workflowDefaults.worktree;
@@ -4275,7 +4259,6 @@ export function prepareWorkflowLaunchParams(
 			...(options.runFanoutBudget ? { runFanoutBudget: { ...options.runFanoutBudget, parentPath: `${options.runFanoutBudget.parentPath ? `${options.runFanoutBudget.parentPath}/` : ""}workflow[${workflowKey}]` } } : {}),
 			...(options.missionDetached ? { mission: false } : {}),
 			...(timeoutMs !== undefined ? { timeoutMs: timeoutMs as number } : {}),
-			...(turnBudget !== undefined ? { turnBudget: turnBudget as TurnBudgetConfig } : {}),
 			...(toolBudget !== undefined ? { toolBudget: toolBudget as ToolBudgetConfig } : {}),
 			...(intercomBridge !== undefined ? { intercomBridge: intercomBridge as IntercomBridgeConfig } : {}),
 			...(capabilityCeiling ? { capabilityCeiling } : {}),
@@ -5817,8 +5800,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		effectiveParams = canonicalParams.params!;
 		const modelScope = discovered.modelScope;
 		effectiveParams = applySingleAgentLaunchDefaults(effectiveParams, discoveredAgents);
-		const turnBudget = resolveTurnBudgetConfig(effectiveParams.turnBudget ?? deps.config.turnBudget);
-		if (turnBudget.error) return buildRequestedModeError(effectiveParams, turnBudget.error);
 		// An agent-level defaultContext is a preference, unlike an explicit request.
 		// Prefer fork only when the parent session is persisted and has a current leaf;
 		// otherwise use fresh immediately instead of launching a guaranteed-to-fail fork.
@@ -6138,7 +6119,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			intercomBridge,
 			nestedRoute,
 			timeoutMs: foregroundTimeout.timeoutMs,
-			turnBudget: turnBudget.turnBudget,
 			toolBudget: runToolBudget.toolBudget,
 			usageBudget: usageBudget.budget,
 			allowZeroToolBudget,

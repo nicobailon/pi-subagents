@@ -68,14 +68,13 @@ subagent({
     return runs.run("review", { agent: "reviewer", task: "Review:\n" + scan.output });
   `,
   timeoutMs: 900000,
-  turnBudget: { maxTurns: 30, graceTurns: 2 },
   toolBudget: { soft: 40, hard: 60 },
   usageBudget: { tokens: { soft: 100000, hard: 150000 } }
 });
 ```
 
 - `timeoutMs` sets the workflow deadline and bounds child deadlines to the remaining time.
-- `turnBudget` and `toolBudget` become defaults for each child unless that child supplies a narrower value.
+- `toolBudget` becomes the default for each child unless that child supplies a narrower value.
 - `usageBudget` accounts for reported usage across completed workflow children. Once exhausted, it rejects later child launches but does not stop children that are already running.
 - Budget and timeout stops return a structured `terminalOutcome` with `state: "partial"` and reason `budget_exhausted` or `timeout`. Workflow receipts keep settled child evidence for recovery.
 

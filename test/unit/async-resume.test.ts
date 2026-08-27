@@ -313,7 +313,7 @@ describe("async resume lookup", () => {
 		}
 	});
 
-	it("normalizes persisted turn-budget state without weakening public input validation", () => {
+	it("ignores removed turn budgets in persisted recovery descriptors", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-turn-budget-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
@@ -354,16 +354,14 @@ describe("async resume lookup", () => {
 
 			const target = resolveAsyncResumeTarget({ id: "run-turn-budget" }, { asyncDirRoot: asyncRoot, resultsDir });
 
-			assert.deepEqual(target.recoveryDescriptor?.initialTurnBudget, { maxTurns: 8, graceTurns: 2 });
+			assert.equal(target.recoveryDescriptor?.initialTurnBudget, undefined);
 
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
 				...descriptor,
 				initialTurnBudget: { maxTurns: 8, graceTurns: 2, unrelated: true },
 			});
-			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-turn-budget" }, { asyncDirRoot: asyncRoot, resultsDir }),
-				/recoveryDescriptor\.initialTurnBudget\.unrelated is not supported/,
-			);
+			const malformedLegacy = resolveAsyncResumeTarget({ id: "run-turn-budget" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(malformedLegacy.recoveryDescriptor?.initialTurnBudget, undefined);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

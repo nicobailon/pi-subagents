@@ -104,7 +104,6 @@ import {
 import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput } from "../shared/acceptance.ts";
 import { PROMPT_REDACTED } from "../../shared/utils.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
-import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
@@ -354,7 +353,7 @@ async function runSingleAttempt(
 		tools: agent.tools,
 		extensions: agent.extensions,
 		subagentOnlyExtensions: agent.subagentOnlyExtensions,
-		systemPrompt: appendTurnBudgetSystemPrompt(shared.systemPrompt, options.turnBudget),
+		systemPrompt: shared.systemPrompt,
 		mcpDirectTools: agent.mcpDirectTools,
 		cwd: options.cwd ?? runtimeCwd,
 		promptFileStem: agent.name,
@@ -391,7 +390,7 @@ async function runSingleAttempt(
 		shared.launchWarnings.emitted = true;
 	}
 
-	const effectiveSystemPrompt = appendTurnBudgetSystemPrompt(shared.systemPrompt, options.turnBudget);
+	const effectiveSystemPrompt = shared.systemPrompt;
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: agent.tools,
 		extensions: agent.extensions,
@@ -479,7 +478,6 @@ async function runSingleAttempt(
 		transcriptPath: shared.transcriptWriter ? shared.artifactPaths?.transcriptPath : undefined,
 		skills: shared.resolvedSkillNames,
 		skillsWarning: shared.skillsWarning,
-		...(options.turnBudget ? { turnBudget: initialTurnBudgetState(options.turnBudget) } : {}),
 		...(options.toolBudget ? { toolBudget: initialToolBudgetState(options.toolBudget) } : {}),
 		...(options.capabilityCeiling ? { capabilityCeiling: options.capabilityCeiling } : {}),
 		...(capabilityAudit ? { capabilityAudit } : {}),
@@ -586,20 +584,7 @@ async function runSingleAttempt(
 		let timeoutTimer: NodeJS.Timeout | undefined;
 		let timeoutTerminationTimer: NodeJS.Timeout | undefined;
 		let timeoutHardKillTimer: NodeJS.Timeout | undefined;
-		let turnBudgetSoftReached = false;
-		let turnBudgetTerminationTimer: NodeJS.Timeout | undefined;
-		let turnBudgetHardKillTimer: NodeJS.Timeout | undefined;
 		let protocolHardKillTimer: NodeJS.Timeout | undefined;
-		const clearTurnBudgetTimers = () => {
-			if (turnBudgetTerminationTimer) {
-				clearTimeout(turnBudgetTerminationTimer);
-				turnBudgetTerminationTimer = undefined;
-			}
-			if (turnBudgetHardKillTimer) {
-				clearTimeout(turnBudgetHardKillTimer);
-				turnBudgetHardKillTimer = undefined;
-			}
-		};
 		const clearTimeoutTimers = () => {
 			if (timeoutTimer) {
 				clearTimeout(timeoutTimer);
@@ -760,7 +745,6 @@ async function runSingleAttempt(
 			clearStdioGuard();
 			clearTimeoutTimers();
 			clearAllToolTimeouts();
-			clearTurnBudgetTimers();
 			if (protocolHardKillTimer) {
 				clearTimeout(protocolHardKillTimer);
 				protocolHardKillTimer = undefined;
@@ -898,57 +882,6 @@ async function runSingleAttempt(
 			}));
 			return true;
 		};
-		const requestTurnBudgetAbort = (turnCount: number) => {
-			const budget = options.turnBudget;
-			if (!budget || result.timedOut || result.turnBudgetExceeded || interruptedByControl || processClosed || lifecycleFinished) return;
-			const message = turnBudgetExceededMessage(budget, turnCount);
-			result.turnBudgetExceeded = true;
-			result.wrapUpRequested = true;
-			result.turnBudget = turnBudgetState(budget, turnCount, true);
-			result.error = message;
-			result.finalOutput = message;
-			progress.status = "failed";
-			progress.error = message;
-			progress.durationMs = Date.now() - startTime;
-			fireUpdate();
-			trySignalChild(proc, "SIGINT");
-			turnBudgetTerminationTimer = setTimeout(() => {
-				if (processClosed || lifecycleFinished || result.timedOut) return;
-				trySignalChild(proc, "SIGTERM");
-			}, 1000);
-			turnBudgetTerminationTimer.unref?.();
-			turnBudgetHardKillTimer = setTimeout(() => {
-				if (processClosed || lifecycleFinished || result.timedOut) return;
-				trySignalChild(proc, "SIGKILL");
-			}, 4000);
-			turnBudgetHardKillTimer.unref?.();
-		};
-
-		const updateTurnBudget = (turnCount: number, terminalAssistantStop: boolean, toolWorkActiveOrStarting: boolean) => {
-			const budget = options.turnBudget;
-			if (!budget || result.timedOut || result.turnBudgetExceeded) return;
-			if (turnCount < budget.maxTurns) {
-				result.turnBudget = { ...budget, outcome: "within-budget", turnCount };
-				return;
-			}
-			if (!turnBudgetSoftReached) {
-				turnBudgetSoftReached = true;
-				result.wrapUpRequested = true;
-				appendRecentOutput(progress, [turnBudgetSoftNote(budget, turnCount)]);
-			}
-			const decision = turnBudgetDecision(budget, turnCount, terminalAssistantStop, toolWorkActiveOrStarting, options.enforceHardTurnLimit);
-			if (decision === "defer") {
-				result.turnBudget = turnBudgetDeferredState(
-					budget,
-					turnCount,
-					result.turnBudget?.terminationDeferredAtTurn,
-				);
-				return;
-			}
-			result.turnBudget = turnBudgetState(budget, turnCount, false);
-			if (decision === "abort") requestTurnBudgetAbort(turnCount);
-		};
-
 		const updateActivityState = (now: number): boolean => {
 			if (!controlConfig.enabled) return false;
 			const idleState = deriveActivityState({
@@ -1002,7 +935,7 @@ async function runSingleAttempt(
 		const fireUpdate = () => {
 			if (!options.onUpdate || processClosed) return;
 			progress.durationMs = Date.now() - startTime;
-			const output = (result.timedOut || result.turnBudgetExceeded) && result.finalOutput ? result.finalOutput : getFinalOutput(result.messages ?? []);
+			const output = result.timedOut && result.finalOutput ? result.finalOutput : getFinalOutput(result.messages ?? []);
 			emitUpdateSnapshot(output || "(running...)");
 		};
 
@@ -1095,16 +1028,11 @@ async function runSingleAttempt(
 				if (evt.message.role === "assistant") {
 					result.usage.turns++;
 					progress.turnCount = result.usage.turns;
-					const stopReason = (evt.message as { stopReason?: string }).stopReason;
 					const toolCalls = Array.isArray(evt.message.content)
 						? evt.message.content.filter((part) => (part as { type?: string }).type === "toolCall")
 						: [];
 					const hasToolCall = toolCalls.length > 0;
-					const terminalAssistantStop = stopReason === "stop" && !hasToolCall;
-					const terminalStructuredOutputCall = Boolean(options.structuredOutput)
-						&& toolCalls.length === 1
-						&& (toolCalls[0] as { name?: string }).name === "structured_output";
-					updateTurnBudget(result.usage.turns, terminalAssistantStop || terminalStructuredOutputCall, hasToolCall || Boolean(progress.currentTool));
+					const terminalAssistantStop = (evt.message as { stopReason?: string }).stopReason === "stop" && !hasToolCall;
 					const u = evt.message.usage;
 					if (u) {
 						const window = (u.input || 0) + (u.cacheRead || 0);
@@ -1370,7 +1298,6 @@ async function runSingleAttempt(
 				interrupted: result.interrupted,
 				timedOut: result.timedOut,
 				stopped: result.stopped,
-				turnBudgetExceeded: result.turnBudgetExceeded,
 				forcedDrainAfterFinalSuccess,
 			})) {
 				closeError = formatProcessSignalError(signal!);
@@ -1473,7 +1400,6 @@ async function runSingleAttempt(
 		&& !abortedBySignal
 		&& !result.timedOut
 		&& !result.stopped
-		&& !result.turnBudgetExceeded
 		&& !result.protocolError
 		&& !toolAvailabilityError) {
 		const processExitCode = result.exitCode;
@@ -1572,14 +1498,6 @@ async function runSingleAttempt(
 		fullOutput = fullOutput.trim()
 			? `${timeoutMessage}\n\n${result.timeoutRecovery.message}\n\nPartial output before timeout:\n${fullOutput}`
 			: `${timeoutMessage}\n\n${result.timeoutRecovery.message}`;
-	} else if (result.turnBudgetExceeded && result.turnBudget) {
-		fullOutput = formatTurnBudgetOutput(turnBudgetExceededMessage(result.turnBudget, result.turnBudget.turnCount), fullOutput);
-	} else if (result.turnBudget?.outcome === "termination-deferred") {
-		const note = turnBudgetDeferredNote(result.turnBudget, result.turnBudget.terminationDeferredAtTurn ?? result.turnBudget.turnCount);
-		fullOutput = fullOutput.trim() ? `${note}\n\n${fullOutput}` : note;
-	} else if (result.wrapUpRequested && result.turnBudget?.outcome === "wrap-up-requested") {
-		const note = turnBudgetSoftNote(result.turnBudget, result.turnBudget.wrapUpRequestedAtTurn ?? result.turnBudget.turnCount);
-		fullOutput = fullOutput.trim() ? `${note}\n\n${fullOutput}` : note;
 	}
 	const completionGuardEnabled = isAgentContractV1(options.agentContract) ? agent.completionGuard === true : agent.completionGuard !== false;
 	const completionGuard = ((result.exitCode === 0 && !result.error) || toolAvailabilityError) && completionGuardEnabled
@@ -1993,7 +1911,7 @@ async function runSyncCompletionInner(
 			// Preserve the legacy intercom handoff contract: once this logical run has
 			// been handed to a supervisor, terminating that attempt must not launch a
 			// startup retry or model fallback. Explicit user detach retains fallback.
-			if (intercomDetached || result.timedOut || result.turnBudgetExceeded) break modelAttemptsLoop;
+			if (intercomDetached || result.timedOut) break modelAttemptsLoop;
 			if (attemptSucceeded) break modelAttemptsLoop;
 
 			const startupFailure = isRetryableSubagentStartupFailure({
@@ -2010,7 +1928,6 @@ async function runSyncCompletionInner(
 				interrupted: result.interrupted,
 				timedOut: result.timedOut,
 				stopped: result.stopped,
-				turnBudgetExceeded: result.turnBudgetExceeded,
 			});
 			const retryDelayMs = SUBAGENT_STARTUP_RETRY_DELAYS_MS[startupAttemptIndex];
 			if (startupFailure && retryDelayMs !== undefined) {
@@ -2142,8 +2059,6 @@ async function runSyncCompletionInner(
 			result.acceptance = buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "stopped", message: "Acceptance was not evaluated because the subagent was stopped." });
 		} else if (result.timedOut) {
 			result.acceptance = buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "timeout", message: "Acceptance was not evaluated because the subagent timed out." });
-		} else if (result.turnBudgetExceeded) {
-			result.acceptance = buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "turn-budget", message: "Acceptance was not evaluated because the subagent exceeded its turn budget." });
 		} else {
 			result.acceptance = await evaluateAcceptance({
 				acceptance: effectiveAcceptance,

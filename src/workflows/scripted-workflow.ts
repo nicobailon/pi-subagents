@@ -1111,7 +1111,7 @@ function resolveWorkflowParserEntry(): string {
 	}
 }
 
-const AUTO_RESUME_PARAM_KEYS = ["acceptance", "agentContract", "index", "intercomBridge", "label", "maxRuntimeMs", "output", "outputMode", "outputSchema", "phase", "skill", "skills", "task", "timeoutMs", "toolBudget", "turnBudget", "worktree"] as const;
+const AUTO_RESUME_PARAM_KEYS = ["acceptance", "agentContract", "index", "intercomBridge", "label", "maxRuntimeMs", "output", "outputMode", "outputSchema", "phase", "skill", "skills", "task", "timeoutMs", "toolBudget", "worktree"] as const;
 
 function isZeroUsage(usage: unknown): boolean {
 	if (!isRecord(usage)) return false;

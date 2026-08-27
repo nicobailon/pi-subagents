@@ -262,12 +262,11 @@ describe("workflow launch params", () => {
 	it("preserves execution limits and fan-out identity when routing retained resume items", () => {
 		assert.deepEqual(
 			prepareWorkflowLaunchParams(
-				{ turnBudget: { maxTurns: 8 }, toolBudget: { hard: 12, block: ["read"] } },
+				{ toolBudget: { hard: 12, block: ["read"] } },
 				{
 					resume: " retained-run ",
 					task: "Continue carefully",
 					maxRuntimeMs: 5_000,
-					turnBudget: { maxTurns: 3, graceTurns: 1 },
 					toolBudget: { soft: 2, hard: 4, block: "*" },
 				},
 				"workflow-run",
@@ -283,7 +282,6 @@ describe("workflow launch params", () => {
 				runFanoutBudget: { version: 1, rootRunId: "root-run", directory: "/tmp/fanout", limit: 64, parentPath: "parent/workflow[continue]" },
 				mission: false,
 				timeoutMs: 5_000,
-				turnBudget: { maxTurns: 3, graceTurns: 1 },
 				toolBudget: { soft: 2, hard: 4, block: "*" },
 			},
 		);
