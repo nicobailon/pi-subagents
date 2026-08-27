@@ -1003,6 +1003,54 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
+	it("ignores the current stale UI context during runtime reload cleanup", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-stale-ui-reload-"));
+		const configDir = path.join(agentDir, "extensions", "subagent");
+		fs.mkdirSync(configDir, { recursive: true });
+		fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ asyncWidget: false, fleetView: false }), "utf-8");
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			const handlers = new Map();
+			const events = { on() { return () => {}; }, emit() {} };
+			const fakePi = new Proxy({
+				events,
+				on(channel, handler) { handlers.set(channel, handler); },
+				registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+				sendMessage() {}, getSessionName() { return undefined; },
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			let stale = false;
+			const ctx = {
+				cwd: process.cwd(),
+				get hasUI() {
+					if (stale) throw new Error("This extension ctx is stale after session replacement or reload.");
+					return true;
+				},
+				ui: {
+					setWidget() {}, requestRender() {}, setToolsExpanded() {}, getToolsExpanded() { return false; },
+					theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } },
+				},
+				sessionManager: { getSessionId() { return "stale-ui-session"; }, getSessionFile() { return null; }, getEntries() { return []; } },
+				modelRegistry: { getAvailable() { return []; } },
+			};
+			registerSubagentExtension(fakePi);
+			handlers.get("session_start")({ reason: "startup" }, ctx);
+			stale = true;
+			handlers.get("session_shutdown")({ reason: "reload" });
+		`;
+
+		try {
+			const env = parentToolEnv(agentDir);
+			env.PI_CODING_AGENT_DIR = agentDir;
+			execFileSync(
+				process.execPath,
+				["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+				{ cwd: projectRoot, env, stdio: "pipe" },
+			);
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("claims the explicit predecessor session during session replacement", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-session-transition-"));
 		const configDir = path.join(agentDir, "extensions", "subagent");

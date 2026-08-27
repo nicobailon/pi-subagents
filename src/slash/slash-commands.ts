@@ -449,50 +449,76 @@ function getProfileWorkerModel(profile: { subagents?: { agentOverrides?: Record<
 	return typeof model === "string" && model.trim() ? model.trim() : undefined;
 }
 
+function isStaleExtensionContextError(error: unknown): boolean {
+	return error instanceof Error
+		&& (error.message.includes("This extension ctx is stale")
+			|| error.message.includes("Extension context no longer active"));
+}
+
+function slashHasUI(ctx: ExtensionContext): boolean | undefined {
+	try {
+		return ctx.hasUI;
+	} catch (error) {
+		if (isStaleExtensionContextError(error)) return undefined;
+		throw error;
+	}
+}
+
 
 async function requestSlashRun(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	requestId: string,
 	params: SubagentParamsLike,
+	signal?: AbortSignal,
 ): Promise<SlashSubagentResponse> {
 	return new Promise((resolve, reject) => {
 		let done = false;
 		let started = false;
-
-		const startTimeoutMs = 15_000;
-		const startTimeout = setTimeout(() => {
-			finish(() => reject(new Error(
-				"Slash subagent bridge did not start within 15s. Ensure the extension is loaded correctly.",
-			)));
-		}, startTimeoutMs);
+		let startTimeout: ReturnType<typeof setTimeout> | undefined;
 
 		const onStarted = (data: unknown) => {
-			if (done || !data || typeof data !== "object") return;
+			if (done || signal?.aborted || !data || typeof data !== "object") return;
 			if ((data as { requestId?: unknown }).requestId !== requestId) return;
 			started = true;
-			clearTimeout(startTimeout);
-			if (ctx.hasUI) ctx.ui.setStatus("subagent-slash", "running...");
+			if (startTimeout) clearTimeout(startTimeout);
+			try {
+				if (ctx.hasUI) ctx.ui.setStatus("subagent-slash", "running...");
+			} catch (error) {
+				if (isStaleExtensionContextError(error)) {
+					finish(() => reject(error));
+					return;
+				}
+				throw error;
+			}
 		};
 
 		const onResponse = (data: unknown) => {
-			if (done || !data || typeof data !== "object") return;
+			if (done || signal?.aborted || !data || typeof data !== "object") return;
 			const response = data as Partial<SlashSubagentResponse>;
 			if (response.requestId !== requestId) return;
-			clearTimeout(startTimeout);
+			if (startTimeout) clearTimeout(startTimeout);
 			finish(() => resolve(response as SlashSubagentResponse));
 		};
 
 		const onUpdate = (data: unknown) => {
-			if (done || !data || typeof data !== "object") return;
+			if (done || signal?.aborted || !data || typeof data !== "object") return;
 			const update = data as SlashSubagentUpdate;
 			if (update.requestId !== requestId) return;
 			applySlashUpdate(requestId, update);
-			if (!ctx.hasUI) return;
-			const tool = update.currentTool ? ` ${update.currentTool}` : "";
-			const count = update.toolCount ?? 0;
-			const liveDetailKey = keyText("app.tools.expand");
-			ctx.ui.setStatus("subagent-slash", `${count} tools${tool} | ${liveDetailKey} live detail`);
+			try {
+				if (!ctx.hasUI) return;
+				const tool = update.currentTool ? ` ${update.currentTool}` : "";
+				const count = update.toolCount ?? 0;
+				const liveDetailKey = keyText("app.tools.expand");
+				ctx.ui.setStatus("subagent-slash", `${count} tools${tool} | ${liveDetailKey} live detail`);
+			} catch (error) {
+				if (isStaleExtensionContextError(error)) {
+					finish(() => reject(error));
+					return;
+				}
+				throw error;
+			}
 		};
 
 		const onTerminalInput = ctx.hasUI
@@ -508,18 +534,43 @@ async function requestSlashRun(
 		const unsubResponse = pi.events.on(SLASH_SUBAGENT_RESPONSE_EVENT, onResponse);
 		const unsubUpdate = pi.events.on(SLASH_SUBAGENT_UPDATE_EVENT, onUpdate);
 
+		let onAbort: () => void;
 		const finish = (next: () => void) => {
 			if (done) return;
 			done = true;
-			clearTimeout(startTimeout);
+			if (startTimeout) clearTimeout(startTimeout);
 			unsubStarted();
 			unsubResponse();
 			unsubUpdate();
-			onTerminalInput?.();
+			try {
+				onTerminalInput?.();
+			} catch (error) {
+				if (!isStaleExtensionContextError(error)) throw error;
+			}
+			signal?.removeEventListener("abort", onAbort);
 			next();
 		};
+		onAbort = () => finish(() => reject(new Error("Slash subagent request canceled during session replacement or reload.")));
+		startTimeout = setTimeout(() => {
+			finish(() => reject(new Error(
+				"Slash subagent bridge did not start within 15s. Ensure the extension is loaded correctly.",
+			)));
+		}, 15_000);
 
-		pi.events.emit(SLASH_SUBAGENT_REQUEST_EVENT, { requestId, params, ctx });
+		if (signal?.aborted) {
+			onAbort();
+			return;
+		}
+		signal?.addEventListener("abort", onAbort, { once: true });
+		try {
+			pi.events.emit(SLASH_SUBAGENT_REQUEST_EVENT, { requestId, params, ctx });
+		} catch (error) {
+			if (isStaleExtensionContextError(error)) {
+				finish(() => reject(error));
+				return;
+			}
+			throw error;
+		}
 
 		// Bridge emits STARTED synchronously during REQUEST emit.
 		// If not started, no bridge received the request.
@@ -585,62 +636,74 @@ async function runSlashSubagent(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	params: SubagentParamsLike,
+	signal?: AbortSignal,
 ): Promise<void> {
-	if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
+	if (signal?.aborted) return;
+	const initialHasUI = slashHasUI(ctx);
+	if (initialHasUI === undefined) return;
+	try {
+		if (initialHasUI) ctx.ui.setToolsExpanded(false);
+	} catch (error) {
+		if (isStaleExtensionContextError(error)) return;
+		throw error;
+	}
 	const requestId = randomUUID();
 	const initialDetails = buildSlashInitialResult(requestId, params);
 	const initialText = extractSlashMessageText(initialDetails.result.content) || "Running subagent...";
-	pi.sendMessage({
-		customType: SLASH_RESULT_TYPE,
-		content: initialText,
-		display: true,
-		details: initialDetails,
-	});
+	try {
+		pi.sendMessage({
+			customType: SLASH_RESULT_TYPE,
+			content: initialText,
+			display: true,
+			details: initialDetails,
+		});
+	} catch (error) {
+		if (isStaleExtensionContextError(error)) return;
+		throw error;
+	}
 	persistSlashSessionSnapshot(ctx);
 
 	try {
-		const response = await requestSlashRun(pi, ctx, requestId, params);
+		const response = await requestSlashRun(pi, ctx, requestId, params, signal);
+		if (signal?.aborted) return;
+		const hasUI = slashHasUI(ctx);
+		if (hasUI === undefined) return;
 		const finalDetails = finalizeSlashResult(response);
 		pi.sendMessage({
 			customType: SLASH_RESULT_TYPE,
 			content: buildSlashExportText(response),
-			display: !ctx.hasUI,
+			display: !hasUI,
 			details: finalDetails,
 		});
 		persistSlashSessionSnapshot(ctx);
-		if (ctx.hasUI) {
+		if (hasUI) {
 			ctx.ui.setStatus("subagent-slash", undefined);
 		}
-		if (response.isError && ctx.hasUI) {
+		if (response.isError && hasUI) {
 			ctx.ui.notify(response.errorText || "Subagent failed", "error");
 		}
 	} catch (error) {
+		if (signal?.aborted || isStaleExtensionContextError(error)) return;
 		const message = error instanceof Error ? error.message : String(error);
+		const hasUI = slashHasUI(ctx);
+		if (hasUI === undefined) return;
 		const failedDetails = failSlashResult(requestId, params, message);
 		pi.sendMessage({
 			customType: SLASH_RESULT_TYPE,
 			content: `## Subagent result\n\n${message}`,
-			display: !ctx.hasUI,
+			display: !hasUI,
 			details: failedDetails,
 		});
 		persistSlashSessionSnapshot(ctx);
-		if (ctx.hasUI) {
+		if (hasUI) {
 			ctx.ui.setStatus("subagent-slash", undefined);
 		}
 		if (message === "Cancelled") {
-			if (ctx.hasUI) ctx.ui.notify("Cancelled", "warning");
+			if (hasUI) ctx.ui.notify("Cancelled", "warning");
 			return;
 		}
-		if (ctx.hasUI) ctx.ui.notify(message, "error");
+		if (hasUI) ctx.ui.notify(message, "error");
 	}
-}
-
-function launchSlashSubagent(
-	pi: ExtensionAPI,
-	ctx: ExtensionContext,
-	params: SubagentParamsLike,
-): void {
-	void runSlashSubagent(pi, ctx, params);
 }
 
 function slashRunWorkflowScript(key: string, child: Record<string, unknown>): string {
@@ -651,12 +714,23 @@ export function registerSlashCommands(
 	pi: ExtensionAPI,
 	state: SubagentState,
 	options: { fleetKeybindings?: FleetKeybindingsConfig; foregroundDetachShortcut?: string } = {},
-): void {
+): { dispose: () => void } {
 	let fleetOpen = false;
+	let disposed = false;
+	const pendingRequests = new Set<AbortController>();
+	const runCommand = (ctx: ExtensionContext, params: SubagentParamsLike): Promise<void> => {
+		if (disposed) return Promise.resolve();
+		const controller = new AbortController();
+		pendingRequests.add(controller);
+		return runSlashSubagent(pi, ctx, params, controller.signal).finally(() => pendingRequests.delete(controller));
+	};
+	const launchCommand = (ctx: ExtensionContext, params: SubagentParamsLike): void => {
+		void runCommand(ctx, params);
+	};
 	const showFleet = async (ctx: ExtensionContext) => {
 		state.lastUiContext = ctx;
 		if (!ctx.hasUI) {
-			await runSlashSubagent(pi, ctx, { action: "status", view: "fleet" });
+			await runCommand(ctx, { action: "status", view: "fleet" });
 			return;
 		}
 		if (fleetOpen) {
@@ -712,7 +786,7 @@ export function registerSlashCommands(
 			if (inline.skill !== undefined) child.skill = inline.skill;
 			if (inline.model) child.model = inline.model;
 			if (fork) child.context = "fork";
-			launchSlashSubagent(pi, ctx, { workflowScript: slashRunWorkflowScript("run", child), async: bg ? true : false });
+			launchCommand(ctx, { workflowScript: slashRunWorkflowScript("run", child), async: bg ? true : false });
 		},
 	});
 
@@ -726,7 +800,7 @@ export function registerSlashCommands(
 	pi.registerCommand("subagents-doctor", {
 		description: "Show subagent diagnostics",
 		handler: async (_args, ctx) => {
-			await runSlashSubagent(pi, ctx, { action: "doctor" });
+			await runCommand(ctx, { action: "doctor" });
 		},
 	});
 
@@ -758,7 +832,7 @@ export function registerSlashCommands(
 				ctx.ui.notify("Usage: /subagents-guide [topic]", "error");
 				return;
 			}
-			await runSlashSubagent(pi, ctx, { action: "guide", ...(topic ? { topic } : {}) });
+			await runCommand(ctx, { action: "guide", ...(topic ? { topic } : {}) });
 		},
 	});
 
@@ -771,7 +845,7 @@ export function registerSlashCommands(
 				ctx.ui.notify("Usage: /subagents-refine <agent>", "error");
 				return;
 			}
-			await runSlashSubagent(pi, ctx, { action: "refine", agent: parts[0] });
+			await runCommand(ctx, { action: "refine", agent: parts[0] });
 		},
 	});
 
@@ -830,7 +904,7 @@ export function registerSlashCommands(
 				return;
 			}
 			if (id) {
-				await runSlashSubagent(pi, ctx, childId ? { action: "stop", id, childId } : { action: "stop", id });
+				await runCommand(ctx, childId ? { action: "stop", id, childId } : { action: "stop", id });
 				return;
 			}
 
@@ -862,10 +936,10 @@ export function registerSlashCommands(
 			);
 			if (!result?.confirmed || !result.target) return;
 			if (result.target.kind === "scheduled") {
-				await runSlashSubagent(pi, ctx, { action: "schedule.pause", id: result.target.id });
+				await runCommand(ctx, { action: "schedule.pause", id: result.target.id });
 				return;
 			}
-			await runSlashSubagent(pi, ctx, { action: "stop", id: result.target.id });
+			await runCommand(ctx, { action: "stop", id: result.target.id });
 		},
 	});
 
@@ -920,7 +994,7 @@ export function registerSlashCommands(
 				else if (resolution.child.step.runId) targetId = resolution.child.step.runId;
 				else childIndex = resolution.child.index;
 			}
-			await runSlashSubagent(pi, ctx, {
+			await runCommand(ctx, {
 				action: "steer",
 				id: targetId,
 				message,
@@ -936,17 +1010,17 @@ export function registerSlashCommands(
 	registerPromptWorkflowCommands({
 		pi,
 		run: async (params, ctx) => {
-			launchSlashSubagent(pi, ctx, params);
+			launchCommand(ctx, params);
 		},
 	});
 
 	pi.registerCommand("subagents-models", {
 		description: "Show runtime-loaded builtin subagent models",
 		getArgumentCompletions: makeBuiltinAgentNameCompletions(),
-		handler: async (args, ctx) => {
-			const trimmed = args.trim();
-			if (!trimmed) {
-				await runSlashSubagent(pi, ctx, { action: "models" });
+			handler: async (args, ctx) => {
+				const trimmed = args.trim();
+				if (!trimmed) {
+					await runCommand(ctx, { action: "models" });
 				return;
 			}
 			const parts = trimmed.split(/\s+/).filter(Boolean);
@@ -959,7 +1033,7 @@ export function registerSlashCommands(
 				ctx.ui.notify(`Unknown builtin agent: ${agent}`, "error");
 				return;
 			}
-			await runSlashSubagent(pi, ctx, { action: "models", agent });
+			await runCommand(ctx, { action: "models", agent });
 		},
 	});
 
@@ -1132,4 +1206,14 @@ export function registerSlashCommands(
 		},
 	});
 
+	return {
+		dispose: () => {
+			if (disposed) return;
+			disposed = true;
+			// A reload revokes the command context; do not let delayed responses
+			// resume a command against the old Pi context.
+			for (const controller of pendingRequests) controller.abort();
+			pendingRequests.clear();
+		},
+	};
 }

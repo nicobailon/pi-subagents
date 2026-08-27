@@ -293,7 +293,9 @@ function isSlashResultError(result: { details?: Details }): boolean {
 }
 
 function isStaleExtensionContextError(error: unknown): boolean {
-	return error instanceof Error && error.message.includes("Extension context no longer active");
+	return error instanceof Error
+		&& (error.message.includes("This extension ctx is stale")
+			|| error.message.includes("Extension context no longer active"));
 }
 
 function rebuildSlashResultContainer(
@@ -756,7 +758,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}
 	});
 
-	registerSlashCommands(pi, state, {
+	const disposeSlashCommands = registerSlashCommands(pi, state, {
 		fleetKeybindings: config.fleetKeybindings,
 		foregroundDetachShortcut: config.foregroundDetachShortcut,
 	});
@@ -940,6 +942,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			if (runtimeCleaned) return;
 			runtimeCleaned = true;
 			const shuttingDownParentSession = parentSessionEnvValue;
+			// Workflow continuations retain their launch context; abort them before
+			// teardown so a reload cannot launch through a stale context.
+			for (const controller of state.workflowControllers?.values() ?? []) {
+				if (!controller.signal.aborted) controller.abort(new Error("Workflow stopped because the extension session was replaced or reloaded."));
+			}
+			state.workflowControllers?.clear();
+			state.workflowChildStops?.clear();
 			clearRuntimeAgentsForPi(pi);
 			clearTimeout(resultIndexCleanupTimer);
 			clearTimeout(asyncRetentionTimer);
@@ -963,6 +972,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 					// Best effort cleanup during shutdown or reload.
 				}
 			}
+			disposeSlashCommands.dispose();
 			slashBridge.cancelAll();
 			slashBridge.dispose();
 			promptTemplateBridge.cancelAll();

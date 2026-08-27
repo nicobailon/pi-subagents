@@ -59,7 +59,7 @@ interface RegisterSlashCommandsModule {
 			resultFileCoalescer: { schedule(file: string, delayMs?: number): boolean; clear(): void };
 		},
 		options?: { foregroundDetachShortcut?: string },
-	) => void;
+	) => { dispose(): void };
 }
 
 interface SlashLiveStateModule {
@@ -896,6 +896,87 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		assert.match((sent[1] as { content?: string }).content ?? "", /Commit finished/);
 		assert.equal(sessionManager.rewrites, 2);
 		assert.equal(sessionManager.flushed, true);
+	});
+
+	it("/run abandons captured context when commands are disposed during reload", async () => {
+		const sent: unknown[] = [];
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		let deliverResponse: (() => void) | undefined;
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
+			const requestId = (data as { requestId: string }).requestId;
+			events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId });
+			deliverResponse = () => events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
+				requestId,
+				result: {
+					content: [{ type: "text", text: "late result" }],
+					details: { mode: "single", results: [] },
+				},
+				isError: false,
+			});
+		});
+
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage(message: unknown) { sent.push(message); },
+		};
+		const disposer = registerSlashCommands!(pi, createState(process.cwd()));
+		let stale = false;
+		const ctx = createCommandContext({ hasUI: true });
+		Object.defineProperty(ctx, "hasUI", {
+			get() {
+				if (stale) throw new Error("This extension ctx is stale after session replacement or reload.");
+				return true;
+			},
+		});
+
+		await commands.get("run")!.handler("scout Inspect this", ctx);
+		assert.equal(sent.length, 1);
+		stale = true;
+		disposer.dispose();
+		deliverResponse?.();
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		assert.equal(sent.length, 1, "disposed slash work must not use the stale context for a final message");
+	});
+
+	it("/run handles a start timeout without an uninitialized finish callback", async () => {
+		const sent: unknown[] = [];
+		const commands = new Map<string, RegisteredSlashCommand>();
+		const pi = {
+			events: createEventBus(),
+			registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+			registerShortcut() {},
+			sendMessage(message: unknown) { sent.push(message); },
+		};
+		const disposer = registerSlashCommands!(pi, createState(process.cwd()));
+		const realSetTimeout = globalThis.setTimeout;
+		let timeoutCalls = 0;
+		const immediateTimeout = (...args: Parameters<typeof setTimeout>): ReturnType<typeof setTimeout> => {
+			const [handler, delay, ...rest] = args;
+			if (delay === 15_000) {
+				timeoutCalls += 1;
+				(handler as (...values: unknown[]) => void)(...rest);
+				return 0 as ReturnType<typeof setTimeout>;
+			}
+			return realSetTimeout(...args);
+		};
+		globalThis.setTimeout = immediateTimeout;
+		try {
+			await commands.get("run")!.handler("scout Inspect this", createCommandContext());
+			await new Promise<void>((resolve) => setImmediate(resolve));
+		} finally {
+			globalThis.setTimeout = realSetTimeout;
+			disposer.dispose();
+		}
+
+		assert.equal(timeoutCalls, 1);
+		assert.equal(sent.length, 2);
+		assert.match((sent[1] as { content?: string }).content ?? "", /did not start within 15s/);
 	});
 
 	it("/run reports discovery evidence for a missing agent", async () => {

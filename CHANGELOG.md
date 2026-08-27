@@ -20,6 +20,7 @@
 - Show workflow child labels and phases in async status progress while preserving stable workflow keys.
 
 ### Fixed
+- Stop stale extension and slash-command contexts from escaping during reload or session replacement.
 - Format million-scale context limits as `1M` instead of `1000k` in live status displays.
 - Accept path-like Pi session ids up to 4,096 characters when snapshotting background work. Thanks to [@dvishoot](https://github.com/dvishoot) for #1616.
 - Accept bare leaf model ids reported by provider drivers when verifying provider-qualified launch candidates. Thanks to [@lallenlowe](https://github.com/lallenlowe) for #1609.

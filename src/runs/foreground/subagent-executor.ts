@@ -4751,7 +4751,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					const { action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = workflowRequest;
 					const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
 					const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
-					const workflowAggregateOutputPath = resolveWorkflowAggregateOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, workflowRunId));
+					const workflowAggregateOutputPath = resolveWorkflowAggregateOutputPath(workflowOutput, parentCwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, workflowRunId));
 					const claimedOutputPaths = new Map<string, string>();
 					const childOutputOverrides = new Map<string, string>();
 					const producedChildOutputPaths = new Set<string>();
@@ -4864,7 +4864,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							...(workflowState ? { state: workflowState } : {}),
 							onTrace: updateTrace,
 							admit: (calls) => {
-								const outputClaims = workflowChildOutputClaims({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: discoverWorkflowAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, state: deps.state, claimedOutputPaths, entries: calls });
+								const outputClaims = workflowChildOutputClaims({ ctxCwd: parentCwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: discoverWorkflowAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, state: deps.state, claimedOutputPaths, entries: calls });
 								if (outputClaims.error) throw new Error(outputClaims.error);
 								status.runFanoutBudget = claimRunFanoutBatch(workflowFanoutBudget, calls.map(({ key }) => `workflow[${key}]`));
 								if (outputClaims.claims) applyWorkflowChildOutputClaims(claimedOutputPaths, outputClaims.claims);
@@ -4892,7 +4892,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								});
 								const result = await runMissionWorkflowChild(missionBinding, workflowRunId, key, childPhase, () => {
 									const childRequest = bindMissionWorkflowChildAsyncLaunch(
-										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: discoverWorkflowAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt, capabilityCeiling: workflowCapabilityCeiling } }), runFanoutAdmitted: admission.admitted },
+										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: parentCwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: discoverWorkflowAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt, capabilityCeiling: workflowCapabilityCeiling } }), runFanoutAdmitted: admission.admitted },
 										missionBinding,
 										deps.asyncByDefault,
 									);
