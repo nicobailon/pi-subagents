@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
-import { cleanupResultIndexes, removeResultIndex, resultCandidateFilesForSession, resultFilesForSession, resultFilesForToolCall, resultPayloadPathForIndexedRun, resultPayloadPathForSessionRun, writeAsyncResultFile, writePendingAsyncResultFile, writeResultIndexForData } from "../../src/runs/background/result-files.ts";
+import { cleanupResultIndexes, removeResultIndex, resultCandidateFilesForSession, resultFilesForSession, resultFilesForToolCall, resultPayloadPathForIndexedRun, resultPayloadPathForMissionObserverRun, resultPayloadPathForSessionRun, writeAsyncResultFile, writePendingAsyncResultFile, writeResultIndexForData } from "../../src/runs/background/result-files.ts";
 
 const JSON_EXTENSION = ".json";
 const MAX_JSON_FILE_STEM_BYTES = MAX_INDEX_SEGMENT_BYTES - Buffer.byteLength(JSON_EXTENSION, "utf-8");
@@ -171,6 +171,22 @@ describe("result file indexes", () => {
 			assert.equal(resultPayloadPathForIndexedRun(resultsDir, "blocked"), undefined);
 			assert.deepEqual(resultCandidateFilesForSession(resultsDir, "session-a"), ["blocked.json"]);
 		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("treats a missing mission observer index directory as absent without logging", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-observer-enotdir-"));
+		const originalError = console.error;
+		const errors: unknown[][] = [];
+		try {
+			fs.writeFileSync(path.join(resultsDir, "result-index"), "not a directory", "utf-8");
+			console.error = (...args: unknown[]) => { errors.push(args); };
+
+			assert.equal(resultPayloadPathForMissionObserverRun(resultsDir, "mission-run"), undefined);
+			assert.deepEqual(errors, []);
+		} finally {
+			console.error = originalError;
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
 	});

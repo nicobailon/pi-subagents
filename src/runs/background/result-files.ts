@@ -343,7 +343,8 @@ export function resultPayloadPathForMissionObserverRun(resultsDir: string, runId
 		if (!entry || entry.runId !== runId) return undefined;
 		return resultPayloadLocationFromIndex(resultsDir, entry)?.path;
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !isUnaddressableResultCandidate(error)) console.error(`Ignoring invalid async result observer index for '${runId}':`, error);
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code !== "ENOENT" && code !== "ENOTDIR" && !isUnaddressableResultCandidate(error)) console.error(`Ignoring invalid async result observer index for '${runId}':`, error);
 		return undefined;
 	}
 }
