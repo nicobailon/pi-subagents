@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Give every subagent child session a human-readable display name (`agent: task excerpt`, workflow node label preferred): applied to the child's own Pi session via `pi.setSessionName` (intercom routing targets keep precedence) and echoed as an optional `sessionName` field across result, live-progress, async status, workflow, nested, and intercom payloads so hosts can label child runs without reading child session files.
 - Add `/subagents-steer <run-id> [--child <child-id>] <message>`, a host bridge for steering live async runs from non-TUI sessions and RPC hosts, with fail-closed child-id resolution and pause-and-revive recovery disabled so callers keep exact-child authority. Thanks to [@yanqianglu](https://github.com/yanqianglu) for #1608.
 - Add explicit `allowNestedSubagents` agent authorization for nested fanout without replacing inherited tools or extensions. Thanks to [@tutu359](https://github.com/tutu359) for #1587.
 - Accept a child id on `/subagents-stop <run-id> <child-id>` so RPC hosts and non-TUI sessions can stop one child of a multi-child async run or workflow without stopping the whole run. Thanks to [@yanqianglu](https://github.com/yanqianglu) for #1603.

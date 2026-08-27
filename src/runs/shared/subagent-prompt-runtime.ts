@@ -32,6 +32,9 @@ import { drainOutstandingWork } from "../background/auto-drain.ts";
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
 export const SUBAGENT_INTERCOM_SESSION_NAME_ENV = "PI_SUBAGENT_INTERCOM_SESSION_NAME";
+/** Human-readable child display name (agent + task excerpt) set by the parent
+ *  at launch; applied via pi.setSessionName when no intercom target exists. */
+export const SUBAGENT_SESSION_NAME_ENV = "PI_SUBAGENT_SESSION_NAME";
 const STEERING_LEGACY_SETTLE_FALLBACK_MS = 1000;
 const STEERING_SAFETY_POLL_INTERVAL_MS = 5000;
 
@@ -756,9 +759,14 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	onRuntimeEvent("before_agent_start", async (event: unknown) => {
 		if (!event || typeof event !== "object" || !("systemPrompt" in event) || typeof event.systemPrompt !== "string") return undefined;
 		registerNativeSupervisorClientOnce();
+		// The intercom target is a routing address and always wins; the display
+		// name (agent + task excerpt, computed by the parent at launch) only
+		// applies when the bridge is not addressing this child.
 		const intercomSessionName = process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV]?.trim();
-		if (intercomSessionName && typeof pi.setSessionName === "function") {
-			pi.setSessionName(intercomSessionName);
+		const displaySessionName = process.env[SUBAGENT_SESSION_NAME_ENV]?.trim();
+		const childSessionName = intercomSessionName || displaySessionName;
+		if (childSessionName && typeof pi.setSessionName === "function") {
+			pi.setSessionName(childSessionName);
 		}
 
 		const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);

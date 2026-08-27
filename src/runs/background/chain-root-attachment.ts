@@ -12,6 +12,8 @@ export interface ImportedAsyncRoot {
 
 export interface ImportedAsyncRootResult {
 	agent: string;
+	/** Human-readable display name for the child session, when derived at launch. */
+	sessionName?: string;
 	output: string;
 	success: boolean;
 	exitCode: number;
@@ -46,6 +48,7 @@ interface AsyncResultFile {
 	stopped?: boolean;
 	results?: Array<{
 		agent?: string;
+		sessionName?: string;
 		output?: string;
 		error?: string;
 		success?: boolean;
@@ -124,6 +127,7 @@ function outputFromTerminalStatus(root: ImportedAsyncRoot, status: AsyncStatus, 
 		error: message,
 		...(timedOut ? { timedOut: true } : {}),
 		...(stopped ? { stopped: true } : {}),
+		...(step?.sessionName ? { sessionName: step.sessionName } : {}),
 		...(step?.sessionFile ?? status.sessionFile ? { sessionFile: step?.sessionFile ?? status.sessionFile } : {}),
 		...(step?.model ? { model: step.model } : {}),
 		...(step?.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
@@ -149,6 +153,7 @@ function outputFromTimeout(root: ImportedAsyncRoot, status: AsyncStatus | null, 
 		exitCode: 1,
 		error: message,
 		timedOut: true,
+		...(step?.sessionName ? { sessionName: step.sessionName } : {}),
 		...(step?.sessionFile ?? status?.sessionFile ? { sessionFile: step?.sessionFile ?? status?.sessionFile } : {}),
 		...(step?.model ? { model: step.model } : {}),
 		...(step?.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
@@ -178,6 +183,7 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 		...(error ? { error } : {}),
 		...(timedOut ? { timedOut: true } : {}),
 		...(stopped ? { stopped: true } : {}),
+		...(child?.sessionName ?? step?.sessionName ? { sessionName: child?.sessionName ?? step?.sessionName } : {}),
 		...(child?.sessionFile ?? step?.sessionFile ?? status?.sessionFile ? { sessionFile: child?.sessionFile ?? step?.sessionFile ?? status?.sessionFile } : {}),
 		...(child?.intercomTarget ? { intercomTarget: child.intercomTarget } : {}),
 		...(child?.model ?? step?.model ? { model: child?.model ?? step?.model } : {}),

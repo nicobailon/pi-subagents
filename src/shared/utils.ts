@@ -338,6 +338,7 @@ function compactCompletedProgress(progress: AgentProgress): AgentProgress {
 	return {
 		index: progress.index,
 		agent: progress.agent,
+		...(progress.sessionName ? { sessionName: progress.sessionName } : {}),
 		status: progress.status,
 		activityState: progress.activityState,
 		task: "[prompt redacted]",

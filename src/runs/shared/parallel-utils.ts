@@ -6,6 +6,8 @@ export interface RunnerSubagentStep {
 	/** Resolved opt-in rules for native Pi child tool calls. */
 	permissionRules?: import("./permissions.ts").PermissionRules;
 	agent: string;
+	/** Human-readable display name for the child session, derived internally at launch. */
+	sessionName?: string;
 	task: string;
 	runner?: ResolvedRunnerConfig;
 	externalJobFollowUp?: {

@@ -579,14 +579,14 @@ export function formatAsyncResultTranscript(data: {
 	sessionFile?: string;
 	agent?: string;
 	exitCode?: number | null;
-	results?: Array<{ agent?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null }>;
+	results?: Array<{ agent?: string; sessionName?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null }>;
 }, resultPath: string, options: TranscriptOptions = {}): string {
 	const lineLimit = transcriptLineLimit(options.lines);
 	const runId = data.runId ?? data.id ?? path.basename(resultPath, ".json");
 	const children = Array.isArray(data.results)
 		? data.results
 		: data.agent
-			? [{ agent: data.agent, output: data.output, summary: data.summary, sessionFile: data.sessionFile, state: data.state, success: data.success, exitCode: data.exitCode }]
+			? [{ agent: data.agent, sessionName: undefined, output: data.output, summary: data.summary, sessionFile: data.sessionFile, state: data.state, success: data.success, exitCode: data.exitCode }]
 			: [];
 	let index = options.index;
 	if (index !== undefined && !Number.isInteger(index)) throw new Error("Transcript index must be an integer.");

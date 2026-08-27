@@ -321,3 +321,39 @@ describe("workflow receipts", () => {
 		);
 	});
 });
+
+describe("workflow child session names", () => {
+	it("persists a bounded child session name from async status", () => {
+		const summary = workflowChildSummary({
+			parentToolCallId: "tool-call",
+			workflowRunId: "workflow-1",
+			workflowState: "completed",
+			inventoryComplete: true,
+			steps: [{
+				agent: "reviewer",
+				sessionName: "reviewer: Inspect the changed auth middleware",
+				workflowKey: "review",
+				status: "complete",
+			}],
+		});
+		assert.equal(summary.children[0]?.sessionName, "reviewer: Inspect the changed auth middleware");
+	});
+
+	it("rejects unbounded session names in persisted workflow summaries", () => {
+		const root = tempRoot();
+		const asyncDir = path.join(root, "workflow-1");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		writeWorkflowReceipt(asyncDir, {
+			...buildWorkflowReceipt({ workflowRunId: "workflow-1", state: "complete", children: [] }),
+			workflowChildren: {
+				version: 1,
+				parentToolCallId: "tool",
+				workflowRunId: "workflow-1",
+				inventoryComplete: true,
+				workflowState: "completed",
+				children: [{ childId: "review", state: "completed", sessionName: "x".repeat(257) }],
+			},
+		});
+		assert.throws(() => readWorkflowReceipt(root, "workflow-1"), /sessionName is invalid/);
+	});
+});

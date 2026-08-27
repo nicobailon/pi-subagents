@@ -104,6 +104,7 @@ function compactNestedRun(run: NestedRunSummary | PublicNestedRunSummary, depth 
 		})),
 		...(run.asyncDir ? { asyncDir: run.asyncDir } : {}),
 		...(run.sessionId ? { sessionId: run.sessionId } : {}),
+		...(run.sessionName ? { sessionName: run.sessionName } : {}),
 		...(run.sessionFile ? { sessionFile: run.sessionFile } : {}),
 		...(run.intercomTarget ? { intercomTarget: run.intercomTarget } : {}),
 		...(run.ownerIntercomTarget ? { ownerIntercomTarget: run.ownerIntercomTarget } : {}),
@@ -132,6 +133,7 @@ function compactNestedRun(run: NestedRunSummary | PublicNestedRunSummary, depth 
 		...(run.error ? { error: run.error } : {}),
 		...(run.steps?.length ? { steps: run.steps.slice(0, 12).map((step) => ({
 			agent: step.agent,
+			...(step.sessionName ? { sessionName: step.sessionName } : {}),
 			status: step.status,
 			...(step.model ? { model: step.model } : {}),
 			...(step.thinking ? { thinking: step.thinking } : {}),

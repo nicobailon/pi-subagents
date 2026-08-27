@@ -29,6 +29,7 @@ function compactChild(child: ForegroundResumeChild): ForegroundResumeChild {
 	return {
 		agent: child.agent,
 		index: child.index,
+		...(child.sessionName ? { sessionName: child.sessionName } : {}),
 		...(child.context ? { context: child.context } : {}),
 		...(child.sessionFile ? { sessionFile: child.sessionFile } : {}),
 		...(child.model ? { model: child.model } : {}),

@@ -5,6 +5,7 @@ import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { appendJsonl } from "../../shared/artifacts.ts";
 import type { AsyncParallelGroupStatus, AsyncStatus, WorkflowGraphNode, WorkflowGraphSnapshot } from "../../shared/types.ts";
 import { PROMPT_REDACTED, readStatus } from "../../shared/utils.ts";
+import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import type { DynamicRunnerGroup, ParallelStepGroup, RunnerStep, RunnerSubagentStep } from "../shared/parallel-utils.ts";
 import { isDynamicRunnerGroup, isParallelGroup } from "../shared/parallel-utils.ts";
 
@@ -160,8 +161,10 @@ export function statusStepDescription(task: string | undefined): string | undefi
 
 function statusStepForTask(task: RunnerSubagentStep): StatusStep {
 	const description = statusStepDescription(task.task);
+	const sessionName = task.sessionName ?? deriveChildSessionName({ agent: task.agent, task: task.task, label: task.label });
 	return {
 		agent: task.agent,
+		...(sessionName ? { sessionName } : {}),
 		...(description ? { description } : {}),
 		...(task.context ? { context: task.context } : {}),
 		phase: task.phase,

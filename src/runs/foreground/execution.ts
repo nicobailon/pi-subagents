@@ -67,6 +67,7 @@ import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-prog
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { resolvePermissionRules } from "../shared/permissions.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, type SubagentTaskDelivery } from "../shared/pi-args.ts";
+import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -328,6 +329,10 @@ async function runSingleAttempt(
 	assertThinkingWithinCeiling({ model: modelArg, configThinking: effectiveThinking, ceiling: options.thinkingCeiling, agent: agent.name, runId: options.runId });
 	const expectedModelForVerification = shared.verifyModel ? modelArg : undefined;
 	const resolvedThinking = resolveEffectiveThinking(modelArg, effectiveThinking);
+	// Display name for the child session: applied inside the child via
+	// PI_SUBAGENT_SESSION_NAME and echoed back on the result payload so hosts
+	// can label this run without reading the child's session file.
+	const childSessionName = deriveChildSessionName({ agent: agent.name, task });
 	const watchdogConfig = resolveWatchdogConfig(options.cwd ?? runtimeCwd);
 	const childWatchdog = watchdogConfig.ok
 		? resolveChildWatchdogConfig({
@@ -364,6 +369,7 @@ async function runSingleAttempt(
 		cwd: options.cwd ?? runtimeCwd,
 		promptFileStem: agent.name,
 		intercomSessionName: options.intercomSessionName,
+		sessionName: childSessionName,
 		orchestratorIntercomTarget: options.orchestratorIntercomTarget,
 		runId: options.runId,
 		childAgentName: agent.name,
@@ -433,6 +439,7 @@ async function runSingleAttempt(
 			index: options.index ?? 0,
 			agent: agent.name,
 			task,
+			...(childSessionName ? { sessionName: childSessionName } : {}),
 			messages: [],
 			finalOutput: "",
 			exitCode: 1,
@@ -473,6 +480,7 @@ async function runSingleAttempt(
 		index: options.index ?? 0,
 		agent: agent.name,
 		task: shared.originalTask ?? task,
+		...(childSessionName ? { sessionName: childSessionName } : {}),
 		...(options.agentContract ? { agentContract: options.agentContract } : {}),
 		launchContractDigest,
 		launchResolvedExtensions,
@@ -514,6 +522,7 @@ async function runSingleAttempt(
 	const progress: AgentProgress = {
 		index: options.index ?? 0,
 		agent: agent.name,
+		...(childSessionName ? { sessionName: childSessionName } : {}),
 		status: "running",
 		task,
 		skills: shared.resolvedSkillNames,
@@ -1505,6 +1514,7 @@ async function runSingleAttempt(
 	}
 
 	result.progressSummary = {
+		...(childSessionName ? { sessionName: childSessionName } : {}),
 		toolCount: progress.toolCount,
 		tokens: progress.tokens,
 		durationMs: progress.durationMs,
@@ -1656,6 +1666,7 @@ async function runSyncCompletionInner(
 		...options,
 		capabilityCeiling: intersectSubagentCapabilityCeilings(options.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(options.parentSessionId), decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV])),
 	};
+	const childSessionName = deriveChildSessionName({ agent: agentName, task });
 	const agent = agents.find((a) => a.name === agentName);
 	if (!agent) {
 		const diagnosticContext = options.unknownAgentDiagnosticContext
@@ -2074,6 +2085,7 @@ async function runSyncCompletionInner(
 	result.attemptedModels = attemptedModels.length > 0 ? attemptedModels : undefined;
 	result.modelAttempts = modelAttempts.length > 0 ? modelAttempts : undefined;
 	result.progressSummary = {
+		...(childSessionName ? { sessionName: childSessionName } : {}),
 		toolCount: totalToolCount,
 		tokens: aggregateUsage.input + aggregateUsage.output,
 		durationMs: totalDurationMs,

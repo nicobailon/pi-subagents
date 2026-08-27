@@ -38,6 +38,7 @@ export function workflowChildSummary(input: {
 			state,
 			...(bounded(entry.runId, 256) ? { runId: bounded(entry.runId, 256) } : {}),
 			...(previous?.agent ? { agent: previous.agent } : {}),
+			...(previous?.sessionName ? { sessionName: previous.sessionName } : {}),
 			...(previous?.model ? { model: previous.model } : {}),
 			...(previous?.thinking ? { thinking: previous.thinking } : {}),
 		});
@@ -57,6 +58,7 @@ export function workflowChildSummary(input: {
 			state,
 			...(bounded(step.runId, 256) ? { runId: bounded(step.runId, 256) } : {}),
 			...(launchResolved && bounded(step.agent, 256) ? { agent: bounded(step.agent, 256) } : {}),
+			...(bounded(step.sessionName, 256) ? { sessionName: bounded(step.sessionName, 256) } : {}),
 			...(bounded(step.model, 256) ? { model: bounded(step.model, 256) } : {}),
 			...(bounded(step.thinking, 32) ? { thinking: bounded(step.thinking, 32) } : {}),
 		});
@@ -70,6 +72,7 @@ export function workflowChildSummary(input: {
 			state,
 			...(bounded(child.runId, 256) ? { runId: bounded(child.runId, 256) } : {}),
 			...(bounded(child.agent, 256) ? { agent: bounded(child.agent, 256) } : {}),
+			...(bounded(result?.sessionName, 256) ? { sessionName: bounded(result?.sessionName, 256) } : {}),
 			...(bounded(result?.model, 256) ? { model: bounded(result?.model, 256) } : {}),
 			...(bounded(result?.thinking, 32) ? { thinking: bounded(result?.thinking, 32) } : {}),
 		});
@@ -101,14 +104,14 @@ export function parseWorkflowChildSummary(value: unknown): WorkflowChildSummaryV
 	const children = input.children.map((row): WorkflowChildSummaryV1["children"][number] => {
 		if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error("workflowChildren child row is invalid.");
 		const child = row as Record<string, unknown>;
-		if (Object.keys(child).some((key) => !["childId", "runId", "agent", "model", "thinking", "state"].includes(key))) throw new Error("workflowChildren child row has unsupported fields.");
+		if (Object.keys(child).some((key) => !["childId", "runId", "agent", "sessionName", "model", "thinking", "state"].includes(key))) throw new Error("workflowChildren child row has unsupported fields.");
 		if (typeof child.childId !== "string" || !KEY_PATTERN.test(child.childId)) throw new Error("workflowChildren childId is invalid.");
 		const state = child.state;
 		if (state !== "pending" && state !== "running" && state !== "completed" && state !== "failed" && state !== "paused" && state !== "stopped" && state !== "rejected" && state !== "detached") throw new Error("workflowChildren child state is invalid.");
-		for (const [field, maxBytes] of [["runId", 256], ["agent", 256], ["model", 256], ["thinking", 32]] as const) {
+		for (const [field, maxBytes] of [["runId", 256], ["agent", 256], ["sessionName", 256], ["model", 256], ["thinking", 32]] as const) {
 			if (child[field] !== undefined && bounded(child[field], maxBytes) === undefined) throw new Error(`workflowChildren child ${field} is invalid.`);
 		}
-		return { childId: child.childId, state, ...(child.runId ? { runId: child.runId as string } : {}), ...(child.agent ? { agent: child.agent as string } : {}), ...(child.model ? { model: child.model as string } : {}), ...(child.thinking ? { thinking: child.thinking as string } : {}) };
+		return { childId: child.childId, state, ...(child.runId ? { runId: child.runId as string } : {}), ...(child.agent ? { agent: child.agent as string } : {}), ...(child.sessionName ? { sessionName: child.sessionName as string } : {}), ...(child.model ? { model: child.model as string } : {}), ...(child.thinking ? { thinking: child.thinking as string } : {}) };
 	});
 	if (new Set(children.map((child) => child.childId)).size !== children.length) throw new Error("workflowChildren has duplicate childId values.");
 	if (typeof input.parentToolCallId !== "string") throw new Error("workflowChildren.parentToolCallId is invalid.");

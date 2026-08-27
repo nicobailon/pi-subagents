@@ -19,6 +19,8 @@ export type WorkflowStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
 export interface WorkflowPublicChild {
 	workflowKey?: string;
 	agent?: string;
+	/** Human-readable display name for the child session, when derived at launch. */
+	sessionName?: string;
 	runId?: string;
 	output: string;
 	outputState: "present" | "absent";
@@ -92,7 +94,7 @@ export function promoteSettledPausedWorkflow(status: AsyncStatus, now = Date.now
 
 export function applyDetachedChildSettlement(
 	status: AsyncStatus,
-	input: { childRunId: string; result: { exitCode: number | null; error?: string; interrupted?: boolean; sessionFile?: string; stopped?: boolean }; workflowKey?: string; now?: number },
+	input: { childRunId: string; result: { exitCode: number | null; error?: string; interrupted?: boolean; sessionFile?: string; sessionName?: string; stopped?: boolean }; workflowKey?: string; now?: number },
 ): AsyncStatus | undefined {
 	if (status.mode !== "workflow" || status.state !== "paused") return undefined;
 	const next = cloneWorkflowStatus(status);
@@ -114,6 +116,7 @@ export function applyDetachedChildSettlement(
 	delete step.currentTool;
 	delete step.currentToolStartedAt;
 	if (input.result.sessionFile) step.sessionFile = input.result.sessionFile;
+	if (input.result.sessionName) step.sessionName = input.result.sessionName;
 	if (succeeded) {
 		delete step.error;
 		delete step.interrupted;

@@ -100,6 +100,8 @@ export interface WorkflowChildSummaryV1 {
 		childId: string;
 		runId?: string;
 		agent?: string;
+		/** Human-readable display name for the child session, when derived at launch. */
+		sessionName?: string;
 		model?: string;
 		thinking?: string;
 		state: "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "rejected" | "detached";
@@ -677,7 +679,7 @@ export interface SteeringRecoveryDescriptor {
 
 export type PublicNestedStepSummary = Pick<
 	NestedStepSummary,
-	"agent" | "status" | "model" | "thinking" | "sessionFile" | "transcriptPath" | "transcriptError" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "startedAt" | "endedAt" | "error" | "timedOut" | "stopped"
+	"agent" | "sessionName" | "status" | "model" | "thinking" | "sessionFile" | "transcriptPath" | "transcriptError" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "startedAt" | "endedAt" | "error" | "timedOut" | "stopped"
 > & {
 	children?: PublicNestedRunSummary[];
 };
@@ -690,7 +692,7 @@ export type CostSummary = {
 
 export type PublicNestedRunSummary = Pick<
 	NestedRunSummary,
-	"id" | "parentRunId" | "parentStepIndex" | "parentAgent" | "depth" | "path" | "asyncDir" | "sessionId" | "sessionFile" | "intercomTarget" | "ownerIntercomTarget" | "leafIntercomTarget" | "ownerState" | "mode" | "state" | "agent" | "agents" | "model" | "thinking" | "currentStep" | "chainStepCount" | "parallelGroups" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "totalTokens" | "totalCost" | "startedAt" | "endedAt" | "lastUpdate" | "error" | "timeoutMs" | "deadlineAt" | "timedOut" | "stopped" | "turnBudget" | "turnBudgetExceeded" | "wrapUpRequested"
+	"id" | "parentRunId" | "parentStepIndex" | "parentAgent" | "depth" | "path" | "asyncDir" | "sessionId" | "sessionFile" | "intercomTarget" | "ownerIntercomTarget" | "leafIntercomTarget" | "ownerState" | "mode" | "state" | "agent" | "sessionName" | "agents" | "model" | "thinking" | "currentStep" | "chainStepCount" | "parallelGroups" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "totalTokens" | "totalCost" | "startedAt" | "endedAt" | "lastUpdate" | "error" | "timeoutMs" | "deadlineAt" | "timedOut" | "stopped" | "turnBudget" | "turnBudgetExceeded" | "wrapUpRequested"
 > & {
 	steps?: PublicNestedStepSummary[];
 	children?: PublicNestedRunSummary[];
@@ -698,6 +700,8 @@ export type PublicNestedRunSummary = Pick<
 
 export interface SubagentResultIntercomChild {
 	agent: string;
+	/** Human-readable display name for the child session, when derived at launch. */
+	sessionName?: string;
 	/** Process/lifecycle status. It does not establish semantic task completion. */
 	status: SubagentResultStatus;
 	/** Whether the child produced substantive output before its process ended. */
@@ -746,6 +750,8 @@ export interface ChildWatchdogProgress {
 export interface AgentProgress {
 	index: number;
 	agent: string;
+	/** Human-readable display name for the child's session, when derived at launch. */
+	sessionName?: string;
 	status: "pending" | "running" | "completed" | "failed" | "detached";
 	activityState?: ActivityState;
 	task: string;
@@ -781,6 +787,8 @@ export interface ToolCallSummary {
 interface ProgressSummary {
 	index?: number;
 	agent?: string;
+	/** Human-readable display name for the child's session, when derived at launch. */
+	sessionName?: string;
 	status?: AgentProgress["status"];
 	activityState?: ActivityState;
 	skills?: string[];
@@ -1041,6 +1049,9 @@ export interface SingleResult {
 	index: number;
 	agent: string;
 	task: string;
+	/** Human-readable display name for the child's own session (agent + task
+	 *  excerpt), when the launcher derived one. Display metadata only. */
+	sessionName?: string;
 	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	exitCode: number;
@@ -1319,6 +1330,8 @@ export interface NestedRunAddress {
 
 export interface NestedStepSummary {
 	agent: string;
+	/** Human-readable display name for the child session, when derived at launch. */
+	sessionName?: string;
 	status: "pending" | "running" | "complete" | "completed" | "failed" | "partial" | "paused" | "stopped" | "rejected";
 	model?: string;
 	thinking?: string;
@@ -1370,6 +1383,8 @@ export interface NestedRunSummary extends NestedRunAddress {
 	capabilityAudit?: SubagentCapabilityAudit;
 	state: NestedRunState;
 	agent?: string;
+	/** Human-readable display name for the child session, when derived at launch. */
+	sessionName?: string;
 	agents?: string[];
 	model?: string;
 	thinking?: string;
@@ -1616,6 +1631,8 @@ export interface AsyncStatus {
 		/** Stable caller-facing child identity for inspect/status/stop. */
 		childId?: string;
 		agent: string;
+		/** Human-readable display name for the child session, when derived at launch. */
+		sessionName?: string;
 		runner?: ExternalCliRunnerStatus | ExternalJobRunnerStatus;
 		externalProcess?: ExternalProcessStatus;
 		externalJob?: ExternalJobStatus;
@@ -1769,6 +1786,8 @@ export interface AsyncJobState {
 
 export interface ForegroundResumeChild {
 	agent: string;
+	/** Human-readable display name for the child session, when derived at launch. */
+	sessionName?: string;
 	index: number;
 	context?: "fresh" | "fork";
 	sessionFile?: string;

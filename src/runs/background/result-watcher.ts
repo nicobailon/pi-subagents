@@ -67,6 +67,7 @@ type ResultWatcherDeps = {
 
 type ResultFileChild = {
 	agent?: string;
+	sessionName?: string;
 	output?: string;
 	structuredOutput?: unknown;
 	outputState?: SubagentOutputState;
@@ -482,6 +483,7 @@ export function createResultWatcher(
 							: undefined;
 				return {
 					agent: result.agent ?? data.agent ?? `step-${index + 1}`,
+					...(result.sessionName ? { sessionName: result.sessionName } : {}),
 					status: resolveSubagentResultStatus({
 						success: result.success,
 						state: childState,

@@ -79,6 +79,7 @@ import {
 	Semaphore,
 } from "../shared/parallel-utils.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, type SubagentTaskDelivery } from "../shared/pi-args.ts";
+import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
@@ -220,6 +221,8 @@ interface SubagentRunConfig {
 
 interface StepResult {
 	agent: string;
+	/** Human-readable display name for the child session, when derived at launch. */
+	sessionName?: string;
 	context?: "fresh" | "fork";
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: import("../shared/capability-ceiling.ts").SubagentCapabilityAudit;
@@ -1443,6 +1446,7 @@ async function runSingleStepInner(
 		const acceptancePrompt = formatAcceptancePrompt(step.effectiveAcceptance, { reportOptional: isAgentContractV1(step.agentContract), structuredOutput: Boolean(step.structuredOutput?.acceptanceReportPath) });
 		if (acceptancePrompt) task = `${task}\n${acceptancePrompt}`;
 	}
+	const childSessionName = step.sessionName ?? deriveChildSessionName({ agent: step.agent, task, label: step.label });
 	const sessionEnabled = Boolean(step.sessionFile) || ctx.sessionEnabled;
 	const sessionDir = step.sessionFile ? undefined : ctx.sessionDir;
 
@@ -1524,6 +1528,7 @@ async function runSingleStepInner(
 			: {};
 		return omitUndefinedProperties({
 			agent: step.agent,
+			...(childSessionName ? { sessionName: childSessionName } : {}),
 			context: step.context,
 			output: finalizedOutput.displayOutput,
 			outputState: external.output.trim() ? "present" : "absent",
@@ -1589,6 +1594,7 @@ async function runSingleStepInner(
 			: {};
 		return omitUndefinedProperties({
 			agent: step.agent,
+			...(childSessionName ? { sessionName: childSessionName } : {}),
 			context: step.context,
 			output: finalizedOutput.displayOutput,
 			outputState: external.output.trim() ? "present" : "absent",
@@ -1704,6 +1710,7 @@ async function runSingleStepInner(
 			cwd: step.cwd ?? ctx.cwd,
 			promptFileStem: step.agent,
 			intercomSessionName: ctx.childIntercomTarget,
+			sessionName: childSessionName,
 			orchestratorIntercomTarget: ctx.orchestratorIntercomTarget,
 			runId: ctx.id,
 			childAgentName: step.agent,
@@ -2189,6 +2196,7 @@ async function runSingleStepInner(
 
 	const result: StepResult & { completionGuardTriggered?: boolean } = omitUndefinedProperties({
 		agent: step.agent,
+		...(childSessionName ? { sessionName: childSessionName } : {}),
 		context: step.context,
 		...(step.agentContract ? { agentContract: step.agentContract } : {}),
 		launchContractDigest: actualLaunchContractDigest,
@@ -2548,8 +2556,10 @@ async function runSubagent(
 			for (const task of step.parallel) {
 				const taskFlatIndex = flatStepCount;
 				const transcriptPath = resolveAsyncStepTranscriptPath(omitUndefinedProperties({ artifactsDir, artifactConfig, runId: id, agent: task.agent, flatIndex: taskFlatIndex, flatStepCount: initialFlatStepCount }));
+				const taskSessionName = task.sessionName ?? deriveChildSessionName({ agent: task.agent, task: task.task, label: task.label });
 				initialStatusSteps.push(omitUndefinedProperties({
 					agent: task.agent,
+					...(taskSessionName ? { sessionName: taskSessionName } : {}),
 					...(externalRunnerStatus(task.runner) ? { runner: externalRunnerStatus(task.runner) } : {}),
 					...(statusStepDescription(task.task) ? { description: statusStepDescription(task.task) } : {}),
 					...(task.context ? { context: task.context } : {}),
@@ -2599,8 +2609,10 @@ async function runSubagent(
 		} else {
 			const stepFlatIndex = flatStepCount;
 			const transcriptPath = resolveAsyncStepTranscriptPath(omitUndefinedProperties({ artifactsDir, artifactConfig, runId: id, agent: step.agent, flatIndex: stepFlatIndex, flatStepCount: initialFlatStepCount }));
+			const stepSessionName = step.sessionName ?? deriveChildSessionName({ agent: step.agent, task: step.task, label: step.label });
 			initialStatusSteps.push(omitUndefinedProperties({
 				agent: step.agent,
+				...(stepSessionName ? { sessionName: stepSessionName } : {}),
 				...(externalRunnerStatus(step.runner) ? { runner: externalRunnerStatus(step.runner) } : {}),
 				...(statusStepDescription(step.task) ? { description: statusStepDescription(step.task) } : {}),
 				...(step.context ? { context: step.context } : {}),
@@ -2824,6 +2836,7 @@ async function runSubagent(
 			stopped: state === "stopped" ? true : undefined,
 			results: statusPayload.steps.map((step) => omitUndefinedProperties({
 				agent: step.agent,
+				...(step.sessionName ? { sessionName: step.sessionName } : {}),
 				output: step.status === "complete" || step.status === "completed" ? "" : step.error ?? summary,
 				error: step.error,
 				success: statusResultSuccess(state, step),
@@ -2925,7 +2938,7 @@ async function runSubagent(
 	};
 	const childStopResult = (index: number, agent: string, context?: "fresh" | "fork"): SingleStepResult => {
 		markChildStopped(index);
-		return stoppedStepResult(agent, context);
+		return stoppedStepResult(agent, context, requiredStatusStep(statusPayload, index).sessionName);
 	};
 	const stopChildStep = (request: StopRequest): void => {
 		if (request.targetIndex === undefined) {
@@ -3077,23 +3090,26 @@ async function runSubagent(
 			}
 		}
 	};
-	const pausedStepResult = (agent: string, context?: "fresh" | "fork"): SingleStepResult => omitUndefinedProperties({
+	const pausedStepResult = (agent: string, context?: "fresh" | "fork", sessionName?: string): SingleStepResult => omitUndefinedProperties({
 		agent,
+		sessionName,
 		context,
 		output: "Paused after interrupt. Waiting for explicit next action.",
 		exitCode: 0,
 		interrupted: true,
 	});
-	const timedOutStepResult = (agent: string, context?: "fresh" | "fork"): SingleStepResult => omitUndefinedProperties({
+	const timedOutStepResult = (agent: string, context?: "fresh" | "fork", sessionName?: string): SingleStepResult => omitUndefinedProperties({
 		agent,
+		sessionName,
 		context,
 		output: timeoutMessage ?? "Subagent timed out.",
 		error: timeoutMessage ?? "Subagent timed out.",
 		exitCode: 1,
 		timedOut: true,
 	});
-	const stoppedStepResult = (agent: string, context?: "fresh" | "fork"): SingleStepResult => omitUndefinedProperties({
+	const stoppedStepResult = (agent: string, context?: "fresh" | "fork", sessionName?: string): SingleStepResult => omitUndefinedProperties({
 		agent,
+		sessionName,
 		context,
 		output: stopMessage,
 		error: stopMessage,
@@ -3996,10 +4012,12 @@ async function runSubagent(
 					: step.parallel.outputPath;
 				const taskText = task.task ?? step.parallel.task;
 				const materializedTask = step.parallel.namespaceOutputPath ? injectSingleOutputInstruction(taskText, outputPath, step.parallel) : taskText;
+				const sessionName = deriveChildSessionName({ agent: step.parallel.agent, task: materializedTask, label: task.label ?? step.parallel.label });
 				return omitUndefinedProperties({
 					...step.parallel,
 					runFanoutPath: `chain[${stepIndex}].expand[${itemIndex}]`,
 					task: materializedTask,
+					...(sessionName ? { sessionName } : {}),
 					effectiveAcceptance: resolveEffectiveAcceptance(omitUndefinedProperties({
 						explicit: step.parallel.acceptanceInput,
 						agentName: step.parallel.agent,
@@ -4030,6 +4048,7 @@ async function runSubagent(
 				const transcriptPath = resolveAsyncStepTranscriptPath(omitUndefinedProperties({ artifactsDir, artifactConfig, runId: id, agent: task.agent, flatIndex: groupStartFlatIndex + itemIndex, flatStepCount: dynamicFlatStepCount }));
 				return omitUndefinedProperties({
 					agent: task.agent,
+					...(task.sessionName ? { sessionName: task.sessionName } : {}),
 					...(statusStepDescription(task.task) ? { description: statusStepDescription(task.task) } : {}),
 					...(task.context ? { context: task.context } : {}),
 					...(task.phase ?? step.phase ? { phase: task.phase ?? step.phase } : {}),
@@ -4113,12 +4132,12 @@ async function runSubagent(
 					usageBudgetExceeded = true;
 					writeStatusPayload();
 					appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.failed", ts: skippedAt, runId: id, stepIndex: fi, agent: task.agent, exitCode: 1, durationMs: 0 }));
-					return omitUndefinedProperties({ agent: task.agent, context: task.context, output: message, error: message, exitCode: 1 as number | null, skipped: true });
+					return omitUndefinedProperties({ agent: task.agent, ...(task.sessionName ? { sessionName: task.sessionName } : {}), context: task.context, output: message, error: message, exitCode: 1 as number | null, skipped: true });
 				}
-				if (timedOut) return timedOutStepResult(task.agent, task.context);
-				if (stopped) return stoppedStepResult(task.agent, task.context);
+				if (timedOut) return timedOutStepResult(task.agent, task.context, task.sessionName);
+				if (stopped) return stoppedStepResult(task.agent, task.context, task.sessionName);
 				if (childStopRequests.has(fi)) return childStopResult(fi, task.agent, task.context);
-				if (interrupted) return pausedStepResult(task.agent, task.context);
+				if (interrupted) return pausedStepResult(task.agent, task.context, task.sessionName);
 				if (aborted && failFast) {
 					const skippedAt = Date.now();
 					requiredStatusStep(statusPayload, fi).status = "failed";
@@ -4129,7 +4148,7 @@ async function runSubagent(
 					requiredStatusStep(statusPayload, fi).exitCode = -1;
 					statusPayload.lastUpdate = skippedAt;
 					writeStatusPayload();
-					return omitUndefinedProperties({ agent: task.agent, context: task.context, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true });
+					return omitUndefinedProperties({ agent: task.agent, ...(task.sessionName ? { sessionName: task.sessionName } : {}), context: task.context, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true });
 				}
 				const taskStartTime = Date.now();
 				statusPayload.currentStep = fi;
@@ -4200,6 +4219,7 @@ async function runSubagent(
 				if (singleResult.turnBudget) statusPayload.turnBudget = singleResult.turnBudget;
 				if (singleResult.turnBudgetExceeded) statusPayload.turnBudgetExceeded = true;
 				if (singleResult.wrapUpRequested) statusPayload.wrapUpRequested = true;
+				setOptionalProperty(requiredStatusStep(statusPayload, fi), "sessionName", singleResult.sessionName);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "model", singleResult.model);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, fi).thinking));
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "attemptedModels", singleResult.attemptedModels);
@@ -4251,6 +4271,7 @@ async function runSubagent(
 			for (const pr of parallelResults) {
 				results.push(omitUndefinedProperties({
 					agent: pr.agent,
+					...(pr.sessionName ? { sessionName: pr.sessionName } : {}),
 					context: pr.context,
 					agentContract: pr.agentContract,
 					launchContractDigest: pr.launchContractDigest,
@@ -4493,12 +4514,12 @@ async function runSubagent(
 							appendJsonl(eventsPath, JSON.stringify({
 								type: "subagent.step.failed", ts: skippedAt, runId: id, stepIndex: fi, agent: task.agent, exitCode: 1, durationMs: 0,
 							}));
-							return omitUndefinedProperties({ agent: task.agent, context: task.context, output: message, error: message, exitCode: 1 as number | null, skipped: true });
+							return omitUndefinedProperties({ agent: task.agent, ...(task.sessionName ? { sessionName: task.sessionName } : {}), context: task.context, output: message, error: message, exitCode: 1 as number | null, skipped: true });
 						}
-						if (timedOut) return timedOutStepResult(task.agent, task.context);
-						if (stopped) return stoppedStepResult(task.agent, task.context);
+						if (timedOut) return timedOutStepResult(task.agent, task.context, task.sessionName);
+						if (stopped) return stoppedStepResult(task.agent, task.context, task.sessionName);
 						if (childStopRequests.has(fi)) return childStopResult(fi, task.agent, task.context);
-						if (interrupted) return pausedStepResult(task.agent, task.context);
+						if (interrupted) return pausedStepResult(task.agent, task.context, task.sessionName);
 						if (aborted && failFast) {
 							const skippedAt = Date.now();
 							requiredStatusStep(statusPayload, fi).status = "failed";
@@ -4513,7 +4534,7 @@ async function runSubagent(
 							appendJsonl(eventsPath, JSON.stringify({
 								type: "subagent.step.failed", ts: skippedAt, runId: id, stepIndex: fi, agent: task.agent, exitCode: -1, durationMs: 0,
 							}));
-							return omitUndefinedProperties({ agent: task.agent, context: task.context, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true });
+							return omitUndefinedProperties({ agent: task.agent, ...(task.sessionName ? { sessionName: task.sessionName } : {}), context: task.context, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true });
 						}
 
 						const taskStartTime = Date.now();
@@ -4602,6 +4623,7 @@ async function runSubagent(
 						if (singleResult.turnBudget) statusPayload.turnBudget = singleResult.turnBudget;
 						if (singleResult.turnBudgetExceeded) statusPayload.turnBudgetExceeded = true;
 						if (singleResult.wrapUpRequested) statusPayload.wrapUpRequested = true;
+						setOptionalProperty(requiredStatusStep(statusPayload, fi), "sessionName", singleResult.sessionName);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "model", singleResult.model);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, fi).thinking));
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "attemptedModels", singleResult.attemptedModels);
@@ -4826,12 +4848,12 @@ async function runSubagent(
 		} else {
 			const seqStep = step as SubagentStep;
 			if (timedOut) {
-				results.push(timedOutStepResult(seqStep.agent, seqStep.context));
+				results.push(timedOutStepResult(seqStep.agent, seqStep.context, seqStep.sessionName));
 				flatIndex++;
 				continue;
 			}
 			if (stopped) {
-				results.push(stoppedStepResult(seqStep.agent, seqStep.context));
+				results.push(stoppedStepResult(seqStep.agent, seqStep.context, seqStep.sessionName));
 				flatIndex++;
 				continue;
 			}
@@ -4841,7 +4863,7 @@ async function runSubagent(
 				continue;
 			}
 			if (interrupted) {
-				results.push(pausedStepResult(seqStep.agent, seqStep.context));
+				results.push(pausedStepResult(seqStep.agent, seqStep.context, seqStep.sessionName));
 				flatIndex++;
 				continue;
 			}
@@ -4944,6 +4966,7 @@ async function runSubagent(
 			const childStopped = singleResult.stopped === true;
 			results.push(omitUndefinedProperties({
 				agent: singleResult.agent,
+				...(singleResult.sessionName ? { sessionName: singleResult.sessionName } : {}),
 				context: singleResult.context,
 				agentContract: singleResult.agentContract,
 				launchContractDigest: singleResult.launchContractDigest,
@@ -5046,6 +5069,7 @@ async function runSubagent(
 			if (singleResult.turnBudget) statusPayload.turnBudget = singleResult.turnBudget;
 			if (singleResult.turnBudgetExceeded) statusPayload.turnBudgetExceeded = true;
 			if (singleResult.wrapUpRequested) statusPayload.wrapUpRequested = true;
+			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "sessionName", singleResult.sessionName);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "model", singleResult.model);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, flatIndex).thinking));
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "attemptedModels", singleResult.attemptedModels);
@@ -5309,6 +5333,7 @@ async function runSubagent(
 			...(stopped ? { stopped: true, error: stopMessage } : timedOut ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." } : usageBudgetExceeded ? { error: statusPayload.error ?? "Usage budget exhausted." } : {}),
 			results: results.map((r) => omitUndefinedProperties({
 				agent: r.agent,
+				...(r.sessionName ? { sessionName: r.sessionName } : {}),
 				context: r.context,
 				output: r.output,
 				outputState: r.outputState,

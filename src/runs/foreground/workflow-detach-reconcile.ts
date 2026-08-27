@@ -32,7 +32,7 @@ import {
 
 export function applyDetachedChildToPausedWorkflow(
 	status: AsyncStatus,
-	input: { childRunId: string; result: Pick<SingleResult, "exitCode" | "error" | "interrupted" | "sessionFile" | "stopped">; workflowKey?: string },
+	input: { childRunId: string; result: Pick<SingleResult, "exitCode" | "error" | "interrupted" | "sessionFile" | "sessionName" | "stopped">; workflowKey?: string },
 ): AsyncStatus | undefined {
 	return applyDetachedChildSettlement(status, input);
 }
@@ -62,6 +62,7 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 				...(result.interrupted || result.stopped ? { interrupted: true } : {}),
 				...(result.stopped ? { stopped: true } : {}),
 				...(terminalOutcome ? { terminalOutcome } : {}),
+				...(result.sessionName ? { sessionName: result.sessionName } : {}),
 				...(result.error ? { error: result.error } : {}),
 			};
 		});
@@ -69,6 +70,7 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 	return status.steps?.map((step: WorkflowStatusStep) => ({
 		workflowKey: step.workflowKey,
 		agent: step.agent,
+		...(step.sessionName ? { sessionName: step.sessionName } : {}),
 		runId: step.runId,
 		success: step.status === "completed" || step.status === "complete",
 		output: step.runId === childRunId ? output : "",

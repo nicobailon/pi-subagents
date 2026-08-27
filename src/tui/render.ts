@@ -266,6 +266,12 @@ function oneLine(text: string): string {
 
 const COMPACT_TASK_MAX_CHARS = 96;
 
+/** Display label for a child run: the derived session name (agent + task
+ *  excerpt) when the launcher provided one, else the bare agent name. */
+function childDisplayName(result: { agent?: string; sessionName?: string } | undefined, fallback = "subagent"): string {
+	return result?.sessionName?.trim() || result?.agent || fallback;
+}
+
 export function compactTaskText(task: string | undefined, label?: string): string | undefined {
 	const taskText = task?.trim();
 	const labelText = label?.trim();
@@ -1909,7 +1915,7 @@ function renderSingleCompact(
 	const detailIndent = mainWindowIndent(layout, 1);
 	const continuationIndent = mainWindowIndent(layout, 2) + (layout.horizontalSpacing > 0 ? " " : "");
 	const modelDisplay = modelThinkingBadge(theme, r.model ?? r.progress?.model, r.thinking ?? r.progress?.thinking);
-	c.addChild(new Text(truncLine(`${resultGlyph(r, output, theme, isRunning, undefined, frame)} ${theme.fg("toolTitle", theme.bold(r.agent))}${modelDisplay}${contextBadge}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`, width), 0, 0));
+	c.addChild(new Text(truncLine(`${resultGlyph(r, output, theme, isRunning, undefined, frame)} ${theme.fg("toolTitle", theme.bold(childDisplayName(r)))}${modelDisplay}${contextBadge}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`, width), 0, 0));
 
 	if (isRunning && r.progress) {
 		const task = compactTaskText(r.task);
@@ -2050,7 +2056,7 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 		const r = d.results[i];
 		const fallbackLabel = itemTitle.toLowerCase();
 		const rowNumber = multiLabel.showActiveGroupOnly ? (i - multiLabel.groupStartIndex + 1) : (i + 1);
-		return { kind: "result", resultIndex: i, rowNumber, agentName: useResultsDirectly ? (r?.agent || `${fallbackLabel}-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `${fallbackLabel}-${rowNumber}`) };
+		return { kind: "result", resultIndex: i, rowNumber, agentName: useResultsDirectly ? childDisplayName(r, `${fallbackLabel}-${rowNumber}`) : (d.chainAgents![i] || childDisplayName(r, `${fallbackLabel}-${rowNumber}`)) };
 	});
 	for (const entry of renderEntries) {
 		if (entry.kind === "placeholder") {
@@ -2141,7 +2147,7 @@ export function renderSubagentSummary(
 				? theme.fg("error", "✗")
 				: theme.fg("warning", "■");
 	const label = details?.mode === "single" && results.length === 1
-		? results[0]?.agent || "subagent"
+		? childDisplayName(results[0])
 		: details?.mode || "subagent";
 	return new Text(
 		truncLine(`${glyph} ${theme.fg("toolTitle", theme.bold(label))} ${theme.fg("dim", "·")} ${theme.fg(state === "failed" ? "error" : state === "completed" ? "success" : state === "running" ? "accent" : "warning", state)}`, getTermWidth() - 4),
@@ -2211,7 +2217,7 @@ export function renderSubagentResult(
 		const fit = (text: string) => expanded ? text : truncLine(text, w);
 		const toolCallLines = getToolCallLines(r, expanded);
 		const c = new Container();
-		c.addChild(new Text(fit(`${presentation.glyph} ${theme.fg("toolTitle", theme.bold(r.agent))}${contextBadge}${progressInfo} ${theme.fg("dim", "·")} ${presentation.label}`), 0, 0));
+		c.addChild(new Text(fit(`${presentation.glyph} ${theme.fg("toolTitle", theme.bold(childDisplayName(r)))}${contextBadge}${progressInfo} ${theme.fg("dim", "·")} ${presentation.label}`), 0, 0));
 		c.addChild(new Spacer(1));
 		const taskMaxLen = Math.max(20, w - 8);
 		const taskPreview = expanded || r.task.length <= taskMaxLen
@@ -2384,7 +2390,7 @@ export function renderSubagentResult(
 		const i = displayStart + offset;
 		const r = d.results[i];
 		const rowNumber = multiLabel.showActiveGroupOnly ? (i - multiLabel.groupStartIndex + 1) : (i + 1);
-		return { kind: "result", resultIndex: i, rowNumber, agentName: useResultsDirectly ? (r?.agent || `step-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `step-${rowNumber}`) };
+		return { kind: "result", resultIndex: i, rowNumber, agentName: useResultsDirectly ? childDisplayName(r, `step-${rowNumber}`) : (d.chainAgents![i] || childDisplayName(r, `step-${rowNumber}`)) };
 	});
 
 	c.addChild(new Spacer(1));
@@ -2425,7 +2431,7 @@ export function renderSubagentResult(
 		const contextBadge = contextModeBadge(theme, r.context);
 		const stepHeader = rRunning
 			? `${rowPresentation.glyph} ${stepLabel}: ${theme.bold(theme.fg("warning", r.agent))}${contextBadge}${modelDisplay}${stats} ${theme.fg("dim", "·")} ${rowPresentation.label}`
-			: `${rowPresentation.glyph} ${stepLabel}: ${theme.bold(r.agent)}${contextBadge}${modelDisplay}${stats} ${theme.fg("dim", "·")} ${rowPresentation.label}`;
+			: `${rowPresentation.glyph} ${stepLabel}: ${theme.bold(childDisplayName(r))}${contextBadge}${modelDisplay}${stats} ${theme.fg("dim", "·")} ${rowPresentation.label}`;
 		const toolCallLines = getToolCallLines(r, expanded);
 		c.addChild(new Text(fit(stepHeader), 0, 0));
 
