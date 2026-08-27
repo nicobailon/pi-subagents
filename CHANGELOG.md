@@ -9,6 +9,9 @@
 - Remove assistant turn budgets, including hard termination, wrap-up prompt injection, and launch/configuration surface.
 - Show workflow child labels and phases in async status progress while preserving stable workflow keys.
 
+### Fixed
+- Resume a retained child session once after a provider or transport abort follows useful progress, without restarting the task or involving the parent model.
+
 ## [0.58.0] - 2026-08-27
 
 ### Highlights

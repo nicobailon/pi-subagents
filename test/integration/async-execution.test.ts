@@ -3198,7 +3198,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(mockPi.callCount(), 1);
 	});
 
-	it("background runs do not retry provider connection errors after completed tool work", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("background runs resume the retained session once after a provider abort following completed tool work", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const sessionFile = path.join(tempDir, "async-abort-recovery-session.jsonl");
 		mockPi.onCall({
 			jsonl: [
 				events.toolStart("write", { path: "side-effect.txt", content: "done" }),
@@ -3215,14 +3216,15 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 					},
 				},
 			],
-			writeFiles: [{ path: "side-effect.txt", content: "done" }],
+			writeFiles: [{ path: "side-effect.txt", content: "done" }, { path: sessionFile, content: "{}\n" }],
 			exitCode: 1,
 		});
-		mockPi.onCall({ output: "fallback must not run" });
+		mockPi.onCall({ output: "Recovered asynchronously from retained session" });
 		const id = `async-fallback-provider-after-tool-${Date.now().toString(36)}`;
 		executeAsyncSingle(id, {
 			agent: "worker",
 			task: "Do work",
+			sessionFile,
 			agentConfig: makeAgent("worker", {
 				model: "openai/gpt-5-mini:high",
 				fallbackModels: ["anthropic/claude-sonnet-4:low"],
@@ -3245,10 +3247,15 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		});
 
 		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"));
-		assert.equal(payload.success, false);
-		assert.equal(payload.results[0].modelAttempts.length, 1);
-		assert.match(payload.results[0].error ?? "", /Connection error/u);
-		assert.equal(mockPi.callCount(), 1);
+		assert.equal(payload.success, true);
+		assert.deepEqual(payload.results[0].attemptedModels, ["openai/gpt-5-mini:high"]);
+		assert.deepEqual(payload.results[0].modelAttempts.map((attempt: { success: boolean }) => attempt.success), [false, true]);
+		assert.equal(mockPi.callCount(), 2);
+		const firstArgs = readMockPiArgs(mockPi, 0);
+		const resumedArgs = readMockPiArgs(mockPi, 1);
+		assert.equal(firstArgs[firstArgs.indexOf("--session") + 1], sessionFile);
+		assert.equal(resumedArgs[resumedArgs.indexOf("--session") + 1], sessionFile);
+		assert.match(resumedArgs.at(-1) ?? "", /Continue from the current files and transcript/);
 		assert.equal(fs.readFileSync(path.join(tempDir, "side-effect.txt"), "utf-8"), "done");
 	});
 

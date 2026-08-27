@@ -4545,10 +4545,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
-		const child = result.details.workflow?.value as { ok?: boolean; output?: string; continuation?: { runIds?: string[] } };
+		const child = result.details.workflow?.value as { ok?: boolean; runId?: string; output?: string; continuation?: { runIds?: string[] } };
 		assert.equal(child.ok, true);
 		assert.match(child.output ?? "", /Recovered after workflow auto-resume/u);
-		assert.equal(child.continuation?.runIds?.length, 2);
+		assert.deepEqual(child.continuation?.runIds, [child.runId]);
 		assert.equal(mockPi.callCount(), 2);
 	});
 
@@ -5826,7 +5826,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 1);
 	});
 
-	it("does not retry provider connection errors after completed tool work", async () => {
+	it("resumes the retained session once after a provider abort following completed tool work", async () => {
+		const sessionFile = path.join(tempDir, "abort-recovery-session.jsonl");
 		mockPi.onCall({
 			jsonl: [
 				events.toolStart("write", { path: "side-effect.txt", content: "done" }),
@@ -5843,23 +5844,29 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 					},
 				},
 			],
-			writeFiles: [{ path: "side-effect.txt", content: "done" }],
+			writeFiles: [{ path: "side-effect.txt", content: "done" }, { path: sessionFile, content: "{}\n" }],
 			exitCode: 1,
 		});
-		mockPi.onCall({ output: "fallback must not run" });
+		mockPi.onCall({ output: "Recovered from retained session" });
 		const agents = [makeAgent("echo", {
 			model: "openai/gpt-5-mini",
 			fallbackModels: ["anthropic/claude-sonnet-4"],
 		})];
 
 		const result = await runSync(tempDir, agents, "echo", "Task", {
-			runId: "no-fallback-provider-after-tool",
+			runId: "resume-provider-after-tool",
+			sessionFile,
 		});
 
-		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /Connection error/u);
-		assert.equal(result.modelAttempts?.length, 1);
-		assert.equal(mockPi.callCount(), 1);
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.finalOutput, "Recovered from retained session");
+		assert.deepEqual(result.attemptedModels, ["openai/gpt-5-mini"]);
+		assert.deepEqual(result.modelAttempts?.map((attempt) => attempt.success), [false, true]);
+		assert.equal(mockPi.callCount(), 2);
+		const [firstArgs, resumedArgs] = readAllCallArgs();
+		assert.equal(firstArgs?.[firstArgs.indexOf("--session") + 1], sessionFile);
+		assert.equal(resumedArgs?.[resumedArgs.indexOf("--session") + 1], sessionFile);
+		assert.match(resumedArgs?.at(-1) ?? "", /Continue from the current files and transcript/);
 		assert.equal(fs.readFileSync(path.join(tempDir, "side-effect.txt"), "utf-8"), "done");
 	});
 

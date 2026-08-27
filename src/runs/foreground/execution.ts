@@ -57,6 +57,7 @@ import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, resolveToolTimeoutMs, toolTimeoutCallKey, toolTimeoutFromEnv } from "../shared/tool-timeout.ts";
 import { evaluateCompletionMutationGuard, expectsImplementationMutation, hasMutationToolCapability, validateImplementationToolContract } from "../shared/completion-guard.ts";
 import { planCompletionEvidence } from "../shared/completion-evidence.ts";
+import { planAbortRecovery } from "../shared/abort-recovery.ts";
 import { arbitrateCompletionGuardRescue } from "../shared/llm-intent-arbiter.ts";
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
@@ -1866,12 +1867,16 @@ async function runSyncCompletionInner(
 	// Escalated to "file" after an unexplained zero-activity startup failure so
 	// retries keep the task text out of argv (endpoint pre-exec scans may deny it).
 	let taskDeliveryOverride: SubagentTaskDelivery | undefined;
+	let abortRecoveryAttempted = false;
+	let nextAttemptTask = taskWithAcceptance;
 	modelAttemptsLoop: for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
 		const candidate = modelsToTry[modelIndex];
 		for (let startupAttemptIndex = 0; ; startupAttemptIndex++) {
+			const recoveringAbort = abortRecoveryAttempted;
+			const attemptTask = nextAttemptTask;
 			const verifyModel = Boolean(candidate) && !(options.modelOverrideFromParent && modelIndex === 0);
 			const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
-			const result = await runSingleAttempt(runtimeCwd, agent, taskWithAcceptance, candidate, attemptOptions, {
+			const result = await runSingleAttempt(runtimeCwd, agent, attemptTask, candidate, attemptOptions, {
 				sessionEnabled,
 				systemPrompt,
 				resolvedSkillNames: resolvedSkills.length > 0 ? resolvedSkills.map((skill) => skill.name) : undefined,
@@ -1891,7 +1896,7 @@ async function runSyncCompletionInner(
 				verifyModel,
 			});
 			lastResult = result;
-			if (startupAttemptIndex === 0) {
+			if (!recoveringAbort && startupAttemptIndex === 0) {
 				if (result.model) attemptedModels.push(result.model);
 				else if (candidate) attemptedModels.push(candidate);
 			}
@@ -1907,6 +1912,30 @@ async function runSyncCompletionInner(
 				usage: { ...result.usage },
 			};
 			modelAttempts.push(attempt);
+			if (!attemptSucceeded && !recoveringAbort) {
+				const abortRecovery = planAbortRecovery({
+					messages: result.messages ?? [],
+					error: result.error,
+					processSignal: result.processSignal,
+					sessionAvailable: Boolean(options.sessionFile && existsSync(options.sessionFile)),
+					alreadyResumed: abortRecoveryAttempted,
+					stopped: result.stopped || result.detached || options.signal?.aborted,
+					interrupted: result.interrupted || intercomDetached || options.interruptSignal?.aborted,
+					timedOut: result.timedOut,
+					toolBudgetExhausted: result.toolBudgetBlocked,
+					usageBudgetExhausted: false,
+					structuredOutputFailed: result.structuredOutputFailed,
+					acceptanceFailed: false,
+					currentTool: result.progress?.currentTool,
+				});
+				if (abortRecovery.action === "resume") {
+					abortRecoveryAttempted = true;
+					nextAttemptTask = abortRecovery.prompt;
+					attemptNotes.push("[abort-recovery] provider/transport abort after useful progress; resuming the retained child session once.");
+					continue;
+				}
+			}
+			if (recoveringAbort && !attemptSucceeded) break modelAttemptsLoop;
 			if (options.workflowChildPermitLaunch && !attemptSucceeded) break modelAttemptsLoop;
 			// Preserve the legacy intercom handoff contract: once this logical run has
 			// been handed to a supervisor, terminating that attempt must not launch a
@@ -2001,6 +2030,7 @@ async function runSyncCompletionInner(
 		usage: emptyUsage(),
 		error: "Subagent did not produce a result.",
 	} satisfies SingleResult, options.context);
+	result.task = task;
 
 	result.usage = aggregateUsage;
 	result.attemptedModels = attemptedModels.length > 0 ? attemptedModels : undefined;

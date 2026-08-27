@@ -104,6 +104,7 @@ import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit
 import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
 import { evaluateCompletionMutationGuard, expectsImplementationMutation, hasMutationToolCapability, validateImplementationToolContract } from "../shared/completion-guard.ts";
 import { planCompletionEvidence, projectSettlementDiagnostic } from "../shared/completion-evidence.ts";
+import { planAbortRecovery } from "../shared/abort-recovery.ts";
 import {
 	createMutatingFailureState,
 	didMutatingToolFail,
@@ -1275,6 +1276,7 @@ interface SingleStepContext {
 	onExternalProcess?: (process: ExternalProcessStatus) => void;
 	onExternalJob?: (status: ExternalJobStatus) => void;
 	skipAcceptance?: () => boolean;
+	usageBudgetExhausted?: () => boolean;
 	/** False when sibling work in the same Git worktree could have caused the tracked diff. */
 	trackedMutationEvidenceForCompletionGuard?: boolean;
 	orcaProgressTab?: OrcaProgressTab;
@@ -1603,8 +1605,12 @@ async function runSingleStepInner(
 	let taskDeliveryOverride: SubagentTaskDelivery | undefined;
 	let contextOverflow = false;
 	let launchWarningsEmitted = false;
+	let abortRecoveryAttempted = false;
+	let nextAttemptTask = task;
 	modelAttemptsLoop: while (modelIndex < candidates.length) {
 		if (ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break;
+		const recoveringAbort = abortRecoveryAttempted;
+		const attemptTask = nextAttemptTask;
 		const candidate = candidates[modelIndex];
 		const expectedModelForVerification = candidate && !(step.skipPrimaryModelVerification && modelIndex === 0) ? candidate : undefined;
 		try {
@@ -1639,7 +1645,7 @@ async function runSingleStepInner(
 		const { args, env, tempDir, toolDiagnosticPath, runtimeAcknowledgedExtensionsPath, capabilityAudit: attemptCapabilityAudit, warnings } = buildPiArgs(omitUndefinedProperties({
 			parentSessionId: step.parentSessionId,
 			baseArgs: ["--mode", "json", "-p"],
-			task,
+			task: attemptTask,
 			taskDelivery: taskDeliveryOverride,
 			sessionEnabled,
 			sessionDir,
@@ -1893,7 +1899,7 @@ async function runSingleStepInner(
 			usage: run.usage,
 		});
 		modelAttempts.push(attempt);
-		if (candidate && startupAttemptIndex === 0) attemptedModels.push(candidate);
+		if (!recoveringAbort && candidate && startupAttemptIndex === 0) attemptedModels.push(candidate);
 		completionGuardTriggeredFinal = completionEvidence.guardTriggered;
 		finalOutputSnapshot = outputSnapshot;
 		if (step.toolBudget) {
@@ -1917,6 +1923,28 @@ async function runSingleStepInner(
 		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, runtimeAcknowledgedExtensions, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(completionEvidence.fileMutation || settlementDiagnostic ? { effects: { ...(completionEvidence.fileMutation ? { fileMutation: completionEvidence.fileMutation } : {}), ...(settlementDiagnostic ? { settlementDiagnostic } : {}) } } : {}) } as RunPiStreamingResult;
 		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break modelAttemptsLoop;
 		if (attempt.success || completionEvidence.guardTriggered) break modelAttemptsLoop;
+		if (recoveringAbort) break modelAttemptsLoop;
+		const abortRecovery = planAbortRecovery({
+			messages: run.messages,
+			error,
+			processSignal: run.processSignal,
+			sessionAvailable: Boolean(step.sessionFile && fs.existsSync(step.sessionFile)),
+			alreadyResumed: abortRecoveryAttempted,
+			stopped: run.stopped,
+			interrupted: run.interrupted,
+			timedOut: run.timedOut,
+			toolBudgetExhausted: run.toolBudgetBlocked || toolBudgetBlocked,
+			usageBudgetExhausted: ctx.usageBudgetExhausted?.(),
+			structuredOutputFailed: Boolean(structuredError),
+			acceptanceFailed: false,
+			currentTool: run.currentTool,
+		});
+		if (abortRecovery.action === "resume") {
+			abortRecoveryAttempted = true;
+			nextAttemptTask = abortRecovery.prompt;
+			attemptNotes.push("[abort-recovery] provider/transport abort after useful progress; resuming the retained child session once.");
+			continue;
+		}
 
 		const startupFailure = isRetryableSubagentStartupFailure(omitUndefinedProperties({
 			exitCode: effectiveExitCode,
@@ -4076,6 +4104,7 @@ async function runSubagent(
 					onExternalProcess: (process) => updateExternalProcess(fi, process),
 					onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
 					skipAcceptance: () => timedOut || stopped || childStopRequests.has(fi),
+					usageBudgetExhausted: () => refreshUsageBudget()?.exhausted === true,
 					orcaProgressTab,
 				}), config.deadlineAt);
 				const taskEndTime = Date.now();
@@ -4471,6 +4500,7 @@ async function runSubagent(
 							onExternalProcess: (process) => updateExternalProcess(fi, process),
 							onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
 							skipAcceptance: () => timedOut || stopped || childStopRequests.has(fi),
+							usageBudgetExhausted: () => refreshUsageBudget()?.exhausted === true,
 							orcaProgressTab,
 						}), config.deadlineAt);
 						if (task.sessionFile) {
@@ -4825,6 +4855,7 @@ async function runSubagent(
 				onExternalProcess: (process) => updateExternalProcess(flatIndex, process),
 				onExternalJob: (externalJob) => updateExternalJob(flatIndex, externalJob),
 				skipAcceptance: () => timedOut || stopped || childStopRequests.has(flatIndex),
+				usageBudgetExhausted: () => refreshUsageBudget()?.exhausted === true,
 				orcaProgressTab,
 				}), config.deadlineAt);
 			} catch (error) {
