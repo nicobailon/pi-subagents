@@ -5,10 +5,18 @@ import * as path from "node:path";
 import { findConfiguredProjectRoot } from "../../agents/agents.ts";
 import { getAgentDir, getProjectConfigDir } from "../../shared/utils.ts";
 import { loadAgentPluginMcpServers, loadPackageMcpServers, type McpServerDefinition } from "./mcp-config-sources.ts";
+import {
+	normalizeMcpDirectToolSelectors,
+	parseMcpDirectToolSelectors,
+	planMcpDirectToolGrant,
+} from "./mcp-direct-tool-grant.ts";
+import type { McpToolPrefix, ResolvedMcpDirectToolSelection } from "./mcp-direct-tool-grant.ts";
+
+export { formatUnresolvedMcpDirectToolSelectors } from "./mcp-direct-tool-grant.ts";
+export type { ResolvedMcpDirectToolSelection } from "./mcp-direct-tool-grant.ts";
 
 const CACHE_VERSION = 1;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const BUILTIN_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
 const GENERIC_GLOBAL_CONFIG_PATH = path.join(os.homedir(), ".config", "mcp", "mcp.json");
 const IMPORT_PATHS = {
 	cursor: [path.join(os.homedir(), ".cursor", "mcp.json")],
@@ -23,7 +31,6 @@ const IMPORT_PATHS = {
 	vscode: [".vscode/mcp.json"],
 } as const;
 
-type ToolPrefix = "server" | "none" | "short";
 type ImportKind = keyof typeof IMPORT_PATHS;
 
 type ServerEntry = McpServerDefinition;
@@ -32,7 +39,7 @@ export interface McpConfig {
 	mcpServers: Record<string, ServerEntry>;
 	imports?: ImportKind[];
 	settings?: {
-		toolPrefix?: ToolPrefix;
+		toolPrefix?: McpToolPrefix;
 		directTools?: boolean;
 		agentPluginPaths?: unknown;
 	};
@@ -83,8 +90,6 @@ interface MetadataCache {
 	servers: Record<string, ServerCacheEntry>;
 }
 
-export interface ResolvedMcpDirectToolSelection { name: string; selector: string }
-
 export interface McpDirectToolResolution {
 	selections: ResolvedMcpDirectToolSelection[];
 	unresolvedSelectors: string[];
@@ -93,21 +98,17 @@ export interface McpDirectToolResolution {
 	runtimeServerNames?: string[];
 }
 
-function normalizeSelectors(selectors: string[] | undefined): string[] {
-	return [...new Set((selectors ?? []).map((selector) => selector.replace(/\/+$/, "")).filter(Boolean))];
-}
-
 export function resolveMcpDirectToolResolution(
 	mcpDirectTools: string[] | undefined,
 	cwd = process.cwd(),
 	runtimeSnapshotHost?: McpRuntimeSnapshotHost,
 	configOverride?: McpConfig,
 ): McpDirectToolResolution {
-	const selectors = normalizeSelectors(mcpDirectTools);
+	const selectors = normalizeMcpDirectToolSelectors(mcpDirectTools);
 	if (selectors.length === 0) return { selections: [], unresolvedSelectors: [] };
 
 	const config = configOverride ?? loadMcpConfig(cwd);
-	const { servers: selectedServers, tools: selectedTools } = parseSelections(selectors);
+	const { servers: selectedServers, tools: selectedTools } = parseMcpDirectToolSelectors(selectors);
 	const runtimeSelectionServers = new Set([...selectedServers, ...selectedTools.keys()]);
 	const runtimeServers = resolveRuntimeMcpServers(config, runtimeSelectionServers, runtimeSnapshotHost);
 	const resolvedConfig = Object.keys(runtimeServers).length > 0
@@ -116,15 +117,20 @@ export function resolveMcpDirectToolResolution(
 	validateSelectedServerDefinitions(resolvedConfig, selectors);
 	const cache = loadMetadataCache();
 	if (!cache) return { selections: [], unresolvedSelectors: selectors };
-	const selections = resolveDirectToolSelections(resolvedConfig, cache, getToolPrefix(resolvedConfig.settings?.toolPrefix), selectors);
-	const unresolvedSelectors = selectors.filter((selector) =>
-		selector.includes("/")
-			? !selections.some((selection) => selection.selector === selector)
-			: !selections.some((selection) => selection.selector.startsWith(`${selector}/`)),
-	);
+	const validMetadata: Record<string, ServerCacheEntry> = {};
+	for (const [serverName, definition] of Object.entries(resolvedConfig.mcpServers)) {
+		const serverCache = cache.servers[serverName];
+		if (isServerCacheValid(serverCache, definition)) validMetadata[serverName] = serverCache;
+	}
+	const grant = planMcpDirectToolGrant({
+		selectors,
+		servers: resolvedConfig.mcpServers,
+		metadata: validMetadata,
+		toolPrefix: resolvedConfig.settings?.toolPrefix,
+	});
 	return {
-		selections,
-		unresolvedSelectors,
+		selections: grant.selections,
+		unresolvedSelectors: grant.unresolvedSelectors,
 		...(Object.keys(runtimeServers).length > 0
 			? { mcpConfig: resolvedConfig, runtimeServerNames: Object.keys(runtimeServers) }
 			: {}),
@@ -137,10 +143,6 @@ export function resolveMcpDirectToolSelections(
 	runtimeSnapshotHost?: McpRuntimeSnapshotHost,
 ): ResolvedMcpDirectToolSelection[] {
 	return resolveMcpDirectToolResolution(mcpDirectTools, cwd, runtimeSnapshotHost).selections;
-}
-
-export function formatUnresolvedMcpDirectToolSelectors(selectors: readonly string[]): string {
-	return `Unresolved MCP direct-tool selectors: ${selectors.join(", ")}. Direct MCP tools require a matching configured server and fresh metadata cache; runtime-registered servers require a host/pi-mcp-adapter handoff before child launch.`;
 }
 
 function loadMetadataCache(): MetadataCache | null {
@@ -312,71 +314,12 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
 	return servers && typeof servers === "object" && !Array.isArray(servers) ? servers as Record<string, ServerEntry> : {};
 }
 
-function resolveDirectToolSelections(config: McpConfig, cache: MetadataCache, prefix: ToolPrefix, envOverride: string[]): ResolvedMcpDirectToolSelection[] {
-	const names: ResolvedMcpDirectToolSelection[] = [];
-	const seenNames = new Set<string>();
-	const { servers: selectedServers, tools: selectedTools } = parseSelections(envOverride);
-
-	for (const [serverName, definition] of Object.entries(config.mcpServers)) {
-		const serverCache = cache.servers[serverName];
-		if (!isServerCacheValid(serverCache, definition)) continue;
-
-		const toolFilter = selectedServers.has(serverName)
-			? true
-			: selectedTools.get(serverName);
-		if (!toolFilter) continue;
-
-		for (const tool of Array.isArray(serverCache.tools) ? serverCache.tools : []) {
-			if (typeof tool?.name !== "string" || !tool.name) continue;
-			if (toolFilter !== true && !toolFilter.has(tool.name)) continue;
-			if (isToolExcluded(tool.name, serverName, prefix, definition.excludeTools)) continue;
-			const prefixedName = formatToolName(tool.name, serverName, prefix);
-			if (BUILTIN_TOOL_NAMES.has(prefixedName) || seenNames.has(prefixedName)) continue;
-			seenNames.add(prefixedName);
-			names.push({ name: prefixedName, selector: `${serverName}/${tool.name}` });
-		}
-
-		if (definition.exposeResources === false) continue;
-		for (const resource of Array.isArray(serverCache.resources) ? serverCache.resources : []) {
-			if (typeof resource?.name !== "string" || !resource.name || typeof resource.uri !== "string" || !resource.uri) continue;
-			const baseName = `get_${resourceNameToToolName(resource.name)}`;
-			if (toolFilter !== true && !toolFilter.has(baseName)) continue;
-			if (isToolExcluded(baseName, serverName, prefix, definition.excludeTools)) continue;
-			const prefixedName = formatToolName(baseName, serverName, prefix);
-			if (BUILTIN_TOOL_NAMES.has(prefixedName) || seenNames.has(prefixedName)) continue;
-			seenNames.add(prefixedName);
-			names.push({ name: prefixedName, selector: `${serverName}/${baseName}` });
-		}
-	}
-
-	return names;
-}
-
 export function resolveMcpDirectToolNames(mcpDirectTools: string[] | undefined, cwd = process.cwd()): string[] {
 	return resolveMcpDirectToolSelections(mcpDirectTools, cwd).map((selection) => selection.name);
 }
 
-function parseSelections(selections: string[]): { servers: Set<string>; tools: Map<string, Set<string>> } {
-	const servers = new Set<string>();
-	const tools = new Map<string, Set<string>>();
-	for (const item of selections) {
-		if (item.includes("/")) {
-			const [server, tool] = item.split("/", 2);
-			if (server && tool) {
-				if (!tools.has(server)) tools.set(server, new Set());
-				tools.get(server)!.add(tool);
-			} else if (server) {
-				servers.add(server);
-			}
-		} else if (item) {
-			servers.add(item);
-		}
-	}
-	return { servers, tools };
-}
-
 function validateSelectedServerDefinitions(config: McpConfig, selectors: string[]): void {
-	const { servers, tools } = parseSelections(selectors);
+	const { servers, tools } = parseMcpDirectToolSelectors(selectors);
 	for (const serverName of new Set([...servers, ...tools.keys()])) {
 		const definition = config.mcpServers[serverName];
 		if (definition) computeMcpServerHash(definition);
@@ -417,52 +360,8 @@ export function computeMcpServerHash(definition: ServerEntry): string {
 	return createHash("sha256").update(stableStringify(identity)).digest("hex");
 }
 
-function getToolPrefix(value: unknown): ToolPrefix {
-	return value === "none" || value === "short" || value === "server" ? value : "server";
-}
-
 function isImportKind(value: unknown): value is ImportKind {
 	return typeof value === "string" && Object.hasOwn(IMPORT_PATHS, value);
-}
-
-function getServerPrefix(serverName: string, mode: ToolPrefix): string {
-	if (mode === "none") return "";
-	if (mode === "short") {
-		const short = serverName.replace(/-?mcp$/i, "").replace(/-/g, "_");
-		return short || "mcp";
-	}
-	return serverName.replace(/-/g, "_");
-}
-
-function formatToolName(toolName: string, serverName: string, prefix: ToolPrefix): string {
-	const serverPrefix = getServerPrefix(serverName, prefix);
-	return serverPrefix ? `${serverPrefix}_${toolName}` : toolName;
-}
-
-function isToolExcluded(toolName: string, serverName: string, prefix: ToolPrefix, excludeTools: unknown): boolean {
-	if (!Array.isArray(excludeTools) || excludeTools.length === 0) return false;
-	const candidates = new Set([
-		normalizeToolName(toolName),
-		normalizeToolName(formatToolName(toolName, serverName, prefix)),
-		normalizeToolName(formatToolName(toolName, serverName, "server")),
-		normalizeToolName(formatToolName(toolName, serverName, "short")),
-	]);
-	return excludeTools.some((excluded) => typeof excluded === "string" && candidates.has(normalizeToolName(excluded)));
-}
-
-function normalizeToolName(value: string): string {
-	return value.replace(/-/g, "_");
-}
-
-function resourceNameToToolName(name: string): string {
-	let result = name
-		.replace(/[^a-zA-Z0-9]/g, "_")
-		.replace(/_+/g, "_")
-		.replace(/^_+/, "")
-		.replace(/_+$/, "")
-		.toLowerCase();
-	if (!result || /^\d/.test(result)) result = `resource${result ? `_${result}` : ""}`;
-	return result;
 }
 
 function interpolateEnvRecord(values: Record<string, string> | undefined): Record<string, string> | undefined {
