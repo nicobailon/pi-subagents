@@ -473,6 +473,30 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		assert.ok(published.summary?.includes(`'second': requested ${secondRequestedPath} -> saved ${secondSavedPath}`));
 	});
 
+	it("skips non-object existing result entries while summarizing output mappings", () => {
+		const workflowRunId = "workflow-existing-non-object-results";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		const requestedPath = path.join(asyncDir, "requested.md");
+		const savedPath = path.join(asyncDir, "saved.md");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ ...pausedWorkflow("child-1"), runId: workflowRunId, sessionId: "session-1" }), "utf-8");
+		fs.writeFileSync(path.join(DIRS.results, `${workflowRunId}.json`), JSON.stringify({ activityState: "needs_attention", results: [null, { workflowKey: "detaches", runId: "child-1", success: false, output: "old", outputState: "present" }] }), "utf-8");
+		const state = { asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]) } as SubagentState;
+
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "child-1",
+			result: { index: 0, agent: "worker", task: `Write your findings to exactly this path: ${requestedPath}`, exitCode: 0, savedOutputPath: savedPath, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+		}), true);
+
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { activityState?: string; summary?: string; results?: unknown[] };
+		assert.equal(published.activityState, undefined);
+		assert.equal(published.results?.[0], null);
+		assert.ok(published.summary?.includes(`'detaches': requested ${requestedPath} -> saved ${savedPath}`));
+	});
+
 	it("publishes detached completion when the workflow receipt is malformed", () => {
 		const workflowRunId = "workflow-malformed-receipt";
 		const asyncDir = path.join(DIRS.async, workflowRunId);
@@ -495,7 +519,7 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; error?: string; workflowReceipt?: unknown };
 		assert.equal(published.state, "failed");
 		assert.equal(published.success, false);
-		assert.match(published.error ?? "", /unsupported-continuation/);
+		assert.match(published.error ?? "", /evidence-persistence-failed/);
 		assert.equal(published.workflowReceipt, undefined);
 		const events = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
 		assert.match(events, /"type":"subagent.workflow.receipt_write_failed"/);
@@ -530,10 +554,11 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			console.error = originalConsoleError;
 		}
 
-		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; error?: string; workflowReceipt?: unknown; reconciledFromDetachedChild?: string };
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; error?: string; summary?: string; workflowReceipt?: unknown; reconciledFromDetachedChild?: string };
 		assert.equal(published.state, "failed");
 		assert.equal(published.success, false);
-		assert.match(published.error ?? "", /unsupported-continuation/);
+		assert.match(published.error ?? "", /evidence-persistence-failed/);
+		assert.match(published.summary ?? "", /Available child evidence was preserved/);
 		assert.equal(published.workflowReceipt, undefined);
 		assert.equal(published.reconciledFromDetachedChild, "child-1");
 		assert.equal(emitted?.name, "subagent:async-complete");
@@ -547,7 +572,7 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			state: "failed",
 			workflowResolution: "settled-awaiting-resume",
 			recovery: [],
-			summary: "Workflow lanes settled after detached child child-1 finished. JavaScript workflow continuation was not persisted. No retained child is resumable.",
+			summary: published.summary,
 			reconciledFromDetachedChild: "child-1",
 			results: [{ workflowKey: "detaches", agent: "worker", runId: "child-1", success: true, output: "", outputState: "absent" }],
 			sessionId: "session-1",

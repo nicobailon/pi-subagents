@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Extract detached workflow settlement planning into a focused workflow module while preserving fail-closed result handoff.
+
 ## [0.58.0] - 2026-08-27
 
 ### Highlights
