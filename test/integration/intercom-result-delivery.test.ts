@@ -1441,7 +1441,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 
 		assert.doesNotMatch(statusText, /Async run not found/);
 		assert.match(statusText, /State: remembered foreground/);
-		assert.match(statusText, /a completed/);
+		assert.match(statusText, /a: ask supervisor completed/);
 		assert.match(statusText, /final recovered answer/);
 
 		const transcript = await executor.execute(
