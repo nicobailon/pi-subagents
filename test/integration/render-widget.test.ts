@@ -3,10 +3,11 @@ import { describe, it } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { extractToolArgsPreview } from "../../src/shared/utils.ts";
 
-const { buildWidgetLines, clearLegacyResultAnimationTimer, compactTaskText, renderWidget } = await import("../../src/tui/render.ts") as {
+const { buildWidgetLines, clearLegacyResultAnimationTimer, compactTaskText, projectAsyncLane, renderWidget } = await import("../../src/tui/render.ts") as {
 	buildWidgetLines: (jobs: Array<Record<string, unknown>>, theme: { fg(name: string, text: string): string; bold(text: string): string }, width?: number, expanded?: boolean, frame?: number) => string[];
 	clearLegacyResultAnimationTimer: (context: { state: { subagentResultAnimationTimer?: ReturnType<typeof setInterval> } }) => void;
 	compactTaskText: (task: string | undefined, label?: string) => string | undefined;
+	projectAsyncLane: (job: Record<string, unknown>) => { label?: string; role: string; phase?: string; state: string; gate?: string; next?: string; output?: string; ref: string; chips: string[] } | undefined;
 	renderWidget: (ctx: Record<string, unknown>, jobs: Array<Record<string, unknown>>) => void;
 };
 
@@ -89,6 +90,171 @@ function resetWidgetLayout(): void {
 }
 
 describe("subagent async widget rendering", () => {
+	it("projects known workflow metadata into a compact lane row", () => {
+		const job = {
+			asyncId: "lane-run-123456",
+			asyncDir: "/tmp/lane-run",
+			status: "running",
+			mode: "parallel",
+			agents: ["reviewer", "writer"],
+			steps: [
+				{
+					index: 0,
+					agent: "reviewer",
+					status: "running",
+					phase: "fresh-review",
+					label: "Review #1610",
+					workflowKey: "review",
+					description: "Inspect the current status surface",
+					outputName: "review.md",
+					context: "fresh",
+					review: { status: "review-required" },
+				},
+				{ index: 1, agent: "writer", status: "pending", phase: "implementation", label: "Fix candidate", workflowKey: "writer", outputName: "fix.md" },
+			],
+		};
+
+		assert.deepEqual(projectAsyncLane(job), {
+			label: "Review #1610 — Inspect the current status surface",
+			role: "reviewer",
+			phase: "fresh-review",
+			state: "running",
+			gate: "review required",
+			next: "review output",
+			output: "review.md",
+			ref: "review",
+			chips: ["fresh"],
+		});
+		const text = buildWidgetLines([job], theme, 180).join("\n");
+		assert.match(text, /lane: Review #1610 — Inspect the current status surface · role:reviewer · running/);
+		assert.match(text, /phase:fresh-review · gate:review required · next:review output · out:review\.md · ref:review · \[fresh\]/);
+		assert.match(text, /lane: Fix candidate/);
+		assert.match(text, /lane: Fix candidate · role:writer · pending/);
+		assert.match(text, /phase:implementation · next:await launch · out:fix\.md/);
+	});
+
+	it("keeps simple one-off async rows on the existing fallback projection", () => {
+		const job = {
+			asyncId: "simple-run",
+			asyncDir: "/tmp/simple-run",
+			status: "running",
+			mode: "single",
+			agents: ["scout"],
+			description: "Explore the repository",
+			outputFile: "/tmp/simple-run/output-0.log",
+			currentTool: "read",
+		};
+
+		assert.equal(projectAsyncLane(job), undefined);
+		const text = buildWidgetLines([job], theme, 180).join("\n");
+		assert.match(text, /async subagent scout · background/);
+		assert.match(text, /⎿  read/);
+		assert.doesNotMatch(text, /lane:/);
+	});
+
+	it("keeps lane state and next-action signals distinct for terminal and attention states", () => {
+		const states = [
+			{ status: "complete", expectedState: "complete", expectedNext: "inspect output" },
+			{ status: "failed", expectedState: "failed", expectedNext: "inspect failure" },
+			{ status: "paused", expectedState: "paused", expectedNext: "inspect paused state" },
+			{ status: "stopped", expectedState: "stopped", expectedNext: "inspect stopped state" },
+		] as const;
+		for (const [index, candidate] of states.entries()) {
+			const lane = projectAsyncLane({
+				asyncId: `state-${index}`,
+				asyncDir: `/tmp/state-${index}`,
+				status: candidate.status,
+				mode: "single",
+				agents: ["worker"],
+				workflowKey: "stateful",
+				description: "stateful work item",
+				steps: [{ agent: "worker", status: candidate.status, outputName: "result.md" }],
+			});
+			assert.equal(lane?.state, candidate.expectedState);
+			assert.equal(lane?.next, candidate.expectedNext);
+		}
+		const attention = projectAsyncLane({
+			asyncId: "attention",
+			asyncDir: "/tmp/attention",
+			status: "running",
+			mode: "single",
+			agents: ["reviewer"],
+			steps: [{ agent: "reviewer", status: "running", label: "Review", activityState: "needs_attention" }],
+		});
+		assert.equal(attention?.next, "inspect attention");
+		assert.deepEqual(attention?.chips, ["attention"]);
+	});
+
+	it("surfaces stale and tool/turn budget blocked states", () => {
+		const staleJob = {
+			asyncId: "stale-run",
+			asyncDir: "/tmp/stale-run",
+			status: "running",
+			mode: "single",
+			agents: ["worker"],
+			steps: [{ agent: "worker", status: "running", label: "Stale work", watchdog: { phase: "stale" } }],
+		};
+		const stale = projectAsyncLane(staleJob);
+		assert.equal(stale?.next, "inspect stale state");
+		assert.deepEqual(stale?.chips, ["stale"]);
+
+		const blockedJobs: Array<Record<string, unknown>> = [];
+		for (const [index, field] of (["toolBudgetBlocked", "turnBudgetExceeded"] as const).entries()) {
+			const blockedJob = {
+				asyncId: `blocked-run-${index}`,
+				asyncDir: `/tmp/blocked-run-${index}`,
+				status: "running",
+				mode: "single",
+				agents: ["worker"],
+				steps: [{ agent: "worker", status: "running", label: "Blocked work", [field]: true }],
+			};
+			blockedJobs.push(blockedJob);
+			const blocked = projectAsyncLane(blockedJob);
+			assert.equal(blocked?.next, "inspect blocked state");
+			assert.deepEqual(blocked?.chips, ["blocked"]);
+		}
+
+		const text = buildWidgetLines([staleJob, ...blockedJobs], theme, 180).join("\n");
+		assert.match(text, /next:inspect stale state/);
+		assert.match(text, /\[stale\]/);
+		assert.match(text, /next:inspect blocked state/);
+		assert.match(text, /\[blocked\]/);
+	});
+
+	it("keeps stale and blocked lane signals in crowded progressive rows", () => {
+		resetWidgetLayout();
+		withStdoutSize(22, 120, () => {
+			const jobs = [
+				{
+					asyncId: "progressive-stale",
+					asyncDir: "/tmp/progressive-stale",
+					status: "running",
+					mode: "single",
+					agents: ["watcher"],
+					steps: [{ agent: "watcher", status: "running", label: "Stale lane", watchdog: { phase: "stale" } }],
+				},
+				{
+					asyncId: "progressive-blocked",
+					asyncDir: "/tmp/progressive-blocked",
+					status: "running",
+					mode: "single",
+					agents: ["budgeter"],
+					steps: [{ agent: "budgeter", status: "running", label: "Blocked lane", toolBudgetBlocked: true }],
+				},
+			];
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, jobs);
+			const lines = renderWidgetLines(ui.widgets.at(-1));
+			assert.equal(lines.length, 3, "22 terminal rows should select the collapsed progressive tier");
+			const text = lines.join("\n");
+			assert.match(text, /next:inspect stale state/);
+			assert.match(text, /\[stale\]/);
+			assert.match(text, /next:inspect blocked state/);
+			assert.match(text, /\[blocked\]/);
+		});
+		resetWidgetLayout();
+	});
+
 	it("orders running jobs before queued summaries and completions", () => {
 		const lines = buildWidgetLines([
 			{ asyncId: "done-1", asyncDir: "/tmp/done", status: "complete", agents: ["reviewer"], startedAt: 0, updatedAt: 1000 },
@@ -398,6 +564,48 @@ describe("subagent async widget rendering", () => {
 			const lines = renderWidgetLines(ui.widgets.at(-1));
 			assert.equal(lines.length, 14);
 			assert.match(lines.join("\n"), /parallel · running/);
+		});
+		resetWidgetLayout();
+	});
+
+	it("selects the current flat-indexed member from a collapsed parallel group", () => {
+		resetWidgetLayout();
+		withStdoutSize(22, 120, () => {
+			const parallelGroupJob = {
+				asyncId: "run-parallel-slice",
+				asyncDir: "/tmp/run-parallel-slice",
+				status: "running",
+				mode: "chain",
+				agents: ["producer", "reviewer", "worker"],
+				activeParallelGroup: true,
+				currentStep: 3,
+				chainStepCount: 2,
+				parallelGroups: [{ start: 2, count: 2, stepIndex: 1 }],
+				steps: [
+					{ index: 2, agent: "reviewer", status: "complete", label: "First parallel member", description: "First member task", phase: "first-phase", workflowKey: "first-ref", outputName: "first.md" },
+					{ index: 3, agent: "worker", status: "running", label: "Current parallel member", description: "Current member task", phase: "current-phase", workflowKey: "current-ref", outputName: "current.md" },
+				],
+			};
+			const direct = projectAsyncLane(parallelGroupJob);
+			assert.equal(direct?.label, "Current parallel member — Current member task");
+			assert.equal(direct?.role, "worker");
+			assert.equal(direct?.phase, "current-phase");
+			assert.equal(direct?.output, "current.md");
+			assert.equal(direct?.ref, "current-ref");
+
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [parallelGroupJob, {
+				asyncId: "run-parallel-sibling",
+				asyncDir: "/tmp/run-parallel-sibling",
+				status: "running",
+				mode: "single",
+				agents: ["sibling"],
+				currentTool: "read",
+			}]);
+			const lines = renderWidgetLines(ui.widgets.at(-1));
+			const text = lines.join("\n");
+			assert.match(text, /Current parallel member — Current member task/);
+			assert.doesNotMatch(text, /First parallel member — First member task/);
 		});
 		resetWidgetLayout();
 	});

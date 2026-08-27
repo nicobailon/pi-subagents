@@ -58,6 +58,7 @@ interface AsyncRunStepSummary {
 	stopped?: boolean;
 	turnBudget?: TurnBudgetState;
 	turnBudgetExceeded?: boolean;
+	toolBudgetBlocked?: boolean;
 	wrapUpRequested?: boolean;
 	acceptance?: AsyncJobStep["acceptance"];
 	agentContract?: AsyncJobStep["agentContract"];
@@ -309,6 +310,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.stopRequestedAt !== undefined ? { stopRequestedAt: step.stopRequestedAt } : {}),
 			...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
 			...(step.turnBudgetExceeded !== undefined ? { turnBudgetExceeded: step.turnBudgetExceeded } : {}),
+			...(step.toolBudgetBlocked !== undefined ? { toolBudgetBlocked: step.toolBudgetBlocked } : {}),
 			...(step.wrapUpRequested !== undefined ? { wrapUpRequested: step.wrapUpRequested } : {}),
 			...(step.acceptance ? { acceptance: step.acceptance } : {}),
 			...(step.agentContract ? { agentContract: step.agentContract } : {}),
@@ -318,6 +320,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.execution ? { execution: step.execution } : {}),
 			...(step.review ? { review: step.review } : {}),
 			...(step.effects ? { effects: step.effects } : {}),
+			...(step.watchdog ? { watchdog: step.watchdog } : {}),
 			...(step.processTerminal ? { processTerminal: sanitizeProcessTerminal(step.processTerminal, { runId: status.runId, runnerProcessInstanceId: step.processTerminal.runnerProcessInstanceId }, `${path.join(asyncDir, "status.json")} step ${index}`) } : {}),
 			...(step.capabilityCeiling ? { capabilityCeiling: step.capabilityCeiling } : {}),
 			...(step.capabilityAudit ? { capabilityAudit: step.capabilityAudit } : {}),

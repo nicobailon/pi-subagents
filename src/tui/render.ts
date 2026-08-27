@@ -278,6 +278,153 @@ export function compactTaskText(task: string | undefined, label?: string): strin
 	return previewDisplayText(normalized, COMPACT_TASK_MAX_CHARS);
 }
 
+export interface AsyncLaneProjection {
+	label?: string;
+	role: string;
+	phase?: string;
+	state: AsyncJobState["status"] | AsyncJobStep["status"];
+	gate?: string;
+	next?: string;
+	output?: string;
+	ref: string;
+	chips: string[];
+}
+
+const LANE_VALUE_MAX_CHARS = 48;
+
+function boundedLaneValue(value: string | undefined, maxChars = LANE_VALUE_MAX_CHARS): string | undefined {
+	if (!value?.trim() || value.trim() === PROMPT_REDACTED) return undefined;
+	return previewDisplayText(oneLine(value), maxChars);
+}
+
+function laneStepForJob(job: AsyncJobState): AsyncJobStep | undefined {
+	const steps = job.steps ?? [];
+	if (steps.length === 0) return undefined;
+	if (job.currentStep !== undefined) {
+		const current = steps[job.currentStep];
+		if (current && (current.index === undefined || current.index === job.currentStep)) return current;
+		// Active parallel groups retain flat indices while exposing only the group slice.
+		const indexedCurrent = steps.find((step) => step.index === job.currentStep);
+		if (indexedCurrent) return indexedCurrent;
+		return steps[0];
+	}
+	return steps.find((step) => step.status === "running")
+		?? steps.find((step) => step.status === "pending")
+		?? steps.at(-1);
+}
+
+function laneTraceForJob(job: AsyncJobState): NonNullable<AsyncJobState["workflow"]>["trace"][number] | undefined {
+	return Array.isArray(job.workflow?.trace) ? job.workflow.trace.at(-1) : undefined;
+}
+
+function laneGate(step: AsyncJobStep | undefined): string | undefined {
+	const review = step?.review?.status ?? step?.acceptance?.reviewResult?.status;
+	if (review === "blockers") return "review blockers";
+	if (review === "review-required") return "review required";
+	if (review === "reviewed") return "reviewed";
+	const acceptance = step?.acceptance?.status;
+	if (acceptance === "review-required") return "acceptance review";
+	if (acceptance === "checked" || acceptance === "verified" || acceptance === "accepted") return "acceptance";
+	return undefined;
+}
+
+function laneNextAction(state: AsyncLaneProjection["state"], step: AsyncJobStep | undefined, output: string | undefined, gate: string | undefined): string | undefined {
+	if (step?.watchdog?.phase === "stale") return "inspect stale state";
+	if (step?.toolBudgetBlocked === true || step?.turnBudgetExceeded === true) return "inspect blocked state";
+	if (gate === "review blockers") return "resolve review blockers";
+	if (gate === "review required" || gate === "acceptance review") return "review output";
+	if (step?.activityState === "needs_attention") return "inspect attention";
+	if (state === "queued" || state === "pending") return "await launch";
+	if (state === "failed" || state === "rejected") return "inspect failure";
+	if (state === "partial") return "inspect partial state";
+	if (state === "paused") return "inspect paused state";
+	if (state === "stopped") return "inspect stopped state";
+	if ((state === "complete" || state === "completed") && gate === "reviewed") return "ready";
+	if ((state === "complete" || state === "completed") && output) return "inspect output";
+	return undefined;
+}
+
+function isTerminalLaneState(state: AsyncJobState["status"]): boolean {
+	return state !== "queued" && state !== "running";
+}
+
+/** Project already-loaded async status facts into one bounded, render-only lane row. */
+export function projectAsyncLane(job: AsyncJobState, selectedStep = laneStepForJob(job)): AsyncLaneProjection | undefined {
+	const trace = laneTraceForJob(job);
+	const label = compactTaskText(selectedStep?.description, selectedStep?.label)
+		?? boundedLaneValue(trace?.label)
+		?? boundedLaneValue(selectedStep?.workflowKey ?? job.workflowKey);
+	const role = boundedLaneValue(selectedStep?.agent ?? trace?.agent ?? job.agents?.[0] ?? widgetJobName(job), 32) ?? "subagent";
+	const phase = boundedLaneValue(selectedStep?.phase ?? trace?.phase);
+	const gate = laneGate(selectedStep);
+	const output = boundedLaneValue(selectedStep?.outputName);
+	const ref = boundedLaneValue(selectedStep?.workflowKey ?? job.workflowKey ?? job.asyncId.slice(0, 8), 24) ?? job.asyncId.slice(0, 8);
+	const chips = [
+		selectedStep?.context,
+		selectedStep?.structured ? "structured" : undefined,
+		selectedStep?.activityState === "active_long_running" ? "long-running" : undefined,
+		selectedStep?.activityState === "needs_attention" ? "attention" : undefined,
+		selectedStep?.watchdog?.phase === "stale" ? "stale" : undefined,
+		selectedStep?.toolBudgetBlocked === true || selectedStep?.turnBudgetExceeded === true ? "blocked" : undefined,
+	].filter((chip): chip is string => Boolean(chip));
+	const state = isTerminalLaneState(job.status) ? job.status : selectedStep?.status ?? job.status;
+	const next = laneNextAction(state, selectedStep, output, gate);
+	if (!label && !phase && !gate && !output && !selectedStep?.workflowKey && !job.workflowKey && !trace?.label && !trace?.phase) return undefined;
+	return { ...(label ? { label } : {}), role, ...(phase ? { phase } : {}), state, ...(gate ? { gate } : {}), ...(next ? { next } : {}), ...(output ? { output } : {}), ref, chips };
+}
+
+function laneStateLabel(state: AsyncLaneProjection["state"], theme: Theme): string {
+	if (state === "running") return theme.fg("accent", "running");
+	if (state === "queued" || state === "pending") return theme.fg("muted", state);
+	if (state === "complete" || state === "completed") return theme.fg("success", "complete");
+	if (state === "failed" || state === "rejected") return theme.fg("error", state === "rejected" ? "rejected" : "failed");
+	return theme.fg("warning", state);
+}
+
+function formatLaneProjection(lane: AsyncLaneProjection, theme: Theme): string {
+	const label = boundedLaneValue(lane.label, 56);
+	const identity = [label, lane.role ? `role:${lane.role}` : undefined].filter(Boolean).join(" · ");
+	return `${theme.fg("dim", "lane:")} ${identity ? theme.bold(identity) : theme.bold(lane.role)} · ${laneStateLabel(lane.state, theme)}`;
+}
+
+function formatLaneChip(chip: string, theme: Theme): string {
+	const text = `[${chip}]`;
+	if (chip === "blocked") return theme.fg("error", text);
+	if (chip === "stale") return theme.fg("warning", text);
+	return text;
+}
+
+function formatLaneProjectionDetails(lane: AsyncLaneProjection, theme: Theme): string | undefined {
+	const details = [
+		lane.phase ? `phase:${lane.phase}` : undefined,
+		lane.gate ? `gate:${lane.gate}` : undefined,
+		lane.next ? `next:${lane.next}` : undefined,
+		lane.output ? `out:${lane.output}` : undefined,
+		lane.ref ? `ref:${lane.ref}` : undefined,
+	].filter(Boolean);
+	const chips = lane.chips.map((chip) => formatLaneChip(chip, theme));
+	return [...(details.length ? [theme.fg("dim", details.join(" · "))] : []), ...chips].join(" · ") || undefined;
+}
+
+function formatLaneProjectionLines(lane: AsyncLaneProjection, theme: Theme, indent: string): string[] {
+	const details = formatLaneProjectionDetails(lane, theme);
+	return [
+		`${indent}${formatLaneProjection(lane, theme)}`,
+		...(details ? [`${indent}  ${details}`] : []),
+	];
+}
+
+function laneRenderKey(job: AsyncJobState): unknown {
+	const lane = projectAsyncLane(job);
+	return lane ? [lane.label, lane.role, lane.phase, lane.state, lane.gate, lane.next, lane.output, lane.ref, lane.chips] : undefined;
+}
+
+function widgetLaneDetailLines(job: AsyncJobState, theme: Theme): string[] {
+	if (job.steps?.length && (job.mode === "parallel" || job.mode === "chain")) return [];
+	const lane = projectAsyncLane(job);
+	return lane ? formatLaneProjectionLines(lane, theme, "  ") : [];
+}
+
 function workflowLabelForResult(details: Details, resultIndex: number): string | undefined {
 	const flatIndex = details.results[resultIndex]?.progress?.index ?? resultIndex;
 	const visit = (nodes: NonNullable<Details["workflowGraph"]>["nodes"]): string | undefined => {
@@ -593,6 +740,15 @@ function widgetStepRenderKey(step: AsyncJobStep, index: number, expanded = false
 		step.model,
 		step.thinking,
 		step.context,
+		step.description,
+		step.outputName,
+		step.structured,
+		step.acceptance?.status,
+		step.acceptance?.reviewResult?.status,
+		step.review?.status,
+		step.toolBudgetBlocked,
+		step.turnBudgetExceeded,
+		step.watchdog?.phase,
 		step.error,
 		expanded ? expandedStepActivityRenderKey(step) : undefined,
 		nestedRenderKey(step.children, expanded),
@@ -641,6 +797,7 @@ export function widgetRenderKey(job: AsyncJobState, expanded = false): string {
 		parallelGroups: job.parallelGroups,
 		steps: job.steps?.map((step, index) => widgetStepRenderKey(step, index, expanded)),
 		nestedChildren: nestedRenderKey(job.nestedChildren, expanded),
+		lane: laneRenderKey(job),
 		stepsTotal: job.stepsTotal,
 		runningSteps: job.runningSteps,
 		completedSteps: job.completedSteps,
@@ -802,6 +959,8 @@ function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme, expanded =
 		const label = compactTaskText(step.description, step.label);
 		const display = label ? `${label} (${step.agent})` : step.agent;
 		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame)} ${itemTitle} ${index + 1}/${total}: ${display} · ${widgetStepStatus(step.status, theme)}${modelDisplay}${activity ? ` · ${activity}` : ""}`)}`);
+		const lane = projectAsyncLane(job, step);
+		if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "    "));
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 8 : 6)) lines.push(`    ${nestedLine}`);
 	}
 	return lines;
@@ -1286,6 +1445,8 @@ function foregroundStyleWidgetStepLines(
 	const stats = widgetStepStats(theme, step);
 	const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
 	const lines = [`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame)} ${itemTitle} ${index}/${total}: ${themeBold(theme, step.agent)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
+	const lane = projectAsyncLane(job, step);
+	if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "    "));
 	const task = compactTaskText(step.description, step.label);
 	if (task) lines.push(`    ${theme.fg("dim", `task: ${task}`)}`);
 	const activity = widgetStepActivityLine(step, width, expanded, job.updatedAt);
@@ -1314,10 +1475,14 @@ function foregroundStyleWidgetStepLines(
 }
 
 function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded: boolean, width: number, frame?: number): string[] {
-	if (!job.steps?.length) return [
-		`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
-		...formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt, expanded ? 12 : 6).map((line) => `  ${line}`),
-	];
+	if (!job.steps?.length) {
+		const lane = projectAsyncLane(job);
+		return [
+			...(lane ? formatLaneProjectionLines(lane, theme, "  ") : []),
+			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
+			...formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt, expanded ? 12 : 6).map((line) => `  ${line}`),
+		];
+	}
 	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width, frame);
 	const total = job.stepsTotal ?? job.steps.length;
 	const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
@@ -1361,6 +1526,8 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 		const task = compactTaskText(step.description, step.label);
 		const taskSuffix = task ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", `task: ${task}`)}` : "";
 		lines.push(`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame)} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${taskSuffix}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
+		const lane = projectAsyncLane(job, step);
+		if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "  "));
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, false, job.updatedAt, 6)) lines.push(`    ${nestedLine}`);
 	}
 	if (job.steps.some((step) => step.status === "running")) lines.push(theme.fg("accent", `  ${liveDetailHintText()}`));
@@ -1499,9 +1666,18 @@ function progressiveJobLine(job: AsyncJobState, theme: Theme, width: number, fra
 	const stats = widgetStats(job, theme);
 	const activity = widgetActivity(job);
 	const status = job.status === "complete" ? "done" : job.status;
+	const lane = projectAsyncLane(job);
+	const laneSummary = lane
+		? [lane.label ?? lane.role, lane.phase ? `phase:${lane.phase}` : undefined, lane.output ? `out:${lane.output}` : undefined, `ref:${lane.ref}`].filter(Boolean).join(" · ")
+		: "";
+	const laneSignals = lane
+		? [lane.next ? `next:${lane.next}` : undefined, ...lane.chips.map((chip) => formatLaneChip(chip, theme))].filter(Boolean).join(" · ")
+		: "";
 	const parts = [
 		`${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}`,
 		theme.fg("dim", status),
+		laneSignals ? laneSignals : "",
+		laneSummary ? theme.fg("dim", laneSummary) : "",
 		stats,
 		activity && activity.toLowerCase() !== status ? theme.fg("dim", activity) : "",
 	].filter(Boolean);
@@ -1647,6 +1823,7 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 		items.push([
 			`${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
 			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
+			...widgetLaneDetailLines(job, theme),
 			...widgetParallelAgentDetails(job, theme, expanded, width, frame),
 		]);
 		slots--;
@@ -1664,6 +1841,7 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 		items.push([
 			`${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
 			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
+			...widgetLaneDetailLines(job, theme),
 			...widgetParallelAgentDetails(job, theme, expanded, width, frame),
 		]);
 		slots--;

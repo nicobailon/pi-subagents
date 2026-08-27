@@ -37,7 +37,7 @@ describe("async status helpers", () => {
 				outputFile,
 				steps: [
 					{ agent: "scout", status: "complete", durationMs: 10, description: "Inspect auth only" },
-					{ agent: "worker", status: "running", durationMs: 20, description: "Patch billing only", contextLimit: 128_000 },
+					{ agent: "worker", status: "running", durationMs: 20, description: "Patch billing only", contextLimit: 128_000, toolBudgetBlocked: true, watchdog: { phase: "stale", seq: 2, lastUpdate: 200, followUpPending: false } },
 				],
 			});
 			const descriptor = createRunFanoutBudget("run-a", 64);
@@ -63,6 +63,8 @@ describe("async status helpers", () => {
 			assert.equal(runs[0]?.steps[0]?.description, "Inspect auth only");
 			assert.equal(runs[0]?.steps[1]?.description, "Patch billing only");
 			assert.equal(runs[0]?.steps[1]?.contextLimit, 128_000);
+			assert.equal(runs[0]?.steps[1]?.toolBudgetBlocked, true);
+			assert.equal(runs[0]?.steps[1]?.watchdog?.phase, "stale");
 			const text = formatAsyncRunList(runs);
 			assert.match(text, /Run fan-out: 3\/64 used, 61 remaining/);
 			assert.match(text, /output: .*output-1\.log/);
