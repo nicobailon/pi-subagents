@@ -8,6 +8,7 @@
 - Accept a child id on `/subagents-stop <run-id> <child-id>` so RPC hosts and non-TUI sessions can stop one child of a multi-child async run or workflow without stopping the whole run. Thanks to [@yanqianglu](https://github.com/yanqianglu) for #1603.
 
 ### Changed
+- Clarify `workflowScript` contracts: each distinct retained resume pass needs a new stable workflow key, and durable child output paths should use explicit bindings plus returned path metadata.
 - Show optional lane/work-item context in async status rows, including known phase, gate, next action, output, run reference, and stale/blocked signals without adding render-time I/O.
 - Extract async status snapshot projection into a pure internal module while preserving RPC and widget wire compatibility.
 - Extract child launch planning into a focused internal module shared by async workflow launch setup.

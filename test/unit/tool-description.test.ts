@@ -41,13 +41,15 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /script inputs are mutually exclusive/i);
 		assert.equal(metadata.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
 		assert.equal(Buffer.byteLength(metadata.promptSnippet!), 62);
-		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 1897);
+		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 2355);
 		assert.deepEqual(metadata.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
 		assert.match(metadata.promptGuidelines!.join("\n"), /Use subagent only when delegation is needed/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /action: \"list\".*executable, non-disabled/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /workflowScript for multi-step or parallel work/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /workflowScript means exactly one top-level subagent tool call with async:true/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /Inside it, use runs\.run\/runs\.all to launch children/i);
+		assert.match(metadata.promptGuidelines!.join("\n"), /Each workflow key identifies one result lane.*new stable workflow key.*retained resume pass/i);
+		assert.match(metadata.promptGuidelines!.join("\n"), /output.*not an output declaration.*outputReference.*outputPathMapping.*artifactPaths/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /do not make another top-level subagent call for those children/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /await runs\.all.*do not read \.output from unawaited runs\.run launches/i);
 		assert.match(description, /External CLI agents.*model override.*native Pi tools/i);
@@ -82,6 +84,8 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /continue independent work only until its next dependency barrier; consume the result before work that depends on it/i);
 		assert.match(description, /children\.list.*resumable\/not-resumable reasons/i);
 		assert.match(description, /Resume only rows reported resumable/i);
+		assert.match(description, /Each workflow key identifies one result lane.*new stable workflow key.*retained resume pass/i);
+		assert.match(description, /output.*not an output declaration.*outputReference.*outputPathMapping.*artifactPaths/i);
 		assert.match(description, /implementation challenge.*\{action:\"resume\", id:\"run-id\", message:\"\.\.\.\"\}/i);
 		assert.match(description, /Resume keeps the stored agent\/model\/tool contract/i);
 		assert.match(description, /Oracle\/advisor consultations should use supervisor dialogue for material unknowns when available/i);
@@ -107,6 +111,8 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /subagent_wait/i);
 		assert.match(description, /continue independent work only until its next dependency barrier; consume the result before work that depends on it/i);
 		assert.match(description, /children\.list.*resume only rows reported resumable/i);
+		assert.match(description, /Each workflow key identifies one result lane.*new stable workflow key.*retained resume pass/i);
+		assert.match(description, /output.*not an output declaration.*outputReference.*outputPathMapping.*artifactPaths/i);
 		assert.match(description, /\{action:\"resume\",id:\"run-id\",message:\"\.\.\.\"\} for a simple follow-up or challenge/i);
 		assert.match(description, /resume keeps the stored agent\/model\/tool contract/i);
 		assert.match(description, /Oracle\/advisor consultations use available supervisor dialogue/i);

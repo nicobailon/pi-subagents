@@ -6,6 +6,8 @@ import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 const CUSTOM_TOOL_DESCRIPTION_FILE = "subagent-tool-description.md";
 const CUSTOM_TOOL_DESCRIPTION_MAX_BYTES = 50 * 1024;
 const EXTERNAL_CLI_RUNNER_GUIDANCE = "External CLI agents (codex-exec, codex-exec-writer, claude-code, claude-code-writer, cursor-agent, cursor-agent-writer) use their own runner contract and do not support native Pi child options such as model override, structured output, acceptance/agent contract, tool budget, fast mode, fork context, skills, or native Pi tools unless the runner explicitly implements them.";
+const WORKFLOW_RESUME_KEY_GUIDANCE = "Each workflow key identifies one result lane: use a new stable workflow key for every distinct retained resume pass; same-key calls are reused only when launch parameters are identical, and incompatible parameters are rejected.";
+const WORKFLOW_OUTPUT_BINDING_GUIDANCE = "For durable workflow child files, set output on runs.run/runs.all; task filename prose is not an output declaration, and return the child's outputReference, outputPathMapping, or artifactPaths instead of inventing a literal path.";
 
 export const DEFAULT_SUBAGENT_TOOL_DESCRIPTION = `Delegate to configured subagents. For execution, omit action and use {agent, task?} for one child, workflowScript for inline orchestration, or workflowScriptPath to load a script from the request cwd. The script inputs are mutually exclusive. Use action:'validate' with either script input to check it without launching children. For multi-step or parallel work, make exactly one top-level subagent call with async:true; launch children only inside that workflow and do not make another top-level call for them. Use runs.run('key',{agent,task}) for one child, await runs.all([{key:'a',agent:'reviewer',task:'...'},{key:'b',agent:'reviewer',task:'...'}]) for ordinary parallel children, and read its ordered array result with indexes, destructuring, or .map(...), not by key property. ${EXTERNAL_CLI_RUNNER_GUIDANCE} Use action only for management/control. Use guide or the pi-subagents skill for advanced workflow details.`;
 
@@ -15,6 +17,8 @@ export const SUBAGENT_TOOL_PROMPT_GUIDELINES = [
 	"Use subagent only when delegation is needed. Before executing, call { action: \"list\" } and run only executable, non-disabled agents.",
 	"Omit action for execution. Use { agent, task? } only for one child; use workflowScript for multi-step or parallel work.",
 	"workflowScript means exactly one top-level subagent tool call with async:true. Inside it, use runs.run/runs.all to launch children; do not make another top-level subagent call for those children.",
+	WORKFLOW_RESUME_KEY_GUIDANCE,
+	WORKFLOW_OUTPUT_BINDING_GUIDANCE,
 	"For ordinary parallel work, use await runs.all([{key,agent,task}, ...]); it resolves to an ordered array, not a key map, so use results[0], destructuring, or results.map(...), not results.<key>. Do not read .output from unawaited runs.run launches. Stored runs.run promises are only for advanced rolling fanout and each must later be observed with direct await, Promise.race, or Promise.all.",
 	"Keep one writer per cwd/worktree unless writers run in isolated worktrees.",
 	"To pass an explicit model to a child, first call { action: \"models\" } and copy an exact provider/id (e.g. openai-codex/gpt-5.6-sol); bare ids resolve only when unique in the registry, and agent names (gpt-pro, advisor) are not model ids. Set per-run thinking with a suffix on the model string (e.g. openai-codex/gpt-5.6-sol:high; off/minimal/low/medium/high/xhigh/max); the suffix wins over the agent's thinking default. The thinking field only applies to action='watchdog.configure' and is ignored on dispatch.",
@@ -26,6 +30,8 @@ export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Use { action: "list" } before execution and only run executable/non-disabled agents.
 • Keep execution and management separate: omit action for structured single-child or workflowScript execution; use action only for management/control.
 • Async/background runs are the normal default unless config sets asyncByDefault:false; set async:true explicitly when async behavior matters. Use async:false only when the parent must block until completion. Async mode still shows progress. Final reviews and gate checks stay async; needing a result is not a blocking reason. After an async launch, continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll status just to wait; use subagent_wait only when the current request must finish in this turn.
+• ${WORKFLOW_RESUME_KEY_GUIDANCE}
+• ${WORKFLOW_OUTPUT_BINDING_GUIDANCE}
 • Ordinary child subagents are not orchestrators. Only explicitly configured fanout children may use the child-safe subagent tool, still bounded by depth/session limits.
 • Oracle/advisor consultations should use supervisor dialogue for material unknowns when available; request one-shot only when desired.
 • Keep one writer for the same cwd/worktree. Use fresh-context read-only reviewers for independent review, then have the parent synthesize and apply fixes.
@@ -70,6 +76,8 @@ MANAGE / CONTROL:
 
 ASYNC / SAFETY:
 • Omitted async follows asyncByDefault config; set async:true explicitly when async behavior matters. Continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll merely to wait; use subagent_wait only when this turn must receive results.
+• ${WORKFLOW_RESUME_KEY_GUIDANCE}
+• ${WORKFLOW_OUTPUT_BINDING_GUIDANCE}
 • Ordinary children are not orchestrators. Keep one writer per cwd/worktree and use fresh read-only reviewers for independent checks.
 • Oracle/advisor consultations use available supervisor dialogue for material unknowns; request one-shot when desired.
 • Status and artifacts live under asyncId/asyncDir with status.json, events.jsonl, output logs, and {action:"status",id:"..."}.`;
