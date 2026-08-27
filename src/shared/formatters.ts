@@ -11,10 +11,13 @@ import { previewDisplayText, sanitizeDisplayText } from "./display-text.ts";
 import { splitKnownThinkingSuffix, THINKING_LEVELS } from "./model-info.ts";
 
 /**
- * Format token count with k suffix for large numbers
+ * Format token count for compact display.
  */
 export function formatTokens(n: number): string {
-	return n < 1000 ? String(n) : n < 10000 ? `${(n / 1000).toFixed(1)}k` : `${Math.round(n / 1000)}k`;
+	if (n < 1000) return String(n);
+	if (n < 10000) return `${(n / 1000).toFixed(1)}k`;
+	if (n < 999_500) return `${Math.round(n / 1000)}k`;
+	return `${Number((n / 1_000_000).toFixed(1))}M`;
 }
 
 export function formatTokenUsage(usage: TokenUsage, legacyLabel = "tok"): string {
