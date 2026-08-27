@@ -4806,7 +4806,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								if (entry.durationMs === undefined) delete existing.durationMs;
 								else existing.durationMs = entry.durationMs;
 							} else {
-								const stepSessionName = deriveChildSessionName({ agent: entry.agent ?? entry.key, label: entryLabel ?? entry.key });
+								// Naming uses the explicit label only — never the workflow key — so the
+								// placeholder cannot diverge from the task-derived name the child
+								// session actually gets (launch/progress updates overwrite this).
+								const stepSessionName = deriveChildSessionName({ agent: entry.agent ?? entry.key, label: entryLabel });
 								const step: NonNullable<AsyncStatus["steps"]>[number] = {
 									agent: entry.agent ?? entry.key,
 									...(stepSessionName ? { sessionName: stepSessionName } : {}),

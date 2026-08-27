@@ -1442,11 +1442,13 @@ async function runSingleStepInner(
 			});
 		}
 	}
+	// Derive from the pre-acceptance task so internal acceptance/recovery
+	// instructions never leak into the display name.
+	const childSessionName = step.sessionName ?? deriveChildSessionName({ agent: step.agent, task, label: step.label });
 	if (step.effectiveAcceptance) {
 		const acceptancePrompt = formatAcceptancePrompt(step.effectiveAcceptance, { reportOptional: isAgentContractV1(step.agentContract), structuredOutput: Boolean(step.structuredOutput?.acceptanceReportPath) });
 		if (acceptancePrompt) task = `${task}\n${acceptancePrompt}`;
 	}
-	const childSessionName = step.sessionName ?? deriveChildSessionName({ agent: step.agent, task, label: step.label });
 	const sessionEnabled = Boolean(step.sessionFile) || ctx.sessionEnabled;
 	const sessionDir = step.sessionFile ? undefined : ctx.sessionDir;
 

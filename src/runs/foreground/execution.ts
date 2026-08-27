@@ -332,7 +332,7 @@ async function runSingleAttempt(
 	// Display name for the child session: applied inside the child via
 	// PI_SUBAGENT_SESSION_NAME and echoed back on the result payload so hosts
 	// can label this run without reading the child's session file.
-	const childSessionName = deriveChildSessionName({ agent: agent.name, task });
+	const childSessionName = deriveChildSessionName({ agent: agent.name, task: shared.originalTask ?? task });
 	const watchdogConfig = resolveWatchdogConfig(options.cwd ?? runtimeCwd);
 	const childWatchdog = watchdogConfig.ok
 		? resolveChildWatchdogConfig({
