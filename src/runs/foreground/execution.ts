@@ -55,7 +55,8 @@ import {
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, resolveToolTimeoutMs, toolTimeoutCallKey, toolTimeoutFromEnv } from "../shared/tool-timeout.ts";
-import { evaluateCompletionMutationGuard, validateImplementationToolContract } from "../shared/completion-guard.ts";
+import { evaluateCompletionMutationGuard, expectsImplementationMutation, hasMutationToolCapability, validateImplementationToolContract } from "../shared/completion-guard.ts";
+import { planCompletionEvidence } from "../shared/completion-evidence.ts";
 import { arbitrateCompletionGuardRescue } from "../shared/llm-intent-arbiter.ts";
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
@@ -1595,7 +1596,6 @@ async function runSingleAttempt(
 		: undefined;
 	const mutationAttemptObserved = observedMutationAttempt || mutationEvidence.attemptedMutation;
 	let completionGuardTriggered = completionGuard?.triggered === true && !mutationAttemptObserved;
-	const completionGuardBlocked = completionGuard?.blocked === true;
 	// The classifier is deliberately narrow, so a read-only review task can
 	// still be misread as implementation. Arbitrate BEFORE any failure side
 	// effect is published (effects, exit code, progress, notifications,
@@ -1612,31 +1612,26 @@ async function runSingleAttempt(
 		completionGuardTriggered = arbitration.triggered;
 		arbiterRescued = arbitration.rescued;
 	}
-	if (completionGuard) {
+	const completionEvidence = planCompletionEvidence({
+		guard: completionGuard,
+		guardTriggered: completionGuardTriggered,
+		completionGuardEnabled,
+		mutationCapable: hasMutationToolCapability(contractTools, toolPlan.effectiveMcpTools),
+		implementationMutationExpected: expectsImplementationMutation(agent.name, shared.originalTask ?? task),
+		mutationAttemptObserved,
+		mutationEvidence,
+		arbiterRescued,
+		agentContractV1: isAgentContractV1(options.agentContract),
+	});
+	if (completionEvidence.fileMutation) {
 		result.effects = {
 			...(result.effects ?? {}),
-			fileMutation: {
-				status: completionGuardBlocked
-					? "blocked"
-					: completionGuard.expectedMutation
-					? completionGuardTriggered
-						? "missing"
-						: arbiterRescued
-							? "not-applicable"
-							: "observed"
-					: "not-applicable",
-				expected: completionGuard.expectedMutation,
-				attempted: completionGuardBlocked ? false : completionGuard.attemptedMutation || mutationAttemptObserved,
-				evidence: mutationEvidence,
-				...(completionGuardBlocked && completionGuard.message ? { message: completionGuard.message } : {}),
-				...(completionGuardTriggered ? { message: "Subagent completed without making edits for an implementation task." } : {}),
-				...(arbiterRescued ? { resolvedBy: "llm-intent-arbiter" } : {}),
-			},
+			fileMutation: completionEvidence.fileMutation,
 		};
 	}
-	if (completionGuardTriggered && !isAgentContractV1(options.agentContract)) {
+	if (completionEvidence.legacyFailureError) {
 		result.exitCode = 1;
-		result.error = "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes.";
+		result.error = completionEvidence.legacyFailureError;
 		progress.status = "failed";
 		progress.error = result.error;
 		emitControlEvent(buildControlEvent({

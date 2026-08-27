@@ -52,7 +52,7 @@ interface CompletionMutationGuardInput {
 	mutationEvidence?: TrackedMutationEvidence;
 }
 
-interface CompletionMutationGuardResult {
+export interface CompletionMutationGuardResult {
 	expectedMutation: boolean;
 	attemptedMutation: boolean;
 	triggered: boolean;

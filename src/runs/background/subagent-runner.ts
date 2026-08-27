@@ -50,7 +50,6 @@ import {
 	type SteeringTargetState,
 	type SteeringTargetStatus,
 	type SubagentChildStatusEvent,
-	type SettlementDiagnostic,
 	DEFAULT_MAX_OUTPUT,
 	type MaxOutputConfig,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
@@ -104,6 +103,7 @@ import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSt
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
 import { evaluateCompletionMutationGuard, expectsImplementationMutation, hasMutationToolCapability, validateImplementationToolContract } from "../shared/completion-guard.ts";
+import { planCompletionEvidence, projectSettlementDiagnostic } from "../shared/completion-evidence.ts";
 import {
 	createMutatingFailureState,
 	didMutatingToolFail,
@@ -1904,25 +1904,16 @@ async function runSingleStepInner(
 			}))
 			: undefined;
 		const mutationAttemptObserved = run.observedMutationAttempt === true || completionMutationEvidence?.attemptedMutation === true;
-		const completionGuardTriggered = completionGuard?.triggered === true && !mutationAttemptObserved;
-		const completionGuardBlocked = completionGuard?.blocked === true;
-		const mutationExpected = completionGuard?.expectedMutation ?? (completionGuardEnabled
-			&& hasMutationToolCapability(completionTools, completionToolPlan?.effectiveMcpTools ?? step.mcpDirectTools)
-			&& expectsImplementationMutation(step.agent, taskForCompletionGuard));
-		const fileMutationEffect = completionGuard
-			? {
-				status: completionGuardBlocked ? "blocked" as const : completionGuard.expectedMutation ? completionGuardTriggered ? "missing" as const : "observed" as const : "not-applicable" as const,
-				expected: completionGuard.expectedMutation,
-				attempted: completionGuardBlocked ? false : completionGuard.attemptedMutation || mutationAttemptObserved,
-				...(completionMutationEvidence ? { evidence: completionMutationEvidence } : {}),
-				...(completionGuardBlocked && completionGuard.message ? { message: completionGuard.message } : {}),
-				...(completionGuardTriggered ? { message: "Subagent completed without making edits for an implementation task." } : {}),
-			}
-			: undefined;
-		const completionGuardError = completionGuardTriggered && !isAgentContractV1(step.agentContract)
-			? "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes."
-			: undefined;
-		const effectiveExitCode = toolAvailabilityError || (completionGuardTriggered && !isAgentContractV1(step.agentContract)) || midToolExitError || structuredError || emptyOutputError
+		const completionEvidence = planCompletionEvidence({
+			guard: completionGuard,
+			completionGuardEnabled,
+			mutationCapable: hasMutationToolCapability(completionTools, completionToolPlan?.effectiveMcpTools ?? step.mcpDirectTools),
+			implementationMutationExpected: expectsImplementationMutation(step.agent, taskForCompletionGuard),
+			mutationAttemptObserved,
+			mutationEvidence: completionMutationEvidence,
+			agentContractV1: isAgentContractV1(step.agentContract),
+		});
+		const effectiveExitCode = toolAvailabilityError || completionEvidence.legacyFailureError || midToolExitError || structuredError || emptyOutputError
 			? 1
 			: hiddenError?.hasError
 				? (hiddenError.exitCode ?? 1)
@@ -1938,7 +1929,7 @@ async function runSingleStepInner(
 		})) ? formatProcessSignalError(run.processSignal!) : undefined;
 		const error = formatSubagentExtensionConflictError(
 			toolAvailabilityError
-				?? completionGuardError
+				?? completionEvidence.legacyFailureError
 				?? midToolExitError
 				?? structuredError
 				?? emptyOutputError
@@ -1961,7 +1952,7 @@ async function runSingleStepInner(
 		});
 		modelAttempts.push(attempt);
 		if (candidate && startupAttemptIndex === 0) attemptedModels.push(candidate);
-		completionGuardTriggeredFinal = completionGuardTriggered;
+		completionGuardTriggeredFinal = completionEvidence.guardTriggered;
 		finalOutputSnapshot = outputSnapshot;
 		if (step.toolBudget) {
 			const toolMessages = run.messages.filter((message) => message.role === "toolResult");
@@ -1974,22 +1965,17 @@ async function runSingleStepInner(
 			: effectiveStructuredOutput
 				? { kind: "structured" as const, path: effectiveStructuredOutput.outputPath, missing: !fs.existsSync(effectiveStructuredOutput.outputPath) }
 			: undefined;
-		const settlementDiagnostic: SettlementDiagnostic | undefined = effectiveExitCode !== 0 || completionGuardTriggered || completionGuardBlocked
-			? {
-				finalTextPresent: Boolean(stripAcceptanceReport(run.finalOutput).trim()),
-				mutation: {
-					expected: mutationExpected,
-					attempted: completionGuard?.attemptedMutation === true || mutationAttemptObserved,
-					observed: mutationEvidence.attemptedMutation,
-				},
-				...(requiredOutput ? { requiredOutput } : {}),
-				afterCompactionSettlement: run.afterCompactionSettlement === true,
-			}
-			: undefined;
-		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, runtimeAcknowledgedExtensions, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(fileMutationEffect || settlementDiagnostic ? { effects: { ...(fileMutationEffect ? { fileMutation: fileMutationEffect } : {}), ...(settlementDiagnostic ? { settlementDiagnostic } : {}) } } : {}) } as RunPiStreamingResult;
+		const settlementDiagnostic = projectSettlementDiagnostic(completionEvidence, {
+			terminalFailed: effectiveExitCode !== 0,
+			finalTextPresent: Boolean(stripAcceptanceReport(run.finalOutput).trim()),
+			mutationObserved: mutationEvidence.attemptedMutation,
+			requiredOutput,
+			afterCompactionSettlement: run.afterCompactionSettlement === true,
+		});
+		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, runtimeAcknowledgedExtensions, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(completionEvidence.fileMutation || settlementDiagnostic ? { effects: { ...(completionEvidence.fileMutation ? { fileMutation: completionEvidence.fileMutation } : {}), ...(settlementDiagnostic ? { settlementDiagnostic } : {}) } } : {}) } as RunPiStreamingResult;
 		if (run.turnBudgetExceeded) break modelAttemptsLoop;
 		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break modelAttemptsLoop;
-		if (attempt.success || completionGuardTriggered) break modelAttemptsLoop;
+		if (attempt.success || completionEvidence.guardTriggered) break modelAttemptsLoop;
 
 		const startupFailure = isRetryableSubagentStartupFailure(omitUndefinedProperties({
 			exitCode: effectiveExitCode,
