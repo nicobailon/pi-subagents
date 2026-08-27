@@ -180,6 +180,7 @@ type ProjectRootResolution = "nearest" | "git-root";
 
 interface SubagentSettings {
 	overrides: Record<string, BuiltinAgentOverrideConfig>;
+	providerOverrides: Record<string, Record<string, BuiltinAgentOverrideConfig>>;
 	defaultModel?: string;
 	defaultProvider?: string;
 	defaultThinking?: string;
@@ -190,7 +191,7 @@ interface SubagentSettings {
 	modelScope?: ModelScopeConfig;
 }
 
-const EMPTY_SUBAGENT_SETTINGS: SubagentSettings = { overrides: {} };
+const EMPTY_SUBAGENT_SETTINGS: SubagentSettings = { overrides: {}, providerOverrides: {} };
 const agentFrontmatterFields = new WeakMap<AgentConfig, Set<string>>();
 
 export interface ChainStepConfig {
@@ -1134,9 +1135,12 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 	const modelScope = parseModelScopeConfig(subagentsObject.modelScope, { filePath });
 
 	const parsed: Record<string, BuiltinAgentOverrideConfig> = {};
+	const providerOverrides: Record<string, Record<string, BuiltinAgentOverrideConfig>> = {};
 	const agentOverrides = subagentsObject.agentOverrides;
+	const agentOverridesByProvider = subagentsObject.agentOverridesByProvider;
 	const parsedSettings: SubagentSettings = {
 		overrides: parsed,
+		providerOverrides,
 		...(defaultModel !== undefined ? { defaultModel } : {}),
 		...(defaultProvider !== undefined ? { defaultProvider } : {}),
 		...(defaultThinking !== undefined ? { defaultThinking } : {}),
@@ -1146,14 +1150,40 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		...(disableThinking !== undefined ? { disableThinking } : {}),
 		...(modelScope !== undefined ? { modelScope } : {}),
 	};
-	if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) {
-		return parsedSettings;
+	if (agentOverrides && typeof agentOverrides === "object" && !Array.isArray(agentOverrides)) {
+		for (const [name, value] of Object.entries(agentOverrides)) {
+			const override = parseBuiltinOverrideEntry(name, value, filePath);
+			if (override) parsed[name] = override;
+		}
 	}
-	for (const [name, value] of Object.entries(agentOverrides)) {
-		const override = parseBuiltinOverrideEntry(name, value, filePath);
-		if (override) parsed[name] = override;
+	if (agentOverridesByProvider !== undefined) {
+		if (!agentOverridesByProvider || typeof agentOverridesByProvider !== "object" || Array.isArray(agentOverridesByProvider)) {
+			throw new Error(`Subagent settings in '${filePath}' have invalid 'agentOverridesByProvider'; expected an object keyed by provider.`);
+		}
+		for (const [provider, value] of Object.entries(agentOverridesByProvider)) {
+			if (!value || typeof value !== "object" || Array.isArray(value)) {
+				throw new Error(`Subagent settings in '${filePath}' have invalid 'agentOverridesByProvider.${provider}'; expected an object keyed by agent.`);
+			}
+			const entries: Record<string, BuiltinAgentOverrideConfig> = {};
+			for (const [agentName, agentValue] of Object.entries(value)) {
+				const override = parseBuiltinOverrideEntry(`agentOverridesByProvider.${provider}.${agentName}`, agentValue, filePath);
+				if (override) entries[agentName] = override;
+			}
+			providerOverrides[provider] = entries;
+		}
 	}
 	return parsedSettings;
+}
+
+function selectProviderOverrides(settings: SubagentSettings, provider: string | undefined): SubagentSettings {
+	if (!provider) return settings;
+	const selected = settings.providerOverrides[provider];
+	if (!selected) return settings;
+	const overrides = { ...settings.overrides };
+	for (const [name, override] of Object.entries(selected)) {
+		overrides[name] = { ...overrides[name], ...override };
+	}
+	return { ...settings, overrides };
 }
 
 function resolveSubagentDefaultProvider(
@@ -2248,15 +2278,15 @@ function extraUserAgentDirs(): string[] {
 		.filter((dir) => dir.length > 0);
 }
 
-export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
+export function discoverAgents(cwd: string, scope: AgentScope, preferredModelProvider?: string): AgentDiscoveryResult {
 	const effectiveCwd = path.resolve(cwd);
 	const userDirOld = path.join(getAgentDir(), "agents");
 	const userDirNew = path.join(os.homedir(), ".agents");
 	const { readDirs: projectAgentDirs, candidateDirs: projectCandidateDirs, preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(effectiveCwd);
 	const userSettingsPath = getUserAgentSettingsPath();
 	const projectSettingsPath = getProjectAgentSettingsPath(effectiveCwd);
-	const userSettings = scope === "project" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(userSettingsPath);
-	const projectSettings = scope === "user" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(projectSettingsPath);
+	const userSettings = selectProviderOverrides(scope === "project" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(userSettingsPath), preferredModelProvider);
+	const projectSettings = selectProviderOverrides(scope === "user" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(projectSettingsPath), preferredModelProvider);
 	const defaultProvider = resolveSubagentDefaultProvider(userSettings, projectSettings, projectSettingsPath);
 	const defaultModel = resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath, defaultProvider);
 	const defaultThinking = resolveSubagentDefaultThinking(userSettings, projectSettings, projectSettingsPath);
@@ -2319,7 +2349,7 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	return { agents, agentDiagnostics, projectAgentsDir, cwd: effectiveCwd, scope, directories, ...(modelScope !== undefined ? { modelScope } : {}), ...(maxThinking !== undefined ? { maxThinking } : {}) };
 }
 
-export function discoverAgentsAll(cwd: string): {
+export function discoverAgentsAll(cwd: string, preferredModelProvider?: string): {
 	builtin: AgentConfig[];
 	package: AgentConfig[];
 	user: AgentConfig[];
@@ -2342,8 +2372,8 @@ export function discoverAgentsAll(cwd: string): {
 	const { readDirs: projectChainDirs, preferredDir: projectChainDir } = resolveNearestProjectChainDirs(cwd);
 	const userSettingsPath = getUserAgentSettingsPath();
 	const projectSettingsPath = getProjectAgentSettingsPath(cwd);
-	const userSettings = readSubagentSettings(userSettingsPath);
-	const projectSettings = readSubagentSettings(projectSettingsPath);
+	const userSettings = selectProviderOverrides(readSubagentSettings(userSettingsPath), preferredModelProvider);
+	const projectSettings = selectProviderOverrides(readSubagentSettings(projectSettingsPath), preferredModelProvider);
 	const defaultProvider = resolveSubagentDefaultProvider(userSettings, projectSettings, projectSettingsPath);
 	const defaultModel = resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath, defaultProvider);
 	const defaultThinking = resolveSubagentDefaultThinking(userSettings, projectSettings, projectSettingsPath);

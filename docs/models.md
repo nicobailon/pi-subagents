@@ -8,9 +8,10 @@ Builtin agents inherit your current Pi default model. This keeps new installs fr
 - `subagents.defaultProvider` — a provider preference for bare model ids, such as `llama-3`, when multiple providers expose the same id.
 - `subagents.agentOverrides.<name>.model` — pin one role.
 - `subagents.agentOverrides.<name>.defaultProvider` — choose or clear the provider preference for one role.
+- `subagents.agentOverridesByProvider.<provider>.<name>` — layer role fields for the active parent provider.
 - Per-run overrides — for one launch only.
 
-Precedence, strongest first: per-run override → agent frontmatter `model` → `agentOverrides.<name>.model` → `subagents.defaultModel` → the parent session model. A provider preference does not replace this order; it only resolves bare model ids when the active registry has more than one match. Fully qualified `provider/model` strings still win exactly.
+Precedence, strongest first: per-run override → agent frontmatter `model` → provider-scoped role override → `agentOverrides.<name>.model` → `subagents.defaultModel` → the parent session model. A provider preference does not replace this order; it only resolves bare model ids when the active registry has more than one match. Fully qualified `provider/model` strings still win exactly.
 
 Use `model: "inherit"` in agent frontmatter or `agentOverrides.<name>.model` to select the current parent session model explicitly.
 
@@ -35,6 +36,28 @@ In `~/.pi/agent/settings.json` (user) or the project config settings file (`.pi/
   }
 }
 ```
+
+To keep one role definition but configure it differently for work and personal providers, add the unambiguous provider map beside `agentOverrides`:
+
+```json
+{
+  "subagents": {
+    "agentOverrides": {
+      "worker": { "thinking": "medium" }
+    },
+    "agentOverridesByProvider": {
+      "github-copilot": {
+        "worker": { "model": "github-copilot/gpt-5-mini" }
+      },
+      "openrouter": {
+        "worker": { "model": "openrouter/openai/gpt-5-mini" }
+      }
+    }
+  }
+}
+```
+
+The provider key comes from the active parent session model (or an explicit host `preferredProvider`) before fallback selection. Provider-scoped fields layer over the ordinary override in the same settings file; project settings still win over user settings. A fallback attempt does not switch the selected provider configuration.
 
 For one run, put the override in the command:
 

@@ -192,6 +192,26 @@ For one run, use inline config:
 
 For persistent tweaks, edit `subagents.agentOverrides` in user or project settings. User overrides apply everywhere. Project overrides apply only in that repo and win over user overrides. Use `/subagents-models` or `subagent({ action: "models" })` to inspect the live mapping after settings and overrides load.
 
+Provider-scoped entries can layer on top of the default override for the active parent session provider. The provider is selected once from the parent model before child model fallback starts, so fallback attempts cannot switch configuration. Within each settings file, the provider entry wins per field; project settings still win over user settings.
+
+```json
+{
+  "subagents": {
+    "agentOverrides": {
+      "worker": { "thinking": "medium" }
+    },
+    "agentOverridesByProvider": {
+      "github-copilot": {
+        "worker": { "model": "github-copilot/gpt-5-mini" }
+      },
+      "openrouter": {
+        "worker": { "model": "openrouter/openai/gpt-5-mini" }
+      }
+    }
+  }
+}
+```
+
 Model ids do not have to be exact. Separator variations (`claude-haiku-4.5` vs `claude-haiku-4-5`), case (`Claude-Sonnet-4`), and optional trailing date stamps (`claude-haiku-4-5-20251001`) all resolve to the same registry model. Exact `provider/id` wins; a qualified `provider/model` never switches providers. To constrain subagents to a budget or compliance profile, set `subagents.modelScope: { enforce: true, allow: ["anthropic/*", "openai/gpt-5-*"] }` in user or project settings. Out-of-scope models you pass explicitly error and abort; models inherited from frontmatter, `subagents.defaultModel`, agent frontmatter, or the parent session only warn.
 
 For model fleets, use the profile commands instead of hand-editing repeated overrides: `/subagents-refresh-provider-models <provider>`, `/subagents-generate-profiles <provider>`, `/subagents-load-profile <name>`, and `/subagents-check-profile <name>`. Profiles live under `~/.pi/agent/profiles/pi-subagents/` and replace only `settings.subagents` when loaded.

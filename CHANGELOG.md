@@ -16,6 +16,7 @@
 
 ### Fixed
 - Ignore nested `.pi` and `sync-backups` directories during agent discovery so stale backup definitions cannot become executable agents. Thanks to [@arlishansenn](https://github.com/arlishansenn) for #1596.
+- Let projects layer agent overrides by the active parent model provider without duplicating agent definitions. Thanks to [@arichiardi](https://github.com/arichiardi) for #1597.
 - Let operators configure the default `subagent_wait` window and report window expiry as non-error active work while preserving strict headless draining. Thanks to [@Shujakuinkuraudo](https://github.com/Shujakuinkuraudo) for #1591.
 - Degrade run status to the stored fan-out budget snapshot when persisted state is unavailable, instead of failing the entire run list. Thanks to [@qsgy-edge](https://github.com/qsgy-edge) for #1595.
 - Enforce MCP server `includeTools`/`excludeTools` policies for child direct-tool grants, including adapter-compatible glob matching. Thanks to [@Shujakuinkuraudo](https://github.com/Shujakuinkuraudo) for #1590.

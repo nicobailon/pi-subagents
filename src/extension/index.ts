@@ -503,10 +503,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (scheduledRunManager.observedCompletionRunIds().size > 0) return true;
 		return missionObserverResultCandidateFiles(DIRS.results).length > 0;
 	};
-	const discoverAgentsForRuntime = (cwd: string, scope: AgentScope) => {
-		const discovered = discoverAgents(cwd, scope);
+	const discoverAgentsForRuntime = (cwd: string, scope: AgentScope, preferredModelProvider?: string) => {
+		const discovered = discoverAgents(cwd, scope, preferredModelProvider);
 		if (listRuntimeAgentConfigs(pi).length === 0) return discovered;
-		const all = discoverAgentsAll(cwd);
+		const all = discoverAgentsAll(cwd, preferredModelProvider);
 		const configuredAgents: AgentConfig[] = [
 			...all.builtin,
 			...all.package,

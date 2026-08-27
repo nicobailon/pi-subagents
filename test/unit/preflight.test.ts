@@ -170,6 +170,34 @@ Project prompt.
 		if (!invalid.ok) assert.equal(invalid.code, "invalid_extension_bindings");
 	});
 
+	it("uses the parent provider for provider-scoped agent overrides", async () => {
+		const cwd = path.join(tempDir, "provider-overrides");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeJson(path.join(cwd, ".pi", "settings.json"), {
+			subagents: {
+				agentOverridesByProvider: {
+					"github-copilot": { worker: { model: "github-copilot/gpt-5-mini" } },
+					openrouter: { worker: { model: "openrouter/openai/gpt-5-mini" } },
+				},
+			},
+		});
+		const availableModels = [
+			{ provider: "github-copilot", id: "gpt-5-mini", fullId: "github-copilot/gpt-5-mini" },
+			{ provider: "openrouter", id: "openai/gpt-5-mini", fullId: "openrouter/openai/gpt-5-mini" },
+		];
+
+		const copilot = await resolveSubagentLaunchContract({
+			agent: "worker", cwd, parentModel: { provider: "github-copilot", id: "parent" }, availableModels,
+		});
+		const openrouter = await resolveSubagentLaunchContract({
+			agent: "worker", cwd, preferredProvider: "openrouter", parentModel: { provider: "github-copilot", id: "parent" }, availableModels,
+		});
+		assert.equal(copilot.ok, true);
+		assert.equal(openrouter.ok, true);
+		if (copilot.ok) assert.equal(copilot.contract.model, "github-copilot/gpt-5-mini:high");
+		if (openrouter.ok) assert.equal(openrouter.contract.model, "openrouter/openai/gpt-5-mini:high");
+	});
+
 	it("warns when workspace package work has package-only authority", async () => {
 		const cwd = path.join(tempDir, "workspace-scope-repo");
 		fs.mkdirSync(cwd, { recursive: true });

@@ -222,8 +222,8 @@ function taskWorkspaceScopeAuthorityDiagnostic(task: string | undefined): Subage
 	};
 }
 
-function candidateList(inputAgent: string, selected: AgentConfig | undefined, cwd: string): SubagentLaunchContractAgentCandidate[] {
-	const all = discoverAgentsAll(cwd);
+function candidateList(inputAgent: string, selected: AgentConfig | undefined, cwd: string, provider?: string): SubagentLaunchContractAgentCandidate[] {
+	const all = discoverAgentsAll(cwd, provider);
 	return [...all.builtin, ...all.package, ...all.user, ...all.project]
 		.filter((agent) => Boolean(resolveAgentName(inputAgent, [agent]).agent))
 		.map((agent) => ({
@@ -257,7 +257,8 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		return { ok: false, code: "invalid_artifact_dir", message: `Unsupported artifactDir '${String(input.artifactDir)}'; expected 'project', 'session', or 'temp'.`, diagnostics };
 	}
 	const scope = resolveExecutionAgentScope(input.agentScope);
-	const discovered = discoverAgents(effectiveCwd, scope);
+	const parentProvider = input.preferredProvider ?? input.parentModel?.provider;
+	const discovered = discoverAgents(effectiveCwd, scope, parentProvider);
 	const resolvedAgent = resolveAgentName(input.agent, discovered.agents);
 	const ambiguousCandidates = resolvedAgent.error
 		? discovered.agents.filter((agent) => resolveAgentName(input.agent, [agent]).agent)
@@ -396,7 +397,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	const memoryInjection = buildAgentMemoryInjection(agent, effectiveCwd);
 	if (memoryInjection) effectiveSystemPrompt = effectiveSystemPrompt ? `${effectiveSystemPrompt}\n\n${memoryInjection}` : memoryInjection;
 	effectiveSystemPrompt = injectOutputPathSystemPrompt(effectiveSystemPrompt, outputPath, agent);
-	const candidates = candidateList(input.agent, agent, effectiveCwd);
+	const candidates = candidateList(input.agent, agent, effectiveCwd, parentProvider);
 	const shadowedCandidates = candidates.filter((candidate) => !candidate.selected);
 	const definitionDigest = agentDefinitionDigest(agent);
 	const contractBase: Omit<SubagentLaunchContract, "digest"> = {

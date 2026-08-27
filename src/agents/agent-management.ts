@@ -734,7 +734,7 @@ function formatAgentDetail(agent: AgentConfig): string {
 
 export function handleList(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
 	const scope = normalizeListScope(params.agentScope) ?? "both";
-	const d = discoverAgentsAll(ctx.cwd);
+	const d = discoverAgentsAll(ctx.cwd, ctx.model?.provider);
 	let scopedAgents = mergeAgentsForScope(scope, d.user, d.project, d.builtin, d.package);
 	if (ctx.runtimeAgentOwner && listRuntimeAgentConfigs(ctx.runtimeAgentOwner).length > 0) {
 		const configuredAgents: AgentConfig[] = [
@@ -795,7 +795,7 @@ function handleModels(params: ManagementParams, ctx: ManagementContext): AgentTo
 		return result(`Builtin agent '${requestedAgent}' not found. Available: ${BUILTIN_AGENT_NAMES.join(", ")}.`, true);
 	}
 
-	const discovered = discoverAgentsAll(ctx.cwd);
+	const discovered = discoverAgentsAll(ctx.cwd, ctx.model?.provider);
 	const builtinByName = new Map(discovered.builtin.map((agent) => [agent.name, agent]));
 	const resolveBuiltinModelAgent = (name: string): AgentConfig | undefined => builtinByName.get(name) ?? resolveAgentName(name, discovered.builtin).agent;
 	const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
@@ -874,7 +874,7 @@ function handleGet(params: ManagementParams, ctx: ManagementContext): AgentToolR
 	if (!params.agent) return result("Specify 'agent' for get.", true);
 	const scope = normalizeListScope(params.agentScope);
 	if (!scope) return result("agentScope must be 'user', 'project', or 'both' for get.", true);
-	const discovered = discoverAgentsAll(ctx.cwd);
+	const discovered = discoverAgentsAll(ctx.cwd, ctx.model?.provider);
 	const matches = findAgentsInDiscovery(params.agent, discovered, scope);
 	const diagnostics = diagnosticsForScope(discovered.agentDiagnostics, scope);
 	const rawName = params.agent.trim();
