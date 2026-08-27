@@ -4900,6 +4900,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										const step = status.steps?.find((candidate) => candidate.workflowKey === key);
 										if (step) {
 											step.agent = launch.agent;
+											if (launch.sessionName) step.sessionName = launch.sessionName;
 											step.sessionFile = launch.sessionFile;
 											step.async = launch.async;
 											if (launch.runId) step.runId = launch.runId;
@@ -4924,6 +4925,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										step.toolCount = progress.toolCount;
 										step.model = progress.model;
 										step.thinking = progress.thinking;
+										if (progress.sessionName) step.sessionName = progress.sessionName;
 										step.error = progress.error;
 										projectWorkflowActivity();
 										persist({ tolerateStatusWriteFailure: true });
