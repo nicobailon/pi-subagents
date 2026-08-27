@@ -746,6 +746,43 @@ describe("async interrupt action", () => {
 		}
 	});
 
+	it("/subagents-stop rejects a nested-only child without writing a parent target request", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `stop-nested-${Date.now().toString(36)}`;
+		const nestedChildId = `${runId}-nested`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "session" });
+		try {
+			const statusPath = path.join(asyncDir, "status.json");
+			writeJson(statusPath, {
+				...JSON.parse(fs.readFileSync(statusPath, "utf-8")),
+				steps: [{
+					agent: "wrapper",
+					status: "running",
+					startedAt: 100,
+					children: [{
+						id: nestedChildId,
+						parentRunId: runId,
+						parentStepIndex: 0,
+						depth: 1,
+						path: [{ runId, stepIndex: 0 }],
+						state: "running",
+					}],
+				}],
+			});
+
+			const result = await executorWithKill(state, () => {
+				throw new Error("nested-only child stop must not signal the parent runner");
+			}).execute("stop-nested", { action: "stop", id: runId, childId: nestedChildId }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), new RegExp(`Child '${nestedChildId}' was not found under async run '${runId}'`));
+			assert.equal(consumeStopRequestPayload(asyncDir), undefined);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
 	it("dismisses only a reload-recovered running workflow without terminating work", async () => {
 		const state = createState();
 		state.currentSessionId = "session";

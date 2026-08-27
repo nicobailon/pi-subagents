@@ -22,6 +22,8 @@ import { listAsyncRuns, formatAsyncRunProgressLabel, type AsyncRunSummary } from
 import { encodeInspectReply, handleInspectRpcArgs, INSPECT_WIDGET_KEY } from "../runs/background/inspect-rpc.ts";
 import { listScheduledRunSummaries } from "../runs/background/scheduled-runs.ts";
 import { SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
+import { resolveAsyncStatusChild } from "../runs/shared/child-identity.ts";
+import { readStatus } from "../shared/utils.ts";
 import { FLEET_OPEN_SHORTCUT } from "../shared/shortcuts.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import { registerPromptWorkflowCommands } from "./prompt-workflows.ts";
@@ -864,6 +866,70 @@ export function registerSlashCommands(
 				return;
 			}
 			await runSlashSubagent(pi, ctx, { action: "stop", id: result.target.id });
+		},
+	});
+
+	pi.registerCommand("subagents-steer", {
+		description: "Steer a live async subagent run with a message, or one child of it with --child <child-id>",
+		handler: async (args, ctx) => {
+			const tokens = args.trim().split(/\s+/).filter(Boolean);
+			const usage = "Usage: /subagents-steer <run-id> [--child <child-id>] <message>";
+			const [id, ...rest] = tokens;
+			if (!id || id.startsWith("--")) {
+				sendSlashText(pi, usage);
+				return;
+			}
+			// Only the optional child selector is parsed as a flag. Everything
+			// after the run id (or selector) is free-form message text, including
+			// a leading token such as `--verbose`.
+			let childId: string | undefined;
+			let messageStart = 0;
+			if (rest[0] === "--child" && rest[1] && !rest[1].startsWith("--")) {
+				childId = rest[1];
+				messageStart = 2;
+			}
+			const message = rest.slice(messageStart).join(" ").trim();
+			if (!message) {
+				sendSlashText(pi, usage);
+				return;
+			}
+			let targetId = id;
+			let childIndex: number | undefined;
+			if (childId !== undefined) {
+				const sessionId = state.currentSessionId ?? ctx.sessionManager.getSessionId() ?? undefined;
+				const run = listAsyncRuns(DIRS.async, {
+					runId: id,
+					states: ["queued", "running", "paused"],
+					...(sessionId ? { sessionId } : {}),
+				})[0];
+				const status = run ? readStatus(run.asyncDir) : null;
+				if (!run || !status) {
+					sendSlashText(pi, `No current-session async run found for '${id}'.`);
+					return;
+				}
+				const resolutionStatus = {
+					...status,
+					steps: status.steps?.map((step, index) => ({ ...step, children: run.steps[index]?.children ?? step.children })),
+				};
+				const resolution = resolveAsyncStatusChild(resolutionStatus, childId, { includeNested: true });
+				if (!resolution.ok) {
+					sendSlashText(pi, resolution.message);
+					return;
+				}
+				if (resolution.child.nested) targetId = resolution.child.nested.id;
+				else if (resolution.child.step.runId) targetId = resolution.child.step.runId;
+				else childIndex = resolution.child.index;
+			}
+			await runSlashSubagent(pi, ctx, {
+				action: "steer",
+				id: targetId,
+				message,
+				...(childIndex !== undefined ? { index: childIndex } : {}),
+				// Host-style exact-child authority, matching the extension RPC
+				// nonRecoveringSteer guarantee: never swap the addressed child for
+				// a pause-and-revive replacement after a missed acknowledgment.
+				steeringRecovery: false,
+			});
 		},
 	});
 

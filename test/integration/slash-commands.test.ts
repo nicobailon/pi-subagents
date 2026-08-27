@@ -8,6 +8,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { registerAgent } from "../../src/api/agents.ts";
 import { clearRuntimeAgentsForPi } from "../../src/agents/runtime-agent-registry.ts";
 import { scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
+import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 import { ASYNC_DIR, DIRS } from "../../src/shared/types.ts";
 import type { WatchdogReviewFunction } from "../../src/watchdog/runtime.ts";
@@ -647,6 +648,198 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 
 		assert.equal(sent.length, 1);
 		assert.match(String((sent[0] as { content?: unknown }).content ?? ""), /Usage: \/subagents-stop \[run-id\] \[child-id\]/);
+	});
+
+	it("/subagents-steer forwards a run-level steer with host-style recovery disabled", async () => {
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		let requestedParams: unknown;
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
+			const payload = data as { requestId: string; params?: unknown };
+			requestedParams = payload.params;
+			events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId: payload.requestId });
+			events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
+				requestId: payload.requestId,
+				result: {
+					content: [{ type: "text", text: "Steer delivered to run-123." }],
+					details: { mode: "management", results: [] },
+				},
+				isError: false,
+			});
+		});
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage() {},
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()));
+		await commands.get("subagents-steer")!.handler("run-123 wrap up and report", createCommandContext());
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		assert.deepEqual(requestedParams, { action: "steer", id: "run-123", message: "wrap up and report", steeringRecovery: false });
+	});
+
+	it("/subagents-steer --child resolves workflow and nested children to direct runs", async () => {
+		const runId = "steer-itest-child-resolution";
+		const childRunId = `${runId}-child`;
+		const nestedChildRunId = `${runId}-nested`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+			runId,
+			sessionId: "session-test",
+			mode: "workflow",
+			state: "paused",
+			activityState: "needs_attention",
+			startedAt: 100,
+			lastUpdate: 200,
+			steps: [
+				{
+					agent: "worker",
+					status: "complete",
+					startedAt: 100,
+					children: [{
+						id: nestedChildRunId,
+						parentRunId: runId,
+						parentStepIndex: 0,
+						depth: 1,
+						path: [{ runId, stepIndex: 0 }],
+						state: "running",
+						asyncDir: path.join(ASYNC_DIR, nestedChildRunId),
+					}],
+				},
+				{ agent: "scout", workflowKey: "detaches", status: "paused", runId: childRunId, startedAt: 110, activityState: "needs_attention" },
+			],
+		}, null, 2), "utf-8");
+		updateActiveRunIndex(asyncDir, "paused");
+
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		let requestedParams: unknown;
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
+			const payload = data as { requestId: string; params?: unknown };
+			requestedParams = payload.params;
+			events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId: payload.requestId });
+			events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
+				requestId: payload.requestId,
+				result: {
+					content: [{ type: "text", text: "Steer delivered." }],
+					details: { mode: "management", results: [] },
+				},
+				isError: false,
+			});
+		});
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage() {},
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()));
+		await commands.get("subagents-steer")!.handler(`${runId} --child detaches --verbose`, createCommandContext());
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		assert.deepEqual(requestedParams, { action: "steer", id: childRunId, message: "--verbose", steeringRecovery: false });
+		await commands.get("subagents-steer")!.handler(`${runId} --child ${nestedChildRunId} continue`, createCommandContext());
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		assert.deepEqual(requestedParams, { action: "steer", id: nestedChildRunId, message: "continue", steeringRecovery: false });
+	});
+
+	it("/subagents-steer --child fails closed for an unknown child id", async () => {
+		const runId = "steer-itest-child-resolution";
+		const sent: unknown[] = [];
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		let requested = false;
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, () => {
+			requested = true;
+		});
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage(message: unknown) { sent.push(message); },
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()));
+		await commands.get("subagents-steer")!.handler(`${runId} --child nope hurry up`, createCommandContext());
+
+		assert.equal(requested, false);
+		assert.equal(sent.length, 1);
+		assert.match(String((sent[0] as { content?: unknown }).content ?? ""), /was not found under async run/);
+	});
+
+	it("/subagents-steer requires a message", async () => {
+		const sent: unknown[] = [];
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		let requested = false;
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, () => {
+			requested = true;
+		});
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage(message: unknown) { sent.push(message); },
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()));
+		await commands.get("subagents-steer")!.handler("run-123", createCommandContext());
+
+		assert.equal(requested, false);
+		assert.equal(sent.length, 1);
+		assert.match(String((sent[0] as { content?: unknown }).content ?? ""), /Usage: \/subagents-steer <run-id>/);
+	});
+
+	it("/subagents-steer treats leading -- tokens as message text", async () => {
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		let requestedParams: unknown;
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
+			const payload = data as { requestId: string; params?: unknown };
+			requestedParams = payload.params;
+			events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId: payload.requestId });
+			events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
+				requestId: payload.requestId,
+				result: {
+					content: [{ type: "text", text: "Steer delivered." }],
+					details: { mode: "management", results: [] },
+				},
+				isError: false,
+			});
+		});
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage() {},
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()));
+		await commands.get("subagents-steer")!.handler("run-123 --verbose", createCommandContext());
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		assert.deepEqual(requestedParams, { action: "steer", id: "run-123", message: "--verbose", steeringRecovery: false });
+
+		await commands.get("subagents-steer")!.handler("run-123 --child --verbose", createCommandContext());
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		assert.deepEqual(requestedParams, { action: "steer", id: "run-123", message: "--child --verbose", steeringRecovery: false });
 	});
 
 	it("/run accepts an agent without a task", async () => {

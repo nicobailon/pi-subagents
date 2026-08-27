@@ -1,4 +1,4 @@
-import type { AsyncStatus } from "../../shared/types.ts";
+import type { AsyncStatus, NestedRunSummary } from "../../shared/types.ts";
 
 export type AsyncStatusStep = NonNullable<AsyncStatus["steps"]>[number];
 
@@ -6,6 +6,7 @@ export interface ResolvedAsyncStatusChild {
 	index: number;
 	step: AsyncStatusStep;
 	id: string;
+	nested?: NestedRunSummary;
 }
 
 export type AsyncStatusChildResolution =
@@ -20,11 +21,25 @@ export function asyncStatusChildIdentityCandidates(step: AsyncStatusStep, index:
 	return [...new Set([step.workflowKey, step.runId, `step:${index}`].filter((value): value is string => typeof value === "string" && value.length > 0))];
 }
 
-export function resolveAsyncStatusChild(status: Pick<AsyncStatus, "runId" | "steps">, childId: string): AsyncStatusChildResolution {
+export function resolveAsyncStatusChild(
+	status: Pick<AsyncStatus, "runId" | "steps">,
+	childId: string,
+	options: { includeNested?: boolean } = {},
+): AsyncStatusChildResolution {
 	const matches: ResolvedAsyncStatusChild[] = [];
 	for (const [index, step] of (status.steps ?? []).entries()) {
-		if (!asyncStatusChildIdentityCandidates(step, index).includes(childId)) continue;
-		matches.push({ index, step, id: asyncStatusChildIdentity(step, index) });
+		if (asyncStatusChildIdentityCandidates(step, index).includes(childId)) {
+			matches.push({ index, step, id: asyncStatusChildIdentity(step, index) });
+		}
+		if (options.includeNested) {
+			const findNested = (children: readonly NestedRunSummary[] | undefined): void => {
+				for (const nested of children ?? []) {
+					if (nested.id === childId) matches.push({ index, step, id: nested.id, nested });
+					findNested(nested.children);
+				}
+			};
+			findNested(step.children);
+		}
 	}
 	if (matches.length === 1) return { ok: true, child: matches[0]! };
 	if (matches.length > 1) return { ok: false, code: "ambiguous", message: `Child '${childId}' is ambiguous under async run '${status.runId}'.` };
