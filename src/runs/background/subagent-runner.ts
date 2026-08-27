@@ -101,7 +101,7 @@ import { markProcessTerminalCandidateLeaseRelease, writeProcessTerminalCandidate
 import { createOwnedProcessTreeController, type OwnedProcessTreeController } from "./owned-process-tree.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, updateSteeringTarget } from "./steering.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
-import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
+import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
 import { evaluateCompletionMutationGuard, expectsImplementationMutation, hasMutationToolCapability, validateImplementationToolContract } from "../shared/completion-guard.ts";
 import { planCompletionEvidence, projectSettlementDiagnostic } from "../shared/completion-evidence.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
@@ -1075,22 +1075,26 @@ function runPiStreaming(
 			const finalOutput = getFinalOutput(messages) || rawStdoutTail.text().trim();
 			const finalError = error ?? assistantError;
 			const forcedDrainAfterFinalSuccess = Boolean(forcedTerminationSignal || signal) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !finalError;
+			const forcedDrainAfterEmptyTerminal = forcedDrainAfterFinalSuccess && hasEmptyTerminalAssistantResponse(messages);
+			const forcedDrainError = forcedDrainAfterEmptyTerminal && stderr.trim()
+				? stderr.trim()
+				: undefined;
 			const signalError = isUnexplainedProcessSignal({
 				processSignal: signal,
 				interrupted,
 				timedOut,
 				stopped,
-				forcedDrainAfterFinalSuccess,
+				forcedDrainAfterFinalSuccess: forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal,
 			}) ? formatProcessSignalError(signal!) : undefined;
 			resolve(omitUndefinedProperties({
 				stderr,
-				exitCode: timedOut || stopped ? 1 : interrupted || forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (exitCode ?? 1) : exitCode,
+				exitCode: timedOut || stopped ? 1 : interrupted || (forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal) ? 0 : forcedTerminationSignal || signal ? (exitCode ?? 1) : exitCode,
 				messages,
 				usage,
 				toolCount,
 				durationMs: Date.now() - startedAt,
 				model,
-				error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : interrupted || forcedDrainAfterFinalSuccess ? undefined : finalError ?? signalError,
+				error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : interrupted || (forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal) ? undefined : finalError ?? forcedDrainError ?? signalError,
 				protocolError,
 				finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput,
 				outputState: finalOutput.trim() ? "present" : "absent",
@@ -1853,7 +1857,7 @@ async function runSingleStepInner(
 			&& !validatedStructuredOutput
 			&& (!run.finalOutput.trim() || terminalEmptyAfterUsefulWork)
 			&& (!hiddenError?.hasError || hasEmptyTerminalAssistantResponse(run.messages))
-			? "Subagent produced no output (possible model cold-start or empty response)."
+			? formatEmptyTerminalAssistantResponseError(run.messages)
 			: undefined;
 		const completionGuardEnabled = isAgentContractV1(step.agentContract) ? step.completionGuard === true : step.completionGuard !== false;
 		const completionToolPlan = resolvedTaskToolPlan;
@@ -1907,13 +1911,17 @@ async function runSingleStepInner(
 		const underlyingError = toolAvailabilityError
 			?? midToolExitError
 			?? structuredError
-			?? (missingRequiredOutputAfterMutation ? missingRequiredOutputError : undefined)
+			?? run.error
+			?? signalError
+			?? (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined)
+			?? ((emptyOutputError || missingRequiredOutputError) && run.stderr.trim() ? run.stderr.trim() : undefined)
 			?? emptyOutputError
+			?? (missingRequiredOutputAfterMutation ? missingRequiredOutputError : undefined)
 			?? (hiddenError?.hasError
 				? hiddenError.details
 					? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
 					: `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
-				: run.error || signalError || (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined));
+				: undefined);
 		const error = formatSubagentExtensionConflictError(
 			underlyingError ?? missingRequiredOutputError ?? completionEvidence.legacyFailureError,
 			{

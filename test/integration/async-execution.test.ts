@@ -5364,7 +5364,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0].error, "provider exploded");
 	});
 
-	it("prioritizes a missing file-only handoff over the completion guard", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("reports terminal abort before a missing file-only handoff after mutation", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const partialOutput = "I’ll inspect the retained candidate before changing it.";
 		const repo = createRepo("pi-subagents-missing-handoff-partial-");
 		const outputPath = path.join(repo, "missing-challenge-report.md");
@@ -5419,7 +5419,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.equal(payload.success, false);
 			assert.equal(payload.state, "partial");
 			assert.equal(child?.success, false);
-			assert.match(diagnostic, new RegExp(`^Required file-only output was not produced: ${escapeRegExp(outputPath)}$`));
+			assert.match(diagnostic, /^Subagent produced no output after terminal assistant stopReason "aborted"\./);
+			assert.match(diagnostic, new RegExp(`Required file-only output was not produced: ${escapeRegExp(outputPath)}`));
 			assert.doesNotMatch(diagnostic, /completed without making edits/);
 			assert.doesNotMatch(child?.modelAttempts?.[0]?.error ?? "", /completed without making edits/);
 			assert.equal(child?.effects?.fileMutation?.status, "observed");
@@ -5482,7 +5483,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const diagnostic = child?.error ?? "";
 		assert.equal(payload.success, false);
 		assert.equal(child?.success, false);
-		assert.match(diagnostic, /^Subagent produced no output \(possible model cold-start or empty response\)\./);
+		assert.match(diagnostic, /^Subagent produced no output after terminal assistant stopReason "aborted"\./);
 		assert.match(diagnostic, /Required file-only output was not produced/);
 		assert.doesNotMatch(diagnostic, /completed without making edits/);
 		assert.doesNotMatch(child?.modelAttempts?.[0]?.error ?? "", /completed without making edits/);
@@ -5492,6 +5493,56 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const eventsText = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf-8");
 		assert.doesNotMatch(eventsText, /completed without making edits/);
+	});
+
+	it("reports zero-exit terminal stderr before missing file-only output after settlement", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const outputPath = path.join(tempDir, "missing-stderr-report.md");
+		const terminalStderr = "Extension error: stale ctx after session replacement";
+		mockPi.onCall({
+			jsonl: [
+				events.toolStart("read", { path: "src/index.ts" }),
+				events.toolEnd("read"),
+				events.toolResult("read", "file contents"),
+				events.assistantMessage("I found the candidate seam."),
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [],
+						model: "mock/test-model",
+						stopReason: "aborted",
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+				{ type: "agent_settled" },
+			],
+			stderr: terminalStderr,
+		});
+
+		const id = `async-stderr-empty-handoff-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Implement the approved file changes",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			output: outputPath,
+			outputMode: "file-only",
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const child = payload.results[0];
+		const diagnostic = child?.error ?? "";
+		assert.equal(payload.success, false);
+		assert.equal(child?.success, false);
+		assert.match(diagnostic, new RegExp(`^${escapeRegExp(terminalStderr)}`));
+		assert.match(diagnostic, /Required file-only output was not produced/);
+		assert.doesNotMatch(diagnostic, /^Subagent produced no output \(possible model cold-start or empty response\)\./);
+		assert.equal(fs.existsSync(outputPath), false);
 	});
 
 	it("reports bounded compaction failure context when file-only output is missing", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

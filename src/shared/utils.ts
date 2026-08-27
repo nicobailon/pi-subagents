@@ -482,6 +482,20 @@ export function hasEmptyTerminalAssistantResponse(messages: Message[]): boolean 
 		&& lastAssistant.usage.output === 0;
 }
 
+export function formatEmptyTerminalAssistantResponseError(messages: Message[]): string {
+	const lastAssistant = messages.findLast((message) => message.role === "assistant");
+	const errorMessage = lastAssistant && "errorMessage" in lastAssistant && typeof lastAssistant.errorMessage === "string" && lastAssistant.errorMessage.trim()
+		? lastAssistant.errorMessage.trim()
+		: undefined;
+	if (errorMessage) return errorMessage;
+	const stopReason = lastAssistant && "stopReason" in lastAssistant && typeof lastAssistant.stopReason === "string" && lastAssistant.stopReason.trim()
+		? lastAssistant.stopReason.trim()
+		: undefined;
+	return stopReason && stopReason !== "stop"
+		? `Subagent produced no output after terminal assistant stopReason "${stopReason}".`
+		: "Subagent produced no output (possible model cold-start or empty response).";
+}
+
 /**
  * Detect errors in subagent execution from messages (only errors with no subsequent success)
  */

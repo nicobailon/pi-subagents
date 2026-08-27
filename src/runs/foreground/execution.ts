@@ -46,6 +46,7 @@ import {
 	findLatestSessionFile,
 	detectSubagentError,
 	hasEmptyTerminalAssistantResponse,
+	formatEmptyTerminalAssistantResponseError,
 	extractToolArgsPreview,
 	extractTextFromContent,
 	boundStreamedRecentTools,
@@ -1296,13 +1297,17 @@ async function runSingleAttempt(
 			const rawStdout = rawStdoutTail.text();
 			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
 			const forcedDrainAfterFinalSuccess = Boolean(forcedTerminationSignal || signal) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
+			const forcedDrainAfterEmptyTerminal = forcedDrainAfterFinalSuccess && hasEmptyTerminalAssistantResponse(result.messages ?? []);
 			if (signal) result.processSignal = signal;
+			if (!closeError && forcedDrainAfterEmptyTerminal && stderr.trim()) {
+				closeError = stderr.trim();
+			}
 			if (!closeError && isUnexplainedProcessSignal({
 				processSignal: signal,
 				interrupted: result.interrupted,
 				timedOut: result.timedOut,
 				stopped: result.stopped,
-				forcedDrainAfterFinalSuccess,
+				forcedDrainAfterFinalSuccess: forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal,
 			})) {
 				closeError = formatProcessSignalError(signal!);
 			}
@@ -1312,7 +1317,7 @@ async function runSingleAttempt(
 			if (code !== 0 && stderr.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
 				closeError = stderr.trim();
 			}
-			const finalCode = forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
+			const finalCode = forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
 			if (!result.error && closeError) result.error = closeError;
 			finish(finalCode);
 		});
@@ -1461,7 +1466,7 @@ async function runSingleAttempt(
 			&& (progress.toolCount > 0 || Boolean(finalText?.trim()));
 		if ((missingOutput || terminalEmptyAfterUsefulWork) && (!errInfo.hasError || hasEmptyTerminalAssistantResponse(messages))) {
 			result.exitCode = 1;
-			result.error = "Subagent produced no output (possible model cold-start or empty response).";
+			result.error = formatEmptyTerminalAssistantResponseError(messages);
 		} else if (errInfo.hasError) {
 			result.exitCode = errInfo.exitCode ?? 1;
 			result.error = errInfo.details

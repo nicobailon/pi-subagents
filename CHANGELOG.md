@@ -15,6 +15,7 @@
 - Show workflow child labels and phases in async status progress while preserving stable workflow keys.
 
 ### Fixed
+- Report aborted or signalled no-output child runs with their terminal stop, stderr, or process signal before missing-output handoff diagnostics.
 - Apply `globalConcurrencyLimit` to `workflowScript` children launched through `runs.run` and `runs.all`, not only legacy multi-child runners. Thanks to [@mateominato](https://github.com/mateominato) for #1600.
 - Ignore nested `.pi` and `sync-backups` directories during agent discovery so stale backup definitions cannot become executable agents. Thanks to [@arlishansenn](https://github.com/arlishansenn) for #1596.
 - Let projects layer agent overrides by the active parent model provider without duplicating agent definitions. Thanks to [@arichiardi](https://github.com/arichiardi) for #1597.

@@ -479,7 +479,7 @@ function messageError(message: unknown): string | undefined {
 export function isRetryableModelFailureAttempt(input: { error: string | undefined; messages?: readonly unknown[]; toolCount?: number }): boolean {
 	if (!isRetryableModelFailure(input.error)) return false;
 	if ((input.toolCount ?? 0) > 0) return false;
-	if (input.error === "Subagent produced no output (possible model cold-start or empty response).") return true;
+	if (input.error === "Subagent produced no output (possible model cold-start or empty response)." || /^Subagent produced no output after terminal assistant stopReason "[^"]+"\.$/.test(input.error ?? "")) return true;
 	if ((input.toolCount ?? 0) === 0 && (input.messages?.length ?? 0) === 0) return true;
 	const error = input.error?.trim();
 	return Boolean(error && input.messages?.some((message) => messageError(message)?.trim() === error));

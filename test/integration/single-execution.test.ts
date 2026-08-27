@@ -4394,7 +4394,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 
 		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /^Subagent produced no output \(possible model cold-start or empty response\)\./);
+		assert.match(result.error ?? "", /^Subagent produced no output after terminal assistant stopReason "aborted"\./);
 		assert.doesNotMatch(result.error ?? "", /completed without making edits/);
 		assert.equal(result.finalOutput, partialOutput);
 	});
