@@ -309,6 +309,37 @@ describe("native subagent fleet", () => {
 		}
 	});
 
+	it("does not crash Fleet render when live prompt audit stores a non-string authored task", () => {
+		const state = stateForTest();
+		const control = {
+			runId: "bad-prompt-run",
+			sessionId: "session-current",
+			mode: "single" as const,
+			startedAt: 10,
+			updatedAt: 20,
+			activeChildren: new Map([[0, { index: 0, agent: "worker", startedAt: 10, updatedAt: 20 }]]),
+		};
+		state.foregroundControls.set(control.runId, control);
+		registerLivePromptAudit(control, 0, { nested: "task payload" } as unknown as string, "effective prompt");
+		const component = new SubagentFleetComponent(
+			{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+			theme as never,
+			state,
+			() => {},
+			{ refreshMs: 60_000, markdownTheme },
+		);
+		try {
+			assert.doesNotThrow(() => component.render(100));
+			const rendered = component.render(100).join("\n");
+			assert.doesNotMatch(rendered, /nested|task payload/);
+			component.handleInput("p");
+			assert.doesNotThrow(() => component.render(100));
+			assert.match(component.render(100).join("\n"), /Selected prompt unavailable/);
+		} finally {
+			component.dispose();
+		}
+	});
+
 	it("shows live prompt summaries and opens Prompt Audit with the authored prompt visible", async () => {
 		const sentinel = "PROMPT_AUDIT_SENTINEL_1021";
 		const secondSentinel = "PROMPT_AUDIT_SECOND_CHILD";

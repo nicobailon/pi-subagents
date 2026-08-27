@@ -3576,7 +3576,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const currentProvider = parentModel?.provider;
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const modelScopes = resolveModelScopesForAgent(data.modelScope, agentConfig.name, parentModel);
-	let task = params.task ?? "";
+	let task = typeof params.task === "string" ? params.task : "";
 	let modelOverride: string | undefined = resolveEffectiveSubagentModel(
 		params.model as string | undefined,
 		agentConfig.model,
