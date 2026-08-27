@@ -248,6 +248,25 @@ function foregroundDescription(control: { parentWorkflowRunId?: string; workflow
 	return description ? `${workflow} · ${description}` : workflow;
 }
 
+function workflowIdentityCandidates(step: Pick<AsyncJobStep, "workflowKey" | "runId">): string[] {
+	return [...new Set([step.workflowKey, step.runId].filter((value): value is string => typeof value === "string" && value.length > 0))];
+}
+
+function asyncJobIdentityCandidates(job: AsyncJobState): string[] {
+	return [...new Set([job.workflowKey, job.asyncId].filter((value): value is string => typeof value === "string" && value.length > 0))];
+}
+
+function linkedWorkflowParentKey(parentWorkflowRunId: string | undefined, activeWorkflowKeys: ReadonlySet<string>): string | undefined {
+	if (!parentWorkflowRunId) return undefined;
+	const parentKey = `async:${parentWorkflowRunId}`;
+	return activeWorkflowKeys.has(parentKey) ? parentKey : undefined;
+}
+
+function workflowStepsWithoutMaterializedChildren(steps: AsyncJobStep[] | undefined, materializedChildIds: ReadonlySet<string> | undefined): AsyncJobStep[] | undefined {
+	if (!steps?.length || !materializedChildIds?.size) return steps;
+	return steps.filter((step) => !workflowIdentityCandidates(step).some((identity) => materializedChildIds.has(identity)));
+}
+
 function activeLeafAgentCount(entries: FleetStatusEntry[]): number {
 	return entries.filter((entry) => !entry.workflowWrapper && !entry.surface).length;
 }
@@ -282,9 +301,17 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 	const activeWorkflowKeys = new Set([...state.asyncJobs.values()]
 		.filter((job) => job.mode === "workflow" && isActiveState(job.status))
 		.map((job) => `async:${job.asyncId}`));
+	const materializedChildrenByWorkflow = new Map<string, Set<string>>();
+	for (const job of state.asyncJobs.values()) {
+		if (!isActiveState(job.status) || !job.parentWorkflowRunId) continue;
+		const parentKey = linkedWorkflowParentKey(job.parentWorkflowRunId, activeWorkflowKeys);
+		if (!parentKey) continue;
+		const childIds = materializedChildrenByWorkflow.get(parentKey) ?? new Set<string>();
+		for (const identity of asyncJobIdentityCandidates(job)) childIds.add(identity);
+		materializedChildrenByWorkflow.set(parentKey, childIds);
+	}
 	for (const control of state.foregroundControls.values()) {
-		const parentKey = control.parentWorkflowRunId ? `async:${control.parentWorkflowRunId}` : undefined;
-		const linkedParentKey = parentKey && activeWorkflowKeys.has(parentKey) ? parentKey : undefined;
+		const linkedParentKey = linkedWorkflowParentKey(control.parentWorkflowRunId, activeWorkflowKeys);
 		if (control.activeChildren) {
 			for (const child of [...control.activeChildren.values()].sort((left, right) => left.index - right.index)) {
 				const modelThinking = formatModelThinking(child.model, child.thinking) || undefined;
@@ -323,10 +350,13 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 	for (const job of state.asyncJobs.values()) {
 		if (!isActiveState(job.status)) continue;
 		const startedAt = job.startedAt ?? job.updatedAt ?? Date.now();
+		const linkedParentKey = linkedWorkflowParentKey(job.parentWorkflowRunId, activeWorkflowKeys);
 		if (job.mode === "workflow") {
 			const latestEmit = job.workflow?.emits?.length ? formatWorkflowJsonPreview(job.workflow.emits.at(-1), 120) : undefined;
+			const workflowSteps = workflowStepsWithoutMaterializedChildren(job.steps, materializedChildrenByWorkflow.get(`async:${job.asyncId}`));
 			entries.push({
 				key: `async:${job.asyncId}`,
+				...(linkedParentKey ? { parentKey: linkedParentKey } : {}),
 				workflowWrapper: true,
 				agent: "workflow",
 				description: latestEmit !== undefined ? `latest emit: ${latestEmit}` : job.description,
@@ -334,7 +364,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 				tokens: job.totalTokens?.total ?? 0,
 				...(job.totalTokens?.window !== undefined ? { window: job.totalTokens.window } : {}),
 				state: job.status,
-				...(job.steps?.length ? { workflowRows: projectAsyncWorkflowRows(job.steps) } : {}),
+				...(workflowSteps?.length ? { workflowRows: projectAsyncWorkflowRows(workflowSteps) } : {}),
 				...(job.nestedChildren?.length ? { nestedChildren: job.nestedChildren } : {}),
 			});
 			continue;
@@ -349,6 +379,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 		if (!steps?.length) {
 			entries.push({
 				key: `async:${job.asyncId}`,
+				...(linkedParentKey ? { parentKey: linkedParentKey } : {}),
 				agent: job.mode ?? "subagent",
 				description: job.description,
 				startedAt,
@@ -366,6 +397,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 			const modelThinking = formatModelThinking(step.model, step.thinking) || undefined;
 			entries.push({
 				key: `async:${job.asyncId}:${index}`,
+				...(linkedParentKey ? { parentKey: linkedParentKey } : {}),
 				agent: step.label ? `${step.label} (${step.agent})` : step.agent,
 				...(modelThinking ? { modelThinking } : {}),
 				description: step.description ?? job.description,

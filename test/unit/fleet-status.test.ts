@@ -834,6 +834,128 @@ describe("below-editor subagent FleetView", () => {
 		}
 	});
 
+	it("attaches active async workflow children and removes matching shell rows", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("workflow-1", {
+			asyncId: "workflow-1",
+			asyncDir: "/tmp/workflow-1",
+			status: "running",
+			mode: "workflow",
+			startedAt: 10,
+			updatedAt: 20,
+			steps: [
+				{ agent: "reviewer", workflowKey: "review", runId: "child-review", status: "running" },
+				{ agent: "worker", workflowKey: "worker", runId: "child-worker", status: "running" },
+			],
+		});
+		state.asyncJobs.set("child-review", {
+			asyncId: "child-review",
+			asyncDir: "/tmp/child-review",
+			status: "running",
+			mode: "single",
+			parentWorkflowRunId: "workflow-1",
+			workflowKey: "review",
+			startedAt: 11,
+			updatedAt: 20,
+			steps: [{ agent: "reviewer", status: "running" }],
+		});
+
+		const entries = collectFleetStatusEntries(state);
+		const workflow = entries.find((entry) => entry.key === "async:workflow-1");
+		const child = entries.find((entry) => entry.key === "async:child-review:0");
+		assert.equal(child?.parentKey, "async:workflow-1");
+		assert.deepEqual(workflow?.workflowRows?.map((row) => row.name), ["worker (worker)"]);
+	});
+
+	it("preserves sibling shell rows when a materialized child has nested step identities", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("workflow-1", {
+			asyncId: "workflow-1",
+			asyncDir: "/tmp/workflow-1",
+			status: "running",
+			mode: "workflow",
+			startedAt: 10,
+			updatedAt: 20,
+			steps: [
+				{ agent: "reviewer", workflowKey: "a", status: "running" },
+				{ agent: "worker", workflowKey: "b", status: "running" },
+			],
+		});
+		state.asyncJobs.set("child-a", {
+			asyncId: "child-a",
+			asyncDir: "/tmp/child-a",
+			status: "running",
+			mode: "single",
+			parentWorkflowRunId: "workflow-1",
+			workflowKey: "a",
+			startedAt: 11,
+			updatedAt: 20,
+			steps: [{ agent: "nested", workflowKey: "b", status: "running" }],
+		});
+
+		const entries = collectFleetStatusEntries(state);
+		const workflow = entries.find((entry) => entry.key === "async:workflow-1");
+		const child = entries.find((entry) => entry.key === "async:child-a:0");
+		assert.equal(child?.parentKey, "async:workflow-1");
+		assert.deepEqual(workflow?.workflowRows?.map((row) => row.name), ["b (worker)"]);
+	});
+
+	it("keeps async workflow children top-level when the parent is missing or terminal", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("missing-child", {
+			asyncId: "missing-child",
+			asyncDir: "/tmp/missing-child",
+			status: "running",
+			mode: "single",
+			parentWorkflowRunId: "missing-parent",
+			workflowKey: "missing",
+			startedAt: 10,
+			updatedAt: 20,
+			steps: [{ agent: "reviewer", status: "running" }],
+		});
+		state.asyncJobs.set("terminal-child", {
+			asyncId: "terminal-child",
+			asyncDir: "/tmp/terminal-child",
+			status: "running",
+			mode: "single",
+			parentWorkflowRunId: "terminal-parent",
+			workflowKey: "terminal",
+			startedAt: 11,
+			updatedAt: 20,
+			steps: [{ agent: "worker", status: "running" }],
+		});
+		state.asyncJobs.set("terminal-parent", {
+			asyncId: "terminal-parent",
+			asyncDir: "/tmp/terminal-parent",
+			status: "complete",
+			mode: "workflow",
+			startedAt: 12,
+			updatedAt: 20,
+		});
+
+		const entries = collectFleetStatusEntries(state);
+		assert.deepEqual(entries.map((entry) => [entry.key, entry.parentKey]), [
+			["async:missing-child:0", undefined],
+			["async:terminal-child:0", undefined],
+		]);
+	});
+
+	it("keeps workflow shell rows when no materialized child is present", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("workflow-1", {
+			asyncId: "workflow-1",
+			asyncDir: "/tmp/workflow-1",
+			status: "running",
+			mode: "workflow",
+			startedAt: 10,
+			updatedAt: 20,
+			steps: [{ agent: "reviewer", workflowKey: "review", runId: "child-review", status: "running" }],
+		});
+
+		const workflow = collectFleetStatusEntries(state).find((entry) => entry.key === "async:workflow-1");
+		assert.deepEqual(workflow?.workflowRows?.map((row) => row.name), ["review (reviewer)"]);
+	});
+
 	it("renders bounded workflow progress rows under the workflow parent", () => {
 		const state = stateForTest();
 		const workflowJob = {

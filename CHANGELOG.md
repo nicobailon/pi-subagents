@@ -22,6 +22,7 @@
 ### Fixed
 - Stop stale extension and slash-command contexts from escaping during reload or session replacement.
 - Format million-scale context limits as `1M` instead of `1000k` in live status displays.
+- Restore active workflow children under their workflow parent in Fleet Status after reload, while keeping unmatched shell rows visible.
 - Accept path-like Pi session ids up to 4,096 characters when snapshotting background work. Thanks to [@dvishoot](https://github.com/dvishoot) for #1616.
 - Accept bare leaf model ids reported by provider drivers when verifying provider-qualified launch candidates. Thanks to [@lallenlowe](https://github.com/lallenlowe) for #1609.
 - Resume compaction-induced child aborts once when retained state is safe, and report the exact recovery blocker otherwise.
