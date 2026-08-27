@@ -240,8 +240,17 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 	const { activityState, lastActivityAt } = deriveAsyncActivityState(asyncDir, status);
 	const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId })
 		?? sanitizeProcessTerminal(status.processTerminal, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId }, path.join(asyncDir, "status.json"));
-	const runFanoutBudgetDescriptor = readRunFanoutBudgetDescriptor(asyncDir);
-	const runFanoutBudget = runFanoutBudgetDescriptor ? getRunFanoutBudgetSnapshot(runFanoutBudgetDescriptor) : status.runFanoutBudget;
+	// Degrade to the status-stored snapshot when the persisted budget is unavailable (e.g. removed
+	// by OS temp cleanup) instead of failing the whole run list; admission paths stay strict.
+	// Degrade to the status-stored snapshot when the persisted budget vanishes (e.g. removed by OS
+	// temp cleanup) instead of failing the entire run list; admission paths stay strict.
+	let runFanoutBudget: AsyncStatus["runFanoutBudget"] = status.runFanoutBudget;
+	try {
+		const runFanoutBudgetDescriptor = readRunFanoutBudgetDescriptor(asyncDir);
+		if (runFanoutBudgetDescriptor) runFanoutBudget = getRunFanoutBudgetSnapshot(runFanoutBudgetDescriptor);
+	} catch (error) {
+		nestedWarnings.push(`Run fan-out status unavailable: ${getErrorMessage(error)}`);
+	}
 	const steps = status.steps ?? [];
 	const chainStepCount = status.chainStepCount ?? steps.length;
 	const parallelGroups = normalizeParallelGroups(status.parallelGroups, steps.length, chainStepCount);

@@ -14,7 +14,8 @@ import {
 	RunFanoutLimitError,
 	validateRunFanoutBudgetDescriptor,
 } from "../../src/runs/shared/run-fanout-budget.ts";
-import { resolveMaxSubagentSpawnsPerRun } from "../../src/shared/types.ts";
+import { resolveMaxSubagentSpawnsPerRun, type AsyncStatus } from "../../src/shared/types.ts";
+import { summarizeAsyncStatus } from "../../src/runs/background/async-status.ts";
 
 const directories: string[] = [];
 const externalDirectories: string[] = [];
@@ -45,6 +46,27 @@ describe("run fan-out budget", () => {
 			process.env.PI_SUBAGENT_MAX_SPAWNS_PER_RUN = invalid;
 			assert.equal(resolveMaxSubagentSpawnsPerRun(undefined), 64);
 		}
+	});
+
+	it("degrades status projection when persisted budget state is removed", () => {
+		const descriptor = budget(2);
+		fs.rmSync(path.join(descriptor.directory, "claims"), { recursive: true, force: true });
+		const asyncDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-fanout-status-"));
+		directories.push(asyncDir);
+		fs.writeFileSync(path.join(asyncDir, "run-fanout-budget.json"), JSON.stringify(descriptor), "utf-8");
+		const fallback = { used: 1, limit: 2, remaining: 1 };
+		const status = {
+			runId: "run-1",
+			mode: "single",
+			state: "running",
+			startedAt: 100,
+			lastUpdate: 200,
+			steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+			runFanoutBudget: fallback,
+		} as AsyncStatus;
+		const summary = summarizeAsyncStatus(asyncDir, status);
+		assert.deepEqual(summary.runFanoutBudget, fallback);
+		assert.ok(summary.nestedWarnings?.some((warning) => warning.includes("Run fan-out status unavailable")));
 	});
 
 	it("persists claims and rejects the responsible next path at the exact cap", () => {
