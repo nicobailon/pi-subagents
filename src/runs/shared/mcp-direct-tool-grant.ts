@@ -4,6 +4,7 @@ export type McpToolPrefix = "server" | "none" | "short";
 
 export interface McpGrantServerFacts {
 	readonly exposeResources?: boolean;
+	readonly includeTools?: readonly unknown[];
 	readonly excludeTools?: readonly unknown[];
 }
 
@@ -86,7 +87,7 @@ export function planMcpDirectToolGrant(input: McpDirectToolGrantInput): McpDirec
 		for (const tool of Array.isArray(metadata.tools) ? metadata.tools : []) {
 			if (typeof tool?.name !== "string" || !tool.name) continue;
 			if (toolFilter !== true && !toolFilter.has(tool.name)) continue;
-			if (isToolExcluded(tool.name, serverName, prefix, server.excludeTools)) continue;
+			if (!isToolAllowed(tool.name, serverName, prefix, server.includeTools, server.excludeTools)) continue;
 			const name = formatToolName(tool.name, serverName, prefix);
 			if (BUILTIN_TOOL_NAMES.has(name) || seenNames.has(name)) continue;
 			seenNames.add(name);
@@ -98,7 +99,7 @@ export function planMcpDirectToolGrant(input: McpDirectToolGrantInput): McpDirec
 			if (typeof resource?.name !== "string" || !resource.name || typeof resource.uri !== "string" || !resource.uri) continue;
 			const baseName = `get_${resourceNameToToolName(resource.name)}`;
 			if (toolFilter !== true && !toolFilter.has(baseName)) continue;
-			if (isToolExcluded(baseName, serverName, prefix, server.excludeTools)) continue;
+			if (!isToolAllowed(baseName, serverName, prefix, server.includeTools, server.excludeTools)) continue;
 			const name = formatToolName(baseName, serverName, prefix);
 			if (BUILTIN_TOOL_NAMES.has(name) || seenNames.has(name)) continue;
 			seenNames.add(name);
@@ -136,20 +137,48 @@ function formatToolName(toolName: string, serverName: string, prefix: McpToolPre
 	return serverPrefix ? `${serverPrefix}_${toolName}` : toolName;
 }
 
-function isToolExcluded(
+function isToolAllowed(
 	toolName: string,
 	serverName: string,
 	prefix: McpToolPrefix,
+	includeTools: readonly unknown[] | undefined,
 	excludeTools: readonly unknown[] | undefined,
 ): boolean {
-	if (!Array.isArray(excludeTools) || excludeTools.length === 0) return false;
-	const candidates = new Set([
-		normalizeToolName(toolName),
-		normalizeToolName(formatToolName(toolName, serverName, prefix)),
-		normalizeToolName(formatToolName(toolName, serverName, "server")),
-		normalizeToolName(formatToolName(toolName, serverName, "short")),
+	const candidates = toolNameCandidates(toolName, serverName, prefix);
+	return (!Array.isArray(includeTools) || includeTools.length === 0 || matchesToolPatterns(candidates, includeTools))
+		&& !matchesToolPatterns(candidates, excludeTools);
+}
+
+function toolNameCandidates(toolName: string, serverName: string, prefix: McpToolPrefix): Set<string> {
+	return new Set([
+		toolName,
+		`mcp_${toolName}`,
+		formatToolName(toolName, serverName, prefix),
+		formatToolName(toolName, serverName, "server"),
+		formatToolName(toolName, serverName, "short"),
+		formatToolName(toolName, serverName, "none"),
 	]);
-	return excludeTools.some((excluded) => typeof excluded === "string" && candidates.has(normalizeToolName(excluded)));
+}
+
+function matchesToolPatterns(candidates: ReadonlySet<string>, patterns: readonly unknown[] | undefined): boolean {
+	if (!Array.isArray(patterns) || patterns.length === 0) return false;
+	for (const pattern of patterns) {
+		if (typeof pattern !== "string") continue;
+		const normalizedPattern = normalizeToolName(pattern);
+		const matcher = normalizedPattern.includes("*") || normalizedPattern.includes("?")
+			? globToRegExp(normalizedPattern)
+			: undefined;
+		for (const candidate of candidates) {
+			const normalizedCandidate = normalizeToolName(candidate);
+			if (matcher ? matcher.test(normalizedCandidate) : normalizedCandidate === normalizedPattern) return true;
+		}
+	}
+	return false;
+}
+
+function globToRegExp(pattern: string): RegExp {
+	const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+	return new RegExp(`^${escaped}$`);
 }
 
 function normalizeToolName(value: string): string {

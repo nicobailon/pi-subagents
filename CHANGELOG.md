@@ -12,6 +12,7 @@
 - Show workflow child labels and phases in async status progress while preserving stable workflow keys.
 
 ### Fixed
+- Enforce MCP server `includeTools`/`excludeTools` policies for child direct-tool grants, including adapter-compatible glob matching. Thanks to [@Shujakuinkuraudo](https://github.com/Shujakuinkuraudo) for #1590.
 - Prevent Fleet prompt audit rendering from crashing on malformed non-string task payloads. Thanks to [@bengidev](https://github.com/bengidev) for #1586.
 - Resume a retained child session once after a provider or transport abort follows useful progress, without restarting the task or involving the parent model.
 
