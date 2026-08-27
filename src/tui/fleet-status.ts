@@ -3,6 +3,7 @@ import { type EditorComponent, isKeyRelease, Key, matchesKey, truncateToWidth, v
 import { snapshotExternalRuns } from "../api/external-runs.ts";
 import { formatModelThinking } from "../shared/formatters.ts";
 import type { AsyncJobState, AsyncJobStep, FleetViewPlacement, HerdrProjectPaneSnapshot, NestedRunSummary, NestedStepSummary, SubagentState } from "../shared/types.ts";
+import { projectAsyncWorkflowRows, type AsyncStatusWorkflowRow } from "../runs/shared/async-status-projection.ts";
 import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
 
 export const FLEET_STATUS_WIDGET_KEY = "subagent-fleet-status";
@@ -30,18 +31,7 @@ type FleetStatusEntry = {
 	external?: true;
 	projectPane?: HerdrProjectPaneSnapshot;
 	nestedChildren?: NestedRunSummary[];
-	workflowRows?: FleetWorkflowRow[];
-};
-
-type FleetWorkflowRow = {
-	name: string;
-	state: AsyncJobStep["status"];
-	modelThinking?: string;
-	activity?: string;
-	startedAt?: number;
-	tokens?: number;
-	window?: number;
-	overflow?: number;
+	workflowRows?: AsyncStatusWorkflowRow[];
 };
 
 type FleetNestedRow = {
@@ -57,7 +47,7 @@ type FleetNestedRow = {
 type FleetTreeRow =
 	| { kind: "owner"; entry: FleetStatusEntry }
 	| { kind: "child"; entry: FleetStatusEntry; last: boolean }
-	| { kind: "workflow"; ownerKey: string; row: FleetWorkflowRow; last: boolean }
+	| { kind: "workflow"; ownerKey: string; row: AsyncStatusWorkflowRow; last: boolean }
 	| { kind: "nested"; ownerKey: string; row: FleetNestedRow; last: boolean };
 
 export interface FleetStatusOptions {
@@ -111,40 +101,7 @@ function nestedActivity(node: NestedRunSummary | NestedStepSummary): string | un
 	return undefined;
 }
 
-function workflowStepActivity(step: AsyncJobStep): string | undefined {
-	if (step.currentTool) return `tool ${step.currentTool}`;
-	if (step.currentPath) return step.currentPath.split(/[\\/]/).at(-1);
-	if (step.activityState === "needs_attention") return "needs attention";
-	if (step.activityState === "active_long_running") return "long-running";
-	if (step.turnCount !== undefined) return `${step.turnCount} turns`;
-	if (step.toolCount !== undefined) return `${step.toolCount} tools`;
-	return undefined;
-}
-
-function workflowStepName(step: AsyncJobStep, index: number): string {
-	const key = step.workflowKey ?? `step ${index + 1}`;
-	const label = step.label && step.label !== key ? ` · ${step.label}` : "";
-	const phase = step.phase ? `${step.phase}: ` : "";
-	return `${phase}${key}${label} (${step.agent})`;
-}
-
-function workflowFleetRows(steps: AsyncJobStep[] | undefined): FleetWorkflowRow[] {
-	return (steps ?? []).map((step, index) => {
-		const modelThinking = formatModelThinking(step.model, step.thinking) || undefined;
-		const activity = workflowStepActivity(step);
-		return {
-			name: workflowStepName(step, index),
-			state: step.status,
-			...(modelThinking ? { modelThinking } : {}),
-			...(activity ? { activity } : {}),
-			...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
-			...(step.tokens?.total !== undefined ? { tokens: step.tokens.total } : {}),
-			...(step.tokens?.window !== undefined ? { window: step.tokens.window } : {}),
-		};
-	});
-}
-
-function visibleWorkflowRows(rows: FleetWorkflowRow[] | undefined, visibleLimit: number): FleetWorkflowRow[] {
+function visibleWorkflowRows(rows: AsyncStatusWorkflowRow[] | undefined, visibleLimit: number): AsyncStatusWorkflowRow[] {
 	if (!rows?.length) return [];
 	if (rows.length <= visibleLimit) return rows;
 	const selected = new Set<number>();
@@ -377,7 +334,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 				tokens: job.totalTokens?.total ?? 0,
 				...(job.totalTokens?.window !== undefined ? { window: job.totalTokens.window } : {}),
 				state: job.status,
-				...(job.steps?.length ? { workflowRows: workflowFleetRows(job.steps) } : {}),
+				...(job.steps?.length ? { workflowRows: projectAsyncWorkflowRows(job.steps) } : {}),
 				...(job.nestedChildren?.length ? { nestedChildren: job.nestedChildren } : {}),
 			});
 			continue;
@@ -703,7 +660,7 @@ export class SubagentFleetStatus {
 		return truncateToWidth(`${left}${theme.fg("dim", elapsed)}`, width);
 	}
 
-	private renderWorkflowRow(row: FleetWorkflowRow, last: boolean, width: number, theme: Theme): string {
+	private renderWorkflowRow(row: AsyncStatusWorkflowRow, last: boolean, width: number, theme: Theme): string {
 		const marker = last ? "└─" : "├─";
 		const indent = "    ";
 		if (row.overflow !== undefined) return truncateToWidth(`${indent}${marker} ${theme.fg("dim", `+${row.overflow} hidden workflow steps`)}`, width);

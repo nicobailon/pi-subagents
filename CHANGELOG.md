@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Extract async status snapshot projection into a pure internal module while preserving RPC and widget wire compatibility.
 - Extract child launch planning into a focused internal module shared by async workflow launch setup.
 - Extract detached workflow settlement planning into a focused workflow module while preserving fail-closed result handoff.
 - Extract completion evidence planning into a focused module shared by foreground and background execution.
