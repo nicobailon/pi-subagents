@@ -5,7 +5,13 @@ import { resolveWaitToolConfig, waitForSubagents } from "./subagent-wait.ts";
 import type { WaitSubscriptionManager } from "./wait-subscriptions.ts";
 import { finalizeToolResult } from "../../extension/tool-result.ts";
 
-export function registerWaitTool(pi: ExtensionAPI, state: SubagentState, enabled = resolveWaitToolConfig().enabled, subscriptions?: Pick<WaitSubscriptionManager, "arm">): void {
+export function registerWaitTool(
+	pi: ExtensionAPI,
+	state: SubagentState,
+	enabled = resolveWaitToolConfig().enabled,
+	subscriptions?: Pick<WaitSubscriptionManager, "arm">,
+	defaultTimeoutMs?: number,
+): void {
 	const tool: ToolDefinition<typeof SubagentWaitParams, Details> = {
 		name: "subagent_wait",
 		label: "Subagent Wait",
@@ -18,7 +24,7 @@ In an interactive chat, do not call this merely to wait: return control to the u
 • { id: "..." } — wait for one async or remembered detached foreground subagent run (id or prefix).
 • { id: "...", nonBlocking: true } — resolve the prefix once, persist an exact-run wake subscription, and return immediately. The originating interactive session wakes on completion, failure, attention, reconciliation failure, or timeout.
 • { stopOnAttention: false } — for blocking waits only, keep waiting through idle or long-thinking attention; supervisor/contact requests still stop the wait.
-• { timeoutMs: 600000 } — stop waiting after N ms; active work keeps running.
+• { timeoutMs: 600000 } — stop waiting after N ms; active work keeps running. Omitted values use waitTool.defaultTimeoutMs, then 30 minutes. Window expiry returns a non-error window_elapsed result with active work identities.
 
 Non-blocking subscriptions are visible in subagent status and differ from disabling waitTool: waitTool.enabled=false returns immediately without registering any future wake. Provider jobs are session-scoped and identified exactly, so replacing one job with another cannot hide a completion. Provider extensions must be explicitly loaded in this process. In a child agent, keep \`subagent_wait\` in the child tool allowlist and load each provider through the agent's extensions or subagentOnlyExtensions; this tool never loads providers or grants tools itself.${enabled ? "" : "\n\nConfigured behavior: subagent_wait is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED and returns immediately without blocking."}`,
 		parameters: SubagentWaitParams,
@@ -27,6 +33,7 @@ Non-blocking subscriptions are visible in subagent status and differ from disabl
 				state,
 				events: pi.events,
 				enabled,
+				...(defaultTimeoutMs !== undefined ? { defaultTimeoutMs } : {}),
 				onUpdate,
 				...(subscriptions && ctx?.hasUI ? { subscribe: (input) => subscriptions.arm(input) } : {}),
 			}));

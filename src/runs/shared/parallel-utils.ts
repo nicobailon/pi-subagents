@@ -63,6 +63,7 @@ export interface RunnerSubagentStep {
 	/** Resolved configured hard per-tool-call timeout (ms); fast tools still have a default when undefined. */
 	toolTimeoutMs?: number;
 	waitToolEnabled?: boolean;
+	waitToolDefaultTimeoutMs?: number;
 	structuredOutput?: {
 		schema: import("../../shared/types.ts").JsonSchemaObject;
 		schemaPath: string;

@@ -14,7 +14,7 @@ import {
 	TOOL_BUDGET_ENV,
 	TOOL_BUDGET_ZERO_AUTH_ENV,
 } from "../../src/runs/shared/tool-budget.ts";
-import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
+import { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import {
 	CHILD_TOOL_DIAGNOSTIC_PATH_ENV,
@@ -360,6 +360,17 @@ describe("buildPiArgs session wiring", () => {
 				waitToolEnabled: true,
 			}).env[WAIT_TOOL_ENABLED_ENV],
 			"true",
+		);
+		assert.equal(
+			buildPiArgs({
+				baseArgs: [],
+				task: "test",
+				sessionEnabled: false,
+				inheritProjectContext: true,
+				inheritSkills: true,
+				waitToolDefaultTimeoutMs: 12_000,
+			}).env[WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV],
+			"12000",
 		);
 	});
 

@@ -671,7 +671,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	registerPermissionGate(pi);
 	registerToolBudget(pi, decodeToolBudgetEnv(process.env[TOOL_BUDGET_ENV], { allowZero: process.env[TOOL_BUDGET_ZERO_AUTH_ENV] === "1" }));
 	registerChildWatchdog(pi);
-	const waitToolEnabled = resolveWaitToolConfig().enabled;
+	const waitToolConfig = resolveWaitToolConfig();
 	const waitState = {
 		baseCwd: "",
 		currentSessionId: null,
@@ -686,7 +686,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		watcherRestartTimer: null,
 		resultFileCoalescer: { schedule: () => false, clear: () => {} },
 	} as unknown as SubagentState;
-	if (typeof pi.registerTool === "function") registerWaitTool(pi, waitState, waitToolEnabled);
+	if (typeof pi.registerTool === "function") registerWaitTool(pi, waitState, waitToolConfig.enabled, undefined, waitToolConfig.defaultTimeoutMs);
 	let nativeSupervisorClientRegistered = false;
 	const registerNativeSupervisorClientOnce = (): void => {
 		if (nativeSupervisorClientRegistered) return;

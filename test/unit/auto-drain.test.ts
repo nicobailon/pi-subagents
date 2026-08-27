@@ -7,11 +7,15 @@ function state(sessionId: string | null = "session-a"): SubagentState {
 	return { currentSessionId: sessionId } as SubagentState;
 }
 
-function waitResult(text: string, isError = false) {
+function waitResult(text: string, isError = false, windowElapsed = false) {
 	return {
 		content: [{ type: "text" as const, text }],
 		...(isError ? { isError: true } : {}),
-		details: { mode: "management" as const, results: [] } satisfies Details,
+		details: {
+			mode: "management" as const,
+			results: [],
+			...(windowElapsed ? { wait: { reason: "window_elapsed" as const, timedOut: true as const, activeRunIds: ["run-a"], activeProviderItems: [] } } : {}),
+		} satisfies Details,
 	};
 }
 
@@ -59,7 +63,7 @@ describe("headless background-work auto-drain", () => {
 		}), /provider reconcile failed/);
 	});
 
-	it("enforces one absolute timeout across repeated drains", async () => {
+	it("keeps its absolute deadline strict after a non-error wait window elapses", async () => {
 		let clock = 0;
 		await assert.rejects(() => drainOutstandingWork({
 			state: state(),
@@ -68,7 +72,7 @@ describe("headless background-work auto-drain", () => {
 			hasWork: () => true,
 			wait: async () => {
 				clock = 101;
-				return waitResult("first batch done");
+				return waitResult("Wait window elapsed; work remains active.", false, true);
 			},
 		}), /timed out after 100ms.*session 'session-a'/);
 	});

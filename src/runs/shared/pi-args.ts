@@ -48,7 +48,7 @@ import {
 	encodeChildWatchdogConfig,
 	type ChildWatchdogConfig,
 } from "../../watchdog/child-status.ts";
-import { WAIT_TOOL_ENABLED_ENV } from "../background/wait-config.ts";
+import { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV } from "../background/wait-config.ts";
 import {
 	PI_CODING_AGENT_PACKAGE_ROOT_ENV,
 	getAgentDir,
@@ -206,6 +206,7 @@ export interface BuildPiArgsInput {
 	 */
 	taskDelivery?: SubagentTaskDelivery;
 	waitToolEnabled?: boolean;
+	waitToolDefaultTimeoutMs?: number;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	thinkingCeiling?: import("../../shared/model-info.ts").ThinkingLevel;
 	extensionBindings?: ExtensionBindings;
@@ -794,6 +795,9 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	env[SUBAGENT_FANOUT_CHILD_ENV] = toolPlan.fanoutAuthorized ? "1" : "0";
 	if (input.waitToolEnabled !== undefined) {
 		env[WAIT_TOOL_ENABLED_ENV] = input.waitToolEnabled ? "true" : "false";
+	}
+	if (input.waitToolDefaultTimeoutMs !== undefined) {
+		env[WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV] = String(input.waitToolDefaultTimeoutMs);
 	}
 	const inheritedNestedRoute = Boolean(
 		process.env[SUBAGENT_PARENT_EVENT_SINK_ENV] &&

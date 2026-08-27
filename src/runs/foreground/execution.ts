@@ -381,6 +381,7 @@ async function runSingleAttempt(
 		permissionAuditPath,
 		childWatchdog,
 		waitToolEnabled: options.waitToolEnabled,
+		waitToolDefaultTimeoutMs: options.waitToolDefaultTimeoutMs,
 		capabilityCeiling: options.capabilityCeiling,
 		thinkingCeiling: options.thinkingCeiling,
 		extensionBindings: options.extensionBindings,

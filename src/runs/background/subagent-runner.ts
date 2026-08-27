@@ -1706,6 +1706,7 @@ async function runSingleStepInner(
 				: undefined,
 			childWatchdog,
 			waitToolEnabled: step.waitToolEnabled,
+			waitToolDefaultTimeoutMs: step.waitToolDefaultTimeoutMs,
 			thinkingCeiling: step.thinkingCeiling,
 			extensionBindings,
 		}));

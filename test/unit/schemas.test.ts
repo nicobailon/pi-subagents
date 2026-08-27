@@ -338,9 +338,12 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 	it("exposes tolerant wait mode on subagent_wait", () => {
 		const properties = SubagentWaitParams?.properties as Record<string, JsonSchemaNode> | undefined;
 		const stopOnAttention = properties?.stopOnAttention;
+		const timeoutMs = properties?.timeoutMs;
 		assert.ok(stopOnAttention, "stopOnAttention schema should exist");
 		assert.equal(stopOnAttention.type, "boolean");
 		assert.match(String(stopOnAttention.description ?? ""), /idle or long-thinking attention/);
+		assert.match(String(timeoutMs?.description ?? ""), /waitTool\.defaultTimeoutMs/);
+		assert.match(String(timeoutMs?.description ?? ""), /non-error active-work result/);
 	});
 
 	it("does not emit description-only schema nodes", () => {

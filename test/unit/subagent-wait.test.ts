@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
-import { WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
+import { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
 import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import type { AsyncStatus, SubagentState } from "../../src/shared/types.ts";
 
@@ -89,10 +89,15 @@ describe("subagent_wait tool", () => {
 		assert.deepEqual(resolveWaitToolConfig(undefined, {}), { enabled: true });
 		assert.deepEqual(resolveWaitToolConfig(false, {}), { enabled: false });
 		assert.deepEqual(resolveWaitToolConfig({ enabled: false }, {}), { enabled: false });
+		assert.deepEqual(resolveWaitToolConfig({ defaultTimeoutMs: 120_000 }, {}), { enabled: true, defaultTimeoutMs: 120_000 });
+		assert.deepEqual(resolveWaitToolConfig({ defaultTimeoutMs: 120_000 }, { [WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV]: "3000" }), { enabled: true, defaultTimeoutMs: 3_000 });
 		assert.deepEqual(resolveWaitToolConfig({ enabled: false }, { [WAIT_TOOL_ENABLED_ENV]: "true" }), { enabled: true });
 		assert.deepEqual(resolveWaitToolConfig(true, { [WAIT_TOOL_ENABLED_ENV]: "off" }), { enabled: false });
 		assert.throws(() => resolveWaitToolConfig("false" as never, {}), /config\.waitTool/);
 		assert.throws(() => resolveWaitToolConfig({ enabled: "false" } as never, {}), /config\.waitTool\.enabled/);
+		assert.throws(() => resolveWaitToolConfig({ defaultTimeoutMs: 0 }, {}), /config\.waitTool\.defaultTimeoutMs/);
+		assert.throws(() => resolveWaitToolConfig({ defaultTimeoutMs: 1.5 }, {}), /config\.waitTool\.defaultTimeoutMs/);
+		assert.throws(() => resolveWaitToolConfig(undefined, { [WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV]: "0" }), /PI_SUBAGENT_WAIT_TOOL_DEFAULT_TIMEOUT_MS/);
 		assert.throws(() => resolveWaitToolConfig(undefined, { [WAIT_TOOL_ENABLED_ENV]: "maybe" }), /PI_SUBAGENT_WAIT_TOOL_ENABLED/);
 	});
 
@@ -1146,11 +1151,62 @@ describe("subagent_wait tool", () => {
 				clock += ms + 10_000;
 			};
 
-			const result = await waitForSubagents({ timeoutMs: 5_000 }, undefined, baseDeps(root, state, { now, sleep }));
-			assert.equal(result.isError, true);
+			const result = await waitForSubagents({ timeoutMs: 5_000 }, undefined, baseDeps(root, state, { now, sleep, defaultTimeoutMs: 1_000 }));
+			assert.equal(result.isError, undefined);
 			const text = textOf(result);
-			assert.match(text, /timed out/i);
+			assert.match(text, /window elapsed after 5\.0s/i, "explicit timeoutMs must override the configured default");
 			assert.match(text, /run-stuck \(running\)/);
+			assert.deepEqual(result.details.wait, {
+				reason: "window_elapsed",
+				timedOut: true,
+				activeRunIds: ["run-stuck"],
+				activeProviderItems: [],
+			});
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses the configured wait window when timeoutMs is omitted", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-config-timeout-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-configured", "running", { sessionId: "sess-1", pid: 999999 });
+			let clock = 0;
+			const result = await waitForSubagents({}, undefined, baseDeps(root, state, {
+				now: () => clock,
+				sleep: async (ms) => { clock += ms + 10_000; },
+				defaultTimeoutMs: 2_000,
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /window elapsed after 2\.0s/i);
+			assert.equal(result.details.wait?.reason, "window_elapsed");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reports still-active provider identities when the wait window elapses", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-provider-timeout-"));
+		try {
+			const state = makeState("sess-1");
+			let clock = 0;
+			const result = await waitForSubagents({ timeoutMs: 1_000 }, undefined, baseDeps(root, state, {
+				now: () => clock,
+				sleep: async (ms) => { clock += ms + 10_000; },
+				backgroundWork: {
+					snapshot: () => ({
+						providers: ["herdr"],
+						items: [{ provider: "herdr", id: "pane-1", sessionId: "sess-1" }],
+					}),
+					wakeChannels: () => [],
+				},
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.deepEqual(result.details.wait?.activeProviderItems, [{ provider: "herdr", id: "pane-1" }]);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

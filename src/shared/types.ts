@@ -257,6 +257,8 @@ export interface CompletionBatchConfig {
 
 export interface WaitToolConfigObject {
 	enabled?: boolean;
+	/** Default blocking window for subagent_wait calls that omit timeoutMs. */
+	defaultTimeoutMs?: number;
 }
 
 export type WaitToolConfig = boolean | WaitToolConfigObject;
@@ -1172,6 +1174,12 @@ export interface Details {
 	 * identity never reaches tool_result details.
 	 */
 	completions?: WaitCompletion[];
+	wait?: {
+		reason: "window_elapsed";
+		timedOut: true;
+		activeRunIds: string[];
+		activeProviderItems: Array<{ provider: string; id: string }>;
+	};
 	controlEvents?: ControlEvent[];
 	steering?: SteerActionResult;
 	asyncId?: string;
@@ -2102,6 +2110,8 @@ export interface RunSyncOptions {
 	maxSubagentDepth?: number;
 	/** Effective parent wait-tool setting propagated to the child runtime. */
 	waitToolEnabled?: boolean;
+	/** Effective parent default wait window propagated to the child runtime. */
+	waitToolDefaultTimeoutMs?: number;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	nestedRoute?: NestedRouteInfo;
