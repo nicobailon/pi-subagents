@@ -4,7 +4,11 @@ export const BACKGROUND_WORK_REGISTRY_KEY = "pi-subagents.background-work.v1";
 const MAX_PROVIDER_NAME_LENGTH = 128;
 const MAX_PROVIDERS = 100;
 const MAX_ITEM_ID_LENGTH = 256;
-const MAX_SESSION_ID_LENGTH = 256;
+/**
+ * A Pi session id is the session file path, which routinely exceeds a short
+ * identity budget in nested worktrees, so it is bounded like the other paths.
+ */
+const MAX_SESSION_ID_LENGTH = 4_096;
 const MAX_WAKE_CHANNEL_LENGTH = 256;
 const MAX_ITEMS_PER_PROVIDER = 10_000;
 

@@ -127,6 +127,29 @@ describe("background-work provider protocol", () => {
 		assert.throws(() => snapshotBackgroundWork("session-a"), /duplicate item 'job'/);
 	});
 
+	it("accepts path-like session ids up to the bound and rejects longer ids", () => {
+		const longSessionId = `${"/nested/".repeat(511)}xsession`;
+		const overBoundSessionId = `${longSessionId}x`;
+		assert.equal(longSessionId.length, 4_096);
+
+		registerBackgroundWorkProvider({
+			name: "patty",
+			listActiveWork: () => [{ id: "job", sessionId: longSessionId }],
+		});
+		assert.deepEqual(snapshotBackgroundWork(longSessionId), {
+			providers: ["patty"],
+			items: [{ provider: "patty", id: "job", sessionId: longSessionId }],
+		});
+		assert.throws(() => snapshotBackgroundWork(overBoundSessionId), /at most 4096 characters/);
+
+		clearRegistry();
+		registerBackgroundWorkProvider({
+			name: "patty",
+			listActiveWork: () => [{ id: "job", sessionId: overBoundSessionId }],
+		});
+		assert.throws(() => snapshotBackgroundWork("session-a"), /at most 4096 characters/);
+	});
+
 	it("preserves list and reconcile errors with provider context", () => {
 		registerBackgroundWorkProvider({
 			name: "broken-reconcile",
