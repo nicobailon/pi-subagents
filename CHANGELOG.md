@@ -16,6 +16,7 @@
 
 ### Fixed
 - Fail explicitly requested models closed when a cached model exclusion is active, instead of silently selecting a fallback. Thanks to [@harpsychord](https://github.com/harpsychord) for #1556.
+- Preserve fast-mode provider request root fields when adding OpenAI's priority service tier. Thanks to [@nothingrotf](https://github.com/nothingrotf) for #1570.
 - Classify workflow budget and timeout stops as partial terminal outcomes while preserving settled child evidence. Thanks to [@yceachan](https://github.com/yceachan) for #1530.
 - Show task intent and context-window use in compact in-progress async status rows.
 - Avoid attributing assistant-issued workflow stops to the user.
