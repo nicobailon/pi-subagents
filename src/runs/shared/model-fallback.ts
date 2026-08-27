@@ -24,7 +24,12 @@ export function formatSubagentModelVerificationError(expectedModel: string, obse
 	const observedBase = splitThinkingSuffix(observedModel).baseModel;
 	if (expectedBase === observedBase) return undefined;
 	const expectedEntry = availableModels.find((entry) => entry.fullId === expectedBase);
-	if (expectedEntry && expectedEntry.id === observedBase) return undefined;
+	if (expectedEntry) {
+		if (expectedEntry.id === observedBase) return undefined;
+		const expectedIdLeaf = expectedEntry.id.slice(expectedEntry.id.lastIndexOf("/") + 1);
+		const expectedFullIdLeaf = expectedEntry.fullId.slice(expectedEntry.fullId.lastIndexOf("/") + 1);
+		if (expectedIdLeaf === observedBase || expectedFullIdLeaf === observedBase) return undefined;
+	}
 	return `model_verification_failed: child reported a different model than the launch candidate. Expected '${expectedModel}' but observed '${observedModel}'.`;
 }
 

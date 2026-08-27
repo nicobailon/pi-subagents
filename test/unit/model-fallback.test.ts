@@ -54,6 +54,38 @@ describe("model fallback helpers", () => {
 		);
 	});
 
+	it("accepts a bare leaf reported by an Anthropic gateway driver", () => {
+		const gatewayModels = [{
+			provider: "bifrost-anthropic",
+			id: "vertex/claude-fable-5",
+			fullId: "bifrost-anthropic/vertex/claude-fable-5",
+		}];
+		assert.equal(
+			formatSubagentModelVerificationError(
+				"bifrost-anthropic/vertex/claude-fable-5:high",
+				"claude-fable-5",
+				gatewayModels,
+			),
+			undefined,
+		);
+		assert.match(
+			formatSubagentModelVerificationError(
+				"bifrost-anthropic/vertex/claude-fable-5:high",
+				"wrong-provider/claude-fable-5",
+				gatewayModels,
+			) ?? "",
+			/model_verification_failed/,
+		);
+		assert.match(
+			formatSubagentModelVerificationError(
+				"bifrost-anthropic/vertex/claude-fable-5:high",
+				"claude-sonnet-4",
+				gatewayModels,
+			) ?? "",
+			/model_verification_failed/,
+		);
+	});
+
 	it("resolves unique owner/name ids when the owner is not a registered provider", () => {
 		const registry = [
 			...availableModels,
