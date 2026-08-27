@@ -820,11 +820,15 @@ export function registerSlashCommands(
 	}
 
 	pi.registerCommand("subagents-stop", {
-		description: "Stop a current-session async subagent run",
+		description: "Stop a current-session async subagent run, or one child of it with /subagents-stop <run-id> <child-id>",
 		handler: async (args, ctx) => {
-			const id = args.trim();
+			const [id, childId, ...extra] = args.trim().split(/\s+/).filter(Boolean);
+			if (extra.length > 0) {
+				sendSlashText(pi, "Usage: /subagents-stop [run-id] [child-id]");
+				return;
+			}
 			if (id) {
-				await runSlashSubagent(pi, ctx, { action: "stop", id });
+				await runSlashSubagent(pi, ctx, childId ? { action: "stop", id, childId } : { action: "stop", id });
 				return;
 			}
 

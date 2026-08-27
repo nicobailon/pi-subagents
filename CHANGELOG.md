@@ -4,6 +4,7 @@
 
 ### Added
 - Add explicit `allowNestedSubagents` agent authorization for nested fanout without replacing inherited tools or extensions. Thanks to [@tutu359](https://github.com/tutu359) for #1587.
+- Accept a child id on `/subagents-stop <run-id> <child-id>` so RPC hosts and non-TUI sessions can stop one child of a multi-child async run or workflow without stopping the whole run. Thanks to [@yanqianglu](https://github.com/yanqianglu) for #1603.
 
 ### Changed
 - Extract async status snapshot projection into a pure internal module while preserving RPC and widget wire compatibility.

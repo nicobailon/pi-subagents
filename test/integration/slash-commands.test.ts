@@ -597,6 +597,58 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		});
 	});
 
+	it("/subagents-stop forwards a child id for child-scoped stops", async () => {
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		let requestedParams: unknown;
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
+			const payload = data as { requestId: string; params?: unknown };
+			requestedParams = payload.params;
+			events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId: payload.requestId });
+			events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
+				requestId: payload.requestId,
+				result: {
+					content: [{ type: "text", text: "Stop requested for child step-0-agent-0 in async workflow run-123." }],
+					details: { mode: "management", results: [] },
+				},
+				isError: false,
+			});
+		});
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage() {},
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()));
+		await commands.get("subagents-stop")!.handler("run-123 step-0-agent-0", createCommandContext());
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		assert.deepEqual(requestedParams, { action: "stop", id: "run-123", childId: "step-0-agent-0" });
+	});
+
+	it("/subagents-stop rejects extra arguments with usage text", async () => {
+		const sent: unknown[] = [];
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const pi = {
+			events: createEventBus(),
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage(message: unknown) { sent.push(message); },
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()));
+		await commands.get("subagents-stop")!.handler("run-123 child-0 unexpected", createCommandContext());
+
+		assert.equal(sent.length, 1);
+		assert.match(String((sent[0] as { content?: unknown }).content ?? ""), /Usage: \/subagents-stop \[run-id\] \[child-id\]/);
+	});
+
 	it("/run accepts an agent without a task", async () => {
 		const sent: unknown[] = [];
 		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
