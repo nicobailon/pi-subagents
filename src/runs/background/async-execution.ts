@@ -14,9 +14,10 @@ import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext,
 import { appendAgentRefinementOverlay } from "../../agents/agent-refinements.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
+import { planChildLaunch, resolveStepBehavior, suppressProgressForReadOnlyTask, type ResolvedStepBehavior } from "../shared/child-launch-plan.ts";
 import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
 import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
-import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveChainPath, resolveExistingReadPaths, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, type ChainStep, type ResolvedStepBehavior, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
+import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveChainPath, resolveExistingReadPaths, writeInitialProgressFile, type ChainStep, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
@@ -800,19 +801,21 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			envValue: params.toolTimeoutMsEnv ?? toolTimeoutFromEnv(),
 		});
 		if (resolvedToolTimeout.error) throw new AsyncStartValidationError(resolvedToolTimeout.error);
-		const stepCwd = resolveChildCwd(runnerCwd, s.cwd);
-		const instructionCwd = behaviorCwd ?? stepCwd;
-		const readExistenceCwd = behaviorCwd ? stepCwd : instructionCwd;
-		let behavior = suppressProgressForReadOnlyTask(resolvedBehavior ?? resolveStepBehavior(a, buildStepOverrides(s), chainSkills), s.task, originalTask);
-		const inheritedRelativeParallelOutput = parallelOutputNamespace && s.output === undefined && typeof behavior.output === "string" && !path.isAbsolute(behavior.output);
-		if (inheritedRelativeParallelOutput && parallelOutputNamespace.taskIndex !== undefined) {
-			behavior = {
-				...behavior,
-				output: path.join(`parallel-${parallelOutputNamespace.stepIndex}`, `${parallelOutputNamespace.taskIndex}-${s.agent}`, behavior.output as string),
-			};
-		}
-		const namespaceOutputPath = Boolean(inheritedRelativeParallelOutput && parallelOutputNamespace.taskIndex === undefined);
-		const skillNames = behavior.skills === false ? [] : behavior.skills;
+		const launchPlan = planChildLaunch({
+			agentConfig: a,
+			stepOverrides: buildStepOverrides(s),
+			task: s.task,
+			originalTask,
+			runnerCwd,
+			runtimeCwd: ctx.cwd,
+			stepCwdInput: s.cwd,
+			behaviorCwd,
+			chainSkills,
+			outputBaseDir,
+			parallelOutputNamespace,
+			resolvedBehavior,
+		});
+		const { stepCwd, instructionCwd, readExistenceCwd, behavior, namespaceOutputPath, outputPath, skillNames } = launchPlan;
 		const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(
 			skillNames,
 			stepCwd,
@@ -837,7 +840,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const isFirstProgressAgent = behavior.progress && !progressPrecreated && !progressInstructionCreated;
 		if (behavior.progress) progressInstructionCreated = true;
 		const progressInstructions = buildChainInstructions({ ...behavior, output: false, reads: false }, progressDir, isFirstProgressAgent);
-		const outputPath = resolveSingleOutputPath(behavior.output, ctx.cwd, instructionCwd, outputBaseDir);
 		if (!namespaceOutputPath) systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath, a);
 		const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Async step (${s.agent})`);
 		if (validationError) throw new AsyncStartValidationError(validationError);

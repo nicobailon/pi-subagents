@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Extract child launch planning into a focused internal module shared by async workflow launch setup.
 - Extract detached workflow settlement planning into a focused workflow module while preserving fail-closed result handoff.
 - Extract completion evidence planning into a focused module shared by foreground and background execution.
 - Extract direct MCP grant planning into a pure module while keeping source loading and child launch wiring in adapters.
