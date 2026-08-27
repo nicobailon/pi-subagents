@@ -1,7 +1,3 @@
-/**
- * General utility functions for the subagent extension
- */
-
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,10 +5,6 @@ import type { Message } from "@earendil-works/pi-ai";
 import { previewDisplayText, sanitizeDisplayText, truncateDisplayText } from "./display-text.ts";
 import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
-
-// ============================================================================
-// File System Utilities
-// ============================================================================
 
 const DEFAULT_CONFIG_DIR_NAME = ".pi";
 const PI_CODING_AGENT_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
@@ -254,10 +246,7 @@ function getOutputTail(outputFile: string | undefined, maxLines: number = 3): st
 	}
 }
 
-/**
- * Get human-readable last activity time for a file
- */
-	export function getLastActivity(outputFile: string | undefined): string {
+export function getLastActivity(outputFile: string | undefined): string {
 	if (!outputFile) return "";
 	try {
 		const stat = fs.statSync(outputFile);
@@ -266,14 +255,11 @@ function getOutputTail(outputFile: string | undefined, maxLines: number = 3): st
 		if (ago < 60000) return `active ${Math.floor(ago / 1000)}s ago`;
 		return `active ${Math.floor(ago / 60000)}m ago`;
 	} catch {
-		// Last-activity text is best effort; missing files should simply omit the hint.
+		// Last-activity text is best effort; missing files should omit the hint.
 		return "";
 	}
 }
 
-/**
- * Find the latest session file in a directory
- */
 export function findLatestSessionFile(sessionDir: string): string | null {
 	if (!fs.existsSync(sessionDir)) return null;
 	const files = fs.readdirSync(sessionDir)
@@ -290,9 +276,6 @@ export function findLatestSessionFile(sessionDir: string): string | null {
 	return latest ? latest.path : null;
 }
 
-/**
- * Write a prompt to a temporary file
- */
 function writePrompt(agent: string, prompt: string): { dir: string; path: string } {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
 	const p = path.join(dir, `${agent.replace(/[^\w.-]/g, "_")}.md`);
@@ -300,13 +283,6 @@ function writePrompt(agent: string, prompt: string): { dir: string; path: string
 	return { dir, path: p };
 }
 
-// ============================================================================
-// Message Parsing Utilities
-// ============================================================================
-
-/**
- * Get the final text output from a list of messages
- */
 export function getFinalOutput(messages: Message[]): string {
 	const validTextParts: string[] = [];
 	for (let i = messages.length - 1; i >= 0; i--) {

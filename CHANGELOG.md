@@ -12,6 +12,7 @@
 
 ### Changed
 - Agents now omit the operator's global context file by default, including existing agents with `inheritProjectContext: true`; set `inheritGlobalContext: true` to preserve the previous behavior. Thanks to [@hknatm](https://github.com/hknatm) for #1560.
+- Remove redundant utility-file comments left over from older generated cleanup.
 
 ### Fixed
 - Fail explicitly requested models closed when a cached model exclusion is active, instead of silently selecting a fallback. Thanks to [@harpsychord](https://github.com/harpsychord) for #1556.
