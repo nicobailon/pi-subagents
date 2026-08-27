@@ -1692,7 +1692,7 @@ export function removeBuiltinAgentOverrideFields(
 	return { path: filePath, removed: true };
 }
 
-const DISCOVERY_PRUNED_DIR_NAMES = new Set([".git", "node_modules"]);
+const DISCOVERY_PRUNED_DIR_NAMES = new Set([".git", "node_modules", ".pi", "sync-backups"]);
 
 function isDiscoveryNestedProjectRoot(dir: string): boolean {
 	return isDirectory(getProjectConfigDir(dir)) || isDirectory(path.join(dir, ".agents"));
