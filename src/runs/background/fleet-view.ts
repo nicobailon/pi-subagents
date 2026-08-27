@@ -72,6 +72,14 @@ function uniqueStrings(values: Array<string | undefined>): string[] {
 	return result;
 }
 
+function fleetChildDisplayName(child: { agent?: string; sessionName?: string }, fallback = "subagent"): string {
+	return child.sessionName?.trim() || child.agent || fallback;
+}
+
+function fleetStepDisplayName(step: Pick<AsyncJobStep, "agent" | "sessionName" | "label">): string {
+	return step.sessionName?.trim() || (step.label ? `${step.label} (${step.agent})` : step.agent);
+}
+
 function resolveMaybeRelative(asyncDir: string, filePath: string | undefined): string | undefined {
 	if (!filePath) return undefined;
 	return path.resolve(asyncDir, filePath);
@@ -283,7 +291,8 @@ function formatActivityFacts(input: {
 }
 
 function foregroundModeName(control: ForegroundControl): string {
-	if (control.mode === "single" && control.currentAgent) return control.currentAgent;
+	const currentDisplayName = control.sessionName?.trim() || control.currentAgent;
+	if (control.mode === "single" && currentDisplayName) return currentDisplayName;
 	return control.mode;
 }
 
@@ -302,7 +311,8 @@ function formatForegroundFleetLines(controls: ForegroundControl[]): string[] {
 			toolCount: control.toolCount,
 			...(control.tokens !== undefined ? { tokens: { total: control.tokens } } : {}),
 		});
-		const current = control.currentAgent ? ` | ${control.currentAgent}${control.currentIndex !== undefined ? ` #${control.currentIndex}` : ""}` : "";
+		const currentDisplayName = control.sessionName?.trim() || control.currentAgent;
+		const current = currentDisplayName ? ` | ${currentDisplayName}${control.currentIndex !== undefined ? ` #${control.currentIndex}` : ""}` : "";
 		lines.push(`- ${control.runId} | running | ${foregroundModeName(control)}${current}${activity ? ` | ${activity}` : ""}`);
 		lines.push(`  status: subagent({ action: "status", id: "${control.runId}" })`);
 		lines.push("  transcript: live in the expanded foreground result; persisted session transcript appears after completion when sessions are enabled.");
@@ -317,7 +327,7 @@ function formatDetachedForegroundFleetLines(runs: ForegroundRun[]): string[] {
 	const ordered = [...runs].sort((left, right) => right.updatedAt - left.updatedAt);
 	for (const run of ordered) {
 		const detachedChildren = run.children.filter((child) => child.status === "detached");
-		const childSummary = detachedChildren.map((child) => `${child.agent} #${child.index}`).join(", ");
+		const childSummary = detachedChildren.map((child) => `${fleetChildDisplayName(child)} #${child.index}`).join(", ");
 		lines.push(`- ${run.runId} | detached | ${run.mode}${childSummary ? ` | ${childSummary}` : ""}`);
 		lines.push(`  status: subagent({ action: "status", id: "${run.runId}" })`);
 		lines.push(`  recovery: reply to the supervisor request first, then wait with subagent_wait({ id: "${run.runId}" }); do not resume or launch a replacement while any child remains detached.`);
@@ -338,7 +348,7 @@ function formatAsyncFleetLines(runs: AsyncRunSummary[]): string[] {
 		lines.push(`  status: subagent({ action: "status", id: "${run.id}" })`);
 		lines.push(`  transcript: subagent({ action: "status", id: "${run.id}", view: "transcript" })`);
 		for (const step of run.steps) {
-			const display = step.label ? `${step.label} (${step.agent})` : step.agent;
+			const display = fleetStepDisplayName(step);
 			const stepContext = contextModeLabel(step.context);
 			const phase = step.phase ? `[${step.phase}] ` : "";
 			const stepActivity = formatActivityFacts(step);
@@ -435,7 +445,7 @@ function selectTranscriptStep(status: AsyncStatus, options: TranscriptOptions): 
 	}
 	const step = selectedIndex !== undefined ? steps[selectedIndex] : undefined;
 	const hint = options.index === undefined && steps.length > 1
-		? `Tip: pass index to inspect a specific child transcript (${steps.map((candidate, index) => `${index}=${candidate.agent}`).join(", ")}).`
+		? `Tip: pass index to inspect a specific child transcript (${steps.map((candidate, index) => `${index}=${fleetChildDisplayName(candidate)}`).join(", ")}).`
 		: undefined;
 	return { index: selectedIndex, step, hint };
 }
@@ -445,7 +455,7 @@ function stepStateLine(mode: SubagentRunMode, index: number | undefined, step: A
 	const modelThinking = formatModelThinking(step.model, step.thinking);
 	const context = contextModeLabel(step.context);
 	const parts = [
-		`${mode === "parallel" ? "Agent" : "Step"}: ${index} (${step.agent})${context ? ` ${context}` : ""}`,
+		`${mode === "parallel" ? "Agent" : "Step"}: ${index} (${fleetChildDisplayName(step)})${context ? ` ${context}` : ""}`,
 		step.status,
 		formatActivityFacts(step),
 		modelThinking,
@@ -553,7 +563,7 @@ export function formatNestedRunTranscript(run: NestedRunSummary, options: Transc
 		`Nested run: ${run.id}`,
 		`State: ${run.state}`,
 		run.mode ? `Mode: ${run.mode}` : undefined,
-		run.agent ? `Agent: ${run.agent}` : run.agents?.length ? `Agents: ${run.agents.join(", ")}` : undefined,
+		run.sessionName?.trim() ? `Agent: ${run.sessionName.trim()}` : run.agent ? `Agent: ${run.agent}` : run.agents?.length ? `Agents: ${run.agents.join(", ")}` : undefined,
 	].filter((line): line is string => Boolean(line));
 	appendKnownArtifacts(lines, { outputPaths: [], sessionFile: run.sessionFile });
 	if (!run.sessionFile) {
@@ -601,8 +611,8 @@ export function formatAsyncResultTranscript(data: {
 	const lines = [
 		`Run: ${runId}`,
 		`State: ${data.state ?? (data.success ? "complete" : "failed")}`,
-		index !== undefined && child ? `Child: ${index} (${child.agent ?? "subagent"})` : undefined,
-		index === undefined && children.length > 1 ? `Tip: pass index to inspect a specific child transcript (${children.map((candidate, childIndex) => `${childIndex}=${candidate.agent ?? "subagent"}`).join(", ")}).` : undefined,
+		index !== undefined && child ? `Child: ${index} (${fleetChildDisplayName(child)})` : undefined,
+		index === undefined && children.length > 1 ? `Tip: pass index to inspect a specific child transcript (${children.map((candidate, childIndex) => `${childIndex}=${fleetChildDisplayName(candidate)}`).join(", ")}).` : undefined,
 	].filter((line): line is string => Boolean(line));
 	appendKnownArtifacts(lines, { outputPaths: [], sessionFile, resultPath });
 	appendTranscriptBody(lines, "Result transcript tail", transcriptLines.filter((line) => line.trim()), output.split(/\r?\n/).length > lineLimit);

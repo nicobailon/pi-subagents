@@ -697,7 +697,7 @@ describe("subagent async widget rendering", () => {
 				stepsTotal: 3,
 				updatedAt: now,
 				steps: [
-					{ agent: "reviewer", status: "running", lastActivityAt: now, toolCount: 2 },
+					{ agent: "reviewer", sessionName: "  reviewer: Inspect the first row  ", status: "running", lastActivityAt: now, toolCount: 2 },
 					{ agent: "reviewer", status: "running", currentTool: "read", currentToolStartedAt: now - 2000 },
 					{ agent: "reviewer", status: "complete", tokens: { input: 1000, output: 500, cache: 0, total: 1500 } },
 				],
@@ -707,11 +707,39 @@ describe("subagent async widget rendering", () => {
 		const text = lines.join("\n");
 		assert.match(text, /async subagent parallel \(3\) · background/);
 		assert.match(text, /parallel · 2 agents running · 1\/3 done/);
-		assert.match(text, /Agent 1\/3: reviewer · running · 2 tool uses/);
+		assert.match(text, /Agent 1\/3: reviewer: Inspect the first row · running · 2 tool uses/);
 		assert.match(text, /⎿  active now/);
 		assert.match(text, /Agent 2\/3: reviewer · running\n\s+⎿  read \| 2\.0s/);
 		assert.match(text, /Press configured-expand-key for live detail/);
 		assert.match(text, /Agent 3\/3: reviewer · complete · 1\.5k token/);
+	});
+
+	it("prefers session names in multi-job widget step rows", () => {
+		const text = buildWidgetLines([
+			{
+				asyncId: "run-multi-a",
+				asyncDir: "/tmp/multi-a",
+				status: "running",
+				mode: "parallel",
+				agents: ["reviewer"],
+				stepsTotal: 1,
+				runningSteps: 1,
+				completedSteps: 0,
+				steps: [{ index: 0, agent: "reviewer", sessionName: "  reviewer: Inspect the multi-job row  ", status: "running" }],
+			},
+			{
+				asyncId: "run-multi-b",
+				asyncDir: "/tmp/multi-b",
+				status: "complete",
+				mode: "single",
+				agents: ["worker"],
+				stepsTotal: 1,
+				steps: [{ index: 0, agent: "worker", status: "complete" }],
+			},
+		], theme, 180).join("\n");
+
+		assert.match(text, /Agent 1\/1: reviewer: Inspect the multi-job row · running/);
+		assert.doesNotMatch(text, /Agent 1\/1: reviewer · running/);
 	});
 
 	it("shows async job and step context badges", () => {
@@ -1002,6 +1030,7 @@ describe("subagent async widget rendering", () => {
 				{
 					index: 0,
 					agent: "worker",
+					sessionName: "  worker: Read the widget  ",
 					status: "running",
 					currentTool: "read",
 					currentToolArgs: "src/tui/render.ts",
@@ -1013,7 +1042,7 @@ describe("subagent async widget rendering", () => {
 
 		const collapsedText = buildWidgetLines([job], theme, 180).join("\n");
 		assert.match(collapsedText, /async subagent worker · background/);
-		assert.match(collapsedText, /Step 1\/1: worker · running/);
+		assert.match(collapsedText, /Step 1\/1: worker: Read the widget · running/);
 		assert.match(collapsedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
 		assert.match(collapsedText, /Press configured-expand-key for live detail/);
 		assert.match(collapsedText, outputPathPattern("/tmp/single-run/output-0.log"));

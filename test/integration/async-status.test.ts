@@ -142,7 +142,7 @@ describe("async status helpers", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				steps: [
-					{ agent: "scout", context: "fresh", status: "running" },
+					{ agent: "scout", sessionName: "  scout: Scan the auth flow  ", context: "fresh", status: "running" },
 					{ agent: "worker", context: "fork", status: "running" },
 				],
 			});
@@ -152,7 +152,7 @@ describe("async status helpers", () => {
 			assert.deepEqual(runs[0]?.steps.map((step) => step.context), ["fresh", "fork"]);
 			const text = formatAsyncRunList(runs);
 			assert.match(text, /run-context \| running .* \| parallel \[mixed\]/);
-			assert.match(text, /1\. scout \[fresh\] \| running/);
+			assert.match(text, /1\. scout: Scan the auth flow \[fresh\] \| running/);
 			assert.match(text, /2\. worker \[fork\] \| running/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

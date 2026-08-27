@@ -171,7 +171,7 @@ describe("async run status inspection", () => {
 				chainStepCount: 1,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
 				steps: [
-					{ agent: "reviewer", status: "running", startedAt: 100, model: "openai-codex/gpt-5.5:high" },
+					{ agent: "reviewer", sessionName: "  reviewer: Inspect the first result  ", status: "running", startedAt: 100, model: "openai-codex/gpt-5.5:high" },
 					{ agent: "reviewer", status: "running", startedAt: 100, model: "anthropic/claude-haiku-4-5", thinking: "low" },
 					{ agent: "reviewer", status: "pending" },
 				],
@@ -189,7 +189,7 @@ describe("async run status inspection", () => {
 			assert.match(text, /Error: top-level async status error/);
 			assert.match(text, /Progress: 2 agents running · 0\/3 done/);
 			assert.match(text, new RegExp(`Output: ${runOutputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-			assert.match(text, /Agent 1\/3: reviewer running \(gpt-5\.5 · thinking high\)/);
+			assert.match(text, /Agent 1\/3: reviewer: Inspect the first result running \(gpt-5\.5 · thinking high\)/);
 			assert.match(text, /Agent 2\/3: reviewer running \(claude-haiku-4-5 · thinking low\)/);
 			assert.match(text, /Agent 3\/3: reviewer pending/);
 			assert.doesNotMatch(text, /openai-codex\/gpt-5\.5/);
@@ -216,7 +216,7 @@ describe("async run status inspection", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				currentStep: 0,
-				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+				steps: [{ agent: "worker", sessionName: "  worker: Read the transcript  ", status: "running", startedAt: 100 }],
 			}, null, 2), "utf-8");
 
 			const result = inspectSubagentStatus({ id: "run-transcript", view: "transcript", lines: 2 }, {
@@ -229,7 +229,7 @@ describe("async run status inspection", () => {
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
 			assert.match(text, /Run: run-transcript/);
-			assert.match(text, /Step: 0 \(worker\) \| running/);
+			assert.match(text, /Step: 0 \(worker: Read the transcript\) \| running/);
 			assert.match(text, new RegExp(`Transcript tail from ${outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(tail truncated\\):`));
 			assert.doesNotMatch(text, /first line/);
 			assert.match(text, /second line/);
@@ -465,7 +465,7 @@ describe("async run status inspection", () => {
 				chainStepCount: 1,
 				parallelGroups: [{ start: 0, count: 2, stepIndex: 0 }],
 				steps: [
-					{ agent: "worker", status: "running", startedAt: 100 },
+					{ agent: "worker", sessionName: "  worker: Inspect fleet  ", label: "Fleet check", status: "running", startedAt: 100 },
 					{ agent: "reviewer", status: "pending" },
 				],
 			}, null, 2), "utf-8");
@@ -477,6 +477,7 @@ describe("async run status inspection", () => {
 					startedAt: 100,
 					updatedAt: 250,
 					currentAgent: "scout",
+					sessionName: "  foreground: Inspect fleet  ",
 					currentIndex: 0,
 					lastActivityAt: 240,
 				}]]),
@@ -494,8 +495,10 @@ describe("async run status inspection", () => {
 			assert.equal(result.isError, undefined);
 			assert.match(text, /Subagent fleet: 2 tracked/);
 			assert.match(text, /Foreground runs:/);
-			assert.match(text, /fg-run \| running \| scout/);
+			assert.match(text, /fg-run \| running \| foreground: Inspect fleet/);
+			assert.doesNotMatch(text, /fg-run \| running \| scout/);
 			assert.match(text, /Async runs:/);
+			assert.match(text, /0\. worker: Inspect fleet \| running/);
 			assert.match(text, /run-fleet \| running .*\| parallel \| 1 agent running · 0\/2 done/);
 			assert.match(text, /transcript: subagent\(\{ action: "status", id: "run-fleet", view: "transcript" \}\)/);
 			assert.match(text, /transcript: subagent\(\{ action: "status", id: "run-fleet", index: 0, view: "transcript" \}\)/);
@@ -735,6 +738,7 @@ describe("async run status inspection", () => {
 					path: [{ runId: "run-nested-root", stepIndex: 0, agent: "orchestrator" }],
 					state: "running",
 					agent: "reviewer",
+					sessionName: "  reviewer: Read the status  ",
 					currentTool: "read",
 					lastUpdate: 150,
 				},
@@ -750,7 +754,7 @@ describe("async run status inspection", () => {
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
 			assert.match(text, /Step 1: orchestrator running/);
-			assert.match(text, /↳ reviewer \[nested-status-child\] running \| tool read/);
+			assert.match(text, /↳ reviewer: Read the status \[nested-status-child\] running \| tool read/);
 			assert.match(text, /Status: subagent\(\{ action: "status", id: "nested-status-child" \}\)/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

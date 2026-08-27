@@ -360,6 +360,20 @@ test("static sequential and static parallel chain rendering keep existing labels
 	assert.match(parallel, /Step 3: writer/);
 });
 
+test("expanded simple chain summaries prefer result session names", () => {
+	const expanded = componentText(renderSubagentResult({
+		content: [{ type: "text", text: "done" }],
+		details: {
+			mode: "chain",
+			chainAgents: ["chain-label"],
+			totalSteps: 1,
+			results: [{ ...result("worker", "done"), sessionName: "  worker: named task  " }],
+		},
+	}, { expanded: true }, theme as any));
+	assert.match(expanded, /Step 1: worker: named task/);
+	assert.doesNotMatch(expanded, /Step 1: chain-label/);
+});
+
 test("main-window renderer config removes compact result indentation without changing status glyphs", () => {
 	const component = renderSubagentResult({
 		content: [{ type: "text", text: "done" }],

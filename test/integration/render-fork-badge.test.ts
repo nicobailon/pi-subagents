@@ -833,6 +833,30 @@ describe("renderSubagentResult fork indicator", () => {
 		assert.match(expanded, /reviewer \(gpt-5\.5 · thinking high\)/);
 	});
 
+	it("prefers session names in expanded running multi-result rows", () => {
+		const sessionName = "reviewer: Review the diff";
+		const widget = renderSubagentResult!({
+			content: [{ type: "text", text: "(running...)" }],
+			details: {
+				mode: "parallel",
+				totalSteps: 1,
+				results: [{
+					agent: "reviewer",
+					sessionName,
+					task: "Review the diff",
+					exitCode: 0,
+					messages: [],
+					usage: emptyUsage,
+					progress: { index: 0, agent: "reviewer", sessionName, status: "running", task: "Review the diff", recentTools: [], recentOutput: [], toolCount: 0, tokens: 0, durationMs: 0 },
+				}],
+			},
+		}, { expanded: true }, theme);
+
+		const text = widget.render(160).join("\n");
+		assert.match(text, /Agent 1\/1: reviewer: Review the diff[^\n]* · running/);
+		assert.doesNotMatch(text, /Agent 1\/1: reviewer · running/);
+	});
+
 	it("keeps running compact result output stable when progress is unchanged", async () => {
 		const result = {
 			content: [{ type: "text" as const, text: "(running...)" }],
@@ -1059,6 +1083,7 @@ describe("renderSubagentResult fork indicator", () => {
 				chainAgents: ["[scout+reviewer+worker]", "planner", "writer"],
 				results: [{
 					agent: "scout",
+					sessionName: "  scout: Scan the repository  ",
 					task: "scan",
 					exitCode: 0,
 					messages: [],
@@ -1078,7 +1103,7 @@ describe("renderSubagentResult fork indicator", () => {
 
 		const text = widget.render(120).join("\n");
 		assert.match(text, /chain · step 1\/3 · parallel group: 2 agents running · 0\/3 done/);
-		assert.match(text, /Agent 1\/3: scout/);
+		assert.match(text, /Agent 1\/3: scout: Scan the repository/);
 		assert.match(text, /Agent 2\/3: reviewer/);
 		assert.doesNotMatch(text, /Step 1: scout/);
 	});
@@ -1144,6 +1169,7 @@ describe("renderSubagentResult fork indicator", () => {
 				chainAgents: ["planner", "[scout+reviewer]", "writer"],
 				results: progress.map((entry) => ({
 					agent: entry.agent,
+					...(entry.agent === "scout" ? { sessionName: "  scout: Scan completed targets  " } : {}),
 					task: entry.task,
 					exitCode: 0,
 					messages: [],
@@ -1157,7 +1183,7 @@ describe("renderSubagentResult fork indicator", () => {
 		const text = widget.render(120).join("\n");
 		assert.match(text, /chain · step 3\/3/);
 		assert.match(text, /Step 1: planner/);
-		assert.match(text, /Agent 1\/2: scout/);
+		assert.match(text, /Agent 1\/2: scout: Scan completed targets/);
 		assert.match(text, /Agent 2\/2: reviewer/);
 		assert.match(text, /Step 3: writer/);
 		assert.doesNotMatch(text, /step 4\/4/);

@@ -15,6 +15,7 @@ function progress(index: number, agent: string, tokens: number): AgentProgress {
 	return {
 		index,
 		agent,
+		sessionName: `  ${agent}: named task  `,
 		status: "running",
 		task: `${agent} task`,
 		recentTools: [],
@@ -69,6 +70,8 @@ describe("foreground child control", () => {
 		assert.equal(control.currentIndex, 1);
 		updateForegroundChild(control, 0, progress(0, "reviewer", 120));
 		assert.equal(control.currentIndex, 0);
+		assert.equal(control.sessionName, "  reviewer: named task  ");
+		assert.equal(control.activeChildren?.get(0)?.sessionName, "  reviewer: named task  ");
 		assert.equal(control.tokens, 120);
 		assert.equal(control.inputTokens, 100);
 		assert.equal(control.outputTokens, 20);
@@ -93,6 +96,7 @@ describe("foreground child control", () => {
 		finishForegroundChild(control, 0);
 		assert.equal(control.activeChildren?.size, 0);
 		assert.equal(control.currentIndex, undefined);
+		assert.equal(control.sessionName, undefined);
 		assert.equal(control.model, undefined);
 		assert.equal(control.inputTokens, undefined);
 		assert.equal(control.outputTokens, undefined);

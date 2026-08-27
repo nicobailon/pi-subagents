@@ -526,7 +526,7 @@ function formatActivityFacts(input: { activityState?: ActivityState; lastActivit
 }
 
 function formatStepLine(step: AsyncRunStepSummary): string {
-	const display = step.label ? `${step.label} (${step.agent})` : step.agent;
+	const display = step.sessionName?.trim() || (step.label ? `${step.label} (${step.agent})` : step.agent);
 	const context = contextModeLabel(step.context);
 	const phase = step.phase ? `[${step.phase}] ` : "";
 	const parts = [`${step.index + 1}. ${phase}${display}${context ? ` ${context}` : ""}`, step.status];

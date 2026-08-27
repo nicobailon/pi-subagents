@@ -4014,7 +4014,7 @@ async function runSubagent(
 					: step.parallel.outputPath;
 				const taskText = task.task ?? step.parallel.task;
 				const materializedTask = step.parallel.namespaceOutputPath ? injectSingleOutputInstruction(taskText, outputPath, step.parallel) : taskText;
-				const sessionName = deriveChildSessionName({ agent: step.parallel.agent, task: materializedTask, label: task.label ?? step.parallel.label });
+				const sessionName = deriveChildSessionName({ agent: step.parallel.agent, task: taskText, label: task.label ?? step.parallel.label });
 				return omitUndefinedProperties({
 					...step.parallel,
 					runFanoutPath: `chain[${stepIndex}].expand[${itemIndex}]`,

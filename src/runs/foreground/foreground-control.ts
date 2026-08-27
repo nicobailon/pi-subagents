@@ -18,6 +18,7 @@ interface BeginForegroundChildInput {
 
 function copyProgress(target: ForegroundChildControl, progress: AgentProgress | undefined): void {
 	if (!progress) return;
+	target.sessionName = progress.sessionName;
 	target.currentActivityState = progress.activityState;
 	target.lastActivityAt = progress.lastActivityAt;
 	target.currentTool = progress.currentTool;
@@ -36,6 +37,7 @@ function copyProgress(target: ForegroundChildControl, progress: AgentProgress | 
 
 function syncCurrentChild(control: ForegroundRunControl, child: ForegroundChildControl): void {
 	control.currentAgent = child.agent;
+	control.sessionName = child.sessionName;
 	control.currentIndex = child.index;
 	control.description = child.description;
 	control.currentActivityState = child.currentActivityState;
@@ -59,6 +61,7 @@ function syncCurrentChild(control: ForegroundRunControl, child: ForegroundChildC
 
 function clearCurrentChild(control: ForegroundRunControl): void {
 	control.currentAgent = undefined;
+	control.sessionName = undefined;
 	control.currentIndex = undefined;
 	control.currentActivityState = undefined;
 	control.lastActivityAt = undefined;

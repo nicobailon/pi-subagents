@@ -1851,6 +1851,8 @@ export interface ForegroundResumeRun {
 export interface ForegroundChildControl {
 	index: number;
 	agent: string;
+	/** Human-readable display name for the child's session, when derived at launch. */
+	sessionName?: string;
 	description?: string;
 	startedAt: number;
 	updatedAt: number;
@@ -1888,6 +1890,8 @@ export interface ForegroundRunControl {
 	/** Effective working directory used to resolve live transcript artifacts. */
 	cwd?: string;
 	currentAgent?: string;
+	/** Human-readable display name for the current child session, when derived at launch. */
+	sessionName?: string;
 	currentIndex?: number;
 	/** Short caller-facing task/goal shown in fleet surfaces when available. */
 	description?: string;
