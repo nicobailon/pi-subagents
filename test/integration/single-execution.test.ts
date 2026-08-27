@@ -4367,6 +4367,38 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		]);
 	});
 
+	it("preserves terminal empty-output diagnostics after useful foreground work", async () => {
+		const partialOutput = "I’ll inspect the retained candidate before changing it.";
+		mockPi.onCall({
+			jsonl: [
+				events.toolStart("read", { path: "src/index.ts" }),
+				events.toolEnd("read"),
+				events.toolResult("read", "file contents"),
+				events.assistantMessage(partialOutput),
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [],
+						model: "mock/test-model",
+						stopReason: "aborted",
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+			],
+			exitCode: 0,
+		});
+
+		const result = await runSync(tempDir, [makeAgent("worker")], "worker", "Implement the approved file changes", {
+			runId: "foreground-aborted-empty-output",
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /^Subagent produced no output \(possible model cold-start or empty response\)\./);
+		assert.doesNotMatch(result.error ?? "", /completed without making edits/);
+		assert.equal(result.finalOutput, partialOutput);
+	});
+
 	it("agent contract v1 reports omitted acceptance separately without injecting a prompt", async () => {
 		mockPi.onCall({ output: "Plan only" });
 		const agents = [makeAgent("worker", { tools: ["read", "write"] })];

@@ -39,7 +39,7 @@ export function formatResumeFirstFailedRunDetail(run: AsyncRunSummary): string |
 }
 
 export function formatResumeFirstFailedRunsNote(runs: AsyncRunSummary[]): string {
-	const failedRuns = runs.filter((run) => run.state === "failed");
+	const failedRuns = runs.filter((run) => run.state === "failed" || run.state === "partial");
 	const detachGuidance = failedRuns
 		.map(formatIntercomDetachGuidance)
 		.filter((guidance): guidance is string => Boolean(guidance));

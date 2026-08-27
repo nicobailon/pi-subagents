@@ -366,7 +366,7 @@ export interface AgentContract {
 
 export type ChainGateLayer = "execution" | "acceptance";
 
-export type ExecutionProjectionStatus = "completed" | "failed" | "paused" | "stopped" | "detached";
+export type ExecutionProjectionStatus = "completed" | "failed" | "partial" | "paused" | "stopped" | "detached";
 
 export interface ExecutionProjection {
 	status: ExecutionProjectionStatus;
@@ -1296,7 +1296,7 @@ export interface AsyncParallelGroupStatus {
 	stepIndex: number;
 }
 
-export type NestedRunState = "queued" | "running" | "complete" | "failed" | "paused" | "stopped" | "rejected";
+export type NestedRunState = "queued" | "running" | "complete" | "failed" | "partial" | "paused" | "stopped" | "rejected";
 export type NestedOwnerState = "live" | "gone" | "unknown";
 
 export interface NestedRunAddress {
@@ -1310,7 +1310,7 @@ export interface NestedRunAddress {
 
 export interface NestedStepSummary {
 	agent: string;
-	status: "pending" | "running" | "complete" | "completed" | "failed" | "paused" | "stopped" | "rejected";
+	status: "pending" | "running" | "complete" | "completed" | "failed" | "partial" | "paused" | "stopped" | "rejected";
 	model?: string;
 	thinking?: string;
 	sessionFile?: string;
@@ -1555,7 +1555,7 @@ export interface AsyncStatus {
 	mode: SubagentRunMode;
 	context?: "fresh" | "fork" | "mixed";
 	isNested?: boolean;
-	state: "queued" | "running" | "complete" | "failed" | "paused" | "stopped" | "rejected";
+	state: "queued" | "running" | "complete" | "failed" | "partial" | "paused" | "stopped" | "rejected";
 	/** Display-only dismissal marker for a reload-orphaned workflow. */
 	displayDismissedAt?: number;
 	error?: string;
@@ -1624,7 +1624,7 @@ export interface AsyncStatus {
 		parentWorkflowRunId?: string;
 		outputName?: string;
 		structured?: boolean;
-		status: "pending" | "running" | "complete" | "completed" | "failed" | "paused" | "stopped" | "rejected";
+		status: "pending" | "running" | "complete" | "completed" | "failed" | "partial" | "paused" | "stopped" | "rejected";
 		stopRequested?: boolean;
 		stopRequestedAt?: number;
 		children?: NestedRunSummary[];
@@ -1705,7 +1705,7 @@ export interface AsyncJobState {
 	cwd?: string;
 	/** Parent-resolved child session root retained for trusted live transcript lookup. */
 	sessionRoot?: string;
-	status: "queued" | "running" | "complete" | "failed" | "paused" | "stopped" | "rejected";
+	status: "queued" | "running" | "complete" | "failed" | "partial" | "paused" | "stopped" | "rejected";
 	/** Short caller-facing task/goal shown in fleet surfaces when available. */
 	description?: string;
 	pid?: number;

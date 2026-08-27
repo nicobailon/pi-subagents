@@ -221,7 +221,7 @@ export function planWorkflowSettlement(input: {
 		...(receipt && input.receiptPath ? { workflowReceipt: { path: input.receiptPath, receipt } } : {}),
 		timestamp: now,
 	};
-	const terminal = status.state === "complete" || status.state === "failed" || status.state === "stopped";
+	const terminal = status.state === "complete" || status.state === "failed" || status.state === "partial" || status.state === "stopped";
 	const completionEvent = terminal ? {
 		type: "subagent.workflow.completed",
 		state: status.state,

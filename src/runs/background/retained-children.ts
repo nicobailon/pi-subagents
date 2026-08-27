@@ -27,7 +27,7 @@ export interface RetainedChild {
 }
 
 function isRetainedChildState(state: AsyncRunSummary["state"]): state is RetainedChildState {
-	return state === "complete" || state === "failed" || state === "paused" || state === "stopped";
+	return state === "complete" || state === "failed" || state === "partial" || state === "paused" || state === "stopped";
 }
 
 function isTerminalStepStatus(status: AsyncRunSummary["steps"][number]["status"]): boolean {

@@ -618,7 +618,7 @@ export async function waitForSubagents(
 		const allNow = runsForIds(initialAsyncIds, deps);
 		const terminal = allNow.filter((run) => !ACTIVE_STATES.includes(run.state) && initialAsyncIds.has(run.id));
 		finishedAsyncCount = terminal.length;
-		failedAsyncCount = terminal.filter((run) => run.state === "failed").length;
+		failedAsyncCount = terminal.filter((run) => run.state === "failed" || run.state === "partial").length;
 		terminalSummary = summarizeTerminalRuns(terminal, providerFinishedCount);
 		resumeGuidance = formatResumeFirstFailedRunsNote(terminal);
 		completions = collectWaitCompletions(terminal, deps.state, deps.resultsDir ?? DIRS.results);

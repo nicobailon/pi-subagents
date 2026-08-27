@@ -11,7 +11,7 @@ const DEFAULT_MAX_DEPTH = 3;
 const DEFAULT_MAX_STRING_LENGTH = 160;
 const DEFAULT_MAX_SERIALIZED_BYTES = 32 * 1024;
 
-export type AsyncStatusSnapshotState = "queued" | "running" | "complete" | "failed" | "paused" | "stopped" | "rejected";
+export type AsyncStatusSnapshotState = "queued" | "running" | "complete" | "failed" | "partial" | "paused" | "stopped" | "rejected";
 export type AsyncStatusSnapshotKind = "subagent" | "workflow" | "step";
 
 export interface AsyncStatusSnapshotActivityV1 {
@@ -109,7 +109,7 @@ function normalizeState(value: string): AsyncStatusSnapshotState {
 }
 
 function terminalState(state: AsyncStatusSnapshotState): boolean {
-	return state === "complete" || state === "failed" || state === "paused" || state === "stopped" || state === "rejected";
+	return state === "complete" || state === "failed" || state === "partial" || state === "paused" || state === "stopped" || state === "rejected";
 }
 
 function kindForMode(mode: SubagentRunMode | undefined): AsyncStatusSnapshotKind {

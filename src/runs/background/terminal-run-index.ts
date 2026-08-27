@@ -18,7 +18,7 @@ interface TerminalRunIndexEntry {
 }
 
 function isTerminalState(state: AsyncStatus["state"]): boolean {
-	return state === "complete" || state === "failed" || state === "paused" || state === "stopped" || state === "rejected";
+	return state === "complete" || state === "failed" || state === "partial" || state === "paused" || state === "stopped" || state === "rejected";
 }
 
 function indexRoot(asyncDirRoot: string): string {

@@ -562,16 +562,28 @@ interface RunPiStreamingResult {
 
 const MAX_CHILD_FAILURE_DIAGNOSTIC_CHARS = 8_192;
 
+function formatRequiredOutputError(requiredOutput: {
+	kind: "file-only" | "structured";
+	path: string;
+	missing: boolean;
+} | undefined): string | undefined {
+	if (!requiredOutput?.missing) return undefined;
+	return `Required ${requiredOutput.kind} output was not produced: ${requiredOutput.path.slice(0, 2_048)}`;
+}
+
 function formatChildFailureDiagnostic(input: {
 	error: string | undefined;
 	afterCompactionSettlement?: boolean;
-	missingFileOnlyOutput?: string;
-	missingStructuredOutput?: string;
+	requiredOutput?: {
+		kind: "file-only" | "structured";
+		path: string;
+		missing: boolean;
+	};
 }): string | undefined {
+	const missingOutput = formatRequiredOutputError(input.requiredOutput);
 	const notes = [
 		input.afterCompactionSettlement ? "Child failure followed session compaction and agent settlement." : undefined,
-		input.missingFileOnlyOutput ? `Required file-only output was not produced: ${input.missingFileOnlyOutput.slice(0, 2_048)}` : undefined,
-		input.missingStructuredOutput ? `Required structured output was not produced: ${input.missingStructuredOutput.slice(0, 2_048)}` : undefined,
+		missingOutput && input.error !== missingOutput ? missingOutput : undefined,
 	].filter((note): note is string => Boolean(note));
 	if (notes.length === 0) return input.error;
 	const context = notes.join("\n");
@@ -1349,6 +1361,8 @@ async function runSingleStepInner(
 				structuredOutputPath: timedOut || stopped ? undefined : imported.structuredOutputPath,
 				structuredOutputSchemaPath: timedOut || stopped ? undefined : imported.structuredOutputSchemaPath,
 				acceptance: timedOut || stopped ? undefined : imported.acceptance,
+				execution: timedOut || stopped ? undefined : imported.execution,
+				effects: timedOut || stopped ? undefined : imported.effects,
 			});
 		} finally {
 			ctx.registerTimeout?.(undefined);
@@ -1825,12 +1839,15 @@ async function runSingleStepInner(
 		const hiddenError = run.exitCode === 0 && !run.error && !toolAvailabilityError && !structuredError && !midToolExitError
 			? detectSubagentError(errorMessages)
 			: null;
+		const terminalEmptyAfterUsefulWork = !validatedStructuredOutput
+			&& hasEmptyTerminalAssistantResponse(run.messages)
+			&& (run.toolCount > 0 || Boolean(run.finalOutput.trim()));
 		const emptyOutputError = run.exitCode === 0
 			&& !run.error
 			&& !toolAvailabilityError
 			&& !structuredError
-			&& !run.finalOutput.trim()
 			&& !validatedStructuredOutput
+			&& (!run.finalOutput.trim() || terminalEmptyAfterUsefulWork)
 			&& (!hiddenError?.hasError || hasEmptyTerminalAssistantResponse(run.messages))
 			? "Subagent produced no output (possible model cold-start or empty response)."
 			: undefined;
@@ -1862,7 +1879,15 @@ async function runSingleStepInner(
 			mutationEvidence: completionMutationEvidence,
 			agentContractV1: isAgentContractV1(step.agentContract),
 		});
-		const effectiveExitCode = toolAvailabilityError || completionEvidence.legacyFailureError || midToolExitError || structuredError || emptyOutputError
+		const finalOutputHasPersistableFileContent = run.exitCode === 0 && !run.error && !emptyOutputError && Boolean(stripAcceptanceReport(run.finalOutput).trim());
+		const requiredOutput = step.outputMode === "file-only" && step.outputPath
+			? { kind: "file-only" as const, path: step.outputPath, missing: !fs.existsSync(step.outputPath) && !finalOutputHasPersistableFileContent }
+			: effectiveStructuredOutput
+				? { kind: "structured" as const, path: effectiveStructuredOutput.outputPath, missing: !fs.existsSync(effectiveStructuredOutput.outputPath) }
+			: undefined;
+		const missingRequiredOutputError = formatRequiredOutputError(requiredOutput);
+		const missingRequiredOutputAfterMutation = Boolean(missingRequiredOutputError) && (mutationAttemptObserved || Boolean(mutationEvidence.changedFiles.length));
+		const effectiveExitCode = toolAvailabilityError || completionEvidence.legacyFailureError || midToolExitError || structuredError || emptyOutputError || missingRequiredOutputError
 			? 1
 			: hiddenError?.hasError
 				? (hiddenError.exitCode ?? 1)
@@ -1875,17 +1900,18 @@ async function runSingleStepInner(
 			timedOut: run.timedOut,
 			stopped: run.stopped,
 		})) ? formatProcessSignalError(run.processSignal!) : undefined;
+		const underlyingError = toolAvailabilityError
+			?? midToolExitError
+			?? structuredError
+			?? (missingRequiredOutputAfterMutation ? missingRequiredOutputError : undefined)
+			?? emptyOutputError
+			?? (hiddenError?.hasError
+				? hiddenError.details
+					? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
+					: `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
+				: run.error || signalError || (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined));
 		const error = formatSubagentExtensionConflictError(
-			toolAvailabilityError
-				?? completionEvidence.legacyFailureError
-				?? midToolExitError
-				?? structuredError
-				?? emptyOutputError
-				?? (hiddenError?.hasError
-					? hiddenError.details
-						? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
-						: `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
-					: run.error || signalError || (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined)),
+			underlyingError ?? missingRequiredOutputError ?? completionEvidence.legacyFailureError,
 			{
 				agent: step.agent,
 				ambientExtensionsEnabled: launchResolvedExtensions?.disableAmbientExtensions === false,
@@ -1900,7 +1926,7 @@ async function runSingleStepInner(
 		});
 		modelAttempts.push(attempt);
 		if (!recoveringAbort && candidate && startupAttemptIndex === 0) attemptedModels.push(candidate);
-		completionGuardTriggeredFinal = completionEvidence.guardTriggered;
+		completionGuardTriggeredFinal = completionEvidence.guardTriggered && !underlyingError && !missingRequiredOutputError;
 		finalOutputSnapshot = outputSnapshot;
 		if (step.toolBudget) {
 			const toolMessages = run.messages.filter((message) => message.role === "toolResult");
@@ -1908,11 +1934,6 @@ async function runSingleStepInner(
 			toolBudgetBlocked = Boolean(blockedMessage);
 			toolBudget = toolBudgetState(step.toolBudget, toolMessages.length, blockedMessage ? (blockedMessage as { toolName?: string }).toolName : undefined);
 		}
-		const requiredOutput = step.outputMode === "file-only" && step.outputPath
-			? { kind: "file-only" as const, path: step.outputPath, missing: !fs.existsSync(step.outputPath) }
-			: effectiveStructuredOutput
-				? { kind: "structured" as const, path: effectiveStructuredOutput.outputPath, missing: !fs.existsSync(effectiveStructuredOutput.outputPath) }
-			: undefined;
 		const settlementDiagnostic = projectSettlementDiagnostic(completionEvidence, {
 			terminalFailed: effectiveExitCode !== 0,
 			finalTextPresent: Boolean(stripAcceptanceReport(run.finalOutput).trim()),
@@ -1920,7 +1941,8 @@ async function runSingleStepInner(
 			requiredOutput,
 			afterCompactionSettlement: run.afterCompactionSettlement === true,
 		});
-		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, runtimeAcknowledgedExtensions, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(completionEvidence.fileMutation || settlementDiagnostic ? { effects: { ...(completionEvidence.fileMutation ? { fileMutation: completionEvidence.fileMutation } : {}), ...(settlementDiagnostic ? { settlementDiagnostic } : {}) } } : {}) } as RunPiStreamingResult;
+		const fileMutationEffect = completionEvidence.fileMutation ?? (missingRequiredOutputAfterMutation ? { status: "observed" as const, expected: completionEvidence.mutationExpected, attempted: true, evidence: mutationEvidence } : undefined);
+		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, runtimeAcknowledgedExtensions, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(fileMutationEffect || settlementDiagnostic ? { effects: { ...(fileMutationEffect ? { fileMutation: fileMutationEffect } : {}), ...(settlementDiagnostic ? { settlementDiagnostic } : {}) } } : {}) } as RunPiStreamingResult;
 		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break modelAttemptsLoop;
 		if (attempt.success || completionEvidence.guardTriggered) break modelAttemptsLoop;
 		if (recoveringAbort) break modelAttemptsLoop;
@@ -2093,12 +2115,7 @@ async function runSingleStepInner(
 	const effectiveFinalError = formatChildFailureDiagnostic({
 		error: baseFinalError,
 		afterCompactionSettlement: effectiveFinalExitCode !== 0 ? finalResult?.afterCompactionSettlement : undefined,
-		missingFileOnlyOutput: effectiveFinalExitCode !== 0 && finalResult?.effects?.settlementDiagnostic?.requiredOutput?.kind === "file-only" && finalResult.effects.settlementDiagnostic.requiredOutput.missing
-			? finalResult.effects.settlementDiagnostic.requiredOutput.path
-			: undefined,
-		missingStructuredOutput: effectiveFinalExitCode !== 0 && finalResult?.effects?.settlementDiagnostic?.requiredOutput?.kind === "structured" && finalResult.effects.settlementDiagnostic.requiredOutput.missing
-			? finalResult.effects.settlementDiagnostic.requiredOutput.path
-			: undefined,
+		requiredOutput: effectiveFinalExitCode !== 0 ? finalResult?.effects?.settlementDiagnostic?.requiredOutput : undefined,
 	});
 
 	const artifactErrors = artifactPaths && ctx.artifactConfig?.enabled !== false
@@ -2367,6 +2384,25 @@ function resolveAsyncStepTranscriptPath(input: {
 }
 
 type SingleStepResult = Awaited<ReturnType<typeof runSingleStep>>;
+
+function missingRequiredOutputAfterUsefulMutation(result: SingleStepResult): boolean {
+	const effects = result.effects;
+	return effects?.settlementDiagnostic?.requiredOutput?.missing === true
+		&& (effects.settlementDiagnostic.mutation.attempted || effects.fileMutation?.attempted === true || Boolean(effects.fileMutation?.evidence?.changedFiles.length));
+}
+
+function partialExecutionWithUsefulMutation(result: SingleStepResult): boolean {
+	const fileMutation = result.effects?.fileMutation;
+	return result.execution?.status === "partial" && (fileMutation?.attempted === true || Boolean(fileMutation?.evidence?.changedFiles.length));
+}
+
+function partialEvidenceResult(result: SingleStepResult): boolean {
+	return missingRequiredOutputAfterUsefulMutation(result) || partialExecutionWithUsefulMutation(result);
+}
+
+function concreteFailureResult(result: SingleStepResult): boolean {
+	return result.success === false && !partialEvidenceResult(result);
+}
 
 function combinedAbortSignal(signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
 	const activeSignals = signals.filter((signal): signal is AbortSignal => Boolean(signal));
@@ -2721,6 +2757,7 @@ async function runSubagent(
 	const statusResultSummary = (state: AsyncStatus["state"]): string => {
 		if (statusPayload.error) return statusPayload.error;
 		if (state === "paused") return "Paused after interrupt. Waiting for explicit next action.";
+		if (state === "partial") return "Subagent needs attention after partial work.";
 		if (state === "stopped") return stopMessage;
 		if (state === "rejected") return "Subagent rejected.";
 		return state === "complete" ? "Subagent completed." : "Subagent failed.";
@@ -2729,7 +2766,7 @@ async function runSubagent(
 		if (step.status === "complete" || step.status === "completed") return true;
 		if (step.status === "failed" || step.status === "stopped" || step.status === "rejected") return false;
 		if (state === "complete") return true;
-		if (state === "failed" || state === "stopped" || state === "rejected") return false;
+		if (state === "failed" || state === "partial" || state === "stopped" || state === "rejected") return false;
 		return undefined;
 	};
 	const writeRecoverableStatusResult = (): void => {
@@ -2746,7 +2783,7 @@ async function runSubagent(
 			success: state === "complete",
 			state,
 			summary,
-			error: state === "failed" || state === "stopped" || state === "rejected" ? summary : undefined,
+			error: state === "failed" || state === "partial" || state === "stopped" || state === "rejected" ? summary : undefined,
 			stopped: state === "stopped" ? true : undefined,
 			results: statusPayload.steps.map((step) => omitUndefinedProperties({
 				agent: step.agent,
@@ -5158,7 +5195,8 @@ async function runSubagent(
 		timedOut: result.timedOut,
 		stopped: result.stopped,
 	})));
-	statusPayload.state = stopped || signalTerminated ? "stopped" : timedOut || usageBudgetExceeded || statusPayload.error ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed";
+	const partialWithEvidence = !stopped && !signalTerminated && !timedOut && !usageBudgetExceeded && !interrupted && results.some(partialEvidenceResult) && !results.some(concreteFailureResult);
+	statusPayload.state = stopped || signalTerminated ? "stopped" : timedOut || usageBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : partialWithEvidence ? "partial" : "failed";
 	closeSteerInbox(asyncDir, statusPayload.state, (filePath, payload) => runPersistence.write(filePath, payload));
 	disposeControlInbox();
 	for (const request of consumeSteerRequests(asyncDir)) deliverSteerRequest(request);
@@ -5191,6 +5229,14 @@ async function runSubagent(
 	if (usageBudgetExceeded && statusPayload.usageBudget && !statusPayload.error) {
 		statusPayload.error = usageBudgetExceededMessage(statusPayload.usageBudget);
 	}
+	if (partialWithEvidence) {
+		const partialResult = results.find(partialEvidenceResult);
+		statusPayload.activityState = "needs_attention";
+		statusPayload.error = partialResult?.error ?? statusPayload.error;
+		for (const step of statusPayload.steps) {
+			if (step.status === "failed") step.activityState = "needs_attention";
+		}
+	}
 	statusPayload.endedAt = runEndedAt;
 	statusPayload.lastUpdate = runEndedAt;
 	setOptionalProperty(statusPayload, "sessionFile", effectiveSessionFile);
@@ -5200,8 +5246,10 @@ async function runSubagent(
 	setOptionalProperty(statusPayload, "shareUrl", shareUrl);
 	setOptionalProperty(statusPayload, "gistUrl", gistUrl);
 	setOptionalProperty(statusPayload, "shareError", shareError);
-	if (statusPayload.state === "failed" && !statusPayload.error) {
-		const failedStep = statusPayload.steps.find((s) => s.status === "failed");
+	if ((statusPayload.state === "failed" || statusPayload.state === "partial") && !statusPayload.error) {
+		const concreteFailure = results.find(concreteFailureResult);
+		const failedStep = concreteFailure ? undefined : statusPayload.steps.find((s) => s.status === "failed");
+		if (concreteFailure?.error) statusPayload.error = concreteFailure.error;
 		if (failedStep?.agent) {
 			statusPayload.error = `Step failed: ${failedStep.agent}`;
 		}
@@ -5213,9 +5261,9 @@ async function runSubagent(
 			id,
 			agent: agentName,
 			mode: resultMode,
-			success: !stopped && !timedOut && !usageBudgetExceeded && !interrupted && !signalTerminated && results.every((r) => r.success),
-			state: stopped || signalTerminated ? "stopped" : timedOut || usageBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed",
-			summary: stopped ? stopMessage : signalTerminated ? (statusPayload.error ?? "Subagent process terminated by signal.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : usageBudgetExceeded ? (statusPayload.error ?? "Usage budget exhausted.") : interrupted ? "Paused after interrupt. Waiting for explicit next action." : summary,
+			success: statusPayload.state === "complete",
+			state: statusPayload.state,
+			summary: stopped ? stopMessage : signalTerminated ? (statusPayload.error ?? "Subagent process terminated by signal.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : usageBudgetExceeded ? (statusPayload.error ?? "Usage budget exhausted.") : interrupted ? "Paused after interrupt. Waiting for explicit next action." : statusPayload.state === "partial" ? (statusPayload.error ?? summary) : summary,
 			...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
 			...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
 			...(statusPayload.toolBudget ? { toolBudget: statusPayload.toolBudget } : {}),
@@ -5276,7 +5324,7 @@ async function runSubagent(
 			capabilityAudit: statusPayload.capabilityAudit,
 			...(config.parentWorkflowRunId ? { parentWorkflowRunId: config.parentWorkflowRunId } : {}),
 			...(config.workflowKey ? { workflowKey: config.workflowKey } : {}),
-			exitCode: stopped || timedOut || usageBudgetExceeded ? 1 : interrupted || results.every((r) => r.success) ? 0 : 1,
+			exitCode: statusPayload.state === "complete" || statusPayload.state === "paused" ? 0 : 1,
 			timestamp: runEndedAt,
 			durationMs: runEndedAt - overallStartTime,
 			totalTokens: statusPayload.totalTokens,

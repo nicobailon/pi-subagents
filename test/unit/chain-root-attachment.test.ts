@@ -111,6 +111,55 @@ describe("async chain root attachment", () => {
 		assert.equal(result.output, "root failed");
 	});
 
+	it("imports a partial root without collapsing it to failed", async () => {
+		const importedRoot = root();
+		writeJson(path.join(importedRoot.asyncDir, "status.json"), {
+			runId: importedRoot.runId,
+			mode: "single",
+			state: "partial",
+			activityState: "needs_attention",
+			startedAt: 1,
+			error: "Required file-only output was not produced: report.md",
+			steps: [{ agent: "worker", status: "failed", activityState: "needs_attention", error: "Required file-only output was not produced: report.md" }],
+		});
+		writeJson(importedRoot.resultPath, {
+			state: "partial",
+			success: false,
+			summary: "Required file-only output was not produced: report.md",
+			results: [{ agent: "worker", output: "Required file-only output was not produced: report.md", error: "Required file-only output was not produced: report.md", success: false, effects: { fileMutation: { status: "observed", expected: true, attempted: true, evidence: { source: "tracked-files", trackedOnly: true, cwd: tempDir, changedFiles: ["input.md"], attemptedMutation: true } } } }],
+		});
+
+		const result = await waitForImportedAsyncRoot(importedRoot, { pollIntervalMs: 1 });
+
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.error, "Required file-only output was not produced: report.md");
+		assert.equal(result.execution?.status, "partial");
+		assert.deepEqual(result.effects?.fileMutation?.evidence?.changedFiles, ["input.md"]);
+	});
+
+	it("fails a partial root that never produced a result file", async () => {
+		const importedRoot = root();
+		const effects = { fileMutation: { status: "observed", expected: true, attempted: true, evidence: { source: "tracked-files", trackedOnly: true, cwd: tempDir, changedFiles: ["input.md"], attemptedMutation: true } } };
+		writeJson(path.join(importedRoot.asyncDir, "status.json"), {
+			runId: importedRoot.runId,
+			mode: "single",
+			state: "partial",
+			startedAt: 1,
+			error: "Required file-only output was not produced: report.md",
+			steps: [{ agent: "worker", status: "failed", activityState: "needs_attention", error: "Required file-only output was not produced: report.md", effects }],
+		});
+
+		const result = await waitForImportedAsyncRoot(importedRoot, {
+			pollIntervalMs: 1,
+			terminalResultGraceMs: 0,
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.error, "Required file-only output was not produced: report.md");
+		assert.equal(result.execution?.status, "partial");
+		assert.deepEqual(result.effects?.fileMutation?.evidence?.changedFiles, ["input.md"]);
+	});
+
 	it("fails a terminal root that never produced a result file", async () => {
 		const importedRoot = root();
 		writeJson(path.join(importedRoot.asyncDir, "status.json"), {

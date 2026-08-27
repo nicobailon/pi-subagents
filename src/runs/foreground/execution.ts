@@ -1453,7 +1453,10 @@ async function runSingleAttempt(
 			: messages;
 		const errInfo = detectSubagentError(errorMessages);
 		const missingOutput = !finalText?.trim() && !validatedStructuredOutput;
-		if (missingOutput && (!errInfo.hasError || hasEmptyTerminalAssistantResponse(messages))) {
+		const terminalEmptyAfterUsefulWork = !validatedStructuredOutput
+			&& hasEmptyTerminalAssistantResponse(messages)
+			&& (progress.toolCount > 0 || Boolean(finalText?.trim()));
+		if ((missingOutput || terminalEmptyAfterUsefulWork) && (!errInfo.hasError || hasEmptyTerminalAssistantResponse(messages))) {
 			result.exitCode = 1;
 			result.error = "Subagent produced no output (possible model cold-start or empty response).";
 		} else if (errInfo.hasError) {

@@ -77,7 +77,7 @@ export interface AsyncRunSummary {
 	asyncDir: string;
 	toolCallId?: string;
 	sessionId?: string;
-	state: "queued" | "running" | "complete" | "failed" | "paused" | "stopped" | "rejected";
+	state: "queued" | "running" | "complete" | "failed" | "partial" | "paused" | "stopped" | "rejected";
 	error?: string;
 	activityState?: ActivityState;
 	lastActivityAt?: number;
@@ -383,6 +383,7 @@ function sortRuns(runs: AsyncRunSummary[]): AsyncRunSummary[] {
 			case "running": return 0;
 			case "queued": return 1;
 			case "failed": return 2;
+			case "partial": return 2;
 			case "stopped": return 2;
 			case "paused": return 2;
 			case "complete": return 3;

@@ -681,6 +681,7 @@ function widgetActivity(job: AsyncJobState): string {
 	if (job.status === "queued") return "queued…";
 	if (job.status === "paused") return "Paused";
 	if (job.status === "stopped") return "Stopped";
+	if (job.status === "partial") return "Partial";
 	if (job.status === "failed") return "Failed";
 	return "Done";
 }
@@ -1125,6 +1126,7 @@ function nestedStatusGlyph(state: NestedRunSummary["state"] | NestedStepSummary[
 	if (state === "running") return theme.fg("accent", runningGlyph(seed));
 	if (state === "complete" || state === "completed") return theme.fg("success", "✓");
 	if (state === "failed") return theme.fg("error", "✗");
+	if (state === "partial") return theme.fg("warning", "■");
 	if (state === "paused") return theme.fg("warning", "■");
 	if (state === "stopped") return theme.fg("warning", "■");
 	return theme.fg("muted", "◦");
@@ -1172,6 +1174,7 @@ function nestedActivity(input: Pick<NestedRunSummary | NestedStepSummary, "activ
 	if (state === "queued" || state === "pending") return "queued…";
 	if (state === "paused") return "Paused";
 	if (state === "stopped") return "Stopped";
+	if (state === "partial") return "Partial";
 	if (state === "failed") return "Failed";
 	return "Done";
 }

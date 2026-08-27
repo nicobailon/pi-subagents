@@ -591,7 +591,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		await waitForAsyncResultFile(id);
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(status.state, "failed");
-		assert.equal(status.error, "Step failed: worker");
+		assert.equal(status.error, "Detached for intercom coordination before task completion.");
 		assert.equal(status.steps?.[0]?.error, "Detached for intercom coordination before task completion.");
 	});
 
@@ -5364,6 +5364,136 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0].error, "provider exploded");
 	});
 
+	it("prioritizes a missing file-only handoff over the completion guard", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const partialOutput = "I’ll inspect the retained candidate before changing it.";
+		const repo = createRepo("pi-subagents-missing-handoff-partial-");
+		const outputPath = path.join(repo, "missing-challenge-report.md");
+		mockPi.onCall({
+			jsonl: [
+				events.assistantMessage(partialOutput),
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [],
+						model: "mock/test-model",
+						stopReason: "aborted",
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+			],
+			writeFiles: [{ path: "input.md", content: "changed by retained child\n" }],
+		});
+
+		const task = [
+			"You are reviving a previous subagent conversation.",
+			"",
+			"Original run: source-run",
+			"Original agent: worker",
+			"Original session file: /tmp/source-session.jsonl",
+			"",
+			"Use the stored session context as background. Answer the orchestrator's follow-up below. Do not assume the original child process is still alive.",
+			"",
+			"Follow-up:",
+			"Implementation challenge pass 1 for the accepted candidate. Reconsider it and implement any better current-scope change.",
+		].join("\n");
+		const id = `async-missing-handoff-guard-${Date.now().toString(36)}`;
+		try {
+			executeAsyncSingle(id, {
+				agent: "worker",
+				task,
+				agentConfig: makeAgent("worker"),
+				ctx: { pi: { events: { emit() {} } }, cwd: repo, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				sessionRoot: path.join(tempDir, "sessions"),
+				output: outputPath,
+				outputMode: "file-only",
+				maxSubagentDepth: 2,
+			});
+
+			const resultPath = await waitForAsyncResultFile(id);
+			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+			const child = payload.results[0];
+			const diagnostic = child?.error ?? "";
+			assert.equal(payload.success, false);
+			assert.equal(payload.state, "partial");
+			assert.equal(child?.success, false);
+			assert.match(diagnostic, new RegExp(`^Required file-only output was not produced: ${escapeRegExp(outputPath)}$`));
+			assert.doesNotMatch(diagnostic, /completed without making edits/);
+			assert.doesNotMatch(child?.modelAttempts?.[0]?.error ?? "", /completed without making edits/);
+			assert.equal(child?.effects?.fileMutation?.status, "observed");
+			assert.equal(child?.effects?.fileMutation?.attempted, true);
+			assert.deepEqual(child?.effects?.fileMutation?.evidence?.changedFiles, ["input.md"]);
+			assert.equal(child?.effects?.settlementDiagnostic?.requiredOutput?.missing, true);
+			assert.equal(fs.existsSync(outputPath), false);
+
+			const status = await waitForAsyncState(id, (candidate) => candidate.state === "partial");
+			assert.equal(status.activityState, "needs_attention");
+			assert.equal(status.steps?.[0]?.activityState, "needs_attention");
+			assert.equal(status.steps?.[0]?.error, diagnostic);
+			const eventsText = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf-8");
+			assert.doesNotMatch(eventsText, /completed without making edits/);
+		} finally {
+			removeTempDir(repo);
+		}
+	});
+
+	it("preserves terminal empty-output diagnostics after useful child work", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const partialOutput = "I’ll inspect the retained candidate before changing it.";
+		const outputPath = path.join(tempDir, "missing-aborted-report.md");
+		mockPi.onCall({
+			jsonl: [
+				events.toolStart("read", { path: "src/index.ts" }),
+				events.toolEnd("read"),
+				events.toolResult("read", "file contents"),
+				events.assistantMessage(partialOutput),
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [],
+						model: "mock/test-model",
+						stopReason: "aborted",
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+			],
+			exitCode: 0,
+		});
+
+		const id = `async-aborted-empty-handoff-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Implement the approved file changes",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			output: outputPath,
+			outputMode: "file-only",
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const child = payload.results[0];
+		const diagnostic = child?.error ?? "";
+		assert.equal(payload.success, false);
+		assert.equal(child?.success, false);
+		assert.match(diagnostic, /^Subagent produced no output \(possible model cold-start or empty response\)\./);
+		assert.match(diagnostic, /Required file-only output was not produced/);
+		assert.doesNotMatch(diagnostic, /completed without making edits/);
+		assert.doesNotMatch(child?.modelAttempts?.[0]?.error ?? "", /completed without making edits/);
+		assert.equal(child?.effects?.settlementDiagnostic?.requiredOutput?.missing, true);
+		assert.equal(child?.effects?.settlementDiagnostic?.finalTextPresent, true);
+		assert.equal(fs.existsSync(outputPath), false);
+
+		const eventsText = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf-8");
+		assert.doesNotMatch(eventsText, /completed without making edits/);
+	});
+
 	it("reports bounded compaction failure context when file-only output is missing", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const terminalError = `This operation was aborted${"x".repeat(12_000)}`;
 		mockPi.onCall({
@@ -5428,6 +5558,103 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(fs.readFileSync(logPath, "utf-8").includes(`## Summary\noracle:\n${diagnostic}`));
 	});
 
+	it("preserves partial imported async roots with mutation evidence", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const sourceId = `partial-source-${Date.now().toString(36)}`;
+		const sourceDir = path.join(ASYNC_DIR, sourceId);
+		const message = "Required file-only output was not produced: report.md";
+		const effects = { fileMutation: { status: "observed", expected: true, attempted: true, evidence: { source: "tracked-files", trackedOnly: true, cwd: tempDir, changedFiles: ["input.md"], attemptedMutation: true } } };
+		fs.mkdirSync(sourceDir, { recursive: true });
+		fs.writeFileSync(path.join(sourceDir, "status.json"), JSON.stringify({
+			runId: sourceId,
+			mode: "single",
+			state: "partial",
+			activityState: "needs_attention",
+			startedAt: Date.now(),
+			error: message,
+			steps: [{ agent: "worker", status: "failed", activityState: "needs_attention", error: message, effects }],
+		}), "utf-8");
+
+		const id = `async-imported-partial-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [],
+			attachRoot: { runId: sourceId, asyncDir: sourceDir, resultPath: path.join(RESULTS_DIR, `${sourceId}.json`), index: 0, agent: "worker" },
+			agents: [makeAgent("worker")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, false);
+		assert.equal(payload.state, "partial");
+		assert.equal(payload.summary, message);
+		assert.equal(payload.results[0]?.execution?.status, "partial");
+		assert.deepEqual(payload.results[0]?.effects?.fileMutation?.evidence?.changedFiles, ["input.md"]);
+
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "partial");
+		assert.equal(status.activityState, "needs_attention");
+		assert.equal(status.steps?.[0]?.activityState, "needs_attention");
+	});
+
+	it("keeps concrete sibling failures above partial mutation evidence", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const repo = createRepo("pi-subagents-partial-sibling-failure-");
+		const outputPath = path.join(repo, "missing-report.md");
+		mockPi.onCall({
+			matchArgIncludes: "Write required report",
+			jsonl: [
+				events.assistantMessage("I changed the file but did not hand off the report."),
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [],
+						model: "mock/test-model",
+						stopReason: "aborted",
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+			],
+			writeFiles: [{ path: "input.md", content: "changed before missing report\n" }],
+		});
+		mockPi.onCall({ matchArgIncludes: "Fail normally", stderr: "ordinary sibling failure", exitCode: 1 });
+
+		const id = `async-partial-sibling-failure-${Date.now().toString(36)}`;
+		try {
+			executeAsyncChain(id, {
+				chain: [{
+					parallel: [
+						{ agent: "partial", task: "Write required report" },
+						{ agent: "failure", task: "Fail normally" },
+					],
+					concurrency: 2,
+				}],
+				resultMode: "parallel",
+				agents: [makeAgent("partial", { output: outputPath, outputMode: "file-only" }), makeAgent("failure", { completionGuard: false })],
+				ctx: { pi: { events: { emit() {} } }, cwd: repo, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+			});
+
+			const payload = await readAsyncPayload(id);
+			assert.equal(payload.success, false);
+			assert.equal(payload.state, "failed");
+			assert.match(payload.summary, /ordinary sibling failure/);
+			assert.equal(payload.results[0]?.effects?.fileMutation?.status, "observed");
+			assert.equal(payload.results[0]?.effects?.settlementDiagnostic?.requiredOutput?.missing, true);
+			assert.match(payload.results[1]?.error ?? "", /ordinary sibling failure/);
+
+			const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
+			assert.equal(status.activityState, undefined);
+			assert.match(status.error ?? "", /ordinary sibling failure/);
+		} finally {
+			removeTempDir(repo);
+		}
+	});
+
 	it("reports missing file-only output when a child exits without an error", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ delay: 2_100, exitCode: 1 });
 
@@ -5452,7 +5679,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.success, false);
 		assert.equal(payload.exitCode, 1);
 		assert.equal(child?.success, false);
-		assert.match(diagnostic, /^Subagent failed\.\nRequired file-only output was not produced:/);
+		assert.match(diagnostic, /^Required file-only output was not produced:/);
 		assert.equal(fs.existsSync(outputPath), false);
 		assert.equal(child?.output, "");
 		assert.equal(child?.effects?.settlementDiagnostic?.requiredOutput?.kind, "file-only");

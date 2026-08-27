@@ -8,13 +8,14 @@ export interface NestedRunCounts {
 	paused: number;
 	complete: number;
 	failed: number;
+	partial: number;
 	rejected: number;
 	stopped: number;
 	queued: number;
 }
 
 export function countNestedRuns(children: NestedRunSummary[] | undefined): NestedRunCounts {
-	const counts: NestedRunCounts = { total: 0, running: 0, paused: 0, complete: 0, failed: 0, rejected: 0, stopped: 0, queued: 0 };
+	const counts: NestedRunCounts = { total: 0, running: 0, paused: 0, complete: 0, failed: 0, partial: 0, rejected: 0, stopped: 0, queued: 0 };
 	for (const child of children ?? []) {
 		counts.total++;
 		counts[child.state]++;
@@ -24,6 +25,7 @@ export function countNestedRuns(children: NestedRunSummary[] | undefined): Neste
 		counts.paused += nested.paused;
 		counts.complete += nested.complete;
 		counts.failed += nested.failed;
+		counts.partial += nested.partial;
 		counts.rejected += nested.rejected;
 		counts.stopped += nested.stopped;
 		counts.queued += nested.queued;
@@ -38,6 +40,7 @@ export function formatNestedAggregate(children: NestedRunSummary[] | undefined):
 		counts.running > 0 ? `${counts.running} running` : "",
 		counts.paused > 0 ? `${counts.paused} paused` : "",
 		counts.failed > 0 ? `${counts.failed} failed` : "",
+		counts.partial > 0 ? `${counts.partial} partial` : "",
 		counts.rejected > 0 ? `${counts.rejected} rejected` : "",
 		counts.stopped > 0 ? `${counts.stopped} stopped` : "",
 		counts.complete > 0 ? `${counts.complete} complete` : "",
