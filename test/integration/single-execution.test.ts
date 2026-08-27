@@ -2304,10 +2304,13 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		for (let attempt = 0; attempt < 150 && !fs.existsSync(resultPath); attempt++) {
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
-		const persisted = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { state?: string; summary?: string };
+		const persisted = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { state?: string; summary?: string; results?: Array<{ workflowKey?: string; outputReference?: string; output?: string }> };
 		const savedReport = path.join(tempDir, "failed-workflow.review.md");
 		const expectedMapping = `Output path mappings: 'review': requested ${requestedReport} -> saved ${savedReport}`;
 		assert.equal(persisted.state, "failed");
+		assert.equal(persisted.results?.[0]?.workflowKey, "review");
+		assert.equal(persisted.results?.[0]?.outputReference, savedReport);
+		assert.equal(persisted.results?.[0]?.output, "review report");
 		assert.match(persisted.summary ?? "", new RegExp(escapeRegExp(expectedMapping)));
 		assert.match(fs.readFileSync(workflowOutput, "utf-8"), new RegExp(escapeRegExp(expectedMapping)));
 		assert.equal(fs.readFileSync(savedReport, "utf-8"), "review report");

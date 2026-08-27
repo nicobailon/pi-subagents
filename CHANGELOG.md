@@ -21,6 +21,7 @@
 
 ### Fixed
 - Stop stale extension and slash-command contexts from escaping during reload or session replacement.
+- Include saved workflow child output paths and bounded inline previews in completion notices (#1629).
 - Format million-scale context limits as `1M` instead of `1000k` in live status displays.
 - Restore active workflow children under their workflow parent in Fleet Status after reload, while keeping unmatched shell rows visible.
 - Accept path-like Pi session ids up to 4,096 characters when snapshotting background work. Thanks to [@dvishoot](https://github.com/dvishoot) for #1616.
