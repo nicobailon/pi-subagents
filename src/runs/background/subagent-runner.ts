@@ -557,6 +557,7 @@ interface RunPiStreamingResult {
 	currentToolArgs?: string;
 	currentPath?: string;
 	afterCompactionSettlement?: boolean;
+	abortRecoveryDiagnostic?: string;
 	effects?: import("../../shared/types.ts").EffectsProjection;
 }
 
@@ -574,6 +575,7 @@ function formatRequiredOutputError(requiredOutput: {
 function formatChildFailureDiagnostic(input: {
 	error: string | undefined;
 	afterCompactionSettlement?: boolean;
+	abortRecoveryDiagnostic?: string;
 	requiredOutput?: {
 		kind: "file-only" | "structured";
 		path: string;
@@ -582,6 +584,7 @@ function formatChildFailureDiagnostic(input: {
 }): string | undefined {
 	const missingOutput = formatRequiredOutputError(input.requiredOutput);
 	const notes = [
+		input.abortRecoveryDiagnostic,
 		input.afterCompactionSettlement ? "Child failure followed session compaction and agent settlement." : undefined,
 		missingOutput && input.error !== missingOutput ? missingOutput : undefined,
 	].filter((note): note is string => Boolean(note));
@@ -756,8 +759,19 @@ function runPiStreaming(
 			appendChildEvent(event as unknown as Record<string, unknown>);
 			transcriptWriter?.writeChildEvent(event);
 			if (event.type === "compaction_start") compactionStartedReceived = true;
+			if (event.type === "compaction_end" && event.willRetry === true) {
+				compactionStartedReceived = false;
+				afterCompactionSettlement = false;
+			}
+			if (event.type === "agent_start" || event.type === "auto_retry_start") {
+				compactionStartedReceived = false;
+				afterCompactionSettlement = false;
+			}
 			const lifecycleAction = projectChildLifecycle(event, false, childLifecycleState);
-			if (event.type === "agent_settled" && lifecycleAction === "start-drain") agentSettledReceived = true;
+			if (event.type === "agent_settled" && lifecycleAction === "start-drain") {
+				agentSettledReceived = true;
+				afterCompactionSettlement = compactionStartedReceived;
+			}
 			applyChildLifecycle(lifecycleAction);
 
 			if (isChildWatchdogStatusEvent(event)) {
@@ -865,6 +879,7 @@ function runPiStreaming(
 		let cleanTerminalAssistantStopReceived = false;
 		let agentSettledReceived = false;
 		let compactionStartedReceived = false;
+		let afterCompactionSettlement = false;
 		let finalDrainTimer: NodeJS.Timeout | undefined;
 		let finalHardKillTimer: NodeJS.Timeout | undefined;
 		let watchdogTailTimer: NodeJS.Timeout | undefined;
@@ -1112,7 +1127,7 @@ function runPiStreaming(
 				currentTool,
 				currentToolArgs,
 				currentPath,
-				afterCompactionSettlement: (compactionStartedReceived && agentSettledReceived) || undefined,
+				afterCompactionSettlement: afterCompactionSettlement || undefined,
 			}));
 		});
 
@@ -1955,30 +1970,39 @@ async function runSingleStepInner(
 		});
 		const fileMutationEffect = completionEvidence.fileMutation ?? (missingRequiredOutputAfterMutation ? { status: "observed" as const, expected: completionEvidence.mutationExpected, attempted: true, evidence: mutationEvidence } : undefined);
 		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, runtimeAcknowledgedExtensions, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(fileMutationEffect || settlementDiagnostic ? { effects: { ...(fileMutationEffect ? { fileMutation: fileMutationEffect } : {}), ...(settlementDiagnostic ? { settlementDiagnostic } : {}) } } : {}) } as RunPiStreamingResult;
-		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break modelAttemptsLoop;
-		if (attempt.success || completionEvidence.guardTriggered) break modelAttemptsLoop;
-		if (recoveringAbort) break modelAttemptsLoop;
-		const abortRecovery = planAbortRecovery({
+		const abortRecovery = !attempt.success ? planAbortRecovery({
 			messages: run.messages,
 			error,
 			processSignal: run.processSignal,
 			sessionAvailable: Boolean(step.sessionFile && fs.existsSync(step.sessionFile)),
 			alreadyResumed: abortRecoveryAttempted,
-			stopped: run.stopped,
+			stopped: run.stopped || ctx.stopSignal?.aborted || ctx.skipAcceptance?.(),
 			interrupted: run.interrupted,
-			timedOut: run.timedOut,
+			timedOut: run.timedOut || ctx.timeoutSignal?.aborted,
 			toolBudgetExhausted: run.toolBudgetBlocked || toolBudgetBlocked,
 			usageBudgetExhausted: ctx.usageBudgetExhausted?.(),
 			structuredOutputFailed: Boolean(structuredError),
 			acceptanceFailed: false,
 			currentTool: run.currentTool,
-		});
-		if (abortRecovery.action === "resume") {
+			afterCompactionSettlement: run.afterCompactionSettlement,
+		}) : undefined;
+		if (abortRecovery?.action === "settle" && abortRecovery.diagnostic) {
+			attempt.error = attempt.error
+				? `${abortRecovery.diagnostic}\n${attempt.error.slice(0, 8_000)}`
+				: abortRecovery.diagnostic;
+			if (finalResult) finalResult.abortRecoveryDiagnostic = abortRecovery.diagnostic;
+		}
+		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break modelAttemptsLoop;
+		if (abortRecovery?.action === "settle" && abortRecovery.diagnostic) break modelAttemptsLoop;
+		if (attempt.success) break modelAttemptsLoop;
+		if (recoveringAbort) break modelAttemptsLoop;
+		if (abortRecovery?.action === "resume") {
 			abortRecoveryAttempted = true;
 			nextAttemptTask = abortRecovery.prompt;
 			attemptNotes.push("[abort-recovery] provider/transport abort after useful progress; resuming the retained child session once.");
 			continue;
 		}
+		if (completionEvidence.guardTriggered) break modelAttemptsLoop;
 
 		const startupFailure = isRetryableSubagentStartupFailure(omitUndefinedProperties({
 			exitCode: effectiveExitCode,
@@ -2127,6 +2151,7 @@ async function runSingleStepInner(
 	const effectiveFinalError = formatChildFailureDiagnostic({
 		error: baseFinalError,
 		afterCompactionSettlement: effectiveFinalExitCode !== 0 ? finalResult?.afterCompactionSettlement : undefined,
+		abortRecoveryDiagnostic: effectiveFinalExitCode !== 0 ? finalResult?.abortRecoveryDiagnostic : undefined,
 		requiredOutput: effectiveFinalExitCode !== 0 ? finalResult?.effects?.settlementDiagnostic?.requiredOutput : undefined,
 	});
 

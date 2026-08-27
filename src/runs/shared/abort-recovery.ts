@@ -4,7 +4,7 @@ export const ABORT_RECOVERY_PROMPT = "The prior run ended from a provider/transp
 
 export type AbortRecoveryPlan =
 	| { action: "resume"; prompt: typeof ABORT_RECOVERY_PROMPT }
-	| { action: "settle"; reason: string };
+	| { action: "settle"; reason: string; diagnostic?: string };
 
 const PROVIDER_ABORT_PATTERN = /(?:provider|transport|connection|stream|socket|request).*(?:abort|closed|reset|ended|terminated|error|fail)|(?:abort|closed|reset|ended|terminated|error|fail).*(?:provider|transport|connection|stream|socket|request)/i;
 const ABORT_ERROR_PATTERN = /\b(?:operation|request|response|stream|connection|transport|provider)?\s*(?:was\s+)?aborted\b/i;
@@ -78,32 +78,42 @@ export function planAbortRecovery(input: {
 	structuredOutputFailed?: boolean;
 	acceptanceFailed?: boolean;
 	currentTool?: string;
+	afterCompactionSettlement?: boolean;
 }): AbortRecoveryPlan {
-	if (input.alreadyResumed) return { action: "settle", reason: "resume already attempted" };
-	if (!input.sessionAvailable) return { action: "settle", reason: "retained session unavailable" };
-	if (input.stopped || input.interrupted) return { action: "settle", reason: "explicit stop or interrupt" };
-	if (input.processSignal) return { action: "settle", reason: "process terminated by signal" };
-	if (input.timedOut) return { action: "settle", reason: "elapsed timeout" };
-	if (input.toolBudgetExhausted || input.usageBudgetExhausted) return { action: "settle", reason: "budget exhausted" };
-	if (input.structuredOutputFailed) return { action: "settle", reason: "structured output failure" };
-	if (input.acceptanceFailed) return { action: "settle", reason: "acceptance failure" };
-	if (input.currentTool || hasUnresolvedToolCall(input.messages)) return { action: "settle", reason: "tool call still in flight" };
-
 	const terminal = terminalAssistant(input.messages);
 	const message = terminal.message;
-	const error = [input.error, typeof message?.errorMessage === "string" ? message.errorMessage : undefined]
-		.filter((value): value is string => Boolean(value))
-		.join("\n");
+	const terminalError = typeof message?.errorMessage === "string" ? message.errorMessage : undefined;
 	const emptyZeroUsageTerminal = message !== undefined
 		&& contentParts(message).length === 0
 		&& zeroOutputUsage(message);
-	const abortMarker = message?.stopReason === "aborted"
-		|| isProviderAbortError(error);
-	const equivalentProviderAbort = isProviderAbortError(error);
-	if ((!emptyZeroUsageTerminal || !abortMarker) && !equivalentProviderAbort) {
-		return { action: "settle", reason: "terminal response is not a provider abort" };
-	}
+	const terminalAssistantAbort = message?.stopReason === "aborted"
+		|| (message?.stopReason === "error" && terminalError !== undefined && isProviderAbortError(terminalError));
+	const abortCandidate = emptyZeroUsageTerminal && terminalAssistantAbort;
+	const compactionAbortCandidate = input.afterCompactionSettlement === true && abortCandidate;
+	const settle = (reason: string): AbortRecoveryPlan => ({
+		action: "settle",
+		reason,
+		...(compactionAbortCandidate
+			? { diagnostic: `Compaction-induced child abort could not be resumed safely: ${reason}.` }
+			: {}),
+	});
+
+	if (input.alreadyResumed) return settle("resume already attempted");
+	if (!input.sessionAvailable) return settle("retained session unavailable");
+	if (input.stopped || input.interrupted) return settle("explicit stop or interrupt");
+	// A compaction abort can leave the child process open until the runner's
+	// terminal drain sends SIGTERM. The compaction + settlement markers make
+	// that cleanup signal non-authoritative; explicit stop/interrupt still wins.
+	if (input.processSignal && !compactionAbortCandidate) return settle("process terminated by signal");
+	if (input.timedOut) return settle("elapsed timeout");
+	if (input.toolBudgetExhausted || input.usageBudgetExhausted) return settle("budget exhausted");
+	if (input.structuredOutputFailed) return settle("structured output failure");
+	if (input.acceptanceFailed) return settle("acceptance failure");
+	if (input.currentTool) return settle(`active tool '${input.currentTool.slice(0, 128)}' remains in flight`);
+	if (hasUnresolvedToolCall(input.messages)) return settle("unresolved tool call remains in transcript");
+	if (!input.afterCompactionSettlement) return settle("compaction settlement not verified");
+	if (!abortCandidate) return settle("terminal assistant abort evidence not verified");
 	const progressLimit = emptyZeroUsageTerminal ? terminal.index : input.messages.length;
-	if (!hasUsefulProgress(input.messages, progressLimit)) return { action: "settle", reason: "no useful prior progress" };
+	if (!hasUsefulProgress(input.messages, progressLimit)) return settle("no useful prior progress");
 	return { action: "resume", prompt: ABORT_RECOVERY_PROMPT };
 }

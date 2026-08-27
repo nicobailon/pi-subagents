@@ -296,6 +296,9 @@ function snapshotStreamResult(result: SingleResult, progress: AgentProgress): Si
 	return snapshot;
 }
 
+const AFTER_COMPACTION_SETTLEMENT = Symbol("afterCompactionSettlement");
+type AbortRecoverySingleResult = SingleResult & { [AFTER_COMPACTION_SETTLEMENT]?: true };
+
 async function runSingleAttempt(
 	runtimeCwd: string,
 	agent: AgentConfig,
@@ -570,6 +573,7 @@ async function runSingleAttempt(
 			return result;
 		}
 	}
+	let afterCompactionSettlement = false;
 	const exitCode = await new Promise<number>((resolve) => {
 		const proc = spawn(spawnSpec.command, spawnSpec.args, {
 			cwd: options.cwd ?? runtimeCwd,
@@ -652,6 +656,7 @@ async function runSingleAttempt(
 		let forcedTerminationSignal = false;
 		let cleanTerminalAssistantStopReceived = false;
 		let agentSettledReceived = false;
+		let compactionStartedReceived = false;
 		let finalDrainTimer: NodeJS.Timeout | undefined;
 		let finalHardKillTimer: NodeJS.Timeout | undefined;
 		let watchdogTailTimer: NodeJS.Timeout | undefined;
@@ -960,8 +965,20 @@ async function runSingleAttempt(
 			}
 			shared.transcriptWriter?.writeChildEvent(evt);
 			shared.orcaProgressTab?.event(evt);
+			if (evt.type === "compaction_start") compactionStartedReceived = true;
+			if (evt.type === "compaction_end" && evt.willRetry === true) {
+				compactionStartedReceived = false;
+				afterCompactionSettlement = false;
+			}
+			if (evt.type === "agent_start" || evt.type === "auto_retry_start") {
+				compactionStartedReceived = false;
+				afterCompactionSettlement = false;
+			}
 			const lifecycleAction = projectChildLifecycle(evt, false, childLifecycleState);
-			if (evt.type === "agent_settled" && lifecycleAction === "start-drain") agentSettledReceived = true;
+			if (evt.type === "agent_settled" && lifecycleAction === "start-drain") {
+				agentSettledReceived = true;
+				afterCompactionSettlement = compactionStartedReceived;
+			}
 			applyChildLifecycle(lifecycleAction);
 
 			if (isChildWatchdogStatusEvent(evt)) {
@@ -1389,6 +1406,9 @@ async function runSingleAttempt(
 		}
 	});
 	result.exitCode = exitCode;
+	if (afterCompactionSettlement) {
+		(result as AbortRecoverySingleResult)[AFTER_COMPACTION_SETTLEMENT] = true;
+	}
 	if (interruptedByControl) {
 		result.exitCode = 0;
 		result.interrupted = true;
@@ -1923,7 +1943,8 @@ async function runSyncCompletionInner(
 				usage: { ...result.usage },
 			};
 			modelAttempts.push(attempt);
-			if (!attemptSucceeded && !recoveringAbort) {
+			if (!attemptSucceeded) {
+				const afterCompactionSettlement = (result as AbortRecoverySingleResult)[AFTER_COMPACTION_SETTLEMENT];
 				const abortRecovery = planAbortRecovery({
 					messages: result.messages ?? [],
 					error: result.error,
@@ -1938,12 +1959,18 @@ async function runSyncCompletionInner(
 					structuredOutputFailed: result.structuredOutputFailed,
 					acceptanceFailed: false,
 					currentTool: result.progress?.currentTool,
+					afterCompactionSettlement,
 				});
 				if (abortRecovery.action === "resume") {
 					abortRecoveryAttempted = true;
 					nextAttemptTask = abortRecovery.prompt;
 					attemptNotes.push("[abort-recovery] provider/transport abort after useful progress; resuming the retained child session once.");
 					continue;
+				}
+				if (abortRecovery.diagnostic) {
+					result.error = result.error ? `${result.error}\n${abortRecovery.diagnostic}` : abortRecovery.diagnostic;
+					attempt.error = result.error;
+					break modelAttemptsLoop;
 				}
 			}
 			if (recoveringAbort && !attemptSucceeded) break modelAttemptsLoop;

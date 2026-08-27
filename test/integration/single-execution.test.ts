@@ -4399,6 +4399,39 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.finalOutput, partialOutput);
 	});
 
+	it("reports why an unsafe foreground compaction abort cannot resume without falling back", async () => {
+		mockPi.onCall({
+			jsonl: [
+				events.toolStart("read", { path: "src/index.ts" }),
+				events.toolEnd("read"),
+				events.toolResult("read", "file contents"),
+				{ type: "compaction_start" },
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [],
+						model: "mock/test-model",
+						stopReason: "aborted",
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+				{ type: "agent_settled" },
+			],
+			exitCode: 0,
+		});
+		mockPi.onCall({ output: "Fallback must not run" });
+
+		const result = await runSync(tempDir, [makeAgent("worker", { model: "mock/test-model", fallbackModels: ["mock/fallback-model"] })], "worker", "Inspect the current source", {
+			runId: "foreground-compaction-abort-no-session",
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /^Subagent produced no output after terminal assistant stopReason "aborted"\./);
+		assert.match(result.error ?? "", /Compaction-induced child abort could not be resumed safely: retained session unavailable\./);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
 	it("agent contract v1 reports omitted acceptance separately without injecting a prompt", async () => {
 		mockPi.onCall({ output: "Plan only" });
 		const agents = [makeAgent("worker", { tools: ["read", "write"] })];
@@ -4580,7 +4613,12 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const child = result.details.workflow?.value as { ok?: boolean; runId?: string; output?: string; continuation?: { runIds?: string[] } };
 		assert.equal(child.ok, true);
 		assert.match(child.output ?? "", /Recovered after workflow auto-resume/u);
-		assert.deepEqual(child.continuation?.runIds, [child.runId]);
+		// The workflow-level setup recovery is a distinct launch, so its receipt
+		// retains both the failed source run and the resumed child run. The
+		// compaction planner no longer hides this source by resuming it first.
+		assert.equal(child.continuation?.runIds?.length, 2);
+		assert.notEqual(child.continuation?.runIds?.[0], child.runId);
+		assert.equal(child.continuation?.runIds?.at(-1), child.runId);
 		assert.equal(mockPi.callCount(), 2);
 	});
 
@@ -5858,26 +5896,133 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 1);
 	});
 
-	it("resumes the retained session once after a provider abort following completed tool work", async () => {
-		const sessionFile = path.join(tempDir, "abort-recovery-session.jsonl");
+	it("does not use compaction recovery for a generic empty assistant abort after a compaction retry", async () => {
+		const sessionFile = path.join(tempDir, "generic-empty-after-compaction-retry-session.jsonl");
 		mockPi.onCall({
 			jsonl: [
-				events.toolStart("write", { path: "side-effect.txt", content: "done" }),
-				events.toolEnd("write"),
-				events.toolResult("write", "Wrote side-effect.txt"),
+				{ type: "compaction_start" },
+				{ type: "compaction_end", willRetry: true },
+				{ type: "agent_settled" },
+				{ type: "agent_start" },
+				events.assistantMessage("The compaction retry produced useful output.", "openai/gpt-5-mini"),
+				{ type: "agent_settled" },
 				{
 					type: "message_end",
 					message: {
 						role: "assistant",
 						content: [],
 						model: "openai/gpt-5-mini",
-						errorMessage: "Connection error.",
-						usage: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+						stopReason: "aborted",
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
 					},
 				},
+				{ type: "agent_settled" },
+			],
+			writeFiles: [{ path: sessionFile, content: "{}\n" }],
+			exitCode: 0,
+		});
+		mockPi.onCall({ output: "Compaction recovery must not run" });
+		const agents = [makeAgent("echo", { model: "openai/gpt-5-mini" })];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "no-compaction-recovery-after-compaction-retry",
+			sessionFile,
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /Subagent produced no output after terminal assistant stopReason "aborted"\./u);
+		assert.equal(result.modelAttempts?.length, 1);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("does not use compaction recovery after compaction_end willRetry false and a continued agent turn", async () => {
+		const sessionFile = path.join(tempDir, "generic-empty-after-successful-compaction-session.jsonl");
+		mockPi.onCall({
+			jsonl: [
+				{ type: "compaction_start" },
+				{ type: "compaction_end", willRetry: false },
+				{ type: "agent_start" },
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [],
+						model: "openai/gpt-5-mini",
+						stopReason: "aborted",
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+				{ type: "agent_settled" },
+			],
+			writeFiles: [{ path: sessionFile, content: "{}\n" }],
+			exitCode: 0,
+		});
+		mockPi.onCall({ output: "Compaction recovery must not run" });
+		const agents = [makeAgent("echo", { model: "openai/gpt-5-mini" })];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "no-compaction-recovery-after-successful-compaction",
+			sessionFile,
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /Subagent produced no output after terminal assistant stopReason "aborted"\./u);
+		assert.equal(result.modelAttempts?.length, 1);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("does not use compaction recovery for a generic provider abort after normal settlement", async () => {
+		const sessionFile = path.join(tempDir, "generic-provider-after-compaction-session.jsonl");
+		mockPi.onCall({
+			jsonl: [
+				{ type: "compaction_start" },
+				events.assistantMessage("Compaction completed and the child settled normally.", "openai/gpt-5-mini"),
+				{ type: "agent_settled" },
+			],
+			writeFiles: [{ path: sessionFile, content: "{}\n" }],
+			stderr: "APIConnectionError: Connection reset by provider transport.",
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "Compaction recovery must not run" });
+		const agents = [makeAgent("echo", {
+			model: "openai/gpt-5-mini",
+			fallbackModels: ["anthropic/claude-sonnet-4"],
+		})];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "no-compaction-recovery-after-normal-settlement",
+			sessionFile,
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /Connection reset by provider transport/u);
+		assert.equal(result.modelAttempts?.length, 1);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("resumes the retained session once after a compaction-induced abort following completed tool work", async () => {
+		const sessionFile = path.join(tempDir, "abort-recovery-session.jsonl");
+		mockPi.onCall({
+			jsonl: [
+				events.toolStart("write", { path: "side-effect.txt", content: "done" }),
+				events.toolEnd("write"),
+				events.toolResult("write", "Wrote side-effect.txt"),
+				{ type: "compaction_start" },
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [],
+						model: "openai/gpt-5-mini",
+						stopReason: "aborted",
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+				{ type: "agent_settled" },
 			],
 			writeFiles: [{ path: "side-effect.txt", content: "done" }, { path: sessionFile, content: "{}\n" }],
-			exitCode: 1,
+			keepAliveAfterFinalMessageMs: 5_000,
+			exitCode: 0,
 		});
 		mockPi.onCall({ output: "Recovered from retained session" });
 		const agents = [makeAgent("echo", {
