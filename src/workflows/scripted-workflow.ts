@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve as resolvePath } from "node:path";
 import { Worker } from "node:worker_threads";
+import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../runs/shared/parallel-utils.ts";
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const requireFromPackage = createRequire(import.meta.url);
@@ -740,6 +741,8 @@ export interface RunWorkflowScriptOptions {
 	oneUsePermit?: { claim: (key: string) => string | undefined };
 	timeoutMs?: number;
 	signal?: AbortSignal;
+	/** Maximum children executing concurrently within this workflow. Defaults to 20. */
+	globalConcurrencyLimit?: number;
 	admit?: (calls: Array<{ key: string; params: Record<string, unknown> }>) => void | Promise<void>;
 	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal, admission: { admitted: boolean; batch: boolean }) => Promise<WorkflowScriptChildResult>;
 	resolveResume?: (reference: WorkflowReceiptResumeReference, signal: AbortSignal) => string | WorkflowResolvedResumeReference | Promise<string | WorkflowResolvedResumeReference>;
@@ -1149,6 +1152,10 @@ function setupAbortResumeParams(params: Record<string, unknown>, result: Workflo
 export async function runWorkflowScript(options: RunWorkflowScriptOptions): Promise<WorkflowScriptResult> {
 	if (!options.script.trim()) throw new Error("workflowScript must not be empty.");
 	if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 1)) throw new Error("workflow script timeout must be a positive integer.");
+	if (options.globalConcurrencyLimit !== undefined && (!Number.isInteger(options.globalConcurrencyLimit) || options.globalConcurrencyLimit < 1)) {
+		throw new Error("workflow script global concurrency limit must be a positive integer.");
+	}
+	const launchSemaphore = new Semaphore(options.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
 
 	let acornPath: string;
 	try {
@@ -1528,13 +1535,23 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					if (resolvedResumeLineage.at(-1) !== resolvedResumeId) resolvedResumeLineage.push(resolvedResumeId!);
 				}
 				const launchParams = resolvedResumeId ? { ...params, resume: resolvedResumeId } : params;
-				const result = await options.launch(key, launchParams, childSignal, { admitted: true, batch: batch !== undefined });
-				const autoResumeParams = setupAbortResumeParams(params, result, childSignal);
-				if (!autoResumeParams) return result;
-				resolvedResumeLineage = [...new Set([...(resolvedResumeLineage ?? []), result.runId!])];
-				trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(autoResumeParams), phase: "auto-resume", runId: result.runId });
-				traceChanged();
-				return options.launch(key, autoResumeParams, childSignal, { admitted: true, batch: batch !== undefined });
+				await launchSemaphore.acquire();
+				try {
+					if (settled || finishing || stoppedLaunches.has(key) || childSignal.aborted) {
+						const reason = childSignal.reason;
+						const text = children.get(key)?.error ?? (reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "Workflow script aborted.");
+						return stoppedChildResult(key, text);
+					}
+					const result = await options.launch(key, launchParams, childSignal, { admitted: true, batch: batch !== undefined });
+					const autoResumeParams = setupAbortResumeParams(params, result, childSignal);
+					if (!autoResumeParams) return result;
+					resolvedResumeLineage = [...new Set([...(resolvedResumeLineage ?? []), result.runId!])];
+					trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(autoResumeParams), phase: "auto-resume", runId: result.runId });
+					traceChanged();
+					return options.launch(key, autoResumeParams, childSignal, { admitted: true, batch: batch !== undefined });
+				} finally {
+					launchSemaphore.release();
+				}
 			}).then((result) => {
 				let normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
 				if (resolvedResumeLineage?.length && normalized.runId) {

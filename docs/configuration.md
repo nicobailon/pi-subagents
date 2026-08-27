@@ -241,7 +241,7 @@ The tool timer tracks each active `toolCallId` separately and never extends the 
 { "globalConcurrencyLimit": 20 }
 ```
 
-Caps simultaneously running children inside existing durable legacy multi-child runs. New orchestration uses `workflowScript` and `runs.all`.
+Caps simultaneously running children inside one run, including durable legacy multi-child runs and `workflowScript` launches through `runs.run`/`runs.all`. Queued workflow children retain their stable keys and begin when a running sibling releases capacity. The default is `20`.
 
 ## `maxSubagentSpawnsPerSession`
 

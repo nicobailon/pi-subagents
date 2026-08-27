@@ -4844,6 +4844,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					try {
 						const workflow = await runWorkflowScript({
 							script: workflowScript,
+							globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
 							timeoutMs: timeout,
 							signal: controller.signal,
 							registerStopChild: (stop) => {
@@ -5050,6 +5051,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const workflow = await runWorkflowScript({
 					script: requestParams.workflowScript,
 					...(delegatedWorkflowPermit ? { oneUsePermit: { claim: (key: string) => claimWorkflowChildPermit(delegatedWorkflowPermit, _id, key) } } : {}),
+					globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
 					timeoutMs: timeout,
 					signal,
 					...(workflowState ? { state: workflowState } : {}),

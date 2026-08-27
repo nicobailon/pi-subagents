@@ -337,6 +337,48 @@ describe("scripted workflow runtime", () => {
 		]);
 	});
 
+	it("caps concurrent workflow child launches across runs.all", async () => {
+		let active = 0;
+		let maxActive = 0;
+		const result = await runWorkflowScript({
+			script: `return await runs.all([
+				{ key: "one", agent: "worker", task: "one" },
+				{ key: "two", agent: "worker", task: "two" },
+				{ key: "three", agent: "worker", task: "three" },
+				{ key: "four", agent: "worker", task: "four" }
+			]);`,
+			globalConcurrencyLimit: 2,
+			async launch(key) {
+				active += 1;
+				maxActive = Math.max(maxActive, active);
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				active -= 1;
+				return { key, ok: true, output: key, artifactPaths: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.equal(maxActive, 2);
+		assert.deepEqual((result.value as Array<{ key: string }>).map(({ key }) => key), ["one", "two", "three", "four"]);
+	});
+
+	it("rejects an invalid workflow concurrency limit before launching", async () => {
+		let launches = 0;
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return runs.run("one", { agent: "worker", task: "one" });`,
+				globalConcurrencyLimit: 0,
+				async launch(key) {
+					launches += 1;
+					return { key, ok: true, output: key, artifactPaths: [] };
+				},
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			/workflow script global concurrency limit must be a positive integer/,
+		);
+		assert.equal(launches, 0);
+	});
+
 	it("returns runs.all launch errors without aborting successful siblings", async () => {
 		const result = await runWorkflowScript({
 			script: `
