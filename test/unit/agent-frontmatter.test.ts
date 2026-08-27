@@ -1436,6 +1436,39 @@ Inspect code
 	});
 });
 
+describe("agent frontmatter allowNestedSubagents", () => {
+	it("serializes and parses explicit nested fanout authorization", () => {
+		const agent: AgentConfig = {
+			name: "delegator",
+			description: "Delegator",
+			systemPrompt: "Delegate focused work",
+			systemPromptMode: "replace",
+			inheritProjectContext: false,
+			inheritSkills: false,
+			source: "project",
+			filePath: "/tmp/delegator.md",
+			allowNestedSubagents: true,
+		};
+		assert.match(serializeAgent(agent), /allowNestedSubagents: true/);
+
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-nested-fanout-"));
+		tempDirs.push(dir);
+		const agentsDir = path.join(dir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "delegator.md"), `---
+name: delegator
+description: Delegator
+allowNestedSubagents: true
+---
+
+Delegate focused work
+`, "utf-8");
+		const discovered = discoverAgents(dir, "project").agents.find((candidate) => candidate.name === "delegator");
+		assert.equal(discovered?.allowNestedSubagents, true);
+		assert.equal(discovered?.extraFields?.allowNestedSubagents, undefined);
+	});
+});
+
 describe("agent frontmatter thinking", () => {
 	it("coerces frontmatter false strings to disabled thinking", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-thinking-false-"));

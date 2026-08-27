@@ -122,6 +122,18 @@ describe("async runner execution", () => {
 		assert.equal(result.steps[0]?.contextLimit, 128_000);
 	});
 
+	it("carries explicit nested fanout authorization into async runner steps", () => {
+		const nestedAgent = { ...agent("delegator"), allowNestedSubagents: true };
+		const result = buildAsyncRunnerSteps("nested-fanout-run", {
+			chain: [{ agent: "delegator", task: "delegate" }],
+			agents: [nestedAgent],
+			ctx,
+		});
+
+		assert.equal(result.error, undefined);
+		assert.equal(result.steps[0]?.allowNestedSubagents, true);
+	});
+
 	it("assigns default and agent-level deadlines to async serial and parallel children", () => {
 		const result = buildAsyncRunnerSteps("timeout-run", {
 			chain: [

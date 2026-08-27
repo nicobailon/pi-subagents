@@ -127,6 +127,7 @@ describe("steering lifecycle ledger", () => {
 			fallbackModels: ["current/fallback"],
 			thinking: "high",
 			tools: ["write"],
+			allowNestedSubagents: true,
 			extensions: ["current-extension"],
 			subagentOnlyExtensions: ["current-child-extension"],
 			mcpDirectTools: ["current_mcp"],
@@ -150,6 +151,7 @@ describe("steering lifecycle ledger", () => {
 			cwd: "/original",
 			model: "original/model",
 			tools: ["read"],
+			allowNestedSubagents: false,
 			systemPrompt: "original prompt",
 			systemPromptMode: "replace",
 			inheritProjectContext: false,
@@ -161,6 +163,7 @@ describe("steering lifecycle ledger", () => {
 		});
 		assert.equal(recovered.model, "original/model");
 		assert.deepEqual(recovered.tools, ["read"]);
+		assert.equal(recovered.allowNestedSubagents, false);
 		assert.equal(recovered.systemPrompt, "original prompt");
 		assert.equal(recovered.inheritProjectContext, false);
 		assert.deepEqual(recovered.toolBudget, { hard: 7, block: ["read"] });

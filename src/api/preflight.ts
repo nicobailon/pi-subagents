@@ -350,6 +350,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	try {
 		toolPlan = resolvePiLaunchToolPlan({
 			tools: agent.tools,
+			allowNestedSubagents: agent.allowNestedSubagents,
 			extensions: agent.extensions,
 			subagentOnlyExtensions: agent.subagentOnlyExtensions,
 			mcpDirectTools: agent.mcpDirectTools,

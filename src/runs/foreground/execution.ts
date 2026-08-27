@@ -352,6 +352,7 @@ async function runSingleAttempt(
 		inheritSkills: agent.inheritSkills,
 		requireReadTool: Boolean(shared.resolvedSkillNames?.length),
 		tools: agent.tools,
+		allowNestedSubagents: agent.allowNestedSubagents,
 		extensions: agent.extensions,
 		subagentOnlyExtensions: agent.subagentOnlyExtensions,
 		systemPrompt: shared.systemPrompt,
@@ -395,6 +396,7 @@ async function runSingleAttempt(
 	const effectiveSystemPrompt = shared.systemPrompt;
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: agent.tools,
+		allowNestedSubagents: agent.allowNestedSubagents,
 		extensions: agent.extensions,
 		subagentOnlyExtensions: agent.subagentOnlyExtensions,
 		mcpDirectTools: agent.mcpDirectTools,

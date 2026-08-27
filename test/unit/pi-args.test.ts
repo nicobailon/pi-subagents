@@ -1763,7 +1763,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.ok(extensionArgs.includes("./child-tool.ts"));
 	});
 
-	it("authorizes child fanout only from exact declared builtin subagent", () => {
+	it("authorizes child fanout from an exact declared builtin subagent", () => {
 		const { args, env } = buildPiArgs({
 			baseArgs: ["-p"],
 			task: "hello",
@@ -1799,6 +1799,36 @@ describe("buildPiArgs system prompt mode wiring", () => {
 				arg.endsWith(path.join("src", "extension", "fanout-child.ts")),
 			),
 		);
+	});
+
+	it("authorizes explicit nested fanout without creating a tool allowlist", () => {
+		const inherited = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			allowNestedSubagents: true,
+		});
+		const extensionArgs = inherited.args.filter((arg, index) => inherited.args[index - 1] === "--extension");
+		assert.ok(!inherited.args.includes("--tools"));
+		assert.ok(!inherited.args.includes("--no-tools"));
+		assert.ok(!inherited.args.includes("--no-extensions"));
+		assert.equal(inherited.env[SUBAGENT_FANOUT_CHILD_ENV], "1");
+		assert.ok(extensionArgs.some((arg) => arg.endsWith(path.join("src", "extension", "fanout-child.ts"))));
+
+		const ceilingDenied = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			allowNestedSubagents: true,
+			capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: false, sources: ["test"] },
+		});
+		const deniedExtensions = ceilingDenied.args.filter((arg, index) => ceilingDenied.args[index - 1] === "--extension");
+		assert.equal(ceilingDenied.env[SUBAGENT_FANOUT_CHILD_ENV], "0");
+		assert.ok(!deniedExtensions.some((arg) => arg.endsWith(path.join("src", "extension", "fanout-child.ts"))));
 	});
 
 	it("clears all fanout routing env values for non-fanout children", () => {

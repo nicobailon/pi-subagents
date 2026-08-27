@@ -1381,6 +1381,7 @@ async function runSingleStepInner(
 	if (!step.runner) {
 		resolvedTaskToolPlan = resolvePiLaunchToolPlan(omitUndefinedProperties({
 			tools: step.tools,
+			allowNestedSubagents: step.allowNestedSubagents,
 			extensions: step.extensions,
 			subagentOnlyExtensions: step.subagentOnlyExtensions,
 			fast: step.fast,
@@ -1670,6 +1671,7 @@ async function runSingleStepInner(
 			inheritSkills: step.inheritSkills,
 			requireReadTool: Boolean(step.skills?.length),
 			tools: step.tools,
+			allowNestedSubagents: step.allowNestedSubagents,
 			extensions: step.extensions,
 			subagentOnlyExtensions: step.subagentOnlyExtensions,
 			fast: step.fast,
@@ -1717,6 +1719,7 @@ async function runSingleStepInner(
 		if (step.definitionDigest) {
 			const toolPlan = resolvedTaskToolPlan ?? resolvePiLaunchToolPlan(omitUndefinedProperties({
 				tools: step.tools,
+				allowNestedSubagents: step.allowNestedSubagents,
 				extensions: step.extensions,
 				subagentOnlyExtensions: step.subagentOnlyExtensions,
 				fast: step.fast,

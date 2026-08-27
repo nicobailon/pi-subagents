@@ -20,6 +20,7 @@ export interface RuntimeAgentDefinition {
 	systemPrompt: string;
 	aliases?: readonly string[];
 	tools?: readonly string[];
+	allowNestedSubagents?: boolean;
 	mcpDirectTools?: readonly string[];
 	model?: string;
 	fallbackModels?: readonly string[];
@@ -197,7 +198,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Runtime agent definition must be an object.");
 	const definition = value as Record<string, unknown>;
 	const supported = new Set([
-		"description", "systemPrompt", "aliases", "tools", "mcpDirectTools", "model", "fallbackModels", "thinking",
+		"description", "systemPrompt", "aliases", "tools", "allowNestedSubagents", "mcpDirectTools", "model", "fallbackModels", "thinking",
 		"systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "defaultContext", "defaultAsync", "defaultTimeoutMs",
 		"defaultToolTimeoutMs", "defaultAcceptance", "acceptanceRole", "runner", "skills", "skillPath",
 		"extensions", "subagentOnlyExtensions", "mutationTools", "output", "outputMode", "defaultReads", "defaultProgress", "interactive",
@@ -217,6 +218,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 	if (outputMode !== undefined && outputMode !== "inline" && outputMode !== "file-only") throw new Error("Runtime agent definition outputMode must be 'inline' or 'file-only'.");
 	const aliases = validateStringList(definition.aliases, "Runtime agent definition aliases");
 	const tools = validateStringList(definition.tools, "Runtime agent definition tools");
+	const allowNestedSubagents = validateBoolean(definition.allowNestedSubagents, "Runtime agent definition allowNestedSubagents");
 	const mcpDirectTools = validateStringList(definition.mcpDirectTools, "Runtime agent definition mcpDirectTools");
 	const model = validateOptionalString(definition.model, "Runtime agent definition model");
 	const fallbackModels = validateStringList(definition.fallbackModels, "Runtime agent definition fallbackModels");
@@ -246,6 +248,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 		systemPrompt: validateString(definition.systemPrompt, "Runtime agent definition systemPrompt", MAX_SYSTEM_PROMPT_LENGTH),
 		...(aliases ? { aliases } : {}),
 		...(tools ? { tools } : {}),
+		...(allowNestedSubagents !== undefined ? { allowNestedSubagents } : {}),
 		...(mcpDirectTools ? { mcpDirectTools } : {}),
 		...(model ? { model } : {}),
 		...(fallbackModels ? { fallbackModels } : {}),
@@ -324,6 +327,7 @@ function toAgentConfig(name: string, definition: RuntimeAgentDefinition): AgentC
 		...(aliases ? { aliases } : {}),
 		...(definition.runner !== undefined ? { runner: definition.runner } : {}),
 		...(definition.tools !== undefined ? { tools: [...definition.tools] } : {}),
+		...(definition.allowNestedSubagents !== undefined ? { allowNestedSubagents: definition.allowNestedSubagents } : {}),
 		...(definition.mcpDirectTools !== undefined ? { mcpDirectTools: [...definition.mcpDirectTools] } : {}),
 		...(definition.model !== undefined ? { model: definition.model } : {}),
 		...(definition.fallbackModels !== undefined ? { fallbackModels: [...definition.fallbackModels] } : {}),
