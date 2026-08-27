@@ -915,7 +915,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			toolCallId,
 			{
 				cwd: workflowCwd,
-				workflowScript: `emit("starting"); await runs.run("work", { agent: "helper", task: "Async work" }); return { answer: 42 };`,
+				workflowScript: `emit("starting"); await runs.run("work", { agent: "helper", label: "Run async child", phase: "Execution", task: "Async work" }); return { answer: 42 };`,
 				mission: { summary: "Review the active backlog", labels: ["github-backlog", "review"] },
 			},
 			new AbortController().signal,
@@ -939,7 +939,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.existsSync(path.join(DIRS.async, toolCallId)), false);
 		assert.match(result.content[0]?.text ?? "", /Async workflow/);
 		const statusPath = path.join(result.details.asyncDir!, "status.json");
-		let status: { runId?: string; toolCallId?: string; cwd?: string; sessionRoot?: string; state?: string; steps?: Array<{ agent?: string; label?: string; workflowKey?: string; parentWorkflowRunId?: string }>; workflow?: { value?: unknown; emits?: unknown[]; trace?: Array<{ key?: string; agent?: string; state?: string }> } } = {};
+		let status: { runId?: string; toolCallId?: string; cwd?: string; sessionRoot?: string; state?: string; steps?: Array<{ agent?: string; label?: string; phase?: string; workflowKey?: string; parentWorkflowRunId?: string }>; workflow?: { value?: unknown; emits?: unknown[]; trace?: Array<{ key?: string; agent?: string; label?: string; phase?: string; state?: string }> } } = {};
 		for (let attempt = 0; attempt < 100; attempt++) {
 			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
 			if (status.state === "complete" || status.state === "failed") break;
@@ -951,14 +951,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(status.cwd, workflowCwd);
 		assert.equal(status.sessionRoot, path.join(tempDir, ".pi/subagents", "sessions"));
 		assert.equal(status.steps?.length, 1);
-		assert.deepEqual(status.steps?.map(({ agent, label, workflowKey }) => ({ agent, label, workflowKey })), [
-			{ agent: "echo", label: "work", workflowKey: "work" },
+		assert.deepEqual(status.steps?.map(({ agent, label, phase, workflowKey }) => ({ agent, label, phase, workflowKey })), [
+			{ agent: "echo", label: "Run async child", phase: "Execution", workflowKey: "work" },
 		]);
 		assert.ok(status.steps?.every((step) => step.parentWorkflowRunId === workflowRunId));
 		assert.deepEqual(status.workflow?.value, { answer: 42 });
 		assert.deepEqual(status.workflow?.emits, ["starting"]);
 		assert.equal(mockPi.callCount(), 1);
-		assert.ok(status.workflow?.trace?.some((entry) => entry.key === "work" && entry.agent === "echo" && entry.state === "completed"));
+		assert.ok(status.workflow?.trace?.some((entry) => entry.key === "work" && entry.agent === "echo" && entry.label === "Run async child" && entry.phase === "Execution" && entry.state === "completed"));
 		const traceEvents = fs.readFileSync(path.join(result.details.asyncDir!, "events.jsonl"), "utf-8")
 			.trim()
 			.split("\n")
@@ -1000,6 +1000,65 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.existsSync(path.join(DIRS.results, `${toolCallId}.json`)), false);
 		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true });
 		fs.rmSync(resultPath, { force: true });
+	});
+
+	it("keeps script workflow phase during async auto-resume", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({
+			jsonl: [
+				events.toolStart("read", { path: "src/index.ts" }),
+				events.toolEnd("read"),
+				events.toolResult("read", "file contents"),
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [],
+						model: "openai-codex/gpt-5.6-luna",
+						stopReason: "error",
+						errorMessage: "This operation was aborted",
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+			],
+			exitCode: 1,
+		});
+		const releasePath = path.join(tempDir, "release-auto-resume-child");
+		mockPi.onCall({ waitForPath: releasePath, output: "Recovered after workflow auto-resume" });
+		const executor = makeExecutor([makeAgent("echo", { aliases: ["helper"] })]);
+		const result = await executor.execute(
+			"workflow-auto-resume-phase-status",
+			{ workflowScript: `await runs.run("work", { agent: "helper", label: "Review current diff", phase: "Review", task: "Review the current diff" }); return { ok: true };` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		const statusPath = path.join(result.details.asyncDir!, "status.json");
+		let status: { state?: string; steps?: Array<{ workflowKey?: string; phase?: string }> } = {};
+		for (let attempt = 0; attempt < 100 && mockPi.callCount() < 2; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		for (let attempt = 0; attempt < 100; attempt++) {
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+			if (status.state === "running" && status.steps?.some((step) => step.workflowKey === "work" && step.phase !== undefined)) break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(status.state, "running");
+		assert.equal(status.steps?.find((step) => step.workflowKey === "work")?.phase, "Review");
+
+		fs.writeFileSync(releasePath, "go", "utf-8");
+		for (let attempt = 0; attempt < 100; attempt++) {
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+			if (status.state === "complete" || status.state === "failed") break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(status.state, "complete");
+		assert.equal(status.steps?.find((step) => step.workflowKey === "work")?.phase, "Review");
+		assert.equal(mockPi.callCount(), 2);
+
+		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true });
+		fs.rmSync(path.join(DIRS.results, `${result.details.asyncId}.json`), { force: true });
 	});
 
 	it("runs an external CLI workflow child with subagents.defaultModel configured", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

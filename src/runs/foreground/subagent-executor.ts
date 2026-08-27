@@ -4759,8 +4759,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						for (let index = projectedTraceLength; index < trace.length; index += 1) {
 							const entry = trace[index]!;
 							if (entry.operation !== "run") continue;
+							const entryLabel = entry.label?.trim() || undefined;
+							const entryPhase = entry.phase?.trim() || undefined;
+							const shouldProjectPhase = entryPhase !== undefined && (entryPhase !== "auto-resume" || workflowSteps.get(entry.key)?.phase === undefined);
 							const existing = workflowSteps.get(entry.key);
-							if (entry.state === "reused" && existing) continue;
+							if (existing) {
+								if (entryLabel) existing.label = entryLabel;
+								if (shouldProjectPhase) existing.phase = entryPhase;
+							}
+							if (entry.state === "reused" && existing) {
+								continue;
+							}
 							const mapped = entry.state === "started" || entry.state === "reused"
 								? "running"
 								: entry.state === "completed"
@@ -4786,11 +4795,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							} else {
 								const step: NonNullable<AsyncStatus["steps"]>[number] = {
 									agent: entry.agent ?? entry.key,
-									label: entry.key,
+									label: entryLabel ?? entry.key,
 									workflowKey: entry.key,
 									parentWorkflowRunId: workflowRunId,
 									status: mapped,
 									startedAt: Date.now(),
+									...(entryPhase ? { phase: entryPhase } : {}),
 									...(entry.runId ? { runId: entry.runId } : {}),
 									...(entry.state === "failed" && !entry.runId ? { async: false } : {}),
 									...(entry.state === "detached" ? { activityState: "needs_attention" as const } : {}),
