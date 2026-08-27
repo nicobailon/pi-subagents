@@ -371,9 +371,16 @@ function formatName(value: string, fallback: string): string {
 }
 
 function readJson(filePath: string): unknown | undefined {
+	let content: string;
 	try {
-		return JSON.parse(fs.readFileSync(filePath, "utf-8"));
-	} catch {
-		return undefined;
+		content = fs.readFileSync(filePath, "utf-8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw new Error(`Failed to read JSON file '${filePath}': ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+	}
+	try {
+		return JSON.parse(content);
+	} catch (error) {
+		throw new Error(`Invalid JSON in '${filePath}': ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 	}
 }

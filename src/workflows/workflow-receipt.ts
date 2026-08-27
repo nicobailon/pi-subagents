@@ -200,9 +200,9 @@ function parseEntry(value: unknown, key: string, source: string): WorkflowReceip
 	const reason = (resumability as Record<string, unknown>).reason;
 	if (state === "resumable" && latestRunId === undefined) throw new Error(`Invalid workflow receipt '${source}': entry '${key}' resumable entry has no retained run id.`);
 	if (state === "not-resumable" && (typeof reason !== "string" || !reason.trim())) throw new Error(`Invalid workflow receipt '${source}': entry '${key}' non-resumable reason is missing.`);
-	parseTerminalOutcome(entry.terminalOutcome, `Invalid workflow receipt '${source}': entry '${key}' terminalOutcome`);
+	const terminalOutcome = parseTerminalOutcome(entry.terminalOutcome, `Invalid workflow receipt '${source}': entry '${key}' terminalOutcome`);
 	parseExternalCliReceiptMetadata(entry.externalAdapter, key, source);
-	return value as WorkflowReceiptEntry;
+	return { ...(value as WorkflowReceiptEntry), ...(terminalOutcome ? { terminalOutcome } : {}) };
 }
 
 function parseWorkflowResolution(value: unknown, source: string): WorkflowTerminalResolution | undefined {

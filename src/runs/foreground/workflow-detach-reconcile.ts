@@ -156,7 +156,8 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 				detached: undefined,
 				...(outputReference ? { outputReference } : {}),
 				...(outputPathMapping ? { outputPathMapping } : {}),
-				...(result.interrupted ? { interrupted: true } : {}),
+				...(result.interrupted || result.stopped ? { interrupted: true } : {}),
+				...(result.stopped ? { stopped: true } : {}),
 				...(terminalOutcome ? { terminalOutcome } : {}),
 				...(result.error ? { error: result.error } : {}),
 			};
@@ -193,7 +194,7 @@ function workflowResultOutputPathMappingSummary(results: unknown): string {
 	return mappings.length > 0 ? ` Output path mappings: ${mappings.join("; ")}.` : "";
 }
 
-function publishedWorkflowResult(status: AsyncStatus, childRunId: string, result: SingleResult, asyncDir: string, existing?: Record<string, unknown>, receipt?: WorkflowReceipt, settledStep?: WorkflowStatusStep): Record<string, unknown> {
+function publishedWorkflowResult(status: AsyncStatus, childRunId: string, result: SingleResult, asyncDir: string, existing?: Record<string, unknown>, receipt?: WorkflowReceipt): Record<string, unknown> {
 	const sessionId = status.sessionId ?? (typeof existing?.sessionId === "string" ? existing.sessionId : undefined);
 	const resolution = workflowResolution(status, result);
 	const recovery = workflowRecovery(receipt);
@@ -351,7 +352,7 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 	} catch (error) {
 		receiptError = `Failed to reconcile async workflow receipt: ${error instanceof Error ? error.message : String(error)}`;
 	}
-	const published = publishedWorkflowResult(next, input.childRunId, input.result, asyncDir, existing, receipt, settledStep);
+	const published = publishedWorkflowResult(next, input.childRunId, input.result, asyncDir, existing, receipt);
 	writeAsyncResultFile(resultPath, published);
 	if (receiptError) {
 		appendDetachedWorkflowEvent(asyncDir, {

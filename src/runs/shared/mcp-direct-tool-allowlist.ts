@@ -359,8 +359,7 @@ export function resolveMcpDirectToolNames(mcpDirectTools: string[] | undefined, 
 function parseSelections(selections: string[]): { servers: Set<string>; tools: Map<string, Set<string>> } {
 	const servers = new Set<string>();
 	const tools = new Map<string, Set<string>>();
-	for (let item of selections) {
-		item = item.replace(/\/+$/, "");
+	for (const item of selections) {
 		if (item.includes("/")) {
 			const [server, tool] = item.split("/", 2);
 			if (server && tool) {
