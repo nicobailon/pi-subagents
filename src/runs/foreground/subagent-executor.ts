@@ -127,7 +127,7 @@ import { previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, Wo
 import { buildWorkflowReceipt, resolveWorkflowReceiptResumeEntry, writeWorkflowReceipt, type WorkflowReceipt, type WorkflowReceiptState } from "../../workflows/workflow-receipt.ts";
 import { validHostStepNodes } from "../shared/host-step-status.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
-import { workflowChildSummary } from "../../workflows/workflow-child-summary.ts";
+import { parseWorkflowChildSummary, workflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 import { resolveWorkflowChatProgress, type WorkflowChatProgressProjection } from "../../workflows/chat-progress.ts";
 import { annotateWorkflowPreflightTrace, formatWorkflowPreflight, formatWorkflowPreflightWarnings, normalizeWorkflowPreflight, workflowPreflightWarnings } from "../../workflows/workflow-preflight.ts";
 import { claimWorkflowChildPermit, validateWorkflowChildPermitRoot, type WorkflowChildPermit, type WorkflowChildPermitContext } from "../../shared/workflow-child-permit.ts";
@@ -4154,21 +4154,97 @@ function workflowSteerReceipt(key: string, result: AgentToolResult<Details>): Wo
 	};
 }
 
+const MAX_WORKFLOW_RESUME_HINT_BYTES = 1024;
+const MAX_WORKFLOW_CHILD_RUN_ID_BYTES = 256;
+const WORKFLOW_RESUME_HINT_PARENT_STATES = new Set(["complete", "failed", "partial"]);
+const WORKFLOW_STEP_STATES = new Set(["pending", "running", "complete", "completed", "failed", "partial", "paused", "stopped", "rejected"]);
+
+function isSafeWorkflowChildRunId(value: unknown): value is string {
+	if (typeof value !== "string") return false;
+	const runId = value.trim();
+	return value === runId
+		&& Boolean(runId)
+		&& Buffer.byteLength(runId, "utf8") <= MAX_WORKFLOW_CHILD_RUN_ID_BYTES
+		&& path.basename(runId) === runId
+		&& path.win32.basename(runId) === runId
+		&& !/[\\/]/.test(runId)
+		&& !runId.includes("..")
+		&& !/[\u0000-\u001f\u007f]/.test(runId);
+}
+
+function isMissingWorkflowReceiptDiagnostic(error: unknown, workflowRunId: string): error is Error {
+	return error instanceof Error
+		&& error.message.startsWith(`Workflow receipt '${workflowRunId}' is not available because the workflow may still be active or terminal receipt writing failed.`);
+}
+
+function missingWorkflowReceiptResumeHint(reference: WorkflowReceiptResumeReference, state: SubagentState): string | undefined {
+	try {
+		if (!state.currentSessionId) return undefined;
+		const workflowRunId = reference.workflowRunId.trim();
+		const workflowStatus = readStatus(path.join(DIRS.async, workflowRunId));
+		if (!workflowStatus
+			|| workflowStatus.runId !== workflowRunId
+			|| workflowStatus.mode !== "workflow"
+			|| workflowStatus.sessionId !== state.currentSessionId
+			|| typeof workflowStatus.startedAt !== "number"
+			|| !Number.isFinite(workflowStatus.startedAt)
+			|| !WORKFLOW_RESUME_HINT_PARENT_STATES.has(workflowStatus.state)
+			|| !Array.isArray(workflowStatus.steps)
+			|| workflowStatus.steps.some((step) => {
+				if (!step || typeof step !== "object" || Array.isArray(step)) return true;
+				const record = step as Record<string, unknown>;
+				return typeof record.agent !== "string"
+					|| typeof record.status !== "string"
+					|| !WORKFLOW_STEP_STATES.has(record.status)
+					|| (record.workflowKey !== undefined && typeof record.workflowKey !== "string")
+					|| (record.runId !== undefined && typeof record.runId !== "string");
+			})) return undefined;
+		const matchingSteps = workflowStatus.steps.filter((step) => step.workflowKey === reference.key);
+		if (matchingSteps.length !== 1) return undefined;
+		const childRunId = matchingSteps[0]?.runId;
+		if (!isSafeWorkflowChildRunId(childRunId)) return undefined;
+
+		const workflowChildren = parseWorkflowChildSummary(workflowStatus.workflowChildren);
+		if (workflowChildren) {
+			if (workflowChildren.workflowRunId !== workflowRunId) return undefined;
+			const matchingChildren = workflowChildren.children.filter((child) => child.childId === reference.key);
+			if (matchingChildren.length > 1 || (workflowChildren.inventoryComplete && matchingChildren.length !== 1)) return undefined;
+			if (matchingChildren.length === 1 && matchingChildren[0]?.runId !== childRunId) return undefined;
+		}
+
+		const target = resolveResumeTarget({ id: childRunId }, state, { asyncRequireSessionFile: true, exactOnly: true });
+		if (target.kind !== "revive") return undefined;
+		const hint = `Direct resumable child for workflow key '${reference.key}': subagent({ action: "resume", id: ${JSON.stringify(childRunId)}, message: "..." })`;
+		return Buffer.byteLength(hint, "utf8") <= MAX_WORKFLOW_RESUME_HINT_BYTES ? hint : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 function resolveKeyedWorkflowResume(
 	reference: WorkflowReceiptResumeReference,
 	state: SubagentState,
 ): { runId: string; runIds: string[] } {
-	const entry = resolveWorkflowReceiptResumeEntry({
-		reference,
-		asyncDirRoot: DIRS.async,
-		assertResumable(runId) {
-			const target = resolveResumeTarget({ id: runId }, state, { asyncRequireSessionFile: true, exactOnly: true });
-			if (target.kind !== "revive") throw new Error(`Workflow receipt child '${reference.key}' latest run '${runId}' is still running.`);
-		},
-	});
-	const runId = entry.latestRunId;
-	if (!runId) throw new Error(`Workflow receipt child '${reference.key}' has no retained run id.`);
-	return { runId, runIds: entry.continuation.runIds };
+	try {
+		const entry = resolveWorkflowReceiptResumeEntry({
+			reference,
+			asyncDirRoot: DIRS.async,
+			assertResumable(runId) {
+				const target = resolveResumeTarget({ id: runId }, state, { asyncRequireSessionFile: true, exactOnly: true });
+				if (target.kind !== "revive") throw new Error(`Workflow receipt child '${reference.key}' latest run '${runId}' is still running.`);
+			},
+		});
+		const runId = entry.latestRunId;
+		if (!runId) throw new Error(`Workflow receipt child '${reference.key}' has no retained run id.`);
+		return { runId, runIds: entry.continuation.runIds };
+	} catch (error) {
+		const workflowRunId = reference.workflowRunId.trim();
+		if (isMissingWorkflowReceiptDiagnostic(error, workflowRunId)) {
+			const hint = missingWorkflowReceiptResumeHint(reference, state);
+			if (hint) throw new Error(`${error.message} ${hint}`, { cause: error });
+		}
+		throw error;
+	}
 }
 
 function terminalWorkflowReceipt(
