@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
-import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type LaunchResolvedChildExtensionsV1, type RuntimeAcknowledgedChildExtensionsV1, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TokenUsage, type TurnBudgetState, type UsageBudgetState } from "../../shared/types.ts";
+import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type HostStepNodeV1, type HostStepState, type LaunchResolvedChildExtensionsV1, type RuntimeAcknowledgedChildExtensionsV1, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TokenUsage, type TurnBudgetState, type UsageBudgetState } from "../../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../shared/capability-ceiling.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, findNestedRouteForRootId, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
@@ -17,6 +17,8 @@ import { readRecentTerminalRunIndex, TERMINAL_RUN_INDEX_DIR } from "./terminal-r
 import { canScanAsyncRunPrefix } from "./run-id-query.ts";
 import { asyncStatusChildIdentity } from "../shared/child-identity.ts";
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
+import { assertWorkflowGraphHostSteps, hostStepReportName, hostStepVerdictLabel, validHostStepNodes } from "../shared/host-step-status.ts";
+import { projectAsyncWorkflowRows } from "../shared/async-status-projection.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -108,6 +110,7 @@ export interface AsyncRunSummary {
 	chainStepCount?: number;
 	pendingAppends?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
+	hostSteps?: HostStepNodeV1[];
 	steps: AsyncRunStepSummary[];
 	sessionDir?: string;
 	outputFile?: string;
@@ -237,6 +240,8 @@ function deriveAsyncActivityState(asyncDir: string, status: AsyncStatus): { acti
 function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string }, nestedWarnings: string[] = [], nestedRoute?: NestedRoute): AsyncRunSummary {
 	const workflowChildren = parseWorkflowChildSummary(status.workflowChildren);
 	if (workflowChildren && workflowChildren.workflowRunId !== status.runId) throw new Error(`Invalid async status '${path.join(asyncDir, "status.json")}': workflowChildren.workflowRunId does not match.`);
+	assertWorkflowGraphHostSteps(status.workflowGraph, path.join(asyncDir, "status.json"), status.runId);
+	const hostSteps = validHostStepNodes(status.workflowGraph);
 	if (status.sessionId !== undefined && typeof status.sessionId !== "string") {
 		throw new Error(`Invalid async status '${path.join(asyncDir, "status.json")}': sessionId must be a string.`);
 	}
@@ -364,6 +369,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		...(status.chainStepCount !== undefined ? { chainStepCount: status.chainStepCount } : {}),
 		...(status.pendingAppends !== undefined ? { pendingAppends: status.pendingAppends } : {}),
 		...(parallelGroups.length ? { parallelGroups } : {}),
+		...(hostSteps.length ? { hostSteps } : {}),
 		steps: summarizedSteps,
 		...(nestedChildren.length ? { nestedChildren } : {}),
 		...(nestedWarnings.length ? { nestedWarnings } : {}),
@@ -539,6 +545,21 @@ function formatStepLine(step: AsyncRunStepSummary): string {
 	return parts.join(" | ");
 }
 
+function formatHostStepLine(row: ReturnType<typeof projectAsyncWorkflowRows>[number]): string {
+	if (!row.kind) return "";
+	const state = hostStepVerdictLabel(row.state as HostStepState, row.verdict);
+	const details = [
+		row.provider ? `provider:${row.provider}` : undefined,
+		row.role ? `role:${row.role}` : undefined,
+		row.target,
+		row.detail,
+		row.reasonCode ? `reason:${row.reasonCode}` : undefined,
+		row.freshness?.stale ? "stale" : row.freshness?.observedRef ? `ref:${row.freshness.observedRef}` : undefined,
+		row.reportPath ? `out:${hostStepReportName(row.reportPath)}` : undefined,
+	].filter((value): value is string => Boolean(value));
+	return `host ${row.kind}: ${row.name} | ${state}${details.length ? ` | ${details.join(" | ")}` : ""}`;
+}
+
 export function formatAsyncRunOutputPath(run: Pick<AsyncRunSummary, "asyncDir" | "outputFile">): string | undefined {
 	if (!run.outputFile) return undefined;
 	return path.isAbsolute(run.outputFile) ? run.outputFile : path.join(run.asyncDir, run.outputFile);
@@ -583,6 +604,10 @@ export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active as
 		for (const step of run.steps) {
 			lines.push(`  ${formatStepLine(step)}`);
 			lines.push(...formatNestedRunStatusLines(step.children, { indent: "    ", maxLines: 12 }));
+		}
+		for (const row of projectAsyncWorkflowRows([], run.hostSteps)) {
+			const line = formatHostStepLine(row);
+			if (line) lines.push(`  ${line}`);
 		}
 		const attached = new Set(run.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []));
 		const unattached = run.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];

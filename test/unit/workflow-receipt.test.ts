@@ -6,6 +6,7 @@ import { afterEach, describe, it } from "node:test";
 import { buildWorkflowReceipt, readWorkflowReceipt, resolveWorkflowReceiptResume, workflowReceiptPath, writeWorkflowReceipt } from "../../src/workflows/workflow-receipt.ts";
 import { externalCliReceiptMetadata, resolveExternalCliRunnerStatus } from "../../src/runs/shared/external-cli-contract.ts";
 import type { WorkflowScriptChildResult } from "../../src/workflows/scripted-workflow.ts";
+import type { HostStepNodeV1 } from "../../src/shared/types.ts";
 import { workflowChildSummary } from "../../src/workflows/workflow-child-summary.ts";
 
 const roots: string[] = [];
@@ -38,6 +39,20 @@ function child(key: string, overrides: Partial<WorkflowScriptChildResult> = {}):
 	};
 }
 
+function hostStep(overrides: Partial<HostStepNodeV1> = {}): HostStepNodeV1 {
+	return {
+		version: 1,
+		kind: "host-step",
+		monitorKind: "gate",
+		id: "gate-1",
+		label: "Review gate",
+		state: "done",
+		verdict: "pass",
+		updatedAt: 10,
+		...overrides,
+	};
+}
+
 describe("workflow receipts", () => {
 	it("reads old receipt-v1 files without external adapter metadata", () => {
 		const asyncRoot = tempRoot();
@@ -52,6 +67,31 @@ describe("workflow receipts", () => {
 		}));
 
 		assert.equal(readWorkflowReceipt(asyncRoot, "workflow-old").entries.advisor?.externalAdapter, undefined);
+	});
+
+	it("round-trips bounded host CI/gate state in terminal receipts", () => {
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-host");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		const receipt = buildWorkflowReceipt({
+			workflowRunId: "workflow-host",
+			state: "complete",
+			children: [],
+			hostSteps: [hostStep({ monitorKind: "ci", id: "ci-1", label: "CI checks", provider: "opaque-provider", state: "done", verdict: "inconclusive", reasonCode: "stale-head", freshness: { expectedRef: "old", observedRef: "new", stale: true }, reportPath: "/private/report.json" })],
+			createdAt: 10,
+		});
+		writeWorkflowReceipt(asyncDir, receipt);
+		assert.deepEqual(readWorkflowReceipt(asyncRoot, "workflow-host").hostSteps, receipt.hostSteps);
+		assert.equal(JSON.stringify(receipt).includes("/private/report.json"), true);
+	});
+
+	it("rejects malformed host monitor receipt state", () => {
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-host-invalid");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		const receipt = buildWorkflowReceipt({ workflowRunId: "workflow-host-invalid", state: "complete", children: [] });
+		fs.writeFileSync(workflowReceiptPath(asyncRoot, "workflow-host-invalid"), JSON.stringify({ ...receipt, hostSteps: [{ ...hostStep(), state: "done", verdict: undefined }] }));
+		assert.throws(() => readWorkflowReceipt(asyncRoot, "workflow-host-invalid"), /done state requires a verdict/);
 	});
 
 	it("reads legacy Grok receipt metadata after the active profile is removed", () => {

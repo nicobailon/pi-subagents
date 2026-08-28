@@ -12,6 +12,7 @@ import { resultFilePath, resultPayloadPathForIndexedRun } from "./result-files.t
 import { canScanAsyncRunPrefix, MIN_SAFE_ASYNC_RUN_PREFIX_LENGTH } from "./run-id-query.ts";
 import { parallelHandoffPath, resolveRetainedWorktreeCwd } from "../shared/parallel-handoff.ts";
 import { intersectThinkingCeilings, parseThinkingLevel, type ThinkingLevel } from "../../shared/thinking-ceiling.ts";
+import { assertWorkflowGraphHostSteps } from "../shared/host-step-status.ts";
 
 export interface AsyncResumeParams {
 	id?: string;
@@ -260,6 +261,7 @@ function resultState(result: AsyncResultFile): AsyncStatus["state"] {
 function validateStatusForResume(status: AsyncStatus | null, source: string): void {
 	if (!status) return;
 	if (typeof status.runId !== "string") throw new Error(`Invalid async status '${source}': runId must be a string.`);
+	assertWorkflowGraphHostSteps(status.workflowGraph, source, status.runId);
 	if (status.sessionId !== undefined && typeof status.sessionId !== "string") throw new Error(`Invalid async status '${source}': sessionId must be a string.`);
 	if (status.cwd !== undefined && typeof status.cwd !== "string") throw new Error(`Invalid async status '${source}': cwd must be a string.`);
 	if (status.sessionFile !== undefined && typeof status.sessionFile !== "string") throw new Error(`Invalid async status '${source}': sessionFile must be a string.`);

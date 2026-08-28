@@ -88,6 +88,48 @@ describe("async status snapshot", () => {
 		assert.equal(snapshot.runs[0]?.children?.[0]?.state, "queued");
 	});
 
+	it("projects loaded host CI/gate nodes with bounded provider-neutral metadata", () => {
+		const snapshot = buildAsyncStatusSnapshot([{
+			asyncId: "workflow-1",
+			asyncDir: "/tmp/workflow-1",
+			status: "running",
+			mode: "workflow",
+			agents: [],
+			hostSteps: [{
+				version: 1,
+				kind: "host-step",
+				monitorKind: "gate",
+				id: "gate-1",
+				label: "Gate",
+				provider: "opaque-provider",
+				state: "done",
+				verdict: "inconclusive",
+				reasonCode: "stale-head",
+				freshness: { expectedRef: "old", observedRef: "new", stale: true },
+				reportPath: "/private/reports/gate.json",
+				updatedAt: 100,
+			}],
+		}] as any, { generatedAt: 200 });
+
+		assert.deepEqual(snapshot.runs[0]?.children, [{
+			id: "gate-1",
+			kind: "host-step",
+			label: "Gate",
+			state: "partial",
+			updatedAt: 100,
+			endedAt: 100,
+			hostStep: {
+				kind: "gate",
+				provider: "opaque-provider",
+				state: "done",
+				verdict: "inconclusive",
+				reasonCode: "stale-head",
+				stale: true,
+				report: "gate.json",
+			},
+		}]);
+	});
+
 	it("applies run, child, depth, string, and byte caps", () => {
 		const jobs = Array.from({ length: 5 }, (_, runIndex) => ({
 			asyncId: `run-${runIndex}`,

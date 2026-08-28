@@ -236,6 +236,48 @@ describe("subagent async widget rendering", () => {
 		);
 	});
 
+	it("renders loaded host CI and gate nodes without creating child lanes", () => {
+		const job = {
+			asyncId: "host-run",
+			asyncDir: "/tmp/host-run",
+			status: "running",
+			mode: "workflow",
+			agents: [],
+			hostSteps: [
+				{
+					version: 1,
+					kind: "host-step",
+					monitorKind: "ci",
+					id: "ci-1",
+					label: "CI checks",
+					provider: "local-tests",
+					state: "running",
+					target: "PR #1614",
+					updatedAt: 10,
+				},
+				{
+					version: 1,
+					kind: "host-step",
+					monitorKind: "gate",
+					id: "gate-1",
+					label: "Review gate",
+					provider: "opaque-provider",
+					state: "done",
+					verdict: "inconclusive",
+					reasonCode: "stale-head",
+					freshness: { expectedRef: "old", observedRef: "new", stale: true },
+					reportPath: "/tmp/reports/gate.json",
+					updatedAt: 20,
+				},
+			],
+		};
+
+		const text = buildWidgetLines([job], theme, 180).join("\n");
+		assert.match(text, /ci: CI checks · running · provider:local-tests · PR #1614/);
+		assert.match(text, /gate: Review gate · inconclusive · provider:opaque-provider · reason:stale-head · stale · out:gate.json/);
+		assert.doesNotMatch(text, /async subagent .*CI checks/);
+	});
+
 	it("keeps simple one-off async rows on the existing fallback projection", () => {
 		const job = {
 			asyncId: "simple-run",

@@ -1005,6 +1005,79 @@ describe("below-editor subagent FleetView", () => {
 		}
 	});
 
+	it("renders host CI and gate rows as typed workflow monitors", () => {
+		const state = stateForTest();
+		const workflowJob = {
+			asyncId: "workflow-host",
+			asyncDir: "/tmp/workflow-host",
+			sessionId: "session-current",
+			status: "running" as const,
+			mode: "workflow" as const,
+			startedAt: 10,
+			updatedAt: 20,
+			hostSteps: [
+				{
+					version: 1 as const,
+					kind: "host-step" as const,
+					monitorKind: "ci" as const,
+					id: "ci-check",
+					label: "CI checks",
+					provider: "github-ci",
+					state: "running" as const,
+					target: "PR #1614",
+					updatedAt: 20,
+				},
+				{
+					version: 1 as const,
+					kind: "host-step" as const,
+					monitorKind: "gate" as const,
+					id: "gate-check",
+					label: "Review gate",
+					provider: "greptile",
+					state: "done" as const,
+					verdict: "inconclusive" as const,
+					reasonCode: "stale-head",
+					freshness: { expectedRef: "old", observedRef: "new", stale: true },
+					reportPath: "/tmp/reports/gate.json",
+					updatedAt: 20,
+				},
+			],
+		};
+		state.asyncJobs.set(workflowJob.asyncId, workflowJob);
+		state.fleetJobs!.set(workflowJob.asyncId, workflowJob);
+
+		const workflow = collectFleetStatusEntries(state).find((entry) => entry.key === "async:workflow-host");
+		assert.deepEqual(workflow?.workflowRows?.map((row) => ({ kind: row.kind, state: row.state })), [
+			{ kind: "ci", state: "running" },
+			{ kind: "gate", state: "done" },
+		]);
+
+		let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				requestRender() {},
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000, maxAgentRows: 8 });
+		try {
+			fleet.setContext(ctx);
+			const component = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor }, theme);
+			assert.deepEqual(fleet.handleKey("\x1b[B"), { consume: true });
+			const lines = component.render(160).join("\n");
+			assert.match(lines, /ci: CI checks · running · .*provider:github-ci.*PR #1614/);
+			assert.match(lines, /gate: Review gate · inconclusive · .*provider:greptile.*stale.*out:gate.json/);
+			assert.doesNotMatch(lines, /agent: CI checks/);
+		} finally {
+			fleet.dispose();
+		}
+	});
+
 	it("renders recursive nested runs and steps within the existing row budget", () => {
 		const state = stateForTest();
 		state.asyncJobs.set("supervisor", {

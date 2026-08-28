@@ -1,6 +1,7 @@
 import { sanitizeDisplayText, truncateDisplayText } from "../../shared/display-text.ts";
 import { formatModelThinking } from "../../shared/formatters.ts";
-import type { AsyncJobState, AsyncJobStep, NestedRunSummary, NestedStepSummary, SubagentRunMode } from "../../shared/types.ts";
+import type { AsyncJobState, AsyncJobStep, HostStepFreshnessV1, HostStepMonitorKind, HostStepNodeV1, HostStepState, HostStepVerdict, NestedRunSummary, NestedStepSummary, SubagentRunMode, WorkflowGraphSnapshot } from "../../shared/types.ts";
+import { HOST_STEP_MAX_COUNT, HOST_STEP_MAX_DETAIL_CHARS, HOST_STEP_MAX_LABEL_CHARS, HOST_STEP_MAX_PROVIDER_CHARS, HOST_STEP_MAX_REASON_CHARS, HOST_STEP_MAX_REF_CHARS, HOST_STEP_MAX_ROLE_CHARS, HOST_STEP_MAX_TARGET_CHARS, hostStepReportName, parseHostStepNode, validHostStepNodes } from "./host-step-status.ts";
 
 export const ASYNC_STATUS_SNAPSHOT_KIND = "pi-subagents.async-status-snapshot";
 export const ASYNC_STATUS_SNAPSHOT_VERSION = 1;
@@ -23,15 +24,29 @@ export interface AsyncStatusSnapshotActivityV1 {
 	toolCount?: number;
 }
 
+export interface AsyncStatusSnapshotHostStepV1 {
+	kind: HostStepMonitorKind;
+	provider?: string;
+	role?: string;
+	state: HostStepState;
+	verdict?: HostStepVerdict;
+	reasonCode?: string;
+	detail?: string;
+	target?: string;
+	stale?: boolean;
+	report?: string;
+}
+
 export interface AsyncStatusSnapshotNodeV1 {
 	id: string;
-	kind: AsyncStatusSnapshotKind;
+	kind: AsyncStatusSnapshotKind | "host-step";
 	label: string;
 	state: AsyncStatusSnapshotState;
 	startedAt?: number;
 	updatedAt?: number;
 	endedAt?: number;
 	activity?: AsyncStatusSnapshotActivityV1;
+	hostStep?: AsyncStatusSnapshotHostStepV1;
 	children?: AsyncStatusSnapshotNodeV1[];
 }
 
@@ -69,18 +84,41 @@ export interface AsyncStatusSnapshotOptions {
 
 export interface AsyncStatusWorkflowRow {
 	name: string;
-	state: AsyncJobStep["status"];
+	state: AsyncJobStep["status"] | HostStepState;
+	/** Present only for typed host-owned monitor rows; legacy child rows omit it. */
+	kind?: HostStepMonitorKind;
 	modelThinking?: string;
 	activity?: string;
 	startedAt?: number;
 	tokens?: number;
 	window?: number;
 	overflow?: number;
+	provider?: string;
+	role?: string;
+	verdict?: HostStepVerdict;
+	reasonCode?: string;
+	detail?: string;
+	target?: string;
+	freshness?: HostStepFreshnessV1;
+	reportPath?: string;
 }
 
 interface ProjectionContext {
 	caps: AsyncStatusSnapshotCapsV1;
 	omitted: AsyncStatusSnapshotOmittedV1;
+}
+
+function validHostStepList(source: readonly HostStepNodeV1[] | WorkflowGraphSnapshot | undefined): HostStepNodeV1[] {
+	if (source && "nodes" in source) return validHostStepNodes(source);
+	const hostSteps: HostStepNodeV1[] = [];
+	for (const [index, value] of (source ?? []).slice(0, HOST_STEP_MAX_COUNT).entries()) {
+		try {
+			hostSteps.push(parseHostStepNode(value, `hostSteps[${index}]`));
+		} catch {
+			// Renderers must not turn malformed host data into a fake child row.
+		}
+	}
+	return hostSteps;
 }
 
 function resolveCaps(options: AsyncStatusSnapshotOptions): AsyncStatusSnapshotCapsV1 {
@@ -219,6 +257,41 @@ function projectNestedRun(child: NestedRunSummary, index: number, depth: number,
 	return node;
 }
 
+function hostStepSnapshotState(state: HostStepState, verdict: HostStepVerdict | undefined): AsyncStatusSnapshotState {
+	if (state === "pending") return "queued";
+	if (state === "running") return "running";
+	if (state === "cancelled") return "stopped";
+	if (state === "error" || verdict === "fail") return "failed";
+	return verdict === "inconclusive" ? "partial" : "complete";
+}
+
+function projectHostStep(hostStep: HostStepNodeV1, ctx: ProjectionContext): AsyncStatusSnapshotNodeV1 {
+	const state = hostStepSnapshotState(hostStep.state, hostStep.verdict);
+	const detail = publicOptionalText(hostStep.detail, ctx.caps.maxStringLength);
+	const report = publicOptionalText(hostStepReportName(hostStep.reportPath), ctx.caps.maxStringLength);
+	const hostMetadata: AsyncStatusSnapshotHostStepV1 = {
+		kind: hostStep.monitorKind,
+		state: hostStep.state,
+		...(hostStep.provider ? { provider: publicText(hostStep.provider, "provider", ctx.caps.maxStringLength) } : {}),
+		...(hostStep.role ? { role: publicText(hostStep.role, "role", ctx.caps.maxStringLength) } : {}),
+		...(hostStep.verdict ? { verdict: hostStep.verdict } : {}),
+		...(hostStep.reasonCode ? { reasonCode: publicText(hostStep.reasonCode, "reason", ctx.caps.maxStringLength) } : {}),
+		...(detail ? { detail } : {}),
+		...(hostStep.target ? { target: publicText(hostStep.target, "target", ctx.caps.maxStringLength) } : {}),
+		...(hostStep.freshness?.stale !== undefined ? { stale: hostStep.freshness.stale } : {}),
+		...(report ? { report } : {}),
+	};
+	return {
+		id: publicText(hostStep.id, "host-step", ctx.caps.maxStringLength),
+		kind: "host-step",
+		label: publicText(hostStep.label, "host step", ctx.caps.maxStringLength),
+		state,
+		updatedAt: hostStep.updatedAt,
+		...(terminalState(state) ? { endedAt: hostStep.updatedAt } : {}),
+		hostStep: hostMetadata,
+	};
+}
+
 function projectRun(job: AsyncJobState, ctx: ProjectionContext): AsyncStatusSnapshotNodeV1 {
 	const state = normalizeState(job.status);
 	const startedAt = publicTime(job.startedAt);
@@ -237,11 +310,12 @@ function projectRun(job: AsyncJobState, ctx: ProjectionContext): AsyncStatusSnap
 	if (ctx.caps.maxDepth > 0) {
 		const stepChildren = job.steps?.map((step, index) => projectStep(step, step.index ?? index, 1, ctx)) ?? [];
 		const nestedChildren = job.nestedChildren?.map((child, index) => projectNestedRun(child, index, 1, ctx)) ?? [];
+		const hostStepChildren = validHostStepList(job.hostSteps).map((hostStep) => projectHostStep(hostStep, ctx));
 		const bounded: AsyncStatusSnapshotNodeV1[] = [];
-		appendBoundedChildren(bounded, [...stepChildren, ...nestedChildren], ctx);
+		appendBoundedChildren(bounded, [...stepChildren, ...nestedChildren, ...hostStepChildren], ctx);
 		if (bounded.length) node.children = bounded;
 	} else {
-		ctx.omitted.children += (job.steps?.length ?? 0) + (job.nestedChildren?.length ?? 0);
+		ctx.omitted.children += (job.steps?.length ?? 0) + (job.nestedChildren?.length ?? 0) + validHostStepList(job.hostSteps).length;
 	}
 	return node;
 }
@@ -285,9 +359,32 @@ function workflowStepName(step: AsyncJobStep, index: number): string {
 	return `${phase}${key}${label} (${step.agent})`;
 }
 
+function hostStepRow(hostStep: HostStepNodeV1): AsyncStatusWorkflowRow {
+	const freshness = hostStep.freshness
+		? {
+			expectedRef: publicText(hostStep.freshness.expectedRef, "ref", HOST_STEP_MAX_REF_CHARS),
+			...(hostStep.freshness.observedRef ? { observedRef: publicText(hostStep.freshness.observedRef, "ref", HOST_STEP_MAX_REF_CHARS) } : {}),
+			...(hostStep.freshness.stale !== undefined ? { stale: hostStep.freshness.stale } : {}),
+		}
+		: undefined;
+	return {
+		name: publicText(hostStep.label, "host step", HOST_STEP_MAX_LABEL_CHARS),
+		kind: hostStep.monitorKind,
+		state: hostStep.state,
+		...(hostStep.role ? { role: publicText(hostStep.role, "role", HOST_STEP_MAX_ROLE_CHARS) } : {}),
+		...(hostStep.provider ? { provider: publicText(hostStep.provider, "provider", HOST_STEP_MAX_PROVIDER_CHARS) } : {}),
+		...(hostStep.verdict ? { verdict: hostStep.verdict } : {}),
+		...(hostStep.reasonCode ? { reasonCode: publicText(hostStep.reasonCode, "reason", HOST_STEP_MAX_REASON_CHARS) } : {}),
+		...(hostStep.detail ? { detail: publicText(hostStep.detail, "detail", HOST_STEP_MAX_DETAIL_CHARS) } : {}),
+		...(hostStep.target ? { target: publicText(hostStep.target, "target", HOST_STEP_MAX_TARGET_CHARS) } : {}),
+		...(freshness ? { freshness } : {}),
+		...(hostStep.reportPath ? { reportPath: hostStepReportName(hostStep.reportPath) } : {}),
+	};
+}
+
 /** Project loaded workflow child facts into compact rows; visibility bounds and rendering remain caller-owned. */
-export function projectAsyncWorkflowRows(steps: readonly AsyncJobStep[] | undefined): AsyncStatusWorkflowRow[] {
-	return (steps ?? []).map((step, index) => {
+export function projectAsyncWorkflowRows(steps: readonly AsyncJobStep[] | undefined, hostSteps?: readonly HostStepNodeV1[] | WorkflowGraphSnapshot): AsyncStatusWorkflowRow[] {
+	const childRows = (steps ?? []).map((step, index) => {
 		const modelThinking = formatModelThinking(step.model, step.thinking) || undefined;
 		const activity = workflowStepActivity(step);
 		return {
@@ -300,6 +397,7 @@ export function projectAsyncWorkflowRows(steps: readonly AsyncJobStep[] | undefi
 			...(step.tokens?.window !== undefined ? { window: step.tokens.window } : {}),
 		};
 	});
+	return [...childRows, ...validHostStepList(hostSteps).map(hostStepRow)];
 }
 
 /** Project already-loaded async status facts into the bounded public snapshot shape. */

@@ -14,6 +14,7 @@ export {
 export type {
 	AsyncStatusSnapshotActivityV1,
 	AsyncStatusSnapshotCapsV1,
+	AsyncStatusSnapshotHostStepV1,
 	AsyncStatusSnapshotKind,
 	AsyncStatusSnapshotNodeV1,
 	AsyncStatusSnapshotOmittedV1,

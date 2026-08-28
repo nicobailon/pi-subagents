@@ -13,6 +13,8 @@ import {
 	type AsyncJobStep,
 	type AsyncParallelGroupStatus,
 	type Details,
+	type HostStepState,
+	type HostStepVerdict,
 	type NestedRunSummary,
 	type NestedStepSummary,
 	type WorkflowNodeStatus,
@@ -31,6 +33,8 @@ import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, form
 import { contextModeBadge, contextModePrefix } from "../runs/shared/context-mode.ts";
 import { buildWorkflowChatProgressRows, type WorkflowChatProgressRow } from "../workflows/chat-progress.ts";
 import { encodeAsyncStatusSnapshotWidget } from "../runs/background/async-status-snapshot.ts";
+import { projectAsyncWorkflowRows, type AsyncStatusWorkflowRow } from "../runs/shared/async-status-projection.ts";
+import { hostStepReportName, hostStepVerdictLabel } from "../runs/shared/host-step-status.ts";
 
 type Theme = ExtensionContext["ui"]["theme"];
 
@@ -789,6 +793,22 @@ function nestedRenderKey(children: NestedRunSummary[] | undefined, expanded = fa
 	]);
 }
 
+function hostStepRenderKey(row: AsyncStatusWorkflowRow): unknown[] {
+	return [
+		row.kind,
+		row.name,
+		row.state,
+		row.provider,
+		row.role,
+		row.verdict,
+		row.reasonCode,
+		row.detail,
+		row.target,
+		row.freshness,
+		row.reportPath,
+	];
+}
+
 export function widgetRenderKey(job: AsyncJobState, expanded = false): string {
 	return JSON.stringify({
 		asyncDir: job.asyncDir,
@@ -805,6 +825,7 @@ export function widgetRenderKey(job: AsyncJobState, expanded = false): string {
 		currentStep: job.currentStep,
 		chainStepCount: job.chainStepCount,
 		parallelGroups: job.parallelGroups,
+		workflowHostSteps: projectAsyncWorkflowRows([], job.hostSteps).map(hostStepRenderKey),
 		steps: job.steps?.map((step, index) => widgetStepRenderKey(step, index, expanded)),
 		nestedChildren: nestedRenderKey(job.nestedChildren, expanded),
 		lane: laneRenderKey(job),
@@ -1486,11 +1507,37 @@ function foregroundStyleWidgetStepLines(
 	return lines;
 }
 
+function hostStepWidgetLines(job: AsyncJobState, theme: Theme, indent: string): string[] {
+	const rows = projectAsyncWorkflowRows([], job.hostSteps).filter((row) => row.kind);
+	const visible = rows.slice(0, 8);
+	const lines = visible.map((row) => {
+		const state = hostStepVerdictLabel(row.state as HostStepState, row.verdict as HostStepVerdict | undefined);
+		const glyph = state === "running" ? theme.fg("accent", "●")
+			: state === "pending" ? theme.fg("muted", "◦")
+			: state === "pass" ? theme.fg("success", "✓")
+			: state === "fail" || state === "error" ? theme.fg("error", "✗")
+			: theme.fg("warning", "■");
+		const details = [
+			row.provider ? `provider:${row.provider}` : undefined,
+			row.role ? `role:${row.role}` : undefined,
+			row.target,
+			row.detail,
+			row.reasonCode ? `reason:${row.reasonCode}` : undefined,
+			row.freshness?.stale ? "stale" : row.freshness?.observedRef ? `ref:${row.freshness.observedRef}` : undefined,
+			row.reportPath ? `out:${hostStepReportName(row.reportPath)}` : undefined,
+		].filter(Boolean).join(" · ");
+		return `${indent}${glyph} ${row.kind}: ${row.name} · ${state}${details ? ` · ${details}` : ""}`;
+	});
+	if (rows.length > visible.length) lines.push(`${indent}${theme.fg("dim", `… +${rows.length - visible.length} host steps hidden`)}`);
+	return lines;
+}
+
 function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded: boolean, width: number, frame?: number): string[] {
 	if (!job.steps?.length) {
 		const lane = projectAsyncLane(job);
 		return [
 			...(lane ? formatLaneProjectionLines(lane, theme, "  ") : []),
+			...hostStepWidgetLines(job, theme, "  "),
 			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
 			...formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt, expanded ? 12 : 6).map((line) => `  ${line}`),
 		];
@@ -1502,6 +1549,7 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 	for (const [index, step] of job.steps.entries()) {
 		lines.push(...foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index + 1, total, expanded, width, frame));
 	}
+	lines.push(...hostStepWidgetLines(job, theme, "  "));
 	const attached = new Set(job.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []));
 	const unattached = job.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
 	for (const nestedLine of formatNestedWidgetLines(unattached, theme, width, expanded, job.updatedAt, expanded ? 12 : 6)) {
@@ -1542,6 +1590,7 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 		if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "  "));
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, false, job.updatedAt, 6)) lines.push(`    ${nestedLine}`);
 	}
+	lines.push(...hostStepWidgetLines(job, theme, "  "));
 	if (job.steps.some((step) => step.status === "running")) lines.push(theme.fg("accent", `  ${liveDetailHintText()}`));
 	return lines.map((line) => truncLine(line, width));
 }

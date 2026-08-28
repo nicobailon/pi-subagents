@@ -8,6 +8,7 @@ import { DIRS, type AsyncParallelGroupStatus, type AsyncStatus, type NestedRunSu
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, type NestedRoute } from "../shared/nested-events.ts";
+import { assertWorkflowGraphHostSteps } from "../shared/host-step-status.ts";
 
 export type PidLiveness = "alive" | "dead" | "unknown";
 
@@ -357,6 +358,7 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 	const startedStatus = !status && options.startedRun ? buildStartedStatus(asyncDir, options.startedRun, now) : undefined;
 	const effectiveStatus = status ?? startedStatus;
 	if (!effectiveStatus) return { status: null, repaired: false };
+	assertWorkflowGraphHostSteps(effectiveStatus.workflowGraph, path.join(asyncDir, "status.json"), effectiveStatus.runId);
 	const statusPath = path.join(asyncDir, "status.json");
 	for (const [index, step] of (effectiveStatus.steps ?? []).entries()) {
 		const stepRecord = step as Record<string, unknown>;

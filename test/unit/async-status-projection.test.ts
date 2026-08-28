@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { AsyncJobState } from "../../src/shared/types.ts";
+import type { AsyncJobState, HostStepNodeV1 } from "../../src/shared/types.ts";
 import {
 	ASYNC_STATUS_SNAPSHOT_KIND,
 	ASYNC_STATUS_SNAPSHOT_VERSION,
@@ -13,6 +13,21 @@ function job(input: Partial<AsyncJobState> & Pick<AsyncJobState, "asyncId" | "st
 		asyncDir: `/tmp/${input.asyncId}`,
 		...input,
 	} as AsyncJobState;
+}
+
+function hostStep(overrides: Partial<HostStepNodeV1> = {}): HostStepNodeV1 {
+	return {
+		version: 1,
+		kind: "host-step",
+		monitorKind: "ci",
+		id: "ci-check",
+		label: "CI checks",
+		provider: "github-ci",
+		state: "done",
+		verdict: "pass",
+		updatedAt: 20,
+		...overrides,
+	};
 }
 
 describe("async status projection", () => {
@@ -82,5 +97,32 @@ describe("async status projection", () => {
 			tokens: 25,
 			window: 18,
 		}]);
+	});
+
+	it("projects typed CI and gate host rows without treating them as child agents", () => {
+		const rows = projectAsyncWorkflowRows([], {
+			runId: "workflow-1",
+			mode: "workflow",
+			phases: [],
+			nodes: [
+				{ id: "ci-check", kind: "host-step", label: "CI checks", status: "completed", hostStep: hostStep() },
+				{ id: "review-gate", kind: "host-step", label: "Review gate", status: "completed", hostStep: hostStep({ id: "review-gate", monitorKind: "gate", label: "Review gate", verdict: "inconclusive", reasonCode: "stale-head", detail: "head changed", target: "PR #1614", freshness: { expectedRef: "old-head", observedRef: "new-head", stale: true }, reportPath: "/tmp/reports/gate.json" }) },
+			],
+		});
+
+		assert.deepEqual(rows, [
+			{ name: "CI checks", kind: "ci", state: "done", provider: "github-ci", verdict: "pass" },
+			{ name: "Review gate", kind: "gate", state: "done", provider: "github-ci", verdict: "inconclusive", reasonCode: "stale-head", detail: "head changed", target: "PR #1614", freshness: { expectedRef: "old-head", observedRef: "new-head", stale: true }, reportPath: "gate.json" },
+		]);
+	});
+
+	it("omits malformed host nodes instead of rendering them as agents", () => {
+		const rows = projectAsyncWorkflowRows([], {
+			runId: "workflow-1",
+			mode: "workflow",
+			phases: [],
+			nodes: [{ id: "bad", kind: "host-step", label: "bad", status: "running" }],
+		});
+		assert.deepEqual(rows, []);
 	});
 });

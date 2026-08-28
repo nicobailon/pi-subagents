@@ -74,6 +74,70 @@ describe("async status helpers", () => {
 		}
 	});
 
+	it("loads typed host monitor nodes from workflow status without child identity", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-host-step-"));
+		try {
+			createAsyncDir(root, "workflow-host", {
+				runId: "workflow-host",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{ agent: "reviewer", workflowKey: "review", runId: "child-review", status: "running" }],
+				workflowGraph: {
+					runId: "workflow-host",
+					mode: "workflow",
+					phases: [],
+					nodes: [{
+						id: "ci-check",
+						kind: "host-step",
+						label: "CI",
+						status: "completed",
+						hostStep: {
+							version: 1,
+							kind: "host-step",
+							monitorKind: "ci",
+							id: "ci-check",
+							label: "CI",
+							provider: "local-tests",
+							state: "running",
+							detail: "waiting for checks",
+							updatedAt: 150,
+						},
+					}],
+				},
+			});
+
+			const runs = listAsyncRuns(root, { states: ["running"], reconcile: false });
+			assert.equal(runs[0]?.hostSteps?.[0]?.kind, "host-step");
+			assert.equal(runs[0]?.steps[0]?.workflowKey, "review");
+			assert.match(formatAsyncRunList(runs), /host ci: CI \| running \| provider:local-tests \| waiting for checks/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("fails closed when a persisted host monitor node is malformed", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-host-step-invalid-"));
+		try {
+			createAsyncDir(root, "workflow-host-invalid", {
+				runId: "workflow-host-invalid",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				workflowGraph: {
+					runId: "workflow-host-invalid",
+					mode: "workflow",
+					phases: [],
+					nodes: [{ id: "bad", kind: "host-step", label: "bad", status: "running" }],
+				},
+			});
+			assert.throws(() => listAsyncRuns(root, { states: ["running"], reconcile: false }), /host step.*expected an object/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("preserves agent contract projections on step summaries", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-contract-"));
 		try {

@@ -42,9 +42,40 @@ export type ChainOutputMap = Record<string, ChainOutputMapEntry>;
 
 export type WorkflowNodeStatus = "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "detached" | "rejected";
 
+export type HostStepMonitorKind = "ci" | "gate";
+export type HostStepState = "pending" | "running" | "done" | "cancelled" | "error";
+export type HostStepVerdict = "pass" | "fail" | "inconclusive";
+
+export interface HostStepFreshnessV1 {
+	expectedRef: string;
+	observedRef?: string;
+	stale?: boolean;
+}
+
+/** Bounded, provider-agnostic status for a host-owned workflow monitor. */
+export interface HostStepNodeV1 {
+	version: 1;
+	kind: "host-step";
+	/** Explicit monitor category; never inferred from labels or commands. */
+	monitorKind: HostStepMonitorKind;
+	id: string;
+	label: string;
+	role?: string;
+	provider?: string;
+	state: HostStepState;
+	verdict?: HostStepVerdict;
+	reasonCode?: string;
+	detail?: string;
+	target?: string;
+	freshness?: HostStepFreshnessV1;
+	reportPath?: string;
+	updatedAt: number;
+	deadlineAt?: number;
+}
+
 export interface WorkflowGraphNode {
 	id: string;
-	kind: "step" | "parallel-group" | "dynamic-parallel-group" | "agent";
+	kind: "step" | "parallel-group" | "dynamic-parallel-group" | "agent" | "host-step";
 	agent?: string;
 	phase?: string;
 	label: string;
@@ -64,6 +95,7 @@ export interface WorkflowGraphNode {
 	structured?: boolean;
 	acceptanceStatus?: AcceptanceLedgerStatus;
 	error?: string;
+	hostStep?: HostStepNodeV1;
 }
 
 export interface WorkflowGraphSnapshot {
@@ -129,6 +161,7 @@ export interface WorkflowReceipt {
 	state: WorkflowReceiptState;
 	createdAt: number;
 	entries: Record<string, WorkflowReceiptEntry>;
+	hostSteps?: HostStepNodeV1[];
 	workflowChildren?: WorkflowChildSummaryV1;
 	workflowResolution?: WorkflowTerminalResolution;
 	terminalOutcome?: WorkflowTerminalOutcome;
@@ -1752,6 +1785,8 @@ export interface AsyncJobState {
 	currentStep?: number;
 	chainStepCount?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
+	/** Bounded host-owned CI/gate nodes loaded from the workflow status graph. */
+	hostSteps?: HostStepNodeV1[];
 	steps?: AsyncJobStep[];
 	stepsTotal?: number;
 	runningSteps?: number;

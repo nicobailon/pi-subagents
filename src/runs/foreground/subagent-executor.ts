@@ -125,6 +125,7 @@ import { handleHerdrInspectorAction, HERDR_INSPECTOR_ACTIONS } from "../../inspe
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
 import { previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowReceiptResumeReference, type WorkflowScriptChildResult, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
 import { buildWorkflowReceipt, resolveWorkflowReceiptResumeEntry, writeWorkflowReceipt, type WorkflowReceipt, type WorkflowReceiptState } from "../../workflows/workflow-receipt.ts";
+import { validHostStepNodes } from "../shared/host-step-status.ts";
 import { workflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 import { resolveWorkflowChatProgress, type WorkflowChatProgressProjection } from "../../workflows/chat-progress.ts";
 import { claimWorkflowChildPermit, validateWorkflowChildPermitRoot, type WorkflowChildPermit, type WorkflowChildPermitContext } from "../../shared/workflow-child-permit.ts";
@@ -4146,8 +4147,9 @@ function terminalWorkflowReceipt(
 	children: WorkflowScriptChildResult[],
 	workflowChildren?: WorkflowReceipt["workflowChildren"],
 	terminalOutcome?: WorkflowTerminalOutcome,
+	hostSteps?: WorkflowReceipt["hostSteps"],
 ): WorkflowReceipt {
-	return buildWorkflowReceipt({ workflowRunId, state, children, workflowChildren, terminalOutcome });
+	return buildWorkflowReceipt({ workflowRunId, state, children, workflowChildren, terminalOutcome, hostSteps });
 }
 
 function workflowFailureTerminalOutcome(error: unknown, _children: WorkflowScriptChildResult[], usageBudget: ReturnType<typeof usageBudgetState>): WorkflowTerminalOutcome | undefined {
@@ -4988,7 +4990,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const workflowUsage = sumResultsUsage(workflowResults);
 						const workflowChildren = workflowChildSummary({ parentToolCallId: toolCallId, workflowRunId, workflowState: "completed", inventoryComplete: true, trace: workflow.trace, children: workflow.children, steps: status.steps });
 						status = { ...status, state: "complete", endedAt: Date.now(), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, workflowChildren, totalTokens: { input: workflowUsage.input, output: workflowUsage.output, total: workflowUsage.input + workflowUsage.output }, totalCost: sumResultsCost(workflowResults) };
-						const receipt = terminalWorkflowReceipt(workflowRunId, "complete", workflow.children, workflowChildren);
+						const receipt = terminalWorkflowReceipt(workflowRunId, "complete", workflow.children, workflowChildren, undefined, validHostStepNodes(status.workflowGraph));
 						let workflowReceipt: { path: string; receipt: WorkflowReceipt } | undefined;
 						try {
 							workflowReceipt = { path: writeWorkflowReceipt(asyncDir, receipt), receipt };
@@ -5031,7 +5033,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const resultSummary = appendWorkflowOutputWarning(terminalSummary, outputWarning);
 						const receiptState: WorkflowReceiptState = status.state === "complete" ? "complete" : status.state === "paused" ? "paused" : status.state === "stopped" ? "stopped" : "failed";
 						const terminalOutcome = workflowFailureTerminalOutcome(error, partial.children, usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)));
-						const receipt = terminalWorkflowReceipt(workflowRunId, receiptState, partial.children, workflowChildren, terminalOutcome);
+						const receipt = terminalWorkflowReceipt(workflowRunId, receiptState, partial.children, workflowChildren, terminalOutcome, validHostStepNodes(status.workflowGraph));
 						let workflowReceipt: { path: string; receipt: WorkflowReceipt } | undefined;
 						try {
 							workflowReceipt = { path: writeWorkflowReceipt(asyncDir, receipt), receipt };
