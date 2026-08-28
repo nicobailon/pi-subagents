@@ -292,6 +292,7 @@ export interface AsyncLaneProjection {
 	gate?: string;
 	next?: string;
 	output?: string;
+	workspace?: string;
 	ref: string;
 	chips: string[];
 }
@@ -357,9 +358,10 @@ function isTerminalLaneState(state: AsyncJobState["status"]): boolean {
 /** Project already-loaded async status facts into one bounded, render-only lane row. */
 export function projectAsyncLane(job: AsyncJobState, selectedStep = laneStepForJob(job)): AsyncLaneProjection | undefined {
 	const trace = laneTraceForJob(job);
+	const workspace = job.cwd ? boundedLaneValue(shortenPath(job.cwd)) : undefined;
 	const label = compactTaskText(selectedStep?.description, selectedStep?.label)
 		?? boundedLaneValue(trace?.label)
-		?? boundedLaneValue(selectedStep?.workflowKey ?? job.workflowKey);
+		?? (workspace ? undefined : boundedLaneValue(selectedStep?.workflowKey ?? job.workflowKey));
 	const role = boundedLaneValue(selectedStep?.agent ?? trace?.agent ?? job.agents?.[0] ?? widgetJobName(job), 32) ?? "subagent";
 	const phase = boundedLaneValue(selectedStep?.phase ?? trace?.phase);
 	const gate = laneGate(selectedStep);
@@ -376,7 +378,7 @@ export function projectAsyncLane(job: AsyncJobState, selectedStep = laneStepForJ
 	const state = isTerminalLaneState(job.status) ? job.status : selectedStep?.status ?? job.status;
 	const next = laneNextAction(state, selectedStep, output, gate);
 	if (!label && !phase && !gate && !output && !selectedStep?.workflowKey && !job.workflowKey && !trace?.label && !trace?.phase) return undefined;
-	return { ...(label ? { label } : {}), role, ...(phase ? { phase } : {}), state, ...(gate ? { gate } : {}), ...(next ? { next } : {}), ...(output ? { output } : {}), ref, chips };
+	return { ...(label ? { label } : {}), role, ...(phase ? { phase } : {}), state, ...(gate ? { gate } : {}), ...(next ? { next } : {}), ...(output ? { output } : {}), ...(workspace ? { workspace } : {}), ref, chips };
 }
 
 function laneStateLabel(state: AsyncLaneProjection["state"], theme: Theme): string {
@@ -406,7 +408,7 @@ function formatLaneProjectionDetails(lane: AsyncLaneProjection, theme: Theme): s
 		lane.gate ? `gate:${lane.gate}` : undefined,
 		lane.next ? `next:${lane.next}` : undefined,
 		lane.output ? `out:${lane.output}` : undefined,
-		lane.ref ? `ref:${lane.ref}` : undefined,
+		lane.workspace ? `workspace:${lane.workspace}` : lane.ref ? `ref:${lane.ref}` : undefined,
 	].filter(Boolean);
 	const chips = lane.chips.map((chip) => formatLaneChip(chip, theme));
 	return [...(details.length ? [theme.fg("dim", details.join(" · "))] : []), ...chips].join(" · ") || undefined;
@@ -422,7 +424,7 @@ function formatLaneProjectionLines(lane: AsyncLaneProjection, theme: Theme, inde
 
 function laneRenderKey(job: AsyncJobState): unknown {
 	const lane = projectAsyncLane(job);
-	return lane ? [lane.label, lane.role, lane.phase, lane.state, lane.gate, lane.next, lane.output, lane.ref, lane.chips] : undefined;
+	return lane ? [lane.label, lane.role, lane.phase, lane.state, lane.gate, lane.next, lane.output, lane.workspace, lane.ref, lane.chips] : undefined;
 }
 
 function widgetLaneDetailLines(job: AsyncJobState, theme: Theme): string[] {
@@ -1678,7 +1680,7 @@ function progressiveJobLine(job: AsyncJobState, theme: Theme, width: number, fra
 	const status = job.status === "complete" ? "done" : job.status;
 	const lane = projectAsyncLane(job);
 	const laneSummary = lane
-		? [lane.label ?? lane.role, lane.phase ? `phase:${lane.phase}` : undefined, lane.output ? `out:${lane.output}` : undefined, `ref:${lane.ref}`].filter(Boolean).join(" · ")
+		? [lane.label ?? lane.role, lane.phase ? `phase:${lane.phase}` : undefined, lane.output ? `out:${lane.output}` : undefined, lane.workspace ? `workspace:${lane.workspace}` : `ref:${lane.ref}`].filter(Boolean).join(" · ")
 		: "";
 	const laneSignals = lane
 		? [lane.next ? `next:${lane.next}` : undefined, ...lane.chips.map((chip) => formatLaneChip(chip, theme))].filter(Boolean).join(" · ")

@@ -3,12 +3,13 @@ import { describe, it } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { extractToolArgsPreview } from "../../src/shared/utils.ts";
 
-const { buildWidgetLines, clearLegacyResultAnimationTimer, compactTaskText, projectAsyncLane, renderWidget } = await import("../../src/tui/render.ts") as {
+const { buildWidgetLines, clearLegacyResultAnimationTimer, compactTaskText, projectAsyncLane, renderWidget, widgetRenderKey } = await import("../../src/tui/render.ts") as {
 	buildWidgetLines: (jobs: Array<Record<string, unknown>>, theme: { fg(name: string, text: string): string; bold(text: string): string }, width?: number, expanded?: boolean, frame?: number) => string[];
 	clearLegacyResultAnimationTimer: (context: { state: { subagentResultAnimationTimer?: ReturnType<typeof setInterval> } }) => void;
 	compactTaskText: (task: string | undefined, label?: string) => string | undefined;
-	projectAsyncLane: (job: Record<string, unknown>) => { label?: string; role: string; phase?: string; state: string; gate?: string; next?: string; output?: string; ref: string; chips: string[] } | undefined;
+	projectAsyncLane: (job: Record<string, unknown>) => { label?: string; role: string; phase?: string; state: string; gate?: string; next?: string; output?: string; workspace?: string; ref: string; chips: string[] } | undefined;
 	renderWidget: (ctx: Record<string, unknown>, jobs: Array<Record<string, unknown>>) => void;
+	widgetRenderKey: (job: Record<string, unknown>, expanded?: boolean) => string;
 };
 
 const theme = {
@@ -133,10 +134,113 @@ describe("subagent async widget rendering", () => {
 		assert.match(text, /phase:implementation · next:await launch · out:fix\.md/);
 	});
 
+	it("prefers bounded loaded workspace context over repeated internal lane refs", () => {
+		const workspacePath = `/tmp/workspaces/${"project-".repeat(16)}`;
+		const job = {
+			asyncId: "workspace-run",
+			asyncDir: "/tmp/workspace-run",
+			cwd: workspacePath,
+			status: "running",
+			mode: "single",
+			agents: ["reviewer"],
+			workflowKey: "internal-workflow-key",
+			steps: [{ index: 0, agent: "reviewer", status: "running", workflowKey: "internal-workflow-key" }],
+		};
+
+		const lane = projectAsyncLane(job);
+		assert.equal(lane?.ref, "internal-workflow-key");
+		assert.ok(lane?.workspace);
+		assert.ok((lane.workspace?.length ?? 0) <= 48, "workspace display should stay bounded");
+		assert.match(lane?.workspace ?? "", /^\/tmp\/workspaces\/project-/);
+		assert.match(lane?.workspace ?? "", /\.\.\.$/);
+
+		const text = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.match(text, /workspace:\/tmp\/workspaces\/project-/);
+		assert.doesNotMatch(text, /ref:internal-workflow-key/);
+	});
+
+	it("shows workspace context in expanded single and parallel/chain rows", () => {
+		for (const mode of ["single", "parallel", "chain"] as const) {
+			const workflowKey = `${mode}-workflow-key`;
+			const workspace = `/tmp/${mode}-workspace`;
+			const job = {
+				asyncId: `${mode}-workspace-run`,
+				asyncDir: `/tmp/${mode}-workspace-run`,
+				cwd: workspace,
+				status: "running",
+				mode,
+				agents: ["worker"],
+				steps: [{ index: 0, agent: "worker", status: "running", workflowKey }],
+			};
+
+			const text = buildWidgetLines([job], theme, 180, true).join("\n");
+			assert.match(text, new RegExp(`workspace:${escapeRegExp(workspace)}`));
+			assert.doesNotMatch(text, new RegExp(`ref:${escapeRegExp(workflowKey)}`));
+		}
+	});
+
+	it("keeps the bounded workflow-key fallback when no workspace is loaded", () => {
+		const workflowKey = `internal-${"workflow-key-".repeat(8)}`;
+		const job = {
+			asyncId: "fallback-ref-run",
+			asyncDir: "/tmp/fallback-ref-run",
+			status: "running",
+			mode: "single",
+			agents: ["worker"],
+			workflowKey,
+		};
+
+		const lane = projectAsyncLane(job);
+		assert.equal(lane?.workspace, undefined);
+		assert.ok(lane?.ref);
+		assert.ok((lane.ref.length) <= 24, "workflow-key fallback should stay bounded");
+		const text = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.match(text, new RegExp(`ref:${escapeRegExp(lane?.ref ?? "")}`));
+	});
+
+	it("uses workspace context in compact progressive lane headers", () => {
+		resetWidgetLayout();
+		withStdoutSize(22, 120, () => {
+			const workspace = "/tmp/compact-workspace";
+			const job = {
+				asyncId: "compact-workspace-run",
+				asyncDir: "/tmp/compact-workspace-run",
+				cwd: workspace,
+				status: "running",
+				mode: "single",
+				agents: ["worker"],
+				workflowKey: "compact-workflow-key",
+				currentTool: "read",
+			};
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [job]);
+			const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
+			assert.match(text, new RegExp(`workspace:${escapeRegExp(workspace)}`));
+			assert.doesNotMatch(text, /ref:compact-workflow-key/);
+		});
+		resetWidgetLayout();
+	});
+
+	it("refreshes widget render keys when loaded workspace changes", () => {
+		const base = {
+			asyncId: "render-key-workspace-run",
+			asyncDir: "/tmp/render-key-workspace-run",
+			status: "running",
+			mode: "single",
+			agents: ["worker"],
+			workflowKey: "render-key-workflow",
+		};
+		assert.notEqual(
+			widgetRenderKey({ ...base, cwd: "/tmp/workspace-one" }),
+			widgetRenderKey({ ...base, cwd: "/tmp/workspace-two" }),
+		);
+	});
+
 	it("keeps simple one-off async rows on the existing fallback projection", () => {
 		const job = {
 			asyncId: "simple-run",
 			asyncDir: "/tmp/simple-run",
+			cwd: "/repo/simple",
 			status: "running",
 			mode: "single",
 			agents: ["scout"],
