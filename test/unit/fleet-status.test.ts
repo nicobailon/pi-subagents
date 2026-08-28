@@ -700,6 +700,15 @@ describe("below-editor subagent FleetView", () => {
 			mode: "parallel",
 			startedAt: 10,
 			updatedAt: 30,
+			nestedChildren: [0, 1, 2].map((index) => ({
+				id: `nested-${index}`,
+				parentRunId: "parallel",
+				parentStepIndex: index,
+				depth: 1,
+				path: [{ runId: "parallel", stepIndex: index }],
+				state: "running" as const,
+				agent: `nested-${index}`,
+			})),
 			activeChildren: new Map([
 				[0, { index: 0, agent: "reviewer", description: "Review correctness", startedAt: 11, updatedAt: 21, tokens: 100 }],
 				[1, { index: 1, agent: "reviewer", description: "Review quality", startedAt: 12, updatedAt: 22, tokens: 200 }],
@@ -714,6 +723,7 @@ describe("below-editor subagent FleetView", () => {
 			"foreground-active:parallel:2",
 		]);
 		assert.deepEqual(entries.map((entry) => entry.description), ["Review correctness", "Review quality", "Review tests"]);
+		assert.deepEqual(entries.map((entry) => entry.nestedChildren?.map((child) => child.id)), [["nested-0"], ["nested-1"], ["nested-2"]]);
 		assert.deepEqual(collectFleetSnapshot(state).items.map((item) => item.key), entries.map((entry) => entry.key));
 	});
 

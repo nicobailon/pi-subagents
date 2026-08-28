@@ -313,8 +313,18 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 	for (const control of state.foregroundControls.values()) {
 		const linkedParentKey = linkedWorkflowParentKey(control.parentWorkflowRunId, activeWorkflowKeys);
 		if (control.activeChildren) {
+			const nestedChildren = control.nestedChildren ?? [];
+			const nestedChildrenByParentStep = new Map<number, NestedRunSummary[]>();
+			for (const nested of nestedChildren) {
+				if (nested.parentStepIndex === undefined) continue;
+				const children = nestedChildrenByParentStep.get(nested.parentStepIndex) ?? [];
+				children.push(nested);
+				nestedChildrenByParentStep.set(nested.parentStepIndex, children);
+			}
 			for (const child of [...control.activeChildren.values()].sort((left, right) => left.index - right.index)) {
 				const modelThinking = formatModelThinking(child.model, child.thinking) || undefined;
+				const childNestedChildren = nestedChildrenByParentStep.get(child.index)
+					?? (control.activeChildren.size === 1 && nestedChildren.length ? nestedChildren : undefined);
 				entries.push({
 					key: `foreground-active:${control.runId}:${child.index}`,
 					...(linkedParentKey ? { parentKey: linkedParentKey } : {}),
@@ -322,12 +332,10 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 					...(modelThinking ? { modelThinking } : {}),
 					description: foregroundDescription(control, child.description),
 					startedAt: child.startedAt,
-				tokens: child.tokens ?? 0,
-				...(child.window !== undefined ? { window: child.window } : {}),
+					tokens: child.tokens ?? 0,
+					...(child.window !== undefined ? { window: child.window } : {}),
 					state: "running",
-					...((control.nestedChildren?.filter((nested) => nested.parentStepIndex === child.index).length ?? 0) > 0
-						? { nestedChildren: control.nestedChildren!.filter((nested) => nested.parentStepIndex === child.index) }
-						: control.activeChildren.size === 1 && control.nestedChildren?.length ? { nestedChildren: control.nestedChildren } : {}),
+					...(childNestedChildren?.length ? { nestedChildren: childNestedChildren } : {}),
 				});
 			}
 			continue;
@@ -633,6 +641,10 @@ export class SubagentFleetStatus {
 		}
 		const roster = this.rosterKeys();
 		const selectedIndex = Math.max(0, roster.indexOf(this.selectedKey));
+		const rosterIndexByKey = new Map<string, number>();
+		for (const [index, entry] of this.entries.entries()) {
+			if (!rosterIndexByKey.has(entry.key)) rosterIndexByKey.set(entry.key, index + 1);
+		}
 		const lines = [truncateToWidth(`  ${theme.fg("dim", "↑↓/jk select · enter inspect · esc back")}`, width), ""];
 		lines.push(truncateToWidth(`  ${this.bullet(0, selectedIndex, theme)} main`, width));
 
@@ -646,8 +658,8 @@ export class SubagentFleetStatus {
 		for (let index = start; index < start + visibleCount; index++) {
 			const row = tree[index]!;
 			if (row.kind === "owner" || row.kind === "child") {
-				const ownerIndex = this.entries.findIndex((entry) => entry.key === row.entry.key);
-				lines.push(this.renderEntry(ownerIndex + 1, selectedIndex, row.entry, width, theme, row.kind === "child" ? (row.last ? "└─" : "├─") : undefined));
+				const rosterIndex = rosterIndexByKey.get(row.entry.key) ?? 0;
+				lines.push(this.renderEntry(rosterIndex, selectedIndex, row.entry, width, theme, row.kind === "child" ? (row.last ? "└─" : "├─") : undefined));
 			} else if (row.kind === "workflow") {
 				lines.push(this.renderWorkflowRow(row.row, row.last, width, theme));
 			} else {
@@ -655,16 +667,16 @@ export class SubagentFleetStatus {
 			}
 		}
 		if (hiddenBelow > 0) lines.push(rightAlign("", theme.fg("dim", `↓ ${hiddenBelow} more`), width));
-		this.renderProjectPaneSection(lines, selectedIndex, width, theme);
+		this.renderProjectPaneSection(lines, selectedIndex, width, theme, rosterIndexByKey);
 		return lines;
 	}
 
-	private renderProjectPaneSection(lines: string[], selectedIndex: number, width: number, theme: Theme): void {
+	private renderProjectPaneSection(lines: string[], selectedIndex: number, width: number, theme: Theme, rosterIndexByKey: ReadonlyMap<string, number>): void {
 		const entries = this.entries.filter((entry) => entry.surface === "project-pane");
 		if (!entries.length) return;
 		lines.push("", truncateToWidth(`  ${theme.fg("dim", "project panes")}`, width));
 		for (const entry of entries) {
-			const rosterIndex = this.entries.findIndex((candidate) => candidate.key === entry.key) + 1;
+			const rosterIndex = rosterIndexByKey.get(entry.key) ?? 0;
 			lines.push(this.renderEntry(rosterIndex, selectedIndex, entry, width, theme));
 		}
 	}
