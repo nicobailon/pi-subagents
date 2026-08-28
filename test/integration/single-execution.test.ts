@@ -3140,7 +3140,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.existsSync(path.join(tempDir, "feature.txt")), false);
 	});
 
-	it("pauses an async workflow when its child detaches for supervisor coordination", { skip: !createSubagentExecutor ? "executor unavailable" : undefined }, async () => {
+	it("continues an async sequential workflow after supervisor coordination settles", { skip: !createSubagentExecutor ? "executor unavailable" : undefined }, async () => {
 		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
 		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
 		execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
@@ -3148,11 +3148,13 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
 		execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
 		mockPi.onCall({
+			matchArgIncludes: "Ask then continue",
 			steps: [
 				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
 				{ delay: 500, jsonl: [events.assistantMessage("done after coordination")] },
 			],
 		});
+		mockPi.onCall({ matchArgIncludes: "Use coordinated output: done after coordination", output: "tail completed" });
 		const piEvents = createEventBus();
 		const asyncJobs: SubagentState["asyncJobs"] = new Map();
 		const executor = makeExecutor(
@@ -3182,7 +3184,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			{
 				workflowScript: `
 					const child = await runs.run("detaches", { agent: "worker", task: "Ask then continue", worktree: true });
-					return child.output;
+					const tail = await runs.run("tail", { agent: "worker", task: "Use coordinated output: " + child.output });
+					return tail.output;
 				`,
 			},
 			new AbortController().signal,
@@ -3198,57 +3201,13 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const activeMarkerPath = path.join(DIRS.async, ACTIVE_RUN_INDEX_DIR, workflowRunId);
 
 		let status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
-		for (let attempt = 0; attempt < 150 && status.state !== "paused" && status.state !== "failed"; attempt++) {
+		for (let attempt = 0; attempt < 150 && status.steps?.[0]?.activityState !== "needs_attention"; attempt++) {
 			await new Promise((resolve) => setTimeout(resolve, 20));
 			status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
 		}
 		clearInterval(detachTimer);
 
 		assert.equal(detachAccepted, true);
-		assert.equal(status.state, "paused", status.error);
-		assert.equal(status.activityState, "needs_attention");
-		assert.match(status.error ?? "", /detached for intercom coordination/i);
-		assert.equal(status.workflow?.trace.some((entry) => entry.key === "detaches" && entry.state === "detached"), true);
-		assert.equal(status.workflow?.trace.some((entry) => entry.key === "detaches" && entry.state === "failed"), false);
-		assert.equal(status.steps?.[0]?.status, "paused");
-		assert.equal(status.steps?.[0]?.activityState, "needs_attention");
-		assert.equal(asyncJobs.get(workflowRunId)?.status, "paused");
-		assert.equal(asyncJobs.get(workflowRunId)?.activityState, "needs_attention");
-		assert.equal(fs.existsSync(activeMarkerPath), false);
-
-		let persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as {
-			state?: string;
-			activityState?: string;
-			error?: string;
-			summary?: string;
-			workflow?: { trace?: Array<{ key?: string; state?: string }> };
-			results?: Array<{ detached?: boolean; artifactPaths?: { outputPath?: string } }>;
-		};
-		assert.equal(persistedResult.state, "paused");
-		assert.equal(persistedResult.activityState, "needs_attention");
-		assert.match(persistedResult.error ?? "", /Reply to the supervisor request first/);
-		assert.match(persistedResult.summary ?? "", /subagent_wait/);
-		assert.equal(persistedResult.workflow?.trace?.some((entry) => entry.key === "detaches" && entry.state === "detached"), true);
-		assert.equal(persistedResult.workflow?.trace?.some((entry) => entry.key === "detaches" && entry.state === "failed"), false);
-		assert.equal(persistedResult.results?.[0]?.detached, true);
-		const handoffPath = persistedResult.results?.[0]?.artifactPaths?.outputPath;
-		assert.ok(handoffPath, "missing preserved worktree handoff path");
-		let handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8")) as {
-			groups: Array<{
-				children: Array<{ status: string; patch: { changed: boolean; filesChanged: number } }>;
-				cleanup: { state: string; tasks: Array<{ path: string; branch: string; preserved: boolean; worktreeRemoved: boolean; branchRemoved: boolean }> };
-			}>;
-		};
-		const cleanup = handoff.groups[0]?.cleanup;
-		assert.equal(cleanup?.state, "partial");
-		assert.equal(cleanup?.tasks[0]?.preserved, true);
-		assert.equal(cleanup?.tasks[0]?.worktreeRemoved, false);
-		assert.equal(cleanup?.tasks[0]?.branchRemoved, false);
-		const worktreePath = cleanup?.tasks[0]?.path;
-		const branch = cleanup?.tasks[0]?.branch;
-		assert.ok(worktreePath);
-		assert.ok(branch);
-		assert.equal(fs.existsSync(worktreePath), true, "live detached worktree must remain present");
 
 		let reconciled: AsyncStatus | undefined;
 		for (let attempt = 0; attempt < 150; attempt++) {
@@ -3256,33 +3215,49 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			if (reconciled.state === "complete" || reconciled.state === "failed") break;
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
-		assert.equal(reconciled?.state, "failed", reconciled?.error);
-		assert.match(reconciled?.error ?? "", /unsupported-continuation/);
+		assert.equal(reconciled?.state, "complete", reconciled?.error);
 		assert.equal(reconciled?.activityState, undefined);
 		assert.equal(reconciled?.steps?.[0]?.status, "completed");
 		assert.equal(reconciled?.steps?.[0]?.activityState, undefined);
-		assert.equal(asyncJobs.get(workflowRunId)?.status, "failed");
+		assert.equal(reconciled?.steps?.[1]?.workflowKey, "tail");
+		assert.equal(reconciled?.steps?.[1]?.status, "completed");
+		assert.equal(asyncJobs.get(workflowRunId)?.status, "complete");
+		assert.equal(mockPi.callCount(), 2);
 
-		persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
-		assert.equal(persistedResult.state, "failed");
+		const persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as {
+			state?: string;
+			success?: boolean;
+			activityState?: string;
+			error?: string;
+			results?: Array<{ workflowKey?: string; success?: boolean; output?: string; detached?: boolean; artifactPaths?: { outputPath?: string } }>;
+		};
+		assert.equal(persistedResult.state, "complete");
+		assert.equal(persistedResult.success, true);
 		assert.equal(persistedResult.activityState, undefined);
-		assert.match(persistedResult.error ?? "", /unsupported-continuation/);
-		for (let attempt = 0; attempt < 150 && handoff.groups[0]?.cleanup.state !== "complete"; attempt++) {
-			await new Promise((resolve) => setTimeout(resolve, 20));
-			handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8")) as typeof handoff;
-		}
+		assert.equal(persistedResult.error, undefined);
+		assert.equal(persistedResult.results?.find((entry) => entry.workflowKey === "detaches")?.detached, undefined);
+		assert.equal(persistedResult.results?.find((entry) => entry.workflowKey === "tail")?.output, "tail completed");
+		const handoffPath = persistedResult.results?.find((entry) => entry.workflowKey === "detaches")?.artifactPaths?.outputPath;
+		assert.ok(handoffPath, "missing finalized worktree handoff path");
+		const handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8")) as {
+			groups: Array<{
+				children: Array<{ status: string; patch: { changed: boolean; filesChanged: number } }>;
+				cleanup: { state: string; tasks: Array<{ path: string; worktreeRemoved: boolean; branchRemoved: boolean }> };
+			}>;
+		};
 		assert.equal(handoff.groups[0]?.children[0]?.status, "completed");
 		assert.equal(handoff.groups[0]?.children[0]?.patch.changed, false);
 		assert.equal(handoff.groups[0]?.children[0]?.patch.filesChanged, 0);
 		assert.equal(handoff.groups[0]?.cleanup.state, "complete");
 		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.worktreeRemoved, true);
 		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.branchRemoved, true);
-		assert.equal(fs.existsSync(worktreePath), false);
+		assert.equal(fs.existsSync(handoff.groups[0]?.cleanup.tasks[0]?.path ?? ""), false);
+		assert.equal(fs.existsSync(activeMarkerPath), false);
 		fs.rmSync(started.details.asyncDir, { recursive: true, force: true });
 		fs.rmSync(resultPath, { force: true });
 	});
 
-	it("keeps async workflows failed when a detached child is mixed with a real failure", { skip: !createSubagentExecutor ? "executor unavailable" : undefined }, async () => {
+	it("keeps async workflows failed when a coordinated child is mixed with a real failure", { skip: !createSubagentExecutor ? "executor unavailable" : undefined }, async () => {
 		mockPi.onCall({
 			matchArgIncludes: "Ask then continue",
 			steps: [
@@ -3348,10 +3323,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(status.state, "failed");
 		assert.equal(status.activityState, undefined);
 		assert.match(status.error ?? "", /manual hard failure/);
-		assert.equal(status.workflow?.trace.some((entry) => entry.key === "detaches" && entry.state === "detached"), true);
+		assert.equal(status.workflow?.trace.some((entry) => entry.key === "detaches" && entry.state === "completed"), true);
 		assert.equal(status.workflow?.trace.some((entry) => entry.key === "fails" && entry.state === "failed"), true);
-		assert.equal(status.steps?.find((step) => step.workflowKey === "detaches")?.status, "paused");
-		assert.equal(status.steps?.find((step) => step.workflowKey === "detaches")?.activityState, "needs_attention");
+		assert.equal(status.steps?.find((step) => step.workflowKey === "detaches")?.status, "completed");
+		assert.equal(status.steps?.find((step) => step.workflowKey === "detaches")?.activityState, undefined);
 		assert.equal(status.steps?.find((step) => step.workflowKey === "fails")?.status, "failed");
 		assert.equal(asyncJobs.get(workflowRunId)?.status, "failed");
 		assert.equal(asyncJobs.get(workflowRunId)?.activityState, undefined);
@@ -3366,9 +3341,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(persistedResult.state, "failed");
 		assert.equal(persistedResult.activityState, undefined);
 		assert.match(persistedResult.error ?? "", /manual hard failure/);
-		assert.equal(persistedResult.workflow?.trace?.some((entry) => entry.key === "detaches" && entry.state === "detached"), true);
+		assert.equal(persistedResult.workflow?.trace?.some((entry) => entry.key === "detaches" && entry.state === "completed"), true);
 		assert.equal(persistedResult.workflow?.trace?.some((entry) => entry.key === "fails" && entry.state === "failed"), true);
-		assert.equal(persistedResult.results?.find((entry) => entry.workflowKey === "detaches")?.detached, true);
+		assert.equal(persistedResult.results?.find((entry) => entry.workflowKey === "detaches")?.detached, undefined);
+		assert.equal(persistedResult.results?.find((entry) => entry.workflowKey === "detaches")?.success, true);
 		assert.equal(persistedResult.results?.find((entry) => entry.workflowKey === "fails")?.success, false);
 
 		await new Promise((resolve) => setTimeout(resolve, 750));
@@ -3376,85 +3352,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(persistedResult.state, "failed", "real workflow failure must not be overwritten by detached child completion");
 		fs.rmSync(started.details.asyncDir, { recursive: true, force: true });
 		fs.rmSync(resultPath, { force: true });
-	});
-
-	it("fails closed after a detached child finishes while a sibling is aborted", { skip: !createSubagentExecutor ? "executor unavailable" : undefined }, async () => {
-		mockPi.onCall({
-			matchArgIncludes: "Ask then continue",
-			steps: [
-				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
-				{ delay: 500, jsonl: [events.assistantMessage("done after coordination")] },
-			],
-		});
-		mockPi.onCall({ matchArgIncludes: "Stay running", delay: 10_000 });
-		const piEvents = createEventBus();
-		const asyncJobs: SubagentState["asyncJobs"] = new Map();
-		const executor = makeExecutor(
-			[makeAgent("worker", { systemPrompt: "Intercom orchestration channel:" })],
-			{},
-			false,
-			undefined,
-			true,
-			asyncJobs,
-			undefined,
-			undefined,
-			piEvents,
-		);
-		let detachAccepted = false;
-		piEvents.on(INTERCOM_DETACH_RESPONSE_EVENT, (payload) => {
-			if ((payload as { requestId?: unknown }).requestId === "async-workflow-detach-with-sibling") {
-				detachAccepted ||= (payload as { accepted?: unknown }).accepted === true;
-			}
-		});
-		const detachTimer = setInterval(() => {
-			if (!detachAccepted) piEvents.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "async-workflow-detach-with-sibling" });
-		}, 10);
-		detachTimer.unref();
-
-		const started = await executor.execute(
-			"async-scripted-workflow-detached-with-sibling",
-			{
-				workflowScript: `
-					await Promise.all([
-						runs.run("detaches", { agent: "worker", task: "Ask then continue" }),
-						runs.run("slow", { agent: "worker", task: "Stay running" })
-					]);
-					return "should not reach";
-				`,
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-		assert.equal(started.isError, undefined);
-		assert.ok(started.details.asyncDir);
-		const workflowRunId = started.details.asyncId;
-		const statusPath = path.join(started.details.asyncDir, "status.json");
-
-		let status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
-		for (let attempt = 0; attempt < 150 && status.state !== "paused" && status.state !== "failed" && status.state !== "complete"; attempt++) {
-			await new Promise((resolve) => setTimeout(resolve, 20));
-			status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
-		}
-		clearInterval(detachTimer);
-		assert.equal(detachAccepted, true);
-		assert.equal(status.state, "paused", status.error);
-		assert.equal(status.steps?.find((step) => step.workflowKey === "detaches")?.status, "paused");
-		assert.equal(status.steps?.find((step) => step.workflowKey === "slow")?.status, "stopped");
-
-		let reconciled: AsyncStatus | undefined;
-		for (let attempt = 0; attempt < 150; attempt++) {
-			reconciled = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
-			if (reconciled.state === "complete" || reconciled.state === "failed") break;
-			await new Promise((resolve) => setTimeout(resolve, 20));
-		}
-		assert.equal(reconciled?.state, "failed", reconciled?.error);
-		assert.match(reconciled?.error ?? "", /unsupported-continuation/);
-		assert.equal(reconciled?.steps?.find((step) => step.workflowKey === "detaches")?.status, "completed");
-		assert.equal(reconciled?.steps?.find((step) => step.workflowKey === "slow")?.status, "stopped");
-		assert.equal(asyncJobs.get(workflowRunId)?.status, "failed");
-		fs.rmSync(started.details.asyncDir, { recursive: true, force: true });
-		fs.rmSync(path.join(DIRS.results, `${workflowRunId}.json`), { force: true });
 	});
 
 	it("inherits workflow-level worktree isolation and allows a child opt-out", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {

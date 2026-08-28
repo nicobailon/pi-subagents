@@ -314,6 +314,8 @@ export interface SubagentParamsLike {
 	scheduleOrigin?: ScheduleOrigin;
 	workflowChildAsyncId?: string;
 	workflowAwaitAsync?: boolean;
+	/** Internal async-workflow bridge: keep the live VM await pending across supervisor detachment. */
+	workflowAwaitDetached?: boolean;
 	workflowParentDeadlineAt?: number;
 	suppressRoutineResultIntercom?: boolean;
 	/** Internal inherited cumulative run-tree budget. */
@@ -499,12 +501,13 @@ function getForegroundControl(state: SubagentState, runId: string | undefined) {
 	return newest;
 }
 
-function promptAuditRedoParams(value: unknown, rewrittenTask: string): SubagentParamsLike {
+export function promptAuditRedoParams(value: unknown, rewrittenTask: string): SubagentParamsLike {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Prompt redo is missing a safe live launch contract.");
 	const params = { ...(value as SubagentParamsLike), task: rewrittenTask, async: false };
 	delete params.workflowParentRunId;
 	delete params.workflowKey;
 	delete params.workflowChildAsyncId;
+	delete params.workflowAwaitDetached;
 	delete params.workflowParentDeadlineAt;
 	delete params.suppressRoutineResultIntercom;
 	if (params.worktree === true && Array.isArray(params.tasks)) delete params.cwd;
@@ -3473,7 +3476,7 @@ function prepareWorkflowChildLaunchParams(input: {
 	agents: AgentConfig[];
 	workflowAgentScope?: unknown;
 	outputOverride?: string;
-	options?: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number; capabilityCeiling?: ResolvedSubagentCapabilityCeiling };
+	options?: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; awaitDetachedChild?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number; capabilityCeiling?: ResolvedSubagentCapabilityCeiling };
 }): SubagentParamsLike {
 	let childParams = input.childParams;
 	if (input.childParams.output === undefined && input.childParams.resume === undefined && input.outputOverride !== undefined) {
@@ -3701,8 +3704,12 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 
 	const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
 	let r: Awaited<ReturnType<typeof runSync>> | undefined;
+	let resolveDetachedWorkflowChild: ((result: Awaited<ReturnType<typeof runSync>>) => void) | undefined;
+	const detachedWorkflowChild = params.workflowAwaitDetached === true
+		? new Promise<Awaited<ReturnType<typeof runSync>>>((resolve) => { resolveDetachedWorkflowChild = resolve; })
+		: undefined;
 	try {
-		r = await runSync(ctx.cwd, agents, params.agent!, task, compactOptional<Parameters<typeof runSync>[4]>({
+		const launched = await runSync(ctx.cwd, agents, params.agent!, task, compactOptional<Parameters<typeof runSync>[4]>({
 			permissions: deps.config.permissions,
 			runtimeSnapshotHost: deps.pi,
 			parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
@@ -3756,6 +3763,10 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				detachForeground = detach;
 			},
 			onDetachedExit: (result) => {
+				if (resolveDetachedWorkflowChild) {
+					resolveDetachedWorkflowChild(result);
+					return;
+				}
 				try {
 					if (worktreeSetup) {
 						finalizeSingleWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: sourceCwd, agent: params.agent!, result });
@@ -3797,6 +3808,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			capabilityCeiling: data.capabilityCeiling,
 			allowZeroToolBudget: data.allowZeroToolBudget && effectiveToolBudget.toolBudget === data.toolBudget,
 		}));
+		r = launched.detached && detachedWorkflowChild ? await detachedWorkflowChild : launched;
 	} catch (error) {
 		if (worktreeSetup) cleanupWorktrees(worktreeSetup);
 		throw error;
@@ -4225,7 +4237,7 @@ export function prepareWorkflowLaunchParams(
 	childParams: Record<string, unknown>,
 	parentWorkflowRunId: string,
 	workflowKey: string,
-	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number; externalAsyncRequired?: boolean; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } = {},
+	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; awaitDetachedChild?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number; externalAsyncRequired?: boolean; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } = {},
 ): SubagentParamsLike {
 	const capabilityCeiling = intersectSubagentCapabilityCeilings(workflowDefaults.capabilityCeiling, options.capabilityCeiling);
 	const parentTimeoutMs = options.parentDeadlineAt === undefined
@@ -4284,6 +4296,7 @@ export function prepareWorkflowLaunchParams(
 		...(options.missionDetached ? { mission: false } : {}),
 		workflowParentRunId: parentWorkflowRunId,
 		workflowKey,
+		...(options.awaitDetachedChild ? { workflowAwaitDetached: true } : {}),
 		...(parentTimeoutMs !== undefined ? { workflowParentDeadlineAt: options.parentDeadlineAt } : {}),
 		...(options.runFanoutBudget ? { runFanoutBudget: { ...options.runFanoutBudget, parentPath: `${options.runFanoutBudget.parentPath ? `${options.runFanoutBudget.parentPath}/` : ""}workflow[${workflowKey}]` } } : {}),
 		...(options.suppressRoutineResultIntercom ? { suppressRoutineResultIntercom: true } : {}),
@@ -4892,7 +4905,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								});
 								const result = await runMissionWorkflowChild(missionBinding, workflowRunId, key, childPhase, () => {
 									const childRequest = bindMissionWorkflowChildAsyncLaunch(
-										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: parentCwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: discoverWorkflowAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt, capabilityCeiling: workflowCapabilityCeiling } }), runFanoutAdmitted: admission.admitted },
+										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: parentCwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: discoverWorkflowAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, awaitDetachedChild: true, runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt, capabilityCeiling: workflowCapabilityCeiling } }), runFanoutAdmitted: admission.admitted },
 										missionBinding,
 										deps.asyncByDefault,
 									);

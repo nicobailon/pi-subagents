@@ -22,6 +22,7 @@ export interface PublicSubagentExecutionParams {
 	workflowKey?: unknown;
 	workflowChildAsyncId?: unknown;
 	workflowAwaitAsync?: unknown;
+	workflowAwaitDetached?: unknown;
 	workflowParentDeadlineAt?: unknown;
 	suppressRoutineResultIntercom?: unknown;
 	runFanoutBudget?: unknown;
@@ -59,7 +60,7 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	if (params.runFanoutBudget !== undefined || params.runFanoutAdmitted !== undefined) {
 		return { ok: false, error: "Public execution does not accept internal run fan-out fields.", mode: hasWorkflowInput ? "workflow" : "management" };
 	}
-	if (params.workflowParentRunId !== undefined || params.workflowKey !== undefined || params.workflowChildAsyncId !== undefined || params.workflowAwaitAsync !== undefined || params.workflowParentDeadlineAt !== undefined || params.suppressRoutineResultIntercom !== undefined) {
+	if (params.workflowParentRunId !== undefined || params.workflowKey !== undefined || params.workflowChildAsyncId !== undefined || params.workflowAwaitAsync !== undefined || params.workflowAwaitDetached !== undefined || params.workflowParentDeadlineAt !== undefined || params.suppressRoutineResultIntercom !== undefined) {
 		return { ok: false, error: "Public execution does not accept internal workflow child fields.", mode: hasWorkflowInput ? "workflow" : "management" };
 	}
 	const action = params.action;
