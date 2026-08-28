@@ -29,6 +29,7 @@
 - Show workflow child labels and phases in async status progress while preserving stable workflow keys.
 
 ### Fixed
+- Ignore stale cached UI contexts during background status refresh and session lifecycle cleanup (#1670).
 - Compact workflow preflight status in default TUI/status views while keeping full details available when expanded (#1668).
 - Give `runs.lanes(...)` stage-0 retained-resume validation actionable `runs.run(...)` guidance instead of a generic error (#1657).
 - Remove the remaining `lane:` prefix from operator-facing async status rows in the TUI (#1658).

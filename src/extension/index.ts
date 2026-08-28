@@ -26,6 +26,7 @@ import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { getAgentDir } from "../shared/utils.ts";
+import { isStaleExtensionContextError, withCachedUiContext } from "../shared/extension-context.ts";
 import { currentCompletionOwnerId } from "../shared/completion-owner.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderSubagentResult, renderSubagentSummary } from "../tui/render.ts";
@@ -302,12 +303,6 @@ function isSlashResultError(result: { details?: Details }): boolean {
 	return result.details?.results.some((entry) => entry.exitCode !== 0 && entry.progress?.status !== "running") || false;
 }
 
-function isStaleExtensionContextError(error: unknown): boolean {
-	return error instanceof Error
-		&& (error.message.includes("This extension ctx is stale")
-			|| error.message.includes("Extension context no longer active"));
-}
-
 function rebuildSlashResultContainer(
 	container: Container,
 	result: AgentToolResult<Details>,
@@ -476,6 +471,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			clear: () => {},
 		},
 	};
+	const withLastUiContext = <T>(run: (ctx: ExtensionContext) => T): T | undefined => {
+		const cached = state.lastUiContext;
+		return withCachedUiContext(cached, () => {
+			if (state.lastUiContext === cached) state.lastUiContext = null;
+		}, run);
+	};
 
 	const supervisorChannel = createNativeSupervisorChannel(pi, state);
 	const waitSubscriptionManager = createWaitSubscriptionManager(pi, state);
@@ -484,9 +485,17 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const completionNotifier = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch, ownership: resultDeliveryOwnership });
 	const fleetStatus = fleetViewEnabled
 		? new SubagentFleetStatus(state, async (itemKey) => {
-			const ctx = state.lastUiContext;
-			if (!ctx?.hasUI) return;
-			await openSubagentFleet(ctx, state, { initialKey: itemKey, asyncDirRoot: DIRS.async, resultsDir: DIRS.results, fleetKeybindings: config.fleetKeybindings });
+			const ctx = withLastUiContext((current) => current);
+			if (!ctx) return;
+			try {
+				await openSubagentFleet(ctx, state, { initialKey: itemKey, asyncDirRoot: DIRS.async, resultsDir: DIRS.results, fleetKeybindings: config.fleetKeybindings });
+			} catch (error) {
+				if (isStaleExtensionContextError(error)) {
+					if (state.lastUiContext === ctx) state.lastUiContext = null;
+					return;
+				}
+				throw error;
+			}
 		}, { placement: fleetViewPlacement })
 		: undefined;
 	let executorScheduled: ((id: string, params: SubagentParamsLike, signal: AbortSignal, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
@@ -849,14 +858,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const suspendWidgetsForCompaction = () => {
 		if (state.widgetsSuspended) return;
 		state.widgetsSuspended = true;
-		if (state.lastUiContext?.hasUI) state.lastUiContext.ui.setWidget(WIDGET_KEY, undefined);
+		withLastUiContext((ctx) => ctx.ui.setWidget(WIDGET_KEY, undefined));
 		fleetStatus?.refresh();
 	};
 	const resumeWidgetsAfterCompaction = () => {
 		if (!state.widgetsSuspended) return;
 		state.widgetsSuspended = false;
-		const ctx = state.lastUiContext;
-		if (ctx?.hasUI) refreshWidget(ctx);
+		withLastUiContext((ctx) => refreshWidget(ctx));
 		fleetStatus?.refresh();
 	};
 
@@ -1051,7 +1059,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_compact", () => {
 		const hasActiveAsyncWork = [...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running");
-		if (!hasActiveAsyncWork || state.lastUiContext?.hasUI !== true) return;
+		if (!hasActiveAsyncWork || !withLastUiContext(() => true)) return;
 		pi.sendMessage(
 			{
 				customType: "subagent-compaction-resume",

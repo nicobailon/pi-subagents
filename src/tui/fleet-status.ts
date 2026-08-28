@@ -6,6 +6,7 @@ import type { AsyncJobState, AsyncJobStep, FleetViewPlacement, HerdrProjectPaneS
 import { projectAsyncWorkflowRows, type AsyncStatusWorkflowRow } from "../runs/shared/async-status-projection.ts";
 import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
 import { hostStepReportName, hostStepVerdictLabel } from "../runs/shared/host-step-status.ts";
+import { isStaleExtensionContextError } from "../shared/extension-context.ts";
 
 export const FLEET_STATUS_WIDGET_KEY = "subagent-fleet-status";
 
@@ -239,13 +240,6 @@ function fleetTreeRows(entries: FleetStatusEntry[]): FleetTreeRow[] {
 		for (const [index, row] of nested.entries()) rows.push({ kind: "nested", ownerKey: entry.key, row, last: index === nested.length - 1 });
 	}
 	return rows;
-}
-
-function isStaleExtensionContextError(error: unknown): boolean {
-	// Pi currently exposes stale contexts as plain Errors without a stable code or subtype.
-	return error instanceof Error
-		&& (error.message.includes("This extension ctx is stale")
-			|| error.message.includes("Extension context no longer active"));
 }
 
 function foregroundDescription(control: { parentWorkflowRunId?: string; workflowKey?: string }, description: string | undefined): string | undefined {
@@ -846,7 +840,13 @@ export class SubagentFleetStatus {
 
 	private clearWidget(): void {
 		if (!this.widgetRegistered) return;
-		this.ui?.setWidget(FLEET_STATUS_WIDGET_KEY, undefined);
+		try {
+			this.ui?.setWidget(FLEET_STATUS_WIDGET_KEY, undefined);
+		} catch (error) {
+			if (!isStaleExtensionContextError(error)) throw error;
+			this.clearUiRegistration();
+			return;
+		}
 		this.widgetRegistered = false;
 		this.tui = undefined;
 	}

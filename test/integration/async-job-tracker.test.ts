@@ -156,6 +156,40 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("clears stale cached contexts before a status refresh can leak the error", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-stale-refresh-");
+		try {
+			const runDir = path.join(asyncRoot, "run-stale-refresh");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "run-stale-refresh",
+				mode: "single",
+				state: "running",
+				startedAt: Date.now(),
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running" }],
+			}), "utf-8");
+
+			const state = createState();
+			const recorder = createEventRecorder();
+			const tracker = createTracker(recorder.pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+				watch: (() => { throw new Error("watch disabled"); }) as never,
+			});
+			tracker.handleStarted({ id: "run-stale-refresh", asyncDir: runDir, agent: "worker" });
+			(state as { lastUiContext: unknown }).lastUiContext = {
+				get hasUI() {
+					throw new Error("This extension ctx is stale after session replacement or reload.");
+				},
+			};
+
+			await waitForCondition(() => state.lastUiContext === null, "stale cached context to clear during status refresh");
+			assert.equal(state.asyncJobs.get("run-stale-refresh")?.status, "running");
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("stores only parent-registered session roots from async start events", () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-session-root-");
 		try {
