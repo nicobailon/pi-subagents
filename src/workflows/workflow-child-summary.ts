@@ -3,6 +3,7 @@ import type { WorkflowScriptChildResult, WorkflowScriptTraceEntry } from "./scri
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const TERMINAL_STATES = new Set(["completed", "failed", "paused", "stopped", "rejected", "detached"]);
+const MAX_REQUIRED_ID_BYTES = 4_096;
 
 function bounded(value: unknown, maxBytes: number): string | undefined {
 	if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value, "utf8") > maxBytes) return undefined;
@@ -10,8 +11,8 @@ function bounded(value: unknown, maxBytes: number): string | undefined {
 }
 
 function requiredId(value: string, label: string): string {
-	const id = bounded(value, 256);
-	if (!id) throw new Error(`${label} must be a non-empty identifier of at most 256 UTF-8 bytes.`);
+	const id = bounded(value, MAX_REQUIRED_ID_BYTES);
+	if (!id) throw new Error(`${label} must be a non-empty identifier of at most ${MAX_REQUIRED_ID_BYTES} UTF-8 bytes.`);
 	return id;
 }
 

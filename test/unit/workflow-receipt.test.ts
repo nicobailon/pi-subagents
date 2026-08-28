@@ -7,7 +7,7 @@ import { buildWorkflowReceipt, readWorkflowReceipt, resolveWorkflowReceiptResume
 import { externalCliReceiptMetadata, resolveExternalCliRunnerStatus } from "../../src/runs/shared/external-cli-contract.ts";
 import type { WorkflowScriptChildResult } from "../../src/workflows/scripted-workflow.ts";
 import type { HostStepNodeV1 } from "../../src/shared/types.ts";
-import { workflowChildSummary } from "../../src/workflows/workflow-child-summary.ts";
+import { parseWorkflowChildSummary, workflowChildSummary } from "../../src/workflows/workflow-child-summary.ts";
 
 const roots: string[] = [];
 
@@ -181,6 +181,21 @@ describe("workflow receipts", () => {
 		fs.mkdirSync(asyncDir, { recursive: true });
 		writeWorkflowReceipt(asyncDir, receipt);
 		assert.deepEqual(readWorkflowReceipt(asyncRoot, "workflow-1").workflowChildren, summary);
+	});
+
+	it("round-trips long parent tool-call ids while rejecting ids over the summary bound", () => {
+		const parentToolCallId = `call_${"x".repeat(500)}`;
+		const summary = workflowChildSummary({ parentToolCallId, workflowRunId: "workflow-long-tool-call", workflowState: "completed", inventoryComplete: true });
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-long-tool-call");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		writeWorkflowReceipt(asyncDir, buildWorkflowReceipt({ workflowRunId: "workflow-long-tool-call", state: "complete", children: [], workflowChildren: summary, createdAt: 10 }));
+		assert.equal(readWorkflowReceipt(asyncRoot, "workflow-long-tool-call").workflowChildren?.parentToolCallId, parentToolCallId);
+
+		const overBoundParentToolCallId = `call_${"x".repeat(4_091)}`;
+		assert.equal(workflowChildSummary({ parentToolCallId: overBoundParentToolCallId, workflowRunId: "workflow-long-tool-call", workflowState: "completed", inventoryComplete: true }).parentToolCallId, overBoundParentToolCallId);
+		assert.throws(() => workflowChildSummary({ parentToolCallId: `${overBoundParentToolCallId}x`, workflowRunId: "workflow-long-tool-call", workflowState: "completed", inventoryComplete: true }), /at most 4096 UTF-8 bytes/);
+		assert.throws(() => parseWorkflowChildSummary({ ...summary, parentToolCallId: `${overBoundParentToolCallId}x` }), /at most 4096 UTF-8 bytes/);
 	});
 
 	it("uses workflow keys when flattened child indexes collide", () => {
