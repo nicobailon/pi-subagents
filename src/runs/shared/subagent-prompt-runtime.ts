@@ -291,6 +291,7 @@ const PORTABLE_TOOL_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_PORTABLE_TOOL_ID_LENGTH = 64;
 const COMPOSITE_TOOL_ID_APIS = new Set([
 	"azure-openai-responses",
+	"cursor-native",
 	"openai-completions",
 	"openai-responses",
 ]);

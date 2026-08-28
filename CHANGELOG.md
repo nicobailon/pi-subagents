@@ -32,6 +32,7 @@
 - Match detached workflow completion by exact child identity, preserve host gate rows in bounded snapshots, and report missing host verdicts as inconclusive.
 - Atomically replace explicit `runs.host(...)` output files inside their verified directory, retrying transient Windows destination locks instead of writing through a separately checked path.
 - Reject malformed MCP direct-tool server and metadata-cache entry fields at their JSON load boundaries.
+- Preserve live composite child tool-call ids for `cursor-native`, so Cursor MCP results keep matching pending execs. Thanks to [@moofone](https://github.com/moofone) for #1677 and #1678.
 - Ignore stale cached UI contexts during background status refresh and session lifecycle cleanup (#1670).
 - Compact workflow preflight status in default TUI/status views while keeping full details available when expanded (#1668).
 - Give `runs.lanes(...)` stage-0 retained-resume validation actionable `runs.run(...)` guidance instead of a generic error (#1657).

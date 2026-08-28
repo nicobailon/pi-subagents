@@ -1468,6 +1468,26 @@ describe("subagent prompt runtime", () => {
 		assert.equal(contextHandler?.({ messages }, { model: { api: "openai-responses" } }), undefined);
 	});
 
+	it("preserves composite tool ids for cursor-native children", () => {
+		let contextHandler: ((event: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) | undefined;
+		registerSubagentPromptRuntime({
+			on(event: string, handler: (payload: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) {
+				if (event === "context") contextHandler = handler;
+			},
+		} as { on(event: string, handler: (payload: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined): void });
+
+		const toolCallId = "call_7XJjvAJfk07117JO8LgBCZjY\nfc_0e92b09b28010bac016a756e9e79cc8197b01825a5dc3d9eaa";
+		const messages = [
+			{ role: "user", content: "Task" },
+			{ role: "assistant", content: [{ type: "toolCall", id: toolCallId, name: "read", input: { path: "README.md" } }] },
+			{ role: "toolResult", toolName: "read", toolCallId, content: "file" },
+		];
+
+		assert.equal(contextHandler?.({ messages }, { model: { api: "cursor-native" } }), undefined);
+		assert.equal((messages[1] as { content: Array<{ id?: unknown }> }).content[0]?.id, toolCallId);
+		assert.equal((messages[2] as { toolCallId?: unknown }).toolCallId, toolCallId);
+	});
+
 	it("does not rewrite child context when no parent-only artifacts are present", () => {
 		let contextHandler: ((event: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) | undefined;
 		registerSubagentPromptRuntime({
