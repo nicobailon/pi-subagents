@@ -487,27 +487,30 @@ describe("parallel handoff", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parallel-handoff-active-"));
 		try {
 			const manifestPath = path.join(dir, "handoff.json");
-			writeParallelHandoffGroup({
-				manifestPath,
-				runId: "lane-active",
-				mode: "single",
-				source: "async",
-				cwd: "/repo",
-				stepIndex: 0,
-				flatStartIndex: 0,
-				setup: setup("/repo", "base-1"),
-				diffs: [diff(dir, 0, "worker", false)],
-				cleanup: cleanup("partial"),
-				results: [{ agent: "worker", status: "running" as never, summary: "active" }],
-			});
-			assert.throws(
-				() => recordParallelHandoffSupersession({
+			for (const status of ["running", "detached"] as const) {
+				writeParallelHandoffGroup({
 					manifestPath,
-					laneId: "lane-active",
-					supersession: { supersededBy: "lane-replacement", attestedBy: "nicobailon", attestedAt: "2026-08-27T16:23:00.000Z" },
-				}),
-				/active child owner/,
-			);
+					runId: "lane-active",
+					mode: "single",
+					source: "async",
+					cwd: "/repo",
+					stepIndex: 0,
+					flatStartIndex: 0,
+					setup: setup("/repo", "base-1"),
+					diffs: [diff(dir, 0, "worker", false)],
+					cleanup: cleanup("partial"),
+					results: [{ agent: "worker", status: status as never, summary: "active" }],
+				});
+				assert.match(formatStoredParallelHandoffCleanup(manifestPath), /Cleanup eligibility: active/);
+				assert.throws(
+					() => recordParallelHandoffSupersession({
+						manifestPath,
+						laneId: "lane-active",
+						supersession: { supersededBy: "lane-replacement", attestedBy: "nicobailon", attestedAt: "2026-08-27T16:23:00.000Z" },
+					}),
+					/active child owner/,
+				);
+			}
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}

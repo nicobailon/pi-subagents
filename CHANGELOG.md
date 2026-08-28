@@ -46,7 +46,6 @@
 - Prevent Fleet prompt audit rendering from crashing on malformed non-string task payloads. Thanks to [@bengidev](https://github.com/bengidev) for #1586.
 - Resume a retained child session once after a provider or transport abort follows useful progress, without restarting the task or involving the parent model.
 
-### Fixed
 - Retry unused fallback models after a provider reports a plain-text `500` or `internal server error`. Thanks to [@rafafortes](https://github.com/rafafortes) for #1642.
 - Mark missing required child handoffs with useful mutation evidence as partial needs-attention results.
 

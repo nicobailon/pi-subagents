@@ -163,6 +163,18 @@ describe("worktree cleanup plan", () => {
 			assert.match(formatWorktreeCleanupPlan(created), /Will remove[\s\S]*Will delete local branches[\s\S]*Plan-only mode: no worktrees or branches were removed/);
 			assert.ok(fs.existsSync(setup.worktrees[0]!.path));
 			assert.notEqual(git(repo, ["branch", "--list", setup.worktrees[0]!.branch]), "");
+
+			for (const childStatus of ["complete", "rejected"] as const) {
+				writeManifest({ repo, manifestPath, setup, childStatus });
+				const compatibilityPlan = buildPlan({ repo, worktreeBaseDir: baseDir, now: 10_000, planId: `${childStatus}-plan` });
+				assert.equal(compatibilityPlan.entries[0]?.decision, "remove");
+				assert.equal(compatibilityPlan.entries[0]?.state, "safe");
+			}
+
+			writeManifest({ repo, manifestPath, setup, childStatus: "detached" });
+			const detachedPlan = buildPlan({ repo, worktreeBaseDir: baseDir, now: 10_000, planId: "detached-plan" });
+			assert.equal(detachedPlan.entries[0]?.decision, "keep");
+			assert.equal(detachedPlan.entries[0]?.state, "active");
 		} finally {
 			removeGeneratedWorktrees(repo, setup);
 			fs.rmSync(repo, { recursive: true, force: true });

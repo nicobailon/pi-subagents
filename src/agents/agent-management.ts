@@ -904,7 +904,7 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	const runtimeName = buildRuntimeName(name, parsedPackage.packageName);
 	const scopeRaw = cfg.scope ?? "user";
 	if (scopeRaw !== "user" && scopeRaw !== "project") return result("config.scope must be 'user' or 'project'.", true);
-	const scope = scopeRaw as ManagementScope;
+	const scope = scopeRaw;
 	if (hasKey(cfg, "steps")) return result("Durable chain definitions were removed; use workflowScript or /prompt-workflow for repeatable workflows.", true);
 	const d = discoverAgentsAll(ctx.cwd);
 	const projectConfigDir = getProjectConfigDir(ctx.cwd);
@@ -1152,7 +1152,7 @@ function handleReset(params: ManagementParams, ctx: ManagementContext): AgentToo
 }
 
 export function handleManagementAction(action: string, params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
-	switch (action as ManagementAction) {
+	switch (action) {
 		case "list": return handleList(params, ctx);
 		case "get": return handleGet(params, ctx);
 		case "models": return handleModels(params, ctx);

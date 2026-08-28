@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { dirname, resolve as resolvePath } from "node:path";
 import { Worker } from "node:worker_threads";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../runs/shared/parallel-utils.ts";
+import type { SingleResult } from "../shared/types.ts";
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const requireFromPackage = createRequire(import.meta.url);
@@ -924,7 +925,7 @@ export interface WorkflowScriptChildResult {
 	resumability?: { state: "resumable" } | { state: "not-resumable"; reason: string };
 	continuation?: { runIds: string[] };
 	artifactPaths: string[];
-	results?: unknown[];
+	results?: SingleResult[];
 }
 
 export interface WorkflowScriptTraceEntry {

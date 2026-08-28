@@ -134,8 +134,8 @@ function validateStringList(value: unknown, field: string): string[] | undefined
 
 function validatePositiveInteger(value: unknown, field: string): number | undefined {
 	if (value === undefined) return undefined;
-	if (!Number.isInteger(value) || (value as number) <= 0) throw new Error(`${field} must be a positive integer when provided.`);
-	return value as number;
+	if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) throw new Error(`${field} must be a positive integer when provided.`);
+	return value;
 }
 
 function validateBoolean(value: unknown, field: string): boolean | undefined {

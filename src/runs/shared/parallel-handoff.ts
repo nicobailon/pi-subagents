@@ -295,6 +295,10 @@ function normalizeStoredCleanupEligibility(value: unknown): CleanupEligibility {
 
 const STORED_CHILD_STATUSES = new Set(["pending", "running", "completed", "complete", "failed", "paused", "stopped", "detached", "rejected"]);
 
+export function isTerminalParallelHandoffChildStatus(status: unknown): boolean {
+	return status === "completed" || status === "complete" || status === "failed" || status === "paused" || status === "stopped" || status === "rejected";
+}
+
 function hasValidStoredLaneShape(manifest: ParallelHandoffManifest): boolean {
 	if (!manifest || typeof manifest !== "object" || manifest.version !== 1 || typeof manifest.runId !== "string" || !manifest.runId.trim() || !Array.isArray(manifest.groups) || manifest.groups.length === 0) return false;
 	let hasManagedTask = false;
@@ -327,11 +331,7 @@ function hasActiveChildren(manifest: ParallelHandoffManifest): boolean {
 		if (!group || typeof group !== "object") return false;
 		const children = Array.isArray(group.children) ? group.children : [];
 		if (children.length === 0 && Array.isArray(group.cleanup?.tasks) && group.cleanup.tasks.length > 0) return true;
-		return children.some((child) => {
-			if (!child || typeof child !== "object") return false;
-			const status = child.status as string;
-			return status === "pending" || status === "running";
-		});
+		return children.some((child) => !child || typeof child !== "object" || !isTerminalParallelHandoffChildStatus(child.status));
 	});
 }
 
@@ -352,7 +352,7 @@ function validateManifestForLaneEvidence(manifest: ParallelHandoffManifest, lane
 		}
 		if (!Array.isArray(group.children)) throw new Error("Lane manifest has invalid child records.");
 		for (const child of group.children) {
-			if (!["pending", "running", "completed", "complete", "failed", "paused", "stopped", "detached", "rejected"].includes(child.status)) {
+			if (!STORED_CHILD_STATUSES.has(child.status)) {
 				throw new Error("Lane manifest has an invalid child status.");
 			}
 		}

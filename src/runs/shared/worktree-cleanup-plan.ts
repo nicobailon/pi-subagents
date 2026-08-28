@@ -13,6 +13,7 @@ import type {
 	ParallelHandoffGroup,
 	ParallelHandoffManifest,
 } from "../../shared/types.ts";
+import { isTerminalParallelHandoffChildStatus } from "./parallel-handoff.ts";
 
 export const WORKTREE_CLEANUP_PLAN_VERSION = 1 as const;
 export const WORKTREE_CLEANUP_PLAN_TTL_MS = 30 * 60 * 1000;
@@ -462,10 +463,6 @@ function metadataReportPaths(record: ManifestMetadataRecord): string[] {
 		.map((candidate) => metadataPath(record.manifestPath, candidate));
 }
 
-function terminalChildStatus(status: unknown): boolean {
-	return status === "completed" || status === "failed" || status === "paused" || status === "stopped";
-}
-
 function terminalRunState(status: AsyncStatus["state"]): boolean {
 	return status === "complete" || status === "failed" || status === "partial" || status === "paused" || status === "stopped" || status === "rejected";
 }
@@ -480,7 +477,7 @@ function inspectRunState(record: ManifestMetadataRecord, now: number, foreground
 		return { kind: "unknown", reason: `async status is missing beside ${record.manifestPath}` };
 	}
 
-	if (record.group.children.length === 0 || !record.group.children.every((child) => terminalChildStatus(child.status))) {
+	if (record.group.children.length === 0 || !record.group.children.every((child) => isTerminalParallelHandoffChildStatus(child.status))) {
 		return { kind: "active", reason: "owning handoff still has a non-terminal child" };
 	}
 	if (record.manifest.source === "foreground") {
