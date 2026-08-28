@@ -415,6 +415,31 @@ export interface ParallelHandoffCleanupTask {
 	errors?: string[];
 }
 
+export type CleanupEligibility =
+	| { state: "active" }
+	| { state: "terminal-eligible" }
+	| { state: "terminal-blocked"; reason: string }
+	| { state: "superseded-eligible" }
+	| { state: "unknown" };
+
+export interface ParallelHandoffMergeEvidence {
+	prNumber: number;
+	reviewedHead: string;
+	mergeCommit: string;
+	treeEquivalent: boolean | "unknown";
+	postMergeChecks: "recorded" | "unknown";
+	attestedBy: string;
+	attestedAt: string;
+	manifestDigest?: string;
+}
+
+export interface ParallelHandoffSupersessionEvidence {
+	supersededBy: string;
+	attestedBy: string;
+	attestedAt: string;
+	manifestDigest?: string;
+}
+
 export interface ParallelHandoffGroup {
 	stepIndex: number;
 	baseCommit: string;
@@ -439,6 +464,9 @@ export interface ParallelHandoffManifest {
 	createdAt: number;
 	updatedAt: number;
 	groups: ParallelHandoffGroup[];
+	merge?: ParallelHandoffMergeEvidence;
+	supersession?: ParallelHandoffSupersessionEvidence;
+	cleanupEligibility?: CleanupEligibility;
 }
 
 export interface ParallelHandoffReference {
@@ -448,6 +476,7 @@ export interface ParallelHandoffReference {
 	childCount: number;
 	changedPatches: number;
 	cleanupState: "complete" | "partial";
+	cleanupEligibility?: CleanupEligibility;
 }
 
 export interface AgentContract {
@@ -2568,7 +2597,7 @@ export const POLL_INTERVAL_MS = 250;
 export const WIDGET_ANIMATION_INTERVAL_MS = 1000;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
-export const SUBAGENT_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "worktree.discard", "worktree.cleanup", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "dismiss", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"] as const;
+export const SUBAGENT_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "worktree.discard", "worktree.cleanup", "lane.status", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "dismiss", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +

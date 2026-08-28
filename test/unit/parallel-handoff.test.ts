@@ -5,7 +5,10 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
 	formatParallelHandoffReference,
+	formatStoredParallelHandoffCleanup,
 	readParallelHandoffManifest,
+	recordParallelHandoffMerge,
+	recordParallelHandoffSupersession,
 	resolveParallelHandoffChild,
 	writeParallelHandoffGroup,
 	writePendingParallelHandoff,
@@ -261,6 +264,295 @@ describe("parallel handoff", () => {
 			raw.groups[0]!.children[0]!.lane.key = "other";
 			fs.writeFileSync(manifestPath, JSON.stringify(raw), "utf-8");
 			assert.throws(() => readParallelHandoffManifest(manifestPath), /does not match workflow key/);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("records merge evidence and renders stored terminal eligibility without deleting", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parallel-handoff-merge-evidence-"));
+		try {
+			const manifestPath = path.join(dir, "handoff.json");
+			writeParallelHandoffGroup({
+				manifestPath,
+				runId: "lane-merge",
+				mode: "single",
+				source: "async",
+				cwd: "/repo",
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: setup("/repo", "base-1"),
+				diffs: [diff(dir, 0, "worker", false)],
+				cleanup: cleanup("partial"),
+				results: [{ agent: "worker", status: "completed", summary: "done" }],
+			});
+			const superseded = recordParallelHandoffSupersession({
+				manifestPath,
+				laneId: "lane-merge",
+				supersession: { supersededBy: "replacement-lane", attestedBy: "nicobailon", attestedAt: "2026-08-27T16:22:00.000Z" },
+			});
+			assert.deepEqual(superseded.manifest.cleanupEligibility, { state: "superseded-eligible" });
+
+			const recorded = recordParallelHandoffMerge({
+				manifestPath,
+				laneId: "lane-merge",
+				merge: {
+					prNumber: 1623,
+					reviewedHead: "1111111111111111111111111111111111111111",
+					mergeCommit: "2222222222222222222222222222222222222222",
+					treeEquivalent: true,
+					postMergeChecks: "recorded",
+					attestedBy: "nicobailon",
+					attestedAt: "2026-08-27T16:23:00.000Z",
+				},
+				now: 200,
+			});
+
+			assert.deepEqual(recorded.manifest.cleanupEligibility, { state: "terminal-eligible" });
+			assert.equal(recorded.manifest.supersession, undefined);
+			assert.equal(recorded.reference.cleanupEligibility?.state, "terminal-eligible");
+			assert.match(recorded.text, /Cleanup eligibility: terminal-eligible/);
+			assert.match(recorded.text, /action: "worktree\.cleanup"/);
+			assert.match(recorded.text, /handoffPath:/);
+			assert.match(recorded.text, /mode: "plan"/);
+			const recordedManifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as ParallelHandoffManifest;
+			assert.equal(recordedManifest.merge?.prNumber, 1623);
+			assert.equal(recordedManifest.supersession, undefined);
+			assert.match(recordedManifest.merge?.manifestDigest ?? "", /^[0-9a-f]{64}$/);
+
+			const active = writeParallelHandoffGroup({
+				manifestPath,
+				runId: "lane-merge",
+				mode: "single",
+				source: "async",
+				cwd: "/repo",
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: setup("/repo", "base-1"),
+				diffs: [diff(dir, 0, "worker", false)],
+				cleanup: cleanup("partial"),
+				results: [{ agent: "worker", status: "running" as never, summary: "active" }],
+			});
+			assert.deepEqual(active.cleanupEligibility, { state: "active" });
+			assert.match(formatStoredParallelHandoffCleanup(manifestPath), /Cleanup eligibility: active/);
+
+			const settled = writeParallelHandoffGroup({
+				manifestPath,
+				runId: "lane-merge",
+				mode: "single",
+				source: "async",
+				cwd: "/repo",
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: setup("/repo", "base-1"),
+				diffs: [diff(dir, 0, "worker", false)],
+				cleanup: cleanup("partial"),
+				results: [{ agent: "worker", status: "completed", summary: "done" }],
+			});
+			assert.deepEqual(settled.cleanupEligibility, { state: "terminal-eligible" });
+			assert.match(formatStoredParallelHandoffCleanup(manifestPath), /Cleanup eligibility: terminal-eligible/);
+
+			const stale = writeParallelHandoffGroup({
+				manifestPath,
+				runId: "lane-merge",
+				mode: "single",
+				source: "async",
+				cwd: "/repo",
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: setup("/repo", "base-2"),
+				diffs: [diff(dir, 0, "worker", false)],
+				cleanup: cleanup("partial"),
+				results: [{ agent: "worker", status: "completed", summary: "done" }],
+			});
+			assert.deepEqual(stale.cleanupEligibility, { state: "terminal-blocked", reason: "stored merge evidence is stale" });
+			assert.match(formatStoredParallelHandoffCleanup(manifestPath), /Cleanup eligibility: terminal-blocked/);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects mismatched lanes and stale reviewed heads", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parallel-handoff-merge-stale-"));
+		try {
+			const manifestPath = path.join(dir, "handoff.json");
+			writeParallelHandoffGroup({
+				manifestPath,
+				runId: "lane-stale",
+				mode: "single",
+				source: "foreground",
+				cwd: "/repo",
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: setup("/repo", "base-1"),
+				diffs: [diff(dir, 0, "worker", false)],
+				cleanup: cleanup("partial"),
+				results: [{ agent: "worker", status: "completed", summary: "done" }],
+			});
+			const merge = {
+				prNumber: 1623,
+				reviewedHead: "3333333333333333333333333333333333333333",
+				mergeCommit: "4444444444444444444444444444444444444444",
+				treeEquivalent: true as const,
+				postMergeChecks: "recorded" as const,
+				attestedBy: "nicobailon",
+				attestedAt: "2026-08-27T16:23:00.000Z",
+			};
+			recordParallelHandoffMerge({ manifestPath, laneId: "lane-stale", merge });
+			assert.throws(
+				() => recordParallelHandoffMerge({ manifestPath, laneId: "another-lane", merge }),
+				/does not match manifest run/,
+			);
+			assert.throws(
+				() => recordParallelHandoffMerge({ manifestPath, laneId: "lane-stale", merge: { ...merge, reviewedHead: "5555555555555555555555555555555555555555" } }),
+				/stale: reviewed head is already recorded/,
+			);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps pending, unknown, and ineligible stored states fail closed", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parallel-handoff-merge-unknown-"));
+		try {
+			const manifestPath = path.join(dir, "handoff.json");
+			writePendingParallelHandoff({
+				manifestPath,
+				runId: "lane-unknown",
+				mode: "single",
+				source: "foreground",
+				cwd: "/repo",
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: {
+					...setup("/repo", "base-1"),
+					worktrees: [{ path: "/tmp/worktree-0", agentCwd: "/tmp/worktree-0", branch: "branch-0", index: 0, nodeModulesLinked: false, syntheticPaths: [] }],
+				},
+			});
+			const pending = formatStoredParallelHandoffCleanup(manifestPath);
+			assert.match(pending, /Cleanup eligibility: active/);
+			assert.match(pending, /child owner is still active/);
+			assert.match(pending, /mode: "plan"/);
+			const merge = {
+				prNumber: 1623,
+				reviewedHead: "6666666666666666666666666666666666666666",
+				mergeCommit: "7777777777777777777777777777777777777777",
+				treeEquivalent: "unknown" as const,
+				postMergeChecks: "unknown" as const,
+				attestedBy: "nicobailon",
+				attestedAt: "2026-08-27T16:23:00.000Z",
+			};
+			assert.throws(() => recordParallelHandoffMerge({ manifestPath, laneId: "lane-unknown", merge }), /active child owner/);
+			assert.throws(
+				() => recordParallelHandoffSupersession({
+					manifestPath,
+					laneId: "lane-unknown",
+					supersession: { supersededBy: "replacement-lane", attestedBy: "nicobailon", attestedAt: "2026-08-27T16:23:00.000Z" },
+				}),
+				/active child owner/,
+			);
+
+			writeParallelHandoffGroup({
+				manifestPath,
+				runId: "lane-unknown",
+				mode: "single",
+				source: "foreground",
+				cwd: "/repo",
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: setup("/repo", "base-1"),
+				diffs: [diff(dir, 0, "worker", false)],
+				cleanup: cleanup("partial"),
+				results: [{ agent: "worker", status: "completed", summary: "done" }],
+			});
+			const blocked = recordParallelHandoffMerge({ manifestPath, laneId: "lane-unknown", merge });
+			assert.deepEqual(blocked.manifest.cleanupEligibility, { state: "terminal-blocked", reason: "merged tree equivalence was not attested" });
+			assert.match(blocked.text, /Cleanup eligibility: terminal-blocked/);
+
+			const unsafeClaim = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as ParallelHandoffManifest;
+			delete unsafeClaim.merge;
+			unsafeClaim.cleanupEligibility = { state: "terminal-eligible" };
+			assert.match(formatStoredParallelHandoffCleanup(manifestPath, unsafeClaim), /Cleanup eligibility: unknown/);
+			assert.match(formatStoredParallelHandoffCleanup(manifestPath, { ...unsafeClaim, groups: [null as never] }), /Cleanup eligibility: unknown/);
+
+			const invalidPath = path.join(dir, "invalid.json");
+			fs.writeFileSync(invalidPath, "{not-json", "utf-8");
+			assert.match(formatStoredParallelHandoffCleanup(invalidPath), /Cleanup eligibility: unknown/);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("refuses to record evidence while a stored child owner is active", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parallel-handoff-active-"));
+		try {
+			const manifestPath = path.join(dir, "handoff.json");
+			writeParallelHandoffGroup({
+				manifestPath,
+				runId: "lane-active",
+				mode: "single",
+				source: "async",
+				cwd: "/repo",
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: setup("/repo", "base-1"),
+				diffs: [diff(dir, 0, "worker", false)],
+				cleanup: cleanup("partial"),
+				results: [{ agent: "worker", status: "running" as never, summary: "active" }],
+			});
+			assert.throws(
+				() => recordParallelHandoffSupersession({
+					manifestPath,
+					laneId: "lane-active",
+					supersession: { supersededBy: "lane-replacement", attestedBy: "nicobailon", attestedAt: "2026-08-27T16:23:00.000Z" },
+				}),
+				/active child owner/,
+			);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("records supersession evidence as an eligible stored state", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parallel-handoff-supersession-"));
+		try {
+			const manifestPath = path.join(dir, "handoff.json");
+			writeParallelHandoffGroup({
+				manifestPath,
+				runId: "lane-review",
+				mode: "single",
+				source: "foreground",
+				cwd: "/repo",
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: setup("/repo", "base-1"),
+				diffs: [diff(dir, 0, "reviewer", false)],
+				cleanup: cleanup("partial"),
+				results: [{ agent: "reviewer", status: "completed", summary: "superseded" }],
+			});
+			const recorded = recordParallelHandoffSupersession({
+				manifestPath,
+				laneId: "lane-review",
+				supersession: { supersededBy: "lane-replacement", attestedBy: "nicobailon", attestedAt: "2026-08-27T16:23:00.000Z" },
+			});
+			assert.deepEqual(recorded.manifest.cleanupEligibility, { state: "superseded-eligible" });
+			assert.match(recorded.text, /Cleanup eligibility: superseded-eligible/);
+
+			const stale = writeParallelHandoffGroup({
+				manifestPath,
+				runId: "lane-review",
+				mode: "single",
+				source: "foreground",
+				cwd: "/repo",
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: setup("/repo", "base-2"),
+				diffs: [diff(dir, 0, "reviewer", false)],
+				cleanup: cleanup("partial"),
+				results: [{ agent: "reviewer", status: "completed", summary: "superseded" }],
+			});
+			assert.deepEqual(stale.cleanupEligibility, { state: "terminal-blocked", reason: "stored supersession evidence is stale" });
+			assert.match(formatStoredParallelHandoffCleanup(manifestPath), /Cleanup eligibility: terminal-blocked/);
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}

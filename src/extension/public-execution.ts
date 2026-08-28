@@ -5,6 +5,10 @@ export interface PublicSubagentExecutionParams {
 	planId?: unknown;
 	agent?: unknown;
 	task?: unknown;
+	handoffPath?: unknown;
+	laneId?: unknown;
+	merge?: unknown;
+	supersession?: unknown;
 	step?: unknown;
 	tasks?: unknown;
 	chain?: unknown;

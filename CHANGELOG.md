@@ -15,6 +15,7 @@
 
 ### Changed
 - Clarify `workflowScript` contracts: each distinct retained resume pass needs a new stable workflow key, and durable child output paths should use explicit bindings plus returned path metadata.
+- Record attested merge or supersession evidence in existing worktree handoff manifests and render fail-closed cleanup eligibility without performing removal.
 - Show optional lane/work-item context in async status rows, including known phase, gate, next action, output, run reference, and stale/blocked signals without adding render-time I/O.
 - Extract async status snapshot projection into a pure internal module while preserving RPC and widget wire compatibility.
 - Extract child launch planning into a focused internal module shared by async workflow launch setup.

@@ -68,6 +68,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /^Run one child with \{ agent, task\? \}; use \{ workflowScript \} for inline orchestration or \{ workflowScriptPath \}/i);
 		assert.match(description, /workflowScriptPath:"workflows\/review\.js".*host reads the file.*sandbox/i);
 		assert.match(description, /SINGLE CHILD:.*starts exactly one direct child/i);
+		assert.match(description, /lane\.status.*lane\.recordMerge.*lane\.recordSupersession/i);
 		assert.match(description, /Do not combine agent\/task with action, workflowScript, or workflowScriptPath/i);
 		assert.match(description, /runs\.run for one child and await runs\.all.*ordinary parallel children/i);
 		assert.match(description, /runs\.lanes\(\[\{key,stages:.*later stages sequence per lane/i);

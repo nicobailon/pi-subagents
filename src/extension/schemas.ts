@@ -292,9 +292,12 @@ const SubagentParamProperties = {
 	dir: Type.Optional(Type.String({
 		description: "Async run directory for status/debug.run, stop, resume, or steer."
 	})),
-	handoffPath: Type.Optional(Type.String({ description: "Aggregate handoff manifest for worktree.discard or worktree.cleanup metadata." })),
+	handoffPath: Type.Optional(Type.String({ description: "Existing parallel handoff manifest for worktree.discard, worktree.cleanup metadata, or lane evidence actions." })),
 	repo: Type.Optional(Type.String({ description: "Repository path for action='worktree.cleanup'; defaults to cwd." })),
 	planId: Type.Optional(Type.String({ description: "Cleanup plan id reserved for a future worktree.cleanup apply action." })),
+	laneId: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Exact manifest run id for lane.status, lane.recordMerge, or lane.recordSupersession." })),
+	merge: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: true, description: "Attested merge evidence for lane.recordMerge: prNumber, reviewedHead, mergeCommit, treeEquivalent, postMergeChecks, attestedBy, and attestedAt." })),
+	supersession: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: true, description: "Attested replacement-lane evidence for lane.recordSupersession: supersededBy, attestedBy, and attestedAt." })),
 	index: Type.Optional(Type.Integer({ minimum: 0, description: "Zero-based child index for actions that target a specific child or transcript." })),
 	childId: Type.Optional(Type.String({ minLength: 1, maxLength: 256, description: "Stable child identity for child-scoped stop requests." })),
 	view: Type.Optional(Type.String({

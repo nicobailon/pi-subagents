@@ -3675,6 +3675,75 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /Valid:/);
 	});
 
+	it("records and renders stored lane merge evidence through management actions", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const manifestPath = path.join(tempDir, "lane-handoff.json");
+		fs.writeFileSync(manifestPath, JSON.stringify({
+			version: 1,
+			runId: "lane-action",
+			mode: "single",
+			source: "async",
+			cwd: tempDir,
+			createdAt: 1,
+			updatedAt: 1,
+			groups: [{
+				stepIndex: 0,
+				baseCommit: "base-commit",
+				repoRoot: tempDir,
+				children: [{
+					index: 0,
+					taskIndex: 0,
+					agent: "worker",
+					status: "completed",
+					summary: "done",
+					patch: { path: path.join(tempDir, "worker.patch"), branch: "lane-action-branch", changed: false, diffStat: "", filesChanged: 0, insertions: 0, deletions: 0 },
+				}],
+				cleanup: { state: "partial", pruned: false, tasks: [{ index: 0, path: path.join(tempDir, "worktree"), branch: "lane-action-branch", worktreeRemoved: false, branchRemoved: false, preserved: true }] },
+			}],
+		}, null, 2), "utf-8");
+		const executor = makeExecutor([makeAgent("echo")]);
+		const merge = {
+			prNumber: 1623,
+			reviewedHead: "8888888888888888888888888888888888888888",
+			mergeCommit: "9999999999999999999999999999999999999999",
+			treeEquivalent: true,
+			postMergeChecks: "recorded",
+			attestedBy: "nicobailon",
+			attestedAt: "2026-08-27T16:23:00.000Z",
+		};
+
+		const recorded = await executor.execute(
+			"lane-record-action",
+			{ action: "lane.recordMerge", laneId: "lane-action", handoffPath: manifestPath, merge },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(recorded.isError, undefined, recorded.content[0]?.text ?? "");
+		assert.match(recorded.content[0]?.text ?? "", /Cleanup eligibility: terminal-eligible/);
+		assert.equal(recorded.details.parallelHandoff?.cleanupEligibility?.state, "terminal-eligible");
+
+		const rendered = await executor.execute(
+			"lane-status-action",
+			{ action: "lane.status", laneId: "lane-action", handoffPath: manifestPath },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(rendered.isError, undefined, rendered.content[0]?.text ?? "");
+		assert.match(rendered.content[0]?.text ?? "", /Cleanup eligibility: terminal-eligible/);
+		assert.match(rendered.content[0]?.text ?? "", /action: "worktree\.cleanup"/);
+
+		const invalid = await executor.execute(
+			"lane-invalid-action",
+			{ action: "lane.recordMerge", laneId: "lane-action", handoffPath: manifestPath },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(invalid.isError, true);
+		assert.match(invalid.content[0]?.text ?? "", /merge must be an object/);
+	});
+
 	it("routes watchdog.configure through the management action path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const gpt = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
 		const opus = { provider: "anthropic", id: "claude-opus-4-8", reasoning: true };
