@@ -87,7 +87,6 @@ export function assertHostStepNode(value: unknown, source = "status"): asserts v
 	if (value.verdict !== undefined && value.verdict !== "pass" && value.verdict !== "fail" && value.verdict !== "inconclusive") {
 		throw new Error(`Invalid host step '${source}': verdict is invalid.`);
 	}
-	if (value.state === "done" && value.verdict === undefined) throw new Error(`Invalid host step '${source}': done state requires a verdict.`);
 	if (value.state !== "done" && value.verdict !== undefined) throw new Error(`Invalid host step '${source}': verdict is only valid for done state.`);
 	assertBoundedString(value.reasonCode, "reasonCode", HOST_STEP_MAX_REASON_CHARS, source);
 	assertBoundedString(value.detail, "detail", HOST_STEP_MAX_DETAIL_CHARS, source);
@@ -177,6 +176,7 @@ function workflowNodeStatus(hostStep: HostStepNodeV1): WorkflowNodeStatus {
 	if (hostStep.state === "running") return "running";
 	if (hostStep.state === "cancelled") return "stopped";
 	if (hostStep.state === "error") return "failed";
+	if (hostStep.verdict === undefined || hostStep.verdict === "inconclusive") return "partial";
 	return hostStep.verdict === "fail" ? "failed" : "completed";
 }
 

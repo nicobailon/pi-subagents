@@ -32,7 +32,8 @@ describe("host step status", () => {
 		assert.equal(running.monitorKind, "ci");
 		assert.equal(hostStepWorkflowNode(running).status, "running");
 		assert.equal(hostStepWorkflowNode(hostStep({ state: "done", verdict: "pass" })).status, "completed");
-		assert.equal(hostStepWorkflowNode(hostStep({ state: "done", verdict: "inconclusive" })).status, "completed");
+		assert.equal(hostStepWorkflowNode(hostStep({ state: "done", verdict: "inconclusive" })).status, "partial");
+		assert.equal(hostStepWorkflowNode(hostStep({ state: "done" })).status, "partial");
 		assert.equal(hostStepWorkflowNode(hostStep({ state: "done", verdict: "fail" })).status, "failed");
 		assert.equal(hostStepWorkflowNode(hostStep({ state: "cancelled" })).status, "stopped");
 		assert.equal(hostStepWorkflowNode(hostStep({ state: "error" })).status, "failed");
@@ -41,7 +42,6 @@ describe("host step status", () => {
 
 	it("rejects unbounded or incomplete terminal data", () => {
 		assert.throws(() => assertHostStepNode(hostStep({ label: "x".repeat(HOST_STEP_MAX_LABEL_CHARS + 1) }), "fixture"), /label exceeds/);
-		assert.throws(() => assertHostStepNode(hostStep({ state: "done" }), "fixture"), /done state requires a verdict/);
 		assert.throws(() => assertHostStepNode(hostStep({ state: "running", verdict: "pass" }), "fixture"), /verdict is only valid/);
 		assert.throws(() => assertHostStepNode(hostStep({ state: "done", verdict: "inconclusive", freshness: {} as HostStepNodeV1["freshness"] }), "fixture"), /expected/);
 		assert.throws(() => assertHostStepNode(hostStep({ state: "done", verdict: "pass", freshness: { expectedRef: "head", stale: true } }), "fixture"), /stale freshness/);

@@ -12,9 +12,10 @@ type RenderSubagentResult = (
 		content: Array<{ type: "text"; text: string }>;
 		isError?: boolean;
 		details?: {
-			mode: "single" | "parallel" | "chain" | "management";
+			mode: "single" | "parallel" | "chain" | "workflow" | "management";
 			context?: "fresh" | "fork" | "mixed";
 			results: unknown[];
+			workflowGraph?: unknown;
 		};
 	},
 	options: { expanded: boolean },
@@ -24,7 +25,7 @@ type RenderSubagentResult = (
 type RenderSubagentSummary = (
 	result: {
 		content: Array<{ type: "text"; text: string }>;
-		details?: { mode: "single" | "parallel" | "chain" | "management"; results: unknown[]; progress?: unknown[]; asyncId?: string };
+		details?: { mode: "single" | "parallel" | "chain" | "workflow" | "management"; results: unknown[]; progress?: unknown[]; asyncId?: string; workflowGraph?: unknown };
 	},
 	options: { isPartial?: boolean },
 	theme: RenderTheme,
@@ -574,6 +575,29 @@ describe("renderSubagentResult fork indicator", () => {
 			assert.match(summary, /· completed$/, mode);
 			assert.doesNotMatch(summary, /running/, mode);
 		}
+	});
+
+	it("renders an inconclusive host graph as partial", () => {
+		const result = {
+			content: [{ type: "text" as const, text: "inconclusive gate" }],
+			details: {
+				mode: "workflow" as const,
+				results: ["worker", "reviewer"].map((agent) => ({ agent, task: "gate", exitCode: 0, messages: [], usage: emptyUsage })),
+				workflowGraph: {
+					runId: "workflow-partial",
+					mode: "workflow" as const,
+					phases: [],
+					nodes: [{ id: "gate", kind: "host-step" as const, label: "Review gate", status: "partial" as const }],
+				},
+			},
+		};
+
+		const summary = renderSubagentSummary!(result, {}, theme).render(120).join("\n");
+		const compact = renderSubagentResult!(result, { expanded: false }, theme).render(120).join("\n");
+		const expanded = renderSubagentResult!(result, { expanded: true }, theme).render(120).join("\n");
+		assert.match(summary, /■ workflow · partial$/);
+		assert.equal(firstGrapheme(compact), "■");
+		assert.match(expanded, /■ workflow .*· partial$/m);
 	});
 
 	it("keeps all-failed async aggregate inline summaries terminal", () => {

@@ -649,7 +649,7 @@ function resultStatusLine(result: Details["results"][number], output: string): s
 
 type ResultPresentation = {
 	glyph: string;
-	label: "running" | "detached" | "stopped" | "paused" | "failed" | "completed";
+	label: "running" | "detached" | "stopped" | "paused" | "failed" | "partial" | "completed";
 	tone: "accent" | "warning" | "error" | "success";
 };
 
@@ -659,6 +659,7 @@ function semanticResultPresentation(input: {
 	stopped?: boolean;
 	interrupted?: boolean;
 	failed?: boolean;
+	partial?: boolean;
 	completedWithoutOutput?: boolean;
 	seed?: number;
 	frame?: number;
@@ -671,6 +672,7 @@ function semanticResultPresentation(input: {
 	if (input.stopped) return { glyph: "■", label: "stopped", tone: "warning" };
 	if (input.interrupted) return { glyph: "■", label: "paused", tone: "warning" };
 	if (input.failed) return { glyph: "✗", label: "failed", tone: "error" };
+	if (input.partial) return { glyph: "■", label: "partial", tone: "warning" };
 	return { glyph: "✓", label: "completed", tone: input.completedWithoutOutput ? "warning" : "success" };
 }
 
@@ -2102,6 +2104,7 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 		|| workflowGraphHasStatus(d, ["failed"]);
 	const paused = d.results.some((r) => r.interrupted)
 		|| workflowGraphHasStatus(d, ["paused"]);
+	const partial = workflowGraphHasStatus(d, ["partial"]);
 	let totalSummary = d.progressSummary;
 	if (!totalSummary) {
 		let sawProgress = false;
@@ -2125,6 +2128,7 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 		stopped,
 		interrupted: paused,
 		failed,
+		partial,
 		seed: runningSeed(progressRunningSeed(totalSummary), d.currentStepIndex),
 		frame,
 	});
@@ -2228,7 +2232,8 @@ export function renderSubagentSummary(
 	const failed = result.isError === true
 		|| results.some((entry) => !hasTerminalResultFlag(entry) && entry.exitCode !== 0 && !isResultRunning(entry))
 		|| Boolean(details && workflowGraphHasStatus(details, ["failed"]));
-	const state = running ? "running" : failed ? "failed" : stopped ? "stopped" : paused ? "paused" : "completed";
+	const partial = Boolean(details && workflowGraphHasStatus(details, ["partial"]));
+	const state = running ? "running" : failed ? "failed" : stopped ? "stopped" : paused ? "paused" : partial ? "partial" : "completed";
 	const glyph = state === "running"
 		? theme.fg("accent", STATIC_RUNNING_GLYPH)
 		: state === "completed"
@@ -2398,6 +2403,7 @@ export function renderSubagentResult(
 		|| workflowGraphHasStatus(d, ["failed"]);
 	const paused = d.results.some((r) => r.interrupted)
 		|| workflowGraphHasStatus(d, ["paused"]);
+	const partial = workflowGraphHasStatus(d, ["partial"]);
 	const completedWithoutOutput = d.results.some((r) =>
 		!hasTerminalResultFlag(r)
 		&& r.exitCode === 0
@@ -2410,6 +2416,7 @@ export function renderSubagentResult(
 		stopped,
 		interrupted: paused,
 		failed,
+		partial,
 		completedWithoutOutput,
 		frame,
 	}), theme);

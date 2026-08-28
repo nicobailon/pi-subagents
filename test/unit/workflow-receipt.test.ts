@@ -85,13 +85,13 @@ describe("workflow receipts", () => {
 		assert.equal(JSON.stringify(receipt).includes("/private/report.json"), true);
 	});
 
-	it("rejects malformed host monitor receipt state", () => {
+	it("reads inconclusive host monitor receipt state without a verdict", () => {
 		const asyncRoot = tempRoot();
-		const asyncDir = path.join(asyncRoot, "workflow-host-invalid");
+		const asyncDir = path.join(asyncRoot, "workflow-host-inconclusive");
 		fs.mkdirSync(asyncDir, { recursive: true });
-		const receipt = buildWorkflowReceipt({ workflowRunId: "workflow-host-invalid", state: "complete", children: [] });
-		fs.writeFileSync(workflowReceiptPath(asyncRoot, "workflow-host-invalid"), JSON.stringify({ ...receipt, hostSteps: [{ ...hostStep(), state: "done", verdict: undefined }] }));
-		assert.throws(() => readWorkflowReceipt(asyncRoot, "workflow-host-invalid"), /done state requires a verdict/);
+		const receipt = buildWorkflowReceipt({ workflowRunId: "workflow-host-inconclusive", state: "complete", children: [] });
+		fs.writeFileSync(workflowReceiptPath(asyncRoot, "workflow-host-inconclusive"), JSON.stringify({ ...receipt, hostSteps: [{ ...hostStep(), state: "done", verdict: undefined }] }));
+		assert.equal(readWorkflowReceipt(asyncRoot, "workflow-host-inconclusive").hostSteps?.[0]?.verdict, undefined);
 	});
 
 	it("reads legacy Grok receipt metadata after the active profile is removed", () => {

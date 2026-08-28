@@ -40,7 +40,7 @@ export interface ChainOutputMapEntry {
 
 export type ChainOutputMap = Record<string, ChainOutputMapEntry>;
 
-export type WorkflowNodeStatus = "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "detached" | "rejected";
+export type WorkflowNodeStatus = "pending" | "running" | "completed" | "failed" | "partial" | "paused" | "stopped" | "detached" | "rejected";
 
 export type HostStepMonitorKind = "command" | "ci" | "gate";
 export type HostStepState = "pending" | "running" | "done" | "cancelled" | "error";

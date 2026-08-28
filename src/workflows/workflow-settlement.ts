@@ -73,9 +73,13 @@ function withWorkflowChildren(status: AsyncStatus): AsyncStatus {
 	};
 }
 
-export function findWorkflowSettlementStep(status: AsyncStatus, childRunId: string, workflowKey?: string): WorkflowStatusStep | undefined {
-	return status.steps?.find((candidate) => candidate.runId === childRunId)
-		?? (workflowKey ? status.steps?.find((candidate) => candidate.workflowKey === workflowKey) : undefined) as WorkflowStatusStep | undefined;
+export function findWorkflowSettlementStep(status: AsyncStatus, childRunId: string, workflowKey?: string, sessionFile?: string): WorkflowStatusStep | undefined {
+	const exact = status.steps?.find((candidate) => candidate.runId === childRunId);
+	if (exact || !workflowKey || !sessionFile) return exact;
+	const candidates = status.steps?.filter((candidate) => candidate.runId === undefined
+		&& candidate.workflowKey === workflowKey
+		&& candidate.sessionFile === sessionFile) ?? [];
+	return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 export function promoteSettledPausedWorkflow(status: AsyncStatus, now = Date.now()): AsyncStatus | undefined {
@@ -101,8 +105,9 @@ export function applyDetachedChildSettlement(
 ): AsyncStatus | undefined {
 	if (status.mode !== "workflow" || status.state !== "paused") return undefined;
 	const next = cloneWorkflowStatus(status);
-	const step = findWorkflowSettlementStep(next, input.childRunId, input.workflowKey);
+	const step = findWorkflowSettlementStep(next, input.childRunId, input.workflowKey, input.result.sessionFile);
 	if (!step) return undefined;
+	step.runId ??= input.childRunId;
 	const succeeded = input.result.exitCode === 0 && !input.result.error && !input.result.interrupted;
 	const failedSiblingError = next.steps?.find((candidate) => {
 		const candidateStep = candidate as WorkflowStatusStep;

@@ -180,6 +180,16 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 	const asyncDir = job?.asyncDir ?? path.join(DIRS.async, input.workflowRunId);
 	const status = readStatus(asyncDir);
 	if (!status) return false;
+	const matchingControls = input.workflowKey === undefined ? [] : [...(input.state.foregroundControls?.values() ?? [])].filter((control) =>
+		control.parentWorkflowRunId === input.workflowRunId && control.workflowKey === input.workflowKey
+	);
+	const confirmedLiveIdentity = matchingControls.length === 1 && matchingControls[0]?.runId === input.childRunId;
+	if (confirmedLiveIdentity) {
+		const candidates = status.steps?.filter((candidate) => candidate.workflowKey === input.workflowKey) ?? [];
+		const candidate = candidates.length === 1 ? candidates[0] : undefined;
+		if (candidate && candidate.runId === undefined && candidate.sessionFile === undefined
+			&& candidate.status === "paused" && candidate.activityState === "needs_attention") candidate.runId = input.childRunId;
+	}
 	const next = applyDetachedChildToPausedWorkflow(status, {
 		childRunId: input.childRunId,
 		result: input.result,
@@ -188,7 +198,7 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 	if (!next) return false;
 	const outputReference = input.result.savedOutputPath ?? input.result.outputReference?.path;
 	const outputPathMapping = outputPathMappingFromTask(input.result.task, outputReference);
-	const settledStep = findWorkflowSettlementStep(next, input.childRunId, input.workflowKey);
+	const settledStep = findWorkflowSettlementStep(next, input.childRunId);
 	if (settledStep && outputPathMapping) settledStep.outputPathMapping = outputPathMapping;
 	const resultPath = resultFilePath(DIRS.results, input.workflowRunId);
 	let existing: Record<string, unknown> | undefined;

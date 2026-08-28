@@ -116,6 +116,34 @@ describe("async status projection", () => {
 		]);
 	});
 
+	it("projects done host steps without verdicts as partial", () => {
+		const snapshot = projectAsyncStatusSnapshot([job({
+			asyncId: "inconclusive-gate",
+			status: "running",
+			hostSteps: [hostStep({ verdict: undefined })],
+		})]);
+
+		assert.equal(snapshot.runs[0]?.children?.[0]?.state, "partial");
+	});
+
+	it("reserves bounded snapshot capacity for host steps", () => {
+		const snapshot = projectAsyncStatusSnapshot([job({
+			asyncId: "bounded-gate",
+			status: "running",
+			steps: [
+				{ agent: "first", status: "running" },
+				{ agent: "second", status: "running" },
+			],
+			hostSteps: [hostStep()],
+		})], { maxChildrenPerNode: 2 });
+
+		assert.deepEqual(snapshot.runs[0]?.children?.map(({ kind, id }) => ({ kind, id })), [
+			{ kind: "step", id: "step:0" },
+			{ kind: "host-step", id: "ci-check" },
+		]);
+		assert.equal(snapshot.omitted.children, 1);
+	});
+
 	it("omits malformed host nodes instead of rendering them as agents", () => {
 		const rows = projectAsyncWorkflowRows([], {
 			runId: "workflow-1",
