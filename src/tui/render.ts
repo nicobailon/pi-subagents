@@ -397,7 +397,7 @@ function laneStateLabel(state: AsyncLaneProjection["state"], theme: Theme): stri
 function formatLaneProjection(lane: AsyncLaneProjection, theme: Theme): string {
 	const label = boundedLaneValue(lane.label, 56);
 	const identity = [label, lane.role ? `role:${lane.role}` : undefined].filter(Boolean).join(" · ");
-	return `${theme.fg("dim", "lane:")} ${identity ? theme.bold(identity) : theme.bold(lane.role)} · ${laneStateLabel(lane.state, theme)}`;
+	return `${identity ? theme.bold(identity) : theme.bold(lane.role)} · ${laneStateLabel(lane.state, theme)}`;
 }
 
 function formatLaneChip(chip: string, theme: Theme): string {

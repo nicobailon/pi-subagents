@@ -29,6 +29,7 @@
 - Show workflow child labels and phases in async status progress while preserving stable workflow keys.
 
 ### Fixed
+- Remove the remaining `lane:` prefix from operator-facing async status rows in the TUI (#1658).
 - Avoid false preflight mismatch warnings for generated `runs.lanes(...)` stage keys (#1649).
 - Accept long host tool-call ids in workflow child summaries, matching the existing 4,096-byte session id bound. Thanks to [@SudoKillMe](https://github.com/SudoKillMe) for #1653.
 - Keep an async `workflowScript` continuation live while an awaited child coordinates with its supervisor, so sequential tail steps continue after the child settles (#1634).

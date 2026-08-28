@@ -145,11 +145,12 @@ describe("subagent async widget rendering", () => {
 			chips: ["fresh"],
 		});
 		const text = buildWidgetLines([job], theme, 180).join("\n");
-		assert.match(text, /lane: Review #1610 — Inspect the current status surface · role:reviewer · running/);
+		assert.match(text, /Review #1610 — Inspect the current status surface · role:reviewer · running/);
 		assert.match(text, /phase:fresh-review · gate:review required · next:review output · out:review\.md · ref:review · \[fresh\]/);
-		assert.match(text, /lane: Fix candidate/);
-		assert.match(text, /lane: Fix candidate · role:writer · pending/);
+		assert.match(text, /Fix candidate/);
+		assert.match(text, /Fix candidate · role:writer · pending/);
 		assert.match(text, /phase:implementation · next:await launch · out:fix\.md/);
+		assert.doesNotMatch(text, /lane:/);
 	});
 
 	it("prefers bounded loaded workspace context over repeated internal lane refs", () => {
