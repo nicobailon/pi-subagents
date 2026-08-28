@@ -30,6 +30,7 @@
 
 ### Fixed
 - Remove the remaining `lane:` prefix from operator-facing async status rows in the TUI (#1658).
+- Allow scheduled project roots shared through a registered Git worktree's `.pi` symlink while rejecting unrelated or unproven Git-layout escapes. Thanks to [@sususu98](https://github.com/sususu98) for #1656.
 - Avoid false preflight mismatch warnings for generated `runs.lanes(...)` stage keys (#1649).
 - Accept long host tool-call ids in workflow child summaries, matching the existing 4,096-byte session id bound. Thanks to [@SudoKillMe](https://github.com/SudoKillMe) for #1653.
 - Keep an async `workflowScript` continuation live while an awaited child coordinates with its supervisor, so sequential tail steps continue after the child settles (#1634).

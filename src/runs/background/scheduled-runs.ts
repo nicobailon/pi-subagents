@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -11,6 +12,8 @@ import type { SubagentParamsLike } from "../foreground/subagent-executor.ts";
 import { validateExecutionAcceptance } from "../shared/acceptance.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { previewSimpleWorkflowRun } from "../../workflows/scripted-workflow.ts";
+import { resolveGitRepositoryIdentity } from "../../workflows/chat-progress.ts";
+import { getConfigDirName } from "../../shared/utils.ts";
 
 export const SCHEDULED_RUN_ACTIONS = [
 	"schedule.create",
@@ -142,9 +145,81 @@ function validateScheduleId(id: string): string {
 	return id;
 }
 
+function normalizedComparisonPath(value: string): string {
+	const absolute = path.resolve(value);
+	if (process.platform !== "win32") return absolute;
+	let normalized = absolute;
+	try { normalized = fs.realpathSync.native(absolute); } catch {}
+	normalized = normalized.replaceAll("/", "\\");
+	if (normalized.startsWith("\\\\?\\UNC\\")) normalized = `\\\\${normalized.slice(8)}`;
+	else if (normalized.startsWith("\\\\?\\")) normalized = normalized.slice(4);
+	normalized = path.win32.normalize(normalized).toLowerCase();
+	if (normalized.length > 3) normalized = normalized.replace(/[\\]+$/, "");
+	return normalized;
+}
+
 function pathWithin(root: string, candidate: string): boolean {
-	const relative = path.relative(root, candidate);
+	const relative = path.relative(normalizedComparisonPath(root), normalizedComparisonPath(candidate));
 	return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+function resolveGitCommonDirForCheckout(checkoutRoot: string): string | undefined {
+	const gitPath = path.join(checkoutRoot, ".git");
+	try {
+		const stat = fs.statSync(gitPath);
+		if (stat.isDirectory()) return fs.realpathSync.native(gitPath);
+		if (!stat.isFile()) return undefined;
+		const match = /^gitdir:[ \t]*([^\r\n]+)$/i.exec(fs.readFileSync(gitPath, "utf-8").trim());
+		return match?.[1] ? fs.realpathSync.native(path.resolve(checkoutRoot, match[1])) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function samePath(left: string, right: string): boolean {
+	return normalizedComparisonPath(left) === normalizedComparisonPath(right);
+}
+
+function resolveTrustedGitConfigRoot(checkoutRoot: string, commonDir: string): string | undefined {
+	const resolvedCommonDir = resolveGitCommonDirForCheckout(checkoutRoot);
+	if (!resolvedCommonDir || !samePath(resolvedCommonDir, commonDir)) return undefined;
+	const configRoot = path.join(checkoutRoot, getConfigDirName());
+	try {
+		const resolved = fs.realpathSync.native(configRoot);
+		return fs.statSync(resolved).isDirectory() && pathWithin(checkoutRoot, resolved) ? resolved : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function registeredGitWorktreeRoots(projectCwd: string): string[] {
+	const result = spawnSync("git", ["-C", projectCwd, "worktree", "list", "--porcelain"], { encoding: "utf-8", windowsHide: true });
+	if (result.status !== 0 || typeof result.stdout !== "string") return [];
+	const roots: string[] = [];
+	for (const line of result.stdout.split(/\r?\n/)) {
+		if (!line.startsWith("worktree ")) continue;
+		try { roots.push(fs.realpathSync.native(line.slice("worktree ".length).trim())); } catch {}
+	}
+	return roots;
+}
+
+function resolveSharedGitConfigRoot(projectCwd: string): string | undefined {
+	const repository = resolveGitRepositoryIdentity(projectCwd);
+	if (!repository) return undefined;
+	let projectConfigRoot: string;
+	try {
+		projectConfigRoot = fs.realpathSync.native(path.join(projectCwd, getConfigDirName()));
+	} catch {
+		return undefined;
+	}
+	// Git may report a separate-git-dir primary checkout as its common git
+	// directory, not as the checkout root. Without a registered checkout root,
+	// do not infer a shared config path from that unprovable layout.
+	for (const checkoutRoot of new Set(registeredGitWorktreeRoots(projectCwd))) {
+		const resolved = resolveTrustedGitConfigRoot(checkoutRoot, repository.commonDir);
+		if (resolved && samePath(resolved, projectConfigRoot)) return resolved;
+	}
+	return undefined;
 }
 
 function assertScheduleRoot(root: string, projectCwd: string | undefined, create: boolean): void {
@@ -154,7 +229,7 @@ function assertScheduleRoot(root: string, projectCwd: string | undefined, create
 	}
 	let projectPath: string;
 	try {
-		projectPath = fs.realpathSync(projectCwd);
+		projectPath = fs.realpathSync.native(projectCwd);
 	} catch (error) {
 		if (!create && (error as NodeJS.ErrnoException).code === "ENOENT") return;
 		throw error;
@@ -165,10 +240,14 @@ function assertScheduleRoot(root: string, projectCwd: string | undefined, create
 		if (parent === existing) break;
 		existing = parent;
 	}
-	if (!pathWithin(projectPath, fs.realpathSync(existing))) throw new Error(`Project schedule root '${root}' resolves outside the real project.`);
+	const existingPath = fs.realpathSync.native(existing);
+	const sharedGitConfigRoot = pathWithin(projectPath, existingPath) ? undefined : resolveSharedGitConfigRoot(projectCwd);
+	const isTrustedPath = (candidate: string): boolean => pathWithin(projectPath, candidate)
+		|| (sharedGitConfigRoot !== undefined && pathWithin(sharedGitConfigRoot, candidate));
+	if (!isTrustedPath(existingPath)) throw new Error(`Project schedule root '${root}' resolves outside the real project.`);
 	if (!create) return;
 	fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-	if (!pathWithin(projectPath, fs.realpathSync(root))) throw new Error(`Project schedule root '${root}' resolves outside the real project.`);
+	if (!isTrustedPath(fs.realpathSync.native(root))) throw new Error(`Project schedule root '${root}' resolves outside the real project.`);
 }
 
 function scheduleDir(root: string, id: string, create = false, projectCwd?: string): string {
@@ -182,9 +261,9 @@ function scheduleDir(root: string, id: string, create = false, projectCwd?: stri
 		if (!create) return dir;
 		fs.mkdirSync(dir, { mode: 0o700 });
 	}
-	const rootPath = fs.realpathSync(root);
-	const dirPath = fs.realpathSync(dir);
-	if (dirPath !== path.join(rootPath, id)) throw new Error(`Schedule path '${dir}' escapes the project schedule root.`);
+	const rootPath = fs.realpathSync.native(root);
+	const dirPath = fs.realpathSync.native(dir);
+	if (!samePath(dirPath, path.join(rootPath, id))) throw new Error(`Schedule path '${dir}' escapes the project schedule root.`);
 	return dir;
 }
 

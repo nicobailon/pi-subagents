@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -55,6 +56,10 @@ const roots: string[] = [];
 afterEach(() => {
 	for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
+
+function git(cwd: string, args: string[]): void {
+	execFileSync("git", args, { cwd, stdio: "ignore" });
+}
 
 function context(cwd: string, sessionId = "session-a"): ExtensionContext {
 	return {
@@ -381,6 +386,116 @@ describe("project schedule management", () => {
 		assert.equal(result.isError, true);
 		assert.match(text(result), /resolves outside the real project/);
 		assert.equal(fs.existsSync(path.join(outside, "schedules")), false);
+	});
+
+	it("allows a default project schedule root through a shared Git worktree .pi symlink", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schedule-worktree-link-"));
+		roots.push(root);
+		const repository = path.join(root, "repository");
+		const worktree = path.join(repository, ".worktrees", "feature");
+		fs.mkdirSync(repository, { recursive: true });
+		git(repository, ["init"]);
+		git(repository, ["config", "user.email", "test@example.com"]);
+		git(repository, ["config", "user.name", "Test User"]);
+		fs.writeFileSync(path.join(repository, "tracked.txt"), "base\n", "utf-8");
+		git(repository, ["add", "tracked.txt"]);
+		git(repository, ["commit", "-m", "base"]);
+		fs.mkdirSync(path.dirname(worktree), { recursive: true });
+		git(repository, ["worktree", "add", "-b", "feature", worktree]);
+		fs.mkdirSync(path.join(repository, ".pi"), { recursive: true });
+		fs.symlinkSync(path.join(repository, ".pi"), path.join(worktree, ".pi"), process.platform === "win32" ? "junction" : "dir");
+
+		const ctx = context(worktree);
+		const manager = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
+		});
+		manager.bindSession(ctx);
+		const result = await manager.handleToolCall({ action: "schedule.create", id: "shared", every: "1h", workflowScript: "return 1" }, ctx);
+		assert.equal(result.isError, undefined);
+		assert.equal(fs.existsSync(path.join(repository, ".pi", "subagents", "schedules", "shared", "schedule.json")), true);
+	});
+
+	it("rejects a Git worktree .pi symlink outside the shared config root", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schedule-worktree-escape-"));
+		roots.push(root);
+		const repository = path.join(root, "repository");
+		const worktree = path.join(repository, ".worktrees", "feature");
+		const outside = path.join(root, "outside");
+		fs.mkdirSync(repository, { recursive: true });
+		git(repository, ["init"]);
+		git(repository, ["config", "user.email", "test@example.com"]);
+		git(repository, ["config", "user.name", "Test User"]);
+		fs.writeFileSync(path.join(repository, "tracked.txt"), "base\n", "utf-8");
+		git(repository, ["add", "tracked.txt"]);
+		git(repository, ["commit", "-m", "base"]);
+		fs.mkdirSync(path.dirname(worktree), { recursive: true });
+		git(repository, ["worktree", "add", "-b", "feature", worktree]);
+		fs.mkdirSync(path.join(repository, ".pi"), { recursive: true });
+		fs.mkdirSync(outside);
+		fs.symlinkSync(outside, path.join(worktree, ".pi"), process.platform === "win32" ? "junction" : "dir");
+
+		const manager = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
+		});
+		assert.throws(() => manager.bindSession(context(worktree)), /resolves outside the real project/);
+		assert.equal(fs.existsSync(path.join(outside, "subagents")), false);
+	});
+
+	it("rejects separate-git-dir primary checkout sharing without a registered root", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schedule-separate-git-dir-"));
+		roots.push(root);
+		const repository = path.join(root, "repository");
+		const gitDir = path.join(root, "git-data", "metadata");
+		const worktree = path.join(root, "worktree");
+		fs.mkdirSync(repository, { recursive: true });
+		fs.mkdirSync(path.dirname(gitDir), { recursive: true });
+		git(repository, ["init", "--separate-git-dir", gitDir]);
+		git(repository, ["config", "user.email", "test@example.com"]);
+		git(repository, ["config", "user.name", "Test User"]);
+		fs.writeFileSync(path.join(repository, "tracked.txt"), "base\n", "utf-8");
+		git(repository, ["add", "tracked.txt"]);
+		git(repository, ["commit", "-m", "base"]);
+		git(repository, ["worktree", "add", "-b", "feature", worktree]);
+		const primaryConfig = path.join(repository, ".pi");
+		fs.mkdirSync(primaryConfig, { recursive: true });
+		fs.symlinkSync(primaryConfig, path.join(worktree, ".pi"), process.platform === "win32" ? "junction" : "dir");
+
+		const manager = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
+		});
+		assert.throws(() => manager.bindSession(context(worktree)), /resolves outside the real project/);
+		assert.equal(fs.existsSync(path.join(primaryConfig, "subagents")), false);
+	});
+
+	it("rejects an unregistered checkout ancestor with the same Git directory", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schedule-unregistered-git-dir-"));
+		roots.push(root);
+		const repository = path.join(root, "repository");
+		const worktree = path.join(repository, ".worktrees", "feature");
+		const outside = path.join(root, "outside");
+		fs.mkdirSync(repository, { recursive: true });
+		git(repository, ["init"]);
+		git(repository, ["config", "user.email", "test@example.com"]);
+		git(repository, ["config", "user.name", "Test User"]);
+		fs.writeFileSync(path.join(repository, "tracked.txt"), "base\n", "utf-8");
+		git(repository, ["add", "tracked.txt"]);
+		git(repository, ["commit", "-m", "base"]);
+		fs.mkdirSync(path.dirname(worktree), { recursive: true });
+		git(repository, ["worktree", "add", "-b", "feature", worktree]);
+		const outsideConfig = path.join(outside, ".pi");
+		fs.mkdirSync(outsideConfig, { recursive: true });
+		fs.writeFileSync(path.join(outside, ".git"), `gitdir: ${path.join(repository, ".git")}\n`, "utf-8");
+		fs.symlinkSync(outsideConfig, path.join(worktree, ".pi"), process.platform === "win32" ? "junction" : "dir");
+
+		const manager = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
+		});
+		assert.throws(() => manager.bindSession(context(worktree)), /resolves outside the real project/);
+		assert.equal(fs.existsSync(path.join(outsideConfig, "subagents")), false);
 	});
 });
 
