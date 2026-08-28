@@ -62,6 +62,7 @@ import { createNestedRoute, nestedRouteEnv, parseNestedEventRecords } from "../.
 import { resolveMissionStoreLocation } from "../../src/missions/store.ts";
 import { missionStatePath } from "../../src/missions/workflow-state.ts";
 import { discardPreservedWorktrees } from "../../src/runs/shared/parallel-handoff.ts";
+import { createWorktrees } from "../../src/runs/shared/worktree.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
 import { createWorkflowChildPermit, workflowChildPermitConsumed } from "../../src/shared/workflow-child-permit.ts";
@@ -4189,6 +4190,70 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(status.isError, undefined);
 		assert.doesNotMatch(status.content[0]?.text ?? "", /Rejected: a subagent call is already in progress/);
 		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("creates a plan-only worktree cleanup action without removing managed state", { skip: !createSubagentExecutor ? "executor not importable" : process.platform === "win32" ? "worktree paths differ on Windows" : undefined }, async () => {
+		const repo = path.join(tempDir, "cleanup-repo");
+		const baseDir = path.join(tempDir, "cleanup-worktrees");
+		fs.mkdirSync(repo, { recursive: true });
+		execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repo });
+		execFileSync("git", ["config", "user.name", "Test User"], { cwd: repo });
+		fs.writeFileSync(path.join(repo, "base.txt"), "base\n", "utf-8");
+		execFileSync("git", ["add", "base.txt"], { cwd: repo });
+		execFileSync("git", ["commit", "-m", "base"], { cwd: repo, stdio: "ignore" });
+		const setup = createWorktrees(repo, "action", 1, { baseDir });
+		const worktree = setup.worktrees[0]!;
+		const manifestPath = path.join(repo, ".pi", "subagents", "artifacts", "handoff.json");
+		const baseCommit = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
+		fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+		fs.writeFileSync(manifestPath, JSON.stringify({
+			version: 1,
+			runId: "cleanup-action-run",
+			mode: "parallel",
+			source: "async",
+			cwd: repo,
+			createdAt: 1,
+			updatedAt: 1,
+			groups: [{
+				stepIndex: 0,
+				baseCommit,
+				repoRoot: repo,
+				children: [{
+					index: 0,
+					taskIndex: 0,
+					agent: "worker",
+					status: "completed",
+					summary: "done",
+					patch: { path: path.join(repo, ".pi", "subagents", "artifacts", "worktree.patch"), branch: worktree.branch, changed: false, diffStat: "", filesChanged: 0, insertions: 0, deletions: 0 },
+				}],
+				cleanup: { state: "partial", pruned: false, tasks: [{ index: 0, path: worktree.path, branch: worktree.branch, worktreeRemoved: false, branchRemoved: false, preserved: true }] },
+			}],
+		}, null, 2), "utf-8");
+		fs.writeFileSync(path.join(repo, ".pi", "subagents", "artifacts", "status.json"), JSON.stringify({ runId: "cleanup-action-run", state: "complete" }), "utf-8");
+		try {
+			const executor = makeExecutor([makeAgent("echo")], { worktreeBaseDir: baseDir });
+			const result = await executor.executePublic("cleanup-plan", { action: "worktree.cleanup", repo: "cleanup-repo", mode: "plan" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "cleanup plan failed");
+			const text = result.content[0]?.text ?? "";
+			assert.match(text, /Will remove/);
+			assert.match(text, /Plan-only mode: no worktrees or branches were removed/);
+			const planFiles = fs.readdirSync(path.join(repo, ".pi", "subagents", "cleanup-plans"));
+			assert.equal(planFiles.length, 1);
+			const planId = planFiles[0]!.replace(/\.json$/, "");
+			const childSafe = makeExecutor([makeAgent("echo")], { worktreeBaseDir: baseDir }, false, undefined, false);
+			const childSafeResult = await childSafe.executePublic("cleanup-child-safe", { action: "worktree.cleanup", repo: "cleanup-repo", mode: "plan" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(childSafeResult.isError, true);
+			assert.match(childSafeResult.content[0]?.text ?? "", /child-safe subagent fanout mode/i);
+			const apply = await executor.executePublic("cleanup-apply", { action: "worktree.cleanup", repo: "cleanup-repo", mode: "apply", planId }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(apply.isError, true);
+			assert.match(apply.content[0]?.text ?? "", /plan.*only|apply\/removal is not available/i);
+			assert.ok(fs.existsSync(worktree.path));
+			assert.notEqual(execFileSync("git", ["-C", repo, "branch", "--list", worktree.branch], { encoding: "utf-8" }).trim(), "");
+		} finally {
+			try { execFileSync("git", ["-C", repo, "worktree", "remove", "--force", worktree.path], { stdio: "ignore" }); } catch {}
+			try { execFileSync("git", ["-C", repo, "branch", "-D", worktree.branch], { stdio: "ignore" }); } catch {}
+		}
 	});
 
 
