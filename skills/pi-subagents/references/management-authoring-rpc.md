@@ -41,7 +41,7 @@ subagent({
     description: "Project-specific implementation helper",
     systemPrompt: "Your system prompt here.",
     systemPromptMode: "replace",
-    model: "openai-codex/gpt-5.4",
+    model: "provider/model-id",
     tools: "read,grep,find,ls,bash"
   }
 })
@@ -97,7 +97,7 @@ name: my-agent
 package: code-analysis
 description: What this agent does
 aliases: developer, coder
-model: openai-codex/gpt-5.4
+model: provider/model-id
 thinking: high
 tools: read, grep, find, ls, bash
 systemPromptMode: replace

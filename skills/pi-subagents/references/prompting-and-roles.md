@@ -8,7 +8,7 @@ Parent extensions may register a session-scoped, out-of-band ceiling through `pi
 
 ## When to Use
 
-- **Complex work orchestration**: use Fable mode as the default parent-agent loop for complex work. Complex means the task has multiple moving parts, unclear acceptance, cross-cutting code, meaningful user-visible impact, expensive or irreversible validation, broad review surface, or the user asks for orchestration. Lightweight one-off delegation can stay lightweight.
+- **Complex work orchestration**: keep the parent on its ordinary strong default model. Delegate only when another child materially improves evidence, independent review, or isolated execution; omission failures are cheaper than unnecessary commissions. For hard orchestration or root-cause questions, use a top-reasoning model only as a bounded read-only critic/oracle escalation, never as an autonomous root. Complex means the task has multiple moving parts, unclear acceptance, cross-cutting code, meaningful user-visible impact, expensive or irreversible validation, broad review surface, or the user asks for orchestration. Lightweight one-off delegation can stay lightweight.
 - **Advisory review**: use fresh-context `reviewer` agents for adversarial code review, or fork to `oracle` when inherited decisions and drift matter
 - **Implementation handoff**: have `oracle` advise, then `worker` implement only after an approved direction
 - **Recon and planning**: use `scout`, then write a plan when needed
@@ -51,11 +51,15 @@ Packaged prompt shortcuts are also available for repeatable workflows. Treat the
 
 The prompt templates in `prompts/` encode workflows the parent agent can run on demand. If the user provides a URL, issue, PR, plan, local file, screenshot, or freeform target, treat that target as the primary scope: read or fetch it before launching children, then include it explicitly in every child task. For targets outside the parent cwd, include the exact repository, explicit `cwd`, authority boundary, and expected output path in each child task. Do not depend on the parent conversation history when the recipe calls for fresh context.
 
+### Commission-risk and cold-start packets
+
+Delegate only when the child materially improves evidence, independent review, or isolated execution; do not manufacture parallelism. Every child packet must be cold-start complete: state the goal, exact target/cwd/ref, authority and edit boundary, relevant context/evidence, success criteria, validation, output, and stop/escalation rules. For an orchestration audit by the critic tier, make the child read-only and request at most three omissions, each cited to a file, line, or decision; high thinking is an explicit escalation, not a default.
+
 ### Council Mode technique
 
-Use Council Mode when the user asks to convene advisors, debate a material decision, cross-examine recommendations, or critique and improve a plan with several model perspectives. This includes requests such as “run a council on this architecture,” “have Sol, Fable, and Kimi critique this plan,” or “get multiple oracles to debate the tradeoffs.” Read `../council-mode/SKILL.md` and follow its bounded parent-supervised protocol instead of launching ad hoc parallel oracle calls.
+Use Council Mode when the user asks to convene advisors, debate a material decision, cross-examine recommendations, or critique and improve a plan with several model perspectives. This includes requests such as “run a council on this architecture,” “have the configured advisors critique this plan,” or “get multiple oracles to debate the tradeoffs.” Read `../council-mode/SKILL.md` and follow its bounded parent-supervised protocol instead of launching ad hoc parallel oracle calls.
 
-Council advisors are read-only. User or project `council-*` profiles can pin models such as GPT 5.6 Sol, Fable, or Kimi and define any persistent stance in the profile body. Package advisors such as Surf's `gpt-pro` can join the roster only when the `surf-cli` Pi extension is installed and its `surf-oracle` provider is registered; treat them as external runners, omit child `async` for attached results, and do not pass `outputSchema` to them. The council question and scope provide the decision frame; do not invent per-advisor role labels. The parent collects independent reports, optionally sends curated cross-exam packets, and writes the final memo. Do not treat the council as agent-to-agent chat, implementation authority, or a writer swarm.
+Council advisors are read-only. User or project `council-*` profiles choose allowed models and define any persistent stance in the profile body. A top-reasoning advisor remains bounded and read-only; it does not become the root. Package advisors such as Surf's `gpt-pro` can join the roster only when the `surf-cli` Pi extension is installed and its `surf-oracle` provider is registered; treat them as external runners, omit child `async` for attached results, and do not pass `outputSchema` to them. The council question and scope provide the decision frame; do not invent per-advisor role labels. The parent collects independent reports, optionally sends curated cross-exam packets, and writes the final memo. Do not treat the council as agent-to-agent chat, implementation authority, or a writer swarm.
 
 ### Parallel review technique
 
@@ -161,19 +165,19 @@ subagent({
 Builtin agents load at the lowest priority. Project agents override user agents,
 and user/project agents override builtins with the same name.
 
-| Agent | Purpose | Model | Typical output / role |
+| Agent | Purpose | Recommended tier | Typical output / role |
 |-------|---------|-------|------------------------|
-| `scout` | Fast codebase recon | inherits default | Writes `context.md` handoff material |
-| `worker` | Implementation and approved oracle handoffs | inherits default | Single-writer implementation with decision escalation |
-| `reviewer` | Review specialist | inherits default | Default recipes are review-only; tools include edit/write when a fix pass is explicit |
-| `researcher` | Web research brief generator | inherits default | Writes `research.md` |
-| `delegate` | Lightweight generic delegate | inherits default | No fixed output; generic delegated work |
-| `oracle` | Decision-consistency advisory review | inherits default | Advisory review, intercom coordination |
-| `advisor` | Claude Code-compatible alias for `oracle` | inherits default | Same advisory role as `oracle` |
+| `scout` | Fast codebase recon | fast worker/scout tier | Writes `context.md` handoff material |
+| `worker` | Implementation and approved oracle handoffs | capable worker tier | Single-writer implementation with decision escalation |
+| `reviewer` | Review specialist | strong reviewer tier; high thinking for serious reviews | Default recipes are review-only; tools include edit/write when a fix pass is explicit |
+| `researcher` | Web research brief generator | inherits configured default | Writes `research.md` |
+| `delegate` | Lightweight generic delegate | inherits configured default | No fixed output; generic delegated work |
+| `oracle` | Decision-consistency advisory review | top-reasoning critic tier, bounded read-only; high thinking escalation only | Advisory review, intercom coordination |
+| `advisor` | Compatibility alias for `oracle` | top-reasoning critic tier, bounded read-only; high thinking escalation only | Same advisory role as `oracle` |
 
 Builtin `worker` and `delegate` use strict tool allowlists and do not inherit ambient parent extension tools. To give a child an extension tool, name it in `tools` and load its provider via `extensions`, a path-like `tools` entry, or `subagentOnlyExtensions`. Custom agents without an `extensions` field follow `subagents.defaultExtensions` when set.
 
-Builtin agents inherit the current Pi default model unless a run, user setting, project setting, or `subagents.defaultModel` overrides `model`. Set `subagents.defaultModel` when subagents should use a different default model than the parent session. Override builtin defaults before copying full agent files when a small tweak is enough.
+Builtin agents inherit the current Pi default model unless a run, user setting, project setting, or `subagents.defaultModel` overrides `model`. The table records recommended tier routing, not shipped hard defaults; explicit run, user, or project settings still win. Keep the parent/orchestrator on the ordinary strong default model unless parent/user policy says otherwise. Override builtin defaults before copying full agent files when a small tweak is enough.
 
 Set `subagents.defaultThinking` to apply a shared thinking level to builtin, package, user, and project agents whose frontmatter leaves `thinking` unset. Project settings win over user settings; explicit frontmatter (including `thinking: false`), `agentOverrides.<name>.thinking`, and per-run overrides remain more specific. This setting affects child agents only and does not change the parent session's default thinking level.
 
@@ -188,7 +192,7 @@ Set `subagents.defaultThinking` to apply a shared thinking level to builtin, pac
 For one run, use inline config:
 
 ```text
-/run reviewer[model=anthropic/claude-sonnet-4] "Review this diff"
+/run reviewer[model=provider/review-model] "Review this diff"
 ```
 
 For persistent tweaks, edit `subagents.agentOverrides` in user or project settings. User overrides apply everywhere. Project overrides apply only in that repo and win over user overrides. Use `/subagents-models` or `subagent({ action: "models" })` to inspect the live mapping after settings and overrides load.
@@ -202,18 +206,18 @@ Provider-scoped entries can layer on top of the default override for the active 
       "worker": { "thinking": "medium" }
     },
     "agentOverridesByProvider": {
-      "github-copilot": {
-        "worker": { "model": "github-copilot/gpt-5-mini" }
+      "provider-a": {
+        "worker": { "model": "provider-a/fast-worker-model" }
       },
-      "openrouter": {
-        "worker": { "model": "openrouter/openai/gpt-5-mini" }
+      "provider-b": {
+        "worker": { "model": "provider-b/fast-worker-model" }
       }
     }
   }
 }
 ```
 
-Model ids do not have to be exact. Separator variations (`claude-haiku-4.5` vs `claude-haiku-4-5`), case (`Claude-Sonnet-4`), and optional trailing date stamps (`claude-haiku-4-5-20251001`) all resolve to the same registry model. Exact `provider/id` wins; a qualified `provider/model` never switches providers. To constrain subagents to a budget or compliance profile, set `subagents.modelScope: { enforce: true, allow: ["anthropic/*", "openai/gpt-5-*"] }` in user or project settings. Out-of-scope models you pass explicitly error and abort; models inherited from frontmatter, `subagents.defaultModel`, agent frontmatter, or the parent session only warn.
+Model ids do not have to be exact. Separator variations (`fast.worker-v1` vs `fast-worker-v1`), case (`Strong-Review-Model`), and optional trailing date stamps all resolve to the same registry model. Exact `provider/id` wins; a qualified `provider/model` never switches providers. To constrain subagents to a budget or compliance profile, set `subagents.modelScope: { enforce: true, allow: ["approved-provider/*", "second-provider/approved-*"] }` in user or project settings. Out-of-scope models you pass explicitly error and abort; models inherited from frontmatter, `subagents.defaultModel`, agent frontmatter, or the parent session only warn.
 
 For model fleets, use the profile commands instead of hand-editing repeated overrides: `/subagents-refresh-provider-models <provider>`, `/subagents-generate-profiles <provider>`, `/subagents-load-profile <name>`, and `/subagents-check-profile <name>`. Profiles live under `~/.pi/agent/profiles/pi-subagents/` and replace only `settings.subagents` when loaded.
 
@@ -249,9 +253,9 @@ Direct settings example:
   "subagents": {
     "agentOverrides": {
       "reviewer": {
-        "model": "anthropic/claude-sonnet-4",
+        "model": "provider/strong-review-model",
         "thinking": "high",
-        "fallbackModels": ["openai-codex/gpt-5.6-luna:low"],
+        "fallbackModels": ["backup-provider/strong-review-model"],
         "acceptanceRole": "read-only"
       }
     }
@@ -269,14 +273,11 @@ agent with the same name only when you want a substantially different agent.
 
 ### Recommended model tiering (optional)
 
-When several providers are available, route agents by task shape instead of one model for everything:
+Keep the parent/orchestrator on the ordinary strong default model because omission failures are cheaper than unnecessary commissions. Route workers and scouts to a fast, capable worker tier, and keep serious reviews on the strong tier at high thinking. Use a top-reasoning model only for bounded, read-only critic/oracle/root-cause audits; critic-tier high thinking is escalation-only and never an autonomous root. Explicit parent/user model policy wins over these recommendations.
 
-1. **Fast workhorse** — cheapest capable model at low thinking for recon, lookups, and mechanical edits (for example on `scout`).
-2. **Standard well-scoped** — mid-tier model at medium thinking for most delegations: routine multi-file edits, focused reviews, straightforward implementation (for example on `worker`, `reviewer`, `delegate`).
-3. **Deep but bounded** — top reasoning model at high thinking only for hard tasks that arrive with explicit goals and completion criteria; these models loop on vague goals (for example on oracle-style agents).
-4. **Taste and intent** — a model that reads human intent well for ambiguous work: UX/design judgment, product tradeoffs, planning from vague requirements, writing quality.
+Examples are illustrative, not requirements. One maintainer setup maps these tiers to GPT-5.5 for the parent and serious reviews, GPT-5.6 Luna for workers/scouts, and GPT-5.6 Sol for critic/oracle escalation. A non-OpenAI setup should choose comparable available models by capability and record that mapping in user/project settings or a profile.
 
-Routing rule: use tiers 1–3 when the task is well-scoped; use tier 4 when scoping or judging is the task itself. Give tier-4 agents cross-provider `fallbackModels` so subscription usage limits degrade gracefully; fallback triggers automatically on rate-limit and overload errors. Note that forked context over an Anthropic parent transcript with signed thinking blocks forces the child's thinking off, so intent-tier agents work best with fresh context.
+Use `fallbackModels` when a tier has provider quota or availability risk. Prefer fresh context for cross-provider children when inherited provider-specific reasoning blocks would force thinking off.
 
 If a provider rejects model IDs with thinking suffixes, use
 `subagents.disableThinking: true` in user or project settings to clear bundled

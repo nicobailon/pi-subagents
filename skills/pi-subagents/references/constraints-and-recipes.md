@@ -104,9 +104,9 @@ subagent({ workflowScript: `
 ` })
 ```
 
-### Fable mode for complex work
+### Bounded parent orchestration for complex work
 
-Fable mode is the default orchestration posture for complex work. It is not a separate runtime mode; it is how the parent session uses `subagent`, `interview`, `subagent_wait`, acceptance contracts, artifacts, and fresh-context review when the work has real complexity. Use it for complex features, broad refactors, migrations, ambiguous goals, multi-system changes, expensive validation, user-visible behavior changes, or any request to plan/orchestrate end to end. Do not force it onto tiny one-shot delegation.
+For complex work, keep the parent on its ordinary strong default model and use `subagent`, `interview`, `subagent_wait`, acceptance contracts, artifacts, and fresh-context review as needed. Delegate only when a child materially improves evidence, independent review, or isolated execution; do not manufacture parallelism or force orchestration onto tiny one-shot delegation. Use a top-reasoning critic model only as a bounded, read-only critic/oracle/root-cause escalation, with at most three cited omissions in an orchestration audit; high thinking requires explicit parent/user approval.
 
 Run the work through seven gated phases:
 
@@ -120,7 +120,7 @@ Run the work through seven gated phases:
 
 ### Clarify → Plan → Implement → Review (self-orchestrated workflow)
 
-For straightforward non-trivial work, this sequence is the lightweight version of the parent-owned loop. When the task is complex, use Fable mode above. In either case, factor in the packaged prompt workflows without literally invoking slash commands. Use the same patterns through tools and subagents.
+For straightforward non-trivial work, this sequence is the lightweight version of the parent-owned loop. When the task is complex, use the bounded parent orchestration above. In either case, factor in the packaged prompt workflows without literally invoking slash commands. Use the same patterns through tools and subagents.
 
 Keep builtin agent defaults unless the user explicitly asks for a different model, thinking level, skills, output behavior, context mode, or other override. Do not add overrides just because you are orchestrating; the defaults encode the intended role behavior. In particular, packaged `worker`, `oracle`, and `advisor` default to forked context.
 

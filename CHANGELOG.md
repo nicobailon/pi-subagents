@@ -1,6 +1,10 @@
 # Changelog
 
+
 ## [Unreleased]
+
+### Changed
+- Clarify portable subagent orchestration guidance: keep the parent on the ordinary strong default model, route bounded workers/scouts to a fast worker tier, and reserve a top-reasoning model for bounded read-only critique or escalation without requiring a specific provider.
 
 ### Fixed
 - Show workflow child `[fresh]` and `[fork]` context labels in Fleet status rows alongside model and thinking badges.

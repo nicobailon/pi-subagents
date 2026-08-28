@@ -31,7 +31,15 @@ Read the matching reference file before acting. Paths are relative to this `SKIL
 
 For broad or uncertain requests, read more than one reference. For complex work, start with `references/prompting-and-roles.md` and `references/execution-controls.md`, then consult `references/constraints-and-recipes.md` before launching or reviewing child work.
 
-External CLI agents such as `codex-exec`, `codex-exec-writer`, `claude-code`, and `cursor-agent` use their own runner contract. Do not pass native Pi child options such as model override, structured output, acceptance/agent contract, tool budgets, fast mode, fork context, skills, or native Pi tools unless that runner explicitly implements them.
+External CLI agents use their own runner contract and are opt-in under explicit parent/user policy. Do not pass native Pi child options such as model override, structured output, acceptance/agent contract, tool budgets, fast mode, fork context, skills, or native Pi tools unless that runner explicitly implements them.
+
+## Orchestration policy
+
+- Keep the parent/orchestrator on your ordinary strong default model: omission failures are cheaper and easier to patch than unnecessary commissions.
+- Control commission risk: delegate only when a child materially improves evidence, independent review, or isolated execution. Do not manufacture parallelism.
+- Every child packet must be cold-start complete: include the goal, exact target/cwd/ref, authority and edit boundary, relevant context/evidence, success criteria, validation, output, and stop/escalation rules. Never rely on parent history, an issue number, or a broad glob alone.
+- Route workers and scouts to a fast, capable worker tier; keep serious reviews on the strong tier at high thinking. Reserve a top-reasoning model for bounded, read-only critic/oracle/root-cause escalation. Orchestration audits return at most three cited omissions, high thinking requires explicit parent/user approval, and the critic never becomes the autonomous root.
+- Exact model routing is deployment policy: set it in user/project `subagents` settings or profiles. The package guidance describes roles and tiers, not required providers or model families.
 
 ## Always-on constraints
 
