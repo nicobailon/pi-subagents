@@ -4,6 +4,7 @@
 
 ### Added
 - Add bounded, provider-agnostic host-owned CI and gate workflow rows with explicit monitor kinds, terminal verdicts, stale freshness, report pointers, and fail-closed status/receipt projection.
+- Persist bounded workflow lane metadata across child status, terminal receipts, and existing worktree handoff manifests, including display-only worktree paths and branches without adding a lane registry or cleanup authority; write pending worktree ownership evidence before creation to avoid crash orphan gaps.
 - Give every subagent child session a human-readable display name (`agent: task excerpt`, workflow node label preferred): applied to the child's own Pi session via `pi.setSessionName` (intercom routing targets keep precedence) and echoed as an optional `sessionName` field across result, live-progress, async status, workflow, nested, and intercom payloads so hosts can label child runs without reading child session files. Thanks to [@yanqianglu](https://github.com/yanqianglu) for #1615.
 - Add `/subagents-steer <run-id> [--child <child-id>] <message>`, a host bridge for steering live async runs from non-TUI sessions and RPC hosts, with fail-closed child-id resolution and pause-and-revive recovery disabled so callers keep exact-child authority. Thanks to [@yanqianglu](https://github.com/yanqianglu) for #1608.
 - Add explicit `allowNestedSubagents` agent authorization for nested fanout without replacing inherited tools or extensions. Thanks to [@tutu359](https://github.com/tutu359) for #1587.

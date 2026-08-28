@@ -74,6 +74,27 @@ describe("worktree", () => {
 		}
 	});
 
+	it("invokes beforeCreate with deterministic ownership metadata before creating worktrees", () => {
+		const repoDir = createRepo("pi-worktree-before-create-");
+		let setup: WorktreeSetup | undefined;
+		let planned: WorktreeSetup | undefined;
+		try {
+			setup = createWorktrees(repoDir, "before-create", 1, {
+				beforeCreate: (candidate) => {
+					planned = candidate;
+					assert.equal(fs.existsSync(candidate.worktrees[0]!.path), false);
+					assert.equal(candidate.worktrees[0]!.branch, "pi-parallel-before-create-0");
+				},
+			});
+			assert.equal(planned?.baseCommit, setup.baseCommit);
+			assert.equal(planned?.worktrees[0]?.path, setup.worktrees[0]?.path);
+			assert.equal(fs.existsSync(setup.worktrees[0]!.path), true);
+		} finally {
+			if (setup) cleanupWorktrees(setup);
+			cleanupRepo(repoDir);
+		}
+	});
+
 	it("createWorktrees maps subdirectory cwd to each agentCwd", () => {
 		const repoDir = createRepo("pi-worktree-subdir-");
 		const nestedDir = path.join(repoDir, "packages", "app");

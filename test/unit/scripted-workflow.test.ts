@@ -676,6 +676,30 @@ describe("scripted workflow runtime", () => {
 		]);
 	});
 
+	it("validates bounded lane metadata and passes it to child launch", async () => {
+		const launches: Array<{ key: string; lane: unknown }> = [];
+		await runWorkflowScript({
+			script: `return runs.run("writer", { agent: "worker", task: "write", lane: { version: 1, key: "writer", mode: "mutation", sourceRef: "owner/repo#1621", claims: ["src/shared/types.ts"], outputPaths: ["reports/writer.md"] } });`,
+			timeoutMs: 2_000,
+			async launch(key, params) {
+				launches.push({ key, lane: params.lane });
+				return { key, ok: true, output: key, artifactPaths: [], results: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.deepEqual(launches, [{ key: "writer", lane: { version: 1, key: "writer", mode: "mutation", sourceRef: "owner/repo#1621", claims: ["src/shared/types.ts"], outputPaths: ["reports/writer.md"] } }]);
+
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return runs.run("writer", { agent: "worker", task: "write", lane: { version: 1, key: "other" } });`,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: true, output: "unexpected", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && /must match workflow key/.test(error.message),
+		);
+	});
+
 	it("passes distinct namespaced bindings to parallel children", async () => {
 		const launches: Array<{ key: string; bindings: unknown }> = [];
 		await runWorkflowScript({

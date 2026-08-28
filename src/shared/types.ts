@@ -122,6 +122,22 @@ export interface WorkflowRecoveryAction {
 	taskRequired: true;
 }
 
+/**
+ * Bounded, launch-declared workflow lane metadata. This is display and
+ * triage information only; capability ceilings, authorization, and cleanup
+ * safety remain owned by their existing enforcement and handoff paths.
+ */
+export type WorkflowLaneMode = "mutation" | "review" | "scout" | "gate";
+
+export interface WorkflowLaneMetadata {
+	version: 1;
+	key: string;
+	mode?: WorkflowLaneMode;
+	sourceRef?: string;
+	claims?: string[];
+	outputPaths?: string[];
+}
+
 export interface WorkflowChildSummaryV1 {
 	version: 1;
 	parentToolCallId: string;
@@ -146,6 +162,7 @@ type WorkflowReceiptEntryResumability =
 
 export type WorkflowReceiptEntry = WorkflowReceiptEntryResumability & {
 	key: string;
+	lane?: WorkflowLaneMetadata;
 	terminalOutcome?: WorkflowTerminalOutcome;
 	agent?: string;
 	requestedContext?: "fresh" | "fork";
@@ -344,6 +361,11 @@ export interface ParallelHandoffChild {
 	index: number;
 	taskIndex: number;
 	agent: string;
+	/** Stable workflow identity used to join status/receipt metadata. */
+	workflowKey?: string;
+	/** Child run id when the worktree belongs to a workflow child. */
+	runId?: string;
+	lane?: WorkflowLaneMetadata;
 	status: SubagentResultStatus;
 	summary: string;
 	outputPath?: string;
@@ -351,6 +373,15 @@ export interface ParallelHandoffChild {
 	structuredOutputPath?: string;
 	sessionPath?: string;
 	patch: ParallelHandoffPatch;
+}
+
+/** Launch-time identity retained while a handoff group has no terminal child rows yet. */
+export interface ParallelHandoffLaneBinding {
+	index: number;
+	taskIndex: number;
+	workflowKey?: string;
+	runId?: string;
+	lane?: WorkflowLaneMetadata;
 }
 
 export interface ParallelHandoffCleanupTask {
@@ -369,6 +400,8 @@ export interface ParallelHandoffGroup {
 	baseCommit: string;
 	repoRoot: string;
 	children: ParallelHandoffChild[];
+	/** Optional launch identities for pending groups before child results settle. */
+	laneBindings?: ParallelHandoffLaneBinding[];
 	cleanup: {
 		state: "complete" | "partial";
 		tasks: ParallelHandoffCleanupTask[];
@@ -697,6 +730,7 @@ export interface SteeringRecoveryDescriptor {
 	context?: "fresh" | "fork";
 	/** Raw per-run bridge override. Omitted descriptors continue to use global config. */
 	intercomBridge?: IntercomBridgeConfig;
+	lane?: WorkflowLaneMetadata;
 	absoluteDeadlineAt?: number;
 	initialTurnBudget?: ResolvedTurnBudget;
 	initialToolBudget?: ResolvedToolBudget;
@@ -1658,6 +1692,7 @@ export interface AsyncStatus {
 	workflowChildren?: WorkflowChildSummaryV1;
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
+	lane?: WorkflowLaneMetadata;
 	/** Set when a durable schedule launched this run, so completions can name their origin. */
 	scheduleOrigin?: ScheduleOrigin;
 	steps?: Array<{
@@ -1676,6 +1711,11 @@ export interface AsyncStatus {
 		phase?: string;
 		label?: string;
 		workflowKey?: string;
+		lane?: WorkflowLaneMetadata;
+		/** Display-only worktree path copied at launch; handoff remains authoritative. */
+		worktreePath?: string;
+		/** Display-only branch copied at launch; handoff remains authoritative. */
+		branch?: string;
 		/** Child run identity for workflow capacity reconciliation. */
 		runId?: string;
 		/** True only when this workflow child owns a detached async runner. */
@@ -1817,6 +1857,7 @@ export interface AsyncJobState {
 	workflowKey?: string;
 	workflow?: Details["workflow"];
 	workflowChildren?: WorkflowChildSummaryV1;
+	lane?: WorkflowLaneMetadata;
 }
 
 export interface ForegroundResumeChild {

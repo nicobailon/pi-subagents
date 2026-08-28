@@ -305,6 +305,33 @@ A top-level `{ workflowScript, worktree: true }` makes isolation the default for
 
 Configure the worktree base directory and setup hook in [configuration.md](configuration.md).
 
+### Lane metadata lifecycle
+
+Workflow children may declare a bounded `lane` object (`version`, `key`, optional
+`mode`, opaque `sourceRef`, advisory `claims`, and advisory `outputPaths`). The
+lane key must match the `runs.run`/`runs.all` workflow key. These fields are
+display and triage hints only: they do not grant tools, authorization, or
+cleanup permission, and `sourceRef` is never resolved over the network while
+rendering status. Worktree paths and branches copied into status are also
+display-only; the handoff manifest remains the deletion authority.
+
+| Durable file | Owner | Pending / running / finalized / cleanup states | Release predicate | Rollback predicate | Stale-head behavior | Fail-closed cases |
+| --- | --- | --- | --- | --- | --- | --- |
+| `status.json` | Async runner and workflow status projector | Child step starts `pending`, becomes `running`, then terminal `complete`/`failed`/`paused`/`stopped`; worktree path and branch are copied at launch | Status is terminal and the existing active-run/process proof can release the run marker; lane metadata alone never releases a worktree | Setup or persistence failure keeps the lane unknown; only the existing verified setup rollback may remove a newly created worktree | Recorded status is retained; a base/head mismatch is not repaired or inferred from render-time Git calls | Missing, malformed, or key-mismatched lane data; only one of `worktreePath`/`branch`; unverified process state |
+| `handoffs/<run-id>.json` | Existing parallel handoff writer and cleanup engine | Group is `partial` with preserved cleanup tasks while pending/running; finalized groups contain child identity, patch, and cleanup evidence; cleanup is `partial` or `complete` | Only the existing cleanup engine's fresh Git checks and recorded task evidence can release a worktree/branch; #1621 adds no deletion path | Missing diff, failed capture, or cleanup error preserves the task and records the reason | `baseCommit` is retained as evidence; stale or changed heads remain unknown/preserved until an explicit later reconciliation | Missing/invalid manifest, mismatched run/key/task identity, duplicate identity, dirty or uncaptured work |
+| `workflow-receipt.json` | Workflow terminal settlement | No receipt while `pending`/`running`; terminal receipt is finalized with one optional lane block per keyed child | Receipt publication is complete only after every included child entry is serialized; it does not authorize cleanup | Receipt write failure leaves status/handoff evidence authoritative and the workflow reports the missing receipt | Existing receipt is not backfilled or rewritten from a newer head | Invalid version/state, mismatched entry key or lane key, stale continuation lineage |
+| `.active-runs` marker | Existing active-run index | `pending`/`running` while the runner is live; terminal marker remains until observed process proof | Marker removal requires the existing exact-run process-terminal proof | Unknown proof keeps the marker and lane retained for inspection | Marker state is not inferred from Git head or timestamps alone | Missing/unknown process proof, active marker, or foreign run identity |
+
+Older runs without lane metadata remain readable and retain their existing
+handoff/cleanup behavior. Missing lane, receipt, or handoff metadata is
+unknown—not eligible for destructive cleanup.
+
+For managed worktree launches, the runner writes the pending handoff and the
+display-only status path/branch from the deterministic setup plan before the
+first `git worktree add`. If setup then fails or is interrupted, that pending
+ownership record remains preserved evidence; cleanup still rechecks the actual
+worktree state before any removal.
+
 ## Supervisor coordination (child asks parent)
 
 Child agents can talk back to the parent Pi session without installing `pi-intercom`. `pi-subagents` provides the child-facing `contact_supervisor` tool and the parent-facing `subagent_supervisor({ action: "reply" })` path natively. Generic `intercom` remains available only when an explicitly loaded external provider supplies it.

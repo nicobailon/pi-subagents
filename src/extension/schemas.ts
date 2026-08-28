@@ -101,6 +101,15 @@ const ChainGateOverride = Type.String({
 	description: "For chain steps with agentContract, choose whether the chain advances on execution success or acceptance success. Defaults to execution.",
 });
 
+const WorkflowLaneMetadata = Type.Object({
+	version: Type.Integer({ minimum: 1, maximum: 1 }),
+	key: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+	mode: Type.Optional(Type.String({ enum: ["mutation", "review", "scout", "gate"] })),
+	sourceRef: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+	claims: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 160 }), { maxItems: 20 })),
+	outputPaths: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 256 }), { maxItems: 10 })),
+}, { additionalProperties: false, description: "Optional bounded child lane metadata. Display/triage only; sourceRef is opaque and never resolved during status rendering." });
+
 const ToolBudgetBlock = Type.Unsafe({
 	anyOf: [
 		{ type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
@@ -312,6 +321,7 @@ const SubagentParamProperties = {
 	chatProgress: Type.Optional(Type.String({ enum: ["auto", "off", "live-card"], description: "WorkflowScript chat progress projection. auto shows a live in-chat card only for watched foreground workflows in the same Git repository; it is off otherwise. Explicit live-card requires same-repository async:false; async workflows should omit chatProgress or use auto/off." })),
 	isolation: Type.Optional(Type.String({ enum: ["none", "worktree"], description: "Workflow child isolation. none runs in the shared cwd; worktree requires managed git worktree isolation." })),
 	worktree: Type.Optional(Type.Boolean({ description: "Managed child isolation. true gives each workflow child a separate git worktree; an individual runs.run/runs.all item can override a workflow default with worktree:false." })),
+	lane: Type.Optional(WorkflowLaneMetadata),
 	context: Type.Optional(Type.String({
 		enum: ["fresh", "fork", "profile"],
 		description: "'fresh' or 'fork' to branch from parent session, or 'profile' to require the selected agent's declared defaultContext. Explicit fresh/fork overrides every child; profile ignores config defaultSubagentContext and fails when an agent has no defaultContext. If omitted, config defaultSubagentContext wins over each agent defaultContext; implicit fork needs a persisted parent session and leaf, else fresh. Config forkContext may prune resolved forks before spawn without adding another context value.",

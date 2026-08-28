@@ -77,6 +77,8 @@ interface CreateWorktreesOptions {
 	agents?: string[];
 	setupHook?: WorktreeSetupHookConfig;
 	baseDir?: string;
+	/** Called with deterministic ownership metadata before any worktree is created. */
+	beforeCreate?: (setup: WorktreeSetup) => void;
 }
 
 interface ResolvedWorktreeSetupHook {
@@ -680,6 +682,22 @@ export function createWorktrees(cwd: string, runId: string, count: number, optio
 	const repo = resolveRepoState(cwd);
 	const setupHook = resolveWorktreeSetupHook(repo.toplevel, options?.setupHook);
 	const baseDir = resolveWorktreeBaseDir(options?.baseDir, repo.toplevel);
+	const plannedSetup: WorktreeSetup = {
+		cwd: repo.toplevel,
+		baseCommit: repo.baseCommit,
+		worktrees: Array.from({ length: count }, (_, index) => {
+			const worktreePath = buildWorktreePath(baseDir, runId, index);
+			return {
+				path: worktreePath,
+				agentCwd: repo.cwdRelative ? path.join(worktreePath, repo.cwdRelative) : worktreePath,
+				branch: buildWorktreeBranch(runId, index),
+				index,
+				nodeModulesLinked: false,
+				syntheticPaths: [],
+			};
+		}),
+	};
+	options?.beforeCreate?.(plannedSetup);
 	const worktrees: WorktreeInfo[] = [];
 
 	try {

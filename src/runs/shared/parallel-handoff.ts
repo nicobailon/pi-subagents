@@ -5,7 +5,9 @@ import type {
 	ParallelHandoffGroup,
 	ParallelHandoffManifest,
 	ParallelHandoffReference,
+	ParallelHandoffLaneBinding,
 	SubagentResultStatus,
+	WorkflowLaneMetadata,
 } from "../../shared/types.ts";
 import type {
 	WorktreeCleanupReport,
@@ -14,6 +16,7 @@ import type {
 	WorktreeCleanupIntent,
 } from "./worktree.ts";
 import { cleanupWorktrees } from "./worktree.ts";
+import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "./lane-metadata.ts";
 
 export interface ParallelHandoffResult {
 	agent: string;
@@ -23,15 +26,123 @@ export interface ParallelHandoffResult {
 	structuredOutput?: unknown;
 	structuredOutputPath?: string;
 	sessionPath?: string;
+	workflowKey?: string;
+	runId?: string;
+	lane?: WorkflowLaneMetadata;
+}
+
+function optionalIdentity(value: unknown, label: string): string | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "string" || !value.trim()) throw new Error(`${label} must be a non-empty string.`);
+	return value.trim();
+}
+
+function nonNegativeIndex(value: unknown, label: string): number {
+	if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error(`${label} must be a non-negative integer.`);
+	return value as number;
+}
+
+function normalizeLaneBinding(value: unknown, label: string): ParallelHandoffLaneBinding {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object.`);
+	const binding = value as Record<string, unknown>;
+	const unknown = Object.keys(binding).filter((field) => !["index", "taskIndex", "workflowKey", "runId", "lane"].includes(field));
+	if (unknown.length > 0) throw new Error(`${label} has unsupported fields: ${unknown.join(", ")}.`);
+	const index = nonNegativeIndex(binding.index, `${label}.index`);
+	const taskIndex = nonNegativeIndex(binding.taskIndex, `${label}.taskIndex`);
+	const workflowKey = optionalIdentity(binding.workflowKey, `${label}.workflowKey`);
+	const runId = optionalIdentity(binding.runId, `${label}.runId`);
+	const lane = normalizeWorkflowLaneMetadata(binding.lane, `${label}.lane`);
+	assertWorkflowLaneKey(lane, workflowKey, `${label}.lane`);
+	return {
+		index,
+		taskIndex,
+		...(workflowKey ? { workflowKey } : {}),
+		...(runId ? { runId } : {}),
+		...(lane ? { lane } : {}),
+	};
+}
+
+function validateManifestIdentity(parsed: ParallelHandoffManifest, manifestPath: string): ParallelHandoffManifest {
+	if (parsed.version !== 1 || !Array.isArray(parsed.groups)) {
+		throw new Error(`Invalid parallel handoff manifest: ${manifestPath}`);
+	}
+	if (typeof parsed.runId !== "string" || !parsed.runId.trim()) throw new Error(`Invalid parallel handoff manifest '${manifestPath}': runId must be a non-empty string.`);
+	parsed.runId = parsed.runId.trim();
+	const workflowKeys = new Set<string>();
+	const childRunIds = new Set<string>();
+	const childIndexes = new Set<number>();
+	for (const [groupIndex, group] of parsed.groups.entries()) {
+		if (!group || typeof group !== "object" || !Array.isArray(group.children) || !group.cleanup || !Array.isArray(group.cleanup.tasks)) throw new Error(`Invalid parallel handoff manifest '${manifestPath}': groups[${groupIndex}] is malformed.`);
+		if (group.laneBindings !== undefined) {
+			if (!Array.isArray(group.laneBindings)) throw new Error(`Invalid parallel handoff manifest '${manifestPath}': groups[${groupIndex}].laneBindings must be an array.`);
+			const taskIndexes = new Set<number>();
+			const cleanupIndexes = new Set(group.cleanup.tasks.map((task) => task.index));
+			group.laneBindings = group.laneBindings.map((binding, bindingIndex) => {
+				const normalized = normalizeLaneBinding(binding, `Invalid parallel handoff manifest '${manifestPath}': groups[${groupIndex}].laneBindings[${bindingIndex}]`);
+				if (taskIndexes.has(normalized.taskIndex)) throw new Error(`Invalid parallel handoff manifest '${manifestPath}': groups[${groupIndex}] has duplicate lane binding taskIndex ${normalized.taskIndex}.`);
+				if (!cleanupIndexes.has(normalized.taskIndex)) throw new Error(`Invalid parallel handoff manifest '${manifestPath}': groups[${groupIndex}].laneBindings[${bindingIndex}] has no cleanup task for taskIndex ${normalized.taskIndex}.`);
+				taskIndexes.add(normalized.taskIndex);
+				return normalized;
+			});
+		}
+		const taskIndexes = new Set<number>();
+		for (const [childIndex, child] of group.children.entries()) {
+			if (!child || typeof child !== "object" || !child.patch || typeof child.patch !== "object") throw new Error(`Invalid parallel handoff manifest '${manifestPath}': groups[${groupIndex}].children[${childIndex}] is malformed.`);
+			const childRecord = child as unknown as Record<string, unknown>;
+			const index = nonNegativeIndex(childRecord.index, `Invalid parallel handoff manifest '${manifestPath}': groups[${groupIndex}].children[${childIndex}].index`);
+			const taskIndex = nonNegativeIndex(childRecord.taskIndex, `Invalid parallel handoff manifest '${manifestPath}': groups[${groupIndex}].children[${childIndex}].taskIndex`);
+			if (taskIndexes.has(taskIndex)) throw new Error(`Invalid parallel handoff manifest '${manifestPath}': groups[${groupIndex}] has duplicate child taskIndex ${taskIndex}.`);
+			taskIndexes.add(taskIndex);
+			if (childIndexes.has(index)) throw new Error(`Invalid parallel handoff manifest '${manifestPath}': duplicate child index ${index}.`);
+			childIndexes.add(index);
+			if (!group.cleanup.tasks.some((task) => task.index === taskIndex)) throw new Error(`Invalid parallel handoff manifest '${manifestPath}': groups[${groupIndex}].children[${childIndex}] has no cleanup task for taskIndex ${taskIndex}.`);
+			const workflowKey = optionalIdentity(childRecord.workflowKey, `Invalid parallel handoff manifest '${manifestPath}': groups[${groupIndex}].children[${childIndex}].workflowKey`);
+			const runId = optionalIdentity(childRecord.runId, `Invalid parallel handoff manifest '${manifestPath}': groups[${groupIndex}].children[${childIndex}].runId`);
+			const lane = normalizeWorkflowLaneMetadata(childRecord.lane, `Invalid parallel handoff manifest '${manifestPath}': groups[${groupIndex}].children[${childIndex}].lane`);
+			assertWorkflowLaneKey(lane, workflowKey, `Invalid parallel handoff manifest '${manifestPath}': groups[${groupIndex}].children[${childIndex}].lane`);
+			if (workflowKey && workflowKeys.has(workflowKey)) throw new Error(`Invalid parallel handoff manifest '${manifestPath}': duplicate workflow key '${workflowKey}'.`);
+			if (workflowKey) workflowKeys.add(workflowKey);
+			if (runId && childRunIds.has(runId)) throw new Error(`Invalid parallel handoff manifest '${manifestPath}': duplicate child run id '${runId}'.`);
+			if (runId) childRunIds.add(runId);
+			if (lane) childRecord.lane = lane;
+			if (workflowKey) childRecord.workflowKey = workflowKey;
+			if (runId) childRecord.runId = runId;
+			childRecord.index = index;
+			childRecord.taskIndex = taskIndex;
+		}
+	}
+	return parsed;
 }
 
 function readManifest(manifestPath: string): ParallelHandoffManifest | undefined {
 	if (!fs.existsSync(manifestPath)) return undefined;
 	const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as ParallelHandoffManifest;
-	if (parsed.version !== 1 || !Array.isArray(parsed.groups)) {
-		throw new Error(`Invalid parallel handoff manifest: ${manifestPath}`);
-	}
-	return parsed;
+	return validateManifestIdentity(parsed, manifestPath);
+}
+
+export function readParallelHandoffManifest(manifestPath: string): ParallelHandoffManifest | undefined {
+	return readManifest(manifestPath);
+}
+
+export function resolveParallelHandoffChild(input: {
+	manifestPath: string;
+	runId: string;
+	workflowKey?: string;
+	childRunId?: string;
+}): { group: ParallelHandoffGroup; child: ParallelHandoffGroup["children"][number] } | undefined {
+	const manifest = readManifest(input.manifestPath);
+	if (!manifest) return undefined;
+	if (manifest.runId !== input.runId) throw new Error(`Managed worktree handoff belongs to run '${manifest.runId}', not '${input.runId}'.`);
+	const workflowKey = input.workflowKey?.trim() || undefined;
+	const childRunId = input.childRunId?.trim() || undefined;
+	if (!workflowKey && !childRunId) throw new Error("Parallel handoff child resolution requires workflowKey or childRunId.");
+	const matches = manifest.groups.flatMap((group) => group.children.map((child) => ({ group, child }))).filter(({ child }) => {
+		if (workflowKey && child.workflowKey !== workflowKey) return false;
+		if (childRunId && child.runId !== childRunId) return false;
+		return true;
+	});
+	if (matches.length > 1) throw new Error(`Parallel handoff has multiple children matching workflow identity${workflowKey ? ` '${workflowKey}'` : ` '${childRunId}'`}.`);
+	return matches[0];
 }
 
 function resolveExistingPath(candidate: string): string {
@@ -125,6 +236,7 @@ export function writeParallelHandoffGroup(input: {
 	diffs: WorktreeDiff[];
 	cleanup?: WorktreeCleanupReport;
 	results: ParallelHandoffResult[];
+	laneBindings?: ParallelHandoffLaneBinding[];
 	now?: number;
 }): ParallelHandoffReference {
 	const now = input.now ?? Date.now();
@@ -132,11 +244,27 @@ export function writeParallelHandoffGroup(input: {
 	if (existing && (existing.runId !== input.runId || existing.mode !== input.mode || existing.source !== input.source)) {
 		throw new Error(`Parallel handoff manifest belongs to a different run: ${input.manifestPath}`);
 	}
+	const laneBindings = input.laneBindings?.map((binding, index) => normalizeLaneBinding(binding, `parallel handoff lane binding ${index}`));
+	if (laneBindings) {
+		const taskIndexes = new Set<number>();
+		for (const binding of laneBindings) {
+			if (taskIndexes.has(binding.taskIndex)) throw new Error(`Parallel handoff has duplicate lane binding taskIndex ${binding.taskIndex}.`);
+			if (!input.setup.worktrees.some((worktree) => worktree.index === binding.taskIndex)) throw new Error(`Parallel handoff lane binding taskIndex ${binding.taskIndex} has no managed worktree.`);
+			if (binding.index !== input.flatStartIndex + binding.taskIndex) throw new Error(`Parallel handoff lane binding index ${binding.index} does not match taskIndex ${binding.taskIndex}.`);
+			taskIndexes.add(binding.taskIndex);
+		}
+	}
+	const bindingForTask = (taskIndex: number): ParallelHandoffLaneBinding | undefined => laneBindings?.find((binding) => binding.taskIndex === taskIndex);
 	const group: ParallelHandoffGroup = {
 		stepIndex: input.stepIndex,
 		baseCommit: input.setup.baseCommit,
 		repoRoot: input.setup.cwd,
 		children: input.results.map((result, taskIndex) => {
+			const binding = bindingForTask(taskIndex);
+			const runId = optionalIdentity(result.runId ?? binding?.runId, `parallel handoff child ${taskIndex}.runId`);
+			const lane = normalizeWorkflowLaneMetadata(result.lane ?? binding?.lane, `parallel handoff child ${taskIndex}.lane`);
+			const workflowKey = optionalIdentity(result.workflowKey ?? binding?.workflowKey, `parallel handoff child ${taskIndex}.workflowKey`);
+			assertWorkflowLaneKey(lane, workflowKey, `parallel handoff child ${taskIndex}.lane`);
 			const diff = input.diffs[taskIndex] ?? missingDiff({
 				manifestPath: input.manifestPath,
 				stepIndex: input.stepIndex,
@@ -148,6 +276,9 @@ export function writeParallelHandoffGroup(input: {
 				index: input.flatStartIndex + taskIndex,
 				taskIndex,
 				agent: result.agent,
+				...(workflowKey ? { workflowKey } : {}),
+				...(runId ? { runId } : {}),
+				...(lane ? { lane } : {}),
 				status: result.status,
 				summary: result.summary,
 				...(result.outputPath ? { outputPath: result.outputPath } : {}),
@@ -166,6 +297,7 @@ export function writeParallelHandoffGroup(input: {
 				},
 			};
 		}),
+		...(laneBindings && laneBindings.length > 0 && input.results.length === 0 ? { laneBindings } : {}),
 		cleanup: input.cleanup ?? {
 			state: "partial",
 			pruned: false,
@@ -210,6 +342,7 @@ export function writePendingParallelHandoff(input: {
 	stepIndex: number;
 	flatStartIndex: number;
 	setup: WorktreeSetup;
+	laneBindings?: ParallelHandoffLaneBinding[];
 }): ParallelHandoffReference {
 	return writeParallelHandoffGroup({ ...input, diffs: [], results: [] });
 }

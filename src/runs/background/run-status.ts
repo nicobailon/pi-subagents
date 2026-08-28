@@ -64,13 +64,14 @@ function formatCapacityOwner(inspect: ActiveAsyncCapacityInspection): string[] {
 }
 
 function formatWorkflowDebug(status: AsyncStatus): string[] {
-	if (status.mode !== "workflow" && !status.parentWorkflowRunId && !status.workflowKey) return [];
+	if (status.mode !== "workflow" && !status.parentWorkflowRunId && !status.workflowKey && !status.lane) return [];
 	const lines = [
 		status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}${status.workflowKey ? ` (${status.workflowKey})` : ""}` : undefined,
 		status.mode === "workflow" ? `Workflow children: ${(status.steps ?? []).length}` : undefined,
+		status.lane ? `Lane: ${status.lane.key}${status.lane.mode ? ` (${status.lane.mode})` : ""}` : undefined,
 	].filter((line): line is string => line !== undefined);
 	for (const [index, step] of (status.steps ?? []).entries()) {
-		lines.push(`  ${index + 1}. key ${step.workflowKey ?? "n/a"} · ${runStatusStepDisplayName(step)} · ${step.status} · async ${step.async === undefined ? "unknown" : step.async ? "yes" : "no"}${step.runId ? ` · run ${step.runId}` : ""}`);
+		lines.push(`  ${index + 1}. key ${step.workflowKey ?? "n/a"} · ${runStatusStepDisplayName(step)} · ${step.status} · async ${step.async === undefined ? "unknown" : step.async ? "yes" : "no"}${step.runId ? ` · run ${step.runId}` : ""}${step.lane ? ` · lane ${step.lane.key}` : ""}${step.worktreePath ? ` · worktree ${step.worktreePath} · branch ${step.branch ?? "unknown"}` : ""}`);
 	}
 	return lines;
 }
@@ -88,6 +89,7 @@ function formatRunLifecycleDebug(input: { status: AsyncStatus; asyncDir: string;
 		`Mode: ${status.mode}`,
 		status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}` : undefined,
 		status.workflowKey ? `Workflow key: ${status.workflowKey}` : undefined,
+		status.lane ? `Lane: ${status.lane.key}${status.lane.mode ? ` (${status.lane.mode})` : ""}` : undefined,
 		`Status process terminal: ${formatProcessTerminal(overlayProcessTerminal)}`,
 		`Sidecar process terminal: ${formatProcessTerminal(sidecarProcessTerminal)}`,
 		...formatCapacityOwner(capacity),

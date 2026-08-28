@@ -19,6 +19,7 @@ import { asyncStatusChildIdentity } from "../shared/child-identity.ts";
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 import { assertWorkflowGraphHostSteps, hostStepReportName, hostStepVerdictLabel, validHostStepNodes } from "../shared/host-step-status.ts";
 import { projectAsyncWorkflowRows } from "../shared/async-status-projection.ts";
+import { validateAsyncStatusLaneMetadata } from "../shared/lane-metadata.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -31,6 +32,9 @@ interface AsyncRunStepSummary {
 	description?: string;
 	phase?: string;
 	workflowKey?: string;
+	lane?: AsyncJobStep["lane"];
+	worktreePath?: string;
+	branch?: string;
 	runId?: string;
 	outputName?: string;
 	structured?: boolean;
@@ -128,6 +132,7 @@ export interface AsyncRunSummary {
 	capabilityAudit?: SubagentCapabilityAudit;
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
+	lane?: AsyncStatus["lane"];
 	workflow?: Details["workflow"];
 	workflowChildren?: Details["workflowChildren"];
 }
@@ -238,6 +243,7 @@ function deriveAsyncActivityState(asyncDir: string, status: AsyncStatus): { acti
 }
 
 function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string }, nestedWarnings: string[] = [], nestedRoute?: NestedRoute): AsyncRunSummary {
+	validateAsyncStatusLaneMetadata(status, `Invalid async status '${path.join(asyncDir, "status.json")}'`);
 	const workflowChildren = parseWorkflowChildSummary(status.workflowChildren);
 	if (workflowChildren && workflowChildren.workflowRunId !== status.runId) throw new Error(`Invalid async status '${path.join(asyncDir, "status.json")}': workflowChildren.workflowRunId does not match.`);
 	assertWorkflowGraphHostSteps(status.workflowGraph, path.join(asyncDir, "status.json"), status.runId);
@@ -284,6 +290,9 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.description ? { description: step.description } : {}),
 			...(step.phase ? { phase: step.phase } : {}),
 			...(step.workflowKey ? { workflowKey: step.workflowKey } : {}),
+			...(step.lane ? { lane: step.lane } : {}),
+			...(step.worktreePath ? { worktreePath: step.worktreePath } : {}),
+			...(step.branch ? { branch: step.branch } : {}),
 			...(step.runId ? { runId: step.runId } : {}),
 			...(step.outputName ? { outputName: step.outputName } : {}),
 			...(step.structured ? { structured: step.structured } : {}),
@@ -382,6 +391,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		...(status.capabilityAudit ? { capabilityAudit: status.capabilityAudit } : {}),
 		...(status.parentWorkflowRunId ? { parentWorkflowRunId: status.parentWorkflowRunId } : {}),
 		...(status.workflowKey ? { workflowKey: status.workflowKey } : {}),
+		...(status.lane ? { lane: status.lane } : {}),
 		...(status.workflow ? { workflow: status.workflow } : {}),
 		...(workflowChildren ? { workflowChildren } : {}),
 		...(status.sessionDir ? { sessionDir: status.sessionDir } : {}),
@@ -542,6 +552,8 @@ function formatStepLine(step: AsyncRunStepSummary): string {
 	if (modelThinking) parts.push(modelThinking);
 	if (step.durationMs !== undefined) parts.push(formatDuration(step.durationMs));
 	if (step.tokens) parts.push(`${formatTokens(step.tokens.total)} tok`);
+	if (step.lane) parts.push(`lane ${step.lane.key}`);
+	if (step.worktreePath) parts.push(`worktree ${shortenPath(step.worktreePath)} · branch ${step.branch ?? "unknown"}`);
 	return parts.join(" | ");
 }
 
@@ -592,7 +604,8 @@ function formatRunHeader(run: AsyncRunSummary): string {
 	const activity = formatActivityFacts(run);
 	const pending = run.pendingAppends ? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}` : "";
 	const context = contextModeLabel(run.context);
-	return `${run.id} | ${run.state}${activity ? ` | ${activity}` : ""} | ${run.mode}${context ? ` ${context}` : ""} | ${stepLabel}${pending} | ${cwd}`;
+	const lane = run.lane ? ` | lane ${run.lane.key}` : "";
+	return `${run.id} | ${run.state}${activity ? ` | ${activity}` : ""} | ${run.mode}${context ? ` ${context}` : ""} | ${stepLabel}${pending}${lane} | ${cwd}`;
 }
 
 export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active async runs"): string {

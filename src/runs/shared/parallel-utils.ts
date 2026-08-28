@@ -92,6 +92,8 @@ export interface RunnerSubagentStep {
 	runFanoutPath?: string;
 	/** Run this single child in one managed worktree. */
 	worktree?: boolean;
+	/** Bounded launch-declared lane metadata; display/triage only. */
+	lane?: import("../../shared/types.ts").WorkflowLaneMetadata;
 }
 
 export interface ParallelStepGroup {

@@ -401,6 +401,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				job.mode = status.mode;
 				job.parentWorkflowRunId = status.parentWorkflowRunId ?? job.parentWorkflowRunId;
 				job.workflowKey = status.workflowKey ?? job.workflowKey;
+				job.lane = status.lane ?? job.lane;
 				job.workflow = status.workflow ?? job.workflow;
 				job.hostSteps = validHostStepNodes(status.workflowGraph);
 				const workflowChildren = parseWorkflowChildSummary(status.workflowChildren);

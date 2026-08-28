@@ -5,6 +5,8 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
 	formatParallelHandoffReference,
+	readParallelHandoffManifest,
+	resolveParallelHandoffChild,
 	writeParallelHandoffGroup,
 	writePendingParallelHandoff,
 } from "../../src/runs/shared/parallel-handoff.ts";
@@ -63,6 +65,7 @@ describe("parallel handoff", () => {
 					...setup("/repo", "base-1"),
 					worktrees: [{ path: "/tmp/worktree-0", agentCwd: "/tmp/worktree-0", branch: "branch-0", index: 0, nodeModulesLinked: false, syntheticPaths: [] }],
 				},
+				laneBindings: [{ index: 0, taskIndex: 0, workflowKey: "writer", runId: "run-pending", lane: { version: 1, key: "writer", mode: "mutation" } }],
 			});
 
 			assert.equal(reference.childCount, 0);
@@ -70,6 +73,7 @@ describe("parallel handoff", () => {
 			const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as ParallelHandoffManifest;
 			assert.equal(manifest.groups[0]?.cleanup.tasks[0]?.path, "/tmp/worktree-0");
 			assert.equal(manifest.groups[0]?.cleanup.tasks[0]?.preserved, true);
+			assert.deepEqual(manifest.groups[0]?.laneBindings?.[0], { index: 0, taskIndex: 0, workflowKey: "writer", runId: "run-pending", lane: { version: 1, key: "writer", mode: "mutation" } });
 			assert.match(manifest.groups[0]?.cleanup.tasks[0]?.reason ?? "", /cleanup pending/);
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
@@ -198,6 +202,65 @@ describe("parallel handoff", () => {
 				() => writeParallelHandoffGroup({ ...common, runId: "run-2" }),
 				/belongs to a different run/,
 			);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("round-trips lane identity and resolves a workflow child to its manifest task", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parallel-handoff-lane-"));
+		try {
+			const manifestPath = path.join(dir, "handoff.json");
+			const lane = { version: 1 as const, key: "writer", mode: "mutation" as const, sourceRef: "nicobailon/pi-subagents#1621", claims: ["src/shared/types.ts"], outputPaths: ["reports/lane.md"] };
+			writeParallelHandoffGroup({
+				manifestPath,
+				runId: "workflow-run",
+				mode: "single",
+				source: "async",
+				cwd: "/repo",
+				stepIndex: 0,
+				flatStartIndex: 3,
+				setup: setup("/repo", "base-1"),
+				diffs: [diff(dir, 0, "writer", false)],
+				cleanup: cleanup(),
+				results: [{ agent: "worker", status: "completed", summary: "done", workflowKey: "writer", runId: "child-run", lane }],
+			});
+
+			const manifest = readParallelHandoffManifest(manifestPath);
+			assert.deepEqual(manifest?.groups[0]?.children[0]?.lane, lane);
+			assert.equal(manifest?.groups[0]?.children[0]?.workflowKey, "writer");
+			assert.equal(manifest?.groups[0]?.children[0]?.runId, "child-run");
+			const match = resolveParallelHandoffChild({ manifestPath, runId: "workflow-run", workflowKey: "writer", childRunId: "child-run" });
+			assert.equal(match?.child.taskIndex, 0);
+			assert.equal(match?.child.index, 3);
+			assert.equal(resolveParallelHandoffChild({ manifestPath, runId: "workflow-run", workflowKey: "missing" }), undefined);
+			assert.throws(() => resolveParallelHandoffChild({ manifestPath, runId: "other-run", workflowKey: "writer" }), /belongs to run/);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("fails closed when persisted lane identity does not match the workflow key", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parallel-handoff-lane-invalid-"));
+		try {
+			const manifestPath = path.join(dir, "handoff.json");
+			writeParallelHandoffGroup({
+				manifestPath,
+				runId: "workflow-run",
+				mode: "single",
+				source: "async",
+				cwd: "/repo",
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: setup("/repo", "base-1"),
+				diffs: [diff(dir, 0, "writer", false)],
+				cleanup: cleanup(),
+				results: [{ agent: "worker", status: "completed", summary: "done", workflowKey: "writer", lane: { version: 1, key: "writer" } }],
+			});
+			const raw = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as { groups: Array<{ children: Array<{ lane: { key: string } }> }> };
+			raw.groups[0]!.children[0]!.lane.key = "other";
+			fs.writeFileSync(manifestPath, JSON.stringify(raw), "utf-8");
+			assert.throws(() => readParallelHandoffManifest(manifestPath), /does not match workflow key/);
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}

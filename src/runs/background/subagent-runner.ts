@@ -50,6 +50,7 @@ import {
 	type SteeringTargetState,
 	type SteeringTargetStatus,
 	type SubagentChildStatusEvent,
+	type WorkflowLaneMetadata,
 	DEFAULT_MAX_OUTPUT,
 	type MaxOutputConfig,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
@@ -217,6 +218,7 @@ interface SubagentRunConfig {
 	launchBarrierToken?: string;
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
+	lane?: WorkflowLaneMetadata;
 }
 
 interface StepResult {
@@ -2304,6 +2306,11 @@ function requiredStatusStep(statusPayload: RunnerStatusPayload, index: number): 
 	return step;
 }
 
+function setStatusWorktreeReference(statusStep: RunnerStatusStep, worktree: WorktreeSetup["worktrees"][number]): void {
+	statusStep.worktreePath = worktree.path;
+	statusStep.branch = worktree.branch;
+}
+
 function markParallelGroupSetupFailure(input: {
 	statusPayload: RunnerStatusPayload;
 	results: StepResult[];
@@ -2522,6 +2529,8 @@ async function runSubagent(
 	const overallStartTime = Date.now();
 	const shareEnabled = config.share === true;
 	const asyncDir = config.asyncDir;
+	const handoffWorkflowKey = config.workflowKey;
+	const handoffChildRunId = handoffWorkflowKey ? id : undefined;
 	const statusPath = path.join(asyncDir, "status.json");
 	const eventsPath = path.join(asyncDir, "events.jsonl");
 	const logPath = path.join(asyncDir, `subagent-log-${id}.md`);
@@ -2561,6 +2570,7 @@ async function runSubagent(
 				const taskSessionName = task.sessionName ?? deriveChildSessionName({ agent: task.agent, task: task.task, label: task.label });
 				initialStatusSteps.push(omitUndefinedProperties({
 					agent: task.agent,
+					...(task.lane ? { lane: task.lane } : config.lane ? { lane: config.lane } : {}),
 					...(taskSessionName ? { sessionName: taskSessionName } : {}),
 					...(externalRunnerStatus(task.runner) ? { runner: externalRunnerStatus(task.runner) } : {}),
 					...(statusStepDescription(task.task) ? { description: statusStepDescription(task.task) } : {}),
@@ -2614,6 +2624,7 @@ async function runSubagent(
 			const stepSessionName = step.sessionName ?? deriveChildSessionName({ agent: step.agent, task: step.task, label: step.label });
 			initialStatusSteps.push(omitUndefinedProperties({
 				agent: step.agent,
+				...(step.lane ? { lane: step.lane } : config.lane ? { lane: config.lane } : {}),
 				...(stepSessionName ? { sessionName: stepSessionName } : {}),
 				...(externalRunnerStatus(step.runner) ? { runner: externalRunnerStatus(step.runner) } : {}),
 				...(statusStepDescription(step.task) ? { description: statusStepDescription(step.task) } : {}),
@@ -2691,6 +2702,7 @@ async function runSubagent(
 		...(config.runFanoutBudget ? { runFanoutBudget: getRunFanoutBudgetSnapshot(config.runFanoutBudget) } : {}),
 		...(config.parentWorkflowRunId ? { parentWorkflowRunId: config.parentWorkflowRunId } : {}),
 		...(config.workflowKey ? { workflowKey: config.workflowKey } : {}),
+		...(config.lane ? { lane: config.lane } : {}),
 		...(config.runnerProcessInstanceId ? { processTerminal: { version: 1 as const, state: "pending" as const, runId: id, runnerProcessInstanceId: config.runnerProcessInstanceId } } : {}),
 		steps: initialStatusSteps,
 		artifactsDir,
@@ -4444,6 +4456,23 @@ async function runSubagent(
 							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs })
 							: undefined,
 						baseDir: config.worktreeBaseDir,
+						beforeCreate: (plannedSetup) => {
+							for (const worktree of plannedSetup.worktrees) setStatusWorktreeReference(requiredStatusStep(statusPayload, groupStartFlatIndex + worktree.index), worktree);
+							const pendingHandoff = writePendingParallelHandoff({
+								manifestPath: parallelHandoffPath(asyncDir),
+								runId: id,
+								mode: (config.resultMode ?? statusPayload.mode) === "parallel" ? "parallel" : "chain",
+								source: "async",
+								cwd,
+								stepIndex,
+								flatStartIndex: groupStartFlatIndex,
+								setup: plannedSetup,
+								laneBindings: handoffWorkflowKey || config.lane ? [{ index: groupStartFlatIndex, taskIndex: 0, ...(handoffWorkflowKey ? { workflowKey: handoffWorkflowKey } : {}), ...(handoffChildRunId ? { runId: handoffChildRunId } : {}), ...(config.lane ? { lane: config.lane } : {}) }] : undefined,
+							});
+							statusPayload.parallelHandoff = pendingHandoff;
+							statusPayload.lastUpdate = Date.now();
+							writeStatusPayload();
+						},
 					}));
 				} catch (error) {
 					const setupError = error instanceof Error ? error.message : String(error);
@@ -4468,18 +4497,6 @@ async function runSubagent(
 			}
 
 			try {
-				if (worktreeSetup) {
-					writePendingParallelHandoff({
-						manifestPath: parallelHandoffPath(asyncDir),
-						runId: id,
-						mode: (config.resultMode ?? statusPayload.mode) === "parallel" ? "parallel" : "chain",
-						source: "async",
-						cwd,
-						stepIndex,
-						flatStartIndex: groupStartFlatIndex,
-						setup: worktreeSetup,
-					});
-				}
 				if (group.worktree) ensureParallelProgressFile(cwd, group);
 				const groupStartTime = Date.now();
 				markParallelGroupRunning({
@@ -4799,6 +4816,9 @@ async function runSubagent(
 						diffs: captured.diffs,
 						results: parallelResults.map((result) => ({
 							agent: result.agent,
+							...(handoffWorkflowKey ? { workflowKey: handoffWorkflowKey } : {}),
+							...(handoffChildRunId ? { runId: handoffChildRunId } : {}),
+							...(config.lane ? { lane: config.lane } : {}),
 							status: result.stopped || (result.exitCode !== 0 && isUnexplainedProcessSignal(omitUndefinedProperties({
 								processSignal: result.processSignal,
 								interrupted: result.interrupted,
@@ -4878,17 +4898,27 @@ async function runSubagent(
 							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs })
 							: undefined,
 						baseDir: config.worktreeBaseDir,
+						beforeCreate: (plannedSetup) => {
+							const worktree = plannedSetup.worktrees[0];
+							if (worktree) {
+								setStatusWorktreeReference(requiredStatusStep(statusPayload, flatIndex), worktree);
+							}
+							const pendingHandoff = writePendingParallelHandoff({
+								manifestPath: parallelHandoffPath(asyncDir),
+								runId: id,
+								mode: "single",
+								source: "async",
+								cwd,
+								stepIndex,
+								flatStartIndex: flatIndex,
+								setup: plannedSetup,
+								laneBindings: handoffWorkflowKey || config.lane ? [{ index: flatIndex, taskIndex: 0, ...(handoffWorkflowKey ? { workflowKey: handoffWorkflowKey } : {}), ...(handoffChildRunId ? { runId: handoffChildRunId } : {}), ...(config.lane ? { lane: config.lane } : {}) }] : undefined,
+							});
+							statusPayload.parallelHandoff = pendingHandoff;
+							statusPayload.lastUpdate = Date.now();
+							writeStatusPayload();
+						},
 					}));
-					writePendingParallelHandoff({
-						manifestPath: parallelHandoffPath(asyncDir),
-						runId: id,
-						mode: "single",
-						source: "async",
-						cwd,
-						stepIndex,
-						flatStartIndex: flatIndex,
-						setup: singleWorktreeSetup,
-					});
 				} catch (error) {
 					if (singleWorktreeSetup) cleanupWorktrees(singleWorktreeSetup);
 					throw error;
@@ -5132,6 +5162,9 @@ async function runSubagent(
 					diffs,
 					results: [{
 						agent: singleResult.agent,
+						...(handoffWorkflowKey ? { workflowKey: handoffWorkflowKey } : {}),
+						...(handoffChildRunId ? { runId: handoffChildRunId } : {}),
+						...(config.lane ? { lane: config.lane } : {}),
 						status: singleResult.stopped ? "stopped" as const : singleResult.interrupted ? "paused" as const : singleResult.exitCode === 0 ? "completed" as const : "failed" as const,
 						summary: singleResult.output || singleResult.error || "(no output)",
 						...(singleResult.artifactPaths?.outputPath ? { outputPath: singleResult.artifactPaths.outputPath } : {}),

@@ -73,7 +73,6 @@ describe("async status helpers", () => {
 			if (budgetDirectory) fs.rmSync(budgetDirectory, { recursive: true, force: true });
 		}
 	});
-
 	it("loads typed host monitor nodes from workflow status without child identity", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-host-step-"));
 		try {
@@ -133,6 +132,52 @@ describe("async status helpers", () => {
 				},
 			});
 			assert.throws(() => listAsyncRuns(root, { states: ["running"], reconcile: false }), /host step.*expected an object/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("projects bounded lane and display-only worktree metadata from status", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-lane-"));
+		try {
+			createAsyncDir(root, "run-lane", {
+				runId: "run-lane",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{
+					agent: "worker",
+					workflowKey: "writer",
+					lane: { version: 1, key: "writer", mode: "mutation", sourceRef: "owner/repo#1621" },
+					worktreePath: "/tmp/worktrees/run-lane-0",
+					branch: "pi-subagent/run-lane-0",
+					status: "running",
+				}],
+			});
+			const run = listAsyncRuns(root, { states: ["running"] })[0]!;
+			assert.deepEqual(run.steps[0]?.lane, { version: 1, key: "writer", mode: "mutation", sourceRef: "owner/repo#1621" });
+			assert.equal(run.steps[0]?.worktreePath, "/tmp/worktrees/run-lane-0");
+			assert.equal(run.steps[0]?.branch, "pi-subagent/run-lane-0");
+			assert.match(formatAsyncRunList([run]), /lane writer/);
+			assert.match(formatAsyncRunList([run]), /worktree .*run-lane-0 .*branch pi-subagent\/run-lane-0/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects malformed or mismatched lane identity in status", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-lane-invalid-"));
+		try {
+			const runDir = createAsyncDir(root, "run-lane-invalid", {
+				runId: "run-lane-invalid",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", workflowKey: "writer", lane: { version: 1, key: "other" }, status: "running" }],
+			});
+			assert.throws(() => listAsyncRuns(root, { states: ["running"] }), /does not match workflow key/);
+			assert.equal(fs.existsSync(path.join(runDir, "status.json")), true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

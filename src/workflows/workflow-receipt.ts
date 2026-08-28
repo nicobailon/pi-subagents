@@ -5,6 +5,7 @@ import type { ExternalCliReceiptMetadata, WorkflowReceipt, WorkflowReceiptEntry,
 import type { WorkflowReceiptResumeReference, WorkflowScriptChildResult } from "./scripted-workflow.ts";
 import { parseWorkflowChildSummary } from "./workflow-child-summary.ts";
 import { HOST_STEP_MAX_COUNT, assertUniqueHostStepIds, parseHostStepNode } from "../runs/shared/host-step-status.ts";
+import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../runs/shared/lane-metadata.ts";
 
 export type { WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState } from "../shared/types.ts";
 
@@ -45,12 +46,15 @@ export function buildWorkflowReceipt(input: {
 	for (const child of input.children) {
 		const key = assertKey(child.key, "workflow receipt child key");
 		if (entries[key]) throw new Error(`Workflow receipt has duplicate child key '${key}'.`);
+		const lane = normalizeWorkflowLaneMetadata(child.lane, `workflow receipt child '${key}'.lane`);
+		assertWorkflowLaneKey(lane, key, `workflow receipt child '${key}'.lane`);
 		const runIds = [...new Set((child.continuation?.runIds ?? (child.runId ? [child.runId] : [])).filter((runId) => typeof runId === "string" && runId.trim()).map((runId) => runId.trim()))];
 		const latestRunId = runIds.at(-1);
 		const resumability = child.resumability ?? { state: "not-resumable", reason: child.runId ? "resumability was not recorded" : "child produced no run id" };
 		if (resumability.state === "resumable" && !latestRunId) throw new Error(`Workflow receipt child '${key}' is resumable but has no retained run id.`);
 		const base = {
 			key,
+			...(lane ? { lane } : {}),
 			...(child.terminalOutcome ? { terminalOutcome: child.terminalOutcome } : {}),
 			...(child.agent ? { agent: child.agent } : {}),
 			...(child.requestedContext ? { requestedContext: child.requestedContext } : {}),
@@ -207,7 +211,9 @@ function parseEntry(value: unknown, key: string, source: string): WorkflowReceip
 	if (state === "not-resumable" && (typeof reason !== "string" || !reason.trim())) throw new Error(`Invalid workflow receipt '${source}': entry '${key}' non-resumable reason is missing.`);
 	const terminalOutcome = parseTerminalOutcome(entry.terminalOutcome, `Invalid workflow receipt '${source}': entry '${key}' terminalOutcome`);
 	parseExternalCliReceiptMetadata(entry.externalAdapter, key, source);
-	return { ...(value as WorkflowReceiptEntry), ...(terminalOutcome ? { terminalOutcome } : {}) };
+	const lane = normalizeWorkflowLaneMetadata(entry.lane, `Invalid workflow receipt '${source}': entry '${key}'.lane`);
+	assertWorkflowLaneKey(lane, key, `Invalid workflow receipt '${source}': entry '${key}'.lane`);
+	return { ...(value as WorkflowReceiptEntry), ...(lane ? { lane } : {}), ...(terminalOutcome ? { terminalOutcome } : {}) };
 }
 
 function parseWorkflowResolution(value: unknown, source: string): WorkflowTerminalResolution | undefined {

@@ -206,6 +206,23 @@ describe("workflow receipts", () => {
 		assert.throws(() => buildWorkflowReceipt({ workflowRunId: "workflow-1", state: "complete", children: [], workflowChildren: summary }), /does not match its receipt/);
 	});
 
+	it("round-trips bounded lane metadata and rejects mismatched receipt identity", () => {
+		const lane = { version: 1 as const, key: "advisor", mode: "review" as const, sourceRef: "owner/repo#1621", claims: ["src/shared/types.ts"], outputPaths: ["reports/advisor.md"] };
+		const receipt = buildWorkflowReceipt({ workflowRunId: "workflow-lane", state: "complete", children: [child("advisor", { lane })], createdAt: 10 });
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-lane");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		writeWorkflowReceipt(asyncDir, receipt);
+		assert.deepEqual(readWorkflowReceipt(asyncRoot, "workflow-lane").entries.advisor?.lane, lane);
+		assert.throws(() => buildWorkflowReceipt({ workflowRunId: "workflow-lane", state: "complete", children: [child("advisor", { lane: { ...lane, key: "other" } })] }), /does not match workflow key/);
+
+		const receiptPath = workflowReceiptPath(asyncRoot, "workflow-lane");
+		const malformed = JSON.parse(fs.readFileSync(receiptPath, "utf-8")) as { entries: { advisor: { lane: { key: string } } } };
+		malformed.entries.advisor.lane.key = "other";
+		fs.writeFileSync(receiptPath, JSON.stringify(malformed), "utf-8");
+		assert.throws(() => readWorkflowReceipt(asyncRoot, "workflow-lane"), /does not match workflow key/);
+	});
+
 	it("rejects non-string workflow-child summary identifiers", () => {
 		const asyncRoot = tempRoot();
 		const asyncDir = path.join(asyncRoot, "workflow-1");

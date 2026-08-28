@@ -14,6 +14,7 @@ export interface PublicSubagentExecutionParams {
 	workflowScriptPath?: unknown;
 	isolation?: unknown;
 	worktree?: unknown;
+	lane?: unknown;
 	async?: unknown;
 	output?: unknown;
 	resume?: unknown;
