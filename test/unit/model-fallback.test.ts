@@ -236,6 +236,8 @@ describe("model fallback helpers", () => {
 		assert.equal(isRetryableModelFailure("APIConnectionError: Connection closed."), true);
 		assert.equal(isRetryableModelFailure("Connection reset by peer"), true);
 		assert.equal(isRetryableModelFailure("Request timed out."), true);
+		assert.equal(isRetryableModelFailure("internal server error"), true);
+		assert.equal(isRetryableModelFailure("500"), true);
 	});
 
 	it("does not treat ordinary task/tool failures as retryable model failures", () => {
