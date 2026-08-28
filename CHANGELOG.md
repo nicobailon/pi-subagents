@@ -29,6 +29,7 @@
 - Show workflow child labels and phases in async status progress while preserving stable workflow keys.
 
 ### Fixed
+- Keep the Windows test harness from opening visible terminal tabs for child-process fixtures (#1664).
 - Remove the remaining `lane:` prefix from operator-facing async status rows in the TUI (#1658).
 - Avoid false preflight mismatch warnings for generated `runs.lanes(...)` stage keys (#1649).
 - Accept long host tool-call ids in workflow child summaries, matching the existing 4,096-byte session id bound. Thanks to [@SudoKillMe](https://github.com/SudoKillMe) for #1653.
