@@ -26,6 +26,7 @@ import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey } from "../../src/runs/background/active-async-capacity.ts";
+import { deriveForkPromptCacheKey, SUBAGENT_FORK_CACHE_KEY_ENV } from "../../src/runs/shared/pi-args.ts";
 
 interface LaunchResolvedExtensions {
 	version?: number;
@@ -4650,6 +4651,38 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(launch.details.asyncId);
 		const payload = await readAsyncPayload(launch.details.asyncId);
 		assert.equal(payload.results[0]?.model, "gateway/parent-model");
+	});
+
+	it("background forked runs receive the derived fork cache key", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ echoEnv: [SUBAGENT_FORK_CACHE_KEY_ENV] });
+		const parentSessionFile = path.join(tempDir, "parent-cache.jsonl");
+		const forkedSessionFile = path.join(tempDir, "forked-cache.jsonl");
+		const sessionHeader = JSON.stringify({ type: "session", cwd: fs.realpathSync(tempDir) });
+		fs.writeFileSync(parentSessionFile, `${sessionHeader}\n`, "utf-8");
+		fs.writeFileSync(forkedSessionFile, `${sessionHeader}\n`, "utf-8");
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			sessionManager: {
+				getSessionId: () => "session-cache-parent",
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "leaf-current",
+				openSession: () => ({ createBranchedSession: () => forkedSessionFile }),
+			},
+		};
+
+		const launch = await makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]).execute(
+			"forked-cache-key",
+			{ agent: "worker", task: "Inspect cache affinity", async: true, context: "fork" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		) as AsyncExecutionResult;
+		assert.ok(!launch.isError, launch.content[0]?.text);
+		assert.ok(launch.details.asyncId);
+
+		const payload = await readAsyncPayload(launch.details.asyncId);
+		const childEnv = JSON.parse(payload.results[0]?.output ?? "{}") as Record<string, string | null>;
+		assert.equal(childEnv[SUBAGENT_FORK_CACHE_KEY_ENV], deriveForkPromptCacheKey("session-cache-parent"));
 	});
 
 	it("revives an inherited parent model outside the current registry", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {

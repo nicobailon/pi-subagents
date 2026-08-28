@@ -7,6 +7,7 @@
 - Clarify portable subagent orchestration guidance: keep the parent on the ordinary strong default model, route bounded workers/scouts to a fast worker tier, and reserve a top-reasoning model for bounded read-only critique or escalation without requiring a specific provider.
 
 ### Fixed
+- Reuse a fork-family prompt cache key for OpenAI-style forked subagent requests so sibling fork children keep cache affinity without pooling fresh children. Thanks to [@Shinkicast](https://github.com/Shinkicast) for #1682.
 - Show workflow child `[fresh]` and `[fork]` context labels in Fleet status rows alongside model and thinking badges.
 
 ## [0.59.0] - 2026-08-28
