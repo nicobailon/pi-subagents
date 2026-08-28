@@ -419,7 +419,12 @@ function validateLaneSpecs(laneSpecs) {
       if (generatedKeys.has(generatedKey)) throw new Error("runs.lanes generated child key '" + generatedKey + "' is duplicated.");
       generatedKeys.add(generatedKey);
       const resume = stage.resume;
-      if (resume !== undefined && resume !== "previous") throw new Error(stageLabel + " resume must be 'previous'.");
+      if (resume !== undefined && resume !== "previous") {
+        if (stageIndex === 0 && typeof resume === "string") {
+          throw new Error(stageLabel + " cannot resume a retained run id in runs.lanes; use runs.run(key, { resume: id }) outside lanes, or start the lane with an agent stage and use resume: \"previous\" later.");
+        }
+        throw new Error(stageLabel + " resume must be 'previous'.");
+      }
       if (stageIndex === 0 && resume === "previous") throw new Error(stageLabel + " cannot resume previous without a predecessor stage.");
       const { key: _stageKey, resume: _resume, ...params } = stage;
       const validationParams = resume === "previous" ? { ...params, resume: "retained-run-placeholder" } : params;

@@ -29,6 +29,7 @@
 - Show workflow child labels and phases in async status progress while preserving stable workflow keys.
 
 ### Fixed
+- Give `runs.lanes(...)` stage-0 retained-resume validation actionable `runs.run(...)` guidance instead of a generic error (#1657).
 - Remove the remaining `lane:` prefix from operator-facing async status rows in the TUI (#1658).
 - Allow scheduled project roots shared through a registered Git worktree's `.pi` symlink while rejecting unrelated or unproven Git-layout escapes. Thanks to [@sususu98](https://github.com/sususu98) for #1656.
 - Avoid false preflight mismatch warnings for generated `runs.lanes(...)` stage keys (#1649).

@@ -656,6 +656,23 @@ describe("scripted workflow runtime", () => {
 		]);
 	});
 
+	it("gives actionable guidance for a retained stage-0 resume", async () => {
+		let launches = 0;
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return runs.lanes([{ key: "lane", stages: [{ key: "writer", resume: "retained-run", task: "continue" }] }]);`,
+				timeoutMs: 2_000,
+				async launch(key) { launches += 1; return { key, ok: true, output: "unexpected", artifactPaths: [], results: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError
+				&& error.message.includes("runs.lanes lane 0 stage 0 cannot resume a retained run id in runs.lanes")
+				&& error.message.includes("use runs.run(key, { resume: id }) outside lanes")
+				&& error.message.includes('start the lane with an agent stage and use resume: "previous" later'),
+		);
+		assert.equal(launches, 0);
+	});
+
 	it("validates all lane stages before launching any child", async () => {
 		const malformedScripts = [
 			`return runs.lanes([{ key: "bad lane", stages: [{ key: "writer", agent: "worker", task: "write" }] }]);`,
