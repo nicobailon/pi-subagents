@@ -254,11 +254,11 @@ function hostCall(method, args, observation) {
     : promise;
 }
 
-function runHostCall(key, params, collectFailure, batch) {
+function runHostCall(key, params, collectFailure, batch, generatedLaneKey) {
   const callId = ++nextCallId;
   const promise = new Promise((resolve, reject) => {
     pending.set(callId, { resolve, reject });
-    parentPort.postMessage({ type: "call", callId, method: "run", args: { key, params, ...(collectFailure ? { collectFailure: true } : {}), ...(batch ? { batch } : {}) } });
+    parentPort.postMessage({ type: "call", callId, method: "run", args: { key, params, ...(collectFailure ? { collectFailure: true } : {}), ...(batch ? { batch } : {}), ...(generatedLaneKey ? { generatedLaneKey } : {}) } });
   });
   return { key, callId, promise };
 }
@@ -375,9 +375,9 @@ function laneFailure(stageKey, error) {
   return { key: stageKey, ok: false, output: text, error: text, artifactPaths: [] };
 }
 
-function runCollected(key, params, observe) {
+function runCollected(key, params, observe, generatedLaneKey) {
   validateRunCall(key, params, "runs.lanes stage", runFingerprints);
-  const launched = runHostCall(key, params, true);
+  const launched = runHostCall(key, params, true, undefined, generatedLaneKey);
   observe([{ key, operation: "run", callId: launched.callId }]);
   return launched.promise.then(decorateWorkflowChildResult);
 }
@@ -470,7 +470,7 @@ function runLane(lane, firstResult, observe) {
     }
     let launched;
     try {
-      launched = runCollected(stage.generatedKey, params, observe);
+      launched = runCollected(stage.generatedKey, params, observe, lane.key);
     } catch (error) {
       const failed = laneFailure(stage.generatedKey, error);
       records.push(laneStageRecord(stage.key, failed));
@@ -500,7 +500,7 @@ function runLanes(laneSpecs) {
     return { key: first.generatedKey, ...first.params };
   });
   // Share the runs.all batch launcher while allowing each lane to advance independently.
-  const firstBatch = launchRunsAll(firstItems);
+  const firstBatch = launchRunsAll(firstItems, lanes.map((lane) => lane.key));
   const firstResults = firstBatch.launched.map(({ promise }) => promise.then(decorateWorkflowChildResult));
   let trackedAggregate;
   const observe = (observations) => trackRunObservation(observations, trackedAggregate);
@@ -609,7 +609,7 @@ function validateRunCall(key, params, label, fingerprints) {
   fingerprints.set(key, fingerprint);
 }
 
-function launchRunsAll(items) {
+function launchRunsAll(items, generatedLaneKeys) {
   if (!Array.isArray(items)) throw new Error("runs.all(items) requires an array.");
   const fingerprints = new Map(runFingerprints);
   const calls = [];
@@ -623,7 +623,7 @@ function launchRunsAll(items) {
   }
   runFingerprints = fingerprints;
   const batch = { id: "batch-" + (++nextCallId), calls };
-  const launched = calls.map(({ key, params }) => runHostCall(key, params, true, batch));
+  const launched = calls.map(({ key, params }, index) => runHostCall(key, params, true, batch, generatedLaneKeys?.[index]));
   return { calls, launched };
 }
 
@@ -939,6 +939,8 @@ export interface WorkflowScriptTraceEntry {
 	phase?: string;
 	label?: string;
 	error?: string;
+	/** Internal provenance for a generated runs.lanes child key. */
+	generatedLaneKey?: string;
 	lane?: import("../shared/types.ts").WorkflowLaneMetadata;
 	warning?: string;
 }
@@ -1423,7 +1425,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	const trace: WorkflowScriptTraceEntry[] = [];
 	const children = new Map<string, WorkflowScriptChildResult>();
 	const childOrder: string[] = [];
-	const launches = new Map<string, { fingerprint: string; promise: Promise<WorkflowScriptChildResult>; observed: boolean }>();
+	const launches = new Map<string, { fingerprint: string; promise: Promise<WorkflowScriptChildResult>; observed: boolean; generatedLaneKey?: string }>();
 	const steers = new Map<number, { key: string; promise: Promise<WorkflowSteerResult>; observed: boolean }>();
 	const stoppedLaunches = new Set<string>();
 	const childStopControllers = new Map<string, AbortController>();
@@ -1468,6 +1470,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			...(started?.agent ? { agent: started.agent } : {}),
 			...(started?.phase ? { phase: started.phase } : {}),
 			...(started?.label ? { label: started.label } : {}),
+			...(started?.generatedLaneKey ? { generatedLaneKey: started.generatedLaneKey } : {}),
 			error: message,
 		});
 		traceChanged();
@@ -1519,6 +1522,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					...(started?.agent ? { agent: started.agent } : {}),
 					...(started?.phase ? { phase: started.phase } : {}),
 					...(started?.label ? { label: started.label } : {}),
+					...(started?.generatedLaneKey ? { generatedLaneKey: started.generatedLaneKey } : {}),
 					error: error.message,
 				});
 			}
@@ -1690,6 +1694,9 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			}
 			const params = message.args.params;
 			if (!isRecord(params)) return respond(Promise.reject(new Error(`runs.run('${key}', params) requires a params object.`)));
+			const generatedLaneKey = typeof message.args.generatedLaneKey === "string" && KEY_PATTERN.test(message.args.generatedLaneKey) && key.startsWith(`${message.args.generatedLaneKey}.`)
+				? message.args.generatedLaneKey
+				: undefined;
 			const collectFailure = message.args.collectFailure === true;
 			const callObserved = observedRunCalls.delete(message.callId);
 			const deliver = (promise: Promise<WorkflowScriptChildResult>) => collectFailure
@@ -1707,7 +1714,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (existing) {
 				if (existing.fingerprint !== fingerprint) return respond(Promise.reject(new Error(`Duplicate workflow key '${key}' used with incompatible launch params.`)));
 				if (callObserved) existing.observed = true;
-				trace.push({ operation: "run", key, state: "reused", ...workflowStringMetadata(params) });
+				trace.push({ operation: "run", key, state: "reused", ...workflowStringMetadata(params), ...(existing.generatedLaneKey ? { generatedLaneKey: existing.generatedLaneKey } : {}) });
 				traceChanged();
 				return respond(deliver(existing.promise), `runs.run('${key}') result`, (error) => children.set(key, responseBoundaryFailure(key, error)));
 			}
@@ -1805,7 +1812,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					const autoResumeParams = setupAbortResumeParams(params, result, childSignal);
 					if (!autoResumeParams) return result;
 					resolvedResumeLineage = [...new Set([...(resolvedResumeLineage ?? []), result.runId!])];
-					trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(autoResumeParams), phase: "auto-resume", runId: result.runId });
+					trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(autoResumeParams), ...(generatedLaneKey ? { generatedLaneKey } : {}), phase: "auto-resume", runId: result.runId });
 					traceChanged();
 					return options.launch(key, autoResumeParams, childSignal, { admitted: true, batch: batch !== undefined });
 				} finally {
@@ -1820,7 +1827,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				if (stoppedLaunches.has(key)) return children.get(key) ?? normalized;
 				children.set(key, normalized);
 				const state = normalized.ok ? "completed" : normalized.stopped ? "stopped" : normalized.detached ? "detached" : "failed";
-				trace.push({ operation: "run", key, state, durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok ? { error: normalized.error ?? normalized.output } : {}) });
+				trace.push({ operation: "run", key, state, durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(generatedLaneKey ? { generatedLaneKey } : {}), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok ? { error: normalized.error ?? normalized.output } : {}) });
 				traceChanged();
 				return normalized;
 			}, (error: unknown) => {
@@ -1829,13 +1836,13 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				childStopControllers.delete(key);
 				if (stoppedLaunches.has(key)) return children.get(key) ?? { ...failure, stopped: true };
 				children.set(key, failure);
-				trace.push({ operation: "run", key, state: "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), error: text });
+				trace.push({ operation: "run", key, state: "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(generatedLaneKey ? { generatedLaneKey } : {}), error: text });
 				traceChanged();
 				return failure;
 			});
-			launches.set(key, { fingerprint, promise, observed: callObserved });
+			launches.set(key, { fingerprint, promise, observed: callObserved, ...(generatedLaneKey ? { generatedLaneKey } : {}) });
 			childOrder.push(key);
-			trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(params) });
+			trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(params), ...(generatedLaneKey ? { generatedLaneKey } : {}) });
 			traceChanged();
 			respond(deliver(promise), `runs.run('${key}') result`, (error) => children.set(key, responseBoundaryFailure(key, error)));
 		});

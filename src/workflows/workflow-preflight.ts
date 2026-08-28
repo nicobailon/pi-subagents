@@ -17,6 +17,7 @@ type WorkflowTraceLike = {
 	operation: string;
 	key: string;
 	phase?: string;
+	generatedLaneKey?: string;
 	warning?: string;
 };
 
@@ -141,15 +142,25 @@ function declaredKeys(preflight: WorkflowPreflightV1): Set<string> {
 	return new Set(preflight.lanes.map((lane) => lane.key));
 }
 
-function launchedKeys(trace: readonly WorkflowTraceLike[]): string[] {
-	const keys: string[] = [];
+function generatedByLane(entry: WorkflowTraceLike, laneKey: string): boolean {
+	return entry.generatedLaneKey === laneKey && entry.key.startsWith(`${laneKey}.`);
+}
+
+function keyCoveredByDeclaredLane(entry: WorkflowTraceLike, declared: ReadonlySet<string>): boolean {
+	if (declared.has(entry.key)) return true;
+	for (const laneKey of declared) if (generatedByLane(entry, laneKey)) return true;
+	return false;
+}
+
+function launchedEntries(trace: readonly WorkflowTraceLike[]): WorkflowTraceLike[] {
+	const entries: WorkflowTraceLike[] = [];
 	const seen = new Set<string>();
 	for (const entry of trace) {
 		if (entry.operation !== "run" || entry.phase === "auto-resume" || seen.has(entry.key)) continue;
 		seen.add(entry.key);
-		keys.push(entry.key);
+		entries.push(entry);
 	}
-	return keys;
+	return entries;
 }
 
 function undeclaredWarning(key: string): string {
@@ -168,11 +179,10 @@ export function workflowPreflightWarnings(
 ): string[] {
 	if (!preflight) return [];
 	const declared = declaredKeys(preflight);
-	const launched = launchedKeys(trace);
-	const messages = launched.filter((key) => !declared.has(key)).map(undeclaredWarning);
+	const launched = launchedEntries(trace);
+	const messages = launched.filter((entry) => !keyCoveredByDeclaredLane(entry, declared)).map((entry) => undeclaredWarning(entry.key));
 	if (options.settled === true) {
-		const launchedSet = new Set(launched);
-		for (const lane of preflight.lanes) if (!launchedSet.has(lane.key)) messages.push(unlaunchedWarning(lane.key));
+		for (const lane of preflight.lanes) if (!launched.some((entry) => entry.key === lane.key || generatedByLane(entry, lane.key))) messages.push(unlaunchedWarning(lane.key));
 	}
 	return warningLimit(messages);
 }
@@ -183,7 +193,7 @@ export function annotateWorkflowPreflightTrace<T extends WorkflowTraceLike>(trac
 	const declared = declaredKeys(preflight);
 	const warned = new Set<string>();
 	return trace.map((entry) => {
-		if (entry.operation !== "run" || entry.phase === "auto-resume" || declared.has(entry.key) || warned.has(entry.key)) return entry;
+		if (entry.operation !== "run" || entry.phase === "auto-resume" || keyCoveredByDeclaredLane(entry, declared) || warned.has(entry.key)) return entry;
 		warned.add(entry.key);
 		return { ...entry, warning: entry.warning ?? undeclaredWarning(entry.key) };
 	});

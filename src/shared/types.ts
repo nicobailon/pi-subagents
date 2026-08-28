@@ -1377,6 +1377,8 @@ export interface Details {
 			phase?: string;
 			label?: string;
 			durationMs?: number;
+			/** Internal provenance for a generated runs.lanes child key. */
+			generatedLaneKey?: string;
 			warning?: string;
 			error?: string;
 		}>;

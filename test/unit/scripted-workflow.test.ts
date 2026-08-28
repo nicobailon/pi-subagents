@@ -405,6 +405,11 @@ describe("scripted workflow runtime", () => {
 		assert.equal(alphaChallengeStartedBeforeBetaWriter, true, "a settled lane should advance without waiting for slower siblings");
 		assert.deepEqual(launches.map(({ key }) => key), ["alpha.writer", "beta.writer", "alpha.challenge", "beta.review"]);
 		assert.deepEqual(launches.find(({ key }) => key === "alpha.challenge")?.params, { resume: "run-alpha.writer", task: "alpha challenge" });
+		for (const lane of ["alpha", "beta"]) {
+			const stageTrace = result.trace.filter((entry) => entry.operation === "run" && entry.key.startsWith(`${lane}.`));
+			assert.ok(stageTrace.length > 0);
+			assert.equal(stageTrace.every((entry) => entry.generatedLaneKey === lane), true);
+		}
 		assert.deepEqual(result.value, [
 			{
 				key: "alpha",
@@ -423,6 +428,21 @@ describe("scripted workflow runtime", () => {
 				],
 			},
 		]);
+	});
+
+	it("marks only runs.lanes stages with generated lane provenance", async () => {
+		const result = await runWorkflowScript({
+			script: `const direct = await runs.run("audit.shadow", { agent: "worker", task: "direct" }); const lanes = await runs.lanes([{ key: "audit", stages: [{ key: "writer", agent: "worker", task: "generated" }] }]); return { direct: direct.output, lanes };`,
+			timeoutMs: 2_000,
+			async launch(key) { return { key, ok: true, runId: "run-" + key, output: key, artifactPaths: [], results: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		const directTrace = result.trace.filter((entry) => entry.operation === "run" && entry.key === "audit.shadow");
+		const generatedTrace = result.trace.filter((entry) => entry.operation === "run" && entry.key === "audit.writer");
+		assert.ok(directTrace.length > 0);
+		assert.equal(directTrace.every((entry) => entry.generatedLaneKey === undefined), true);
+		assert.ok(generatedTrace.length > 0);
+		assert.equal(generatedTrace.every((entry) => entry.generatedLaneKey === "audit"), true);
 	});
 
 	it("keeps a rejected first-stage result local to its lane", async () => {

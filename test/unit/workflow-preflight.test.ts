@@ -116,4 +116,38 @@ describe("workflow preflight metadata", () => {
 		assert.ok(workflowPreflightWarnings(manyLanes, [], { settled: true }).some((warning) => warning.includes("declared lane 'declared-0' was not launched")));
 		assert.ok(WORKFLOW_PREFLIGHT_MAX_CLAIMS > 0);
 	});
+
+	it("covers only proven generated runs.lanes stages", () => {
+		const lanes = normalizeWorkflowPreflight({
+			version: 1,
+			coverage: "complete",
+			lanes: [{ key: "audit" }],
+		});
+		const generatedTrace = [
+			{ operation: "run", key: "audit.writer", generatedLaneKey: "audit", state: "completed" as const },
+			{ operation: "run", key: "audit.review", generatedLaneKey: "audit", state: "completed" as const },
+		];
+		assert.deepEqual(workflowPreflightWarnings(lanes, generatedTrace, { settled: true }), []);
+		assert.equal(annotateWorkflowPreflightTrace(generatedTrace, lanes).some((entry) => entry.warning), false);
+
+		const directTrace = [
+			{ operation: "run", key: "audit.shadow", state: "started" as const },
+			{ operation: "run", key: "audit-other.writer", state: "started" as const },
+		];
+		assert.deepEqual(workflowPreflightWarnings(lanes, directTrace), [
+			"Preflight advisory: workflow key 'audit.shadow' launched without a declared lane.",
+			"Preflight advisory: workflow key 'audit-other.writer' launched without a declared lane.",
+		]);
+		assert.deepEqual(workflowPreflightWarnings(lanes, directTrace, { settled: true }), [
+			"Preflight advisory: workflow key 'audit.shadow' launched without a declared lane.",
+			"Preflight advisory: workflow key 'audit-other.writer' launched without a declared lane.",
+			"Preflight advisory: declared lane 'audit' was not launched.",
+		]);
+		const directAnnotated = annotateWorkflowPreflightTrace(directTrace, lanes);
+		assert.match(directAnnotated[0]?.warning ?? "", /without a declared lane/);
+		assert.match(directAnnotated[1]?.warning ?? "", /without a declared lane/);
+
+		const exactTrace = [{ operation: "run", key: "audit", state: "completed" as const }];
+		assert.deepEqual(workflowPreflightWarnings(lanes, exactTrace, { settled: true }), []);
+	});
 });

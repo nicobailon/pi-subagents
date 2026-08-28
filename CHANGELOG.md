@@ -27,6 +27,7 @@
 - Show workflow child labels and phases in async status progress while preserving stable workflow keys.
 
 ### Fixed
+- Avoid false preflight mismatch warnings for generated `runs.lanes(...)` stage keys (#1649).
 - Keep an async `workflowScript` continuation live while an awaited child coordinates with its supervisor, so sequential tail steps continue after the child settles (#1634).
 - Stop stale extension and slash-command contexts from escaping during reload or session replacement.
 - Include saved workflow child output paths and bounded inline previews in completion notices (#1629).
