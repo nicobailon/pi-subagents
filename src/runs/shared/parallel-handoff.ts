@@ -130,7 +130,7 @@ export function resolveParallelHandoffChild(input: {
 	workflowKey?: string;
 	childRunId?: string;
 }): { group: ParallelHandoffGroup; child: ParallelHandoffGroup["children"][number] } | undefined {
-	const manifest = readManifest(input.manifestPath);
+	const manifest = readParallelHandoffManifest(input.manifestPath);
 	if (!manifest) return undefined;
 	if (manifest.runId !== input.runId) throw new Error(`Managed worktree handoff belongs to run '${manifest.runId}', not '${input.runId}'.`);
 	const workflowKey = input.workflowKey?.trim() || undefined;
@@ -143,10 +143,6 @@ export function resolveParallelHandoffChild(input: {
 	});
 	if (matches.length > 1) throw new Error(`Parallel handoff has multiple children matching workflow identity${workflowKey ? ` '${workflowKey}'` : ` '${childRunId}'`}.`);
 	return matches[0];
-}
-
-function readManifest(manifestPath: string): ParallelHandoffManifest | undefined {
-	return readParallelHandoffManifest(manifestPath);
 }
 
 function resolveExistingPath(candidate: string): string {
@@ -163,7 +159,7 @@ function pathInside(root: string, candidate: string): boolean {
 }
 
 export function resolveRetainedWorktreeCwd(manifestPath: string, runId: string, childIndex: number): string | undefined {
-	const manifest = readManifest(manifestPath);
+	const manifest = readParallelHandoffManifest(manifestPath);
 	if (!manifest) return undefined;
 	if (manifest.runId !== runId) throw new Error(`Managed worktree handoff belongs to run '${manifest.runId}', not '${runId}'.`);
 	const match = manifest.groups
@@ -513,7 +509,7 @@ export function writeParallelHandoffGroup(input: {
 	now?: number;
 }): ParallelHandoffReference {
 	const now = input.now ?? Date.now();
-	const existing = readManifest(input.manifestPath);
+	const existing = readParallelHandoffManifest(input.manifestPath);
 	if (existing && (existing.runId !== input.runId || existing.mode !== input.mode || existing.source !== input.source)) {
 		throw new Error(`Parallel handoff manifest belongs to a different run: ${input.manifestPath}`);
 	}
@@ -643,7 +639,7 @@ export function discardPreservedWorktrees(
 	authorization: Extract<WorktreeCleanupIntent, { kind: "discard" }>["authorization"],
 ): { manifest: ParallelHandoffManifest; text: string } {
 	const resolvedPath = path.resolve(manifestPath);
-	const manifest = readManifest(resolvedPath);
+	const manifest = readParallelHandoffManifest(resolvedPath);
 	if (!manifest) throw new Error(`Parallel handoff manifest not found: ${resolvedPath}`);
 	let attempted = 0;
 	for (const group of manifest.groups) {

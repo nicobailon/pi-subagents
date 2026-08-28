@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { appendJsonl } from "../../shared/artifacts.ts";
-import type { AsyncParallelGroupStatus, AsyncStatus, WorkflowGraphNode, WorkflowGraphSnapshot } from "../../shared/types.ts";
+import type { AsyncStatus, WorkflowGraphNode, WorkflowGraphSnapshot } from "../../shared/types.ts";
 import { PROMPT_REDACTED, readStatus } from "../../shared/utils.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import type { DynamicRunnerGroup, ParallelStepGroup, RunnerStep, RunnerSubagentStep } from "../shared/parallel-utils.ts";
@@ -183,7 +183,7 @@ function statusStepForTask(task: RunnerSubagentStep): StatusStep {
 	};
 }
 
-function statusStepsForRunnerStep(step: RunnerStep, stepIndex: number): StatusStep[] {
+function statusStepsForRunnerStep(step: RunnerStep): StatusStep[] {
 	if (isParallelGroup(step)) return step.parallel.map(statusStepForTask);
 	if (isDynamicRunnerGroup(step)) {
 		return [{
@@ -300,7 +300,7 @@ export function appendRunnerStepsToStatus(input: {
 	for (const step of input.steps) {
 		const stepIndex = input.status.chainStepCount ?? input.status.steps?.length ?? 0;
 		const flatIndex = input.status.steps?.length ?? 0;
-		const statusSteps = statusStepsForRunnerStep(step, stepIndex);
+		const statusSteps = statusStepsForRunnerStep(step);
 		input.status.steps ??= [];
 		input.status.steps.push(...statusSteps);
 		if (isParallelGroup(step)) {

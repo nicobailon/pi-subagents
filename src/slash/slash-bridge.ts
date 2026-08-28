@@ -39,7 +39,6 @@ interface EventBus {
 
 interface SlashBridgeOptions {
 	events: EventBus;
-	asyncByDefault: boolean;
 	getContext: () => ExtensionContext | null;
 	execute: (
 		id: string,
@@ -80,7 +79,7 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
 		const request = data as Partial<SlashSubagentRequest>;
 		if (typeof request.requestId !== "string" || !request.params) return;
 		const { requestId } = request as SlashSubagentRequest;
-		const normalized = normalizePublicSubagentExecution((request as SlashSubagentRequest).params, { asyncByDefault: options.asyncByDefault });
+		const normalized = normalizePublicSubagentExecution((request as SlashSubagentRequest).params);
 		if (!normalized.ok) {
 			options.events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
 				requestId,

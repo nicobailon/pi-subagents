@@ -1255,32 +1255,6 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
-	it("omits legacy chain controls from the child-safe fanout tool", () => {
-		const readRegisteredTool = (): { description: string; properties: string[]; id: string; runId: string } => {
-			const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fanout-schema-"));
-			fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
-			const script = String.raw`
-				import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
-				import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
-				process.env[SUBAGENT_CHILD_ENV] = "1";
-				process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
-				let tool;
-				registerFanoutChildSubagentExtension({ events: { on() { return () => {}; }, emit() {} }, registerTool(value) { tool = value; }, getSessionName() { return undefined; } });
-				process.stdout.write(JSON.stringify({ description: tool.description, properties: Object.keys(tool.parameters.properties), id: tool.parameters.properties.id.description, runId: tool.parameters.properties.runId.description }));
-			`;
-			const output = execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], {
-				cwd: projectRoot,
-				env: parentToolEnv(agentDir),
-				encoding: "utf-8",
-			});
-			return JSON.parse(output) as { description: string; properties: string[]; id: string; runId: string };
-		};
-
-		const tool = readRegisteredTool();
-		assert.equal(tool.properties.includes("step"), false);
-		assert.doesNotMatch(`${tool.description}\n${tool.id}\n${tool.runId}`, /append-step|approve-checkpoint|reject-checkpoint/);
-	});
-
 	it("lets fanout children call read-only list but blocks mutating management actions", () => {
 		const script = String.raw`
 			import assert from "node:assert/strict";

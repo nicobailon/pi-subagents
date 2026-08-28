@@ -1,7 +1,5 @@
 import type { AsyncJobState, SubagentState } from "../../shared/types.ts";
 import {
-	ASYNC_STATUS_SNAPSHOT_KIND,
-	ASYNC_STATUS_SNAPSHOT_VERSION,
 	projectAsyncStatusSnapshot,
 	type AsyncStatusSnapshotOptions,
 	type AsyncStatusSnapshotV1,

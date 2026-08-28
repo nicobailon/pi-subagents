@@ -230,10 +230,10 @@ function runnerReleaseVerdict(owner: ActiveAsyncCapacityOwnerV1, status: AsyncSt
 		&& proof.runId === owner.runId
 		&& proof.runnerProcessInstanceId === owner.runnerProcessInstanceId
 		? { state: "releasable", reason: "matching observed process-terminal proof is present" }
-		: abandonedRunnerReleaseVerdict(owner, status, proof?.state ?? "missing", options);
+		: abandonedRunnerReleaseVerdict(status, proof?.state ?? "missing", options);
 }
 
-function abandonedRunnerReleaseVerdict(owner: ActiveAsyncCapacityOwnerV1, status: AsyncStatus, proofState: string, options: CapacityOptions): ActiveAsyncCapacityReleaseVerdict {
+function abandonedRunnerReleaseVerdict(status: AsyncStatus, proofState: string, options: CapacityOptions): ActiveAsyncCapacityReleaseVerdict {
 	const proofReason = `process-terminal proof is ${proofState}`;
 	const thresholdMs = resolveAbandonedSlotReleaseAfterMs(options.abandonedSlotReleaseAfterMs);
 	if (thresholdMs === false) return { state: "retained", reason: `${proofReason}; abandoned-timeout policy is disabled` };

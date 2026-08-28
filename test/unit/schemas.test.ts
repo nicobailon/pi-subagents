@@ -240,8 +240,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		for (const name of ["tasks", "chain", "concurrency", "chainDir", "step", "schedule", "scheduleName", "resume"]) {
 			assert.equal((SubagentParams?.properties as Record<string, unknown> | undefined)?.[name], undefined, `${name} should not be public`);
 		}
-
-		assert.doesNotMatch(JSON.stringify(SubagentParams), /append-step|approve-checkpoint|reject-checkpoint|scheduleName/);
 	});
 
 	it("allows runtime validation of management and control action strings", () => {

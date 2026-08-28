@@ -90,7 +90,7 @@ export function loadAgentPluginMcpServers(paths: unknown, cwd: string): Record<s
 		const rawServers = (config as { mcpServers: Record<string, unknown> }).mcpServers;
 
 		for (const [serverName, rawDefinition] of Object.entries(rawServers)) {
-			const definition = translatePluginServer(manifest.name, pluginRoot, serverName, rawDefinition);
+			const definition = translatePluginServer(manifest.name, pluginRoot, rawDefinition);
 			if (!definition) continue;
 			const normalizedName = `${formatName(manifest.name, "plugin")}__${formatName(serverName, "server")}`;
 			if (Object.hasOwn(servers, normalizedName)) continue;
@@ -254,12 +254,11 @@ function isValidPluginConfig(value: unknown): value is { mcpServers: Record<stri
 function translatePluginServer(
 	pluginName: string,
 	pluginRoot: string,
-	serverName: string,
 	value: unknown,
 ): McpServerDefinition | undefined {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
 	const raw = value as Record<string, unknown>;
-	if (raw.type === "stdio") return translatePluginStdioServer(pluginName, pluginRoot, serverName, raw);
+	if (raw.type === "stdio") return translatePluginStdioServer(pluginName, pluginRoot, raw);
 	if (raw.type === "streamable-http" || raw.type === "sse") return translatePluginHttpServer(raw);
 	return undefined;
 }
@@ -267,7 +266,6 @@ function translatePluginServer(
 function translatePluginStdioServer(
 	pluginName: string,
 	pluginRoot: string,
-	serverName: string,
 	raw: Record<string, unknown>,
 ): McpServerDefinition | undefined {
 	if ([...Object.keys(raw)].some((key) => !PLUGIN_STDIO_FIELDS.has(key))) return undefined;

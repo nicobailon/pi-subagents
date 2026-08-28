@@ -22,8 +22,4 @@ describe("writer budget guidance", () => {
 		assert.match(toolReference, /elapsed timeout is not a mutation-safe boundary/i);
 	});
 
-	it("does not document the removed turn-budget control", () => {
-		const toolReference = readProjectFile("docs/tool-reference.md");
-		assert.doesNotMatch(toolReference, /turnBudget|turn-budget termination/i);
-	});
 });

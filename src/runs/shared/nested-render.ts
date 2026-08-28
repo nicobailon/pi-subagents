@@ -1,6 +1,6 @@
 import { formatDuration, formatModelThinking, formatTokenUsage, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
-import type { ActivityState, NestedRunSummary, NestedStepSummary } from "../../shared/types.ts";
+import type { ActivityState, NestedRunSummary } from "../../shared/types.ts";
 
 export interface NestedRunCounts {
 	total: number;

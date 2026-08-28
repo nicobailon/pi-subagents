@@ -46,7 +46,6 @@ import {
 	type TurnBudgetState,
 	type Usage,
 	type WorkflowGraphSnapshot,
-	type SteeringStatus,
 	type SteeringTargetState,
 	type SteeringTargetStatus,
 	type SubagentChildStatusEvent,
@@ -54,7 +53,6 @@ import {
 	DEFAULT_MAX_OUTPUT,
 	type MaxOutputConfig,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
-	POLL_INTERVAL_MS,
 	truncateOutput,
 	getSubagentDepthEnv,
 } from "../../shared/types.ts";

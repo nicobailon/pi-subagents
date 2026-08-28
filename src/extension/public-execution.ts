@@ -48,7 +48,7 @@ export type PublicSubagentExecutionNormalization<T> =
  * Enforce the public execution cutover before requests reach the executor.
  * Internal runs.run children and structured owned delegation bypass this boundary.
  */
-export function normalizePublicSubagentExecution<T extends PublicSubagentExecutionParams>(params: T, options: { asyncByDefault?: boolean } = {}): PublicSubagentExecutionNormalization<T> {
+export function normalizePublicSubagentExecution<T extends PublicSubagentExecutionParams>(params: T): PublicSubagentExecutionNormalization<T> {
 	if (params.workflowScript !== undefined && params.workflowScriptPath !== undefined) {
 		return { ok: false, error: "workflowScript and workflowScriptPath are mutually exclusive.", mode: "workflow" };
 	}

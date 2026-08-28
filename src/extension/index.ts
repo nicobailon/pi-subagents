@@ -49,7 +49,6 @@ import { registerHerdrStatusBridge, type HerdrStatusRun } from "../integrations/
 import { listHerdrProjectPaneRoots, restoreHerdrProjectPaneSnapshots } from "../inspectors/herdr/project-panes.ts";
 import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
-import { inspectSubagentStatus } from "../runs/background/run-status.ts";
 import { resolveWaitToolConfig } from "../runs/background/subagent-wait.ts";
 import { registerWaitTool } from "../runs/background/wait-tool.ts";
 import { createWaitSubscriptionManager } from "../runs/background/wait-subscriptions.ts";
@@ -667,7 +666,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const slashBridge = registerSlashSubagentBridge({
 		events: pi.events,
-		asyncByDefault,
 		getContext: () => state.lastUiContext,
 		execute: (id, params, signal, onUpdate, ctx) =>
 			executeSubagentCollapsed(id, params, signal, onUpdate, ctx),

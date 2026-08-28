@@ -509,10 +509,10 @@ function buildEntryBase(input: {
 	source: WorktreeCleanupPlanSource;
 	git?: GitWorktreeRecord;
 	metadata?: ManifestMetadataRecord;
-	baseDir: string;
 	targetHead: string;
 }): WorktreeCleanupPlanEntry {
 	const recordedBaseDir = path.dirname(input.path);
+	const patchPath = input.metadata ? metadataPatchPath(input.metadata) : undefined;
 	return {
 		path: input.path,
 		branch: input.branch,
@@ -522,7 +522,7 @@ function buildEntryBase(input: {
 		source: input.source,
 		...(input.metadata ? { runId: input.metadata.manifest.runId, handoffPath: input.metadata.manifestPath, taskIndex: input.metadata.task.index } : {}),
 		...(input.metadata?.group.baseCommit ? { baseCommit: input.metadata.group.baseCommit } : {}),
-		...(input.metadata ? (metadataPatchPath(input.metadata) ? { patchPath: metadataPatchPath(input.metadata) } : {}) : {}),
+		...(patchPath ? { patchPath } : {}),
 		targetRef: input.targetHead,
 		preconditions: {
 			path: input.path,
@@ -591,7 +591,7 @@ function buildManagedEntry(input: {
 	const gitWorktreePath = path.resolve(git.path);
 	const metadataWorktreePath = metadataRecordPath(record);
 	const worktreePath = resolveExistingPath(metadataWorktreePath);
-	const entry = buildEntryBase({ path: worktreePath, branch: git.branch ?? "", source: "both", git, metadata: record, baseDir, targetHead });
+	const entry = buildEntryBase({ path: worktreePath, branch: git.branch ?? "", source: "both", git, metadata: record, targetHead });
 	if (typeof record.manifest.runId !== "string" || !record.manifest.runId.trim()) return blockedEntry(entry, "unknown", "unknown", "handoff metadata has no valid owning run id");
 	if (record.manifest.source !== "foreground" && record.manifest.source !== "async") return blockedEntry(entry, "unknown", "unknown", "handoff metadata has an unknown source");
 	if (typeof record.group.repoRoot !== "string" || !record.group.repoRoot.trim()) return blockedEntry(entry, "unknown", "unknown", "handoff metadata has no repository root");
@@ -690,16 +690,16 @@ function buildManagedEntry(input: {
 	return entry;
 }
 
-function buildUnknownGitEntry(input: { git: GitWorktreeRecord; baseDir: string; targetHead: string }): WorktreeCleanupPlanEntry {
+function buildUnknownGitEntry(input: { git: GitWorktreeRecord; targetHead: string }): WorktreeCleanupPlanEntry {
 	const pathValue = resolveExistingPath(input.git.path);
-	const entry = buildEntryBase({ path: pathValue, branch: input.git.branch ?? "", source: "git", git: input.git, baseDir: input.baseDir, targetHead: input.targetHead });
+	const entry = buildEntryBase({ path: pathValue, branch: input.git.branch ?? "", source: "git", git: input.git, targetHead: input.targetHead });
 	return blockedEntry(entry, "unknown", "unknown", "no matching extension-owned handoff metadata was found");
 }
 
-function buildMissingMetadataEntry(input: { record: ManifestMetadataRecord; repoRoot: string; baseDir: string; targetHead: string }): WorktreeCleanupPlanEntry | undefined {
+function buildMissingMetadataEntry(input: { record: ManifestMetadataRecord; targetHead: string }): WorktreeCleanupPlanEntry | undefined {
 	if (input.record.task.worktreeRemoved && input.record.task.branchRemoved) return undefined;
 	const pathValue = metadataRecordPath(input.record);
-	const entry = buildEntryBase({ path: pathValue, branch: input.record.task.branch, source: "metadata", metadata: input.record, baseDir: input.baseDir, targetHead: input.targetHead });
+	const entry = buildEntryBase({ path: pathValue, branch: input.record.task.branch, source: "metadata", metadata: input.record, targetHead: input.targetHead });
 	return blockedEntry(entry, "stale", "unknown", "handoff metadata records a worktree that is not present in Git worktree state");
 }
 
@@ -745,7 +745,7 @@ export function buildWorktreeCleanupPlan(input: BuildWorktreeCleanupPlanInput): 
 			? metadata.records.filter((record) => record.task.branch === git.branch && samePath(metadataRecordPath(record), git.path))
 			: []);
 		if (records.length === 1) matchedMetadataRecords.add(records[0]!);
-		if (records.length !== 1) entries.push(buildUnknownGitEntry({ git, baseDir, targetHead }));
+		if (records.length !== 1) entries.push(buildUnknownGitEntry({ git, targetHead }));
 		else entries.push(buildManagedEntry({
 			repoRoot,
 			baseDir,
@@ -762,7 +762,7 @@ export function buildWorktreeCleanupPlan(input: BuildWorktreeCleanupPlanInput): 
 	const gitPathKeys = new Set(linkedGit.map((record) => comparablePath(record.path)));
 	for (const [key, records] of metadataByPath) {
 		if (gitPathKeys.has(key) || records.length !== 1 || matchedMetadataRecords.has(records[0]!)) continue;
-		const missing = buildMissingMetadataEntry({ record: records[0]!, repoRoot, baseDir, targetHead });
+		const missing = buildMissingMetadataEntry({ record: records[0]!, targetHead });
 		if (missing) entries.push(missing);
 	}
 

@@ -25,14 +25,7 @@ describe("public subagent execution normalization", () => {
 				output: true,
 			},
 		});
-		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker" }, { asyncByDefault: false }), {
-			ok: true,
-			params: {
-				agent: "worker",
-				output: true,
-			},
-		});
-		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", async: true }, { asyncByDefault: false }), {
+		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", async: true }), {
 			ok: true,
 			params: {
 				agent: "worker",

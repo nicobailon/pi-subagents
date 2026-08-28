@@ -2119,7 +2119,6 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 	const width = getTermWidth() - 4;
 	const rowIndent = mainWindowIndent(layout, 1);
 	const detailIndent = mainWindowIndent(layout, 2);
-	const continuationIndent = mainWindowIndent(layout, 3) + (layout.horizontalSpacing > 0 ? " " : "");
 	c.addChild(new Text(truncLine(`${glyph} ${theme.fg("toolTitle", theme.bold(d.mode))}${contextBadge}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`, width), 0, 0));
 
 	const useResultsDirectly = multiLabel.hasParallelInChain || !d.chainAgents?.length;

@@ -48,7 +48,6 @@ import {
 	DIRS,
 	type Details,
 	type FleetKeybindingsConfig,
-	type JsonSchemaObject,
 	type SingleResult,
 	type SubagentState,
 	type Usage,
