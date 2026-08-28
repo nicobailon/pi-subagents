@@ -36,6 +36,43 @@ Use `workflowScriptPath` instead of `workflowScript` to load the same JavaScript
 ` }
 ```
 
+### Parallel sequential lanes
+
+Use `runs.lanes(lanes)` inside a `workflowScript` when several independent lanes each have ordered stages. This helper composes the existing workflow child runner; it does not add a top-level `lanes` parameter or a second persistence/cleanup system.
+
+```js
+{ workflowScript: `
+  const board = await runs.lanes([
+    { key: "api", stages: [
+      { key: "writer", agent: "worker", task: "Implement the API change" },
+      { key: "challenge", resume: "previous", task: "Challenge the implementation" },
+      { key: "review", agent: "reviewer", task: "Review the API lane" }
+    ] },
+    { key: "ui", stages: [
+      { key: "writer", agent: "worker", task: "Implement the UI change" },
+      { key: "review", agent: "reviewer", task: "Review the UI lane" }
+    ] }
+  ]);
+  return board.map((lane) => ({
+    key: lane.key,
+    state: lane.state,
+    failedStage: lane.failedStage,
+    stages: lane.stages.map((stage) => ({
+      key: stage.key,
+      state: stage.state,
+      ok: stage.ok,
+      runId: stage.runId,
+      outputReference: stage.outputReference,
+      verdict: stage.verdict
+    }))
+  }));
+` }
+```
+
+The first stage of each lane is launched by one existing `runs.all(...)` batch. Later stages run in lane order. Set `resume: "previous"` on a later stage to continue the preceding retained child; the helper requires that child’s returned `runId` and delegates to the existing resume checks. Stage keys are local to the lane, and generated child keys are `<lane>.<stage>`.
+
+The complete plain-JSON inventory is validated before the first launch (maximum 32 lanes, 16 stages per lane, 64 total stages, and 64 KiB canonical JSON). A failed, stopped, or detached stage blocks only its lane and marks later stages `skipped`; an explicit `structuredOutput.verdict === "blocked"` has the same effect. Reviewer prose is not parsed. The bounded board returns lane/stage keys, state, `ok`, run ids, explicit output references, bounded errors, and optional verdicts, not transcripts. Use raw `runs.run(...)`/`runs.all(...)` for conditional or rolling workflows.
+
 ## Parameter reference
 
 | Param | Type | Default | Description |

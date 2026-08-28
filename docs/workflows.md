@@ -115,6 +115,51 @@ subagent({ workflowScript: `
 ` });
 ```
 
+### Parallel sequential lanes
+
+For a bounded set of independent chains, `runs.lanes(...)` removes the mechanical loop that would otherwise connect each lane's stages. It is a helper inside `workflowScript`, not a new top-level `subagent` execution mode:
+
+```js
+subagent({ workflowScript: `
+  const board = await runs.lanes([
+    {
+      key: "api",
+      stages: [
+        { key: "writer", agent: "worker", task: "Implement the API change" },
+        { key: "challenge", resume: "previous", task: "Challenge the API implementation" },
+        { key: "review", agent: "reviewer", task: "Review the API lane" }
+      ]
+    },
+    {
+      key: "ui",
+      stages: [
+        { key: "writer", agent: "worker", task: "Implement the UI change" },
+        { key: "review", agent: "reviewer", task: "Review the UI lane" }
+      ]
+    }
+  ]);
+  return board.map((lane) => ({
+    key: lane.key,
+    state: lane.state,
+    failedStage: lane.failedStage,
+    stages: lane.stages.map((stage) => ({
+      key: stage.key,
+      state: stage.state,
+      ok: stage.ok,
+      runId: stage.runId,
+      outputReference: stage.outputReference,
+      verdict: stage.verdict
+    }))
+  }));
+` });
+```
+
+The first stage from every lane is launched in one existing `runs.all(...)` batch. Later stages in each lane start only after the preceding stage settles. A later stage with `resume: "previous"` requires the preceding child to return a retained `runId`; the helper then uses the existing retained-resume launch checks and does not accept an arbitrary run id. Generated child keys use `<lane>.<stage>`, while the returned board uses the local lane and stage keys.
+
+The helper validates the complete plain-JSON lane inventory before launching anything. It bounds the inventory to 32 lanes, 16 stages per lane, 64 total stages, and 64 KiB of canonical JSON; task and path fields retain the existing 1 MiB and 32 KiB limits. Stage keys must be unique within a lane and generated keys must be unique and valid workflow keys. A child failure, stopped/detached result, or explicit `structuredOutput.verdict === "blocked"` blocks only that lane; later stages are marked `skipped` and sibling lanes continue. Reviewer prose is never parsed.
+
+The board is bounded and contains only lane/stage keys, state, success, retained run ids, explicit output references, bounded errors, and an optional structured verdict. It does not return child transcripts or create a lane registry, cleanup authority, host gate runner, or new status/render lookup. Use raw `runs.run(...)`/`runs.all(...)` when a workflow needs conditional or rolling orchestration beyond this helper.
+
 ### Steering a workflow child
 
 Use `await runs.steer(key, message, options?)` after `runs.run` or `runs.all` has launched that stable key. Scripts do not target raw run ids. The optional fields are `mode: "steer" | "follow_up" | "auto"`, a non-negative child `index`, and a positive `ackTimeoutMs`.

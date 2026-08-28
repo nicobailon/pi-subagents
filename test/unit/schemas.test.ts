@@ -186,6 +186,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(workflowScript?.type, "string");
 		assert.equal(workflowScript?.minLength, 1);
 		assert.match(String(workflowScript?.description ?? ""), /runs\.run/);
+		assert.match(String(workflowScript?.description ?? ""), /runs\.lanes\(\[\{key,stages:/);
+		assert.match(String(workflowScript?.description ?? ""), /first stages run together.*later stages sequence per lane/i);
 		assert.match(String(workflowScript?.description ?? ""), /Each workflow key identifies one result lane.*new stable workflow key.*retained resume pass/i);
 		assert.match(String(workflowScript?.description ?? ""), /await runs\.all\(\[\{key, agent, task\}, \.\.\.\]\)/);
 		assert.match(String(workflowScript?.description ?? ""), /do not read \.output from unawaited runs\.run launches/i);
