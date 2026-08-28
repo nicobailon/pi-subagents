@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { quoteExecutableForShell } from "../runs/shared/acceptance.ts";
 import { createOwnedProcessTreeController, type OwnedProcessTreeController } from "../runs/background/owned-process-tree.ts";
 import { resolveSingleOutputClaimPath } from "../runs/shared/single-output.ts";
+import { DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS, runFileSystemOperationWithRetry } from "../shared/file-system-retry.ts";
 
 const MAX_COMMAND_BYTES = 16 * 1024;
 const MAX_OUTPUT_PATH_BYTES = 240;
@@ -88,7 +90,7 @@ export function resolveWorkflowHostOutputClaimPath(outputPath: string): string {
 	return resolveSingleOutputClaimPath(outputPath);
 }
 
-function assertSafeExplicitOutput(cwd: string, outputPath: string, key: string): void {
+function assertSafeExplicitOutput(cwd: string, outputPath: string, key: string): string {
 	const root = fs.realpathSync(cwd);
 	const outputParent = path.dirname(outputPath);
 	let existingParent = outputParent;
@@ -105,6 +107,32 @@ function assertSafeExplicitOutput(cwd: string, outputPath: string, key: string):
 		if (!stat.isFile() || stat.nlink > 1) throw new Error(`runs.host('${key}') output must be a regular, non-linked file path.`);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	return parent;
+}
+
+function writeExplicitOutput(outputParent: string, outputPath: string, capture: string, key: string): void {
+	const destination = path.join(outputParent, path.basename(outputPath));
+	const temporaryPath = path.join(outputParent, `.pi-host-output-${process.pid}-${randomUUID()}.tmp`);
+	let descriptor: number | undefined;
+	try {
+		descriptor = fs.openSync(temporaryPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600);
+		fs.writeFileSync(descriptor, capture, { encoding: "utf8" });
+		fs.closeSync(descriptor);
+		descriptor = undefined;
+		fs.chmodSync(temporaryPath, 0o600);
+		runFileSystemOperationWithRetry(() => fs.renameSync(temporaryPath, destination), {
+			retryDelaysMs: process.platform === "win32" ? DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS : [],
+		});
+	} catch (error) {
+		throw new Error(`runs.host('${key}') could not atomically replace its output.`, { cause: error instanceof Error ? error : undefined });
+	} finally {
+		if (descriptor !== undefined) fs.closeSync(descriptor);
+		try {
+			fs.unlinkSync(temporaryPath);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		}
 	}
 }
 
@@ -128,8 +156,8 @@ export async function executeWorkflowHostCommand(input: {
 	const outputPath = input.params.output ? path.resolve(input.cwd, input.params.output) : input.defaultOutputPath;
 	const relative = path.relative(input.cwd, outputPath);
 	if (input.params.output && (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))) throw new Error(`runs.host('${input.key}') output escapes the workflow cwd.`);
-	if (input.params.output) assertSafeExplicitOutput(input.cwd, outputPath, input.key);
-	else fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+	const explicitOutputParent = input.params.output ? assertSafeExplicitOutput(input.cwd, outputPath, input.key) : undefined;
+	if (!input.params.output) fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 	const startedAt = Date.now();
 	let stdout = "";
 	let stderr = "";
@@ -182,9 +210,14 @@ export async function executeWorkflowHostCommand(input: {
 			const state = timedOut ? "timed-out" : stopped ? "stopped" : exitCode === 0 && !spawnError && !cleanupError ? "passed" : "failed";
 			const error = spawnError instanceof Error ? spawnError.message : spawnError ? String(spawnError) : cleanupError ? `Process-tree cleanup failed: ${cleanupError}.` : state === "timed-out" ? `Command timed out after ${input.params.timeoutMs}ms.` : state === "stopped" ? "Command stopped because the workflow was aborted." : state === "failed" ? `Command exited with code ${exitCode ?? "unknown"}.` : undefined;
 			try {
-				if (input.params.output) assertSafeExplicitOutput(input.cwd, outputPath, input.key);
 				if (input.claimedOutputPath && resolveWorkflowHostOutputClaimPath(outputPath) !== input.claimedOutputPath) throw new Error(`output path changed after it was claimed.`);
-				fs.writeFileSync(outputPath, capture, { encoding: "utf8", mode: 0o600 });
+				if (explicitOutputParent) {
+					const currentParent = assertSafeExplicitOutput(input.cwd, outputPath, input.key);
+					if (currentParent !== explicitOutputParent) throw new Error(`output parent changed while the command was running.`);
+					writeExplicitOutput(explicitOutputParent, outputPath, capture, input.key);
+				} else {
+					fs.writeFileSync(outputPath, capture, { encoding: "utf8", mode: 0o600 });
+				}
 			} catch (writeError) {
 				reject(new Error(`runs.host('${input.key}') could not save command output: ${writeError instanceof Error ? writeError.message : String(writeError)}`, { cause: writeError instanceof Error ? writeError : undefined }));
 				return;

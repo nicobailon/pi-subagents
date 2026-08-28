@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { findConfiguredProjectRoot } from "../../agents/agents.ts";
 import { getAgentDir, getProjectConfigDir } from "../../shared/utils.ts";
-import { loadAgentPluginMcpServers, loadPackageMcpServers, type McpServerDefinition } from "./mcp-config-sources.ts";
+import { isMcpServerDefinition, loadAgentPluginMcpServers, loadPackageMcpServers, type McpServerDefinition } from "./mcp-config-sources.ts";
 import {
 	normalizeMcpDirectToolSelectors,
 	parseMcpDirectToolSelectors,
@@ -154,12 +154,46 @@ function loadMetadataCache(): MetadataCache | null {
 		return null;
 	}
 
-	if (!parsed || typeof parsed !== "object") return null;
-	const raw = parsed as Record<string, unknown>;
-	if (raw.version !== CACHE_VERSION || !raw.servers || typeof raw.servers !== "object" || Array.isArray(raw.servers)) {
-		return null;
+	if (!isRecord(parsed) || parsed.version !== CACHE_VERSION || !isRecord(parsed.servers)) return null;
+	const servers: Record<string, ServerCacheEntry> = {};
+	for (const [name, value] of Object.entries(parsed.servers)) {
+		const entry = parseServerCacheEntry(value);
+		if (entry) servers[name] = entry;
 	}
-	return raw as unknown as MetadataCache;
+	return { version: CACHE_VERSION, servers };
+}
+
+function parseServerCacheEntry(value: unknown): ServerCacheEntry | undefined {
+	if (!isRecord(value)) return undefined;
+	if (value.configHash !== undefined && typeof value.configHash !== "string") return undefined;
+	if (value.cachedAt !== undefined && (typeof value.cachedAt !== "number" || !Number.isFinite(value.cachedAt))) return undefined;
+	if (value.tools !== undefined && !Array.isArray(value.tools)) return undefined;
+	if (value.resources !== undefined && !Array.isArray(value.resources)) return undefined;
+	const tools = value.tools?.map(parseCachedTool);
+	const resources = value.resources?.map(parseCachedResource);
+	if (tools && !tools.every((entry): entry is CachedTool => entry !== undefined)) return undefined;
+	if (resources && !resources.every((entry): entry is CachedResource => entry !== undefined)) return undefined;
+	return {
+		...(value.configHash !== undefined ? { configHash: value.configHash } : {}),
+		...(value.cachedAt !== undefined ? { cachedAt: value.cachedAt } : {}),
+		...(tools ? { tools } : {}),
+		...(resources ? { resources } : {}),
+	};
+}
+
+function parseCachedTool(value: unknown): CachedTool | undefined {
+	if (!isRecord(value) || (value.name !== undefined && typeof value.name !== "string")) return undefined;
+	return value.name === undefined ? {} : { name: value.name };
+}
+
+function parseCachedResource(value: unknown): CachedResource | undefined {
+	if (!isRecord(value)) return undefined;
+	if (value.uri !== undefined && typeof value.uri !== "string") return undefined;
+	if (value.name !== undefined && typeof value.name !== "string") return undefined;
+	return {
+		...(value.uri !== undefined ? { uri: value.uri } : {}),
+		...(value.name !== undefined ? { name: value.name } : {}),
+	};
 }
 
 function resolveRuntimeMcpServers(
@@ -198,9 +232,7 @@ function getRuntimeMcpServerSnapshot(
 		snapshot.name !== name ||
 		snapshot.runtime !== true ||
 		snapshot.persisted !== false ||
-		!snapshot.definition ||
-		typeof snapshot.definition !== "object" ||
-		Array.isArray(snapshot.definition)
+		!isMcpServerDefinition(snapshot.definition)
 	) {
 		throw new Error(`Invalid MCP runtime snapshot for server "${name}"`);
 	}
@@ -251,16 +283,31 @@ function readConfig(configPath: string): McpConfig | null {
 }
 
 function validateConfig(raw: unknown): McpConfig {
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { mcpServers: {} };
-	const obj = raw as Record<string, unknown>;
+	if (!isRecord(raw)) return { mcpServers: {} };
+	const obj = raw;
 	const servers = obj.mcpServers ?? obj["mcp-servers"] ?? {};
 	return {
-		mcpServers: servers && typeof servers === "object" && !Array.isArray(servers) ? servers as Record<string, ServerEntry> : {},
+		mcpServers: parseServerEntries(servers),
 		imports: Array.isArray(obj.imports) ? obj.imports.filter((value): value is ImportKind => isImportKind(value)) : undefined,
-		settings: obj.settings && typeof obj.settings === "object" && !Array.isArray(obj.settings)
-			? obj.settings as McpConfig["settings"]
-			: undefined,
+		settings: parseSettings(obj.settings),
 	};
+}
+
+function parseServerEntries(value: unknown): Record<string, ServerEntry> {
+	if (!isRecord(value)) return {};
+	return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, ServerEntry] => isMcpServerDefinition(entry[1])));
+}
+
+function parseSettings(value: unknown): McpConfig["settings"] | undefined {
+	if (!isRecord(value)) return undefined;
+	const toolPrefix = value.toolPrefix === "server" || value.toolPrefix === "short" || value.toolPrefix === "none" ? value.toolPrefix : undefined;
+	const directTools = typeof value.directTools === "boolean" ? value.directTools : undefined;
+	const settings: NonNullable<McpConfig["settings"]> = {
+		...(toolPrefix ? { toolPrefix } : {}),
+		...(directTools !== undefined ? { directTools } : {}),
+		...(value.agentPluginPaths !== undefined ? { agentPluginPaths: value.agentPluginPaths } : {}),
+	};
+	return Object.keys(settings).length ? settings : undefined;
 }
 
 function mergeConfigs(base: McpConfig, next: McpConfig): McpConfig {
@@ -306,12 +353,12 @@ function resolveImportPath(importKind: ImportKind, cwd: string): string | null {
 }
 
 function extractServers(config: unknown, kind: ImportKind): Record<string, ServerEntry> {
-	if (!config || typeof config !== "object" || Array.isArray(config)) return {};
-	const obj = config as Record<string, unknown>;
+	if (!isRecord(config)) return {};
+	const obj = config;
 	const servers = kind === "cursor" || kind === "windsurf" || kind === "vscode"
 		? obj.mcpServers ?? obj["mcp-servers"]
 		: obj.mcpServers;
-	return servers && typeof servers === "object" && !Array.isArray(servers) ? servers as Record<string, ServerEntry> : {};
+	return parseServerEntries(servers);
 }
 
 export function resolveMcpDirectToolNames(mcpDirectTools: string[] | undefined, cwd = process.cwd()): string[] {
@@ -362,6 +409,10 @@ export function computeMcpServerHash(definition: ServerEntry): string {
 
 function isImportKind(value: unknown): value is ImportKind {
 	return typeof value === "string" && Object.hasOwn(IMPORT_PATHS, value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function interpolateEnvRecord(values: Record<string, string> | undefined): Record<string, string> | undefined {

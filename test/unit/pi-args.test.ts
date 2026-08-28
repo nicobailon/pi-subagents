@@ -1282,6 +1282,41 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		}), /Unresolved MCP direct-tool selectors: runtime-missing\./);
 	});
 
+	it("fails closed on malformed selected runtime MCP server fields", () => {
+		const fixture = createMcpFixture();
+		const serverName = "runtime-filtered";
+		const definition = { command: "runtime-filtered", includeTools: "safe_only" } as unknown as Parameters<typeof computeMcpServerHash>[0];
+		writeJson(path.join(fixture.agentDir, "mcp.json"), { mcpServers: {} });
+		writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
+			version: 1,
+			servers: {
+				[serverName]: {
+					configHash: computeMcpServerHash(definition),
+					cachedAt: Date.now(),
+					tools: [{ name: "safe_only" }, { name: "dangerous" }],
+				},
+			},
+		});
+		const runtimeSnapshotHost: McpRuntimeSnapshotHost = {
+			events: {
+				emit(_event, request) {
+					request.result = { ok: true, snapshot: { name: request.name, definition, runtime: true, persisted: false } };
+				},
+			},
+		};
+
+		assert.throws(() => buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: [serverName],
+			runtimeSnapshotHost,
+		}), /Unresolved MCP direct-tool selectors: runtime-filtered\./);
+	});
+
 	it("does not serialize runtime MCP servers denied by a capability ceiling", () => {
 		const fixture = createMcpFixture();
 		const definitions = {
@@ -1498,6 +1533,47 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		}), /Unresolved MCP direct-tool selectors: chrome-devtools\./);
 	});
 
+	it("rejects malformed MCP server and metadata entry fields at their load boundaries", () => {
+		const malformedConfig = createMcpFixture();
+		writeJson(path.join(malformedConfig.agentDir, "mcp.json"), {
+			mcpServers: {
+				"unsafe-server": { command: "unsafe-server", env: { TOKEN: 42 } },
+			},
+		});
+		assert.throws(() => buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: ["unsafe-server"],
+		}), /Unresolved MCP direct-tool selectors: unsafe-server\./);
+
+		const malformedCache = createMcpFixture();
+		const definition = { command: "cached-server" };
+		writeJson(path.join(malformedCache.agentDir, "mcp.json"), { mcpServers: { "cached-server": definition } });
+		writeJson(path.join(malformedCache.agentDir, "mcp-cache.json"), {
+			version: 1,
+			servers: {
+				"cached-server": {
+					configHash: computeMcpServerHash(definition),
+					cachedAt: Date.now(),
+					tools: [{ name: 42 }],
+				},
+			},
+		});
+		assert.throws(() => buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: ["cached-server"],
+		}), /Unresolved MCP direct-tool selectors: cached-server\./);
+	});
+
 	it("preserves MCP configuration errors during direct-tool resolution", () => {
 		const fixture = createMcpFixture();
 		writeJson(path.join(fixture.agentDir, "mcp.json"), {
@@ -1571,6 +1647,37 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		});
 
 		assert.equal(args[args.indexOf("--tools") + 1], "read,acme_tools__wiki_read_wiki_structure");
+	});
+
+	it("fails closed on malformed MCP server fields from Pi package manifests", () => {
+		const fixture = createMcpFixture();
+		const packageRoot = path.join(fixture.agentDir, "npm", "node_modules", "@acme", "tools");
+		const malformedFields: Record<string, unknown> = { includeTools: "read_wiki_structure" };
+		const definition = { command: "node", args: ["package-mcp"], ...malformedFields };
+		writeJson(path.join(fixture.agentDir, "settings.json"), { packages: ["npm:@acme/tools@1.0.0"] });
+		writeJson(path.join(packageRoot, "package.json"), { name: "@acme/tools", pi: { mcp: "./mcp.json" } });
+		writeJson(path.join(packageRoot, "mcp.json"), { mcpServers: { wiki: definition } });
+		writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
+			version: 1,
+			servers: {
+				"acme_tools__wiki": {
+					configHash: computeMcpServerHash(definition),
+					cachedAt: Date.now(),
+					tools: [{ name: "read_wiki_structure" }, { name: "delete_wiki" }],
+				},
+			},
+		});
+
+		assert.throws(() => buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: ["acme_tools__wiki"],
+			cwd: fixture.projectDir,
+		}), /Unresolved MCP direct-tool selectors: acme_tools__wiki\./);
 	});
 
 	it("resolves direct MCP tools from the git-root package when child cwd has an incidental .pi directory", () => {

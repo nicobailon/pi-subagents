@@ -39,6 +39,8 @@ describe("workflow host commands", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-host-command-"));
 		roots.push(root);
 		const outputPath = path.join(root, "reports", "command.log");
+		fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+		fs.writeFileSync(outputPath, "stale", "utf8");
 		const result = await executeWorkflowHostCommand({
 			key: "unit-tests",
 			params: { kind: "command", command: commandFor(root, `process.stdout.write("passed\\n"); process.stderr.write("warning\\n");`), timeoutMs: 5000, output: "reports/command.log" },
@@ -53,6 +55,8 @@ describe("workflow host commands", () => {
 		assert.match(result.stderr, /warning/);
 		assert.equal(result.outputPath, outputPath);
 		assert.match(fs.readFileSync(outputPath, "utf8"), /passed/);
+		if (process.platform !== "win32") assert.equal(fs.statSync(outputPath).mode & 0o777, 0o600);
+		assert.deepEqual(fs.readdirSync(path.dirname(outputPath)), ["command.log"]);
 	});
 
 	it("returns failed and timed-out command evidence", async () => {
@@ -97,6 +101,29 @@ describe("workflow host commands", () => {
 			/resolves outside the workflow cwd/,
 		);
 		assert.equal(fs.existsSync(path.join(outside, "sub")), false);
+	});
+
+	it("rejects an explicit output parent redirected while the command runs", { skip: process.platform === "win32" ? "symlink permissions vary on Windows" : undefined }, async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-host-command-symlink-race-"));
+		const outside = fs.mkdtempSync(path.join(os.tmpdir(), "pi-host-command-symlink-target-"));
+		roots.push(root, outside);
+		const outputParent = path.join(root, "reports");
+		const outsidePath = path.join(outside, "outside.log");
+		const command = commandFor(root, `
+			const fs = require("node:fs");
+			fs.rmdirSync(${JSON.stringify(outputParent)});
+			fs.symlinkSync(${JSON.stringify(outside)}, ${JSON.stringify(outputParent)}, "dir");
+			process.stdout.write("captured");
+		`);
+
+		await assert.rejects(executeWorkflowHostCommand({
+			key: "replaced-output",
+			params: { kind: "command", command, timeoutMs: 5000, output: "reports/command.log" },
+			cwd: root,
+			defaultOutputPath: path.join(root, "fallback.log"),
+			signal: new AbortController().signal,
+		}), /resolves outside the workflow cwd/);
+		assert.equal(fs.existsSync(outsidePath), false);
 	});
 
 	it("stops the owned process tree when the workflow aborts", async () => {
