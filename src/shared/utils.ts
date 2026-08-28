@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message, Usage as PiUsage } from "@earendil-works/pi-ai";
 import { previewDisplayText, sanitizeDisplayText, truncateDisplayText } from "./display-text.ts";
 import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
@@ -337,6 +337,17 @@ export function sumResultsUsage(results: SingleResult[]): Usage {
 		usage.turns += result.usage.turns;
 	}
 	return usage;
+}
+
+export function toAgentToolUsage(usage: Usage): PiUsage {
+	return {
+		input: usage.input,
+		output: usage.output,
+		cacheRead: usage.cacheRead,
+		cacheWrite: usage.cacheWrite,
+		totalTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: usage.cost },
+	};
 }
 
 function addNestedCost(total: NonNullable<Details["totalCost"]>, children: NestedRunSummary[] | undefined): void {

@@ -433,6 +433,23 @@ function costSummaryFromAttempts(attempts: ModelAttempt[] | undefined): CostSumm
 		: undefined;
 }
 
+function usageFromAttempts(attempts: ModelAttempt[] | undefined): Usage | undefined {
+	if (!attempts || attempts.length === 0) return undefined;
+	const usage = emptyUsage();
+	for (const attempt of attempts) {
+		if (!attempt.usage) continue;
+		usage.input += attempt.usage.input;
+		usage.output += attempt.usage.output;
+		usage.cacheRead += attempt.usage.cacheRead;
+		usage.cacheWrite += attempt.usage.cacheWrite;
+		usage.cost += attempt.usage.cost;
+		usage.turns += attempt.usage.turns;
+	}
+	return usage.input !== 0 || usage.output !== 0 || usage.cacheRead !== 0 || usage.cacheWrite !== 0 || usage.cost !== 0 || usage.turns !== 0
+		? usage
+		: undefined;
+}
+
 function appendRecentStepOutput(step: RunnerStatusStep, lines: string[]): void {
 	const nonEmpty = lines.filter((line) => line.trim());
 	if (nonEmpty.length === 0) return;
@@ -1379,6 +1396,7 @@ async function runSingleStepInner(
 				modelAttempts: imported.modelAttempts,
 				contextOverflow: imported.contextOverflow,
 				totalCost: imported.totalCost,
+				usage: imported.usage,
 				structuredOutput: timedOut || stopped ? undefined : imported.structuredOutput,
 				structuredOutputPath: timedOut || stopped ? undefined : imported.structuredOutputPath,
 				structuredOutputSchemaPath: timedOut || stopped ? undefined : imported.structuredOutputSchemaPath,
@@ -2177,6 +2195,7 @@ async function runSingleStepInner(
 		abortRecoveryDiagnostic: effectiveFinalExitCode !== 0 ? finalResult?.abortRecoveryDiagnostic : undefined,
 		requiredOutput: effectiveFinalExitCode !== 0 ? finalResult?.effects?.settlementDiagnostic?.requiredOutput : undefined,
 	});
+	const usage = usageFromAttempts(modelAttempts);
 
 	const artifactErrors = artifactPaths && ctx.artifactConfig?.enabled !== false
 		? persistStepArtifacts({
@@ -2196,6 +2215,7 @@ async function runSingleStepInner(
 				model: finalResult?.model,
 				attemptedModels: attemptedModels.length > 0 ? attemptedModels : undefined,
 				modelAttempts,
+				usage,
 				error: effectiveFinalError,
 				acceptance: effectiveAcceptance,
 				...(capabilityAudit ? { capabilityCeiling: capabilityAudit.ceiling, capabilityAudit } : {}),
@@ -2228,6 +2248,7 @@ async function runSingleStepInner(
 		modelAttempts,
 		contextOverflow: contextOverflow || undefined,
 		totalCost: costSummaryFromAttempts(modelAttempts),
+		usage,
 		artifactPaths,
 		outputSaveError: [resolvedOutput.saveError, artifactErrors.outputSaveError].filter(Boolean).join("\n") || undefined,
 		metadataSaveError: artifactErrors.metadataSaveError,
@@ -2871,6 +2892,7 @@ async function runSubagent(
 				model: step.model,
 				attemptedModels: step.attemptedModels,
 				modelAttempts: step.modelAttempts,
+				usage: usageFromAttempts(step.modelAttempts),
 				contextOverflow: step.contextOverflow,
 			})),
 			exitCode: state === "complete" || state === "paused" ? 0 : 1,
@@ -4326,6 +4348,7 @@ async function runSubagent(
 					modelAttempts: pr.modelAttempts,
 					contextOverflow: pr.contextOverflow,
 					totalCost: pr.totalCost,
+					usage: pr.usage,
 					artifactPaths: pr.artifactPaths,
 					transcriptPath: pr.transcriptPath,
 					transcriptError: pr.transcriptError,
@@ -4776,6 +4799,7 @@ async function runSubagent(
 						modelAttempts: pr.modelAttempts,
 						contextOverflow: pr.contextOverflow,
 						totalCost: pr.totalCost,
+						usage: pr.usage,
 						artifactPaths: pr.artifactPaths,
 						transcriptPath: pr.transcriptPath,
 						transcriptError: pr.transcriptError,
@@ -5030,6 +5054,7 @@ async function runSubagent(
 				modelAttempts: singleResult.modelAttempts,
 				contextOverflow: singleResult.contextOverflow,
 				totalCost: singleResult.totalCost,
+				usage: singleResult.usage,
 				artifactPaths: singleResult.artifactPaths,
 				transcriptPath: singleResult.transcriptPath,
 				transcriptError: singleResult.transcriptError,
@@ -5402,6 +5427,7 @@ async function runSubagent(
 				modelAttempts: r.modelAttempts,
 				contextOverflow: r.contextOverflow,
 				totalCost: r.totalCost,
+				usage: r.usage,
 				artifactPaths: r.artifactPaths,
 				outputSaveError: r.outputSaveError,
 				metadataSaveError: r.metadataSaveError,

@@ -3,6 +3,7 @@ import type {
 	WorkflowRecoveryAction,
 	WorkflowTerminalOutcome,
 	WorkflowTerminalResolution,
+	Usage,
 } from "../shared/types.ts";
 import type { WorkflowReceipt } from "./workflow-receipt.ts";
 import { workflowChildSummary } from "./workflow-child-summary.ts";
@@ -22,6 +23,8 @@ export interface WorkflowPublicChild {
 	/** Human-readable display name for the child session, when derived at launch. */
 	sessionName?: string;
 	runId?: string;
+	usage?: Usage;
+	sessionFile?: string;
 	output: string;
 	outputState: "present" | "absent";
 	structuredOutput?: unknown;

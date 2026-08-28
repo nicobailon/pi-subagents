@@ -341,6 +341,7 @@ describe("subagent_wait tool", () => {
 							success: true,
 							outputState: "present",
 							output: "full output text stays out of details",
+							usage: { input: 100, output: 50, cacheRead: 25, cacheWrite: 5, cost: 0.001, turns: 1 },
 							artifactPaths: {
 								outputPath: "/tmp/a1b2c3d4_reviewer_0_output.md",
 								metadataPath: "/tmp/a1b2c3d4_reviewer_0_meta.json",
@@ -356,6 +357,7 @@ describe("subagent_wait tool", () => {
 			assert.equal(completions![0]!.runId, "run-a");
 			assert.equal(completions![0]!.mode, "workflow");
 			assert.equal(completions![0]!.success, true);
+			assert.deepEqual(result.usage, { input: 100, output: 50, cacheRead: 25, cacheWrite: 5, totalTokens: 180, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.001 } });
 			const child = completions![0]!.results?.[0];
 			assert.equal(child?.agent, "reviewer");
 			assert.equal(child?.runId, "a1b2c3d4");

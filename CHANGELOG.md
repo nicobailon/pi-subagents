@@ -32,6 +32,7 @@
 - Give `runs.lanes(...)` stage-0 retained-resume validation actionable `runs.run(...)` guidance instead of a generic error (#1657).
 - Remove the remaining `lane:` prefix from operator-facing async status rows in the TUI (#1658).
 - Allow scheduled project roots shared through a registered Git worktree's `.pi` symlink while rejecting unrelated or unproven Git-layout escapes. Thanks to [@sususu98](https://github.com/sususu98) for #1656.
+- Include delegated child usage in subagent tool results and `/subagent-cost`, including completed async workflow children and parent compaction usage with persisted workflow-receipt recovery when needed (#1662, #1666). Thanks to [@Geraldo-Morais](https://github.com/Geraldo-Morais) for #1662 and [@jf88888](https://github.com/jf88888) for #1666.
 - Avoid false preflight mismatch warnings for generated `runs.lanes(...)` stage keys (#1649).
 - Accept long host tool-call ids in workflow child summaries, matching the existing 4,096-byte session id bound. Thanks to [@SudoKillMe](https://github.com/SudoKillMe) for #1653.
 - Keep an async `workflowScript` continuation live while an awaited child coordinates with its supervisor, so sequential tail steps continue after the child settles (#1634).

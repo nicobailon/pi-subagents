@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import type { ArtifactPaths, SubagentState, WaitCompletion, WaitCompletionChild } from "../../shared/types.ts";
+import type { ArtifactPaths, SubagentState, Usage, WaitCompletion, WaitCompletionChild } from "../../shared/types.ts";
 import type { AsyncRunSummary } from "./async-status.ts";
 import { readCompletionReplay, writeCompletionReplay } from "./completion-replay.ts";
 import { fallbackResultPayloadPathForSessionRun, resultFilePath, resultPayloadPathForSessionRun } from "./result-files.ts";
@@ -7,6 +7,23 @@ import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summar
 
 function asNonEmptyString(value: unknown): string | undefined {
 	return typeof value === "string" && value ? value : undefined;
+}
+
+function nonNegativeNumber(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function projectedUsage(value: unknown): Usage | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const record = value as Record<string, unknown>;
+	const input = nonNegativeNumber(record.input);
+	const output = nonNegativeNumber(record.output);
+	const cacheRead = nonNegativeNumber(record.cacheRead);
+	const cacheWrite = nonNegativeNumber(record.cacheWrite);
+	const cost = nonNegativeNumber(record.cost);
+	const turns = nonNegativeNumber(record.turns);
+	if (input === undefined || output === undefined || cacheRead === undefined || cacheWrite === undefined || cost === undefined || turns === undefined || !Number.isSafeInteger(turns)) return undefined;
+	return { input, output, cacheRead, cacheWrite, cost, turns };
 }
 
 function errorCode(error: unknown): string | undefined {
@@ -43,12 +60,16 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 				: undefined;
 			const agent = asNonEmptyString(child.agent);
 			const childRunId = asNonEmptyString(child.runId);
+			const usage = projectedUsage(child.usage);
+			const sessionFile = asNonEmptyString(child.sessionFile);
 			const error = asNonEmptyString(child.error);
 			const model = asNonEmptyString(child.model);
 			const contextOverflow = child.contextOverflow === true;
 			return [{
 				...(agent ? { agent } : {}),
 				...(childRunId ? { runId: childRunId } : {}),
+				...(usage ? { usage } : {}),
+				...(sessionFile ? { sessionFile } : {}),
 				...(typeof child.success === "boolean" ? { success: child.success } : {}),
 				...(outputState ? { outputState } : {}),
 				...(error ? { error } : {}),

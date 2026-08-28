@@ -41,11 +41,18 @@ export function promotePausedWorkflowIfSettled(status: AsyncStatus): AsyncStatus
 	return promoteSettledPausedWorkflow(status);
 }
 
+function usageWithValue(usage: SingleResult["usage"] | undefined): SingleResult["usage"] | undefined {
+	return usage && (usage.input !== 0 || usage.output !== 0 || usage.cacheRead !== 0 || usage.cacheWrite !== 0 || usage.cost !== 0 || usage.turns !== 0)
+		? usage
+		: undefined;
+}
+
 function workflowResultChildren(status: AsyncStatus, childRunId: string, result: SingleResult, existingResults: unknown, receipt?: WorkflowReceipt): unknown {
 	const output = getSingleResultOutput(result);
 	const outputReference = result.savedOutputPath ?? result.outputReference?.path;
 	const outputPathMapping = outputPathMappingFromTask(result.task, outputReference);
 	const terminalOutcome = workflowTerminalOutcomeForResult(result);
+	const usage = usageWithValue(result.usage);
 	if (Array.isArray(existingResults)) {
 		return existingResults.map((entry) => {
 			if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
@@ -57,12 +64,14 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 				output,
 				outputState: output.trim() ? "present" : "absent",
 				detached: undefined,
+				...(usage ? { usage } : {}),
 				...(outputReference ? { outputReference } : {}),
 				...(outputPathMapping ? { outputPathMapping } : {}),
 				...(result.interrupted || result.stopped ? { interrupted: true } : {}),
 				...(result.stopped ? { stopped: true } : {}),
 				...(terminalOutcome ? { terminalOutcome } : {}),
 				...(result.sessionName ? { sessionName: result.sessionName } : {}),
+				...(result.sessionFile ? { sessionFile: result.sessionFile } : {}),
 				...(result.error ? { error: result.error } : {}),
 			};
 		});
@@ -75,6 +84,7 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 		success: step.status === "completed" || step.status === "complete",
 		output: step.runId === childRunId ? output : "",
 		outputState: step.runId === childRunId && output.trim() ? "present" : "absent",
+		...(step.runId === childRunId ? { ...(usage ? { usage } : {}), ...(result.sessionFile ? { sessionFile: result.sessionFile } : {}) } : {}),
 		...(step.runId === childRunId && outputReference ? { outputReference } : step.workflowKey && receipt?.entries[step.workflowKey]?.outputReference ? { outputReference: receipt.entries[step.workflowKey]!.outputReference } : {}),
 		...(step.runId === childRunId && outputPathMapping ? { outputPathMapping } : step.outputPathMapping ? { outputPathMapping: step.outputPathMapping } : {}),
 		...(step.interrupted ? { interrupted: true } : {}),

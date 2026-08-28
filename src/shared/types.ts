@@ -1263,6 +1263,10 @@ export interface WaitCompletionChild {
 	agent?: string;
 	/** Child run identity where the producer records one (workflow children); artifact files are keyed by it. */
 	runId?: string;
+	/** Bounded accounting projection used by /subagent-cost after async completion. */
+	usage?: Usage;
+	/** Persisted Pi child session when available. */
+	sessionFile?: string;
 	success?: boolean;
 	outputState?: SubagentOutputState;
 	error?: string;

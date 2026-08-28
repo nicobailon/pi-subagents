@@ -17,10 +17,20 @@ describe("workflow wait completion projection", () => {
 				workflowState: "completed",
 				children: [{ childId: "review", runId: "run-1", agent: "reviewer", model: "openai-codex/gpt", thinking: "high", state: "completed" }],
 			},
-			results: [{ agent: "reviewer", runId: "run-1", success: true, output: "must not be copied", task: "must not be copied" }],
+			results: [{
+				agent: "reviewer",
+				runId: "run-1",
+				success: true,
+				sessionFile: "/sessions/run-1.jsonl",
+				usage: { input: 10, output: 2, cacheRead: 30, cacheWrite: 0, cost: 0.04, turns: 1 },
+				output: "must not be copied",
+				task: "must not be copied",
+			}],
 		}, "workflow-1");
 
 		assert.equal(completion.workflowChildren?.children[0]?.childId, "review");
+		assert.deepEqual(completion.results?.[0]?.usage, { input: 10, output: 2, cacheRead: 30, cacheWrite: 0, cost: 0.04, turns: 1 });
+		assert.equal(completion.results?.[0]?.sessionFile, "/sessions/run-1.jsonl");
 		assert.doesNotMatch(JSON.stringify(completion), /must not be copied/);
 	});
 

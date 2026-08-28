@@ -11,6 +11,7 @@ export type { WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState } from
 
 export const WORKFLOW_RECEIPT_VERSION = 1;
 export const WORKFLOW_RECEIPT_FILE = "workflow-receipt.json";
+const MAX_WORKFLOW_RECEIPT_BYTES = 2 * 1024 * 1024;
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -77,6 +78,26 @@ export function writeWorkflowReceipt(asyncDir: string, receipt: WorkflowReceipt)
 	const receiptPath = path.join(asyncDir, WORKFLOW_RECEIPT_FILE);
 	writePrivateAtomicJson(receiptPath, receipt);
 	return receiptPath;
+}
+
+function readWorkflowReceiptFile(receiptPath: string): unknown {
+	let fd: number | undefined;
+	try {
+		fd = fs.openSync(receiptPath, "r");
+		const stat = fs.fstatSync(fd);
+		if (!stat.isFile()) throw new Error("workflow receipt is not a regular file.");
+		if (stat.size > MAX_WORKFLOW_RECEIPT_BYTES) throw new Error(`workflow receipt exceeds the ${MAX_WORKFLOW_RECEIPT_BYTES}-byte limit.`);
+		const buffer = Buffer.allocUnsafe(stat.size);
+		let offset = 0;
+		while (offset < buffer.length) {
+			const bytesRead = fs.readSync(fd, buffer, offset, buffer.length - offset, null);
+			if (bytesRead <= 0) throw new Error("workflow receipt ended before its declared size.");
+			offset += bytesRead;
+		}
+		return JSON.parse(buffer.toString("utf-8")) as unknown;
+	} finally {
+		if (fd !== undefined) fs.closeSync(fd);
+	}
 }
 
 const EXTERNAL_CLI_CAPABILITIES = {
@@ -241,7 +262,7 @@ export function readWorkflowReceipt(asyncDirRoot: string, workflowRunId: string)
 	const receiptPath = workflowReceiptPath(asyncDirRoot, workflowRunId);
 	let value: unknown;
 	try {
-		value = JSON.parse(fs.readFileSync(receiptPath, "utf-8")) as unknown;
+		value = readWorkflowReceiptFile(receiptPath);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
 			const workflowDir = path.dirname(receiptPath);

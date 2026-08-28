@@ -1227,7 +1227,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			{ key: "work", state: "completed" },
 		]);
 		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
-		const persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { id?: string; runId?: string; toolCallId?: string; agent?: string; cwd?: string; summary?: string; workflow?: { value?: unknown; receipt?: unknown }; workflowReceipt?: { path?: string; receipt?: { workflowRunId?: string; entries?: Record<string, { key?: string; agent?: string; latestRunId?: string; resumability?: { state?: string; reason?: string }; continuation?: { runIds?: string[] } }> } }; results?: Array<{ agent?: string; sessionName?: string; workflowKey?: string; runId?: string; output?: string }> };
+		const persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { id?: string; runId?: string; toolCallId?: string; agent?: string; cwd?: string; summary?: string; workflow?: { value?: unknown; receipt?: unknown }; workflowReceipt?: { path?: string; receipt?: { workflowRunId?: string; entries?: Record<string, { key?: string; agent?: string; latestRunId?: string; resumability?: { state?: string; reason?: string }; continuation?: { runIds?: string[] } }> } }; results?: Array<{ agent?: string; sessionName?: string; workflowKey?: string; runId?: string; output?: string; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number; turns: number } }> };
 		assert.equal(persistedResult.id, workflowRunId);
 		assert.equal(persistedResult.runId, workflowRunId);
 		assert.equal(persistedResult.toolCallId, toolCallId);
@@ -1236,6 +1236,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(persistedResult.results?.map(({ agent, sessionName, workflowKey }) => ({ agent, sessionName, workflowKey })), [
 			{ agent: "echo", sessionName: "echo: Async work", workflowKey: "work" },
 		]);
+		assert.deepEqual(persistedResult.results?.[0]?.usage, { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 });
 		const steeringEnv = JSON.parse(persistedResult.results?.[0]?.output ?? "null") as Record<string, string | null>;
 		assert.match(steeringEnv[SUBAGENT_STEER_INBOX_ENV] ?? "", /control[/\\]workflow-foreground[/\\].+[/\\]control[/\\]steer-targets[/\\]0$/);
 		assert.match(steeringEnv[SUBAGENT_STEER_CAPABILITY_ENV] ?? "", /control[/\\]workflow-foreground[/\\].+[/\\]control[/\\]steer-capabilities[/\\]0\.json$/);
@@ -4548,6 +4549,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined);
 		assert.deepEqual(result.details?.totalCost, { inputTokens: 100, outputTokens: 50, costUsd: 0.001 });
+		assert.deepEqual(result.usage, { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, totalTokens: 150, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.001 } });
 	});
 
 	it("ignores stale foreground control notification contexts after reload", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -4916,6 +4918,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const child = result.details.workflow?.value as { ok?: boolean; runId?: string; output?: string; continuation?: { runIds?: string[] } };
 		assert.equal(child.ok, true);
 		assert.match(child.output ?? "", /Recovered after workflow auto-resume/u);
+		assert.deepEqual(result.details.results[0]?.usage, { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 });
 		// The workflow-level setup recovery is a distinct launch, so its receipt
 		// retains both the failed source run and the resumed child run. The
 		// compaction planner no longer hides this source by resuming it first.

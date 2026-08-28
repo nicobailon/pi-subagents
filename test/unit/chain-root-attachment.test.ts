@@ -45,7 +45,7 @@ describe("async chain root attachment", () => {
 		writeJson(importedRoot.resultPath, {
 			state: "complete",
 			success: true,
-			results: [{ agent: "worker", output: "root output", success: true, sessionFile }],
+		results: [{ agent: "worker", output: "root output", success: true, sessionFile, usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 } }],
 		});
 
 		const result = await waitForImportedAsyncRoot(importedRoot, { pollIntervalMs: 1 });
@@ -55,11 +55,13 @@ describe("async chain root attachment", () => {
 			output: result.output,
 			exitCode: result.exitCode,
 			sessionFile: result.sessionFile,
+			usage: result.usage,
 		}, {
 			agent: "worker",
 			output: "root output",
 			exitCode: 0,
 			sessionFile,
+			usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 },
 		});
 	});
 

@@ -66,7 +66,7 @@ import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, outputPathMappingFromTask, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { assertJsonSchemaObject, cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
-import { compactForegroundDetails, getSingleResultOutput, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
+import { compactForegroundDetails, getSingleResultOutput, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage, toAgentToolUsage } from "../../shared/utils.ts";
 import { createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
 import { discardPreservedWorktrees, formatParallelHandoffError, formatParallelHandoffReference, formatStoredParallelHandoffCleanup, parallelHandoffPath, readParallelHandoffManifest, recordParallelHandoffMerge, recordParallelHandoffSupersession, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
 import { summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
@@ -158,6 +158,7 @@ import {
 	type SingleResult,
 	type SubagentChildStatusEvent,
 	type ToolBudgetConfig,
+	type Usage,
 	type UsageBudgetConfig,
 	type WorkflowTerminalOutcome,
 	type SubagentRunMode,
@@ -2091,21 +2092,14 @@ async function resumeAsyncRun(input: {
 			input.signal?.removeEventListener("abort", stopOnAbort);
 		}
 		fs.rmSync(resultPath, { force: true });
-		const totalCost = completed.totalCost;
+		const usage = importedAsyncRootUsage(completed);
 		const childResult: SingleResult = {
 			index: 0,
 			agent: completed.agent,
 			...(completed.sessionName ? { sessionName: completed.sessionName } : {}),
 			task: effectiveFollowUp,
 			exitCode: completed.exitCode,
-			usage: {
-				input: totalCost?.inputTokens ?? 0,
-				output: totalCost?.outputTokens ?? 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				cost: totalCost?.costUsd ?? 0,
-				turns: 0,
-			},
+			usage,
 			finalOutput: completed.output,
 			outputState: completed.output.trim() ? "present" : "absent",
 			...(completed.error ? { error: completed.error } : {}),
@@ -2823,6 +2817,14 @@ function withResolvedContext(
 	};
 }
 
+function withAggregatedToolUsage(result: AgentToolResult<Details>): AgentToolResult<Details> {
+	if (result.details.results.length === 0) return result;
+	const usage = sumResultsUsage(result.details.results);
+	return usage.input !== 0 || usage.output !== 0 || usage.cacheRead !== 0 || usage.cacheWrite !== 0 || usage.cost !== 0 || usage.turns !== 0
+		? { ...result, usage: toAgentToolUsage(usage) }
+		: result;
+}
+
 function withForkThinkingNotes(
 	result: AgentToolResult<Details>,
 	downgrades: Map<number, string>,
@@ -3024,6 +3026,18 @@ async function preflightForkSessionsForStaticTasks(
 	}
 }
 
+function importedAsyncRootUsage(completed: Awaited<ReturnType<typeof waitForImportedAsyncRoot>>): Usage {
+	const totalCost = completed.totalCost;
+	return completed.usage ?? {
+		input: totalCost?.inputTokens ?? 0,
+		output: totalCost?.outputTokens ?? 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		cost: totalCost?.costUsd ?? 0,
+		turns: 0,
+	};
+}
+
 async function waitForWorkflowAsyncSingleResult(
 	params: SubagentParamsLike,
 	launchResult: AgentToolResult<Details>,
@@ -3045,21 +3059,14 @@ async function waitForWorkflowAsyncSingleResult(
 		options.signal?.removeEventListener("abort", stopOnAbort);
 	}
 	fs.rmSync(resultPath, { force: true });
-	const totalCost = completed.totalCost;
+	const usage = importedAsyncRootUsage(completed);
 	const childResult: SingleResult = omitUndefinedProperties({
 		index: 0,
 		agent: completed.agent,
 		...(completed.sessionName ? { sessionName: completed.sessionName } : {}),
 		task: options.task,
 		exitCode: completed.exitCode,
-		usage: {
-			input: totalCost?.inputTokens ?? 0,
-			output: totalCost?.outputTokens ?? 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			cost: totalCost?.costUsd ?? 0,
-			turns: 0,
-		},
+		usage,
 		finalOutput: completed.output,
 		outputState: completed.output.trim() ? "present" as const : "absent" as const,
 		...(completed.error ? { error: completed.error } : {}),
@@ -4075,6 +4082,16 @@ function workflowChildResult(
 		continuation: { runIds: continuationRunIds },
 		artifactPaths: [...artifactPaths],
 		results: result.details.results,
+	};
+}
+
+function workflowChildAccountingFields(child: WorkflowScriptChildResult): { usage?: Usage; sessionFile?: string } {
+	if (!child.results?.length) return {};
+	const usage = sumResultsUsage(child.results);
+	const sessionFile = child.results.find((result) => result.sessionFile)?.sessionFile;
+	return {
+		...(usage.input !== 0 || usage.output !== 0 || usage.cacheRead !== 0 || usage.cacheWrite !== 0 || usage.cost !== 0 || usage.turns !== 0 ? { usage } : {}),
+		...(sessionFile ? { sessionFile } : {}),
 	};
 }
 
@@ -5102,7 +5119,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						} catch (receiptError) {
 							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
 						}
-						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, workflowChildren, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), ...(status.steps?.find((step) => step.workflowKey === child.key)?.sessionName ? { sessionName: status.steps?.find((step) => step.workflowKey === child.key)?.sessionName } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.outputReference ? { outputReference: child.outputReference } : {}), ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, workflowChildren, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), ...(status.steps?.find((step) => step.workflowKey === child.key)?.sessionName ? { sessionName: status.steps?.find((step) => step.workflowKey === child.key)?.sessionName } : {}), ...workflowChildAccountingFields(child), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.outputReference ? { outputReference: child.outputReference } : {}), ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						persist();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(status.error ? { error: status.error } : {}) });
@@ -5147,7 +5164,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						} catch (receiptError) {
 							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
 						}
-						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, workflowChildren, ...(terminalOutcome ? { terminalOutcome } : {}), results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), ...(status.steps?.find((step) => step.workflowKey === child.key)?.sessionName ? { sessionName: status.steps?.find((step) => step.workflowKey === child.key)?.sessionName } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.outputReference ? { outputReference: child.outputReference } : {}), ...(child.terminalOutcome ? { terminalOutcome: child.terminalOutcome } : {}), ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.detached && status.state !== "complete" ? { detached: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, workflowChildren, ...(terminalOutcome ? { terminalOutcome } : {}), results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), ...(status.steps?.find((step) => step.workflowKey === child.key)?.sessionName ? { sessionName: status.steps?.find((step) => step.workflowKey === child.key)?.sessionName } : {}), ...workflowChildAccountingFields(child), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.outputReference ? { outputReference: child.outputReference } : {}), ...(child.terminalOutcome ? { terminalOutcome: child.terminalOutcome } : {}), ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.detached && status.state !== "complete" ? { detached: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						persist();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(terminalOutcome ? { terminalOutcome } : {}), ...(status.error ? { error: status.error } : {}), ...(status.activityState ? { activityState: status.activityState } : {}) });
@@ -6601,15 +6618,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	): Promise<AgentToolResult<Details>> => {
 		const normalizedAction = typeof params.action === "string" ? params.action.trim() : params.action;
 		const requestParams = normalizedAction ? { ...params, action: normalizedAction } : params;
-		if (normalizedAction) return execute(id, requestParams, signal, onUpdate, ctx);
+		if (normalizedAction) return execute(id, requestParams, signal, onUpdate, ctx).then(withAggregatedToolUsage);
 		const { depth } = checkSubagentDepth(deps.config.maxSubagentDepth);
 		const dispatchParams = applyForceTopLevelAsyncOverride(requestParams, depth, deps.config.forceTopLevelAsync === true);
 		const runsForeground = dispatchParams.clarify === true || (dispatchParams.async ?? deps.asyncByDefault) !== true;
-		if (!runsForeground) return execute(id, requestParams, signal, onUpdate, ctx);
+		if (!runsForeground) return execute(id, requestParams, signal, onUpdate, ctx).then(withAggregatedToolUsage);
 		if (deps.state.subagentInProgress === true) return duplicateSubagentCallResult(requestParams);
 		deps.state.subagentInProgress = true;
 		try {
-			return await execute(id, requestParams, signal, onUpdate, ctx);
+			return withAggregatedToolUsage(await execute(id, requestParams, signal, onUpdate, ctx));
 		} finally {
 			deps.state.subagentInProgress = false;
 		}
@@ -6656,7 +6673,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (allowZeroToolBudget) delegatedZeroToolBudgets.add(delegatedParams);
 		if (workflowPermit) workflowPermitContexts.set(delegatedParams, { root: workflowPermit });
 		delegatedExecutions.add(delegatedParams);
-		return execute(id, delegatedParams, signal, onUpdate, ctx);
+		return withAggregatedToolUsage(await execute(id, delegatedParams, signal, onUpdate, ctx));
 	};
 
 	const executeScheduled = (

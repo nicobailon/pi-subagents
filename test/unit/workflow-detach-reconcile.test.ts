@@ -180,7 +180,7 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			state,
 			workflowRunId,
 			childRunId: "child-1",
-			result: { index: 0, agent: "worker", task: `Write your findings to exactly this path: ${requestedPath}`, exitCode: 0, sessionFile, savedOutputPath: savedPath, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+			result: { index: 0, agent: "worker", task: `Write your findings to exactly this path: ${requestedPath}`, exitCode: 0, sessionFile, savedOutputPath: savedPath, usage: { input: 100, output: 50, cacheRead: 25, cacheWrite: 5, cost: 0.001, turns: 1 } },
 		}), true);
 		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; summary?: string; error?: string; sessionId?: string; workflowResolution?: string; recovery?: unknown[]; results?: Array<{ outputReference?: string; outputPathMapping?: unknown }>; workflowReceipt?: { receipt?: { state?: string; workflowResolution?: string; recovery?: unknown[]; entries?: Record<string, { resumability?: { state?: string; reason?: string } }> } } };
 		assert.equal(published.state, "failed");
@@ -192,6 +192,9 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		assert.ok(published.summary?.includes(`Output path mappings: 'detaches': requested ${requestedPath} -> saved ${savedPath}`));
 		assert.equal(published.results?.[0]?.outputReference, savedPath);
 		assert.deepEqual(published.results?.[0]?.outputPathMapping, { requestedPath, savedPath });
+		const publishedChild = published.results?.[0] as { usage?: unknown; sessionFile?: string } | undefined;
+		assert.deepEqual(publishedChild?.usage, { input: 100, output: 50, cacheRead: 25, cacheWrite: 5, cost: 0.001, turns: 1 });
+		assert.equal(publishedChild?.sessionFile, sessionFile);
 		assert.equal(published.sessionId, "session-1");
 		assert.equal(published.workflowReceipt?.receipt?.state, "failed");
 		assert.equal(published.workflowReceipt?.receipt?.workflowResolution, "settled-awaiting-resume");

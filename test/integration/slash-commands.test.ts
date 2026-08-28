@@ -10,6 +10,7 @@ import { clearRuntimeAgentsForPi } from "../../src/agents/runtime-agent-registry
 import { scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
+import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
 import { ASYNC_DIR, DIRS } from "../../src/shared/types.ts";
 import type { WatchdogReviewFunction } from "../../src/watchdog/runtime.ts";
 
@@ -496,6 +497,91 @@ describe("subagents watchdog slash command", { skip: !available ? "watchdog comm
 describe("slash command custom message delivery", { skip: !available ? "slash-commands.ts not importable" : undefined }, () => {
 	beforeEach(() => {
 		clearSlashSnapshots?.();
+	});
+
+	it("/subagent-cost recovers async workflow usage from receipts and metadata", async () => {
+		await withTempProject("pi-subagent-cost-async-", async (root) => {
+			const workflowRunId = `workflow-cost-${process.pid}-${Date.now()}`;
+			const earlierChildRunId = `child-cost-earlier-${process.pid}-${Date.now()}`;
+			const childRunId = `child-cost-${process.pid}-${Date.now()}`;
+			const asyncDir = path.join(DIRS.async, workflowRunId);
+			const sessionFile = path.join(root, "sessions", "parent.jsonl");
+			const artifactsDir = getArtifactsDir(sessionFile, root, "session");
+			const earlierMetadataPath = getArtifactPaths(artifactsDir, earlierChildRunId, "reviewer", 0).metadataPath;
+			const metadataPath = getArtifactPaths(artifactsDir, childRunId, "reviewer", 0).metadataPath;
+			fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.mkdirSync(path.dirname(earlierMetadataPath), { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "workflow-receipt.json"), JSON.stringify({
+				version: 1,
+				workflowRunId,
+				state: "complete",
+				createdAt: Date.now(),
+				entries: {
+					review: {
+						key: "review",
+						agent: "reviewer",
+						latestRunId: childRunId,
+						continuation: { runIds: [earlierChildRunId, childRunId] },
+						resumability: { state: "resumable" },
+					},
+				},
+				workflowChildren: {
+					version: 1,
+					parentToolCallId: "tool-1",
+					workflowRunId,
+					inventoryComplete: true,
+					workflowState: "completed",
+					children: [{ childId: "review", state: "completed", runId: childRunId, agent: "reviewer" }],
+				},
+			}, null, 2), "utf-8");
+			fs.writeFileSync(earlierMetadataPath, JSON.stringify({
+				runId: earlierChildRunId,
+				agent: "reviewer",
+				usage: { input: 8, output: 3, cacheRead: 5, cacheWrite: 0, cost: 0.25, turns: 1 },
+			}, null, 2), "utf-8");
+			fs.writeFileSync(metadataPath, JSON.stringify({
+				runId: childRunId,
+				agent: "reviewer",
+				usage: { input: 20, output: 4, cacheRead: 80, cacheWrite: 0, cost: 0.5, turns: 2 },
+			}, null, 2), "utf-8");
+
+			const sent: unknown[] = [];
+			const commands = new Map<string, RegisteredSlashCommand>();
+			const pi = {
+				events: createEventBus(),
+				registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+				registerShortcut() {},
+				sendMessage(message: unknown) { sent.push(message); },
+			};
+			const branch = [
+				{ type: "message", message: { role: "assistant", usage: { input: 10, output: 2, cacheRead: 30, cacheWrite: 0, cost: { total: 0.2 } } } },
+				{ type: "compaction", usage: { input: 5, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0.05 } } },
+				{ type: "message", message: { role: "toolResult", toolName: "subagent", details: { mode: "workflow", runId: workflowRunId, results: [] } } },
+			];
+			try {
+				registerSlashCommands!(pi as never, createState(root));
+				await commands.get("subagent-cost")!.handler("", createCommandContext({
+					cwd: root,
+					sessionManager: {
+						getBranch: () => branch,
+						getSessionFile: () => sessionFile,
+						getSessionId: () => "session-parent",
+					},
+				}));
+				const report = String((sent[0] as { content?: unknown }).content ?? "");
+				assert.match(report, /Parent: ↑15 ↓3 \$0\.2500/);
+				assert.match(report, /Child 1 \(reviewer\): ↑8 ↓3 \$0\.2500 \(cache read 5, 1 turn\)/);
+				assert.match(report, /Child 2 \(reviewer\): ↑20 ↓4 \$0\.5000 \(cache read 80, 2 turns\)/);
+				assert.equal((report.match(/Child \d+ \(reviewer\):/g) ?? []).length, 2);
+				assert.match(report, /Children: ↑28 ↓7 \$0\.7500 \(cache read 85, 3 turns\)/);
+				assert.match(report, /Total: ↑43 ↓10 \$1\.0000 \(cache read 115, 4 turns\)/);
+				assert.doesNotMatch(report, /No subagent child usage/);
+			} finally {
+				fs.rmSync(asyncDir, { recursive: true, force: true });
+			}
+		});
 	});
 
 	it("registers a configured foreground detach shortcut", async () => {
