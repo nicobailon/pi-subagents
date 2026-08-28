@@ -91,6 +91,24 @@ function resetWidgetLayout(): void {
 }
 
 describe("subagent async widget rendering", () => {
+	it("renders stored workflow preflight lanes without discovering external state", () => {
+		const text = buildWidgetLines([{
+			asyncId: "workflow-preflight",
+			asyncDir: "/tmp/workflow-preflight",
+			status: "running",
+			mode: "workflow",
+			preflight: {
+				version: 1,
+				coverage: "partial",
+				lanes: [{ key: "review", mode: "review", claims: ["src/tui"], expectedOutput: "review.md" }],
+			},
+			workflow: { trace: [], emits: [], console: [] },
+		}], theme, 180).join("\n");
+		assert.match(text, /Preflight: v1 · partial · 1 lane/);
+		assert.match(text, /review \| review \|/);
+		assert.match(text, /expected output \| independence/);
+	});
+
 	it("projects known workflow metadata into a compact lane row", () => {
 		const job = {
 			asyncId: "lane-run-123456",

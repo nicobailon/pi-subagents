@@ -125,4 +125,38 @@ describe("async status projection", () => {
 		});
 		assert.deepEqual(rows, []);
 	});
+
+	it("projects stored preflight lanes as planned rows and merges launched facts", () => {
+		const rows = projectAsyncWorkflowRows([
+			{ agent: "worker", workflowKey: "writer", label: "Writer", status: "running" },
+		], {
+			version: 1,
+			coverage: "complete",
+			lanes: [
+				{ key: "writer", mode: "mutation", claims: ["src/a.ts"] },
+				{ key: "review", mode: "review", expectedOutput: "review.md" },
+			],
+		});
+
+		assert.deepEqual(rows.map((row) => ({ name: row.name, state: row.state, mode: row.preflight?.mode })), [
+			{ name: "writer · Writer (worker)", state: "running", mode: "mutation" },
+			{ name: "review", state: "planned", mode: "review" },
+		]);
+	});
+
+	it("preserves duplicate loaded rows when a declared lane key is reused", () => {
+		const rows = projectAsyncWorkflowRows([
+			{ agent: "worker", workflowKey: "writer", label: "First", status: "complete" },
+			{ agent: "worker", workflowKey: "writer", label: "Second", status: "running" },
+		], {
+			version: 1,
+			coverage: "partial",
+			lanes: [{ key: "writer", mode: "mutation" }],
+		});
+
+		assert.deepEqual(rows.map((row) => ({ name: row.name, state: row.state })), [
+			{ name: "writer · First (worker)", state: "complete" },
+			{ name: "writer · Second (worker)", state: "running" },
+		]);
+	});
 });

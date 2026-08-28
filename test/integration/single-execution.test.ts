@@ -851,6 +851,26 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			ok: false,
 			errors: [{ message: "runs.run key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.", line: 1, column: 17 }],
 		});
+		const invalidPreflight = await executor.executePublic(
+			"invalid-preflight",
+			{ workflowScript: `return runs.run("child", { agent: "echo" });`, preflight: { version: 1, lanes: [{ key: "bad key" }] } },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(invalidPreflight.isError, true);
+		assert.match(invalidPreflight.content[0]?.text ?? "", /preflight\.lanes\[0\]\.key/);
+		const offlinePreflight = await executor.executePublic(
+			"offline-preflight",
+			{ action: "validate", workflowScript: "return 1;", preflight: { version: 1, lanes: [{ key: "bad key" }] } },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(offlinePreflight.isError, true);
+		const offlinePreflightValidation = JSON.parse(offlinePreflight.content[0]?.text ?? "null") as { ok?: boolean; errors?: unknown[] };
+		assert.equal(offlinePreflightValidation.ok, false);
+		assert.match(JSON.stringify(offlinePreflightValidation.errors ?? []), /preflight\.lanes\[0\]\.key/);
 		assert.equal(mockPi.callCount(), 0);
 		assert.deepEqual(fs.readdirSync(tempDir).sort(), before);
 	});
@@ -904,13 +924,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const result = await executor.executePublic(
 			"file-execution",
-			{ async: false, workflowScriptPath: path.join(tempDir, "workflow.js") },
+			{ async: false, workflowScriptPath: path.join(tempDir, "workflow.js"), preflight: { version: 1, coverage: "complete", lanes: [{ key: "main", mode: "mutation" }] } },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
 		);
 
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "file workflow failed");
+		assert.deepEqual(result.details.preflight, { version: 1, coverage: "complete", lanes: [{ key: "main", mode: "mutation" }] });
 		assert.equal(mockPi.callCount(), 1);
 	});
 
@@ -929,6 +950,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			{
 				cwd: workflowCwd,
 				workflowScript: `emit("starting"); await runs.run("work", { agent: "helper", label: "Run async child", phase: "Execution", task: "Async work" }); return { answer: 42 };`,
+				preflight: { version: 1, coverage: "complete", lanes: [{ key: "work", mode: "mutation", claims: ["src/work.ts"], expectedOutput: "child report" }] },
 				mission: { summary: "Review the active backlog", labels: ["github-backlog", "review"] },
 			},
 			new AbortController().signal,
@@ -942,17 +964,20 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(result.details.asyncId);
 		const workflowRunId = result.details.asyncId;
 		assert.equal(result.details.runId, workflowRunId);
+		assert.deepEqual(result.details.preflight, { version: 1, coverage: "complete", lanes: [{ key: "work", mode: "mutation", claims: ["src/work.ts"], expectedOutput: "child report" }] });
 		assert.notEqual(workflowRunId, toolCallId);
 		assert.match(workflowRunId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 		assert.equal(path.basename(result.details.asyncDir!), workflowRunId);
 		assert.equal(asyncJobs.has(workflowRunId), true);
 		assert.equal(asyncJobs.get(workflowRunId)?.cwd, workflowCwd);
 		assert.equal(asyncJobs.get(workflowRunId)?.sessionRoot, path.join(tempDir, ".pi/subagents", "sessions"));
+		assert.deepEqual(asyncJobs.get(workflowRunId)?.preflight, { version: 1, coverage: "complete", lanes: [{ key: "work", mode: "mutation", claims: ["src/work.ts"], expectedOutput: "child report" }] });
 		assert.equal(asyncJobs.has(toolCallId), false);
 		assert.equal(fs.existsSync(path.join(DIRS.async, toolCallId)), false);
+		assert.match(result.content[0]?.text ?? "", /Preflight: v1 · complete · 1 lane/);
 		assert.match(result.content[0]?.text ?? "", /Async workflow/);
 		const statusPath = path.join(result.details.asyncDir!, "status.json");
-		let status: { runId?: string; toolCallId?: string; cwd?: string; sessionRoot?: string; state?: string; steps?: Array<{ agent?: string; sessionName?: string; label?: string; phase?: string; workflowKey?: string; parentWorkflowRunId?: string }>; workflow?: { value?: unknown; emits?: unknown[]; trace?: Array<{ key?: string; agent?: string; label?: string; phase?: string; state?: string }> } } = {};
+		let status: { runId?: string; toolCallId?: string; cwd?: string; sessionRoot?: string; state?: string; preflight?: unknown; steps?: Array<{ agent?: string; sessionName?: string; label?: string; phase?: string; workflowKey?: string; parentWorkflowRunId?: string }>; workflow?: { value?: unknown; emits?: unknown[]; trace?: Array<{ key?: string; agent?: string; label?: string; phase?: string; state?: string }> } } = {};
 		for (let attempt = 0; attempt < 100; attempt++) {
 			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
 			if (status.state === "complete" || status.state === "failed") break;
@@ -963,6 +988,16 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(status.toolCallId, toolCallId);
 		assert.equal(status.cwd, workflowCwd);
 		assert.equal(status.sessionRoot, path.join(tempDir, ".pi/subagents", "sessions"));
+		assert.deepEqual(status.preflight, { version: 1, coverage: "complete", lanes: [{ key: "work", mode: "mutation", claims: ["src/work.ts"], expectedOutput: "child report" }] });
+		const statusResult = await executor.execute(
+			"status-preflight",
+			{ action: "status", id: workflowRunId },
+			new AbortController().signal,
+			undefined,
+			context,
+		);
+		assert.match(statusResult.content[0]?.text ?? "", /Preflight: v1 · complete · 1 lane/);
+		assert.match(statusResult.content[0]?.text ?? "", /work \| mutation \|/);
 		assert.equal(status.steps?.length, 1);
 		assert.deepEqual(status.steps?.map(({ agent, sessionName, label, phase, workflowKey }) => ({ agent, sessionName, label, phase, workflowKey })), [
 			{ agent: "echo", sessionName: "echo: Async work", label: "Run async child", phase: "Execution", workflowKey: "work" },

@@ -120,9 +120,9 @@ function isWorkflowRowTerminal(row: AsyncStatusWorkflowRow): boolean {
 	return row.state === "complete" || row.state === "completed";
 }
 
-function nestedStatusGlyph(state: FleetNestedRow["state"], theme: Theme): string {
+function nestedStatusGlyph(state: FleetNestedRow["state"] | "planned", theme: Theme): string {
 	if (state === "running") return theme.fg("accent", "●");
-	if (state === "queued" || state === "pending") return theme.fg("muted", "◦");
+	if (state === "queued" || state === "pending" || state === "planned") return theme.fg("muted", "◦");
 	if (state === "complete" || state === "completed") return theme.fg("success", "✓");
 	if (state === "failed" || state === "rejected") return theme.fg("error", "✗");
 	return theme.fg("warning", "■");
@@ -360,7 +360,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 		if (job.mode === "workflow") {
 			const latestEmit = job.workflow?.emits?.length ? formatWorkflowJsonPreview(job.workflow.emits.at(-1), 120) : undefined;
 			const workflowSteps = workflowStepsWithoutMaterializedChildren(job.steps, materializedChildrenByWorkflow.get(`async:${job.asyncId}`));
-			const workflowRows = projectAsyncWorkflowRows(workflowSteps, job.hostSteps);
+			const workflowRows = projectAsyncWorkflowRows(workflowSteps, job.hostSteps, job.preflight);
 			entries.push({
 				key: `async:${job.asyncId}`,
 				...(linkedParentKey ? { parentKey: linkedParentKey } : {}),
@@ -725,7 +725,14 @@ export class SubagentFleetStatus {
 		const modelThinking = row.modelThinking ? ` (${row.modelThinking})` : "";
 		const activity = row.activity ? ` · ${row.activity}` : "";
 		const kind = row.kind ? `${row.kind}: ` : "";
-		const left = `${indent}${marker} ${this.workflowRowGlyph(row, theme)} ${theme.fg("muted", `${kind}${row.name}${modelThinking}`)} · ${this.workflowRowStateLabel(row, theme)}${activity}`;
+		const hints = row.preflight ? [
+			row.preflight.mode ? `mode:${row.preflight.mode}` : undefined,
+			row.preflight.decision ? `decision:${row.preflight.decision}` : undefined,
+			row.preflight.claims?.length ? `claims:${row.preflight.claims.join(",")}` : undefined,
+			row.preflight.expectedOutput ? `expected:${row.preflight.expectedOutput}` : undefined,
+			row.preflight.independence ? `independence:${row.preflight.independence}` : undefined,
+		].filter((value): value is string => Boolean(value)).join(" · ") : "";
+		const left = `${indent}${marker} ${this.workflowRowGlyph(row, theme)} ${theme.fg("muted", `${kind}${row.name}${modelThinking}`)} · ${this.workflowRowStateLabel(row, theme)}${activity}${hints ? ` · ${hints}` : ""}`;
 		const details = [
 			row.startedAt !== undefined ? formatFleetElapsed(Date.now() - row.startedAt) : undefined,
 			row.tokens !== undefined ? formatFleetTokens(row.tokens, row.window) : undefined,

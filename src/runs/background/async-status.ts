@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
-import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type HostStepNodeV1, type HostStepState, type LaunchResolvedChildExtensionsV1, type RuntimeAcknowledgedChildExtensionsV1, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TokenUsage, type TurnBudgetState, type UsageBudgetState } from "../../shared/types.ts";
+import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type HostStepNodeV1, type HostStepState, type LaunchResolvedChildExtensionsV1, type RuntimeAcknowledgedChildExtensionsV1, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TokenUsage, type TurnBudgetState, type UsageBudgetState, type WorkflowPreflightV1 } from "../../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../shared/capability-ceiling.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, findNestedRouteForRootId, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
@@ -20,6 +20,7 @@ import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summar
 import { assertWorkflowGraphHostSteps, hostStepReportName, hostStepVerdictLabel, validHostStepNodes } from "../shared/host-step-status.ts";
 import { projectAsyncWorkflowRows } from "../shared/async-status-projection.ts";
 import { validateAsyncStatusLaneMetadata } from "../shared/lane-metadata.ts";
+import { formatWorkflowPreflight, formatWorkflowPreflightWarnings } from "../../workflows/workflow-preflight.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -135,6 +136,7 @@ export interface AsyncRunSummary {
 	lane?: AsyncStatus["lane"];
 	workflow?: Details["workflow"];
 	workflowChildren?: Details["workflowChildren"];
+	preflight?: WorkflowPreflightV1;
 }
 
 interface AsyncRunListOptions {
@@ -394,6 +396,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		...(status.lane ? { lane: status.lane } : {}),
 		...(status.workflow ? { workflow: status.workflow } : {}),
 		...(workflowChildren ? { workflowChildren } : {}),
+		...(status.preflight ? { preflight: status.preflight } : {}),
 		...(status.sessionDir ? { sessionDir: status.sessionDir } : {}),
 		...(status.outputFile ? { outputFile: status.outputFile } : {}),
 		...(status.totalTokens ? { totalTokens: status.totalTokens } : {}),
@@ -614,6 +617,8 @@ export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active as
 	const lines = [`${heading}: ${runs.length}`, ""];
 	for (const run of runs) {
 		lines.push(`- ${formatRunHeader(run)}`);
+		if (run.preflight) lines.push(...formatWorkflowPreflight(run.preflight, { indent: "  " }).split("\n"));
+		if (run.workflow?.preflightWarnings?.length) lines.push(...formatWorkflowPreflightWarnings(run.workflow.preflightWarnings, { indent: "  " }).split("\n"));
 		for (const step of run.steps) {
 			lines.push(`  ${formatStepLine(step)}`);
 			lines.push(...formatNestedRunStatusLines(step.children, { indent: "    ", maxLines: 12 }));

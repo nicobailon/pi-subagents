@@ -12,6 +12,7 @@ export interface PublicSubagentExecutionParams {
 	config?: unknown;
 	workflowScript?: unknown;
 	workflowScriptPath?: unknown;
+	preflight?: unknown;
 	isolation?: unknown;
 	worktree?: unknown;
 	lane?: unknown;
@@ -45,6 +46,9 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		return { ok: false, error: "workflowScript and workflowScriptPath are mutually exclusive.", mode: "workflow" };
 	}
 	const hasWorkflowInput = params.workflowScript !== undefined || params.workflowScriptPath !== undefined;
+	if (params.preflight !== undefined && !hasWorkflowInput) {
+		return { ok: false, error: "preflight requires workflowScript or workflowScriptPath.", mode: params.action === undefined ? "workflow" : "management" };
+	}
 	const hasValidWorkflowInput = (typeof params.workflowScript === "string" && Boolean(params.workflowScript.trim()))
 		|| (typeof params.workflowScriptPath === "string" && Boolean(params.workflowScriptPath.trim()));
 	if (params.isolation !== undefined) {

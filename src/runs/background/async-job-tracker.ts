@@ -149,6 +149,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			chainStepCount: run.chainStepCount,
 			parallelGroups: groups,
 			hostSteps: run.hostSteps,
+			preflight: run.preflight,
 			steps: visibleSteps,
 			stepsTotal: visibleSteps.length,
 			runningSteps: visibleSteps.filter((step) => step.status === "running").length,

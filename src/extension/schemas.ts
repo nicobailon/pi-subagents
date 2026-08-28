@@ -133,6 +133,21 @@ const UsageBudgetOverride = Type.Object({
 	costUsd: Type.Optional(UsageBudgetLimitOverride),
 }, { additionalProperties: false, description: "Optional root-only reported-usage budget. Hard limits prevent future child launches; running children are not stopped." });
 
+const WorkflowPreflightLane = Type.Object({
+	key: Type.String({ minLength: 1, maxLength: 128 }),
+	mode: Type.Optional(Type.String({ enum: ["mutation", "review", "scout", "gate"] })),
+	decision: Type.Optional(Type.String({ maxLength: 256 })),
+	claims: Type.Optional(Type.Array(Type.String({ maxLength: 256 }), { maxItems: 16 })),
+	expectedOutput: Type.Optional(Type.String({ maxLength: 256 })),
+	independence: Type.Optional(Type.String({ maxLength: 256 })),
+}, { additionalProperties: false });
+
+const WorkflowPreflightOverride = Type.Object({
+	version: Type.Integer({ minimum: 1, maximum: 1 }),
+	coverage: Type.Optional(Type.String({ enum: ["complete", "partial"] })),
+	lanes: Type.Array(WorkflowPreflightLane, { maxItems: 64 }),
+}, { additionalProperties: false, description: "Bounded display-only lane hints for workflow launch/status. V1 coverage mismatches warn but never change launch authority or execution." });
+
 // Parallel task item (within a parallel step)
 export const ParallelTaskSchema = Type.Object({
 	agent: Type.String(),
@@ -318,6 +333,7 @@ const SubagentParamProperties = {
 	})),
 	workflowScript: Type.Optional(Type.String({ minLength: 1, description: "Trusted inline JavaScript statement body. Normally async unless asyncByDefault:false; set async:true when async matters. Use async:false only when the parent must block until completion, never for reviews or gates. Use explicit return for output. Use top-level await, plain helper functions, or explicit Promise chains; nested async function, arrow, and method helpers are rejected. Use await runs.run(key, {agent, task, worktree?, gate?}) or runs.run(key, {resume, task}), where resume is a retained run id or {workflowRunId,key,latest:true} from a durable async workflow receipt. Each workflow key identifies one result lane: use a new stable workflow key for every distinct retained resume pass; same-key calls are reused only when launch parameters are identical, and incompatible parameters are rejected. Use runs.all([...]), await runs.steer(key, message, {mode?, index?, ackTimeoutMs?}), runs.status(id), runs.ref(s), emit(value), console, and return. For bounded parallel sequential chains, use runs.lanes([{key,stages:[{key,agent,task},{key,resume:'previous',task},...]}]); first stages run together, later stages sequence per lane, and the bounded board reports lane-local failures. Only an explicit structuredOutput.verdict === 'blocked' blocks a successful stage; reviewer prose is not parsed. For ordinary parallel fanout, use await runs.all([{key, agent, task}, ...]); it resolves to an ordered array, not a key map, so use results[0], destructuring, or results.map(...), not results.<key>. Do not read .output from unawaited runs.run launches. Stored runs.run promises are only for advanced rolling fanout, and each must later be observed with direct await, Promise.race, or Promise.all. runs.steer targets a prior stable child key, never a raw run id, and must be awaited or returned. Mission workflows also have async state.get(key) and state.set(key, JSONValue). Compose sequential and parallel phases dynamically. Set worktree:true at workflow or child level for a separate managed worktree; child fields override workflow defaults. gate is one host-run command and cannot be combined with acceptance. runs.run accepts one child only. No filesystem, shell, Pi tools, or host globals." })),
 	workflowScriptPath: Type.Optional(Type.String({ minLength: 1, description: "Path to a trusted JavaScript workflow file. Mutually exclusive with workflowScript. Relative paths resolve against the request cwd. The host reads the file before the filesystem-free workflow sandbox starts." })),
+	preflight: Type.Optional(WorkflowPreflightOverride),
 	chatProgress: Type.Optional(Type.String({ enum: ["auto", "off", "live-card"], description: "WorkflowScript chat progress projection. auto shows a live in-chat card only for watched foreground workflows in the same Git repository; it is off otherwise. Explicit live-card requires same-repository async:false; async workflows should omit chatProgress or use auto/off." })),
 	isolation: Type.Optional(Type.String({ enum: ["none", "worktree"], description: "Workflow child isolation. none runs in the shared cwd; worktree requires managed git worktree isolation." })),
 	worktree: Type.Optional(Type.Boolean({ description: "Managed child isolation. true gives each workflow child a separate git worktree; an individual runs.run/runs.all item can override a workflow default with worktree:false." })),

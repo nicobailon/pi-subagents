@@ -34,6 +34,7 @@ interface SubagentParamsSchema {
 			minLength?: number;
 			description?: string;
 		};
+		preflight?: JsonSchemaNode;
 		chatProgress?: {
 			type?: string;
 			enum?: string[];
@@ -201,6 +202,13 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(String(workflowScriptPath?.description ?? ""), /mutually exclusive with workflowScript/i);
 		assert.match(String(workflowScriptPath?.description ?? ""), /request cwd/i);
 		assert.match(String(workflowScriptPath?.description ?? ""), /host reads the file/i);
+		const preflight = SubagentParams?.properties?.preflight;
+		assert.equal(preflight?.type, "object");
+		assert.equal(preflight?.additionalProperties, false);
+		assert.match(String(preflight?.description ?? ""), /display-only/i);
+		assert.equal((preflight?.properties as JsonSchemaNode | undefined)?.version?.minimum, 1);
+		assert.equal((preflight?.properties as JsonSchemaNode | undefined)?.version?.maximum, 1);
+		assert.equal((preflight?.properties as JsonSchemaNode | undefined)?.lanes?.maxItems, 64);
 		const chatProgress = SubagentParams?.properties?.chatProgress;
 		assert.equal(chatProgress?.type, "string");
 		assert.deepEqual(chatProgress?.enum, ["auto", "off", "live-card"]);

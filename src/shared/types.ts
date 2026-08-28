@@ -106,6 +106,26 @@ export interface WorkflowGraphSnapshot {
 	currentNodeId?: string;
 }
 
+export type WorkflowPreflightCoverage = "complete" | "partial";
+export type WorkflowPreflightMode = "mutation" | "review" | "scout" | "gate";
+
+/** Bounded, display-only lane hints supplied alongside a workflowScript launch. */
+export interface WorkflowPreflightLaneV1 {
+	key: string;
+	mode?: WorkflowPreflightMode;
+	decision?: string;
+	claims?: string[];
+	expectedOutput?: string;
+	independence?: string;
+}
+
+/** Versioned, display-only workflow launch plan; it never grants launch authority. */
+export interface WorkflowPreflightV1 {
+	version: 1;
+	coverage: WorkflowPreflightCoverage;
+	lanes: WorkflowPreflightLaneV1[];
+}
+
 export type WorkflowReceiptState = "complete" | "failed" | "paused" | "stopped";
 
 export type WorkflowTerminalResolution = "settled-awaiting-resume" | "failed-child" | "interrupted-child";
@@ -1287,6 +1307,9 @@ export interface Details {
 	totalSteps?: number;         // Total steps in chain
 	currentStepIndex?: number;   // 0-indexed current step (for running chains)
 	workflowGraph?: WorkflowGraphSnapshot;
+	/** Validated, display-only fanout plan supplied with a workflow launch. */
+	preflight?: WorkflowPreflightV1;
+	preflightWarnings?: string[];
 	outputs?: ChainOutputMap;
 	// Aggregated child usage across all agents in the run
 	totalChildUsage?: Usage;
@@ -1315,6 +1338,7 @@ export interface Details {
 	mission?: MissionRecord;
 	workflow?: {
 		value?: unknown;
+		preflightWarnings?: string[];
 		trace: Array<{
 			operation: "run" | "status" | "steer";
 			key: string;
@@ -1324,6 +1348,7 @@ export interface Details {
 			phase?: string;
 			label?: string;
 			durationMs?: number;
+			warning?: string;
 			error?: string;
 		}>;
 		emits: unknown[];
@@ -1513,6 +1538,7 @@ export interface AsyncStartedEvent {
 	chainStepCount?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
 	workflowGraph?: WorkflowGraphSnapshot;
+	preflight?: WorkflowPreflightV1;
 	launchContractDigest?: string;
 	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
@@ -1680,6 +1706,7 @@ export interface AsyncStatus {
 	pendingAppends?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
 	workflowGraph?: WorkflowGraphSnapshot;
+	preflight?: WorkflowPreflightV1;
 	processTerminal?: ProcessTerminalV1;
 	runFanoutBudget?: RunFanoutBudgetSnapshot;
 	runFanoutBudgetDescriptor?: RunFanoutBudgetDescriptor;
@@ -1828,6 +1855,7 @@ export interface AsyncJobState {
 	/** Bounded host-owned CI/gate nodes loaded from the workflow status graph. */
 	hostSteps?: HostStepNodeV1[];
 	steps?: AsyncJobStep[];
+	preflight?: WorkflowPreflightV1;
 	stepsTotal?: number;
 	runningSteps?: number;
 	completedSteps?: number;

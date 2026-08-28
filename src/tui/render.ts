@@ -32,6 +32,7 @@ import { formatNestedAggregate } from "../runs/shared/nested-render.ts";
 import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
 import { contextModeBadge, contextModePrefix } from "../runs/shared/context-mode.ts";
 import { buildWorkflowChatProgressRows, type WorkflowChatProgressRow } from "../workflows/chat-progress.ts";
+import { formatWorkflowPreflight, formatWorkflowPreflightWarnings } from "../workflows/workflow-preflight.ts";
 import { encodeAsyncStatusSnapshotWidget } from "../runs/background/async-status-snapshot.ts";
 import { projectAsyncWorkflowRows, type AsyncStatusWorkflowRow } from "../runs/shared/async-status-projection.ts";
 import { hostStepReportName, hostStepVerdictLabel } from "../runs/shared/host-step-status.ts";
@@ -435,6 +436,14 @@ function widgetLaneDetailLines(job: AsyncJobState, theme: Theme): string[] {
 	if (job.steps?.length && (job.mode === "parallel" || job.mode === "chain")) return [];
 	const lane = projectAsyncLane(job);
 	return lane ? formatLaneProjectionLines(lane, theme, "  ") : [];
+}
+
+function workflowPreflightLines(job: AsyncJobState): string[] {
+	if (job.mode !== "workflow" || !job.preflight) return [];
+	return [
+		...formatWorkflowPreflight(job.preflight, { indent: "  " }).split("\n"),
+		...(job.workflow?.preflightWarnings ? formatWorkflowPreflightWarnings(job.workflow.preflightWarnings, { indent: "  " }).split("\n") : []),
+	];
 }
 
 function workflowLabelForResult(details: Details, resultIndex: number): string | undefined {
@@ -1536,6 +1545,7 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 	if (!job.steps?.length) {
 		const lane = projectAsyncLane(job);
 		return [
+			...workflowPreflightLines(job),
 			...(lane ? formatLaneProjectionLines(lane, theme, "  ") : []),
 			...hostStepWidgetLines(job, theme, "  "),
 			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
@@ -1545,7 +1555,7 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width, frame);
 	const total = job.stepsTotal ?? job.steps.length;
 	const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
-	const lines: string[] = [];
+	const lines: string[] = workflowPreflightLines(job);
 	for (const [index, step] of job.steps.entries()) {
 		lines.push(...foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index + 1, total, expanded, width, frame));
 	}
@@ -2003,6 +2013,7 @@ function renderSingleCompact(
 }
 
 function workflowRowGlyph(row: WorkflowChatProgressRow, theme: Theme, frame?: number): string {
+	if (row.state === "planned") return theme.fg("muted", "◦");
 	if (row.state === "running") return theme.fg("accent", runningGlyph(frame));
 	if (row.state === "complete") return theme.fg("success", "✓");
 	if (row.state === "detached" || row.state === "stopped") return theme.fg("warning", "■");
@@ -2011,6 +2022,7 @@ function workflowRowGlyph(row: WorkflowChatProgressRow, theme: Theme, frame?: nu
 
 function workflowRowStateLabel(row: WorkflowChatProgressRow, theme: Theme): string {
 	const label = (row.state === "complete" ? "complete" : row.state).padEnd(8);
+	if (row.state === "planned") return theme.fg("dim", label);
 	if (row.state === "running") return theme.fg("accent", label);
 	if (row.state === "complete") return theme.fg("success", label);
 	if (row.state === "detached" || row.state === "stopped") return theme.fg("warning", label);
@@ -2027,7 +2039,7 @@ function workflowOverallState(rows: WorkflowChatProgressRow[], hasTerminalValue:
 
 function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>, theme: Theme, layout: MainWindowRenderLayout, frame?: number): Component {
 	const workflow = d.workflow;
-	const rows = workflow ? buildWorkflowChatProgressRows(workflow.trace) : [];
+	const rows = workflow ? buildWorkflowChatProgressRows(workflow.trace, d.preflight) : d.preflight ? buildWorkflowChatProgressRows([], d.preflight) : [];
 	const state = workflowOverallState(rows, workflow?.value !== undefined, result.isError);
 	const glyph = state === "running" ? theme.fg("accent", runningGlyph(frame)) : state === "complete" ? theme.fg("success", "✓") : state === "paused" ? theme.fg("warning", "■") : theme.fg("error", "✗");
 	const width = getTermWidth() - 4;
@@ -2051,8 +2063,16 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 		const duration = row.durationMs !== undefined ? ` ${theme.fg("dim", `· ${formatDuration(row.durationMs)}`)}` : "";
 		const run = row.runId ? ` ${theme.fg("dim", `[${row.runId.slice(0, 8)}]`)}` : "";
 		const error = row.error ? ` ${theme.fg(row.state === "detached" ? "warning" : "error", `· ${compactWorkflowError(row.error)}`)}` : "";
-		c.addChild(new Text(truncLine(`${rowIndent}${workflowRowGlyph(row, theme, frame)} ${status} ${theme.bold(row.key)}${label}${run}${duration}${error}`, width), 0, 0));
+		const hints = row.preflight ? [
+			row.preflight.mode ? `mode:${row.preflight.mode}` : undefined,
+			row.preflight.decision ? `decision:${row.preflight.decision}` : undefined,
+			row.preflight.claims?.length ? `claims:${row.preflight.claims.join(",")}` : undefined,
+			row.preflight.expectedOutput ? `expected:${row.preflight.expectedOutput}` : undefined,
+			row.preflight.independence ? `independence:${row.preflight.independence}` : undefined,
+		].filter((value): value is string => Boolean(value)).join(" · ") : "";
+		c.addChild(new Text(truncLine(`${rowIndent}${workflowRowGlyph(row, theme, frame)} ${status} ${theme.bold(row.key)}${label}${run}${duration}${error}${hints ? ` ${theme.fg("dim", `· ${hints}`)}` : ""}`, width), 0, 0));
 	}
+	if (workflow?.preflightWarnings?.length) c.addChild(new Text(truncLine(theme.fg("warning", `${rowIndent}Warnings ${workflow.preflightWarnings.length}`), width), 0, 0));
 	if (workflow?.emits.length) c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Emits  ${workflow.emits.length}`), width), 0, 0));
 	return c;
 }

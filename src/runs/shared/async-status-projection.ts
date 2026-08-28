@@ -1,6 +1,6 @@
 import { sanitizeDisplayText, truncateDisplayText } from "../../shared/display-text.ts";
 import { formatModelThinking } from "../../shared/formatters.ts";
-import type { AsyncJobState, AsyncJobStep, HostStepFreshnessV1, HostStepMonitorKind, HostStepNodeV1, HostStepState, HostStepVerdict, NestedRunSummary, NestedStepSummary, SubagentRunMode, WorkflowGraphSnapshot } from "../../shared/types.ts";
+import type { AsyncJobState, AsyncJobStep, HostStepFreshnessV1, HostStepMonitorKind, HostStepNodeV1, HostStepState, HostStepVerdict, NestedRunSummary, NestedStepSummary, SubagentRunMode, WorkflowGraphSnapshot, WorkflowPreflightLaneV1, WorkflowPreflightV1 } from "../../shared/types.ts";
 import { HOST_STEP_MAX_COUNT, HOST_STEP_MAX_DETAIL_CHARS, HOST_STEP_MAX_LABEL_CHARS, HOST_STEP_MAX_PROVIDER_CHARS, HOST_STEP_MAX_REASON_CHARS, HOST_STEP_MAX_REF_CHARS, HOST_STEP_MAX_ROLE_CHARS, HOST_STEP_MAX_TARGET_CHARS, hostStepReportName, parseHostStepNode, validHostStepNodes } from "./host-step-status.ts";
 
 export const ASYNC_STATUS_SNAPSHOT_KIND = "pi-subagents.async-status-snapshot";
@@ -84,7 +84,7 @@ export interface AsyncStatusSnapshotOptions {
 
 export interface AsyncStatusWorkflowRow {
 	name: string;
-	state: AsyncJobStep["status"] | HostStepState;
+	state: AsyncJobStep["status"] | HostStepState | "planned";
 	/** Present only for typed host-owned monitor rows; legacy child rows omit it. */
 	kind?: HostStepMonitorKind;
 	modelThinking?: string;
@@ -101,6 +101,7 @@ export interface AsyncStatusWorkflowRow {
 	target?: string;
 	freshness?: HostStepFreshnessV1;
 	reportPath?: string;
+	preflight?: WorkflowPreflightLaneV1;
 }
 
 interface ProjectionContext {
@@ -382,22 +383,53 @@ function hostStepRow(hostStep: HostStepNodeV1): AsyncStatusWorkflowRow {
 	};
 }
 
-/** Project loaded workflow child facts into compact rows; visibility bounds and rendering remain caller-owned. */
-export function projectAsyncWorkflowRows(steps: readonly AsyncJobStep[] | undefined, hostSteps?: readonly HostStepNodeV1[] | WorkflowGraphSnapshot): AsyncStatusWorkflowRow[] {
-	const childRows = (steps ?? []).map((step, index) => {
-		const modelThinking = formatModelThinking(step.model, step.thinking) || undefined;
-		const activity = workflowStepActivity(step);
-		return {
-			name: workflowStepName(step, index),
-			state: step.status,
-			...(modelThinking ? { modelThinking } : {}),
-			...(activity ? { activity } : {}),
-			...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
-			...(step.tokens?.total !== undefined ? { tokens: step.tokens.total } : {}),
-			...(step.tokens?.window !== undefined ? { window: step.tokens.window } : {}),
-		};
-	});
+
+function isWorkflowPreflight(value: readonly HostStepNodeV1[] | WorkflowGraphSnapshot | WorkflowPreflightV1 | undefined): value is WorkflowPreflightV1 {
+	return value !== undefined && !Array.isArray(value) && "lanes" in value;
+}
+
+/** Project loaded workflow child facts plus stored preflight hints into compact rows. */
+export function projectAsyncWorkflowRows(
+	steps: readonly AsyncJobStep[] | undefined,
+	hostStepsOrPreflight?: readonly HostStepNodeV1[] | WorkflowGraphSnapshot | WorkflowPreflightV1,
+	preflightOverride?: WorkflowPreflightV1,
+): AsyncStatusWorkflowRow[] {
+	const preflight = preflightOverride ?? (isWorkflowPreflight(hostStepsOrPreflight) ? hostStepsOrPreflight : undefined);
+	const hostSteps = isWorkflowPreflight(hostStepsOrPreflight) ? undefined : hostStepsOrPreflight;
+	const loaded = steps ?? [];
+	const declared = new Map<string, WorkflowPreflightLaneV1>();
+	const consumed = new Set<number>();
+	const childRows: AsyncStatusWorkflowRow[] = [];
+	for (const lane of preflight?.lanes ?? []) {
+		declared.set(lane.key, lane);
+		const index = loaded.findIndex((step) => step.workflowKey === lane.key);
+		if (index < 0) {
+			childRows.push({ name: lane.key, state: "planned", preflight: lane });
+			continue;
+		}
+		consumed.add(index);
+		childRows.push(projectLoadedWorkflowRow(loaded[index]!, index, lane));
+	}
+	for (const [index, step] of loaded.entries()) {
+		if (consumed.has(index)) continue;
+		childRows.push(projectLoadedWorkflowRow(step, index, step.workflowKey ? declared.get(step.workflowKey) : undefined));
+	}
 	return [...childRows, ...validHostStepList(hostSteps).map(hostStepRow)];
+}
+
+function projectLoadedWorkflowRow(step: AsyncJobStep, index: number, preflight?: WorkflowPreflightLaneV1): AsyncStatusWorkflowRow {
+	const modelThinking = formatModelThinking(step.model, step.thinking) || undefined;
+	const activity = workflowStepActivity(step);
+	return {
+		name: workflowStepName(step, index),
+		state: step.status,
+		...(modelThinking ? { modelThinking } : {}),
+		...(activity ? { activity } : {}),
+		...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
+		...(step.tokens?.total !== undefined ? { tokens: step.tokens.total } : {}),
+		...(step.tokens?.window !== undefined ? { window: step.tokens.window } : {}),
+		...(preflight ? { preflight } : {}),
+	};
 }
 
 /** Project already-loaded async status facts into the bounded public snapshot shape. */

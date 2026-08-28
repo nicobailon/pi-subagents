@@ -5,6 +5,7 @@ import { normalizePublicSubagentExecution } from "../../src/extension/public-exe
 describe("public subagent execution normalization", () => {
 	it("accepts structured single-child, workflow, management, and schedules", () => {
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1" }), { ok: true, params: { workflowScript: "return 1" } });
+		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1", preflight: { version: 1, lanes: [] } }), { ok: true, params: { workflowScript: "return 1", preflight: { version: 1, lanes: [] } } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScriptPath: "workflows/review.js" }), { ok: true, params: { workflowScriptPath: "workflows/review.js" } });
 		const task = "Use `quotes`\nand newlines";
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: " worker ", task, context: "fresh", async: false }), {
@@ -77,6 +78,12 @@ describe("public subagent execution normalization", () => {
 		const result = normalizePublicSubagentExecution({ workflowScript: "return 1", workflowScriptPath: "workflow.js" });
 		assert.equal(result.ok, false);
 		if (!result.ok) assert.match(result.error, /mutually exclusive/);
+	});
+
+	it("rejects preflight without a workflow input", () => {
+		const result = normalizePublicSubagentExecution({ agent: "worker", preflight: { version: 1, lanes: [] } });
+		assert.equal(result.ok, false);
+		if (!result.ok) assert.match(result.error, /preflight requires workflowScript or workflowScriptPath/);
 	});
 
 	it("rejects private run fan-out fields at the public boundary", () => {

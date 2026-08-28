@@ -939,6 +939,7 @@ export interface WorkflowScriptTraceEntry {
 	label?: string;
 	error?: string;
 	lane?: import("../shared/types.ts").WorkflowLaneMetadata;
+	warning?: string;
 }
 
 export interface WorkflowSteerOptions {

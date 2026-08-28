@@ -136,7 +136,6 @@ describe("async status helpers", () => {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
-
 	it("projects bounded lane and display-only worktree metadata from status", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-lane-"));
 		try {
@@ -178,6 +177,38 @@ describe("async status helpers", () => {
 			});
 			assert.throws(() => listAsyncRuns(root, { states: ["running"] }), /does not match workflow key/);
 			assert.equal(fs.existsSync(path.join(runDir, "status.json")), true);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("renders persisted preflight mismatch warnings in async status lists", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-preflight-"));
+		try {
+			createAsyncDir(root, "run-preflight", {
+				runId: "run-preflight",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				preflight: {
+					version: 1,
+					coverage: "complete",
+					lanes: [{ key: "writer", mode: "mutation" }],
+				},
+				workflow: {
+					trace: [],
+					emits: [],
+					console: [],
+					preflightWarnings: ["Preflight advisory: workflow key 'review' launched without a declared lane."],
+				},
+			});
+
+			const runs = listAsyncRuns(root, { states: ["running"] });
+			const text = formatAsyncRunList(runs);
+			assert.match(text, /Preflight: v1 · complete · 1 lane/);
+			assert.match(text, /Preflight warnings:/);
+			assert.match(text, /workflow key 'review' launched without a declared lane/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

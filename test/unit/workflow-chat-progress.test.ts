@@ -297,6 +297,37 @@ describe("workflow chat progress rendering", () => {
 		assert.doesNotMatch(text, /failed\s+detaches/);
 	});
 
+	it("seeds declared preflight lanes as planned before workflow trace entries", () => {
+		const preflight = {
+			version: 1 as const,
+			coverage: "partial" as const,
+			lanes: [
+				{ key: "writer", mode: "mutation" as const, claims: ["src/workflows"] },
+				{ key: "review", mode: "review" as const, expectedOutput: "review.md" },
+			],
+		};
+		assert.deepEqual(buildWorkflowChatProgressRows([], preflight).map((row) => ({ key: row.key, state: row.state })), [
+			{ key: "writer", state: "planned" },
+			{ key: "review", state: "planned" },
+		]);
+		const text = componentText(renderSubagentResult({
+			content: [{ type: "text", text: "Workflow running." }],
+			details: {
+				mode: "workflow",
+				runId: "wf_planned",
+				results: [],
+				preflight,
+				chatProgress: { mode: "live-card", repoRelation: "same", repoLabel: "pi-subagents" },
+				workflow: { trace: [], emits: [], console: [] },
+			},
+		}, { expanded: false }, theme as any));
+		assert.match(text, /planned\s+writer/);
+		assert.match(text, /mode:mutation/);
+		assert.match(text, /planned\s+review/);
+		assert.match(text, /expected:review\.md/);
+		assert.doesNotMatch(text, /waiting for workflow child launches/);
+	});
+
 	it("keeps mixed detached and failed workflow traces failed", () => {
 		const text = componentText(renderSubagentResult({
 			content: [{ type: "text", text: "Workflow failed: child failed after a detached sibling." }],
