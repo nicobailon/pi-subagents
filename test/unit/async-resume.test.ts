@@ -359,14 +359,14 @@ describe("async resume lookup", () => {
 
 			const target = resolveAsyncResumeTarget({ id: "run-turn-budget" }, { asyncDirRoot: asyncRoot, resultsDir });
 
-			assert.equal(target.recoveryDescriptor?.initialTurnBudget, undefined);
+			assert.equal("initialTurnBudget" in (target.recoveryDescriptor ?? {}), false);
 
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
 				...descriptor,
 				initialTurnBudget: { maxTurns: 8, graceTurns: 2, unrelated: true },
 			});
 			const malformedLegacy = resolveAsyncResumeTarget({ id: "run-turn-budget" }, { asyncDirRoot: asyncRoot, resultsDir });
-			assert.equal(malformedLegacy.recoveryDescriptor?.initialTurnBudget, undefined);
+			assert.equal("initialTurnBudget" in (malformedLegacy.recoveryDescriptor ?? {}), false);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

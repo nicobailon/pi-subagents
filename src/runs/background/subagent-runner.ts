@@ -36,14 +36,12 @@ import {
 	type NestedRouteInfo,
 	type NestedRunSummary,
 	type ResolvedControlConfig,
-	type ResolvedTurnBudget,
 	type ResolvedToolBudget,
 	type RunFanoutBudgetDescriptor,
 	type SubagentRunMode,
 	type SubagentOutputState,
 	type UsageBudgetConfig,
 	type ToolBudgetState,
-	type TurnBudgetState,
 	type Usage,
 	type WorkflowGraphSnapshot,
 	type SteeringTargetState,
@@ -199,8 +197,6 @@ interface SubagentRunConfig {
 	deadlineAt?: number;
 	/** Resolved configured hard per-tool-call timeout (ms); fast tools still have a default when undefined. */
 	toolTimeoutMs?: number;
-	/** Legacy input retained for recovery descriptor compatibility; no longer enforced. */
-	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
 	usageBudget?: UsageBudgetConfig;
 	revivalLease?: SessionLeaseRequest;
@@ -243,9 +239,6 @@ interface StepResult {
 	stopped?: boolean;
 	processSignal?: string | null;
 	timeoutRecovery?: import("../../shared/types.ts").TimeoutRecoverySummary;
-	turnBudget?: TurnBudgetState;
-	turnBudgetExceeded?: boolean;
-	wrapUpRequested?: boolean;
 	toolBudget?: ToolBudgetState;
 	toolBudgetBlocked?: boolean;
 	sessionFile?: string;
@@ -558,9 +551,6 @@ interface RunPiStreamingResult {
 	interrupted?: boolean;
 	timedOut?: boolean;
 	stopped?: boolean;
-	turnBudget?: TurnBudgetState;
-	turnBudgetExceeded?: boolean;
-	wrapUpRequested?: boolean;
 	toolBudget?: ToolBudgetState;
 	toolBudgetBlocked?: boolean;
 	observedMutationAttempt?: boolean;
@@ -1304,8 +1294,6 @@ interface SingleStepContext {
 	registerInterrupt?: (interrupt: (() => void) | undefined) => void;
 	registerTimeout?: (interrupt: (() => void) | undefined) => void;
 	registerStop?: (stop: (() => void) | undefined) => void;
-	/** Legacy callback slot; turn budgets are no longer enforced. */
-	registerTurnBudgetAbort?: (abort: ((message: string, state?: TurnBudgetState) => void) | undefined) => void;
 	timeoutSignal?: AbortSignal;
 	stopSignal?: AbortSignal;
 	timeoutMessage?: string;
@@ -1314,8 +1302,6 @@ interface SingleStepContext {
 	toolTimeoutMs?: number;
 	/** Effective step deadline (Date.now() + effective timeout) when a run budget exists. */
 	deadlineAt?: number;
-	/** Legacy input retained for recovery descriptor compatibility; no longer enforced. */
-	turnBudget?: ResolvedTurnBudget;
 	childIntercomTarget?: string;
 	orchestratorIntercomTarget?: string;
 	nestedRoute?: NestedRouteInfo;
@@ -4238,7 +4224,6 @@ async function runSubagent(
 					trackedMutationEvidenceForCompletionGuard: false,
 					timeoutMessage,
 					stopMessage,
-					turnBudget: config.turnBudget,
 					toolTimeoutMs: task.toolTimeoutMs ?? config.toolTimeoutMs,
 					onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking, attempt.contextLimit),
 					onChildEvent: (event) => updateStepFromChildEvent(fi, event),
@@ -4258,16 +4243,10 @@ async function runSubagent(
 				requiredStatusStep(statusPayload, fi).exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "timedOut", timedOut || singleResult.timedOut ? true : undefined);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "stopped", stopped || childStopped ? true : undefined);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "turnBudget", singleResult.turnBudget);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "turnBudgetExceeded", singleResult.turnBudgetExceeded);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "wrapUpRequested", singleResult.wrapUpRequested);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "toolBudget", singleResult.toolBudget);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "toolBudgetBlocked", singleResult.toolBudgetBlocked);
 				if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
 				if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
-				if (singleResult.turnBudget) statusPayload.turnBudget = singleResult.turnBudget;
-				if (singleResult.turnBudgetExceeded) statusPayload.turnBudgetExceeded = true;
-				if (singleResult.wrapUpRequested) statusPayload.wrapUpRequested = true;
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "sessionName", singleResult.sessionName);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "model", singleResult.model);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, fi).thinking));
@@ -4336,9 +4315,6 @@ async function runSubagent(
 					interrupted: pr.interrupted,
 					timedOut: pr.timedOut,
 					stopped: pr.stopped,
-					turnBudget: pr.turnBudget,
-					turnBudgetExceeded: pr.turnBudgetExceeded,
-					wrapUpRequested: pr.wrapUpRequested,
 					toolBudget: pr.toolBudget,
 					toolBudgetBlocked: pr.toolBudgetBlocked,
 					sessionFile: pr.sessionFile,
@@ -4642,7 +4618,6 @@ async function runSubagent(
 							trackedMutationEvidenceForCompletionGuard: Boolean(worktreeSetup),
 							timeoutMessage,
 							stopMessage,
-							turnBudget: config.turnBudget,
 							toolTimeoutMs: taskForRun.toolTimeoutMs ?? config.toolTimeoutMs,
 							onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking, attempt.contextLimit),
 							onChildEvent: (event) => updateStepFromChildEvent(fi, event),
@@ -4668,16 +4643,10 @@ async function runSubagent(
 						requiredStatusStep(statusPayload, fi).exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "timedOut", timedOut || singleResult.timedOut ? true : undefined);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "stopped", stopped || childStopped ? true : undefined);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "turnBudget", singleResult.turnBudget);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "turnBudgetExceeded", singleResult.turnBudgetExceeded);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "wrapUpRequested", singleResult.wrapUpRequested);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "toolBudget", singleResult.toolBudget);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "toolBudgetBlocked", singleResult.toolBudgetBlocked);
 						if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
 						if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
-						if (singleResult.turnBudget) statusPayload.turnBudget = singleResult.turnBudget;
-						if (singleResult.turnBudgetExceeded) statusPayload.turnBudgetExceeded = true;
-						if (singleResult.wrapUpRequested) statusPayload.wrapUpRequested = true;
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "sessionName", singleResult.sessionName);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "model", singleResult.model);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, fi).thinking));
@@ -4787,9 +4756,6 @@ async function runSubagent(
 						interrupted: pr.interrupted,
 						timedOut: pr.timedOut,
 						stopped: pr.stopped,
-						turnBudget: pr.turnBudget,
-						turnBudgetExceeded: pr.turnBudgetExceeded,
-						wrapUpRequested: pr.wrapUpRequested,
 						toolBudget: pr.toolBudget,
 						toolBudgetBlocked: pr.toolBudgetBlocked,
 						sessionFile: pr.sessionFile,
@@ -4861,7 +4827,6 @@ async function runSubagent(
 								interrupted: result.interrupted,
 								timedOut: result.timedOut,
 								stopped: result.stopped,
-								turnBudgetExceeded: result.turnBudgetExceeded,
 							}))) ? "stopped" as const : result.interrupted ? "paused" as const : result.exitCode === 0 ? "completed" as const : "failed" as const,
 							summary: result.output || result.error || "(no output)",
 							...(result.artifactPaths?.outputPath ? { outputPath: result.artifactPaths.outputPath } : {}),
@@ -5012,7 +4977,6 @@ async function runSubagent(
 				stopSignal: stopAbortController.signal,
 				timeoutMessage,
 				stopMessage,
-				turnBudget: config.turnBudget,
 				toolTimeoutMs: seqStep.toolTimeoutMs ?? config.toolTimeoutMs,
 				onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt.model, attempt.thinking, attempt.contextLimit),
 				onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
@@ -5072,9 +5036,6 @@ async function runSubagent(
 				interrupted: singleResult.interrupted,
 				timedOut: timedOut || singleResult.timedOut ? true : undefined,
 				stopped: stopped || childStopped ? true : undefined,
-				turnBudget: singleResult.turnBudget,
-				turnBudgetExceeded: singleResult.turnBudgetExceeded,
-				wrapUpRequested: singleResult.wrapUpRequested,
 				toolBudget: singleResult.toolBudget,
 				toolBudgetBlocked: singleResult.toolBudgetBlocked,
 				runner: singleResult.runner,
@@ -5129,16 +5090,10 @@ async function runSubagent(
 			requiredStatusStep(statusPayload, flatIndex).exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "timedOut", timedOut || singleResult.timedOut ? true : undefined);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "stopped", stopped || childStopped ? true : undefined);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "turnBudget", singleResult.turnBudget);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "turnBudgetExceeded", singleResult.turnBudgetExceeded);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "wrapUpRequested", singleResult.wrapUpRequested);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "toolBudget", singleResult.toolBudget);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "toolBudgetBlocked", singleResult.toolBudgetBlocked);
 			if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
 			if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
-			if (singleResult.turnBudget) statusPayload.turnBudget = singleResult.turnBudget;
-			if (singleResult.turnBudgetExceeded) statusPayload.turnBudgetExceeded = true;
-			if (singleResult.wrapUpRequested) statusPayload.wrapUpRequested = true;
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "sessionName", singleResult.sessionName);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "model", singleResult.model);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, flatIndex).thinking));

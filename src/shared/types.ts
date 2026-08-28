@@ -230,16 +230,6 @@ export interface Usage {
 	turns: number;
 }
 
-export interface TurnBudgetConfig {
-	maxTurns: number;
-	graceTurns?: number;
-}
-
-export interface ResolvedTurnBudget {
-	maxTurns: number;
-	graceTurns: number;
-}
-
 export interface ToolBudgetConfig {
 	soft?: number;
 	hard: number;
@@ -262,9 +252,19 @@ export interface ToolBudgetState extends ResolvedToolBudget {
 	blockedTool?: string;
 }
 
+/**
+ * @deprecated Turn budgets are no longer accepted as launch configuration or
+ * enforced. Retained only to decode historical persisted status and result data.
+ */
 export type TurnBudgetOutcome = "within-budget" | "wrap-up-requested" | "termination-deferred" | "exceeded";
 
-export interface TurnBudgetState extends ResolvedTurnBudget {
+/**
+ * @deprecated Historical persisted turn-budget state. New runs do not produce
+ * this field, but status readers retain it for backwards compatibility.
+ */
+export interface TurnBudgetState {
+	maxTurns: number;
+	graceTurns: number;
 	outcome: TurnBudgetOutcome;
 	turnCount: number;
 	wrapUpRequestedAtTurn?: number;
@@ -782,7 +782,6 @@ export interface SteeringRecoveryDescriptor {
 	intercomBridge?: IntercomBridgeConfig;
 	lane?: WorkflowLaneMetadata;
 	absoluteDeadlineAt?: number;
-	initialTurnBudget?: ResolvedTurnBudget;
 	initialToolBudget?: ResolvedToolBudget;
 	maxSubagentDepth: number;
 	maxOutput?: MaxOutputConfig;
