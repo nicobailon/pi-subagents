@@ -84,6 +84,7 @@ describe("async status projection", () => {
 			label: "Fresh review",
 			phase: "quality",
 			status: "partial",
+			context: "fresh",
 			activityState: "needs_attention",
 			startedAt: 10,
 			tokens: { input: 20, output: 5, total: 25, window: 18 },
@@ -92,6 +93,7 @@ describe("async status projection", () => {
 		assert.deepEqual(rows, [{
 			name: "quality: review · Fresh review (reviewer)",
 			state: "partial",
+			context: "fresh",
 			activity: "needs attention",
 			startedAt: 10,
 			tokens: 25,

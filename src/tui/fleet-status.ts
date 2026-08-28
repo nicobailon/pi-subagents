@@ -4,6 +4,7 @@ import { snapshotExternalRuns } from "../api/external-runs.ts";
 import { formatModelThinking } from "../shared/formatters.ts";
 import type { AsyncJobState, AsyncJobStep, FleetViewPlacement, HerdrProjectPaneSnapshot, HostStepState, HostStepVerdict, NestedRunSummary, NestedStepSummary, SubagentState } from "../shared/types.ts";
 import { projectAsyncWorkflowRows, type AsyncStatusWorkflowRow } from "../runs/shared/async-status-projection.ts";
+import { contextModeLabel } from "../runs/shared/context-mode.ts";
 import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
 import { hostStepReportName, hostStepVerdictLabel } from "../runs/shared/host-step-status.ts";
 import { isStaleExtensionContextError } from "../shared/extension-context.ts";
@@ -728,6 +729,7 @@ export class SubagentFleetStatus {
 		const marker = last ? "└─" : "├─";
 		const indent = "    ";
 		if (row.overflow !== undefined) return truncateToWidth(`${indent}${marker} ${theme.fg("dim", `+${row.overflow} hidden workflow steps`)}`, width);
+		const context = contextModeLabel(row.context);
 		const modelThinking = row.modelThinking ? ` (${row.modelThinking})` : "";
 		const activity = row.activity ? ` · ${row.activity}` : "";
 		const kind = row.kind ? `${row.kind}: ` : "";
@@ -738,7 +740,7 @@ export class SubagentFleetStatus {
 			row.preflight.expectedOutput ? `expected:${row.preflight.expectedOutput}` : undefined,
 			row.preflight.independence ? `independence:${row.preflight.independence}` : undefined,
 		].filter((value): value is string => Boolean(value)).join(" · ") : "";
-		const left = `${indent}${marker} ${this.workflowRowGlyph(row, theme)} ${theme.fg("muted", `${kind}${row.name}${modelThinking}`)} · ${this.workflowRowStateLabel(row, theme)}${activity}${hints ? ` · ${hints}` : ""}`;
+		const left = `${indent}${marker} ${this.workflowRowGlyph(row, theme)} ${theme.fg("muted", `${kind}${row.name}${context ? ` ${context}` : ""}${modelThinking}`)} · ${this.workflowRowStateLabel(row, theme)}${activity}${hints ? ` · ${hints}` : ""}`;
 		const details = [
 			row.startedAt !== undefined ? formatFleetElapsed(Date.now() - row.startedAt) : undefined,
 			row.tokens !== undefined ? formatFleetTokens(row.tokens, row.window) : undefined,
@@ -806,6 +808,7 @@ export class SubagentFleetStatus {
 						row.kind,
 						row.name,
 						row.state,
+						row.context,
 						row.modelThinking,
 						row.activity,
 						row.startedAt,

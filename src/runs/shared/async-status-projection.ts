@@ -87,6 +87,7 @@ export interface AsyncStatusWorkflowRow {
 	state: AsyncJobStep["status"] | HostStepState | "planned";
 	/** Present only for typed host-owned monitor rows; legacy child rows omit it. */
 	kind?: HostStepMonitorKind;
+	context?: AsyncJobStep["context"];
 	modelThinking?: string;
 	activity?: string;
 	startedAt?: number;
@@ -431,6 +432,7 @@ function projectLoadedWorkflowRow(step: AsyncJobStep, index: number, preflight?:
 	return {
 		name: workflowStepName(step, index),
 		state: step.status,
+		...(step.context ? { context: step.context } : {}),
 		...(modelThinking ? { modelThinking } : {}),
 		...(activity ? { activity } : {}),
 		...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),

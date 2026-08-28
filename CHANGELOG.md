@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Show workflow child `[fresh]` and `[fork]` context labels in Fleet status rows alongside model and thinking badges.
+
 ## [0.59.0] - 2026-08-28
 
 ### Highlights
