@@ -42,7 +42,7 @@ export type ChainOutputMap = Record<string, ChainOutputMapEntry>;
 
 export type WorkflowNodeStatus = "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "detached" | "rejected";
 
-export type HostStepMonitorKind = "ci" | "gate";
+export type HostStepMonitorKind = "command" | "ci" | "gate";
 export type HostStepState = "pending" | "running" | "done" | "cancelled" | "error";
 export type HostStepVerdict = "pass" | "fail" | "inconclusive";
 
@@ -69,6 +69,7 @@ export interface HostStepNodeV1 {
 	target?: string;
 	freshness?: HostStepFreshnessV1;
 	reportPath?: string;
+	exitCode?: number | null;
 	updatedAt: number;
 	deadlineAt?: number;
 }
@@ -1369,7 +1370,7 @@ export interface Details {
 		value?: unknown;
 		preflightWarnings?: string[];
 		trace: Array<{
-			operation: "run" | "status" | "steer";
+			operation: "run" | "status" | "steer" | "host";
 			key: string;
 			state: "started" | "completed" | "failed" | "detached" | "stopped" | "reused" | "queued" | "delivered" | "missed";
 			agent?: string;
@@ -2265,6 +2266,7 @@ export interface RunSyncOptions {
 	sessionFile?: string;
 	share?: boolean;
 	outputPath?: string;
+	outputClaimPath?: string;
 	outputMode?: OutputMode;
 	maxSubagentDepth?: number;
 	/** Effective parent wait-tool setting propagated to the child runtime. */

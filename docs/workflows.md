@@ -158,7 +158,27 @@ The first stage from every lane is launched in one existing `runs.all(...)` batc
 
 The helper validates the complete plain-JSON lane inventory before launching anything. It bounds the inventory to 32 lanes, 16 stages per lane, 64 total stages, and 64 KiB of canonical JSON; task and path fields retain the existing 1 MiB and 32 KiB limits. Stage keys must be unique within a lane and generated keys must be unique and valid workflow keys. A child failure, stopped/detached result, or explicit `structuredOutput.verdict === "blocked"` blocks only that lane; later stages are marked `skipped` and sibling lanes continue. Reviewer prose is never parsed.
 
-The board is bounded and contains only lane/stage keys, state, success, retained run ids, explicit output references, bounded errors, and an optional structured verdict. It does not return child transcripts or create a lane registry, cleanup authority, host gate runner, or new status/render lookup. Use raw `runs.run(...)`/`runs.all(...)` when a workflow needs conditional or rolling orchestration beyond this helper.
+The board is bounded and contains only lane/stage keys, state, success, retained run ids, explicit output references, bounded errors, and an optional structured verdict. It does not return child transcripts or create a lane registry or cleanup authority. Use raw `runs.run(...)`/`runs.all(...)` when a workflow needs conditional or rolling orchestration beyond this helper.
+
+### Host command steps
+
+Use `runs.host(...)` when the operator wants one non-interactive command to be part of the workflow evidence instead of a child-agent run:
+
+```js
+subagent({ workflowScript: `
+  const tests = await runs.host("unit-tests", {
+    kind: "command",
+    command: "npm run test:unit",
+    timeoutMs: 120000,
+    output: "reports/unit-tests.log",
+    role: "ci",
+    provider: "local"
+  });
+  return { state: tests.state, exitCode: tests.exitCode, outputPath: tests.outputPath };
+` });
+```
+
+The first version supports only `kind: "command"`. `command` and `timeoutMs` are required; `output` must be a relative path without traversal. `role` may be `ci` or `gate`, and `provider` is display metadata only. The command has no stdin, receives the workflow cwd, and must be awaited or returned. Stdout, stderr, and the saved log are bounded. A nonzero exit, timeout, abort, or output-write failure fails the workflow. Async status and terminal receipts store the bounded host-step state; renderers do not run commands or read command output.
 
 ### Steering a workflow child
 

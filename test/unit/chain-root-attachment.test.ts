@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { waitForImportedAsyncRoot } from "../../src/runs/background/chain-root-attachment.ts";
 
 let tempDir: string;
@@ -60,6 +61,31 @@ describe("async chain root attachment", () => {
 			exitCode: 0,
 			sessionFile,
 		});
+	});
+
+	it("imports a session-indexed pending result before terminal status fallback", async () => {
+		const importedRoot = { ...root(), resultPath: path.join(tempDir, "root-run", "workflow-result.json") };
+		writeJson(path.join(importedRoot.asyncDir, "status.json"), {
+			runId: importedRoot.runId,
+			mode: "single",
+			state: "complete",
+			sessionId: "session-a",
+			startedAt: 1,
+			steps: [{ agent: "worker", status: "complete" }],
+		});
+		writePendingAsyncResultFile(importedRoot.resultPath, {
+			id: importedRoot.runId,
+			runId: importedRoot.runId,
+			sessionId: "session-a",
+			state: "complete",
+			success: true,
+			results: [{ agent: "worker", output: "pending root output", success: true }],
+		});
+
+		const result = await waitForImportedAsyncRoot(importedRoot, { pollIntervalMs: 1, terminalResultGraceMs: 0 });
+
+		assert.equal(result.output, "pending root output");
+		assert.equal(result.exitCode, 0);
 	});
 
 	it("waits for a running async child to write its terminal result", async () => {

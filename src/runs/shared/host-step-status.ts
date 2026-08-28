@@ -34,6 +34,7 @@ const HOST_STEP_FIELDS = new Set([
 	"target",
 	"freshness",
 	"reportPath",
+	"exitCode",
 	"updatedAt",
 	"deadlineAt",
 ]);
@@ -75,7 +76,7 @@ export function assertHostStepNode(value: unknown, source = "status"): asserts v
 	if (unknownFields.length > 0) throw new Error(`Invalid host step '${source}': unsupported fields: ${unknownFields.join(", ")}.`);
 	if (value.version !== 1) throw new Error(`Invalid host step '${source}': version must be 1.`);
 	if (value.kind !== "host-step") throw new Error(`Invalid host step '${source}': kind must be 'host-step'.`);
-	if (value.monitorKind !== "ci" && value.monitorKind !== "gate") throw new Error(`Invalid host step '${source}': monitorKind must be 'ci' or 'gate'.`);
+	if (value.monitorKind !== "command" && value.monitorKind !== "ci" && value.monitorKind !== "gate") throw new Error(`Invalid host step '${source}': monitorKind must be 'command', 'ci', or 'gate'.`);
 	assertBoundedString(value.id, "id", HOST_STEP_MAX_ID_CHARS, source, true);
 	assertBoundedString(value.label, "label", HOST_STEP_MAX_LABEL_CHARS, source, true);
 	assertBoundedString(value.role, "role", HOST_STEP_MAX_ROLE_CHARS, source);
@@ -98,6 +99,9 @@ export function assertHostStepNode(value: unknown, source = "status"): asserts v
 	assertBoundedString(value.reportPath, "reportPath", HOST_STEP_MAX_REPORT_PATH_CHARS, source);
 	const reportName = hostStepReportName(value.reportPath);
 	if (value.reportPath !== undefined && (!reportName || reportName === "." || reportName === "..")) throw new Error(`Invalid host step '${source}': reportPath must name a report.`);
+	if (value.exitCode !== undefined && value.exitCode !== null && (typeof value.exitCode !== "number" || !Number.isSafeInteger(value.exitCode) || value.exitCode < 0)) throw new Error(`Invalid host step '${source}': exitCode must be a non-negative safe integer or null.`);
+	if (value.monitorKind !== "command" && value.exitCode !== undefined) throw new Error(`Invalid host step '${source}': exitCode is only valid for command steps.`);
+	if ((value.state === "pending" || value.state === "running") && value.exitCode !== undefined) throw new Error(`Invalid host step '${source}': exitCode is only valid after command settlement.`);
 	assertTimestamp(value.updatedAt, "updatedAt", source, true);
 	assertTimestamp(value.deadlineAt, "deadlineAt", source);
 }

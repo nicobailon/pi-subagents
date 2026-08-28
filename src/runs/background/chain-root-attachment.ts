@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
-import { resultFilePath } from "./result-files.ts";
+import * as path from "node:path";
+import { resultFilePath, resultPayloadPathForSessionRun } from "./result-files.ts";
 import type { AcceptanceLedger, ArtifactPaths, AsyncStatus, CostSummary, EffectsProjection, ExecutionProjection, ModelAttempt } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 
@@ -86,6 +87,13 @@ function readResultFile(resultPath: string): AsyncResultFile | undefined {
 		}
 		throw error;
 	}
+}
+
+function readImportedResultFile(root: ImportedAsyncRoot, status: AsyncStatus | null): AsyncResultFile | undefined {
+	const direct = readResultFile(root.resultPath);
+	if (direct || !status?.sessionId) return direct;
+	const indexedPath = resultPayloadPathForSessionRun(path.dirname(root.resultPath), status.sessionId, root.runId);
+	return indexedPath ? readResultFile(indexedPath) : undefined;
 }
 
 function selectedStatusStep(status: AsyncStatus | null, index: number): NonNullable<AsyncStatus["steps"]>[number] | undefined {
@@ -215,7 +223,7 @@ export async function waitForImportedAsyncRoot(
 	for (;;) {
 		const status = readStatus(root.asyncDir);
 		if (options.shouldAbort?.()) return outputFromTimeout(root, status, options.timeoutMessage ?? "Subagent timed out.");
-		const result = readResultFile(root.resultPath);
+		const result = readImportedResultFile(root, status);
 		if (result) return buildImportedResult(root, status, result);
 		if (isTerminalStatus(status, root.index)) {
 			terminalSince ??= now();

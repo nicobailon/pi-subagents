@@ -57,6 +57,7 @@ export interface RunnerSubagentStep {
 	inheritSkills: boolean;
 	skills?: string[];
 	outputPath?: string;
+	outputClaimPath?: string;
 	/** Defer the authoritative output instruction until a dynamic fanout item is materialized. */
 	namespaceOutputPath?: boolean;
 	outputMode?: "inline" | "file-only";

@@ -113,6 +113,7 @@ describe("external CLI async lifecycle", () => {
 		assert.deepEqual(resultFilesForSession(dir, "session-external"), ["result.json"]);
 		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.equal(result.success, true);
+		assert.equal(result.results[0].output, "ok");
 	});
 
 	it("mirrors a child into Orca without replacing its configured runner", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {

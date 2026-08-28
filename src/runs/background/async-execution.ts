@@ -230,6 +230,7 @@ interface AsyncSingleParams {
 	reads?: string[] | false;
 	outputMode?: "inline" | "file-only";
 	outputBaseDir?: string;
+	outputClaimPath?: string;
 	agentContract?: AgentContract;
 	structuredOutputSchema?: JsonSchemaObject;
 	modelOverride?: string;
@@ -1817,6 +1818,7 @@ export function executeAsyncSingle(
 						inheritSkills: agentConfig.inheritSkills,
 						skills: resolvedSkills.map((r) => r.name),
 						outputPath,
+						...(params.outputClaimPath ? { outputClaimPath: params.outputClaimPath } : {}),
 						outputMode,
 						...(!externalRunner && sessionFile ? { sessionFile } : {}),
 						maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),

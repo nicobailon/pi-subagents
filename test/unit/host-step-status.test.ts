@@ -27,7 +27,7 @@ function hostStep(overrides: Partial<HostStepNodeV1> = {}): HostStepNodeV1 {
 }
 
 describe("host step status", () => {
-	it("validates the explicit CI/gate contract and maps terminal states to graph status", () => {
+	it("validates host monitor states and command exit evidence", () => {
 		const running = parseHostStepNode(hostStep({ monitorKind: "ci" }), "fixture");
 		assert.equal(running.monitorKind, "ci");
 		assert.equal(hostStepWorkflowNode(running).status, "running");
@@ -36,6 +36,7 @@ describe("host step status", () => {
 		assert.equal(hostStepWorkflowNode(hostStep({ state: "done", verdict: "fail" })).status, "failed");
 		assert.equal(hostStepWorkflowNode(hostStep({ state: "cancelled" })).status, "stopped");
 		assert.equal(hostStepWorkflowNode(hostStep({ state: "error" })).status, "failed");
+		assert.equal(parseHostStepNode(hostStep({ monitorKind: "command", state: "done", verdict: "pass", exitCode: 0 })).exitCode, 0);
 	});
 
 	it("rejects unbounded or incomplete terminal data", () => {
@@ -44,6 +45,8 @@ describe("host step status", () => {
 		assert.throws(() => assertHostStepNode(hostStep({ state: "running", verdict: "pass" }), "fixture"), /verdict is only valid/);
 		assert.throws(() => assertHostStepNode(hostStep({ state: "done", verdict: "inconclusive", freshness: {} as HostStepNodeV1["freshness"] }), "fixture"), /expected/);
 		assert.throws(() => assertHostStepNode(hostStep({ state: "done", verdict: "pass", freshness: { expectedRef: "head", stale: true } }), "fixture"), /stale freshness/);
+		assert.throws(() => assertHostStepNode(hostStep({ exitCode: 1 }), "fixture"), /only valid for command/);
+		assert.throws(() => assertHostStepNode(hostStep({ monitorKind: "command", exitCode: 1 }), "fixture"), /only valid after command settlement/);
 	});
 
 	it("upserts through the host-owned persistence callback without touching legacy child steps", () => {

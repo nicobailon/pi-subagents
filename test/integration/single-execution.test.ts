@@ -876,6 +876,213 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(fs.readdirSync(tempDir).sort(), before);
 	});
 
+	it("runs a workflow host command without launching a child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const scriptPath = path.join(tempDir, "host-command.cjs");
+		fs.writeFileSync(scriptPath, `process.stdout.write("host command passed\\n");`);
+		const executor = makeExecutor([makeAgent("echo")]);
+		const result = await executor.executePublic(
+			"host-command",
+			{
+				async: false,
+				output: "reports/host-command.log",
+				workflowScript: `return await runs.host("tests", { kind: "command", command: ${JSON.stringify(`${JSON.stringify(process.execPath)} ${JSON.stringify(scriptPath)}`)}, timeoutMs: 5000, output: "reports/host-command.log", role: "ci", provider: "local" });`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "host command workflow failed");
+		assert.equal(mockPi.callCount(), 0);
+		const savedOutput = fs.readFileSync(path.join(tempDir, "reports", "host-command.log"), "utf8");
+		assert.match(savedOutput, /host command passed/);
+		assert.doesNotMatch(savedOutput, /Workflow completed/);
+		assert.deepEqual(result.details.workflow?.receipt?.hostSteps?.map(({ monitorKind, state, reportPath, exitCode }) => ({ monitorKind, state, reportPath, exitCode })), [{ monitorKind: "command", state: "done", reportPath: "reports/host-command.log", exitCode: 0 }]);
+
+		const failedScriptPath = path.join(tempDir, "host-command-failed.cjs");
+		fs.writeFileSync(failedScriptPath, `process.stderr.write("host command failed\\n"); process.exit(4);`);
+		const failed = await executor.executePublic(
+			"host-command-failed",
+			{
+				async: false,
+				workflowScript: `return await runs.host("tests", { kind: "command", command: ${JSON.stringify(`${JSON.stringify(process.execPath)} ${JSON.stringify(failedScriptPath)}`)}, timeoutMs: 5000, output: "reports/host-command-failed.log" });`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(failed.isError, true);
+		assert.deepEqual(failed.details.workflow?.receipt?.hostSteps?.map(({ state, reasonCode, exitCode }) => ({ state, reasonCode, exitCode })), [{ state: "error", reasonCode: "command_failed", exitCode: 4 }]);
+	});
+
+	it("rejects a child output claimed by an earlier host command", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const scriptPath = path.join(tempDir, "host-output-owner.cjs");
+		fs.writeFileSync(scriptPath, `process.stdout.write("host owns output\\n");`);
+		const sharedOutput = path.join(tempDir, "reports", "shared.log");
+		const executor = makeExecutor([makeAgent("echo")]);
+		const result = await executor.executePublic(
+			"host-output-collision",
+			{
+				async: false,
+				workflowScript: `await runs.host("tests", { kind: "command", command: ${JSON.stringify(`${JSON.stringify(process.execPath)} ${JSON.stringify(scriptPath)}`)}, timeoutMs: 5000, output: "reports/shared.log" }); return runs.run("child", { agent: "echo", task: "unused", output: ${JSON.stringify(sharedOutput)} });`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.match(result.content[0]?.text ?? "", /output path is already claimed|resolve output to the same path/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("rejects host and child output aliases through symlinks", { skip: !createSubagentExecutor || process.platform === "win32" ? "symlink output aliases are not portable on Windows CI" : undefined }, async () => {
+		const scriptPath = path.join(tempDir, "host-output-alias-owner.cjs");
+		const reportsDir = path.join(tempDir, "reports");
+		fs.mkdirSync(reportsDir);
+		fs.symlinkSync(reportsDir, path.join(tempDir, "linked-reports"), "dir");
+		fs.writeFileSync(scriptPath, `process.stdout.write("host owns output alias\\n");`);
+		const executor = makeExecutor([makeAgent("echo")]);
+		const result = await executor.executePublic(
+			"host-output-alias-collision",
+			{
+				async: false,
+				workflowScript: `await runs.host("tests", { kind: "command", command: ${JSON.stringify(`${JSON.stringify(process.execPath)} ${JSON.stringify(scriptPath)}`)}, timeoutMs: 5000, output: "linked-reports/shared.log" }); return runs.run("child", { agent: "echo", task: "unused", output: ${JSON.stringify(path.join(reportsDir, "shared.log"))} });`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.match(result.content[0]?.text ?? "", /output path is already claimed|resolve output to the same path/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("rejects host output aliases created after claim registration", { skip: !createSubagentExecutor || process.platform === "win32" ? "symlink output aliases are not portable on Windows CI" : undefined }, async () => {
+		const reportsDir = path.join(tempDir, "reports");
+		fs.mkdirSync(reportsDir);
+		const firstScriptPath = path.join(tempDir, "host-output-first.cjs");
+		const aliasScriptPath = path.join(tempDir, "host-output-alias.cjs");
+		fs.writeFileSync(firstScriptPath, `process.stdout.write("first evidence\\n");`);
+		fs.writeFileSync(aliasScriptPath, `const fs = require("node:fs"); fs.rmSync(${JSON.stringify(path.join(tempDir, "late-link"))}, { recursive: true, force: true }); fs.symlinkSync(${JSON.stringify(reportsDir)}, ${JSON.stringify(path.join(tempDir, "late-link"))}, "dir"); process.stdout.write("second evidence\\n");`);
+		const result = await makeExecutor([makeAgent("echo")]).executePublic(
+			"host-output-late-alias-collision",
+			{
+				async: false,
+				workflowScript: `await runs.host("first", { kind: "command", command: ${JSON.stringify(`${JSON.stringify(process.execPath)} ${JSON.stringify(firstScriptPath)}`)}, timeoutMs: 5000, output: "reports/shared.log" }); return await runs.host("second", { kind: "command", command: ${JSON.stringify(`${JSON.stringify(process.execPath)} ${JSON.stringify(aliasScriptPath)}`)}, timeoutMs: 5000, output: "late-link/shared.log" });`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /output path changed after it was claimed/);
+		assert.match(fs.readFileSync(path.join(reportsDir, "shared.log"), "utf-8"), /first evidence/);
+	});
+
+	it("rejects child output aliases created after claim registration", { skip: !createSubagentExecutor || process.platform === "win32" ? "symlink output aliases are not portable on Windows CI" : undefined }, async () => {
+		const reportsDir = path.join(tempDir, "reports");
+		fs.mkdirSync(reportsDir);
+		const sharedOutput = path.join(reportsDir, "shared.log");
+		fs.writeFileSync(sharedOutput, "prior output\n", "utf-8");
+		const lateLink = path.join(tempDir, "late-link");
+		const claimedOutput = path.join(lateLink, "shared.log");
+		const releasePath = path.join(tempDir, "release-child-output");
+		mockPi.onCall({ waitForPath: releasePath, output: "child fallback output" });
+
+		const pending = makeExecutor([makeAgent("echo")]).executePublic(
+			"child-output-late-alias-collision",
+			{
+				async: false,
+				workflowScript: `return await runs.run("child", { agent: "echo", task: "unused", output: ${JSON.stringify(claimedOutput)} });`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		for (let attempt = 0; attempt < 100 && mockPi.callCount() === 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+		if (mockPi.callCount() !== 1) {
+			fs.writeFileSync(releasePath, "go", "utf-8");
+			await pending.catch(() => undefined);
+		}
+		assert.equal(mockPi.callCount(), 1);
+		fs.symlinkSync(reportsDir, lateLink, "dir");
+		fs.writeFileSync(releasePath, "go", "utf-8");
+
+		const result = await pending;
+		const child = (result.details as { results?: Array<{ exitCode?: number; outputSaveError?: string; savedOutputPath?: string }> } | undefined)?.results?.[0];
+		assert.equal(child?.exitCode, 1);
+		assert.match(child?.outputSaveError ?? "", /Output path changed after it was claimed/);
+		assert.equal(child?.savedOutputPath, undefined);
+		assert.equal(fs.readFileSync(sharedOutput, "utf-8"), "prior output\n");
+	});
+
+	it("persists async host command status and receipt evidence", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const scriptPath = path.join(tempDir, "async-host-command.cjs");
+		fs.writeFileSync(scriptPath, `process.stdout.write("async host passed\\n");`);
+		const executor = makeExecutor([makeAgent("echo")]);
+		const result = await executor.execute(
+			"async-host-command",
+			{
+				async: true,
+				mission: false,
+				workflowScript: `return await runs.host("tests", { kind: "command", command: ${JSON.stringify(`${JSON.stringify(process.execPath)} ${JSON.stringify(scriptPath)}`)}, timeoutMs: 5000, output: "reports/async-host.log", role: "ci", provider: "local" });`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.ok(result.details.asyncDir);
+		const statusPath = path.join(result.details.asyncDir!, "status.json");
+		let status: { state?: string; workflowGraph?: { nodes?: Array<{ hostStep?: { monitorKind?: string; state?: string; role?: string; reportPath?: string; exitCode?: number | null; updatedAt?: number; deadlineAt?: number } }> } } = {};
+		for (let attempt = 0; attempt < 100; attempt++) {
+			status = JSON.parse(fs.readFileSync(statusPath, "utf8"));
+			if (status.state === "complete" || status.state === "failed") break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(status.state, "complete");
+		assert.deepEqual(status.workflowGraph?.nodes?.[0]?.hostStep, {
+			version: 1, kind: "host-step", monitorKind: "command", id: "tests", label: "tests", role: "ci", provider: "local", state: "done", verdict: "pass", detail: "async host passed", reportPath: "reports/async-host.log", exitCode: 0,
+			updatedAt: status.workflowGraph?.nodes?.[0]?.hostStep?.updatedAt,
+			deadlineAt: status.workflowGraph?.nodes?.[0]?.hostStep?.deadlineAt,
+		});
+		const receipt = JSON.parse(fs.readFileSync(path.join(result.details.asyncDir!, "workflow-receipt.json"), "utf8")) as { hostSteps?: Array<{ monitorKind?: string; state?: string; reportPath?: string }> };
+		assert.deepEqual(receipt.hostSteps?.map(({ monitorKind, state, reportPath }) => ({ monitorKind, state, reportPath })), [{ monitorKind: "command", state: "done", reportPath: "reports/async-host.log" }]);
+		assert.match(fs.readFileSync(path.join(tempDir, "reports", "async-host.log"), "utf8"), /async host passed/);
+		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true });
+		if (result.details.asyncId) fs.rmSync(path.join(DIRS.results, `${result.details.asyncId}.json`), { force: true });
+
+		const failedScript = path.join(tempDir, "async-host-command-failed.cjs");
+		fs.writeFileSync(failedScript, `process.stderr.write("async host failed\\n"); process.exit(3);`);
+		const failed = await executor.execute(
+			"async-host-command-failed",
+			{
+				async: true,
+				mission: false,
+				workflowScript: `return await runs.host("tests", { kind: "command", command: ${JSON.stringify(`${JSON.stringify(process.execPath)} ${JSON.stringify(failedScript)}`)}, timeoutMs: 5000, output: "reports/async-host-failed.log" });`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.ok(failed.details.asyncDir);
+		const failedStatusPath = path.join(failed.details.asyncDir!, "status.json");
+		let failedStatus: { state?: string; workflowGraph?: { nodes?: Array<{ hostStep?: { state?: string; reasonCode?: string; exitCode?: number | null } }> } } = {};
+		for (let attempt = 0; attempt < 100; attempt += 1) {
+			failedStatus = JSON.parse(fs.readFileSync(failedStatusPath, "utf8"));
+			if (failedStatus.state === "complete" || failedStatus.state === "failed") break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(failedStatus.state, "failed");
+		assert.deepEqual(failedStatus.workflowGraph?.nodes?.map((node) => node.hostStep && { state: node.hostStep.state, reasonCode: node.hostStep.reasonCode, exitCode: node.hostStep.exitCode }), [{ state: "error", reasonCode: "command_failed", exitCode: 3 }]);
+		const failedReceipt = JSON.parse(fs.readFileSync(path.join(failed.details.asyncDir!, "workflow-receipt.json"), "utf8")) as { state?: string; hostSteps?: Array<{ state?: string; reasonCode?: string; exitCode?: number | null }> };
+		assert.equal(failedReceipt.state, "failed");
+		assert.deepEqual(failedReceipt.hostSteps?.map(({ state, reasonCode, exitCode }) => ({ state, reasonCode, exitCode })), [{ state: "error", reasonCode: "command_failed", exitCode: 3 }]);
+		assert.match(fs.readFileSync(path.join(tempDir, "reports", "async-host-failed.log"), "utf8"), /async host failed/);
+		fs.rmSync(failed.details.asyncDir!, { recursive: true, force: true });
+		if (failed.details.asyncId) fs.rmSync(path.join(DIRS.results, `${failed.details.asyncId}.json`), { force: true });
+	});
+
 	it("loads workflowScriptPath from the request cwd for validation without launching", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const requestCwd = path.join(tempDir, "request-cwd");
 		fs.mkdirSync(requestCwd);

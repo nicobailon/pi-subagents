@@ -1510,14 +1510,18 @@ async function runSingleStepInner(
 		}));
 		try { fs.writeFileSync(ctx.outputFile, external.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
 		const resolvedOutput = step.outputPath && external.exitCode === 0
-			? resolveSingleOutput(step.outputPath, external.output, outputSnapshot)
+			? resolveSingleOutput(step.outputPath, external.output, outputSnapshot, step.outputClaimPath)
 			: { fullOutput: external.output };
 		const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, resolvedOutput.fullOutput) : undefined;
+		const exitCode = resolvedOutput.fatalError ? 1 : external.exitCode;
+		const error = resolvedOutput.fatalError && resolvedOutput.saveError
+			? external.error ? `${external.error}\n${resolvedOutput.saveError}` : resolvedOutput.saveError
+			: external.error;
 		const finalizedOutput = finalizeSingleOutput(omitUndefinedProperties({
 			fullOutput: resolvedOutput.fullOutput,
 			outputPath: step.outputPath,
 			outputMode: step.outputMode,
-			exitCode: external.exitCode ?? 1,
+			exitCode: exitCode ?? 1,
 			savedPath: resolvedOutput.savedPath,
 			outputReference,
 			saveError: resolvedOutput.saveError,
@@ -1536,13 +1540,13 @@ async function runSingleStepInner(
 			context: step.context,
 			output: finalizedOutput.displayOutput,
 			outputState: external.output.trim() ? "present" : "absent",
-			exitCode: external.exitCode,
-			error: external.error,
+			exitCode,
+			error,
 			timedOut: external.timedOut,
 			stopped: external.stopped,
 			processSignal: external.processSignal,
 			artifactPaths,
-			outputSaveError: artifactErrors.outputSaveError,
+			outputSaveError: [resolvedOutput.saveError, artifactErrors.outputSaveError].filter(Boolean).join("\n") || undefined,
 			metadataSaveError: artifactErrors.metadataSaveError,
 			runner,
 			externalProcess: external.externalProcess,
@@ -1576,14 +1580,18 @@ async function runSingleStepInner(
 		}));
 		try { fs.writeFileSync(ctx.outputFile, external.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
 		const resolvedOutput = step.outputPath && external.exitCode === 0
-			? resolveSingleOutput(step.outputPath, external.output, outputSnapshot)
+			? resolveSingleOutput(step.outputPath, external.output, outputSnapshot, step.outputClaimPath)
 			: { fullOutput: external.output };
 		const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, resolvedOutput.fullOutput) : undefined;
+		const exitCode = resolvedOutput.fatalError ? 1 : external.exitCode;
+		const error = resolvedOutput.fatalError && resolvedOutput.saveError
+			? external.error ? `${external.error}\n${resolvedOutput.saveError}` : resolvedOutput.saveError
+			: external.error;
 		const finalizedOutput = finalizeSingleOutput(omitUndefinedProperties({
 			fullOutput: resolvedOutput.fullOutput,
 			outputPath: step.outputPath,
 			outputMode: step.outputMode,
-			exitCode: external.exitCode,
+			exitCode: exitCode ?? 1,
 			savedPath: resolvedOutput.savedPath,
 			outputReference,
 			saveError: resolvedOutput.saveError,
@@ -1602,12 +1610,12 @@ async function runSingleStepInner(
 			context: step.context,
 			output: finalizedOutput.displayOutput,
 			outputState: external.output.trim() ? "present" : "absent",
-			exitCode: external.exitCode,
-			error: external.error,
+			exitCode,
+			error,
 			timedOut: external.timedOut,
 			stopped: external.stopped,
 			artifactPaths,
-			outputSaveError: artifactErrors.outputSaveError,
+			outputSaveError: [resolvedOutput.saveError, artifactErrors.outputSaveError].filter(Boolean).join("\n") || undefined,
 			metadataSaveError: artifactErrors.metadataSaveError,
 			runner,
 			externalJob: external.externalJob,
@@ -2075,8 +2083,14 @@ async function runSingleStepInner(
 	const rawOutput = finalResult?.finalOutput ?? "";
 	const outputForPersistence = stripAcceptanceReport(rawOutput);
 	const resolvedOutput = step.outputPath && finalResult?.exitCode === 0
-		? resolveSingleOutput(step.outputPath, outputForPersistence, finalOutputSnapshot)
+		? resolveSingleOutput(step.outputPath, outputForPersistence, finalOutputSnapshot, step.outputClaimPath)
 		: { fullOutput: outputForPersistence };
+	if (resolvedOutput.fatalError) {
+		if (finalResult) {
+			finalResult.exitCode = 1;
+			finalResult.error = finalResult.error ? `${finalResult.error}\n${resolvedOutput.saveError}` : resolvedOutput.saveError;
+		}
+	}
 	const output = stripAcceptanceReport(resolvedOutput.fullOutput);
 	const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, output) : undefined;
 	let outputForSummary = output;
@@ -2217,7 +2231,7 @@ async function runSingleStepInner(
 		contextOverflow: contextOverflow || undefined,
 		totalCost: costSummaryFromAttempts(modelAttempts),
 		artifactPaths,
-		outputSaveError: artifactErrors.outputSaveError,
+		outputSaveError: [resolvedOutput.saveError, artifactErrors.outputSaveError].filter(Boolean).join("\n") || undefined,
 		metadataSaveError: artifactErrors.metadataSaveError,
 		transcriptPath: transcriptWriter ? artifactPaths?.transcriptPath : undefined,
 		transcriptError: transcriptWriter?.getError(),
@@ -2835,6 +2849,7 @@ async function runSubagent(
 	const writeRecoverableStatusResult = (): void => {
 		const state = statusResultState();
 		if (!state || finalResultCommitted || !config.sessionId) return;
+		if ((state as string) === "complete") return;
 		const now = statusPayload.endedAt ?? statusPayload.lastUpdate ?? Date.now();
 		const summary = statusResultSummary(state);
 		runPersistence.write(resultPath, omitUndefinedProperties({
