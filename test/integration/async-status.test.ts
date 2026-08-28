@@ -206,9 +206,13 @@ describe("async status helpers", () => {
 
 			const runs = listAsyncRuns(root, { states: ["running"] });
 			const text = formatAsyncRunList(runs);
-			assert.match(text, /Preflight: v1 · complete · 1 lane/);
-			assert.match(text, /Preflight warnings:/);
-			assert.match(text, /workflow key 'review' launched without a declared lane/);
+			assert.match(text, /Plan: 1 lane · writer/);
+			assert.match(text, /Plan note: 1 preflight mismatch · details available for debug\./);
+			assert.doesNotMatch(text, /key \| mode \| decision \| claims \| expected output \| independence/);
+			assert.doesNotMatch(text, /Preflight warnings:/);
+			assert.doesNotMatch(text, /workflow key 'review' launched without a declared lane/);
+			assert.deepEqual(runs[0]?.preflight, { version: 1, coverage: "complete", lanes: [{ key: "writer", mode: "mutation" }] });
+			assert.deepEqual(runs[0]?.workflow?.preflightWarnings, ["Preflight advisory: workflow key 'review' launched without a declared lane."]);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

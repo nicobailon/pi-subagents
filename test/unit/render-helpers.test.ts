@@ -111,6 +111,16 @@ test("widget render keys keep compact payloads quiet and expanded payloads fresh
 	const nestedVisibleChange = structuredClone(job);
 	nestedVisibleChange.nestedChildren = [{ id: "nested-1", parentRunId: "workflow-1", depth: 1, path: [{ runId: "workflow-1" }], state: "failed", agent: "nested", error: "failed" }];
 	assert.notEqual(widgetRenderKey(nestedVisibleChange), widgetRenderKey(job));
+
+	const preflightJob: AsyncJobState = {
+		...job,
+		preflight: { version: 1, coverage: "complete", lanes: [{ key: "writer", decision: "Implement change" }] },
+		workflow: { trace: [], emits: [], console: [], preflightWarnings: ["first mismatch"] },
+	};
+	const warningDetailChange = structuredClone(preflightJob);
+	warningDetailChange.workflow!.preflightWarnings = ["different mismatch"];
+	assert.equal(widgetRenderKey(warningDetailChange), widgetRenderKey(preflightJob));
+	assert.notEqual(widgetRenderKey(warningDetailChange, true), widgetRenderKey(preflightJob, true));
 });
 
 test("multiline rendering omits two-column graphemes at one-column width", () => {

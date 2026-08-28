@@ -32,7 +32,7 @@ import { formatNestedAggregate } from "../runs/shared/nested-render.ts";
 import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
 import { contextModeBadge, contextModePrefix } from "../runs/shared/context-mode.ts";
 import { buildWorkflowChatProgressRows, type WorkflowChatProgressRow } from "../workflows/chat-progress.ts";
-import { formatWorkflowPreflight, formatWorkflowPreflightWarnings } from "../workflows/workflow-preflight.ts";
+import { formatWorkflowPreflight, formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary, formatWorkflowPreflightWarnings } from "../workflows/workflow-preflight.ts";
 import { encodeAsyncStatusSnapshotWidget } from "../runs/background/async-status-snapshot.ts";
 import { projectAsyncWorkflowRows, type AsyncStatusWorkflowRow } from "../runs/shared/async-status-projection.ts";
 import { hostStepReportName, hostStepVerdictLabel } from "../runs/shared/host-step-status.ts";
@@ -438,8 +438,15 @@ function widgetLaneDetailLines(job: AsyncJobState, theme: Theme): string[] {
 	return lane ? formatLaneProjectionLines(lane, theme, "  ") : [];
 }
 
-function workflowPreflightLines(job: AsyncJobState): string[] {
+function workflowPreflightLines(job: AsyncJobState, expanded = false): string[] {
 	if (job.mode !== "workflow" || !job.preflight) return [];
+	if (!expanded) {
+		const warning = formatWorkflowPreflightWarningSummary(job.workflow?.preflightWarnings, { indent: "  ", hint: "expand for debug" });
+		return [
+			formatWorkflowPreflightPlanSummary(job.preflight, { indent: "  " }),
+			...(warning ? [warning] : []),
+		];
+	}
 	return [
 		...formatWorkflowPreflight(job.preflight, { indent: "  " }).split("\n"),
 		...(job.workflow?.preflightWarnings ? formatWorkflowPreflightWarnings(job.workflow.preflightWarnings, { indent: "  " }).split("\n") : []),
@@ -835,6 +842,8 @@ export function widgetRenderKey(job: AsyncJobState, expanded = false): string {
 		chainStepCount: job.chainStepCount,
 		parallelGroups: job.parallelGroups,
 		workflowHostSteps: projectAsyncWorkflowRows([], job.hostSteps).map(hostStepRenderKey),
+		preflight: expanded ? job.preflight : job.preflight ? formatWorkflowPreflightPlanSummary(job.preflight) : undefined,
+		preflightWarnings: expanded ? job.workflow?.preflightWarnings : job.workflow?.preflightWarnings?.length || undefined,
 		steps: job.steps?.map((step, index) => widgetStepRenderKey(step, index, expanded)),
 		nestedChildren: nestedRenderKey(job.nestedChildren, expanded),
 		lane: laneRenderKey(job),
@@ -1545,7 +1554,7 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 	if (!job.steps?.length) {
 		const lane = projectAsyncLane(job);
 		return [
-			...workflowPreflightLines(job),
+			...workflowPreflightLines(job, expanded),
 			...(lane ? formatLaneProjectionLines(lane, theme, "  ") : []),
 			...hostStepWidgetLines(job, theme, "  "),
 			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
@@ -1555,7 +1564,7 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width, frame);
 	const total = job.stepsTotal ?? job.steps.length;
 	const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
-	const lines: string[] = workflowPreflightLines(job);
+	const lines: string[] = workflowPreflightLines(job, expanded);
 	for (const [index, step] of job.steps.entries()) {
 		lines.push(...foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index + 1, total, expanded, width, frame));
 	}
@@ -2037,7 +2046,7 @@ function workflowOverallState(rows: WorkflowChatProgressRow[], hasTerminalValue:
 	return "running";
 }
 
-function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>, theme: Theme, layout: MainWindowRenderLayout, frame?: number): Component {
+function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>, theme: Theme, layout: MainWindowRenderLayout, frame?: number, expanded = false): Component {
 	const workflow = d.workflow;
 	const rows = workflow ? buildWorkflowChatProgressRows(workflow.trace, d.preflight) : d.preflight ? buildWorkflowChatProgressRows([], d.preflight) : [];
 	const state = workflowOverallState(rows, workflow?.value !== undefined, result.isError);
@@ -2050,6 +2059,7 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 	const rowIndent = mainWindowIndent(layout, 1);
 	c.addChild(new Text(truncLine(`${glyph} ${theme.fg("toolTitle", theme.bold("workflow"))} ${runId} ${theme.fg("dim", "·")} ${d.chatProgress?.repoRelation === "same" ? "same repo" : "other repo"} ${theme.fg("dim", "·")} ${state}`, width), 0, 0));
 	c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Repo   ${repoLabel}`), width), 0, 0));
+	if (d.preflight) c.addChild(new Text(truncLine(theme.fg("dim", formatWorkflowPreflightPlanSummary(d.preflight, { indent: rowIndent })), width), 0, 0));
 	if (phase) c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Phase  ${phase}`), width), 0, 0));
 	if (rows.length === 0) {
 		c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}◦ waiting for workflow child launches`), width), 0, 0));
@@ -2063,7 +2073,7 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 		const duration = row.durationMs !== undefined ? ` ${theme.fg("dim", `· ${formatDuration(row.durationMs)}`)}` : "";
 		const run = row.runId ? ` ${theme.fg("dim", `[${row.runId.slice(0, 8)}]`)}` : "";
 		const error = row.error ? ` ${theme.fg(row.state === "detached" ? "warning" : "error", `· ${compactWorkflowError(row.error)}`)}` : "";
-		const hints = row.preflight ? [
+		const hints = expanded && row.preflight ? [
 			row.preflight.mode ? `mode:${row.preflight.mode}` : undefined,
 			row.preflight.decision ? `decision:${row.preflight.decision}` : undefined,
 			row.preflight.claims?.length ? `claims:${row.preflight.claims.join(",")}` : undefined,
@@ -2072,7 +2082,12 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 		].filter((value): value is string => Boolean(value)).join(" · ") : "";
 		c.addChild(new Text(truncLine(`${rowIndent}${workflowRowGlyph(row, theme, frame)} ${status} ${theme.bold(row.key)}${label}${run}${duration}${error}${hints ? ` ${theme.fg("dim", `· ${hints}`)}` : ""}`, width), 0, 0));
 	}
-	if (workflow?.preflightWarnings?.length) c.addChild(new Text(truncLine(theme.fg("warning", `${rowIndent}Warnings ${workflow.preflightWarnings.length}`), width), 0, 0));
+	if (workflow?.preflightWarnings?.length) {
+		const warningLines = expanded
+			? formatWorkflowPreflightWarnings(workflow.preflightWarnings, { indent: rowIndent }).split("\n")
+			: [formatWorkflowPreflightWarningSummary(workflow.preflightWarnings, { indent: rowIndent, hint: "expand for debug" })];
+		for (const warningLine of warningLines) c.addChild(new Text(truncLine(theme.fg("warning", warningLine), width), 0, 0));
+	}
 	if (workflow?.emits.length) c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Emits  ${workflow.emits.length}`), width), 0, 0));
 	return c;
 }
@@ -2246,7 +2261,7 @@ export function renderSubagentResult(
 	const compact = (component: Component): Component => capCompactMainWindowResult(component, layout, theme, !options.expanded);
 	const d = result.details;
 	if (d?.mode === "workflow" && d.chatProgress?.mode === "live-card" && d.workflow?.value === undefined && (!result.isError || (d.workflow?.trace.length ?? 0) > 0)) {
-		return compact(renderWorkflowChatProgress(d, result, theme, options.expanded ? resolveMainWindowRenderLayout() : layout, frame));
+		return compact(renderWorkflowChatProgress(d, result, theme, options.expanded ? resolveMainWindowRenderLayout() : layout, frame, options.expanded));
 	}
 	if (!d || !d.results.length) {
 		const t = result.content[0];
@@ -2257,9 +2272,12 @@ export function renderSubagentResult(
 		if (d && !options.expanded && !result.isError) {
 			const lines = text.split(/\r?\n/);
 			const firstNonEmptyLine = lines.find((line) => line.trim())?.trim() || "(no output)";
+			const compactLine = d.mode === "workflow" && d.preflight
+				? formatWorkflowPreflightPlanSummary(d.preflight)
+				: firstNonEmptyLine;
 			const c = new Container();
 			const detailIndent = mainWindowIndent(layout, 1);
-			c.addChild(new Text(truncLine(`${contextPrefix}${firstNonEmptyLine} · ${lines.length} lines`, width), 0, 0));
+			c.addChild(new Text(truncLine(`${contextPrefix}${compactLine} · ${lines.length} lines`, width), 0, 0));
 			c.addChild(new Text(truncLine(theme.fg("accent", `${detailIndent}Press ${liveDetailKeyText()} for full output`), width), 0, 0));
 			return compact(c);
 		}

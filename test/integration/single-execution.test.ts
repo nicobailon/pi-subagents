@@ -1204,8 +1204,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			undefined,
 			context,
 		);
-		assert.match(statusResult.content[0]?.text ?? "", /Preflight: v1 · complete · 1 lane/);
-		assert.match(statusResult.content[0]?.text ?? "", /work \| mutation \|/);
+		assert.match(statusResult.content[0]?.text ?? "", /Plan: 1 lane · work/);
+		assert.doesNotMatch(statusResult.content[0]?.text ?? "", /key \| mode \| decision \| claims \| expected output \| independence/);
+		assert.deepEqual(statusResult.details.preflight, { version: 1, coverage: "complete", lanes: [{ key: "work", mode: "mutation", claims: ["src/work.ts"], expectedOutput: "child report" }] });
 		assert.equal(status.steps?.length, 1);
 		assert.deepEqual(status.steps?.map(({ agent, sessionName, label, phase, workflowKey }) => ({ agent, sessionName, label, phase, workflowKey })), [
 			{ agent: "echo", sessionName: "echo: Async work", label: "Run async child", phase: "Execution", workflowKey: "work" },

@@ -142,13 +142,16 @@ function declaredKeys(preflight: WorkflowPreflightV1): Set<string> {
 	return new Set(preflight.lanes.map((lane) => lane.key));
 }
 
-function generatedByLane(entry: WorkflowTraceLike, laneKey: string): boolean {
-	return entry.generatedLaneKey === laneKey && entry.key.startsWith(`${laneKey}.`);
+/**
+ * Treat declared lane keys as plan roots: `lane` is the lane itself and
+ * `lane.stage` is a stage by convention, even without generated provenance.
+ */
+function declaredLaneCoversWorkflowKey(entry: WorkflowTraceLike, laneKey: string): boolean {
+	return entry.key === laneKey || entry.key.startsWith(`${laneKey}.`);
 }
 
 function keyCoveredByDeclaredLane(entry: WorkflowTraceLike, declared: ReadonlySet<string>): boolean {
-	if (declared.has(entry.key)) return true;
-	for (const laneKey of declared) if (generatedByLane(entry, laneKey)) return true;
+	for (const laneKey of declared) if (declaredLaneCoversWorkflowKey(entry, laneKey)) return true;
 	return false;
 }
 
@@ -182,7 +185,7 @@ export function workflowPreflightWarnings(
 	const launched = launchedEntries(trace);
 	const messages = launched.filter((entry) => !keyCoveredByDeclaredLane(entry, declared)).map((entry) => undeclaredWarning(entry.key));
 	if (options.settled === true) {
-		for (const lane of preflight.lanes) if (!launched.some((entry) => entry.key === lane.key || generatedByLane(entry, lane.key))) messages.push(unlaunchedWarning(lane.key));
+		for (const lane of preflight.lanes) if (!launched.some((entry) => declaredLaneCoversWorkflowKey(entry, lane.key))) messages.push(unlaunchedWarning(lane.key));
 	}
 	return warningLimit(messages);
 }
@@ -203,7 +206,15 @@ function laneCell(value: string | undefined): string {
 	return value ?? "—";
 }
 
-/** Render a bounded plain-text table suitable for tool/status/TUI output. */
+const WORKFLOW_PREFLIGHT_PLAN_LABEL_LENGTH = 96;
+
+function planLaneLabel(lane: WorkflowPreflightLaneV1): string {
+	const value = lane.decision?.trim() || lane.key;
+	if (value.length <= WORKFLOW_PREFLIGHT_PLAN_LABEL_LENGTH) return value;
+	return `${value.slice(0, WORKFLOW_PREFLIGHT_PLAN_LABEL_LENGTH - 1).trimEnd()}…`;
+}
+
+/** Render the detailed bounded table reserved for tool output and expanded/debug views. */
 export function formatWorkflowPreflight(preflight: WorkflowPreflightV1 | undefined, options: { indent?: string } = {}): string {
 	if (!preflight) return "";
 	const indent = options.indent ?? "";
@@ -230,6 +241,26 @@ export function formatWorkflowPreflightSummary(preflight: WorkflowPreflightV1 | 
 	const keys = preflight.lanes.slice(0, 4).map((lane) => lane.key).join(", ");
 	const remainder = preflight.lanes.length > 4 ? `, +${preflight.lanes.length - 4}` : "";
 	return `preflight · ${preflight.coverage} · ${preflight.lanes.length} lane${preflight.lanes.length === 1 ? "" : "s"}${keys ? `: ${keys}${remainder}` : ""}`;
+}
+
+/** Render the operator-facing one-line plan shown in routine status views. */
+export function formatWorkflowPreflightPlanSummary(preflight: WorkflowPreflightV1 | undefined, options: { indent?: string } = {}): string {
+	if (!preflight) return "";
+	const indent = options.indent ?? "";
+	const count = preflight.lanes.length;
+	const labels = count === 1
+		? planLaneLabel(preflight.lanes[0]!)
+		: preflight.lanes.slice(0, 4).map((lane) => lane.key).join(", ") + (count > 4 ? `, +${count - 4}` : "");
+	return `${indent}Plan: ${count} lane${count === 1 ? "" : "s"}${labels ? ` · ${labels}` : ""}`;
+}
+
+/** Render a bounded, non-alarming warning for routine status views. */
+export function formatWorkflowPreflightWarningSummary(warnings: readonly string[] | undefined, options: { indent?: string; hint?: string } = {}): string {
+	if (!warnings?.length) return "";
+	const indent = options.indent ?? "";
+	const hint = options.hint ?? "details available for debug";
+	const count = warnings.length;
+	return `${indent}Plan note: ${count} preflight mismatch${count === 1 ? "" : "es"} · ${hint}.`;
 }
 
 export function formatWorkflowPreflightWarnings(warnings: readonly string[] | undefined, options: { indent?: string } = {}): string {

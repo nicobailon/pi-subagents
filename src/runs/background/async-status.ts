@@ -20,7 +20,7 @@ import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summar
 import { assertWorkflowGraphHostSteps, hostStepReportName, hostStepVerdictLabel, validHostStepNodes } from "../shared/host-step-status.ts";
 import { projectAsyncWorkflowRows } from "../shared/async-status-projection.ts";
 import { validateAsyncStatusLaneMetadata } from "../shared/lane-metadata.ts";
-import { formatWorkflowPreflight, formatWorkflowPreflightWarnings } from "../../workflows/workflow-preflight.ts";
+import { formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary } from "../../workflows/workflow-preflight.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -617,8 +617,9 @@ export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active as
 	const lines = [`${heading}: ${runs.length}`, ""];
 	for (const run of runs) {
 		lines.push(`- ${formatRunHeader(run)}`);
-		if (run.preflight) lines.push(...formatWorkflowPreflight(run.preflight, { indent: "  " }).split("\n"));
-		if (run.workflow?.preflightWarnings?.length) lines.push(...formatWorkflowPreflightWarnings(run.workflow.preflightWarnings, { indent: "  " }).split("\n"));
+		if (run.preflight) lines.push(formatWorkflowPreflightPlanSummary(run.preflight, { indent: "  " }));
+		const preflightWarning = formatWorkflowPreflightWarningSummary(run.workflow?.preflightWarnings, { indent: "  " });
+		if (preflightWarning) lines.push(preflightWarning);
 		for (const step of run.steps) {
 			lines.push(`  ${formatStepLine(step)}`);
 			lines.push(...formatNestedRunStatusLines(step.children, { indent: "    ", maxLines: 12 }));

@@ -23,7 +23,7 @@ import { attachRootChildrenToSteps, findNestedRouteForRootId, projectNestedRegis
 import { readMissionBinding } from "../../missions/lifecycle.ts";
 import { formatWorkflowJsonPreview } from "../../workflows/scripted-workflow.ts";
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
-import { formatWorkflowPreflight, formatWorkflowPreflightWarnings } from "../../workflows/workflow-preflight.ts";
+import { formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary } from "../../workflows/workflow-preflight.ts";
 import { formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
 import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 
@@ -512,8 +512,8 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				statusActivityText ? `Activity: ${statusActivityText}` : undefined,
 				steeringText ? `Steering: ${steeringText}` : undefined,
 				`Mode: ${status.mode}`,
-				...(status.preflight ? formatWorkflowPreflight(status.preflight).split("\n") : []),
-				...(status.workflow?.preflightWarnings ? formatWorkflowPreflightWarnings(status.workflow.preflightWarnings).split("\n") : []),
+				...(status.preflight ? [formatWorkflowPreflightPlanSummary(status.preflight)] : []),
+				...(status.workflow?.preflightWarnings?.length ? [formatWorkflowPreflightWarningSummary(status.workflow.preflightWarnings)] : []),
 				runFanoutBudget ? formatRunFanoutBudget(runFanoutBudget) : undefined,
 				status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}${status.workflowKey ? ` (${status.workflowKey})` : ""}` : undefined,
 				status.mode === "workflow" && workflowReturnPreview !== undefined ? `Return: ${workflowReturnPreview}` : undefined,
