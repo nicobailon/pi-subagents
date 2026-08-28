@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Add settings-driven extra agent scan directories with bounded wildcard expansion for user and project discovery. Thanks to [@mystery4f](https://github.com/mystery4f) for #1646.
 - Add bounded `runs.host(...)` command steps to `workflowScript`, with required timeouts, saved output, and host-step status/receipt evidence (#1648).
 - Add bounded, provider-agnostic host-owned CI and gate workflow rows with explicit monitor kinds, terminal verdicts, stale freshness, report pointers, and fail-closed status/receipt projection.
 - Persist bounded workflow lane metadata across child status, terminal receipts, and existing worktree handoff manifests, including display-only worktree paths and branches without adding a lane registry or cleanup authority; write pending worktree ownership evidence before creation to avoid crash orphan gaps.

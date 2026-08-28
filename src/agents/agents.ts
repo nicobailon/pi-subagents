@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
+import { expandHomePath } from "../shared/settings.ts";
 import { KNOWN_FIELDS } from "./agent-serializer.ts";
 import { parseChain, parseJsonChain } from "./chain-serializer.ts";
 import { mergeAgentsForScope } from "./agent-selection.ts";
@@ -181,6 +182,7 @@ type ProjectRootResolution = "nearest" | "git-root";
 interface SubagentSettings {
 	overrides: Record<string, BuiltinAgentOverrideConfig>;
 	providerOverrides: Record<string, Record<string, BuiltinAgentOverrideConfig>>;
+	agentScanDirs?: string[];
 	defaultModel?: string;
 	defaultProvider?: string;
 	defaultThinking?: string;
@@ -1132,6 +1134,9 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		}
 		defaultExtensions = subagentsObject.defaultExtensions.map((item) => item.trim());
 	}
+	const agentScanDirs = Array.isArray(subagentsObject.agentScanDirs)
+		? subagentsObject.agentScanDirs.filter((item): item is string => typeof item === "string")
+		: undefined;
 	const modelScope = parseModelScopeConfig(subagentsObject.modelScope, { filePath });
 
 	const parsed: Record<string, BuiltinAgentOverrideConfig> = {};
@@ -1146,6 +1151,7 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		...(defaultThinking !== undefined ? { defaultThinking } : {}),
 		...(maxThinking !== undefined ? { maxThinking } : {}),
 		...(defaultExtensions !== undefined ? { defaultExtensions } : {}),
+		...(agentScanDirs !== undefined ? { agentScanDirs } : {}),
 		...(disableBuiltins !== undefined ? { disableBuiltins } : {}),
 		...(disableThinking !== undefined ? { disableThinking } : {}),
 		...(modelScope !== undefined ? { modelScope } : {}),
@@ -2278,6 +2284,43 @@ function extraUserAgentDirs(): string[] {
 		.filter((dir) => dir.length > 0);
 }
 
+// settings.json 的 subagents.agentScanDirs：额外 agent 扫描目录。
+// 支持 ~ 展开；仅最后一段通配（星号），例如 ~/.pi/flow/（星号）/agents。
+function settingsAgentScanDirs(settings: SubagentSettings): string[] {
+	const dirs = new Set<string>();
+	for (const entry of settings.agentScanDirs ?? []) {
+		for (const dir of expandAgentScanDirPattern(entry)) {
+			const resolved = path.resolve(expandHomePath(dir));
+			if (fs.existsSync(resolved)) dirs.add(resolved);
+		}
+	}
+	return [...dirs];
+}
+
+function expandAgentScanDirPattern(pattern: string): string[] {
+	const expanded = expandHomePath(pattern.trim());
+	if (!expanded) return [];
+	const wildcard = expanded.indexOf("*");
+	if (wildcard === -1) return [expanded];
+	// 定位通配段：段前斜杠（兼容正/反斜杠书写）与段后斜杠
+	const segmentStart = Math.max(expanded.lastIndexOf("/", wildcard), expanded.lastIndexOf("\\", wildcard));
+	if (segmentStart <= 0) return [];
+	const forwardSlashEnd = expanded.indexOf("/", wildcard);
+	const backslashEnd = expanded.indexOf("\\", wildcard);
+	const segmentEnd = forwardSlashEnd === -1
+		? backslashEnd
+		: backslashEnd === -1
+			? forwardSlashEnd
+			: Math.min(forwardSlashEnd, backslashEnd);
+	const base = expanded.slice(0, segmentStart);
+	const rest = segmentEnd === -1 ? "" : expanded.slice(segmentEnd + 1);
+	if (!fs.existsSync(base)) return [];
+	return fs
+		.readdirSync(base, { withFileTypes: true })
+		.filter((entry) => entry.isDirectory())
+		.map((entry) => path.join(base, entry.name, rest));
+}
+
 export function discoverAgents(cwd: string, scope: AgentScope, preferredModelProvider?: string): AgentDiscoveryResult {
 	const effectiveCwd = path.resolve(cwd);
 	const userDirOld = path.join(getAgentDir(), "agents");
@@ -2305,7 +2348,9 @@ export function discoverAgents(cwd: string, scope: AgentScope, preferredModelPro
 		userSettings, projectSettings, userSettingsPath, projectSettingsPath,
 	);
 
-	const userLoaded = scope === "project" ? [] : [...extraUserAgentDirs(), userDirOld, userDirNew].map((dir, discoveryPriority) => {
+	const userScanDirs = scope === "project" ? [] : settingsAgentScanDirs(userSettings);
+	const projectScanDirs = scope === "user" ? [] : settingsAgentScanDirs(projectSettings);
+	const userLoaded = scope === "project" ? [] : [...extraUserAgentDirs(), ...userScanDirs, userDirOld, userDirNew].map((dir, discoveryPriority) => {
 		const inspection = inspectAgentDefinitionDirectory(dir);
 		directories.push(reportAgentDefinitionDirectory("user", dir, inspection));
 		return loadAgentsFromDir(dir, "user", discoveryPriority, undefined, inspection);
@@ -2319,7 +2364,15 @@ export function discoverAgents(cwd: string, scope: AgentScope, preferredModelPro
 	// existing configured-root resolver found a root; never synthesize cwd paths.
 	const projectInspections = scope === "user" ? new Map<string, AgentDefinitionInspection>() : new Map(projectCandidateDirs.map((dir) => [dir, inspectAgentDefinitionDirectory(dir)]));
 	if (scope !== "user") for (const dir of projectCandidateDirs) directories.push(reportAgentDefinitionDirectory("project", dir, projectInspections.get(dir)!));
-	const projectLoaded = scope === "user" ? [] : projectAgentDirs.map((dir) => loadAgentsFromDir(dir, "project", dir === projectAgentsDir ? 1 : 0, undefined, projectInspections.get(dir)!));
+	const projectScanLoaded = projectScanDirs.map((dir, discoveryPriority) => {
+		const inspection = inspectAgentDefinitionDirectory(dir);
+		directories.push(reportAgentDefinitionDirectory("project", dir, inspection));
+		return loadAgentsFromDir(dir, "project", discoveryPriority, undefined, inspection);
+	});
+	const projectLoaded = scope === "user" ? [] : [
+		...projectScanLoaded,
+		...projectAgentDirs.map((dir) => loadAgentsFromDir(dir, "project", dir === projectAgentsDir ? 1 : 0, undefined, projectInspections.get(dir)!)),
+	];
 	const projectAgents = applyCustomAgentOverrides(
 		applySubagentDefaults(projectLoaded.flatMap((loaded) => loaded.agents), defaultModel, defaultProvider, defaultThinking, defaultExtensions),
 		userSettings, projectSettings, userSettingsPath, projectSettingsPath,
@@ -2389,7 +2442,7 @@ export function discoverAgentsAll(cwd: string, preferredModelProvider?: string):
 		userSettingsPath,
 		projectSettingsPath,
 	);
-	const userLoaded = [...extraUserAgentDirs(), userDirOld, userDirNew]
+	const userLoaded = [...extraUserAgentDirs(), ...settingsAgentScanDirs(userSettings), userDirOld, userDirNew]
 		.map((dir, discoveryPriority) => loadAgentsFromDir(dir, "user", discoveryPriority));
 	const user = applyCustomAgentOverrides(
 		applySubagentDefaults(userLoaded.flatMap((loaded) => loaded.agents), defaultModel, defaultProvider, defaultThinking, defaultExtensions),
@@ -2416,7 +2469,7 @@ export function discoverAgentsAll(cwd: string, preferredModelProvider?: string):
 	);
 	const projectMap = new Map<string, AgentConfig>();
 	const projectAgentDiagnostics: AgentDiscoveryDiagnostic[] = [];
-	for (const dir of projectDirs) {
+	for (const dir of [...settingsAgentScanDirs(projectSettings), ...projectDirs]) {
 		const loaded = loadAgentsFromDir(dir, "project", dir === projectDir ? 1 : 0);
 		projectAgentDiagnostics.push(...loaded.diagnostics);
 		for (const agent of loaded.agents) {

@@ -28,6 +28,7 @@ Discovery notes:
 - Project discovery also reads legacy `.agents/**/*.md` files. If both `.agents/` and the project config agents directory define the same parsed runtime agent name, the project config directory wins.
 - Nested subdirectories are discovered recursively. `.chain.md` files do not define agents.
 - Installed Pi packages can expose agent directories from either `{"pi-subagents":{"agents":["./agents"]}}` or `{"pi":{"subagents":{"agents":["./agents"]}}}` in their package manifest. Package agents load above builtins and below user/project agents.
+- Set `subagents.agentScanDirs` in user or project settings to add read-only agent-definition directories without copying files. Entries support a leading `~` and one wildcard path segment, such as `~/.pi/flow/*/agents`; user entries apply to user scope, project entries apply to project scope, and `both` includes both.
 - Use `agentScope: "user" | "project" | "both"` to control discovery. `both` is the default, and project definitions win runtime-name collisions.
 
 ## Builtin agents
