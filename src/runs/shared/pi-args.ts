@@ -518,11 +518,12 @@ export function resolvePiLaunchToolPlan(
 	}
 	const resolvedMcpSelections = mcpResolution.selections;
 	const resolvedMcpNames = new Set(resolvedMcpSelections.map((selection) => selection.name));
+	const legacyMcpNameCounts = countLegacyUnderscoreMcpToolNames(resolvedMcpSelections);
 	const effectiveMcpSelections = resolvedMcpSelections.filter(
 		(selection) =>
 			!allowedToolSet ||
 			allowedToolSet.has(selection.name) ||
-			isLegacyUnderscoreMcpToolAllowed(selection, allowedToolSet, resolvedMcpNames),
+			isLegacyUnderscoreMcpToolAllowed(selection, allowedToolSet, resolvedMcpNames, legacyMcpNameCounts),
 	);
 	const effectiveMcpTools = effectiveMcpSelections.map(
 		(selection) => selection.name,
@@ -678,13 +679,23 @@ export function resolvePiLaunchToolPlan(
 }
 
 // Capability ceilings persisted before #1685 may still name hyphenated MCP server prefixes with underscores.
+function countLegacyUnderscoreMcpToolNames(selections: readonly ResolvedMcpDirectToolSelection[]): Map<string, number> {
+	const counts = new Map<string, number>();
+	for (const selection of selections) {
+		const legacyName = legacyUnderscoreMcpToolName(selection);
+		if (legacyName !== selection.name) counts.set(legacyName, (counts.get(legacyName) ?? 0) + 1);
+	}
+	return counts;
+}
+
 function isLegacyUnderscoreMcpToolAllowed(
 	selection: ResolvedMcpDirectToolSelection,
 	allowedToolSet: ReadonlySet<string>,
 	resolvedMcpNames: ReadonlySet<string>,
+	legacyMcpNameCounts: ReadonlyMap<string, number>,
 ): boolean {
 	const legacyName = legacyUnderscoreMcpToolName(selection);
-	return legacyName !== selection.name && !resolvedMcpNames.has(legacyName) && allowedToolSet.has(legacyName);
+	return legacyMcpNameCounts.get(legacyName) === 1 && !resolvedMcpNames.has(legacyName) && allowedToolSet.has(legacyName);
 }
 
 function legacyUnderscoreMcpToolName(selection: ResolvedMcpDirectToolSelection): string {

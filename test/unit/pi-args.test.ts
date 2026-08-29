@@ -1411,6 +1411,50 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.deepEqual(JSON.parse(launch.env[MCP_DIRECT_CHILD_TOOLS_ENV]!), ["runtime_a_search"]);
 	});
 
+	it("does not allow ambiguous legacy MCP ceiling aliases", () => {
+		const fixture = createMcpFixture();
+		const definitions = {
+			"runtime-a-b": { command: "runtime-a-b", args: ["--stdio"] },
+			"runtime_a-b": { command: "runtime_a-b", args: ["--stdio"] },
+		};
+		writeJson(path.join(fixture.agentDir, "mcp.json"), { mcpServers: {} });
+		writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
+			version: 1,
+			servers: {
+				"runtime-a-b": { configHash: computeMcpServerHash(definitions["runtime-a-b"]), cachedAt: Date.now(), tools: [{ name: "search" }] },
+				"runtime_a-b": { configHash: computeMcpServerHash(definitions["runtime_a-b"]), cachedAt: Date.now(), tools: [{ name: "search" }] },
+			},
+		});
+		const runtimeSnapshotHost: McpRuntimeSnapshotHost = {
+			events: {
+				emit(_event, request) {
+					const definition = definitions[request.name as keyof typeof definitions];
+					if (!definition) {
+						request.result = { ok: false, error: new Error(`unknown runtime server ${request.name}`) };
+						return;
+					}
+					request.result = { ok: true, snapshot: { name: request.name, definition, runtime: true, persisted: false } };
+				},
+			},
+		};
+
+		const launch = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: ["runtime-a-b", "runtime_a-b"],
+			capabilityCeiling: { version: 1, allowedTools: ["read", "runtime_a_b_search"], denyExtensions: false, sources: ["test"] },
+			runtimeSnapshotHost,
+		});
+
+		assert.equal(launch.args[launch.args.indexOf("--tools") + 1], "read");
+		assert.equal(launch.args.includes("--mcp-config"), false);
+		assert.equal(launch.env[MCP_DIRECT_CHILD_TOOLS_ENV], undefined);
+	});
+
 	it("emits --no-tools for explicit empty tool allowlists", () => {
 		for (const requireReadTool of [false, true]) {
 			const { args, env } = buildPiArgs({
