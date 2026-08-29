@@ -4,6 +4,7 @@
 ## [Unreleased]
 
 ### Changed
+- Align foreground subagent result labels with async widget labels and disambiguate duplicate rows (#1697).
 - Render parallel subagent workflow groups as readable cards with nested agent rows (#1696).
 - Remove repeated one-child async widget status labels and compact progress echoes (#1695).
 - Tighten packaged subagent and council-mode skill guidance around direct one-child launches, composed `workflowScript` runs, generic review validation, pass contracts, and private policy boundaries.

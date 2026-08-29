@@ -311,8 +311,8 @@ describe("renderSubagentResult fork indicator", () => {
 		}, { expanded: false }, theme).render(160).join("\n");
 
 		assert.match(compact, /parallel \[mixed\]/);
-		assert.match(compact, /scout \[fresh\]/);
-		assert.match(compact, /worker \[fork\]/);
+		assert.match(compact, /scan \[fresh\]/);
+		assert.match(compact, /fix \[fork\]/);
 
 		const expanded = renderSubagentResult!({
 			content: [{ type: "text", text: "done" }],
@@ -327,8 +327,8 @@ describe("renderSubagentResult fork indicator", () => {
 		}, { expanded: true }, theme).render(160).join("\n");
 
 		assert.match(expanded, /parallel \[mixed\]/);
-		assert.match(expanded, /scout \[fresh\]/);
-		assert.match(expanded, /worker \[fork\]/);
+		assert.match(expanded, /scan \[fresh\]/);
+		assert.match(expanded, /fix \[fork\]/);
 	});
 
 	it("uses compacted tool-call summaries when messages were stripped", () => {
@@ -453,6 +453,8 @@ describe("renderSubagentResult fork indicator", () => {
 			assert.equal(firstGrapheme(compact), testCase.glyph, `${testCase.name} compact glyph`);
 			assert.equal(firstGrapheme(expanded), testCase.glyph, `${testCase.name} expanded glyph`);
 			assert.match((expanded.split("\n")[0] ?? "").trimEnd(), new RegExp(`reviewer(?: \\| [^·]+)? · ${testCase.label}$`), `${testCase.name} expanded label`);
+			const compactEvidence = { detached: "Detached", stopped: "Stopped", interrupted: "Paused", failed: "Error" }[testCase.name];
+			if (compactEvidence) assert.match(compact, new RegExp(`⎿  ${compactEvidence}`), `${testCase.name} compact evidence`);
 		}
 	});
 
@@ -683,15 +685,15 @@ describe("renderSubagentResult fork indicator", () => {
 		const expanded = renderSubagentResult!(result, { expanded: true }, theme).render(160).join("\n");
 
 		assert.match(compact, /^■ parallel/);
-		assert.match(compact, /■ Agent 3\/5: paused-agent/);
+		assert.match(compact, /■ three/);
 		assert.doesNotMatch(compact, /running agent/);
 		assert.match(expanded, /^■ parallel[^\n]* · detached/);
-		assert.match(expanded, /■ Agent 1\/5: detached-agent[^\n]* · detached/);
-		assert.match(expanded, /■ Agent 2\/5: stopped-agent[^\n]* · stopped/);
-		assert.match(expanded, /■ Agent 3\/5: paused-agent[^\n]* · paused/);
+		assert.match(expanded, /■ one[^\n]* · detached/);
+		assert.match(expanded, /■ two[^\n]* · stopped/);
+		assert.match(expanded, /■ three[^\n]* · paused/);
 		assert.doesNotMatch(expanded, /running agent/);
-		assert.match(expanded, /✗ Agent 4\/5: failed-agent · failed/);
-		assert.match(expanded, /✓ Agent 5\/5: completed-agent · completed/);
+		assert.match(expanded, /✗ four · failed/);
+		assert.match(expanded, /✓ five · completed/);
 	});
 
 	it("renders a stale-running interrupted aggregate as paused", () => {
@@ -848,8 +850,8 @@ describe("renderSubagentResult fork indicator", () => {
 				],
 			},
 		}, { expanded: false }, theme).render(160).join("\n");
-		assert.match(multi, /Agent 1\/2: scout \(claude-haiku-4-5 · thinking low\)/);
-		assert.match(multi, /Agent 2\/2: worker \(gpt-5-mini\)/);
+		assert.match(multi, /scan \(claude-haiku-4-5 · thinking low\)/);
+		assert.match(multi, /fix \(gpt-5-mini\)/);
 
 		const expanded = renderSubagentResult!({
 			content: [{ type: "text", text: "done" }],
@@ -866,10 +868,10 @@ describe("renderSubagentResult fork indicator", () => {
 				}],
 			},
 		}, { expanded: true }, theme).render(160).join("\n");
-		assert.match(expanded, /reviewer \(gpt-5\.5 · thinking high\)/);
+		assert.match(expanded, /review \(gpt-5\.5 · thinking high\)/);
 	});
 
-	it("prefers session names in expanded running multi-result rows", () => {
+	it("strips repeated agent prefixes in expanded running multi-result rows", () => {
 		const sessionName = "reviewer: Review the diff";
 		const widget = renderSubagentResult!({
 			content: [{ type: "text", text: "(running...)" }],
@@ -889,8 +891,8 @@ describe("renderSubagentResult fork indicator", () => {
 		}, { expanded: true }, theme);
 
 		const text = widget.render(160).join("\n");
-		assert.match(text, /Agent 1\/1: reviewer: Review the diff[^\n]* · running/);
-		assert.doesNotMatch(text, /Agent 1\/1: reviewer · running/);
+		assert.match(text, /Review the diff[^\n]* · running/);
+		assert.doesNotMatch(text, /reviewer:\s+Review the diff/);
 	});
 
 	it("keeps running compact result output stable at the same render clock when progress is unchanged", () => {
@@ -1029,14 +1031,14 @@ describe("renderSubagentResult fork indicator", () => {
 		}, { expanded: false }, theme);
 
 		const lines = widget.render(120);
-		const pendingIndex = lines.findIndex((line) => /Step 2: b/.test(line));
+		const pendingIndex = lines.findIndex((line) => /Step 2\/2: second/.test(line));
 		assert.notEqual(pendingIndex, -1);
-		assert.match(lines[pendingIndex]!, /◦ Step 2: b · pending/);
+		assert.match(lines[pendingIndex]!, /◦ Step 2\/2: second · pending/);
 		assert.doesNotMatch(lines[pendingIndex]!, /0ms/);
 		assert.doesNotMatch(lines[pendingIndex + 1] ?? "", /Done \(no text output\)/);
 	});
 
-	it("uses running/done wording and agent fractions for live parallel rendering", () => {
+	it("uses running/done wording and readable labels for live parallel rendering", () => {
 		const widget = renderSubagentResult!({
 			content: [{ type: "text", text: "(running...)" }],
 			details: {
@@ -1076,8 +1078,8 @@ describe("renderSubagentResult fork indicator", () => {
 
 		const text = widget.render(120).join("\n");
 		assert.match(text, /parallel · 2 agents running · 0\/3 done/);
-		assert.match(text, /Agent 3\/3: worker/);
-		assert.doesNotMatch(text, /Step 3: worker/);
+		assert.match(text, /third task/);
+		assert.doesNotMatch(text, /Step 3\/3: worker/);
 		assert.doesNotMatch(text, /Agent 1: worker/);
 	});
 
@@ -1110,7 +1112,7 @@ describe("renderSubagentResult fork indicator", () => {
 		assert.match(text, /parallel · 1 agent running · 1\/3 done/);
 	});
 
-	it("labels active chain parallel groups with chain step and agent fractions", () => {
+	it("labels active chain parallel groups with chain step and readable candidates", () => {
 		const widget = renderSubagentResult!({
 			content: [{ type: "text", text: "running" }],
 			details: {
@@ -1140,8 +1142,9 @@ describe("renderSubagentResult fork indicator", () => {
 
 		const text = widget.render(120).join("\n");
 		assert.match(text, /chain · step 1\/3 · parallel group: 2 agents running · 0\/3 done/);
-		assert.match(text, /Agent 1\/3: scout: Scan the repository/);
-		assert.match(text, /Agent 2\/3: reviewer/);
+		assert.match(text, /Scan the repository/);
+		assert.match(text, /review/);
+		assert.match(text, /Agent 3: agent-3 · pending/);
 		assert.doesNotMatch(text, /Step 1: scout/);
 	});
 
@@ -1185,13 +1188,13 @@ describe("renderSubagentResult fork indicator", () => {
 
 		const text = widget.render(120).join("\n");
 		assert.match(text, /chain · step 2\/3 · parallel group: 2 agents running · 0\/2 done/);
-		assert.match(text, /Agent 1\/2: scout/);
-		assert.match(text, /Agent 2\/2: reviewer/);
+		assert.match(text, /scan/);
+		assert.match(text, /review/);
 		assert.doesNotMatch(text, /planner/);
 		assert.doesNotMatch(text, /Agent 1\/2: planner/);
 	});
 
-	it("uses logical chain progress and agent labels for completed mixed chains", () => {
+	it("uses logical chain progress and readable labels for completed mixed chains", () => {
 		const progress = [
 			{ index: 0, agent: "planner", status: "completed" as const, task: "plan", recentTools: [], recentOutput: [], toolCount: 0, tokens: 0, durationMs: 1 },
 			{ index: 1, agent: "scout", status: "completed" as const, task: "scan", recentTools: [], recentOutput: [], toolCount: 0, tokens: 0, durationMs: 1 },
@@ -1219,10 +1222,10 @@ describe("renderSubagentResult fork indicator", () => {
 
 		const text = widget.render(120).join("\n");
 		assert.match(text, /chain · step 3\/3/);
-		assert.match(text, /Step 1: planner/);
-		assert.match(text, /Agent 1\/2: scout: Scan completed targets/);
-		assert.match(text, /Agent 2\/2: reviewer/);
-		assert.match(text, /Step 3: writer/);
+		assert.match(text, /Step 1\/3: plan/);
+		assert.match(text, /Step 2\/3: parallel group/);
+		assert.match(text, /Scan completed targets/);
+		assert.match(text, /Step 3\/3: write/);
 		assert.doesNotMatch(text, /step 4\/4/);
 	});
 
@@ -1247,7 +1250,159 @@ describe("renderSubagentResult fork indicator", () => {
 
 		const text = widget.render(120).join("\n");
 		assert.match(text, /chain · step 1\/3/);
-		assert.match(text, /Step 1: scout/);
+		assert.match(text, /Step 1\/3: scan/);
 		assert.doesNotMatch(text, /parallel group:/);
 	});
+
+	it("keeps single-child foreground labels aligned across summary and result views", () => {
+		const result = {
+			content: [{ type: "text" as const, text: "done" }],
+			details: {
+				mode: "single" as const,
+				results: [{
+					agent: "reviewer",
+					sessionName: "reviewer: Review the current docs",
+					task: "Review the current docs",
+					exitCode: 0,
+					messages: [],
+					usage: emptyUsage,
+				}],
+			},
+		};
+
+		const summary = renderSubagentSummary!(result, {}, theme).render(180).join("\n");
+		assert.match(summary, /reviewer/);
+		assert.doesNotMatch(summary, /Step 1\/1/);
+		assert.doesNotMatch(summary, /Agent 1\/1/);
+		assert.doesNotMatch(summary, /reviewer:\s+Review the current docs/);
+
+		for (const expanded of [false, true]) {
+			const text = renderSubagentResult!(result, { expanded }, theme).render(180).join("\n");
+			assert.match(text, /reviewer/, expanded ? "expanded final result" : "compact final result");
+			assert.doesNotMatch(text, /Step 1\/1/);
+			assert.doesNotMatch(text, /Agent 1\/1/);
+			assert.doesNotMatch(text, /reviewer:\s+Review the current docs/);
+		}
+	});
+
+	it("renders foreground top-level parallel results with readable group labels", () => {
+		const result = {
+			content: [{ type: "text" as const, text: "running" }],
+			details: {
+				mode: "parallel" as const,
+				totalSteps: 2,
+				results: [
+					{
+						agent: "scout",
+						sessionName: "scout: Gather context",
+						task: "Gather context",
+						exitCode: 0,
+						messages: [],
+						usage: emptyUsage,
+						progress: { index: 0, agent: "scout", status: "running" as const, task: "Gather context", recentTools: [], recentOutput: [], toolCount: 0, tokens: 0, durationMs: 0 },
+					},
+					{
+						agent: "reviewer",
+						sessionName: "reviewer · Review diff",
+						task: "Review diff",
+						exitCode: 0,
+						messages: [],
+						usage: emptyUsage,
+						progress: { index: 1, agent: "reviewer", status: "running" as const, task: "Review diff", recentTools: [], recentOutput: [], toolCount: 0, tokens: 0, durationMs: 0 },
+					},
+				],
+			},
+		};
+
+		for (const expanded of [false, true]) {
+			const text = renderSubagentResult!(result, { expanded }, theme).render(220).join("\n");
+			assert.match(text, /Gather context/);
+			assert.match(text, /Review diff/);
+			assert.doesNotMatch(text, /Agent \d+\/2:/);
+			assert.doesNotMatch(text, /scout:\s+Gather context/);
+			assert.doesNotMatch(text, /reviewer\s*[·:]\s+Review diff/);
+		}
+	});
+
+	it("keeps logical Step n\/m labels for foreground chain parallel groups", () => {
+		const result = {
+			content: [{ type: "text" as const, text: "done" }],
+			details: {
+				mode: "chain" as const,
+				chainAgents: ["planner", "[scout+reviewer]", "writer"],
+				totalSteps: 3,
+				results: [
+					{ agent: "planner", task: "Plan", exitCode: 0, messages: [], usage: emptyUsage },
+					{ agent: "scout", sessionName: "scout: Gather context", task: "Gather context", exitCode: 0, messages: [], usage: emptyUsage },
+					{ agent: "reviewer", sessionName: "reviewer: Review diff", task: "Review diff", exitCode: 0, messages: [], usage: emptyUsage },
+					{ agent: "writer", task: "Write", exitCode: 0, messages: [], usage: emptyUsage },
+				],
+			},
+		};
+
+		for (const expanded of [false, true]) {
+			const text = renderSubagentResult!(result, { expanded }, theme).render(220).join("\n");
+			assert.match(text, /Step 2\/3: parallel group/);
+			assert.match(text, /Gather context/);
+			assert.match(text, /Review diff/);
+			assert.doesNotMatch(text, /scout:\s+Gather context/);
+			assert.doesNotMatch(text, /reviewer:\s+Review diff/);
+		}
+	});
+
+	it("keeps duplicate unlabeled foreground agents distinguishable", () => {
+		const result = {
+			content: [{ type: "text" as const, text: "done" }],
+			details: {
+				mode: "parallel" as const,
+				totalSteps: 2,
+				results: [
+					{ agent: "reviewer", task: "Inspect the same files", exitCode: 0, messages: [], usage: emptyUsage },
+					{ agent: "reviewer", task: "Inspect the same files", exitCode: 0, messages: [], usage: emptyUsage },
+				],
+			},
+		};
+
+		for (const expanded of [false, true]) {
+			const text = renderSubagentResult!(result, { expanded }, theme).render(180).join("\n");
+			const rows = text.split("\n").filter((line) => /Inspect the same files/.test(line) && !/task:/.test(line));
+			assert.equal(rows.length, 2);
+			assert.notEqual(rows[0], rows[1], "duplicate unlabeled rows need stable disambiguators");
+			for (const row of rows) {
+				assert.equal(row.match(/Inspect the same files/g)?.length, 1, "duplicate rows should render the candidate only once");
+			}
+		}
+	});
+
+	it("keeps final-result failure and output evidence on dedicated lines", () => {
+		const result = {
+			content: [{ type: "text" as const, text: "failed" }],
+			details: {
+				mode: "parallel" as const,
+				totalSteps: 1,
+				results: [{
+					agent: "reviewer",
+					sessionName: "reviewer: Review the current docs",
+					task: "[Write to: /tmp/review.md] Review the current docs",
+					exitCode: 1,
+					error: "Review failed after checking the current docs",
+					messages: [],
+					usage: emptyUsage,
+					artifactPaths: { outputPath: "/tmp/review-artifact.md" },
+					children: [nestedChild("failed-child", "failed")],
+				}],
+			},
+		};
+
+		for (const expanded of [false, true]) {
+			const lines = renderSubagentResult!(result, { expanded }, theme).render(180);
+			const text = lines.join("\n");
+			assert.ok(lines.some((line) => /^\s+output: \/tmp\/review\.md$/.test(line)), "output evidence should be its own line");
+			assert.ok(lines.some((line) => new RegExp(`^\\s+${expanded ? "artifacts" : "output"}: \/tmp\/review-artifact\\.md$`).test(line)), "artifact evidence should be its own line");
+			if (expanded) assert.match(text, /failed-child · failed/, "nested failure evidence should remain visible");
+			assert.ok(lines.some((line) => /(?:Error|error): Review failed after checking the current docs/.test(line)), expanded ? "expanded result should keep failure evidence" : "compact result should keep failure evidence");
+			assert.doesNotMatch(text, /Agent 1\/1: reviewer.*(?:Error|error):/);
+		}
+	});
+
 });

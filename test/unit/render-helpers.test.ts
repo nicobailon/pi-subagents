@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { row, shouldSuppressSingleStep, stripRepeatedAgentPrefix } from "../../src/tui/render-helpers.ts";
+import { row, shouldSuppressSingleStep, stripRepeatedAgentPrefix, withDuplicateLabelDiscriminators } from "../../src/tui/render-helpers.ts";
 import { buildWidgetLines, renderSubagentResult, truncLine, widgetRenderKey } from "../../src/tui/render.ts";
 import type { AsyncJobState } from "../../src/shared/types.ts";
 
@@ -54,6 +54,25 @@ test("shouldSuppressSingleStep uses logical totals instead of materialized step 
 	assert.equal(shouldSuppressSingleStep(2, 1), false);
 	assert.equal(shouldSuppressSingleStep(undefined, 2), false);
 	assert.equal(shouldSuppressSingleStep(undefined, undefined), false);
+});
+
+test("withDuplicateLabelDiscriminators preserves unique labels and stable duplicate fractions", () => {
+	const rows = [
+		{ index: 0, displayName: "Gather context" },
+		{ index: 1, displayName: "Review diff" },
+		{ index: 2, displayName: "Review diff" },
+	];
+
+	assert.deepEqual(
+		withDuplicateLabelDiscriminators(rows, 3).map((row) => row.rowLabel),
+		["Gather context", "Agent 2/3: Review diff", "Agent 3/3: Review diff"],
+	);
+
+	const reordered = [rows[2]!, rows[0]!, rows[1]!];
+	assert.deepEqual(
+		withDuplicateLabelDiscriminators(reordered, 3).map((row) => row.rowLabel),
+		["Agent 3/3: Review diff", "Gather context", "Agent 2/3: Review diff"],
+	);
 });
 
 test("row normalizes multiline content before clipping", () => {
@@ -265,7 +284,7 @@ test("compact multi-result cards prefer bounded workflow labels over raw tasks",
 	assert.match(text, /Ctrl\+Alt\+F Fleet/);
 });
 
-test("compact chain rendering uses workflow graph spans for dynamic fanout results", () => {
+test("compact chain rendering uses workflow graph labels and parallel groups", () => {
 	const component = renderSubagentResult({
 		content: [{ type: "text", text: "done" }],
 		details: {
@@ -298,10 +317,11 @@ test("compact chain rendering uses workflow graph spans for dynamic fanout resul
 	}, { expanded: false }, theme as any);
 
 	const text = componentText(component);
-	assert.match(text, /Step 1: scout/);
-	assert.match(text, /Agent 1\/2: reviewer/);
-	assert.match(text, /Agent 2\/2: reviewer/);
-	assert.match(text, /Step 3: writer/);
+	assert.match(text, /Step 1\/3: Scout/);
+	assert.match(text, /Step 2\/3: parallel group \(Review targets\)/);
+	assert.match(text, /Review A/);
+	assert.match(text, /Review B/);
+	assert.match(text, /Step 3\/3: Writer/);
 });
 
 test("compact chain rendering shows failed zero-child dynamic fanout groups", () => {
@@ -337,10 +357,10 @@ test("compact chain rendering shows failed zero-child dynamic fanout groups", ()
 	const text = componentText(component);
 	assert.match(text, /step 1\/3/);
 	assert.doesNotMatch(text, /step 3\/3/);
-	assert.match(text, /Step 1: scout/);
-	assert.match(text, /Step 2: Review targets .* failed/);
+	assert.match(text, /Step 1\/3: Scout/);
+	assert.match(text, /Step 2\/3: parallel group \(Review targets\) · failed/);
 	assert.match(text, /No review targets materialized/);
-	assert.match(text, /Step 3: writer .* pending/);
+	assert.match(text, /Step 3\/3: writer .* pending/);
 });
 
 test("expanded chain rendering uses workflow graph spans for dynamic fanout results", () => {
@@ -376,10 +396,11 @@ test("expanded chain rendering uses workflow graph spans for dynamic fanout resu
 	}, { expanded: true }, theme as any);
 
 	const text = componentText(component);
-	assert.match(text, /Step 1: scout/);
-	assert.match(text, /Agent 1\/2: reviewer/);
-	assert.match(text, /Agent 2\/2: reviewer/);
-	assert.match(text, /Step 3: writer/);
+	assert.match(text, /Step 1\/3: Scout/);
+	assert.match(text, /Step 2\/3: parallel group \(Review targets\)/);
+	assert.match(text, /Review A/);
+	assert.match(text, /Review B/);
+	assert.match(text, /Step 3\/3: Writer/);
 });
 
 test("compact multi-result rendering shows total cost in the header", () => {
@@ -396,7 +417,7 @@ test("compact multi-result rendering shows total cost in the header", () => {
 	assert.match(text, /in:30 out:12 \$0\.0400/);
 });
 
-test("static sequential and static parallel chain rendering keep existing labels", () => {
+test("static sequential and static parallel chain rendering keep logical labels", () => {
 	const sequential = componentText(renderSubagentResult({
 		content: [{ type: "text", text: "done" }],
 		details: {
@@ -406,8 +427,8 @@ test("static sequential and static parallel chain rendering keep existing labels
 			results: [result("scout", "a"), result("writer", "b")],
 		},
 	}, { expanded: false }, theme as any));
-	assert.match(sequential, /Step 1: scout/);
-	assert.match(sequential, /Step 2: writer/);
+	assert.match(sequential, /Step 1\/2: scout task/);
+	assert.match(sequential, /Step 2\/2: writer task/);
 
 	const parallel = componentText(renderSubagentResult({
 		content: [{ type: "text", text: "done" }],
@@ -418,13 +439,14 @@ test("static sequential and static parallel chain rendering keep existing labels
 			results: [result("scout", "a"), result("reviewer", "b"), result("auditor", "c"), result("writer", "d")],
 		},
 	}, { expanded: false }, theme as any));
-	assert.match(parallel, /Step 1: scout/);
-	assert.match(parallel, /Agent 1\/2: reviewer/);
-	assert.match(parallel, /Agent 2\/2: auditor/);
-	assert.match(parallel, /Step 3: writer/);
+	assert.match(parallel, /Step 1\/3: scout task/);
+	assert.match(parallel, /Step 2\/3: parallel group/);
+	assert.match(parallel, /reviewer task/);
+	assert.match(parallel, /auditor task/);
+	assert.match(parallel, /Step 3\/3: writer task/);
 });
 
-test("expanded simple chain summaries prefer result session names", () => {
+test("expanded simple chain summaries strip repeated agent prefixes", () => {
 	const expanded = componentText(renderSubagentResult({
 		content: [{ type: "text", text: "done" }],
 		details: {
@@ -434,8 +456,9 @@ test("expanded simple chain summaries prefer result session names", () => {
 			results: [{ ...result("worker", "done"), sessionName: "  worker: named task  " }],
 		},
 	}, { expanded: true }, theme as any));
-	assert.match(expanded, /Step 1: worker: named task/);
-	assert.doesNotMatch(expanded, /Step 1: chain-label/);
+	assert.match(expanded, /named task/);
+	assert.doesNotMatch(expanded, /worker:\s+named task/);
+	assert.doesNotMatch(expanded, /Step 1\/1/);
 });
 
 test("main-window renderer config removes compact result indentation without changing status glyphs", () => {
@@ -449,8 +472,8 @@ test("main-window renderer config removes compact result indentation without cha
 
 	const text = componentText(component);
 	assert.match(text, /^✗ parallel/m);
-	assert.match(text, /^✓ Agent 1\/2: scout/m);
-	assert.match(text, /^✗ Agent 2\/2: reviewer/m);
+	assert.match(text, /^✓ scout task/m);
+	assert.match(text, /^✗ reviewer task/m);
 	assert.match(text, /^⎿  Error: failed/m);
 });
 

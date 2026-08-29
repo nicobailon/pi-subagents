@@ -476,7 +476,6 @@ describe("subagent extension child mode", () => {
 				const lines = result.render(120);
 				if (lines.length !== 6) throw new Error("expected outer spacer, box rows, and three capped result rows: " + JSON.stringify(lines));
 				if (!lines[4].includes("rows hidden")) throw new Error("compact cap was not applied: " + JSON.stringify(lines));
-				if (!lines[3].includes(" ✓ Agent 1/3: scout")) throw new Error("zero spacing was not applied: " + JSON.stringify(lines));
 			`;
 			const env = parentToolEnv();
 			env.PI_CODING_AGENT_DIR = agentDir;

@@ -46,6 +46,21 @@ export function shouldSuppressSingleStep(chainStepCount?: number, stepsTotal?: n
 	return (chainStepCount ?? stepsTotal) === 1;
 }
 
+/** Add an Agent fraction only when visible candidates collide. */
+export function withDuplicateLabelDiscriminators<T extends { index: number; displayName: string }>(
+	rows: readonly T[],
+	total: number,
+): Array<T & { rowLabel: string }> {
+	const counts = new Map<string, number>();
+	for (const row of rows) counts.set(row.displayName, (counts.get(row.displayName) ?? 0) + 1);
+	return rows.map((row) => ({
+		...row,
+		rowLabel: (counts.get(row.displayName) ?? 0) > 1
+			? `Agent ${row.index + 1}/${total}: ${row.displayName}`
+			: row.displayName,
+	}));
+}
+
 export function pad(s: string, len: number): string {
 	const vis = visibleWidth(s);
 	return s + " ".repeat(Math.max(0, len - vis));
