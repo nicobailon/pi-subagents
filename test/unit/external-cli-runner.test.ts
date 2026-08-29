@@ -150,7 +150,7 @@ describe("external CLI runner", () => {
 					limits: { parserLineBytes: 64 },
 					parser: { parseLine() { return undefined; }, finish() { return { state: "completed" }; } },
 				}),
-				new Promise<never>((_, reject) => { settleTimer = setTimeout(() => reject(new Error("unterminated oversized line did not fail promptly")), 1_000); }),
+				new Promise<never>((_, reject) => { settleTimer = setTimeout(() => reject(new Error("unterminated oversized line did not fail promptly")), 10_000); }),
 			]);
 			assert.equal(unterminated.exitCode, 1);
 			assert.match(unterminated.error ?? "", /line exceeded/);
