@@ -31,7 +31,7 @@ For durable evidence, copy only the final summary to session memory, a PR body/c
 
 ## Best Practices
 
-- Run subagents asynchronously by default through `workflowScript`; use `async: false` only when the parent must block. See `references/execution-controls.md` → Async/background for wait semantics.
+- Run subagents asynchronously by default; direct one-child execution is enough for a simple disposable child, and `workflowScript` is the composition surface for keyed, parallel, retained, or multi-step work. Use `async: false` only when the parent must block. See `references/execution-controls.md` → Async/background for wait semantics.
 - Keep one writer per cwd/worktree. Parallelize reading, review, and validation; concurrent writers need isolated worktrees. Give every child a cold-start packet with its goal, target/ref, authority, context, success criteria, validation, output, and stop rules.
 - Keep tasks narrow and standalone; do not rely on issue numbers, broad globs, or supervisor round-trips to supply missing context.
 - Keep authority with the parent. Escalate unapproved product, scope, architecture, merge, credential, or release decisions; checks, receipts, and review bots are evidence, not authority.
@@ -47,6 +47,7 @@ This reference keeps cross-cutting policy and failure handling. Load the matchin
 | --- | --- |
 | Execution syntax, lifecycle, async/wait, missions, controls, watchdog, or worktrees | [`references/execution-controls.md`](execution-controls.md) |
 | Role choice, prompt contracts, review/research/cleanup techniques, or model tiering | [`references/prompting-and-roles.md`](prompting-and-roles.md) |
+| Fresh review, validation, gate failures, finding disposition, and final delivery checks | [`references/review-and-validation.md`](review-and-validation.md) |
 | Independent lanes, repositories, worktrees, and handoffs | [`references/multi-lane-orchestration.md`](multi-lane-orchestration.md) |
 | Agent management, file authoring, prompt integration, or RPC | [`references/management-authoring-rpc.md`](management-authoring-rpc.md) |
 

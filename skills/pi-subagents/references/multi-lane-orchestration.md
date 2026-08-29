@@ -34,7 +34,7 @@ While one lane waits, run safe independent preparation, validation, or fresh rea
 
 An ordinary coordinated workflow has one mission. Use its durable state, artifacts, run records, and receipts for recovery. Treat a receipt as evidence, not as authority or acceptance.
 
-After a writer produces a candidate, run the required fresh-context, read-only reviewer. The reviewer inspects the exact worktree and returns evidence-backed findings. The parent decides which findings are in scope and whether the lane is ready. Send accepted fixes to that lane's sole writer, then rerun only the affected gate.
+After a writer produces a candidate, run the required fresh-context, read-only reviewer. The reviewer inspects the exact worktree and returns evidence-backed findings. The parent decides which findings are in scope and whether the lane is ready. Use `review-and-validation.md` for finding disposition, validation, and gate-failure triage. Send accepted fixes to that lane's sole writer, then rerun only the affected gate.
 
 ## Handoff, cleanup, and recovery
 

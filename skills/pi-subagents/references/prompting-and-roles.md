@@ -20,7 +20,7 @@ Parent extensions may register a session-scoped, out-of-band ceiling through `pi
 
 ## Tool vs Slash Commands
 
-Agents use the `subagent(...)` tool with `workflowScript` for execution, and `action` for management, status, and control. Humans often use the slash-command layer instead:
+Agents use the `subagent(...)` tool for execution, management, status, and control. Direct `{ agent, task }` execution is enough for one simple child; use `workflowScript` when the parent needs keyed, parallel, sequential, branching, retry, retained-resume, or aggregate workflow behavior. Humans often use the slash-command layer instead:
 
 - `/run` — launch a single agent
 - `workflowScript` — the sole public surface for sequence, parallelism, branching, retries, and aggregation

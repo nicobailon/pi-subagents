@@ -38,9 +38,15 @@ External job profiles do not support foreground/clarify, steer/resume, Pi models
 
 ```typescript
 subagent({
-  workflowScript: `return runs.run("oracle-check", { agent: "oracle", task: "Review my current direction and challenge assumptions." })`
+  agent: "oracle",
+  task: "Review my current direction and challenge assumptions."
 })
 ```
+
+Use direct single-agent execution for one disposable child when no stable key,
+branching, retained-child lookup, or aggregate workflow result is needed. Use a
+`workflowScript` even for one child when the run is part of a larger coordinated
+wave or a later step must resume it by key.
 
 ### Forked context
 
@@ -61,7 +67,7 @@ its resolved launch context as `[fresh]` or `[fork]`. Aggregate headers show
 
 ### Scripted workflows
 
-`workflowScript` is the sole public execution surface. Use `runs.run(key, { agent, task, ... })` for one child, `runs.all([...])` for parallel children, and ordinary JavaScript for sequence, branching, filtering, retries, and aggregation. Scripts are ordinary JavaScript statement bodies, so use an explicit return such as `workflowScript: "return runs.run('main', { agent: 'worker', task: '...' })"` for a useful one-child result. Use top-level `await`, plain helper functions, or explicit Promise chains; nested `async function` helpers, async arrows, and async methods are rejected. Prefer a single scripted workflow whenever the parent is starting a coordinated wave, such as multiple reviews, review plus gate monitor, worker then monitor setup, cross-repo prep lanes, or a fanout that the parent will consume together.
+`workflowScript` is the public composition surface. Use `runs.run(key, { agent, task, ... })` for keyed children, `runs.all([...])` for parallel children, and ordinary JavaScript for sequence, branching, filtering, retries, and aggregation. Scripts are ordinary JavaScript statement bodies, so use an explicit return such as `workflowScript: "return runs.run('main', { agent: 'worker', task: '...' })"` for a useful one-child result. Use top-level `await`, plain helper functions, or explicit Promise chains; nested `async function` helpers, async arrows, and async methods are rejected. Prefer a single scripted workflow whenever the parent is starting a coordinated wave, such as multiple reviews, review plus gate monitor, worker then monitor setup, cross-repo prep lanes, or a fanout that the parent will consume together.
 
 ```js
 subagent({
@@ -101,7 +107,7 @@ Keyed resume reads that one exact receipt and revalidates the retained run at la
 
 ### Async/background
 
-Prefer async mode for every subagent launch. Set `async: true` no matter the task unless the parent must block until completion. This applies to scouts, researchers, workers, reviewers, validators, oracle checks, one-off delegates, final review gates, backlog gates, and scripted workflows. Keep the write path single-threaded even when the run is async.
+Prefer async mode for every subagent launch. Set `async: true` no matter the task unless the parent must block until completion. This applies to scouts, researchers, workers, reviewers, validators, oracle checks, one-off delegates, final review gates, publication gates, and scripted workflows. Keep the write path single-threaded even when the run is async.
 
 Use `async:false` only when the parent must block until completion. Async mode still shows progress. Do not use `async:false` because a task is short, because it is the last gate, because no other work is ready, because the user asked to finish the overall job, or because blocking is convenient.
 
