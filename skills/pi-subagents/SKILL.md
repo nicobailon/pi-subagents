@@ -16,8 +16,10 @@ explicitly delegated fanout and their resolved `tools` allow `subagent`.
 
 | Need | Use |
 | --- | --- |
-| One disposable child | direct `{ agent, task }` |
-| Sequence, fanout, retry, gate monitor, retained resume, cross-repo wave, or aggregate result | `workflowScript` |
+| One bounded task for one child | direct `{ agent, task }` |
+| JavaScript control flow or data-dependent branching; sequence, fanout, retry, rolling fanout, or aggregation | `workflowScript` with `runs.run(...)` / `runs.all(...)` |
+| A broad plan split into visible narrow stages per lane | `workflowScript` with `runs.lanes([{ key, stages: [...] }])` |
+| Independent worktree or repository lanes | `references/multi-lane-orchestration.md` |
 | Council of advisors | `../council-mode/SKILL.md` |
 | Management, status, steering, authoring, or inspection | `action` |
 
@@ -26,6 +28,15 @@ explicitly delegated fanout and their resolved `tools` allow `subagent`.
 Keep scripts portable: use top-level `await`, plain helpers, or explicit Promise
 chains, not nested async helpers. Legacy top-level `chain` / `tasks` inputs and
 durable `.chain.md` execution are inspection or migration material only.
+
+Use `runs.lanes(...)` only inside a `workflowScript`, not as a top-level mode. It
+keeps a predeclared staged plan visible: first stages batch across lanes, later
+stages sequence per lane, and the returned board exposes lane/stage results. See
+the [canonical staged-lane example](../../docs/workflows.md#parallel-sequential-lanes).
+When staged seams are available, do not give a low-tier writer an end-to-end
+issue. Split it into narrow stages, such as a scout/red test, helper-only change,
+one render seam, validation, minimality challenge, or fresh review, and give the
+writer only its assigned implementation stage.
 
 Use async/background by default. Set `async:false` only when the parent must
 block. Final reviews, validation gates, oracle checks, and publication checks

@@ -20,7 +20,7 @@ Parent extensions may register a session-scoped, out-of-band ceiling through `pi
 
 ## Tool vs Slash Commands
 
-Agents use the `subagent(...)` tool for execution, management, status, and control. Direct `{ agent, task }` execution is enough for one simple child; use `workflowScript` when the parent needs keyed, parallel, sequential, branching, retry, retained-resume, or aggregate workflow behavior. Humans often use the slash-command layer instead:
+Agents use the `subagent(...)` tool for execution, management, status, and control. Direct `{ agent, task }` execution is enough for one bounded child task; use `workflowScript` when the parent needs JavaScript control flow or data-dependent branching, keyed, parallel, sequential, retry, retained-resume, aggregate, or explicit staged-lane behavior (`runs.lanes`). Humans often use the slash-command layer instead:
 
 - `/run` — launch a single agent
 - `workflowScript` — the sole public surface for sequence, parallelism, branching, retries, and aggregation
@@ -114,6 +114,12 @@ Use this after implementation when the user wants cleanup review or when a final
 ### Staged fix orchestration technique
 
 Use this when a broad diff has known reviewer findings across several items and the user wants the parent to “orchestrate subagents like a boss.” Keep the active worktree safe with a three-stage `workflowScript`:
+
+When staged seams are available, a low-tier writer should not receive the
+end-to-end issue. Use `runs.lanes` inside `workflowScript` to keep stages narrow:
+a scout/red test, helper-only change, one render seam, validation, minimality
+challenge, or fresh review. Give the writer only its assigned implementation
+stage; keep sequencing and synthesis with the parent.
 
 1. A parallel read-only planning fanout, one reviewer per issue cluster. Each child inspects the real diff and returns exact files, line refs, proposed fixes, and focused validation. They must not edit.
 2. One writer worker. It receives the reviewer summaries as the awaited planning results (or their durable output paths) interpolated into its task, plus the parent’s accepted scope, stop rules, and verification contract. It is the only child allowed to edit the active worktree.

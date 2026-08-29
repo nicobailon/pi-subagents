@@ -43,10 +43,11 @@ subagent({
 })
 ```
 
-Use direct single-agent execution for one disposable child when no stable key,
+Use direct single-agent execution for one bounded task when no stable key,
 branching, retained-child lookup, or aggregate workflow result is needed. Use a
-`workflowScript` even for one child when the run is part of a larger coordinated
-wave or a later step must resume it by key.
+`workflowScript` when the parent needs JavaScript control flow or data-dependent
+branching, or when the run is part of a larger coordinated wave or a later step
+must resume it by key.
 
 ### Forked context
 
@@ -67,7 +68,17 @@ its resolved launch context as `[fresh]` or `[fork]`. Aggregate headers show
 
 ### Scripted workflows
 
-`workflowScript` is the public composition surface. Use `runs.run(key, { agent, task, ... })` for keyed children, `runs.all([...])` for parallel children, and ordinary JavaScript for sequence, branching, filtering, retries, and aggregation. Scripts are ordinary JavaScript statement bodies, so use an explicit return such as `workflowScript: "return runs.run('main', { agent: 'worker', task: '...' })"` for a useful one-child result. Use top-level `await`, plain helper functions, or explicit Promise chains; nested `async function` helpers, async arrows, and async methods are rejected. Prefer a single scripted workflow whenever the parent is starting a coordinated wave, such as multiple reviews, review plus gate monitor, worker then monitor setup, cross-repo prep lanes, or a fanout that the parent will consume together.
+`workflowScript` is the public composition surface when the parent needs
+JavaScript control flow or data-dependent branching. Use
+`runs.run(key, { agent, task, ... })` for keyed children, `runs.all([...])` for
+parallel children, and ordinary JavaScript for sequence, filtering, retries,
+and aggregation. Scripts are ordinary JavaScript statement bodies, so use an
+explicit return such as `return runs.run("main", { agent: "worker", task: "..." })` for a useful one-child result. Use top-level `await`,
+plain helper functions, or explicit Promise chains; nested `async function`
+helpers, async arrows, and async methods are rejected. Prefer a single scripted
+workflow whenever the parent is starting a coordinated wave, such as multiple
+reviews, review plus gate monitor, worker then monitor setup, cross-repo prep
+lanes, or a fanout that the parent will consume together.
 
 ```js
 subagent({
@@ -104,6 +115,19 @@ return runs.run("cross-oracle", {
 ```
 
 Keyed resume reads that one exact receipt and revalidates the retained run at launch. It fails when the workflow or key is missing, the receipt is stale, `latest` is not `true`, or the recorded child is no longer resumable. The receipt is terminal-only: if `status.json` or `events.jsonl` exists without it, the workflow may still be active or terminal receipt writing may have failed. Use direct child run IDs from status/events for direct resume after the normal retained-child checks; do not reconstruct keyed entries from those files. Foreground workflow results expose the same receipt in `details.workflow.receipt`, but cross-workflow keyed lookup requires the durable receipt from an async workflow.
+
+### Parallel sequential lanes
+
+For a broad plan with a known set of narrow, visible stages per lane, use
+`runs.lanes(...)` inside a `workflowScript`; it is a nested helper, not a
+top-level `subagent` mode. Give each lane and stage a stable key. The first
+stage from every lane is launched together, then later stages sequence per lane.
+`resume: "previous"` requires the retained predecessor, and a failed or blocked
+stage blocks only that lane. The returned board exposes lane/stage results for
+the parent. See the [canonical staged-lane example](../../../docs/workflows.md#parallel-sequential-lanes).
+
+Use raw `runs.run(...)`/`runs.all(...)` instead when branching or rolling fanout
+depends on runtime data rather than a predeclared stage plan.
 
 ### Async/background
 
