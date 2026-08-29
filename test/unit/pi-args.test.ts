@@ -1351,7 +1351,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			inheritSkills: false,
 			tools: ["read"],
 			mcpDirectTools: ["runtime-a", "runtime-b"],
-			capabilityCeiling: { version: 1, allowedTools: ["read", "runtime-a_search"], denyExtensions: false, sources: ["test"] },
+			capabilityCeiling: { version: 1, allowedTools: ["read", "runtime_a_search"], denyExtensions: false, sources: ["test"] },
 			runtimeSnapshotHost,
 		});
 		assert.equal(launch.args[launch.args.indexOf("--tools") + 1], "read,runtime-a_search");

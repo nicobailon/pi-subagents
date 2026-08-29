@@ -518,7 +518,10 @@ export function resolvePiLaunchToolPlan(
 	}
 	const resolvedMcpSelections = mcpResolution.selections;
 	const effectiveMcpSelections = resolvedMcpSelections.filter(
-		(selection) => !allowedToolSet || allowedToolSet.has(selection.name),
+		(selection) =>
+			!allowedToolSet ||
+			allowedToolSet.has(selection.name) ||
+			allowedToolSet.has(legacyUnderscoreMcpToolName(selection)),
 	);
 	const effectiveMcpTools = effectiveMcpSelections.map(
 		(selection) => selection.name,
@@ -671,6 +674,17 @@ export function resolvePiLaunchToolPlan(
 			: {}),
 		...(capabilityAudit ? { capabilityAudit } : {}),
 	};
+}
+
+// Capability ceilings persisted before #1685 may still name hyphenated MCP server prefixes with underscores.
+function legacyUnderscoreMcpToolName(selection: ResolvedMcpDirectToolSelection): string {
+	const slash = selection.selector.indexOf("/");
+	if (slash < 1) return selection.name;
+	const toolName = selection.selector.slice(slash + 1);
+	const suffix = `_${toolName}`;
+	if (!selection.name.endsWith(suffix)) return selection.name;
+	const prefix = selection.name.slice(0, -suffix.length);
+	return `${prefix.replace(/-/g, "_")}${suffix}`;
 }
 
 /** Escape XML-significant characters in a string for safe attribute interpolation. */
