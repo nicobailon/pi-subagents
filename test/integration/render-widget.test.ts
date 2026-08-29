@@ -926,6 +926,110 @@ describe("subagent async widget rendering", () => {
 		resetWidgetLayout();
 	});
 
+	it("keeps the active runs.lanes stage in focus before collapsed history", () => {
+		resetWidgetLayout();
+		withStdoutSize(60, 120, () => {
+			const stageKeys = ["scope-scout", "red-tests", "label-helpers", "summary-title", "detail-row", "tiers-noise", "validation", "minimality-challenge", "fresh-review"];
+			const nodeIds = stageKeys.map((key) => `issue-1695.${key}`);
+			const statuses = stageKeys.map((_, index) => index < 3 ? "completed" : index === 3 ? "running" : "pending");
+			const workflowGraph = {
+				runId: "workflow-1695",
+				mode: "workflow",
+				phases: [{ title: "issue-1695 staged lane", nodeIds }],
+				nodes: stageKeys.map((key, index) => ({
+					id: nodeIds[index],
+					kind: "step",
+					agent: index === 0 ? "scout" : "worker",
+					label: key,
+					status: statuses[index],
+					flatIndex: index,
+					stepIndex: index,
+				})),
+				currentNodeId: nodeIds[3],
+			};
+			const job = {
+				asyncId: "workflow-1695",
+				asyncDir: "/tmp/workflow-1695",
+				status: "running",
+				mode: "workflow",
+				agents: ["scout", "worker"],
+				currentStep: 3,
+				stepsTotal: 4,
+				updatedAt: 200,
+				workflowGraph,
+				steps: stageKeys.slice(0, 4).map((key, index) => ({
+					index,
+					agent: index === 0 ? "scout" : "worker",
+					status: statuses[index],
+					label: key,
+					workflowKey: nodeIds[index],
+					phase: "issue-1695",
+					description: `${key} task`,
+					outputName: `${key}.md`,
+					...(index < 3 ? { lastActivityAt: 100 } : { currentTool: "read", currentToolStartedAt: 190, lastActivityAt: 195 }),
+				})),
+			};
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [job]);
+			const lines = renderWidgetLines(ui.widgets.at(-1));
+			const text = lines.join("\n");
+			const activeIndex = lines.findIndex((line) => line.includes("summary-title"));
+			const hiddenIndex = lines.findIndex((line) => /lines hidden/.test(line));
+			assert.ok(hiddenIndex >= 0, `collapsed history should expose a hidden-lines marker:\n${text}`);
+			assert.ok(activeIndex >= 0, `active stage should remain visible:\n${text}`);
+			assert.ok(activeIndex < hiddenIndex, `active stage must precede the hidden-lines marker:\n${text}`);
+			assert.match(text, /stage\s+4\/9/i);
+			assert.match(text, /summary-title task/);
+			assert.match(lines[activeIndex]!, /worker/);
+		});
+		resetWidgetLayout();
+	});
+
+	it("prioritizes failed, blocked, and gate stages over completed history", () => {
+		const stages = [
+			{ index: 0, agent: "scout", label: "completed-history", workflowKey: "issue-1695.completed-history", status: "complete" },
+			{ index: 1, agent: "worker", label: "failed-stage", workflowKey: "issue-1695.failed-stage", status: "failed", error: "stage failed" },
+			{ index: 2, agent: "worker", label: "blocked-stage", workflowKey: "issue-1695.blocked-stage", status: "pending", toolBudgetBlocked: true },
+			{ index: 3, agent: "reviewer", label: "gate-stage", workflowKey: "issue-1695.gate-stage", status: "complete", review: { status: "blockers" } },
+			{ index: 4, agent: "worker", label: "completed-tail", workflowKey: "issue-1695.completed-tail", status: "complete" },
+		];
+		const workflowGraph = {
+			runId: "workflow-priority",
+			mode: "workflow",
+			phases: [{ title: "issue-1695 staged lane", nodeIds: stages.map((stage) => stage.workflowKey) }],
+			nodes: stages.map((stage) => ({
+				id: stage.workflowKey,
+				kind: "step",
+				agent: stage.agent,
+				label: stage.label,
+				status: stage.status === "complete" ? "completed" : stage.status === "failed" ? "failed" : "pending",
+				flatIndex: stage.index,
+				stepIndex: stage.index,
+			})),
+			currentNodeId: "issue-1695.failed-stage",
+		};
+		const text = buildWidgetLines([{
+			asyncId: "workflow-priority",
+			asyncDir: "/tmp/workflow-priority",
+			status: "running",
+			mode: "workflow",
+			agents: ["scout", "worker", "reviewer"],
+			currentStep: 1,
+			stepsTotal: stages.length,
+			workflowGraph,
+			steps: stages,
+		}], theme, 220, false).join("\n");
+		const rowIndex = (label: string): number => text.split("\n").findIndex((line) => line.includes(label));
+		const completed = rowIndex("completed-history");
+		const failed = rowIndex("failed-stage");
+		const blocked = rowIndex("blocked-stage");
+		const gate = rowIndex("gate-stage");
+		assert.ok(completed >= 0 && failed >= 0 && blocked >= 0 && gate >= 0, text);
+		assert.ok(failed < completed, `failed stage should precede completed history:\n${text}`);
+		assert.ok(blocked < completed, `blocked stage should precede completed history:\n${text}`);
+		assert.ok(gate < completed, `gate stage should precede completed history:\n${text}`);
+	});
+
 	it("keeps constrained progressive slots focused on active jobs", () => {
 		resetWidgetLayout();
 		withStdoutSize(22, 120, () => {

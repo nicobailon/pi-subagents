@@ -19,6 +19,27 @@ function createAsyncDir(root: string, id: string, status: Record<string, unknown
 	return dir;
 }
 
+const stagedLaneKeys = ["scope-scout", "red-tests", "label-helpers", "summary-title", "detail-row", "tiers-noise", "validation", "minimality-challenge", "fresh-review"];
+
+function stagedLaneStatusGraph(runId: string): Record<string, unknown> {
+	const nodeIds = stagedLaneKeys.map((key) => `${runId}.${key}`);
+	return {
+		runId,
+		mode: "workflow",
+		phases: [{ title: `${runId} staged lane`, nodeIds }],
+		nodes: stagedLaneKeys.map((key, index) => ({
+			id: nodeIds[index],
+			kind: "step",
+			agent: index === 0 ? "scout" : index === 7 ? "simplifier" : "worker",
+			label: key,
+			status: index === 0 ? "running" : "pending",
+			flatIndex: index,
+			stepIndex: index,
+		})),
+		currentNodeId: nodeIds[0],
+	};
+}
+
 describe("async status helpers", () => {
 	it("lists only requested states and includes flattened step summaries", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-"));
@@ -73,6 +94,33 @@ describe("async status helpers", () => {
 			if (budgetDirectory) fs.rmSync(budgetDirectory, { recursive: true, force: true });
 		}
 	});
+
+	it("reports the planned runs.lanes stage count while the first child is running", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-staged-lane-"));
+		try {
+			const runId = "run-staged-lane";
+			createAsyncDir(root, runId, {
+				runId,
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				currentStep: 0,
+				steps: [{ agent: "scout", workflowKey: `${runId}.scope-scout`, label: "scope-scout", status: "running" }],
+				workflowGraph: stagedLaneStatusGraph(runId),
+			});
+
+			const runs = listAsyncRuns(root, { states: ["running"], reconcile: false });
+			const text = formatAsyncRunList(runs);
+			assert.match(text, /stage\s+1\/9/i);
+			assert.doesNotMatch(text, /step\s+1\/1/i);
+			assert.match(text, /scope-scout/);
+			assert.match(text, /stage\s+9\/9:.*fresh-review.*pending/i);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("loads typed host monitor nodes from workflow status without child identity", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-host-step-"));
 		try {

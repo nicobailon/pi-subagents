@@ -363,7 +363,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 		if (job.mode === "workflow") {
 			const latestEmit = job.workflow?.emits?.length ? formatWorkflowJsonPreview(job.workflow.emits.at(-1), 120) : undefined;
 			const workflowSteps = workflowStepsWithoutMaterializedChildren(job.steps, materializedChildrenByWorkflow.get(`async:${job.asyncId}`));
-			const workflowRows = projectAsyncWorkflowRows(workflowSteps, job.hostSteps, job.preflight);
+			const workflowRows = projectAsyncWorkflowRows(workflowSteps, job.workflowGraph ?? job.hostSteps, job.preflight);
 			entries.push({
 				key: `async:${job.asyncId}`,
 				...(linkedParentKey ? { parentKey: linkedParentKey } : {}),

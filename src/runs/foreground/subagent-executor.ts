@@ -112,7 +112,7 @@ import { createMissionWorkflowState } from "../../missions/workflow-state.ts";
 import { resolveAuthorityDecision } from "../../policy/authority.ts";
 import { handleHerdrInspectorAction, HERDR_INSPECTOR_ACTIONS } from "../../inspectors/herdr/actions.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
-import { previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowReceiptResumeReference, type WorkflowScriptChildResult, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
+import { previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowLanePlan, type WorkflowReceiptResumeReference, type WorkflowScriptChildResult, type WorkflowScriptTraceEntry, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
 import { executeWorkflowHostCommand, resolveWorkflowHostOutputClaimPath, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "../../workflows/host-command.ts";
 import { buildWorkflowReceipt, resolveWorkflowReceiptResumeEntry, writeWorkflowReceipt, type WorkflowReceipt, type WorkflowReceiptState } from "../../workflows/workflow-receipt.ts";
 import { upsertHostStep, validHostStepNodes } from "../shared/host-step-status.ts";
@@ -160,6 +160,9 @@ import {
 	type ToolBudgetConfig,
 	type Usage,
 	type UsageBudgetConfig,
+	type WorkflowGraphNode,
+	type WorkflowGraphSnapshot,
+	type WorkflowNodeStatus,
 	type WorkflowTerminalOutcome,
 	type SubagentRunMode,
 	type SubagentState,
@@ -4411,6 +4414,90 @@ function formatWorkflowValue(value: unknown): string {
 	}
 }
 
+function buildWorkflowLaneGraph(runId: string, lanes: WorkflowLanePlan[], existing?: WorkflowGraphSnapshot): WorkflowGraphSnapshot {
+	const plannedIds = new Set(lanes.flatMap((lane) => lane.stages.map((stage) => stage.generatedKey)));
+	const previousById = new Map((existing?.nodes ?? []).map((node) => [node.id, node]));
+	const nodes: WorkflowGraphNode[] = [];
+	const phases: WorkflowGraphSnapshot["phases"] = [];
+	let flatIndex = 0;
+	for (const lane of lanes) {
+		const nodeIds: string[] = [];
+		for (const [stageIndex, stage] of lane.stages.entries()) {
+			const previous = previousById.get(stage.generatedKey);
+			const outputName = stage.outputName || previous?.outputName;
+			const structured = stage.structured ?? previous?.structured;
+			const node: WorkflowGraphNode = {
+				id: stage.generatedKey,
+				kind: "step",
+				agent: stage.agent ?? previous?.agent,
+				phase: stage.phase ?? previous?.phase,
+				label: stage.label ?? stage.key,
+				status: previous?.status ?? (stageIndex === 0 ? "running" : "pending"),
+				flatIndex,
+				stepIndex: flatIndex,
+				...(outputName ? { outputName } : {}),
+				...(structured !== undefined ? { structured } : {}),
+				...(previous?.acceptanceStatus ? { acceptanceStatus: previous.acceptanceStatus } : {}),
+				...(previous?.error ? { error: previous.error } : {}),
+			};
+			nodes.push(node);
+			nodeIds.push(node.id);
+			flatIndex++;
+		}
+		if (nodeIds.length > 0) phases.push({ title: lane.key, nodeIds });
+	}
+	for (const node of existing?.nodes ?? []) {
+		if (!plannedIds.has(node.id)) nodes.push(node);
+	}
+	for (const phase of existing?.phases ?? []) {
+		const retainedNodeIds = phase.nodeIds.filter((nodeId) => !plannedIds.has(nodeId));
+		if (retainedNodeIds.length === 0) continue;
+		const currentPhase = phases.find((candidate) => candidate.title === phase.title);
+		if (currentPhase) currentPhase.nodeIds.push(...retainedNodeIds);
+		else phases.push({ title: phase.title, nodeIds: retainedNodeIds });
+	}
+	const currentNodeId = nodes.find((node) => node.status === "running")?.id ?? existing?.currentNodeId;
+	return { runId, mode: "workflow", phases, nodes, ...(currentNodeId ? { currentNodeId } : {}) };
+}
+
+function workflowLaneTraceStatus(state: WorkflowScriptTraceEntry["state"]): WorkflowNodeStatus | undefined {
+	switch (state) {
+		case "started":
+			return "running";
+		case "reused":
+			return undefined;
+		case "completed":
+			return "completed";
+		case "failed":
+			return "failed";
+		case "detached":
+			return "detached";
+		case "stopped":
+			return "stopped";
+		default:
+			return undefined;
+	}
+}
+
+function applyWorkflowLaneTrace(graph: WorkflowGraphSnapshot, trace: WorkflowScriptTraceEntry[]): void {
+	const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+	for (const entry of trace) {
+		if (entry.operation !== "run") continue;
+		const node = nodesById.get(entry.key);
+		if (!node) continue;
+		const status = workflowLaneTraceStatus(entry.state);
+		if (status) node.status = status;
+		if (entry.agent) node.agent = entry.agent;
+		if (entry.phase && (entry.phase !== "auto-resume" || node.phase === undefined)) node.phase = entry.phase;
+		if (entry.label) node.label = entry.label;
+		if (entry.error) node.error = entry.error;
+		else if (status === "completed" || status === "running") delete node.error;
+	}
+	const currentNodeId = graph.nodes.find((node) => node.status === "running")?.id;
+	if (currentNodeId) graph.currentNodeId = currentNodeId;
+	else delete graph.currentNodeId;
+}
+
 function workflowChatProgressUpdate(
 	runId: string,
 	chatProgress: WorkflowChatProgressProjection,
@@ -4800,6 +4887,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						liveJob.toolCount = status.toolCount;
 						liveJob.currentStep = status.currentStep;
 						liveJob.preflight = status.preflight;
+						liveJob.workflowGraph = status.workflowGraph;
 						if (status.steps) {
 							liveJob.steps = status.steps.map((step, index) => ({ ...step, index }));
 							liveJob.agents = status.steps.map((step) => step.agent);
@@ -4883,6 +4971,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							trace: projectedTrace,
 							...(preflightWarnings.length ? { preflightWarnings } : {}),
 						};
+						if (status.workflowGraph) applyWorkflowLaneTrace(status.workflowGraph, trace);
 						const rebuild = trace.length < projectedTraceLength
 							|| (projectedTraceLength > 0 && trace[projectedTraceLength - 1] !== projectedTraceTail);
 						if (rebuild) {
@@ -4986,6 +5075,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							},
 							...(workflowState ? { state: workflowState } : {}),
 							onTrace: updateTrace,
+							onLanePlan: (lanes) => {
+								status.workflowGraph = buildWorkflowLaneGraph(workflowRunId, lanes, status.workflowGraph);
+								applyWorkflowLaneTrace(status.workflowGraph, status.workflow?.trace ?? []);
+								persist({ tolerateStatusWriteFailure: true });
+							},
 							host: runHostCommand,
 							onHostStep: (hostStep) => {
 								status = upsertHostStep({ status, hostStep, persist: (nextStatus) => {

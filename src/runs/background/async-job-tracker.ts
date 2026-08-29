@@ -146,6 +146,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			chainStepCount: run.chainStepCount,
 			parallelGroups: groups,
 			hostSteps: run.hostSteps,
+			...(run.mode === "workflow" && run.workflowGraph ? { workflowGraph: run.workflowGraph } : {}),
 			preflight: run.preflight,
 			steps: visibleSteps,
 			stepsTotal: visibleSteps.length,
@@ -401,6 +402,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				job.workflowKey = status.workflowKey ?? job.workflowKey;
 				job.lane = status.lane ?? job.lane;
 				job.workflow = status.workflow ?? job.workflow;
+				if (status.mode === "workflow") job.workflowGraph = status.workflowGraph ?? job.workflowGraph;
 				job.hostSteps = validHostStepNodes(status.workflowGraph);
 				const workflowChildren = parseWorkflowChildSummary(status.workflowChildren);
 				if (workflowChildren && workflowChildren.workflowRunId !== status.runId) throw new Error("workflowChildren.workflowRunId does not match async status runId.");
@@ -627,6 +629,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			turnBudget: info.turnBudget,
 			parentWorkflowRunId: info.parentWorkflowRunId,
 			workflowKey: info.workflowKey,
+			...(info.mode === "workflow" && info.workflowGraph ? { workflowGraph: info.workflowGraph } : {}),
 			controlEventCursor: 0,
 		});
 		const job = state.asyncJobs.get(info.id)!;

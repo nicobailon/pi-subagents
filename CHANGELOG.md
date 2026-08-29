@@ -4,6 +4,7 @@
 ## [Unreleased]
 
 ### Changed
+- Show `runs.lanes(...)` workflows with active-stage focus and planned-stage progress in async status widgets (#1699).
 - Align foreground subagent result labels with async widget labels and disambiguate duplicate rows (#1697).
 - Render parallel subagent workflow groups as readable cards with nested agent rows (#1696).
 - Remove repeated one-child async widget status labels and compact progress echoes (#1695).

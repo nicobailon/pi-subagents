@@ -13,6 +13,21 @@ export interface WorkflowGraphBuildInput {
 	dynamicGroupStatuses?: Record<number, { status: WorkflowNodeStatus; error?: string; acceptance?: SingleResult["acceptance"] }>;
 }
 
+/** Return displayable workflow stages while hiding structural parallel groups and host monitors. */
+export function workflowGraphStageNodes(graph: WorkflowGraphSnapshot | undefined): WorkflowGraphNode[] {
+	if (!graph?.nodes?.length) return [];
+	const stages: WorkflowGraphNode[] = [];
+	const visit = (node: WorkflowGraphNode): void => {
+		if (node.kind === "parallel-group" || node.kind === "dynamic-parallel-group") {
+			for (const child of node.children ?? []) visit(child);
+			return;
+		}
+		if (node.kind !== "host-step") stages.push(node);
+	};
+	for (const node of graph.nodes) visit(node);
+	return stages;
+}
+
 function normalizeStatus(status: string | undefined): WorkflowNodeStatus | undefined {
 	switch (status) {
 		case "complete":

@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { safeTerminalText } from "../../shared/display-text.ts";
-import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns } from "./async-status.ts";
+import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, formatWorkflowStageLine, listAsyncRuns } from "./async-status.ts";
 import { formatAsyncResultTranscript, formatAsyncRunTranscript, formatNestedRunTranscript, inspectSubagentFleet } from "./fleet-view.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { formatModelThinking } from "../../shared/formatters.ts";
@@ -25,6 +25,7 @@ import { formatWorkflowJsonPreview } from "../../workflows/scripted-workflow.ts"
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 import { formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary } from "../../workflows/workflow-preflight.ts";
 import { formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
+import { workflowGraphStageNodes } from "../shared/workflow-graph.ts";
 import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 
 interface RunStatusParams {
@@ -481,6 +482,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				currentStep: status.currentStep,
 				chainStepCount: status.chainStepCount,
 				parallelGroups: status.parallelGroups,
+				workflowGraph: status.workflowGraph,
 				steps: (status.steps ?? []).map((step, index) => ({ index, agent: step.agent, status: step.status })),
 			});
 			const started = new Date(status.startedAt).toISOString();
@@ -592,6 +594,11 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				} else if (step.status === "running" && (step.runner?.type === "external-cli" || step.runner?.type === "external-job")) {
 					lines.push("  Steer: unavailable; external runners do not accept live messages.");
 				}
+			}
+			const loadedWorkflowKeys = new Set((status.steps ?? []).flatMap((step) => step.workflowKey ? [step.workflowKey] : []));
+			const graphStages = status.mode === "workflow" ? workflowGraphStageNodes(status.workflowGraph) : [];
+			for (const [index, node] of graphStages.entries()) {
+				if (!loadedWorkflowKeys.has(node.id)) lines.push(`  ${formatWorkflowStageLine(node, index, graphStages.length)}`);
 			}
 			const attached = new Set((status.steps ?? []).flatMap((step) => step.children?.map((child) => child.id) ?? []));
 			const unattached = nestedChildren.filter((child) => !attached.has(child.id));

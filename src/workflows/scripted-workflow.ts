@@ -500,8 +500,26 @@ function runLane(lane, firstResult, observe) {
   return visit(0, firstResult);
 }
 
+function workflowPlanStringMetadata(params) {
+  return {
+    ...(typeof params.phase === "string" && params.phase.trim() ? { phase: params.phase.trim() } : {}),
+    ...(typeof params.label === "string" && params.label.trim() ? { label: params.label.trim() } : {}),
+    ...(typeof params.agent === "string" && params.agent.trim() ? { agent: params.agent.trim() } : {}),
+  };
+}
+
 function runLanes(laneSpecs) {
   const lanes = validateLaneSpecs(laneSpecs);
+  parentPort.postMessage({ type: "lanePlan", lanes: lanes.map((lane) => ({
+    key: lane.key,
+    stages: lane.stages.map((stage) => ({
+      key: stage.key,
+      generatedKey: stage.generatedKey,
+      ...workflowPlanStringMetadata(stage.params),
+      ...(typeof stage.params.as === "string" && stage.params.as.trim() ? { outputName: stage.params.as.trim() } : {}),
+      ...(stage.params.outputSchema !== undefined ? { structured: true } : {}),
+    })),
+  })) });
   const firstItems = lanes.map((lane) => {
     const first = lane.stages[0];
     return { key: first.generatedKey, ...first.params };
@@ -982,6 +1000,22 @@ export interface WorkflowScriptTraceEntry {
 	warning?: string;
 }
 
+/** Bounded plan metadata emitted when a workflow materializes a runs.lanes graph. */
+export interface WorkflowLanePlanStage {
+	key: string;
+	generatedKey: string;
+	agent?: string;
+	phase?: string;
+	label?: string;
+	outputName?: string;
+	structured?: boolean;
+}
+
+export interface WorkflowLanePlan {
+	key: string;
+	stages: WorkflowLanePlanStage[];
+}
+
 export interface WorkflowSteerOptions {
 	mode?: "steer" | "follow_up" | "auto";
 	index?: number;
@@ -1049,6 +1083,7 @@ export interface RunWorkflowScriptOptions {
 	};
 	registerStopChild?: (stop: ((key: string, message?: string) => boolean) | undefined) => void;
 	onTrace?: (trace: WorkflowScriptTraceEntry[]) => void;
+	onLanePlan?: (lanes: WorkflowLanePlan[]) => void;
 	onEmit?: (emits: unknown[]) => void;
 }
 
@@ -1529,6 +1564,13 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			console.error("Workflow onTrace callback failed:", error);
 		}
 	};
+	const lanePlanChanged = (lanes: WorkflowLanePlan[]) => {
+		try {
+			options.onLanePlan?.(lanes);
+		} catch (error) {
+			console.error("Workflow onLanePlan callback failed:", error);
+		}
+	};
 	const hostStepChanged = (hostStep: HostStepNodeV1) => {
 		try {
 			options.onHostStep?.(hostStep);
@@ -1631,6 +1673,10 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		});
 		worker.on("message", (message: Record<string, unknown>) => {
 			if (settled) return;
+			if (message.type === "lanePlan" && Array.isArray(message.lanes)) {
+				lanePlanChanged(message.lanes as WorkflowLanePlan[]);
+				return;
+			}
 			if (message.type === "emit") {
 				try {
 					assertWorkflowJsonValue(message.value, "emit");

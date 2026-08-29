@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { AsyncJobState, HostStepNodeV1 } from "../../src/shared/types.ts";
+import type { AsyncJobState, HostStepNodeV1, WorkflowGraphSnapshot, WorkflowNodeStatus } from "../../src/shared/types.ts";
 import {
 	ASYNC_STATUS_SNAPSHOT_KIND,
 	ASYNC_STATUS_SNAPSHOT_VERSION,
@@ -27,6 +27,27 @@ function hostStep(overrides: Partial<HostStepNodeV1> = {}): HostStepNodeV1 {
 		verdict: "pass",
 		updatedAt: 20,
 		...overrides,
+	};
+}
+
+const stagedLaneKeys = ["scope-scout", "red-tests", "label-helpers", "summary-title", "detail-row", "tiers-noise", "validation", "minimality-challenge", "fresh-review"];
+
+function stagedLaneGraph(statuses: WorkflowNodeStatus[] = stagedLaneKeys.map((_, index) => index === 0 ? "running" : "pending")): WorkflowGraphSnapshot {
+	const nodeIds = stagedLaneKeys.map((key) => `issue-1695.${key}`);
+	return {
+		runId: "workflow-1695",
+		mode: "workflow",
+		phases: [{ title: "issue-1695", nodeIds }],
+		nodes: stagedLaneKeys.map((key, index) => ({
+			id: nodeIds[index]!,
+			kind: "step",
+			agent: index === 0 ? "scout" : index === 7 ? "simplifier" : "worker",
+			label: key,
+			status: statuses[index] ?? "pending",
+			flatIndex: index,
+			stepIndex: index,
+		})),
+		currentNodeId: nodeIds[statuses.findIndex((status) => status === "running")],
 	};
 }
 
@@ -172,6 +193,27 @@ describe("async status projection", () => {
 			{ name: "writer · Writer (worker)", state: "running", mode: "mutation" },
 			{ name: "review", state: "planned", mode: "review" },
 		]);
+	});
+
+	it("projects known runs.lanes stages from the workflow graph, including pending stages", () => {
+		const rows = projectAsyncWorkflowRows([{
+			agent: "scout",
+			workflowKey: "issue-1695.scope-scout",
+			label: "scope-scout",
+			status: "running",
+		}], stagedLaneGraph(), {
+			version: 1,
+			coverage: "complete",
+			lanes: [{ key: "issue-1695", mode: "scout" }],
+		});
+
+		for (const [index, key] of stagedLaneKeys.entries()) {
+			const row = rows.find((candidate) => candidate.name.includes(key));
+			assert.ok(row, `stage ${key} should remain discoverable`);
+			assert.equal(row?.state, index === 0 ? "running" : "planned", `stage ${key} state`);
+		}
+		assert.equal(rows.filter((row) => row.state === "planned").length, stagedLaneKeys.length - 1);
+		assert.equal(rows.every((row) => row.preflight?.mode === "scout"), true);
 	});
 
 	it("preserves duplicate loaded rows when a declared lane key is reused", () => {

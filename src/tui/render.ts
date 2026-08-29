@@ -37,6 +37,7 @@ import { formatWorkflowPreflight, formatWorkflowPreflightPlanSummary, formatWork
 import { encodeAsyncStatusSnapshotWidget } from "../runs/background/async-status-snapshot.ts";
 import { projectAsyncWorkflowRows, type AsyncStatusWorkflowRow } from "../runs/shared/async-status-projection.ts";
 import { hostStepReportName, hostStepVerdictLabel } from "../runs/shared/host-step-status.ts";
+import { workflowGraphStageNodes } from "../runs/shared/workflow-graph.ts";
 
 type Theme = ExtensionContext["ui"]["theme"];
 
@@ -314,9 +315,129 @@ function boundedLaneValue(value: string | undefined, maxChars = LANE_VALUE_MAX_C
 	return previewDisplayText(oneLine(value), maxChars);
 }
 
+function workflowNodeStepStatus(status: WorkflowNodeStatus): AsyncJobStep["status"] {
+	switch (status) {
+		case "completed":
+			return "completed";
+		case "detached":
+			return "paused";
+		default:
+			return status;
+	}
+}
+
+function workflowNodeStatusLabel(status: WorkflowNodeStatus): string {
+	switch (status) {
+		case "completed":
+			return "complete";
+		case "detached":
+			return "paused";
+		default:
+			return status;
+	}
+}
+
+function workflowStepPriority(step: AsyncJobStep, currentNodeId?: string): number {
+	const isCurrent = step.workflowKey === currentNodeId;
+	if (step.status === "running" || (isCurrent && step.status !== "complete" && step.status !== "completed")) return 0;
+	const gate = laneGate(step);
+	if (
+		step.status === "failed"
+		|| step.status === "partial"
+		|| step.status === "paused"
+		|| step.status === "stopped"
+		|| step.status === "rejected"
+		|| step.toolBudgetBlocked === true
+		|| step.turnBudgetExceeded === true
+		|| step.activityState === "needs_attention"
+		|| step.watchdog?.phase === "stale"
+		|| gate !== undefined
+	) return 1;
+	if (step.status === "pending") return 2;
+	return 3;
+}
+
+/** Merge materialized child rows with the planned workflow stages for rendering. */
+function workflowWidgetSteps(job: AsyncJobState): AsyncJobStep[] {
+	const planned = job.mode === "workflow" ? workflowGraphStageNodes(job.workflowGraph) : [];
+	const loaded = job.steps ?? [];
+	if (planned.length === 0) return loaded;
+
+	const loadedIndexesByKey = new Map<string, number[]>();
+	for (const [index, step] of loaded.entries()) {
+		if (!step.workflowKey) continue;
+		const indexes = loadedIndexesByKey.get(step.workflowKey) ?? [];
+		indexes.push(index);
+		loadedIndexesByKey.set(step.workflowKey, indexes);
+	}
+	const consumed = new Set<number>();
+	const entries: Array<{ step: AsyncJobStep; order: number }> = [];
+	for (const [order, node] of planned.entries()) {
+		const loadedIndex = loadedIndexesByKey.get(node.id)?.find((index) => !consumed.has(index));
+		if (loadedIndex !== undefined) {
+			consumed.add(loadedIndex);
+			const loadedStep = loaded[loadedIndex]!;
+			entries.push({
+				step: {
+					...loadedStep,
+					index: node.flatIndex ?? loadedStep.index ?? order,
+					agent: loadedStep.agent || node.agent || job.agents?.[0] || "workflow",
+					phase: loadedStep.phase ?? node.phase,
+					label: loadedStep.label ?? node.label,
+					workflowKey: loadedStep.workflowKey ?? node.id,
+					...(loadedStep.outputName === undefined && node.outputName !== undefined ? { outputName: node.outputName } : {}),
+					...(loadedStep.structured === undefined && node.structured !== undefined ? { structured: node.structured } : {}),
+					...(loadedStep.error === undefined && node.error !== undefined ? { error: node.error } : {}),
+				},
+				order,
+			});
+			continue;
+		}
+		entries.push({
+			step: {
+				index: node.flatIndex ?? order,
+				agent: node.agent ?? job.agents?.[0] ?? "workflow",
+				status: workflowNodeStepStatus(node.status),
+				workflowKey: node.id,
+				label: node.label,
+				...(node.phase ? { phase: node.phase } : {}),
+				...(node.outputName ? { outputName: node.outputName } : {}),
+				...(node.structured !== undefined ? { structured: node.structured } : {}),
+				...(node.error ? { error: node.error } : {}),
+			},
+			order,
+		});
+	}
+	for (const [index, step] of loaded.entries()) {
+		if (!consumed.has(index)) entries.push({ step, order: planned.length + index });
+	}
+	entries.sort((left, right) => workflowStepPriority(left.step, job.workflowGraph?.currentNodeId) - workflowStepPriority(right.step, job.workflowGraph?.currentNodeId) || left.order - right.order);
+	return entries.map(({ step }) => step);
+}
+
+function workflowStageProgress(job: AsyncJobState): { total: number; current?: number } | undefined {
+	if (job.mode !== "workflow") return undefined;
+	const stages = workflowGraphStageNodes(job.workflowGraph);
+	if (stages.length === 0) return undefined;
+	const currentId = job.workflowGraph?.currentNodeId;
+	const currentIndex = currentId ? stages.findIndex((stage) => stage.id === currentId) : -1;
+	if (currentIndex >= 0 && stages[currentIndex]?.status !== "completed") return { total: stages.length, current: currentIndex };
+	const runningIndex = stages.findIndex((stage) => stage.status === "running");
+	if (runningIndex >= 0) return { total: stages.length, current: runningIndex };
+	const indexedStage = job.currentStep !== undefined && job.currentStep >= 0 ? stages[job.currentStep] : undefined;
+	if (indexedStage && indexedStage.status !== "completed") return { total: stages.length, current: job.currentStep };
+	if (stages.every((stage) => stage.status === "completed")) return { total: stages.length, current: stages.length - 1 };
+	return { total: stages.length };
+}
+
 function laneStepForJob(job: AsyncJobState): AsyncJobStep | undefined {
-	const steps = job.steps ?? [];
+	const steps = workflowWidgetSteps(job);
 	if (steps.length === 0) return undefined;
+	const graphCurrent = job.workflowGraph?.currentNodeId;
+	if (graphCurrent) {
+		const current = steps.find((step) => step.workflowKey === graphCurrent);
+		if (current) return current;
+	}
 	if (job.currentStep !== undefined) {
 		const current = steps[job.currentStep];
 		if (current && (current.index === undefined || current.index === job.currentStep)) return current;
@@ -903,6 +1024,10 @@ export function widgetRenderKey(job: AsyncJobState, expanded = false): string {
 		chainStepCount: job.chainStepCount,
 		parallelGroups: job.parallelGroups,
 		workflowHostSteps: projectAsyncWorkflowRows([], job.hostSteps).map(hostStepRenderKey),
+		workflowGraph: job.mode === "workflow" && job.workflowGraph ? {
+			currentNodeId: job.workflowGraph.currentNodeId,
+			stages: workflowGraphStageNodes(job.workflowGraph).map((node) => [node.id, node.status, node.agent, node.phase, node.label, node.flatIndex, node.outputName, node.structured, node.error]),
+		} : undefined,
 		preflight: expanded ? job.preflight : job.preflight ? formatWorkflowPreflightPlanSummary(job.preflight) : undefined,
 		preflightWarnings: expanded ? job.workflow?.preflightWarnings : job.workflow?.preflightWarnings?.length || undefined,
 		steps: job.steps?.map((step, index) => widgetStepRenderKey(step, index, expanded)),
@@ -1573,9 +1698,17 @@ function buildForegroundResultEntries(
 
 function widgetStats(job: AsyncJobState, theme: Theme): string {
 	const parts: string[] = [];
-	const stepsTotal = job.stepsTotal ?? (job.agents?.length ?? 1);
+	const stageProgress = workflowStageProgress(job);
+	const stepsTotal = stageProgress?.total ?? job.stepsTotal ?? (job.agents?.length ?? 1);
 	const isSingleChild = isSingleChildAsyncJob(job);
-	if (job.activeParallelGroup) {
+	if (stageProgress) {
+		const stages = workflowGraphStageNodes(job.workflowGraph);
+		const currentStage = stageProgress.current !== undefined ? stages[stageProgress.current] : undefined;
+		const focus = currentStage
+			? [compactTaskText(undefined, currentStage.label) ?? boundedLaneValue(currentStage.id), currentStage.agent ? boundedLaneValue(currentStage.agent) : "", workflowNodeStatusLabel(currentStage.status)].filter(Boolean)
+			: [];
+		parts.push(["staged lane", stageProgress.current !== undefined ? `stage ${stageProgress.current + 1}/${stageProgress.total}` : `${stageProgress.total} stages`, ...focus].join(" · "));
+	} else if (job.activeParallelGroup) {
 		const running = job.runningSteps ?? (job.status === "running" ? 1 : 0);
 		const done = job.completedSteps ?? (job.status === "complete" ? stepsTotal : 0);
 		if (job.mode === "parallel") {
@@ -1799,7 +1932,7 @@ function foregroundStyleWidgetStepLines(
 	job: AsyncJobState,
 	theme: Theme,
 	step: NonNullable<AsyncJobState["steps"]>[number],
-	itemTitle: "Agent" | "Step",
+	itemTitle: "Agent" | "Stage" | "Step",
 	index: number,
 	total: number,
 	expanded: boolean,
@@ -1814,7 +1947,11 @@ function foregroundStyleWidgetStepLines(
 	const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
 	const collapseDetails = shouldCollapseSingleChildDetails(job, step);
 	const displayName = collapseDetails ? singleChildAgentName(job, step) : childDisplayName(step);
-	const rowLabel = collapseDetails ? displayName : (options?.rowLabel ?? `${itemTitle} ${index}/${total}: ${displayName}`);
+	const stageName = itemTitle === "Stage"
+		? compactTaskText(undefined, step.label) ?? boundedLaneValue(step.workflowKey) ?? displayName
+		: undefined;
+	const stageIdentity = stageName && stageName !== displayName ? `${stageName} (${displayName})` : stageName ?? displayName;
+	const rowLabel = collapseDetails ? displayName : (options?.rowLabel ?? `${itemTitle} ${index}/${total}: ${itemTitle === "Stage" ? stageIdentity : displayName}`);
 	const rowMarker = options?.rowMarker ? `${options.rowMarker} ` : "";
 	const lines = [`${rowIndent}${rowMarker}${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame)} ${themeBold(theme, rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
 	const lane = projectAsyncLane(job, step);
@@ -1878,7 +2015,8 @@ function hostStepWidgetLines(job: AsyncJobState, theme: Theme, indent: string): 
 }
 
 function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded: boolean, width: number, frame?: number): string[] {
-	if (!job.steps?.length) {
+	const steps = workflowWidgetSteps(job);
+	if (!steps.length) {
 		const lane = projectAsyncLane(job);
 		return [
 			...workflowPreflightLines(job, expanded),
@@ -1894,16 +2032,26 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 	if (group) {
 		lines.push(...parallelWidgetGroupDetails(job, theme, group, expanded, width, frame, Boolean(job.activeParallelGroup)));
 	} else {
+		const stageProgress = workflowStageProgress(job);
 		const total = job.mode === "chain"
-			? job.chainStepCount ?? job.stepsTotal ?? job.steps.length
-			: job.stepsTotal ?? job.steps.length;
-		const itemTitle = "Step";
-		for (const [index, step] of job.steps.entries()) {
-			lines.push(...foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index + 1, total, expanded, width, frame));
+			? job.chainStepCount ?? job.stepsTotal ?? steps.length
+			: stageProgress?.total ?? job.stepsTotal ?? steps.length;
+		const stageTotal = stageProgress?.total ?? total;
+		const plannedKeys = stageProgress ? new Set(workflowGraphStageNodes(job.workflowGraph).map((node) => node.id)) : undefined;
+		const extraStepCount = plannedKeys
+			? steps.filter((step) => step.workflowKey === undefined || !plannedKeys.has(step.workflowKey)).length
+			: total;
+		let extraStepIndex = 0;
+		for (const [index, step] of steps.entries()) {
+			const isPlannedStage = plannedKeys !== undefined && step.workflowKey !== undefined && plannedKeys.has(step.workflowKey);
+			const itemTitle = isPlannedStage ? "Stage" : "Step";
+			const displayIndex = isPlannedStage ? (step.index ?? index) + 1 : plannedKeys ? ++extraStepIndex : index + 1;
+			const displayTotal = isPlannedStage ? stageTotal : extraStepCount;
+			lines.push(...foregroundStyleWidgetStepLines(job, theme, step, itemTitle, displayIndex, displayTotal, expanded, width, frame));
 		}
 	}
 	lines.push(...hostStepWidgetLines(job, theme, "  "));
-	const attached = new Set(job.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []));
+	const attached = new Set(steps.flatMap((step) => step.children?.map((child) => child.id) ?? []));
 	const unattached = job.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
 	for (const nestedLine of formatNestedWidgetLines(unattached, theme, width, expanded, job.updatedAt, expanded ? 12 : 6)) {
 		lines.push(`  ${nestedLine}`);
@@ -1913,7 +2061,7 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 
 function buildSingleWidgetLines(job: AsyncJobState, theme: Theme, width: number, expanded: boolean, frame?: number): string[] {
 	const stats = widgetStats(job, theme);
-	const count = job.mode === "chain" ? job.chainStepCount : job.stepsTotal ?? job.agents?.length ?? job.steps?.length;
+	const count = job.mode === "chain" ? job.chainStepCount : workflowStageProgress(job)?.total ?? job.stepsTotal ?? job.agents?.length ?? job.steps?.length;
 	const mode = widgetJobName(job);
 	const title = isSingleChildAsyncJob(job)
 		? "async subagent"
@@ -2189,6 +2337,10 @@ function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[
 
 	const lines = buildLines();
 	if (lines.length <= availableRows) {
+		widgetLayoutSession = { expanded, rows, columns, tier: "full", visibleJobKeys: [] };
+		return fitWidgetLineBudget(lines, theme, width, false);
+	}
+	if (availableRows > 2 && jobs.length === 1 && workflowStageProgress(jobs[0]!)) {
 		widgetLayoutSession = { expanded, rows, columns, tier: "full", visibleJobKeys: [] };
 		return fitWidgetLineBudget(lines, theme, width, false);
 	}

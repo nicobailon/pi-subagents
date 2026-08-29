@@ -1889,6 +1889,8 @@ export interface AsyncJobState {
 	parallelGroups?: AsyncParallelGroupStatus[];
 	/** Bounded host-owned CI/gate nodes loaded from the workflow status graph. */
 	hostSteps?: HostStepNodeV1[];
+	/** Full bounded workflow plan, including not-yet-materialized stages. */
+	workflowGraph?: WorkflowGraphSnapshot;
 	steps?: AsyncJobStep[];
 	preflight?: WorkflowPreflightV1;
 	stepsTotal?: number;
