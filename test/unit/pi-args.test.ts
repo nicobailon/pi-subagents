@@ -145,6 +145,47 @@ function writeMcpFixture(
 	});
 }
 
+type RuntimeMcpDefinition = { command: string; args: string[] };
+
+function buildLegacyAliasLaunch(params: {
+	definitions: Record<string, RuntimeMcpDefinition>;
+	mcpDirectTools: string[];
+	allowedTools: string[];
+}) {
+	const fixture = createMcpFixture();
+	writeJson(path.join(fixture.agentDir, "mcp.json"), { mcpServers: {} });
+	writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
+		version: 1,
+		servers: Object.fromEntries(Object.entries(params.definitions).map(([name, definition]) => [
+			name,
+			{ configHash: computeMcpServerHash(definition), cachedAt: Date.now(), tools: [{ name: "search" }] },
+		])),
+	});
+	const runtimeSnapshotHost: McpRuntimeSnapshotHost = {
+		events: {
+			emit(_event, request) {
+				const definition = params.definitions[request.name];
+				if (!definition) {
+					request.result = { ok: false, error: new Error(`unknown runtime server ${request.name}`) };
+					return;
+				}
+				request.result = { ok: true, snapshot: { name: request.name, definition, runtime: true, persisted: false } };
+			},
+		},
+	};
+	return buildPiArgs({
+		baseArgs: ["-p"],
+		task: "hello",
+		sessionEnabled: false,
+		inheritProjectContext: false,
+		inheritSkills: false,
+		tools: ["read"],
+		mcpDirectTools: params.mcpDirectTools,
+		capabilityCeiling: { version: 1, allowedTools: params.allowedTools, denyExtensions: false, sources: ["test"] },
+		runtimeSnapshotHost,
+	});
+}
+
 afterEach(() => {
 	process.chdir(originalCwd);
 	for (const [key, value] of Object.entries(originalEnv)) {
@@ -1364,42 +1405,14 @@ describe("buildPiArgs system prompt mode wiring", () => {
 	});
 
 	it("does not let legacy MCP ceiling aliases cross server boundaries", () => {
-		const fixture = createMcpFixture();
 		const definitions = {
 			"runtime-a": { command: "runtime-a", args: ["--stdio"] },
 			runtime_a: { command: "runtime_a", args: ["--stdio"] },
 		};
-		writeJson(path.join(fixture.agentDir, "mcp.json"), { mcpServers: {} });
-		writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
-			version: 1,
-			servers: {
-				"runtime-a": { configHash: computeMcpServerHash(definitions["runtime-a"]), cachedAt: Date.now(), tools: [{ name: "search" }] },
-				runtime_a: { configHash: computeMcpServerHash(definitions.runtime_a), cachedAt: Date.now(), tools: [{ name: "search" }] },
-			},
-		});
-		const runtimeSnapshotHost: McpRuntimeSnapshotHost = {
-			events: {
-				emit(_event, request) {
-					const definition = definitions[request.name as keyof typeof definitions];
-					if (!definition) {
-						request.result = { ok: false, error: new Error(`unknown runtime server ${request.name}`) };
-						return;
-					}
-					request.result = { ok: true, snapshot: { name: request.name, definition, runtime: true, persisted: false } };
-				},
-			},
-		};
-
-		const launch = buildPiArgs({
-			baseArgs: ["-p"],
-			task: "hello",
-			sessionEnabled: false,
-			inheritProjectContext: false,
-			inheritSkills: false,
-			tools: ["read"],
+		const launch = buildLegacyAliasLaunch({
+			definitions,
 			mcpDirectTools: ["runtime-a", "runtime_a"],
-			capabilityCeiling: { version: 1, allowedTools: ["read", "runtime_a_search"], denyExtensions: false, sources: ["test"] },
-			runtimeSnapshotHost,
+			allowedTools: ["read", "runtime_a_search"],
 		});
 
 		assert.equal(launch.args[launch.args.indexOf("--tools") + 1], "read,runtime_a_search");
@@ -1412,42 +1425,13 @@ describe("buildPiArgs system prompt mode wiring", () => {
 	});
 
 	it("does not allow ambiguous legacy MCP ceiling aliases", () => {
-		const fixture = createMcpFixture();
-		const definitions = {
+		const launch = buildLegacyAliasLaunch({
+			definitions: {
 			"runtime-a-b": { command: "runtime-a-b", args: ["--stdio"] },
 			"runtime_a-b": { command: "runtime_a-b", args: ["--stdio"] },
-		};
-		writeJson(path.join(fixture.agentDir, "mcp.json"), { mcpServers: {} });
-		writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
-			version: 1,
-			servers: {
-				"runtime-a-b": { configHash: computeMcpServerHash(definitions["runtime-a-b"]), cachedAt: Date.now(), tools: [{ name: "search" }] },
-				"runtime_a-b": { configHash: computeMcpServerHash(definitions["runtime_a-b"]), cachedAt: Date.now(), tools: [{ name: "search" }] },
 			},
-		});
-		const runtimeSnapshotHost: McpRuntimeSnapshotHost = {
-			events: {
-				emit(_event, request) {
-					const definition = definitions[request.name as keyof typeof definitions];
-					if (!definition) {
-						request.result = { ok: false, error: new Error(`unknown runtime server ${request.name}`) };
-						return;
-					}
-					request.result = { ok: true, snapshot: { name: request.name, definition, runtime: true, persisted: false } };
-				},
-			},
-		};
-
-		const launch = buildPiArgs({
-			baseArgs: ["-p"],
-			task: "hello",
-			sessionEnabled: false,
-			inheritProjectContext: false,
-			inheritSkills: false,
-			tools: ["read"],
 			mcpDirectTools: ["runtime-a-b", "runtime_a-b"],
-			capabilityCeiling: { version: 1, allowedTools: ["read", "runtime_a_b_search"], denyExtensions: false, sources: ["test"] },
-			runtimeSnapshotHost,
+			allowedTools: ["read", "runtime_a_b_search"],
 		});
 
 		assert.equal(launch.args[launch.args.indexOf("--tools") + 1], "read");

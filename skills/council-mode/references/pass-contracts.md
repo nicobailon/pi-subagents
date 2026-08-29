@@ -137,7 +137,7 @@ Create model-based advisors in the user or project agent directory, not in this 
 name: council-sol
 description: Read-only fresh-context advisor for bounded council decisions
 tools: read, grep, find, ls
-model: openai-codex/gpt-5.6-sol
+model: provider/top-reasoning-model
 thinking: high
 systemPromptMode: replace
 inheritProjectContext: true

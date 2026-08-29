@@ -139,12 +139,6 @@ Async does not mean parallel writes. Do not edit the same active worktree while 
 
 Do not end your turn immediately after launching an async child if you promised to keep working. Continue the local inspection, synthesis, or validation prep, then check the async run when its result is needed. If no safe independent work remains, return control and let Pi wake the session; do not convert the child to foreground.
 
-“Continue/orchestrate/work until done” means keep the lane board moving while a
-safe immediate action remains; it does not mean hold an interactive turn open
-until async lanes finish. If only async lanes are running, record the revisit
-trigger and yield. Do not use `subagent_wait({ all: true })` as an interactive
-lane barrier.
-
 In an ordinary interactive chat, normally return control after launching or
 triaging useful async work and let Pi wake the session on completion; do not
 call `subagent_wait()` merely to wait. A run-to-completion user request is not

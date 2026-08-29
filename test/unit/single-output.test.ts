@@ -169,6 +169,19 @@ describe("resolveSingleOutput", () => {
 		assert.equal(result.savedPath, undefined);
 		assert.match(result.saveError ?? "", /Failed to read changed output file/);
 	});
+
+	it("fails closed when the pre-run output snapshot could not be inspected", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-test-"));
+		tempDirs.push(dir);
+		const outputPath = path.join(dir, "review.md");
+
+		const result = resolveSingleOutput(outputPath, "fallback output", { exists: false, error: "permission denied" });
+
+		assert.equal(result.fullOutput, "fallback output");
+		assert.equal(result.savedPath, undefined);
+		assert.match(result.saveError ?? "", /Failed to inspect output file: permission denied/);
+		assert.equal(fs.existsSync(outputPath), false);
+	});
 });
 
 describe("extractChildWrittenOutput", () => {

@@ -16,6 +16,21 @@ const DEFAULT_MAX_SERIALIZED_BYTES = 32 * 1024;
 export type AsyncStatusSnapshotState = "queued" | "running" | "complete" | "failed" | "partial" | "paused" | "stopped" | "rejected";
 export type AsyncStatusSnapshotKind = "subagent" | "workflow" | "step";
 
+const ASYNC_STATUS_SNAPSHOT_STATES: Record<AsyncStatusSnapshotState, true> = {
+	queued: true,
+	running: true,
+	complete: true,
+	failed: true,
+	partial: true,
+	paused: true,
+	stopped: true,
+	rejected: true,
+};
+
+function isAsyncStatusSnapshotState(value: string): value is AsyncStatusSnapshotState {
+	return Object.hasOwn(ASYNC_STATUS_SNAPSHOT_STATES, value);
+}
+
 export interface AsyncStatusSnapshotActivityV1 {
 	state?: string;
 	currentTool?: string;
@@ -157,7 +172,8 @@ function publicCount(value: unknown): number | undefined {
 function normalizeState(value: string): AsyncStatusSnapshotState {
 	if (value === "completed") return "complete";
 	if (value === "pending") return "queued";
-	return value as AsyncStatusSnapshotState;
+	if (isAsyncStatusSnapshotState(value)) return value;
+	return "partial";
 }
 
 function terminalState(state: AsyncStatusSnapshotState): boolean {

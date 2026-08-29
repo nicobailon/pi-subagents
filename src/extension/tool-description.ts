@@ -28,13 +28,13 @@ export const SUBAGENT_TOOL_PROMPT_GUIDELINES = [
 	WORKFLOW_OUTPUT_BINDING_GUIDANCE,
 	"For ordinary parallel work, use await runs.all([{key,agent,task}, ...]); it resolves to an ordered array, not a key map, so use results[0], destructuring, or results.map(...), not results.<key>. Do not read .output from unawaited runs.run launches. Stored runs.run promises are only for advanced rolling fanout and each must later be observed with direct await, Promise.race, or Promise.all.",
 	"Keep one writer per cwd/worktree unless writers run in isolated worktrees.",
-	"To pass an explicit model to a child, first call { action: \"models\" } and copy an exact provider/id (e.g. openai-codex/gpt-5.6-sol); bare ids resolve only when unique in the registry, and agent names (gpt-pro, advisor) are not model ids. Set per-run thinking with a suffix on the model string (e.g. openai-codex/gpt-5.6-sol:high; off/minimal/low/medium/high/xhigh/max); the suffix wins over the agent's thinking default. The thinking field only applies to action='watchdog.configure' and is ignored on dispatch.",
+	"To pass an explicit model to a child, first call { action: \"models\" } and copy an exact provider/id (e.g. provider/model-id); bare ids resolve only when unique in the registry, and agent names (gpt-pro, advisor) are not model ids. Set per-run thinking with a suffix on the model string (e.g. provider/model-id:high; off/minimal/low/medium/high/xhigh/max); the suffix wins over the agent's thinking default. The thinking field only applies to action='watchdog.configure' and is ignored on dispatch.",
 	EXTERNAL_CLI_RUNNER_GUIDANCE,
 	"Use guide or the pi-subagents skill for advanced scheduling, missions, steering, and retention.",
 ];
 
 export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
-• Use { action: "list" } before execution and only run executable/non-disabled agents. ${AGENT_CAPABILITY_GUIDANCE}
+• Use { action: "list" } before execution and only run executable/non-disabled agents.
 • Keep execution and management separate: omit action for structured single-child or workflowScript execution; use action only for management/control.
 • Async/background runs are the normal default unless config sets asyncByDefault:false; set async:true explicitly when async behavior matters. Use async:false only when the parent must block until completion. Async mode still shows progress. Final reviews and gate checks stay async; needing a result is not a blocking reason. After an async launch, continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll status just to wait; use subagent_wait only when the current request must finish in this turn.
 • ${WORKFLOW_RESUME_KEY_GUIDANCE}

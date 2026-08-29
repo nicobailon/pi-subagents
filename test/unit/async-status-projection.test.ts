@@ -98,6 +98,18 @@ describe("async status projection", () => {
 		assert.doesNotMatch(serialized, /private\/report|fileMutation|Required file-only output/);
 	});
 
+	it("maps malformed persisted states to partial instead of widening the public state union", () => {
+		const snapshot = projectAsyncStatusSnapshot([{
+			asyncId: "bad-state",
+			asyncDir: "/tmp/bad-state",
+			status: "mystery",
+			steps: [{ agent: "worker", status: "also-mystery" }],
+		} as unknown as AsyncJobState]);
+
+		assert.equal(snapshot.runs[0]?.state, "partial");
+		assert.equal(snapshot.runs[0]?.children?.[0]?.state, "partial");
+	});
+
 	it("projects compact Fleet workflow rows without applying UI bounds", () => {
 		const rows = projectAsyncWorkflowRows([{
 			agent: "reviewer",

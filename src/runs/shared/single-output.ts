@@ -8,6 +8,17 @@ export interface SingleOutputSnapshot {
 	exists: boolean;
 	mtimeMs?: number;
 	size?: number;
+	error?: string;
+}
+
+function missingFileStatError(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | undefined)?.code;
+	return code === "ENOENT" || code === "ENOTDIR";
+}
+
+function snapshotFromStatError(error: unknown): SingleOutputSnapshot {
+	if (missingFileStatError(error)) return { exists: false };
+	return { exists: false, error: error instanceof Error ? error.message : String(error) };
 }
 
 /**
@@ -183,9 +194,8 @@ export function captureSingleOutputSnapshot(outputPath: string | undefined): Sin
 	try {
 		const stat = fs.statSync(outputPath);
 		return { exists: true, mtimeMs: stat.mtimeMs, size: stat.size };
-	} catch {
-		// The snapshot is advisory; resolveSingleOutput reports concrete read/write failures.
-		return { exists: false };
+	} catch (error) {
+		return snapshotFromStatError(error);
 	}
 }
 
@@ -193,14 +203,14 @@ function inspectSingleOutputChange(
 	outputPath: string,
 	beforeRun: SingleOutputSnapshot | undefined,
 ): { changed: boolean; error?: string } {
+	if (beforeRun?.error) return { changed: false, error: beforeRun.error };
 	try {
 		const stat = fs.statSync(outputPath);
 		return {
 			changed: !beforeRun?.exists || stat.mtimeMs !== beforeRun.mtimeMs || stat.size !== beforeRun.size,
 		};
 	} catch (error) {
-		const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
-		if (code === "ENOENT" || code === "ENOTDIR") return { changed: false };
+		if (missingFileStatError(error)) return { changed: false };
 		return { changed: false, error: error instanceof Error ? error.message : String(error) };
 	}
 }

@@ -281,7 +281,7 @@ agent with the same name only when you want a substantially different agent.
 
 Keep the parent/orchestrator on the ordinary strong default model because omission failures are cheaper than unnecessary commissions. Route workers and scouts to a fast, capable worker tier, and keep serious reviews on the strong tier at high thinking. Use a top-reasoning model only for bounded, read-only critic/oracle/root-cause audits; critic-tier high thinking is escalation-only and never an autonomous root. Explicit parent/user model policy wins over these recommendations.
 
-Examples are illustrative, not requirements. One maintainer setup maps these tiers to GPT-5.5 for the parent and serious reviews, GPT-5.6 Luna for workers/scouts, and GPT-5.6 Sol for critic/oracle escalation. A non-OpenAI setup should choose comparable available models by capability and record that mapping in user/project settings or a profile.
+Examples are illustrative, not requirements. Map these tiers to concrete models in user/project settings or a profile. A non-OpenAI setup should choose comparable available models by capability.
 
 Use `fallbackModels` when a tier has provider quota or availability risk. Prefer fresh context for cross-provider children when inherited provider-specific reasoning blocks would force thinking off.
 

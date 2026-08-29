@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildPiArgs, deriveForkPromptCacheKey, SUBAGENT_FORK_CACHE_KEY_ENV } from "../../src/runs/shared/pi-args.ts";
 import { rewriteForkCacheProviderRequest } from "../../src/runs/shared/subagent-prompt-runtime.ts";
 
@@ -13,6 +14,10 @@ const baseLaunch = {
 	inheritGlobalContext: false,
 	inheritSkills: false,
 };
+
+function providerContext(api: string): Pick<ExtensionContext, "model"> {
+	return { model: { api } };
+}
 
 afterEach(() => {
 	if (originalForkCacheKey === undefined) delete process.env[SUBAGENT_FORK_CACHE_KEY_ENV];
@@ -56,11 +61,11 @@ describe("fork prompt cache keys", () => {
 		};
 
 		assert.deepEqual(
-			rewriteForkCacheProviderRequest({ type: "before_provider_request", payload }, { model: { api: "openai-responses" } } as never),
+			rewriteForkCacheProviderRequest({ type: "before_provider_request", payload }, providerContext("openai-responses")),
 			{ ...payload, prompt_cache_key: "pi-fork:parent-session" },
 		);
 		assert.deepEqual(
-			rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { ...payload, prompt_cache_key: "pi-fork:parent-session" } }, { model: { api: "openai-responses" } } as never),
+			rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { ...payload, prompt_cache_key: "pi-fork:parent-session" } }, providerContext("openai-responses")),
 			{ ...payload, prompt_cache_key: "pi-fork:parent-session" },
 		);
 	});
@@ -68,18 +73,18 @@ describe("fork prompt cache keys", () => {
 	it("does not add prompt cache keys or touch non-OpenAI payloads", () => {
 		process.env[SUBAGENT_FORK_CACHE_KEY_ENV] = "pi-fork:parent-session";
 
-		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: "raw" }, { model: { api: "openai-responses" } } as never), undefined);
-		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: [] }, { model: { api: "openai-responses" } } as never), undefined);
-		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test" } }, { model: { api: "openai-responses" } } as never), undefined);
-		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: undefined } }, { model: { api: "openai-responses" } } as never), undefined);
-		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: "child" } }, { model: { api: "anthropic-messages" } } as never), undefined);
-		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: "child" } }, { model: { api: "unknown-api" } } as never), undefined);
+		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: "raw" }, providerContext("openai-responses")), undefined);
+		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: [] }, providerContext("openai-responses")), undefined);
+		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test" } }, providerContext("openai-responses")), undefined);
+		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: undefined } }, providerContext("openai-responses")), undefined);
+		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: "child" } }, providerContext("anthropic-messages")), undefined);
+		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: "child" } }, providerContext("unknown-api")), undefined);
 	});
 
 	it("is a no-op when fork cache affinity is not configured", () => {
 		delete process.env[SUBAGENT_FORK_CACHE_KEY_ENV];
 		assert.equal(
-			rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: "child" } }, { model: { api: "openai-responses" } } as never),
+			rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: "child" } }, providerContext("openai-responses")),
 			undefined,
 		);
 	});

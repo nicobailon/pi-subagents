@@ -2390,9 +2390,7 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 	let hiddenFinished = 0;
 	let queuedSummaryShown = false;
 	let slots = MAX_WIDGET_JOBS;
-
-	for (const job of running) {
-		if (slots <= 0) { hiddenRunning++; continue; }
+	const appendJob = (job: AsyncJobState): void => {
 		const stats = widgetStats(job, theme);
 		items.push([
 			`${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
@@ -2400,6 +2398,11 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 			...widgetLaneDetailLines(job, theme),
 			...widgetParallelAgentDetails(job, theme, expanded, width, frame),
 		]);
+	};
+
+	for (const job of running) {
+		if (slots <= 0) { hiddenRunning++; continue; }
+		appendJob(job);
 		slots--;
 	}
 
@@ -2411,13 +2414,7 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 
 	for (const job of finished) {
 		if (slots <= 0) { hiddenFinished++; continue; }
-		const stats = widgetStats(job, theme);
-		items.push([
-			`${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
-			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
-			...widgetLaneDetailLines(job, theme),
-			...widgetParallelAgentDetails(job, theme, expanded, width, frame),
-		]);
+		appendJob(job);
 		slots--;
 	}
 

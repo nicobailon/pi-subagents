@@ -4,7 +4,7 @@ import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { formatAsyncRunList, listAsyncRuns } from "../../src/runs/background/async-status.ts";
+import { formatAsyncRunList, formatWorkflowStageLine, listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { ACTIVE_RUN_INDEX_DIR, DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { encodeIndexSegment } from "../../src/runs/background/index-segment.ts";
 import { TERMINAL_RUN_INDEX_DIR } from "../../src/runs/background/terminal-run-index.ts";
@@ -41,6 +41,21 @@ function stagedLaneStatusGraph(runId: string): Record<string, unknown> {
 }
 
 describe("async status helpers", () => {
+	it("bounds workflow stage text from persisted status", () => {
+		const line = formatWorkflowStageLine({
+			id: `${"stage".repeat(80)}\u001b[31m`,
+			kind: "step",
+			label: `${"label".repeat(80)}\nsecond line`,
+			agent: "worker".repeat(40),
+			status: "failed",
+			error: `${"boom".repeat(100)}\nwith details`,
+		}, 0, 1);
+
+		assert.equal(line.includes("\u001b"), false);
+		assert.equal(line.includes("\n"), false);
+		assert.ok(line.length < 700, line);
+	});
+
 	it("lists only requested states and includes flattened step summaries", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-"));
 		let budgetDirectory: string | undefined;

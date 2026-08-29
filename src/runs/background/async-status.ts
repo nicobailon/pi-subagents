@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
+import { previewDisplayText } from "../../shared/display-text.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
 import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type HostStepNodeV1, type HostStepState, type LaunchResolvedChildExtensionsV1, type RuntimeAcknowledgedChildExtensionsV1, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TimeoutRecoveryProjection, type TokenUsage, type TurnBudgetState, type UsageBudgetState, type WorkflowPreflightV1, type WorkflowGraphSnapshot } from "../../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../shared/capability-ceiling.ts";
@@ -595,10 +596,12 @@ function workflowStageStateLabel(status: WorkflowGraphSnapshot["nodes"][number][
 
 export function formatWorkflowStageLine(node: WorkflowGraphSnapshot["nodes"][number], index: number, total: number): string {
 	const state = workflowStageStateLabel(node.status);
-	const display = node.label && node.label !== node.id ? ` | ${node.label}` : "";
-	const agent = node.agent ? ` | ${node.agent}` : "";
-	const error = node.error ? ` | ${node.error.replace(/\s+/g, " ").trim()}` : "";
-	return `stage ${index + 1}/${total}: ${node.id}${display}${agent} | ${state}${error}`;
+	const id = previewDisplayText(node.id, 160);
+	const label = node.label ? previewDisplayText(node.label, 160) : "";
+	const display = label && label !== id ? ` | ${label}` : "";
+	const agent = node.agent ? ` | ${previewDisplayText(node.agent, 80)}` : "";
+	const error = node.error ? ` | ${previewDisplayText(node.error, 240)}` : "";
+	return `stage ${index + 1}/${total}: ${id}${display}${agent} | ${state}${error}`;
 }
 
 export function formatAsyncRunOutputPath(run: Pick<AsyncRunSummary, "asyncDir" | "outputFile">): string | undefined {
