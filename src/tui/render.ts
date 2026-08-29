@@ -192,7 +192,10 @@ function runningSeed(...values: Array<number | undefined>): number | undefined {
 
 function runningGlyph(seed?: number): string {
 	if (seed === undefined) return STATIC_RUNNING_GLYPH;
-	return RUNNING_FRAMES[Math.abs(seed) % RUNNING_FRAMES.length]!;
+	// Free-running wall-clock spinner: advance ~8 fps regardless of model
+	// activity; keep the seed so parallel rows stay phase-offset.
+	const clock = Math.floor(Date.now() / 125);
+	return RUNNING_FRAMES[Math.abs(seed + clock) % RUNNING_FRAMES.length]!;
 }
 
 function animatedSeed(seed: number | undefined, frame: number | undefined): number | undefined {

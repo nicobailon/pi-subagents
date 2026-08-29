@@ -551,7 +551,12 @@ export class SubagentFleetStatus {
 			this.lastRenderKey = renderKey;
 			return;
 		}
-		if (renderKey === this.lastRenderKey) return;
+		if (renderKey === this.lastRenderKey) {
+			// Repaint anyway while anything is running so the wall-clock
+			// spinner animates between state changes (500ms tick).
+			if (this.entries.some((entry) => entry.state === "running")) this.tui?.requestRender();
+			return;
+		}
 		this.lastRenderKey = renderKey;
 		this.tui?.requestRender();
 	}
