@@ -19,8 +19,8 @@ test("plans server grants from explicit metadata facts and preserves resource fi
 
 	assert.deepEqual(grant, {
 		selections: [
-			{ name: "browser_mcp_navigate", selector: "browser-mcp/navigate" },
-			{ name: "browser_mcp_get_console_logs", selector: "browser-mcp/get_console_logs" },
+			{ name: "browser-mcp_navigate", selector: "browser-mcp/navigate" },
+			{ name: "browser-mcp_get_console_logs", selector: "browser-mcp/get_console_logs" },
 		],
 		unresolvedSelectors: [],
 	});
@@ -95,7 +95,7 @@ test("enforces server includeTools before exclusions for tools and generated res
 
 test("matches include and exclude patterns against raw and alternate prefix names", () => {
 	for (const [toolPrefix, expectedName] of [
-		["server", "demo_mcp_search-records"],
+		["server", "demo-mcp_search-records"],
 		["short", "demo_search-records"],
 		["none", "search-records"],
 	] as const) {
@@ -114,6 +114,23 @@ test("matches include and exclude patterns against raw and alternate prefix name
 			toolPrefix,
 		});
 		assert.deepEqual(excluded.selections, []);
+	}
+});
+
+test("matches adapter names for test-mcp/example in every prefix mode", () => {
+	for (const [toolPrefix, expectedName] of [
+		["server", "test-mcp_example"],
+		["short", "test_example"],
+		["none", "example"],
+	] as const) {
+		const grant = planMcpDirectToolGrant({
+			selectors: ["test-mcp"],
+			servers: { "test-mcp": {} },
+			metadata: { "test-mcp": { tools: [{ name: "example" }] } },
+			toolPrefix,
+		});
+
+		assert.deepEqual(grant.selections, [{ name: expectedName, selector: "test-mcp/example" }]);
 	}
 });
 

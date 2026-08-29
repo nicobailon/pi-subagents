@@ -125,11 +125,8 @@ export function formatUnresolvedMcpDirectToolSelectors(selectors: readonly strin
 
 function getServerPrefix(serverName: string, mode: McpToolPrefix): string {
 	if (mode === "none") return "";
-	if (mode === "short") {
-		const short = serverName.replace(/-?mcp$/i, "").replace(/-/g, "_");
-		return short || "mcp";
-	}
-	return serverName.replace(/-/g, "_");
+	if (mode === "short") return serverName.replace(/-?mcp$/i, "") || "mcp";
+	return serverName;
 }
 
 function formatToolName(toolName: string, serverName: string, prefix: McpToolPrefix): string {
