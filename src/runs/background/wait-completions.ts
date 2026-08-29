@@ -4,6 +4,7 @@ import type { AsyncRunSummary } from "./async-status.ts";
 import { readCompletionReplay, writeCompletionReplay } from "./completion-replay.ts";
 import { fallbackResultPayloadPathForSessionRun, resultFilePath, resultPayloadPathForSessionRun } from "./result-files.ts";
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
+import { projectTimeoutRecovery } from "../shared/mutation-evidence.ts";
 
 function asNonEmptyString(value: unknown): string | undefined {
 	return typeof value === "string" && value ? value : undefined;
@@ -65,6 +66,7 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 			const error = asNonEmptyString(child.error);
 			const model = asNonEmptyString(child.model);
 			const contextOverflow = child.contextOverflow === true;
+			const timeoutRecovery = projectTimeoutRecovery(child.timeoutRecovery);
 			return [{
 				...(agent ? { agent } : {}),
 				...(childRunId ? { runId: childRunId } : {}),
@@ -76,6 +78,7 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 				...(model ? { model } : {}),
 				...(contextOverflow ? { contextOverflow: true } : {}),
 				...(artifactPaths ? { artifactPaths } : {}),
+				...(timeoutRecovery ? { timeoutRecovery } : {}),
 			}];
 		})
 		: undefined;

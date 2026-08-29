@@ -559,6 +559,10 @@ export interface TimeoutRecoverySummary {
 	termination: "timed-out" | "stopped";
 	changedFiles: string[];
 	truncated?: boolean;
+	/** True only when a timed-out child left tracked changes without its requested report. */
+	recoveryNeeded?: boolean;
+	reason?: "timed-out-with-dirty-worktree";
+	reportStatus?: "missing" | "written" | "not-requested" | "unknown";
 	currentTool?: string;
 	currentToolArgs?: string;
 	currentPath?: string;
@@ -568,6 +572,9 @@ export interface TimeoutRecoverySummary {
 	warning: string;
 	message: string;
 }
+
+/** Safe parent-facing subset of a timeout recovery summary. */
+export type TimeoutRecoveryProjection = Pick<TimeoutRecoverySummary, "termination" | "changedFiles" | "truncated" | "recoveryNeeded" | "reason" | "reportStatus">;
 
 export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 3;
 export type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFACT_VERSION;
@@ -1272,6 +1279,7 @@ export interface WaitCompletionChild {
 	model?: string;
 	contextOverflow?: boolean;
 	artifactPaths?: Partial<ArtifactPaths>;
+	timeoutRecovery?: TimeoutRecoveryProjection;
 }
 
 /**
@@ -1852,9 +1860,10 @@ export interface AsyncStatus {
 	parallelHandoff?: ParallelHandoffReference;
 }
 
-export type AsyncJobStep = NonNullable<AsyncStatus["steps"]>[number] & {
+export type AsyncJobStep = Omit<NonNullable<AsyncStatus["steps"]>[number], "timeoutRecovery"> & {
 	index?: number;
 	description?: string;
+	timeoutRecovery?: TimeoutRecoveryProjection;
 };
 
 export interface AsyncJobState {

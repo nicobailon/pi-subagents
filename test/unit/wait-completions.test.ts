@@ -34,6 +34,38 @@ describe("workflow wait completion projection", () => {
 		assert.doesNotMatch(JSON.stringify(completion), /must not be copied/);
 	});
 
+	it("retains only bounded timeout recovery evidence in completion details", () => {
+		const changedFiles = Array.from({ length: 25 }, (_, index) => `src/file-${String(index + 1).padStart(2, "0")}.ts`);
+		const completion = toWaitCompletion({
+			state: "failed",
+			success: false,
+			results: [{
+				agent: "worker",
+				success: false,
+				timeoutRecovery: {
+					termination: "timed-out",
+					changedFiles,
+					truncated: true,
+					recoveryNeeded: true,
+					reason: "timed-out-with-dirty-worktree",
+					reportStatus: "missing",
+					message: "raw recovery message must not cross the completion boundary",
+					effects: { settlementDiagnostic: { finalTextPresent: true } },
+				},
+			}],
+		}, "run-recovery");
+
+		assert.deepEqual(completion.results?.[0]?.timeoutRecovery, {
+			termination: "timed-out",
+			changedFiles: changedFiles.slice(0, 20),
+			truncated: true,
+			recoveryNeeded: true,
+			reason: "timed-out-with-dirty-worktree",
+			reportStatus: "missing",
+		});
+		assert.doesNotMatch(JSON.stringify(completion), /raw recovery message|settlementDiagnostic/);
+	});
+
 	it("rejects unbounded or unknown summary fields at the replay boundary", () => {
 		assert.throws(() => toWaitCompletion({ workflowChildren: { version: 1, parentToolCallId: "tool", workflowRunId: "run", inventoryComplete: true, workflowState: "completed", children: [], output: "secret" } }, "run"), /unsupported fields/);
 	});

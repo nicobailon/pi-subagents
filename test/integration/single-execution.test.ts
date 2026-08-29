@@ -138,6 +138,7 @@ interface RunSyncResult {
 	processSignal?: string | null;
 	interrupted?: boolean;
 	timedOut?: boolean;
+	timeoutRecovery?: { changedFiles?: string[]; message?: string; recoveryNeeded?: boolean; reason?: string; reportStatus?: string };
 	turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; exceededAtTurn?: number };
 	turnBudgetExceeded?: boolean;
 	wrapUpRequested?: boolean;
@@ -7731,6 +7732,36 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.error, "Subagent timed out after 150ms.");
 		assert.match(result.finalOutput ?? "", /Subagent timed out after 150ms\./);
 		assert.equal(result.progress.status, "failed");
+	});
+
+	it("treats an unchanged pre-existing file-only output as missing on dirty foreground timeout", async () => {
+		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+		execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+		const reportPath = path.join(tempDir, "report.md");
+		fs.writeFileSync(path.join(tempDir, "input.md"), "base\n", "utf-8");
+		fs.writeFileSync(reportPath, "stale report\n", "utf-8");
+		execFileSync("git", ["add", "input.md", "report.md"], { cwd: tempDir });
+		execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
+
+		mockPi.onCall({
+			writeFiles: [{ path: "input.md", content: "changed\n" }],
+			steps: [{ delay: 10_000 }],
+		});
+
+		const result = await runSync(tempDir, makeAgentConfigs(["slow"]), "slow", "Slow task", {
+			timeoutMs: 150,
+			outputPath: reportPath,
+			outputMode: "file-only",
+			acceptance: false,
+		});
+
+		assert.equal(result.timedOut, true);
+		assert.deepEqual(result.timeoutRecovery?.changedFiles, ["input.md"]);
+		assert.equal(result.timeoutRecovery?.reportStatus, "missing");
+		assert.equal(result.timeoutRecovery?.recoveryNeeded, true);
+		assert.match(result.finalOutput ?? "", /requested report: missing/i);
+		assert.equal(fs.readFileSync(reportPath, "utf-8"), "stale report\n");
 	});
 
 	it("ignores legacy turn-budget options without prompt injection or termination", async () => {

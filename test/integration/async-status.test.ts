@@ -95,6 +95,53 @@ describe("async status helpers", () => {
 		}
 	});
 
+	it("forwards bounded timeout recovery evidence and formats the recovery route", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-recovery-"));
+		try {
+			const changedFiles = Array.from({ length: 25 }, (_, index) => `src/file-${String(index + 1).padStart(2, "0")}.ts`);
+			createAsyncDir(root, "run-recovery", {
+				runId: "run-recovery",
+				mode: "single",
+				state: "failed",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{
+					agent: "worker",
+					status: "failed",
+					timedOut: true,
+					timeoutRecovery: {
+						termination: "timed-out",
+						changedFiles,
+						truncated: true,
+						recoveryNeeded: true,
+						reason: "timed-out-with-dirty-worktree",
+						reportStatus: "missing",
+						message: "raw recovery message must not cross the projection",
+						effects: { settlementDiagnostic: { finalTextPresent: true } },
+					},
+				}],
+			});
+
+			const run = listAsyncRuns(root, { states: ["failed"], reconcile: false })[0]!;
+			assert.deepEqual(run.steps[0]?.timeoutRecovery, {
+				termination: "timed-out",
+				changedFiles: changedFiles.slice(0, 20),
+				truncated: true,
+				recoveryNeeded: true,
+				reason: "timed-out-with-dirty-worktree",
+				reportStatus: "missing",
+			});
+			assert.doesNotMatch(JSON.stringify(run), /raw recovery message|settlementDiagnostic/);
+			const text = formatAsyncRunList([run], "Failed async runs");
+			assert.match(text, /Recovery needed: review the diff and artifacts before resuming or launching dependent stages\./);
+			assert.match(text, /requested report: missing/);
+			assert.match(text, /changed tracked files: src\/file-01\.ts, src\/file-02\.ts/);
+			assert.match(text, /file-20\.ts, …/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("reports the planned runs.lanes stage count while the first child is running", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-staged-lane-"));
 		try {

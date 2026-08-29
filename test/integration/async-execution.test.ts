@@ -81,7 +81,7 @@ interface AsyncResultPayload {
 	totalTokens?: { input: number; output: number; total: number };
 	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
 	usageBudget?: UsageBudgetState;
-	results: Array<{ agent?: string; sessionName?: string; launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions; runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions; output?: string; outputState?: "present" | "absent" | "unknown"; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; timeoutRecovery?: { changedFiles?: string[]; message?: string; warning?: string }; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number; turns: number }; structuredOutput?: unknown; agentContract?: { version: 1 }; execution?: { status?: string; success?: boolean; exitCode?: number }; effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean; message?: string }; settlementDiagnostic?: { finalTextPresent?: boolean; mutation?: { expected?: boolean; attempted?: boolean; observed?: boolean }; requiredOutput?: { kind?: string; path?: string; missing?: boolean }; afterCompactionSettlement?: boolean } }; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string; transcriptPath?: string }; outputSaveError?: string; metadataSaveError?: string; capabilityCeiling?: { version?: number; allowedTools?: string[]; denyExtensions?: boolean; sources?: string[] }; capabilityAudit?: { effectiveTools?: string[]; removedTools?: string[]; extensionsDenied?: boolean } }>;
+	results: Array<{ agent?: string; sessionName?: string; launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions; runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions; output?: string; outputState?: "present" | "absent" | "unknown"; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; timeoutRecovery?: { changedFiles?: string[]; message?: string; warning?: string; recoveryNeeded?: boolean; reason?: string; reportStatus?: string }; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number; turns: number }; structuredOutput?: unknown; agentContract?: { version: 1 }; execution?: { status?: string; success?: boolean; exitCode?: number }; effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean; message?: string }; settlementDiagnostic?: { finalTextPresent?: boolean; mutation?: { expected?: boolean; attempted?: boolean; observed?: boolean }; requiredOutput?: { kind?: string; path?: string; missing?: boolean }; afterCompactionSettlement?: boolean } }; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string; transcriptPath?: string }; outputSaveError?: string; metadataSaveError?: string; capabilityCeiling?: { version?: number; allowedTools?: string[]; denyExtensions?: boolean; sources?: string[] }; capabilityAudit?: { effectiveTools?: string[]; removedTools?: string[]; extensionsDenied?: boolean } }>;
 	outputs?: Record<string, { text?: string; structured?: unknown }>;
 	workflowGraph?: { nodes?: Array<{ kind?: string; label?: string; phase?: string; status?: string; acceptanceStatus?: string; error?: string; outputName?: string; structured?: boolean; children?: Array<{ label?: string; outputName?: string; itemKey?: string; status?: string; acceptanceStatus?: string; error?: string }> }> };
 	parallelHandoff?: { version?: number; path?: string; groupCount?: number; childCount?: number; changedPatches?: number; cleanupState?: string };
@@ -129,7 +129,7 @@ interface AsyncStatusPayload {
 		status?: string;
 		exitCode?: number;
 		timedOut?: boolean;
-		timeoutRecovery?: { changedFiles?: string[]; message?: string; warning?: string };
+		timeoutRecovery?: { changedFiles?: string[]; message?: string; warning?: string; recoveryNeeded?: boolean; reason?: string; reportStatus?: string };
 		error?: string;
 		model?: string;
 		thinking?: string;
@@ -1552,14 +1552,15 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.error, "Subagent timed out after 150ms.");
 	});
 
-	it("preserves async timeout recovery summaries in final results", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+	it("classifies a timed-out dirty child with a missing requested report as recovery-needed", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({ delay: 5_000, output: "too late" });
 		const repo = createRepo("pi-subagents-timeout-recovery-");
 		try {
 			const id = `async-timeout-recovery-${Date.now().toString(36)}`;
+			const outputPath = path.join(repo, "missing-report.md");
 			executeAsyncChain(id, {
-				chain: [{ agent: "slow", task: "Wait" }],
-				agents: [makeAgent("slow")],
+				chain: [{ agent: "slow", task: "Write the requested report" }],
+				agents: [makeAgent("slow", { output: outputPath, outputMode: "file-only" })],
 				ctx: { pi: { events: { emit() {} } }, cwd: repo, currentSessionId: "session-1" },
 				artifactConfig: {
 					enabled: true,
@@ -1579,12 +1580,27 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const payload = await readAsyncPayload(id);
 			const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
 			const result = payload.results[0];
+			const recovery = result?.timeoutRecovery;
+			const statusRecovery = status.steps?.[0]?.timeoutRecovery;
+			assert.equal(payload.success, false);
+			assert.equal(payload.state, "failed");
 			assert.equal(result?.timedOut, true);
+			assert.equal(result?.success, false);
+			assert.equal(fs.existsSync(outputPath), false);
 			assert.deepEqual(result?.timeoutRecovery?.changedFiles, ["input.md"]);
+			assert.equal(recovery?.recoveryNeeded, true);
+			assert.equal(recovery?.reason, "timed-out-with-dirty-worktree");
+			assert.equal(recovery?.reportStatus, "missing");
 			assert.match(result?.timeoutRecovery?.message ?? "", /changed tracked files: input\.md/);
+			assert.match(recovery?.message ?? "", /requested report: missing/i);
+			assert.match(result?.output ?? "", /review (?:the )?diff and artifacts before resuming.*dependent stages/i);
 			assert.match(result?.output ?? "", /Recovery summary:/);
 			assert.match(result?.output ?? "", /Warning: Inspect partial changes before retrying/);
-			assert.deepEqual(status.steps?.[0]?.timeoutRecovery?.changedFiles, ["input.md"]);
+			assert.equal(status.state, "failed");
+			assert.equal(status.steps?.[0]?.status, "failed");
+			assert.deepEqual(statusRecovery?.changedFiles, ["input.md"]);
+			assert.equal(statusRecovery?.recoveryNeeded, true);
+			assert.equal(statusRecovery?.reportStatus, "missing");
 		} finally {
 			fs.rmSync(repo, { recursive: true, force: true });
 		}

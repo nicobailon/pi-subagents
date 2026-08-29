@@ -78,6 +78,50 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("renders bounded recovery guidance from a failed status step", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-recovery-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-recovery");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			const changedFiles = Array.from({ length: 25 }, (_, index) => `src/file-${String(index + 1).padStart(2, "0")}.ts`);
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-recovery",
+				mode: "single",
+				state: "failed",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{
+					agent: "worker",
+					status: "failed",
+					timedOut: true,
+					timeoutRecovery: {
+						termination: "timed-out",
+						changedFiles,
+						truncated: true,
+						recoveryNeeded: true,
+						reason: "timed-out-with-dirty-worktree",
+						reportStatus: "missing",
+						message: "raw recovery message must not be rendered",
+						effects: { settlementDiagnostic: { finalTextPresent: true } },
+					},
+				}],
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-recovery" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.match(text, /State: failed/);
+			assert.match(text, /Recovery needed: review the diff and artifacts before resuming or launching dependent stages\./);
+			assert.match(text, /requested report: missing/);
+			assert.match(text, /changed tracked files: src\/file-01\.ts, src\/file-02\.ts/);
+			assert.match(text, /file-20\.ts, …/);
+			assert.doesNotMatch(text, /raw recovery message|settlementDiagnostic/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("shows a follow-up hint for completed external-job runs when the provider supports it", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-external-follow-up-"));
 		try {
@@ -1399,6 +1443,17 @@ describe("async run status inspection", () => {
 				state: "failed",
 				sessionFile,
 				summary: "result survived missing status",
+				results: [{
+					agent: "worker",
+					success: false,
+					timeoutRecovery: {
+						termination: "timed-out",
+						changedFiles: ["input.md"],
+						recoveryNeeded: true,
+						reason: "timed-out-with-dirty-worktree",
+						reportStatus: "missing",
+					},
+				}],
 			}, null, 2), "utf-8");
 
 			const result = inspectSubagentStatus({ id: "run-result-only" }, {
@@ -1412,6 +1467,9 @@ describe("async run status inspection", () => {
 			assert.match(text, /Result: /);
 			assert.match(text, /Revive: subagent\(\{ action: "resume", id: "run-result-only", message: "\.\.\." \}\)/);
 			assert.match(text, /result survived missing status/);
+			assert.match(text, /Recovery needed: review the diff and artifacts before resuming or launching dependent stages\./);
+			assert.match(text, /requested report: missing/);
+			assert.match(text, /changed tracked files: input\.md/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

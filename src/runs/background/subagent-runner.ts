@@ -1640,6 +1640,7 @@ async function runSingleStepInner(
 	const writerProcesses: PiWriterProcessInstanceExitV1[] = [];
 	let writerAttemptCount = 0;
 	const attemptNotes: string[] = [];
+	let finalRequiredOutputMissing: boolean | undefined;
 	const eventsPath = path.join(path.dirname(ctx.outputFile), "events.jsonl");
 	let finalResult: RunPiStreamingResult | undefined;
 	let finalOutputSnapshot: SingleOutputSnapshot | undefined;
@@ -1930,6 +1931,7 @@ async function runSingleStepInner(
 			: effectiveStructuredOutput
 				? { kind: "structured" as const, path: effectiveStructuredOutput.outputPath, missing: !fs.existsSync(effectiveStructuredOutput.outputPath) }
 			: undefined;
+		finalRequiredOutputMissing = requiredOutput?.missing;
 		const missingRequiredOutputError = formatRequiredOutputError(requiredOutput);
 		const missingRequiredOutputAfterMutation = Boolean(missingRequiredOutputError) && (mutationAttemptObserved || Boolean(mutationEvidence.changedFiles.length));
 		const effectiveExitCode = toolAvailabilityError || completionEvidence.legacyFailureError || midToolExitError || structuredError || emptyOutputError || missingRequiredOutputError
@@ -2118,6 +2120,7 @@ async function runSingleStepInner(
 		? buildTimeoutRecoverySummary({
 			termination: "timed-out",
 			evidence: finalMutationEvidence,
+			requiredOutputMissing: finalRequiredOutputMissing,
 			currentTool: finalResult?.currentTool,
 			currentToolArgs: finalResult?.currentToolArgs,
 			currentPath: finalResult?.currentPath,

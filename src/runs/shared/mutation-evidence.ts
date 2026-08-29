@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ArtifactPaths, TimeoutRecoverySummary, TrackedMutationEvidence, TrackedMutationFingerprint, TrackedMutationSnapshot } from "../../shared/types.ts";
+import type { ArtifactPaths, TimeoutRecoveryProjection, TimeoutRecoverySummary, TrackedMutationEvidence, TrackedMutationFingerprint, TrackedMutationSnapshot } from "../../shared/types.ts";
 
 const MAX_TRACKED_PATHS = 500;
 const MAX_HASH_BYTES = 1024 * 1024;
@@ -110,9 +110,48 @@ function formatPathList(paths: string[]): string {
 	return paths.length > MAX_TIMEOUT_FILES ? `${shown}, ... (${paths.length - MAX_TIMEOUT_FILES} more)` : shown;
 }
 
+/** Keep status and completion details to bounded routing evidence, not raw output or effects. */
+export function projectTimeoutRecovery(value: unknown): TimeoutRecoveryProjection | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const source = value as Record<string, unknown>;
+	const termination = source.termination === "timed-out" || source.termination === "stopped" ? source.termination : undefined;
+	if (!termination || !Array.isArray(source.changedFiles)) return undefined;
+	const allChangedFiles = source.changedFiles.filter((file): file is string => typeof file === "string");
+	const changedFiles = allChangedFiles.slice(0, MAX_TIMEOUT_FILES);
+	const reportStatus = source.reportStatus === "missing"
+		|| source.reportStatus === "written"
+		|| source.reportStatus === "not-requested"
+		|| source.reportStatus === "unknown"
+		? source.reportStatus
+		: undefined;
+	return {
+		termination,
+		changedFiles,
+		...(source.truncated === true || allChangedFiles.length > changedFiles.length ? { truncated: true } : {}),
+		...(source.recoveryNeeded === true ? { recoveryNeeded: true } : {}),
+		...(source.reason === "timed-out-with-dirty-worktree" ? { reason: source.reason } : {}),
+		...(reportStatus ? { reportStatus } : {}),
+	};
+}
+
+/** Render only the bounded recovery route needed by a parent/operator. */
+export function formatTimeoutRecoveryLines(value: unknown, indent = ""): string[] {
+	const recovery = projectTimeoutRecovery(value);
+	if (!recovery?.recoveryNeeded) return [];
+	const changedFiles = recovery.changedFiles.length > 0
+		? `${recovery.changedFiles.join(", ")}${recovery.truncated ? ", …" : ""}`
+		: "none";
+	const changedFileCount = recovery.changedFiles.length > 0 ? `${recovery.changedFiles.length}${recovery.truncated ? "+" : ""}` : "0";
+	return [
+		`${indent}Recovery needed: review the diff and artifacts before resuming or launching dependent stages.`,
+		`${indent}Recovery evidence: requested report: ${recovery.reportStatus ?? "unknown"}; changed tracked files: ${changedFiles} (${changedFileCount}); classification: ${recovery.reason ?? recovery.termination}`,
+	];
+}
+
 export function buildTimeoutRecoverySummary(input: {
 	termination: "timed-out" | "stopped";
 	evidence: TrackedMutationEvidence;
+	requiredOutputMissing?: boolean;
 	currentTool?: string;
 	currentToolArgs?: string;
 	currentPath?: string;
@@ -122,11 +161,19 @@ export function buildTimeoutRecoverySummary(input: {
 }): TimeoutRecoverySummary {
 	const warning = "Inspect partial changes before retrying or resuming the child.";
 	const changedFiles = input.evidence.changedFiles.slice(0, MAX_TIMEOUT_FILES);
+	let reportStatus: "missing" | "written" | "not-requested" = "not-requested";
+	if (input.requiredOutputMissing === true) reportStatus = "missing";
+	else if (input.requiredOutputMissing === false) reportStatus = "written";
+	const recoveryNeeded = input.termination === "timed-out"
+		&& reportStatus === "missing"
+		&& input.evidence.changedFiles.length > 0;
 	const lines = [
 		"Recovery summary:",
 		`- termination: ${input.termination}`,
 		`- changed tracked files: ${input.evidence.unavailable ? `unavailable (${input.evidence.unavailable})` : formatPathList(input.evidence.changedFiles)}`,
 	];
+	if (input.requiredOutputMissing !== undefined) lines.push(`- requested report: ${reportStatus}`);
+	if (recoveryNeeded) lines.push("- Recovery needed: review the diff and artifacts before resuming or launching dependent stages.");
 	if (input.currentTool) lines.push(`- active tool: ${input.currentTool}${input.currentToolArgs ? ` — ${input.currentToolArgs}` : ""}`);
 	if (input.currentPath) lines.push(`- active path: ${input.currentPath}`);
 	if (input.sessionFile) lines.push(`- session file: ${input.sessionFile}`);
@@ -138,6 +185,8 @@ export function buildTimeoutRecoverySummary(input: {
 		termination: input.termination,
 		changedFiles,
 		truncated: input.evidence.changedFiles.length > changedFiles.length || input.evidence.truncated || undefined,
+		...(recoveryNeeded ? { recoveryNeeded: true, reason: "timed-out-with-dirty-worktree" as const } : {}),
+		reportStatus,
 		currentTool: input.currentTool,
 		currentToolArgs: input.currentToolArgs,
 		currentPath: input.currentPath,

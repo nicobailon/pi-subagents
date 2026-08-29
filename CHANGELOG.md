@@ -14,6 +14,7 @@
 - Clarify workflowScript portability and runs.host working-directory limits, including the outer workflow cwd and trusted `cd ... && command` patterns (#1679).
 
 ### Fixed
+- Surface recovery-needed diagnostics for dirty timed-out children that miss requested reports, while keeping them fail-closed (#1713).
 - Keep retained-session resume runners from flashing console windows on Windows while preserving Unix background detachment. Thanks to [@Zethu5](https://github.com/Zethu5) for #1711.
 - Hide mutation-evidence Git subprocess windows on Windows to prevent visible console flashes or terminal tabs. Thanks to [@dnnkeeper](https://github.com/dnnkeeper) for #1706.
 - Deliver immediate async workflow terminal failures on macOS without requiring a later status refresh (#1700).

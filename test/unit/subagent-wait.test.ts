@@ -370,6 +370,60 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
+	it("surfaces bounded recovery guidance for a failed completion", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-recovery-completion-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			fs.mkdirSync(resultsDir, { recursive: true });
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-recovery", "running", { sessionId: "sess-1", pid: 999999 });
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				sleep: async () => {
+					const recovery = {
+						termination: "timed-out",
+						changedFiles: ["input.md"],
+						recoveryNeeded: true,
+						reason: "timed-out-with-dirty-worktree",
+						reportStatus: "missing",
+						message: "raw recovery message must not cross the wait boundary",
+						effects: { settlementDiagnostic: { finalTextPresent: true } },
+					};
+					writeStatus(asyncRoot, "run-recovery", "failed", {
+						sessionId: "sess-1",
+						steps: [{ agent: "worker", status: "failed", timedOut: true, timeoutRecovery: recovery }],
+					});
+					fs.writeFileSync(path.join(resultsDir, "run-recovery.json"), JSON.stringify({
+						id: "run-recovery",
+						runId: "run-recovery",
+						mode: "single",
+						state: "failed",
+						success: false,
+						results: [{ agent: "worker", success: false, error: "Subagent timed out.", output: "raw output must not be copied", timeoutRecovery: recovery }],
+					}), "utf-8");
+				},
+			}));
+
+			assert.equal(result.isError, undefined);
+			const text = textOf(result);
+			assert.match(text, /Recovery needed: review the diff and artifacts before resuming or launching dependent stages\./);
+			assert.match(text, /requested report: missing/);
+			assert.match(text, /changed tracked files: input\.md/);
+			assert.doesNotMatch(text, /raw recovery message|settlementDiagnostic|raw output/);
+			const completion = result.details.completions?.[0];
+			assert.equal(completion?.success, false);
+			assert.deepEqual(completion?.results?.[0]?.timeoutRecovery, {
+				termination: "timed-out",
+				changedFiles: ["input.md"],
+				recoveryNeeded: true,
+				reason: "timed-out-with-dirty-worktree",
+				reportStatus: "missing",
+			});
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("surfaces terminal completion payloads from an indexed pending result file", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-completions-pending-"));
 		const originalError = console.error;
