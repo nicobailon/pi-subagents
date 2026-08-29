@@ -1363,6 +1363,54 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.deepEqual(JSON.parse(launch.env[MCP_DIRECT_CHILD_TOOLS_ENV]!), ["runtime-a_search"]);
 	});
 
+	it("does not let legacy MCP ceiling aliases cross server boundaries", () => {
+		const fixture = createMcpFixture();
+		const definitions = {
+			"runtime-a": { command: "runtime-a", args: ["--stdio"] },
+			runtime_a: { command: "runtime_a", args: ["--stdio"] },
+		};
+		writeJson(path.join(fixture.agentDir, "mcp.json"), { mcpServers: {} });
+		writeJson(path.join(fixture.agentDir, "mcp-cache.json"), {
+			version: 1,
+			servers: {
+				"runtime-a": { configHash: computeMcpServerHash(definitions["runtime-a"]), cachedAt: Date.now(), tools: [{ name: "search" }] },
+				runtime_a: { configHash: computeMcpServerHash(definitions.runtime_a), cachedAt: Date.now(), tools: [{ name: "search" }] },
+			},
+		});
+		const runtimeSnapshotHost: McpRuntimeSnapshotHost = {
+			events: {
+				emit(_event, request) {
+					const definition = definitions[request.name as keyof typeof definitions];
+					if (!definition) {
+						request.result = { ok: false, error: new Error(`unknown runtime server ${request.name}`) };
+						return;
+					}
+					request.result = { ok: true, snapshot: { name: request.name, definition, runtime: true, persisted: false } };
+				},
+			},
+		};
+
+		const launch = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			mcpDirectTools: ["runtime-a", "runtime_a"],
+			capabilityCeiling: { version: 1, allowedTools: ["read", "runtime_a_search"], denyExtensions: false, sources: ["test"] },
+			runtimeSnapshotHost,
+		});
+
+		assert.equal(launch.args[launch.args.indexOf("--tools") + 1], "read,runtime_a_search");
+		const configPath = launch.args[launch.args.indexOf("--mcp-config") + 1];
+		assert.ok(configPath);
+		assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf-8")), {
+			mcpServers: { runtime_a: definitions.runtime_a },
+		});
+		assert.deepEqual(JSON.parse(launch.env[MCP_DIRECT_CHILD_TOOLS_ENV]!), ["runtime_a_search"]);
+	});
+
 	it("emits --no-tools for explicit empty tool allowlists", () => {
 		for (const requireReadTool of [false, true]) {
 			const { args, env } = buildPiArgs({
