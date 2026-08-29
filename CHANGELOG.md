@@ -4,6 +4,7 @@
 ## [Unreleased]
 
 ### Changed
+- Render parallel subagent workflow groups as readable cards with nested agent rows (#1696).
 - Remove repeated one-child async widget status labels and compact progress echoes (#1695).
 - Tighten packaged subagent and council-mode skill guidance around direct one-child launches, composed `workflowScript` runs, generic review validation, pass contracts, and private policy boundaries.
 - Clarify portable subagent orchestration guidance: keep the parent on the ordinary strong default model, route bounded workers/scouts to a fast worker tier, and reserve a top-reasoning model for bounded read-only critique or escalation without requiring a specific provider.

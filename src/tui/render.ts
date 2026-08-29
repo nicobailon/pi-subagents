@@ -1056,8 +1056,7 @@ function widgetChainDetails(job: AsyncJobState, theme: Theme, expanded = false, 
 	for (const span of buildAsyncChainStepSpans(total, job.steps.length, job.parallelGroups)) {
 		const steps = job.steps.slice(span.start, span.start + span.count);
 		if (span.isParallel) {
-			const status = aggregateStepStatus(steps);
-			lines.push(`  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(steps), frame)} Step ${span.stepIndex + 1}/${total}: ${themeBold(theme, "parallel group")} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(steps, span.count))}`);
+			lines.push(...parallelWidgetGroupDetails(job, theme, { steps, total: span.count, stepIndex: span.stepIndex, chainTotal: total }, expanded, width, frame, false));
 			continue;
 		}
 		const step = steps[0];
@@ -1074,6 +1073,8 @@ function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme, expanded =
 	if (!job.steps?.length) return [];
 	if (job.mode !== "parallel" && job.mode !== "chain") return [];
 	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width, frame);
+	const group = activeParallelWidgetGroup(job);
+	if (group) return parallelWidgetGroupDetails(job, theme, group, expanded, width, frame, Boolean(job.activeParallelGroup));
 	const total = job.stepsTotal ?? job.steps.length;
 	const lines: string[] = [];
 	for (const [index, step] of job.steps.entries()) {
@@ -1162,6 +1163,134 @@ function buildAsyncChainStepSpans(total: number, stepCount: number, parallelGrou
 		flatIndex++;
 	}
 	return spans;
+}
+
+interface ParallelWidgetGroup {
+	steps: AsyncJobStep[];
+	total: number;
+	stepIndex?: number;
+	chainTotal?: number;
+}
+
+interface ParallelWidgetStepRow {
+	step: AsyncJobStep;
+	index: number;
+	rowLabel: string;
+}
+
+function normalizedParallelDisplayText(value: string | undefined): string | undefined {
+	if (!value?.trim()) return undefined;
+	const normalized = oneLine(value);
+	return normalized && normalized !== PROMPT_REDACTED ? normalized : undefined;
+}
+
+function parallelWidgetStepDisplayName(step: AsyncJobStep): string {
+	const agent = normalizedParallelDisplayText(step.agent);
+	const explicitLabel = normalizedParallelDisplayText(step.label);
+	if (explicitLabel) {
+		const label = compactTaskText(step.description, explicitLabel) ?? explicitLabel;
+		return agent ? `${label} (${agent})` : label;
+	}
+
+	const sessionName = normalizedParallelDisplayText(step.sessionName);
+	if (sessionName) {
+		const sessionTask = stripRepeatedAgentPrefix(sessionName, agent);
+		if (sessionTask && sessionTask !== PROMPT_REDACTED && sessionTask.toLowerCase() !== agent?.toLowerCase()) return sessionTask;
+	}
+
+	return compactTaskText(step.description) ?? agent ?? "subagent";
+}
+
+function parallelWidgetStepPriority(step: AsyncJobStep): number {
+	if (step.status === "running" || step.activityState === "needs_attention") return 0;
+	switch (step.status) {
+		case "failed":
+		case "rejected":
+		case "partial":
+		case "stopped":
+		case "paused":
+			return 1;
+		case "complete":
+		case "completed":
+			return 2;
+		default:
+			return 3;
+	}
+}
+
+function parallelWidgetStepRows(steps: AsyncJobStep[], total: number, prioritizeActive: boolean): ParallelWidgetStepRow[] {
+	const indexed = steps.map((step, index) => ({ step, index, displayName: parallelWidgetStepDisplayName(step) }));
+	if (prioritizeActive) indexed.sort((left, right) => parallelWidgetStepPriority(left.step) - parallelWidgetStepPriority(right.step) || left.index - right.index);
+	const counts = new Map<string, number>();
+	for (const row of indexed) counts.set(row.displayName, (counts.get(row.displayName) ?? 0) + 1);
+	return indexed.map(({ displayName, ...row }) => ({
+		...row,
+		rowLabel: (counts.get(displayName) ?? 0) > 1
+			? `Agent ${row.index + 1}/${total}: ${displayName}`
+			: displayName,
+	}));
+}
+
+function activeParallelWidgetGroup(job: AsyncJobState): ParallelWidgetGroup | undefined {
+	const steps = job.steps ?? [];
+	if (!steps.length) return undefined;
+	if (job.mode === "parallel") return { steps, total: job.stepsTotal ?? steps.length };
+	if (job.mode !== "chain" || !job.activeParallelGroup) return undefined;
+
+	const chainTotal = job.chainStepCount ?? job.stepsTotal ?? steps.length;
+	const spans = buildAsyncChainStepSpans(chainTotal, steps.length, job.parallelGroups);
+	const currentStep = job.currentStep;
+	const activeSpan = currentStep === undefined
+		? spans.find((span) => span.isParallel)
+		: spans.find((span) => span.isParallel
+			&& currentStep >= span.start
+			&& currentStep < span.start + span.count);
+	return {
+		steps,
+		total: activeSpan?.count ?? job.stepsTotal ?? steps.length,
+		stepIndex: activeSpan?.stepIndex,
+		chainTotal,
+	};
+}
+
+function parallelWidgetGroupHeader(
+	group: ParallelWidgetGroup,
+	theme: Theme,
+	frame?: number,
+): string {
+	const status = aggregateStepStatus(group.steps);
+	const label = group.stepIndex !== undefined && group.chainTotal !== undefined
+		? `Step ${group.stepIndex + 1}/${group.chainTotal}: parallel group`
+		: "parallel group";
+	return `  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(group.steps), frame)} ${themeBold(theme, label)} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(group.steps, group.total))}`;
+}
+
+function parallelWidgetGroupDetails(
+	job: AsyncJobState,
+	theme: Theme,
+	group: ParallelWidgetGroup,
+	expanded: boolean,
+	width: number,
+	frame: number | undefined,
+	prioritizeActive: boolean,
+): string[] {
+	const lines = [parallelWidgetGroupHeader(group, theme, frame)];
+	const rows = parallelWidgetStepRows(group.steps, group.total, prioritizeActive);
+	for (const [rowIndex, row] of rows.entries()) {
+		const marker = rowIndex === rows.length - 1 && rows.length >= group.total ? "└─" : "├─";
+		lines.push(...foregroundStyleWidgetStepLines(job, theme, row.step, "Agent", row.index + 1, group.total, expanded, width, frame, {
+			rowLabel: row.rowLabel,
+			rowIndent: "    ",
+			detailIndent: "      ",
+			rowMarker: marker,
+			includeCurrentPath: true,
+		}));
+	}
+	for (let index = rows.length; index < group.total; index++) {
+		const marker = index === group.total - 1 ? "└─" : "├─";
+		lines.push(`    ${marker} ${theme.fg("muted", "◦")} ${theme.fg("dim", "pending")}`);
+	}
+	return lines;
 }
 
 function isDoneResult(result: Details["results"][number]): boolean {
@@ -1568,39 +1697,47 @@ function foregroundStyleWidgetStepLines(
 	expanded: boolean,
 	width: number,
 	frame?: number,
+	options?: { rowLabel?: string; rowIndent?: string; detailIndent?: string; rowMarker?: string; includeCurrentPath?: boolean },
 ): string[] {
+	const rowIndent = options?.rowIndent ?? "  ";
+	const detailIndent = options?.detailIndent ?? "    ";
 	const status = widgetStepStatus(step.status, theme);
 	const stats = widgetStepStats(theme, step);
 	const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
 	const collapseDetails = shouldCollapseSingleChildDetails(job, step);
 	const displayName = collapseDetails ? singleChildAgentName(job, step) : childDisplayName(step);
-	const rowLabel = collapseDetails ? displayName : `${itemTitle} ${index}/${total}: ${displayName}`;
-	const lines = [`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame)} ${themeBold(theme, rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
+	const rowLabel = collapseDetails ? displayName : (options?.rowLabel ?? `${itemTitle} ${index}/${total}: ${displayName}`);
+	const rowMarker = options?.rowMarker ? `${options.rowMarker} ` : "";
+	const lines = [`${rowIndent}${rowMarker}${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame)} ${themeBold(theme, rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
 	const lane = projectAsyncLane(job, step);
-	if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "    "));
+	if (lane) lines.push(...formatLaneProjectionLines(lane, theme, detailIndent));
 	const task = collapseDetails ? singleChildTask(job, step) : compactTaskText(step.description, step.label);
-	if (task) lines.push(`    ${theme.fg("dim", `task: ${task}`)}`);
+	if (task) lines.push(`${detailIndent}${theme.fg("dim", `task: ${task}`)}`);
 	const activity = widgetStepActivityLine(step, width, expanded, job.updatedAt);
-	if (activity) lines.push(`    ${theme.fg("dim", `⎿  ${activity}`)}`);
+	const currentPath = options?.includeCurrentPath && step.currentPath ? shortenPath(step.currentPath) : undefined;
+	const activityWithPath = currentPath && activity && !activity.includes(currentPath)
+		? `${activity} · ${currentPath}`
+		: activity ?? currentPath;
+	if (activityWithPath) lines.push(`${detailIndent}${theme.fg("dim", `⎿  ${activityWithPath}`)}`);
 	for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 12 : 6)) {
-		lines.push(`    ${nestedLine}`);
+		lines.push(`${detailIndent}${nestedLine}`);
 	}
 	const error = step.error?.trim() || step.execution?.error?.trim();
-	if (error) lines.push(`    ${theme.fg("error", `error: ${oneLine(error)}`)}`);
+	if (error) lines.push(`${detailIndent}${theme.fg("error", `error: ${oneLine(error)}`)}`);
 	if (step.status === "running") {
-		if (!expanded) lines.push(`    ${theme.fg("accent", liveDetailHintText())}`);
+		if (!expanded) lines.push(`${detailIndent}${theme.fg("accent", liveDetailHintText())}`);
 		const output = widgetOutputPath(job, step);
-		if (output) lines.push(`    ${theme.fg("dim", `output: ${shortenPath(output)}`)}`);
+		if (output) lines.push(`${detailIndent}${theme.fg("dim", `output: ${shortenPath(output)}`)}`);
 		if (expanded) {
 			const liveStatus = buildLiveStatusLine(step, job.updatedAt);
-			if (liveStatus && liveStatus !== activity) lines.push(`    ${theme.fg("accent", liveStatus)}`);
+			if (liveStatus && liveStatus !== activity) lines.push(`${detailIndent}${theme.fg("accent", liveStatus)}`);
 			for (const tool of step.recentTools?.slice(-3) ?? []) {
 				const maxArgsLen = Math.max(40, width - 30);
 				const argsPreview = renderToolArgsPreview(tool.args, maxArgsLen, expanded);
-				lines.push(`      ${theme.fg("dim", `${tool.tool}${argsPreview ? `: ${argsPreview}` : ""}`)}`);
+				lines.push(`${detailIndent}  ${theme.fg("dim", `${tool.tool}${argsPreview ? `: ${argsPreview}` : ""}`)}`);
 			}
 			for (const line of compactRecentOutputLines(step.recentOutput)) {
-				lines.push(`      ${theme.fg("dim", line)}`);
+				lines.push(`${detailIndent}  ${theme.fg("dim", line)}`);
 			}
 		}
 	}
@@ -1644,13 +1781,18 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 		];
 	}
 	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width, frame);
-	const total = job.mode === "chain"
-		? job.chainStepCount ?? job.stepsTotal ?? job.steps.length
-		: job.stepsTotal ?? job.steps.length;
-	const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
 	const lines: string[] = workflowPreflightLines(job, expanded);
-	for (const [index, step] of job.steps.entries()) {
-		lines.push(...foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index + 1, total, expanded, width, frame));
+	const group = activeParallelWidgetGroup(job);
+	if (group) {
+		lines.push(...parallelWidgetGroupDetails(job, theme, group, expanded, width, frame, Boolean(job.activeParallelGroup)));
+	} else {
+		const total = job.mode === "chain"
+			? job.chainStepCount ?? job.stepsTotal ?? job.steps.length
+			: job.stepsTotal ?? job.steps.length;
+		const itemTitle = "Step";
+		for (const [index, step] of job.steps.entries()) {
+			lines.push(...foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index + 1, total, expanded, width, frame));
+		}
 	}
 	lines.push(...hostStepWidgetLines(job, theme, "  "));
 	const attached = new Set(job.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []));
@@ -1681,10 +1823,13 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 	const fullLines = buildSingleWidgetLines(job, theme, width, false, frame);
 	if (fullLines.length <= 10 || !job.steps?.length || (job.mode !== "parallel" && !job.activeParallelGroup)) return fullLines;
 
-	const total = job.stepsTotal ?? job.steps.length;
-	const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
+	const group = activeParallelWidgetGroup(job);
+	if (!group) return fullLines;
+	const rows = parallelWidgetStepRows(group.steps, group.total, Boolean(job.activeParallelGroup));
 	const lines = fullLines.slice(0, 2);
-	for (const [index, step] of job.steps.entries()) {
+	lines.push(parallelWidgetGroupHeader(group, theme, frame));
+	for (const [rowIndex, row] of rows.entries()) {
+		const step = row.step;
 		const status = widgetStepStatus(step.status, theme);
 		const activity = widgetStepActivityLine(step, width, false, job.updatedAt);
 		const stepStats = widgetStepStats(theme, step);
@@ -1692,10 +1837,11 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
 		const task = compactTaskText(step.description, step.label);
 		const taskSuffix = task ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", `task: ${task}`)}` : "";
-		lines.push(`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame)} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, childDisplayName(step))}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${taskSuffix}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
+		const marker = rowIndex === rows.length - 1 && rowIndex >= group.total - 1 ? "└─" : "├─";
+		lines.push(`    ${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, row.index), frame)} ${themeBold(theme, row.rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${taskSuffix}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
 		const lane = projectAsyncLane(job, step);
-		if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "  "));
-		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, false, job.updatedAt, 6)) lines.push(`    ${nestedLine}`);
+		if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "      "));
+		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, false, job.updatedAt, 6)) lines.push(`      ${nestedLine}`);
 	}
 	lines.push(...hostStepWidgetLines(job, theme, "  "));
 	if (job.steps.some((step) => step.status === "running")) lines.push(theme.fg("accent", `  ${liveDetailHintText()}`));

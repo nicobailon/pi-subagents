@@ -549,9 +549,144 @@ describe("subagent async widget rendering", () => {
 		}], theme, 120);
 
 		const text = lines.join("\n");
-		assert.match(text, /Agent 1\/2: Review auth — private auth task \(reviewer\) · running/);
-		assert.match(text, /Agent 2\/2: Review billing — private billing task \(reviewer\) · running/);
+		assert.match(text, /Review auth — private auth task \(reviewer\) · running/);
+		assert.match(text, /Review billing — private billing task \(reviewer\) · running/);
+		assert.doesNotMatch(text, /Agent \d+\/2:/);
 		assert.equal(compactTaskText("  [prompt redacted]  ", "Review auth"), "Review auth");
+	});
+
+	it("renders a named top-level parallel group card with nested readable agent rows", () => {
+		const now = Date.now();
+		const text = buildWidgetLines([{
+			asyncId: "named-parallel-group",
+			asyncDir: "/tmp/named-parallel-group",
+			status: "running",
+			mode: "parallel",
+			agents: ["scout", "reviewer", "worker"],
+			activeParallelGroup: true,
+			runningSteps: 2,
+			completedSteps: 0,
+			stepsTotal: 3,
+			updatedAt: now,
+			steps: [
+				{
+					index: 0,
+					agent: "scout",
+					label: "Gather context",
+					description: "Read source files",
+					status: "running",
+					currentTool: "read",
+					currentToolStartedAt: now - 2_000,
+					currentPath: "src/tui/render.ts",
+				},
+				{
+					index: 1,
+					agent: "reviewer",
+					sessionName: "reviewer: Review diff",
+					status: "running",
+					currentTool: "grep",
+					currentToolStartedAt: now - 1_000,
+					currentPath: "test/integration/render-widget.test.ts",
+					phase: "review",
+					workflowKey: "review",
+					outputName: "review.md",
+					children: [{
+						id: "nested-reviewer",
+						parentRunId: "named-parallel-group",
+						parentStepIndex: 1,
+						depth: 1,
+						path: [{ runId: "named-parallel-group", stepIndex: 1 }],
+						state: "running",
+						agent: "nested-reviewer",
+						lastUpdate: now,
+					}],
+				},
+				{
+					index: 2,
+					agent: "worker",
+					label: "Apply fixes",
+					status: "pending",
+					phase: "implementation",
+					workflowKey: "worker",
+					outputName: "fix.md",
+				},
+			],
+		}], theme, 220, true).join("\n");
+
+		assert.equal((text.match(/parallel group/g) ?? []).length, 1);
+		assert.match(text, /parallel · (?:2 agents running|2 running) · 0\/3 done/);
+		assert.match(text, /Gather context/);
+		assert.match(text, /Review diff/);
+		assert.doesNotMatch(text, /reviewer: Review diff/);
+		assert.match(text, /Apply fixes/);
+		assert.doesNotMatch(text, /Agent \d+\/3:/);
+		assert.match(text, /nested-reviewer/);
+		assert.match(text, /src\/tui\/render\.ts/);
+		assert.match(text, /out:review\.md/);
+		assert.match(text, /pending/);
+	});
+
+	it("groups active parallel-card rows before completed and pending rows", () => {
+		const text = buildWidgetLines([{
+			asyncId: "active-first-group",
+			asyncDir: "/tmp/active-first-group",
+			status: "running",
+			mode: "parallel",
+			agents: ["scout", "worker", "reviewer", "auditor"],
+			activeParallelGroup: true,
+			runningSteps: 2,
+			completedSteps: 1,
+			stepsTotal: 4,
+			steps: [
+				{ index: 0, agent: "scout", label: "done-scout", status: "complete" },
+				{ index: 1, agent: "worker", label: "pending-worker", status: "pending" },
+				{ index: 2, agent: "reviewer", label: "active-reviewer", status: "running" },
+				{ index: 3, agent: "auditor", label: "active-auditor", status: "running" },
+			],
+		}], theme, 220, true).join("\n");
+		const rowIndex = (label: string): number => text.split("\n").findIndex((line) => line.includes(label) && !line.includes("task:"));
+		const done = rowIndex("done-scout");
+		const pending = rowIndex("pending-worker");
+		const reviewer = rowIndex("active-reviewer");
+		const auditor = rowIndex("active-auditor");
+
+		assert.ok(reviewer >= 0 && auditor >= 0 && done >= 0 && pending >= 0);
+		assert.ok(reviewer < auditor, "active rows should retain stable input order");
+		assert.ok(auditor < done, "active rows should precede completed rows");
+		assert.ok(done < pending, "completed rows should precede pending rows");
+		assert.match(text, /done-scout.*complete/);
+		assert.match(text, /pending-worker.*pending/);
+	});
+
+	it("preserves completed, pending, and hidden overflow evidence in a parallel group card", () => {
+		const group = {
+			asyncId: "evidence-group",
+			asyncDir: "/tmp/evidence-group",
+			status: "running",
+			mode: "parallel",
+			agents: ["scout", "worker"],
+			activeParallelGroup: true,
+			runningSteps: 0,
+			completedSteps: 1,
+			stepsTotal: 2,
+			steps: [
+				{ index: 0, agent: "scout", label: "done-scout", status: "complete" },
+				{ index: 1, agent: "worker", label: "pending-worker", status: "pending" },
+			],
+		};
+		const text = buildWidgetLines([
+			group,
+			{ asyncId: "overflow-1", asyncDir: "/tmp/overflow-1", status: "running", agents: ["one"] },
+			{ asyncId: "overflow-2", asyncDir: "/tmp/overflow-2", status: "running", agents: ["two"] },
+			{ asyncId: "overflow-3", asyncDir: "/tmp/overflow-3", status: "running", agents: ["three"] },
+			{ asyncId: "overflow-4", asyncDir: "/tmp/overflow-4", status: "running", agents: ["four"] },
+		], theme, 220).join("\n");
+
+		assert.equal((text.match(/parallel group/g) ?? []).length, 1);
+		assert.match(text, /1\/2 done/);
+		assert.match(text, /done-scout.*complete/);
+		assert.match(text, /pending-worker.*pending/);
+		assert.match(text, /\+1 more \(1 running\)/);
 	});
 
 	it("shows peak context usage and falls back to token usage without a limit", () => {
@@ -608,6 +743,7 @@ describe("subagent async widget rendering", () => {
 		const lines = (widget as (_tui: unknown, widgetTheme: typeof theme) => { render(width: number): string[] })(undefined, theme).render(180).map((line) => line.trimEnd());
 		const text = lines.join("\n");
 		assert.match(text, /async subagent parallel \(3\) · background/);
+		assert.match(text, /parallel group · 3 agents running · 0\/3 done/);
 		assert.match(text, /Agent 1\/3: reviewer · running · active now · 5 turns · 18 tool uses · 44k token/);
 		assert.match(text, /Agent 2\/3: reviewer · running · active 2s ago · 4 turns · 13 tool uses · 22k token/);
 		assert.match(text, /Agent 3\/3: reviewer · running · grep \| 1\.0s · 3 turns · 11 tool uses · 19k token/);
@@ -856,7 +992,8 @@ describe("subagent async widget rendering", () => {
 
 			const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
 			assert.match(text, /async subagent parallel · background/);
-			assert.match(text, /Agent 1\/1: reviewer · running/);
+			assert.match(text, /parallel group · 1 agent running · 0\/1 done/);
+			assert.match(text, /reviewer · running/);
 			assert.doesNotMatch(text, /subagents \(1\/1 running\)/);
 		});
 		resetWidgetLayout();
@@ -887,7 +1024,8 @@ describe("subagent async widget rendering", () => {
 		const text = lines.join("\n");
 		assert.match(text, /async subagent parallel \(3\) · background/);
 		assert.match(text, /parallel · 2 agents running · 1\/3 done/);
-		assert.match(text, /Agent 1\/3: reviewer: Inspect the first row · running · 2 tool uses/);
+		assert.match(text, /Inspect the first row · running · 2 tool uses/);
+		assert.doesNotMatch(text, /Agent 1\/3: reviewer/);
 		assert.match(text, /⎿  active now/);
 		assert.match(text, /Agent 2\/3: reviewer · running\n\s+⎿  read \| 2\.0s/);
 		assert.match(text, /Press configured-expand-key for live detail/);
@@ -918,8 +1056,8 @@ describe("subagent async widget rendering", () => {
 			},
 		], theme, 180).join("\n");
 
-		assert.match(text, /Agent 1\/1: reviewer: Inspect the multi-job row · running/);
-		assert.doesNotMatch(text, /Agent 1\/1: reviewer · running/);
+		assert.match(text, /Inspect the multi-job row · running/);
+		assert.doesNotMatch(text, /reviewer: Inspect the multi-job row/);
 	});
 
 	it("shows async job and step context badges", () => {
@@ -945,8 +1083,8 @@ describe("subagent async widget rendering", () => {
 		], theme, 160).join("\n");
 
 		assert.match(text, /parallel \[mixed\]/);
-		assert.match(text, /Agent 1\/2: scout \[fresh\] · running/);
-		assert.match(text, /Agent 2\/2: worker \[fork\] · running/);
+		assert.match(text, /scout \[fresh\] · running/);
+		assert.match(text, /worker \[fork\] · running/);
 	});
 
 	it("shows model and thinking for active async widget rows", () => {
@@ -969,8 +1107,8 @@ describe("subagent async widget rendering", () => {
 		], theme, 180);
 
 		const text = lines.join("\n");
-		assert.match(text, /Agent 1\/2: reviewer · running \(gpt-5\.5 · thinking high\)/);
-		assert.match(text, /Agent 2\/2: scout · running \(claude-haiku-4-5 · thinking low\)/);
+		assert.match(text, /reviewer · running \(gpt-5\.5 · thinking high\)/);
+		assert.match(text, /scout · running \(claude-haiku-4-5 · thinking low\)/);
 		assert.doesNotMatch(text, /openai-codex\/gpt-5\.5/);
 		assert.doesNotMatch(text, /gpt-5\.5:high/);
 	});
@@ -993,9 +1131,9 @@ describe("subagent async widget rendering", () => {
 			},
 		], theme, 68);
 
-		const row = lines.find((line) => line.includes("Agent 1/1")) ?? "";
-		assert.match(row, /Agent 1\/1: reviewer · running/);
-		assert.doesNotMatch(row, /Agent 1\/1: reviewer \(/);
+		const row = lines.find((line) => line.includes("reviewer · running")) ?? "";
+		assert.match(row, /reviewer · running/);
+		assert.doesNotMatch(row, /reviewer \(/);
 	});
 
 	it("shows inline live detail for expanded async parallel widget rows", () => {
@@ -1405,6 +1543,91 @@ describe("subagent async widget rendering", () => {
 		assert.match(text, /step 2\/3 · parallel group: 1 agent running · 1\/2 done/);
 	});
 
+	it("keeps the chain step number while nesting readable rows in an active parallel group card", () => {
+		const text = buildWidgetLines([{
+			asyncId: "active-chain-group",
+			asyncDir: "/tmp/active-chain-group",
+			status: "running",
+			mode: "chain",
+			agents: ["producer", "scout", "reviewer"],
+			activeParallelGroup: true,
+			currentStep: 2,
+			chainStepCount: 3,
+			parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
+			runningSteps: 1,
+			completedSteps: 1,
+			stepsTotal: 2,
+			steps: [
+				{ index: 1, agent: "scout", label: "Inspect source", status: "complete" },
+				{ index: 2, agent: "reviewer", label: "Review diff", status: "running" },
+			],
+		}], theme, 220, true).join("\n");
+
+		assert.match(text, /chain · step 2\/3/);
+		assert.match(text, /Step 2\/3: parallel group/);
+		assert.match(text, /Inspect source/);
+		assert.match(text, /Review diff/);
+		assert.doesNotMatch(text, /Agent \d+\/3:/);
+	});
+
+	it("renders child rows beneath an inactive chain parallel-group header", () => {
+		const text = buildWidgetLines([{
+			asyncId: "completed-chain-group",
+			asyncDir: "/tmp/completed-chain-group",
+			status: "running",
+			mode: "chain",
+			agents: ["scout", "reviewer", "writer"],
+			activeParallelGroup: false,
+			currentStep: 3,
+			chainStepCount: 2,
+			parallelGroups: [{ start: 0, count: 2, stepIndex: 0 }],
+			stepsTotal: 3,
+			steps: [
+				{ index: 0, agent: "scout", label: "Gather context", status: "complete" },
+				{ index: 1, agent: "reviewer", label: "Review diff", status: "complete" },
+				{ index: 2, agent: "writer", label: "Apply fixes", status: "running" },
+			],
+		}], theme, 220, true).join("\n");
+		const headerIndex = text.indexOf("Step 1/2: parallel group");
+
+		assert.ok(headerIndex >= 0);
+		assert.ok(text.indexOf("Gather context", headerIndex) > headerIndex);
+		assert.ok(text.indexOf("Review diff", headerIndex) > headerIndex);
+		assert.match(text, /Step 2\/2: writer/);
+	});
+
+	it("renders a pending dynamic fanout placeholder instead of an empty parallel group", () => {
+		const text = buildWidgetLines([{
+			asyncId: "dynamic-placeholder",
+			asyncDir: "/tmp/dynamic-placeholder",
+			status: "running",
+			mode: "chain",
+			agents: ["expand:reviewer"],
+			activeParallelGroup: true,
+			currentStep: 0,
+			chainStepCount: 1,
+			parallelGroups: [{ start: 0, count: 1, stepIndex: 0 }],
+			runningSteps: 0,
+			completedSteps: 0,
+			stepsTotal: 1,
+			steps: [{
+				index: 0,
+				agent: "expand:reviewer",
+				label: "Dynamic fanout (reviews)",
+				description: "Await review targets",
+				status: "pending",
+				workflowKey: "dynamic-review",
+				outputName: "reviews.md",
+			}],
+		}], theme, 220, true).join("\n");
+
+		assert.match(text, /parallel group/);
+		assert.match(text, /Step 1\/1: parallel group/);
+		assert.match(text, /Dynamic fanout \(reviews\)/);
+		assert.match(text, /pending/);
+		assert.match(text, /next:await launch/);
+	});
+
 	it("uses logical chain steps after an async chain parallel group finishes", () => {
 		const job = {
 			asyncId: "run-chain",
@@ -1637,8 +1860,8 @@ describe("subagent async widget rendering", () => {
 			assert.notEqual(firstRunningGlyph(first[0] ?? ""), firstRunningGlyph(second[0] ?? ""), "header glyph should advance");
 			assert.notEqual(firstRunningGlyph(first[1] ?? ""), firstRunningGlyph(second[1] ?? ""), "job glyph should advance");
 			assert.notEqual(
-				firstRunningGlyph(first.find((line) => line.includes("Agent 1/1")) ?? ""),
-				firstRunningGlyph(second.find((line) => line.includes("Agent 1/1")) ?? ""),
+				firstRunningGlyph(first.find((line) => line.includes("reviewer · running")) ?? ""),
+				firstRunningGlyph(second.find((line) => line.includes("reviewer · running")) ?? ""),
 				"step glyph should advance",
 			);
 		} finally {
