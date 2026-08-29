@@ -11,6 +11,7 @@
 ### Fixed
 - Reuse a fork-family prompt cache key for OpenAI-style forked subagent requests so sibling fork children keep cache affinity without pooling fresh children. Thanks to [@Shinkicast](https://github.com/Shinkicast) for #1682.
 - Show workflow child `[fresh]` and `[fork]` context labels in Fleet status rows alongside model and thinking badges.
+- Match pi-mcp-adapter direct-tool names when configured MCP server names contain hyphens. Thanks to [@unrelentingfox](https://github.com/unrelentingfox) for #1685.
 
 ## [0.59.0] - 2026-08-28
 
