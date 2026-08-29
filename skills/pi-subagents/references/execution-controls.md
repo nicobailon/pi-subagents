@@ -139,7 +139,20 @@ Async does not mean parallel writes. Do not edit the same active worktree while 
 
 Do not end your turn immediately after launching an async child if you promised to keep working. Continue the local inspection, synthesis, or validation prep, then check the async run when its result is needed. If no safe independent work remains, return control and let Pi wake the session; do not convert the child to foreground.
 
-In an interactive chat, normally return control when ready to yield and let Pi wake the session on completion; do not call `subagent_wait()` merely to wait. A run-to-completion user request is not by itself a reason to use foreground children. Override the normal yield-and-wake flow only when this exact turn cannot safely end without the result, such as a headless provider flow or a skill contract that must produce a same-turn artifact. Use `subagent_wait()`, not `async:false`, for that current-turn dependency. Never substitute sleep or status-polling loops.
+“Continue/orchestrate/work until done” means keep the lane board moving while a
+safe immediate action remains; it does not mean hold an interactive turn open
+until async lanes finish. If only async lanes are running, record the revisit
+trigger and yield. Do not use `subagent_wait({ all: true })` as an interactive
+lane barrier.
+
+In an ordinary interactive chat, normally return control after launching or
+triaging useful async work and let Pi wake the session on completion; do not
+call `subagent_wait()` merely to wait. A run-to-completion user request is not
+by itself a reason to use foreground children. Override the normal yield-and-
+wake flow only when this exact turn cannot safely end without the result, such
+as a headless provider flow or a skill contract that must produce a same-turn
+artifact. Use `subagent_wait()`, not `async:false`, for that current-turn
+dependency. Never substitute sleep or status-polling loops.
 
 `subagent_wait()` returns when the next initially active async run or registered provider item finishes or a subagent needs attention. Use `subagent_wait({ all: true })` for all work active at call time, `subagent_wait({ id: "..." })` for one async or remembered detached foreground run, and `subagent_wait({ timeoutMs })` to cap the block; active work keeps running if it elapses. `subagent_wait({ stopOnAttention: false })` keeps a blocking wait through idle or long-thinking attention, but supervisor/contact requests still stop it. In a long-lived interactive parent session, use `subagent_wait({ id: "...", nonBlocking: true })` to resolve the prefix to one exact run, persist an armed subscription, return immediately, and wake later on completion, failure, attention, reconciliation failure, or timeout. Ordinary status lists armed subscriptions separately from active children. This differs from disabling `waitTool`, which returns immediately without arming a future wake. If a foreground child detaches for supervisor coordination, reply first, then wait on its id; do not resume or launch a replacement while it remains detached. Headless sessions also auto-drain exact current-session work at `agent_end` as a final safeguard.
 
