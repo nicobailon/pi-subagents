@@ -48,11 +48,19 @@ function git(cwd: string, args: string[]): string {
 	return result.stdout.trim();
 }
 
-function createRepo(prefix: string): string {
+function createEmptyRepo(prefix: string): string {
 	const repo = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 	git(repo, ["init"]);
 	git(repo, ["config", "user.email", "watchdog@example.com"]);
 	git(repo, ["config", "user.name", "Watchdog Tests"]);
+	return repo;
+}
+
+function createRepo(prefix: string): string {
+	const repo = createEmptyRepo(prefix);
+	fs.writeFileSync(path.join(repo, ".watchdog-baseline"), "baseline\n", "utf-8");
+	git(repo, ["add", ".watchdog-baseline"]);
+	git(repo, ["commit", "-m", "initial"]);
 	return repo;
 }
 
@@ -96,6 +104,45 @@ describe("watchdog change signature", () => {
 		git(checkout, ["commit", "-m", "update tracked"]);
 		const headChange = computeWatchdogRepoChangeSignature(parent);
 		assert.notEqual(headChange?.key, first?.key, "submodule HEAD changes remain visible");
+	});
+
+	it("does not inspect untracked files in an empty repository", (t) => {
+		const repo = createEmptyRepo("watchdog-empty-");
+		t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+
+		fs.writeFileSync(path.join(repo, "untracked.txt"), "one\n", "utf-8");
+		const first = computeWatchdogRepoChangeSignature(repo);
+		assert.ok(first, "expected a signature");
+		assert.deepEqual(first?.changedPaths, []);
+
+		fs.writeFileSync(path.join(repo, "untracked.txt"), "two\n", "utf-8");
+		const afterChange = computeWatchdogRepoChangeSignature(repo);
+		assert.equal(afterChange?.key, first?.key, "untracked-only changes must not trigger an empty-repo scan");
+	});
+
+	it("does not inspect untracked files when the repository root is the user home", (t) => {
+		const repo = createRepo("watchdog-home-");
+		t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+		const previousHome = process.env.HOME;
+		const previousUserProfile = process.env.USERPROFILE;
+		process.env.HOME = repo;
+		process.env.USERPROFILE = repo;
+		t.after(() => {
+			if (previousHome === undefined) delete process.env.HOME;
+			else process.env.HOME = previousHome;
+			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = previousUserProfile;
+		});
+
+		fs.writeFileSync(path.join(repo, "untracked.txt"), "one\n", "utf-8");
+		const first = computeWatchdogRepoChangeSignature(repo);
+		assert.ok(first, "expected a signature");
+		assert.deepEqual(first?.changedPaths, []);
+
+		fs.writeFileSync(path.join(repo, ".watchdog-baseline"), "changed\n", "utf-8");
+		const trackedChange = computeWatchdogRepoChangeSignature(repo);
+		assert.deepEqual(trackedChange?.changedPaths, [".watchdog-baseline"]);
+		assert.notEqual(trackedChange?.key, first?.key, "tracked changes remain visible for a home-root repository");
 	});
 
 	function setThreshold(bytes: number, t: { after: (fn: () => void) => void }): void {

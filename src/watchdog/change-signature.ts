@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { PROJECT_SUBAGENTS_RELATIVE_DIR } from "../shared/artifacts.ts";
 
@@ -11,6 +12,7 @@ const IGNORED_CHANGE_SEGMENTS = new Set([".git", "node_modules"]);
 const DEFAULT_MAX_HASH_FILE_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_HASH_TOTAL_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_HASH_ENTRIES = 2_000;
+const TRACKED_ENTRY_PROBE_MAX_BYTES = 1_024;
 
 function positiveEnvNumber(name: string, fallback: number): number {
 	const parsed = Number(process.env[name]);
@@ -41,6 +43,37 @@ function git(cwd: string, args: string[]): string | undefined {
 	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024, windowsHide: true });
 	if (result.status !== 0) return undefined;
 	return result.stdout;
+}
+
+function comparablePath(value: string): string {
+	let resolved = path.resolve(value);
+	try {
+		resolved = fs.realpathSync.native(resolved);
+	} catch {
+		// Keep the lexical path when canonicalization is unavailable.
+	}
+	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function isHomeRepoRoot(root: string): boolean {
+	return comparablePath(root) === comparablePath(os.homedir());
+}
+
+/**
+ * Probe the index without asking Git to inspect the working tree. The output
+ * cap keeps this check bounded even for repositories with a very large index;
+ * an ENOBUFS result still proves that at least one tracked path exists.
+ */
+function hasTrackedEntries(root: string): boolean | undefined {
+	const result = spawnSync("git", ["-C", root, "ls-files", "--cached", "--error-unmatch", "--", "."], {
+		encoding: "utf-8",
+		maxBuffer: TRACKED_ENTRY_PROBE_MAX_BYTES,
+		windowsHide: true,
+	});
+	const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
+	if (result.status === 0 || errorCode === "ENOBUFS") return true;
+	if (result.status === 1) return false;
+	return undefined;
 }
 
 function normalizeRelPath(value: string): string {
@@ -181,7 +214,13 @@ function buildRepoChangeSignature(root: string, statusOutput: string): WatchdogR
 export function computeWatchdogRepoChangeSignature(cwd: string): WatchdogRepoChangeSignature | undefined {
 	const root = git(cwd, ["rev-parse", "--show-toplevel"])?.trim();
 	if (!root) return undefined;
-	const statusOutput = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+	const skipUntracked = isHomeRepoRoot(root) || hasTrackedEntries(root) === false;
+	const statusOutput = git(root, [
+		"status",
+		"--porcelain=v1",
+		"-z",
+		`--untracked-files=${skipUntracked ? "no" : "all"}`,
+	]);
 	if (statusOutput === undefined) return undefined;
 	try {
 		return buildRepoChangeSignature(root, statusOutput);

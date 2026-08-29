@@ -10,6 +10,7 @@
 - Clarify workflowScript portability and runs.host working-directory limits, including the outer workflow cwd and trusted `cd ... && command` patterns (#1679).
 
 ### Fixed
+- Skip untracked-file enumeration for watchdog signatures when the Git root is the user home or has no tracked files, avoiding startup and turn hangs in accidental large home repositories. Thanks to [@AluxesLAS](https://github.com/AluxesLAS) for #1693.
 - Reuse a fork-family prompt cache key for OpenAI-style forked subagent requests so sibling fork children keep cache affinity without pooling fresh children. Thanks to [@Shinkicast](https://github.com/Shinkicast) for #1682.
 - Show workflow child `[fresh]` and `[fork]` context labels in Fleet status rows alongside model and thinking badges.
 - Match pi-mcp-adapter direct-tool names when configured MCP server names contain hyphens. Thanks to [@unrelentingfox](https://github.com/unrelentingfox) for #1685.
