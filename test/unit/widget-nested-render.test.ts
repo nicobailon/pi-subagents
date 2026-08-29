@@ -123,7 +123,8 @@ describe("nested widget rendering", () => {
 		state.status = "complete";
 		state.steps![0]!.status = "complete";
 		const expanded = buildWidgetLines([state], theme as any, 120, true).join("\n");
-		assert.match(expanded, /✓ Step 1\/1: owner · complete/);
+		assert.match(expanded, /✓ owner · complete/);
+		assert.doesNotMatch(expanded, /Step 1\/1: owner/);
 		assert.match(expanded, /↳ \[\d{2}:\d{2}:\d{2}\] . still-running · running/);
 	});
 

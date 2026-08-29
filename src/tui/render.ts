@@ -31,6 +31,7 @@ import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
 import { formatNestedAggregate } from "../runs/shared/nested-render.ts";
 import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
 import { contextModeBadge, contextModePrefix } from "../runs/shared/context-mode.ts";
+import { shouldSuppressSingleStep, stripRepeatedAgentPrefix } from "./render-helpers.ts";
 import { buildWorkflowChatProgressRows, type WorkflowChatProgressRow } from "../workflows/chat-progress.ts";
 import { formatWorkflowPreflight, formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary, formatWorkflowPreflightWarnings } from "../workflows/workflow-preflight.ts";
 import { encodeAsyncStatusSnapshotWidget } from "../runs/background/async-status-snapshot.ts";
@@ -262,6 +263,7 @@ const noisyStatusPatterns = [
 	/^(?:checking|fetching|reading|inspecting|verifying|collecting|confirming|polling)\b/i,
 	/^(?:async\s+subagent\s+)?[\w.-]+\s*·\s*(?:step|agent)\s+\d+\/\d+\s*·/i,
 	/^(?:Step|Agent)\s+\d+\/\d+:\s+[\w.-]+\s*·\s*(?:running|queued|pending|complete|completed)\b/i,
+	/^(?:async\s+subagent\s+)?[\w.-]+(?:\s+\[(?:fresh|fork|mixed)\])?\s*·\s*(?:running|queued|pending|complete|completed|done)\b/i,
 	/^Press\s+\S+\s+for\s+live\s+detail$/i,
 	/^output:\s+.+\/async-subagent-runs\//i,
 ];
@@ -782,6 +784,14 @@ function widgetStepRenderKey(step: AsyncJobStep, index: number, expanded = false
 		step.review?.status,
 		step.toolBudgetBlocked,
 		step.turnBudgetExceeded,
+		step.timedOut,
+		step.stopped,
+		step.execution?.status,
+		step.execution?.error,
+		step.execution?.timedOut,
+		step.execution?.interrupted,
+		step.execution?.stopped,
+		step.execution?.detached,
 		step.watchdog?.phase,
 		step.error,
 		expanded ? expandedStepActivityRenderKey(step) : undefined,
@@ -858,6 +868,8 @@ export function widgetRenderKey(job: AsyncJobState, expanded = false): string {
 		activeParallelGroup: job.activeParallelGroup,
 		startedAt: job.startedAt,
 		updatedAt: job.updatedAt,
+		timedOut: job.timedOut,
+		stopped: job.stopped,
 		totalTokens: job.totalTokens,
 	});
 }
@@ -875,6 +887,65 @@ function widgetJobName(job: AsyncJobState): string {
 	if (job.mode === "single" && job.agents?.length === 1) return job.agents[0]!;
 	if (job.agents?.length) return formatWidgetAgents(job.agents);
 	return job.mode ?? "subagent";
+}
+
+function isSingleChildAsyncJob(job: AsyncJobState): boolean {
+	return job.mode === "single"
+		&& job.steps?.length === 1
+		&& shouldSuppressSingleStep(job.chainStepCount, job.stepsTotal);
+}
+
+function isCompletedWidgetStepStatus(status: AsyncJobStep["status"]): boolean {
+	return status === "complete" || status === "completed";
+}
+
+function singleChildAgentName(job: AsyncJobState, step: AsyncJobStep): string {
+	return job.agents?.length === 1 ? job.agents[0]! : step.agent || widgetJobName(job);
+}
+
+function hasSingleChildDetailEvidence(job: AsyncJobState, step: AsyncJobStep): boolean {
+	return Boolean(
+		step.error?.trim()
+		|| step.execution?.error?.trim()
+		|| step.phase?.trim()
+		|| step.label?.trim()
+		|| step.workflowKey?.trim()
+		|| step.outputName?.trim()
+		|| step.lane
+		|| job.workflowKey?.trim()
+		|| job.lane
+		|| laneTraceForJob(job)?.phase?.trim()
+		|| laneTraceForJob(job)?.label?.trim()
+		|| step.timedOut
+		|| step.stopped
+		|| step.execution?.timedOut
+		|| step.execution?.interrupted
+		|| step.execution?.stopped
+		|| step.execution?.detached
+		|| job.timedOut
+		|| job.stopped
+		|| ["failed", "partial", "paused", "stopped", "detached"].includes(step.execution?.status ?? "")
+		|| step.acceptance?.status === "rejected"
+		|| step.acceptance?.reviewResult?.status === "blockers"
+		|| step.review?.status === "blockers",
+	);
+}
+
+function shouldCollapseSingleChildDetails(job: AsyncJobState, step: AsyncJobStep): boolean {
+	if (!isSingleChildAsyncJob(job) || hasSingleChildDetailEvidence(job, step)) return false;
+	if (job.status === "running") return step.status === "running";
+	if (job.status === "complete") return isCompletedWidgetStepStatus(step.status);
+	return false;
+}
+
+function singleChildTask(job: AsyncJobState, step: AsyncJobStep): string | undefined {
+	const task = compactTaskText(step.description, step.label);
+	if (task) return task;
+	const sessionName = step.sessionName?.trim();
+	if (!sessionName) return undefined;
+	const agentName = singleChildAgentName(job, step);
+	const sessionTask = stripRepeatedAgentPrefix(sessionName, agentName);
+	return sessionTask === agentName ? undefined : compactTaskText(sessionTask);
 }
 
 function widgetActivity(job: AsyncJobState): string {
@@ -1266,6 +1337,7 @@ function resultRowLabel(label: MultiProgressLabel, resultIndex: number, stepNumb
 function widgetStats(job: AsyncJobState, theme: Theme): string {
 	const parts: string[] = [];
 	const stepsTotal = job.stepsTotal ?? (job.agents?.length ?? 1);
+	const isSingleChild = isSingleChildAsyncJob(job);
 	if (job.activeParallelGroup) {
 		const running = job.runningSteps ?? (job.status === "running" ? 1 : 0);
 		const done = job.completedSteps ?? (job.status === "complete" ? stepsTotal : 0);
@@ -1283,10 +1355,10 @@ function widgetStats(job: AsyncJobState, theme: Theme): string {
 			parts.push(`step ${logicalStep + 1}/${total} · parallel group: ${groupParts.join(" · ")}`);
 		}
 	} else if (job.currentStep !== undefined) {
-		if (job.mode === "chain" && job.parallelGroups?.length) {
+		if (job.mode === "chain") {
 			const total = job.chainStepCount ?? stepsTotal;
-			parts.push(`step ${flatToLogicalStepIndex(job.currentStep, total, job.parallelGroups) + 1}/${total}`);
-		} else {
+			parts.push(`step ${flatToLogicalStepIndex(job.currentStep, total, job.parallelGroups ?? []) + 1}/${total}`);
+		} else if (!isSingleChild) {
 			parts.push(`step ${job.currentStep + 1}/${stepsTotal}`);
 		}
 	} else if (stepsTotal > 1) {
@@ -1500,16 +1572,21 @@ function foregroundStyleWidgetStepLines(
 	const status = widgetStepStatus(step.status, theme);
 	const stats = widgetStepStats(theme, step);
 	const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
-	const lines = [`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame)} ${itemTitle} ${index}/${total}: ${themeBold(theme, childDisplayName(step))}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
+	const collapseDetails = shouldCollapseSingleChildDetails(job, step);
+	const displayName = collapseDetails ? singleChildAgentName(job, step) : childDisplayName(step);
+	const rowLabel = collapseDetails ? displayName : `${itemTitle} ${index}/${total}: ${displayName}`;
+	const lines = [`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame)} ${themeBold(theme, rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
 	const lane = projectAsyncLane(job, step);
 	if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "    "));
-	const task = compactTaskText(step.description, step.label);
+	const task = collapseDetails ? singleChildTask(job, step) : compactTaskText(step.description, step.label);
 	if (task) lines.push(`    ${theme.fg("dim", `task: ${task}`)}`);
 	const activity = widgetStepActivityLine(step, width, expanded, job.updatedAt);
 	if (activity) lines.push(`    ${theme.fg("dim", `⎿  ${activity}`)}`);
 	for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 12 : 6)) {
 		lines.push(`    ${nestedLine}`);
 	}
+	const error = step.error?.trim() || step.execution?.error?.trim();
+	if (error) lines.push(`    ${theme.fg("error", `error: ${oneLine(error)}`)}`);
 	if (step.status === "running") {
 		if (!expanded) lines.push(`    ${theme.fg("accent", liveDetailHintText())}`);
 		const output = widgetOutputPath(job, step);
@@ -1567,7 +1644,9 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 		];
 	}
 	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width, frame);
-	const total = job.stepsTotal ?? job.steps.length;
+	const total = job.mode === "chain"
+		? job.chainStepCount ?? job.stepsTotal ?? job.steps.length
+		: job.stepsTotal ?? job.steps.length;
 	const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
 	const lines: string[] = workflowPreflightLines(job, expanded);
 	for (const [index, step] of job.steps.entries()) {
@@ -1586,10 +1665,14 @@ function buildSingleWidgetLines(job: AsyncJobState, theme: Theme, width: number,
 	const stats = widgetStats(job, theme);
 	const count = job.mode === "chain" ? job.chainStepCount : job.stepsTotal ?? job.agents?.length ?? job.steps?.length;
 	const mode = widgetJobName(job);
-	const title = `async subagent ${mode}${count && count > 1 ? ` (${count})` : ""}`;
+	const title = isSingleChildAsyncJob(job)
+		? "async subagent"
+		: `async subagent ${mode}${count && count > 1 ? ` (${count})` : ""}`;
+	const collapseDetails = job.steps?.length === 1 && shouldCollapseSingleChildDetails(job, job.steps[0]!);
+	const summary = `${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, mode)}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`;
 	return [
 		`${theme.fg("toolTitle", themeBold(theme, title))} ${theme.fg("dim", "· background")}`,
-		`${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, mode)}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
+		...(collapseDetails ? [] : [summary]),
 		...foregroundStyleWidgetDetails(job, theme, expanded, width, frame),
 	].map((line) => truncLine(line, width));
 }

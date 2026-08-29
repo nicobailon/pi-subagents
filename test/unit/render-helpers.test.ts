@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { row } from "../../src/tui/render-helpers.ts";
+import { row, shouldSuppressSingleStep, stripRepeatedAgentPrefix } from "../../src/tui/render-helpers.ts";
 import { buildWidgetLines, renderSubagentResult, truncLine, widgetRenderKey } from "../../src/tui/render.ts";
 import type { AsyncJobState } from "../../src/shared/types.ts";
 
@@ -36,6 +36,24 @@ function result(agent: string, output: string) {
 test("row clips content to the available width", () => {
 	const rendered = row("abcdef", 6, theme as any);
 	assert.equal(visibleWidth(rendered), 6);
+});
+
+test("stripRepeatedAgentPrefix removes only safe repeated job-name prefixes", () => {
+	assert.equal(stripRepeatedAgentPrefix("  reviewer: Review the diff  ", "reviewer"), "Review the diff");
+	assert.equal(stripRepeatedAgentPrefix("reviewer · Review the diff", "reviewer"), "Review the diff");
+	assert.equal(stripRepeatedAgentPrefix("reviewer Review the diff", "reviewer"), "Review the diff");
+	assert.equal(stripRepeatedAgentPrefix("reviewer-2: Review the diff", "reviewer"), "reviewer-2: Review the diff");
+	assert.equal(stripRepeatedAgentPrefix("reviewerhood: Review the diff", "reviewer"), "reviewerhood: Review the diff");
+	assert.equal(stripRepeatedAgentPrefix("worker: Review the diff", "reviewer"), "worker: Review the diff");
+	assert.equal(stripRepeatedAgentPrefix("reviewer", "reviewer"), "reviewer");
+});
+
+test("shouldSuppressSingleStep uses logical totals instead of materialized step count", () => {
+	assert.equal(shouldSuppressSingleStep(undefined, 1), true);
+	assert.equal(shouldSuppressSingleStep(1, 1), true);
+	assert.equal(shouldSuppressSingleStep(2, 1), false);
+	assert.equal(shouldSuppressSingleStep(undefined, 2), false);
+	assert.equal(shouldSuppressSingleStep(undefined, undefined), false);
 });
 
 test("row normalizes multiline content before clipping", () => {

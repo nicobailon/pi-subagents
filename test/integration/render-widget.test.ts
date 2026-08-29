@@ -1107,6 +1107,10 @@ describe("subagent async widget rendering", () => {
 						"Step 1/1: reviewer · running (gpt-5.5 · thinking xhigh) · 4 turns · 11 tool uses",
 						"reviewer · step 1/1 · 11 tool uses · 3m32s",
 						"Step 1/1: reviewer · running (gpt-5.5 · thinking xhigh) · 4 turns · 11 tool uses",
+						"reviewer [fresh] · running · 11 tool uses · 3m37s",
+						"reviewer · running · 11 tool uses · 3m39s",
+						"reviewer · running · 11 tool uses · 3m42s",
+						"reviewer · running · 11 tool uses · 3m44s",
 						"repo=nicobailon/pi-subagents",
 						"sha=d61aca... | 2m32s",
 						"output: /var/folders/x/T/pi-subagents-uid-501/async-subagent-runs/run-status-snapshots/output.log",
@@ -1116,12 +1120,16 @@ describe("subagent async widget rendering", () => {
 		};
 
 		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
-		assert.match(expandedText, /↻ 7 progress updates/);
+		assert.match(expandedText, /↻ 11 progress updates/);
 		assert.match(expandedText, /latest: output: \/var\/folders\/x\/T\/pi-subagents-uid-501\/async-subagent-runs\/run-status-snapshots\/output.log/);
 		assert.match(expandedText, /repo=nicobailon\/pi-subagents/);
 		assert.match(expandedText, /sha=d61aca\.\.\. \| 2m32s/);
 		assert.doesNotMatch(expandedText, /3m27s/);
 		assert.doesNotMatch(expandedText, /3m29s/);
+		assert.doesNotMatch(expandedText, /3m37s/);
+		assert.doesNotMatch(expandedText, /3m39s/);
+		assert.doesNotMatch(expandedText, /3m42s/);
+		assert.doesNotMatch(expandedText, /3m44s/);
 	});
 
 	it("keeps mixed live output raw instead of hiding non-status lines", () => {
@@ -1196,41 +1204,163 @@ describe("subagent async widget rendering", () => {
 		assert.match(expandedText, /Checking final status: rejected/);
 	});
 
-	it("shows step detail and configured live detail key hint for running single async jobs with steps", () => {
+	it("dedupes one-child single async summary/title while retaining detail evidence", () => {
 		const now = Date.now();
 		const job = {
 			asyncId: "single-run",
 			asyncDir: "/tmp/single-run",
 			status: "running",
 			mode: "single",
-			agents: ["worker"],
+			agents: ["reviewer"],
+			currentStep: 0,
 			stepsTotal: 1,
 			updatedAt: now,
 			steps: [
 				{
 					index: 0,
-					agent: "worker",
-					sessionName: "  worker: Read the widget  ",
+					agent: "reviewer",
+					sessionName: "  reviewer: Review the widget  ",
 					status: "running",
+					description: "Review the widget",
 					currentTool: "read",
 					currentToolArgs: "src/tui/render.ts",
 					currentToolStartedAt: now - 2000,
-					recentOutput: ["reading render widget"],
+					toolCount: 23,
+					durationMs: 49_100,
+					recentOutput: ["error: failed to inspect the widget"],
 				},
 			],
 		};
 
 		const collapsedText = buildWidgetLines([job], theme, 180).join("\n");
-		assert.match(collapsedText, /async subagent worker · background/);
-		assert.match(collapsedText, /Step 1\/1: worker: Read the widget · running/);
+		const collapsedLines = collapsedText.split("\n");
+		const collapsedSummary = collapsedLines.slice(0, 2).join("\n");
+		assert.doesNotMatch(collapsedSummary, /step 1\/1/i);
+		assert.match(collapsedSummary, /async subagent · background/);
+		assert.match(collapsedSummary, /reviewer/);
+		assert.match(collapsedLines[1] ?? "", /reviewer · running · 23 tool uses · 49\.1s/);
+		assert.equal(collapsedLines.filter((line) => line.includes("reviewer · running · 23 tool uses · 49.1s")).length, 1);
+		assert.doesNotMatch(collapsedText, /Step 1\/1: reviewer:/);
+		assert.match(collapsedText, /reviewer · running · 23 tool uses · 49\.1s/);
+		assert.match(collapsedText, /task: Review the widget/);
 		assert.match(collapsedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
 		assert.match(collapsedText, /Press configured-expand-key for live detail/);
 		assert.match(collapsedText, outputPathPattern("/tmp/single-run/output-0.log"));
-		assert.doesNotMatch(collapsedText, /reading render widget/);
+		assert.doesNotMatch(collapsedText, /error: failed to inspect the widget/);
 
 		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
+		const expandedLines = expandedText.split("\n");
+		const expandedSummary = expandedLines.slice(0, 2).join("\n");
 		assert.doesNotMatch(expandedText, /Press configured-expand-key for live detail/);
-		assert.match(expandedText, /reading render widget/);
+		assert.doesNotMatch(expandedSummary, /step 1\/1/i);
+		assert.match(expandedSummary, /async subagent · background/);
+		assert.match(expandedSummary, /reviewer/);
+		assert.match(expandedLines[1] ?? "", /reviewer · running · 23 tool uses · 49\.1s/);
+		assert.equal(expandedLines.filter((line) => line.includes("reviewer · running · 23 tool uses · 49.1s")).length, 1);
+		assert.doesNotMatch(expandedText, /Step 1\/1: reviewer:/);
+		assert.match(expandedText, /reviewer · running · 23 tool uses · 49\.1s/);
+		assert.match(expandedText, /task: Review the widget/);
+		assert.match(expandedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
+		assert.match(expandedText, /error: failed to inspect the widget/);
+		assert.match(expandedText, outputPathPattern("/tmp/single-run/output-0.log"));
+	});
+
+	it("collapses a completed single child but keeps a mismatched step header", () => {
+		const completed = buildWidgetLines([{
+			asyncId: "single-complete",
+			asyncDir: "/tmp/single-complete",
+			status: "complete",
+			mode: "single",
+			agents: ["reviewer"],
+			stepsTotal: 1,
+			steps: [{ index: 0, agent: "reviewer", sessionName: "reviewer: Review the widget", status: "completed" }],
+		}], theme, 180).join("\n");
+		assert.match(completed, /reviewer · complete/);
+		assert.doesNotMatch(completed, /Step 1\/1: reviewer:/);
+		assert.match(completed, /task: Review the widget/);
+
+		const mismatched = buildWidgetLines([{
+			asyncId: "single-mismatch",
+			asyncDir: "/tmp/single-mismatch",
+			status: "complete",
+			mode: "single",
+			agents: ["reviewer"],
+			currentStep: 0,
+			stepsTotal: 1,
+			steps: [{ index: 0, agent: "reviewer", sessionName: "reviewer: Review the widget", status: "running" }],
+		}], theme, 180).join("\n");
+		assert.match(mismatched, /Step 1\/1: reviewer: Review the widget · running/);
+	});
+
+	it("keeps explicit single-child error and gate evidence with a step header", () => {
+		const text = buildWidgetLines([{
+			asyncId: "single-evidence",
+			asyncDir: "/tmp/single-evidence",
+			status: "running",
+			mode: "single",
+			agents: ["reviewer"],
+			currentStep: 0,
+			stepsTotal: 1,
+			steps: [{
+				index: 0,
+				agent: "reviewer",
+				sessionName: "reviewer: Review the widget",
+				status: "running",
+				error: "failed to inspect the widget",
+				review: { status: "blockers" },
+			}],
+		}], theme, 180, true).join("\n");
+		assert.match(text, /Step 1\/1: reviewer: Review the widget · running/);
+		assert.match(text, /error: failed to inspect the widget/);
+		assert.match(text, /gate:review blockers/);
+	});
+
+	it("keeps a Step header for lane-bearing one-child single async jobs", () => {
+		const job = {
+			asyncId: "single-lane",
+			asyncDir: "/tmp/single-lane",
+			status: "running",
+			mode: "single",
+			agents: ["reviewer"],
+			currentStep: 0,
+			stepsTotal: 1,
+			steps: [{
+				index: 0,
+				agent: "reviewer",
+				sessionName: "reviewer: Review the widget",
+				status: "running",
+				phase: "fresh-review",
+				label: "Review #1695",
+				workflowKey: "review",
+				outputName: "review.md",
+			}],
+		};
+
+		for (const expanded of [false, true]) {
+			const text = buildWidgetLines([job], theme, 180, expanded).join("\n");
+			assert.match(text, /Step 1\/1: reviewer: Review the widget · running/);
+			assert.match(text, /phase:fresh-review/);
+			assert.match(text, /out:review\.md/);
+		}
+	});
+
+	it("keeps failed, paused, and stopped detail evidence in single-child summaries", () => {
+		for (const status of ["failed", "paused", "stopped"] as const) {
+			const text = buildWidgetLines([{
+				asyncId: `single-${status}`,
+				asyncDir: `/tmp/single-${status}`,
+				status,
+				mode: "single",
+				agents: ["reviewer"],
+				currentStep: 0,
+				stepsTotal: 1,
+				steps: [{ index: 0, agent: "reviewer", status }],
+			}], theme, 180).join("\n");
+			const summary = text.split("\n").slice(0, 2).join("\n");
+
+			assert.doesNotMatch(summary, /step 1\/1/i);
+			assert.match(text, new RegExp(`Step 1/1: reviewer · ${status}`));
+		}
 	});
 
 	it("keeps generic activity fallback for single async jobs without steps", () => {
@@ -1312,6 +1442,32 @@ describe("subagent async widget rendering", () => {
 			firstRunningGlyph(second.find((line) => line.includes("Step 2/2")) ?? ""),
 			"logical chain step glyph should advance with the render frame",
 		);
+	});
+
+	it("keeps chain step structure when only one logical child is materialized", () => {
+		const job = {
+			asyncId: "partial-chain",
+			asyncDir: "/tmp/partial-chain",
+			status: "running",
+			mode: "chain",
+			agents: ["planner", "reviewer"],
+			currentStep: 0,
+			chainStepCount: 2,
+			stepsTotal: 1,
+			steps: [{
+				index: 0,
+				agent: "planner",
+				sessionName: "planner: Plan the review",
+				status: "running",
+			}],
+		};
+		const text = buildWidgetLines([job], theme, 180).join("\n");
+
+		assert.match(text, /async subagent chain \(2\) · background/);
+		assert.match(text, /chain · step 1\/2/);
+		assert.match(text, /Step 1\/2: planner: Plan the review/);
+		assert.doesNotMatch(text, /Step 1\/1: planner: Plan the review/);
+		assert.doesNotMatch(text, /\s+[^\n]*planner · running/);
 	});
 
 	it("omits zero-running labels for pending active async parallel groups", () => {

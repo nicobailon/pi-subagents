@@ -30,6 +30,22 @@ export function fuzzyFilter<T extends { name: string; description: string; model
 		.map((x) => x.item);
 }
 
+/** Remove a repeated job name from a child label when a safe separator follows it. */
+export function stripRepeatedAgentPrefix(label: string, jobName: string | undefined): string {
+	const value = label.trim();
+	const prefix = jobName?.trim();
+	if (!prefix || !value.startsWith(prefix)) return value;
+
+	const suffix = value.slice(prefix.length);
+	if (!suffix || !/^(?::|·|\s)/u.test(suffix)) return value;
+	return suffix.replace(/^\s*(?::|·)?\s*/u, "").trim();
+}
+
+/** Whether a status label may omit the one logical step marker. */
+export function shouldSuppressSingleStep(chainStepCount?: number, stepsTotal?: number): boolean {
+	return (chainStepCount ?? stepsTotal) === 1;
+}
+
 export function pad(s: string, len: number): string {
 	const vis = visibleWidth(s);
 	return s + " ".repeat(Math.max(0, len - vis));
