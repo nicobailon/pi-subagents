@@ -23,4 +23,15 @@ describe("nested child Pi process visibility", () => {
 	it("hides background child Pi process windows on Windows", () => {
 		assertNestedPiSpawnHidesWindows("src/runs/background/subagent-runner.ts");
 	});
+
+	it("hides mutation-evidence Git process windows on Windows", () => {
+		const sourcePath = "src/runs/shared/mutation-evidence.ts";
+		const source = fs.readFileSync(path.join(projectRoot, sourcePath), "utf-8");
+		const gitExecCalls = source.match(/execFileSync\(\s*"git"[\s\S]*?\{[^}]*\}\s*\)/g) ?? [];
+
+		assert.equal(gitExecCalls.length, 2, `${sourcePath} should have exactly two Git execFileSync calls`);
+		for (const call of gitExecCalls) {
+			assert.match(call, /\bwindowsHide:\s*true\b/, `${sourcePath} Git execFileSync should set windowsHide: true`);
+		}
+	});
 });

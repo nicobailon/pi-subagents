@@ -15,7 +15,7 @@ function gitArguments(args: string[]): string[] {
 }
 
 function gitOutput(cwd: string, args: string[], maxBuffer = MAX_HASH_BYTES): string {
-	return execFileSync("git", gitArguments(args), { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], maxBuffer });
+	return execFileSync("git", gitArguments(args), { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], maxBuffer, windowsHide: true });
 }
 
 function splitNul(output: string): string[] {
@@ -26,7 +26,7 @@ function hashLargeDiff(cwd: string, relativePath: string): string {
 	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tracked-diff-"));
 	const diffPath = path.join(tempDir, "diff.patch");
 	try {
-		execFileSync("git", gitArguments(["diff", "--no-ext-diff", "--binary", `--output=${diffPath}`, "HEAD", "--", relativePath]), { cwd, stdio: "ignore" });
+		execFileSync("git", gitArguments(["diff", "--no-ext-diff", "--binary", `--output=${diffPath}`, "HEAD", "--", relativePath]), { cwd, stdio: "ignore", windowsHide: true });
 		const hash = createHash("sha256");
 		const buffer = Buffer.allocUnsafe(64 * 1024);
 		const fd = fs.openSync(diffPath, "r");
