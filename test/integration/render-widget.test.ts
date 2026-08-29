@@ -1411,7 +1411,8 @@ describe("subagent async widget rendering", () => {
 		);
 	});
 
-	it("keeps running widget output stable when progress seed is unchanged", async () => {
+	it("advances running widget glyphs when the wall clock moves despite unchanged progress", () => {
+		const originalNow = Date.now;
 		const job = {
 			asyncId: "run-stable",
 			asyncDir: "/tmp/run",
@@ -1423,12 +1424,19 @@ describe("subagent async widget rendering", () => {
 			currentToolStartedAt: 2_000,
 			lastActivityAt: 2_500,
 		};
-		const first = buildWidgetLines([job], theme, 120);
-		await new Promise((resolve) => setTimeout(resolve, 120));
-		const second = buildWidgetLines([job], theme, 120);
+		try {
+			Date.now = () => 1_000;
+			const first = buildWidgetLines([job], theme, 120);
+			Date.now = () => 1_125;
+			const second = buildWidgetLines([job], theme, 120);
+			const withoutRunningGlyphs = (lines: string[]) => lines.map((line) => line.replace(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/gu, ""));
 
-		assert.deepEqual(second, first);
-		assert.equal(firstGrapheme(first[1] ?? ""), firstGrapheme(second[1] ?? ""));
+			assert.notDeepEqual(second, first);
+			assert.deepEqual(withoutRunningGlyphs(second), withoutRunningGlyphs(first), "only the running glyph should change");
+			assert.notEqual(firstGrapheme(first[1] ?? ""), firstGrapheme(second[1] ?? ""));
+		} finally {
+			Date.now = originalNow;
+		}
 	});
 
 	it("advances component running glyphs with the render clock", () => {

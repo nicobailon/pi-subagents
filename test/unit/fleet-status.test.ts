@@ -258,6 +258,46 @@ describe("below-editor subagent FleetView", () => {
 		}
 	});
 
+	it("repaints unchanged running entries but keeps queued-only ticks quiet", () => {
+		const refreshCount = (status: "running" | "queued"): number => {
+			const state = stateForTest();
+			state.asyncJobs.set(`run-${status}`, {
+				asyncId: `run-${status}`,
+				asyncDir: `/tmp/run-${status}`,
+				status,
+				mode: "single",
+				startedAt: 10,
+				updatedAt: 20,
+			});
+			let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+			let renderRequests = 0;
+			const ctx = {
+				hasUI: true,
+				ui: {
+					setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+					onTerminalInput() { return () => {}; },
+					getEditorText() { return ""; },
+					requestRender() {},
+					notify() {},
+					theme,
+				},
+			} as unknown as ExtensionContext;
+			const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+			try {
+				fleet.setContext(ctx);
+				assert.ok(widgetFactory);
+				widgetFactory!({ requestRender() { renderRequests++; } }, theme);
+				fleet.refresh();
+				return renderRequests;
+			} finally {
+				fleet.dispose();
+			}
+		};
+
+		assert.equal(refreshCount("running"), 1);
+		assert.equal(refreshCount("queued"), 0);
+	});
+
 	it("counts project panes in compact status", () => {
 		const state = stateForTest();
 		const projectRoot = path.join("fixtures", "peer-project");

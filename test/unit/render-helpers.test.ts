@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { row } from "../../src/tui/render-helpers.ts";
-import { renderSubagentResult, truncLine, widgetRenderKey } from "../../src/tui/render.ts";
+import { buildWidgetLines, renderSubagentResult, truncLine, widgetRenderKey } from "../../src/tui/render.ts";
 import type { AsyncJobState } from "../../src/shared/types.ts";
 
 const theme = {
@@ -121,6 +121,42 @@ test("widget render keys keep compact payloads quiet and expanded payloads fresh
 	warningDetailChange.workflow!.preflightWarnings = ["different mismatch"];
 	assert.equal(widgetRenderKey(warningDetailChange), widgetRenderKey(preflightJob));
 	assert.notEqual(widgetRenderKey(warningDetailChange, true), widgetRenderKey(preflightJob, true));
+});
+
+test("seeded running glyphs advance at wall-clock frame boundaries while unseeded glyphs stay static", () => {
+	const originalNow = Date.now;
+	const runningGlyph = (lines: string[]): string => lines
+		.map((line) => line.match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏●]/u)?.[0])
+		.find((glyph): glyph is string => glyph !== undefined) ?? "";
+	const seededJob: AsyncJobState = {
+		asyncId: "seeded",
+		asyncDir: "/tmp/seeded",
+		status: "running",
+		mode: "single",
+		updatedAt: 1,
+	};
+	const unseededJob: AsyncJobState = {
+		asyncId: "unseeded",
+		asyncDir: "/tmp/unseeded",
+		status: "running",
+		mode: "single",
+	};
+
+	try {
+		Date.now = () => 1_000;
+		const seededBeforeBoundary = runningGlyph(buildWidgetLines([seededJob], theme, 180));
+		const unseededBeforeBoundary = runningGlyph(buildWidgetLines([unseededJob], theme, 180));
+
+		Date.now = () => 1_125;
+		const seededAfterBoundary = runningGlyph(buildWidgetLines([seededJob], theme, 180));
+		const unseededAfterBoundary = runningGlyph(buildWidgetLines([unseededJob], theme, 180));
+
+		assert.notEqual(seededAfterBoundary, seededBeforeBoundary);
+		assert.equal(unseededAfterBoundary, unseededBeforeBoundary);
+		assert.equal(unseededBeforeBoundary, "●");
+	} finally {
+		Date.now = originalNow;
+	}
 });
 
 test("multiline rendering omits two-column graphemes at one-column width", () => {
