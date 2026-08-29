@@ -1,8 +1,9 @@
 /**
  * Cross-OS control channel for async subagent runs.
  *
- * Background runs are detached OS processes. The original control path delivered
- * an interrupt with `process.kill(pid, SIGUSR2|SIGBREAK)`, but Windows cannot
+ * Background runs use child processes. Unix detaches them from the parent process.
+ * The original control path delivered an interrupt with
+ * `process.kill(pid, SIGUSR2|SIGBREAK)`, but Windows cannot
  * deliver those signals cross-process via `process.kill` and throws `ENOSYS`,
  * which left async runs uninterruptible (no stop, no live steer) on Windows.
  *

@@ -22,6 +22,7 @@ import type { ContextMode } from "../shared/context-mode.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { resolveNodeExecutable } from "../../shared/node-executable.ts";
+import { backgroundProcessOptions } from "../shared/background-process-options.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, PROMPT_REDACTED, resolveChildCwd } from "../../shared/utils.ts";
@@ -562,9 +563,8 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 		}
 		const proc = spawn(nodeCommand, [jitiCliPath, runner, cfgPath], {
 			cwd,
-			detached: true,
+			...backgroundProcessOptions(),
 			stdio: ["ignore", stdoutFd ?? "ignore", stderrFd ?? "ignore"],
-			windowsHide: true,
 			env: {
 				...omitExtensionBindingsEnv(process.env),
 				...(piPackageRoot ? { [PI_CODING_AGENT_PACKAGE_ROOT_ENV]: piPackageRoot } : {}),

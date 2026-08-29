@@ -12,6 +12,7 @@
 - Clarify workflowScript portability and runs.host working-directory limits, including the outer workflow cwd and trusted `cd ... && command` patterns (#1679).
 
 ### Fixed
+- Keep retained-session resume runners from flashing console windows on Windows while preserving Unix background detachment.
 - Hide mutation-evidence Git subprocess windows on Windows to prevent visible console flashes or terminal tabs. Thanks to [@dnnkeeper](https://github.com/dnnkeeper) for #1706.
 - Deliver immediate async workflow terminal failures on macOS without requiring a later status refresh (#1700).
 - Skip untracked-file enumeration for watchdog signatures when the Git root is the user home or has no tracked files, avoiding startup and turn hangs in accidental large home repositories. Thanks to [@AluxesLAS](https://github.com/AluxesLAS) for #1693.
