@@ -32,8 +32,8 @@ import { toModelInfo } from "../shared/model-info.ts";
 import { resolveSubagentModelOverride, type ParentModel } from "../runs/shared/model-fallback.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
-import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
-import type { AcceptanceInput, Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
+import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, resolveExternalCliRunnerStatus, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
+import type { AcceptanceInput, AgentCapabilitiesSnapshot, AgentCapabilityRow, Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
 import { getProjectConfigDir } from "../shared/utils.ts";
 import { previewDisplayText } from "../shared/display-text.ts";
 import { capabilityCeilingAgentRestrictionSources, isAgentAllowedByCapabilityCeiling, resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
@@ -52,8 +52,17 @@ interface ManagementParams {
 	config?: unknown;
 }
 
-function result(text: string, isError = false): AgentToolResult<Details> {
-	return { content: [{ type: "text", text }], isError, details: { mode: "management", results: [] } };
+function result(text: string, isError = false, details?: Partial<Details>): AgentToolResult<Details> {
+	return { content: [{ type: "text", text }], isError, details: { mode: "management", results: [], ...details } };
+}
+
+function jsonDetails<T>(value: T): T {
+	return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function presentDetails<T extends Record<string, unknown>>(value: T): T | undefined {
+	const cleaned = jsonDetails(value);
+	return Object.keys(cleaned).length > 0 ? cleaned : undefined;
 }
 
 function parseCsv(value: string): string[] {
@@ -681,6 +690,96 @@ function formatAgentCapabilitiesLine(agent: AgentConfig, providerNames: Set<stri
 	return `- ${agent.name} (${agentListMetadata(agent, providerNames)}): Description: ${previewDisplayText(agent.description, 240)}; Tools: ${tools}; Model: ${model}; Thinking: ${thinking}`;
 }
 
+const EXTERNAL_JOB_CAPABILITIES = { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false } as const;
+const PI_AGENT_RUNNER = { type: "pi" } as const;
+
+function listOrEmpty<T>(values: T[] | undefined): T[] {
+	return values ?? [];
+}
+
+function agentCapabilityRunner(agent: AgentConfig, providerNames: Set<string> | undefined): AgentCapabilityRow["runner"] {
+	const runner = agent.runner;
+	if (!runner || runner.type === "pi") return PI_AGENT_RUNNER;
+	if (runner.type === "external-cli") return { type: "external-cli", adapter: runner.adapter, capabilities: resolveExternalCliRunnerStatus(runner).capabilities };
+	return { type: "external-job", provider: runner.provider, available: providerNames?.has(runner.provider), capabilities: EXTERNAL_JOB_CAPABILITIES };
+}
+
+function agentCapabilityTools(agent: AgentConfig): AgentCapabilityRow["tools"] {
+	return {
+		ambient: agent.tools === undefined && agent.mcpDirectTools === undefined,
+		names: listOrEmpty(agent.tools),
+		mcpDirectTools: listOrEmpty(agent.mcpDirectTools),
+		mutationTools: agent.mutationTools,
+	};
+}
+
+function agentCapabilityRow(agent: AgentConfig, options: { executable: boolean; providerNames?: Set<string>; restrictionSources?: string[] }): AgentCapabilityRow {
+	return {
+		name: agent.name,
+		description: previewDisplayText(agent.description, 1000),
+		source: agent.source,
+		executable: options.executable,
+		restrictionSources: options.executable ? undefined : options.restrictionSources ?? [],
+		aliases: agent.aliases ? [...agent.aliases] : undefined,
+		runner: agentCapabilityRunner(agent, options.providerNames),
+		tools: agentCapabilityTools(agent),
+		model: presentDetails({ value: agent.model, fallbackModels: agent.fallbackModels, thinking: agent.thinking }),
+		execution: presentDetails({ defaultAsync: agent.defaultAsync, timeoutMs: agent.defaultTimeoutMs }),
+		output: presentDetails({ path: agent.output, mode: agent.outputMode }),
+		extensions: presentDetails({ names: agent.extensions, subagentOnly: agent.subagentOnlyExtensions, skills: agent.skills }),
+	};
+}
+
+function agentCapabilitiesSnapshot(input: { agents: AgentConfig[]; restrictedAgents: AgentConfig[]; providerNames?: Set<string>; restrictedSources?: string[] }): AgentCapabilitiesSnapshot {
+	return {
+		agents: [
+			...input.agents.map((agent) => agentCapabilityRow(agent, { executable: true, providerNames: input.providerNames })),
+			...input.restrictedAgents.map((agent) => agentCapabilityRow(agent, { executable: false, providerNames: input.providerNames, restrictionSources: input.restrictedSources })),
+		],
+		restrictedCount: input.restrictedAgents.length,
+		...(input.restrictedSources?.length ? { capabilityCeilingSources: [...input.restrictedSources] } : {}),
+	};
+}
+
+function providerNames(status: ExternalJobProviderStatus): Set<string> | undefined {
+	return status.ok ? status.names : undefined;
+}
+
+function appendRestrictedAgentLines(input: { lines: string[]; agents: AgentConfig[]; sources?: string[]; providerNames?: Set<string>; formatLine: (agent: AgentConfig, providerNames: Set<string> | undefined) => string }): void {
+	if (input.agents.length === 0) return;
+	input.lines.push(
+		"",
+		`Restricted agents (not executable in this session${input.sources?.length ? `; capability ceiling: ${input.sources.join(", ")}` : ""}):`,
+		...input.agents.map((agent) => input.formatLine(agent, input.providerNames)),
+	);
+}
+
+function appendExternalJobRegistryLine(lines: string[], agents: AgentConfig[], status: ExternalJobProviderStatus): void {
+	if (status.ok || !agents.some((agent) => agent.runner?.type === "external-job")) return;
+	lines.push("", `External-job provider registry unavailable: ${status.error}`);
+}
+
+function appendAgentDiagnosticLines(lines: string[], diagnostics: AgentDiscoveryDiagnostic[] | undefined): void {
+	if (!diagnostics?.length) return;
+	lines.push(
+		"",
+		"Invalid agent definitions:",
+		...diagnostics.map((diagnostic) => `- ${diagnostic.name ?? diagnostic.filePath} (${diagnostic.source}): ${diagnostic.error}`),
+	);
+}
+
+function agentCapabilityDetails(input: { capabilityMode: boolean; agents: AgentConfig[]; restrictedAgents: AgentConfig[]; providerNames?: Set<string>; restrictedSources?: string[] }): Partial<Details> | undefined {
+	if (!input.capabilityMode) return undefined;
+	return {
+		agentCapabilities: jsonDetails(agentCapabilitiesSnapshot({
+			agents: input.agents,
+			restrictedAgents: input.restrictedAgents,
+			providerNames: input.providerNames,
+			restrictedSources: input.restrictedSources,
+		})),
+	};
+}
+
 function formatAgentListSections(
 	agents: AgentConfig[],
 	providerNames: Set<string> | undefined,
@@ -787,25 +886,24 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 		discoverAvailableSkills: () => discoverAvailableSkills(ctx.cwd),
 	});
 	const providerStatus = registeredExternalJobProviderStatus();
+	const providerNameSet = providerNames(providerStatus);
 	const capabilityMode = params.capabilities === true;
 	const formatLine = capabilityMode ? formatAgentCapabilitiesLine : formatAgentListLine;
 	const lines = [
 		capabilityMode ? "Executable agents (capabilities):" : "Executable agents:",
-		...formatAgentListSections(agents, providerStatus.ok ? providerStatus.names : undefined, formatLine),
-		...(restrictedAgents.length ? [
-			"",
-			`Restricted agents (not executable in this session${restrictedSources?.length ? `; capability ceiling: ${restrictedSources.join(", ")}` : ""}):`,
-			...restrictedAgents.map((a) => formatLine(a, providerStatus.ok ? providerStatus.names : undefined)),
-		] : []),
-		...(!providerStatus.ok && [...agents, ...restrictedAgents].some((agent) => agent.runner?.type === "external-job") ? ["", `External-job provider registry unavailable: ${providerStatus.error}`] : []),
-		...(d.agentDiagnostics?.length ? [
-			"",
-			"Invalid agent definitions:",
-			...d.agentDiagnostics.map((diagnostic) => `- ${diagnostic.name ?? diagnostic.filePath} (${diagnostic.source}): ${diagnostic.error}`),
-		] : []),
-		...(proactiveSuggestions.length ? ["", ...proactiveSuggestions] : []),
+		...formatAgentListSections(agents, providerNameSet, formatLine),
 	];
-	return result(lines.join("\n"));
+	appendRestrictedAgentLines({ lines, agents: restrictedAgents, sources: restrictedSources, providerNames: providerNameSet, formatLine });
+	appendExternalJobRegistryLine(lines, [...agents, ...restrictedAgents], providerStatus);
+	appendAgentDiagnosticLines(lines, d.agentDiagnostics);
+	if (proactiveSuggestions.length) lines.push("", ...proactiveSuggestions);
+	return result(lines.join("\n"), false, agentCapabilityDetails({
+		capabilityMode,
+		agents,
+		restrictedAgents,
+		providerNames: providerNameSet,
+		restrictedSources,
+	}));
 }
 
 function formatModelSource(agent: AgentConfig, currentModel: ParentModel | undefined): string {

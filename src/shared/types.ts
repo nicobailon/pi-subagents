@@ -1298,6 +1298,27 @@ export interface WaitCompletion {
 	workflowChildren?: WorkflowChildSummaryV1;
 }
 
+export interface AgentCapabilitiesSnapshot {
+	agents: AgentCapabilityRow[];
+	restrictedCount: number;
+	capabilityCeilingSources?: string[];
+}
+
+export interface AgentCapabilityRow {
+	name: string;
+	description: string;
+	source: "builtin" | "package" | "user" | "project" | "runtime";
+	executable: boolean;
+	restrictionSources?: string[];
+	aliases?: string[];
+	runner: { type: "pi" } | { type: "external-cli"; adapter?: string; capabilities: ExternalCliCapabilities } | { type: "external-job"; provider: string; available?: boolean; capabilities: ExternalJobRunnerStatus["capabilities"] };
+	tools: { ambient: boolean; names: string[]; mcpDirectTools: string[]; mutationTools?: string[] };
+	model?: { value?: string; fallbackModels?: string[]; thinking?: string | false };
+	execution?: { defaultAsync?: boolean; timeoutMs?: number };
+	output?: { path?: string; mode?: OutputMode };
+	extensions?: { names?: string[]; subagentOnly?: string[]; skills?: string[] };
+}
+
 export interface Details {
 	mode: SubagentResultMode | "management";
 	runId?: string;
@@ -1360,6 +1381,7 @@ export interface Details {
 	runFanoutBudget?: RunFanoutBudgetSnapshot;
 	runFanoutRejection?: RunFanoutRejection;
 	activeAsyncCapacity?: ActiveAsyncCapacitySnapshot;
+	agentCapabilities?: AgentCapabilitiesSnapshot;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
 	parallelHandoff?: ParallelHandoffReference;

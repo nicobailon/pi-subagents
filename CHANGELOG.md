@@ -13,6 +13,7 @@
 - Trim duplicated orchestration recipes from the packaged skill while keeping policy in `constraints-and-recipes.md` and execution details in `execution-controls.md`.
 - Clarify workflowScript portability and runs.host working-directory limits, including the outer workflow cwd and trusted `cd ... && command` patterns (#1679).
 - Add compact prompt-free agent capability discovery with `action: "list", capabilities: true`. Thanks to [@peedrr](https://github.com/peedrr) for #1717.
+- Add structured `details.agentCapabilities` records for capability discovery so callers can select agents without parsing prose rows (#1720).
 
 ### Fixed
 - Treat malformed persisted async status states as partial, bound persisted workflow stage text, and fail closed when an explicit child-output path cannot be inspected before a run.

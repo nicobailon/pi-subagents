@@ -70,7 +70,16 @@ describe("agent management config parsing", () => {
 			"aliases: capability",
 			"tools: read, grep, mcp:github/search",
 			"model: openai/gpt-5-mini",
+			"fallbackModels: openai/gpt-5-mini-fallback",
+			"async: true",
+			"timeoutMs: 123",
 			"thinking: high",
+			"skills: typescript-code",
+			"extensions: github",
+			"subagentOnlyExtensions: surf",
+			"mutationTools: edit, write",
+			"output: report.md",
+			"outputMode: file-only",
 			"---",
 			"SYSTEM_PROMPT_SENTINEL",
 			"---",
@@ -86,6 +95,17 @@ describe("agent management config parsing", () => {
 		assert.match(text, /^Executable agents \(capabilities\):/);
 		assert.match(text, /- capability-worker \(project, aliases: capability\): Description: Capability worker; Tools: read, grep, mcp:github\/search; Model: openai\/gpt-5-mini; Thinking: high/);
 		assert.doesNotMatch(text, /System Prompt:|SYSTEM_PROMPT_SENTINEL/);
+		const capabilities = listed.details?.agentCapabilities;
+		assert.ok(capabilities);
+		const row = capabilities.agents.find((agent) => agent.name === "capability-worker");
+		assert.ok(row);
+		assert.equal(row.executable, true);
+		assert.deepEqual(row.tools, { ambient: false, names: ["read", "grep"], mcpDirectTools: ["github/search"], mutationTools: ["edit", "write"] });
+		assert.deepEqual(row.model, { value: "openai/gpt-5-mini", fallbackModels: ["openai/gpt-5-mini-fallback"], thinking: "high" });
+		assert.deepEqual(row.execution, { defaultAsync: true, timeoutMs: 123 });
+		assert.deepEqual(row.output, { path: "report.md", mode: "file-only" });
+		assert.deepEqual(row.extensions, { names: ["github"], subagentOnly: ["surf"], skills: ["typescript-code"] });
+		assert.equal(JSON.stringify(capabilities).includes("SYSTEM_PROMPT_SENTINEL"), false);
 	});
 
 	it("rejects management attempts to widen the reserved read-only Claude profile", () => {
