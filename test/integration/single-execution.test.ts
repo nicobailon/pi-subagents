@@ -64,6 +64,7 @@ import { missionStatePath } from "../../src/missions/workflow-state.ts";
 import { discardPreservedWorktrees } from "../../src/runs/shared/parallel-handoff.ts";
 import { createWorktrees } from "../../src/runs/shared/worktree.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
+import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
 import { createWorkflowChildPermit, workflowChildPermitConsumed } from "../../src/shared/workflow-child-permit.ts";
 import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-adapters.ts";
@@ -1276,6 +1277,79 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.existsSync(path.join(DIRS.results, `${toolCallId}.json`)), false);
 		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true });
 		fs.rmSync(resultPath, { force: true });
+	});
+
+	it("delivers a terminal Darwin workflow failure after demand disappears", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const state: SubagentState = {
+			baseCwd: tempDir,
+			currentSessionId: "session-1700",
+			completionOwnerId: "owner-1700",
+			asyncJobs: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+			completionSeen: new Map(),
+			resultFileCoalescer: { schedule: () => false, clear: () => {} },
+		};
+		let pollCreated = false;
+		const delivered: Array<{ id?: string; state?: string }> = [];
+		const piEvents = createEventBus();
+		const watcher = createResultWatcher({ events: piEvents }, state, DIRS.results, 60_000, {
+			platform: "darwin",
+			deliverIntercomResults: false,
+			coalesceDelayMs: 0,
+			hasDeliveryDemand: () => [...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running"),
+			notifier: { deliver: async (result) => { delivered.push({ id: result.id, state: result.state }); return true; } },
+			timers: {
+				setTimeout,
+				clearTimeout,
+				setInterval: ((handler: () => void, delay?: number) => {
+					assert.equal(delay, 3000);
+					pollCreated = true;
+					return { unref() {} } as NodeJS.Timeout;
+				}) as typeof setInterval,
+				clearInterval: (() => {}) as typeof clearInterval,
+			},
+		});
+		let asyncDir: string | undefined;
+		let resultPath: string | undefined;
+		try {
+			const executor = createSubagentExecutor!({
+				pi: { events: piEvents, getSessionName: () => undefined },
+				state,
+				config: {},
+				asyncByDefault: false,
+				tempArtifactsDir: tempDir,
+				getSubagentSessionRoot: () => path.join(tempDir, ".pi/subagents", "sessions"),
+				expandTilde: (value: string) => value,
+				discoverAgents: () => ({ agents: [makeAgent("echo")] }),
+				refreshResultDelivery: watcher.refreshResultDelivery,
+			});
+			const launchPromise = executor.execute(
+				"darwin-immediate-workflow-failure",
+				{ async: true, workflowScript: "{" },
+				new AbortController().signal,
+				undefined,
+				{ ...makeMinimalCtx(tempDir), sessionManager: { getSessionId: () => "session-1700", getSessionFile: () => null } },
+			);
+			watcher.startResultWatcher();
+			assert.equal(pollCreated, true, "expected Darwin demand polling to be armed");
+			const launch = await launchPromise;
+			assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "workflow launch failed");
+			const workflowRunId = launch.details.asyncId;
+			assert.ok(workflowRunId);
+			asyncDir = launch.details.asyncDir;
+			resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
+			for (let attempt = 0; attempt < 100 && (state.asyncJobs.get(workflowRunId)?.status !== "failed" || delivered.length === 0); attempt += 1) {
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			assert.equal(state.asyncJobs.get(workflowRunId)?.status, "failed");
+			assert.equal([...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running"), false);
+			assert.deepEqual(delivered, [{ id: workflowRunId, state: "failed" }], "terminal completion must not require a manual result refresh");
+		} finally {
+			watcher.stopResultWatcher();
+			if (asyncDir) fs.rmSync(asyncDir, { recursive: true, force: true });
+			if (resultPath) fs.rmSync(resultPath, { force: true });
+		}
 	});
 
 	it("keeps script workflow phase during async auto-resume", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
