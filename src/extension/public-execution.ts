@@ -1,5 +1,6 @@
 export interface PublicSubagentExecutionParams {
 	action?: unknown;
+	capabilities?: unknown;
 	mode?: unknown;
 	repo?: unknown;
 	planId?: unknown;

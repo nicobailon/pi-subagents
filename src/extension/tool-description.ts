@@ -11,13 +11,14 @@ const WORKFLOW_OUTPUT_BINDING_GUIDANCE = "For durable workflow child files, set 
 const WORKFLOW_LANES_GUIDANCE = "For bounded parallel sequential chains, use runs.lanes([{key,stages:[{key,agent,task},{key,resume:'previous',task},...]}]); first stages run together, later stages sequence per lane, and the bounded board reports lane-local failures. Only an explicit structuredOutput.verdict === 'blocked' blocks a successful stage; reviewer prose is not parsed.";
 const WORKFLOW_SCRIPT_PORTABILITY_GUIDANCE = "workflowScript rejects nested async function, arrow, and method helpers; use top-level await, plain helper functions that return runs.run(...), or explicit Promise chains instead.";
 const WORKFLOW_HOST_GUIDANCE = "For one non-interactive operator-owned command, await runs.host(key,{kind:'command',command,timeoutMs,output?,role?,provider?}). runs.host has no per-step cwd: commands and relative output paths use the workflow cwd; set cwd on the outer subagent request instead (for example, {cwd:'/path/to/worktree',workflowScript:'...'}), or put a trusted directory change in the command (for example, 'cd /path/to/worktree && npm test'). v1 supports only command steps; output is bounded and command failure fails the workflow.";
+const AGENT_CAPABILITY_GUIDANCE = "For capability selection, use { action: \"list\", capabilities: true } for compact prompt-free rows.";
 
 export const DEFAULT_SUBAGENT_TOOL_DESCRIPTION = `Delegate to configured subagents. For execution, omit action and use {agent, task?} for one child, workflowScript for inline orchestration, or workflowScriptPath to load a script from the request cwd. The script inputs are mutually exclusive. Use action:'validate' with either script input to check it without launching children. For multi-step or parallel work, make exactly one top-level subagent call with async:true; launch children only inside that workflow and do not make another top-level call for them. Use runs.run('key',{agent,task}) for one child, await runs.all([{key:'a',agent:'reviewer',task:'...'},{key:'b',agent:'reviewer',task:'...'}]) for ordinary parallel children, and read its ordered array result with indexes, destructuring, or .map(...), not by key property. ${WORKFLOW_SCRIPT_PORTABILITY_GUIDANCE} ${WORKFLOW_LANES_GUIDANCE} ${WORKFLOW_HOST_GUIDANCE} ${EXTERNAL_CLI_RUNNER_GUIDANCE} Use action only for management/control. Use guide or the pi-subagents skill for advanced workflow details.`;
 
 export const SUBAGENT_TOOL_PROMPT_SNIPPET = "Delegate to subagents; orchestrate in one workflowScript call.";
 
 export const SUBAGENT_TOOL_PROMPT_GUIDELINES = [
-	"Use subagent only when delegation is needed. Before executing, call { action: \"list\" } and run only executable, non-disabled agents.",
+	`Use subagent only when delegation is needed. Before executing, call { action: "list" } and run only executable, non-disabled agents. ${AGENT_CAPABILITY_GUIDANCE}`,
 	"Omit action for execution. Use { agent, task? } only for one child; use workflowScript for multi-step or parallel work.",
 	"workflowScript means exactly one top-level subagent tool call with async:true. Inside it, use runs.run/runs.all to launch children; do not make another top-level subagent call for those children.",
 	WORKFLOW_SCRIPT_PORTABILITY_GUIDANCE,
@@ -33,7 +34,7 @@ export const SUBAGENT_TOOL_PROMPT_GUIDELINES = [
 ];
 
 export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
-• Use { action: "list" } before execution and only run executable/non-disabled agents.
+• Use { action: "list" } before execution and only run executable/non-disabled agents. ${AGENT_CAPABILITY_GUIDANCE}
 • Keep execution and management separate: omit action for structured single-child or workflowScript execution; use action only for management/control.
 • Async/background runs are the normal default unless config sets asyncByDefault:false; set async:true explicitly when async behavior matters. Use async:false only when the parent must block until completion. Async mode still shows progress. Final reviews and gate checks stay async; needing a result is not a blocking reason. After an async launch, continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll status just to wait; use subagent_wait only when the current request must finish in this turn.
 • ${WORKFLOW_RESUME_KEY_GUIDANCE}

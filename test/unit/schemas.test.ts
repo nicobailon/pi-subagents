@@ -78,6 +78,10 @@ interface SubagentParamsSchema {
 			enum?: string[];
 			description?: string;
 		};
+		capabilities?: {
+			type?: string;
+			description?: string;
+		};
 		view?: {
 			type?: string;
 			enum?: string[];
@@ -255,6 +259,22 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.doesNotMatch(description, /orchestration\./);
 	});
 
+	it("accepts prompt-free capability discovery on list requests", () => {
+		const capabilitiesSchema = SubagentParams?.properties?.capabilities;
+		assert.ok(capabilitiesSchema, "capabilities schema should exist");
+		assert.equal(capabilitiesSchema.type, "boolean");
+		const description = String(capabilitiesSchema.description ?? "");
+		assert.match(description, /action=['\"]list['\"]/i);
+		assert.match(description, /compact/i);
+		assert.match(description, /system prompt/i);
+
+		if (CompileSchema) {
+			const validator = CompileSchema(SubagentParams);
+			assert.equal(validator.Check({ action: "list", capabilities: true }), true);
+			assert.equal(validator.Check({ action: "list", capabilities: "true" }), false);
+		}
+	});
+
 	it("keeps agentContract.version as integer bounds without an enum (Gemini schema subset)", () => {
 		const agentContract = (SubagentParams?.properties as Record<string, JsonSchemaNode> | undefined)?.agentContract;
 		assert.ok(agentContract, "agentContract schema should exist");
@@ -418,8 +438,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		const schema = SubagentParams as unknown as JsonSchemaNode;
 		const serialized = JSON.stringify(schema);
-		// Mission, inspector, inline workflow, guide, and toolTimeoutMs fields intentionally expanded the public tool surface.
-		assert.ok(serialized.length < 17_400, `expected compact schema under 17.4k chars, got ${serialized.length}`);
+		// Mission, inspector, inline workflow, guide, toolTimeoutMs, and capability-list fields intentionally expanded the public tool surface.
+		assert.ok(serialized.length < 17_600, `expected compact schema under 17.6k chars, got ${serialized.length}`);
 		assert.equal(serialized.includes('"$ref"'), false);
 		assert.equal(serialized.includes('"$defs"'), false);
 		assert.equal(serialized.split("Optional acceptance policy.").length - 1, 1);

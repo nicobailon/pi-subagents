@@ -282,6 +282,7 @@ const SubagentParamProperties = {
 	action: Type.Optional(Type.String({ minLength: 1,
 		description: "Optional management/control action. Use action='validate' with workflowScript or workflowScriptPath for offline checks. Omit this field for structured single-child or workflow execution; otherwise, use it only for management/control actions."
 	})),
+	capabilities: Type.Optional(Type.Boolean({ description: "For action='list', return compact capability rows without system prompts." })),
 	name: Type.Optional(Type.String({ description: "Human-readable name for action='schedule.create'." })),
 	id: Type.Optional(Type.String({
 		description: "Run id/prefix for status/debug.run, interrupt, steer, or mission.attach-run."

@@ -49,6 +49,7 @@ describe("public subagent execution normalization", () => {
 			},
 		});
 		assert.deepEqual(normalizePublicSubagentExecution({ action: " list " }), { ok: true, params: { action: "list" } });
+		assert.deepEqual(normalizePublicSubagentExecution({ action: " list ", capabilities: true }), { ok: true, params: { action: "list", capabilities: true } });
 		assert.deepEqual(
 			normalizePublicSubagentExecution({ action: " validate ", workflowScript: "return 1" }),
 			{ ok: true, params: { action: "validate", workflowScript: "return 1" } },

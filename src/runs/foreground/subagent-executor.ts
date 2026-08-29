@@ -298,6 +298,7 @@ export interface SubagentParamsLike {
 	type?: string;
 	agent?: string;
 	task?: string;
+	capabilities?: boolean;
 	extensionBindings?: ExtensionBindings;
 	/** Retained async child run id. Valid only on workflow runs.run items. */
 	resume?: string;

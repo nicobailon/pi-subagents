@@ -46,10 +46,11 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /no per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/i);
 		assert.equal(metadata.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
 		assert.equal(Buffer.byteLength(metadata.promptSnippet!), 62);
-		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 3398);
+		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 3497);
 		assert.deepEqual(metadata.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
 		assert.match(metadata.promptGuidelines!.join("\n"), /Use subagent only when delegation is needed/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /action: \"list\".*executable, non-disabled/i);
+		assert.match(metadata.promptGuidelines!.join("\n"), /action: \"list\", capabilities: true.*compact prompt-free rows/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /workflowScript for multi-step or parallel work/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /workflowScript means exactly one top-level subagent tool call with async:true/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /Inside it, use runs\.run\/runs\.all to launch children/i);

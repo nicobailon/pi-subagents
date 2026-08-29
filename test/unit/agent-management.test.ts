@@ -60,6 +60,34 @@ describe("agent management config parsing", () => {
 		assert.doesNotMatch(readText(result), /- scout \(builtin/);
 	});
 
+	it("lists compact declared capabilities without exposing system prompts", () => {
+		const agentsDir = path.join(tempDir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "capability-worker.md"), [
+			"---",
+			"name: capability-worker",
+			"description: Capability worker",
+			"aliases: capability",
+			"tools: read, grep, mcp:github/search",
+			"model: openai/gpt-5-mini",
+			"thinking: high",
+			"---",
+			"SYSTEM_PROMPT_SENTINEL",
+			"---",
+		].join("\n"));
+
+		const capabilityRequest = { agentScope: "project", capabilities: true };
+		const listed = handleManagementAction("list", capabilityRequest, {
+			cwd: tempDir,
+			modelRegistry: { getAvailable: () => [] },
+		});
+		assert.equal(listed.isError, false);
+		const text = readText(listed);
+		assert.match(text, /^Executable agents \(capabilities\):/);
+		assert.match(text, /- capability-worker \(project, aliases: capability\): Description: Capability worker; Tools: read, grep, mcp:github\/search; Model: openai\/gpt-5-mini; Thinking: high/);
+		assert.doesNotMatch(text, /System Prompt:|SYSTEM_PROMPT_SENTINEL/);
+	});
+
 	it("rejects management attempts to widen the reserved read-only Claude profile", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 		const writerRunner = { type: "external-cli", adapter: "claude-code-writer", command: "claude" };

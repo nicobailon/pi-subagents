@@ -35,6 +35,7 @@ import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import type { AcceptanceInput, Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
 import { getProjectConfigDir } from "../shared/utils.ts";
+import { previewDisplayText } from "../shared/display-text.ts";
 import { capabilityCeilingAgentRestrictionSources, isAgentAllowedByCapabilityCeiling, resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
 import { listRuntimeAgentConfigs, mergeRuntimeAgents, type RuntimeAgentOwner } from "./runtime-agent-registry.ts";
 import { listExternalJobProviders } from "../api/external-job-provider.ts";
@@ -47,6 +48,7 @@ interface ManagementParams {
 	action?: string;
 	agent?: string;
 	agentScope?: unknown;
+	capabilities?: unknown;
 	config?: unknown;
 }
 
@@ -645,18 +647,45 @@ function runnerListBadge(agent: AgentConfig, providerNames: Set<string> | undefi
 	return undefined;
 }
 
-function formatAgentListLine(agent: AgentConfig, providerNames: Set<string> | undefined): string {
+function agentListMetadata(agent: AgentConfig, providerNames: Set<string> | undefined): string {
 	const source = agent.source === "package" ? packageSourceLabel(agent) : agent.source;
-	const parts = [
+	return [
 		source,
 		runnerListBadge(agent, providerNames),
 		agent.defaultContext ? `context: ${agent.defaultContext}` : undefined,
 		agent.aliases?.length ? `aliases: ${agent.aliases.join(", ")}` : undefined,
-	].filter((part): part is string => Boolean(part));
-	return `- ${agent.name} (${parts.join(", ")}): ${agent.description}`;
+	].filter((part): part is string => Boolean(part)).join(", ");
 }
 
-function formatAgentListSections(agents: AgentConfig[], providerNames: Set<string> | undefined): string[] {
+function formatAgentListLine(agent: AgentConfig, providerNames: Set<string> | undefined): string {
+	return `- ${agent.name} (${agentListMetadata(agent, providerNames)}): ${agent.description}`;
+}
+
+function formatAgentCapabilitiesLine(agent: AgentConfig, providerNames: Set<string> | undefined): string {
+	const declaredTools = [
+		...(agent.tools ?? []),
+		...(agent.mcpDirectTools ?? []).map((tool) => `mcp:${tool}`),
+	];
+	let tools = "none";
+	if (agent.tools === undefined && agent.mcpDirectTools === undefined) {
+		tools = "default/ambient";
+	} else if (declaredTools.length > 0) {
+		tools = declaredTools.join(", ");
+	}
+	let model = "inherits current session";
+	if (agent.model !== undefined) {
+		model = agent.model;
+		if (agent.modelProvider && !agent.model.includes("/")) model = `${agent.modelProvider}/${agent.model}`;
+	}
+	const thinking = agent.thinking === false ? "off" : agent.thinking ?? "default";
+	return `- ${agent.name} (${agentListMetadata(agent, providerNames)}): Description: ${previewDisplayText(agent.description, 240)}; Tools: ${tools}; Model: ${model}; Thinking: ${thinking}`;
+}
+
+function formatAgentListSections(
+	agents: AgentConfig[],
+	providerNames: Set<string> | undefined,
+	formatLine: (agent: AgentConfig, providerNames: Set<string> | undefined) => string = formatAgentListLine,
+): string[] {
 	if (agents.length === 0) return ["- (none)"];
 	const sections: Array<[AgentSource, string]> = [
 		["package", "Package agents"],
@@ -670,7 +699,7 @@ function formatAgentListSections(agents: AgentConfig[], providerNames: Set<strin
 		const matches = agents.filter((agent) => agent.source === source);
 		if (matches.length === 0) continue;
 		if (lines.length > 0) lines.push("");
-		lines.push(label, ...matches.map((agent) => formatAgentListLine(agent, providerNames)));
+		lines.push(label, ...matches.map((agent) => formatLine(agent, providerNames)));
 	}
 	return lines;
 }
@@ -758,13 +787,15 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 		discoverAvailableSkills: () => discoverAvailableSkills(ctx.cwd),
 	});
 	const providerStatus = registeredExternalJobProviderStatus();
+	const capabilityMode = params.capabilities === true;
+	const formatLine = capabilityMode ? formatAgentCapabilitiesLine : formatAgentListLine;
 	const lines = [
-		"Executable agents:",
-		...formatAgentListSections(agents, providerStatus.ok ? providerStatus.names : undefined),
+		capabilityMode ? "Executable agents (capabilities):" : "Executable agents:",
+		...formatAgentListSections(agents, providerStatus.ok ? providerStatus.names : undefined, formatLine),
 		...(restrictedAgents.length ? [
 			"",
 			`Restricted agents (not executable in this session${restrictedSources?.length ? `; capability ceiling: ${restrictedSources.join(", ")}` : ""}):`,
-			...restrictedAgents.map((a) => formatAgentListLine(a, providerStatus.ok ? providerStatus.names : undefined)),
+			...restrictedAgents.map((a) => formatLine(a, providerStatus.ok ? providerStatus.names : undefined)),
 		] : []),
 		...(!providerStatus.ok && [...agents, ...restrictedAgents].some((agent) => agent.runner?.type === "external-job") ? ["", `External-job provider registry unavailable: ${providerStatus.error}`] : []),
 		...(d.agentDiagnostics?.length ? [

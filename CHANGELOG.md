@@ -12,6 +12,7 @@
 - Clarify portable subagent orchestration guidance: keep the parent on the ordinary strong default model, route bounded workers/scouts to a fast worker tier, and reserve a top-reasoning model for bounded read-only critique or escalation without requiring a specific provider.
 - Trim duplicated orchestration recipes from the packaged skill while keeping policy in `constraints-and-recipes.md` and execution details in `execution-controls.md`.
 - Clarify workflowScript portability and runs.host working-directory limits, including the outer workflow cwd and trusted `cd ... && command` patterns (#1679).
+- Add compact prompt-free agent capability discovery with `action: "list", capabilities: true`. Thanks to [@peedrr](https://github.com/peedrr) for #1717.
 
 ### Fixed
 - Surface recovery-needed diagnostics for dirty timed-out children that miss requested reports, while keeping them fail-closed (#1713).
