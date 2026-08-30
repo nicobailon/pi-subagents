@@ -3,6 +3,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Clarify that `oracle` and top-reasoning models are escalation tools, not routine fresh-review defaults.
+
 ## [0.60.0] - 2026-08-30
 
 ### Highlights

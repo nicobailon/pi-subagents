@@ -9,7 +9,7 @@ Parent extensions may register a session-scoped, out-of-band ceiling through `pi
 ## When to Use
 
 - **Complex work orchestration**: keep the parent on its ordinary strong default model. Delegate only when another child materially improves evidence, independent review, or isolated execution; omission failures are cheaper than unnecessary commissions. For hard orchestration or root-cause questions, use a top-reasoning model only as a bounded read-only critic/oracle escalation, never as an autonomous root. Complex means the task has multiple moving parts, unclear acceptance, cross-cutting code, meaningful user-visible impact, expensive or irreversible validation, broad review surface, or the user asks for orchestration. Lightweight one-off delegation can stay lightweight.
-- **Advisory review**: use fresh-context `reviewer` agents for adversarial code review, or fork to `oracle` when inherited decisions and drift matter
+- **Advisory review**: use fresh-context `reviewer` agents for adversarial code review; fork to `oracle` only for rare escalation where inherited decisions, drift, model routing, root cause, or hard tradeoffs matter
 - **Implementation handoff**: have `oracle` advise, then `worker` implement only after an approved direction
 - **Recon and planning**: use `scout`, then write a plan when needed
 - **Parallel exploration**: run multiple non-conflicting tasks concurrently
@@ -178,8 +178,8 @@ and user/project agents override builtins with the same name.
 | `reviewer` | Review specialist | strong reviewer tier; high thinking for serious reviews | Default recipes are review-only; tools include edit/write when a fix pass is explicit |
 | `researcher` | Web research brief generator | inherits configured default | Writes `research.md` |
 | `delegate` | Lightweight generic delegate | inherits configured default | No fixed output; generic delegated work |
-| `oracle` | Decision-consistency advisory review | top-reasoning critic tier, bounded read-only; high thinking escalation only | Advisory review, intercom coordination |
-| `advisor` | Compatibility alias for `oracle` | top-reasoning critic tier, bounded read-only; high thinking escalation only | Same advisory role as `oracle` |
+| `oracle` | Rare hard-decision/root-cause escalation | top-reasoning critic tier, bounded read-only; high thinking escalation only | Advisory trajectory review, not routine code review |
+| `advisor` | Compatibility alias for `oracle` | top-reasoning critic tier, bounded read-only; high thinking escalation only | Same advisory escalation role as `oracle` |
 
 Builtin `worker` and `delegate` use strict tool allowlists and do not inherit ambient parent extension tools. To give a child an extension tool, name it in `tools` and load its provider via `extensions`, a path-like `tools` entry, or `subagentOnlyExtensions`. Custom agents without an `extensions` field follow `subagents.defaultExtensions` when set.
 
@@ -279,7 +279,7 @@ agent with the same name only when you want a substantially different agent.
 
 ### Recommended model tiering (optional)
 
-Keep the parent/orchestrator on the ordinary strong default model because omission failures are cheaper than unnecessary commissions. Route workers and scouts to a fast, capable worker tier, and keep serious reviews on the strong tier at high thinking. Use a top-reasoning model only for bounded, read-only critic/oracle/root-cause audits; critic-tier high thinking is escalation-only and never an autonomous root. Explicit parent/user model policy wins over these recommendations.
+Keep the parent/orchestrator on the ordinary strong default model because omission failures are cheaper than unnecessary commissions. Route workers and scouts to a fast, capable worker tier, and keep serious reviews on the strong reviewer tier at high thinking. Do not use `oracle` or a top-reasoning model as the routine fresh-review default. Use that tier only for bounded, read-only critic/oracle/root-cause audits after ordinary review, CI, bot, or source evidence is insufficient; critic-tier high thinking is escalation-only and never an autonomous root. Explicit parent/user model policy wins over these recommendations.
 
 Examples are illustrative, not requirements. Map these tiers to concrete models in user/project settings or a profile. A non-OpenAI setup should choose comparable available models by capability.
 

@@ -455,6 +455,8 @@ history as a baseline contract.
 
 Use `oracle` as a smart-friend escalation when the parent needs help with trajectory rather than diff inspection: architectural boundaries, model capability routing, merge conflicts, reviewer disagreement, context drift after long work, a worker about to invent a pattern, or fixes that require product/scope tradeoffs. Ask broad questions when the right concern is unclear, and let `oracle` point out missing context or files the parent should inspect before asking again. Keep `oracle` advisory unless it has been explicitly assigned the single writer role.
 
+Do not use `oracle` or Sol-high models to satisfy routine fresh-review gates, ordinary follow-up reviews, or ordinary performance crit passes. Use the `reviewer` role for those reviews, then escalate only when normal review/bot/CI evidence exposes an unresolved invariant, root-cause, model-routing, or product-tradeoff question.
+
 ## Subagent + Intercom Coordination
 
 `pi-subagents` includes native supervisor coordination. Child agents can use `contact_supervisor` to ask the exact parent session that spawned them; messages are scoped by parent session id and should not appear in other Pi sessions. Parents inspect or reply with `subagent_supervisor`. This path does not require `pi-intercom`.

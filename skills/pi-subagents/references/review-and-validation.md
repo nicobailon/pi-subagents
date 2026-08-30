@@ -25,7 +25,7 @@ Skip review ceremony for trivial wording, renames, or local-only probes when dir
 | Possible over-scope or needless complexity | same-writer challenge before fresh review |
 | Material design tradeoff | council mode |
 
-Reviewers are fresh-context by default. Forked reviewers are for parent-history, drift, or prior-decision evidence.
+Reviewers are fresh-context by default. Use the ordinary `reviewer` role for routine code review. Forked oracle/advisor runs are escalation-only for parent-history, drift, root-cause, model-routing, or hard tradeoff evidence.
 
 ## Finding disposition
 
