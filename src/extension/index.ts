@@ -19,7 +19,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { keyText, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
-import { discoverAgents, discoverAgentsAll, type AgentConfig, type AgentScope } from "../agents/agents.ts";
+import { discoverAgentSnapshot, discoverAgents, type AgentConfig, type AgentScope } from "../agents/agents.ts";
 import { clearRuntimeAgentsForPi, listRuntimeAgentConfigs, mergeRuntimeAgents } from "../agents/runtime-agent-registry.ts";
 import { registerRuntimeAgentEventListener } from "../agents/runtime-agent-events.ts";
 import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
@@ -526,9 +526,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		return missionObserverResultCandidateFiles(DIRS.results).length > 0;
 	};
 	const discoverAgentsForRuntime = (cwd: string, scope: AgentScope, preferredModelProvider?: string) => {
-		const discovered = discoverAgents(cwd, scope, preferredModelProvider);
-		if (listRuntimeAgentConfigs(pi).length === 0) return discovered;
-		const all = discoverAgentsAll(cwd, preferredModelProvider);
+		if (listRuntimeAgentConfigs(pi).length === 0) return discoverAgents(cwd, scope, preferredModelProvider);
+		const snapshot = discoverAgentSnapshot(cwd, scope, preferredModelProvider, { includeChains: false });
+		const discovered = snapshot.effective;
+		const all = snapshot.all;
 		const configuredAgents: AgentConfig[] = [
 			...all.builtin,
 			...all.package,

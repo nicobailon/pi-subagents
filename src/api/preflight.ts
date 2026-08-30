@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentScope, type AgentSource } from "../agents/agents.ts";
+import { discoverAgentSnapshot, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryAllResult, type AgentScope, type AgentSource } from "../agents/agents.ts";
 import { resolveExecutionAgentScope } from "../agents/agent-scope.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../agents/agent-memory.ts";
@@ -222,8 +222,7 @@ function taskWorkspaceScopeAuthorityDiagnostic(task: string | undefined): Subage
 	};
 }
 
-function candidateList(inputAgent: string, selected: AgentConfig | undefined, cwd: string, provider?: string): SubagentLaunchContractAgentCandidate[] {
-	const all = discoverAgentsAll(cwd, provider);
+function candidateList(inputAgent: string, selected: AgentConfig | undefined, all: AgentDiscoveryAllResult): SubagentLaunchContractAgentCandidate[] {
 	return [...all.builtin, ...all.package, ...all.user, ...all.project]
 		.filter((agent) => Boolean(resolveAgentName(inputAgent, [agent]).agent))
 		.map((agent) => ({
@@ -258,7 +257,8 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	}
 	const scope = resolveExecutionAgentScope(input.agentScope);
 	const parentProvider = input.preferredProvider ?? input.parentModel?.provider;
-	const discovered = discoverAgents(effectiveCwd, scope, parentProvider);
+	const discovery = discoverAgentSnapshot(effectiveCwd, scope, parentProvider, { includeChains: false });
+	const discovered = discovery.effective;
 	const resolvedAgent = resolveAgentName(input.agent, discovered.agents);
 	const ambiguousCandidates = resolvedAgent.error
 		? discovered.agents.filter((agent) => resolveAgentName(input.agent, [agent]).agent)
@@ -397,7 +397,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	const memoryInjection = buildAgentMemoryInjection(agent, effectiveCwd);
 	if (memoryInjection) effectiveSystemPrompt = effectiveSystemPrompt ? `${effectiveSystemPrompt}\n\n${memoryInjection}` : memoryInjection;
 	effectiveSystemPrompt = injectOutputPathSystemPrompt(effectiveSystemPrompt, outputPath, agent);
-	const candidates = candidateList(input.agent, agent, effectiveCwd, parentProvider);
+	const candidates = candidateList(input.agent, agent, discovery.all);
 	const shadowedCandidates = candidates.filter((candidate) => !candidate.selected);
 	const definitionDigest = agentDefinitionDigest(agent);
 	const contractBase: Omit<SubagentLaunchContract, "digest"> = {

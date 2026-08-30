@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { keyText, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, type Component, type KeyId, type TUI } from "@earendil-works/pi-tui";
-import { BUILTIN_AGENT_NAMES, discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../agents/agents.ts";
+import { BUILTIN_AGENT_NAMES, discoverAgentSnapshot, discoverAgents, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../agents/agents.ts";
 import { listRuntimeAgentConfigs, mergeRuntimeAgents } from "../agents/runtime-agent-registry.ts";
 import { resolveExistingReadPaths } from "../shared/settings.ts";
 import {
@@ -113,9 +113,13 @@ const extractExecutionFlags = (rawArgs: string): { args: string; bg: boolean; fo
 };
 
 function discoverSlashAgents(pi: ExtensionAPI, cwd: string, scope: AgentScope): { agents: AgentConfig[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; unknownAgentDiagnosticContext: UnknownAgentDiagnosticContext } {
-	const discovered = discoverAgents(cwd, scope);
-	if (listRuntimeAgentConfigs(pi).length === 0) return { ...discovered, unknownAgentDiagnosticContext: unknownAgentDiagnosticContext(discovered) };
-	const all = discoverAgentsAll(cwd);
+	if (listRuntimeAgentConfigs(pi).length === 0) {
+		const discovered = discoverAgents(cwd, scope);
+		return { ...discovered, unknownAgentDiagnosticContext: unknownAgentDiagnosticContext(discovered) };
+	}
+	const snapshot = discoverAgentSnapshot(cwd, scope, undefined, { includeChains: false });
+	const discovered = snapshot.effective;
+	const all = snapshot.all;
 	const configuredAgents: AgentConfig[] = [
 		...all.builtin,
 		...all.package,
