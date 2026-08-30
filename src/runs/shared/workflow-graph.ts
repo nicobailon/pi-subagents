@@ -15,7 +15,8 @@ export interface WorkflowGraphBuildInput {
 
 /** Return displayable workflow stages while hiding structural parallel groups and host monitors. */
 export function workflowGraphStageNodes(graph: WorkflowGraphSnapshot | undefined): WorkflowGraphNode[] {
-	if (!graph?.nodes?.length) return [];
+	const nodes = graph?.nodes;
+	if (!nodes?.length) return [];
 	const stages: WorkflowGraphNode[] = [];
 	const visit = (node: WorkflowGraphNode): void => {
 		if (node.kind === "parallel-group" || node.kind === "dynamic-parallel-group") {
@@ -24,7 +25,7 @@ export function workflowGraphStageNodes(graph: WorkflowGraphSnapshot | undefined
 		}
 		if (node.kind !== "host-step") stages.push(node);
 	};
-	for (const node of graph.nodes) visit(node);
+	for (const node of nodes) visit(node);
 	return stages;
 }
 

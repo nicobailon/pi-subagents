@@ -17,6 +17,7 @@ import {
 	type HostStepVerdict,
 	type NestedRunSummary,
 	type NestedStepSummary,
+	type WorkflowGraphNode,
 	type WorkflowNodeStatus,
 	type MainWindowRendererConfig,
 	MAX_WIDGET_JOBS,
@@ -40,6 +41,15 @@ import { hostStepReportName, hostStepVerdictLabel } from "../runs/shared/host-st
 import { workflowGraphStageNodes } from "../runs/shared/workflow-graph.ts";
 
 type Theme = ExtensionContext["ui"]["theme"];
+
+interface WorkflowWidgetProjection {
+	stages: WorkflowGraphNode[];
+	steps: AsyncJobStep[];
+	stageProgress?: { total: number; current?: number };
+	plannedKeys?: Set<string>;
+}
+
+type WorkflowWidgetProjectionLookup = (job: AsyncJobState) => WorkflowWidgetProjection;
 
 interface MainWindowRenderLayout {
 	horizontalSpacing: number;
@@ -358,8 +368,7 @@ function workflowStepPriority(step: AsyncJobStep, currentNodeId?: string): numbe
 }
 
 /** Merge materialized child rows with the planned workflow stages for rendering. */
-function workflowWidgetSteps(job: AsyncJobState): AsyncJobStep[] {
-	const planned = job.mode === "workflow" ? workflowGraphStageNodes(job.workflowGraph) : [];
+function workflowWidgetSteps(job: AsyncJobState, planned = job.mode === "workflow" ? workflowGraphStageNodes(job.workflowGraph) : []): AsyncJobStep[] {
 	const loaded = job.steps ?? [];
 	if (planned.length === 0) return loaded;
 
@@ -415,9 +424,8 @@ function workflowWidgetSteps(job: AsyncJobState): AsyncJobStep[] {
 	return entries.map(({ step }) => step);
 }
 
-function workflowStageProgress(job: AsyncJobState): { total: number; current?: number } | undefined {
+function workflowStageProgress(job: AsyncJobState, stages = job.mode === "workflow" ? workflowGraphStageNodes(job.workflowGraph) : []): { total: number; current?: number } | undefined {
 	if (job.mode !== "workflow") return undefined;
-	const stages = workflowGraphStageNodes(job.workflowGraph);
 	if (stages.length === 0) return undefined;
 	const currentId = job.workflowGraph?.currentNodeId;
 	const currentIndex = currentId ? stages.findIndex((stage) => stage.id === currentId) : -1;
@@ -430,8 +438,28 @@ function workflowStageProgress(job: AsyncJobState): { total: number; current?: n
 	return { total: stages.length };
 }
 
-function laneStepForJob(job: AsyncJobState): AsyncJobStep | undefined {
-	const steps = workflowWidgetSteps(job);
+function buildWorkflowWidgetProjection(job: AsyncJobState): WorkflowWidgetProjection {
+	const stages = job.mode === "workflow" ? workflowGraphStageNodes(job.workflowGraph) : [];
+	const stageProgress = workflowStageProgress(job, stages);
+	const steps = workflowWidgetSteps(job, stages);
+	const projection: WorkflowWidgetProjection = { stages, steps };
+	if (stageProgress) projection.stageProgress = stageProgress;
+	if (stages.length) projection.plannedKeys = new Set(stages.map((node) => node.id));
+	return projection;
+}
+
+function workflowWidgetProjectionLookup(): WorkflowWidgetProjectionLookup {
+	const projections = new WeakMap<AsyncJobState, WorkflowWidgetProjection>();
+	return (job: AsyncJobState) => {
+		const cached = projections.get(job);
+		if (cached) return cached;
+		const projection = buildWorkflowWidgetProjection(job);
+		projections.set(job, projection);
+		return projection;
+	};
+}
+
+function laneStepForJob(job: AsyncJobState, steps = workflowWidgetSteps(job)): AsyncJobStep | undefined {
 	if (steps.length === 0) return undefined;
 	const graphCurrent = job.workflowGraph?.currentNodeId;
 	if (graphCurrent) {
@@ -487,7 +515,8 @@ function isTerminalLaneState(state: AsyncJobState["status"]): boolean {
 }
 
 /** Project already-loaded async status facts into one bounded, render-only lane row. */
-export function projectAsyncLane(job: AsyncJobState, selectedStep = laneStepForJob(job)): AsyncLaneProjection | undefined {
+export function projectAsyncLane(job: AsyncJobState, ...args: [selectedStep?: AsyncJobStep]): AsyncLaneProjection | undefined {
+	const selectedStep = args.length === 0 ? laneStepForJob(job) : args[0];
 	const trace = laneTraceForJob(job);
 	const workspace = job.cwd ? boundedLaneValue(shortenPath(job.cwd)) : undefined;
 	const label = compactTaskText(selectedStep?.description, selectedStep?.label)
@@ -553,14 +582,16 @@ function formatLaneProjectionLines(lane: AsyncLaneProjection, theme: Theme, inde
 	];
 }
 
-function laneRenderKey(job: AsyncJobState): unknown {
-	const lane = projectAsyncLane(job);
+function laneRenderKey(job: AsyncJobState, projection?: WorkflowWidgetProjection): unknown {
+	const selectedStep = projection ? laneStepForJob(job, projection.steps) : laneStepForJob(job);
+	const lane = projectAsyncLane(job, selectedStep);
 	return lane ? [lane.label, lane.role, lane.phase, lane.state, lane.gate, lane.next, lane.output, lane.workspace, lane.ref, lane.chips] : undefined;
 }
 
-function widgetLaneDetailLines(job: AsyncJobState, theme: Theme): string[] {
+function widgetLaneDetailLines(job: AsyncJobState, theme: Theme, projection?: WorkflowWidgetProjection): string[] {
 	if (job.steps?.length && (job.mode === "parallel" || job.mode === "chain")) return [];
-	const lane = projectAsyncLane(job);
+	const selectedStep = projection ? laneStepForJob(job, projection.steps) : laneStepForJob(job);
+	const lane = projectAsyncLane(job, selectedStep);
 	return lane ? formatLaneProjectionLines(lane, theme, "  ") : [];
 }
 
@@ -1008,6 +1039,7 @@ function hostStepRenderKey(row: AsyncStatusWorkflowRow): unknown[] {
 }
 
 export function widgetRenderKey(job: AsyncJobState, expanded = false): string {
+	const projection = buildWorkflowWidgetProjection(job);
 	return JSON.stringify({
 		asyncDir: job.asyncDir,
 		status: job.status,
@@ -1026,13 +1058,13 @@ export function widgetRenderKey(job: AsyncJobState, expanded = false): string {
 		workflowHostSteps: projectAsyncWorkflowRows([], job.hostSteps).map(hostStepRenderKey),
 		workflowGraph: job.mode === "workflow" && job.workflowGraph ? {
 			currentNodeId: job.workflowGraph.currentNodeId,
-			stages: workflowGraphStageNodes(job.workflowGraph).map((node) => [node.id, node.status, node.agent, node.phase, node.label, node.flatIndex, node.outputName, node.structured, node.error]),
+			stages: projection.stages.map((node) => [node.id, node.status, node.agent, node.phase, node.label, node.flatIndex, node.outputName, node.structured, node.error]),
 		} : undefined,
 		preflight: expanded ? job.preflight : job.preflight ? formatWorkflowPreflightPlanSummary(job.preflight) : undefined,
 		preflightWarnings: expanded ? job.workflow?.preflightWarnings : job.workflow?.preflightWarnings?.length || undefined,
 		steps: job.steps?.map((step, index) => widgetStepRenderKey(step, index, expanded)),
 		nestedChildren: nestedRenderKey(job.nestedChildren, expanded),
-		lane: laneRenderKey(job),
+		lane: laneRenderKey(job, projection),
 		stepsTotal: job.stepsTotal,
 		runningSteps: job.runningSteps,
 		completedSteps: job.completedSteps,
@@ -1696,14 +1728,13 @@ function buildForegroundResultEntries(
 	return label.itemTitle === "Agent" ? withDuplicateForegroundLabels(entries, label.totalCount) : entries;
 }
 
-function widgetStats(job: AsyncJobState, theme: Theme): string {
+function widgetStats(job: AsyncJobState, theme: Theme, projection = buildWorkflowWidgetProjection(job)): string {
 	const parts: string[] = [];
-	const stageProgress = workflowStageProgress(job);
+	const { stageProgress } = projection;
 	const stepsTotal = stageProgress?.total ?? job.stepsTotal ?? (job.agents?.length ?? 1);
 	const isSingleChild = isSingleChildAsyncJob(job);
 	if (stageProgress) {
-		const stages = workflowGraphStageNodes(job.workflowGraph);
-		const currentStage = stageProgress.current !== undefined ? stages[stageProgress.current] : undefined;
+		const currentStage = stageProgress.current !== undefined ? projection.stages[stageProgress.current] : undefined;
 		const focus = currentStage
 			? [compactTaskText(undefined, currentStage.label) ?? boundedLaneValue(currentStage.id), currentStage.agent ? boundedLaneValue(currentStage.agent) : "", workflowNodeStatusLabel(currentStage.status)].filter(Boolean)
 			: [];
@@ -2014,10 +2045,10 @@ function hostStepWidgetLines(job: AsyncJobState, theme: Theme, indent: string): 
 	return lines;
 }
 
-function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded: boolean, width: number, frame?: number): string[] {
-	const steps = workflowWidgetSteps(job);
+function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded: boolean, width: number, frame?: number, projection = buildWorkflowWidgetProjection(job)): string[] {
+	const { steps } = projection;
 	if (!steps.length) {
-		const lane = projectAsyncLane(job);
+		const lane = projectAsyncLane(job, laneStepForJob(job, steps));
 		return [
 			...workflowPreflightLines(job, expanded),
 			...(lane ? formatLaneProjectionLines(lane, theme, "  ") : []),
@@ -2032,12 +2063,11 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 	if (group) {
 		lines.push(...parallelWidgetGroupDetails(job, theme, group, expanded, width, frame, Boolean(job.activeParallelGroup)));
 	} else {
-		const stageProgress = workflowStageProgress(job);
+		const { stageProgress, plannedKeys } = projection;
 		const total = job.mode === "chain"
 			? job.chainStepCount ?? job.stepsTotal ?? steps.length
 			: stageProgress?.total ?? job.stepsTotal ?? steps.length;
 		const stageTotal = stageProgress?.total ?? total;
-		const plannedKeys = stageProgress ? new Set(workflowGraphStageNodes(job.workflowGraph).map((node) => node.id)) : undefined;
 		const extraStepCount = plannedKeys
 			? steps.filter((step) => step.workflowKey === undefined || !plannedKeys.has(step.workflowKey)).length
 			: total;
@@ -2059,9 +2089,9 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 	return lines;
 }
 
-function buildSingleWidgetLines(job: AsyncJobState, theme: Theme, width: number, expanded: boolean, frame?: number): string[] {
-	const stats = widgetStats(job, theme);
-	const count = job.mode === "chain" ? job.chainStepCount : workflowStageProgress(job)?.total ?? job.stepsTotal ?? job.agents?.length ?? job.steps?.length;
+function buildSingleWidgetLines(job: AsyncJobState, theme: Theme, width: number, expanded: boolean, frame?: number, projection = buildWorkflowWidgetProjection(job)): string[] {
+	const stats = widgetStats(job, theme, projection);
+	const count = job.mode === "chain" ? job.chainStepCount : projection.stageProgress?.total ?? job.stepsTotal ?? job.agents?.length ?? job.steps?.length;
 	const mode = widgetJobName(job);
 	const title = isSingleChildAsyncJob(job)
 		? "async subagent"
@@ -2071,12 +2101,12 @@ function buildSingleWidgetLines(job: AsyncJobState, theme: Theme, width: number,
 	return [
 		`${theme.fg("toolTitle", themeBold(theme, title))} ${theme.fg("dim", "· background")}`,
 		...(collapseDetails ? [] : [summary]),
-		...foregroundStyleWidgetDetails(job, theme, expanded, width, frame),
+		...foregroundStyleWidgetDetails(job, theme, expanded, width, frame, projection),
 	].map((line) => truncLine(line, width));
 }
 
-function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: number, frame?: number): string[] {
-	const fullLines = buildSingleWidgetLines(job, theme, width, false, frame);
+function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: number, frame?: number, projection = buildWorkflowWidgetProjection(job)): string[] {
+	const fullLines = buildSingleWidgetLines(job, theme, width, false, frame, projection);
 	if (fullLines.length <= 10 || !job.steps?.length || (job.mode !== "parallel" && !job.activeParallelGroup)) return fullLines;
 
 	const group = activeParallelWidgetGroup(job);
@@ -2232,11 +2262,11 @@ function progressiveHeaderLine(jobs: AsyncJobState[], theme: Theme, width: numbe
 	return truncLine(`${theme.fg(hasActive ? "accent" : "dim", glyph)} ${theme.fg(hasActive ? "accent" : "dim", "Async agents")} ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(", ") || `${jobs.length} total`)}`, width);
 }
 
-function progressiveJobLine(job: AsyncJobState, theme: Theme, width: number, frame?: number): string {
-	const stats = widgetStats(job, theme);
+function progressiveJobLine(job: AsyncJobState, theme: Theme, width: number, frame?: number, projection = buildWorkflowWidgetProjection(job)): string {
+	const stats = widgetStats(job, theme, projection);
 	const activity = widgetActivity(job);
 	const status = job.status === "complete" ? "done" : job.status;
-	const lane = projectAsyncLane(job);
+	const lane = projectAsyncLane(job, laneStepForJob(job, projection.steps));
 	const laneSummary = lane
 		? [lane.label ?? lane.role, lane.phase ? `phase:${lane.phase}` : undefined, lane.output ? `out:${lane.output}` : undefined, lane.workspace ? `workspace:${lane.workspace}` : `ref:${lane.ref}`].filter(Boolean).join(" · ")
 		: "";
@@ -2264,7 +2294,7 @@ function progressiveHiddenLine(hiddenJobs: AsyncJobState[], theme: Theme, width:
 	return truncLine(theme.fg("dim", `  +${hiddenJobs.length} more${parts.length ? ` (${parts.join(", ")})` : ""}`), width);
 }
 
-function buildProgressiveWidgetLines(jobs: AsyncJobState[], theme: Theme, width: number, lockedRows: number, previousKeys: string[], frame?: number): { lines: string[]; visibleJobKeys: string[] } {
+function buildProgressiveWidgetLines(jobs: AsyncJobState[], theme: Theme, width: number, lockedRows: number, previousKeys: string[], frame?: number, projectionFor: WorkflowWidgetProjectionLookup = workflowWidgetProjectionLookup()): { lines: string[]; visibleJobKeys: string[] } {
 	const rowCount = Math.max(1, lockedRows);
 	if (rowCount === 1) return { lines: buildSingleLineWidgetLines(jobs, theme, width, frame), visibleJobKeys: [] };
 
@@ -2283,7 +2313,7 @@ function buildProgressiveWidgetLines(jobs: AsyncJobState[], theme: Theme, width:
 
 	const lines = [
 		progressiveHeaderLine(jobs, theme, width, frame),
-		...visibleJobs.map((job) => progressiveJobLine(job, theme, width, frame)),
+		...visibleJobs.map((job) => progressiveJobLine(job, theme, width, frame, projectionFor(job))),
 	];
 	if (hiddenJobs.length > 0 && lines.length < rowCount) lines.push(progressiveHiddenLine(hiddenJobs, theme, width));
 	while (lines.length < rowCount) lines.push(" ");
@@ -2314,7 +2344,7 @@ function fitWidgetLineBudget(lines: string[], theme: Theme, width: number, expan
 	return [...lines.slice(0, visibleLines), truncLine(theme.fg("dim", hint), width)];
 }
 
-function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[], theme: Theme, width: number, expanded: boolean, frame?: number): string[] {
+function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[], theme: Theme, width: number, expanded: boolean, frame?: number, projectionFor?: WorkflowWidgetProjectionLookup): string[] {
 	if (expanded) {
 		resetWidgetLayoutSession();
 		return fitWidgetLineBudget(buildLines(), theme, width, true);
@@ -2330,7 +2360,7 @@ function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[
 	}
 
 	if (hasMatchingSession && widgetLayoutSession?.tier === "progressive" && widgetLayoutSession.lockedRows !== undefined) {
-		const rendered = buildProgressiveWidgetLines(jobs, theme, width, widgetLayoutSession.lockedRows, widgetLayoutSession.visibleJobKeys, frame);
+		const rendered = buildProgressiveWidgetLines(jobs, theme, width, widgetLayoutSession.lockedRows, widgetLayoutSession.visibleJobKeys, frame, projectionFor);
 		widgetLayoutSession.visibleJobKeys = rendered.visibleJobKeys;
 		return rendered.lines;
 	}
@@ -2340,7 +2370,7 @@ function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[
 		widgetLayoutSession = { expanded, rows, columns, tier: "full", visibleJobKeys: [] };
 		return fitWidgetLineBudget(lines, theme, width, false);
 	}
-	if (availableRows > 2 && jobs.length === 1 && workflowStageProgress(jobs[0]!)) {
+	if (availableRows > 2 && jobs.length === 1 && projectionFor?.(jobs[0]!).stageProgress) {
 		widgetLayoutSession = { expanded, rows, columns, tier: "full", visibleJobKeys: [] };
 		return fitWidgetLineBudget(lines, theme, width, false);
 	}
@@ -2351,7 +2381,7 @@ function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[
 	}
 
 	const lockedRows = Math.min(availableRows, collapsedWidgetLineBudget(rows));
-	const rendered = buildProgressiveWidgetLines(jobs, theme, width, lockedRows, [], frame);
+	const rendered = buildProgressiveWidgetLines(jobs, theme, width, lockedRows, [], frame, projectionFor);
 	widgetLayoutSession = { expanded, rows, columns, tier: "progressive", lockedRows, visibleJobKeys: rendered.visibleJobKeys };
 	return rendered.lines;
 }
@@ -2362,20 +2392,21 @@ function buildWidgetComponent(jobs: AsyncJobState[], expanded: boolean): (_tui: 
 		container.render = (renderWidth: number): string[] => {
 			const width = Math.max(0, renderWidth - 2);
 			const frame = Math.floor(Date.now() / WIDGET_ANIMATION_INTERVAL_MS);
+			const projectionFor = workflowWidgetProjectionLookup();
 			const buildLines = (): string[] => expanded
-				? buildWidgetLines(jobs, theme, width, true, frame)
+				? buildWidgetLinesWithProjection(jobs, theme, width, true, frame, projectionFor)
 				: jobs.length === 1
-					? compactSingleWidgetLines(jobs[0]!, theme, width, frame)
-					: buildWidgetLines(jobs, theme, width, false, frame);
-			return fitAdaptiveWidgetLines(jobs, buildLines, theme, width, expanded, frame).map((line) => paddedWidgetLine(line, renderWidth));
+					? compactSingleWidgetLines(jobs[0]!, theme, width, frame, projectionFor(jobs[0]!))
+					: buildWidgetLinesWithProjection(jobs, theme, width, false, frame, projectionFor);
+			return fitAdaptiveWidgetLines(jobs, buildLines, theme, width, expanded, frame, projectionFor).map((line) => paddedWidgetLine(line, renderWidth));
 		};
 		return container;
 	};
 }
 
-export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = getTermWidth(), expanded = false, frame?: number): string[] {
+function buildWidgetLinesWithProjection(jobs: AsyncJobState[], theme: Theme, width = getTermWidth(), expanded = false, frame?: number, projectionFor: WorkflowWidgetProjectionLookup = workflowWidgetProjectionLookup()): string[] {
 	if (jobs.length === 0) return [];
-	if (jobs.length === 1) return buildSingleWidgetLines(jobs[0]!, theme, width, expanded, frame);
+	if (jobs.length === 1) return buildSingleWidgetLines(jobs[0]!, theme, width, expanded, frame, projectionFor(jobs[0]!));
 	const running = jobs.filter((job) => job.status === "running");
 	const queued = jobs.filter((job) => job.status === "queued");
 	const finished = jobs.filter((job) => job.status !== "running" && job.status !== "queued");
@@ -2391,11 +2422,12 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 	let queuedSummaryShown = false;
 	let slots = MAX_WIDGET_JOBS;
 	const appendJob = (job: AsyncJobState): void => {
-		const stats = widgetStats(job, theme);
+		const projection = projectionFor(job);
+		const stats = widgetStats(job, theme, projection);
 		items.push([
 			`${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
 			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
-			...widgetLaneDetailLines(job, theme),
+			...widgetLaneDetailLines(job, theme, projection),
 			...widgetParallelAgentDetails(job, theme, expanded, width, frame),
 		]);
 	};
@@ -2440,6 +2472,10 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 	}
 
 	return lines;
+}
+
+export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = getTermWidth(), expanded = false, frame?: number): string[] {
+	return buildWidgetLinesWithProjection(jobs, theme, width, expanded, frame);
 }
 
 /**
