@@ -19,10 +19,22 @@ function lintFixture(source: string): string {
 			cwd: projectRoot,
 			encoding: "utf8",
 		});
-		assert.equal(result.error, undefined, result.error?.message);
-		assert.ok(result.status !== null, result.stderr);
+		const stdout = String(result.stdout ?? "");
+		const processOutput = [String(result.stderr ?? ""), stdout].filter(Boolean).join("\n").trim() || "(no output)";
+		if (result.error) assert.fail(`Oxlint setup failed to start: ${result.error.message}\n${processOutput}`);
+		if (result.status === null) assert.fail(`Oxlint setup failed before producing a result:\n${processOutput}`);
+
+		let lintResult: unknown;
+		try {
+			lintResult = JSON.parse(stdout);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			assert.fail(`Oxlint setup/configuration failed before producing a JSON lint result: ${message}\n${processOutput}`);
+		}
+		const diagnostics = lintResult !== null && typeof lintResult === "object" && "diagnostics" in lintResult ? lintResult.diagnostics : undefined;
+		assert.ok(Array.isArray(diagnostics), `Oxlint setup/configuration did not produce a JSON lint result with diagnostics:\n${processOutput}`);
 		assert.notEqual(result.status, 0, result.stderr);
-		return result.stdout;
+		return stdout;
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
 	}
