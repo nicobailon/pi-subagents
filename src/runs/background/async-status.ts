@@ -166,6 +166,40 @@ function getErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+function isAsyncStatusIsolationError(asyncDir: string, error: unknown): boolean {
+	const statusPath = path.join(asyncDir, "status.json");
+	const message = getErrorMessage(error);
+	return /^(?:Failed to (?:inspect|read|parse|validate) async status file|Invalid async status file) '/.test(message)
+		|| message.startsWith(`Invalid async status '${statusPath}'`)
+		|| message.startsWith(`Invalid host step '${statusPath}`)
+		|| /^(workflowChildren|Invalid workflowChildren)/.test(message);
+}
+
+function isolateCorruptActiveRun(asyncDir: string, runId: string, error: unknown, now?: () => number): void {
+	const statusPath = path.join(asyncDir, "status.json");
+	const processTerminal = readProcessTerminal(asyncDir, { runId });
+	let markerAge: number | undefined;
+	try {
+		markerAge = activeRunMarkerAgeMs(asyncDir, now?.());
+	} catch (markerError) {
+		console.error(`Failed to inspect corrupt async active-run marker for '${runId}':`, markerError);
+	}
+	const markerCanBeReleased = processTerminal?.state === "observed"
+		|| (markerAge !== undefined && markerAge > DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS);
+	let markerAction = "active marker retained because runner liveness is unknown";
+	if (markerCanBeReleased) {
+		try {
+			releaseActiveRunIndex(asyncDir);
+			markerAction = processTerminal?.state === "observed"
+				? "active marker released after observed process-terminal proof"
+				: "stale active marker released";
+		} catch (releaseError) {
+			markerAction = `failed to release active marker: ${getErrorMessage(releaseError)}`;
+		}
+	}
+	console.error(`[pi-subagents] Skipping corrupt active async run '${runId}' at '${statusPath}': ${getErrorMessage(error)}; ${markerAction}.`);
+}
+
 function isNotFoundError(error: unknown): boolean {
 	return typeof error === "object"
 		&& error !== null
@@ -250,14 +284,16 @@ function deriveAsyncActivityState(asyncDir: string, status: AsyncStatus): { acti
 }
 
 function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string }, nestedWarnings: string[] = [], nestedRoute?: NestedRoute): AsyncRunSummary {
-	validateAsyncStatusLaneMetadata(status, `Invalid async status '${path.join(asyncDir, "status.json")}'`);
+	const statusPath = path.join(asyncDir, "status.json");
+	validateAsyncStatusLaneMetadata(status, `Invalid async status '${statusPath}'`);
 	const workflowChildren = parseWorkflowChildSummary(status.workflowChildren);
-	if (workflowChildren && workflowChildren.workflowRunId !== status.runId) throw new Error(`Invalid async status '${path.join(asyncDir, "status.json")}': workflowChildren.workflowRunId does not match.`);
-	assertWorkflowGraphHostSteps(status.workflowGraph, path.join(asyncDir, "status.json"), status.runId);
+	if (workflowChildren && workflowChildren.workflowRunId !== status.runId) throw new Error(`Invalid async status '${statusPath}': workflowChildren.workflowRunId does not match.`);
+	assertWorkflowGraphHostSteps(status.workflowGraph, statusPath, status.runId);
 	const hostSteps = validHostStepNodes(status.workflowGraph);
 	if (status.sessionId !== undefined && typeof status.sessionId !== "string") {
-		throw new Error(`Invalid async status '${path.join(asyncDir, "status.json")}': sessionId must be a string.`);
+		throw new Error(`Invalid async status '${statusPath}': sessionId must be a string.`);
 	}
+	if (status.outputFile !== undefined && typeof status.outputFile !== "string") throw new Error(`Invalid async status '${statusPath}': outputFile must be a string.`);
 	const { activityState, lastActivityAt } = deriveAsyncActivityState(asyncDir, status);
 	const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId })
 		?? sanitizeProcessTerminal(status.processTerminal, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId }, path.join(asyncDir, "status.json"));
@@ -499,10 +535,17 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 	};
 	for (const entry of entries) {
 		const asyncDir = path.join(asyncDirRoot, entry);
-		const reconciliation = options.reconcile === false
-			? undefined
-			: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
-		const status = (reconciliation?.status ?? readStatus(asyncDir)) as (AsyncStatus & { cwd?: string }) | null;
+		let status: (AsyncStatus & { cwd?: string }) | null;
+		try {
+			const reconciliation = options.reconcile === false
+				? undefined
+				: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
+			status = (reconciliation?.status ?? readStatus(asyncDir)) as (AsyncStatus & { cwd?: string }) | null;
+		} catch (error) {
+			if (!activeEntries.has(entry) || !isAsyncStatusIsolationError(asyncDir, error)) throw error;
+			isolateCorruptActiveRun(asyncDir, entry, error, options.now);
+			continue;
+		}
 		if (!status) {
 			if (activeEntries.has(entry)) updateActiveRunIndex(asyncDir, "failed");
 			continue;
@@ -528,7 +571,14 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 				nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
 			}
 		}
-		const summary = statusToSummary(asyncDir, status, nestedWarnings, nestedRoute);
+		let summary: AsyncRunSummary;
+		try {
+			summary = statusToSummary(asyncDir, status, nestedWarnings, nestedRoute);
+		} catch (error) {
+			if (!activeEntries.has(entry) || !isAsyncStatusIsolationError(asyncDir, error)) throw error;
+			isolateCorruptActiveRun(asyncDir, entry, error, options.now);
+			continue;
+		}
 		runs.push(summary);
 	}
 

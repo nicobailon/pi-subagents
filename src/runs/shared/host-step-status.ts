@@ -144,6 +144,7 @@ export function validHostStepNodes(graph: WorkflowGraphSnapshot | undefined): Ho
 export function assertWorkflowGraphHostSteps(graph: WorkflowGraphSnapshot | undefined, source = "status", expectedRunId?: string): void {
 	if (!graph) return;
 	if (expectedRunId !== undefined && graph.runId !== expectedRunId) throw new Error(`Invalid host step '${source}': workflowGraph.runId does not match the status run id.`);
+	if (!Array.isArray(graph.nodes)) throw new Error(`Invalid host step '${source}.workflowGraph': nodes must be an array.`);
 	const hostStepCount = graph.nodes.filter((node) => node.kind === "host-step").length;
 	if (hostStepCount > HOST_STEP_MAX_COUNT) throw new Error(`Invalid host step '${source}': workflowGraph contains more than ${HOST_STEP_MAX_COUNT} host steps.`);
 	const hostSteps: HostStepNodeV1[] = [];

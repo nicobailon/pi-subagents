@@ -5,7 +5,7 @@ import { afterEach, describe, it } from "node:test";
 import { registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
 import { getArtifactsDir } from "../../src/shared/artifacts.ts";
 import { SUBAGENT_CHILD_STATUS_EVENT } from "../../src/shared/types.ts";
-import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
+import { ACTIVE_RUN_INDEX_DIR, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR } from "../../src/runs/shared/external-job-bridge.ts";
 import { SubagentFleetComponent } from "../../src/tui/fleet.ts";
 import { createNestedRoute } from "../../src/runs/shared/nested-events.ts";
@@ -955,7 +955,11 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.doesNotThrow(() => tracker.restoreActiveJobs(ui.ctx as never));
 			assert.equal(state.asyncJobs.size, 0);
 			assert.equal(state.poller, null);
-			assert.match(String(errors[0]?.[0] ?? ""), /Failed to restore active async jobs/);
+			assert.match(String(errors[0]?.[0] ?? ""), /Skipping corrupt active async run 'run-bad-status'/);
+			assert.match(String(errors[0]?.[0] ?? ""), /status\.json/);
+			assert.match(String(errors[0]?.[0] ?? ""), /active marker retained because runner liveness is unknown/);
+			assert.equal(fs.existsSync(runDir), true);
+			assert.equal(fs.existsSync(path.join(asyncRoot, ACTIVE_RUN_INDEX_DIR, "run-bad-status")), true);
 		} finally {
 			console.error = originalError;
 			removeTempDir(asyncRoot);

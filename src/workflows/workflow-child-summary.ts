@@ -117,5 +117,5 @@ export function parseWorkflowChildSummary(value: unknown): WorkflowChildSummaryV
 	if (new Set(children.map((child) => child.childId)).size !== children.length) throw new Error("workflowChildren has duplicate childId values.");
 	if (typeof input.parentToolCallId !== "string") throw new Error("workflowChildren.parentToolCallId is invalid.");
 	if (typeof input.workflowRunId !== "string") throw new Error("workflowChildren.workflowRunId is invalid.");
-	return { version: 1, parentToolCallId: requiredId(input.parentToolCallId, "parentToolCallId"), workflowRunId: requiredId(input.workflowRunId, "workflowRunId"), inventoryComplete: input.inventoryComplete, workflowState, children };
+	return { version: 1, parentToolCallId: requiredId(input.parentToolCallId, "workflowChildren.parentToolCallId"), workflowRunId: requiredId(input.workflowRunId, "workflowChildren.workflowRunId"), inventoryComplete: input.inventoryComplete, workflowState, children };
 }
