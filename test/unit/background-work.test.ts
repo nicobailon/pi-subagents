@@ -234,7 +234,7 @@ describe("background-work provider protocol", () => {
 	});
 });
 
-describe("subagent_wait with background-work providers", () => {
+describe("bg_wait with background-work providers", () => {
 	it("detects completion when another item replaces it at the same count", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-provider-replace-"));
 		try {

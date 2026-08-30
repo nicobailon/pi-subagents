@@ -1121,10 +1121,10 @@ describe("subagent prompt runtime", () => {
 			},
 		} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(tool: { name: string }): void });
 
-		assert.deepEqual(registered, ["subagent_wait"]);
+		assert.deepEqual(registered, ["bg_wait", "subagent_wait"]);
 		handlers.get("session_start")?.({});
 		await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
-		assert.deepEqual(registered, ["subagent_wait"]);
+		assert.deepEqual(registered, ["bg_wait", "subagent_wait"]);
 	});
 
 	it("does not satisfy strict allowlists with native generic intercom", () => {
@@ -1149,12 +1149,12 @@ describe("subagent prompt runtime", () => {
 			} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(tool: { name: string }): void });
 
 			handlers.get("session_start")?.({});
-			assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
+			assert.deepEqual(registered, ["bg_wait", "subagent_wait", "contact_supervisor"]);
 			assert.throws(() => handlers.get("agent_start")?.({}), /requested unavailable child tools: read, grep, find, ls, bash, edit, write, intercom/);
 			assert.deepEqual(readChildToolDiagnostic(diagnosticPath), {
 				agent: "scout",
 				required: ["read", "grep", "find", "ls", "bash", "edit", "write", "intercom"],
-				available: ["subagent_wait", "contact_supervisor"],
+				available: ["bg_wait", "subagent_wait", "contact_supervisor"],
 				missing: ["read", "grep", "find", "ls", "bash", "edit", "write", "intercom"],
 			});
 		} finally {
@@ -1209,7 +1209,7 @@ describe("subagent prompt runtime", () => {
 		handlers.get("session_start")?.({});
 		await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
 
-		assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
+		assert.deepEqual(registered, ["bg_wait", "subagent_wait", "contact_supervisor"]);
 	});
 
 	it("registers only native supervisor tools at runtime when pi-intercom is absent", async () => {
@@ -1231,10 +1231,10 @@ describe("subagent prompt runtime", () => {
 			} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(tool: { name: string }): void });
 
 			handlers.get("session_start")?.({});
-			assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
+			assert.deepEqual(registered, ["bg_wait", "subagent_wait", "contact_supervisor"]);
 
 			await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
-			assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
+			assert.deepEqual(registered, ["bg_wait", "subagent_wait", "contact_supervisor"]);
 		} finally {
 			if (previousRequiredTools === undefined) delete process.env[REQUIRED_CHILD_TOOLS_ENV];
 			else process.env[REQUIRED_CHILD_TOOLS_ENV] = previousRequiredTools;

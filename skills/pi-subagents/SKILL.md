@@ -55,10 +55,12 @@ block. Final reviews, validation gates, oracle checks, and publication checks
 stay async.
 
 In an ordinary interactive session, yield after launching or triaging useful
-async lanes and let Pi wake the parent on completion; do not call blocking
-`subagent_wait()` merely because a child is active. Use blocking
-`subagent_wait()` only when a headless/run-to-completion contract or a required
-same-turn artifact makes the result necessary before this turn ends. For
+async lanes and let Pi wake the parent on completion; ordinary async subagents
+already have native completion notifications, so do not call `bg_wait()` merely
+because a child is active. Use blocking `bg_wait()` only for provider,
+detached, or other background work without a native notification when a
+headless/run-to-completion contract or a required same-turn artifact makes the
+result necessary before this turn ends. For
 “continue/orchestrate/work until done,” keep the lane board moving while a safe
 immediate action remains; if only async lanes are running, record the revisit
 trigger and yield.

@@ -84,7 +84,7 @@ function baseDeps(root: string, state: SubagentState, overrides: Partial<Subagen
 	};
 }
 
-describe("subagent_wait tool", () => {
+describe("bg_wait tool", () => {
 	it("resolves waitTool config and environment overrides strictly", () => {
 		assert.deepEqual(resolveWaitToolConfig(undefined, {}), { enabled: true });
 		assert.deepEqual(resolveWaitToolConfig(false, {}), { enabled: false });
@@ -112,7 +112,7 @@ describe("subagent_wait tool", () => {
 				enabled: false,
 				sleep: async () => {
 					slept = true;
-					throw new Error("disabled subagent_wait should not sleep");
+					throw new Error("disabled bg_wait should not sleep");
 				},
 			}));
 
@@ -308,7 +308,7 @@ describe("subagent_wait tool", () => {
 
 			const text = textOf(result);
 			assert.match(text, /Reply to the supervisor request first/);
-			assert.match(text, /wait with subagent_wait/);
+			assert.match(text, /wait with bg_wait/);
 			assert.match(text, /do not resume or launch a replacement/);
 			assert.doesNotMatch(text, /Resume-first/);
 		} finally {
@@ -1334,7 +1334,7 @@ describe("subagent_wait tool", () => {
 
 			const result = await Promise.race([
 				p,
-				new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("event wake did not resolve subagent_wait")), 1_000)),
+				new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("event wake did not resolve bg_wait")), 1_000)),
 			]);
 			assert.equal(result.isError, undefined);
 			assert.match(textOf(result), /done/i);

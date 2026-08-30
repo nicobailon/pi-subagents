@@ -485,7 +485,7 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
-	it("registers only subagent_wait and honors waitTool disabled config", () => {
+	it("registers bg_wait and its compatibility alias and honors waitTool disabled config", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-wait-tool-config-"));
 		try {
 			const configDir = path.join(agentDir, "extensions", "subagent");
@@ -495,11 +495,13 @@ describe("subagent extension child mode", () => {
 			const script = String.raw`
 				import registerSubagentExtension from "./index.ts";
 				const events = { on() { return () => {}; }, emit() {} };
+				let bgWaitTool;
 				let subagentWaitTool;
 				let legacyWaitRegistered = false;
 				const fakePi = new Proxy({
 					events,
 					registerTool(tool) {
+						if (tool.name === "bg_wait") bgWaitTool = tool;
 						if (tool.name === "subagent_wait") subagentWaitTool = tool;
 						if (tool.name === "wait") legacyWaitRegistered = true;
 					},
@@ -515,9 +517,11 @@ describe("subagent extension child mode", () => {
 					},
 				});
 				registerSubagentExtension(fakePi);
-				if (!subagentWaitTool) throw new Error("subagent_wait tool not registered");
+				if (!bgWaitTool || !subagentWaitTool) throw new Error("bg_wait and subagent_wait tools not registered");
 				if (legacyWaitRegistered) throw new Error("legacy wait tool must not be registered");
-				const result = await subagentWaitTool.execute("subagent-wait-disabled", {}, new AbortController().signal, undefined, {});
+				const result = await bgWaitTool.execute("bg-wait-disabled", {}, new AbortController().signal, undefined, {});
+				const aliasResult = await subagentWaitTool.execute("subagent-wait-disabled", {}, new AbortController().signal, undefined, {});
+				if (aliasResult.content[0].text !== result.content[0].text) throw new Error("subagent_wait alias behavior differs from bg_wait");
 				process.stdout.write(JSON.stringify(result.content[0].text));
 			`;
 

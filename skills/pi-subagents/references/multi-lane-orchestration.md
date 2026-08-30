@@ -34,7 +34,7 @@ While one lane waits, run safe independent preparation, validation, or fresh rea
 
 In an ordinary interactive session, completion wakes the parent; after useful
 async lanes are launched or triaged, yield rather than use
-`subagent_wait({ all: true })` as a barrier. “Continue/orchestrate/work until
+`bg_wait({ all: true })` as a barrier. “Continue/orchestrate/work until
 done” means keep the board moving while safe immediate work remains. If only
 async lanes are running, record the revisit trigger and yield.
 

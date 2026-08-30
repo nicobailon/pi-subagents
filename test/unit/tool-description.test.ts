@@ -121,7 +121,9 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /never accepts a raw run id/i);
 		assert.match(description, /repository mutation lanes.*worktree:true.*runs\.run\/runs\.all.*managed isolation/i);
 		assert.doesNotMatch(description, /tasks\[\]|chain\[\]/i);
-		assert.match(description, /subagent_wait/i);
+		assert.match(description, /ordinary async subagents notify this session natively.*return control.*do not call bg_wait/i);
+		assert.match(description, /bg_wait only for provider, detached, or other background work without a native notification/i);
+		assert.doesNotMatch(description, /subagent_wait/i);
 		assert.match(description, /continue independent work only until its next dependency barrier; consume the result before work that depends on it/i);
 		assert.match(description, /children\.list.*resume only rows reported resumable/i);
 		assert.match(description, /Each workflow key identifies one result lane.*new stable workflow key.*retained resume pass/i);

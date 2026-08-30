@@ -1096,7 +1096,7 @@ describe("async run status inspection", () => {
 				mode: "workflow",
 				state: "paused",
 				activityState: "needs_attention",
-				error: "Run 'detaches' detached for intercom coordination. Reply to the supervisor request first, then wait with subagent_wait({ id: \"child-detached\" }). Use subagent({ action: \"status\", id: \"child-detached\" }) to recover the result; do not resume or launch a replacement while it remains detached.",
+				error: "Run 'detaches' detached for intercom coordination. Reply to the supervisor request first, then wait with bg_wait({ id: \"child-detached\" }). Use subagent({ action: \"status\", id: \"child-detached\" }) to recover the result; do not resume or launch a replacement while it remains detached.",
 				startedAt: 100,
 				lastUpdate: 200,
 				steps: [{
@@ -1112,7 +1112,7 @@ describe("async run status inspection", () => {
 			const result = inspectSubagentStatus({ id: "workflow-detached" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
 			const text = textContent(result);
 			assert.match(text, /Reply to the supervisor request first/);
-			assert.match(text, /wait with subagent_wait\(\{ id: "child-detached" \}\)/);
+			assert.match(text, /wait with bg_wait\(\{ id: "child-detached" \}\)/);
 			assert.match(text, /do not resume or launch a replacement while it remains detached/);
 			assert.match(text, /Recovery workflow child 'detaches'/);
 			assert.doesNotMatch(text, /Revive workflow child 'detaches'/);

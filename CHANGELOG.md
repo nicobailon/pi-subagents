@@ -8,6 +8,7 @@
 - Avoid repeating external-run display normalization during Fleet refresh while retaining validation for externally replaced or mutated records (#1736).
 - Clarify that `oracle` and top-reasoning models are escalation tools, not routine fresh-review defaults.
 - Route untargeted RPC status through restored in-memory projections when safe while preserving executor-backed targeted status and transcript options (#1735).
+- Make `bg_wait` the primary background-work wait tool, retain `subagent_wait` as a deprecated compatibility alias, and stop ordinary async handoffs from encouraging redundant wait subscriptions (#1729).
 
 ### Fixed
 - Preserve durable file-only child reports and continue read-only workflow review after malformed acceptance metadata (#1724).

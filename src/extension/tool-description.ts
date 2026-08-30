@@ -36,7 +36,7 @@ export const SUBAGENT_TOOL_PROMPT_GUIDELINES = [
 export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Use { action: "list" } before execution and only run executable/non-disabled agents.
 • Keep execution and management separate: omit action for structured single-child or workflowScript execution; use action only for management/control.
-• Async/background runs are the normal default unless config sets asyncByDefault:false; set async:true explicitly when async behavior matters. Use async:false only when the parent must block until completion. Async mode still shows progress. Final reviews and gate checks stay async; needing a result is not a blocking reason. After an async launch, continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll status just to wait; use subagent_wait only when the current request must finish in this turn.
+• Async/background runs are the normal default unless config sets asyncByDefault:false; set async:true explicitly when async behavior matters. Use async:false only when the parent must block until completion. Async mode still shows progress. Final reviews and gate checks stay async; needing a result is not a blocking reason. After an async launch, continue independent work only until its next dependency barrier; consume the result before work that depends on it. Ordinary async subagents notify this session natively, so return control and do not call bg_wait merely to get a completion wake. Do not sleep or poll status just to wait; use bg_wait only for provider, detached, or other background work without a native notification when this turn must receive its result.
 • ${WORKFLOW_RESUME_KEY_GUIDANCE}
 • ${WORKFLOW_OUTPUT_BINDING_GUIDANCE}
 • ${WORKFLOW_HOST_GUIDANCE}
@@ -85,7 +85,7 @@ MANAGE / CONTROL:
 • A mission object needs exactly one non-empty title or summary; objective and labels are optional. goal may only be true and requires budget:{tokens}.
 
 ASYNC / SAFETY:
-• Omitted async follows asyncByDefault config; set async:true explicitly when async behavior matters. Continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll merely to wait; use subagent_wait only when this turn must receive results.
+• Omitted async follows asyncByDefault config; set async:true explicitly when async behavior matters. Continue independent work only until its next dependency barrier; consume the result before work that depends on it. Ordinary async subagents notify this session natively, so return control and do not call bg_wait merely to get a completion wake. Do not sleep or poll merely to wait; use bg_wait only for provider, detached, or other background work without a native notification when this turn must receive its result.
 • ${WORKFLOW_RESUME_KEY_GUIDANCE}
 • ${WORKFLOW_OUTPUT_BINDING_GUIDANCE}
 • ${WORKFLOW_HOST_GUIDANCE}

@@ -331,7 +331,7 @@ export interface CompletionBatchConfig {
 
 export interface WaitToolConfigObject {
 	enabled?: boolean;
-	/** Default blocking window for subagent_wait calls that omit timeoutMs. */
+	/** Default blocking window for bg_wait calls that omit timeoutMs. */
 	defaultTimeoutMs?: number;
 }
 
@@ -1297,7 +1297,7 @@ export interface WaitCompletionChild {
 }
 
 /**
- * Terminal completion observed for a run a subagent_wait call covered. Carries run
+ * Terminal completion observed for a run a bg_wait call covered. Carries run
  * identity and the artifact trail; output text stays in the tool result content.
  */
 export interface WaitCompletion {
@@ -1343,7 +1343,7 @@ export interface Details {
 	results: SingleResult[];
 	workflowChildren?: WorkflowChildSummaryV1;
 	/**
-	 * Terminal completion payloads for runs this subagent_wait call observed
+	 * Terminal completion payloads for runs this bg_wait call observed
 	 * finishing. Async completions travel as result files that are consumed and
 	 * deleted after text delivery, so without this field their run and artifact
 	 * identity never reaches tool_result details.
