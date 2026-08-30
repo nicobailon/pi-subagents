@@ -930,14 +930,25 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("does not throw during restore when a persisted async status is malformed", () => {
+	it("restores valid jobs when another persisted async status is malformed", () => {
 		const asyncRoot = createTempDir("pi-async-job-restore-bad-status-");
 		const originalError = console.error;
 		try {
-			const runDir = path.join(asyncRoot, "run-bad-status");
-			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), "{bad json", "utf-8");
-			updateActiveRunIndex(runDir, "running");
+			const validDir = path.join(asyncRoot, "run-valid-status");
+			fs.mkdirSync(validDir, { recursive: true });
+			fs.writeFileSync(path.join(validDir, "status.json"), JSON.stringify({
+				runId: "run-valid-status",
+				sessionId: "session-bad",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			}), "utf-8");
+			updateActiveRunIndex(validDir, "running");
+			const badDir = path.join(asyncRoot, "run-bad-status");
+			fs.mkdirSync(badDir, { recursive: true });
+			fs.writeFileSync(path.join(badDir, "status.json"), Buffer.alloc(64));
+			updateActiveRunIndex(badDir, "running");
 
 			const state = createState();
 			state.currentSessionId = "session-bad";
@@ -953,9 +964,10 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			});
 			tracker.resetJobs(ui.ctx as never);
 			assert.doesNotThrow(() => tracker.restoreActiveJobs(ui.ctx as never));
-			assert.equal(state.asyncJobs.size, 0);
-			assert.equal(state.poller, null);
-			assert.match(String(errors[0]?.[0] ?? ""), /Failed to restore active async jobs/);
+			assert.deepEqual([...state.asyncJobs.keys()], ["run-valid-status"]);
+			assert.notEqual(state.poller, null);
+			assert.match(String(errors[0]?.[0] ?? ""), /Skipping unreadable active async run 'run-bad-status'/);
+			tracker.dispose();
 		} finally {
 			console.error = originalError;
 			removeTempDir(asyncRoot);

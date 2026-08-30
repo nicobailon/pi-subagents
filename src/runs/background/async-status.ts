@@ -173,6 +173,10 @@ function isNotFoundError(error: unknown): boolean {
 		&& (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
+function isAsyncStatusParseError(error: unknown): boolean {
+	return error instanceof Error && error.message.startsWith("Failed to parse async status file '");
+}
+
 function isAsyncRunDir(root: string, entry: string): boolean {
 	const entryPath = path.join(root, entry);
 	try {
@@ -499,10 +503,26 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 	};
 	for (const entry of entries) {
 		const asyncDir = path.join(asyncDirRoot, entry);
-		const reconciliation = options.reconcile === false
-			? undefined
-			: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
-		const status = (reconciliation?.status ?? readStatus(asyncDir)) as (AsyncStatus & { cwd?: string }) | null;
+		let status: (AsyncStatus & { cwd?: string }) | null;
+		try {
+			const reconciliation = options.reconcile === false
+				? undefined
+				: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
+			status = (reconciliation?.status ?? readStatus(asyncDir)) as (AsyncStatus & { cwd?: string }) | null;
+		} catch (error) {
+			// Active-run restoration is best-effort per run. A corrupt persisted
+			// status must not prevent unrelated jobs from being restored, while
+			// targeted and repair scans and semantic validation failures still
+			// surface the underlying error.
+			if (!activeEntries.has(entry) || !isAsyncStatusParseError(error)) throw error;
+			console.error(`Skipping unreadable active async run '${entry}' in '${asyncDirRoot}': ${getErrorMessage(error)}`);
+			try {
+				releaseActiveRunIndex(asyncDir);
+			} catch (releaseError) {
+				console.error(`Failed to release unreadable async run '${entry}' from the active-run index: ${getErrorMessage(releaseError)}`);
+			}
+			continue;
+		}
 		if (!status) {
 			if (activeEntries.has(entry)) updateActiveRunIndex(asyncDir, "failed");
 			continue;

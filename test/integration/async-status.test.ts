@@ -610,6 +610,38 @@ describe("async status helpers", () => {
 		}
 	});
 
+	it("isolates unreadable active status files while restoring valid runs", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-active-bad-status-"));
+		const originalError = console.error;
+		try {
+			createAsyncDir(root, "good-run", {
+				runId: "good-run",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			});
+			const badDir = path.join(root, "bad-run");
+			fs.mkdirSync(badDir, { recursive: true });
+			fs.writeFileSync(path.join(badDir, "status.json"), Buffer.alloc(64));
+			updateActiveRunIndex(badDir, "running");
+			const errors: unknown[][] = [];
+			console.error = (...args: unknown[]) => {
+				errors.push(args);
+			};
+
+			const runs = listAsyncRuns(root, { states: ["running"], reconcile: false });
+
+			assert.deepEqual(runs.map((run) => run.id), ["good-run"]);
+			assert.equal(fs.existsSync(path.join(root, ACTIVE_RUN_INDEX_DIR, "bad-run")), false);
+			assert.equal(fs.existsSync(path.join(badDir, "status.json")), true);
+			assert.match(String(errors[0]?.[0] ?? ""), /Skipping unreadable active async run 'bad-run'/);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects malformed persisted session ids", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-bad-session-id-"));
 		try {
