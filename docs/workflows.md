@@ -57,6 +57,17 @@ subagent({ action: "validate", workflowScriptPath: "workflows/review.js" });
 
 The fields are mutually exclusive. Relative paths resolve against the request `cwd`; absolute paths pass through. The host reads the file before validation, schedule creation, or workflow sandbox execution. The sandbox still has no filesystem access. Missing, unreadable, and empty files return file input errors instead of script syntax errors.
 
+### Named workflow resources for permission extensions
+
+Use a named workflow resource when a permission or policy extension needs to distinguish extension-resolved workflow content from raw model-authored scripts:
+
+```js
+subagent({ workflow: "review", args: { task: "Review the change" } });
+subagent({ workflow: "run-ci", args: { command: "npm test" } });
+```
+
+The host resolves the name and validates bounded plain-JSON `args` before starting the workflow. Resource provenance is recorded in workflow details and receipts for downstream permission/policy checks. Resource authority is not caller-supplied: `runs.host` is available only when the resolved resource explicitly grants the requested host key and command. Inline `workflowScript` and `workflowScriptPath` remain raw, unknown-provenance inputs, so their `runs.host` calls are unavailable through the public execution boundary. Named resources cannot be combined with `agent`, `task`, `workflowScript`, or `workflowScriptPath`; this first slice ships only the package-owned `review` and `run-ci` resources, not a user/project resource registry.
+
 ### Opt-in bounded workflows
 
 Composite workflows have no default parent deadline. Add bounds only when the workflow contract calls for them:
@@ -162,23 +173,13 @@ The board is bounded and contains only lane/stage keys, state, success, retained
 
 ### Host command steps
 
-Use `runs.host(...)` when the operator wants one non-interactive command to be part of the workflow evidence instead of a child-agent run:
+Use the named `run-ci` resource when a permission/policy extension needs to admit one supported non-interactive command as workflow evidence instead of a child-agent run:
 
 ```js
-subagent({ workflowScript: `
-  const tests = await runs.host("unit-tests", {
-    kind: "command",
-    command: "npm run test:unit",
-    timeoutMs: 120000,
-    output: "reports/unit-tests.log",
-    role: "ci",
-    provider: "local"
-  });
-  return { state: tests.state, exitCode: tests.exitCode, outputPath: tests.outputPath };
-` });
+subagent({ workflow: "run-ci", args: { command: "npm test", timeoutMs: 120000 } });
 ```
 
-The first version supports only `kind: "command"`. `command` and `timeoutMs` are required; `output` must be a relative path without traversal. `role` may be `ci` or `gate`, and `provider` is display metadata only. **There is no per-step `cwd` field:** the command and relative output path use the workflow cwd. Set `cwd` on the outer `subagent({...})` request when the workflow should run in another directory, or put a trusted directory change in the command (for example, `cd /path/to/worktree && npm test`) when only that step differs. The command has no stdin, receives the workflow cwd, and must be awaited or returned. Stdout, stderr, and the saved log are bounded. A nonzero exit, timeout, abort, or output-write failure fails the workflow. Async status and terminal receipts store the bounded host-step state; renderers do not run commands or read command output.
+The first named resource version supports only `npm test` and `npm run typecheck`, with bounded timeout values. Its resolved script uses `runs.host("ci", ...)` and the resource authority admits only the selected command. **There is no per-step `cwd` field:** the command and relative output path use the workflow cwd. Set `cwd` on the outer `subagent({...})` request when the workflow should run in another directory. The command has no stdin, receives the workflow cwd, and must be awaited or returned. Stdout, stderr, and the saved log are bounded. A nonzero exit, timeout, abort, or output-write failure fails the workflow. Async status and terminal receipts store the bounded host-step state; renderers do not run commands or read command output.
 
 ### Steering a workflow child
 

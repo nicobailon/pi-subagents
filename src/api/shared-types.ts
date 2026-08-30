@@ -20,4 +20,5 @@ export {
 	type SubagentResultStatus,
 	type SubagentRunMode,
 	type Usage,
+	type WorkflowResourceProvenanceV1,
 } from "../shared/types.ts";

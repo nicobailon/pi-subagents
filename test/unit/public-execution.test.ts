@@ -5,6 +5,7 @@ import { normalizePublicSubagentExecution } from "../../src/extension/public-exe
 describe("public subagent execution normalization", () => {
 	it("accepts structured single-child, workflow, management, and schedules", () => {
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1" }), { ok: true, params: { workflowScript: "return 1" } });
+		assert.deepEqual(normalizePublicSubagentExecution({ workflow: "review", args: { task: "Review this" } }), { ok: true, params: { workflow: "review", args: { task: "Review this" } } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1", preflight: { version: 1, lanes: [] } }), { ok: true, params: { workflowScript: "return 1", preflight: { version: 1, lanes: [] } } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScriptPath: "workflows/review.js" }), { ok: true, params: { workflowScriptPath: "workflows/review.js" } });
 		const task = "Use `quotes`\nand newlines";
@@ -72,6 +73,36 @@ describe("public subagent execution normalization", () => {
 		const result = normalizePublicSubagentExecution({ workflowScript: "return 1", workflowScriptPath: "workflow.js" });
 		assert.equal(result.ok, false);
 		if (!result.ok) assert.match(result.error, /mutually exclusive/);
+	});
+
+	it("rejects named workflow combinations and caller-controlled provenance fields", () => {
+		for (const params of [
+			{ workflow: "review", workflowScript: "return 1" },
+			{ workflow: "review", workflowScriptPath: "workflow.js" },
+			{ workflow: "review", agent: "worker" },
+			{ workflow: "review", task: "work" },
+			{ args: { task: "work" } },
+			{ workflow: "review", resource: { kind: "workflow" } },
+			{ workflow: "review", resourceProvenance: { kind: "workflow" } },
+			{ workflow: "review", workflowResourcePermit: {} },
+		] as const) {
+			const result = normalizePublicSubagentExecution(params);
+			assert.equal(result.ok, false, JSON.stringify(params));
+		}
+	});
+
+	it("keeps raw workflow inputs untrusted and rejects invalid named-resource arguments", () => {
+		const raw = normalizePublicSubagentExecution({ workflowScript: `return await runs.host("ci", { kind: "command", command: "npm test", timeoutMs: 1000 });` });
+		assert.equal(raw.ok, true);
+		if (raw.ok) assert.equal(Object.hasOwn(raw.params, "resource"), false);
+		for (const params of [
+			{ args: { task: "work" } },
+			{ workflow: "", args: {} },
+			{ workflow: 42, args: {} },
+		] as const) {
+			const result = normalizePublicSubagentExecution(params);
+			assert.equal(result.ok, false, JSON.stringify(params));
+		}
 	});
 
 	it("rejects preflight without a workflow input", () => {

@@ -120,7 +120,17 @@ import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/
 import { parseWorkflowChildSummary, workflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 import { resolveWorkflowChatProgress, type WorkflowChatProgressProjection } from "../../workflows/chat-progress.ts";
 import { annotateWorkflowPreflightTrace, formatWorkflowPreflight, formatWorkflowPreflightWarnings, normalizeWorkflowPreflight, workflowPreflightWarnings } from "../../workflows/workflow-preflight.ts";
-import { claimWorkflowChildPermit, validateWorkflowChildPermitRoot, type WorkflowChildPermit, type WorkflowChildPermitContext } from "../../shared/workflow-child-permit.ts";
+import {
+	authorizeWorkflowResourceHost,
+	claimWorkflowChildPermit,
+	consumeWorkflowResourcePermit,
+	validateWorkflowChildPermitRoot,
+	type WorkflowChildPermit,
+	type WorkflowChildPermitContext,
+	type WorkflowResourceAuthority,
+	type WorkflowResourcePermit,
+} from "../../shared/workflow-child-permit.ts";
+import { resolveWorkflowResource } from "../../workflows/workflow-resources.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
@@ -160,6 +170,7 @@ import {
 	type ToolBudgetConfig,
 	type Usage,
 	type UsageBudgetConfig,
+	type WorkflowResourceProvenanceV1,
 	type WorkflowGraphNode,
 	type WorkflowGraphSnapshot,
 	type WorkflowNodeStatus,
@@ -361,6 +372,9 @@ export interface SubagentParamsLike {
 	modelOrigin?: ModelOrigin;
 	fast?: boolean;
 	thinking?: string | false;
+	/** Public named workflow resource. Resolved before entering the workflow sandbox. */
+	workflow?: string;
+	args?: Record<string, unknown>;
 	scope?: string;
 	target?: string;
 	focus?: boolean;
@@ -3334,8 +3348,11 @@ function workflowHostCommandRunner(input: {
 	workflowRunId: string;
 	claimedOutputPaths: Map<string, string>;
 	producedOutputPaths: Set<string>;
+	authorize?: (key: string, params: WorkflowHostCommandParams) => string | undefined;
 }) {
 	return async (key: string, params: WorkflowHostCommandParams, signal: AbortSignal): Promise<WorkflowHostCommandResult> => {
+		const authorizationError = input.authorize?.(key, params);
+		if (authorizationError) throw new Error(authorizationError);
 		const defaultOutputPath = path.join(input.artifactsDir, "outputs", sanitizeRunPathSegment(input.workflowRunId), "host", `${sanitizeRunPathSegment(key)}.log`);
 		const outputPath = params.output ? path.resolve(input.workflowCwd, params.output) : defaultOutputPath;
 		const claimPath = resolveWorkflowHostOutputClaimPath(outputPath);
@@ -4261,8 +4278,9 @@ function terminalWorkflowReceipt(
 	workflowChildren?: WorkflowReceipt["workflowChildren"],
 	terminalOutcome?: WorkflowTerminalOutcome,
 	hostSteps?: WorkflowReceipt["hostSteps"],
+	resource?: WorkflowReceipt["resource"],
 ): WorkflowReceipt {
-	return buildWorkflowReceipt({ workflowRunId, state, children, workflowChildren, terminalOutcome, hostSteps });
+	return buildWorkflowReceipt({ workflowRunId, state, children, workflowChildren, terminalOutcome, hostSteps, resource });
 }
 
 function workflowFailureTerminalOutcome(error: unknown, _children: WorkflowScriptChildResult[], usageBudget: ReturnType<typeof usageBudgetState>): WorkflowTerminalOutcome | undefined {
@@ -4624,6 +4642,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	const delegatedThinkingOverrides = new WeakMap<object, AgentConfig["thinking"]>();
 	const delegatedZeroToolBudgets = new WeakSet<object>();
 	const delegatedExecutions = new WeakSet<object>();
+	const publicExecutions = new WeakSet<object>();
+	const workflowResourcePermits = new WeakMap<object, WorkflowResourcePermit>();
 	const workflowPermitContexts = new WeakMap<object, { root: WorkflowChildPermit } | { child: WorkflowChildPermitContext }>();
 	const warnedArtifactPackageDirs = new Set<string>();
 	const scheduledOwnerExecutors = new Map<string, ReturnType<typeof createSubagentExecutor>>();
@@ -4640,6 +4660,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const delegatedThinkingOverride = delegatedThinkingOverrides.get(params);
 		const allowZeroToolBudget = delegatedZeroToolBudgets.has(params);
 		const delegatedExecution = delegatedExecutions.has(params);
+		const publicExecution = publicExecutions.has(params);
+		const workflowResourcePermit = workflowResourcePermits.get(params);
 		const workflowPermitContext = workflowPermitContexts.get(params);
 		const delegatedWorkflowPermit = workflowPermitContext && "root" in workflowPermitContext ? workflowPermitContext.root : undefined;
 		const workflowChildPermitLaunch = workflowPermitContext && "child" in workflowPermitContext ? workflowPermitContext.child : undefined;
@@ -4681,6 +4703,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
 		if (normalizedAction === "resume" && requestParams.extensionBindings !== undefined) return buildRequestedModeError(requestParams, "extensionBindings is not supported with action='resume'; resume uses the original retained child binding.");
+		let workflowResource: { permit: WorkflowResourcePermit; provenance: WorkflowResourceProvenanceV1; authority: WorkflowResourceAuthority } | undefined;
+		if (workflowResourcePermit) {
+			if (typeof requestParams.workflowScript !== "string") return buildRequestedModeError(requestParams, "Resolved workflow resource is missing its workflow script.");
+			const consumed = consumeWorkflowResourcePermit(workflowResourcePermit, requestParams.workflowScript);
+			if (typeof consumed === "string") return buildRequestedModeError(requestParams, consumed);
+			workflowResource = { permit: workflowResourcePermit, ...consumed };
+		}
 		if (requestParams.workflowScript !== undefined && normalizedAction === undefined) {
 			if (delegatedWorkflowPermit) {
 				const permitError = validateWorkflowChildPermitRoot(delegatedWorkflowPermit, _id);
@@ -4838,7 +4867,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					pid: process.pid,
 					steps: [],
 					...(workflowPreflight ? { preflight: workflowPreflight } : {}),
-					workflow: { trace: [], emits: [], console: [] },
+					workflow: { trace: [], emits: [], console: [], ...(workflowResource ? { resource: workflowResource.provenance } : {}) },
 					workflowChildren: workflowChildSummary({ parentToolCallId: toolCallId, workflowRunId, workflowState: "running", inventoryComplete: false }),
 					runFanoutBudget: getRunFanoutBudgetSnapshot(workflowFanoutBudget),
 				};
@@ -4999,7 +5028,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					const childOutputClaimPaths = new Map<string, string>();
 					const producedChildOutputPaths = new Set<string>();
 					const workflowSteps = new Map<string, NonNullable<AsyncStatus["steps"]>[number]>();
-					const runHostCommand = workflowHostCommandRunner({ workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId, claimedOutputPaths, producedOutputPaths: producedChildOutputPaths });
+					const runHostCommand = workflowHostCommandRunner({
+						workflowCwd,
+						artifactsDir: workflowArtifactsDir,
+						workflowRunId,
+						claimedOutputPaths,
+						producedOutputPaths: producedChildOutputPaths,
+						...(workflowResource ? { authorize: (key, params) => authorizeWorkflowResourceHost(workflowResource!.permit, key, params.command) } : {}),
+					});
+					const workflowHost = workflowResource
+						? workflowResource.authority.host ? runHostCommand : undefined
+						: publicExecution ? undefined : runHostCommand;
 					let projectedTraceLength = 0;
 					let projectedTraceTail: NonNullable<Details["workflow"]>["trace"][number] | undefined;
 					const updateTrace = (trace: NonNullable<Details["workflow"]>["trace"]) => {
@@ -5119,7 +5158,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								applyWorkflowLaneTrace(status.workflowGraph, status.workflow?.trace ?? []);
 								persist({ tolerateStatusWriteFailure: true });
 							},
-							host: runHostCommand,
+							...(workflowHost ? { host: workflowHost } : {}),
 							onHostStep: (hostStep) => {
 								status = upsertHostStep({ status, hostStep, persist: (nextStatus) => {
 									status = nextStatus;
@@ -5244,8 +5283,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const resultSummary = appendWorkflowOutputWarning(summary, outputWarning);
 						const workflowUsage = sumResultsUsage(workflowResults);
 						const workflowChildren = workflowChildSummary({ parentToolCallId: toolCallId, workflowRunId, workflowState: "completed", inventoryComplete: true, trace: workflow.trace, children: workflow.children, steps: status.steps });
-						status = { ...status, state: "complete", endedAt: Date.now(), workflow: { value: workflow.value, trace: finalPreflightTrace, emits: workflow.emits, console: workflow.console, ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}) }, workflowChildren, totalTokens: { input: workflowUsage.input, output: workflowUsage.output, total: workflowUsage.input + workflowUsage.output }, totalCost: sumResultsCost(workflowResults) };
-						const receipt = terminalWorkflowReceipt(workflowRunId, "complete", workflow.children, workflowChildren, undefined, validHostStepNodes(status.workflowGraph));
+						status = { ...status, state: "complete", endedAt: Date.now(), workflow: { value: workflow.value, trace: finalPreflightTrace, emits: workflow.emits, console: workflow.console, ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}) }, workflowChildren, totalTokens: { input: workflowUsage.input, output: workflowUsage.output, total: workflowUsage.input + workflowUsage.output }, totalCost: sumResultsCost(workflowResults) };
+						const receipt = terminalWorkflowReceipt(workflowRunId, "complete", workflow.children, workflowChildren, undefined, validHostStepNodes(status.workflowGraph), workflowResource?.provenance);
 						let workflowReceipt: { path: string; receipt: WorkflowReceipt } | undefined;
 						try {
 							workflowReceipt = { path: writeWorkflowReceipt(asyncDir, receipt), receipt };
@@ -5279,7 +5318,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const workflowChildren = workflowChildSummary({ parentToolCallId: toolCallId, workflowRunId, workflowState, inventoryComplete: true, trace: partial.trace, children: partial.children, steps: status.steps });
 						const finalPreflightWarnings = workflowPreflightWarnings(workflowPreflight, partial.trace, { settled: true });
 						const finalPreflightTrace = annotateWorkflowPreflightTrace(partial.trace, workflowPreflight);
-						status = compactOptional<AsyncStatus>({ ...status, state, stopped: stopped || undefined, activityState: pauseForDetached ? "needs_attention" : undefined, error: workflowFailureMessage(error, workflowRunId, partial.children), endedAt: Date.now(), workflow: { trace: finalPreflightTrace, emits: partial.emits, console: partial.console, ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}) }, workflowChildren });
+						status = compactOptional<AsyncStatus>({ ...status, state, stopped: stopped || undefined, activityState: pauseForDetached ? "needs_attention" : undefined, error: workflowFailureMessage(error, workflowRunId, partial.children), endedAt: Date.now(), workflow: { trace: finalPreflightTrace, emits: partial.emits, console: partial.console, ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}) }, workflowChildren });
 						if (pauseForDetached) {
 							const promoted = promotePausedWorkflowIfSettled(status);
 							if (promoted) status = promoted;
@@ -5291,7 +5330,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const resultSummary = appendWorkflowOutputWarning(terminalSummary, outputWarning);
 						const receiptState: WorkflowReceiptState = status.state === "complete" ? "complete" : status.state === "paused" ? "paused" : status.state === "stopped" ? "stopped" : "failed";
 						const terminalOutcome = workflowFailureTerminalOutcome(error, partial.children, usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)));
-						const receipt = terminalWorkflowReceipt(workflowRunId, receiptState, partial.children, workflowChildren, terminalOutcome, validHostStepNodes(status.workflowGraph));
+						const receipt = terminalWorkflowReceipt(workflowRunId, receiptState, partial.children, workflowChildren, terminalOutcome, validHostStepNodes(status.workflowGraph), workflowResource?.provenance);
 						let workflowReceipt: { path: string; receipt: WorkflowReceipt } | undefined;
 						try {
 							workflowReceipt = { path: writeWorkflowReceipt(asyncDir, receipt), receipt };
@@ -5313,7 +5352,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				});
 				return attachWorkflowMission(withRunFanoutBudget({
 					content: [{ type: "text", text: `${workflowPreflight ? `${formatWorkflowPreflight(workflowPreflight)}\n\n` : ""}${formatAsyncStartedMessage(`Async workflow [${workflowRunId}]`, ctx.hasUI === true)}` }],
-					details: { mode: "workflow", runId: workflowRunId, toolCallId, asyncId: workflowRunId, asyncDir, results: [], ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflowChildren: status.workflowChildren, chatProgress, ...(deps.state.activeAsyncCapacity ? { activeAsyncCapacity: deps.state.activeAsyncCapacity } : {}) },
+					details: { mode: "workflow", runId: workflowRunId, toolCallId, asyncId: workflowRunId, asyncDir, results: [], ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflow: status.workflow, workflowChildren: status.workflowChildren, chatProgress, ...(deps.state.activeAsyncCapacity ? { activeAsyncCapacity: deps.state.activeAsyncCapacity } : {}) },
 				}, workflowFanoutBudget));
 			}
 			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, chatProgress: _chatProgress, missionId: _missionId, mission: _mission, preflight: _preflight, ...workflowChildDefaults } = requestParams;
@@ -5326,9 +5365,21 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const producedChildOutputPaths = new Set<string>();
 			const workflowResults: SingleResult[] = [];
 			const workflowChildRunIds = new Map<string, string>();
-			const runHostCommand = workflowHostCommandRunner({ workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId: _id, claimedOutputPaths, producedOutputPaths: producedChildOutputPaths });
+			const runHostCommand = workflowHostCommandRunner({
+				workflowCwd,
+				artifactsDir: workflowArtifactsDir,
+				workflowRunId: _id,
+				claimedOutputPaths,
+				producedOutputPaths: producedChildOutputPaths,
+				...(workflowResource ? { authorize: (key, params) => authorizeWorkflowResourceHost(workflowResource!.permit, key, params.command) } : {}),
+			});
+			const workflowHost = delegatedWorkflowPermit
+				? undefined
+				: workflowResource
+					? workflowResource.authority.host ? runHostCommand : undefined
+					: publicExecution ? undefined : runHostCommand;
 			const workflowHostSteps = new Map<string, HostStepNodeV1>();
-			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [] };
+			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [], ...(workflowResource ? { resource: workflowResource.provenance } : {}) };
 			let liveWorkflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: _id, workflowState: "running", inventoryComplete: false });
 			const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
 			const workflowCapabilityCeiling = intersectSubagentCapabilityCeilings(requestParams.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(resolveCurrentSessionId(ctx.sessionManager)));
@@ -5344,7 +5395,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					timeoutMs: timeout,
 					signal,
 					...(workflowState ? { state: workflowState } : {}),
-					...(!delegatedWorkflowPermit ? { host: runHostCommand } : {}),
+					...(workflowHost ? { host: workflowHost } : {}),
 					onHostStep: (hostStep) => {
 						workflowHostSteps.set(hostStep.id, { ...hostStep, ...(hostStep.freshness ? { freshness: { ...hostStep.freshness } } : {}) });
 					},
@@ -5441,7 +5492,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const finalPreflightWarnings = workflowPreflightWarnings(workflowPreflight, workflow.trace, { settled: true });
 				const finalPreflightTrace = annotateWorkflowPreflightTrace(workflow.trace, workflowPreflight);
 				const workflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: _id, workflowState: "completed", inventoryComplete: true, trace: workflow.trace, children: workflow.children });
-				const receipt = terminalWorkflowReceipt(_id, "complete", workflow.children, workflowChildren, undefined, [...workflowHostSteps.values()]);
+				const receipt = terminalWorkflowReceipt(_id, "complete", workflow.children, workflowChildren, undefined, [...workflowHostSteps.values()], workflowResource?.provenance);
 				const traceLines = finalPreflightTrace.map((entry) => `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.durationMs !== undefined ? ` in ${entry.durationMs}ms` : ""}${entry.warning ? ` — ${entry.warning}` : ""}${entry.error ? ` — ${entry.error}` : ""}`);
 				const sections = [
 					...(workflowPreflight ? [formatWorkflowPreflight(workflowPreflight)] : []),
@@ -5459,7 +5510,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const displayText = appendWorkflowOutputWarning(workflowText, outputWarning);
 				return attachWorkflowMission(withRunFanoutBudget({
 					content: [{ type: "text", text: displayText }],
-					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: workflow.children.flatMap((child) => (child.results ?? []) as SingleResult[]), ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflowChildren, totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { value: workflow.value, trace: finalPreflightTrace, emits: workflow.emits, console: workflow.console, ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}), receipt }, chatProgress }),
+					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: workflow.children.flatMap((child) => (child.results ?? []) as SingleResult[]), ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflowChildren, totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { value: workflow.value, trace: finalPreflightTrace, emits: workflow.emits, console: workflow.console, ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}), receipt }, chatProgress }),
 				}, workflowFanoutBudget));
 			} catch (error) {
 				const partial = error instanceof WorkflowScriptError ? error.partial : { trace: [], emits: [], console: [], children: [] };
@@ -5482,11 +5533,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const displayText = appendWorkflowOutputWarning(workflowText, outputWarning);
 				const workflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: _id, workflowState: "failed", inventoryComplete: true, trace: partial.trace, children: partial.children });
 				const terminalOutcome = workflowFailureTerminalOutcome(error, partial.children, usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)));
-				const receipt = terminalWorkflowReceipt(_id, "failed", partial.children, workflowChildren, terminalOutcome, [...workflowHostSteps.values()]);
+				const receipt = terminalWorkflowReceipt(_id, "failed", partial.children, workflowChildren, terminalOutcome, [...workflowHostSteps.values()], workflowResource?.provenance);
 				return attachWorkflowMission(withRunFanoutBudget({
 					content: [{ type: "text", text: displayText }],
 					isError: true,
-					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: partial.children.flatMap((child) => (child.results ?? []) as SingleResult[]), ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflowChildren, totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: finalPreflightTrace, emits: partial.emits, console: partial.console, ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}), receipt }, chatProgress }),
+					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: partial.children.flatMap((child) => (child.results ?? []) as SingleResult[]), ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflowChildren, totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: finalPreflightTrace, emits: partial.emits, console: partial.console, ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}), receipt }, chatProgress }),
 				}, workflowFanoutBudget));
 			}
 		}
@@ -6792,10 +6843,19 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (!normalized.ok) {
 			return Promise.resolve({ content: [{ type: "text", text: normalized.error }], isError: true, details: { mode: normalized.mode, results: [] } });
 		}
-		const loaded = loadWorkflowScriptPath(normalized.params, ctx.cwd);
-		if (loaded.error) {
-			return Promise.resolve({ content: [{ type: "text", text: loaded.error }], isError: true, details: { mode: normalized.params.action ? "management" : "workflow", results: [] } });
+		let publicParams = normalized.params as SubagentParamsLike;
+		if (publicParams.workflow !== undefined) {
+			const resolved = resolveWorkflowResource(publicParams.workflow, publicParams.args);
+			if (!resolved.ok) return Promise.resolve({ content: [{ type: "text", text: resolved.error }], isError: true, details: { mode: "workflow", results: [] } });
+			const { workflow: _workflow, args: _args, ...withoutResourceInput } = publicParams;
+			publicParams = { ...withoutResourceInput, workflowScript: resolved.resource.script };
+			workflowResourcePermits.set(publicParams, resolved.resource.permit);
 		}
+		const loaded = loadWorkflowScriptPath(publicParams, ctx.cwd);
+		if (loaded.error) {
+			return Promise.resolve({ content: [{ type: "text", text: loaded.error }], isError: true, details: { mode: publicParams.action ? "management" : "workflow", results: [] } });
+		}
+		publicExecutions.add(loaded.params!);
 		return executeWithSingleDispatchGuard(id, loaded.params!, signal, onUpdate, ctx);
 	};
 
@@ -6840,7 +6900,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			});
 			scheduledOwnerExecutors.set(ownerSessionId, ownerExecutor);
 		}
-		return ownerExecutor.execute(id, params, signal, undefined, ctx);
+		return ownerExecutor.executePublic(id, params, signal, undefined, ctx);
 	};
 
 	return { execute: executeWithSingleDispatchGuard, executePublic, executeDelegated, executeScheduled };

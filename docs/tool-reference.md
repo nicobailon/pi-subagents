@@ -4,11 +4,20 @@ Parameters and actions for the `subagent` tool. These are what the LLM passes wh
 
 ## Execution examples
 
-Chaining is code-driven through `workflowScript`. Use `await runs.run(...)` for sequential steps and `await runs.all([{ key, agent, task }, ...])` for ordinary parallel fanout. `runs.all` resolves to an ordered array, not a key map, so use indexes, destructuring, or `.map(...)`, not `results.<key>`. Do not read `.output` from an unawaited `runs.run` launch. Stored `runs.run` promises are only for the advanced rolling fanout pattern under [Workflow steering](#workflow-steering), where every promise is later observed with direct `await`, `Promise.race`, or `Promise.all`. Legacy top-level `chain`, `tasks`, and `parallel` inputs are not supported. Helper functions must be plain functions or explicit Promise chains. Nested `async function` helpers, async arrows, and async methods are rejected so child-launch tracking stays portable across Node and Bun. Host steps are similarly narrow: use `runs.host(key, { kind: "command", command, timeoutMs, output?, role?, provider? })`; there is no per-step `cwd`, and commands and relative output paths use the workflow `cwd`. Set `cwd` on the outer `subagent({...})` request instead, or put a trusted directory change in the command (for example, `cd /path/to/worktree && npm test`).
+Chaining is code-driven through `workflowScript`. Use `await runs.run(...)` for sequential steps and `await runs.all([{ key, agent, task }, ...])` for ordinary parallel fanout. `runs.all` resolves to an ordered array, not a key map, so use indexes, destructuring, or `.map(...)`, not `results.<key>`. Do not read `.output` from an unawaited `runs.run` launch. Stored `runs.run` promises are only for the advanced rolling fanout pattern under [Workflow steering](#workflow-steering), where every promise is later observed with direct `await`, `Promise.race`, or `Promise.all`. Legacy top-level `chain`, `tasks`, and `parallel` inputs are not supported. Helper functions must be plain functions or explicit Promise chains. Nested `async function` helpers, async arrows, and async methods are rejected so child-launch tracking stays portable across Node and Bun. For permission-sensitive host calls, use an extension-owned named resource such as `{ workflow: "run-ci", args: { command: "npm test" } }`; raw public `workflowScript`/`workflowScriptPath` inputs have unknown resource provenance and cannot call `runs.host`. A resolved resource may internally use `runs.host(key, { kind: "command", command, timeoutMs, output?, role?, provider? })` within its authority ceiling; there is no per-step `cwd`, and commands and relative output paths use the workflow `cwd`. Set `cwd` on the outer `subagent({...})` request instead, or put a trusted directory change in the command (for example, `cd /path/to/worktree && npm test`).
 
 Use `{ action: "validate", workflowScript }` to check statically decidable syntax and structure without launching children. It returns `{ ok, errors }` and fails the tool call when `ok` is false. Dynamic keys and values remain valid because runtime-only cases are not guessed.
 
 Use `workflowScriptPath` instead of `workflowScript` to load the same JavaScript statement body from a file. The two fields are mutually exclusive. Relative paths resolve against the request `cwd`, and absolute paths pass through. The host reads the file before validation, scheduling, or sandbox execution. The workflow sandbox still has no filesystem access. Missing, unreadable, and empty files fail as file input errors.
+
+For permission-extension interoperability, use one of the package-owned named resources with bounded `args` instead of caller-supplied workflow text:
+
+```js
+{ workflow: "review", args: { task: "Review the auth flow" } }
+{ workflow: "run-ci", args: { command: "npm test" } }
+```
+
+The host resolves the script and authority internally and records bounded provenance in workflow details and receipts. Named resources cannot be combined with `agent`, `task`, `workflowScript`, or `workflowScriptPath`; user/project resource registries are not part of this first slice.
 
 ```js
 { workflowScriptPath: "workflows/review.js", cwd: "/path/to/project" }

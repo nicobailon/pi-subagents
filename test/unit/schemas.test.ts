@@ -24,6 +24,12 @@ interface SubagentParamsSchema {
 			minimum?: number;
 			description?: string;
 		};
+		workflow?: {
+			type?: string;
+			minLength?: number;
+			description?: string;
+		};
+		args?: JsonSchemaNode;
 		workflowScript?: {
 			type?: string;
 			minLength?: number;
@@ -186,7 +192,15 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(description, /else fresh/);
 	});
 
-	it("exposes trusted inline and file workflow script modes", () => {
+	it("exposes named resources plus raw inline and file workflow script modes", () => {
+		const workflow = SubagentParams?.properties?.workflow;
+		assert.equal(workflow?.type, "string");
+		assert.equal(workflow?.minLength, 1);
+		assert.match(String(workflow?.description ?? ""), /extension-owned workflow resource/i);
+		const args = SubagentParams?.properties?.args;
+		assert.equal(args?.type, "object");
+		assert.equal(args?.maxProperties, 16);
+		assert.match(String(args?.description ?? ""), /bounded plain-JSON/i);
 		const workflowScript = SubagentParams?.properties?.workflowScript;
 		assert.equal(workflowScript?.type, "string");
 		assert.equal(workflowScript?.minLength, 1);
@@ -450,8 +464,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		const schema = SubagentParams as unknown as JsonSchemaNode;
 		const serialized = JSON.stringify(schema);
-		// Mission, inspector, inline workflow, guide, toolTimeoutMs, and capability-list fields intentionally expanded the public tool surface.
-		assert.ok(serialized.length < 17_600, `expected compact schema under 17.6k chars, got ${serialized.length}`);
+		// Mission, inspector, named-resource/inline workflow, guide, toolTimeoutMs, and capability-list fields intentionally expand the public tool surface.
+		assert.ok(serialized.length < 18_000, `expected compact schema under 18k chars, got ${serialized.length}`);
 		assert.equal(serialized.includes('"$ref"'), false);
 		assert.equal(serialized.includes('"$defs"'), false);
 		assert.equal(serialized.split("Optional acceptance policy.").length - 1, 1);

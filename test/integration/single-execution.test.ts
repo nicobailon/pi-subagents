@@ -882,7 +882,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const scriptPath = path.join(tempDir, "host-command.cjs");
 		fs.writeFileSync(scriptPath, `process.stdout.write("host command passed\\n");`);
 		const executor = makeExecutor([makeAgent("echo")]);
-		const result = await executor.executePublic(
+		const result = await executor.execute(
 			"host-command",
 			{
 				async: false,
@@ -903,7 +903,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const failedScriptPath = path.join(tempDir, "host-command-failed.cjs");
 		fs.writeFileSync(failedScriptPath, `process.stderr.write("host command failed\\n"); process.exit(4);`);
-		const failed = await executor.executePublic(
+		const failed = await executor.execute(
 			"host-command-failed",
 			{
 				async: false,
@@ -915,6 +915,74 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 		assert.equal(failed.isError, true);
 		assert.deepEqual(failed.details.workflow?.receipt?.hostSteps?.map(({ state, reasonCode, exitCode }) => ({ state, reasonCode, exitCode })), [{ state: "error", reasonCode: "command_failed", exitCode: 4 }]);
+	});
+
+	it("resolves a named workflow resource internally and exposes its provenance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Named review completed" });
+		const result = await makeExecutor([makeAgent("reviewer")]).executePublic(
+			"named-review-resource",
+			{ workflow: "review", args: { task: "Review the change" }, async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "named workflow failed");
+		assert.match(result.content[0]?.text ?? "", /Named review completed/);
+		assert.equal(result.details.workflow?.resource?.kind, "workflow");
+		assert.equal(result.details.workflow?.resource?.name, "review");
+		assert.equal(result.details.workflow?.resource?.invocation, "named");
+		assert.equal(result.details.workflow?.receipt?.resource?.id, result.details.workflow?.resource?.id);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("denies host calls from raw public workflow scripts without resource authority", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const result = await makeExecutor([makeAgent("echo")]).executePublic(
+			"raw-host-denied",
+			{ workflowScript: `return await runs.host("ci", { kind: "command", command: "npm test", timeoutMs: 1000 });`, async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /runs\.host is unavailable/);
+		assert.equal(result.details.workflow?.resource, undefined);
+		assert.equal(result.details.workflow?.receipt?.resource, undefined);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("denies host calls when scheduled raw workflows replay", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const markerPath = path.join(tempDir, "scheduled-host-marker.txt");
+		const script = `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "ran");`;
+		const result = await makeExecutor([makeAgent("echo")]).executeScheduled(
+			"scheduled-raw-host-denied",
+			{
+				workflowScript: `return await runs.host("ci", { kind: "command", command: ${JSON.stringify(`${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`)}, timeoutMs: 1000 });`,
+				async: false,
+				scheduleOrigin: { id: "nightly" },
+			},
+			new AbortController().signal,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /runs\.host is unavailable/);
+		assert.equal(fs.existsSync(markerPath), false);
+		assert.equal(result.details.workflow?.resource, undefined);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("admits only the host command granted by a named workflow resource", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const result = await makeExecutor([makeAgent("echo")]).executePublic(
+			"named-ci-resource",
+			{ workflow: "run-ci", args: { command: "npm run typecheck", timeoutMs: 120_000 }, async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(path.resolve(".")),
+		);
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "named CI workflow failed");
+		assert.equal(result.details.workflow?.resource?.name, "run-ci");
+		assert.equal(result.details.workflow?.receipt?.resource?.name, "run-ci");
+		assert.deepEqual(result.details.workflow?.receipt?.hostSteps?.map(({ id, state, exitCode }) => ({ id, state, exitCode })), [{ id: "ci", state: "done", exitCode: 0 }]);
+		assert.equal(mockPi.callCount(), 0);
 	});
 
 	it("explains the cwd workaround instead of launching a host step", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -940,7 +1008,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.writeFileSync(scriptPath, `process.stdout.write("host owns output\\n");`);
 		const sharedOutput = path.join(tempDir, "reports", "shared.log");
 		const executor = makeExecutor([makeAgent("echo")]);
-		const result = await executor.executePublic(
+		const result = await executor.execute(
 			"host-output-collision",
 			{
 				async: false,
@@ -962,7 +1030,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.symlinkSync(reportsDir, path.join(tempDir, "linked-reports"), "dir");
 		fs.writeFileSync(scriptPath, `process.stdout.write("host owns output alias\\n");`);
 		const executor = makeExecutor([makeAgent("echo")]);
-		const result = await executor.executePublic(
+		const result = await executor.execute(
 			"host-output-alias-collision",
 			{
 				async: false,
@@ -984,7 +1052,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const aliasScriptPath = path.join(tempDir, "host-output-alias.cjs");
 		fs.writeFileSync(firstScriptPath, `process.stdout.write("first evidence\\n");`);
 		fs.writeFileSync(aliasScriptPath, `const fs = require("node:fs"); fs.rmSync(${JSON.stringify(path.join(tempDir, "late-link"))}, { recursive: true, force: true }); fs.symlinkSync(${JSON.stringify(reportsDir)}, ${JSON.stringify(path.join(tempDir, "late-link"))}, "dir"); process.stdout.write("second evidence\\n");`);
-		const result = await makeExecutor([makeAgent("echo")]).executePublic(
+		const result = await makeExecutor([makeAgent("echo")]).execute(
 			"host-output-late-alias-collision",
 			{
 				async: false,

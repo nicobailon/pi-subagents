@@ -69,6 +69,16 @@ describe("workflow receipts", () => {
 		assert.equal(readWorkflowReceipt(asyncRoot, "workflow-old").entries.advisor?.externalAdapter, undefined);
 	});
 
+	it("round-trips named workflow resource provenance", () => {
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-resource");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		const resource = { kind: "workflow" as const, name: "review", version: 1, invocation: "named" as const, expansion: "resolved" as const, id: "resource-1" };
+		const receipt = buildWorkflowReceipt({ workflowRunId: "workflow-resource", state: "complete", children: [], resource, createdAt: 10 });
+		writeWorkflowReceipt(asyncDir, receipt);
+		assert.deepEqual(readWorkflowReceipt(asyncRoot, "workflow-resource").resource, resource);
+	});
+
 	it("round-trips bounded host CI/gate state in terminal receipts", () => {
 		const asyncRoot = tempRoot();
 		const asyncDir = path.join(asyncRoot, "workflow-host");

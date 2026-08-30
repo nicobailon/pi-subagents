@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
-import type { AcceptanceRecoveryMetadata, ExternalCliReceiptMetadata, WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState, WorkflowRecoveryAction, WorkflowTerminalOutcome, WorkflowTerminalResolution } from "../shared/types.ts";
+import type { AcceptanceRecoveryMetadata, ExternalCliReceiptMetadata, WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState, WorkflowRecoveryAction, WorkflowResourceProvenanceV1, WorkflowTerminalOutcome, WorkflowTerminalResolution } from "../shared/types.ts";
 import type { WorkflowReceiptResumeReference, WorkflowScriptChildResult } from "./scripted-workflow.ts";
 import { parseWorkflowChildSummary } from "./workflow-child-summary.ts";
 import { HOST_STEP_MAX_COUNT, assertUniqueHostStepIds, parseHostStepNode } from "../runs/shared/host-step-status.ts";
@@ -14,6 +14,7 @@ export const WORKFLOW_RECEIPT_FILE = "workflow-receipt.json";
 const MAX_WORKFLOW_RECEIPT_BYTES = 2 * 1024 * 1024;
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const RESOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 function assertSafeRunId(value: string, label: string): string {
 	const normalized = value.trim();
@@ -38,6 +39,7 @@ export function buildWorkflowReceipt(input: {
 	children: WorkflowScriptChildResult[];
 	hostSteps?: WorkflowReceipt["hostSteps"];
 	workflowChildren?: WorkflowReceipt["workflowChildren"];
+	resource?: WorkflowResourceProvenanceV1;
 	terminalOutcome?: WorkflowTerminalOutcome;
 	createdAt?: number;
 }): WorkflowReceipt {
@@ -72,7 +74,8 @@ export function buildWorkflowReceipt(input: {
 	if (input.hostSteps && input.hostSteps.length > HOST_STEP_MAX_COUNT) throw new Error(`Workflow receipt has more than ${HOST_STEP_MAX_COUNT} host steps.`);
 	const hostSteps = input.hostSteps?.map((hostStep, index) => parseHostStepNode(hostStep, `workflow receipt hostSteps[${index}]`));
 	if (hostSteps) assertUniqueHostStepIds(hostSteps, "workflow receipt");
-	return { version: WORKFLOW_RECEIPT_VERSION, workflowRunId, state: input.state, createdAt: input.createdAt ?? Date.now(), entries, ...(hostSteps?.length ? { hostSteps } : {}), ...(input.workflowChildren ? { workflowChildren: input.workflowChildren } : {}), ...(input.terminalOutcome ? { terminalOutcome: input.terminalOutcome } : {}) };
+	const resource = parseWorkflowResource(input.resource, "workflow receipt");
+	return { version: WORKFLOW_RECEIPT_VERSION, workflowRunId, state: input.state, createdAt: input.createdAt ?? Date.now(), entries, ...(resource ? { resource } : {}), ...(hostSteps?.length ? { hostSteps } : {}), ...(input.workflowChildren ? { workflowChildren: input.workflowChildren } : {}), ...(input.terminalOutcome ? { terminalOutcome: input.terminalOutcome } : {}) };
 }
 
 export function writeWorkflowReceipt(asyncDir: string, receipt: WorkflowReceipt): string {
@@ -259,6 +262,23 @@ function parseWorkflowResolution(value: unknown, source: string): WorkflowTermin
 	return value;
 }
 
+function parseWorkflowResource(value: unknown, source: string): WorkflowResourceProvenanceV1 | undefined {
+	if (value === undefined) return undefined;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid workflow receipt '${source}': resource must be an object.`);
+	const resource = value as Record<string, unknown>;
+	if (resource.kind !== "workflow" || typeof resource.name !== "string" || !KEY_PATTERN.test(resource.name) || !Number.isInteger(resource.version) || (resource.version as number) < 1 || (resource.version as number) > 1_000_000 || resource.invocation !== "named" || resource.expansion !== "resolved" || typeof resource.id !== "string" || !RESOURCE_ID_PATTERN.test(resource.id)) {
+		throw new Error(`Invalid workflow receipt '${source}': resource is invalid.`);
+	}
+	return {
+		kind: "workflow",
+		name: resource.name,
+		version: resource.version as number,
+		invocation: "named",
+		expansion: "resolved",
+		id: resource.id,
+	};
+}
+
 function parseRecovery(value: unknown, workflowRunId: string, entries: Record<string, WorkflowReceiptEntry>, source: string): WorkflowRecoveryAction[] | undefined {
 	if (value === undefined) return undefined;
 	if (!Array.isArray(value)) throw new Error(`Invalid workflow receipt '${source}': recovery must be an array.`);
@@ -310,9 +330,10 @@ export function readWorkflowReceipt(asyncDirRoot: string, workflowRunId: string)
 		assertUniqueHostStepIds(hostSteps, receiptPath);
 	}
 	const workflowResolution = parseWorkflowResolution(receipt.workflowResolution, receiptPath);
+	const resource = parseWorkflowResource(receipt.resource, receiptPath);
 	const terminalOutcome = parseTerminalOutcome(receipt.terminalOutcome, `Invalid workflow receipt '${receiptPath}': terminalOutcome`);
 	const recovery = parseRecovery(receipt.recovery, workflowRunId, entries, receiptPath);
-	return { version: 1, workflowRunId, state: receipt.state, createdAt: receipt.createdAt, entries, ...(hostSteps?.length ? { hostSteps } : {}), ...(workflowChildren ? { workflowChildren } : {}), ...(workflowResolution ? { workflowResolution } : {}), ...(terminalOutcome ? { terminalOutcome } : {}), ...(recovery ? { recovery } : {}) };
+	return { version: 1, workflowRunId, state: receipt.state, createdAt: receipt.createdAt, entries, ...(resource ? { resource } : {}), ...(hostSteps?.length ? { hostSteps } : {}), ...(workflowChildren ? { workflowChildren } : {}), ...(workflowResolution ? { workflowResolution } : {}), ...(terminalOutcome ? { terminalOutcome } : {}), ...(recovery ? { recovery } : {}) };
 }
 
 export function resolveWorkflowReceiptResumeEntry(input: {

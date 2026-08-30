@@ -36,7 +36,7 @@ describe("registered subagent tool description", () => {
 		const description = buildSubagentToolDescription();
 		const metadata = buildSubagentToolPromptMetadata();
 		assert.equal(description, DEFAULT_SUBAGENT_TOOL_DESCRIPTION);
-		assert.equal(Buffer.byteLength(description), 2307);
+		assert.equal(Buffer.byteLength(description), 3000);
 		assert.match(description, /workflowScriptPath.*request cwd/i);
 		assert.match(description, /script inputs are mutually exclusive/i);
 		assert.match(description, /runs\.lanes\(\[\{key,stages:/);
@@ -46,7 +46,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /no per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/i);
 		assert.equal(metadata.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
 		assert.equal(Buffer.byteLength(metadata.promptSnippet!), 62);
-		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 3483);
+		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 4111);
 		assert.deepEqual(metadata.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
 		assert.match(metadata.promptGuidelines!.join("\n"), /Use subagent only when delegation is needed/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /action: \"list\".*executable, non-disabled/i);

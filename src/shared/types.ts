@@ -144,6 +144,20 @@ export interface WorkflowRecoveryAction {
 }
 
 /**
+ * Bounded, host-generated identity for a resolved pi-subagents workflow resource.
+ * Permission/policy extensions can use it to distinguish resolved content from
+ * raw workflow scripts. This audit projection never grants execution authority.
+ */
+export interface WorkflowResourceProvenanceV1 {
+	kind: "workflow";
+	name: string;
+	version: number;
+	invocation: "named";
+	expansion: "resolved";
+	id: string;
+}
+
+/**
  * Bounded, launch-declared workflow lane metadata. This is display and
  * triage information only; capability ceilings, authorization, and cleanup
  * safety remain owned by their existing enforcement and handoff paths.
@@ -200,6 +214,7 @@ export interface WorkflowReceipt {
 	state: WorkflowReceiptState;
 	createdAt: number;
 	entries: Record<string, WorkflowReceiptEntry>;
+	resource?: WorkflowResourceProvenanceV1;
 	hostSteps?: HostStepNodeV1[];
 	workflowChildren?: WorkflowChildSummaryV1;
 	workflowResolution?: WorkflowTerminalResolution;
@@ -1416,6 +1431,7 @@ export interface Details {
 	mission?: MissionRecord;
 	workflow?: {
 		value?: unknown;
+		resource?: WorkflowResourceProvenanceV1;
 		preflightWarnings?: string[];
 		trace: Array<{
 			operation: "run" | "status" | "steer" | "host";
