@@ -11,6 +11,7 @@
 - Make `bg_wait` the primary background-work wait tool, retain `subagent_wait` as a deprecated compatibility alias, and stop ordinary async handoffs from encouraging redundant wait subscriptions (#1729).
 
 ### Fixed
+- Avoid repeated staged workflow projection during widget rendering. Thanks [@kkkhs](https://github.com/kkkhs) for #1730.
 - Preserve durable file-only child reports and continue read-only workflow review after malformed acceptance metadata (#1724).
 
 ## [0.60.0] - 2026-08-30
