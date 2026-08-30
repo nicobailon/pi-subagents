@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
-import type { ExternalCliReceiptMetadata, WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState, WorkflowRecoveryAction, WorkflowTerminalOutcome, WorkflowTerminalResolution } from "../shared/types.ts";
+import type { AcceptanceRecoveryMetadata, ExternalCliReceiptMetadata, WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState, WorkflowRecoveryAction, WorkflowTerminalOutcome, WorkflowTerminalResolution } from "../shared/types.ts";
 import type { WorkflowReceiptResumeReference, WorkflowScriptChildResult } from "./scripted-workflow.ts";
 import { parseWorkflowChildSummary } from "./workflow-child-summary.ts";
 import { HOST_STEP_MAX_COUNT, assertUniqueHostStepIds, parseHostStepNode } from "../runs/shared/host-step-status.ts";
@@ -61,6 +61,7 @@ export function buildWorkflowReceipt(input: {
 			...(child.requestedContext ? { requestedContext: child.requestedContext } : {}),
 			...(child.resolvedContext ? { resolvedContext: child.resolvedContext } : {}),
 			...(child.outputReference ? { outputReference: child.outputReference } : {}),
+			...(child.recovery ? { acceptanceRecovery: child.recovery } : {}),
 			...(child.externalAdapter ? { externalAdapter: child.externalAdapter } : {}),
 			continuation: { runIds },
 		};
@@ -210,6 +211,20 @@ function parseTerminalOutcome(value: unknown, label: string): WorkflowTerminalOu
 	return { state: "partial", reason: outcome.reason };
 }
 
+function parseAcceptanceRecoveryMetadata(value: unknown, label: string): AcceptanceRecoveryMetadata | undefined {
+	if (value === undefined) return undefined;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object.`);
+	const recovery = value as Record<string, unknown>;
+	if (recovery.status !== "available-for-review" || recovery.reason !== "acceptance-metadata-rejected") throw new Error(`${label} is invalid.`);
+	if (typeof recovery.reportPath !== "string" || !recovery.reportPath.trim() || typeof recovery.reportHash !== "string" || !/^[a-f0-9]{64}$/u.test(recovery.reportHash)) throw new Error(`${label} is invalid.`);
+	return {
+		status: "available-for-review",
+		reason: "acceptance-metadata-rejected",
+		reportPath: recovery.reportPath,
+		reportHash: recovery.reportHash,
+	};
+}
+
 function parseEntry(value: unknown, key: string, source: string): WorkflowReceiptEntry {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid workflow receipt '${source}': entry '${key}' must be an object.`);
 	const entry = value as Record<string, unknown>;
@@ -231,10 +246,11 @@ function parseEntry(value: unknown, key: string, source: string): WorkflowReceip
 	if (state === "resumable" && latestRunId === undefined) throw new Error(`Invalid workflow receipt '${source}': entry '${key}' resumable entry has no retained run id.`);
 	if (state === "not-resumable" && (typeof reason !== "string" || !reason.trim())) throw new Error(`Invalid workflow receipt '${source}': entry '${key}' non-resumable reason is missing.`);
 	const terminalOutcome = parseTerminalOutcome(entry.terminalOutcome, `Invalid workflow receipt '${source}': entry '${key}' terminalOutcome`);
+	const acceptanceRecovery = parseAcceptanceRecoveryMetadata(entry.acceptanceRecovery, `Invalid workflow receipt '${source}': entry '${key}' acceptanceRecovery`);
 	parseExternalCliReceiptMetadata(entry.externalAdapter, key, source);
 	const lane = normalizeWorkflowLaneMetadata(entry.lane, `Invalid workflow receipt '${source}': entry '${key}'.lane`);
 	assertWorkflowLaneKey(lane, key, `Invalid workflow receipt '${source}': entry '${key}'.lane`);
-	return { ...(value as WorkflowReceiptEntry), ...(lane ? { lane } : {}), ...(terminalOutcome ? { terminalOutcome } : {}) };
+	return { ...(value as WorkflowReceiptEntry), ...(lane ? { lane } : {}), ...(terminalOutcome ? { terminalOutcome } : {}), ...(acceptanceRecovery ? { acceptanceRecovery } : {}) };
 }
 
 function parseWorkflowResolution(value: unknown, source: string): WorkflowTerminalResolution | undefined {

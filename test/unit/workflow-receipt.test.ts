@@ -142,6 +142,26 @@ describe("workflow receipts", () => {
 		assert.ok(serialized.length < 400_000, `receipt metadata unexpectedly large: ${serialized.length}`);
 	});
 
+	it("round-trips durable acceptance recovery metadata in terminal receipts", () => {
+		const recovery = {
+			status: "available-for-review" as const,
+			reason: "acceptance-metadata-rejected" as const,
+			reportPath: "/tmp/writer-report.md",
+			reportHash: "b".repeat(64),
+		};
+		const receipt = buildWorkflowReceipt({
+			workflowRunId: "workflow-recovery",
+			state: "complete",
+			children: [child("writer", { ok: false, recovery })],
+			createdAt: 10,
+		});
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-recovery");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		writeWorkflowReceipt(asyncDir, receipt);
+		assert.deepEqual(readWorkflowReceipt(asyncRoot, "workflow-recovery").entries.writer?.acceptanceRecovery, recovery);
+	});
+
 	it("persists structured partial outcomes for workflows and children", () => {
 		const asyncRoot = tempRoot();
 		const asyncDir = path.join(asyncRoot, "workflow-budget");

@@ -2983,6 +2983,61 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(fs.readFileSync(sharedOutput), Buffer.from(usefulReport));
 	});
 
+	it("continues to a read-only review after malformed file-only acceptance metadata", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const sharedOutput = path.join(tempDir, "implementation-report.md");
+		const malformed = `ACCEPTANCE_REPORT: ${JSON.stringify({ criteriaSatisfied: true, commandsRun: ["npm test"] })}`;
+		mockPi.onCall({
+			output: "Implementation report persisted.",
+			matchArgIncludes: "Write implementation report",
+			jsonl: [...events.completedWrite(sharedOutput, malformed), events.assistantMessage("Implementation report persisted.")],
+			writeFiles: [{ path: sharedOutput, content: malformed }],
+		});
+		mockPi.onCall({ output: "Read-only review completed.", matchArgIncludes: "Review the persisted implementation report without editing it" });
+		const executor = makeExecutor([
+			makeAgent("worker", { tools: ["read", "write"], completionGuard: false }),
+			makeAgent("reviewer", { tools: ["read"], completionGuard: false }),
+		]);
+
+		const result = await executor.execute(
+			"scripted-workflow-malformed-acceptance-recovery",
+			{
+				async: false,
+				workflowScript: `
+					const writer = await runs.run("writer", {
+						agent: "worker",
+						task: "Write implementation report",
+						output: ${JSON.stringify(sharedOutput)},
+						outputMode: "file-only",
+						acceptance: { level: "checked", criteria: ["Return the implementation report"] }
+					});
+					const review = await runs.run("review", {
+						agent: "reviewer",
+						task: "Review the persisted implementation report without editing it",
+						acceptance: false
+					});
+					return { writerOk: writer.ok, writerRecovery: writer.recovery, reviewOk: review.ok };
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		const value = result.details.workflow?.value as { writerOk?: boolean; writerRecovery?: { status?: string; reason?: string; reportPath?: string; reportHash?: string }; reviewOk?: boolean };
+		assert.equal(value.writerOk, false);
+		assert.equal(value.writerRecovery?.status, "available-for-review");
+		assert.equal(value.writerRecovery?.reason, "acceptance-metadata-rejected");
+		assert.equal(value.writerRecovery?.reportPath, sharedOutput);
+		assert.match(value.writerRecovery?.reportHash ?? "", /^[0-9a-f]{64}$/);
+		assert.equal(value.reviewOk, true);
+		assert.equal(result.details.results[0]?.acceptance?.status, "rejected");
+		assert.equal(result.details.results[0]?.outputReference?.path, sharedOutput);
+		assert.equal(result.details.results[0]?.savedOutputPath, sharedOutput);
+		assert.equal(result.details.workflowChildren?.children.find((child) => child.childId === "writer")?.state, "rejected");
+		assert.deepEqual(fs.readFileSync(sharedOutput, "utf-8"), malformed);
+	});
+
 	it("identifies validation failures before any workflow child launches", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("worker")]);
 		const workflowId = "scripted-workflow-invalid-nested-async";

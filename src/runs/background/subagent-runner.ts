@@ -2149,7 +2149,7 @@ async function runSingleStepInner(
 			report: structuredAcceptanceReport as import("../../shared/types.ts").AcceptanceReport | undefined,
 			reportError: structuredAcceptanceReportError,
 			fileOutput: childWrittenOutput !== undefined && step.outputPath
-				? { content: childWrittenOutput, path: step.outputPath, authoritative: step.outputMode === "file-only" }
+				? { content: childWrittenOutput, path: step.outputPath, authoritative: step.outputMode === "file-only", durable: resolvedOutput.savedPath !== undefined }
 				: undefined,
 			cwd: step.cwd ?? ctx.cwd,
 			signal: combinedAbortSignal([ctx.timeoutSignal, ctx.stopSignal]),

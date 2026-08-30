@@ -794,11 +794,433 @@ describe("scripted workflow runtime", () => {
 			runWorkflowScript({
 				script: `return await runs.run("fails", { agent: "worker", task: "fail" });`,
 				timeoutMs: 2_000,
-				async launch(key) { return { key, ok: false, output: "failed", artifactPaths: [], results: [] }; },
+				async launch(key) { return { key, ok: false, output: "failed", artifactPaths: [], results: [{ acceptance: { status: "rejected" } }] }; },
 				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 			}),
 			(error: unknown) => error instanceof WorkflowScriptError && /Run 'fails' failed: failed/.test(error.message),
 		);
+	});
+
+	it("continues with a later review after a durable acceptance metadata rejection", async () => {
+		const launches: string[] = [];
+		const recovery = {
+			status: "available-for-review" as const,
+			reason: "acceptance-metadata-rejected" as const,
+			reportPath: "/tmp/writer-report.md",
+			reportHash: "a".repeat(64),
+		};
+		const result = await runWorkflowScript({
+			script: `
+				const writer = await runs.run("writer", { agent: "worker", task: "write" });
+				const review = await runs.run("review", { agent: "reviewer", task: "Read-only review. Do not edit files, commit, push, comment, merge, or launch subagents. Review the patch and return findings only. Do not run workers. Do not launch worker subagents. Do not hand off remediation to workers. Do not use worker subagents. Do not have a worker continue follow-up. Do not tell a worker to continue follow-up. Do not get a worker to continue follow-up. Do not let a worker continue follow-up. Do not request implementation follow-up from a worker. Do not ask a reviewer to implement changes. Do not ask for a review from another reviewer. Delta since prior review: fixed quoted git option handling and added exact regressions; mutation detection now includes move/rename/copy file mutation imperatives; Delegation now catches target-after-preposition forms using from/with/via/by and request phrasing: 'Get implementation follow-up via a worker.', 'Get a review via another reviewer.', 'Have implementation follow-up done by a worker.', and 'Request implementation follow-up from a worker.'; 'Launch two workers for implementation follow-up.' and 'Launch review subagents for follow-up.' are blocked; 'Launch two reviewers for follow-up.' is blocked; \`rm -rf .\` is blocked. RECOVERY_REVIEW_MUTATION_VERB_PATTERN now includes append, prepend, and save, with gerund forms. Added exact regressions for 'Append a regression test.', 'Prepend a guard clause.', and 'Save the updated report.' This keeps a later object phrase visible, so a prompt ending with \`save the updated report\` remains blocked. Accepted contract: after rejected durable acceptance-metadata recovery, sequential workflow continuation may only launch explicit read-only review children with acceptance:false, must not mutate durable state, and must not launch mutating/destructive work. state.get remains allowed; state.set, runs.host, runs.steer, ordinary/mutating children, and destructive command wording are blocked. Existing regressions cover plain rm and git clean/reset/restore. Prior regressions covering rm/git clean as evidence only. Validation after fix: npm exec -- tsx --test test/unit/scripted-workflow.test.ts --test-name-pattern \\\"acceptance metadata rejection|mission state writes\\\" (101 pass), npm run typecheck, git diff --check HEAD^..HEAD. (Validation after fix: npm run typecheck) Write findings to reports/review.md.", acceptance: false });
+				return { writerOk: writer.ok, writerStatus: writer.results?.[0]?.acceptance?.status, writerRecovery: writer.recovery, reviewOk: review.ok };
+			`,
+			launch(key) {
+				launches.push(key);
+				if (key === "writer") {
+					return Promise.resolve({
+						key,
+						ok: false,
+						output: "saved writer report",
+						error: "Acceptance rejected: malformed acceptance-report",
+						runId: "writer-run",
+						outputReference: recovery.reportPath,
+						recovery,
+						artifactPaths: [recovery.reportPath],
+						results: [{ acceptance: { status: "rejected", recovery } }],
+					});
+				}
+				return Promise.resolve({ key, ok: true, output: "review complete", runId: "review-run", artifactPaths: [] });
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.deepEqual(launches, ["writer", "review"]);
+		assert.deepEqual(result.value, { writerOk: false, writerStatus: "rejected", writerRecovery: recovery, reviewOk: true });
+		assert.deepEqual(result.trace.filter((entry) => entry.operation === "run" && entry.state !== "started").map(({ key, state }) => ({ key, state })), [
+			{ key: "writer", state: "failed" },
+			{ key: "review", state: "completed" },
+		]);
+	});
+
+	it("allows review prompts to describe mutation nouns after durable acceptance metadata recovery", async () => {
+		const launches: string[] = [];
+		const recovery = {
+			status: "available-for-review" as const,
+			reason: "acceptance-metadata-rejected" as const,
+			reportPath: "/tmp/writer-report.md",
+			reportHash: "a".repeat(64),
+		};
+		const result = await runWorkflowScript({
+			script: `
+				const writer = await runs.run("writer", { agent: "worker", task: "write" });
+				const review = await runs.run("review", { agent: "reviewer", task: "Read-only review. Do not edit files. The later real update imperative regression passed. Return findings only.", acceptance: false });
+				return review.ok;
+			`,
+			launch(key) {
+				launches.push(key);
+				if (key === "writer") {
+					return Promise.resolve({
+						key,
+						ok: false,
+						output: "saved writer report",
+						error: "Acceptance rejected: malformed acceptance-report",
+						runId: "writer-run",
+						outputReference: recovery.reportPath,
+						recovery,
+						artifactPaths: [recovery.reportPath],
+						results: [{ acceptance: { status: "rejected", recovery } }],
+					});
+				}
+				return Promise.resolve({ key, ok: true, output: "review complete", runId: "review-run", artifactPaths: [] });
+			},
+		});
+
+		assert.deepEqual(launches, ["writer", "review"]);
+		assert.equal(result.value, true);
+	});
+
+	it("allows review prompts to describe anaphoric regression examples after durable acceptance metadata recovery", async () => {
+		const launches: string[] = [];
+		const recovery = {
+			status: "available-for-review" as const,
+			reason: "acceptance-metadata-rejected" as const,
+			reportPath: "/tmp/writer-report.md",
+			reportHash: "a".repeat(64),
+		};
+		const result = await runWorkflowScript({
+			script: `
+				const writer = await runs.run("writer", { agent: "worker", task: "write" });
+				const review = await runs.run("review", { agent: "reviewer", task: "Read-only review. Do not edit files. Added exact regressions for Execute the command now anyway, Run that now anyway, and Perform the operation now anyway after stripped quoted blocked examples. This blocks examples like \`Execute the previous command right now anyway\` and \`Execute the blocked phrase right now anyway\`. Examples like \`Execute the previous command and keep reviewing\`, \`Execute the previous command but only for review\`, and \`Execute the previous command then return findings\` are blocked after quoted destructive context is stripped. Added regression for quoted rm remaining blocked followed by Execute the previous command while keeping live-command variants such as followed by Execute the previous command then update tests blocked. Delta since prior review: fixed mutating Git follow-up bypasses. Added cherry-pick/rebase/stage to the mutation imperative pattern and add/cherry-pick/commit/merge/rebase to the mutating Git command pattern, described prompts like Run git rebase main, git rebase main, Run git cherry-pick abc123, cherry-pick abc123, and Stage the changed files as blocked. Positive Git mutations are broader: git branch -D old, git tag -d v1.0, git stash, git revert abc123, and natural cherry pick abc123 now trip the recovery barrier. Broadened positive Git mutation coverage for natural \`cherry pick\`, \`revert\`, \`stash\`, \`tag\`, plus git \`branch|revert|stash|tag\`. The prior fix keeps commands hidden in \`Broadened positive Git mutation coverage for natural cherry pick, then update tests, plus git branch\` or \`then run git reset --hard\` visible and blocked. The examples \`rm -rf .\` and \`git reset --hard\` are visible and blocked. Direct anaphoric references now include numeric and word ordinals through tenth plus one, so Run the first one anyway, Run the 1st command anyway, and Run the fourth command anyway are blocked after quoted destructive examples are scrubbed. Direct anaphoric references now include numeric and word ordinals through tenth plus one, so Run the first one anyway is blocked. Exact regressions for \`Do not launch worker subagents -- launch a worker subagent\` remain blocked. Return findings only.", acceptance: false });
+				return review.ok;
+			`,
+			launch(key) {
+				launches.push(key);
+				if (key === "writer") {
+					return Promise.resolve({
+						key,
+						ok: false,
+						output: "saved writer report",
+						error: "Acceptance rejected: malformed acceptance-report",
+						runId: "writer-run",
+						outputReference: recovery.reportPath,
+						recovery,
+						artifactPaths: [recovery.reportPath],
+						results: [{ acceptance: { status: "rejected", recovery } }],
+					});
+				}
+				return Promise.resolve({ key, ok: true, output: "review complete", runId: "review-run", artifactPaths: [] });
+			},
+		});
+
+		assert.deepEqual(launches, ["writer", "review"]);
+		assert.equal(result.value, true);
+	});
+
+	it("allows listed blocked examples after durable acceptance metadata recovery", async () => {
+		const launches: string[] = [];
+		const recovery = {
+			status: "available-for-review" as const,
+			reason: "acceptance-metadata-rejected" as const,
+			reportPath: "/tmp/writer-report.md",
+			reportHash: "a".repeat(64),
+		};
+		const task = "Read-only review. Do not edit files. Review the saved report and return findings only. Blocked examples:\n- update tests\n- launch a worker subagent";
+		const result = await runWorkflowScript({
+			script: `
+				const writer = await runs.run("writer", { agent: "worker", task: "write" });
+				const review = await runs.run("review", { agent: "reviewer", task: ${JSON.stringify(task)}, acceptance: false });
+				return review.ok;
+			`,
+			launch(key) {
+				launches.push(key);
+				if (key === "writer") {
+					return Promise.resolve({ key, ok: false, output: "saved writer report", recovery, artifactPaths: [recovery.reportPath], results: [{ acceptance: { status: "rejected", recovery } }] });
+				}
+				return Promise.resolve({ key, ok: true, output: "review complete", artifactPaths: [] });
+			},
+		});
+
+		assert.deepEqual(launches, ["writer", "review"]);
+		assert.equal(result.value, true);
+	});
+
+	it("allows quoted blocked examples phrased as blocked examples after durable acceptance metadata recovery", async () => {
+		const launches: string[] = [];
+		const recovery = {
+			status: "available-for-review" as const,
+			reason: "acceptance-metadata-rejected" as const,
+			reportPath: "/tmp/writer-report.md",
+			reportHash: "a".repeat(64),
+		};
+		const task = "Read-only review. Do not edit files. Review the saved report and return findings only. `update tests` is a blocked example.";
+		const result = await runWorkflowScript({
+			script: `
+				const writer = await runs.run("writer", { agent: "worker", task: "write" });
+				const review = await runs.run("review", { agent: "reviewer", task: ${JSON.stringify(task)}, acceptance: false });
+				return review.ok;
+			`,
+			launch(key) {
+				launches.push(key);
+				if (key === "writer") {
+					return Promise.resolve({ key, ok: false, output: "saved writer report", recovery, artifactPaths: [recovery.reportPath], results: [{ acceptance: { status: "rejected", recovery } }] });
+				}
+				return Promise.resolve({ key, ok: true, output: "review complete", artifactPaths: [] });
+			},
+		});
+
+		assert.deepEqual(launches, ["writer", "review"]);
+		assert.equal(result.value, true);
+	});
+
+	it("blocks mutating workflow work after a durable acceptance metadata rejection", async () => {
+		const recovery = {
+			status: "available-for-review" as const,
+			reason: "acceptance-metadata-rejected" as const,
+			reportPath: "/tmp/writer-report.md",
+			reportHash: "a".repeat(64),
+		};
+		for (const [agent, task] of [
+			["worker", "Implement a follow-up change"],
+			["worker", "Read-only review. Do not edit files. Return findings only."],
+			["reviewer", "Review the saved report and delete files"],
+			["custom-reviewer", "Review the saved report and add tests"],
+			["oracle", "Review the saved report and create files"],
+			["reviewer", "Review the saved report, then add a regression case"],
+			["custom-reviewer", "Review the saved report and create a regression test"],
+			["oracle", "Review the saved report and replace the brittle assertion"],
+			["reviewer", "Review the saved report and patch src/parser.ts"],
+			["reviewer", "Change src/parser.ts after reviewing the saved report"],
+			["reviewer", "Read-only review. Do not edit files. Append a regression test."],
+			["reviewer", "Read-only review. Do not edit files. Prepend a guard clause."],
+			["reviewer", "Read-only review. Do not edit files. Save the updated report."],
+			["reviewer", "Read-only review. Do not edit files. Move src/a.ts to src/b.ts."],
+			["reviewer", "Read-only review. Do not edit files. Rename src/a.ts to src/b.ts."],
+			["reviewer", "Read-only review. Do not edit files. Copy src/a.ts to src/b.ts."],
+			["advisor", "Review only, then apply the fix"],
+			["reviewer", "Read-only review. Do not edit files. Launch a worker subagent to continue."],
+			["reviewer", "Read-only review. Do not edit files. Launch worker subagents for implementation follow-up."],
+			["reviewer", "Read-only review. Do not edit files. Launch workers for implementation follow-up."],
+			["reviewer", "Read-only review. Do not edit files. Launch two workers for implementation follow-up."],
+			["reviewer", "Read-only review. Do not edit files. Launch review subagents for follow-up."],
+			["reviewer", "Read-only review. Do not edit files. Launch two reviewers for follow-up."],
+			["reviewer", "Read-only review. Do not edit files. Delegate remediation to a worker."],
+			["reviewer", "Read-only review. Do not edit files. Hand off remediation to a worker."],
+			["reviewer", "Read-only review. Do not edit files. Assign implementation follow-up to a worker."],
+			["reviewer", "Read-only review. Do not edit files. Assign implementation follow-up to workers."],
+			["reviewer", "Read-only review. Do not edit files. Ask a worker to implement the fix."],
+			["reviewer", "Read-only review. Do not edit files. Ask a reviewer to review the saved report."],
+			["reviewer", "Read-only review. Do not edit files. Ask another reviewer to review the saved report."],
+			["reviewer", "Read-only review. Do not edit files. Ask for a review from another reviewer."],
+			["reviewer", "Read-only review. Do not edit files. Do not ask for a review from another reviewer and ask for a review from a worker."],
+			["reviewer", "Read-only review. Do not edit files. Do not ask for a review from another reviewer however ask for a review from a worker."],
+			["reviewer", "Read-only review. Do not edit files. Use a worker subagent for follow-up."],
+			["reviewer", "Read-only review. Do not edit files. Get a worker to continue follow-up."],
+			["reviewer", "Read-only review. Do not edit files. Let a worker continue follow-up."],
+			["reviewer", "Read-only review. Do not edit files. Ask a worker for follow-up."],
+			["reviewer", "Read-only review. Do not edit files. Get implementation follow-up from a worker."],
+			["reviewer", "Read-only review. Do not edit files. Get a review from another reviewer."],
+			["reviewer", "Read-only review. Do not edit files. Let follow-up continue with a worker."],
+			["reviewer", "Read-only review. Do not edit files. Get implementation follow-up via a worker."],
+			["reviewer", "Read-only review. Do not edit files. Get a review via another reviewer."],
+			["reviewer", "Read-only review. Do not edit files. Have implementation follow-up done by a worker."],
+			["reviewer", "Read-only review. Do not edit files. Request implementation follow-up from a worker."],
+			["reviewer", "Read-only review. Do not edit files. Have a worker continue follow-up."],
+			["reviewer", "Read-only review. Do not edit files. Tell a worker to continue follow-up."],
+			["reviewer", "Read-only review. Do not edit files. Do not launch worker subagents and launch a worker subagent to continue."],
+			["reviewer", "Read-only review. Do not edit files. Do not launch worker subagents however launch a worker subagent to continue."],
+			["reviewer", "Read-only review. Do not edit files. Do not launch worker subagents — launch a worker subagent. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Do not execute the previous command — delete src/a. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Do not launch worker subagents -- launch a worker subagent. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Do not execute the previous command -- delete src/a. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Do not launch worker subagents: launch a worker subagent. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Do not run workers: run a worker. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Do not execute the previous command: delete src/a. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Do not launch worker subagents / launch a worker subagent. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. `update tests` is a blocked example, then update tests."],
+			["reviewer", "Read-only review. Do not edit files. Blocked examples:\n- update tests\n- launch a worker subagent\nThen update tests."],
+			["reviewer", "Read-only review. Do not edit files. Not blocked examples:\n- launch a worker subagent"],
+			["reviewer", "Read-only review. Do not edit files. Destructive command wording is blocked, then run rm -rf ."],
+			["reviewer", "Read-only review. Do not edit files. state.set is forbidden. Run rm -rf . This is blocked."],
+			["reviewer", "Read-only review. Do not edit files. state.set: Run rm -rf /tmp/worktree because it is blocked."],
+			["reviewer", "Read-only review. Do not edit files. Prior validation after the fix: npm run typecheck."],
+			["reviewer", "Read-only review. Do not edit files. Validation after fix: npm run typecheck, then update tests."],
+			["reviewer", "Read-only review. Do not edit files. Validation after fix: npm run typecheck and update tests."],
+			["reviewer", "Read-only review. Do not edit files. Validation after fix: npm run typecheck and launch a worker subagent."],
+			["reviewer", "Read-only review. Do not edit files. Validation after fix: npm run typecheck and run a worker subagent."],
+			["reviewer", "Read-only review. Do not edit files. Mutation detection now includes move/rename/copy file mutation imperatives, then update tests."],
+			["reviewer", "Read-only review. Do not edit files. Mutation detection now includes delete src/a.ts. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Delegation detection now blocks get/let/have/tell/ask follow-up forms, then launch a worker subagent."],
+			["reviewer", "Read-only review. Do not edit files. Delegation detection now blocks get/let/have/tell/ask follow-up forms and then launch a worker subagent."],
+			["reviewer", "Read-only review. Do not edit files. Mutation detection now includes move/rename/copy file mutation imperatives and update tests."],
+			["reviewer", "Read-only review. Do not edit files. Delegation detection now blocks get/let/have/tell/ask follow-up forms and launch a worker subagent."],
+			["reviewer", "Read-only review. Do not edit files. RECOVERY_REVIEW_MUTATION_VERB_PATTERN now includes append, prepend, and save, then update tests."],
+			["reviewer", "Read-only review. Do not edit files. RECOVERY_REVIEW_MUTATION_VERB_PATTERN now includes append, prepend, and save the updated report."],
+			["reviewer", "Read-only review. Do not edit files. A prompt ending with `save the updated report` remains blocked, then update tests."],
+			["reviewer", "Read-only review. Do not edit files. Prompts like update tests are blocked, then update tests. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Examples like `update tests` are blocked because they are dangerous, then update tests. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Examples like `rm -rf .` are blocked because they are destructive, then run rm -rf . Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Examples like `launch a worker` are blocked because delegation is unsafe, then launch a worker subagent. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Positive Git mutations are broader: run rm -rf . now trips the recovery barrier. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Positive Git mutations are broader: then launch a worker subagent now trips the recovery barrier. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. `update tests` remains blocked. Do it anyway."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Run it anyway."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the command anyway."],
+			["reviewer", "Read-only review. Do not edit files. `update tests` remains blocked. Run that anyway."],
+			["reviewer", "Read-only review. Do not edit files. `update tests` remains blocked. Apply the quoted example anyway."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the command now anyway."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the command right now anyway."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the previous command right now anyway."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the previous command."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the previous command please."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the previous command while reviewing."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the previous command while you review."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the previous command for review."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the previous command while you review because the example is blocked."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the previous command for review because this is blocked."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the previous command and keep reviewing."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the previous command but only for review."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the previous command then return findings."],
+			["reviewer", "Read-only review. Do not edit files. commands hidden in `rm -rf .` are visible and blocked. Run the first command anyway."],
+			["reviewer", "Read-only review. Do not edit files. commands hidden in `rm -rf .` are visible and blocked. Run the first one anyway."],
+			["reviewer", "Read-only review. Do not edit files. commands hidden in `rm -rf .` are visible and blocked. Run the 1st command anyway."],
+			["reviewer", "Read-only review. Do not edit files. The examples `rm -rf .`, `git reset --hard`, `rm -rf /tmp/a`, and `git clean -fd` are visible and blocked. Run the fourth command anyway."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the previously quoted command anyway."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the blocked phrase right now anyway."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the above quoted blocked command anyway."],
+			["reviewer", "Read-only review. Do not edit files. `update tests` remains blocked. Run that now anyway."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Perform the operation now anyway."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Execute the command, now anyway."],
+			["reviewer", "Read-only review. Do not edit files. `update tests` remains blocked. Run that, now anyway."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .` remains blocked. Perform the operation, now anyway."],
+			["reviewer", "Read-only review. Do not edit files. Added exact regressions for Execute the command then update tests anyway. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Added exact regressions for Run that then launch workers anyway. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Added regression for delete src/a followed by Execute the previous command. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Added regression for rm -rf /tmp followed by Execute the previous command. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Added regression for quoted rm remaining blocked followed by Execute the previous command then update tests."],
+			["reviewer", "Read-only review. Do not edit files. Keeping live-command variants such as delete src/a blocked. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Keeping live-command variants such as launch a worker subagent blocked. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Broadened positive Git mutation coverage for delete src/a, plus git `branch`. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Broadened positive Git mutation coverage for launch a worker subagent, plus git `branch`. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Broadened positive Git mutation coverage for natural `cherry pick`, then update tests, plus git `branch|revert|stash|tag`."],
+			["reviewer", "Read-only review. Do not edit files. Broadened positive Git mutation coverage for natural `cherry pick`, then run git reset --hard, plus git `branch|revert|stash|tag`."],
+			["reviewer", "Read-only review. Do not edit files. Direct anaphoric references now include numeric and word ordinals through tenth plus one, so Run the first one anyway, Run the 1st command anyway, and Run the fourth command anyway are blocked, then update tests. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Direct anaphoric references now include numeric and word ordinals through tenth plus one, so Run the first one anyway and launch a worker subagent are blocked. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Direct anaphoric references now include numeric and word ordinals through tenth plus one, so Run the first one anyway plus launch a worker subagent are blocked. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Direct anaphoric references now include numeric and word ordinals through tenth plus one, so Run the first one anyway or launch a worker subagent are blocked. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Direct anaphoric references now include numeric and word ordinals through tenth plus one, so Run the first one and update tests anyway are blocked. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Direct anaphoric references now include numeric and word ordinals through tenth plus one, so Run the first one and launch workers anyway are blocked. Return findings only."],
+			["reviewer", "Read-only review. Do not edit files. Run a worker."],
+			["reviewer", "Read-only review. Do not edit files. Open a PR."],
+			["reviewer", "Read-only review. Do not edit files. Merge the branch."],
+			["reviewer", "Read-only review. Do not edit files, merge the branch."],
+			["reviewer", "Read-only review. Do not edit files, commit the changes."],
+			["reviewer", "Read-only review. Do not edit files. Do not use a worker subagent, use a worker subagent for follow-up."],
+			["reviewer", "Read-only review. Do not edit files. Do not hand off to a worker, hand off remediation to a worker."],
+			["reviewer", "Read-only review. Do not edit files. Do not assign this to a worker, assign implementation follow-up to a worker."],
+			["reviewer", "Read-only review. Do not edit files; update tests."],
+			["reviewer", "Read-only review. Do not edit files; updating tests is required."],
+			["reviewer", "Do not edit files, run git clean -fd"],
+			["reviewer", "Review only; do not edit files. Run git clean -fd"],
+			["reviewer", "Read-only review. Do not edit files. Validation after fix: rm -rf ."],
+			["reviewer", "Read-only review. Do not edit files. Existing regressions cover plain rm, then run rm -rf ."],
+			["reviewer", "Read-only review. Do not edit files. git clean -fd; existing regressions cover git clean."],
+			["reviewer", "Read-only review. Do not edit files. Existing regressions cover rm/git clean. Write findings."],
+			["reviewer", "Read-only review. Do not edit files. Existing regressions cover rm. Write findings."],
+			["reviewer", "Read-only review. Do not edit files. Existing regressions cover git clean and run git clean -fd."],
+			["reviewer", "Read-only review. Do not edit files. Existing regressions cover git clean and launch a worker subagent."],
+			["reviewer", "Read-only review. Do not edit files. rm -rf ."],
+			["reviewer", "Read-only review. Do not edit files. `rm -rf .`"],
+			["reviewer", "Read-only review. Do not edit files. 'rm -rf .'"],
+			["reviewer", "Read-only review. Do not edit files. /bin/rm -rf ."],
+			["reviewer", "Read-only review. Do not edit files. /usr/bin/rm -rf ."],
+			["reviewer", "Read-only review. Do not edit files. /usr/local/bin/rm -rf ."],
+			["reviewer", "Read-only review. Do not edit files. Validation after fix: git -C . reset --hard."],
+			["reviewer", "Read-only review. Do not edit files. git --work-tree . reset --hard."],
+			["reviewer", "Read-only review. Do not edit files. git --work-tree \"/tmp/my repo\" reset --hard."],
+			["reviewer", "Read-only review. Do not edit files. git --work-tree '/tmp/my repo' reset --hard."],
+			["reviewer", "Read-only review. Do not edit files. Run git rebase main."],
+			["reviewer", "Read-only review. Do not edit files. git rebase main."],
+			["reviewer", "Read-only review. Do not edit files. Run git cherry-pick abc123."],
+			["reviewer", "Read-only review. Do not edit files. cherry-pick abc123."],
+			["reviewer", "Read-only review. Do not edit files. cherry pick abc123."],
+			["reviewer", "Read-only review. Do not edit files. git branch -D old."],
+			["reviewer", "Read-only review. Do not edit files. git tag -d v1.0."],
+			["reviewer", "Read-only review. Do not edit files. git stash."],
+			["reviewer", "Read-only review. Do not edit files. git revert abc123."],
+			["reviewer", "Read-only review. Do not edit files. Stage the changed files."],
+			["reviewer", "Read-only review. Do not edit files. git reset --hard"],
+			["reviewer", "Read-only review. Do not edit files. git restore src/workflows/scripted-workflow.ts"],
+		]) {
+			const launches: string[] = [];
+			await assert.rejects(
+				runWorkflowScript({
+					script: `
+						await runs.run("writer", { agent: "worker", task: "write" });
+						await runs.run("mutate", { agent: ${JSON.stringify(agent)}, task: ${JSON.stringify(task)}, acceptance: false });
+					`,
+					launch(key) {
+						launches.push(key);
+						if (key === "mutate") return Promise.resolve({ key, ok: true, output: "mutated", artifactPaths: [] });
+						return Promise.resolve({
+							key,
+							ok: false,
+							output: "saved writer report",
+							error: "Acceptance rejected: malformed acceptance-report",
+							runId: "writer-run",
+							outputReference: recovery.reportPath,
+							recovery,
+							artifactPaths: [recovery.reportPath],
+							results: [{ acceptance: { status: "rejected", recovery } }],
+						});
+					},
+					async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				}),
+				(error: unknown) => error instanceof WorkflowScriptError && /only explicit read-only review children with acceptance:false may follow/.test(error.message),
+			);
+			assert.deepEqual(launches, ["writer"]);
+		}
+	});
+
+	it("blocks mission state writes after a durable acceptance metadata rejection", async () => {
+		const recovery = {
+			status: "available-for-review" as const,
+			reason: "acceptance-metadata-rejected" as const,
+			reportPath: "/tmp/writer-report.md",
+			reportHash: "a".repeat(64),
+		};
+		const values = new Map<string, unknown>();
+		const launches: string[] = [];
+		await assert.rejects(
+			runWorkflowScript({
+				script: `
+					const writer = await runs.run("writer", { agent: "worker", task: "write" });
+					await state.set("recovered.output", writer.output);
+				`,
+				state: {
+					get: (key) => values.get(key),
+					set: (key, value) => { values.set(key, value); },
+				},
+				launch(key) {
+					launches.push(key);
+					return Promise.resolve({
+						key,
+						ok: false,
+						output: "saved writer report",
+						error: "Acceptance rejected: malformed acceptance-report",
+						runId: "writer-run",
+						outputReference: recovery.reportPath,
+						recovery,
+						artifactPaths: [recovery.reportPath],
+						results: [{ acceptance: { status: "rejected", recovery } }],
+					});
+				},
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && /Run 'state\.set\('recovered\.output'\)' cannot launch after run 'writer' returned rejected acceptance recovery/.test(error.message),
+		);
+		assert.deepEqual(launches, ["writer"]);
+		assert.deepEqual([...values.entries()], []);
 	});
 
 	it("tags only fail-fast detached child errors as detached-child", async () => {

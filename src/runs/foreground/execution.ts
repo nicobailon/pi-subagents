@@ -2159,7 +2159,7 @@ async function runSyncCompletionInner(
 				report: (result as SingleResult & { structuredAcceptanceReport?: import("../../shared/types.ts").AcceptanceReport; structuredAcceptanceReportError?: string }).structuredAcceptanceReport,
 				reportError: (result as SingleResult & { structuredAcceptanceReport?: import("../../shared/types.ts").AcceptanceReport; structuredAcceptanceReportError?: string }).structuredAcceptanceReportError,
 				fileOutput: childWrittenOutput !== undefined && options.outputPath
-					? { content: childWrittenOutput, path: options.outputPath, authoritative: options.outputMode === "file-only" }
+					? { content: childWrittenOutput, path: options.outputPath, authoritative: options.outputMode === "file-only", durable: result.savedOutputPath !== undefined }
 					: undefined,
 				cwd: options.cwd ?? runtimeCwd,
 				reportOptional: isAgentContractV1(options.agentContract),

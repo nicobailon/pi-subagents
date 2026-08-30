@@ -189,6 +189,7 @@ export type WorkflowReceiptEntry = WorkflowReceiptEntryResumability & {
 	requestedContext?: "fresh" | "fork";
 	resolvedContext?: "fresh" | "fork" | "mixed";
 	outputReference?: string;
+	acceptanceRecovery?: AcceptanceRecoveryMetadata;
 	externalAdapter?: ExternalCliReceiptMetadata;
 	continuation: { runIds: string[] };
 };
@@ -1086,6 +1087,18 @@ export type AcceptanceLedgerStatus =
 	| "reviewed"
 	| "accepted";
 
+/**
+ * Durable child evidence that can be handed to a read-only review after the
+ * acceptance envelope itself was rejected. This never upgrades acceptance;
+ * the enclosing ledger remains rejected and the child remains unsuccessful.
+ */
+export interface AcceptanceRecoveryMetadata {
+	status: "available-for-review";
+	reason: "acceptance-metadata-rejected";
+	reportPath: string;
+	reportHash: string;
+}
+
 export interface AcceptanceLedger {
 	status: AcceptanceLedgerStatus;
 	evidenceStatus: AcceptanceEvidenceStatus;
@@ -1095,6 +1108,7 @@ export interface AcceptanceLedger {
 	criteria: ResolvedAcceptanceGate[];
 	childReport?: AcceptanceReport;
 	childReportParseError?: string;
+	recovery?: AcceptanceRecoveryMetadata;
 	runtimeChecks: AcceptanceRuntimeCheck[];
 	verifyRuns: AcceptanceVerifyResult[];
 	reviewResult?: AcceptanceReviewResult;

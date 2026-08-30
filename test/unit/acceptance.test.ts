@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -1070,6 +1071,70 @@ describe("acceptance gates", () => {
 			});
 			assert.equal(inline.status, "rejected");
 			assert.match(inline.childReportParseError ?? "", /Failed to parse acceptance-report/);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("records durable malformed report evidence without relaxing rejection", async () => {
+		const cwd = tempRepo();
+		try {
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "Implement a fix",
+				explicit: { level: "checked" },
+			});
+			const reportPath = path.join(cwd, "child-report.md");
+			const malformed = JSON.stringify({ criteriaSatisfied: true, commandsRun: ["npm test"] });
+			const ledger = await evaluateAcceptance({
+				acceptance,
+				output: "file-only child output",
+				fileOutput: { content: `ACCEPTANCE_REPORT: ${malformed}`, path: reportPath, authoritative: true, durable: true },
+				cwd,
+			});
+
+			assert.equal(ledger.status, "rejected");
+			assert.deepEqual(ledger.recovery, {
+				status: "available-for-review",
+				reason: "acceptance-metadata-rejected",
+				reportPath,
+				reportHash: createHash("sha256").update(`ACCEPTANCE_REPORT: ${malformed}`).digest("hex"),
+			});
+			const optional = await evaluateAcceptance({
+				acceptance,
+				output: "file-only child output",
+				fileOutput: { content: `ACCEPTANCE_REPORT: ${malformed}`, path: reportPath, authoritative: true, durable: true },
+				cwd,
+				reportOptional: true,
+			});
+			assert.equal(optional.status, "rejected");
+			assert.deepEqual(optional.recovery, ledger.recovery);
+
+			const missing = await evaluateAcceptance({
+				acceptance,
+				output: "file-only child output",
+				fileOutput: { content: "artifact without acceptance metadata", path: reportPath, authoritative: true, durable: true },
+				cwd,
+			});
+			assert.equal(missing.status, "rejected");
+			assert.equal(missing.recovery, undefined);
+			const textOnlyMalformed = await evaluateAcceptance({
+				acceptance,
+				output: `ACCEPTANCE_REPORT: ${malformed}`,
+				fileOutput: { content: "artifact without acceptance metadata", path: reportPath, authoritative: true, durable: true },
+				cwd,
+			});
+			assert.equal(textOnlyMalformed.status, "rejected");
+			assert.equal(textOnlyMalformed.recovery, undefined);
+
+			const unmet = await evaluateAcceptance({
+				acceptance,
+				output: report({ criteriaSatisfied: [{ id: "criterion-1", status: "not-satisfied", evidence: "not proved" }] }),
+				fileOutput: { content: report({ criteriaSatisfied: [{ id: "criterion-1", status: "not-satisfied", evidence: "not proved" }] }), path: reportPath, authoritative: true, durable: true },
+				cwd,
+			});
+			assert.equal(unmet.status, "rejected");
+			assert.equal(unmet.recovery, undefined);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}

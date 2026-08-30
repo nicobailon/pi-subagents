@@ -4022,7 +4022,8 @@ function workflowChildResult(
 			: result.details.usageBudget?.exhausted || result.details.results.some((child) => child.turnBudgetExceeded || child.toolBudgetBlocked)
 				? { state: "partial" as const, reason: "budget_exhausted" as const }
 				: undefined);
-	const ok = result.isError !== true && !detached && !interrupted && !stopped;
+	const acceptanceRecovery = result.details.results.find((child) => child.acceptance?.recovery)?.acceptance?.recovery;
+	const ok = result.isError !== true && !detached && !interrupted && !stopped && acceptanceRecovery === undefined;
 	const artifactPaths = new Set<string>();
 	if (result.details.asyncDir) artifactPaths.add(result.details.asyncDir);
 	if (result.details.parallelHandoff?.path) artifactPaths.add(result.details.parallelHandoff.path);
@@ -4080,6 +4081,7 @@ function workflowChildResult(
 		...(requestedContext ? { requestedContext } : {}),
 		...(resolvedContext ? { resolvedContext } : {}),
 		...(outputReference ? { outputReference } : {}),
+		...(acceptanceRecovery ? { recovery: acceptanceRecovery } : {}),
 		...(outputPathMapping ? { outputPathMapping } : {}),
 		...(externalAdapter ? { externalAdapter } : {}),
 		resumability,
@@ -4089,13 +4091,14 @@ function workflowChildResult(
 	};
 }
 
-function workflowChildAccountingFields(child: WorkflowScriptChildResult): { usage?: Usage; sessionFile?: string } {
+function workflowChildAccountingFields(child: WorkflowScriptChildResult): { usage?: Usage; sessionFile?: string; recovery?: import("../../shared/types.ts").AcceptanceRecoveryMetadata } {
 	if (!child.results?.length) return {};
 	const usage = sumResultsUsage(child.results);
 	const sessionFile = child.results.find((result) => result.sessionFile)?.sessionFile;
 	return {
 		...(usage.input !== 0 || usage.output !== 0 || usage.cacheRead !== 0 || usage.cacheWrite !== 0 || usage.cost !== 0 || usage.turns !== 0 ? { usage } : {}),
 		...(sessionFile ? { sessionFile } : {}),
+		...(child.recovery ? { recovery: child.recovery } : {}),
 	};
 }
 
