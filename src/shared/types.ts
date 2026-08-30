@@ -2117,6 +2117,8 @@ export interface ActiveAsyncCapacitySnapshot {
 export interface SubagentState {
 	baseCwd: string;
 	currentSessionId: string | null;
+	/** Session for which active status projections were restored successfully. */
+	statusProjectionSessionId?: string | null;
 	/** Reload-stable identity for this parent Pi process/window. */
 	completionOwnerId?: string;
 	/** Runtime-owned artifact resolution inputs used by Fleet transcript targeting. */

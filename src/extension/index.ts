@@ -438,6 +438,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const state: SubagentState = {
 		baseCwd: "",
 		currentSessionId: null,
+		statusProjectionSessionId: null,
 		completionOwnerId: currentCompletionOwnerId(),
 		artifactDirPreference: config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir,
 		...(config.authorityPolicy ? { authorityPolicy: config.authorityPolicy } : {}),
@@ -996,6 +997,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			promptTemplateBridge.dispose();
 			state.widgetsSuspended = false;
 			state.currentSessionId = null;
+			state.statusProjectionSessionId = null;
 			state.parentSessionFile = null;
 			parentSessionEnvValue = null;
 			if (shuttingDownParentSession && process.env[SUBAGENT_PARENT_SESSION_ENV] === shuttingDownParentSession) {

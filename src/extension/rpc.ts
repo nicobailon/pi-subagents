@@ -172,6 +172,8 @@ interface FleetCandidate {
 	goal?: unknown;
 }
 
+type StatusRpcParams = Pick<SubagentParamsLike, "id" | "runId" | "dir" | "index" | "view" | "lines">;
+
 function buildFleetStatus(
 	state: SubagentState | undefined,
 	keyState: FleetKeyState,
@@ -380,14 +382,50 @@ function failIfToolError(result: ToolResultWithError): void {
 	throw new SubagentRpcError("execution_failed", textFromToolResult(result) || "Subagent RPC execution failed.");
 }
 
-function normalizeTargetParams(params: unknown, method: SubagentRpcMethod): Pick<SubagentParamsLike, "id" | "runId" | "dir" | "index"> {
-	const input = assertRecordParams(params, method);
+function normalizeTargetParamsFromRecord(input: Record<string, unknown>): Pick<SubagentParamsLike, "id" | "runId" | "dir" | "index"> {
 	const output: Pick<SubagentParamsLike, "id" | "runId" | "dir" | "index"> = {};
 	if (input.id !== undefined) output.id = input.id as string;
 	if (input.runId !== undefined) output.runId = input.runId as string;
 	if (input.dir !== undefined) output.dir = input.dir as string;
 	if (input.index !== undefined) output.index = input.index as number;
 	return output;
+}
+
+function normalizeTargetParams(params: unknown, method: SubagentRpcMethod): Pick<SubagentParamsLike, "id" | "runId" | "dir" | "index"> {
+	return normalizeTargetParamsFromRecord(assertRecordParams(params, method));
+}
+
+function normalizeStatusParams(params: unknown): StatusRpcParams {
+	const input = assertRecordParams(params, "status");
+	const output: StatusRpcParams = normalizeTargetParamsFromRecord(input);
+	if (input.view !== undefined) output.view = input.view as StatusRpcParams["view"];
+	if (input.lines !== undefined) output.lines = input.lines as number;
+	return output;
+}
+
+function hasStatusTarget(params: StatusRpcParams): boolean {
+	return params.id !== undefined
+		|| params.runId !== undefined
+		|| params.dir !== undefined
+		|| params.index !== undefined
+		|| params.view !== undefined
+		|| params.lines !== undefined;
+}
+
+function canUseInMemoryStatus(state: SubagentState | undefined, sessionId: string | undefined): state is SubagentState {
+	return Boolean(
+		state
+			&& sessionId
+			&& state.currentSessionId === sessionId
+			&& state.statusProjectionSessionId === sessionId
+			&& state.foregroundControls instanceof Map
+			&& state.asyncJobs instanceof Map,
+	);
+}
+
+function inMemoryStatusSummary(fleet: SubagentRpcFleetStatus): string {
+	const noun = fleet.totalActive === 1 ? "child" : "children";
+	return `In-memory subagent status: ${fleet.totalActive} active ${noun}.`;
 }
 
 function sessionData(ctx: ExtensionContext | null): { cwd?: string; sessionId?: string; sessionFile?: string | null } {
@@ -405,6 +443,7 @@ function pingData(ctx: ExtensionContext | null) {
 		methods: [...SUBAGENT_RPC_METHODS],
 		capabilities: {
 			status: true,
+			statusProjection: { version: 1, untargeted: "in-memory-when-ready", targeted: "executor" },
 			managementActions: [...SUBAGENT_RPC_MANAGEMENT_ACTIONS],
 			fleetStatus: { version: 1 },
 			asyncStatusSnapshot: { kind: ASYNC_STATUS_SNAPSHOT_KIND, version: ASYNC_STATUS_SNAPSHOT_VERSION },
@@ -689,14 +728,33 @@ async function handleRequest(
 		return executeChecked(options, ctx, request.requestId, request.method, spawnParams(request.params));
 	}
 	if (request.method === "status") {
+		const statusParams = normalizeStatusParams(request.params);
+		let sessionId: string | undefined;
+		if (!hasStatusTarget(statusParams)) {
+			try {
+				sessionId = resolveCurrentSessionId(ctx.sessionManager);
+			} catch {
+				// Let the executor produce the canonical error when session identity is unavailable.
+			}
+			if (canUseInMemoryStatus(options.state, sessionId)) {
+				const fleet = buildFleetStatus(options.state, fleetKeys, sessionId);
+				const asyncSnapshot = buildAsyncStatusSnapshotForState(options.state, sessionId);
+				return {
+					text: inMemoryStatusSummary(fleet),
+					details: { mode: "management", results: [] },
+					fleet,
+					asyncSnapshot,
+				};
+			}
+		}
 		const status = await executeChecked(
 			options,
 			ctx,
 			request.requestId,
 			request.method,
-			{ action: "status", ...normalizeTargetParams(request.params, "status") },
+			{ action: "status", ...statusParams },
 		);
-		const sessionId = resolveCurrentSessionId(ctx.sessionManager);
+		sessionId ??= resolveCurrentSessionId(ctx.sessionManager);
 		return {
 			...status,
 			fleet: buildFleetStatus(

@@ -682,6 +682,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 
 	const resetJobs = (ctx?: ExtensionContext) => {
 		dispose();
+		state.statusProjectionSessionId = null;
 		for (const timer of state.cleanupTimers.values()) clearTimeout(timer);
 		state.cleanupTimers.clear();
 		state.asyncJobs.clear();
@@ -698,6 +699,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 
 	const restoreActiveJobs = (ctx?: ExtensionContext) => {
 		if (ctx?.hasUI) state.lastUiContext = ctx;
+		state.statusProjectionSessionId = null;
 		if (!state.currentSessionId) return;
 		let runs: AsyncRunSummary[];
 		try {
@@ -713,6 +715,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			rememberFleetJob(state, job);
 			watchJob(job);
 		}
+		state.statusProjectionSessionId = state.currentSessionId;
 		if (runs.length === 0) return;
 		ensurePoller();
 		rerenderLastWidget();

@@ -381,6 +381,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(job.runningSteps, 2);
 			assert.equal(job.completedSteps, 0);
 			assert.equal(job.activeParallelGroup, true);
+			assert.equal(state.statusProjectionSessionId, "session-restored");
 			assert.ok(state.poller, "expected restored active jobs to start polling");
 			assert.ok(ui.renderRequests >= 2, "expected reset and restore to request widget renders");
 			assert.equal(typeof ui.widgets.at(-1), "function", "expected restored jobs to render the widget");

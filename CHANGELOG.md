@@ -6,6 +6,7 @@
 ### Changed
 - Pass the requested session and timestamp as optional context to background-work providers so they can avoid listing unrelated sessions while preserving strict snapshot validation (#1737).
 - Clarify that `oracle` and top-reasoning models are escalation tools, not routine fresh-review defaults.
+- Route untargeted RPC status through restored in-memory projections when safe while preserving executor-backed targeted status and transcript options (#1735).
 
 ## [0.60.0] - 2026-08-30
 
