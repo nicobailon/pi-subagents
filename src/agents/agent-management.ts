@@ -7,7 +7,6 @@ import {
 	type AgentDiscoveryDiagnostic,
 	type AgentScope,
 	type AgentSource,
-	BUILTIN_AGENT_NAMES,
 	defaultInheritProjectContext,
 	defaultInheritSkills,
 	defaultSystemPromptMode,
@@ -28,7 +27,7 @@ import {
 	buildProactiveSkillSubagentRecommendationLines,
 } from "./proactive-skills.ts";
 import { parseFrontmatter, parseFrontmatterList } from "./frontmatter.ts";
-import { toModelInfo } from "../shared/model-info.ts";
+import { resolveEffectiveThinking, toModelInfo } from "../shared/model-info.ts";
 import { resolveSubagentModelOverride, type ParentModel } from "../runs/shared/model-fallback.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
@@ -913,80 +912,107 @@ function formatModelSource(agent: AgentConfig, currentModel: ParentModel | undef
 	if (agent.modelSource?.type === "subagents.defaultModel" && agent.model === agent.modelSource.model) {
 		return `${agent.modelSource.scope} defaultModel`;
 	}
-	if (agent.model) return "builtin agent config";
+	if (agent.model) return `${agent.source} agent config`;
 	if (currentModel) return "inherits current session model";
 	return "inherit requested, but no current session model is available";
 }
 
 function handleModels(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
 	const requestedAgent = params.agent?.trim();
-	if (requestedAgent && !(BUILTIN_AGENT_NAMES as readonly string[]).includes(requestedAgent)) {
-		return result(`Builtin agent '${requestedAgent}' not found. Available: ${BUILTIN_AGENT_NAMES.join(", ")}.`, true);
-	}
+	const scope = normalizeListScope(params.agentScope);
+	if (!scope) return result("agentScope must be 'user', 'project', or 'both' for models.", true);
 
 	const discovered = discoverAgentsAll(ctx.cwd, ctx.model?.provider);
-	const builtinByName = new Map(discovered.builtin.map((agent) => [agent.name, agent]));
-	const resolveBuiltinModelAgent = (name: string): AgentConfig | undefined => builtinByName.get(name) ?? resolveAgentName(name, discovered.builtin).agent;
+	const effectiveAgents = mergeAgentsForScope(scope, discovered.user, discovered.project, discovered.builtin, discovered.package)
+		.sort((a, b) => a.name.localeCompare(b.name));
 	const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const currentModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
 	const preferredProvider = ctx.model?.provider;
-	const names = requestedAgent ? [requestedAgent] : [...BUILTIN_AGENT_NAMES];
+	const capabilityCeiling = resolveCurrentSubagentCapabilityCeiling(ctx.currentSessionId);
 
+	let selectedAgents = effectiveAgents;
 	if (requestedAgent) {
-		const agent = resolveBuiltinModelAgent(requestedAgent);
-		if (!agent) return result(`Builtin agent '${requestedAgent}' not found.`, true);
-		const resolvedModel = resolveSubagentModelOverride(agent.model, currentModel, availableModels, preferredProvider);
-		const lines = [
-			"Builtin subagent model",
-			"",
-			`Agent: ${requestedAgent}`,
-			"Effective model:",
-			`  ${resolvedModel ?? "(unresolved)"}`,
-			`Source: ${formatModelSource(agent, currentModel)}`,
-		];
-		if (agent.override) {
-			lines.push("Override file:");
-			lines.push(`  ${agent.override.path}`);
+		const matches = findAgentsInDiscovery(requestedAgent, discovered, scope);
+		const diagnostics = diagnosticsForScope(discovered.agentDiagnostics, scope);
+		const normalizedName = sanitizeName(requestedAgent);
+		const diagnostic = findBlockingAgentDiagnostic(requestedAgent, matches, diagnostics)
+			?? (normalizedName !== requestedAgent ? findBlockingAgentDiagnostic(normalizedName, matches, diagnostics) : undefined);
+		if (diagnostic) return result(`Agent '${params.agent}' has invalid configuration: ${diagnostic.error}`, true);
+		const distinctNames = [...new Set(matches.map((agent) => agent.name))];
+		if (distinctNames.length > 1) return result(`Ambiguous agent alias or name '${params.agent}': ${distinctNames.sort((a, b) => a.localeCompare(b)).join(", ")}`, true);
+		if (!matches.length) {
+			return result(`Agent '${params.agent}' not found. Available: ${availableAgentNamesFromDiscovery(discovered).join(", ") || "none"}.`, true);
 		}
-		if (agent.model && resolvedModel && agent.model !== resolvedModel) {
-			lines.push("Requested model setting:");
-			lines.push(`  ${agent.model}`);
-		}
-		if (agent.disabled) lines.push("Disabled: true");
-		lines.push("Current session model:");
-		lines.push(`  ${currentModel ? `${currentModel.provider}/${currentModel.id}` : "(unavailable)"}`);
-		return result(lines.join("\n"));
+		selectedAgents = [matches[0]!];
 	}
 
 	const lines = [
-		"Builtin subagent models",
+		requestedAgent ? "Subagent model" : "Subagent models",
 		"",
-		"Current session model:",
-		`  ${currentModel ? `${currentModel.provider}/${currentModel.id}` : "(unavailable)"}`,
-		"",
+		...(requestedAgent ? [] : [
+			"Current session model:",
+			`  ${currentModel ? `${currentModel.provider}/${currentModel.id}` : "(unavailable)"}`,
+			"",
+		]),
 	];
 
-	for (const name of names) {
-		const agent = resolveBuiltinModelAgent(name);
-		if (!agent) {
-			lines.push(name);
-			lines.push("  model:");
-			lines.push("    (builtin definition not found)");
-			lines.push("  source: missing");
-			lines.push("");
-			continue;
+	const modelEntries = selectedAgents.flatMap((agent) => requestedAgent
+		? [{ agent, name: requestedAgent }]
+		: [{ agent, name: agent.name }, ...(agent.aliases ?? []).map((name) => ({ agent, name }))]);
+	for (const { agent, name } of modelEntries) {
+		const resolvedModel = resolveSubagentModelOverride(agent.model, currentModel, availableModels, agent.modelProvider ?? preferredProvider);
+		const effectiveThinking = resolveEffectiveThinking(resolvedModel, agent.thinking);
+		const source = `${formatModelSource(agent, currentModel)}${agent.disabled ? "; disabled" : ""}${isAgentAllowedByCapabilityCeiling(agent.name, capabilityCeiling) ? "" : "; restricted"}`;
+		if (requestedAgent) {
+			lines.push(`Agent: ${requestedAgent}`);
+			lines.push("Effective model:");
+			lines.push(`  ${resolvedModel ?? "(unresolved)"}`);
+			lines.push(`Source: ${source}`);
+			lines.push(`Thinking: ${effectiveThinking ?? "default"}`);
+			if (agent.fallbackModels?.length) {
+				lines.push("Fallback models:");
+				for (const fallback of agent.fallbackModels) {
+					lines.push(`  ${resolveSubagentModelOverride(fallback, currentModel, availableModels, agent.modelProvider ?? preferredProvider) ?? fallback}`);
+				}
+			}
+			if (agent.override) {
+				lines.push("Override file:");
+				lines.push(`  ${agent.override.path}`);
+			}
+			if (agent.model && resolvedModel && agent.model !== resolvedModel) {
+				lines.push("Requested model setting:");
+				lines.push(`  ${agent.model}`);
+			}
+			if (agent.disabled) lines.push("Disabled: true");
+			if (!isAgentAllowedByCapabilityCeiling(agent.name, capabilityCeiling)) lines.push("Restricted: true");
+			lines.push("Current session model:");
+			lines.push(`  ${currentModel ? `${currentModel.provider}/${currentModel.id}` : "(unavailable)"}`);
+			break;
 		}
-		const resolvedModel = resolveSubagentModelOverride(agent.model, currentModel, availableModels, preferredProvider);
-		const source = `${formatModelSource(agent, currentModel)}${agent.disabled ? "; disabled" : ""}`;
 		lines.push(name);
 		lines.push("  model:");
 		lines.push(`    ${resolvedModel ?? "(unresolved)"}`);
 		lines.push(`  source: ${source}`);
+		lines.push(`  thinking: ${effectiveThinking ?? "default"}`);
+		if (agent.fallbackModels?.length) {
+			lines.push("  fallback models:");
+			for (const fallback of agent.fallbackModels) {
+				lines.push(`    ${resolveSubagentModelOverride(fallback, currentModel, availableModels, agent.modelProvider ?? preferredProvider) ?? fallback}`);
+			}
+		}
+		if (agent.override) {
+			lines.push("  override file:");
+			lines.push(`    ${agent.override.path}`);
+		}
+		if (agent.model && resolvedModel && agent.model !== resolvedModel) {
+			lines.push("  requested model setting:");
+			lines.push(`    ${agent.model}`);
+		}
 		lines.push("");
 	}
 
 	const availableFullIds = availableModels.map((m) => m.fullId).sort();
-	if (availableFullIds.length > 0) {
+	if (!requestedAgent && availableFullIds.length > 0) {
 		lines.push("Available models in this session's registry (copy an exact provider/id when passing model):");
 		lines.push("");
 		const shown = availableFullIds.slice(0, 80);
@@ -995,7 +1021,7 @@ function handleModels(params: ManagementParams, ctx: ManagementContext): AgentTo
 		lines.push("");
 		lines.push("Use an exact provider/id from this list when you pass model; bare ids resolve only when unique in the registry.");
 	}
-
+	if (!requestedAgent) appendAgentDiagnosticLines(lines, diagnosticsForScope(discovered.agentDiagnostics, scope));
 	return result(lines.join("\n"));
 }
 

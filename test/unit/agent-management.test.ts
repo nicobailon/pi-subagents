@@ -8,6 +8,7 @@ import { EXTRA_AGENT_DIRS_ENV } from "../../src/agents/agents.ts";
 import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
 import { clearSkillCache } from "../../src/agents/skills.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
+import { registerSubagentCapabilityCeiling } from "../../src/runs/shared/capability-ceiling.ts";
 
 let tempDir = "";
 let oldAgentDir: string | undefined;
@@ -1048,7 +1049,7 @@ Drive the failing test first.
 		const result = handleManagementAction("models", {}, ctx);
 		const text = readText(result);
 		assert.equal(result.isError, false);
-		assert.match(text, /^Builtin subagent models/m);
+		assert.match(text, /^Subagent models/m);
 		assert.match(text, /Current session model:\n  openai\/gpt-5-mini/);
 		assert.match(text, /(?:^|\n)scout\n  model:\n    openai\/gpt-5-mini\n  source: inherits current session model(?:\n|$)/);
 		assert.match(text, /(?:^|\n)advisor\n  model:\n    openai\/gpt-5-mini\n  source: inherits current session model(?:\n|$)/);
@@ -1096,7 +1097,7 @@ Drive the failing test first.
 		const result = handleManagementAction("models", { agent: "reviewer" }, ctx);
 		const text = readText(result);
 		assert.equal(result.isError, false);
-		assert.match(text, /^Builtin subagent model/m);
+		assert.match(text, /^Subagent model/m);
 		assert.match(text, /Agent: reviewer/);
 		assert.match(text, /Effective model:\n  anthropic\/claude-sonnet-4/);
 		assert.match(text, /Source: project override/);
@@ -1112,7 +1113,81 @@ Drive the failing test first.
 		});
 
 		assert.equal(result.isError, true);
-		assert.match(readText(result), /Builtin agent 'not-a-builtin' not found/);
+		assert.match(readText(result), /Agent 'not-a-builtin' not found/);
+	});
+
+	it("resolves builtin and discovered agent model mappings with effective precedence", () => {
+		const projectAgentsDir = path.join(tempDir, ".pi", "agents");
+		const userAgentsDir = path.join(tempDir, "agent-home", "agents");
+		const packageDir = path.join(tempDir, ".pi", "npm", "node_modules", "model-agents");
+		fs.mkdirSync(projectAgentsDir, { recursive: true });
+		fs.mkdirSync(userAgentsDir, { recursive: true });
+		fs.mkdirSync(path.join(packageDir, "agents"), { recursive: true });
+		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({
+			name: "model-agents",
+			version: "1.2.3",
+			pi: { subagents: { agents: ["agents"] } },
+		}));
+		const writeAgent = (dir: string, name: string, model: string, thinking: string, fallback: string) => fs.writeFileSync(path.join(dir, `${name}.md`), [
+			"---",
+			`name: ${name}`,
+			`description: ${name} model mapping`,
+			`model: ${model}`,
+			`thinking: ${thinking}`,
+			`fallbackModels: ${fallback}`,
+			"---",
+			"Model mapping test agent.",
+		].join("\n"));
+		writeAgent(path.join(packageDir, "agents"), "package-worker", "anthropic/claude-sonnet-4", "low", "openai/gpt-5-mini");
+		writeAgent(userAgentsDir, "user-worker", "gpt-5-mini", "medium", "claude-sonnet-4");
+		fs.writeFileSync(path.join(userAgentsDir, "provider-worker.md"), [
+			"---",
+			"name: provider-worker",
+			"description: provider-worker model mapping",
+			"model: gpt-5-mini",
+			"modelProvider: unavailable-provider",
+			"thinking: low",
+			"---",
+			"Model provider fallback test agent.",
+		].join("\n"));
+		writeAgent(userAgentsDir, "shadowed", "openai/gpt-5-mini", "low", "anthropic/claude-sonnet-4");
+		writeAgent(projectAgentsDir, "project-worker", "anthropic/claude-sonnet-4", "high", "openai/gpt-5-mini");
+		writeAgent(projectAgentsDir, "shadowed", "openai/gpt-5-mini", "high", "anthropic/claude-sonnet-4");
+		const settingsPath = path.join(tempDir, ".pi", "settings.json");
+		fs.writeFileSync(settingsPath, JSON.stringify({ subagents: { agentOverrides: { reviewer: { disabled: true } } } }));
+		const ceiling = registerSubagentCapabilityCeiling({ sessionId: "models-restricted", source: "test", ceiling: { allowedAgents: ["project-worker"], denyExtensions: false } });
+		try {
+			const ctx = {
+				cwd: tempDir,
+				modelRegistry: { getAvailable: () => [
+					{ provider: "openai", id: "gpt-5-mini" },
+					{ provider: "anthropic", id: "claude-sonnet-4" },
+				] },
+				model: { provider: "openai", id: "gpt-5-mini" },
+				currentSessionId: "models-restricted",
+			};
+			const all = readText(handleManagementAction("models", {}, ctx));
+			assert.match(all, /package-worker\n  model:\n    anthropic\/claude-sonnet-4\n  source: package agent config; restricted\n  thinking: low\n  fallback models:\n    openai\/gpt-5-mini/);
+			assert.match(all, /user-worker\n  model:\n    openai\/gpt-5-mini\n  source: user agent config; restricted\n  thinking: medium/);
+			assert.match(all, /provider-worker\n  model:\n    openai\/gpt-5-mini\n  source: user agent config; restricted\n  thinking: low/);
+			assert.match(all, /project-worker\n  model:\n    anthropic\/claude-sonnet-4\n  source: project agent config\n  thinking: high/);
+			assert.match(all, /shadowed\n  model:\n    openai\/gpt-5-mini\n  source: project agent config/);
+			assert.doesNotMatch(all, /shadowed\n  model:\n    openai\/gpt-5-mini\n  source: user agent config/);
+			assert.match(all, /reviewer\n  model:\n    openai\/gpt-5-mini\n  source: inherits current session model; disabled/);
+			assert.doesNotMatch(all, /api[_-]?key|token|secret/i);
+			fs.writeFileSync(path.join(userAgentsDir, "broken-model.md"), "---\nname: broken-model\ndescription: Broken model mapping\nmodel: missing-model\n---\nBroken model mapping test agent.\n");
+
+			const packageResult = readText(handleManagementAction("models", { agent: "package-worker" }, ctx));
+			assert.match(packageResult, /Agent: package-worker/);
+			assert.match(packageResult, /Fallback models:\n  openai\/gpt-5-mini/);
+			assert.match(packageResult, /Restricted: true/);
+			const unknown = handleManagementAction("models", { agent: "unknown-worker" }, ctx);
+			assert.equal(unknown.isError, true);
+			assert.match(readText(unknown), /Agent 'unknown-worker' not found/);
+			assert.throws(() => handleManagementAction("models", { agent: "broken-model" }, ctx), /Unknown subagent model 'missing-model'/);
+		} finally {
+			ceiling.dispose();
+		}
 	});
 
 	it("creates delegate with its builtin prompt defaults", () => {
