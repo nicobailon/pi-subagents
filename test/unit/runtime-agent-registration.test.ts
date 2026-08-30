@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { RUNTIME_AGENT_REGISTER_EVENT, registerAgent, registerAgentViaEvents, type RuntimeAgentRegistrationRequest } from "../../src/api/agents.ts";
 import { registerRuntimeAgentEventListener } from "../../src/agents/runtime-agent-events.ts";
-import { handleList } from "../../src/agents/agent-management.ts";
+import { handleList, handleManagementAction } from "../../src/agents/agent-management.ts";
 import { discoverAgents, discoverAgentsAll } from "../../src/agents/agents.ts";
 import { clearRuntimeAgentsForPi, mergeRuntimeAgents } from "../../src/agents/runtime-agent-registry.ts";
 
@@ -210,6 +210,48 @@ describe("runtime agent registration", () => {
 		const listed = handleList({}, { cwd: tempProject, modelRegistry: { getAvailable: () => [] }, runtimeAgentOwner: pi });
 		const text = listed.content.map((part) => part.type === "text" ? part.text ?? "" : "").join("\n");
 		assert.match(text, /- runtime-helper \(runtime, aliases: helper\): Runtime helper/);
+	});
+
+	it("reports runtime agent model mappings by name and alias", () => {
+		const registration = registerAgent({
+			pi,
+			name: "runtime-model-helper",
+			definition: {
+				description: "Runtime model helper",
+				systemPrompt: "Help with model routing.",
+				aliases: ["model-helper"],
+				model: "openai/gpt-5-mini",
+				fallbackModels: ["anthropic/claude-sonnet-4"],
+				thinking: "high",
+			},
+		});
+		try {
+			const ctx = {
+				cwd: tempProject,
+				modelRegistry: {
+					getAvailable: () => [
+						{ provider: "openai", id: "gpt-5-mini" },
+						{ provider: "anthropic", id: "claude-sonnet-4" },
+					],
+				},
+				model: { provider: "openai", id: "gpt-5-mini" },
+				runtimeAgentOwner: pi,
+			};
+			const all = handleManagementAction("models", {}, ctx);
+			const allText = all.content.map((part) => part.type === "text" ? part.text ?? "" : "").join("\n");
+			assert.equal(all.isError, false);
+			assert.match(allText, /runtime-model-helper\n  model:\n    openai\/gpt-5-mini\n  source: runtime agent config\n  thinking: high\n  fallback models:\n    anthropic\/claude-sonnet-4/);
+
+			const filtered = handleManagementAction("models", { agent: "model-helper" }, ctx);
+			const filteredText = filtered.content.map((part) => part.type === "text" ? part.text ?? "" : "").join("\n");
+			assert.equal(filtered.isError, false);
+			assert.match(filteredText, /Agent: model-helper/);
+			assert.match(filteredText, /Effective model:\n  openai\/gpt-5-mini/);
+			assert.match(filteredText, /Source: runtime agent config/);
+			assert.match(filteredText, /Fallback models:\n  anthropic\/claude-sonnet-4/);
+		} finally {
+			registration.dispose();
+		}
 	});
 
 	it("fails closed for builtin and duplicate runtime identities", () => {

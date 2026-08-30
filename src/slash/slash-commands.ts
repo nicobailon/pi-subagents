@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { keyText, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, type Component, type KeyId, type TUI } from "@earendil-works/pi-tui";
-import { BUILTIN_AGENT_NAMES, discoverAgentSnapshot, discoverAgents, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../agents/agents.ts";
+import { discoverAgentSnapshot, discoverAgents, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../agents/agents.ts";
 import { listRuntimeAgentConfigs, mergeRuntimeAgents } from "../agents/runtime-agent-registry.ts";
 import { resolveExistingReadPaths } from "../shared/settings.ts";
 import {
@@ -135,13 +135,6 @@ const makeAgentCompletions = (pi: ExtensionAPI, state: SubagentState) => (prefix
 	return discoverSlashAgents(pi, state.baseCwd, "both").agents
 		.filter((agent) => agent.name.startsWith(prefix))
 		.map((agent) => ({ value: agent.name, label: agent.name }));
-};
-
-const makeBuiltinAgentNameCompletions = () => (prefix: string) => {
-	if (prefix.includes(" ")) return null;
-	return BUILTIN_AGENT_NAMES
-		.filter((name) => name.startsWith(prefix))
-		.map((name) => ({ value: name, label: name }));
 };
 
 const makeProviderCompletions = (state: SubagentState) => (prefix: string) => {
@@ -1144,25 +1137,20 @@ export function registerSlashCommands(
 	});
 
 	pi.registerCommand("subagents-models", {
-		description: "Show runtime-loaded builtin subagent models",
-		getArgumentCompletions: makeBuiltinAgentNameCompletions(),
-			handler: async (args, ctx) => {
-				const trimmed = args.trim();
-				if (!trimmed) {
-					await runCommand(ctx, { action: "models" });
+		description: "Show model mappings for discovered subagents",
+		getArgumentCompletions: makeAgentCompletions(pi, state),
+		handler: async (args, ctx) => {
+			const trimmed = args.trim();
+			if (!trimmed) {
+				await runCommand(ctx, { action: "models" });
 				return;
 			}
 			const parts = trimmed.split(/\s+/).filter(Boolean);
 			if (parts.length !== 1) {
-				ctx.ui.notify("Usage: /subagents-models [builtin-agent-name]", "error");
+				ctx.ui.notify("Usage: /subagents-models [agent-name]", "error");
 				return;
 			}
-			const agent = parts[0]!;
-			if (!(BUILTIN_AGENT_NAMES as readonly string[]).includes(agent)) {
-				ctx.ui.notify(`Unknown builtin agent: ${agent}`, "error");
-				return;
-			}
-			await runCommand(ctx, { action: "models", agent });
+			await runCommand(ctx, { action: "models", agent: parts[0]! });
 		},
 	});
 

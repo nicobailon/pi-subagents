@@ -1122,6 +1122,51 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		});
 	});
 
+	it("/subagents-models accepts discovered and runtime agent names", async () => {
+		await withTempProject("pi-slash-models-agent-", async (root) => {
+			fs.writeFileSync(path.join(root, ".pi", "agents", "project-helper.md"), "---\nname: project-helper\ndescription: Project helper\n---\nProject helper.\n", "utf-8");
+			const runtimeRun = await captureSlashCommandParams("subagents-models", "runtime-helper", root, (pi) => {
+				registerAgent({
+					pi: pi as never,
+					name: "runtime-helper",
+					definition: { description: "Runtime helper", systemPrompt: "Help at runtime." },
+				});
+			});
+			assert.deepEqual(runtimeRun.params, { action: "models", agent: "runtime-helper" });
+
+			const projectRun = await captureSlashCommandParams("subagents-models", "project-helper", root);
+			assert.deepEqual(projectRun.params, { action: "models", agent: "project-helper" });
+
+			await withIsolatedHome(async () => {
+				const commands = new Map<string, RegisteredSlashCommand>();
+				const pi = {
+					events: createEventBus(),
+					on() { return () => {}; },
+					registerTool() {},
+					registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+					registerShortcut() {},
+					sendMessage() {},
+				};
+				const registration = registerAgent({
+					pi: pi as never,
+					name: "runtime-helper",
+					definition: { description: "Runtime helper", systemPrompt: "Help at runtime." },
+				});
+				try {
+					const disposer = registerSlashCommands!(pi, createState(root));
+					try {
+						const completions = commands.get("subagents-models")!.getArgumentCompletions!("runtime-") as Array<{ value: string }>;
+						assert.deepEqual(completions.map(({ value }) => value), ["runtime-helper"]);
+					} finally {
+						disposer.dispose();
+					}
+				} finally {
+					registration.dispose();
+				}
+			});
+		});
+	});
+
 	it("/run preserves existing relative reads and omits missing reads", async () => {
 		await withTempProject("pi-slash-reads-", async (root) => {
 			fs.writeFileSync(path.join(root, ".pi", "agents", "scout.md"), `---
