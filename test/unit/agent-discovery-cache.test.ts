@@ -159,6 +159,46 @@ describe("agent discovery snapshots", () => {
 		assert.equal(snapshot.all.project.some((agent) => agent.name === "project-agent"), true);
 	});
 
+	it("keeps shared package agent metadata scoped to the selected settings source", () => {
+		const userPackageRoot = path.join(tempRoot, "user-package");
+		const projectPackageRoot = path.join(tempRoot, "project-package");
+		const sharedAgentDir = path.join(tempRoot, "shared-package-agents");
+		writeJson(path.join(home, ".pi", "agent", "settings.json"), { packages: [userPackageRoot] });
+		writeJson(path.join(project, ".pi", "settings.json"), { packages: [projectPackageRoot] });
+		writeJson(path.join(userPackageRoot, "package.json"), {
+			name: "user-package",
+			"pi-subagents": { agents: [path.relative(userPackageRoot, sharedAgentDir)] },
+		});
+		writeJson(path.join(projectPackageRoot, "package.json"), {
+			name: "project-package",
+			"pi-subagents": { agents: [path.relative(projectPackageRoot, sharedAgentDir)] },
+		});
+		writeAgent(path.join(sharedAgentDir, "shared.md"), "shared", "Shared package agent");
+
+		const directUser = discoverAgents(project, "user").agents.find((agent) => agent.name === "shared");
+		const directProject = discoverAgents(project, "project").agents.find((agent) => agent.name === "shared");
+		const snapshotUser = discoverAgentSnapshot(project, "user", undefined, { includeChains: false }).effective.agents.find((agent) => agent.name === "shared");
+		const snapshotProject = discoverAgentSnapshot(project, "project", undefined, { includeChains: false }).effective.agents.find((agent) => agent.name === "shared");
+
+		assert.equal(directUser?.packageSourceName, "user-package");
+		assert.equal(directProject?.packageSourceName, "project-package");
+		assert.equal(snapshotUser?.packageSourceName, directUser?.packageSourceName);
+		assert.equal(snapshotProject?.packageSourceName, directProject?.packageSourceName);
+	});
+
+	it("surfaces malformed in-scope settings while collecting package roots", () => {
+		const settingsPath = path.join(home, ".pi", "agent", "settings.json");
+		fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+		fs.writeFileSync(settingsPath, "{ malformed", "utf-8");
+
+		assert.throws(
+			() => discoverAgentSnapshot(project, "both", undefined, { includeChains: false }),
+			(error: unknown) => error instanceof Error
+				&& error.message.includes(settingsPath)
+				&& error.message.includes("Failed to parse settings file"),
+		);
+	});
+
 	it("invalidates when project-root policy changes", () => {
 		const outer = path.join(tempRoot, "outer");
 		const nested = path.join(outer, "nested");

@@ -341,9 +341,14 @@ function getUserChainDir(): string {
 	return path.join(getAgentDir(), "chains");
 }
 
+type PackageScope = "root" | "user" | "project";
+type PackageSettingsScope = Exclude<PackageScope, "root">;
+
 interface PackageSubagentPath {
 	dir: string;
-	scope: "root" | "user" | "project";
+	// A package can be reachable from more than one settings scope. Keep the
+	// actual memberships instead of promoting a mixed-scope path to root.
+	scope: Set<PackageScope>;
 	packageName?: string;
 	packageVersion?: string;
 	packageRoot: string;
@@ -351,7 +356,7 @@ interface PackageSubagentPath {
 
 interface PackageChainPath {
 	dir: string;
-	scope: "root" | "user" | "project";
+	scope: Set<PackageScope>;
 	packageRoot: string;
 }
 
@@ -359,6 +364,7 @@ interface PackageSubagentPaths {
 	agents: PackageSubagentPath[];
 	chains: PackageChainPath[];
 	watchPaths: string[];
+	settingsErrors: Partial<Record<PackageSettingsScope, Error>>;
 }
 
 let cachedGlobalNpmRoot: string | null = null;
@@ -494,10 +500,10 @@ function packageMetadata(pkg: Record<string, unknown>, packageRoot: string): Omi
 	};
 }
 
-function extractSubagentPathsFromPackageRoot(packageRoot: string, scope: "root" | "user" | "project"): PackageSubagentPaths {
+function extractSubagentPathsFromPackageRoot(packageRoot: string, scope: Set<PackageScope>): PackageSubagentPaths {
 	const packageJsonPath = path.join(packageRoot, "package.json");
 	const pkg = readJsonFileBestEffort(packageJsonPath);
-	if (!pkg || typeof pkg !== "object" || Array.isArray(pkg)) return { agents: [], chains: [], watchPaths: [packageJsonPath] };
+	if (!pkg || typeof pkg !== "object" || Array.isArray(pkg)) return { agents: [], chains: [], watchPaths: [packageJsonPath], settingsErrors: {} };
 	const pkgRecord = pkg as Record<string, unknown>;
 	const metadata = packageMetadata(pkgRecord, packageRoot);
 
@@ -521,7 +527,7 @@ function extractSubagentPathsFromPackageRoot(packageRoot: string, scope: "root" 
 		for (const entry of stringArray(root.agents)) agents.push({ dir: path.resolve(packageRoot, entry), scope, ...metadata });
 		for (const entry of stringArray(root.chains)) chains.push({ dir: path.resolve(packageRoot, entry), scope, packageRoot });
 	}
-	return { agents, chains, watchPaths: [packageJsonPath] };
+	return { agents, chains, watchPaths: [packageJsonPath], settingsErrors: {} };
 }
 
 function collectPackageRootsFromNodeModules(nodeModulesDir: string, watchPaths?: string[]): string[] {
@@ -563,8 +569,7 @@ function collectPackageRootsFromNodeModules(nodeModulesDir: string, watchPaths?:
 }
 
 function collectSettingsPackageRoots(settingsFile: string, baseDir: string): string[] {
-	const settings = readJsonFileBestEffort(settingsFile);
-	if (!settings || typeof settings !== "object" || Array.isArray(settings)) return [];
+	const settings = readSettingsFileStrict(settingsFile);
 	const packages = (settings as { packages?: unknown }).packages;
 	if (!Array.isArray(packages)) return [];
 
@@ -582,28 +587,38 @@ function collectSettingsPackageRoots(settingsFile: string, baseDir: string): str
 	return roots;
 }
 
-function mergePackageScopes(left: "root" | "user" | "project", right: "root" | "user" | "project"): "root" | "user" | "project" {
-	return left === right ? left : "root";
-}
-
 function collectPackageSubagentPaths(cwd: string, options: { includeUser: boolean; includeProject: boolean } = { includeUser: true, includeProject: true }): PackageSubagentPaths {
 	const agentDir = getAgentDir();
 	const projectRoot = findConfiguredProjectRoot(cwd) ?? cwd;
-	const packageRoots: Array<{ root: string; scope: "root" | "user" | "project" }> = [
+	const packageRoots: Array<{ root: string; scope: PackageScope }> = [
 		{ root: projectRoot, scope: "root" },
 	];
 	const watchPaths: string[] = [path.join(projectRoot, "package.json")];
+	const settingsErrors: Partial<Record<PackageSettingsScope, Error>> = {};
+	const collectScopedSettingsRoots = (scope: PackageSettingsScope, settingsFile: string, baseDir: string): string[] => {
+		try {
+			return collectSettingsPackageRoots(settingsFile, baseDir);
+		} catch (error) {
+			// The raw source snapshot includes both settings scopes. Defer a
+			// strict failure until a projection actually selects this scope so an
+			// unrelated malformed settings file stays out of scoped discovery.
+			settingsErrors[scope] = error instanceof Error
+				? error
+				: new Error(`Failed to read settings file '${settingsFile}': ${String(error)}`, { cause: error });
+			return [];
+		}
+	};
 	if (options.includeProject) {
 		const projectConfigDir = getProjectConfigDir(projectRoot);
 		const nodeModulesDir = path.join(projectConfigDir, "npm", "node_modules");
 		packageRoots.push(...collectPackageRootsFromNodeModules(nodeModulesDir, watchPaths).map((root) => ({ root, scope: "project" as const })));
-		packageRoots.push(...collectSettingsPackageRoots(path.join(projectConfigDir, "settings.json"), projectConfigDir).map((root) => ({ root, scope: "project" as const })));
+		packageRoots.push(...collectScopedSettingsRoots("project", path.join(projectConfigDir, "settings.json"), projectConfigDir).map((root) => ({ root, scope: "project" as const })));
 	}
 
 	if (options.includeUser) {
 		const nodeModulesDir = path.join(agentDir, "npm", "node_modules");
 		packageRoots.push(...collectPackageRootsFromNodeModules(nodeModulesDir, watchPaths).map((root) => ({ root, scope: "user" as const })));
-		packageRoots.push(...collectSettingsPackageRoots(path.join(agentDir, "settings.json"), agentDir).map((root) => ({ root, scope: "user" as const })));
+		packageRoots.push(...collectScopedSettingsRoots("user", path.join(agentDir, "settings.json"), agentDir).map((root) => ({ root, scope: "user" as const })));
 	}
 
 	if (options.includeUser) {
@@ -613,46 +628,44 @@ function collectPackageSubagentPaths(cwd: string, options: { includeUser: boolea
 		}
 	}
 
-	const seenRoots = new Map<string, "root" | "user" | "project">();
-	const seenAgents = new Set<string>();
-	const seenChains = new Set<string>();
+	const seenRoots = new Map<string, Set<PackageScope>>();
+	const seenAgents = new Map<string, PackageSubagentPath>();
+	const seenChains = new Map<string, PackageChainPath>();
 	const agents: PackageSubagentPath[] = [];
 	const chains: PackageChainPath[] = [];
 	for (const { root: packageRoot, scope } of packageRoots) {
 		const resolvedRoot = path.resolve(packageRoot);
-		const previousScope = seenRoots.get(resolvedRoot);
-		if (previousScope !== undefined) {
-			const mergedScope = mergePackageScopes(previousScope, scope);
-			if (mergedScope !== previousScope) {
-				for (const agent of agents) if (agent.packageRoot === resolvedRoot) agent.scope = mergedScope;
-				for (const chain of chains) if (chain.packageRoot === resolvedRoot) chain.scope = mergedScope;
-				seenRoots.set(resolvedRoot, mergedScope);
-			}
+		const scopes = seenRoots.get(resolvedRoot);
+		if (scopes !== undefined) {
+			scopes.add(scope);
 			continue;
 		}
-		seenRoots.set(resolvedRoot, scope);
-		const paths = extractSubagentPathsFromPackageRoot(resolvedRoot, scope);
+		const packageScopes = new Set<PackageScope>([scope]);
+		seenRoots.set(resolvedRoot, packageScopes);
+		const paths = extractSubagentPathsFromPackageRoot(resolvedRoot, packageScopes);
 		watchPaths.push(...paths.watchPaths);
 		for (const agentPath of paths.agents) {
-			if (seenAgents.has(agentPath.dir)) {
-				const existing = agents.find((agent) => agent.dir === agentPath.dir);
-				if (existing) existing.scope = mergePackageScopes(existing.scope, agentPath.scope);
+			const agentKey = `${agentPath.dir}\u0000${agentPath.packageRoot}`;
+			const existing = seenAgents.get(agentKey);
+			if (existing) {
+				for (const packageScope of agentPath.scope) existing.scope.add(packageScope);
 				continue;
 			}
-			seenAgents.add(agentPath.dir);
+			seenAgents.set(agentKey, agentPath);
 			agents.push(agentPath);
 		}
 		for (const chainDir of paths.chains) {
-			if (seenChains.has(chainDir.dir)) {
-				const existing = chains.find((chain) => chain.dir === chainDir.dir);
-				if (existing) existing.scope = mergePackageScopes(existing.scope, chainDir.scope);
+			const chainKey = `${chainDir.dir}\u0000${chainDir.packageRoot}`;
+			const existing = seenChains.get(chainKey);
+			if (existing) {
+				for (const packageScope of chainDir.scope) existing.scope.add(packageScope);
 				continue;
 			}
-			seenChains.add(chainDir.dir);
+			seenChains.set(chainKey, chainDir);
 			chains.push(chainDir);
 		}
 	}
-	return { agents, chains, watchPaths };
+	return { agents, chains, watchPaths, settingsErrors };
 }
 
 function normalizeAgentAliases(rawAliases: string[] | undefined, agentName: string): string[] | undefined {
@@ -2460,9 +2473,9 @@ function projectDiscoveryWatchPaths(cwd: string): string[] {
 	return paths;
 }
 
-function packageEntryIncluded(scope: AgentScope, packageScope: PackageSubagentPath["scope"]): boolean {
-	if (scope === "both" || packageScope === "root") return true;
-	return packageScope === scope;
+function packageEntryIncluded(scope: AgentScope, packageScopes: PackageSubagentPath["scope"]): boolean {
+	if (scope === "both" || packageScopes.has("root")) return true;
+	return packageScopes.has(scope);
 }
 
 function buildAgentDiscoverySources(cwd: string, preferredModelProvider?: string): AgentDiscoverySources {
@@ -2569,9 +2582,11 @@ export function clearAgentDiscoveryCache(): void {
 
 function ensureSettingsForScope(sources: AgentDiscoverySources, scope: AgentScope, preferredModelProvider?: string): void {
 	if (scope !== "project" && sources.userSettings === undefined) {
+		if (sources.packageSubagentPaths.settingsErrors.user) throw sources.packageSubagentPaths.settingsErrors.user;
 		sources.userSettings = selectProviderOverrides(readSubagentSettings(sources.userSettingsPath), preferredModelProvider);
 	}
 	if (scope !== "user" && sources.projectSettings === undefined) {
+		if (sources.packageSubagentPaths.settingsErrors.project) throw sources.packageSubagentPaths.settingsErrors.project;
 		sources.projectSettings = selectProviderOverrides(readSubagentSettings(sources.projectSettingsPath), preferredModelProvider);
 	}
 }
