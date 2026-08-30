@@ -100,7 +100,7 @@ A setup that works well in practice: route agents by task shape instead of runni
 
 The routing rule: use the capability tiers (1–3) when the task is well-scoped, and the intent tier (4) when scoping or judging is the task itself.
 
-Give tier-4 agents cross-provider `fallbackModels` so subscription usage limits degrade gracefully instead of failing the run. Fallback triggers on rate-limit and overload errors automatically:
+Give tier-4 agents cross-provider `fallbackModels` so subscription usage limits degrade gracefully instead of failing the run. Fallback triggers on retryable provider/model failures such as rate-limit, overload, unavailable-model, and provider-reported timeout errors. The outer run-level `timeoutMs` / `maxRuntimeMs` deadline is terminal and does not start another fallback attempt:
 
 ```yaml
 ---

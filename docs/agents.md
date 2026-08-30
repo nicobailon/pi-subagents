@@ -305,7 +305,7 @@ Field notes:
 | `extensions` | Omitted means normal extensions; empty means no extensions; list values allowlist specific extensions. |
 | `subagentOnlyExtensions` | Extension paths loaded only in spawned child sessions for this agent. Tools registered there are unavailable to the main agent unless also installed through normal Pi extension configuration. |
 | `model` | Default model. Bare ids prefer the current provider when possible, then unique registry matches. |
-| `fallbackModels` | Ordered backup models for provider/model failures such as quota, auth, timeout, or unavailable model. Ordinary task failures do not trigger fallback. |
+| `fallbackModels` | Ordered backup models for provider/model failures such as quota, auth, provider-reported timeout, or unavailable model. Expiration of the run-level `timeoutMs` / `maxRuntimeMs` deadline is terminal and does not trigger fallback. Ordinary task failures do not trigger fallback. |
 | `thinking` | Appended as a `:level` suffix at runtime unless a suffix is already present. |
 | `systemPromptMode` | `replace` by default; `append` keeps Pi's base prompt. |
 | `inheritProjectContext` | Keeps or strips inherited repository instruction blocks. |
