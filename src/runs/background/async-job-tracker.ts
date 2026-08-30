@@ -74,6 +74,20 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const jobWatchers = new Map<string, { watchers: Map<string, fs.FSWatcher>; retryTimer?: ReturnType<typeof setTimeout> }>();
 	const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	const runningJobIds = new Set<string>();
+	const externalJobBridgeRuns = new Set<string>();
+	const externalJobBridgeEligibility = (steps: AsyncJobState["steps"]): "required" | "not-required" | "unknown" => {
+		if (!Array.isArray(steps)) return "unknown";
+		for (const step of steps) {
+			const runner = (step as { runner?: unknown } | null)?.runner;
+			if (runner === undefined) continue;
+			if (!runner || typeof runner !== "object" || Array.isArray(runner)) return "unknown";
+			const runnerType = (runner as { type?: unknown }).type;
+			if (typeof runnerType !== "string") return "unknown";
+			if (runnerType === "external-job") return "required";
+			if (runnerType !== "pi" && runnerType !== "external-cli") return "unknown";
+		}
+		return "not-required";
+	};
 	let rootWatcher: fs.FSWatcher | undefined;
 	let nextLivenessAt = Date.now() + livenessIntervalMs;
 	let nextWidgetAnimationAt = Date.now() + WIDGET_ANIMATION_INTERVAL_MS;
@@ -340,6 +354,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		if (timer) clearTimeout(timer);
 		refreshTimers.delete(asyncId);
 		runningJobIds.delete(asyncId);
+		externalJobBridgeRuns.delete(asyncId);
 	};
 
 	const refreshJob = (job: AsyncJobState): boolean => {
@@ -354,9 +369,15 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				console.error(`Failed to refresh nested async descendants for '${job.asyncDir}':`, error);
 			}
 		};
+		let bridgeSweepAttempted = false;
 		try {
 			emitNewControlEvents(job);
-			serviceExternalJobBridgeRequests(job.asyncDir);
+			const bridgeAlreadyRequired = externalJobBridgeRuns.has(job.asyncId) || externalJobBridgeEligibility(job.steps) === "required";
+			if (bridgeAlreadyRequired) {
+				externalJobBridgeRuns.add(job.asyncId);
+				bridgeSweepAttempted = true;
+				serviceExternalJobBridgeRequests(job.asyncDir);
+			}
 			try {
 				if (job.nestedRoute) reconcileNestedAsyncDescendants(job.nestedRoute, { resultsDir, kill: options.kill, now: options.now });
 			} catch (error) {
@@ -382,6 +403,15 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				},
 			});
 			const status = reconciliation.status ?? readStatus(job.asyncDir);
+			if (!bridgeAlreadyRequired) {
+				const bridgeEligibility = externalJobBridgeEligibility(status?.steps);
+				if (bridgeEligibility === "required") externalJobBridgeRuns.add(job.asyncId);
+				// Missing or ambiguous status retains the legacy sweep for recovery races.
+				if (bridgeEligibility !== "not-required") {
+					bridgeSweepAttempted = true;
+					serviceExternalJobBridgeRequests(job.asyncDir);
+				}
+			}
 			if (status) {
 				const previousStatus = job.status;
 				job.status = status.state;
@@ -456,6 +486,14 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				runningJobIds.add(job.asyncId);
 			}
 		} catch (error) {
+			if (!bridgeSweepAttempted) {
+				try {
+					bridgeSweepAttempted = true;
+					serviceExternalJobBridgeRequests(job.asyncDir);
+				} catch (bridgeError) {
+					console.error(`Failed to service external job bridge for '${job.asyncDir}':`, bridgeError);
+				}
+			}
 			if (job.status !== "failed") {
 				console.error(`Failed to read async status for '${job.asyncDir}':`, error);
 				job.status = "failed";
@@ -604,6 +642,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			: rawAgents;
 		const sessionRoot = state.liveAsyncSessionRoots?.get(info.id);
 		state.liveAsyncSessionRoots?.delete(info.id);
+		externalJobBridgeRuns.delete(info.id);
 		state.asyncJobs.set(info.id, {
 			asyncId: info.id,
 			asyncDir,
@@ -678,6 +717,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		for (const timer of refreshTimers.values()) clearTimeout(timer);
 		refreshTimers.clear();
 		runningJobIds.clear();
+		externalJobBridgeRuns.clear();
 	};
 
 	const resetJobs = (ctx?: ExtensionContext) => {

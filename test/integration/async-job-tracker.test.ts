@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
 import { getArtifactsDir } from "../../src/shared/artifacts.ts";
 import { SUBAGENT_CHILD_STATUS_EVENT } from "../../src/shared/types.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
+import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR } from "../../src/runs/shared/external-job-bridge.ts";
 import { SubagentFleetComponent } from "../../src/tui/fleet.ts";
 import { createNestedRoute } from "../../src/runs/shared/nested-events.ts";
 import { createTempDir, removeTempDir, tryImport } from "../support/helpers.ts";
@@ -526,6 +528,181 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 
 			await waitForCondition(() => state.asyncJobs.get("late-status-run")?.steps?.[0]?.currentTool === "read", "late status refresh before liveness", 1000);
 			tracker.resetJobs();
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("does not sweep bridge requests for native jobs after an absent request directory", async () => {
+		const asyncRoot = createTempDir("pi-async-job-native-bridge-");
+		try {
+			const runDir = path.join(asyncRoot, "native-run");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "native-run",
+				mode: "single",
+				state: "running",
+				startedAt: Date.now() - 100,
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running" }],
+			}), "utf-8");
+			const state = createState();
+			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+				watch: (() => { throw new Error("native watcher disabled for test"); }) as never,
+			});
+			tracker.handleStarted({ id: "native-run", asyncDir: runDir, agent: "worker" });
+			await waitForCondition(() => state.asyncJobs.get("native-run")?.status === "running", "native bridge eligibility refresh");
+
+			const requestDir = path.join(runDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+			assert.equal(fs.existsSync(requestDir), false, "native jobs should tolerate a missing bridge directory");
+			fs.mkdirSync(requestDir, { recursive: true });
+			const requestPath = path.join(requestDir, "native.json");
+			fs.writeFileSync(requestPath, "{malformed", "utf-8");
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			assert.equal(fs.existsSync(requestPath), true, "native jobs must not consume bridge requests");
+			assert.equal(fs.existsSync(path.join(runDir, "external-job-responses", "native.json")), false);
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("services an existing request once an external-job runner is identified", async () => {
+		const asyncRoot = createTempDir("pi-async-job-external-bridge-");
+		let unregister: (() => void) | undefined;
+		try {
+			const runDir = path.join(asyncRoot, "external-run");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "external-run",
+				mode: "single",
+				state: "running",
+				startedAt: Date.now() - 100,
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running", runner: { type: "external-job", provider: "tracker-provider", options: {} } }],
+			}), "utf-8");
+			const requestDir = path.join(runDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+			fs.mkdirSync(requestDir, { recursive: true });
+			fs.writeFileSync(path.join(requestDir, "existing.json"), JSON.stringify({
+				id: "existing",
+				operation: "start",
+				provider: "tracker-provider",
+				createdAt: Date.now(),
+				start: {
+					prompt: "prompt",
+					promptDigest: "digest",
+					cwd: runDir,
+					runId: "external-run",
+					stepIndex: 0,
+					agent: "worker",
+					options: {},
+				},
+			}), "utf-8");
+			let starts = 0;
+			unregister = registerExternalJobProvider({
+				name: "tracker-provider",
+				start: () => { starts++; return { providerJobId: "provider-job", state: "completed" }; },
+				status: () => ({ providerJobId: "provider-job", state: "completed" }),
+				result: () => ({ providerJobId: "provider-job", state: "completed" }),
+				reattach: () => ({ providerJobId: "provider-job", state: "completed" }),
+			});
+			const state = createState();
+			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+				watch: (() => { throw new Error("native watcher disabled for test"); }) as never,
+			});
+			tracker.handleStarted({ id: "external-run", asyncDir: runDir, agent: "worker" });
+
+			const responsePath = path.join(runDir, "external-job-responses", "existing.json");
+			await waitForCondition(() => fs.existsSync(responsePath), "existing external bridge request");
+			const response = JSON.parse(fs.readFileSync(responsePath, "utf-8")) as { ok?: boolean; result?: { providerJobId?: string } };
+			assert.equal(response.ok, true);
+			assert.equal(response.result?.providerJobId, "provider-job");
+			assert.equal(starts, 1);
+		} finally {
+			unregister?.();
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("services requests created after the initial missing-directory sweep", async () => {
+		const asyncRoot = createTempDir("pi-async-job-late-bridge-");
+		let unregister: (() => void) | undefined;
+		try {
+			const runDir = path.join(asyncRoot, "late-external-run");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "late-external-run",
+				mode: "single",
+				state: "running",
+				startedAt: Date.now() - 100,
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running", runner: { type: "external-job", provider: "tracker-provider-late", options: {} } }],
+			}), "utf-8");
+			const state = createState();
+			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+				watch: (() => { throw new Error("native watcher disabled for test"); }) as never,
+			});
+			tracker.handleStarted({ id: "late-external-run", asyncDir: runDir, agent: "worker" });
+			await waitForCondition(() => state.asyncJobs.get("late-external-run")?.steps?.[0]?.runner?.type === "external-job", "external bridge eligibility refresh");
+			assert.equal(fs.existsSync(path.join(runDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR)), false);
+
+			unregister = registerExternalJobProvider({
+				name: "tracker-provider-late",
+				start: () => ({ providerJobId: "late-provider-job", state: "completed" }),
+				status: () => ({ providerJobId: "late-provider-job", state: "completed" }),
+				result: () => ({ providerJobId: "late-provider-job", state: "completed" }),
+				reattach: () => ({ providerJobId: "late-provider-job", state: "completed" }),
+			});
+			const requestDir = path.join(runDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+			fs.mkdirSync(requestDir, { recursive: true });
+			fs.writeFileSync(path.join(requestDir, "late.json"), JSON.stringify({
+				id: "late",
+				operation: "start",
+				provider: "tracker-provider-late",
+				createdAt: Date.now(),
+				start: {
+					prompt: "prompt",
+					promptDigest: "digest",
+					cwd: runDir,
+					runId: "late-external-run",
+					stepIndex: 0,
+					agent: "worker",
+					options: {},
+				},
+			}), "utf-8");
+
+			await waitForCondition(() => fs.existsSync(path.join(runDir, "external-job-responses", "late.json")), "late external bridge request");
+			const response = JSON.parse(fs.readFileSync(path.join(runDir, "external-job-responses", "late.json"), "utf-8")) as { ok?: boolean; result?: { providerJobId?: string } };
+			assert.equal(response.ok, true);
+			assert.equal(response.result?.providerJobId, "late-provider-job");
+		} finally {
+			unregister?.();
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("keeps bridge servicing when status is missing", async () => {
+		const asyncRoot = createTempDir("pi-async-job-malformed-bridge-");
+		try {
+			const runDir = path.join(asyncRoot, "malformed-external-run");
+			fs.mkdirSync(path.join(runDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR), { recursive: true });
+			fs.writeFileSync(path.join(runDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR, "malformed.json"), "{malformed", "utf-8");
+			const state = createState();
+			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+				watch: (() => { throw new Error("native watcher disabled for test"); }) as never,
+			});
+			tracker.handleStarted({ id: "malformed-external-run", asyncDir: runDir, agent: "worker" });
+
+			const responsePath = path.join(runDir, "external-job-responses", "malformed.json");
+			await waitForCondition(() => fs.existsSync(responsePath), "malformed bridge response");
+			const response = JSON.parse(fs.readFileSync(responsePath, "utf-8")) as { ok?: boolean; code?: string };
+			assert.equal(response.ok, false);
+			assert.equal(response.code, "malformed-request");
+			assert.equal(fs.existsSync(path.join(runDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR, "malformed.json")), false);
 		} finally {
 			removeTempDir(asyncRoot);
 		}
