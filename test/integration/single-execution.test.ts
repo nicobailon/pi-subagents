@@ -6541,6 +6541,95 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok((runningUpdates.at(-1)?.durationMs ?? 0) > (runningUpdates[0]?.durationMs ?? 0), "expected heartbeat duration to advance");
 	});
 
+	it("suppresses unchanged delegated heartbeats without changing ordinary foreground updates", async () => {
+		const updates: Array<{ text: string; durationMs: number | undefined }> = [];
+		const releasePath = path.join(tempDir, "release-delegated-progress");
+		mockPi.onCall({ output: "Done", waitForPath: releasePath });
+
+		const runPromise = runSync!(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			suppressUnchangedDelegationUpdates: true,
+			onUpdate: (update: { content: Array<{ type: string; text?: string }>; details?: { progress?: ProgressSummary[] } }) => {
+				updates.push({
+					text: update.content[0]?.text ?? "",
+					durationMs: update.details?.progress?.[0]?.durationMs,
+				});
+			},
+		});
+		const initialDeadline = Date.now() + 5_000;
+		while (updates.filter((update) => update.text === "(running...)").length < 1 && Date.now() < initialDeadline) {
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		await new Promise((resolve) => setTimeout(resolve, 1_200));
+		assert.equal(updates.filter((update) => update.text === "(running...)").length, 1, "duration-only delegated heartbeats should be coalesced");
+
+		fs.writeFileSync(releasePath, "release", "utf-8");
+		const result = await runPromise;
+		assert.equal(result.exitCode, 0);
+		assert.ok(updates.some((update) => update.text === "Done"), "changed terminal output should still be delivered");
+	});
+
+	it("delivers delegated activity-state transitions despite heartbeat suppression", async () => {
+		const attentionUpdates: Array<{ details?: { progress?: ProgressSummary[] } }> = [];
+		const attentionReleasePath = path.join(tempDir, "release-delegated-attention");
+		mockPi.onCall({ output: "Done", waitForPath: attentionReleasePath });
+		const attentionRun = runSync!(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			suppressUnchangedDelegationUpdates: true,
+			controlConfig: {
+				enabled: true,
+				needsAttentionAfterMs: 200,
+				activeNoticeAfterMs: 999_999,
+				activeNoticeAfterTurns: 999_999,
+				activeNoticeAfterTokens: 999_999,
+				notifyOn: ["needs_attention"],
+				notifyChannels: ["event"],
+			},
+			onUpdate: (update: { details?: { progress?: ProgressSummary[] } }) => attentionUpdates.push(update),
+		});
+		try {
+			const deadline = Date.now() + 5_000;
+			while (!attentionUpdates.some((update) => update.details?.progress?.[0]?.activityState === "needs_attention") && Date.now() < deadline) {
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+			assert.ok(attentionUpdates.some((update) => update.details?.progress?.[0]?.activityState === "needs_attention"), "needs_attention transition should not be coalesced");
+		} finally {
+			fs.writeFileSync(attentionReleasePath, "release", "utf-8");
+			await attentionRun;
+		}
+
+		const activeUpdates: Array<{ details?: { progress?: ProgressSummary[] } }> = [];
+		const activeReleasePath = path.join(tempDir, "release-delegated-active");
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { message: "waiting" })] },
+				{ waitForPath: activeReleasePath, jsonl: [events.toolEnd("contact_supervisor"), events.toolResult("contact_supervisor", "done")] },
+				{ jsonl: [events.assistantMessage("Done")] },
+			],
+		});
+		const activeRun = runSync!(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			suppressUnchangedDelegationUpdates: true,
+			controlConfig: {
+				enabled: true,
+				needsAttentionAfterMs: 999_999,
+				activeNoticeAfterMs: 200,
+				activeNoticeAfterTurns: 999_999,
+				activeNoticeAfterTokens: 999_999,
+				notifyOn: ["active_long_running"],
+				notifyChannels: ["event"],
+			},
+			onUpdate: (update: { details?: { progress?: ProgressSummary[] } }) => activeUpdates.push(update),
+		});
+		try {
+			const deadline = Date.now() + 5_000;
+			while (!activeUpdates.some((update) => update.details?.progress?.[0]?.activityState === "active_long_running") && Date.now() < deadline) {
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+			assert.ok(activeUpdates.some((update) => update.details?.progress?.[0]?.activityState === "active_long_running"), "active_long_running transition should not be coalesced");
+		} finally {
+			fs.writeFileSync(activeReleasePath, "release", "utf-8");
+			await activeRun;
+		}
+	});
+
 	it("reports foreground context window usage without changing cumulative spend", async () => {
 		mockPi.onCall({
 			jsonl: [{

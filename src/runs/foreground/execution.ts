@@ -49,6 +49,7 @@ import {
 	formatEmptyTerminalAssistantResponseError,
 	extractToolArgsPreview,
 	extractTextFromContent,
+	MAX_STREAMED_RECENT_TOOLS,
 	boundStreamedRecentTools,
 	boundStreamedRecentOutput,
 	boundStreamedToolCalls,
@@ -295,6 +296,55 @@ function snapshotStreamResult(result: SingleResult, progress: AgentProgress): Si
 	snapshot.messages = undefined;
 	snapshot.toolCalls = boundStreamedToolCalls(result);
 	return snapshot;
+}
+
+interface StructuredDelegationProgressState {
+	currentTool?: string;
+	currentToolArgs?: string;
+	recentOutput: string[];
+	recentTools: Array<{ tool: string; args: string }>;
+	activityState?: AgentProgress["activityState"];
+	model?: string;
+	toolCount: number;
+	tokens: number;
+}
+
+function captureStructuredDelegationProgressState(progress: AgentProgress, result: SingleResult): StructuredDelegationProgressState {
+	return {
+		currentTool: progress.currentTool,
+		currentToolArgs: progress.currentToolArgs,
+		recentOutput: [...progress.recentOutput],
+		recentTools: progress.recentTools.slice(-MAX_STREAMED_RECENT_TOOLS).map(({ tool, args }) => ({ tool, args })),
+		activityState: progress.activityState,
+		model: progress.model ?? result.model,
+		toolCount: progress.toolCount,
+		tokens: progress.tokens,
+	};
+}
+
+function structuredDelegationProgressChanged(
+	previous: StructuredDelegationProgressState,
+	progress: AgentProgress,
+	result: SingleResult,
+): boolean {
+	if (previous.currentTool !== progress.currentTool
+		|| previous.currentToolArgs !== progress.currentToolArgs
+		|| previous.activityState !== progress.activityState
+		|| previous.model !== (progress.model ?? result.model)
+		|| previous.toolCount !== progress.toolCount
+		|| previous.tokens !== progress.tokens
+		|| previous.recentOutput.length !== progress.recentOutput.length) return true;
+	for (let index = 0; index < progress.recentOutput.length; index++) {
+		if (previous.recentOutput[index] !== progress.recentOutput[index]) return true;
+	}
+	const recentToolsStart = Math.max(0, progress.recentTools.length - MAX_STREAMED_RECENT_TOOLS);
+	if (previous.recentTools.length !== progress.recentTools.length - recentToolsStart) return true;
+	for (let index = recentToolsStart; index < progress.recentTools.length; index++) {
+		const previousTool = previous.recentTools[index - recentToolsStart];
+		const currentTool = progress.recentTools[index];
+		if (previousTool?.tool !== currentTool?.tool || previousTool?.args !== currentTool?.args) return true;
+	}
+	return false;
 }
 
 const AFTER_COMPACTION_SETTLEMENT = Symbol("afterCompactionSettlement");
@@ -936,6 +986,7 @@ async function runSingleAttempt(
 		};
 
 
+		let lastStructuredDelegationProgressState: StructuredDelegationProgressState | undefined;
 		const emitUpdateSnapshot = (text: string) => {
 			if (!options.onUpdate || processClosed) return;
 			const progressSnapshot = snapshotProgress(progress);
@@ -955,6 +1006,10 @@ async function runSingleAttempt(
 		const fireUpdate = () => {
 			if (!options.onUpdate || processClosed) return;
 			progress.durationMs = Date.now() - startTime;
+			if (options.suppressUnchangedDelegationUpdates) {
+				if (lastStructuredDelegationProgressState && !structuredDelegationProgressChanged(lastStructuredDelegationProgressState, progress, result)) return;
+				lastStructuredDelegationProgressState = captureStructuredDelegationProgressState(progress, result);
+			}
 			const output = result.timedOut && result.finalOutput ? result.finalOutput : getFinalOutput(result.messages ?? []);
 			emitUpdateSnapshot(output || "(running...)");
 		};

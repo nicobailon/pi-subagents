@@ -4,6 +4,7 @@
 ## [Unreleased]
 
 ### Changed
+- Coalesce unchanged structured-delegation heartbeat snapshots while retaining ordinary foreground heartbeats and complete terminal responses (#1739).
 - Clarify that `fallbackModels` handles provider/model timeouts but not run-level `timeoutMs` / `maxRuntimeMs` expiry. Thanks [@kaplan-shaked](https://github.com/kaplan-shaked) for #1745.
 - Pass the requested session and timestamp as optional context to background-work providers so they can avoid listing unrelated sessions while preserving strict snapshot validation (#1737).
 - Avoid repeating external-run display normalization during Fleet refresh while retaining validation for externally replaced or mutated records (#1736).

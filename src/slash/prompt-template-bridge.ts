@@ -7,6 +7,7 @@ import {
 	type SubagentDelegationInvalidResponse,
 	type SubagentDelegationRequest,
 	type SubagentDelegationResponse,
+	type SubagentDelegationUpdate,
 } from "../api/delegation.ts";
 import { parseSubagentDelegationRequest } from "./delegation-request.ts";
 import {
@@ -64,6 +65,37 @@ function hasStructuredDelegationMarker(data: unknown): boolean {
 
 function validId(value: unknown): value is string {
 	return typeof value === "string" && value.trim().length > 0 && value.length <= 256 && !/[\r\n]/.test(value);
+}
+
+function sameStringArray(left: string[] | undefined, right: string[] | undefined): boolean {
+	if (left === right) return true;
+	if (!left || !right || left.length !== right.length) return false;
+	return left.every((value, index) => value === right[index]);
+}
+
+function sameRecentTools(
+	left: Array<{ tool: string; args: string }> | undefined,
+	right: Array<{ tool: string; args: string }> | undefined,
+): boolean {
+	if (left === right) return true;
+	if (!left || !right || left.length !== right.length) return false;
+	return left.every((tool, index) => tool.tool === right[index]?.tool && tool.args === right[index]?.args);
+}
+
+/** Duration is a heartbeat clock, not delegation-visible progress; terminal usage remains authoritative. */
+function sameStructuredDelegationUpdateProgress(left: SubagentDelegationUpdate, right: SubagentDelegationUpdate): boolean {
+	return left.requestId === right.requestId
+		&& left.ownerRunId === right.ownerRunId
+		&& left.nodeId === right.nodeId
+		&& left.runId === right.runId
+		&& left.currentTool === right.currentTool
+		&& left.currentToolArgs === right.currentToolArgs
+		&& left.recentOutput === right.recentOutput
+		&& sameStringArray(left.recentOutputLines, right.recentOutputLines)
+		&& sameRecentTools(left.recentTools, right.recentTools)
+		&& left.model === right.model
+		&& left.toolCount === right.toolCount
+		&& left.tokens === right.tokens;
 }
 
 export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: string }>(
@@ -298,6 +330,7 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 			const executeRequest = structuredRequest && options.executeStructured
 				? options.executeStructured
 				: options.execute;
+			let lastStructuredUpdate: SubagentDelegationUpdate | undefined;
 			const result = await executeRequest(
 				requestId,
 				params,
@@ -307,7 +340,10 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 					if (key ? !ownsAttempt(key, controller) : !ownsLegacyRequest(requestId, controller)) return;
 					if (structuredRequest) {
 						const payload = toSubagentDelegationUpdate(structuredRequest, update);
-						if (payload) options.events.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, payload);
+						if (payload && (!lastStructuredUpdate || !sameStructuredDelegationUpdateProgress(lastStructuredUpdate, payload))) {
+							lastStructuredUpdate = payload;
+							options.events.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, payload);
+						}
 						return;
 					}
 					const payload = toDelegationUpdate(requestId, update);

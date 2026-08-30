@@ -447,6 +447,8 @@ interface ExecutionContextData {
 	effectiveAsync: boolean;
 	asyncRunId: string;
 	controlConfig: ResolvedControlConfig;
+	/** Structured delegation consumers do not need duration-only heartbeat snapshots. */
+	suppressUnchangedDelegationUpdates?: boolean;
 	intercomBridge: IntercomBridgeState;
 	nestedRoute?: NestedRouteInfo;
 	timeoutMs?: number;
@@ -3552,6 +3554,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		onUpdate,
 		controlConfig,
 		contextPolicy,
+		suppressUnchangedDelegationUpdates,
 	} = data;
 	let lane: import("../../shared/types.ts").WorkflowLaneMetadata | undefined;
 	try {
@@ -3724,6 +3727,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			waitToolEnabled: deps.waitToolEnabled,
 			waitToolDefaultTimeoutMs: deps.waitToolDefaultTimeoutMs,
 			onUpdate: forwardSingleUpdate,
+			suppressUnchangedDelegationUpdates,
 			controlConfig,
 			onControlEvent,
 			intercomSessionName: childIntercomTarget,
@@ -6468,6 +6472,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			effectiveAsync,
 			asyncRunId,
 			controlConfig,
+			...(delegatedExecution ? { suppressUnchangedDelegationUpdates: true } : {}),
 			intercomBridge,
 			nestedRoute,
 			timeoutMs: foregroundTimeout.timeoutMs,
