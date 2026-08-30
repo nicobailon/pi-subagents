@@ -2386,19 +2386,29 @@ function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[
 	return rendered.lines;
 }
 
-function buildWidgetComponent(jobs: AsyncJobState[], expanded: boolean): (_tui: unknown, theme: Theme) => Component {
+function buildWidgetComponent(jobs: AsyncJobState[], isExpanded: () => boolean): (_tui: unknown, theme: Theme) => Component {
 	return (_tui, theme) => {
 		const container = new Container();
+		let cachedRenderWidth: number | undefined;
+		let cachedFrame: number | undefined;
+		let cachedExpanded: boolean | undefined;
+		let cachedLines: string[] | undefined;
 		container.render = (renderWidth: number): string[] => {
-			const width = Math.max(0, renderWidth - 2);
 			const frame = Math.floor(Date.now() / WIDGET_ANIMATION_INTERVAL_MS);
+			const expanded = isExpanded();
+			if (cachedLines && cachedRenderWidth === renderWidth && cachedFrame === frame && cachedExpanded === expanded) return cachedLines;
+			const width = Math.max(0, renderWidth - 2);
 			const projectionFor = workflowWidgetProjectionLookup();
 			const buildLines = (): string[] => expanded
 				? buildWidgetLinesWithProjection(jobs, theme, width, true, frame, projectionFor)
 				: jobs.length === 1
 					? compactSingleWidgetLines(jobs[0]!, theme, width, frame, projectionFor(jobs[0]!))
 					: buildWidgetLinesWithProjection(jobs, theme, width, false, frame, projectionFor);
-			return fitAdaptiveWidgetLines(jobs, buildLines, theme, width, expanded, frame, projectionFor).map((line) => paddedWidgetLine(line, renderWidth));
+			cachedRenderWidth = renderWidth;
+			cachedFrame = frame;
+			cachedExpanded = expanded;
+			cachedLines = fitAdaptiveWidgetLines(jobs, buildLines, theme, width, expanded, frame, projectionFor).map((line) => paddedWidgetLine(line, renderWidth));
+			return cachedLines;
 		};
 		return container;
 	};
@@ -2492,7 +2502,7 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
 		ctx.ui.setWidget(WIDGET_KEY, encodeAsyncStatusSnapshotWidget(jobs));
 		return;
 	}
-	ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, ctx.ui.getToolsExpanded?.() ?? false));
+	ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, () => ctx.ui.getToolsExpanded?.() ?? false));
 }
 
 function renderSingleCompact(

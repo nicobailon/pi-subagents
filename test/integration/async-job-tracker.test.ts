@@ -1044,7 +1044,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("rebuilds unchanged running widgets for quiet animation ticks and stops at terminal status", async () => {
+	it("requests quiet animation repaints without rebuilding widgets and stops at terminal status", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
 		try {
@@ -1072,7 +1072,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 
 			const requestsAfterStart = ui.renderRequests;
 			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.updatedAt === 2000, "first status load");
-			assert.ok(ui.renderRequests > requestsAfterStart, "first status load should redraw the widget");
+			await waitForCondition(() => ui.renderRequests > requestsAfterStart, "first status load widget redraw");
 
 			const requestsAfterStatusLoaded = ui.renderRequests;
 			const widgetsAfterStatusLoaded = ui.widgets.length;
@@ -1089,12 +1089,12 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				},
 			})}\n`, "utf-8");
 			await waitForCondition(() => recorder.events.some((event) => event.channel === "subagent:control-event"), "control event delivery");
-			await waitForCondition(() => ui.widgets.length > widgetsAfterStatusLoaded, "running widget cadence rebuild");
-			assert.ok(ui.renderRequests > requestsAfterStatusLoaded, "running widget cadence rebuild should request a repaint when the bridge supports it");
+			await waitForCondition(() => ui.renderRequests > requestsAfterStatusLoaded, "running widget cadence repaint");
+			assert.equal(ui.widgets.length, widgetsAfterStatusLoaded, "animation-only ticks should not replace the widget component when the bridge supports repaint requests");
 
 			writeStatus(3000, 1);
 			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.toolCount === 1, "changed status load");
-			assert.ok(ui.widgets.length > widgetsAfterStatusLoaded, "changed status should replace the widget component");
+			await waitForCondition(() => ui.widgets.length > widgetsAfterStatusLoaded, "changed status widget replacement");
 
 			writeStatus(4000, 1, "complete");
 			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.status === "complete", "terminal status load");
@@ -1103,6 +1103,56 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			await new Promise((resolve) => setTimeout(resolve, 35));
 			assert.equal(ui.widgets.length, widgetsAfterTerminal, "terminal-only jobs must not rebuild on the cadence");
 			assert.equal(ui.renderRequests, requestsAfterTerminal, "terminal-only jobs must not request cadence repaints");
+		} finally {
+			tracker?.resetJobs();
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("coalesces close per-job status refreshes into one widget replacement", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-coalesce-");
+		let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+		try {
+			const runA = path.join(asyncRoot, "run-a");
+			const runB = path.join(asyncRoot, "run-b");
+			fs.mkdirSync(runA, { recursive: true });
+			fs.mkdirSync(runB, { recursive: true });
+			const writeStatus = (runDir: string, id: string, lastUpdate: number) => fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: id,
+				mode: "single",
+				state: "running",
+				startedAt: 1000,
+				lastUpdate,
+				steps: [{ agent: id, status: "running", startedAt: 1000 }],
+			}), "utf-8");
+			writeStatus(runA, "run-a", 2000);
+			writeStatus(runB, "run-b", 2000);
+
+			const watchCallbacks: Array<(event: string, file?: string) => void> = [];
+			const watch: typeof fs.watch = ((watchPath: fs.PathLike, listener: fs.WatchListener<string>) => {
+				if (String(watchPath).includes("run-")) watchCallbacks.push((event, file) => listener(event as fs.WatchEventType, file));
+				return { close() {}, on() { return this; }, unref() {} } as unknown as fs.FSWatcher;
+			}) as typeof fs.watch;
+			const state = createState();
+			const ui = createUiContext();
+			const recorder = createEventRecorder();
+			tracker = createTracker(recorder.pi, state as never, asyncRoot, { pollIntervalMs: 10000, watch });
+			tracker.resetJobs(ui.ctx as never);
+			tracker.handleStarted({ id: "run-a", asyncDir: runA, agent: "worker" });
+			tracker.handleStarted({ id: "run-b", asyncDir: runB, agent: "reviewer" });
+			await waitForCondition(() => state.asyncJobs.get("run-a")?.updatedAt === 2000 && state.asyncJobs.get("run-b")?.updatedAt === 2000, "initial status loads");
+			await waitForCondition(() => watchCallbacks.length > 0, "watch callbacks");
+			await new Promise((resolve) => setTimeout(resolve, 60));
+			const widgetsAfterInitial = ui.widgets.length;
+
+			writeStatus(runA, "run-a", 3000);
+			writeStatus(runB, "run-b", 3000);
+			for (const callback of [...watchCallbacks]) callback("change", "status.json");
+
+			await waitForCondition(() => state.asyncJobs.get("run-a")?.updatedAt === 3000 && state.asyncJobs.get("run-b")?.updatedAt === 3000, "coalesced status loads");
+			await waitForCondition(() => ui.widgets.length === widgetsAfterInitial + 1, "coalesced widget replacement");
+			await new Promise((resolve) => setTimeout(resolve, 60));
+			assert.equal(ui.widgets.length, widgetsAfterInitial + 1, "close status refreshes should share one widget replacement");
 		} finally {
 			tracker?.resetJobs();
 			removeTempDir(asyncRoot);

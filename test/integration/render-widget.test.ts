@@ -1103,6 +1103,38 @@ describe("subagent async widget rendering", () => {
 		resetWidgetLayout();
 	});
 
+	it("updates component expansion state without reinstalling the widget", () => {
+		resetWidgetLayout();
+		withStdoutSize(20, 120, () => {
+			const ui = createUiContext();
+			let expanded = false;
+			ui.ctx.ui.getToolsExpanded = () => expanded;
+			renderWidget(ui.ctx as never, [{
+				asyncId: "run-toggle-expanded",
+				asyncDir: "/tmp/run-toggle-expanded",
+				status: "running",
+				mode: "parallel",
+				agents: ["reviewer"],
+				activeParallelGroup: true,
+				runningSteps: 1,
+				completedSteps: 0,
+				stepsTotal: 1,
+				steps: [{ index: 0, agent: "reviewer", status: "running", currentTool: "read" }],
+			}]);
+			const component = (ui.widgets.at(-1) as (_tui: unknown, widgetTheme: typeof theme) => { render(width: number): string[] })(undefined, theme);
+
+			const collapsed = component.render(180).join("\n");
+			expanded = true;
+			const expandedText = component.render(180).join("\n");
+
+			assert.match(collapsed, /subagents \(1\/1 running\)/);
+			assert.doesNotMatch(collapsed, /parallel group · 1 agent running/);
+			assert.match(expandedText, /parallel group · 1 agent running · 0\/1 done/);
+			assert.match(expandedText, /reviewer · running/);
+		});
+		resetWidgetLayout();
+	});
+
 	it("shows per-agent detail for active async parallel widget rows", () => {
 		const now = Date.now();
 		const lines = buildWidgetLines([
@@ -1968,6 +2000,40 @@ describe("subagent async widget rendering", () => {
 				firstRunningGlyph(second.find((line) => line.includes("reviewer · running")) ?? ""),
 				"step glyph should advance",
 			);
+		} finally {
+			Date.now = originalNow;
+			renderWidget(createUiContext().ctx as never, []);
+		}
+	});
+
+	it("memoizes component render output by width and animation frame", () => {
+		const originalNow = Date.now;
+		let themeCalls = 0;
+		const countingTheme = {
+			fg: (_name: string, text: string) => {
+				themeCalls += 1;
+				return text;
+			},
+			bold: (text: string) => text,
+		};
+		try {
+			Date.now = () => 1_000;
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [{ asyncId: "run-stable", asyncDir: "/tmp/run", status: "running", agents: ["scout"], updatedAt: 1_000 }]);
+			const component = (ui.widgets.at(-1) as (_tui: unknown, widgetTheme: typeof theme) => { render(width: number): string[] })(undefined, countingTheme);
+			const first = component.render(180);
+			const callsAfterFirst = themeCalls;
+
+			assert.equal(component.render(180), first);
+			assert.equal(themeCalls, callsAfterFirst, "same width and frame should reuse the rendered lines");
+
+			component.render(120);
+			assert.ok(themeCalls > callsAfterFirst, "a width change should rebuild lines");
+			const callsAfterWidthChange = themeCalls;
+
+			Date.now = () => 2_000;
+			component.render(120);
+			assert.ok(themeCalls > callsAfterWidthChange, "an animation-frame change should rebuild lines");
 		} finally {
 			Date.now = originalNow;
 			renderWidget(createUiContext().ctx as never, []);

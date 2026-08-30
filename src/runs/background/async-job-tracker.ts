@@ -73,6 +73,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const steeringNoticeSeen = new Map<string, number>();
 	const jobWatchers = new Map<string, { watchers: Map<string, fs.FSWatcher>; retryTimer?: ReturnType<typeof setTimeout> }>();
 	const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	let widgetRerenderTimer: ReturnType<typeof setTimeout> | undefined;
 	const runningJobIds = new Set<string>();
 	const externalJobBridgeRuns = new Set<string>();
 	const externalJobBridgeEligibility = (steps: AsyncJobState["steps"]): "required" | "not-required" | "unknown" => {
@@ -108,9 +109,22 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const rerenderLastWidget = (jobs = Array.from(state.asyncJobs.values())) => {
 		withLastUiContext((ctx) => rerenderWidget(ctx, jobs));
 	};
+	const scheduleLastWidgetRerender = () => {
+		if (widgetRerenderTimer) return;
+		widgetRerenderTimer = setTimeout(() => {
+			widgetRerenderTimer = undefined;
+			rerenderLastWidget();
+		}, EVENT_REFRESH_DEBOUNCE_MS);
+		widgetRerenderTimer.unref?.();
+	};
 	const requestLastWidgetRender = () => {
 		if (options.widgetEnabled === false) return;
-		rerenderLastWidget();
+		withLastUiContext((ctx) => {
+			if (state.widgetsSuspended) return;
+			const requestRender = (ctx.ui as { requestRender?: () => void }).requestRender;
+			if (requestRender) requestRender.call(ctx.ui);
+			else renderWidget(ctx, Array.from(state.asyncJobs.values()));
+		});
 	};
 	const refreshWidget = (ctx: ExtensionContext) => rerenderWidget(ctx);
 	const restoredControlEventCursor = (asyncDir: string) => {
@@ -511,7 +525,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		const timer = setTimeout(() => {
 			refreshTimers.delete(asyncId);
 			const job = state.asyncJobs.get(asyncId);
-			if (job && refreshJob(job)) rerenderLastWidget();
+			if (job && refreshJob(job)) scheduleLastWidgetRerender();
 		}, delayMs);
 		timer.unref?.();
 		refreshTimers.set(asyncId, timer);
@@ -716,6 +730,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		for (const asyncId of jobWatchers.keys()) closeJobWatcher(asyncId);
 		for (const timer of refreshTimers.values()) clearTimeout(timer);
 		refreshTimers.clear();
+		if (widgetRerenderTimer) clearTimeout(widgetRerenderTimer);
+		widgetRerenderTimer = undefined;
 		runningJobIds.clear();
 		externalJobBridgeRuns.clear();
 	};
