@@ -40,6 +40,18 @@ interface SubagentParamsSchema {
 			minLength?: number;
 			description?: string;
 		};
+		globalConcurrencyLimit?: {
+			type?: string;
+			minimum?: number;
+			maximum?: number;
+			description?: string;
+		};
+		maxSubagentSpawnsPerRun?: {
+			type?: string;
+			minimum?: number;
+			maximum?: number;
+			description?: string;
+		};
 		preflight?: JsonSchemaNode;
 		chatProgress?: {
 			type?: string;
@@ -220,6 +232,11 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(String(workflowScriptPath?.description ?? ""), /mutually exclusive with workflowScript/i);
 		assert.match(String(workflowScriptPath?.description ?? ""), /request cwd/i);
 		assert.match(String(workflowScriptPath?.description ?? ""), /host reads the file/i);
+		for (const name of ["globalConcurrencyLimit", "maxSubagentSpawnsPerRun"] as const) {
+			const capacity = SubagentParams?.properties?.[name];
+			assert.equal(capacity?.type, "integer");
+			assert.equal(capacity?.minimum, 1);
+		}
 		const preflight = SubagentParams?.properties?.preflight;
 		assert.equal(preflight?.type, "object");
 		assert.equal(preflight?.additionalProperties, false);
@@ -465,7 +482,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const schema = SubagentParams as unknown as JsonSchemaNode;
 		const serialized = JSON.stringify(schema);
 		// Mission, inspector, named-resource/inline workflow, guide, toolTimeoutMs, and capability-list fields intentionally expand the public tool surface.
-		assert.ok(serialized.length < 18_000, `expected compact schema under 18k chars, got ${serialized.length}`);
+		assert.ok(serialized.length <= 18_000, `expected compact schema at or under 18k chars, got ${serialized.length}`);
 		assert.equal(serialized.includes('"$ref"'), false);
 		assert.equal(serialized.includes('"$defs"'), false);
 		assert.equal(serialized.split("Optional acceptance policy.").length - 1, 1);

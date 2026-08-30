@@ -4,10 +4,10 @@ import { normalizePublicSubagentExecution } from "../../src/extension/public-exe
 
 describe("public subagent execution normalization", () => {
 	it("accepts structured single-child, workflow, management, and schedules", () => {
-		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1" }), { ok: true, params: { workflowScript: "return 1" } });
+		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1", globalConcurrencyLimit: 4, maxSubagentSpawnsPerRun: 8 }), { ok: true, params: { workflowScript: "return 1", globalConcurrencyLimit: 4, maxSubagentSpawnsPerRun: 8 } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflow: "review", args: { task: "Review this" } }), { ok: true, params: { workflow: "review", args: { task: "Review this" } } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1", preflight: { version: 1, lanes: [] } }), { ok: true, params: { workflowScript: "return 1", preflight: { version: 1, lanes: [] } } });
-		assert.deepEqual(normalizePublicSubagentExecution({ workflowScriptPath: "workflows/review.js" }), { ok: true, params: { workflowScriptPath: "workflows/review.js" } });
+		assert.deepEqual(normalizePublicSubagentExecution({ workflowScriptPath: "workflows/review.js", globalConcurrencyLimit: 2 }), { ok: true, params: { workflowScriptPath: "workflows/review.js", globalConcurrencyLimit: 2 } });
 		const task = "Use `quotes`\nand newlines";
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: " worker ", task, context: "fresh", async: false }), {
 			ok: true,
@@ -169,6 +169,12 @@ describe("public subagent execution normalization", () => {
 			{ workflowScript: "return 1", isolation: "invalid" },
 			{ workflowScript: "return 1", isolation: "none", worktree: true },
 			{ workflowScript: "return 1", isolation: "worktree", worktree: false },
+			{ agent: "worker", globalConcurrencyLimit: 2 },
+			{ workflow: "review", maxSubagentSpawnsPerRun: 2 },
+			{ action: "validate", workflowScript: "return 1", globalConcurrencyLimit: 2 },
+			{ workflowScript: "return 1", globalConcurrencyLimit: 0 },
+			{ workflowScript: "return 1", maxSubagentSpawnsPerRun: 1.5 },
+			{ workflowScript: "return 1", maxSubagentSpawnsPerRun: Number.MAX_SAFE_INTEGER + 1 },
 		] as const) {
 			assert.equal(normalizePublicSubagentExecution(params).ok, false, JSON.stringify(params));
 		}

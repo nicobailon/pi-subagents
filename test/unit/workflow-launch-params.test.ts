@@ -21,6 +21,17 @@ describe("workflow launch params", () => {
 		);
 	});
 
+	it("does not forward workflow capacity overrides to children", () => {
+		const params = prepareWorkflowLaunchParams(
+			{ globalConcurrencyLimit: 2, maxSubagentSpawnsPerRun: 3 },
+			{ agent: "worker", task: "Run", globalConcurrencyLimit: 4, maxSubagentSpawnsPerRun: 5 },
+			"workflow-run",
+			"run",
+		);
+		assert.equal(params.globalConcurrencyLimit, undefined);
+		assert.equal(params.maxSubagentSpawnsPerRun, undefined);
+	});
+
 	it("marks only new async workflow children to preserve live supervisor-detach awaits", () => {
 		// Retained workflow children already use the async result-file await path.
 		assert.equal(prepareWorkflowLaunchParams(

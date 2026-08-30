@@ -3379,6 +3379,28 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		for (const child of children) assert.match(child.error ?? "", /workflow\[second\].*0\/1 used; 2 requested, 1 remaining/);
 	});
 
+	it("lets an explicit workflow spawn override exceed config", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "first child completed" });
+		mockPi.onCall({ output: "second child completed" });
+		const result = await makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerRun: 1 }).execute(
+			"scripted-workflow-fanout-override",
+			{
+				async: false,
+				maxSubagentSpawnsPerRun: 2,
+				workflowScript: `return await runs.all([
+					{ key: "first", agent: "echo", task: "First task" },
+					{ key: "second", agent: "echo", task: "Second task" }
+				]);`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.equal(mockPi.callCount(), 2);
+	});
+
 	it("runs a direct child gate as host-verified acceptance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const markerFile = "direct-gate.txt";
 		const markerPath = path.join(tempDir, markerFile);

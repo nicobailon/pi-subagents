@@ -1261,6 +1261,8 @@ describe("scripted workflow runtime", () => {
 			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, { key: "undefined-action", agent: "worker", task: "run", action: undefined }]);`,
 			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, { key: "uncloneable", agent: "worker", task: () => "run" }]);`,
 			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, { key: "bad-binding", agent: "worker", task: "run", extensionBindings: { invalid: true } }]);`,
+			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, { key: "bad-capacity", agent: "worker", task: "run", globalConcurrencyLimit: 2 }]);`,
+			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, { key: "bad-budget", agent: "worker", task: "run", maxSubagentSpawnsPerRun: 2 }]);`,
 			`const items = []; items[1] = { key: "valid", agent: "worker", task: "run" }; return await runs.all(items);`,
 		];
 		for (const script of malformedScripts) {
@@ -1533,7 +1535,7 @@ describe("scripted workflow runtime", () => {
 	});
 
 	it("rejects legacy orchestration params in runs.run", async () => {
-		for (const params of [`tasks: [{ agent: "scout", task: "scan" }]`, `parallel: [{ agent: "scout", task: "scan" }]`]) {
+		for (const params of [`tasks: [{ agent: "scout", task: "scan" }]`, `parallel: [{ agent: "scout", task: "scan" }]`, `globalConcurrencyLimit: 2`, `maxSubagentSpawnsPerRun: 2`]) {
 			let launches = 0;
 			await assert.rejects(
 				runWorkflowScript({
