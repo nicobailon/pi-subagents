@@ -4,6 +4,7 @@
 ## [Unreleased]
 
 ### Changed
+- Trim default subagent prompt guidelines to five parent-facing entries while keeping advanced workflow details in the packaged guide. Thanks [@Ran-Xing](https://github.com/Ran-Xing) for #1746.
 - Add extension-owned named workflow resources so permission/policy extensions can distinguish resolved provenance from raw workflow scripts and enforce resource-scoped host command authority. Thanks [@mathiasloh](https://github.com/mathiasloh) for #1751.
 - Coalesce unchanged structured-delegation heartbeat snapshots while retaining ordinary foreground heartbeats and complete terminal responses (#1739).
 - Clarify that `fallbackModels` handles provider/model timeouts but not run-level `timeoutMs` / `maxRuntimeMs` expiry. Thanks [@kaplan-shaked](https://github.com/kaplan-shaked) for #1745.

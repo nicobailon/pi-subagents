@@ -46,26 +46,25 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /no per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/i);
 		assert.equal(metadata.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
 		assert.equal(Buffer.byteLength(metadata.promptSnippet!), 62);
-		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 4111);
-		assert.deepEqual(metadata.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
-		assert.match(metadata.promptGuidelines!.join("\n"), /Use subagent only when delegation is needed/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /action: \"list\".*executable, non-disabled/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /action: \"list\", capabilities: true.*compact prompt-free rows/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /workflowScript for multi-step or parallel work/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /workflowScript means exactly one top-level subagent tool call with async:true/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /Inside it, use runs\.run\/runs\.all to launch children/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /nested async function.*plain helper functions.*Promise chains/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /no per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /runs\.lanes\(\[\{key,stages:.*first stages run together/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /Each workflow key identifies one result lane.*new stable workflow key.*retained resume pass/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /output.*not an output declaration.*outputReference.*outputPathMapping.*artifactPaths/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /do not make another top-level subagent call for those children/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /await runs\.all.*do not read \.output from unawaited runs\.run launches/i);
+		assert.equal(metadata.promptGuidelines!.length, 5);
+		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 1030);
+		assert.deepEqual(metadata.promptGuidelines, [
+			'Use subagent only when delegation is needed. Before execution, call { action: "list" } and run only executable, non-disabled agents.',
+			'Omit action for execution; use { agent, task? } for one child. For multi-step or parallel work, make exactly one top-level { workflowScript, async: true } call and launch children only inside it. Use action only for management/control.',
+			"workflowScript rejects nested async function, arrow, and method helpers; use top-level await, plain helper functions, or explicit Promise chains.",
+			"Inside workflowScript, use runs.run/runs.all and await their results. runs.all returns an ordered array, not a key map; stored runs.run promises must later be observed with direct await, Promise.race, or Promise.all.",
+			'Keep one writer per cwd/worktree; isolate concurrent writers. For durable files, set output on runs.run/runs.all and return the child\'s outputReference, outputPathMapping, or artifactPaths. For advanced workflows, read the bundled pi-subagents skill or call { action: "guide", topic: "workflows" }.',
+		]);
+		const promptGuidelines = metadata.promptGuidelines!.join("\n");
+		assert.match(promptGuidelines, /Use subagent only when delegation is needed/i);
+		assert.match(promptGuidelines, /workflowScript rejects nested async function, arrow, and method helpers/i);
+		assert.match(promptGuidelines, /runs\.all returns an ordered array, not a key map/i);
+		assert.match(promptGuidelines, /stored runs\.run promises must later be observed with direct await, Promise\.race, or Promise\.all/i);
+		assert.match(promptGuidelines, /outputReference.*outputPathMapping.*artifactPaths/i);
+		assert.match(promptGuidelines, /advanced workflows.*action: \"guide\", topic: \"workflows\"/i);
+		assert.doesNotMatch(promptGuidelines, /capabilities: true|runs\.lanes|runs\.host|workflow key identifies one result lane|action: \"models\"|External CLI agents|ordinary child subagents/i);
 		assert.match(description, /External CLI agents.*model override.*native Pi tools/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /External CLI agents.*model override.*native Pi tools/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /suffix on the model string.*off\/minimal\/low\/medium\/high\/xhigh\/max/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /suffix wins over the agent's thinking default/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /watchdog\.configure' and is ignored on dispatch/i);
+		assert.doesNotMatch(promptGuidelines, /ordinary children are not orchestrators/i);
 	});
 
 	it("keeps the full description when configured", () => {

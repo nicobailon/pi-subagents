@@ -26,4 +26,12 @@ describe("subagent guide", () => {
 		assert.match(readSubagentGuide("tool-reference"), /External CLI agent profiles[\s\S]*native Pi child options[\s\S]*model override[\s\S]*native Pi tools/);
 		assert.match(readSubagentGuide("agents"), /External CLI agents use their own runner contract[\s\S]*native Pi child options/);
 	});
+
+	it("keeps advanced workflow details in the packaged guide", () => {
+		const guide = readSubagentGuide("workflows");
+
+		assert.match(guide, /### Parallel sequential lanes[\s\S]*runs\.lanes/);
+		assert.match(guide, /### Host command steps[\s\S]*runs\.host/);
+		assert.match(guide, /### Advanced rolling child runs[\s\S]*Promise\.race[\s\S]*Promise\.all/);
+	});
 });
