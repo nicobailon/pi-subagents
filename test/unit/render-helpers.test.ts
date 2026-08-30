@@ -191,7 +191,7 @@ test("widget render keys keep compact payloads quiet and expanded payloads fresh
 	assert.notEqual(widgetRenderKey(warningDetailChange, true), widgetRenderKey(preflightJob, true));
 });
 
-test("seeded running glyphs advance at wall-clock frame boundaries while unseeded glyphs stay static", () => {
+test("seeded running glyphs stay stable until the supplied animation frame advances", () => {
 	const originalNow = Date.now;
 	const runningGlyph = (lines: string[]): string => lines
 		.map((line) => line.match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏●]/u)?.[0])
@@ -212,16 +212,18 @@ test("seeded running glyphs advance at wall-clock frame boundaries while unseede
 
 	try {
 		Date.now = () => 1_000;
-		const seededBeforeBoundary = runningGlyph(buildWidgetLines([seededJob], theme, 180));
-		const unseededBeforeBoundary = runningGlyph(buildWidgetLines([unseededJob], theme, 180));
+		const seededFrame0 = runningGlyph(buildWidgetLines([seededJob], theme, 180, false, 0));
+		const unseededBefore = runningGlyph(buildWidgetLines([unseededJob], theme, 180));
 
 		Date.now = () => 1_125;
-		const seededAfterBoundary = runningGlyph(buildWidgetLines([seededJob], theme, 180));
-		const unseededAfterBoundary = runningGlyph(buildWidgetLines([unseededJob], theme, 180));
+		const seededSameFrame = runningGlyph(buildWidgetLines([seededJob], theme, 180, false, 0));
+		const unseededAfter = runningGlyph(buildWidgetLines([unseededJob], theme, 180));
+		const seededNextFrame = runningGlyph(buildWidgetLines([seededJob], theme, 180, false, 1));
 
-		assert.notEqual(seededAfterBoundary, seededBeforeBoundary);
-		assert.equal(unseededAfterBoundary, unseededBeforeBoundary);
-		assert.equal(unseededBeforeBoundary, "●");
+		assert.equal(seededSameFrame, seededFrame0);
+		assert.equal(unseededAfter, unseededBefore);
+		assert.equal(unseededBefore, "●");
+		assert.notEqual(seededNextFrame, seededFrame0);
 	} finally {
 		Date.now = originalNow;
 	}

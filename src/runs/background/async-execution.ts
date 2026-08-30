@@ -26,7 +26,7 @@ import { backgroundProcessOptions } from "../shared/background-process-options.t
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, PROMPT_REDACTED, resolveChildCwd } from "../../shared/utils.ts";
-import { buildModelCandidates, inheritsParentModel, resolveEffectiveSubagentModel, resolveSubagentModelOverride, type AvailableModelInfo, type ParentModel } from "../shared/model-fallback.ts";
+import { buildModelCandidates, resolveEffectiveSubagentModel, resolveModelOrigin, resolveSubagentModelOverride, type AvailableModelInfo, type ModelOrigin, type ParentModel } from "../shared/model-fallback.ts";
 import { resolveToolTimeoutMs, toolTimeoutFromEnv } from "../shared/tool-timeout.ts";
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
 import { findModelInfo, resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -235,6 +235,7 @@ interface AsyncSingleParams {
 	structuredOutputSchema?: JsonSchemaObject;
 	modelOverride?: string;
 	modelOverrideFromParent?: boolean;
+	modelOrigin?: ModelOrigin;
 	fast?: boolean;
 	thinkingOverride?: AgentConfig["thinking"];
 	availableModels?: AvailableModelInfo[];
@@ -857,14 +858,15 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const task = namespaceOutputPath ? taskText : injectSingleOutputInstruction(taskText, outputPath, a);
 
 		const modelScopes = resolveModelScopesForAgent(ctx.modelScope, a.name, ctx.currentModel);
-		const primaryModelFromParent = inheritsParentModel(s.model, a.model, ctx.currentModel);
+		const modelOrigin = resolveModelOrigin({ explicitModel: s.model, agentModel: a.model, parentModel: ctx.currentModel });
+		const primaryModelFromParent = modelOrigin === "inherited";
 		const primaryModel = externalRunner ? undefined : resolveEffectiveSubagentModel(
 			s.model,
 			a.model,
 			ctx.currentModel,
 			availableModels,
 			a.modelProvider ?? ctx.currentModelProvider,
-			{ scope: modelScopes },
+			{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited" },
 		);
 		const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
 		const effectiveThinking = externalRunner ? undefined : thinkingOverride ?? a.thinking;
@@ -884,15 +886,17 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		}
 		const agentContract = s.agentContract ?? params.agentContract;
 		const permissionRules = resolvePermissionRules(ctx.permissions, a.permissions);
-		const modelCandidates = externalRunner ? [] : buildModelCandidates(primaryModel, a.fallbackModels, availableModels, a.modelProvider ?? ctx.currentModelProvider, {
-			scope: modelScopes,
-			primaryModelFromParent,
-		}).flatMap((candidate) => {
-			const resolved = applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined);
-			return resolved ? [resolved] : [];
-		});
+		let modelCandidates: string[] = [];
 		if (!externalRunner) {
 			try {
+				modelCandidates = buildModelCandidates(primaryModel, a.fallbackModels, availableModels, a.modelProvider ?? ctx.currentModelProvider, {
+					scope: modelScopes,
+					primaryModelFromParent,
+					origin: modelOrigin,
+				}).flatMap((candidate) => {
+					const resolved = applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined);
+					return resolved ? [resolved] : [];
+				});
 				for (const candidate of modelCandidates) assertThinkingWithinCeiling({ model: candidate, configThinking: effectiveThinking, ceiling: thinkingCeiling, agent: a.name, runId: id });
 			} catch (error) {
 				throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
@@ -1588,15 +1592,27 @@ export function executeAsyncSingle(
 		: "";
 	const taskText = readsInstruction + taskWithOutputInstruction;
 	const modelScopes = resolveModelScopesForAgent(ctx.modelScope, agentConfig.name, ctx.currentModel);
-	const primaryModel = externalRunner ? undefined : params.modelOverrideFromParent
-		? params.modelOverride
-		: resolveSubagentModelOverride(
-			params.modelOverride ?? agentConfig.model,
-			ctx.currentModel,
-			availableModels,
-			ctx.currentModelProvider,
-			{ scope: modelScopes },
-		);
+	const modelOrigin = resolveModelOrigin({
+		fromParent: params.modelOverrideFromParent,
+		storedOrigin: params.modelOrigin,
+		explicitModel: params.modelOverrideFromParent ? undefined : params.modelOverride,
+		agentModel: agentConfig.model,
+		parentModel: ctx.currentModel,
+	});
+	let primaryModel: string | undefined;
+	try {
+		primaryModel = externalRunner ? undefined : modelOrigin === "inherited"
+			? params.modelOverride ?? (ctx.currentModel ? `${ctx.currentModel.provider}/${ctx.currentModel.id}` : undefined)
+			: resolveSubagentModelOverride(
+				params.modelOverride ?? agentConfig.model,
+				ctx.currentModel,
+				availableModels,
+				ctx.currentModelProvider,
+				{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited" },
+			);
+	} catch (error) {
+		return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
+	}
 	const effectiveThinking = externalRunner ? undefined : params.thinkingOverride ?? agentConfig.thinking;
 	const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinking, params.thinkingOverride !== undefined);
 	const contextLimit = model ? findModelInfo(model, availableModels, agentConfig.modelProvider ?? ctx.currentModelProvider)?.contextWindow : undefined;
@@ -1633,18 +1649,17 @@ export function executeAsyncSingle(
 	const structuredOutput = params.structuredOutputSchema
 		? createStructuredOutputRuntime(params.structuredOutputSchema, path.join(asyncDir, "structured-output"), { captureAcceptanceReport: params.acceptance !== false })
 		: undefined;
-	const modelCandidates = externalRunner
-		? []
-		: buildModelCandidates(primaryModel, agentConfig.fallbackModels, availableModels, agentConfig.modelProvider ?? ctx.currentModelProvider, {
-			scope: modelScopes,
-			primaryModelFromParent: params.modelOverrideFromParent,
-		})
-			.flatMap((candidate) => {
+	let modelCandidates: string[] = [];
+	if (!externalRunner) {
+		try {
+			modelCandidates = buildModelCandidates(primaryModel, agentConfig.fallbackModels, availableModels, agentConfig.modelProvider ?? ctx.currentModelProvider, {
+				scope: modelScopes,
+				primaryModelFromParent: modelOrigin === "inherited",
+				origin: modelOrigin,
+			}).flatMap((candidate) => {
 				const resolved = applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined);
 				return resolved ? [resolved] : [];
 			});
-	if (!externalRunner) {
-		try {
 			for (const candidate of modelCandidates) assertThinkingWithinCeiling({ model: candidate, configThinking: effectiveThinking, ceiling: thinkingCeiling, agent: agentConfig.name, runId: id });
 		} catch (error) {
 			return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
@@ -1730,7 +1745,8 @@ export function executeAsyncSingle(
 		...(model ? { model } : {}),
 		...(params.fast ?? recoveryAgentConfig.fast ? { fast: params.fast ?? recoveryAgentConfig.fast } : {}),
 		...(recoveryAgentConfig.modelProvider ? { modelProvider: recoveryAgentConfig.modelProvider } : {}),
-		...(params.modelOverrideFromParent ? { modelOverrideFromParent: true } : {}),
+		...(modelOrigin === "inherited" ? { modelOverrideFromParent: true } : {}),
+		modelOrigin,
 		...(recoveryAgentConfig.fallbackModels ? { fallbackModels: [...recoveryAgentConfig.fallbackModels] } : {}),
 		...(effectiveThinking ? { thinking: resolveEffectiveThinking(model, effectiveThinking) } : {}),
 		...(thinkingCeiling ? { thinkingCeiling } : {}),
@@ -1799,7 +1815,7 @@ export function executeAsyncSingle(
 						thinking: resolveEffectiveThinking(model, effectiveThinking),
 						...(thinkingCeiling ? { thinkingCeiling } : {}),
 						modelCandidates,
-						...(params.modelOverrideFromParent ? { skipPrimaryModelVerification: true } : {}),
+						...(modelOrigin === "inherited" ? { skipPrimaryModelVerification: true } : {}),
 						...(availableModels && availableModels.length > 0 ? { modelVerificationRegistry: availableModels } : {}),
 						tools: agentConfig.tools,
 						allowNestedSubagents: agentConfig.allowNestedSubagents,

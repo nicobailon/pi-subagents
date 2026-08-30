@@ -151,12 +151,14 @@ describe("nested widget rendering", () => {
 		assert.match(expanded, /\[\d{2}:\d{2}:\d{2}\] . completed-step: Finalize report · completed/);
 	});
 
-	it("keeps event-time timestamps stable while running glyphs use wall time", () => {
+	it("keeps event-time timestamps stable while nested running glyphs use the supplied frame", () => {
 		const state = job(nested("nested-reviewer", "root-run", "running", { currentTool: "read", currentToolStartedAt: 0 }));
-		const first = withMockedDateNow(0, () => buildWidgetLines([state], theme as any, 120, true));
-		const second = withMockedDateNow(1_125, () => buildWidgetLines([state], theme as any, 120, true));
-		assert.notDeepEqual(second, first);
-		assert.deepEqual(withoutRunningGlyphs(second), withoutRunningGlyphs(first));
+		const first = withMockedDateNow(0, () => buildWidgetLines([state], theme as any, 120, true, 0));
+		const unrelatedRender = withMockedDateNow(125, () => buildWidgetLines([state], theme as any, 120, true, 0));
+		const nextFrame = withMockedDateNow(1_000, () => buildWidgetLines([state], theme as any, 120, true, 1));
+		assert.deepEqual(unrelatedRender, first);
+		assert.notDeepEqual(nextFrame, first);
+		assert.deepEqual(withoutRunningGlyphs(nextFrame), withoutRunningGlyphs(first));
 	});
 
 	it("rerenders when only nested state changes", () => {

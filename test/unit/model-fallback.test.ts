@@ -213,6 +213,88 @@ describe("model fallback helpers", () => {
 		]);
 	});
 
+	it("skips an unavailable configured primary and continues to available fallbacks", () => {
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message: unknown) => warnings.push(String(message));
+		try {
+			assert.deepEqual(
+				buildModelCandidates("does-not-exist", ["anthropic/claude-sonnet-4"], availableModels),
+				["anthropic/claude-sonnet-4"],
+			);
+		} finally {
+			console.warn = originalWarn;
+		}
+		assert.deepEqual(warnings, [
+			"[pi-subagents] Skipping primary model 'does-not-exist' because it is unavailable in this environment.",
+		]);
+	});
+
+	it("fails closed when no configured candidate resolves", () => {
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message: unknown) => warnings.push(String(message));
+		try {
+			assert.throws(
+				() => buildModelCandidates("does-not-exist", ["also-unavailable"], availableModels),
+				/Unknown subagent model 'does-not-exist'/,
+			);
+			assert.throws(
+				() => buildModelCandidates("does-not-exist", undefined, availableModels),
+				/Unknown subagent model 'does-not-exist'/,
+			);
+		} finally {
+			console.warn = originalWarn;
+		}
+		assert.ok(warnings.some((warning) => warning.includes("Skipping fallback model 'also-unavailable'")));
+		assert.equal(warnings.some((warning) => warning.includes("Skipping primary model 'does-not-exist'")), false);
+	});
+
+	it("keeps an explicit unknown primary strict even when fallbacks exist", () => {
+		assert.throws(
+			() => buildModelCandidates("does-not-exist", ["anthropic/claude-sonnet-4"], availableModels, undefined, { origin: "explicit" }),
+			/Unknown subagent model 'does-not-exist'/,
+		);
+	});
+
+	it("keeps eligible fallbacks after a valid explicit primary", () => {
+		assert.deepEqual(
+			buildModelCandidates("openai/gpt-5-mini", ["anthropic/claude-sonnet-4"], availableModels, undefined, { origin: "explicit" }),
+			["openai/gpt-5-mini", "anthropic/claude-sonnet-4"],
+		);
+	});
+
+	it("keeps an explicit cached-excluded primary strict even when fallbacks exist", () => {
+		recordModelFailure({ modelId: "gpt-5-mini", provider: "openai", reason: "sk-secret-token-xyz" });
+		assert.throws(
+			() => buildModelCandidates("openai/gpt-5-mini", ["anthropic/claude-sonnet-4"], availableModels, undefined, { origin: "explicit" }),
+			/Requested subagent model 'openai\/gpt-5-mini' is excluded and cannot be replaced by a fallback/,
+		);
+	});
+
+	it("rejects an explicit non-strict out-of-scope primary before fallbacks", () => {
+		assert.throws(
+			() => buildModelCandidates("anthropic/claude-sonnet-4", ["openai/gpt-5-mini"], availableModels, undefined, {
+				origin: "explicit",
+				scope: { enforce: true, allow: ["openai/*"] },
+			}),
+			/outside the configured subagent model scope/,
+		);
+	});
+
+	it("fails closed with a sanitized error when cached exclusions leave zero candidates", () => {
+		recordModelFailure({ modelId: "gpt-5-mini", provider: "openai", reason: "sk-secret-token-xyz" });
+		recordModelFailure({ modelId: "claude-sonnet-4", provider: "anthropic", reason: "sk-secret-token-xyz" });
+		assert.throws(
+			() => buildModelCandidates("openai/gpt-5-mini", ["anthropic/claude-sonnet-4"], availableModels),
+			(error: unknown) => {
+				const message = String(error);
+				return /No usable subagent models remain after registry, scope, and cached-exclusion filtering/.test(message)
+					&& !message.includes("sk-secret-token-xyz");
+			},
+		);
+	});
+
 	it("trusts an inherited parent model outside the registry", () => {
 		assert.deepEqual(
 			buildModelCandidates("gateway/parent-model", undefined, availableModels, undefined, { primaryModelFromParent: true }),
@@ -342,18 +424,18 @@ describe("resolveSubagentModelOverride (cross-session inherit, issue #266)", () 
 
 	it("rejects explicit models that the active registry cannot resolve", () => {
 		assert.throws(
-			() => resolveSubagentModelOverride("does-not-exist", parentModel, availableModels),
+			() => resolveSubagentModelOverride("does-not-exist", parentModel, availableModels, undefined, { source: "explicit" }),
 			/Unknown subagent model 'does-not-exist'/,
 		);
 		assert.throws(
-			() => resolveSubagentModelOverride("does-not-exist:high", parentModel, availableModels),
+			() => resolveSubagentModelOverride("does-not-exist:high", parentModel, availableModels, undefined, { source: "explicit" }),
 			/Unknown subagent model 'does-not-exist:high'/,
 		);
 	});
 
 	it("suggests a unique alternate provider without resolving across providers", () => {
 		assert.throws(
-			() => resolveSubagentModelOverride("openai/claude-sonnet-4:high", parentModel, availableModels),
+			() => resolveSubagentModelOverride("openai/claude-sonnet-4:high", parentModel, availableModels, undefined, { source: "explicit" }),
 			/Unknown subagent model 'openai\/claude-sonnet-4:high'.*Did you mean 'anthropic\/claude-sonnet-4:high'\?/,
 		);
 	});
@@ -364,11 +446,11 @@ describe("resolveSubagentModelOverride (cross-session inherit, issue #266)", () 
 			{ provider: "github-copilot", id: "claude-sonnet-4", fullId: "github-copilot/claude-sonnet-4" },
 		];
 		assert.throws(
-			() => resolveSubagentModelOverride("openai/claude-sonnet-4", parentModel, ambiguous),
+			() => resolveSubagentModelOverride("openai/claude-sonnet-4", parentModel, ambiguous, undefined, { source: "explicit" }),
 			(error: unknown) => !String(error).includes("Did you mean"),
 		);
 		assert.throws(
-			() => resolveSubagentModelOverride("openai/does-not-exist", parentModel, availableModels),
+			() => resolveSubagentModelOverride("openai/does-not-exist", parentModel, availableModels, undefined, { source: "explicit" }),
 			(error: unknown) => !String(error).includes("Did you mean"),
 		);
 	});
@@ -421,6 +503,20 @@ describe("resolveEffectiveSubagentModel", () => {
 		assert.equal(
 			resolveEffectiveSubagentModel(undefined, "gpt-5-mini", undefined, registry, "gpu-b"),
 			"gpu-b/gpt-5-mini",
+		);
+	});
+
+	it("does not throw for an unavailable inherited agent model", () => {
+		assert.equal(
+			resolveEffectiveSubagentModel(undefined, "does-not-exist", { provider: "openai", id: "gpt-5-mini" }, availableModels),
+			"does-not-exist",
+		);
+	});
+
+	it("still throws for an explicit unknown per-call model", () => {
+		assert.throws(
+			() => resolveEffectiveSubagentModel("does-not-exist", "openai/gpt-5-mini", { provider: "openai", id: "gpt-5-mini" }, availableModels),
+			/Unknown subagent model 'does-not-exist'/,
 		);
 	});
 });

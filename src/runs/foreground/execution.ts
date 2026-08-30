@@ -1871,7 +1871,11 @@ async function runSyncCompletionInner(
 		agent.fallbackModels,
 		options.availableModels,
 		agent.modelProvider ?? options.preferredModelProvider,
-		{ scope: options.modelScope, primaryModelFromParent: options.modelOverrideFromParent },
+		{
+			scope: options.modelScope,
+			primaryModelFromParent: options.modelOverrideFromParent,
+			origin: options.modelOrigin ?? (options.modelOverrideFromParent ? "inherited" : "configured"),
+		},
 	);
 	if (options.workflowChildPermitLaunch && candidates.length > 1) {
 		const error = "Workflow child permit does not support model fallback.";

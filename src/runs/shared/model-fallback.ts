@@ -321,15 +321,23 @@ export function resolveSubagentModelOverride(
 	const explicit = trimmed && trimmed !== INHERIT_MODEL ? trimmed : undefined;
 	if (!parentModel) throwForUnresolvedEnforcedInheritScope(options?.scope, explicit === undefined || options?.source === "inherited");
 	let resolved: string | undefined;
+	let resolvedFromRegistry = explicit === undefined;
 	if (explicit === undefined) {
 		resolved = parentModel ? `${parentModel.provider}/${parentModel.id}` : undefined;
 	} else {
-		resolved = resolveRequiredSubagentModelCandidate(explicit, availableModels, preferredProvider);
+		const candidate = resolveSubagentModelCandidate(explicit, availableModels, preferredProvider);
+		if (options?.source === "explicit") {
+			resolved = candidate ?? resolveRequiredSubagentModelCandidate(explicit, availableModels, preferredProvider);
+			throwForExplicitModelExclusion(resolved);
+			resolvedFromRegistry = true;
+		} else if (candidate) {
+			resolved = candidate;
+			resolvedFromRegistry = true;
+		} else {
+			resolved = explicit;
+		}
 	}
-	if (resolved && explicit !== undefined && options?.source === "explicit") {
-		throwForExplicitModelExclusion(resolved);
-	}
-	if (resolved && options?.scope) {
+	if (resolved && options?.scope && resolvedFromRegistry) {
 		const source: ModelSource = explicit === undefined ? "inherited" : (options.source ?? "inherited");
 		enforceModelScopes(resolved, options.scope, source, options.onWarn);
 	}
@@ -362,12 +370,33 @@ export function resolveEffectiveSubagentModel(
 	);
 }
 
+export type ModelOrigin = ModelSource | "configured";
+
 export interface BuildModelCandidatesOptions {
 	/** Fallback models warn by default and throw when strict scope enforcement is enabled. */
 	scope?: ModelScopeCheckRule | ModelScopeCheckRule[];
 	onWarn?: (violation: ModelScopeViolation) => void;
 	/** The primary model came from the running parent session, not configuration. */
 	primaryModelFromParent?: boolean;
+	/** How the primary model was selected. Explicit stays strict and does not rotate to fallbacks. */
+	origin?: ModelOrigin;
+}
+
+const ZERO_USABLE_MODEL_CANDIDATES_ERROR =
+	"No usable subagent models remain after registry, scope, and cached-exclusion filtering.";
+
+export function resolveModelOrigin(input: {
+	explicitModel?: string | boolean;
+	agentModel?: string | boolean;
+	parentModel?: ParentModel;
+	fromParent?: boolean;
+	storedOrigin?: ModelOrigin;
+}): ModelOrigin {
+	if (input.storedOrigin) return input.storedOrigin;
+	if (input.fromParent) return "inherited";
+	if (inheritsParentModel(input.explicitModel, input.agentModel, input.parentModel)) return "inherited";
+	const trimmed = typeof input.explicitModel === "string" ? input.explicitModel.trim() : "";
+	return trimmed && trimmed !== INHERIT_MODEL ? "explicit" : "configured";
 }
 
 export function inheritsParentModel(
@@ -388,36 +417,51 @@ export function buildModelCandidates(
 	options?: BuildModelCandidatesOptions,
 ): string[] {
 	if (!primaryModel) throwForUnresolvedEnforcedInheritScope(options?.scope, true);
+	const origin = options?.origin ?? (options?.primaryModelFromParent ? "inherited" : "configured");
+	const scopes = configuredScopes(options?.scope);
+	const warnCachedExclusion = (candidate: string, exclusion: NonNullable<ReturnType<typeof findModelExclusion>>) => {
+		const reason = redactSecretValues((exclusion.reason ?? "runtime-failure").replace(/[\u0000-\u001f\u007f]+/g, " ")).slice(0, 240);
+		console.warn(`[pi-subagents] Skipping model '${candidate}' due to a cached exclusion (reason: ${reason}; expires: ${new Date(exclusion.expiresAt).toISOString()}).`);
+	};
+	if (origin === "explicit" && primaryModel) {
+		const normalized = resolveRequiredSubagentModelCandidate(primaryModel.trim(), availableModels, preferredProvider);
+		throwForExplicitModelExclusion(normalized);
+		enforceModelScopes(normalized, scopes, "explicit", options?.onWarn);
+		primaryModel = normalized;
+	}
 	const seen = new Set<string>();
 	const candidates: string[] = [];
 	const rawCandidates = [primaryModel, ...(fallbackModels ?? [])];
+	let skippedPrimary: string | undefined;
 	for (let index = 0; index < rawCandidates.length; index++) {
 		const raw = rawCandidates[index];
 		if (!raw) continue;
 		const model = raw.trim();
-		const normalized = index === 0
-			? options?.primaryModelFromParent
-				? model
-				: resolveRequiredSubagentModelCandidate(model, availableModels, preferredProvider)
+		const normalized = index === 0 && (origin === "inherited" || origin === "explicit" || options?.primaryModelFromParent)
+			? model
 			: resolveSubagentModelCandidate(model, availableModels, preferredProvider);
 		if (!normalized) {
-			console.warn(`[pi-subagents] Skipping fallback model '${model}' because it is unavailable in this environment.`);
+			if (index === 0) skippedPrimary = model;
+			else console.warn(`[pi-subagents] Skipping fallback model '${model}' because it is unavailable in this environment.`);
 			continue;
 		}
 		if (seen.has(normalized)) continue;
-		const scopes = configuredScopes(options?.scope);
 		if (index > 0 || scopes.some((scope) => scope.enforce === true && scope.strict === true)) {
 			enforceModelScopes(normalized, scopes, "inherited", options?.onWarn);
 		}
 		seen.add(normalized);
 		candidates.push(normalized);
 	}
-	return filterFallbackCandidates(candidates, {
-		onExcluded(candidate, exclusion) {
-			const reason = redactSecretValues((exclusion.reason ?? "runtime-failure").replace(/[\u0000-\u001f\u007f]+/g, " ")).slice(0, 240);
-			console.warn(`[pi-subagents] Skipping model '${candidate}' due to a cached exclusion (reason: ${reason}; expires: ${new Date(exclusion.expiresAt).toISOString()}).`);
-		},
-	});
+	const resolved = filterFallbackCandidates(candidates, { onExcluded: warnCachedExclusion });
+	if (resolved.length === 0) {
+		if (skippedPrimary) resolveRequiredSubagentModelCandidate(skippedPrimary, availableModels, preferredProvider);
+		if (candidates.length > 0) throw new Error(ZERO_USABLE_MODEL_CANDIDATES_ERROR);
+		return resolved;
+	}
+	if (skippedPrimary) {
+		console.warn(`[pi-subagents] Skipping primary model '${skippedPrimary}' because it is unavailable in this environment.`);
+	}
+	return resolved;
 }
 
 const RETRYABLE_MODEL_FAILURE_PATTERNS = [

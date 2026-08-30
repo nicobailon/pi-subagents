@@ -27,6 +27,7 @@ import { discoverAgents } from "../../src/agents/agents.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey } from "../../src/runs/background/active-async-capacity.ts";
 import { deriveForkPromptCacheKey, SUBAGENT_FORK_CACHE_KEY_ENV } from "../../src/runs/shared/pi-args.ts";
+import { clearExclusions, recordModelFailure } from "../../src/runs/shared/model-exclusions.ts";
 
 interface LaunchResolvedExtensions {
 	version?: number;
@@ -450,9 +451,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	beforeEach(() => {
 		tempDir = createTempDir();
 		mockPi.reset();
+		clearExclusions();
 	});
 
 	afterEach(() => {
+		clearExclusions();
 		removeTempDir(tempDir);
 	});
 
@@ -757,6 +760,143 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const recoveryCallArgs = readMockPiArgs(mockPi, 0);
 		assert.equal(recoveryCallArgs[recoveryCallArgs.indexOf("--tools") + 1], "read,intercom,contact_supervisor");
 		assert.deepEqual(readMockPiRequiredTools(mockPi, 0), ["read"]);
+	});
+
+	it("rejects an explicit unknown model before spawn even when a fallback exists", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
+		mockPi.onCall({ output: "should not spawn" });
+		const launch = executeAsyncSingle(`async-explicit-unknown-model-${Date.now().toString(36)}`, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { model: "mock/fallback", fallbackModels: ["mock/fallback"], completionGuard: false }),
+			modelOverride: "mock/does-not-exist",
+			modelOrigin: "explicit",
+			availableModels: [{ provider: "mock", id: "fallback", fullId: "mock/fallback" }],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+		assert.equal(launch.isError, true);
+		assert.match(launch.content[0]?.text ?? "", /Unknown subagent model 'mock\/does-not-exist'/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("retries configured fallbacks after a valid explicit primary fails", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "primary failed" }],
+					model: "openai/gpt-5-mini",
+					errorMessage: "rate limit exceeded",
+					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+				},
+			}],
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "explicit fallback recovered" });
+		const id = `async-explicit-model-fallback-${Date.now().toString(36)}`;
+		const launch = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { model: "mock/configured", fallbackModels: ["anthropic/claude-sonnet-4"], completionGuard: false }),
+			modelOverride: "openai/gpt-5-mini",
+			modelOrigin: "explicit",
+			availableModels: [
+				{ provider: "mock", id: "configured", fullId: "mock/configured" },
+				{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
+				{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+			],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+
+		assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "launch failed");
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.model, "anthropic/claude-sonnet-4");
+		assert.deepEqual(payload.results[0]?.attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("rejects an explicit cached-excluded model before spawn even when a fallback exists", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
+		recordModelFailure({ modelId: "blocked", provider: "mock", reason: "sk-secret-token-xyz" });
+		mockPi.onCall({ output: "should not spawn" });
+		const launch = executeAsyncSingle(`async-explicit-cached-excluded-${Date.now().toString(36)}`, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { model: "mock/fallback", fallbackModels: ["mock/fallback"], completionGuard: false }),
+			modelOverride: "mock/blocked",
+			modelOrigin: "explicit",
+			availableModels: [
+				{ provider: "mock", id: "blocked", fullId: "mock/blocked" },
+				{ provider: "mock", id: "fallback", fullId: "mock/fallback" },
+			],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+		assert.equal(launch.isError, true);
+		assert.match(launch.content[0]?.text ?? "", /is excluded and cannot be replaced by a fallback/);
+		assert.equal((launch.content[0]?.text ?? "").includes("sk-secret-token-xyz"), false);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("rejects an explicit non-strict out-of-scope model before spawn even when a fallback exists", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
+		mockPi.onCall({ output: "should not spawn" });
+		const launch = executeAsyncSingle(`async-explicit-scope-${Date.now().toString(36)}`, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { model: "mock/fallback", fallbackModels: ["mock/fallback"], completionGuard: false }),
+			modelOverride: "mock/blocked",
+			modelOrigin: "explicit",
+			availableModels: [
+				{ provider: "mock", id: "blocked", fullId: "mock/blocked" },
+				{ provider: "mock", id: "fallback", fullId: "mock/fallback" },
+			],
+			ctx: {
+				pi: { events: { emit() {} } },
+				cwd: tempDir,
+				currentSessionId: "session-1",
+				modelScope: { enforce: true, allow: ["mock/fallback"] },
+			},
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+		assert.equal(launch.isError, true);
+		assert.match(launch.content[0]?.text ?? "", /outside the configured subagent model scope/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("uses a configured fallback when the agent primary is unavailable", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const id = `async-configured-fallback-${Date.now().toString(36)}`;
+		mockPi.onCall({ output: "fallback model ran" });
+		const launch = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { model: "mock/missing-primary", fallbackModels: ["mock/fallback"], completionGuard: false }),
+			modelOrigin: "configured",
+			availableModels: [{ provider: "mock", id: "fallback", fullId: "mock/fallback" }],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+		assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "launch failed");
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.model, "mock/fallback");
+		assert.equal(mockPi.callCount(), 1);
 	});
 
 	it("rejects async thinking above maxThinking before child startup", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
@@ -4642,6 +4782,53 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
 	});
 
+	it("background forked runs use an available fallback when the configured primary is unavailable", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Forked async work" });
+		const parentSessionFile = path.join(tempDir, "parent-pruned-fallback.jsonl");
+		const forkedSessionFile = path.join(tempDir, "forked-pruned-fallback.jsonl");
+		const sessionHeader = { type: "session", version: 1, id: "child", cwd: fs.realpathSync(tempDir), parentSession: parentSessionFile };
+		fs.writeFileSync(parentSessionFile, `${JSON.stringify({ type: "session", version: 1, id: "parent", cwd: fs.realpathSync(tempDir) })}\n`, "utf-8");
+		fs.writeFileSync(forkedSessionFile, `${JSON.stringify(sessionHeader)}\n`, "utf-8");
+		const pruner = { provider: "test", id: "pruner", api: "faux", maxTokens: 1024 };
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			modelRegistry: {
+				getAvailable: () => [
+					{ provider: "mock", id: "fallback" },
+					pruner,
+				],
+				find: (provider: string, id: string) => provider === "test" && id === "pruner" ? pruner : undefined,
+				getApiKeyAndHeaders: async () => ({ ok: true as const, apiKey: "faux" }),
+			},
+			sessionManager: {
+				getSessionId: () => "session-configured-fallback",
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "leaf-current",
+				openSession: () => ({ createBranchedSession: () => forkedSessionFile }),
+			},
+		};
+		const launch = await makeAsyncExecutor([
+			makeAgent("worker", {
+				model: "mock/missing-primary",
+				fallbackModels: ["mock/fallback"],
+				completionGuard: false,
+			}),
+		], { forkContext: { mode: "pruned", model: "test/pruner" } }).execute(
+			"forked-configured-fallback",
+			{ agent: "worker", task: "Do work", async: true, context: "fork" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		) as AsyncExecutionResult;
+		assert.ok(!launch.isError, launch.content[0]?.text);
+		assert.ok(launch.details.asyncId);
+		const payload = await readAsyncPayload(launch.details.asyncId);
+		assert.equal(payload.results[0]?.model, "mock/fallback");
+		assert.deepEqual(payload.results[0]?.attemptedModels, ["mock/fallback"]);
+		const args = readMockPiArgs(mockPi, 0);
+		assert.equal(args[args.indexOf("--model") + 1], "mock/fallback");
+	});
+
 	it("background forked runs inherit a parent model outside the registry", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Forked async work" });
 		const parentSessionFile = path.join(tempDir, "parent.jsonl");
@@ -4727,6 +4914,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		await readAsyncPayload(sourceId);
 		const descriptor = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, sourceId, "recovery-descriptor.json"), "utf-8"));
 		assert.equal(descriptor.modelOverrideFromParent, true);
+		assert.equal(descriptor.modelOrigin, "inherited");
 
 		mockPi.onCall({ output: "Revived async work" });
 		const result = await makeAsyncExecutor([makeAgent("worker")]).execute(

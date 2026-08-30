@@ -7,6 +7,7 @@ import { registerSubagentCapabilityCeiling, resolveSubagentCapabilityCeiling } f
 import { resolveSubagentLaunchContract, SUBAGENT_LAUNCH_CONTRACT_VERSION } from "../../src/api/preflight.ts";
 import { clearSkillCache } from "../../src/agents/skills.ts";
 import { computeMcpServerHash } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
+import { clearExclusions, recordModelFailure } from "../../src/runs/shared/model-exclusions.ts";
 import { TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
 
 let tempDir = "";
@@ -59,10 +60,12 @@ describe("public launch contract preflight", () => {
 		process.env.USERPROFILE = home;
 		process.env.PI_CODING_AGENT_DIR = path.join(home, ".pi", "agent");
 		clearSkillCache();
+		clearExclusions();
 	});
 
 	afterEach(() => {
 		clearSkillCache();
+		clearExclusions();
 		if (previousHome === undefined) delete process.env.HOME;
 		else process.env.HOME = previousHome;
 		if (previousUserProfile === undefined) delete process.env.USERPROFILE;
@@ -296,6 +299,108 @@ Project prompt.
 				availableModels: [{ provider: "test", id: "primary", fullId: "test/primary" }],
 			}),
 			/Unknown subagent model 'fast'/,
+		);
+	});
+
+	it("uses an available configured fallback when the agent primary is unavailable", async () => {
+		const cwd = path.join(tempDir, "repo-unavailable-primary");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "scout.md"), `---
+name: scout
+description: Project scout
+model: test/missing-primary
+fallbackModels:
+  - test/fallback
+---
+Project prompt.
+`);
+
+		const result = await resolveSubagentLaunchContract({
+			agent: "scout",
+			cwd,
+			availableModels: [{ provider: "test", id: "fallback", fullId: "test/fallback" }],
+		});
+
+		assert.equal(result.ok, true);
+		assert.deepEqual(result.contract.modelCandidates, ["test/fallback"]);
+	});
+
+	it("rejects an explicit unknown per-call model even when a fallback is configured", async () => {
+		const cwd = path.join(tempDir, "repo-explicit-unknown-model");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "scout.md"), `---
+name: scout
+description: Project scout
+model: test/missing-primary
+fallbackModels:
+  - test/fallback
+---
+Project prompt.
+`);
+
+		await assert.rejects(
+			resolveSubagentLaunchContract({
+				agent: "scout",
+				cwd,
+				model: "test/does-not-exist",
+				availableModels: [{ provider: "test", id: "fallback", fullId: "test/fallback" }],
+			}),
+			/Unknown subagent model 'test\/does-not-exist'/,
+		);
+	});
+
+	it("fails closed when every configured candidate is unavailable", async () => {
+		const cwd = path.join(tempDir, "repo-all-unavailable-models");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "scout.md"), `---
+name: scout
+description: Project scout
+model: test/missing-primary
+fallbackModels:
+  - test/missing-fallback
+---
+Project prompt.
+`);
+
+		await assert.rejects(
+			resolveSubagentLaunchContract({
+				agent: "scout",
+				cwd,
+				availableModels: [{ provider: "test", id: "other", fullId: "test/other" }],
+			}),
+			/Unknown subagent model 'test\/missing-primary'/,
+		);
+	});
+
+	it("fails closed when cached exclusions leave zero launch candidates", async () => {
+		const cwd = path.join(tempDir, "repo-cached-excluded-models");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "scout.md"), `---
+name: scout
+description: Project scout
+model: test/primary
+fallbackModels:
+  - test/fallback
+---
+Project prompt.
+`);
+		recordModelFailure({ modelId: "primary", provider: "test", reason: "sk-secret-token-xyz" });
+		recordModelFailure({ modelId: "fallback", provider: "test", reason: "sk-secret-token-xyz" });
+
+		await assert.rejects(
+			resolveSubagentLaunchContract({
+				agent: "scout",
+				cwd,
+				availableModels: [
+					{ provider: "test", id: "primary", fullId: "test/primary" },
+					{ provider: "test", id: "fallback", fullId: "test/fallback" },
+				],
+			}),
+			(error: unknown) => {
+				const message = String(error);
+				return /No usable subagent models remain after registry, scope, and cached-exclusion filtering/.test(message)
+					&& !message.includes("sk-secret-token-xyz");
+			},
 		);
 	});
 

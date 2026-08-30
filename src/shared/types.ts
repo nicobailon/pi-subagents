@@ -759,6 +759,7 @@ export interface SteeringRecoveryDescriptor {
 	model?: string;
 	modelProvider?: string;
 	modelOverrideFromParent?: boolean;
+	modelOrigin?: "explicit" | "inherited" | "configured";
 	fallbackModels?: string[];
 	fast?: boolean;
 	thinking?: string;
@@ -2336,6 +2337,8 @@ export interface RunSyncOptions {
 	fast?: boolean;
 	/** The override came from the running parent session, not configuration. */
 	modelOverrideFromParent?: boolean;
+	/** How the launch model was selected: explicit per-call, configured agent primary, or inherited parent. */
+	modelOrigin?: "explicit" | "inherited" | "configured";
 	/** LLM intent arbiter for the completion mutation guard (rescues read-only review runs). */
 	llmIntentArbiter?: import("../runs/shared/llm-intent-arbiter.ts").TaskMutationArbiter;
 	/** Override the agent's default thinking level for this run */

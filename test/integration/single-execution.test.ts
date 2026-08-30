@@ -65,7 +65,7 @@ import { discardPreservedWorktrees } from "../../src/runs/shared/parallel-handof
 import { createWorktrees } from "../../src/runs/shared/worktree.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
-import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
+import { clearExclusions, recordModelFailure } from "../../src/runs/shared/model-exclusions.ts";
 import { createWorkflowChildPermit, workflowChildPermitConsumed } from "../../src/shared/workflow-child-permit.ts";
 import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-adapters.ts";
 
@@ -5641,6 +5641,34 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /Invalid request: malformed payload/u);
 		assert.match(result.details.results[0]?.error ?? "", /Invalid request: malformed payload/u);
 		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("fails closed before spawn when cached exclusions leave zero launch candidates", async () => {
+		recordModelFailure({ modelId: "gpt-5-mini", provider: "openai", reason: "sk-secret-token-xyz" });
+		recordModelFailure({ modelId: "claude-sonnet-4", provider: "anthropic", reason: "sk-secret-token-xyz" });
+		mockPi.onCall({ output: "should not spawn" });
+		const agents = [makeAgent("worker", {
+			model: "openai/gpt-5-mini",
+			fallbackModels: ["anthropic/claude-sonnet-4"],
+		})];
+
+		await assert.rejects(
+			runSync(tempDir, agents, "worker", "Do work", {
+				runId: "cached-exclusion-zero-candidates",
+				acceptance: false,
+				availableModels: [
+					{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
+					{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+				],
+			}),
+			(error: unknown) => {
+				assert.ok(error instanceof Error);
+				assert.match(error.message, /No usable subagent models remain after registry, scope, and cached-exclusion filtering/);
+				assert.equal(error.message.includes("sk-secret-token-xyz"), false);
+				return true;
+			},
+		);
+		assert.equal(mockPi.callCount(), 0);
 	});
 
 	it("retries a zero-activity startup exit on the same model", async () => {

@@ -16,6 +16,7 @@
 - Reduce async widget update churn during running workflows by repainting animation ticks without reinstalling the widget and coalescing close status refreshes (#1726).
 - Avoid repeated staged workflow projection during widget rendering. Thanks [@kkkhs](https://github.com/kkkhs) for #1730.
 - Preserve durable file-only child reports and continue read-only workflow review after malformed acceptance metadata (#1724).
+- Preserve model origins across fallback and fork preparation, allowing unavailable configured primaries and retryable valid explicit primaries to use eligible fallbacks while invalid explicit models remain fail-closed; also stop hidden 125ms spinner redraws while retaining progress refreshes and one-second animation frames ([#1747](https://github.com/nicobailon/pi-subagents/pull/1747) — thanks [@xz-dev](https://github.com/xz-dev)).
 
 ## [0.60.0] - 2026-08-30
 
