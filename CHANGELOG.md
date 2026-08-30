@@ -5,6 +5,7 @@
 
 ### Changed
 - Pass the requested session and timestamp as optional context to background-work providers so they can avoid listing unrelated sessions while preserving strict snapshot validation (#1737).
+- Avoid repeating external-run display normalization during Fleet refresh while retaining validation for externally replaced or mutated records (#1736).
 - Clarify that `oracle` and top-reasoning models are escalation tools, not routine fresh-review defaults.
 - Route untargeted RPC status through restored in-memory projections when safe while preserving executor-backed targeted status and transcript options (#1735).
 

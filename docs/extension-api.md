@@ -133,7 +133,7 @@ updateExternalRun(ctx.sessionManager.getSessionId(), "dependency-review", {
 unregisterExternalRun(ctx.sessionManager.getSessionId(), "dependency-review");
 ```
 
-The API validates and caches bounded display fields when the caller registers or updates a job. FleetView reads that cache only. It does not poll caller code. `snapshotExternalRuns(sessionId)` and `listExternalRuns(sessionId)` return bounded current-session snapshots. By default, malformed cached records throw with the validation error. Display-only Fleet callers can pass `{ ignoreMalformed: true, onMalformedRecord }` to remove bad records and keep rendering with a programmatic diagnostic.
+The API validates and caches bounded display fields when the caller registers or updates a job. FleetView reads that cache only. It does not poll caller code. `snapshotExternalRuns(sessionId)` and `listExternalRuns(sessionId)` return bounded current-session snapshots. Snapshots filter the session-qualified cache key before inspecting record fields; API-written records avoid repeated normalization through module-private provenance, while records replaced or mutated through the process-local registry are validated on demand. By default, malformed records for the requested session throw with the validation error. Display-only Fleet callers can pass `{ ignoreMalformed: true, onMalformedRecord }` to remove bad records and keep rendering with a programmatic diagnostic.
 
 External jobs are observational. The caller owns execution, persistence, cancellation, and result delivery. FleetView does not expose stop, steer, resume, cancel, or Herdr controls for them. Supplied report and transcript paths are shown as bounded text only; FleetView does not read arbitrary external paths.
 

@@ -48,7 +48,16 @@ interface ExternalRunRegistry {
 	runs: Map<string, ExternalRun>;
 }
 
-const RUN_FIELDS = new Set([
+interface TrustedExternalRunRecord {
+	value: unknown;
+	normalized: ExternalRun;
+	keys: readonly string[];
+	values: readonly unknown[];
+}
+
+const trustedRecordsByRegistry = new WeakMap<object, Map<string, TrustedExternalRunRecord>>();
+
+const RUN_FIELD_NAMES = [
 	"id",
 	"sessionId",
 	"source",
@@ -61,7 +70,8 @@ const RUN_FIELDS = new Set([
 	"preview",
 	"reportPath",
 	"transcriptPath",
-]);
+] as const satisfies readonly (keyof ExternalRun)[];
+const RUN_FIELDS = new Set<string>(RUN_FIELD_NAMES);
 const UPDATE_FIELDS = new Set([...RUN_FIELDS].filter((field) => field !== "id" && field !== "sessionId" && field !== "source"));
 
 function registry(): ExternalRunRegistry {
@@ -77,6 +87,14 @@ function registry(): ExternalRunRegistry {
 	const candidate = existing as Partial<ExternalRunRegistry>;
 	if (candidate.version !== EXTERNAL_RUN_REGISTRY_VERSION || !(candidate.runs instanceof Map)) throw new Error(`Unsupported external-run registry at Symbol.for("${EXTERNAL_RUN_REGISTRY_KEY}").`);
 	return candidate as ExternalRunRegistry;
+}
+
+function trustedRecords(current: ExternalRunRegistry): Map<string, TrustedExternalRunRecord> {
+	const cached = trustedRecordsByRegistry.get(current);
+	if (cached) return cached;
+	const records = new Map<string, TrustedExternalRunRecord>();
+	trustedRecordsByRegistry.set(current, records);
+	return records;
 }
 
 function inputObject(value: unknown, field: string, allowed: Set<string>): Record<string, unknown> {
@@ -150,6 +168,41 @@ function clone(run: ExternalRun): ExternalRun {
 	return { ...run };
 }
 
+function trustedRecord(value: unknown, normalized: ExternalRun): TrustedExternalRunRecord {
+	const candidate = value as ExternalRun;
+	return {
+		value,
+		normalized,
+		keys: Object.keys(candidate),
+		values: RUN_FIELD_NAMES.map((field) => candidate[field]),
+	};
+}
+
+function trustedRecordValue(value: unknown, record: TrustedExternalRunRecord | undefined): ExternalRun | undefined {
+	if (!record || record.value !== value || !value || typeof value !== "object") return undefined;
+	try {
+		const candidate = value as ExternalRun;
+		const keys = Object.keys(candidate);
+		if (keys.length !== record.keys.length || keys.some((key, index) => key !== record.keys[index])) return undefined;
+		for (const [index, field] of RUN_FIELD_NAMES.entries()) {
+			if (candidate[field] !== record.values[index]) return undefined;
+		}
+		return record.normalized;
+	} catch {
+		return undefined;
+	}
+}
+
+function rememberTrustedRecord(current: ExternalRunRegistry, cacheKey: string, value: unknown, normalized: ExternalRun): void {
+	trustedRecords(current).set(cacheKey, trustedRecord(value, normalized));
+}
+
+function normalizeCachedRecord(current: ExternalRunRegistry, cacheKey: string, value: unknown): ExternalRun {
+	const run = validateRun(value);
+	rememberTrustedRecord(current, cacheKey, value, run);
+	return run;
+}
+
 /** Register one current-session external job. pi-subagents never controls the job. */
 export function registerExternalRun(input: ExternalRun): ExternalRun {
 	const run = validateRun(input);
@@ -158,6 +211,7 @@ export function registerExternalRun(input: ExternalRun): ExternalRun {
 	if (current.runs.has(runKey)) throw new Error(`External run '${run.id}' is already registered for session '${run.sessionId}'.`);
 	if (current.runs.size >= EXTERNAL_RUN_LIMITS.maxCachedRuns) throw new Error(`External-run registry supports at most ${EXTERNAL_RUN_LIMITS.maxCachedRuns} cached runs.`);
 	current.runs.set(runKey, run);
+	rememberTrustedRecord(current, runKey, run, run);
 	return clone(run);
 }
 
@@ -172,12 +226,17 @@ export function updateExternalRun(sessionId: string, id: string, update: Externa
 	if (!previous) throw new Error(`External run '${safeId}' is not registered for session '${safeSessionId}'.`);
 	const next = validateRun({ ...previous, ...patch });
 	current.runs.set(runKey, next);
+	rememberTrustedRecord(current, runKey, next, next);
 	return clone(next);
 }
 
 /** Remove a cached external job. The caller remains responsible for its process and artifacts. */
 export function unregisterExternalRun(sessionId: string, id: string): boolean {
-	return registry().runs.delete(key(identity(sessionId, "External run sessionId", EXTERNAL_RUN_LIMITS.maxSessionIdLength), identity(id, "External run id")));
+	const current = registry();
+	const runKey = key(identity(sessionId, "External run sessionId", EXTERNAL_RUN_LIMITS.maxSessionIdLength), identity(id, "External run id"));
+	const deleted = current.runs.delete(runKey);
+	if (deleted) trustedRecords(current).delete(runKey);
+	return deleted;
 }
 
 function snapshotBytes(runs: readonly ExternalRun[]): number {
@@ -192,15 +251,19 @@ function getErrorMessage(error: unknown): string {
 export function snapshotExternalRuns(sessionId: string, options: ExternalRunSnapshotOptions = {}): readonly ExternalRun[] {
 	const safeSessionId = identity(sessionId, "External-run snapshot sessionId", EXTERNAL_RUN_LIMITS.maxSessionIdLength);
 	const current = registry();
+	const trusted = trustedRecords(current);
+	const sessionPrefix = `${safeSessionId}\0`;
 	const runs: ExternalRun[] = [];
 	for (const [cacheKey, value] of current.runs.entries()) {
+		if (typeof cacheKey !== "string" || !cacheKey.startsWith(sessionPrefix)) continue;
 		try {
-			const run = validateRun(value);
+			const run = trustedRecordValue(value, trusted.get(cacheKey)) ?? normalizeCachedRecord(current, cacheKey, value);
 			if (run.sessionId === safeSessionId) runs.push(run);
 		} catch (error) {
 			const message = `Malformed cached external run '${cacheKey}': ${getErrorMessage(error)}`;
 			if (!options.ignoreMalformed) throw new Error(message, { cause: error instanceof Error ? error : undefined });
 			current.runs.delete(cacheKey);
+			trusted.delete(cacheKey);
 			options.onMalformedRecord?.(message);
 		}
 	}
