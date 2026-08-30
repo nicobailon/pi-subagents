@@ -22,9 +22,14 @@ export interface BackgroundWorkReconcileContext {
 	nowMs: number;
 }
 
+export interface BackgroundWorkListContext {
+	sessionId: string;
+	nowMs: number;
+}
+
 export interface BackgroundWorkProvider {
 	name: string;
-	listActiveWork(): readonly BackgroundWorkItem[];
+	listActiveWork(context?: BackgroundWorkListContext): readonly BackgroundWorkItem[];
 	wakeChannels?: readonly string[];
 	reconcile?(context: BackgroundWorkReconcileContext): void;
 }
@@ -171,7 +176,7 @@ export function snapshotBackgroundWork(sessionId: string, nowMs = Date.now()): B
 		}
 		let active: readonly BackgroundWorkItem[];
 		try {
-			active = provider.listActiveWork();
+			active = provider.listActiveWork({ sessionId, nowMs });
 		} catch (error) {
 			throw new Error(
 				`Background-work provider '${provider.name}' listActiveWork failed: ${error instanceof Error ? error.message : String(error)}`,

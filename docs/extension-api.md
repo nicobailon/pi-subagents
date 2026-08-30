@@ -287,8 +287,8 @@ import { registerBackgroundWorkProvider } from "pi-subagents/background-work";
 const dispose = registerBackgroundWorkProvider({
   name: "my-background-extension",
   wakeChannels: ["my-extension:job-finished"],
-  listActiveWork: () => jobs
-    .filter((job) => job.status === "running")
+  listActiveWork: (context) => jobs
+    .filter((job) => job.status === "running" && (!context || job.ownerSessionId === context.sessionId))
     .map((job) => ({ id: job.id, sessionId: job.ownerSessionId })),
   reconcile: ({ sessionId, nowMs }) => reconcileJobs(sessionId, nowMs),
 });
@@ -297,6 +297,7 @@ const dispose = registerBackgroundWorkProvider({
 Semantics:
 
 - Each item needs a stable provider-local ID and the exact Pi session ID that owns it. `subagent_wait` captures those identities rather than a count, so one job finishing while another starts still satisfies first-completion waits without losing the replacement.
+- `listActiveWork` receives an optional `{ sessionId, nowMs }` context during snapshots. Providers can use `sessionId` to avoid scanning unrelated work; existing zero-argument `() => items` providers continue to work, and returned items are still validated and filtered to the exact requested session.
 - It filters snapshots to the active session, fails closed if a provider disappears while its work is tracked, and surfaces malformed snapshots or provider errors with provider context.
 - Wake channels only shorten polling; validated snapshots remain authoritative.
 - Providers share a registry through `Symbol.for("pi-subagents.background-work.v1")`, allowing independently loaded extension modules to meet in one Pi process.

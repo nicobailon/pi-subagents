@@ -9,6 +9,7 @@ import {
 	listBackgroundWorkWakeChannels,
 	registerBackgroundWorkProvider,
 	snapshotBackgroundWork,
+	type BackgroundWorkListContext,
 	type BackgroundWorkSnapshot,
 } from "../../src/api/background-work.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
@@ -106,6 +107,39 @@ describe("background-work provider protocol", () => {
 		assert.deepEqual(listBackgroundWorkProviders(), []);
 	});
 
+	it("passes an optional session context while preserving legacy providers and exact filtering", () => {
+		let listContext: BackgroundWorkListContext | undefined;
+		let legacyCalled = false;
+		registerBackgroundWorkProvider({
+			name: "legacy",
+			listActiveWork: () => {
+				legacyCalled = true;
+				return [{ id: "legacy-job", sessionId: "session-a" }];
+			},
+		});
+		registerBackgroundWorkProvider({
+			name: "scoped",
+			listActiveWork: (context) => {
+				if (!context) throw new Error("expected background-work list context");
+				listContext = context;
+				return [
+					{ id: "mine", sessionId: context.sessionId },
+					{ id: "theirs", sessionId: "session-b" },
+				];
+			},
+		});
+
+		assert.deepEqual(snapshotBackgroundWork("session-a", 42), {
+			providers: ["legacy", "scoped"],
+			items: [
+				{ provider: "legacy", id: "legacy-job", sessionId: "session-a" },
+				{ provider: "scoped", id: "mine", sessionId: "session-a" },
+			],
+		});
+		assert.equal(legacyCalled, true);
+		assert.deepEqual(listContext, { sessionId: "session-a", nowMs: 42 });
+	});
+
 	it("validates provider metadata and work items strictly", () => {
 		assert.throws(() => registerBackgroundWorkProvider({ name: " patty", listActiveWork: () => [] }), /leading or trailing/);
 		assert.throws(() => registerBackgroundWorkProvider({ name: "patty", listActiveWork: () => [], wakeChannels: ["done", "done"] }), /duplicates/);
@@ -123,6 +157,27 @@ describe("background-work provider protocol", () => {
 				{ id: "job", sessionId: "session-a" },
 				{ id: "job", sessionId: "session-a" },
 			],
+		});
+		assert.throws(() => snapshotBackgroundWork("session-a"), /duplicate item 'job'/);
+	});
+
+	it("validates scoped provider results before filtering them", () => {
+		registerBackgroundWorkProvider({
+			name: "scoped",
+			listActiveWork: () => [{ id: "job", sessionId: "session-a", extra: true } as never],
+		});
+		assert.throws(() => snapshotBackgroundWork("session-a"), /unknown fields: extra/);
+
+		clearRegistry();
+		registerBackgroundWorkProvider({
+			name: "scoped",
+			listActiveWork: (context) => {
+				if (!context) throw new Error("expected background-work list context");
+				return [
+					{ id: "job", sessionId: context.sessionId },
+					{ id: "job", sessionId: context.sessionId },
+				];
+			},
 		});
 		assert.throws(() => snapshotBackgroundWork("session-a"), /duplicate item 'job'/);
 	});
