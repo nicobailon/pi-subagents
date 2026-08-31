@@ -88,7 +88,6 @@ console.log(`
 The extension is now available in pi. Tools added:
   • subagent - Delegate tasks to agents and inspect run status
   • bg_wait - Wait for background/provider/detached work without native completion notifications
-    (subagent_wait remains a deprecated compatibility alias)
 
 Documentation: ${EXTENSION_DIR}/README.md
 `);

@@ -70,14 +70,12 @@ describe("async runner execution", () => {
 		assert.match(interactive, /provider, detached, or other background work that lacks a native completion notification/i);
 		assert.doesNotMatch(interactive, /bg_wait\(\{ id:/i);
 		assert.doesNotMatch(interactive, /auto-drains current-session background work/i);
-		assert.doesNotMatch(interactive, /subagent_wait/);
 
 		const headless = formatAsyncStartedMessage("Async: worker [headless]", false);
 		assert.match(headless, /non-interactive run.*auto-drains current-session subagent work at agent_end/i);
 		assert.match(headless, /Use bg_wait only.*provider, detached, or other background-work results.*no native completion notification/i);
 		assert.doesNotMatch(headless, /nonBlocking: true/);
 		assert.doesNotMatch(headless, /By default, return control to the user/i);
-		assert.doesNotMatch(headless, /subagent_wait/);
 	});
 
 	it("places detached runner stdio logs in the async run directory", () => {

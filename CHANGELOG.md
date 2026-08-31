@@ -15,7 +15,7 @@
 ### Added
 - Add extension-owned named workflow resources so permission and policy extensions can distinguish trusted workflow resources from raw scripts. Thanks [@mathiasloh](https://github.com/mathiasloh) for #1751.
 - Add workflow-only `globalConcurrencyLimit` and `maxSubagentSpawnsPerRun` overrides for top-level `workflowScript` calls. Thanks [@RapierCraft](https://github.com/RapierCraft) for #1760.
-- Add `bg_wait` as the primary background-work wait tool while keeping `subagent_wait` as a deprecated compatibility alias (#1729).
+- Remove the deprecated compatibility wait alias; use `bg_wait` instead (#1729).
 
 ### Changed
 - Show effective model mappings for discovered and runtime-registered subagents through management and `/subagents-models`. Thanks [@RapierCraft](https://github.com/RapierCraft) for #1732.

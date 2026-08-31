@@ -77,14 +77,14 @@ describe("effectiveToolTimeoutMs", () => {
 	});
 
 	it("never applies a tool timeout to blocking coordination tools", () => {
-		for (const tool of ["contact_supervisor", "intercom", "bg_wait", "subagent_wait"]) {
+		for (const tool of ["contact_supervisor", "intercom", "bg_wait"]) {
 			assert.equal(isToolTimeoutExempt(tool), true, `${tool} must be exempt`);
 			assert.equal(effectiveToolTimeoutMs(tool, 1234), undefined);
 			assert.equal(effectiveToolTimeoutMs(tool, undefined), undefined);
 		}
 		assert.equal(isToolTimeoutExempt("bash"), false);
 		assert.equal(isToolTimeoutExempt(undefined), false);
-		assert.deepEqual([...TOOL_TIMEOUT_ALLOWLIST].sort(), ["bg_wait", "contact_supervisor", "intercom", "subagent_wait"]);
+		assert.deepEqual([...TOOL_TIMEOUT_ALLOWLIST].sort(), ["bg_wait", "contact_supervisor", "intercom"]);
 	});
 });
 

@@ -107,7 +107,7 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
-	it("rejects non-blocking subscriptions from headless tool calls", async () => {
+	it("registers bg_wait and rejects non-blocking subscriptions from headless tool calls", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-headless-"));
 		try {
 			const state = makeState();
@@ -126,8 +126,7 @@ describe("non-blocking wait subscriptions", () => {
 			} as never, state, true, {
 				arm() { throw new Error("headless calls must not arm subscriptions"); },
 			});
-			assert.deepEqual(registered.map((entry) => entry.name), ["bg_wait", "subagent_wait"]);
-			assert.match(registered[1]?.description ?? "", /deprecated compatibility alias for `bg_wait`/i);
+			assert.deepEqual(registered.map((entry) => entry.name), ["bg_wait"]);
 			await assert.rejects(
 				registered[0]!.execute("wait", { id: "run-headless", nonBlocking: true }, undefined, undefined, { hasUI: false }),
 				/long-lived interactive subagent runtime/,

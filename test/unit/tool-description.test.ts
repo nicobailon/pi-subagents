@@ -122,7 +122,6 @@ describe("registered subagent tool description", () => {
 		assert.doesNotMatch(description, /tasks\[\]|chain\[\]/i);
 		assert.match(description, /ordinary async subagents notify this session natively.*return control.*do not call bg_wait/i);
 		assert.match(description, /bg_wait only for provider, detached, or other background work without a native notification/i);
-		assert.doesNotMatch(description, /subagent_wait/i);
 		assert.match(description, /continue independent work only until its next dependency barrier; consume the result before work that depends on it/i);
 		assert.match(description, /children\.list.*resume only rows reported resumable/i);
 		assert.match(description, /Each workflow key identifies one result lane.*new stable workflow key.*retained resume pass/i);

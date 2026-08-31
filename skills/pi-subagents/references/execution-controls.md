@@ -168,13 +168,12 @@ from disabling `waitTool`, which returns immediately without arming a future
 wake. If a foreground child detaches for supervisor coordination, reply first,
 then wait on its id; do not resume or launch a replacement while it remains
 detached. Headless sessions also auto-drain exact current-session work at
-`agent_end` as a final safeguard. `subagent_wait` remains available as a
-deprecated compatibility alias for `bg_wait`.
+`agent_end` as a final safeguard.
 
 Providers are discovered through the `pi-subagents/background-work` registry and
 must expose a stable item id and owning session id. Load a provider through the
-child’s `extensions` or `subagentOnlyExtensions` and allow `bg_wait` (or the
-deprecated `subagent_wait` compatibility alias) in its tools. For
+child’s `extensions` or `subagentOnlyExtensions` and allow `bg_wait` in its
+tools. For
 non-interactive fleets, launch N workers, wait for the next completion, react,
 and replace as needed; use `all: true` only when intentionally draining the
 fleet. If `PI_SUBAGENT_WAIT_TOOL_ENABLED` disables blocking, direct waits return

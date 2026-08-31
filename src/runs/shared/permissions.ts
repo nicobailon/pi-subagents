@@ -7,7 +7,7 @@ export interface PermissionConfig { rules?: PermissionRules }
 
 export const PERMISSION_POLICY_ENV = "PI_SUBAGENT_PERMISSION_POLICY";
 export const PERMISSION_AUDIT_PATH_ENV = "PI_SUBAGENT_PERMISSION_AUDIT_PATH";
-const INTERNAL_TOOLS = new Set(["contact_supervisor", "intercom", "bg_wait", "subagent_wait", "structured_output"]);
+const INTERNAL_TOOLS = new Set(["contact_supervisor", "intercom", "bg_wait", "structured_output"]);
 const DECISIONS = new Set<PermissionDecision>(["allow", "ask", "deny"]);
 const MAX_POLICY_BYTES = 16 * 1024;
 const MAX_PREVIEW_BYTES = 2048;

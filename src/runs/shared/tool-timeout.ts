@@ -16,7 +16,7 @@ export const DEFAULT_FAST_TOOL_TIMEOUT_TOOLS = new Set([
 ]);
 
 /** Tools whose normal job can be to wait for a person or another run. */
-export const TOOL_TIMEOUT_EXEMPT_TOOLS = new Set(["contact_supervisor", "intercom", "bg_wait", "subagent_wait"]);
+export const TOOL_TIMEOUT_EXEMPT_TOOLS = new Set(["contact_supervisor", "intercom", "bg_wait"]);
 
 // Backward-compatible export name for existing callers/tests.
 export const TOOL_TIMEOUT_ALLOWLIST = TOOL_TIMEOUT_EXEMPT_TOOLS;
