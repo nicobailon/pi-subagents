@@ -6,6 +6,7 @@
 ### Fixed
 - Establish async lifecycle sidecars before external CLI workers can mutate a worktree, so a disappeared runner is reconciled to a failed run. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1764.
 - Preserve explicit read-only intent when escaped line separators surround no-edit wording, so workflow delegates do not trigger the completion mutation guard. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1765.
+- Launch child Pi processes through the resolved CLI JavaScript on Windows hosts and run JavaScript `PI_SUBAGENT_PI_BINARY` overrides with Node. Thanks [@caohuipeng](https://github.com/caohuipeng) for #1768.
 
 ## [0.61.0] - 2026-08-31
 

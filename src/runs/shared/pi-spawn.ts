@@ -58,12 +58,16 @@ interface PiSpawnCommand {
 	args: string[];
 }
 
+function isNodeScriptPath(filePath: string): boolean {
+	return /\.(?:mjs|cjs|js)$/i.test(filePath);
+}
+
 function isRunnableNodeScript(
 	filePath: string,
 	existsSync: (filePath: string) => boolean,
 ): boolean {
 	if (!existsSync(filePath)) return false;
-	return /\.(?:mjs|cjs|js)$/i.test(filePath);
+	return isNodeScriptPath(filePath);
 }
 
 function normalizePath(filePath: string): string {
@@ -140,9 +144,16 @@ export function getPiSpawnCommand(
 	args: string[],
 	deps: PiSpawnDeps = {},
 ): PiSpawnCommand {
+	const platform = deps.platform ?? process.platform;
 	const env = deps.env ?? process.env;
 	const piBinary = env[PI_SUBAGENT_PI_BINARY_ENV]?.trim();
 	if (piBinary) {
+		if (platform === "win32" && isNodeScriptPath(piBinary)) {
+			return {
+				command: deps.execPath ?? process.execPath,
+				args: [piBinary, ...args],
+			};
+		}
 		return { command: piBinary, args };
 	}
 

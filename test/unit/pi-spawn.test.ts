@@ -59,6 +59,33 @@ describe("getPiSpawnCommand", () => {
 		});
 	});
 
+	for (const extension of ["js", "mjs", "cjs"] as const) {
+		it(`runs a Windows ${extension} PI_SUBAGENT_PI_BINARY override through Node`, () => {
+			const piBinary = `C:\\Program Files\\pi\\bin\\pi-cli.${extension}`;
+			const args = ["--mode", "json", "Task: check output"];
+			const result = getPiSpawnCommand(args, {
+				platform: "win32",
+				execPath: "C:\\Program Files\\nodejs\\node.exe",
+				env: { PI_SUBAGENT_PI_BINARY: piBinary },
+			});
+			assert.deepEqual(result, {
+				command: "C:\\Program Files\\nodejs\\node.exe",
+				args: [piBinary, ...args],
+			});
+		});
+	}
+
+	it("keeps a JavaScript PI_SUBAGENT_PI_BINARY override direct on POSIX", () => {
+		const piBinary = "/opt/pi/bin/pi-cli.mjs";
+		const args = ["--mode", "json", "Task: check output"];
+		const result = getPiSpawnCommand(args, {
+			platform: "darwin",
+			execPath: "/usr/local/bin/node",
+			env: { PI_SUBAGENT_PI_BINARY: piBinary },
+		});
+		assert.deepEqual(result, { command: piBinary, args });
+	});
+
 	it("ignores a blank PI_SUBAGENT_PI_BINARY override", () => {
 		const args = ["--mode", "json", "Task: check output"];
 		const result = getPiSpawnCommand(args, {
@@ -148,6 +175,33 @@ describe("getPiSpawnCommand", () => {
 		const result = getPiSpawnCommand(args, deps);
 		assert.deepEqual(result, {
 			command: "/usr/local/bin/node",
+			args: [cliPath, ...args],
+		});
+	});
+
+	it("switches from bare pi to the installed CLI script when Windows resolution becomes available", () => {
+		const packageJsonPath = "/opt/pi/package.json";
+		const cliPath = path.resolve(
+			path.dirname(packageJsonPath),
+			"dist/cli/index.js",
+		);
+		let cliAvailable = false;
+		const deps = makeDeps({
+			platform: "win32",
+			execPath: "C:\\Program Files\\nodejs\\node.exe",
+			argv1: "/opt/pi-web/dist/server.js",
+			packageJsonPath,
+			packageJsonContent: JSON.stringify({ bin: { pi: "dist/cli/index.js" } }),
+			existing: [packageJsonPath],
+		});
+		deps.existsSync = (filePath) =>
+			filePath === packageJsonPath || (cliAvailable && filePath === cliPath);
+		const args = ["-p", "Task: hello"];
+
+		assert.deepEqual(getPiSpawnCommand(args, deps), { command: "pi", args });
+		cliAvailable = true;
+		assert.deepEqual(getPiSpawnCommand(args, deps), {
+			command: "C:\\Program Files\\nodejs\\node.exe",
 			args: [cliPath, ...args],
 		});
 	});
