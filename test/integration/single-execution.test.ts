@@ -4144,6 +4144,52 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	it("accepts JSON-encoded acceptance objects and diagnoses malformed strings", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const acceptance = {
+			level: "checked" as const,
+			criteria: [{ id: "criterion-1", must: "Return required evidence" }],
+		};
+		const acceptedOutput = [
+			"done",
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "implemented" }],
+				changedFiles: ["src/file.ts"],
+				testsAddedOrUpdated: ["test/file.test.ts"],
+				commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+				validationOutput: ["tests passed"],
+				residualRisks: [],
+				noStagedFiles: true,
+			}),
+			"```",
+		].join("\n");
+		const executor = makeExecutor([makeAgent("echo")]);
+		for (const [index, input] of [acceptance, JSON.stringify(acceptance)].entries()) {
+			mockPi.onCall({ output: acceptedOutput });
+			const result = await executor.execute(
+				`acceptance-object-string-${index}`,
+				{ async: false, agent: "echo", task: "Return the required evidence", acceptance: input as never },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "acceptance run failed");
+			assert.equal(result.details.results[0]?.acceptance?.status, "checked");
+		}
+
+		const malformed = await executor.execute(
+			"malformed-acceptance-object-string",
+			{ async: false, agent: "echo", task: "Do not spawn", acceptance: '{"level":"checked"' as never },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(malformed.isError, true);
+		assert.match(malformed.content[0]?.text ?? "", /acceptance JSON string must encode a valid acceptance object/i);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
 	it("rejects invalid verified acceptance before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 		const invalidPolicies = [

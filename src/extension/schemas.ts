@@ -86,10 +86,13 @@ const AcceptanceOverride = Type.Unsafe({
 			deprecated: true,
 			description: "Invalid as an explicit policy. Recognized only so preflight can explain that reviewed is an achieved status.",
 		},
+		{
+			type: "string",
+		},
 		{ type: "boolean", enum: [false] },
 		{ type: "object", additionalProperties: true },
 	],
-	description: `Optional acceptance policy. For reviewer/read-only calls, omit acceptance. Example: { level: "checked", evidence: ["commands-run", "changed-files"] }. Supported evidence kinds: ${AcceptanceEvidenceKinds.join(", ")}. Evidence levels end at verified; use acceptance.review.required for review. Omitted means auto-inferred unless agentContract compatibility behavior is enabled.`,
+	description: `Optional acceptance policy. Prefer an inline JSON object. JSON-encoded object strings are tolerated only during input normalization; invalid strings fail closed. Reviewer/read-only calls, omit acceptance. { level: "checked", evidence: ["commands-run", "changed-files"] }. Supported evidence kinds: ${AcceptanceEvidenceKinds.join(",")}. acceptance.review.required.`,
 });
 
 const AgentContractOverride = Type.Object({

@@ -146,18 +146,46 @@ function inferLevel(input: {
 	};
 }
 
-export function normalizeAcceptanceInput(input: AcceptanceInput | undefined): AcceptanceConfig {
+type AcceptanceInputNormalizationResult = { value: unknown; error?: string };
+
+function normalizeAcceptanceValue(input: unknown, pathLabel = "acceptance"): AcceptanceInputNormalizationResult {
+	if (typeof input !== "string") return { value: input };
+	const trimmed = input.trim();
+	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return { value: input };
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(trimmed);
+	} catch (error) {
+		return {
+			value: input,
+			error: `${pathLabel} JSON string must encode a valid acceptance object: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+		const kind = parsed === null ? "null" : Array.isArray(parsed) ? "an array" : typeof parsed;
+		return { value: input, error: `${pathLabel} JSON string must encode an object; got ${kind}.` };
+	}
+	return { value: parsed };
+}
+
+export function normalizeAcceptanceInput(input: unknown): AcceptanceConfig {
+	const normalized = normalizeAcceptanceValue(input);
+	if (normalized.error) throw new Error(normalized.error);
+	input = normalized.value;
 	if (input === undefined || input === "auto") return { level: "auto" };
 	if (input === false) return { level: "none", reason: "disabled by deprecated false shorthand" };
-	if (typeof input === "string") return { level: input };
-	return { ...input };
+	if (typeof input === "string") return { level: input as AcceptanceConfig["level"] };
+	return { ...(input as AcceptanceConfig) };
 }
 
 export type ResolvedAcceptanceReportMode = "off" | "optional" | "required";
 
-export function resolveAcceptanceReportMode(input: AcceptanceInput | undefined): ResolvedAcceptanceReportMode {
-	const report = input && typeof input === "object" ? input.report : undefined;
-	return input === false || report === "off" ? "off" : report === "on" ? "required" : "optional";
+export function resolveAcceptanceReportMode(input: unknown): ResolvedAcceptanceReportMode {
+	const normalized = normalizeAcceptanceValue(input);
+	if (normalized.error) throw new Error(normalized.error);
+	const value = normalized.value;
+	const report = value && typeof value === "object" && !Array.isArray(value) ? (value as AcceptanceConfig).report : undefined;
+	return value === false || report === "off" ? "off" : report === "on" ? "required" : "optional";
 }
 
 type GateAcceptanceNormalizationResult =
@@ -165,7 +193,11 @@ type GateAcceptanceNormalizationResult =
 	| { ok: false; error: string };
 
 export function normalizeGateAcceptance(gate: unknown, acceptance: AcceptanceInput | undefined): GateAcceptanceNormalizationResult {
-	if (gate === undefined) return acceptance === undefined ? { ok: true } : { ok: true, acceptance };
+	if (gate === undefined) {
+		if (acceptance === undefined) return { ok: true };
+		const normalized = normalizeAcceptanceValue(acceptance);
+		return normalized.error ? { ok: false, error: normalized.error } : { ok: true, acceptance: normalized.value as AcceptanceInput };
+	}
 	if (typeof gate !== "string" || !gate.trim()) return { ok: false, error: "gate must be a non-empty command string." };
 	if (acceptance !== undefined) return { ok: false, error: "gate cannot be combined with acceptance; use one gate command or acceptance.verify." };
 	return { ok: true, acceptance: { level: "verified", verify: [{ id: "gate", command: gate.trim() }] } };
@@ -184,6 +216,9 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	const errors: string[] = [];
 	if (input === undefined) return errors;
 	if (input === false) return errors;
+	const normalized = normalizeAcceptanceValue(input, pathLabel);
+	if (normalized.error) return [normalized.error];
+	input = normalized.value;
 	if (typeof input === "string") {
 		if (input === "reviewed") errors.push(`${pathLabel} ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
 		else if (!VALID_LEVELS.has(input as AcceptanceLevel)) errors.push(`${pathLabel} has invalid level '${input}'.`);
@@ -345,6 +380,9 @@ export function validateExecutionAcceptance(input: {
 }
 
 function validateAcceptanceReportMode(acceptance: unknown, outputSchema: unknown, pathLabel: string): string[] {
+	const normalized = normalizeAcceptanceValue(acceptance, pathLabel);
+	if (normalized.error) return [];
+	acceptance = normalized.value;
 	if (!acceptance || typeof acceptance !== "object" || Array.isArray(acceptance)) return [];
 	if (!("report" in acceptance)) return [];
 	return outputSchema === undefined ? [`${pathLabel}.report requires outputSchema.`] : [];

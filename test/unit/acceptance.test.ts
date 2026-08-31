@@ -11,6 +11,7 @@ import {
 	aggregateAcceptanceReport,
 	evaluateAcceptance,
 	formatAcceptancePrompt,
+	normalizeAcceptanceInput,
 	normalizeGateAcceptance,
 	parseAcceptanceReport,
 	quoteExecutableForShell,
@@ -1365,6 +1366,17 @@ describe("acceptance gates", () => {
 			else process.env.GATE_INHERITED_SECRET = previousInheritedSecret;
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
+	});
+
+	it("normalizes JSON-encoded acceptance objects before existing validation", () => {
+		const inline = { level: "checked" as const, evidence: ["commands-run" as const, "changed-files" as const] };
+		const encoded = JSON.stringify(inline);
+
+		assert.deepEqual(normalizeAcceptanceInput(encoded), inline);
+		assert.deepEqual(validateAcceptanceInput(encoded), validateAcceptanceInput(inline));
+		assert.match(validateAcceptanceInput(JSON.stringify({ evidence: "commands-run" })).join("\n"), /acceptance\.evidence must be an array/);
+		assert.match(validateAcceptanceInput('{"level":"checked"').join("\n"), /acceptance JSON string must encode a valid acceptance object/i);
+		assert.match(validateAcceptanceInput(JSON.stringify(["checked"])).join("\n"), /acceptance JSON string must encode an object/i);
 	});
 
 	it("validates invalid disable and verify shapes", () => {

@@ -8,6 +8,7 @@
 - Add per-agent `excludeTools` deny-lists that compose with Pi's ambient or explicit child tool selection. Thanks [@expoli](https://github.com/expoli) for #1776.
 
 ### Fixed
+- Tolerate JSON-encoded acceptance objects from model tool calls by normalizing them before validation, while preserving clear failures for malformed strings. Thanks [@mapleluvr](https://github.com/mapleluvr) for #1781.
 - Separate steer and follow-up receipt statuses from their redacted message previews (#1773).
 - Establish async lifecycle sidecars before external CLI workers can mutate a worktree, so a disappeared runner is reconciled to a failed run. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1764.
 - Preserve explicit read-only intent when escaped line separators surround no-edit wording, so workflow delegates do not trigger the completion mutation guard. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1765.
