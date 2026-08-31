@@ -256,6 +256,19 @@ describe("Herdr inspector", () => {
 			assert.deepEqual(consumeSteerRequests(asyncDir).map((request) => ({ message: request.message, targetIndex: request.targetIndex, source: request.source })), [
 				{ message: "keep going", targetIndex: 0, source: "herdr-inspector" },
 			]);
+			assert.match(submitInspectorControl({ asyncDir, runId: "run-123", index: 0, refreshMs: 1_500 }, "keep going without a prefix"), /Steering queued for run run-123/);
+			assert.deepEqual(consumeSteerRequests(asyncDir).map((request) => ({ message: request.message, targetIndex: request.targetIndex, source: request.source })), [
+				{ message: "keep going without a prefix", targetIndex: 0, source: "herdr-inspector" },
+			]);
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ ...status, mode: "parallel", steps: [...status.steps!, { agent: "reviewer", status: "running" }] }), "utf-8");
+			const aggregateDashboard = formatInspectorDashboard({ status: { ...status, mode: "parallel", steps: [...status.steps!, { agent: "reviewer", status: "running" }] }, asyncDir });
+			assert.match(aggregateDashboard, /Controls: steer <message> \| stop \| status/);
+			assert.doesNotMatch(aggregateDashboard, /type guidance/);
+			assert.throws(() => submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500 }, "ambiguous plain guidance"), /Plain guidance requires a child-specific inspector/);
+			assert.match(submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500 }, "steer broadcast guidance"), /Steering queued for run run-123/);
+			assert.deepEqual(consumeSteerRequests(asyncDir).map((request) => ({ message: request.message, targetIndexes: request.targetIndexes, source: request.source })), [
+				{ message: "broadcast guidance", targetIndexes: [0, 1], source: "herdr-inspector" },
+			]);
 			assert.match(submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500 }, "stop"), /Stop requested/);
 			assert.equal(consumeStopRequest(asyncDir), true);
 			assert.throws(() => submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500 }, "reply decision-1 yes"), /parent Pi session/);
