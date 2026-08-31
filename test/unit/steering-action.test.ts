@@ -139,7 +139,7 @@ describe("acknowledged steering action", () => {
 			assert.equal(result.isError, undefined);
 			assert.equal(result.details.steering?.state, "delivered");
 			assert.match(result.content[0]!.text, /Steering delivered/);
-			assert.match(result.content[0]!.text, /Message: "correct course"/);
+			assert.match(result.content[0]!.text, /Message sent:\n```text\ncorrect course\n```/);
 		} finally {
 			removeAsyncDir(asyncDir);
 		}
@@ -330,7 +330,7 @@ describe("acknowledged steering action", () => {
 			const result = await action;
 			assert.equal(result.isError, undefined);
 			assert.equal(result.details.steering?.state, "recovered");
-			assert.match(result.content[0]!.text, /Message: "correct course"/);
+			assert.match(result.content[0]!.text, /Message sent:\n```text\ncorrect course\n```/);
 			assert.equal(result.details.steering?.replacementRunId, "replacement");
 			assert.ok(result.details.steering?.targets[0]?.lateDeliveredAt);
 			const limits = receivedLimits as { timeoutMs: number; absoluteDeadlineAt: number; toolBudget: unknown };

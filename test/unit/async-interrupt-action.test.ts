@@ -216,7 +216,7 @@ describe("async interrupt action", () => {
 			assert.equal(result.details.steering?.state, "delivered");
 			assert.equal(result.details.steering?.sourceRunId, childRunId);
 			assert.equal(request.message, "Focus on the failing test.");
-			assert.match(text(result), /Message: "Focus on the failing test\."/);
+			assert.match(text(result), /Message sent:\n```text\nFocus on the failing test\.\n```/);
 		} finally {
 			cleanup(workflowRunId, asyncDir);
 		}

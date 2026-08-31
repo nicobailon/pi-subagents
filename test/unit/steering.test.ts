@@ -3,17 +3,23 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { actionResultFromSteeringStatus, claimSteeringRecovery, createSteeringStatus, recordSteeringRequest, remainingSteeringRecoveryLimits, steeringMessagePreview, terminalSteeringNoticeState, updateSteeringTarget } from "../../src/runs/background/steering.ts";
+import { actionResultFromSteeringStatus, claimSteeringRecovery, createSteeringStatus, recordSteeringRequest, remainingSteeringRecoveryLimits, steeringMessagePreview, steeringReceipt, terminalSteeringNoticeState, updateSteeringTarget } from "../../src/runs/background/steering.ts";
 import { applySteeringRecoveryAgentConfig } from "../../src/runs/background/async-resume.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 
 describe("steering lifecycle ledger", () => {
-	it("redacts and bounds steering message previews", () => {
+	it("redacts, bounds, and separates steering message previews", () => {
 		const secret = "ghp_1234567890abcdef";
-		const preview = steeringMessagePreview(`Use ${secret}\n${"x".repeat(200)}`);
+		const message = `Use ${secret}\n${"x".repeat(200)}`;
+		const preview = steeringMessagePreview(message);
+		const receipt = steeringReceipt(message, "Steering delivered.");
 		assert.ok(preview.length <= 160);
 		assert.match(preview, /\[redacted\]/);
 		assert.doesNotMatch(preview, new RegExp(secret));
+		assert.match(receipt, /\[redacted\]/);
+		assert.doesNotMatch(receipt, new RegExp(secret));
+		assert.match(receipt, /^Steering delivered\.\n\nMessage sent:\n```text\n[\s\S]+\n```$/);
+		assert.match(steeringReceipt("review this:\n```\ntext\n```", "Steering queued."), /^Steering queued\.\n\nMessage sent:\n````text\n[\s\S]+\n````$/);
 	});
 
 	it("retains 20 recent requests while aggregate totals remain monotonic", () => {

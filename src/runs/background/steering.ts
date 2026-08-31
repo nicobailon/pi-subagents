@@ -23,7 +23,10 @@ export function steeringMessagePreview(message: string): string {
 }
 
 export function steeringReceipt(message: string, receipt: string): string {
-	return `${receipt} Message: ${JSON.stringify(steeringMessagePreview(message))}`;
+	const preview = steeringMessagePreview(message);
+	const longestFence = Math.max(2, ...[...preview.matchAll(/`{3,}/g)].map((match) => match[0]!.length));
+	const fence = "`".repeat(longestFence + 1);
+	return `${receipt}\n\nMessage sent:\n${fence}text\n${preview}\n${fence}`;
 }
 
 export function createSteeringStatus(): SteeringStatus {
