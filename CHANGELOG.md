@@ -5,6 +5,7 @@
 
 ### Fixed
 - Establish async lifecycle sidecars before external CLI workers can mutate a worktree, so a disappeared runner is reconciled to a failed run. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1764.
+- Preserve explicit read-only intent when escaped line separators surround no-edit wording, so workflow delegates do not trigger the completion mutation guard. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1765.
 
 ## [0.61.0] - 2026-08-31
 

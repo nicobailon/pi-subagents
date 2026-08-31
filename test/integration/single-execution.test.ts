@@ -623,6 +623,38 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.doesNotMatch(readCallArgs().join("\n"), /This path is authoritative for this run/);
 	});
 
+	it("keeps escaped read-only delegate tasks from triggering the completion guard", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "The exact user-facing response" });
+		const task = [
+			"This is a read-only skill compliance scenario, not an implementation assignment.",
+			"Read the supplied skill and write the exact user-facing response.",
+			"Do not edit files.",
+			"Use a scenario that discusses selection for an implementation task or closeout of an implementation assignment.",
+		].join("\\n");
+		const result = await makeExecutor([makeAgent("delegate", {
+			tools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+			inheritProjectContext: true,
+			systemPromptMode: "append",
+		})]).execute(
+			"workflow-read-only-delegate",
+			{
+				async: false,
+				acceptance: false,
+				preflight: { version: 1, coverage: "complete", lanes: [{ key: "main", mode: "review" }] },
+				workflowScript: `return runs.all([{ key: "main", agent: "delegate", task: ${JSON.stringify(task)} }]);`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		const child = (result.details as { results?: Array<{ exitCode?: number; error?: string; output?: string }> } | undefined)?.results?.[0];
+		assert.equal(child?.exitCode, 0);
+		assert.equal(child?.error, undefined);
+		assert.match(result.content[0]?.text ?? "", /The exact user-facing response/);
+	});
+
 	it("consumes one exact host-only workflow child permit before spawn", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo"), makeAgent("other"), makeAgent("external", { runner: { type: "external-cli", command: "external" } })]);
 		const ctx = makeMinimalCtx(tempDir);

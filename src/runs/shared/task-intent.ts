@@ -34,13 +34,22 @@ const REVIEWER_REQUIRED_EDIT_PATTERNS = [
 	/\bmake\s+(?:the\s+)?code\s+changes\b/i,
 ];
 
-// The prohibition's object ends at punctuation or at a coordinating word
-// (but/and/then), so a follow-on clause like "but implement the fix" stays in
-// the text for write-intent testing instead of being swallowed as the object.
-const NO_EDIT_PROHIBITION_PATTERN = /\b(?:do not|don't|must not)\s+(?:edit|modify|write(?:\s+to)?|touch|change)\b((?:(?!\b(?:but|and|then)\b)[^.;,:!?\n–—-])*)/gi;
+// The prohibition's object ends at punctuation, a serialized line separator,
+// or a coordinating word (but/and/then), so a follow-on clause like "but
+// implement the fix" stays in the text for write-intent testing instead of
+// being swallowed as the object.
+// Accept serialized line separators too: workflow prompts can carry literal
+// `\\n`/`\\r\\n` between clauses instead of decoded newlines.
+const NO_EDIT_PROHIBITION_PATTERN = /(?:\b|\\(?:r\\n|n))(?:do not|don't|must not)\s+(?:edit|modify|write(?:\s+to)?|touch|change)\b((?:(?!\b(?:but|and|then)\b|\\(?:r\\n|n))[^.;,:!?\n–—-])*)/gi;
 
 /** Objects of a no-edit prohibition that mean "the codebase in general" rather than a named scope. */
 const GENERIC_PROHIBITION_OBJECT = /^\s*(?:(?:any|all|the|these|those|your|our|existing|project|product|source|sources|config|configs|repo|repository)[\s/,-]*)*(?:files?|code|codebase|sources?|anything|repo(?:sitory)?)?\s*$/i;
+const SCOPED_PROHIBITION_CONTINUATION = /^(?:\\(?:r\\n|n)|\r?\n)\s*(?:in|inside|under|within|outside|except|other\s+than|besides)\b/i;
+const OUTPUT_INSTRUCTION_CONTINUATION = /^(?:\\(?:r\\n|n)|\r?\n)\s*(?:in|inside|within)\s+(?:(?:(?:your|the)\s+)(?:final\s+)?|final\s+)(?:output|response|report|answer|reply|message|summary|findings?|analysis|recommendations?)(?:\s*\/\s*(?:output|response|report|answer|reply|message|summary|findings?|analysis|recommendations?))*\b(?![\\/])/i;
+
+function hasScopedProhibitionContinuation(text: string): boolean {
+	return SCOPED_PROHIBITION_CONTINUATION.test(text) && !OUTPUT_INSTRUCTION_CONTINUATION.test(text);
+}
 
 const SCOPED_NO_EDIT_CONSTRAINT_PATTERNS = [
 	/\bdo not edit files?\s+outside\b/i,
@@ -135,11 +144,13 @@ function analyzeNoEditProhibitions(taskText: string): NoEditProhibitionAnalysis 
 		|| NO_TOOL_INTENT_PATTERNS.some((pattern) => pattern.test(taskText));
 	let blanket = present;
 	let strippedText = stripPatterns(taskText, [...REVIEW_ONLY_PATTERNS, ...NO_TOOL_INTENT_PATTERNS]);
-	strippedText = strippedText.replace(new RegExp(NO_EDIT_PROHIBITION_PATTERN.source, NO_EDIT_PROHIBITION_PATTERN.flags), (_match, object: string) => {
+	strippedText = strippedText.replace(new RegExp(NO_EDIT_PROHIBITION_PATTERN.source, NO_EDIT_PROHIBITION_PATTERN.flags), (match, object: string, offset: number, source: string) => {
 		present = true;
-		if (GENERIC_PROHIBITION_OBJECT.test(object)) blanket = true;
+		if (GENERIC_PROHIBITION_OBJECT.test(object) && !hasScopedProhibitionContinuation(source.slice(offset + match.length))) blanket = true;
 		return " ";
 	});
+	// Restore boundaries after stripping a prohibition from serialized prompts.
+	strippedText = strippedText.replace(/\\(?:r\\n|n)/g, "\n");
 	return { present, blanket, strippedText };
 }
 

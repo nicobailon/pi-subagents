@@ -16,6 +16,13 @@ describe("classifyTaskMutationIntent", () => {
 		assert.equal(classifyTaskMutationIntent("worker", "Do not modify tests; implement the fix").kind, "implementation");
 		assert.equal(classifyTaskMutationIntent("worker", "Fix the bug. Do not edit files outside src/.").kind, "implementation");
 		assert.equal(classifyTaskMutationIntent("worker", "Must not touch the production database; implement the fix locally").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not modify tests\\nImplement the fix").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not modify tests\\r\\nImplement the fix").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not modify files\\nin src; implement the fix").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not modify files\\nin output/; implement the fix").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not modify files\\nin report/; implement the fix").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not modify files\\r\\noutside docs; implement the fix").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not modify files\nin src; implement the fix").kind, "implementation");
 	});
 
 	it("stops the prohibition object before a following implementation clause", () => {
@@ -36,6 +43,10 @@ describe("classifyTaskMutationIntent", () => {
 	it("lets blanket no-edit prohibitions win over write verbs", () => {
 		assert.equal(classifyTaskMutationIntent("worker", "Implement this. Do not edit files.").kind, "read-only");
 		assert.equal(classifyTaskMutationIntent("worker", "Do not edit files. Tell me how to fix the bug.").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not modify files\nIn your final response, explain how to implement the fix.").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not modify files\\nIn your final output, implement the fix.").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not modify files\\nIn your final output/report/response, implement the fix.").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not modify files\\nIn your report, explain how to fix the bug.").kind, "read-only");
 		assert.equal(classifyTaskMutationIntent("worker", "Report on the extraction pipeline. Do not modify project/source files.").kind, "read-only");
 		assert.equal(classifyTaskMutationIntent("reviewer", "Final correctness review after prior fixes. Inspect all changed files and tests. Do not modify project/source files. Report findings.").kind, "read-only");
 		assert.equal(classifyTaskMutationIntent("worker", "Verification-only task. Do not edit product/source/config files.\n   Run a disposable check, delete its temporary harness, and retain only\n   a sanitized report at an explicitly named artifact path.").kind, "read-only");

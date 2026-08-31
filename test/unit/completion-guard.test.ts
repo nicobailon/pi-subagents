@@ -425,9 +425,47 @@ test("review-only, research, and framework output instructions do not expect mut
 	);
 });
 
+test("escaped line separators do not hide read-only prohibitions", () => {
+	const task = [
+		"This is a read-only skill compliance scenario, not an implementation assignment.",
+		"Read the supplied skill and write the exact user-facing response.",
+		"Do not edit files.",
+		"Use a scenario that discusses selection for an implementation task or closeout of an implementation assignment.",
+	].join("\\n");
+
+	assert.deepEqual(evaluateCompletionMutationGuard({
+		agent: "delegate",
+		task,
+		messages: [assistantText("The exact user-facing response")],
+		tools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+	}), {
+		expectedMutation: false,
+		attemptedMutation: false,
+		triggered: false,
+		blocked: false,
+	});
+});
+
+test("output instructions after blanket no-edit prohibitions stay read-only", () => {
+	assert.deepEqual(evaluateCompletionMutationGuard({
+		agent: "worker",
+		task: "Do not modify files\\nIn your final output, implement the fix.",
+		messages: [assistantText("Here is the explanation.")],
+		tools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+	}), {
+		expectedMutation: false,
+		attemptedMutation: false,
+		triggered: false,
+		blocked: false,
+	});
+	assert.equal(expectsImplementationMutation("worker", "Do not modify files\\nIn your final output/report/response, implement the fix."), false);
+});
+
 test("worker implementation verbs win over investigative wording and scoped prohibitions", () => {
 	assert.equal(expectsImplementationMutation("worker", "Investigate why the worker did not edit files and fix it"), true);
 	assert.equal(expectsImplementationMutation("worker", "Do not modify tests; implement the fix"), true);
+	assert.equal(expectsImplementationMutation("worker", "Do not modify files\\nin output/; implement the fix"), true);
+	assert.equal(expectsImplementationMutation("worker", "Do not modify files\\nin report/; implement the fix"), true);
 	assert.equal(expectsImplementationMutation("worker", "Do not modify tests — implement the fix"), true);
 	assert.equal(expectsImplementationMutation("worker", "Research the current code path and patch the bug"), true);
 	assert.equal(expectsImplementationMutation("worker", "Fix the bug where no edits were made"), true);
