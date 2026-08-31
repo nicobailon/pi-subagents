@@ -393,6 +393,7 @@ export interface SubagentParamsLike {
 	agentContract?: AgentContract;
 	at?: string;
 	every?: string;
+	sessionOnly?: boolean;
 	on?: string | number;
 	timezone?: string;
 	overlap?: "skip";

@@ -22,6 +22,7 @@ export interface PublicSubagentExecutionParams {
 	args?: unknown;
 	workflowScript?: unknown;
 	workflowScriptPath?: unknown;
+	sessionOnly?: unknown;
 	globalConcurrencyLimit?: unknown;
 	maxSubagentSpawnsPerRun?: unknown;
 	preflight?: unknown;

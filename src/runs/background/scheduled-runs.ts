@@ -52,6 +52,8 @@ export interface ScheduleRecord {
 	catchUp: "none" | "latest";
 	timeoutMs?: number;
 	paused: boolean;
+	sessionOnly?: boolean;
+	ownerSessionFile?: string;
 	createdAt: string;
 	updatedAt: string;
 	activeRunId?: string;
@@ -295,6 +297,8 @@ function parseSchedule(value: unknown, file: string): ScheduleRecord {
 	} else if (record.trigger.kind === "interval") {
 		if (typeof record.trigger.every !== "string" || typeof record.trigger.everyMs !== "number" || typeof record.trigger.anchorAt !== "string" || typeof record.trigger.nextRunAt !== "string") throw new Error(`Schedule record '${file}' has an invalid interval trigger.`);
 	} else throw new Error(`Schedule record '${file}' has an unsupported trigger.`);
+	if (record.sessionOnly !== undefined && typeof record.sessionOnly !== "boolean") throw new Error(`Schedule record '${file}' has invalid sessionOnly.`);
+	if (record.sessionOnly === true && (typeof record.ownerSessionFile !== "string" || !record.ownerSessionFile.trim())) throw new Error(`Schedule record '${file}' is session-only but has no owner session file.`);
 	return { ...record, target: parseScheduleTarget(record.target, file) } as ScheduleRecord;
 }
 
@@ -450,6 +454,32 @@ function snapshotContext(ctx: ExtensionContext, cwd: string): ExtensionContext {
 	return { ...ctx, cwd, sessionManager };
 }
 
+/**
+ * 规范化会话文件路径, 兼容 Windows 路径大小写差异.
+ *
+ * @param value 会话文件路径
+ * @returns 规范化后的路径, 空值时返回 undefined
+ */
+function normalizedSessionFile(value: string | undefined): string | undefined {
+	if (!value || !value.trim()) return undefined;
+	const normalized = path.normalize(path.resolve(value));
+	return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+/**
+ * 判断 Schedule 是否属于当前 Pi 会话.
+ *
+ * @param schedule Schedule 记录
+ * @param ctx 当前 Pi 会话上下文
+ * @returns 是否允许当前会话执行该 Schedule
+ */
+function scheduleBelongsToSession(schedule: ScheduleRecord, ctx: ExtensionContext): boolean {
+	if (schedule.sessionOnly !== true) return true;
+	const ownerSessionFile = normalizedSessionFile(schedule.ownerSessionFile);
+	const currentSessionFile = normalizedSessionFile(ctx.sessionManager.getSessionFile());
+	return ownerSessionFile !== undefined && ownerSessionFile === currentSessionFile;
+}
+
 export function listScheduledRunSummaries(cwd: string, root?: string): ScheduleRecord[] {
 	return new ScheduleStore(scheduledRunStorePath(cwd, undefined, root), root === undefined ? path.resolve(cwd) : undefined).list();
 }
@@ -560,6 +590,9 @@ export class ScheduledRunManager {
 		if (params.catchUp !== undefined && params.catchUp !== "none" && params.catchUp !== "latest") return textResult("catchUp must be 'none' or 'latest'.", undefined, undefined, true);
 		if (params.missionId !== undefined || params.mission !== undefined || params.missionUpdate !== undefined || params.missionStatus !== undefined || params.missionScope !== undefined) return textResult("Mission attachment is deferred from this first schedule slice.", undefined, undefined, true);
 		if (params.on !== undefined || params.timezone !== undefined || every === "day" || every === "week" || every === "month" || every === "year") return textResult("Calendar schedules are deferred from this first safe slice. Use a fixed interval such as every:'24h' or every:'7d'.", undefined, undefined, true);
+		const sessionOnly = params.sessionOnly === true;
+		const ownerSessionFile = sessionOnly ? ctx.sessionManager.getSessionFile() : undefined;
+		if (sessionOnly && !ownerSessionFile) return textResult("sessionOnly schedules require a persisted current session.", undefined, undefined, true);
 		const sessionId = ctx.sessionManager.getSessionId() ?? "unknown";
 		if (this.deps.resolveCapabilityCeiling?.(sessionId)) return textResult("Cannot persist a schedule while a capability ceiling is active.", undefined, undefined, true);
 		const pendingCount = store.list().filter(hasPendingScheduleWork).length;
@@ -587,24 +620,25 @@ export class ScheduledRunManager {
 			catchUp: params.catchUp ?? "latest",
 			...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
 			paused: false,
+			...(sessionOnly ? { sessionOnly: true, ownerSessionFile: path.resolve(ownerSessionFile!) } : {}),
 			createdAt: timestamp(now),
 			updatedAt: timestamp(now),
 		};
 		store.write(schedule);
 		store.appendEvent(schedule, "schedule.created");
 		this.arm(schedule, store);
-		return textResult(`Created schedule ${id}.\nName: ${schedule.name}\nTrigger: ${at ? `at ${at}` : `every ${every}`}\nNext: ${schedule.trigger.nextRunAt}\nTarget: ${targetLabel(schedule.target)}`, [schedule]);
+		return textResult(`Created schedule ${id}.\nName: ${schedule.name}\nTrigger: ${at ? `at ${at}` : `every ${every}`}\nSession only: ${schedule.sessionOnly === true ? "yes" : "no"}\nNext: ${schedule.trigger.nextRunAt}\nTarget: ${targetLabel(schedule.target)}`, [schedule]);
 	}
 
 	private list(): AgentToolResult<Details> {
 		const schedules = this.requireStore().list().sort((a, b) => (a.trigger.nextRunAt ?? "").localeCompare(b.trigger.nextRunAt ?? ""));
 		if (!schedules.length) return textResult("No project schedules.", []);
-		return textResult([`Project schedules: ${schedules.length}`, ...schedules.map((item) => `- ${item.id} | ${item.paused ? "paused" : item.activeRunId ? "running" : "scheduled"} | ${item.trigger.nextRunAt ?? "no next run"} | ${item.name}`)].join("\n"), schedules);
+		return textResult([`Project schedules: ${schedules.length}`, ...schedules.map((item) => `- ${item.id} | ${item.paused ? "paused" : item.activeRunId ? "running" : "scheduled"} | ${item.trigger.nextRunAt ?? "no next run"} | ${item.sessionOnly === true ? "session-only" : "project"} | ${item.name}`)].join("\n"), schedules);
 	}
 
 	private show(params: SubagentParamsLike): AgentToolResult<Details> {
 		const schedule = this.resolve(params);
-		return textResult([`Schedule: ${schedule.id}`, `Name: ${schedule.name}`, `State: ${schedule.paused ? "paused" : schedule.activeRunId ? "running" : "scheduled"}`, `Target: ${targetLabel(schedule.target)}`, `CWD: ${shortenPath(schedule.cwd)}`, `Next: ${schedule.trigger.nextRunAt ?? "none"}`, `Catch up: ${schedule.catchUp}`, schedule.activeRunId ? `Active run: ${schedule.activeRunId}` : undefined].filter(Boolean).join("\n"), [schedule]);
+		return textResult([`Schedule: ${schedule.id}`, `Name: ${schedule.name}`, `State: ${schedule.paused ? "paused" : schedule.activeRunId ? "running" : "scheduled"}`, `Session only: ${schedule.sessionOnly === true ? "yes" : "no"}`, `Target: ${targetLabel(schedule.target)}`, `CWD: ${shortenPath(schedule.cwd)}`, `Next: ${schedule.trigger.nextRunAt ?? "none"}`, `Catch up: ${schedule.catchUp}`, schedule.activeRunId ? `Active run: ${schedule.activeRunId}` : undefined].filter(Boolean).join("\n"), [schedule]);
 	}
 
 	private history(params: SubagentParamsLike): AgentToolResult<Details> {
@@ -628,13 +662,18 @@ export class ScheduledRunManager {
 	private async runManual(params: SubagentParamsLike): Promise<AgentToolResult<Details>> {
 		const store = this.requireStore();
 		const schedule = this.resolve(params);
+		const context = this.requireContext(store);
+		if (!scheduleBelongsToSession(schedule, context)) {
+			return textResult(`Skipped schedule ${schedule.id}: current session is not its owner.`, [schedule]);
+		}
 		const run = await this.launch(store, schedule, this.now(), "manual", false);
 		return textResult(`Manual schedule run ${run.id}: ${run.state}${run.asyncId ? ` (async ${run.asyncId})` : ""}.`, [store.get(schedule.id)], [run], run.state === "failed_launch");
 	}
 
 	private async runDue(): Promise<AgentToolResult<Details>> {
 		const store = this.requireStore();
-		const due = store.list().filter((schedule) => !schedule.paused && nextRunAt(schedule) !== undefined && nextRunAt(schedule)! <= this.now());
+		const context = this.requireContext(store);
+		const due = store.list().filter((schedule) => scheduleBelongsToSession(schedule, context) && !schedule.paused && nextRunAt(schedule) !== undefined && nextRunAt(schedule)! <= this.now());
 		const runs: ScheduleRunRecord[] = [];
 		for (const schedule of due) {
 			const planned = duePlannedAt(schedule, this.now())!;
@@ -659,6 +698,7 @@ export class ScheduledRunManager {
 	}
 
 	private restoreOne(store: ScheduleStore, schedule: ScheduleRecord, notBefore?: number, rearm = true): void {
+		if (!scheduleBelongsToSession(schedule, this.requireContext(store))) return;
 		if (schedule.activeRunId) {
 			const run = store.history(schedule.id).find((item) => item.id === schedule.activeRunId);
 			if (run?.state === "running" && run.asyncId) this.observedAsyncIds.add(run.asyncId);
@@ -737,6 +777,7 @@ export class ScheduledRunManager {
 		// is then nothing to run and nothing to re-arm.
 		const schedule = store.find(id);
 		if (!schedule) return;
+		if (!scheduleBelongsToSession(schedule, this.requireContext(store))) return;
 		const planned = duePlannedAt(schedule, this.now());
 		if (planned === undefined || schedule.paused) return;
 		if (planned > this.now()) return this.arm(schedule, store);
