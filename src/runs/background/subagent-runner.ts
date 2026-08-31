@@ -3561,6 +3561,9 @@ async function runSubagent(
 		statusPayload.lastUpdate = now;
 		writeStatusPayload();
 	};
+	let childRuntimeRequestSequence = 0;
+	const childRuntimeRequestOrder = new Map<string, number>();
+	const latestAppliedRuntimeOrder = new Map<number, number>();
 	const recordChildControl = (request: ChildControlRequest, state: "queued" | "failed", message: string): void => {
 		const step = statusPayload.steps[request.targetIndex];
 		if (!step) return;
@@ -3573,6 +3576,10 @@ async function runSubagent(
 			updatedAt: now,
 			message,
 		};
+		if (request.type === "child-runtime" && state === "queued") {
+			childRuntimeRequestSequence += 1;
+			childRuntimeRequestOrder.set(request.id, childRuntimeRequestSequence);
+		}
 		statusPayload.lastUpdate = now;
 		writeStatusPayload();
 	};
@@ -3591,22 +3598,34 @@ async function runSubagent(
 	};
 	const consumeChildControlAck = (ack: ChildControlAck): void => {
 		const step = statusPayload.steps[ack.index];
-		if (!step?.childControl || step.childControl.requestId !== ack.requestId) return;
-		const nextStatus: RunnerChildControlStatus = {
-			...step.childControl,
-			state: ack.state,
-			updatedAt: ack.ts,
-			message: ack.message,
-		};
-		if (ack.model) nextStatus.model = ack.model;
-		if (ack.thinking) nextStatus.thinking = ack.thinking;
-		step.childControl = nextStatus;
-		if (ack.state === "applied" && (ack.model !== undefined || ack.thinking !== undefined)) {
+		if (!step) return;
+		const requestOrder = childRuntimeRequestOrder.get(ack.requestId);
+		const previousAppliedOrder = latestAppliedRuntimeOrder.get(ack.index) ?? 0;
+		const projectsRuntime = ack.state === "applied"
+			&& (ack.model !== undefined || ack.thinking !== undefined)
+			&& requestOrder !== undefined
+			&& requestOrder >= previousAppliedOrder;
+		if (projectsRuntime) latestAppliedRuntimeOrder.set(ack.index, requestOrder);
+
+		const isCurrentControl = step.childControl?.requestId === ack.requestId;
+		if (isCurrentControl && step.childControl) {
+			const nextStatus: RunnerChildControlStatus = {
+				...step.childControl,
+				state: ack.state,
+				updatedAt: ack.ts,
+				message: ack.message,
+			};
+			if (ack.model) nextStatus.model = ack.model;
+			if (ack.thinking) nextStatus.thinking = ack.thinking;
+			step.childControl = nextStatus;
+		}
+		if (projectsRuntime) {
 			updateStepModel(ack.index, ack.model ?? step.model, ack.thinking ?? step.thinking, step.contextLimit, ack.ts);
-		} else {
+		} else if (isCurrentControl) {
 			statusPayload.lastUpdate = ack.ts;
 			writeStatusPayload();
 		}
+		if (ack.state !== "queued") childRuntimeRequestOrder.delete(ack.requestId);
 	};
 	const updateStepFromChildEvent = (flatIndex: number, event: ChildEvent): void => {
 		const step = statusPayload.steps[flatIndex];

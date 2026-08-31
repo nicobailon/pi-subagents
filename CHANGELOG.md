@@ -3,6 +3,9 @@
 
 ## [Unreleased]
 
+### Added
+- Add focused native child sessions in Fleet with direct input and safe model/thinking controls. Thanks [@stekman08](https://github.com/stekman08) for #1790.
+
 ### Fixed
 - Preserve coordinated read-only intent when resuming direct async children and surface captured structured output in completion and status evidence. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1788.
 
