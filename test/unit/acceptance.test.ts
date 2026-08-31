@@ -14,6 +14,7 @@ import {
 	normalizeGateAcceptance,
 	parseAcceptanceReport,
 	quoteExecutableForShell,
+	resolveAcceptanceReportMode,
 	resolveEffectiveAcceptance,
 	stripAcceptanceReport,
 	validateAcceptanceInput,
@@ -774,6 +775,15 @@ describe("acceptance gates", () => {
 			});
 			assert.equal(malformedDirect.status, "rejected");
 			assert.match(malformedDirect.childReportParseError ?? "", /unexpected: unsupported acceptance report field/);
+
+			const nullDirect = await evaluateAcceptance({
+				acceptance,
+				output: report({ changedFiles: [], testsAddedOrUpdated: [] }),
+				report: null as never,
+				cwd,
+			});
+			assert.equal(nullDirect.status, "rejected");
+			assert.match(nullDirect.childReportParseError ?? "", /acceptance-report: expected object; got null/);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
@@ -1185,6 +1195,31 @@ describe("acceptance gates", () => {
 		assert.match(errors.join("\n"), /acceptance\.review\.required/);
 	});
 
+	it("requires outputSchema for explicit structured acceptance report mode", () => {
+		const schema = { type: "object" as const };
+		const errors = validateExecutionAcceptance({
+			acceptance: { level: "checked", report: "on" },
+			tasks: [
+				{ acceptance: { level: "checked", report: "off" } },
+				{ outputSchema: schema, acceptance: { level: "checked", report: "on" } },
+			],
+			chain: [
+				{ acceptance: { level: "checked", report: "on" } },
+				{ outputSchema: schema, acceptance: { level: "checked", report: "off" } },
+				{ parallel: [{ acceptance: { level: "checked", report: "on" } }, { outputSchema: schema, acceptance: { level: "checked", report: "on" } }] },
+				{ parallel: { acceptance: { level: "checked", report: "off" } } },
+			],
+		});
+
+		assert.deepEqual(errors, [
+			"acceptance.report requires outputSchema.",
+			"tasks[0].acceptance.report requires outputSchema.",
+			"chain[0].acceptance.report requires outputSchema.",
+			"chain[2].parallel[0].acceptance.report requires outputSchema.",
+			"chain[3].parallel.acceptance.report requires outputSchema.",
+		]);
+	});
+
 	it("blanket read-only wording is not inferred as a risky write task", () => {
 		const readOnlyWorker = resolveEffectiveAcceptance({
 			agentName: "worker",
@@ -1342,6 +1377,8 @@ describe("acceptance gates", () => {
 		assert.deepEqual(validateAcceptanceInput({ level: "verified", verify: [{ id: "tests", command: "npm test" }] }), []);
 		assert.deepEqual(validateAcceptanceInput({ level: "verified", verify: [{ id: "tests", command: "npm test" }, { id: "lint", command: "npm run lint" }] }), []);
 		assert.deepEqual(validateAcceptanceInput({ level: "checked" }), []);
+		assert.deepEqual(validateAcceptanceInput({ level: "checked", report: "on" }), []);
+		assert.match(validateAcceptanceInput({ report: "sometimes" }).join("\n"), /acceptance\.report must be on or off/);
 		assert.deepEqual(validateAcceptanceInput({ verify: [{ id: "missing-command" }] }), ["acceptance.verify[0].command is required."]);
 		assert.deepEqual(validateAcceptanceInput({ verify: [{ id: "fractional", command: "npm test", timeoutMs: 1.5 }] }), ["acceptance.verify[0].timeoutMs must be an integer >= 1."]);
 		assert.deepEqual(validateAcceptanceInput(false), []);
@@ -1362,6 +1399,14 @@ describe("acceptance gates", () => {
 		assert.match(validateAcceptanceInput({ review: { required: "yes" } }).join("\n"), /acceptance\.review\.required must be a boolean/);
 		assert.match(validateAcceptanceInput({ stopRules: [123] }).join("\n"), /acceptance\.stopRules\[0\] must be a string/);
 		assert.match(validateAcceptanceInput({ surprise: true }).join("\n"), /acceptance\.surprise is not supported/);
+	});
+
+	it("resolves structured acceptance report capture without changing the omitted default", () => {
+		assert.equal(resolveAcceptanceReportMode(undefined), "optional");
+		assert.equal(resolveAcceptanceReportMode("checked"), "optional");
+		assert.equal(resolveAcceptanceReportMode(false), "off");
+		assert.equal(resolveAcceptanceReportMode({ report: "off" }), "off");
+		assert.equal(resolveAcceptanceReportMode({ report: "on" }), "required");
 	});
 });
 

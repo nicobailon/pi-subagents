@@ -20,8 +20,10 @@ import { encodeExtensionBindings, PI_SUBAGENT_EXTENSION_BINDINGS_ENV, type Exten
 import { RUNTIME_EXTENSION_ACK_PATH_ENV } from "./runtime-acknowledged-extensions.ts";
 import {
 	STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV,
+	STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV,
 	STRUCTURED_OUTPUT_CAPTURE_ENV,
 	STRUCTURED_OUTPUT_SCHEMA_ENV,
+	type StructuredOutputRuntime,
 } from "./structured-output.ts";
 import {
 	TEMP_ROOT_DIR,
@@ -201,12 +203,7 @@ export interface BuildPiArgsInput {
 	steerInboxDir?: string;
 	steerCapabilityPath?: string;
 	steerAckDir?: string;
-	structuredOutput?: {
-		schema: JsonSchemaObject;
-		schemaPath: string;
-		outputPath: string;
-		acceptanceReportPath?: string;
-	};
+	structuredOutput?: StructuredOutputRuntime;
 	fast?: boolean;
 	modelCandidates?: readonly string[];
 	toolBudget?: ResolvedToolBudget;
@@ -999,10 +996,13 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		env[SUBAGENT_CAPABILITY_CEILING_ENV] = encodedCapabilityCeiling;
 	if (encodedPermissionRules)
 		env[PERMISSION_POLICY_ENV] = encodedPermissionRules;
+	env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV] = undefined;
+	env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV] = undefined;
 	if (input.structuredOutput) {
 		env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
 		env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;
 		if (input.structuredOutput.acceptanceReportPath) env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV] = input.structuredOutput.acceptanceReportPath;
+		if (input.structuredOutput.acceptanceReportRequired) env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV] = "1";
 	}
 	if (input.steerInboxDir) {
 		env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;

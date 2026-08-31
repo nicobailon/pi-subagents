@@ -994,6 +994,7 @@ export interface AcceptanceReviewGate {
 
 export interface AcceptanceConfig {
 	level?: AcceptanceLevel;
+	report?: "on" | "off";
 	criteria?: Array<string | AcceptanceGate>;
 	evidence?: AcceptanceEvidenceKind[];
 	verify?: AcceptanceVerifyCommand[];

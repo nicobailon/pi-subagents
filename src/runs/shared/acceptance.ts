@@ -47,7 +47,7 @@ const VALID_EVIDENCE_KINDS: AcceptanceEvidenceKind[] = [
 const VALID_EVIDENCE = new Set<AcceptanceEvidenceKind>(VALID_EVIDENCE_KINDS);
 const ACCEPTANCE_EVIDENCE_HELP = `Supported evidence kinds: ${VALID_EVIDENCE_KINDS.join(", ")}. Example: { level: "checked", evidence: ["commands-run", "changed-files"] }.`;
 const ACCEPTANCE_OBJECT_EXAMPLE = "Example: { level: \"checked\", evidence: [\"commands-run\", \"changed-files\"] }.";
-const ACCEPTANCE_CONFIG_KEYS = new Set(["level", "criteria", "evidence", "verify", "review", "stopRules", "reason"]);
+const ACCEPTANCE_CONFIG_KEYS = new Set(["level", "report", "criteria", "evidence", "verify", "review", "stopRules", "reason"]);
 const ACCEPTANCE_GATE_KEYS = new Set(["id", "must", "evidence", "severity"]);
 const ACCEPTANCE_VERIFY_KEYS = new Set(["id", "command", "timeoutMs", "cwd", "env", "allowFailure"]);
 const ACCEPTANCE_REVIEW_KEYS = new Set(["agent", "focus", "required"]);
@@ -153,6 +153,13 @@ export function normalizeAcceptanceInput(input: AcceptanceInput | undefined): Ac
 	return { ...input };
 }
 
+export type ResolvedAcceptanceReportMode = "off" | "optional" | "required";
+
+export function resolveAcceptanceReportMode(input: AcceptanceInput | undefined): ResolvedAcceptanceReportMode {
+	const report = input && typeof input === "object" ? input.report : undefined;
+	return input === false || report === "off" ? "off" : report === "on" ? "required" : "optional";
+}
+
 type GateAcceptanceNormalizationResult =
 	| { ok: true; acceptance?: AcceptanceInput }
 	| { ok: false; error: string };
@@ -196,6 +203,9 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 		errors.push(`${pathLabel}.level ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
 	} else if (value.level !== undefined && (typeof value.level !== "string" || !VALID_LEVELS.has(value.level as AcceptanceLevel))) {
 		errors.push(`${pathLabel}.level must be one of auto, none, attested, checked, verified.`);
+	}
+	if (value.report !== undefined && value.report !== "on" && value.report !== "off") {
+		errors.push(`${pathLabel}.report must be on or off.`);
 	}
 	if (value.level === "none" && (typeof value.reason !== "string" || !value.reason.trim())) {
 		errors.push(`${pathLabel}.reason is required when level is none.`);
@@ -304,27 +314,40 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 
 export function validateExecutionAcceptance(input: {
 	acceptance?: unknown;
-	tasks?: Array<{ acceptance?: unknown }>;
+	outputSchema?: unknown;
+	tasks?: Array<{ acceptance?: unknown; outputSchema?: unknown }>;
 	chain?: Array<{
 		acceptance?: unknown;
-		parallel?: Array<{ acceptance?: unknown }> | { acceptance?: unknown };
+		outputSchema?: unknown;
+		parallel?: Array<{ acceptance?: unknown; outputSchema?: unknown }> | { acceptance?: unknown; outputSchema?: unknown };
 	}>;
 }): string[] {
 	const errors = validateAcceptanceInput(input.acceptance, "acceptance");
+	errors.push(...validateAcceptanceReportMode(input.acceptance, input.outputSchema, "acceptance"));
 	for (const [index, task] of (input.tasks ?? []).entries()) {
 		errors.push(...validateAcceptanceInput(task.acceptance, `tasks[${index}].acceptance`));
+		errors.push(...validateAcceptanceReportMode(task.acceptance, task.outputSchema, `tasks[${index}].acceptance`));
 	}
 	for (const [stepIndex, step] of (input.chain ?? []).entries()) {
 		errors.push(...validateAcceptanceInput(step.acceptance, `chain[${stepIndex}].acceptance`));
+		errors.push(...validateAcceptanceReportMode(step.acceptance, step.outputSchema, `chain[${stepIndex}].acceptance`));
 		if (Array.isArray(step.parallel)) {
 			for (const [taskIndex, task] of step.parallel.entries()) {
 				errors.push(...validateAcceptanceInput(task.acceptance, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
+				errors.push(...validateAcceptanceReportMode(task.acceptance, task.outputSchema, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
 			}
 		} else if (step.parallel) {
 			errors.push(...validateAcceptanceInput(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`));
+			errors.push(...validateAcceptanceReportMode(step.parallel.acceptance, step.parallel.outputSchema, `chain[${stepIndex}].parallel.acceptance`));
 		}
 	}
 	return errors;
+}
+
+function validateAcceptanceReportMode(acceptance: unknown, outputSchema: unknown, pathLabel: string): string[] {
+	if (!acceptance || typeof acceptance !== "object" || Array.isArray(acceptance)) return [];
+	if (!("report" in acceptance)) return [];
+	return outputSchema === undefined ? [`${pathLabel}.report requires outputSchema.`] : [];
 }
 
 function normalizeCriteria(criteria: Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }> | undefined, evidence: AcceptanceEvidenceKind[]): ResolvedAcceptanceGate[] {
@@ -851,7 +874,7 @@ function validateStringArrayField(errors: string[], value: unknown, pathLabel: s
 	}
 }
 
-function validateAcceptanceReport(value: unknown, pathLabel = ""): { report?: AcceptanceReport; errors: string[] } {
+export function validateAcceptanceReport(value: unknown, pathLabel = ""): { report?: AcceptanceReport; errors: string[] } {
 	const normalized = normalizeAcceptanceReportValue(value, pathLabel);
 	value = normalized.value;
 	pathLabel = normalized.pathLabel;
@@ -1310,7 +1333,7 @@ export async function evaluateAcceptance(input: {
 
 	const parsed: AcceptanceReportParseResult = input.reportError
 		? { error: input.reportError }
-		: input.report
+		: input.report !== undefined
 		? (() => {
 			const validation = validateAcceptanceReport(input.report);
 			return validation.report

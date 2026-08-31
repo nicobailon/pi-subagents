@@ -3,7 +3,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync } from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig } from "../../agents/agents.ts";
@@ -73,7 +73,7 @@ import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledge
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
-import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
+import { clearStructuredOutputCaptures, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
 import { formatMidToolExitError, formatProcessSignalError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
@@ -551,10 +551,14 @@ async function runSingleAttempt(
 	}, options.context);
 	const startTime = Date.now();
 	if (options.structuredOutput) {
-		try {
-			if (existsSync(options.structuredOutput.outputPath)) unlinkSync(options.structuredOutput.outputPath);
-		} catch {
-			// Missing/stale structured-output files are handled after the child exits.
+		const cleanupError = clearStructuredOutputCaptures(options.structuredOutput);
+		if (cleanupError) {
+			cleanupTempDir(tempDir);
+			result.exitCode = 1;
+			result.error = cleanupError;
+			result.finalOutput = cleanupError;
+			result.progressSummary = { toolCount: 0, tokens: 0, durationMs: Date.now() - startTime };
+			return result;
 		}
 	}
 	const controlConfig = options.controlConfig ?? DEFAULT_CONTROL_CONFIG;

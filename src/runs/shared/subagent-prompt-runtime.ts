@@ -8,7 +8,8 @@ import { decodePermissionRules, permissionDecision, PERMISSION_AUDIT_PATH_ENV, P
 import { consumeSteerRequestsFromDir, MAX_STEER_QUEUE_SIZE, steerAckPathFromDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type SteerDeliveryStatus, type SteerRequest } from "../background/control-channel.ts";
 import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_FORK_CACHE_KEY_ENV, SUBAGENT_INHERIT_GLOBAL_CONTEXT_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV, isRuntimeAcknowledgedExtensionId, writeRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
-import { createStructuredOutputToolParameters, STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
+import { createStructuredOutputToolParameters, MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV, STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
+import { validateAcceptanceReport } from "./acceptance.ts";
 import {
 	CHILD_TOOL_DIAGNOSTIC_PATH_ENV,
 	formatChildToolDiagnostic,
@@ -729,10 +730,14 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	});
 	const structuredOutputPath = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
 	const structuredAcceptanceReportPath = process.env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV];
+	const structuredAcceptanceReportRequired = process.env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV] === "1";
 	const structuredSchemaPath = process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
 	if (structuredOutputPath && structuredSchemaPath) {
 		const schema = JSON.parse(fs.readFileSync(structuredSchemaPath, "utf-8")) as JsonSchemaObject;
-		const parameters = createStructuredOutputToolParameters(schema, { acceptanceReport: Boolean(structuredAcceptanceReportPath) });
+		const acceptanceReportMode = structuredAcceptanceReportPath
+			? structuredAcceptanceReportRequired ? "required" as const : "optional" as const
+			: undefined;
+		const parameters = createStructuredOutputToolParameters(schema, { acceptanceReport: acceptanceReportMode });
 		const registerTool = pi.registerTool as unknown as (tool: {
 			name: string;
 			label: string;
@@ -750,11 +755,23 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 				if (validation.status === "invalid") {
 					throw new Error(`Structured output validation failed: ${validation.message}`);
 				}
-				fs.mkdirSync(path.dirname(structuredOutputPath), { recursive: true });
-				fs.writeFileSync(structuredOutputPath, JSON.stringify(params.value), { mode: 0o600 });
-				if (structuredAcceptanceReportPath && params.acceptanceReport !== undefined) {
-					fs.writeFileSync(structuredAcceptanceReportPath, JSON.stringify(params.acceptanceReport), { mode: 0o600 });
+				if (structuredAcceptanceReportRequired && params.acceptanceReport === undefined) {
+					throw new Error(MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR);
 				}
+				if (structuredAcceptanceReportRequired && params.acceptanceReport !== undefined) {
+					const acceptanceValidation = validateAcceptanceReport(params.acceptanceReport, "acceptanceReport");
+					if (!acceptanceValidation.report) {
+						throw new Error(`Invalid structured output acceptance report: ${acceptanceValidation.errors.join("; ")}`);
+					}
+				}
+				fs.mkdirSync(path.dirname(structuredOutputPath), { recursive: true });
+				if (structuredAcceptanceReportPath && params.acceptanceReport !== undefined) {
+					fs.mkdirSync(path.dirname(structuredAcceptanceReportPath), { recursive: true });
+					fs.writeFileSync(structuredAcceptanceReportPath, JSON.stringify(params.acceptanceReport), { mode: 0o600 });
+				} else if (structuredAcceptanceReportPath && fs.existsSync(structuredAcceptanceReportPath)) {
+					fs.unlinkSync(structuredAcceptanceReportPath);
+				}
+				fs.writeFileSync(structuredOutputPath, JSON.stringify(params.value), { mode: 0o600 });
 				return {
 					content: [{ type: "text", text: "Structured output captured." }],
 					details: { path: structuredOutputPath },

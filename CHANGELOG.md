@@ -3,6 +3,9 @@
 
 ## [Unreleased]
 
+### Added
+- Let native children with `outputSchema` require acceptance evidence in the same `structured_output` call via `acceptance.report: "on"`, while `"off"` keeps fenced acceptance reports. Thanks [@mapleluvr](https://github.com/mapleluvr) for #1770.
+
 ### Fixed
 - Separate steer and follow-up receipt statuses from their redacted message previews (#1773).
 - Establish async lifecycle sidecars before external CLI workers can mutate a worktree, so a disappeared runner is reconciled to a failed run. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1764.

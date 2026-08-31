@@ -15,6 +15,7 @@ import {
 	TOOL_BUDGET_ZERO_AUTH_ENV,
 } from "../../src/runs/shared/tool-budget.ts";
 import { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
+import { STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV, STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV } from "../../src/runs/shared/structured-output.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import {
 	CHILD_TOOL_DIAGNOSTIC_PATH_ENV,
@@ -1042,6 +1043,8 @@ describe("buildPiArgs system prompt mode wiring", () => {
 				schema: { type: "object", properties: {}, additionalProperties: false },
 				schemaPath: "/tmp/schema.json",
 				outputPath: "/tmp/output.json",
+				acceptanceReportPath: "/tmp/acceptance.json",
+				acceptanceReportRequired: true,
 			},
 		});
 
@@ -1054,6 +1057,18 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			"fixture_search",
 			"structured_output",
 		]);
+		assert.equal(env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV], "/tmp/acceptance.json");
+		assert.equal(env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV], "1");
+	});
+
+	it("clears inherited acceptance capture for launches without outputSchema", () => {
+		const { env } = buildPiArgs({
+			baseArgs: ["-p"], task: "hello", sessionEnabled: false,
+			inheritProjectContext: false, inheritSkills: false,
+		});
+
+		assert.equal(env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV], undefined);
+		assert.equal(env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV], undefined);
 	});
 
 	it("forwards the Pi package root to child processes for host peer resolution", () => {

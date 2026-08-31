@@ -420,7 +420,7 @@ Acceptance provenance is stored separately from child prose. `evidenceStatus` pr
 
 ### The acceptance report
 
-For `attested` or stricter levels, the child prompt includes a standardized acceptance section and asks for a fenced `acceptance-report` JSON block.
+For `attested` or stricter levels, the child prompt includes a standardized acceptance section and asks for a fenced `acceptance-report` JSON block. With `outputSchema`, set `acceptance.report: "on"` to require the same report in the final `structured_output` call, or `"off"` to keep the fenced-report path. Omitting `report` preserves the default behavior. Runs without `outputSchema` never gain a standalone structured-output tool from this option.
 
 The parser canonicalizes known enum synonyms, snake_case report keys and wrappers, underscore fence tags, unambiguous scalar arrays, string booleans, and criterion-id separators. Unknown or ambiguous keys and enum values fail with field-level diagnostics. Explicit empty `changedFiles` and `testsAddedOrUpdated` arrays are recorded as not applicable; missing fields and empty required command or validation evidence still fail.
 

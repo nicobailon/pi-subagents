@@ -5365,7 +5365,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			"workflow-schema-acceptance-sidecar",
 			{
 				async: false,
-				acceptance: { level: "checked", criteria: [{ id: "proof", must: "Return required proof" }] },
+				acceptance: { level: "checked", report: "on", criteria: [{ id: "proof", must: "Return required proof" }] },
 				workflowScript: `
 					const child = await runs.run("schema", {
 						agent: "echo",
@@ -5403,7 +5403,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			"workflow-schema-acceptance-missing-sidecar",
 			{
 				async: false,
-				acceptance: { level: "checked", criteria: [{ id: "proof", must: "Return required proof" }] },
+				acceptance: { level: "checked", report: "on", criteria: [{ id: "proof", must: "Return required proof" }] },
 				workflowScript: `
 					const child = await runs.run("schema", {
 						agent: "echo",
@@ -5427,6 +5427,38 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /acceptance/i);
 	});
 
+	it("uses fenced acceptance reports when outputSchema acceptance report capture is off", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const acceptanceReport = {
+			criteriaSatisfied: [{ id: "proof", status: "satisfied", evidence: "fenced proof" }],
+			changedFiles: [], testsAddedOrUpdated: [],
+			commandsRun: [{ command: "mock", result: "passed", summary: "passed" }],
+			validationOutput: ["validated"], residualRisks: [], noStagedFiles: true,
+		};
+		mockPi.onCall({
+			matchArgIncludes: "Finish with a fenced JSON block tagged `acceptance-report`",
+			stdoutRaw: [
+				events.assistantMessage(`done\n\`\`\`acceptance-report\n${JSON.stringify(acceptanceReport)}\n\`\`\``),
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+			structuredOutputCapture: { ok: true },
+		});
+
+		const result = await makeExecutor([makeAgent("echo")]).execute(
+			"single-schema-fenced-acceptance",
+			{
+				agent: "echo", task: "Return structured data",
+				outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } },
+				acceptance: { level: "checked", report: "off", criteria: [{ id: "proof", must: "Return required proof" }] },
+			},
+			new AbortController().signal, undefined, makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text);
+		assert.equal(result.details.results[0]?.acceptance?.status, "checked");
+	});
+
 	it("surfaces corrupt outputSchema acceptance sidecar read errors", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({
 			stdoutRaw: [
@@ -5443,7 +5475,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			"workflow-schema-acceptance-corrupt-sidecar",
 			{
 				async: false,
-				acceptance: { level: "checked", criteria: [{ id: "proof", must: "Return required proof" }] },
+				acceptance: { level: "checked", report: "on", criteria: [{ id: "proof", must: "Return required proof" }] },
 				workflowScript: `
 					const child = await runs.run("schema", {
 						agent: "echo",

@@ -17,7 +17,7 @@ import {
 	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV } from "../../src/runs/shared/runtime-acknowledged-extensions.ts";
-import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
+import { clearStructuredOutputCaptures, STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV, STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
 import { getAgentDir } from "../../src/shared/utils.ts";
 import { PERMISSION_POLICY_ENV } from "../../src/runs/shared/permissions.ts";
@@ -49,6 +49,8 @@ const envSnapshot = {
 	PI_SUBAGENT_STEER_ACK_DIR: process.env.PI_SUBAGENT_STEER_ACK_DIR,
 	PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE,
 	PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA,
+	PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE,
+	PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED,
 	PI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS: process.env.PI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS,
 	PI_SUBAGENT_TOOL_BUDGET: process.env.PI_SUBAGENT_TOOL_BUDGET,
 	PI_SUBAGENT_PERMISSION_POLICY: process.env.PI_SUBAGENT_PERMISSION_POLICY,
@@ -104,6 +106,10 @@ afterEach(() => {
 	else process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;
 	if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA === undefined) delete process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
 	else process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA;
+	if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE === undefined) delete process.env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV];
+	else process.env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE;
+	if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED === undefined) delete process.env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV];
+	else process.env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED;
 	if (envSnapshot.PI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS === undefined) delete process.env[RUNTIME_EXTENSION_ACK_PATH_ENV];
 	else process.env[RUNTIME_EXTENSION_ACK_PATH_ENV] = envSnapshot.PI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS;
 	if (envSnapshot.PI_SUBAGENT_TOOL_BUDGET === undefined) delete process.env[TOOL_BUDGET_ENV];
@@ -744,6 +750,86 @@ describe("subagent prompt runtime", () => {
 			const result = await execute("tool-1", { value: { ok: true } });
 			assert.equal(result.terminate, true);
 			assert.deepEqual(JSON.parse(fs.readFileSync(outputPath, "utf-8")), { ok: true });
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("requires and validates acceptanceReport when structured capture is required", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-structured-acceptance-"));
+		try {
+			const schemaPath = path.join(dir, "schema.json");
+			const outputPath = path.join(dir, "output.json");
+			const acceptancePath = path.join(dir, "acceptance.json");
+			fs.writeFileSync(schemaPath, JSON.stringify({ type: "object" }), "utf-8");
+			process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = schemaPath;
+			process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = outputPath;
+			process.env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV] = acceptancePath;
+			process.env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV] = "1";
+			let execute: ((_id: string, params: { value: unknown; acceptanceReport?: unknown }) => Promise<unknown>) | undefined;
+			let parameters: { required?: string[] } | undefined;
+
+			registerSubagentPromptRuntime({
+				registerTool(tool: { name: string; parameters: unknown; execute: typeof execute }) {
+					if (tool.name === "structured_output") {
+						execute = tool.execute;
+						parameters = tool.parameters as { required?: string[] };
+					}
+				},
+				on() {},
+			} as { registerTool(tool: { name: string; parameters: unknown; execute: typeof execute }): void; on(): void });
+
+			assert.deepEqual(parameters?.required, ["value", "acceptanceReport"]);
+			await assert.rejects(execute!("missing", { value: {} }), /Missing acceptanceReport/);
+			await assert.rejects(execute!("empty", { value: {}, acceptanceReport: {} }), /expected at least one acceptance report field/);
+			await execute!("valid", { value: {}, acceptanceReport: { manualNotes: "validated evidence" } });
+			assert.deepEqual(JSON.parse(fs.readFileSync(acceptancePath, "utf-8")), { manualNotes: "validated evidence" });
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("clears stale optional acceptance reports when structured output omits them", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-structured-acceptance-stale-"));
+		try {
+			const schemaPath = path.join(dir, "schema.json");
+			const outputPath = path.join(dir, "output.json");
+			const acceptancePath = path.join(dir, "acceptance.json");
+			fs.writeFileSync(schemaPath, JSON.stringify({ type: "object" }), "utf-8");
+			fs.writeFileSync(acceptancePath, JSON.stringify({ manualNotes: "stale" }), "utf-8");
+			process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = schemaPath;
+			process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = outputPath;
+			process.env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV] = acceptancePath;
+			let execute: ((_id: string, params: { value: unknown }) => Promise<unknown>) | undefined;
+
+			registerSubagentPromptRuntime({
+				registerTool(tool: { name: string; execute: typeof execute }) {
+					if (tool.name === "structured_output") execute = tool.execute;
+				},
+				on() {},
+			} as { registerTool(tool: { name: string; execute: typeof execute }): void; on(): void });
+
+			await execute!("without-report", { value: {} });
+			assert.equal(fs.existsSync(acceptancePath), false);
+			assert.deepEqual(JSON.parse(fs.readFileSync(outputPath, "utf-8")), {});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("reports capture cleanup failures after clearing every stale file it can", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-structured-cleanup-"));
+		try {
+			const outputPath = path.join(dir, "output.json");
+			const acceptancePath = path.join(dir, "acceptance.json");
+			fs.mkdirSync(outputPath);
+			fs.writeFileSync(acceptancePath, JSON.stringify({ manualNotes: "stale" }), "utf-8");
+
+			const error = clearStructuredOutputCaptures({ schema: { type: "object" }, schemaPath: path.join(dir, "schema.json"), outputPath, acceptanceReportPath: acceptancePath });
+
+			assert.match(error ?? "", /Failed to clear stale structured output capture/);
+			assert.equal(fs.existsSync(outputPath), true);
+			assert.equal(fs.existsSync(acceptancePath), false);
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}

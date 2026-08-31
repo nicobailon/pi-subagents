@@ -68,12 +68,7 @@ export interface RunnerSubagentStep {
 	toolTimeoutMs?: number;
 	waitToolEnabled?: boolean;
 	waitToolDefaultTimeoutMs?: number;
-	structuredOutput?: {
-		schema: import("../../shared/types.ts").JsonSchemaObject;
-		schemaPath: string;
-		outputPath: string;
-		acceptanceReportPath?: string;
-	};
+	structuredOutput?: import("./structured-output.ts").StructuredOutputRuntime;
 	structuredOutputSchema?: import("../../shared/types.ts").JsonSchemaObject;
 	agentContract?: import("../../shared/types.ts").AgentContract;
 	definitionDigest?: string;
