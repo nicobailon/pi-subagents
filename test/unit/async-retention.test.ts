@@ -100,7 +100,10 @@ describe("async retention cleanup", () => {
 			assert.equal(repaired.repairedRuns, 1);
 			assert.equal(repaired.deletedRuns, 0);
 			assert.equal(repaired.skipped.recent, 1);
-			assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, "status.json"), "utf-8")).state, "failed");
+			const repairedStatusPath = path.join(runDir, "status.json");
+			assert.equal(JSON.parse(fs.readFileSync(repairedStatusPath, "utf-8")).state, "failed");
+			fs.utimesSync(repairedStatusPath, NOW / 1000, NOW / 1000);
+			fs.utimesSync(runDir, NOW / 1000, NOW / 1000);
 			assert.equal(fs.existsSync(path.join(roots.asyncDirRoot, ".active-runs", "dead-running")), false);
 			assert.equal(fs.existsSync(path.join(roots.resultsDir, "dead-running.json")), true);
 			assert.equal(JSON.parse(fs.readFileSync(path.join(protectedDir, "status.json"), "utf-8")).state, "running");
