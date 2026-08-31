@@ -77,6 +77,7 @@ import {
 } from "../shared/parallel-utils.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, deriveForkPromptCacheKey, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, type SubagentTaskDelivery } from "../shared/pi-args.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
+import { alignForkedSessionCwd } from "../../shared/fork-session-cwd.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
 import { clearStructuredOutputCaptures, createStructuredOutputRuntime, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
@@ -1628,6 +1629,9 @@ async function runSingleStepInner(
 	const effectiveCwd = step.cwd ?? ctx.cwd;
 	const cwdError = preflightLaunchCwd(step.requestedCwd ?? effectiveCwd, effectiveCwd);
 	if (cwdError) return { agent: step.agent, output: cwdError, error: cwdError, exitCode: 1, context: step.context };
+	if (step.context === "fork" && step.sessionFile && fs.existsSync(step.sessionFile)) {
+		alignForkedSessionCwd(step.sessionFile, effectiveCwd);
+	}
 
 	const candidates = step.modelCandidates !== undefined
 		? step.modelCandidates.length > 0 ? step.modelCandidates : [undefined]

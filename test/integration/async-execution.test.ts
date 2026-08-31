@@ -4995,6 +4995,59 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(args[args.indexOf("--model") + 1], "mock/fallback");
 	});
 
+	it("aligns initial and resumed background forked sessions with an explicit child cwd", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Forked async work" });
+		const parentCwd = fs.realpathSync(tempDir);
+		const childCwd = path.join(tempDir, "child-cwd");
+		fs.mkdirSync(childCwd);
+		const parentSessionFile = path.join(tempDir, "parent-cross-cwd.jsonl");
+		const forkedSessionFile = path.join(tempDir, "forked-cross-cwd.jsonl");
+		const parentHeader = { type: "session", version: 1, id: "parent", cwd: parentCwd };
+		const childHeader = { type: "session", version: 1, id: "child", cwd: parentCwd, parentSession: parentSessionFile };
+		fs.writeFileSync(parentSessionFile, `${JSON.stringify(parentHeader)}\n`, "utf-8");
+		fs.writeFileSync(forkedSessionFile, `${JSON.stringify(childHeader)}\n`, "utf-8");
+		const ctx = {
+			...makeMinimalCtx(parentCwd),
+			sessionManager: {
+				getSessionId: () => "session-cross-cwd",
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "leaf-current",
+				openSession: () => ({ createBranchedSession: () => forkedSessionFile }),
+			},
+		};
+
+		const executor = makeAsyncExecutor([makeAgent("worker")]);
+		const launch = await executor.execute(
+			"forked-cross-cwd",
+			{ agent: "worker", task: "Do work", async: true, context: "fork", cwd: childCwd },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		) as AsyncExecutionResult;
+		assert.ok(!launch.isError, launch.content[0]?.text);
+		assert.ok(launch.details.asyncId);
+		await readAsyncPayload(launch.details.asyncId);
+
+		const sessionHeader = JSON.parse(fs.readFileSync(forkedSessionFile, "utf-8").split("\n", 1)[0]!) as { cwd?: string };
+		assert.equal(sessionHeader.cwd, fs.realpathSync.native(childCwd));
+
+		fs.writeFileSync(forkedSessionFile, `${JSON.stringify(childHeader)}\n`, "utf-8");
+		mockPi.onCall({ output: "Resumed async work" });
+		const resumed = await executor.execute(
+			"resume-cross-cwd",
+			{ action: "resume", id: launch.details.asyncId, message: "Continue" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		) as AsyncExecutionResult;
+		assert.ok(!resumed.isError, resumed.content[0]?.text);
+		assert.ok(resumed.details.asyncId);
+		await readAsyncPayload(resumed.details.asyncId);
+
+		const resumedHeader = JSON.parse(fs.readFileSync(forkedSessionFile, "utf-8").split("\n", 1)[0]!) as { cwd?: string };
+		assert.equal(resumedHeader.cwd, fs.realpathSync.native(childCwd));
+	});
+
 	it("background forked runs inherit a parent model outside the registry", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Forked async work" });
 		const parentSessionFile = path.join(tempDir, "parent.jsonl");

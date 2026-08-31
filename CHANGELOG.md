@@ -9,6 +9,7 @@
 - Add session-only durable schedules that execute only in their creating session. Thanks [@yangfeng20](https://github.com/yangfeng20) for #1777.
 
 ### Fixed
+- Align async forked session headers with an explicit child cwd before initial and resumed background launches. Thanks [@stekman08](https://github.com/stekman08) for #1785.
 - Tolerate JSON-encoded acceptance objects from model tool calls by normalizing them before validation, while preserving clear failures for malformed strings. Thanks [@mapleluvr](https://github.com/mapleluvr) for #1781.
 - Separate steer and follow-up receipt statuses from their redacted message previews (#1773).
 - Establish async lifecycle sidecars before external CLI workers can mutate a worktree, so a disappeared runner is reconciled to a failed run. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1764.

@@ -8,7 +8,7 @@ import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig } from "../../agents/agents.ts";
 import { appendAgentRefinementOverlay } from "../../agents/agent-refinements.ts";
-import { alignForkedSessionCwd } from "../../shared/fork-context.ts";
+import { alignForkedSessionCwd } from "../../shared/fork-session-cwd.ts";
 import {
 	ensureArtifactsDir,
 	formatOutputArtifactContent,
