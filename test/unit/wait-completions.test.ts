@@ -66,6 +66,40 @@ describe("workflow wait completion projection", () => {
 		assert.doesNotMatch(JSON.stringify(completion), /raw recovery message|settlementDiagnostic/);
 	});
 
+	it("retains captured structured output and its durable artifact path", () => {
+		const completion = toWaitCompletion({
+			success: true,
+			results: [{
+				agent: "delegate",
+				success: true,
+				output: "",
+				structuredOutput: { payload: { ok: true }, contract_checks: {} },
+				structuredOutputPath: "/runs/structured-output/output.json",
+			}],
+		}, "run-structured");
+
+		assert.deepEqual(completion.results?.[0]?.structuredOutput, { payload: { ok: true }, contract_checks: {} });
+		assert.equal(completion.results?.[0]?.structuredOutputPath, "/runs/structured-output/output.json");
+	});
+
+	it("omits oversized structured output while retaining its artifact path", () => {
+		const completion = toWaitCompletion({
+			success: true,
+			results: [{
+				agent: "delegate",
+				structuredOutput: { payload: "x".repeat(8_000) },
+				structuredOutputPath: "/runs/structured-output/output.json",
+			}],
+		}, "run-large-structured");
+
+		assert.equal(completion.results?.[0]?.structuredOutput, undefined);
+		assert.equal(completion.results?.[0]?.structuredOutputPath, "/runs/structured-output/output.json");
+	});
+
+	it("rejects non-JSON structured output", () => {
+		assert.throws(() => toWaitCompletion({ success: true, results: [{ structuredOutput: 1n }] }, "run-invalid-structured"), /JSON-serializable|serialize a BigInt/);
+	});
+
 	it("rejects unbounded or unknown summary fields at the replay boundary", () => {
 		assert.throws(() => toWaitCompletion({ workflowChildren: { version: 1, parentToolCallId: "tool", workflowRunId: "run", inventoryComplete: true, workflowState: "completed", children: [], output: "secret" } }, "run"), /unsupported fields/);
 	});

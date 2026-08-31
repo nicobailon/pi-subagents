@@ -709,6 +709,20 @@ describe("completion formatting helpers", () => {
 		assert.equal(details.agent, "unknown");
 		assert.equal(details.status, "completed");
 	});
+
+	it("surfaces direct structured output when the completion has no text output", () => {
+		const details = buildCompletionDetails({
+			id: "structured-run",
+			agent: "delegate",
+			success: true,
+			summary: "delegate:\n(no output)",
+			results: [{ agent: "delegate", output: "", structuredOutput: { payload: { ok: true } }, success: true }],
+		});
+
+		assert.match(details.resultPreview, /Structured output:/);
+		assert.match(details.resultPreview, /"ok": true/);
+		assert.match(formatSingleCompletion(details), /"ok": true/);
+	});
 });
 
 describe("scheduled completions", () => {

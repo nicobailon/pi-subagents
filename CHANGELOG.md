@@ -3,6 +3,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Preserve coordinated read-only intent when resuming direct async children and surface captured structured output in completion and status evidence. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1788.
+
 ## [0.62.0] - 2026-08-31
 
 ### Highlights

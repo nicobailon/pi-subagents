@@ -41,6 +41,7 @@ const REVIEWER_REQUIRED_EDIT_PATTERNS = [
 // Accept serialized line separators too: workflow prompts can carry literal
 // `\\n`/`\\r\\n` between clauses instead of decoded newlines.
 const NO_EDIT_PROHIBITION_PATTERN = /(?:\b|\\(?:r\\n|n))(?:do not|don't|must not)\s+(?:edit|modify|write(?:\s+to)?|touch|change)\b((?:(?!\b(?:but|and|then)\b|\\(?:r\\n|n))[^.;,:!?\n–—-])*)/gi;
+const COORDINATED_NO_EDIT_PROHIBITION_PATTERN = /(?:\b|\\(?:r\\n|n))(?:do not|don't|must not)\s+((?=(?:(?!\\(?:r\\n|n))[^.;:!?\n–—-])*\b(?:and|or)\s+(?:edit|modify|write(?:\s+to)?|touch|change)\b)(?:(?!\\(?:r\\n|n))[^.;:!?\n–—-])*?\b(?:and|or)\s+(?:edit|modify|write(?:\s+to)?|touch|change)\b(?:(?!\b(?:but|and|then)\b|\\(?:r\\n|n))[^.;,:!?\n–—-])*)/gi;
 
 /** Objects of a no-edit prohibition that mean "the codebase in general" rather than a named scope. */
 const GENERIC_PROHIBITION_OBJECT = /^\s*(?:(?:any|all|the|these|those|your|our|existing|project|product|source|sources|config|configs|repo|repository)[\s/,-]*)*(?:files?|code|codebase|sources?|anything|repo(?:sitory)?)?\s*$/i;
@@ -144,11 +145,13 @@ function analyzeNoEditProhibitions(taskText: string): NoEditProhibitionAnalysis 
 		|| NO_TOOL_INTENT_PATTERNS.some((pattern) => pattern.test(taskText));
 	let blanket = present;
 	let strippedText = stripPatterns(taskText, [...REVIEW_ONLY_PATTERNS, ...NO_TOOL_INTENT_PATTERNS]);
-	strippedText = strippedText.replace(new RegExp(NO_EDIT_PROHIBITION_PATTERN.source, NO_EDIT_PROHIBITION_PATTERN.flags), (match, object: string, offset: number, source: string) => {
+	const stripNoEditProhibition = (match: string, object: string, offset: number, source: string): string => {
 		present = true;
 		if (GENERIC_PROHIBITION_OBJECT.test(object) && !hasScopedProhibitionContinuation(source.slice(offset + match.length))) blanket = true;
 		return " ";
-	});
+	};
+	strippedText = strippedText.replace(new RegExp(COORDINATED_NO_EDIT_PROHIBITION_PATTERN.source, COORDINATED_NO_EDIT_PROHIBITION_PATTERN.flags), stripNoEditProhibition);
+	strippedText = strippedText.replace(new RegExp(NO_EDIT_PROHIBITION_PATTERN.source, NO_EDIT_PROHIBITION_PATTERN.flags), stripNoEditProhibition);
 	// Restore boundaries after stripping a prohibition from serialized prompts.
 	strippedText = strippedText.replace(/\\(?:r\\n|n)/g, "\n");
 	return { present, blanket, strippedText };

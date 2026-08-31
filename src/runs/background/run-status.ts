@@ -551,6 +551,9 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				const display = runStatusStepDisplayName(step);
 				const phase = step.phase ? `[${step.phase}] ` : "";
 				lines.push(`${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`);
+				const structuredOutputPreview = step.structuredOutput === undefined ? undefined : formatWorkflowJsonPreview(step.structuredOutput, 4_000);
+				if (structuredOutputPreview !== undefined) lines.push(`  Structured output: ${structuredOutputPreview}`);
+				if (step.structuredOutputPath) lines.push(`  Structured output path: ${step.structuredOutputPath}`);
 				lines.push(...formatTimeoutRecoveryLines(step.timeoutRecovery, "  "));
 				if (step.runner?.type === "external-cli") {
 					const runner = normalizeExternalCliRunnerStatus(step.runner);
@@ -670,7 +673,14 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			if (data.parallelHandoff?.path) lines.push(`Parallel handoff: ${data.parallelHandoff.path}`);
 			const children = Array.isArray(data.results) ? data.results : data.agent ? [{ agent: data.agent, sessionFile: data.sessionFile }] : [];
 			lines.push(...formatTimeoutRecoveryLines(data.timeoutRecovery, "  "));
-			for (const child of children) lines.push(...formatTimeoutRecoveryLines(child.timeoutRecovery, "  "));
+			for (const [index, child] of children.entries()) {
+				const structuredOutput = (child as { structuredOutput?: unknown }).structuredOutput;
+				const structuredOutputPreview = structuredOutput === undefined ? undefined : formatWorkflowJsonPreview(structuredOutput, 4_000);
+				if (structuredOutputPreview !== undefined) lines.push(`  Structured output${children.length > 1 ? ` (${index + 1})` : ""}: ${structuredOutputPreview}`);
+				const structuredOutputPath = (child as { structuredOutputPath?: unknown }).structuredOutputPath;
+				if (typeof structuredOutputPath === "string" && structuredOutputPath.trim()) lines.push(`  Structured output path${children.length > 1 ? ` (${index + 1})` : ""}: ${structuredOutputPath}`);
+				lines.push(...formatTimeoutRecoveryLines(child.timeoutRecovery, "  "));
+			}
 			lines.push(formatResumeGuidance(runId, children, data.sessionFile, { stopped: status === "stopped" }));
 			if (data.summary) lines.push("", data.summary);
 			const workflowChildren = parseWorkflowChildSummary((data as unknown as Record<string, unknown>).workflowChildren);

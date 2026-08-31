@@ -42,6 +42,15 @@ function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+const STRUCTURED_OUTPUT_INLINE_LIMIT_BYTES = 4 * 1024;
+
+export function projectStructuredOutput(value: unknown): unknown {
+	if (value === undefined) return undefined;
+	const serialized = JSON.stringify(value);
+	if (typeof serialized !== "string") throw new Error("Structured output must be JSON-serializable");
+	return Buffer.byteLength(serialized, "utf8") <= STRUCTURED_OUTPUT_INLINE_LIMIT_BYTES ? JSON.parse(serialized) : undefined;
+}
+
 /**
  * Project a terminal result payload into the slim shape that is safe to surface in
  * tool_result details: run identity, per-child outcome, and the artifact trail.
@@ -65,6 +74,8 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 			const sessionFile = asNonEmptyString(child.sessionFile);
 			const error = asNonEmptyString(child.error);
 			const model = asNonEmptyString(child.model);
+			const structuredOutput = projectStructuredOutput(child.structuredOutput);
+			const structuredOutputPath = asNonEmptyString(child.structuredOutputPath);
 			const contextOverflow = child.contextOverflow === true;
 			const timeoutRecovery = projectTimeoutRecovery(child.timeoutRecovery);
 			return [{
@@ -74,6 +85,8 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 				...(sessionFile ? { sessionFile } : {}),
 				...(typeof child.success === "boolean" ? { success: child.success } : {}),
 				...(outputState ? { outputState } : {}),
+				...(structuredOutput !== undefined ? { structuredOutput } : {}),
+				...(structuredOutputPath ? { structuredOutputPath } : {}),
 				...(error ? { error } : {}),
 				...(model ? { model } : {}),
 				...(contextOverflow ? { contextOverflow: true } : {}),

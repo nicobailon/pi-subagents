@@ -40,6 +40,22 @@ describe("classifyTaskMutationIntent", () => {
 		assert.equal(classifyTaskMutationIntent("worker", "Do not modify tests and fixtures").kind, "read-only");
 	});
 
+	it("recognizes coordinated read-only prohibitions", () => {
+		for (const task of [
+			"Do not read more files, run commands, or edit anything.",
+			"Do not read more files, run commands, and edit anything.",
+			"Do not read files or modify anything.",
+		]) {
+			assert.notEqual(classifyTaskMutationIntent("worker", task).kind, "implementation", task);
+			assert.equal(expectsImplementationMutation("worker", task), false, task);
+			assert.equal(taskMayMutate(task), false, task);
+		}
+		assert.equal(classifyTaskMutationIntent("worker", "Do not read more files, run commands, or edit anything; implement the fix").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not read more files, run commands, or edit anything\\r\\nImplement the fix").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Do not read more files\\r\\nImplement or edit the fix").kind, "implementation");
+		assert.equal(taskMayMutate("Do not read more files\\r\\nImplement or edit the fix"), true);
+	});
+
 	it("lets blanket no-edit prohibitions win over write verbs", () => {
 		assert.equal(classifyTaskMutationIntent("worker", "Implement this. Do not edit files.").kind, "read-only");
 		assert.equal(classifyTaskMutationIntent("worker", "Do not edit files. Tell me how to fix the bug.").kind, "read-only");

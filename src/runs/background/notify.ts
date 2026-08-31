@@ -420,6 +420,18 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 	const handoffPath = typeof parallelHandoff?.path === "string" ? parallelHandoff.path : undefined;
 	const rawRunId = typeof result.runId === "string" ? result.runId : typeof result.id === "string" ? result.id : undefined;
 	const workflowRunId = (result.mode === "workflow" || agent === "workflow") && rawRunId ? rawRunId : undefined;
+	const directChild = !workflowRunId && result.results?.length === 1 ? result.results[0]! : undefined;
+	const directStructuredPreview = directChild
+		? childInlinePreview(directChild).preview
+		: undefined;
+	const directSummary = summary.trim();
+	const directAgent = typeof directChild?.agent === "string" ? directChild.agent : agent;
+	const directNoOutputSummary = directChild && (!directSummary
+		|| directSummary === "(no output)"
+		|| (directAgent && directSummary === `${directAgent}:\n(no output)`));
+	const resultPreview = directStructuredPreview && directNoOutputSummary
+		? `Structured output:\n${directStructuredPreview}`
+		: summary;
 	const childRuns = result.results?.flatMap((child) => {
 		const runId = typeof child.runId === "string" && child.runId.trim() ? child.runId.trim() : undefined;
 		const workflowKey = typeof child.workflowKey === "string" && child.workflowKey.trim() ? child.workflowKey.trim() : undefined;
@@ -468,7 +480,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		...(scheduleOrigin ? { scheduleOrigin } : {}),
 		...(result.source ? { source: result.source } : {}),
 		...(taskInfo ? { taskInfo } : {}),
-		resultPreview: summary,
+		resultPreview,
 		...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
 		...(handoffPath ? { handoffPath } : {}),
 		...(workflowRunId ? { workflowRunId } : {}),

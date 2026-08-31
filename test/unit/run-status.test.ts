@@ -1446,6 +1446,8 @@ describe("async run status inspection", () => {
 				results: [{
 					agent: "worker",
 					success: false,
+					structuredOutput: { payload: { ok: true } },
+					structuredOutputPath: "/runs/structured-output/output.json",
 					timeoutRecovery: {
 						termination: "timed-out",
 						changedFiles: ["input.md"],
@@ -1470,6 +1472,8 @@ describe("async run status inspection", () => {
 			assert.match(text, /Recovery needed: review the diff and artifacts before resuming or launching dependent stages\./);
 			assert.match(text, /requested report: missing/);
 			assert.match(text, /changed tracked files: input\.md/);
+			assert.match(text, /Structured output: \{"payload":\{"ok":true\}\}/);
+			assert.match(text, /Structured output path: \/runs\/structured-output\/output\.json/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

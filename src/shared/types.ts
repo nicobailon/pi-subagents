@@ -1307,6 +1307,8 @@ export interface WaitCompletionChild {
 	sessionFile?: string;
 	success?: boolean;
 	outputState?: SubagentOutputState;
+	structuredOutput?: unknown;
+	structuredOutputPath?: string;
 	error?: string;
 	model?: string;
 	contextOverflow?: boolean;
