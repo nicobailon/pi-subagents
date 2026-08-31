@@ -15,6 +15,7 @@ type AtomicJsonWriterOptions = {
 	mode?: number;
 	retryRenameErrors?: boolean;
 	retryDirectoryErrors?: boolean;
+	ignoreCleanupErrorAfterSuccess?: boolean;
 	retryDelaysMs?: readonly number[];
 	wait?: (delayMs: number) => void;
 };
@@ -46,6 +47,7 @@ export function createAtomicJsonWriter(options: AtomicJsonWriterOptions = {}): (
 	const mode = options.mode;
 	const retryRenameErrors = options.retryRenameErrors ?? process.platform === "win32";
 	const retryDirectoryErrors = options.retryDirectoryErrors ?? retryRenameErrors;
+	const ignoreCleanupErrorAfterSuccess = options.ignoreCleanupErrorAfterSuccess ?? false;
 	const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS;
 	const renameRetryDelaysMs = retryRenameErrors ? retryDelaysMs : [];
 	const directoryRetryDelaysMs = retryDirectoryErrors ? retryDelaysMs : [];
@@ -71,7 +73,7 @@ export function createAtomicJsonWriter(options: AtomicJsonWriterOptions = {}): (
 			} catch (cleanupError) {
 				// Preserve the write/rename failure: cleanup is best effort and must
 				// not hide the error callers need to classify or report.
-				if (writeError === undefined) throw cleanupError;
+				if (writeError === undefined && !ignoreCleanupErrorAfterSuccess) throw cleanupError;
 			}
 		}
 	};

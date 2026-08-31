@@ -160,6 +160,22 @@ describe("writeAtomicJson", () => {
 		assert.throws(() => writeAtomicJson(path.join("/tmp", "status.json"), { state: "running" }), /ENOSPC/);
 	});
 
+	it("can ignore cleanup failures after the target is atomically published", () => {
+		const fakeFs = new FakeFs();
+		fakeFs.failCleanup = true;
+		const writeAtomicJson = createAtomicJsonWriter({
+			fs: fakeFs as any,
+			now: () => 12345,
+			pid: 678,
+			random: () => 0.5,
+			ignoreCleanupErrorAfterSuccess: true,
+		});
+		const targetPath = path.join("/tmp", "runner-startup-proceed.json");
+
+		assert.doesNotThrow(() => writeAtomicJson(targetPath, { action: "proceed", token: "runner" }));
+		assert.equal(fakeFs.files.get(targetPath), JSON.stringify({ action: "proceed", token: "runner" }, null, 2));
+	});
+
 	it("cleans up the temp file after retryable failures are exhausted", () => {
 		const fakeFs = new FakeFs();
 		fakeFs.failRenameCodes = ["EPERM", "EPERM", "EPERM", "EPERM"];

@@ -33,6 +33,7 @@ export interface ActiveAsyncCapacityHandle {
 	markStarted(runnerProcessInstanceId: string): void;
 	markWorkflowStarted(): void;
 	rollback(): boolean;
+	rollbackBeforeRunnerProceed(runnerProcessInstanceId: string): boolean;
 	reconcile(liveWorkflowRunIds?: ReadonlySet<string>): ActiveAsyncCapacitySnapshot;
 }
 
@@ -43,6 +44,7 @@ interface CapacityOptions {
 	abandonedSlotReleaseAfterMs?: number | false;
 	pidLiveness?: (pid: number) => PidLiveness;
 	afterSlotRename?: (releasedDir: string) => void;
+	writeOwner?: (filePath: string, owner: ActiveAsyncCapacityOwnerV1) => void;
 }
 
 export interface ActiveAsyncCapacityReleaseEvidence {
@@ -380,6 +382,7 @@ function createSlot(poolDir: string, owner: ActiveAsyncCapacityOwnerV1): boolean
 
 function handleFor(owner: ActiveAsyncCapacityOwnerV1, limit: number, options: CapacityOptions, rollbackOwner?: ActiveAsyncCapacityOwnerV1): ActiveAsyncCapacityHandle {
 	const rootDir = options.rootDir ?? ACTIVE_ASYNC_CAPACITY_DIR;
+	const writeOwner = options.writeOwner ?? writePrivateAtomicJson;
 	const dir = slotDir(sessionDir(owner.ownerSessionId, rootDir), owner.slot);
 	return {
 		owner,
@@ -388,14 +391,10 @@ function handleFor(owner: ActiveAsyncCapacityOwnerV1, limit: number, options: Ca
 				const current = matchingOwner(dir, owner);
 				if (!current) return false;
 				const next = { ...current, runnerProcessInstanceId, runnerStartedAt: options.now?.() ?? Date.now() };
-				// Mark memory first. If persistence fails after the process starts, caller
-				// cleanup must retain the occupied slot instead of rolling it back.
+				// Mark memory first so pre-proceed cleanup can distinguish a failed durable
+				// bind from an unrelated unstarted reservation.
 				Object.assign(owner, next);
-				try {
-					writePrivateAtomicJson(path.join(dir, "owner.json"), next);
-				} catch (error) {
-					console.error(`Failed to bind active async capacity to runner '${runnerProcessInstanceId}'; capacity will remain occupied:`, error);
-				}
+				writeOwner(path.join(dir, "owner.json"), next);
 				return true;
 			});
 			if (!claimed.acquired || !claimed.value) throw new Error(`Active async capacity ownership changed for run '${owner.runId}'.`);
@@ -423,6 +422,26 @@ function handleFor(owner: ActiveAsyncCapacityOwnerV1, limit: number, options: Ca
 				if (!current || current.runnerProcessInstanceId || current.runnerStartedAt) return false;
 				writePrivateAtomicJson(path.join(dir, "owner.json"), rollbackOwner);
 				Object.assign(owner, rollbackOwner);
+				return true;
+			});
+			return claimed.acquired && claimed.value;
+		},
+		rollbackBeforeRunnerProceed(runnerProcessInstanceId) {
+			const claimed = withSlotClaim(dir, () => {
+				const current = matchingOwner(dir, owner);
+				if (!current) return false;
+				const boundToRunner = current.runnerProcessInstanceId === runnerProcessInstanceId;
+				const bindingFailedBeforeProceed = current.runnerProcessInstanceId === undefined && current.runnerStartedAt === undefined && owner.runnerProcessInstanceId === runnerProcessInstanceId;
+				if (!boundToRunner && !bindingFailedBeforeProceed) return false;
+				if (rollbackOwner) {
+					writePrivateAtomicJson(path.join(dir, "owner.json"), rollbackOwner);
+					Object.assign(owner, rollbackOwner);
+					return true;
+				}
+				const releasedDir = path.join(path.dirname(dir), `.${path.basename(dir)}.released-${randomUUID()}`);
+				fs.renameSync(dir, releasedDir);
+				options.afterSlotRename?.(releasedDir);
+				fs.rmSync(releasedDir, { recursive: true, force: true });
 				return true;
 			});
 			return claimed.acquired && claimed.value;

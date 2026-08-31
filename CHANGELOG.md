@@ -3,6 +3,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Establish async lifecycle sidecars before external CLI workers can mutate a worktree, so a disappeared runner is reconciled to a failed run. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1764.
+
 ## [0.61.0] - 2026-08-31
 
 ### Highlights

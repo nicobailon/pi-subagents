@@ -9,8 +9,10 @@
 
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fsDefault from "node:fs";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createEventBus, createMockPi, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir, tryImport } from "../support/helpers.ts";
@@ -25,7 +27,7 @@ import { registerSubagentCapabilityCeiling } from "../../src/api/capability-ceil
 import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
-import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey } from "../../src/runs/background/active-async-capacity.ts";
+import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey, getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
 import { deriveForkPromptCacheKey, SUBAGENT_FORK_CACHE_KEY_ENV } from "../../src/runs/shared/pi-args.ts";
 import { clearExclusions, recordModelFailure } from "../../src/runs/shared/model-exclusions.ts";
 
@@ -988,6 +990,124 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.success, true);
 		assert.match(payload.results[0]?.output ?? "", /external async fast false/);
 		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("establishes a lifecycle sidecar before an external CLI can run", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const id = `async-external-lifecycle-${Date.now().toString(36)}`;
+		const startedRunners: string[] = [];
+		const launch = executeAsyncSingle(id, {
+			agent: "external",
+			task: "Run external",
+			agentConfig: makeAgent("external", {
+				runner: { type: "external-cli", command: process.execPath, args: ["-e", "setTimeout(() => process.stdout.write('external lifecycle'), 500)"] },
+			} as never),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			activeAsyncCapacity: {
+				owner: {},
+				markStarted: (runnerProcessInstanceId: string) => { startedRunners.push(runnerProcessInstanceId); },
+				markWorkflowStarted() {},
+				rollback: () => false,
+				rollbackBeforeRunnerProceed: () => false,
+				reconcile: () => ({ used: 1, limit: 1 }),
+			} as never,
+		});
+
+		assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "launch failed");
+		const proof = JSON.parse(fs.readFileSync(path.join(launch.details.asyncDir ?? "", "process-terminal.json"), "utf-8")) as { state?: string; runId?: string; runnerProcessInstanceId?: string };
+		assert.equal(proof.state, "pending");
+		assert.equal(proof.runId, id);
+		assert.deepEqual(startedRunners, [proof.runnerProcessInstanceId]);
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.match(payload.results[0]?.output ?? "", /external lifecycle/);
+	});
+
+	it("continues startup when proceed authorization is published but temp cleanup fails", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async (t) => {
+		const id = `async-external-proceed-cleanup-${Date.now().toString(36)}`;
+		const originalRmSync = fsDefault.rmSync;
+		let proceedCleanupFailures = 0;
+		let rollbackCount = 0;
+		t.mock.method(fsDefault, "rmSync", ((target: fs.PathLike, options?: fs.RmOptions) => {
+			const targetPath = String(target);
+			if (targetPath.includes(".runner-startup-proceed.json.") && targetPath.endsWith(".tmp") && proceedCleanupFailures === 0) {
+				proceedCleanupFailures += 1;
+				throw new Error("simulated proceed cleanup failure");
+			}
+			return originalRmSync(target, options);
+		}) as typeof fsDefault.rmSync);
+		syncBuiltinESMExports();
+		t.after(() => syncBuiltinESMExports());
+
+		const launch = executeAsyncSingle(id, {
+			agent: "external",
+			task: "Run external",
+			agentConfig: makeAgent("external", {
+				runner: { type: "external-cli", command: process.execPath, args: ["-e", "process.stdout.write('external proceed cleanup')"] },
+			} as never),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			activeAsyncCapacity: {
+				owner: {},
+				markStarted() {},
+				markWorkflowStarted() {},
+				rollback() { rollbackCount += 1; return false; },
+				rollbackBeforeRunnerProceed() { rollbackCount += 1; return false; },
+				reconcile: () => ({ used: 1, limit: 1 }),
+			} as never,
+		});
+
+		assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "launch failed");
+		assert.equal(proceedCleanupFailures, 1);
+		assert.equal(rollbackCount, 0);
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.match(payload.results[0]?.output ?? "", /external proceed cleanup/);
+	});
+
+	it("fails pre-proceed capacity bind without rebinding the killed runner", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async (t) => {
+		const parentSessionId = `session-capacity-bind-${Date.now().toString(36)}`;
+		const id = `async-capacity-bind-failure-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, id);
+		let ownerWrites = 0;
+		fs.rmSync(path.join(ACTIVE_ASYNC_CAPACITY_DIR, activeAsyncCapacitySessionKey(parentSessionId)), { recursive: true, force: true });
+		const activeAsyncCapacity = acquireActiveAsyncCapacity({ sessionId: parentSessionId, limit: 1, runId: id, kind: "runner", asyncDir }, {
+			writeOwner(filePath, owner) {
+				ownerWrites += 1;
+				if (ownerWrites === 1) throw new Error("simulated durable bind failure");
+				fs.mkdirSync(path.dirname(filePath), { recursive: true });
+				fs.writeFileSync(filePath, JSON.stringify(owner, null, 2));
+			},
+		});
+		assert.ok(activeAsyncCapacity);
+		const originalKill = process.kill;
+		t.mock.method(process, "kill", ((pid: number, signal?: NodeJS.Signals | 0) => {
+			if (signal === 0) return true;
+			return originalKill(pid, signal);
+		}) as typeof process.kill);
+
+		const launch = executeAsyncSingle(id, {
+			agent: "external",
+			task: "Run external",
+			agentConfig: makeAgent("external", {
+				runner: { type: "external-cli", command: process.execPath, args: ["-e", "setTimeout(() => {}, 30000)"] },
+			} as never),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: parentSessionId },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			activeAsyncCapacity,
+		});
+
+		assert.equal(launch.isError, true);
+		assert.match(launch.content[0]?.text ?? "", /Failed to establish async runner capacity ownership/);
+		assert.equal(ownerWrites, 1);
+		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(status.state, "failed");
+		assert.match(status.error ?? "", /Failed to establish async runner capacity ownership/);
+		assert.equal(status.processTerminal?.state, "not-started");
+		assert.deepEqual(getActiveAsyncCapacitySnapshot(parentSessionId, 1), { used: 0, limit: 1 });
 	});
 
 	it("lets explicit fast false opt out async external chains from inherited fast mode", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

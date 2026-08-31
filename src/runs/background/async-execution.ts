@@ -11,7 +11,7 @@ import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
 import { appendAgentRefinementOverlay } from "../../agents/agent-refinements.ts";
-import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
+import { createAtomicJsonWriter, writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { planChildLaunch, resolveStepBehavior, suppressProgressForReadOnlyTask, type ResolvedStepBehavior } from "../shared/child-launch-plan.ts";
 import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
@@ -70,7 +70,7 @@ import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetState } from "../shared/usage-budget.ts";
 import type { ImportedAsyncRoot } from "./chain-root-attachment.ts";
 import type { SessionLeaseRequest } from "../shared/session-lease.ts";
-import { finalizeProcessTerminal, readProcessTerminal } from "./process-terminal.ts";
+import { finalizeProcessTerminal, initializeProcessTerminal, readProcessTerminal } from "./process-terminal.ts";
 import type { ActiveAsyncCapacityHandle } from "./active-async-capacity.ts";
 import { statusStepDescription } from "./chain-append.ts";
 import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../shared/types.ts";
@@ -432,13 +432,15 @@ function waitForRunnerStartup(startupPath: string, expectedState: RunnerStartupS
 	return { ok: false, error: `Timed out after ${timeoutMs}ms waiting for the async runner startup state '${expectedState}'.`, startupDidNotProceed: true };
 }
 
+const writePrivateStartupControlJson = createAtomicJsonWriter({ mode: 0o600, ignoreCleanupErrorAfterSuccess: true });
+
 function writeRunnerStartupControl(filePath: string, payload: { action: "ack" | "proceed"; token: string }): void {
 	// Delegate to the shared atomic JSON writer (temp file + rename, retrying
 	// transient Windows EPERM/EBUSY/EACCES locks and cleaning up the temp file
 	// on failure), so the startup handshake gets the same locking resilience as
 	// every other async control/result file. This is exercised by
 	// test/unit/atomic-json.test.ts.
-	writePrivateAtomicJson(filePath, payload);
+	writePrivateStartupControlJson(filePath, payload);
 }
 
 function runnerIsAlive(pid: number): boolean {
@@ -520,7 +522,7 @@ export function emitProcessTerminalEvent(ctx: AsyncExecutionContext, proof: unkn
 	}
 }
 
-function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Omit<AsyncStatus, "pid" | "processTerminal">, initialStatusPath: string, onProcessTerminal?: (proof: unknown) => void, requestedCwd = cwd): SpawnRunnerResult {
+function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Omit<AsyncStatus, "pid" | "processTerminal">, initialStatusPath: string, onProcessTerminal?: (proof: unknown) => void, onBeforeProceed?: (runnerProcessInstanceId: string) => void, requestedCwd = cwd): SpawnRunnerResult {
 	const cwdError = preflightLaunchCwd(requestedCwd, cwd);
 	if (cwdError) return { error: cwdError };
 
@@ -637,6 +639,24 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			});
 		} catch (error) {
 			const message = `Failed to persist initial async status: ${error instanceof Error ? error.message : String(error)}`;
+			if (launchAsyncDir) persistPreProceedStartupFailure(launchAsyncDir, launchRunId, runnerProcessInstanceId, launchSessionId, launchCompletionOwnerId, message);
+			const terminationObserved = terminateRunnerBeforeProceed(proc.pid);
+			return { pid: proc.pid, runnerProcessInstanceId, error: message, terminationObserved, startupDidNotProceed: true };
+		}
+		try {
+			if (!launchAsyncDir) throw new Error("Async runner is missing its lifecycle directory.");
+			initializeProcessTerminal(launchAsyncDir, launchRunId, runnerProcessInstanceId);
+		} catch (error) {
+			const message = `Failed to establish async runner lifecycle sidecar: ${error instanceof Error ? error.message : String(error)}`;
+			if (launchAsyncDir) persistPreProceedStartupFailure(launchAsyncDir, launchRunId, runnerProcessInstanceId, launchSessionId, launchCompletionOwnerId, message);
+			const terminationObserved = terminateRunnerBeforeProceed(proc.pid);
+			return { pid: proc.pid, runnerProcessInstanceId, error: message, terminationObserved, startupDidNotProceed: true };
+		}
+		try {
+			onBeforeProceed?.(runnerProcessInstanceId);
+		} catch (error) {
+			const message = `Failed to establish async runner capacity ownership: ${error instanceof Error ? error.message : String(error)}`;
+			if (launchAsyncDir) persistPreProceedStartupFailure(launchAsyncDir, launchRunId, runnerProcessInstanceId, launchSessionId, launchCompletionOwnerId, message);
 			const terminationObserved = terminateRunnerBeforeProceed(proc.pid);
 			return { pid: proc.pid, runnerProcessInstanceId, error: message, terminationObserved, startupDidNotProceed: true };
 		}
@@ -1332,6 +1352,7 @@ export function executeAsyncChain(
 			},
 			path.join(asyncDir, "status.json"),
 			(proof) => emitProcessTerminalEvent(ctx, proof),
+			(runnerProcessInstanceId) => params.activeAsyncCapacity?.markStarted(runnerProcessInstanceId),
 		);
 	} catch (error) {
 		params.activeAsyncCapacity?.rollback();
@@ -1340,7 +1361,10 @@ export function executeAsyncChain(
 	}
 
 	if (spawnResult.error) {
-		if (!spawnResult.pid || !spawnResult.runnerProcessInstanceId || (spawnResult.startupDidNotProceed && spawnResult.terminationObserved)) params.activeAsyncCapacity?.rollback();
+		if (spawnResult.startupDidNotProceed) {
+			if (!spawnResult.runnerProcessInstanceId || params.activeAsyncCapacity?.rollbackBeforeRunnerProceed(spawnResult.runnerProcessInstanceId) !== true) params.activeAsyncCapacity?.rollback();
+		}
+		else if (!spawnResult.pid || !spawnResult.runnerProcessInstanceId) params.activeAsyncCapacity?.rollback();
 		else params.activeAsyncCapacity?.markStarted(spawnResult.runnerProcessInstanceId);
 		return formatAsyncStartError(resultMode, `Failed to start async ${resultMode} '${id}': ${spawnResult.error}`);
 	}
@@ -1348,8 +1372,6 @@ export function executeAsyncChain(
 		params.activeAsyncCapacity?.rollback();
 		return formatAsyncStartError(resultMode, `Failed to start async ${resultMode} '${id}': runner identity unavailable`);
 	}
-	params.activeAsyncCapacity?.markStarted(spawnResult.runnerProcessInstanceId);
-
 	if (spawnResult.pid) {
 		const eventFirstStep = eventChain[0];
 		if (!eventFirstStep) {
@@ -1914,6 +1936,7 @@ export function executeAsyncSingle(
 			},
 			path.join(asyncDir, "status.json"),
 			(proof) => emitProcessTerminalEvent(ctx, proof),
+			(runnerProcessInstanceId) => params.activeAsyncCapacity?.markStarted(runnerProcessInstanceId),
 			params.requestedCwd ?? runnerCwd,
 		);
 	} catch (error) {
@@ -1923,7 +1946,10 @@ export function executeAsyncSingle(
 	}
 
 	if (spawnResult.error) {
-		if (!spawnResult.pid || !spawnResult.runnerProcessInstanceId || (spawnResult.startupDidNotProceed && spawnResult.terminationObserved)) params.activeAsyncCapacity?.rollback();
+		if (spawnResult.startupDidNotProceed) {
+			if (!spawnResult.runnerProcessInstanceId || params.activeAsyncCapacity?.rollbackBeforeRunnerProceed(spawnResult.runnerProcessInstanceId) !== true) params.activeAsyncCapacity?.rollback();
+		}
+		else if (!spawnResult.pid || !spawnResult.runnerProcessInstanceId) params.activeAsyncCapacity?.rollback();
 		else params.activeAsyncCapacity?.markStarted(spawnResult.runnerProcessInstanceId);
 		return formatAsyncStartError("single", `Failed to start async run '${id}': ${spawnResult.error}`);
 	}
@@ -1931,8 +1957,6 @@ export function executeAsyncSingle(
 		params.activeAsyncCapacity?.rollback();
 		return formatAsyncStartError("single", `Failed to start async run '${id}': runner identity unavailable`);
 	}
-	params.activeAsyncCapacity?.markStarted(spawnResult.runnerProcessInstanceId);
-
 	if (spawnResult.pid) {
 		if (inheritedNestedRoute && nestedAddress) {
 			const now = Date.now();

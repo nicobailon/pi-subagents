@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
 	acquireActiveAsyncCapacity,
+	activeAsyncCapacitySessionKey,
 	ActiveAsyncCapacityError,
 	getActiveAsyncCapacitySnapshot,
 	inspectActiveAsyncCapacityOwner,
@@ -194,7 +195,7 @@ describe("active async capacity", () => {
 		}
 	});
 
-	it("releases a transferred failure that never started", () => {
+	it("restores a transferred source when revival fails before runner proceed", () => {
 		const rootDir = tempRoot();
 		const sourceDir = path.join(rootDir, "runs", "source");
 		const failedDir = path.join(rootDir, "runs", "failed-revival");
@@ -206,8 +207,55 @@ describe("active async capacity", () => {
 			const transferred = transferActiveAsyncCapacity({ sessionId: "session-a", limit: 1, sourceRunId: "source", runId: "failed-revival", asyncDir: failedDir }, { rootDir });
 			assert.ok(transferred);
 			transferred.markStarted("failed-runner");
-			writeJson(path.join(failedDir, "status.json"), { runId: "failed-revival", sessionId: "session-a", mode: "single", state: "failed", startedAt: 200, error: "Failed before startup proceed", processTerminal: { version: 1, state: "not-started", runId: "failed-revival", runnerProcessInstanceId: "failed-runner" } });
+			assert.equal(transferred.rollbackBeforeRunnerProceed("failed-runner"), true);
 
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 1, limit: 1 });
+			const sourceInspection = inspectActiveAsyncCapacityOwner({ sessionId: "session-a", runId: "source", asyncDir: sourceDir }, { rootDir });
+			assert.equal(sourceInspection.relation, "current");
+			assert.equal(sourceInspection.owner?.runId, "source");
+			assert.equal(inspectActiveAsyncCapacityOwner({ sessionId: "session-a", runId: "failed-revival", asyncDir: failedDir }, { rootDir }).relation, "none");
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("releases capacity bound before runner proceed when startup is terminated", () => {
+		const rootDir = tempRoot();
+		const unboundDir = path.join(rootDir, "runs", "pre-bind");
+		const asyncDir = path.join(rootDir, "runs", "pre-proceed");
+		try {
+			const unbound = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "pre-bind", kind: "runner", asyncDir: unboundDir }, { rootDir });
+			assert.ok(unbound);
+			assert.equal(unbound.rollbackBeforeRunnerProceed("pre-bind-runner"), false);
+			assert.equal(unbound.rollback(), true);
+
+			const handle = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "pre-proceed", kind: "runner", asyncDir }, { rootDir });
+			assert.ok(handle);
+			handle.markStarted("pre-proceed-runner");
+			assert.equal(handle.rollback(), false);
+
+			assert.equal(handle.rollbackBeforeRunnerProceed("other-runner"), false);
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 1, limit: 1 });
+			assert.equal(handle.rollbackBeforeRunnerProceed("pre-proceed-runner"), true);
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 0, limit: 1 });
+
+			const bindFailure = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "pre-proceed-bind-failure", kind: "runner", asyncDir: path.join(rootDir, "runs", "pre-proceed-bind-failure") }, {
+				rootDir,
+				writeOwner() { throw new Error("simulated durable bind failure"); },
+			});
+			assert.ok(bindFailure);
+			assert.throws(() => bindFailure.markStarted("pre-proceed-bind-failure-runner"), /simulated durable bind failure/);
+			assert.equal(bindFailure.rollback(), false);
+			assert.equal(bindFailure.rollbackBeforeRunnerProceed("pre-proceed-bind-failure-runner"), true);
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 0, limit: 1 });
+
+			const divergent = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "pre-proceed-divergent", kind: "runner", asyncDir: path.join(rootDir, "runs", "pre-proceed-divergent") }, { rootDir });
+			assert.ok(divergent);
+			const unstartedOwner = { ...divergent.owner };
+			divergent.markStarted("pre-proceed-divergent-runner");
+			writeJson(path.join(rootDir, activeAsyncCapacitySessionKey("session-a"), "slot-0", "owner.json"), unstartedOwner);
+			assert.equal(divergent.rollback(), false);
+			assert.equal(divergent.rollbackBeforeRunnerProceed("pre-proceed-divergent-runner"), true);
 			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 0, limit: 1 });
 		} finally {
 			fs.rmSync(rootDir, { recursive: true, force: true });

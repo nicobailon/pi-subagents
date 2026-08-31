@@ -115,6 +115,22 @@ export function writeProcessTerminalCandidate(asyncDir: string, candidate: Proce
 	writePrivateAtomicJson(processTerminalCandidatePath(asyncDir), candidate);
 }
 
+/** Establish ownership before authorizing a runner to launch any child process. */
+export function initializeProcessTerminal(asyncDir: string, runId: string, runnerProcessInstanceId: string): void {
+	writeProcessTerminalCandidate(asyncDir, {
+		version: 1,
+		runId,
+		runnerProcessInstanceId,
+		writers: {},
+	});
+	writeAtomicJson(processTerminalPath(asyncDir), {
+		version: 1,
+		state: "pending",
+		runId,
+		runnerProcessInstanceId,
+	});
+}
+
 export function markProcessTerminalCandidateLeaseRelease(asyncDir: string, token: string, acknowledged: boolean): void {
 	const candidate = readProcessTerminalCandidate(asyncDir);
 	if (!candidate || candidate.revivalLeaseToken !== token) return;
