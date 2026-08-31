@@ -24,6 +24,28 @@ import { validateAsyncStatusLaneMetadata } from "../shared/lane-metadata.ts";
 import { formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary } from "../../workflows/workflow-preflight.ts";
 import { workflowGraphStageNodes } from "../shared/workflow-graph.ts";
 import { formatTimeoutRecoveryLines, projectTimeoutRecovery } from "../shared/mutation-evidence.ts";
+import type { ResolvedModelScope } from "../shared/model-scope.ts";
+
+export interface AsyncChildControlStatus {
+	requestId: string;
+	type: "input" | "runtime";
+	state: "queued" | "applied" | "failed";
+	requestedAt: number;
+	updatedAt: number;
+	message: string;
+	model?: string;
+	thinking?: string;
+}
+
+function asyncChildControlStatus(step: AsyncJobStep): AsyncChildControlStatus | undefined {
+	// SAFETY: this optional field is written only by the runner from validated child-control requests and acknowledgements.
+	return (step as AsyncJobStep & { childControl?: AsyncChildControlStatus }).childControl;
+}
+
+function asyncModelScopes(step: AsyncJobStep): ResolvedModelScope[] | undefined {
+	// SAFETY: the runner copies this field from launch-resolved, validated model-scope configuration.
+	return (step as AsyncJobStep & { modelScopes?: ResolvedModelScope[] }).modelScopes;
+}
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -55,6 +77,7 @@ interface AsyncRunStepSummary {
 	turnCount?: number;
 	toolCount?: number;
 	steering?: SteeringStatus;
+	childControl?: AsyncChildControlStatus;
 	durationMs?: number;
 	tokens?: TokenUsage;
 	totalCost?: CostSummary;
@@ -62,6 +85,8 @@ interface AsyncRunStepSummary {
 	model?: string;
 	contextLimit?: number;
 	thinking?: string;
+	thinkingCeiling?: AsyncJobStep["thinkingCeiling"];
+	modelScopes?: ResolvedModelScope[];
 	attemptedModels?: string[];
 	sessionFile?: string;
 	transcriptPath?: string;
@@ -353,6 +378,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.turnCount !== undefined ? { turnCount: step.turnCount } : {}),
 			...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
 			...(step.steering ? { steering: step.steering } : {}),
+			...(asyncChildControlStatus(step) ? { childControl: asyncChildControlStatus(step) } : {}),
 			...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
 			...(step.tokens ? { tokens: step.tokens } : {}),
 			...(step.totalCost ? { totalCost: step.totalCost } : {}),
@@ -361,6 +387,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.contextLimit !== undefined ? { contextLimit: step.contextLimit } : {}),
 			...(step.thinking ? { thinking: step.thinking } : {}),
 			...(step.thinkingCeiling ? { thinkingCeiling: step.thinkingCeiling } : {}),
+			...(asyncModelScopes(step) ? { modelScopes: asyncModelScopes(step) } : {}),
 			...(step.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
 			...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
 			...(step.transcriptPath ? { transcriptPath: step.transcriptPath } : {}),

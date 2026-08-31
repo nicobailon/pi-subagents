@@ -71,6 +71,7 @@ function writeAsyncRun(root: string, input: {
 			...(input.contexts?.[index] ? { context: input.contexts[index] } : {}),
 			...(input.models?.[index] ? { model: input.models[index] } : {}),
 			...(input.thinking?.[index] ? { thinking: input.thinking[index] } : {}),
+			modelScopes: [],
 			status: input.state === "complete" ? "complete" : input.state === "failed" ? "failed" : index === 0 ? "running" : "pending",
 			startedAt: 100,
 			...(index === 0 ? { sessionFile: path.join(asyncDir, `${agent}.jsonl`), ...(transcriptPath ? { transcriptPath } : {}) } : {}),
@@ -104,6 +105,116 @@ const markdownTheme: MarkdownTheme = {
 };
 
 describe("native subagent fleet", () => {
+	it("opens focus mode with Enter for a running native async child", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "fleet-focus-enter-"));
+		try {
+			writeAsyncRun(root, { id: "focus-run", agents: ["worker"], transcript: [{ type: "message", role: "assistant", content: "working" }] });
+			const state = stateForTest();
+			const registryModel = { provider: "test", id: "model", reasoning: true };
+			// SAFETY: this focused Fleet test supplies the registry members used by target validation.
+			state.lastUiContext = {
+				model: registryModel,
+				modelRegistry: {
+					getAvailable: () => [registryModel],
+					find: () => registryModel,
+					hasConfiguredAuth: () => true,
+				},
+			} as never;
+			let target: Parameters<NonNullable<import("../../src/tui/fleet.ts").FleetViewOptions["openFocusedChild"]>>[0] | undefined;
+			let closed = false;
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 32, columns: 120 }, requestRender() {} } as never,
+				theme as never,
+				state,
+				() => { closed = true; },
+				{ asyncDirRoot: root, refreshMs: 60_000, markdownTheme, openFocusedChild: (focused) => { target = focused; } },
+			);
+			component.handleInput("\r");
+			assert.equal(target?.runId, "focus-run");
+			assert.equal(target?.index, 0);
+			assert.equal(target?.key, "async:focus-run:0");
+			assert.equal(closed, true);
+			component.dispose();
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("notifies, reopens Fleet, and preserves selection when focused native UI setup fails", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "fleet-focus-recovery-"));
+		try {
+			writeAsyncRun(root, { id: "first-run", lastUpdate: 300, transcript: [{ type: "message", role: "assistant", content: "first" }] });
+			writeAsyncRun(root, { id: "selected-run", lastUpdate: 200, transcript: [{ type: "message", role: "assistant", content: "selected" }] });
+			const state = stateForTest();
+			const registryModel = { provider: "test", id: "model", api: "test", reasoning: true };
+			const modelRegistry = { getAvailable: () => [registryModel], find: () => registryModel, hasConfiguredAuth: () => true };
+			state.lastUiContext = { model: registryModel, modelRegistry } as never;
+			const notices: string[] = [];
+			let customCalls = 0;
+			let reopenedFleet = "";
+			const recoveryTheme = { fg: (name: string, text: string) => name === "accent" ? `<<${text}>>` : text, bold: (text: string) => text };
+			const tui = { terminal: { rows: 32, columns: 120 }, requestRender() {} };
+			const ctx = {
+				model: registryModel,
+				modelRegistry,
+				ui: {
+					setWidget() {},
+					notify(message: string) { notices.push(message); },
+					async custom(factory: (tuiArg: unknown, themeArg: unknown, keybindings: unknown, done: (value: undefined) => void) => { handleInput(data: string): void; render?(width: number): string[] }) {
+						customCalls += 1;
+						let done = false;
+						const component = factory(tui, recoveryTheme, { matches: () => false }, () => { done = true; });
+						if (customCalls === 1) {
+							component.handleInput("j");
+							component.handleInput("\r");
+						} else {
+							reopenedFleet = component.render?.(120).join("\n") ?? "";
+							component.handleInput("\u001b");
+						}
+						assert.equal(done, true);
+					},
+				},
+			} as never;
+			await openSubagentFleet(ctx, state, { asyncDirRoot: root, refreshMs: 60_000, markdownTheme });
+			assert.equal(customCalls, 2);
+			assert.match(notices.join("\n"), /Focused child session unavailable: Focused child sessions require Pi's native CustomEditor/);
+			assert.match(reopenedFleet, /<<[^\n]*selected-run/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps a nested async child independently selectable and focusable beside its workflow aggregate", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "fleet-focus-nested-"));
+		try {
+			writeAsyncRun(root, { id: "parent-workflow", mode: "workflow", agents: ["workflow"], lastUpdate: 300 });
+			const childDir = writeAsyncRun(root, { id: "nested-child", agents: ["worker"], lastUpdate: 200, transcript: [{ type: "message", role: "assistant", content: "nested work" }] });
+			const childStatus = JSON.parse(fs.readFileSync(path.join(childDir, "status.json"), "utf-8"));
+			childStatus.parentWorkflowRunId = "parent-workflow";
+			fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify(childStatus));
+			const state = stateForTest();
+			const registryModel = { provider: "test", id: "model", reasoning: true };
+			// SAFETY: this focused Fleet test supplies the registry members used by target validation.
+			state.lastUiContext = { model: registryModel, modelRegistry: { getAvailable: () => [registryModel], find: () => registryModel, hasConfiguredAuth: () => true } } as never;
+			let targetKey: string | undefined;
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 32, columns: 120 }, requestRender() {} } as never,
+				theme as never,
+				state,
+				() => {},
+				{ asyncDirRoot: root, refreshMs: 60_000, markdownTheme, openFocusedChild: (target) => { targetKey = target.key; } },
+			);
+			component.handleInput("\r");
+			assert.match(component.render(120).join("\n"), /Workflow aggregate rows do not expose child session controls/);
+			component.handleInput("j");
+			component.handleInput("\r");
+			assert.equal(targetKey, "async:nested-child:0");
+			component.dispose();
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rewrites an authored prompt from guidance without persistence", async () => {
 		const calls: unknown[] = [];
 		const streamFn = (_model: never, context: unknown) => {
@@ -235,6 +346,8 @@ describe("native subagent fleet", () => {
 			assert.match(component.render(120).join("\n"), /display-only and remain controlled/);
 			component.handleInput("D");
 			assert.match(component.render(120).join("\n"), /display-only and remain controlled/);
+			component.handleInput("\r");
+			assert.match(component.render(120).join("\n"), /Focus mode is available only for running native async children/);
 			await new Promise((resolve) => setImmediate(resolve));
 			assert.deepEqual({ steerCalls, stopCalls, inspectCalls }, { steerCalls: 0, stopCalls: 0, inspectCalls: 0 });
 		} finally {

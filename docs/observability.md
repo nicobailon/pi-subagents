@@ -70,6 +70,7 @@ Default keys:
 - `x`/`Ctrl+O` — toggle tool details
 - `r` — refresh
 - `Esc` — close
+- `Enter` — open a focused native child session for the selected running Pi child
 - `s` — compose an acknowledged message to a selected live async child; Tab cycles `steer`, `follow_up`, and `auto`
 - `D` — stop a selected child's top-level async run after confirmation
 - `H` — open the selected active async child in a Herdr inspector pane (Herdr 0.7.5+)
@@ -77,6 +78,14 @@ Default keys:
 Set `fleetKeybindings` in the extension config to replace inspector-level keys when a terminal intercepts keys such as `PgUp`, `PgDn`, `Home`, or `End`. Prompt modes keep fixed keys such as `Esc`, `Enter`, `Tab`, and stop-confirmation `Y`/`N`.
 
 `Ctrl+Alt+F` opens the same inspector even while a foreground turn is active and slash input is queued.
+
+### Focused native child sessions
+
+Press `Enter` on a running native async child to replace the Fleet overlay with a full-width live transcript and Pi's normal text editor. Type a message and press `Enter` to send it directly through the acknowledged child-control channel; no `s` prefix is required. `Esc` returns to Fleet at the same child.
+
+The focused header follows delivery acknowledgements and the child's current model and thinking level. Pi's configured `app.model.select` and `app.thinking.cycle` bindings open bounded selectors. Runtime changes are queued until the current child turn settles, then revalidated inside the child against its launch-resolved model scope, available authenticated models, model thinking support, and thinking ceiling before application.
+
+Focus mode is intentionally limited to running native Pi async children. Workflow aggregate rows, external CLI or terminal runners, completed sessions, untrusted transcripts, attachments, shell mode, slash commands, and session resume remain outside this view. Nested native children remain independent rows in Fleet and can be opened the same way.
 
 Without a TUI, `/subagents-fleet` retains the textual `subagent({ action: "status", view: "fleet" })` fallback, and mutations use explicit commands: run `/subagents-stop` and pick from the selector, or use `/subagents-stop <run-id>` / `subagent({ action: "stop", id: "..." })` when you already know the id.
 

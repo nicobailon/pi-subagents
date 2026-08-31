@@ -6,6 +6,8 @@ import { describe, it } from "node:test";
 import {
 	closeSteerInbox,
 	consumeInterruptRequest,
+	consumeChildInboxAcks,
+	consumeChildInboxRequests,
 	consumeSteerAcks,
 	consumeSteerCapabilities,
 	consumeSteerRequests,
@@ -21,12 +23,15 @@ import {
 	requestAsyncInterrupt,
 	requestAsyncSteer,
 	requestAsyncStop,
+	requestChildInput,
+	requestChildRuntime,
 	steerAckPathFromDir,
 	steerAcksDir,
 	steerInboxClosedPath,
 	steerCapabilityPath,
 	stopRequestsDir,
 	writeSteerAck,
+	writeChildControlAckAt,
 	writeSteerCapability,
 	stopRequestPath,
 	steerRequestsDir,
@@ -42,6 +47,46 @@ function tmpAsyncDir(label: string): string {
 function cleanup(asyncDir: string): void {
 	fs.rmSync(path.dirname(asyncDir), { recursive: true, force: true });
 }
+
+describe("control channel: child session control", () => {
+	it("round trips typed direct-input and runtime requests without interpreting them as steering", () => {
+		const asyncDir = tmpAsyncDir("pi-child-control-");
+		try {
+			requestChildInput(asyncDir, { targetIndex: 2, message: "direct message", id: "input-1", ts: 10 });
+			requestChildRuntime(asyncDir, { targetIndex: 2, model: "provider/model", thinking: "high", id: "runtime-1", ts: 11 });
+			const requests = consumeChildInboxRequests(asyncDir);
+			assert.deepEqual(requests.map((request) => request.type), ["child-input", "child-runtime"]);
+			assert.equal(consumeSteerRequests(asyncDir).length, 0);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("round trips queued and applied child-control acknowledgements", () => {
+		const asyncDir = tmpAsyncDir("pi-child-control-ack-");
+		try {
+			const dir = steerAcksDir(asyncDir, 0);
+			writeChildControlAckAt(steerAckPathFromDir(dir, "runtime-1"), { requestId: "runtime-1", index: 0, ts: 20, state: "queued", message: "waiting" });
+			writeChildControlAckAt(steerAckPathFromDir(dir, "runtime-1"), { requestId: "runtime-1", index: 0, ts: 21, state: "applied", message: "done", model: "provider/model", thinking: "high" });
+			assert.deepEqual(consumeChildInboxAcks(asyncDir).map((ack) => ack.type === "child-control-ack" ? ack.state : ack.type), ["queued", "applied"]);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("rejects malformed child runtime fields and oversized direct input", () => {
+		const asyncDir = tmpAsyncDir("pi-child-control-invalid-");
+		try {
+			assert.throws(() => requestChildRuntime(asyncDir, { targetIndex: -1, model: "provider/model" }), /malformed/);
+			fs.mkdirSync(steerRequestsDir(asyncDir), { recursive: true });
+			fs.writeFileSync(path.join(steerRequestsDir(asyncDir), "malformed.json"), JSON.stringify({ type: "child-runtime", protocolVersion: 1, id: "bad", ts: 1, targetIndex: 0, thinking: "bogus", applyAt: "turn-boundary" }));
+			assert.deepEqual(consumeChildInboxRequests(asyncDir), []);
+			assert.throws(() => requestChildInput(asyncDir, { targetIndex: 0, message: "x".repeat(128 * 1024 + 1) }), /malformed/);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+});
 
 describe("control channel: request file", () => {
 	it("writes a parseable interrupt request, creating the inbox dir", () => {

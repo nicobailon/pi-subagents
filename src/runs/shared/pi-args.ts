@@ -34,6 +34,7 @@ import {
 } from "../../shared/types.ts";
 import { THINKING_LEVELS } from "../../shared/model-info.ts";
 import { decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
+import type { ResolvedModelScope } from "./model-scope.ts";
 import { encodeRunFanoutBudgetDescriptor, RUN_FANOUT_BUDGET_ENV } from "./run-fanout-budget.ts";
 import {
 	TOOL_BUDGET_ENV,
@@ -146,6 +147,7 @@ export const SUBAGENT_FORK_CACHE_KEY_ENV = "PI_SUBAGENT_FORK_CACHE_KEY";
 export const SUBAGENT_STEER_INBOX_ENV = "PI_SUBAGENT_STEER_INBOX";
 export const SUBAGENT_STEER_CAPABILITY_ENV = "PI_SUBAGENT_STEER_CAPABILITY";
 export const SUBAGENT_STEER_ACK_DIR_ENV = "PI_SUBAGENT_STEER_ACK_DIR";
+export const SUBAGENT_MODEL_SCOPES_ENV = "PI_SUBAGENT_MODEL_SCOPES";
 export const PI_INTERCOM_STABLE_ID_ENV = "PI_INTERCOM_STABLE_ID";
 export const PI_INTERCOM_SESSION_ID_ENV = "PI_INTERCOM_SESSION_ID";
 export const SUBAGENT_INHERIT_GLOBAL_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_GLOBAL_CONTEXT";
@@ -204,6 +206,7 @@ export interface BuildPiArgsInput {
 	steerInboxDir?: string;
 	steerCapabilityPath?: string;
 	steerAckDir?: string;
+	modelScopes?: ResolvedModelScope[];
 	structuredOutput?: StructuredOutputRuntime;
 	fast?: boolean;
 	modelCandidates?: readonly string[];
@@ -1022,6 +1025,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	if (input.steerCapabilityPath)
 		env[SUBAGENT_STEER_CAPABILITY_ENV] = input.steerCapabilityPath;
 	if (input.steerAckDir) env[SUBAGENT_STEER_ACK_DIR_ENV] = input.steerAckDir;
+	if (input.modelScopes !== undefined) env[SUBAGENT_MODEL_SCOPES_ENV] = JSON.stringify(input.modelScopes);
 	const encodedToolBudget = encodeToolBudgetEnv(input.toolBudget);
 	if (encodedToolBudget) env[TOOL_BUDGET_ENV] = encodedToolBudget;
 	env[TOOL_BUDGET_ZERO_AUTH_ENV] = input.allowZeroToolBudget ? "1" : undefined;

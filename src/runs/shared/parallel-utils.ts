@@ -37,6 +37,8 @@ export interface RunnerSubagentStep {
 	fast?: boolean;
 	thinking?: string;
 	thinkingCeiling?: import("../../shared/model-info.ts").ThinkingLevel;
+	/** Launch-resolved model policies repeated by the child before runtime mutation. */
+	modelScopes?: import("./model-scope.ts").ResolvedModelScope[];
 	modelCandidates?: string[];
 	/** The primary model is inherited from the parent session and should not be verified against the child-reported active registry model. */
 	skipPrimaryModelVerification?: boolean;

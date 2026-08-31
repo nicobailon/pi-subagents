@@ -21,6 +21,7 @@ import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { POLL_INTERVAL_MS } from "../../shared/types.ts";
 import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
+import { parseThinkingLevel, type ThinkingLevel } from "../../shared/thinking-ceiling.ts";
 
 export type ControlChannelFs = Pick<typeof fs, "mkdirSync" | "existsSync" | "rmSync" | "watch" | "readdirSync" | "readFileSync" | "realpathSync">;
 
@@ -94,6 +95,44 @@ export interface SteerAck {
 	message: string;
 }
 
+export type ChildControlRequest =
+	| {
+		type: "child-input";
+		protocolVersion: 1;
+		id: string;
+		ts: number;
+		targetIndex: number;
+		message: string;
+		delivery: "acknowledged-steer";
+		source?: string;
+	}
+	| {
+		type: "child-runtime";
+		protocolVersion: 1;
+		id: string;
+		ts: number;
+		targetIndex: number;
+		model?: string;
+		thinking?: ThinkingLevel;
+		applyAt: "turn-boundary";
+		source?: string;
+	};
+
+export interface ChildControlAck {
+	type: "child-control-ack";
+	protocolVersion: 1;
+	requestId: string;
+	index: number;
+	ts: number;
+	state: "queued" | "applied" | "failed";
+	message: string;
+	model?: string;
+	thinking?: ThinkingLevel;
+}
+
+export type ChildInboxRequest = SteerRequest | ChildControlRequest;
+export type ChildInboxAck = SteerAck | ChildControlAck;
+
 const STEER_REQUESTS_DIR = "steer-requests";
 const STOP_REQUESTS_DIR = "stop-requests";
 const REVIVAL_BRIEFS_DIR = "revival-briefs";
@@ -104,6 +143,8 @@ const STEER_ACKS_DIR = "steer-acks";
 const STEER_INBOX_CLOSED_FILE = "steer-inbox-closed.json";
 const MAX_STEER_MESSAGE_BYTES = 128 * 1024;
 const MAX_STEER_REQUEST_ID_LENGTH = 256;
+const MAX_CHILD_MODEL_LENGTH = 512;
+const MAX_CHILD_CONTROL_BYTES = 256 * 1024;
 
 /** Control inbox directory inside an async run dir. */
 export function controlInboxDir(asyncDir: string): string {
@@ -183,7 +224,7 @@ function validStopChildId(childId: unknown): childId is string {
 		&& !/[\r\n]/.test(childId);
 }
 
-function steerRequestFileName(request: SteerRequest): string {
+function steerRequestFileName(request: { ts: number; id: string }): string {
 	return `${String(request.ts).padStart(13, "0")}-${Buffer.from(request.id).toString("base64url")}.json`;
 }
 
@@ -215,11 +256,62 @@ function validSteerRequest(request: Partial<SteerRequest>): request is SteerRequ
 		&& (request.source === undefined || (typeof request.source === "string" && Boolean(request.source.trim()) && request.source.length <= 256));
 }
 
-export function writeSteerRequestToDir(dir: string, request: SteerRequest): string {
-	if (!validSteerRequest(request)) throw new Error("steer request is malformed or exceeds transport limits.");
+function validRequestIdentity(request: { id?: unknown; ts?: unknown; targetIndex?: unknown; source?: unknown }): boolean {
+	return typeof request.id === "string"
+		&& /^[^\s]+$/.test(request.id)
+		&& request.id.length <= MAX_STEER_REQUEST_ID_LENGTH
+		&& typeof request.ts === "number"
+		&& Number.isFinite(request.ts)
+		&& request.ts > 0
+		&& typeof request.targetIndex === "number"
+		&& Number.isInteger(request.targetIndex)
+		&& request.targetIndex >= 0
+		&& request.targetIndex <= 1_000_000
+		&& (request.source === undefined || (typeof request.source === "string" && Boolean(request.source.trim()) && request.source.length <= 256));
+}
+
+function onlyAllowedKeys(keys: string[], allowed: readonly string[]): boolean {
+	return keys.every((key) => allowed.includes(key));
+}
+
+function validChildControlRequest(request: Partial<ChildControlRequest>): request is ChildControlRequest {
+	if (request.protocolVersion !== 1 || !validRequestIdentity(request)) return false;
+	try {
+		if (Buffer.byteLength(JSON.stringify(request), "utf8") > MAX_CHILD_CONTROL_BYTES) return false;
+	} catch {
+		return false;
+	}
+	if (request.type === "child-input") {
+		if (!onlyAllowedKeys(Object.keys(request), ["type", "protocolVersion", "id", "ts", "targetIndex", "message", "delivery", "source"])) return false;
+		return request.delivery === "acknowledged-steer"
+			&& typeof request.message === "string"
+			&& Boolean(request.message.trim())
+			&& Buffer.byteLength(request.message, "utf8") <= MAX_STEER_MESSAGE_BYTES;
+	}
+	if (request.type !== "child-runtime" || request.applyAt !== "turn-boundary") return false;
+	if (!onlyAllowedKeys(Object.keys(request), ["type", "protocolVersion", "id", "ts", "targetIndex", "model", "thinking", "applyAt", "source"])) return false;
+	if (request.model === undefined && request.thinking === undefined) return false;
+	if (request.model !== undefined && (typeof request.model !== "string" || !request.model.trim() || request.model.length > MAX_CHILD_MODEL_LENGTH || /[\r\n]/.test(request.model))) return false;
+	if (request.thinking !== undefined) {
+		try { parseThinkingLevel(request.thinking); } catch { return false; }
+	}
+	return true;
+}
+
+function validChildInboxRequest(request: ChildInboxRequest): boolean {
+	return request.type === "steer" ? validSteerRequest(request) : validChildControlRequest(request);
+}
+
+export function writeChildInboxRequestToDir(dir: string, request: ChildInboxRequest): string {
+	if (!validChildInboxRequest(request)) throw new Error("child inbox request is malformed or exceeds transport limits.");
 	const requestPath = path.join(dir, steerRequestFileName(request));
 	writeAtomicJson(requestPath, request);
 	return requestPath;
+}
+
+export function writeSteerRequestToDir(dir: string, request: SteerRequest): string {
+	if (!validSteerRequest(request)) throw new Error("steer request is malformed or exceeds transport limits.");
+	return writeChildInboxRequestToDir(dir, request);
 }
 
 export function writeSteerRequestToExistingDir(dir: string, request: SteerRequest): string {
@@ -266,6 +358,19 @@ export function writeSteerAckAt(filePath: string, ack: Omit<SteerAck, "type" | "
 
 export function writeSteerAck(asyncDir: string, ack: Omit<SteerAck, "type" | "protocolVersion">): string {
 	return writeSteerAckAt(path.join(steerAcksDir(asyncDir, ack.index), steerAckFileName(ack.requestId)), ack);
+}
+
+export function writeChildControlAckAt(filePath: string, ack: Omit<ChildControlAck, "type" | "protocolVersion">): string {
+	assertChildIndex(ack.index);
+	if (!/^[^\s]+$/.test(ack.requestId) || ack.requestId.length > MAX_STEER_REQUEST_ID_LENGTH) throw new Error("child control acknowledgment requestId is invalid.");
+	if (!Number.isFinite(ack.ts) || ack.ts <= 0) throw new Error("child control acknowledgment ts must be a finite timestamp.");
+	if (!ack.message.trim() || ack.message.length > 1000) throw new Error("child control acknowledgment message is invalid.");
+	if (ack.model !== undefined && (!ack.model.trim() || ack.model.length > MAX_CHILD_MODEL_LENGTH || /[\r\n]/.test(ack.model))) throw new Error("child control acknowledgment model is invalid.");
+	if (ack.thinking !== undefined) parseThinkingLevel(ack.thinking);
+	const record: ChildControlAck = { type: "child-control-ack", protocolVersion: 1, ...ack, message: ack.message.trim() };
+	const ackPath = steerAckWritePath(filePath, { ...ack, state: ack.state === "applied" ? "delivered" : ack.state } as Omit<SteerAck, "type" | "protocolVersion">);
+	writeAtomicJson(ackPath, record);
+	return ackPath;
 }
 
 /**
@@ -356,6 +461,54 @@ export function enqueueStepSteer(asyncDir: string, index: number, request: Steer
 	return writeSteerRequestToDir(stepSteerInboxDir(asyncDir, index), { ...singleTargetRequest, targetIndex: index, type: "steer" });
 }
 
+export function enqueueStepChildControl(asyncDir: string, index: number, request: ChildControlRequest): string {
+	assertChildIndex(index);
+	return writeChildInboxRequestToDir(stepSteerInboxDir(asyncDir, index), { ...request, targetIndex: index });
+}
+
+export function requestChildInput(asyncDir: string, payload: { targetIndex: number; message: string; source?: string; id?: string; ts?: number }, deps: { now?: () => number; randomId?: () => string } = {}): ChildControlRequest {
+	const request: ChildControlRequest = {
+		type: "child-input",
+		protocolVersion: 1,
+		id: payload.id ?? deps.randomId?.() ?? randomUUID(),
+		ts: payload.ts ?? deps.now?.() ?? Date.now(),
+		targetIndex: payload.targetIndex,
+		message: payload.message.trim(),
+		delivery: "acknowledged-steer",
+		...(payload.source ? { source: payload.source } : {}),
+	};
+	const closedPath = steerInboxClosedPath(asyncDir);
+	if (fs.existsSync(closedPath)) throw new Error("Async run no longer accepts child input.");
+	const requestPath = writeChildInboxRequestToDir(steerRequestsDir(asyncDir), request);
+	if (fs.existsSync(closedPath)) {
+		fs.rmSync(requestPath, { force: true });
+		throw new Error("Async run stopped accepting child input before the request was committed.");
+	}
+	return request;
+}
+
+export function requestChildRuntime(asyncDir: string, payload: { targetIndex: number; model?: string; thinking?: ThinkingLevel; source?: string; id?: string; ts?: number }, deps: { now?: () => number; randomId?: () => string } = {}): ChildControlRequest {
+	const request: ChildControlRequest = {
+		type: "child-runtime",
+		protocolVersion: 1,
+		id: payload.id ?? deps.randomId?.() ?? randomUUID(),
+		ts: payload.ts ?? deps.now?.() ?? Date.now(),
+		targetIndex: payload.targetIndex,
+		...(payload.model ? { model: payload.model.trim() } : {}),
+		...(payload.thinking ? { thinking: payload.thinking } : {}),
+		applyAt: "turn-boundary",
+		...(payload.source ? { source: payload.source } : {}),
+	};
+	const closedPath = steerInboxClosedPath(asyncDir);
+	if (fs.existsSync(closedPath)) throw new Error("Async run no longer accepts runtime controls.");
+	const requestPath = writeChildInboxRequestToDir(steerRequestsDir(asyncDir), request);
+	if (fs.existsSync(closedPath)) {
+		fs.rmSync(requestPath, { force: true });
+		throw new Error("Async run stopped accepting runtime controls before the request was committed.");
+	}
+	return request;
+}
+
 function parseSteerCapability(raw: unknown): SteerCapability | undefined {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
 	const input = raw as Partial<SteerCapability>;
@@ -364,6 +517,20 @@ function parseSteerCapability(raw: unknown): SteerCapability | undefined {
 	if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 1_000_000) return undefined;
 	if (typeof pid !== "number" || typeof readyAt !== "number" || !Number.isInteger(pid) || pid <= 0 || !Number.isFinite(readyAt) || readyAt <= 0 || typeof supported !== "boolean") return undefined;
 	return { type: "steer-capability", protocolVersion: 1, index, pid, readyAt, supported };
+}
+
+function parseChildControlAck(raw: unknown): ChildControlAck | undefined {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+	const input = raw as Partial<ChildControlAck>;
+	if (input.type !== "child-control-ack" || input.protocolVersion !== 1 || !onlyAllowedKeys(Object.keys(input), ["type", "protocolVersion", "requestId", "index", "ts", "state", "message", "model", "thinking"]) || typeof input.requestId !== "string" || !/^[^\s]+$/.test(input.requestId) || input.requestId.length > MAX_STEER_REQUEST_ID_LENGTH) return undefined;
+	if (!Number.isInteger(input.index) || input.index! < 0 || input.index! > 1_000_000 || !Number.isFinite(input.ts) || input.ts! <= 0) return undefined;
+	if (input.state !== "queued" && input.state !== "applied" && input.state !== "failed") return undefined;
+	if (typeof input.message !== "string" || !input.message.trim() || input.message.length > 1000) return undefined;
+	if (input.model !== undefined && (!input.model.trim() || input.model.length > MAX_CHILD_MODEL_LENGTH || /[\r\n]/.test(input.model))) return undefined;
+	if (input.thinking !== undefined) {
+		try { parseThinkingLevel(input.thinking); } catch { return undefined; }
+	}
+	return { type: "child-control-ack", protocolVersion: 1, requestId: input.requestId, index: input.index!, ts: input.ts!, state: input.state, message: input.message.trim(), ...(input.model ? { model: input.model } : {}), ...(input.thinking ? { thinking: input.thinking } : {}) };
 }
 
 function parseSteerAck(raw: unknown): SteerAck | undefined {
@@ -420,10 +587,10 @@ export function consumeSteerAckFromDir(
 	return undefined;
 }
 
-export function consumeSteerAcks(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "readdirSync" | "readFileSync" | "rmSync"> = fs): SteerAck[] {
+export function consumeChildInboxAcks(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "readdirSync" | "readFileSync" | "rmSync"> = fs): ChildInboxAck[] {
 	const root = path.join(controlInboxDir(asyncDir), STEER_ACKS_DIR);
 	if (!fsImpl.existsSync(root)) return [];
-	const acks: SteerAck[] = [];
+	const acks: ChildInboxAck[] = [];
 	let indexNames: string[];
 	try { indexNames = fsImpl.readdirSync(root).filter((name) => /^\d+$/.test(name)); } catch { return []; }
 	for (const indexName of indexNames) {
@@ -432,8 +599,11 @@ export function consumeSteerAcks(asyncDir: string, fsImpl: Pick<typeof fs, "exis
 		try { entries = fsImpl.readdirSync(dir).filter((name) => name.endsWith(".json")).sort(); } catch { continue; }
 		for (const entry of entries) {
 			const target = path.join(dir, entry);
-			let ack: SteerAck | undefined;
-			try { ack = parseSteerAck(JSON.parse(fsImpl.readFileSync(target, "utf-8"))); } catch { ack = undefined; }
+			let ack: ChildInboxAck | undefined;
+			try {
+				const raw = JSON.parse(fsImpl.readFileSync(target, "utf-8"));
+				ack = parseSteerAck(raw) ?? parseChildControlAck(raw);
+			} catch { ack = undefined; }
 			try { fsImpl.rmSync(target, { force: true }); } catch { continue; }
 			if (ack) acks.push(ack);
 		}
@@ -441,23 +611,39 @@ export function consumeSteerAcks(asyncDir: string, fsImpl: Pick<typeof fs, "exis
 	return acks;
 }
 
-function parseSteerRequest(raw: unknown): SteerRequest | undefined {
+export function consumeSteerAcks(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "readdirSync" | "readFileSync" | "rmSync"> = fs): SteerAck[] {
+	return consumeChildInboxAcks(asyncDir, fsImpl).filter((ack): ack is SteerAck => ack.type === "steer-ack");
+}
+
+function parseChildInboxRequest(raw: unknown): ChildInboxRequest | undefined {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-	const input = raw as Partial<SteerRequest>;
-	if (!validSteerRequest(input)) return undefined;
+	const input = raw as Partial<ChildInboxRequest>;
+	if (input.type === "steer") {
+		if (!validSteerRequest(input as Partial<SteerRequest>)) return undefined;
+		const request = input as SteerRequest;
+		return {
+			type: "steer",
+			id: request.id.trim(),
+			ts: request.ts,
+			message: request.message.trim(),
+			...(request.mode ? { mode: request.mode } : {}),
+			...(request.targetIndex !== undefined ? { targetIndex: request.targetIndex } : {}),
+			...(request.targetIndexes !== undefined ? { targetIndexes: [...request.targetIndexes] } : {}),
+			...(typeof request.source === "string" && request.source.trim() ? { source: request.source } : {}),
+		};
+	}
+	if (!validChildControlRequest(input as Partial<ChildControlRequest>)) return undefined;
+	const request = input as ChildControlRequest;
+	if (request.type === "child-input") return { ...request, id: request.id.trim(), message: request.message.trim(), ...(request.source ? { source: request.source.trim() } : {}) };
 	return {
-		type: "steer",
-		id: input.id.trim(),
-		ts: input.ts,
-		message: input.message.trim(),
-		...(input.mode ? { mode: input.mode } : {}),
-		...(input.targetIndex !== undefined ? { targetIndex: input.targetIndex } : {}),
-		...(input.targetIndexes !== undefined ? { targetIndexes: [...input.targetIndexes] } : {}),
-		...(typeof input.source === "string" && input.source.trim() ? { source: input.source } : {}),
+		...request,
+		id: request.id.trim(),
+		...(request.model ? { model: request.model.trim() } : {}),
+		...(request.source ? { source: request.source.trim() } : {}),
 	};
 }
 
-export function consumeSteerRequestsFromDir(dir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs): SteerRequest[] {
+export function consumeChildInboxRequestsFromDir(dir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs): ChildInboxRequest[] {
 	if (!fsImpl.existsSync(dir)) return [];
 	let entries: string[];
 	try {
@@ -466,12 +652,12 @@ export function consumeSteerRequestsFromDir(dir: string, fsImpl: Pick<typeof fs,
 		// Leave requests in place so the periodic poll can retry the scan.
 		return [];
 	}
-	const requests: SteerRequest[] = [];
+	const requests: ChildInboxRequest[] = [];
 	for (const entry of entries) {
 		const requestPath = path.join(dir, entry);
-		let parsed: SteerRequest | undefined;
+		let parsed: ChildInboxRequest | undefined;
 		try {
-			parsed = parseSteerRequest(JSON.parse(fsImpl.readFileSync(requestPath, "utf-8")));
+			parsed = parseChildInboxRequest(JSON.parse(fsImpl.readFileSync(requestPath, "utf-8")));
 		} catch {
 			parsed = undefined;
 		}
@@ -486,8 +672,16 @@ export function consumeSteerRequestsFromDir(dir: string, fsImpl: Pick<typeof fs,
 	return requests.sort((left, right) => left.ts - right.ts || left.id.localeCompare(right.id));
 }
 
+export function consumeSteerRequestsFromDir(dir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs): SteerRequest[] {
+	return consumeChildInboxRequestsFromDir(dir, fsImpl).filter((request): request is SteerRequest => request.type === "steer");
+}
+
+export function consumeChildInboxRequests(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs): ChildInboxRequest[] {
+	return consumeChildInboxRequestsFromDir(steerRequestsDir(asyncDir), fsImpl);
+}
+
 export function consumeSteerRequests(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs): SteerRequest[] {
-	return consumeSteerRequestsFromDir(steerRequestsDir(asyncDir), fsImpl);
+	return consumeChildInboxRequests(asyncDir, fsImpl).filter((request): request is SteerRequest => request.type === "steer");
 }
 
 export function queueRevivalBrief(asyncDir: string, request: SteerRequest): string {
@@ -503,7 +697,8 @@ export function readRevivalBriefs(asyncDir: string): Array<{ request: SteerReque
 	return fs.readdirSync(dir).filter((entry) => entry.endsWith(".json")).sort().flatMap((entry) => {
 		const filePath = path.join(dir, entry);
 		try {
-			const request = parseSteerRequest(JSON.parse(fs.readFileSync(filePath, "utf-8")));
+			const parsed = parseChildInboxRequest(JSON.parse(fs.readFileSync(filePath, "utf-8")));
+			const request = parsed?.type === "steer" ? parsed : undefined;
 			return request ? [{ request, path: filePath }] : [];
 		} catch {
 			return [];
@@ -665,8 +860,10 @@ export function watchAsyncControlInbox(
 		onTimeout?: () => void;
 		onStop?: (request: StopRequest) => void;
 		onSteer?: (request: SteerRequest) => void;
+		onChildControl?: (request: ChildControlRequest) => void;
 		onSteerCapability?: (capability: SteerCapability) => void;
 		onSteerAck?: (ack: SteerAck) => void;
+		onChildControlAck?: (ack: ChildControlAck) => void;
 		pollIntervalMs?: number;
 		safetyPollIntervalMs?: number;
 		platform?: NodeJS.Platform;
@@ -690,9 +887,15 @@ export function watchAsyncControlInbox(
 			for (const stopRequest of consumeStopRequestPayloads(asyncDir, fsImpl)) opts.onStop?.(stopRequest);
 			if (consumeTimeoutRequest(asyncDir, fsImpl)) opts.onTimeout?.();
 			if (consumeInterruptRequest(asyncDir, fsImpl)) opts.onInterrupt();
-			for (const request of consumeSteerRequests(asyncDir, fsImpl)) opts.onSteer?.(request);
+			for (const request of consumeChildInboxRequests(asyncDir, fsImpl)) {
+				if (request.type === "steer") opts.onSteer?.(request);
+				else opts.onChildControl?.(request);
+			}
 			for (const capability of consumeSteerCapabilities(asyncDir, fsImpl)) opts.onSteerCapability?.(capability);
-			for (const ack of consumeSteerAcks(asyncDir, fsImpl)) opts.onSteerAck?.(ack);
+			for (const ack of consumeChildInboxAcks(asyncDir, fsImpl)) {
+				if (ack.type === "steer-ack") opts.onSteerAck?.(ack);
+				else opts.onChildControlAck?.(ack);
+			}
 		} catch {
 			// Never let inbox errors crash the runner.
 		}

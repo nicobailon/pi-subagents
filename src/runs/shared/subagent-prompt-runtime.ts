@@ -5,8 +5,8 @@ import type { BeforeProviderRequestEvent, ExtensionAPI, ExtensionContext } from 
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.ts";
 import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import { decodePermissionRules, permissionDecision, PERMISSION_AUDIT_PATH_ENV, PERMISSION_POLICY_ENV } from "./permissions.ts";
-import { consumeSteerRequestsFromDir, MAX_STEER_QUEUE_SIZE, steerAckPathFromDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type SteerDeliveryStatus, type SteerRequest } from "../background/control-channel.ts";
-import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_FORK_CACHE_KEY_ENV, SUBAGENT_INHERIT_GLOBAL_CONTEXT_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
+import { consumeChildInboxRequestsFromDir, MAX_STEER_QUEUE_SIZE, steerAckPathFromDir, writeChildControlAckAt, writeChildInboxRequestToDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type ChildControlRequest, type SteerDeliveryStatus, type SteerRequest } from "../background/control-channel.ts";
+import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_FORK_CACHE_KEY_ENV, SUBAGENT_INHERIT_GLOBAL_CONTEXT_ENV, SUBAGENT_MODEL_SCOPES_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV, isRuntimeAcknowledgedExtensionId, writeRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
 import { createStructuredOutputToolParameters, MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV, STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
 import { validateAcceptanceReport } from "./acceptance.ts";
@@ -23,6 +23,16 @@ import type { JsonSchemaObject, ResolvedToolBudget, SubagentState } from "../../
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { getAgentDir, resolveWatchPath } from "../../shared/utils.ts";
 import { registerChildWatchdog } from "../../watchdog/register-child.ts";
+import { checkModelScope, type ResolvedModelScope } from "./model-scope.ts";
+import { findModelInfo, getSupportedThinkingLevels, toModelInfo, type ModelInfo, type ThinkingLevel } from "../../shared/model-info.ts";
+import { assertThinkingWithinCeiling, decodeThinkingCeiling } from "../../shared/thinking-ceiling.ts";
+
+type ChildRegistryModel = ReturnType<ExtensionContext["modelRegistry"]["find"]>;
+interface ValidatedChildRuntime {
+	model?: ChildRegistryModel;
+	info?: ModelInfo;
+	thinking?: ThinkingLevel;
+}
 import { CHILD_WATCHDOG_CONFIG_ENV, decodeChildWatchdogConfig } from "../../watchdog/child-status.ts";
 import { requestWatchdogPermission, type WatchdogPermissionRequest, type WatchdogPermissionResult } from "../../watchdog/permission-arbiter.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../watchdog/types.ts";
@@ -454,6 +464,24 @@ function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undef
 	});
 }
 
+function decodeRuntimeModelScopes(raw: string | undefined): ResolvedModelScope[] {
+	if (raw === undefined) throw new Error("Child launch model policy is unavailable; runtime model changes fail closed.");
+	let value: unknown;
+	try { value = JSON.parse(raw); } catch { throw new Error("Child launch model policy is malformed; runtime model changes fail closed."); }
+	if (!Array.isArray(value) || value.length > 16 || !value.every((scope) => scope && typeof scope === "object" && !Array.isArray(scope)
+		&& typeof (scope as ResolvedModelScope).origin === "string"
+		&& Boolean((scope as ResolvedModelScope).origin.trim())
+		&& (scope as ResolvedModelScope).origin.length <= 256
+		&& ((scope as ResolvedModelScope).enforce === undefined || typeof (scope as ResolvedModelScope).enforce === "boolean")
+		&& ((scope as ResolvedModelScope).strict === undefined || typeof (scope as ResolvedModelScope).strict === "boolean")
+		&& ((scope as ResolvedModelScope).allow === undefined || (Array.isArray((scope as ResolvedModelScope).allow)
+			&& (scope as ResolvedModelScope).allow!.length <= 100
+			&& (scope as ResolvedModelScope).allow!.every((pattern) => typeof pattern === "string" && Boolean(pattern.trim()) && pattern.length <= 512))))) {
+		throw new Error("Child launch model policy is malformed; runtime model changes fail closed.");
+	}
+	return value as ResolvedModelScope[];
+}
+
 export function registerSteeringInbox(
 	pi: ExtensionAPI,
 	deps: {
@@ -472,7 +500,12 @@ export function registerSteeringInbox(
 	const sendUserMessage = (pi as { sendUserMessage?: (content: string, options?: { deliverAs: "steer" | "followUp" }) => unknown }).sendUserMessage;
 	const childIndex = Number(process.env[SUBAGENT_CHILD_INDEX_ENV]);
 	const pending = new Map<string, Array<{ request: SteerRequest; deliveryStatus: SteerDeliveryStatus }>>();
+	const pendingChildInputs = new Map<string, ChildControlRequest[]>();
 	const queued: Array<{ request: SteerRequest; ready: boolean }> = [];
+	const runtimeQueue: ChildControlRequest[] = [];
+	let runtimeContext: ExtensionContext | undefined;
+	let currentModelInfo: ModelInfo | undefined;
+	let applyingRuntime = false;
 	let disposed = false;
 	let agentRunning = false;
 	let inTurn = false;
@@ -496,6 +529,77 @@ export function registerSteeringInbox(
 			message,
 		});
 	};
+	const acknowledgeChildControl = (request: ChildControlRequest, state: "queued" | "applied" | "failed", message: string, values: { model?: string; thinking?: ThinkingLevel } = {}): void => {
+		if (!ackDir || !Number.isInteger(childIndex) || childIndex < 0) return;
+		writeChildControlAckAt(steerAckPathFromDir(ackDir, request.id), {
+			requestId: request.id,
+			index: childIndex,
+			ts: Date.now(),
+			state,
+			message,
+			...values,
+		});
+	};
+	const validateRuntimeRequest = (request: Extract<ChildControlRequest, { type: "child-runtime" }>): ValidatedChildRuntime => {
+		if (request.model && !pi.setModel) throw new Error("Child Pi session does not support runtime model changes.");
+		if (request.thinking && !pi.setThinkingLevel) throw new Error("Child Pi session does not support runtime thinking changes.");
+		const registry = runtimeContext?.modelRegistry;
+		let info = currentModelInfo;
+		let model: ChildRegistryModel | undefined;
+		if (request.model) {
+			if (!registry) throw new Error("Child model registry is unavailable.");
+			info = findModelInfo(request.model, registry.getAvailable().map(toModelInfo), currentModelInfo?.provider);
+			if (!info) throw new Error(`Model '${request.model}' is unavailable in the child session.`);
+			model = registry.find(info.provider, info.id);
+			if (!model) throw new Error(`Model '${request.model}' is not registered in the child session.`);
+			if (!registry.hasConfiguredAuth(model)) throw new Error(`Model '${info.fullId}' has no configured credentials in the child session.`);
+			for (const scope of decodeRuntimeModelScopes(process.env[SUBAGENT_MODEL_SCOPES_ENV])) {
+				const violation = checkModelScope(info.fullId, scope, "explicit");
+				if (violation?.severity === "error") throw new Error(violation.message);
+			}
+		}
+		if (request.thinking && !getSupportedThinkingLevels(info).includes(request.thinking)) {
+			throw new Error(`Thinking level '${request.thinking}' is unsupported by model '${info?.fullId ?? "current"}'.`);
+		}
+		assertThinkingWithinCeiling({
+			model: info?.fullId,
+			configThinking: request.thinking,
+			ceiling: decodeThinkingCeiling(process.env.PI_SUBAGENT_THINKING_CEILING),
+			agent: process.env[SUBAGENT_CHILD_AGENT_ENV],
+			runId: process.env.PI_SUBAGENT_RUN_ID,
+		});
+		const validated: ValidatedChildRuntime = {};
+		if (model) validated.model = model;
+		if (info) validated.info = info;
+		if (request.thinking) validated.thinking = request.thinking;
+		return validated;
+	};
+	const drainRuntimeQueue = (): void => {
+		if (disposed || applyingRuntime || inTurn || awaitingSettlement || agentRunning) return;
+		const next = runtimeQueue.shift();
+		if (!next || next.type !== "child-runtime") return;
+		applyingRuntime = true;
+		void (async () => {
+			try {
+				const validated = validateRuntimeRequest(next);
+				if (validated.model) {
+					const accepted = await pi.setModel(validated.model);
+					if (!accepted) throw new Error(`Child Pi rejected model '${validated.info?.fullId ?? next.model}' because credentials are unavailable.`);
+					currentModelInfo = validated.info;
+				}
+				if (validated.thinking) pi.setThinkingLevel(validated.thinking);
+				const thinking = pi.getThinkingLevel();
+				const appliedValues: { model?: string; thinking?: ThinkingLevel } = { thinking };
+				if (currentModelInfo) appliedValues.model = currentModelInfo.fullId;
+				acknowledgeChildControl(next, "applied", "Child runtime selection applied at a safe turn boundary.", appliedValues);
+			} catch (error) {
+				acknowledgeChildControl(next, "failed", error instanceof Error ? error.message : String(error));
+			} finally {
+				applyingRuntime = false;
+				drainRuntimeQueue();
+			}
+		})();
+	};
 	const publishCapability = (): void => {
 		if (!capabilityPath || !Number.isInteger(childIndex) || childIndex < 0) return;
 		writeSteerCapabilityAt(capabilityPath, { index: childIndex, pid: process.pid, readyAt: Date.now(), supported: canSteer });
@@ -504,9 +608,38 @@ export function registerSteeringInbox(
 		if (disposed || flushing) return;
 		flushing = true;
 		try {
-			const requests = consumeSteerRequestsFromDir(steerInbox);
+			const requests = consumeChildInboxRequestsFromDir(steerInbox);
 			for (let index = 0; index < requests.length; index++) {
 				const request = requests[index]!;
+				if (request.type === "child-runtime") {
+					if (runtimeQueue.length >= MAX_STEER_QUEUE_SIZE) acknowledgeChildControl(request, "failed", `Runtime control queue is full (${MAX_STEER_QUEUE_SIZE} requests).`);
+					else {
+						runtimeQueue.push(request);
+						acknowledgeChildControl(request, "queued", inTurn || awaitingSettlement || agentRunning ? "Runtime selection queued until the current turn settles." : "Runtime selection queued for the next safe boundary.");
+						drainRuntimeQueue();
+					}
+					continue;
+				}
+				if (request.type === "child-input") {
+					if (!canSteer || typeof sendUserMessage !== "function") {
+						acknowledgeChildControl(request, "failed", "Child Pi session does not support sendUserMessage steering.");
+						continue;
+					}
+					const entries = pendingChildInputs.get(request.message) ?? [];
+					entries.push(request);
+					pendingChildInputs.set(request.message, entries);
+					try {
+						sendUserMessage(request.message, { deliverAs: "steer" });
+						acknowledgeChildControl(request, "queued", "Direct input submitted; waiting for Pi correlation.");
+					} catch (error) {
+						entries.pop();
+						if (entries.length === 0) pendingChildInputs.delete(request.message);
+						acknowledgeChildControl(request, "failed", error instanceof Error ? error.message : String(error));
+						for (const retry of requests.slice(index + 1)) writeChildInboxRequestToDir(steerInbox, retry);
+						break;
+					}
+					continue;
+				}
 				if (!canSteer || typeof sendUserMessage !== "function") {
 					acknowledge(request, "failed", "Child Pi session does not support sendUserMessage steering.");
 					continue;
@@ -529,7 +662,7 @@ export function registerSteeringInbox(
 					entries.pop();
 					if (entries.length === 0) pending.delete(formatted);
 					acknowledge(request, "failed", error instanceof Error ? error.message : String(error));
-					for (const retry of requests.slice(index + 1)) writeSteerRequestToDir(steerInbox, retry);
+					for (const retry of requests.slice(index + 1)) writeChildInboxRequestToDir(steerInbox, retry);
 					break;
 				}
 			}
@@ -543,6 +676,13 @@ export function registerSteeringInbox(
 		if (input.source !== "extension") return undefined;
 		const text = typeof input.text === "string" ? input.text : typeof input.content === "string" ? input.content : undefined;
 		if (!text) return undefined;
+		const childEntries = pendingChildInputs.get(text);
+		const childEntry = childEntries?.shift();
+		if (childEntry) {
+			if (childEntries?.length === 0) pendingChildInputs.delete(text);
+			acknowledgeChildControl(childEntry, "applied", "Pi accepted the correlated direct child input.");
+			return undefined;
+		}
 		const entries = pending.get(text);
 		const entry = entries?.shift();
 		if (!entry) return undefined;
@@ -602,7 +742,9 @@ export function registerSteeringInbox(
 		agentRunning = false;
 		inTurn = false;
 		awaitingSettlement = false;
-		return activate();
+		const result = activate();
+		drainRuntimeQueue();
+		return result;
 	};
 	const armLegacySettleFallback = (): void => {
 		clearSettleFallback();
@@ -613,6 +755,7 @@ export function registerSteeringInbox(
 			inTurn = false;
 			awaitingSettlement = false;
 			activate();
+			drainRuntimeQueue();
 		}, legacySettleFallbackMs);
 		settleFallback.unref?.();
 	};
@@ -620,7 +763,13 @@ export function registerSteeringInbox(
 	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown, ctx?: unknown) => unknown) => void;
 	// Register input before the watcher so an accepted extension input cannot race request dispatch.
 	onRuntimeEvent("input", onInput);
-	onRuntimeEvent("session_start", () => start());
+	onRuntimeEvent("session_start", (_event, ctx) => {
+		// SAFETY: Pi supplies ExtensionContext as the second argument for session lifecycle events.
+		runtimeContext = ctx as ExtensionContext | undefined;
+		const selected = runtimeContext?.model;
+		if (selected) currentModelInfo = toModelInfo(selected);
+		return start();
+	});
 	onRuntimeEvent("agent_start", () => {
 		clearSettleFallback();
 		agentRunning = true;
@@ -678,6 +827,10 @@ export function registerSteeringInbox(
 		for (const entries of pending.values()) {
 			for (const entry of entries) acknowledge(entry.request, "failed", "Run ended before Pi confirmed steering input delivery.");
 		}
+		for (const entries of pendingChildInputs.values()) {
+			for (const request of entries) acknowledgeChildControl(request, "failed", "Run ended before Pi confirmed direct input delivery.");
+		}
+		for (const request of runtimeQueue) acknowledgeChildControl(request, "failed", "Run ended before the queued runtime selection could be applied.");
 		disposed = true;
 		clearSettleFallback();
 		try { watcher?.close(); } catch {}

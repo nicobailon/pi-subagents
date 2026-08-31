@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { consumeSteerAcks, writeSteerRequestToDir } from "../../src/runs/background/control-channel.ts";
+import { consumeChildInboxAcks, consumeSteerAcks, writeChildInboxRequestToDir, writeSteerRequestToDir } from "../../src/runs/background/control-channel.ts";
 import {
 	SUBAGENT_CHILD_AGENT_ENV,
 	SUBAGENT_CHILD_INDEX_ENV,
@@ -11,6 +11,7 @@ import {
 	SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
 	SUBAGENT_ORCHESTRATOR_TARGET_ENV,
 	SUBAGENT_RUN_ID_ENV,
+	SUBAGENT_MODEL_SCOPES_ENV,
 	SUBAGENT_STEER_ACK_DIR_ENV,
 	SUBAGENT_STEER_CAPABILITY_ENV,
 	SUBAGENT_STEER_INBOX_ENV,
@@ -47,6 +48,8 @@ const envSnapshot = {
 	PI_SUBAGENT_STEER_INBOX: process.env.PI_SUBAGENT_STEER_INBOX,
 	PI_SUBAGENT_STEER_CAPABILITY: process.env.PI_SUBAGENT_STEER_CAPABILITY,
 	PI_SUBAGENT_STEER_ACK_DIR: process.env.PI_SUBAGENT_STEER_ACK_DIR,
+	PI_SUBAGENT_MODEL_SCOPES: process.env.PI_SUBAGENT_MODEL_SCOPES,
+	PI_SUBAGENT_THINKING_CEILING: process.env.PI_SUBAGENT_THINKING_CEILING,
 	PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE,
 	PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA,
 	PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE,
@@ -102,6 +105,10 @@ afterEach(() => {
 	else process.env[SUBAGENT_STEER_CAPABILITY_ENV] = envSnapshot.PI_SUBAGENT_STEER_CAPABILITY;
 	if (envSnapshot.PI_SUBAGENT_STEER_ACK_DIR === undefined) delete process.env[SUBAGENT_STEER_ACK_DIR_ENV];
 	else process.env[SUBAGENT_STEER_ACK_DIR_ENV] = envSnapshot.PI_SUBAGENT_STEER_ACK_DIR;
+	if (envSnapshot.PI_SUBAGENT_MODEL_SCOPES === undefined) delete process.env[SUBAGENT_MODEL_SCOPES_ENV];
+	else process.env[SUBAGENT_MODEL_SCOPES_ENV] = envSnapshot.PI_SUBAGENT_MODEL_SCOPES;
+	if (envSnapshot.PI_SUBAGENT_THINKING_CEILING === undefined) delete process.env.PI_SUBAGENT_THINKING_CEILING;
+	else process.env.PI_SUBAGENT_THINKING_CEILING = envSnapshot.PI_SUBAGENT_THINKING_CEILING;
 	if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE === undefined) delete process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
 	else process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;
 	if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA === undefined) delete process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
@@ -600,6 +607,185 @@ describe("subagent prompt runtime", () => {
 			assert.equal(consumeSteerAcks(dir)[0]?.state, "delivered");
 			handlers.get("session_compact")?.({ reason: "manual" });
 			assert.equal(sent.length, 2);
+			handlers.get("session_shutdown")?.({});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("submits focused child input directly and acknowledges correlation", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-child-input-runtime-"));
+		try {
+			const inbox = path.join(dir, "inbox");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			process.env[SUBAGENT_STEER_CAPABILITY_ENV] = path.join(dir, "capability.json");
+			process.env[SUBAGENT_STEER_ACK_DIR_ENV] = path.join(dir, "control", "steer-acks", "0");
+			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+			const handlers = new Map<string, (payload?: unknown, ctx?: unknown) => unknown>();
+			const sent: Array<{ content: string; deliverAs?: string }> = [];
+			registerSteeringInbox({
+				on(event: string, handler: (payload?: unknown, ctx?: unknown) => unknown) { handlers.set(event, handler); },
+				sendUserMessage(content: string, options?: { deliverAs?: string }) { sent.push({ content, deliverAs: options?.deliverAs }); },
+			} as never);
+			handlers.get("session_start")?.({});
+			writeChildInboxRequestToDir(inbox, { type: "child-input", protocolVersion: 1, id: "input-1", ts: 1, targetIndex: 0, message: "plain editor text", delivery: "acknowledged-steer" });
+			handlers.get("message_start")?.({});
+			assert.deepEqual(sent, [{ content: "plain editor text", deliverAs: "steer" }]);
+			assert.equal(consumeChildInboxAcks(dir)[0]?.type, "child-control-ack");
+			handlers.get("input")?.({ source: "extension", text: "plain editor text" });
+			const applied = consumeChildInboxAcks(dir)[0];
+			assert.equal(applied?.type === "child-control-ack" ? applied.state : undefined, "applied");
+			handlers.get("session_shutdown")?.({});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("queues runtime changes through an active turn and applies after settlement", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-child-runtime-boundary-"));
+		try {
+			const inbox = path.join(dir, "inbox");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			process.env[SUBAGENT_STEER_CAPABILITY_ENV] = path.join(dir, "capability.json");
+			process.env[SUBAGENT_STEER_ACK_DIR_ENV] = path.join(dir, "control", "steer-acks", "0");
+			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+			process.env[SUBAGENT_MODEL_SCOPES_ENV] = "[]";
+			const handlers = new Map<string, (payload?: unknown, ctx?: unknown) => unknown>();
+			const applied: string[] = [];
+			const registryModel = { provider: "test", id: "model", reasoning: true };
+			registerSteeringInbox({
+				on(event: string, handler: (payload?: unknown, ctx?: unknown) => unknown) { handlers.set(event, handler); },
+				sendUserMessage() {},
+				async setModel(model: { provider: string; id: string }) { applied.push(`${model.provider}/${model.id}`); return true; },
+				setThinkingLevel(level: string) { applied.push(level); },
+				getThinkingLevel() { return "high"; },
+			} as never);
+			const modelRegistry = {
+				getAvailable: () => [registryModel],
+				find: () => registryModel,
+				hasConfiguredAuth: () => true,
+			};
+			handlers.get("session_start")?.({}, { model: registryModel, modelRegistry });
+			handlers.get("agent_start")?.({});
+			writeChildInboxRequestToDir(inbox, { type: "child-runtime", protocolVersion: 1, id: "runtime-1", ts: 1, targetIndex: 0, model: "test/model", thinking: "high", applyAt: "turn-boundary" });
+			handlers.get("message_start")?.({});
+			assert.deepEqual(applied, []);
+			const queued = consumeChildInboxAcks(dir)[0];
+			assert.equal(queued?.type === "child-control-ack" ? queued.state : undefined, "queued");
+			handlers.get("agent_settled")?.({});
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			assert.deepEqual(applied, ["test/model", "high"]);
+			const ack = consumeChildInboxAcks(dir)[0];
+			assert.equal(ack?.type === "child-control-ack" ? ack.state : undefined, "applied");
+			handlers.get("session_shutdown")?.({});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("applies queued runtime changes through the legacy settlement fallback", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-child-runtime-legacy-boundary-"));
+		try {
+			const inbox = path.join(dir, "inbox");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			process.env[SUBAGENT_STEER_ACK_DIR_ENV] = path.join(dir, "control", "steer-acks", "0");
+			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+			const handlers = new Map<string, (payload?: unknown, ctx?: unknown) => unknown>();
+			const applied: string[] = [];
+			const registryModel = { provider: "test", id: "model", reasoning: true };
+			registerSteeringInbox({
+				on(event: string, handler: (payload?: unknown, ctx?: unknown) => unknown) { handlers.set(event, handler); },
+				sendUserMessage() {},
+				setThinkingLevel(level: string) { applied.push(level); },
+				getThinkingLevel() { return "low"; },
+			} as never, { legacySettleFallbackMs: 1 });
+			handlers.get("session_start")?.({}, { model: registryModel, modelRegistry: { getAvailable: () => [registryModel], find: () => registryModel, hasConfiguredAuth: () => true } });
+			handlers.get("agent_start")?.({});
+			writeChildInboxRequestToDir(inbox, { type: "child-runtime", protocolVersion: 1, id: "runtime-legacy", ts: 1, targetIndex: 0, thinking: "low", applyAt: "turn-boundary" });
+			handlers.get("message_start")?.({});
+			handlers.get("agent_end")?.({});
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			assert.deepEqual(applied, ["low"]);
+			const states = consumeChildInboxAcks(dir).flatMap((ack) => ack.type === "child-control-ack" ? [ack.state] : []);
+			assert.deepEqual(states, ["queued", "applied"]);
+			handlers.get("session_shutdown")?.({});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects unavailable child runtime credentials without applying the model", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-child-runtime-auth-"));
+		try {
+			const inbox = path.join(dir, "inbox");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			process.env[SUBAGENT_STEER_CAPABILITY_ENV] = path.join(dir, "capability.json");
+			process.env[SUBAGENT_STEER_ACK_DIR_ENV] = path.join(dir, "control", "steer-acks", "0");
+			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+			process.env[SUBAGENT_MODEL_SCOPES_ENV] = "[]";
+			const handlers = new Map<string, (payload?: unknown, ctx?: unknown) => unknown>();
+			let modelApplications = 0;
+			const registryModel = { provider: "test", id: "locked", reasoning: true };
+			registerSteeringInbox({
+				on(event: string, handler: (payload?: unknown, ctx?: unknown) => unknown) { handlers.set(event, handler); },
+				sendUserMessage() {},
+				async setModel() { modelApplications++; return true; },
+				setThinkingLevel() {},
+				getThinkingLevel() { return "medium"; },
+			} as never);
+			handlers.get("session_start")?.({}, { model: registryModel, modelRegistry: { getAvailable: () => [registryModel], find: () => registryModel, hasConfiguredAuth: () => false } });
+			writeChildInboxRequestToDir(inbox, { type: "child-runtime", protocolVersion: 1, id: "runtime-auth", ts: 1, targetIndex: 0, model: "test/locked", applyAt: "turn-boundary" });
+			handlers.get("message_start")?.({});
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			const states = consumeChildInboxAcks(dir).flatMap((ack) => ack.type === "child-control-ack" ? [ack.state] : []);
+			assert.deepEqual(states, ["queued", "failed"]);
+			assert.equal(modelApplications, 0);
+			handlers.get("session_shutdown")?.({});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("enforces launch model scope and thinking ceiling inside the child runtime", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-child-runtime-policy-"));
+		try {
+			const inbox = path.join(dir, "inbox");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			process.env[SUBAGENT_STEER_ACK_DIR_ENV] = path.join(dir, "control", "steer-acks", "0");
+			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+			process.env[SUBAGENT_MODEL_SCOPES_ENV] = JSON.stringify([{ origin: "modelScope", enforce: true, allow: ["other/*"] }]);
+			process.env.PI_SUBAGENT_THINKING_CEILING = "max";
+			const handlers = new Map<string, (payload?: unknown, ctx?: unknown) => unknown>();
+			let modelApplications = 0;
+			let thinkingApplications = 0;
+			const registryModel = { provider: "test", id: "model", reasoning: true, thinkingLevelMap: { high: null } };
+			registerSteeringInbox({
+				on(event: string, handler: (payload?: unknown, ctx?: unknown) => unknown) { handlers.set(event, handler); },
+				sendUserMessage() {},
+				async setModel() { modelApplications++; return true; },
+				setThinkingLevel() { thinkingApplications++; },
+				getThinkingLevel() { return "low"; },
+			} as never);
+			handlers.get("session_start")?.({}, { model: registryModel, modelRegistry: { getAvailable: () => [registryModel], find: () => registryModel, hasConfiguredAuth: () => true } });
+			writeChildInboxRequestToDir(inbox, { type: "child-runtime", protocolVersion: 1, id: "runtime-scope", ts: 1, targetIndex: 0, model: "test/model", applyAt: "turn-boundary" });
+			handlers.get("message_start")?.({});
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			const scopeStates = consumeChildInboxAcks(dir).flatMap((ack) => ack.type === "child-control-ack" ? [ack.state] : []);
+			assert.deepEqual(scopeStates, ["queued", "failed"]);
+			process.env[SUBAGENT_MODEL_SCOPES_ENV] = "[]";
+			writeChildInboxRequestToDir(inbox, { type: "child-runtime", protocolVersion: 1, id: "runtime-support", ts: 2, targetIndex: 0, thinking: "high", applyAt: "turn-boundary" });
+			handlers.get("message_start")?.({});
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			const supportStates = consumeChildInboxAcks(dir).flatMap((ack) => ack.type === "child-control-ack" ? [ack.state] : []);
+			assert.deepEqual(supportStates, ["queued", "failed"]);
+			process.env.PI_SUBAGENT_THINKING_CEILING = "low";
+			writeChildInboxRequestToDir(inbox, { type: "child-runtime", protocolVersion: 1, id: "runtime-ceiling", ts: 3, targetIndex: 0, thinking: "medium", applyAt: "turn-boundary" });
+			handlers.get("message_start")?.({});
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			const ceilingStates = consumeChildInboxAcks(dir).flatMap((ack) => ack.type === "child-control-ack" ? [ack.state] : []);
+			assert.deepEqual(ceilingStates, ["queued", "failed"]);
+			assert.equal(modelApplications, 0);
+			assert.equal(thinkingApplications, 0);
 			handlers.get("session_shutdown")?.({});
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });

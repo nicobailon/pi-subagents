@@ -12,7 +12,7 @@ import { readStatus } from "../shared/utils.ts";
 import { formatAsyncRunTranscript } from "../runs/background/fleet-view.ts";
 import { listAsyncRuns, type AsyncRunSummary } from "../runs/background/async-status.ts";
 import { steerAsyncRun } from "../runs/foreground/async-steering-action.ts";
-import type { SteerDeliveryMode } from "../runs/background/control-channel.ts";
+import { requestChildInput, requestChildRuntime, type SteerDeliveryMode } from "../runs/background/control-channel.ts";
 import { stopAsyncRun } from "../runs/foreground/async-stop-action.ts";
 import { resolveWorkflowForegroundSteeringTarget, steerWorkflowForegroundTarget } from "../runs/foreground/workflow-foreground-steering.ts";
 import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.ts";
@@ -21,6 +21,10 @@ import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from
 import { handleHerdrInspectorAction } from "../inspectors/herdr/actions.ts";
 import type { HerdrClient } from "../inspectors/herdr/client.ts";
 import { getLivePromptAudit, type LivePromptAudit, type PromptAuditView } from "../runs/foreground/prompt-audit.ts";
+import { openFocusedChild, type FocusedChildActions, type FocusedChildTarget } from "./fleet-child-view.ts";
+import { checkModelScope } from "../runs/shared/model-scope.ts";
+import { findModelInfo, getSupportedThinkingLevels, toModelInfo } from "../shared/model-info.ts";
+import { assertThinkingWithinCeiling, parseThinkingLevel } from "../shared/thinking-ceiling.ts";
 
 const REFRESH_MS = 750;
 const MIN_REFRESH_MS = 250;
@@ -111,6 +115,7 @@ export interface FleetViewOptions {
 	actions?: FleetActionHandlers;
 	copyText?: (text: string) => Promise<void> | void;
 	herdrClient?: HerdrClient;
+	openFocusedChild?: (target: FocusedChildTarget) => void;
 }
 
 function belongsToCurrentSession(sessionId: string | undefined, currentSessionId: string | null): boolean {
@@ -926,6 +931,43 @@ export class SubagentFleetComponent implements Component {
 		return { item };
 	}
 
+	private selectedFocusedChildTarget(): { target: FocusedChildTarget } | { reason: string } {
+		const item = this.snapshot.items[this.selected];
+		if (!item) return { reason: "No child is selected." };
+		if (item.kind !== "async") return { reason: "Focus mode is available only for running native async children." };
+		if (item.index === undefined || !item.step) return { reason: "Workflow aggregate rows do not expose child session controls." };
+		if (item.run.state !== "running" || item.state !== "running") return { reason: `Selected child is ${item.state}; focus mode requires a running child.` };
+		if (item.step.runner) return { reason: "External and terminal children do not expose native session controls." };
+		const transcript = transcriptTarget(item, this.state);
+		if (!transcript) return { reason: "The child transcript is not available for trusted focus mode." };
+		const ctx = this.state.lastUiContext;
+		if (!ctx) return { reason: "The current Pi UI context is unavailable." };
+		try {
+			if (!item.step.modelScopes) return { reason: "The child is missing its launch-resolved model policy; focus mode fails closed." };
+			const scopes = item.step.modelScopes;
+			const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo).filter((model) => {
+				const registered = ctx.modelRegistry.find(model.provider, model.id);
+				if (!registered || !ctx.modelRegistry.hasConfiguredAuth(registered)) return false;
+				return scopes.every((scope) => checkModelScope(model.fullId, scope, "explicit")?.severity !== "error");
+			});
+			return { target: {
+				key: item.key,
+				runId: item.runId,
+				asyncDir: item.run.asyncDir,
+				index: item.index,
+				agent: item.step.agent,
+				transcript,
+				...(item.step.model ? { model: item.step.model } : {}),
+				...(item.step.thinking ? { thinking: item.step.thinking } : {}),
+				modelScopes: scopes,
+				...(item.step.thinkingCeiling ? { thinkingCeiling: item.step.thinkingCeiling } : {}),
+				availableModels,
+			} };
+		} catch (error) {
+			return { reason: error instanceof Error ? error.message : String(error) };
+		}
+	}
+
 	private selectedSteerAction(): { runId: string; asyncDir: string; index?: number } | { reason: string } {
 		const item = this.snapshot.items[this.selected];
 		if (item?.kind === "foreground-active" && item.control.parentWorkflowRunId) {
@@ -1133,6 +1175,17 @@ export class SubagentFleetComponent implements Component {
 			if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || data.toLowerCase() === "n" || matchesKey(data, "backspace")) {
 				this.resetActionInput();
 				this.tui.requestRender();
+			}
+			return;
+		}
+		if (matchesKey(data, "return") || data === "\r" || data === "\n") {
+			const focused = this.selectedFocusedChildTarget();
+			if ("reason" in focused || !this.options.openFocusedChild) {
+				this.setActionNotice({ text: "reason" in focused ? focused.reason : "Focused child sessions are unavailable in this context.", isError: true });
+			} else {
+				this.stopRefresh();
+				this.options.openFocusedChild(focused.target);
+				this.done(undefined);
 			}
 			return;
 		}
@@ -1354,7 +1407,7 @@ export class SubagentFleetComponent implements Component {
 			? ` j/k child · 1/2/3 view · g redo with guidance · c copy · Esc close Prompt Audit · ${position}`
 			: selected?.kind === "external"
 				? ` ${bindingLabel(this.keybindings, "selectUp")}/${bindingLabel(this.keybindings, "selectDown")} job · display-only · ${bindingLabel(this.keybindings, "refresh")} refresh · ${bindingLabel(this.keybindings, "close")} close · ${position}`
-				: ` ${bindingLabel(this.keybindings, "selectUp")}/${bindingLabel(this.keybindings, "selectDown")} agent · p Prompt Audit · ${bindingLabel(this.keybindings, "inspect")} Herdr · ${bindingLabel(this.keybindings, "steer")} steer · ${bindingLabel(this.keybindings, "stop")} stop · ${bindingLabel(this.keybindings, "toggleTools")} tools · ${bindingLabel(this.keybindings, "refresh")} refresh · ${bindingLabel(this.keybindings, "close")} close · ${position}`;
+				: ` ${bindingLabel(this.keybindings, "selectUp")}/${bindingLabel(this.keybindings, "selectDown")} agent · Enter focus · p Prompt Audit · ${bindingLabel(this.keybindings, "inspect")} Herdr · ${bindingLabel(this.keybindings, "steer")} steer · ${bindingLabel(this.keybindings, "stop")} stop · ${bindingLabel(this.keybindings, "toggleTools")} tools · ${bindingLabel(this.keybindings, "refresh")} refresh · ${bindingLabel(this.keybindings, "close")} close · ${position}`;
 		lines.push(this.theme.fg("border", "│") + fit(this.theme.fg("dim", footer), innerWidth) + this.theme.fg("border", "│"));
 		lines.push(this.theme.fg("border", `╰${"─".repeat(innerWidth)}╯`));
 		return lines.map((line) => truncateToWidth(line, width));
@@ -1422,14 +1475,59 @@ export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentSt
 			return control.promptAuditRedo(input.index, input.guidance);
 		},
 	} satisfies FleetActionHandlers;
+	const focusedActions = (target: FocusedChildTarget): FocusedChildActions => ({
+		submit: async (message) => {
+			const request = requestChildInput(target.asyncDir, { targetIndex: target.index, message, source: "fleet-focus" });
+			return { requestId: request.id };
+		},
+		setRuntime: async (selection) => {
+			let selectedModel = target.availableModels.find((model) => model.fullId === selection.model);
+			if (selection.model) {
+				selectedModel = findModelInfo(selection.model, ctx.modelRegistry.getAvailable().map(toModelInfo), ctx.model?.provider);
+				if (!selectedModel) throw new Error(`Model '${selection.model}' is unavailable.`);
+				for (const scope of target.modelScopes) {
+					const violation = checkModelScope(selectedModel.fullId, scope, "explicit");
+					if (violation?.severity === "error") throw new Error(violation.message);
+				}
+				const registered = ctx.modelRegistry.find(selectedModel.provider, selectedModel.id);
+				if (!registered || !ctx.modelRegistry.hasConfiguredAuth(registered)) throw new Error(`Model '${selectedModel.fullId}' has no configured credentials.`);
+				await ctx.modelRegistry.getApiKeyAndHeaders(registered);
+			} else {
+				const liveModel = readStatus(target.asyncDir)?.steps?.[target.index]?.model;
+				selectedModel = findModelInfo(liveModel ?? target.model, ctx.modelRegistry.getAvailable().map(toModelInfo), ctx.model?.provider);
+			}
+			const thinking = selection.thinking === undefined ? undefined : parseThinkingLevel(selection.thinking);
+			if (thinking && !getSupportedThinkingLevels(selectedModel).includes(thinking)) throw new Error(`Thinking level '${thinking}' is unsupported by model '${selectedModel?.fullId ?? "current"}'.`);
+			assertThinkingWithinCeiling({ model: selectedModel?.fullId ?? target.model, configThinking: thinking, ceiling: target.thinkingCeiling, agent: target.agent, runId: target.runId });
+			const request = requestChildRuntime(target.asyncDir, {
+				targetIndex: target.index,
+				...(selectedModel && selection.model ? { model: selectedModel.fullId } : {}),
+				...(thinking ? { thinking } : {}),
+				source: "fleet-focus",
+			});
+			return { requestId: request.id };
+		},
+	});
 	try {
-		await ctx.ui.custom<undefined>(
-			(tui, theme, _keybindings, done) => new SubagentFleetComponent(tui, theme, state, done, { ...options, actions, copyText }),
-			{
-				overlay: true,
-				overlayOptions: { anchor: "center", width: "95%", minWidth: 60, maxHeight: "85%", margin: 1 },
-			},
-		);
+		let initialKey = options.initialKey;
+		while (true) {
+			let focusedTarget: FocusedChildTarget | undefined;
+			const requestFocus = options.openFocusedChild ?? ((target: FocusedChildTarget) => { focusedTarget = target; });
+			await ctx.ui.custom<undefined>(
+				(tui, theme, _keybindings, done) => new SubagentFleetComponent(tui, theme, state, done, { ...options, initialKey, actions, copyText, openFocusedChild: requestFocus }),
+				{
+					overlay: true,
+					overlayOptions: { anchor: "center", width: "95%", minWidth: 60, maxHeight: "85%", margin: 1 },
+				},
+			);
+			if (!focusedTarget || options.openFocusedChild) break;
+			initialKey = focusedTarget.key;
+			try {
+				await openFocusedChild(ctx, focusedTarget, focusedActions(focusedTarget));
+			} catch (error) {
+				ctx.ui.notify(`Focused child session unavailable: ${error instanceof Error ? error.message : String(error)}`, "error");
+			}
+		}
 	} finally {
 		state.fleetInspectorOpen = wasOpen;
 	}

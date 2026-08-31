@@ -11,7 +11,7 @@ import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilie
 import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
 import { updateActiveRunIndex } from "./active-run-index.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
-import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, enqueueStepSteer, steerAcksDir, steerCapabilityPath, stepSteerInboxDir, watchAsyncControlInbox, type SteerAck, type SteerCapability, type SteerRequest, type StopRequest } from "./control-channel.ts";
+import { closeSteerInbox, consumeChildInboxRequests, consumeInterruptRequest, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, enqueueStepChildControl, enqueueStepSteer, steerAcksDir, steerCapabilityPath, stepSteerInboxDir, watchAsyncControlInbox, type ChildControlAck, type ChildControlRequest, type SteerAck, type SteerCapability, type SteerRequest, type StopRequest } from "./control-channel.ts";
 import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
@@ -1747,6 +1747,7 @@ async function runSingleStepInner(
 			steerInboxDir: ctx.steerInboxDir,
 			steerCapabilityPath: ctx.steerCapabilityPath,
 			steerAckDir: ctx.steerAckDir,
+			modelScopes: step.modelScopes,
 			structuredOutput: effectiveStructuredOutput,
 			toolBudget: step.toolBudget,
 			permissionRules: step.permissionRules,
@@ -2282,9 +2283,22 @@ async function runSingleStep(
 	return runSingleStepInner(step, ctx);
 }
 
+interface RunnerChildControlStatus {
+	requestId: string;
+	type: "input" | "runtime";
+	state: "queued" | "applied" | "failed";
+	requestedAt: number;
+	updatedAt: number;
+	message: string;
+	model?: string;
+	thinking?: import("../../shared/model-info.ts").ThinkingLevel;
+}
+
 type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
 	exitCode?: number | null;
 	description?: string;
+	childControl?: RunnerChildControlStatus;
+	modelScopes?: import("../shared/model-scope.ts").ResolvedModelScope[];
 };
 
 function externalRunnerStatus(runner: SubagentStep["runner"]): ExternalCliRunnerStatus | ExternalJobRunnerStatus | undefined {
@@ -2614,6 +2628,7 @@ async function runSubagent(
 					...(task.launchResolvedExtensions ? { launchResolvedExtensions: task.launchResolvedExtensions } : {}),
 					...(task.capabilityCeiling ? { capabilityCeiling: task.capabilityCeiling } : {}),
 					...(task.thinkingCeiling ? { thinkingCeiling: task.thinkingCeiling } : {}),
+					modelScopes: task.modelScopes,
 					status: "pending",
 					...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
 					...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
@@ -2668,6 +2683,7 @@ async function runSubagent(
 				...(step.launchResolvedExtensions ? { launchResolvedExtensions: step.launchResolvedExtensions } : {}),
 				...(step.capabilityCeiling ? { capabilityCeiling: step.capabilityCeiling } : {}),
 				...(step.thinkingCeiling ? { thinkingCeiling: step.thinkingCeiling } : {}),
+				modelScopes: step.modelScopes,
 				status: "pending",
 				...(step.toolBudget ? { toolBudget: initialToolBudgetState(step.toolBudget) } : {}),
 				...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
@@ -3545,6 +3561,53 @@ async function runSubagent(
 		statusPayload.lastUpdate = now;
 		writeStatusPayload();
 	};
+	const recordChildControl = (request: ChildControlRequest, state: "queued" | "failed", message: string): void => {
+		const step = statusPayload.steps[request.targetIndex];
+		if (!step) return;
+		const now = Date.now();
+		step.childControl = {
+			requestId: request.id,
+			type: request.type === "child-input" ? "input" : "runtime",
+			state,
+			requestedAt: request.ts,
+			updatedAt: now,
+			message,
+		};
+		statusPayload.lastUpdate = now;
+		writeStatusPayload();
+	};
+	const deliverChildControl = (request: ChildControlRequest): void => {
+		const step = statusPayload.steps[request.targetIndex];
+		if (statusPayload.state !== "running" || !step || step.status !== "running" || step.runner) {
+			recordChildControl(request, "failed", !step ? "Child index is out of range." : step.runner ? "External children do not support native session controls." : `Child is ${step.status}; native session controls require a running child.`);
+			return;
+		}
+		try {
+			enqueueStepChildControl(asyncDir, request.targetIndex, request);
+			recordChildControl(request, "queued", request.type === "child-runtime" ? "Runtime selection routed to the child turn-boundary queue." : "Direct input routed to the child session.");
+		} catch (error) {
+			recordChildControl(request, "failed", error instanceof Error ? error.message : String(error));
+		}
+	};
+	const consumeChildControlAck = (ack: ChildControlAck): void => {
+		const step = statusPayload.steps[ack.index];
+		if (!step?.childControl || step.childControl.requestId !== ack.requestId) return;
+		const nextStatus: RunnerChildControlStatus = {
+			...step.childControl,
+			state: ack.state,
+			updatedAt: ack.ts,
+			message: ack.message,
+		};
+		if (ack.model) nextStatus.model = ack.model;
+		if (ack.thinking) nextStatus.thinking = ack.thinking;
+		step.childControl = nextStatus;
+		if (ack.state === "applied" && (ack.model !== undefined || ack.thinking !== undefined)) {
+			updateStepModel(ack.index, ack.model ?? step.model, ack.thinking ?? step.thinking, step.contextLimit, ack.ts);
+		} else {
+			statusPayload.lastUpdate = ack.ts;
+			writeStatusPayload();
+		}
+	};
 	const updateStepFromChildEvent = (flatIndex: number, event: ChildEvent): void => {
 		const step = statusPayload.steps[flatIndex];
 		if (!step) return;
@@ -3874,6 +3937,7 @@ async function runSubagent(
 				pendingStepSteers.push(request);
 			}
 		},
+		onChildControl: deliverChildControl,
 		onSteerCapability: (capability) => {
 			steeringCapabilities.set(capability.index, capability);
 			if (!capability.supported) {
@@ -3891,6 +3955,7 @@ async function runSubagent(
 			}
 		},
 		onSteerAck: consumeSteerAck,
+		onChildControlAck: consumeChildControlAck,
 	});
 	if (config.deadlineAt !== undefined) {
 		const remainingMs = Math.max(0, config.deadlineAt - Date.now());
@@ -4111,6 +4176,7 @@ async function runSubagent(
 					...(task.contextLimit !== undefined ? { contextLimit: task.contextLimit } : {}),
 					...(task.thinking ? { thinking: task.thinking } : {}),
 					...(task.thinkingCeiling ? { thinkingCeiling: task.thinkingCeiling } : {}),
+					modelScopes: task.modelScopes,
 					...(task.modelCandidates && task.modelCandidates.length > 0 ? { attemptedModels: task.modelCandidates } : task.model ? { attemptedModels: [task.model] } : {}),
 					recentTools: [],
 					recentOutput: [],
@@ -5299,7 +5365,10 @@ async function runSubagent(
 	statusPayload.state = stopped || signalTerminated ? "stopped" : timedOut || usageBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : partialWithEvidence ? "partial" : "failed";
 	closeSteerInbox(asyncDir, statusPayload.state, (filePath, payload) => runPersistence.write(filePath, payload));
 	disposeControlInbox();
-	for (const request of consumeSteerRequests(asyncDir)) deliverSteerRequest(request);
+	for (const request of consumeChildInboxRequests(asyncDir)) {
+		if (request.type === "steer") deliverSteerRequest(request);
+		else deliverChildControl(request);
+	}
 	const effectiveSessionFile = sessionFile ?? latestSessionFile;
 	const steeringLifecycle = steeringStatus(statusPayload);
 	for (const request of steeringLifecycle.recent) {
