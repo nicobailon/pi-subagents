@@ -158,6 +158,55 @@ describe("project schedule management", () => {
 		assert.match(text(shown), /Night review/);
 	});
 
+	it("restores session-only schedules only in the creating session", async () => {
+		const owner = harness({ sessionId: "owner-session" });
+		const created = await owner.manager.handleToolCall({
+			action: "schedule.create",
+			id: "owner-only",
+			name: "Owner only",
+			every: "1h",
+			sessionOnly: true,
+			workflowScript: "return 1",
+		}, owner.ctx);
+		assert.equal(created.isError, undefined);
+
+		const root = scheduledRunStorePath(owner.ctx.cwd, undefined, path.join(owner.root, "stores"));
+		const [record] = listScheduledRunSummaries(owner.ctx.cwd, path.join(owner.root, "stores"));
+		assert.equal(record?.sessionOnly, true);
+		assert.equal(record?.ownerSessionFile, owner.ctx.sessionManager.getSessionFile());
+
+		owner.manager.stop();
+		const otherTimers = new FakeTimers();
+		const otherLaunches: Launch[] = [];
+		const other = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			storeRoot: path.join(owner.root, "stores"),
+			now: () => owner.clock.now,
+			timers: otherTimers,
+			launch: (params, launchCtx) => new Promise((resolve) => otherLaunches.push({ params: params as Record<string, unknown>, ctx: launchCtx, resolve: resolve as Launch["resolve"] })) as never,
+		});
+		const otherContext = context(owner.ctx.cwd, "other-session");
+		other.bindSession(otherContext);
+		assert.equal(otherTimers.values.size, 0, "non-owner sessions must not arm session-only schedules");
+
+		const manual = await other.handleToolCall({ action: "schedule.run", id: "owner-only" }, otherContext);
+		assert.match(text(manual), /not its owner/);
+		assert.equal(otherLaunches.length, 0);
+		assert.equal(listScheduledRunSummaries(owner.ctx.cwd, path.join(owner.root, "stores"))[0]?.ownerSessionFile, owner.ctx.sessionManager.getSessionFile());
+		assert.equal(fs.existsSync(path.join(root, "owner-only", "active.lock")), false);
+
+		const ownerTimers = new FakeTimers();
+		const ownerAgain = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			storeRoot: path.join(owner.root, "stores"),
+			now: () => owner.clock.now,
+			timers: ownerTimers,
+			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
+		});
+		ownerAgain.bindSession(context(owner.ctx.cwd, "owner-session"));
+		assert.equal(ownerTimers.values.size, 1, "the creating session must restore its schedule");
+	});
+
 	it("does not let completed one-shot schedules consume maxPending capacity", async () => {
 		const h = harness({ config: { scheduledRuns: { enabled: true, maxPending: 1 } } });
 		await h.manager.handleToolCall({ action: "schedule.create", id: "completed", at: "+1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, h.ctx);

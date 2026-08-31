@@ -320,6 +320,7 @@ const SubagentParamProperties = {
 	thinking: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "boolean", enum: [false] }], description: "Thinking level for action='watchdog.configure' only (off/minimal/low/medium/high/xhigh/max, inherit, or false for off). Ignored on dispatch; set per-run child thinking with a suffix on the model string, e.g. model: 'provider/id:high'." })),
 	at: Type.Optional(Type.String({ description: "One-shot trigger for action='schedule.create': a relative delay such as '+10m' or an ISO timestamp with timezone." })),
 	every: Type.Optional(Type.String({ description: "Fixed recurring interval for action='schedule.create', such as '30m', '6h', '2d', or '2w'." })),
+	sessionOnly: Type.Optional(Type.Boolean({ description: "When true, only the session that creates the schedule may execute it. Defaults to false." })),
 	on: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "integer" }], description: "Calendar selector reserved for a later schedule slice." })),
 	timezone: Type.Optional(Type.String({ description: "IANA timezone reserved for a later calendar schedule slice." })),
 	overlap: Type.Optional(Type.String({ enum: ["skip"], description: "Overlap policy. This slice supports skip only." })),
