@@ -4063,6 +4063,51 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 1);
 	});
 
+	it("passes an agent-level tool budget to an async single child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const toolBudget = { soft: 100, hard: 150, block: "*" as const };
+		mockPi.onCall({ echoEnv: [TOOL_BUDGET_ENV] });
+		const executor = makeExecutor([makeAgent("echo", { toolBudget })]);
+		let asyncDir: string | undefined;
+		let resultPath: string | undefined;
+
+		try {
+			const result = await executor.execute(
+				"agent-tool-budget-async-single",
+				{ agent: "echo", task: "Run the async budget probe", async: true },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "async launch failed");
+			assert.ok(result.details.asyncId);
+			asyncDir = result.details.asyncDir;
+			resultPath = path.join(DIRS.results, `${result.details.asyncId}.json`);
+
+			let persisted: { state?: string; results?: Array<{ output?: string }> } = {};
+			for (let attempt = 0; attempt < 200; attempt++) {
+				if (fs.existsSync(resultPath)) persisted = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+				if (persisted.state === "complete" || persisted.state === "failed") break;
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.equal(persisted.state, "complete");
+			const childEnv = JSON.parse(persisted.results?.[0]?.output ?? "{}") as Record<string, string | null>;
+			assert.deepEqual(JSON.parse(childEnv[TOOL_BUDGET_ENV] ?? "null"), toolBudget);
+			assert.equal(mockPi.callCount(), 1);
+			const processTerminalPath = path.join(asyncDir!, "process-terminal.json");
+			let processTerminal: { state?: string } = {};
+			for (let attempt = 0; attempt < 100; attempt++) {
+				if (fs.existsSync(processTerminalPath)) processTerminal = JSON.parse(fs.readFileSync(processTerminalPath, "utf-8"));
+				if (processTerminal.state && processTerminal.state !== "pending") break;
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.match(processTerminal.state ?? "", /^(observed|unknown)$/);
+		} finally {
+			if (asyncDir) fs.rmSync(asyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+			if (resultPath) fs.rmSync(resultPath, { force: true });
+		}
+	});
+
 	it("keeps delegated agent and config tool budgets at a minimum of one", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const ctx = makeMinimalCtx(tempDir);
 		const cases = [
