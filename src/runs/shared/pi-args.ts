@@ -173,6 +173,7 @@ export interface BuildPiArgsInput {
 	inheritSkills: boolean;
 	requireReadTool?: boolean;
 	tools?: string[];
+	excludeTools?: string[];
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
 	systemPrompt?: string | null;
@@ -297,6 +298,7 @@ function resolveFastModeExtension(input: Pick<ResolvePiLaunchToolPlanInput, "fas
 
 export interface ResolvePiLaunchToolPlanInput {
 	tools?: string[];
+	excludeTools?: string[];
 	allowNestedSubagents?: boolean;
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
@@ -326,6 +328,7 @@ export interface PiLaunchToolPlan {
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	requestedBuiltinTools: string[];
 	declaredBuiltinTools: string[];
+	excludeTools: string[];
 	toolExtensionPaths: string[];
 	resolvedMcpSelections: ResolvedMcpDirectToolSelection[];
 	effectiveMcpSelections: ResolvedMcpDirectToolSelection[];
@@ -496,8 +499,12 @@ export function resolvePiLaunchToolPlan(
 					? ["read", ...requestedBuiltinTools]
 					: requestedBuiltinTools
 				).filter((tool) => !allowedToolSet || allowedToolSet.has(tool));
-	const fanoutAuthorized = declaredBuiltinTools.includes("subagent") || (
+	const excludeTools = [...new Set((input.excludeTools ?? []).map((tool) => tool.trim()).filter(Boolean))];
+	const excludedToolSet = new Set(excludeTools);
+	const effectiveDeclaredBuiltinTools = declaredBuiltinTools.filter((tool) => !excludedToolSet.has(tool));
+	const fanoutAuthorized = effectiveDeclaredBuiltinTools.includes("subagent") || (
 		input.allowNestedSubagents === true &&
+		!excludedToolSet.has("subagent") &&
 		(!allowedToolSet || allowedToolSet.has("subagent"))
 	);
 	const toolExtensionPaths: string[] = capabilityCeiling?.denyExtensions
@@ -521,7 +528,7 @@ export function resolvePiLaunchToolPlan(
 			!allowedToolSet ||
 			allowedToolSet.has(selection.name) ||
 			isLegacyUnderscoreMcpToolAllowed(selection, allowedToolSet, resolvedMcpNames, legacyMcpNameCounts),
-	);
+	).filter((selection) => !excludedToolSet.has(selection.name));
 	const effectiveMcpTools = effectiveMcpSelections.map(
 		(selection) => selection.name,
 	);
@@ -537,10 +544,10 @@ export function resolvePiLaunchToolPlan(
 		input.tools !== undefined ||
 		(input.mcpDirectTools?.length ?? 0) > 0 ||
 		allowedToolSet !== undefined;
-	const internalTools = input.structuredOutput ? ["structured_output"] : [];
+	const internalTools = (input.structuredOutput ? ["structured_output"] : []).filter((tool) => !excludedToolSet.has(tool));
 	const effectiveToolAllowlist = [
 		...new Set([
-			...declaredBuiltinTools,
+			...effectiveDeclaredBuiltinTools,
 			...effectiveMcpTools,
 			...internalTools,
 		]),
@@ -551,11 +558,11 @@ export function resolvePiLaunchToolPlan(
 	// appended intercom alongside contact_supervisor, so that exact pairing is
 	// legacy plumbing, not a user demand for an external intercom provider;
 	// a lone intercom entry stays strictly required (#1207).
-	const legacySupervisorPairing = declaredBuiltinTools.includes("contact_supervisor");
+	const legacySupervisorPairing = effectiveDeclaredBuiltinTools.includes("contact_supervisor");
 	const requiredChildTools = explicitToolAllowlist
 		? [
 				...new Set([
-					...(input.tools !== undefined ? declaredBuiltinTools : []),
+					...(input.tools !== undefined ? effectiveDeclaredBuiltinTools : []),
 					...(input.mcpDirectTools?.length ? effectiveMcpTools : []),
 					...internalTools,
 				].filter((tool) => tool !== "contact_supervisor" && (!legacySupervisorPairing || tool !== "intercom"))),
@@ -617,6 +624,7 @@ export function resolvePiLaunchToolPlan(
 				ceiling: capabilityCeiling,
 				...(requestedToolNames ? { requestedTools: requestedToolNames } : {}),
 				effectiveTools: effectiveToolAllowlist,
+				...(excludeTools.length > 0 ? { excludeTools } : {}),
 				removedTools:
 					requestedToolNames?.filter(
 						(tool) => !effectiveToolAllowlist.includes(tool),
@@ -654,6 +662,7 @@ export function resolvePiLaunchToolPlan(
 		...(capabilityCeiling ? { capabilityCeiling } : {}),
 		requestedBuiltinTools,
 		declaredBuiltinTools,
+		excludeTools,
 		toolExtensionPaths,
 		resolvedMcpSelections,
 		effectiveMcpSelections,
@@ -737,6 +746,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: input.tools,
+		excludeTools: input.excludeTools,
 		allowNestedSubagents: input.allowNestedSubagents,
 		extensions: input.extensions,
 		subagentOnlyExtensions: input.subagentOnlyExtensions,
@@ -763,6 +773,8 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		);
 		if (toolPlan.effectiveToolAllowlist.length > 0)
 			args.push(toolPlan.effectiveToolAllowlist.join(","));
+	} else if (toolPlan.excludeTools.length > 0) {
+		args.push("--exclude-tools", toolPlan.excludeTools.join(","));
 	}
 	if (toolPlan.disableAmbientExtensions) {
 		args.push("--no-extensions");

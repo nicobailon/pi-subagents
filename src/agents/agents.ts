@@ -70,6 +70,7 @@ export interface BuiltinAgentOverrideBase {
 	skills?: string[];
 	skillPath?: string[];
 	tools?: string[];
+	excludeTools?: string[];
 	allowNestedSubagents?: boolean;
 	mcpDirectTools?: string[];
 	extensions?: string[];
@@ -99,6 +100,7 @@ interface BuiltinAgentOverrideConfig {
 	systemPrompt?: string;
 	skills?: string[] | false;
 	tools?: string[] | false | "inherit";
+	excludeTools?: string[] | false;
 	allowNestedSubagents?: boolean;
 	extensions?: string[] | false;
 	subagentOnlyExtensions?: string[] | false;
@@ -132,6 +134,7 @@ export interface AgentConfig {
 	description: string;
 	aliases?: string[];
 	tools?: string[];
+	excludeTools?: string[];
 	allowNestedSubagents?: boolean;
 	mcpDirectTools?: string[];
 	model?: string;
@@ -760,6 +763,7 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		...(agent.skills ? { skills: [...agent.skills] } : {}),
 		...(agent.skillPath ? { skillPath: [...agent.skillPath] } : {}),
 		...(agent.tools ? { tools: [...agent.tools] } : {}),
+		...(agent.excludeTools ? { excludeTools: [...agent.excludeTools] } : {}),
 		...(agent.allowNestedSubagents !== undefined ? { allowNestedSubagents: agent.allowNestedSubagents } : {}),
 		...(agent.mcpDirectTools ? { mcpDirectTools: [...agent.mcpDirectTools] } : {}),
 		...(!agent.extensionsFromDefault && agent.extensions ? { extensions: [...agent.extensions] } : {}),
@@ -793,6 +797,7 @@ function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentO
 		...(override.systemPrompt !== undefined ? { systemPrompt: override.systemPrompt } : {}),
 		...(override.skills !== undefined ? { skills: override.skills === false ? false : [...override.skills] } : {}),
 		...(override.tools !== undefined ? { tools: Array.isArray(override.tools) ? [...override.tools] : override.tools } : {}),
+		...(override.excludeTools !== undefined ? { excludeTools: override.excludeTools === false ? false : [...override.excludeTools] } : {}),
 		...(override.allowNestedSubagents !== undefined ? { allowNestedSubagents: override.allowNestedSubagents } : {}),
 		...(override.extensions !== undefined ? { extensions: override.extensions === false ? false : [...override.extensions] } : {}),
 		...(override.subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions: override.subagentOnlyExtensions === false ? false : [...override.subagentOnlyExtensions] } : {}),
@@ -1085,6 +1090,8 @@ function parseBuiltinOverrideEntry(
 
 	const tools = parseToolsOverride(input.tools, { filePath, name });
 	if (tools !== undefined) override.tools = tools;
+	const excludeTools = parseOverrideStringArrayOrFalse(input.excludeTools, { filePath, name, field: "excludeTools" });
+	if (excludeTools !== undefined) override.excludeTools = excludeTools;
 	if ("allowNestedSubagents" in input) {
 		if (typeof input.allowNestedSubagents === "boolean") override.allowNestedSubagents = input.allowNestedSubagents;
 		else throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'allowNestedSubagents'; expected a boolean.`);
@@ -1371,6 +1378,7 @@ function applyBuiltinOverride(
 	if (override.systemPrompt !== undefined) next.systemPrompt = override.systemPrompt;
 	if (override.skills !== undefined) { if (override.skills === false) delete next.skills; else next.skills = [...override.skills]; }
 	if (override.tools !== undefined) applyToolsOverride(next, override.tools);
+	if (override.excludeTools !== undefined) { if (override.excludeTools === false) delete next.excludeTools; else next.excludeTools = [...override.excludeTools]; }
 	if (override.allowNestedSubagents !== undefined) next.allowNestedSubagents = override.allowNestedSubagents;
 	if (override.extensions !== undefined) { if (override.extensions === false) delete next.extensions; else next.extensions = [...override.extensions]; }
 	if (override.subagentOnlyExtensions !== undefined) { if (override.subagentOnlyExtensions === false) delete next.subagentOnlyExtensions; else next.subagentOnlyExtensions = [...override.subagentOnlyExtensions]; }
@@ -1536,6 +1544,9 @@ function applyCustomAgentOverride(
 		applyToolsOverride(mutable(), override.tools);
 		anyFilled = true;
 	}
+	if (override.excludeTools !== undefined) {
+		fill("excludeTools", ["excludeTools"], override.excludeTools === false ? undefined : [...override.excludeTools]);
+	}
 	if (override.allowNestedSubagents !== undefined) {
 		fill("allowNestedSubagents", ["allowNestedSubagents"], override.allowNestedSubagents);
 	}
@@ -1591,7 +1602,7 @@ function applyCustomAgentOverrides(
 
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
-	draft: Pick<AgentConfig, "model" | "modelProvider" | "fallbackModels" | "fast" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritGlobalContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "allowNestedSubagents" | "mcpDirectTools" | "extensions" | "subagentOnlyExtensions" | "mutationTools" | "completionGuard" | "toolBudget"> & Partial<Pick<AgentConfig, "description" | "output" | "outputMode" | "defaultReads">>,
+	draft: Pick<AgentConfig, "model" | "modelProvider" | "fallbackModels" | "fast" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritGlobalContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "allowNestedSubagents" | "mcpDirectTools" | "extensions" | "subagentOnlyExtensions" | "mutationTools" | "completionGuard" | "toolBudget"> & Partial<Pick<AgentConfig, "description" | "output" | "outputMode" | "defaultReads" | "excludeTools">>,
 ): BuiltinAgentOverrideConfig | undefined {
 	const override: BuiltinAgentOverrideConfig = {};
 
@@ -1620,6 +1631,7 @@ export function buildBuiltinOverrideConfig(
 	const baseTools = joinToolList(base);
 	const draftTools = joinToolList(draft);
 	if (!arraysEqual(draftTools, baseTools)) override.tools = draftTools ? [...draftTools] : false;
+	if (!arraysEqual(draft.excludeTools, base.excludeTools)) override.excludeTools = draft.excludeTools ? [...draft.excludeTools] : false;
 	if (draft.allowNestedSubagents !== base.allowNestedSubagents) override.allowNestedSubagents = draft.allowNestedSubagents === true;
 	if (!arraysEqual(draft.extensions, base.extensions)) override.extensions = draft.extensions ? [...draft.extensions] : false;
 	if (!arraysEqual(draft.subagentOnlyExtensions, base.subagentOnlyExtensions)) {
@@ -1984,7 +1996,7 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 
 function validateExternalRunnerProfile(frontmatter: Record<string, string>, agentName: string, runner: AgentRunnerConfig | undefined): void {
 	if (runner?.type !== "external-cli" && runner?.type !== "external-job") return;
-	const unsupported = ["tools", "allowNestedSubagents", "model", "fallbackModels", "thinking", "extensions", "subagentOnlyExtensions", "mutationTools", "maxSubagentDepth", "completionGuard", "skills", "skill", "skillPath", "toolBudget", "permission", "permissions"]
+	const unsupported = ["tools", "excludeTools", "allowNestedSubagents", "model", "fallbackModels", "thinking", "extensions", "subagentOnlyExtensions", "mutationTools", "maxSubagentDepth", "completionGuard", "skills", "skill", "skillPath", "toolBudget", "permission", "permissions"]
 		.filter((field) => frontmatter[field] !== undefined);
 	if (unsupported.length > 0) {
 		throw new Error(`Agent '${agentName}' uses runner.type='${runner.type}' and declares unsupported Pi-only fields: ${unsupported.join(", ")}.`);
@@ -2066,6 +2078,7 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 		const parsedTools = splitToolList(rawTools);
 		const tools = parsedTools.tools ?? [];
 		const mcpDirectTools = parsedTools.mcpDirectTools ?? [];
+		const excludeTools = parseFrontmatterList(frontmatter.excludeTools);
 		const defaultReads = parseFrontmatterList(frontmatter.defaultReads);
 		const aliases = normalizeAgentAliases(parseFrontmatterList(frontmatter.aliases ?? frontmatter.alias), runtimeName);
 		const profileError = validateCodeOwnedProfileRunner({ name: runtimeName, localName, aliases, runner });
@@ -2187,6 +2200,7 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			description: frontmatter.description,
 			...(aliases !== undefined ? { aliases } : {}),
 			...(rawTools !== undefined ? { tools } : {}),
+			...(excludeTools !== undefined ? { excludeTools } : {}),
 			...(allowNestedSubagents !== undefined ? { allowNestedSubagents } : {}),
 			...(mcpDirectTools.length > 0 ? { mcpDirectTools } : {}),
 			...(frontmatter.model !== undefined ? { model: frontmatter.model } : {}),

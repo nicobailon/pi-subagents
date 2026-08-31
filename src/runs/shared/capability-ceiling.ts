@@ -22,6 +22,7 @@ export interface SubagentCapabilityAudit {
 	requestedTools?: string[];
 	effectiveTools: string[];
 	removedTools: string[];
+	excludeTools?: string[];
 	internalTools: string[];
 	extensionsDenied: boolean;
 	removedExtensionCount: number;

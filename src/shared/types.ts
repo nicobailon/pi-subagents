@@ -780,6 +780,7 @@ export interface SteeringRecoveryDescriptor {
 	thinking?: string;
 	thinkingCeiling?: ThinkingLevel;
 	tools?: string[];
+	excludeTools?: string[];
 	allowNestedSubagents?: boolean;
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
@@ -1343,7 +1344,7 @@ export interface AgentCapabilityRow {
 	restrictionSources?: string[];
 	aliases?: string[];
 	runner: { type: "pi" } | { type: "external-cli"; adapter?: string; capabilities: ExternalCliCapabilities } | { type: "external-job"; provider: string; available?: boolean; capabilities: ExternalJobRunnerStatus["capabilities"] };
-	tools: { ambient: boolean; names: string[]; mcpDirectTools: string[]; mutationTools?: string[] };
+	tools: { ambient: boolean; names: string[]; excludeTools?: string[]; mcpDirectTools: string[]; mutationTools?: string[] };
 	model?: { value?: string; fallbackModels?: string[]; thinking?: string | false };
 	execution?: { defaultAsync?: boolean; timeoutMs?: number };
 	output?: { path?: string; mode?: OutputMode };

@@ -804,6 +804,26 @@ Project prompt.
 		assert.ok(result.contract.tools.extensionArgs.includes("/tmp/subagent-only.ts"));
 	});
 
+	it("projects per-agent tool exclusions and binds them into launch identity", async () => {
+		const cwd = path.join(tempDir, "exclude-tools-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+tools: read, write
+excludeTools: write, unknown_tool
+---
+Project prompt.
+`);
+
+		const result = await resolveSubagentLaunchContract({ agent: "worker", cwd, task: "Inspect" });
+		assert.equal(result.ok, true);
+		if (!result.ok) return;
+		assert.deepEqual(result.contract.tools.excludeTools, ["write", "unknown_tool"]);
+		assert.deepEqual(result.contract.tools.effectiveAllowlist, ["read"]);
+		assert.match(result.contract.launchContractDigest, /^[a-f0-9]{64}$/);
+	});
+
 	it("falls back implicit default fork to fresh when the parent session is not forkable", async () => {
 		const cwd = path.join(tempDir, "repo-implicit-fork");
 		fs.mkdirSync(cwd, { recursive: true });

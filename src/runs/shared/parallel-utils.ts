@@ -42,6 +42,7 @@ export interface RunnerSubagentStep {
 	skipPrimaryModelVerification?: boolean;
 	modelVerificationRegistry?: Array<{ provider: string; id: string; fullId: string; contextWindow?: number }>;
 	tools?: string[];
+	excludeTools?: string[];
 	allowNestedSubagents?: boolean;
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];

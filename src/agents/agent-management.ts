@@ -269,6 +269,7 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		skills: _skills,
 		skillPath: _skillPath,
 		tools: _tools,
+		excludeTools: _excludeTools,
 		mcpDirectTools: _mcpDirectTools,
 		subagentOnlyExtensions: _subagentOnlyExtensions,
 		mutationTools: _mutationTools,
@@ -301,6 +302,7 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		...(base.skills !== undefined ? { skills: [...base.skills] } : {}),
 		...(base.skillPath !== undefined ? { skillPath: [...base.skillPath] } : {}),
 		...(base.tools !== undefined ? { tools: [...base.tools] } : {}),
+		...(base.excludeTools !== undefined ? { excludeTools: [...base.excludeTools] } : {}),
 		...(base.mcpDirectTools !== undefined ? { mcpDirectTools: [...base.mcpDirectTools] } : {}),
 		...(base.extensions !== undefined ? { extensions: [...base.extensions] } : {}),
 		...(base.subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions: [...base.subagentOnlyExtensions] } : {}),
@@ -333,6 +335,7 @@ export function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<
 	if (hasKey(cfg, "model")) changed("model");
 	if (hasKey(cfg, "fallbackModels")) changed("fallbackModels");
 	if (hasKey(cfg, "tools")) changed("tools");
+	if (hasKey(cfg, "excludeTools")) changed("excludeTools");
 	if (hasKey(cfg, "skills")) changed("skill", "skills");
 	if (hasKey(cfg, "skillPath")) changed("skillPath");
 	if (hasKey(cfg, "extensions")) changed("extensions");
@@ -462,6 +465,18 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 			if (parsed.mcpDirectTools) target.mcpDirectTools = parsed.mcpDirectTools;
 			else delete target.mcpDirectTools;
 		} else return "config.tools must be a comma-separated string or false when provided.";
+	}
+	if (hasKey(cfg, "excludeTools")) {
+		if (cfg.excludeTools === false || cfg.excludeTools === "") delete target.excludeTools;
+		else if (typeof cfg.excludeTools === "string") {
+			const excludeTools = parseCsv(cfg.excludeTools);
+			if (excludeTools.length) target.excludeTools = [...new Set(excludeTools)];
+			else delete target.excludeTools;
+		} else if (Array.isArray(cfg.excludeTools) && cfg.excludeTools.every((entry) => typeof entry === "string")) {
+			const excludeTools = [...new Set(cfg.excludeTools.map((entry) => entry.trim()).filter(Boolean))];
+			if (excludeTools.length) target.excludeTools = excludeTools;
+			else delete target.excludeTools;
+		} else return "config.excludeTools must be a comma-separated string, string array, or false when provided.";
 	}
 	if (hasKey(cfg, "skills")) {
 		if (cfg.skills === false || cfg.skills === "") delete target.skills;
@@ -595,6 +610,7 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 	if (target.runner?.type === "external-cli" || target.runner?.type === "external-job") {
 		const unsupported = [
 			target.tools?.length || target.mcpDirectTools?.length ? "tools" : undefined,
+			target.excludeTools?.length ? "excludeTools" : undefined,
 			target.model ? "model" : undefined,
 			target.fallbackModels?.length ? "fallbackModels" : undefined,
 			target.thinking ? "thinking" : undefined,
@@ -701,6 +717,7 @@ function formatAgentCapabilitiesLine(agent: AgentConfig, providerNames: Set<stri
 	} else if (declaredTools.length > 0) {
 		tools = declaredTools.join(", ");
 	}
+	if (agent.excludeTools?.length) tools = `${tools}; excludes: ${agent.excludeTools.join(", ")}`;
 	let model = "inherits current session";
 	if (agent.model !== undefined) {
 		model = agent.model;
@@ -728,6 +745,7 @@ function agentCapabilityTools(agent: AgentConfig): AgentCapabilityRow["tools"] {
 	return {
 		ambient: agent.tools === undefined && agent.mcpDirectTools === undefined,
 		names: listOrEmpty(agent.tools),
+		...(agent.excludeTools !== undefined ? { excludeTools: [...agent.excludeTools] } : {}),
 		mcpDirectTools: listOrEmpty(agent.mcpDirectTools),
 		mutationTools: agent.mutationTools,
 	};
@@ -846,6 +864,7 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.model) lines.push(`Model: ${agent.model}`);
 	if (agent.fallbackModels?.length) lines.push(`Fallback models: ${agent.fallbackModels.join(", ")}`);
 	if (tools.length) lines.push(`Tools: ${tools.join(", ")}`);
+	if (agent.excludeTools?.length) lines.push(`Excluded tools: ${agent.excludeTools.join(", ")}`);
 	if (agent.skills?.length) lines.push(`Skills: ${agent.skills.join(", ")}`);
 	if (agent.skillPath?.length) lines.push(`Skill paths: ${agent.skillPath.join(", ")}`);
 	lines.push(`System prompt mode: ${agent.systemPromptMode}`);

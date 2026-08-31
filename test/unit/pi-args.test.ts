@@ -489,6 +489,64 @@ describe("buildPiArgs session wiring", () => {
 	});
 });
 
+describe("excludeTools resolution", () => {
+	it("filters excluded names from explicit allowlists and runtime-injected tools", () => {
+		const plan = resolvePiLaunchToolPlan({
+			tools: ["read", "write"],
+			excludeTools: ["write", "structured_output"],
+			structuredOutput: true,
+		});
+		assert.deepEqual(plan.declaredBuiltinTools, ["read", "write"]);
+		assert.deepEqual(plan.excludeTools, ["write", "structured_output"]);
+		assert.deepEqual(plan.effectiveToolAllowlist, ["read"]);
+		assert.deepEqual(plan.internalTools, []);
+		assert.deepEqual(plan.requiredChildTools, ["read"]);
+
+		const built = buildPiArgs({
+			baseArgs: [],
+			task: "hello",
+			sessionEnabled: true,
+			inheritProjectContext: true,
+			inheritSkills: true,
+			tools: ["read", "write"],
+			excludeTools: ["write"],
+		});
+		assert.deepEqual(built.args.slice(0, 2), ["--tools", "read"]);
+		assert.equal(built.args.includes("--exclude-tools"), false);
+	});
+
+	it("forwards exclusions to Pi without inventing an ambient allowlist", () => {
+		const built = buildPiArgs({
+			baseArgs: [],
+			task: "hello",
+			sessionEnabled: true,
+			inheritProjectContext: true,
+			inheritSkills: true,
+			excludeTools: ["write", "unknown_tool"],
+		});
+		assert.deepEqual(built.args.slice(0, 2), ["--exclude-tools", "write,unknown_tool"]);
+		assert.equal(built.args.includes("--tools"), false);
+		assert.equal(built.args.includes("--no-tools"), false);
+	});
+
+	it("keeps empty tool sets all-off and makes excluded nested fanout unavailable", () => {
+		const empty = buildPiArgs({
+			baseArgs: [],
+			task: "hello",
+			sessionEnabled: true,
+			inheritProjectContext: true,
+			inheritSkills: true,
+			tools: [],
+			excludeTools: ["write"],
+		});
+		assert.equal(empty.args.includes("--no-tools"), true);
+		assert.equal(empty.args.includes("--exclude-tools"), false);
+
+		const plan = resolvePiLaunchToolPlan({ allowNestedSubagents: true, excludeTools: ["subagent"] });
+		assert.equal(plan.fanoutAuthorized, false);
+	});
+});
+
 describe("buildPiArgs model wiring", () => {
 	it("uses --model for provider-qualified model ids", () => {
 		const { args } = buildPiArgs({

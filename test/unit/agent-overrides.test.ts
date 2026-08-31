@@ -130,6 +130,19 @@ describe("builtin agent overrides", () => {
 		assert.equal(researcher?.mcpDirectTools, undefined);
 	});
 
+	it("applies excludeTools settings overrides to builtin agents", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: {
+				agentOverrides: {
+					researcher: { excludeTools: ["write", "unknown_tool"] },
+				},
+			},
+		});
+
+		const researcher = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "researcher");
+		assert.deepEqual(researcher?.excludeTools, ["write", "unknown_tool"]);
+	});
+
 	it("surfaces invalid string tool override settings", () => {
 		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
 		writeJson(settingsPath, {

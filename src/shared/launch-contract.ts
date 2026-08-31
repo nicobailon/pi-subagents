@@ -51,6 +51,7 @@ export function projectAgentDefinition(agent: AgentConfig): Record<string, unkno
 		fast: agent.fast,
 		thinking: agent.thinking,
 		tools: agent.tools,
+		excludeTools: agent.excludeTools,
 		allowNestedSubagents: agent.allowNestedSubagents,
 		mcpDirectTools: agent.mcpDirectTools,
 		extensions: agent.extensions,
@@ -93,6 +94,7 @@ export interface LaunchBindingInput {
 	inheritSkills: boolean;
 	skills?: string[];
 	tools?: string[];
+	excludeTools?: string[];
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
 	mcpDirectTools?: string[];
@@ -120,6 +122,7 @@ export function projectLaunchBinding(input: LaunchBindingInput): Record<string, 
 		inheritSkills: input.inheritSkills,
 		skills: input.skills,
 		tools: input.tools,
+		excludeTools: input.excludeTools,
 		extensions: input.extensions,
 		subagentOnlyExtensions: input.subagentOnlyExtensions,
 		mcpDirectTools: input.mcpDirectTools,

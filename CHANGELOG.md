@@ -5,6 +5,7 @@
 
 ### Added
 - Let native children with `outputSchema` require acceptance evidence in the same `structured_output` call via `acceptance.report: "on"`, while `"off"` keeps fenced acceptance reports. Thanks [@mapleluvr](https://github.com/mapleluvr) for #1770.
+- Add per-agent `excludeTools` deny-lists that compose with Pi's ambient or explicit child tool selection. Thanks [@expoli](https://github.com/expoli) for #1776.
 
 ### Fixed
 - Separate steer and follow-up receipt statuses from their redacted message previews (#1773).

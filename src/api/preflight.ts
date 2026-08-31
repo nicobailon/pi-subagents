@@ -111,6 +111,7 @@ export interface SubagentLaunchContractSkills {
 export interface SubagentLaunchContractTools {
 	requestedBuiltin: string[];
 	declaredBuiltin: string[];
+	excludeTools?: string[];
 	effectiveAllowlist: string[];
 	explicitAllowlist: boolean;
 	requiredChildTools: string[];
@@ -356,6 +357,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	try {
 		toolPlan = resolvePiLaunchToolPlan({
 			tools: agent.tools,
+			excludeTools: agent.excludeTools,
 			allowNestedSubagents: agent.allowNestedSubagents,
 			extensions: agent.extensions,
 			subagentOnlyExtensions: agent.subagentOnlyExtensions,
@@ -435,6 +437,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		tools: {
 			requestedBuiltin: toolPlan.requestedBuiltinTools,
 			declaredBuiltin: toolPlan.declaredBuiltinTools,
+			...(toolPlan.excludeTools.length > 0 ? { excludeTools: toolPlan.excludeTools } : {}),
 			effectiveAllowlist: toolPlan.effectiveToolAllowlist,
 			explicitAllowlist: toolPlan.explicitToolAllowlist,
 			requiredChildTools: toolPlan.requiredChildTools,
@@ -485,6 +488,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			inheritSkills: agent.inheritSkills,
 			skills: requestedSkills,
 			tools: toolPlan.effectiveToolAllowlist,
+			...(toolPlan.excludeTools.length > 0 ? { excludeTools: toolPlan.excludeTools } : {}),
 			extensions: toolPlan.extensionArgs,
 			mcpDirectTools: toolPlan.effectiveMcpTools,
 			...(outputPath ? { outputPath } : {}),

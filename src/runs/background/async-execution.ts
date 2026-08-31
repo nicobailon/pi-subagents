@@ -925,6 +925,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const fast = s.fast ?? params.fast ?? a.fast;
 		const toolPlan = resolvePiLaunchToolPlan({
 			tools: a.tools,
+			excludeTools: a.excludeTools,
 			allowNestedSubagents: a.allowNestedSubagents,
 			extensions: a.extensions,
 			subagentOnlyExtensions: a.subagentOnlyExtensions,
@@ -987,6 +988,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			...(primaryModelFromParent ? { skipPrimaryModelVerification: true } : {}),
 			...(availableModels && availableModels.length > 0 ? { modelVerificationRegistry: availableModels } : {}),
 			tools: a.tools,
+			excludeTools: a.excludeTools,
 			allowNestedSubagents: a.allowNestedSubagents,
 			extensions: a.extensions,
 			subagentOnlyExtensions: a.subagentOnlyExtensions,
@@ -1689,6 +1691,7 @@ export function executeAsyncSingle(
 	}
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: agentConfig.tools,
+		excludeTools: agentConfig.excludeTools,
 		allowNestedSubagents: agentConfig.allowNestedSubagents,
 		extensions: agentConfig.extensions,
 		subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,
@@ -1735,6 +1738,7 @@ export function executeAsyncSingle(
 		inheritSkills: agentConfig.inheritSkills,
 		skills: resolvedSkills.map((skill) => skill.name),
 		tools: toolPlan.effectiveToolAllowlist,
+		...(toolPlan.excludeTools.length > 0 ? { excludeTools: toolPlan.excludeTools } : {}),
 		extensions: toolPlan.extensionArgs,
 		mcpDirectTools: toolPlan.effectiveMcpTools,
 		...(outputPath ? { outputPath } : {}),
@@ -1773,6 +1777,7 @@ export function executeAsyncSingle(
 		...(effectiveThinking ? { thinking: resolveEffectiveThinking(model, effectiveThinking) } : {}),
 		...(thinkingCeiling ? { thinkingCeiling } : {}),
 		...(recoveryAgentConfig.tools ? { tools: [...recoveryAgentConfig.tools] } : {}),
+		...(recoveryAgentConfig.excludeTools ? { excludeTools: [...recoveryAgentConfig.excludeTools] } : {}),
 		...(recoveryAgentConfig.allowNestedSubagents !== undefined ? { allowNestedSubagents: recoveryAgentConfig.allowNestedSubagents } : {}),
 		...(recoveryAgentConfig.extensions ? { extensions: [...recoveryAgentConfig.extensions] } : {}),
 		...(recoveryAgentConfig.subagentOnlyExtensions ? { subagentOnlyExtensions: [...recoveryAgentConfig.subagentOnlyExtensions] } : {}),
@@ -1840,6 +1845,7 @@ export function executeAsyncSingle(
 						...(modelOrigin === "inherited" ? { skipPrimaryModelVerification: true } : {}),
 						...(availableModels && availableModels.length > 0 ? { modelVerificationRegistry: availableModels } : {}),
 						tools: agentConfig.tools,
+						excludeTools: agentConfig.excludeTools,
 						allowNestedSubagents: agentConfig.allowNestedSubagents,
 						extensions: agentConfig.extensions,
 						subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,

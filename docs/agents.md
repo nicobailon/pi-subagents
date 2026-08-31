@@ -255,6 +255,7 @@ package: code-analysis
 description: Fast codebase recon
 aliases: explorer, code-scout
 tools: read, grep, find, ls, bash, mcp:chrome-devtools
+excludeTools: bash
 extensions:
 subagentOnlyExtensions: ./tools/child-only-search.ts
 model: claude-haiku-4-5
@@ -283,7 +284,7 @@ allowNestedSubagents: true
 Your system prompt goes here.
 ```
 
-Simple-scalar list fields accept either a comma-separated form or a newline block list with one `- item` per line. This applies to `tools`, `defaultReads`, `skill`/`skills`, `skillPath`, `fallbackModels`, `extensions`, and `subagentOnlyExtensions`:
+Simple-scalar list fields accept either a comma-separated form or a newline block list with one `- item` per line. This applies to `tools`, `excludeTools`, `defaultReads`, `skill`/`skills`, `skillPath`, `fallbackModels`, `extensions`, and `subagentOnlyExtensions`:
 
 ```yaml
 tools:
@@ -301,6 +302,7 @@ Field notes:
 | `package` | Optional package identifier. A file with `name: scout` and `package: code-analysis` registers as `code-analysis.scout`; serialization keeps `name` and `package` separate. |
 | `aliases` | Optional comma-separated or block-list names that resolve to this agent for selection and explicit `agent` and task inputs. Runtime status, persistence, and config still use the canonical `name`. Exact canonical names take precedence over aliases, and alias collisions between distinct canonical agents fail as ambiguous. |
 | `tools` | Strict child tool allowlist. Named extension tools must also have their provider loaded. `mcp:` entries select direct MCP tools when `pi-mcp-adapter` is installed. |
+| `excludeTools` | Optional child tool deny-list applied after normal tool resolution. With an explicit `tools` allowlist, matching names are removed; when `tools` is omitted, the names are forwarded to Pi as `--exclude-tools` so the ambient tool set is inherited minus those names. Unknown names are ignored by Pi without making the agent definition invalid. |
 | `allowNestedSubagents` | Set `true` to authorize the child-safe nested `subagent` runtime without making omitted `tools` an allowlist. Inherited depth and capability ceilings remain authoritative. |
 | `extensions` | Omitted means normal extensions; empty means no extensions; list values allowlist specific extensions. |
 | `subagentOnlyExtensions` | Extension paths loaded only in spawned child sessions for this agent. Tools registered there are unavailable to the main agent unless also installed through normal Pi extension configuration. |
@@ -384,6 +386,8 @@ How `tools` behaves:
 - `tools` present: regular tool names become an explicit allowlist.
 - `tools:` empty: emits `--no-tools`.
 - `allowNestedSubagents: true`: explicitly enables child-safe nested fanout without turning omitted `tools` into an allowlist. Depth and inherited capability ceilings still apply.
+
+`excludeTools` is applied after this resolution. It can narrow an explicit `tools` allowlist or, when `tools` is omitted, compose with Pi's ambient builtin tools through `--exclude-tools`. Runtime-injected tools are excluded only when their exact names are listed. An empty `excludeTools` list has no effect.
 
 An allowlisted name does not load the extension that registers it. Load that provider through normal Pi extension discovery, `extensions`, `subagentOnlyExtensions`, or a path-like `tools` entry.
 

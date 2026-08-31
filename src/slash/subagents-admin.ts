@@ -97,6 +97,7 @@ function buildBuiltinBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		systemPrompt: agent.systemPrompt,
 		...(agent.skills !== undefined ? { skills: [...agent.skills] } : {}),
 		...(agent.tools !== undefined ? { tools: [...agent.tools] } : {}),
+		...(agent.excludeTools !== undefined ? { excludeTools: [...agent.excludeTools] } : {}),
 		...(agent.mcpDirectTools !== undefined ? { mcpDirectTools: [...agent.mcpDirectTools] } : {}),
 		...(agent.subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions: [...agent.subagentOnlyExtensions] } : {}),
 		...(agent.mutationTools !== undefined ? { mutationTools: [...agent.mutationTools] } : {}),
@@ -188,6 +189,7 @@ function metadataFor(agent: AgentConfig): string {
 	if (agent.fallbackModels?.length) lines.push(`Fallback models: ${agent.fallbackModels.join(", ")}`);
 	if (agent.thinking !== undefined) lines.push(`Thinking: ${agent.thinking === false ? "off" : agent.thinking}`);
 	if (tools.length) lines.push(`Tools: ${tools.join(", ")}`);
+	if (agent.excludeTools?.length) lines.push(`Excluded tools: ${agent.excludeTools.join(", ")}`);
 	if (agent.skills?.length) lines.push(`Skills: ${agent.skills.join(", ")}`);
 	lines.push(`System prompt mode: ${agent.systemPromptMode}`);
 	lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);

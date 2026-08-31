@@ -123,6 +123,23 @@ describe("runtime agent registration", () => {
 		registration.dispose();
 	});
 
+	it("preserves excludeTools on runtime agents", () => {
+		const registration = registerAgent({
+			pi,
+			name: "runtime-exclude-helper",
+			definition: {
+				description: "Runtime exclude helper",
+				systemPrompt: "Help at runtime.",
+				tools: ["read", "write"],
+				excludeTools: ["write", "unknown_tool"],
+			},
+		});
+
+		const agent = mergeRuntimeAgents(pi, discoverAgents(tempProject, "both")).agents.find((candidate) => candidate.name === "runtime-exclude-helper");
+		assert.deepEqual(agent?.excludeTools, ["write", "unknown_tool"]);
+		registration.dispose();
+	});
+
 	it("registers through the owner runtime when consumer and owner API objects differ", () => {
 		const events = makeEventBus();
 		const ownerPi = makePiWithEvents(events);
