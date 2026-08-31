@@ -29,6 +29,8 @@ import { discoverAgents } from "../../src/agents/agents.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey, getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
 import { deriveForkPromptCacheKey, SUBAGENT_FORK_CACHE_KEY_ENV } from "../../src/runs/shared/pi-args.ts";
+import { resolveInstalledPiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
+import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import { clearExclusions, recordModelFailure } from "../../src/runs/shared/model-exclusions.ts";
 
 interface LaunchResolvedExtensions {
@@ -567,6 +569,29 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(status.state, "complete");
 		assert.equal(status.endedAt !== undefined, true);
+	});
+
+	it("forwards the installed Pi package root through the async runner environment", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const packageRoot = resolveInstalledPiPackageRoot();
+		assert.ok(packageRoot, "expected the test Pi package to be installed");
+		mockPi.onCall({ echoEnv: [PI_CODING_AGENT_PACKAGE_ROOT_ENV] });
+		const id = `async-package-root-env-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Report the forwarded package root.",
+			agentConfig: makeAgent("worker", { completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-package-root-env" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.deepEqual(JSON.parse(payload.results[0]?.output ?? "{}"), {
+			[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: packageRoot,
+		});
 	});
 
 	it("persists the bounded usage projection in async results and metadata", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

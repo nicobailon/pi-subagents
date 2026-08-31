@@ -30,6 +30,8 @@ describe("public project-panes package export", () => {
 
 	it("runs the structured lifecycle and verifies pane ownership before idle close", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-public-project-pane-"));
+		const previousPiBinary = process.env.PI_SUBAGENT_PI_BINARY;
+		process.env.PI_SUBAGENT_PI_BINARY = path.join(root, "pi-bin");
 		try {
 			const projectRoot = fs.realpathSync(root);
 			const calls: string[][] = [];
@@ -76,6 +78,8 @@ describe("public project-panes package export", () => {
 			assert.ok(calls.some((args) => args.join(" ") === "tab focus tab-20"));
 			assert.ok(calls.some((args) => args.join(" ") === "pane close w1:p20"));
 		} finally {
+			if (previousPiBinary === undefined) delete process.env.PI_SUBAGENT_PI_BINARY;
+			else process.env.PI_SUBAGENT_PI_BINARY = previousPiBinary;
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
@@ -131,6 +135,8 @@ describe("public project-panes package export", () => {
 
 	it("returns a structured error and closes the pane when binding persistence fails", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-public-project-pane-write-failure-"));
+		const previousPiBinary = process.env.PI_SUBAGENT_PI_BINARY;
+		process.env.PI_SUBAGENT_PI_BINARY = path.join(root, "pi-bin");
 		try {
 			fs.mkdirSync(path.join(root, ".pi"));
 			fs.writeFileSync(path.join(root, ".pi/subagents"), "directory collision");
@@ -152,6 +158,8 @@ describe("public project-panes package export", () => {
 			}
 			assert.ok(calls.some((args) => args.join(" ") === "pane close w1:p24"));
 		} finally {
+			if (previousPiBinary === undefined) delete process.env.PI_SUBAGENT_PI_BINARY;
+			else process.env.PI_SUBAGENT_PI_BINARY = previousPiBinary;
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

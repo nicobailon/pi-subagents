@@ -8,6 +8,7 @@ import {
 	resolvePiCliScript,
 	type PiSpawnDeps,
 } from "../../src/runs/shared/pi-spawn.ts";
+import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 
 function makeDeps(input: {
 	platform?: NodeJS.Platform;
@@ -116,7 +117,7 @@ describe("getPiSpawnCommand", () => {
 				execPath,
 				argv1: "/missing/host.js",
 				packageJsonPath,
-				packageJsonContent: JSON.stringify({ bin: { pi: "dist/cli.js" } }),
+				packageJsonContent: JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/cli.js" } }),
 				existing: [packageJsonPath, cliPath],
 			});
 			const args = ["--mode", "json", "-p", "Task: review diff"];
@@ -168,7 +169,7 @@ describe("getPiSpawnCommand", () => {
 			execPath: "/usr/local/bin/node",
 			argv1: "/opt/pi/subagent-runner.ts",
 			packageJsonPath,
-			packageJsonContent: JSON.stringify({ bin: { pi: "dist/cli/index.js" } }),
+			packageJsonContent: JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/cli/index.js" } }),
 			existing: [packageJsonPath, cliPath],
 		});
 		const args = ["-p", "Task: hello"];
@@ -179,7 +180,7 @@ describe("getPiSpawnCommand", () => {
 		});
 	});
 
-	it("switches from bare pi to the installed CLI script when Windows resolution becomes available", () => {
+	it("fails closed until the Windows CLI script becomes available", () => {
 		const packageJsonPath = "/opt/pi/package.json";
 		const cliPath = path.resolve(
 			path.dirname(packageJsonPath),
@@ -191,19 +192,82 @@ describe("getPiSpawnCommand", () => {
 			execPath: "C:\\Program Files\\nodejs\\node.exe",
 			argv1: "/opt/pi-web/dist/server.js",
 			packageJsonPath,
-			packageJsonContent: JSON.stringify({ bin: { pi: "dist/cli/index.js" } }),
+			packageJsonContent: JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/cli/index.js" } }),
 			existing: [packageJsonPath],
 		});
 		deps.existsSync = (filePath) =>
 			filePath === packageJsonPath || (cliAvailable && filePath === cliPath);
 		const args = ["-p", "Task: hello"];
 
-		assert.deepEqual(getPiSpawnCommand(args, deps), { command: "pi", args });
+		assert.throws(
+			() => getPiSpawnCommand(args, deps),
+			/Could not resolve the Pi CLI on Windows/,
+		);
 		cliAvailable = true;
 		assert.deepEqual(getPiSpawnCommand(args, deps), {
 			command: "C:\\Program Files\\nodejs\\node.exe",
 			args: [cliPath, ...args],
 		});
+	});
+
+	it("resolves the Windows CLI from the forwarded package-root env for wrapper hosts", () => {
+		const packageJsonPath = "/opt/pi/package.json";
+		const cliPath = path.resolve(
+			path.dirname(packageJsonPath),
+			"dist/cli/index.js",
+		);
+		const args = ["-p", "Task: hello"];
+		const result = getPiSpawnCommand(args, {
+			platform: "win32",
+			execPath: "C:\\Program Files\\nodejs\\node.exe",
+			argv1: "/opt/pi-web/dist/server.js",
+			env: { [PI_CODING_AGENT_PACKAGE_ROOT_ENV]: "/opt/pi" },
+			existsSync: (filePath) => filePath === packageJsonPath || filePath === cliPath,
+			readFileSync: () => JSON.stringify({
+				name: "@earendil-works/pi-coding-agent",
+				bin: { pi: "dist/cli/index.js" },
+			}),
+		});
+
+		assert.deepEqual(result, {
+			command: "C:\\Program Files\\nodejs\\node.exe",
+			args: [cliPath, ...args],
+		});
+	});
+
+	it("skips an unverified forwarded package-root env before resolving a verified Pi package", () => {
+		const tempDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "pi-spawn-unverified-env-root-"),
+		);
+		try {
+			const wrongRoot = path.join(tempDir, "not-pi");
+			const wrongCli = path.join(wrongRoot, "bin", "evil.js");
+			const piRoot = path.join(tempDir, "node_modules", "@earendil-works", "pi-coding-agent");
+			const piEntry = path.join(piRoot, "dist", "index.js");
+			const piCli = path.join(piRoot, "dist", "cli.js");
+			fs.mkdirSync(path.dirname(wrongCli), { recursive: true });
+			fs.mkdirSync(path.dirname(piCli), { recursive: true });
+			fs.writeFileSync(wrongCli, "console.log('evil');\n");
+			fs.writeFileSync(path.join(wrongRoot, "package.json"), JSON.stringify({ name: "not-pi", bin: { pi: "bin/evil.js" } }));
+			fs.writeFileSync(piEntry, "export {};\n");
+			fs.writeFileSync(piCli, "#!/usr/bin/env node\n");
+			fs.writeFileSync(path.join(piRoot, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/cli.js" } }));
+
+			const result = getPiSpawnCommand(["-p", "Task: hello"], {
+				platform: "win32",
+				execPath: "C:\\Program Files\\nodejs\\node.exe",
+				argv1: "/opt/pi-web/dist/server.js",
+				env: { [PI_CODING_AGENT_PACKAGE_ROOT_ENV]: wrongRoot },
+				resolvePackageEntry: () => piEntry,
+			});
+
+			assert.deepEqual(result, {
+				command: "C:\\Program Files\\nodejs\\node.exe",
+				args: [piCli, "-p", "Task: hello"],
+			});
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
 	});
 
 	it("falls back to plain pi command on POSIX when CLI script cannot be resolved", () => {
@@ -335,23 +399,12 @@ describe("getPiSpawnCommand", () => {
 			execPath: "/usr/local/bin/node",
 			argv1: "/opt/pi/subagent-runner.ts",
 			packageJsonPath,
-			packageJsonContent: JSON.stringify({ bin: { pi: "dist/cli/index.js" } }),
+			packageJsonContent: JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/cli/index.js" } }),
 			existing: [packageJsonPath, cliPath],
 		});
 		const result = getPiSpawnCommand(["-p", "Task: hello"], deps);
 		assert.equal(result.command, "/usr/local/bin/node");
 		assert.equal(result.args[0], cliPath);
-	});
-
-	it("falls back to pi when Windows CLI script cannot be resolved", () => {
-		const deps = makeDeps({
-			platform: "win32",
-			argv1: "/opt/pi/subagent-runner.ts",
-			existing: [],
-		});
-		const args = ["-p", "Task: hello"];
-		const result = getPiSpawnCommand(args, deps);
-		assert.deepEqual(result, { command: "pi", args });
 	});
 
 	it("walks from package main entry to resolve package bin", () => {
@@ -405,7 +458,7 @@ describe("getPiSpawnCommand with piPackageRoot", () => {
 			execPath: "/usr/local/bin/node",
 			argv1: "/opt/pi/subagent-runner.ts",
 			packageJsonPath,
-			packageJsonContent: JSON.stringify({ bin: { pi: "dist/cli/index.js" } }),
+			packageJsonContent: JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/cli/index.js" } }),
 			existing: [packageJsonPath, cliPath],
 		});
 		deps.piPackageRoot = "/opt/pi";
@@ -426,7 +479,7 @@ describe("resolvePiCliScript", () => {
 			platform: "win32",
 			argv1: "/opt/pi/subagent-runner.ts",
 			packageJsonPath,
-			packageJsonContent: JSON.stringify({ bin: "dist/cli/index.mjs" }),
+			packageJsonContent: JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: "dist/cli/index.mjs" }),
 			existing: [packageJsonPath, cliPath],
 		});
 		assert.equal(resolvePiCliScript(deps), cliPath);

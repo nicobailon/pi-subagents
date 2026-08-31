@@ -369,6 +369,8 @@ describe("Herdr inspector", () => {
 
 	it("fails closed when an idle-only project pane close sees active work", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-project-pane-busy-"));
+		const previousPiBinary = process.env[PI_SUBAGENT_PI_BINARY_ENV];
+		process.env[PI_SUBAGENT_PI_BINARY_ENV] = path.join(root, "pi-bin");
 		try {
 			const projectRoot = fs.realpathSync(root);
 			const calls: string[][] = [];
@@ -394,12 +396,16 @@ describe("Herdr inspector", () => {
 			assert.equal(calls.some((args) => args.join(" ") === "pane close w1:p11"), false);
 			assert.equal(readHerdrProjectPaneBinding(root)?.paneId, "w1:p11");
 		} finally {
+			if (previousPiBinary === undefined) delete process.env[PI_SUBAGENT_PI_BINARY_ENV];
+			else process.env[PI_SUBAGENT_PI_BINARY_ENV] = previousPiBinary;
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
 
 	it("preserves legacy model-facing recovery for transient and opaque pane inspection results", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-project-pane-legacy-"));
+		const previousPiBinary = process.env[PI_SUBAGENT_PI_BINARY_ENV];
+		process.env[PI_SUBAGENT_PI_BINARY_ENV] = path.join(root, "pi-bin");
 		try {
 			let splitCount = 0;
 			let getMode: "valid" | "timeout" | "opaque" = "valid";
@@ -436,6 +442,8 @@ describe("Herdr inspector", () => {
 			assert.match(text(closed), /INVALID_PANE_RESPONSE/);
 			assert.equal(readHerdrProjectPaneBinding(root)?.paneId, "w1:p32");
 		} finally {
+			if (previousPiBinary === undefined) delete process.env[PI_SUBAGENT_PI_BINARY_ENV];
+			else process.env[PI_SUBAGENT_PI_BINARY_ENV] = previousPiBinary;
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

@@ -19,7 +19,7 @@ import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeS
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveExistingReadPaths, writeInitialProgressFile, type ChainStep, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
-import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
+import { resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { resolveNodeExecutable } from "../../shared/node-executable.ts";
 import { backgroundProcessOptions } from "../shared/background-process-options.ts";
@@ -81,7 +81,7 @@ import { normalizeExtensionBindings, omitExtensionBindingsEnv, type ExtensionBin
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
 
 const require = createRequire(import.meta.url);
-const piPackageRoot = resolvePiPackageRoot();
+const piPackageRoot = resolvePiPackageRoot() ?? resolveInstalledPiPackageRoot();
 
 function resolveJitiCliFromPackageJson(packageJsonPath: string): string | undefined {
 	if (!fs.existsSync(packageJsonPath)) return undefined;
