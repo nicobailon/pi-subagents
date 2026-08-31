@@ -74,6 +74,8 @@ export interface ScheduleRunRecord {
 	error?: string;
 }
 
+type PublicScheduleRecord = Omit<ScheduleRecord, "ownerSessionFile">;
+
 type ScheduledRunManagerDeps = {
 	config: ExtensionConfig;
 	launch(params: SubagentParamsLike, ctx: ExtensionContext, signal: AbortSignal): Promise<AgentToolResult<Details>>;
@@ -403,11 +405,17 @@ function duePlannedAt(schedule: ScheduleRecord, now: number): number | undefined
 }
 
 function textResult(text: string, schedules?: ScheduleRecord[], runs?: ScheduleRunRecord[], isError = false): AgentToolResult<Details> {
+	const publicSchedules = schedules?.map(publicScheduleRecord);
 	return {
 		content: [{ type: "text", text }],
 		...(isError ? { isError: true } : {}),
-		details: { mode: "management", results: [], schedules: { ...(schedules ? { records: schedules } : {}), ...(runs ? { runs } : {}) } },
+		details: { mode: "management", results: [], schedules: { ...(publicSchedules ? { records: publicSchedules } : {}), ...(runs ? { runs } : {}) } },
 	};
+}
+
+function publicScheduleRecord(schedule: ScheduleRecord): PublicScheduleRecord {
+	const { ownerSessionFile: _ownerSessionFile, ...rest } = schedule;
+	return rest;
 }
 
 function targetLabel(target: ScheduleTarget): string {
@@ -591,6 +599,7 @@ export class ScheduledRunManager {
 		if (params.missionId !== undefined || params.mission !== undefined || params.missionUpdate !== undefined || params.missionStatus !== undefined || params.missionScope !== undefined) return textResult("Mission attachment is deferred from this first schedule slice.", undefined, undefined, true);
 		if (params.on !== undefined || params.timezone !== undefined || every === "day" || every === "week" || every === "month" || every === "year") return textResult("Calendar schedules are deferred from this first safe slice. Use a fixed interval such as every:'24h' or every:'7d'.", undefined, undefined, true);
 		const sessionOnly = params.sessionOnly === true;
+		if (sessionOnly && params.cwd !== undefined && !samePath(params.cwd, ctx.cwd)) return textResult("sessionOnly schedules cannot use an explicit cross-project cwd.", undefined, undefined, true);
 		const ownerSessionFile = sessionOnly ? ctx.sessionManager.getSessionFile() : undefined;
 		if (sessionOnly && !ownerSessionFile) return textResult("sessionOnly schedules require a persisted current session.", undefined, undefined, true);
 		const sessionId = ctx.sessionManager.getSessionId() ?? "unknown";
@@ -898,12 +907,19 @@ export class ScheduledRunManager {
 	private selectProject(cwd: string, ctx: ExtensionContext): void {
 		const projectCwd = path.resolve(cwd);
 		const root = scheduledRunStorePath(projectCwd, undefined, this.deps.storeRoot);
-		if (path.resolve(ctx.cwd) === projectCwd) this.contexts.set(root, snapshotContext(ctx, projectCwd));
+		const isBoundContext = path.resolve(ctx.cwd) === projectCwd;
+		const previousContext = this.contexts.get(root);
+		const contextChanged = isBoundContext
+			&& previousContext !== undefined
+			&& normalizedSessionFile(previousContext.sessionManager.getSessionFile()) !== normalizedSessionFile(ctx.sessionManager.getSessionFile());
+		if (isBoundContext) this.contexts.set(root, snapshotContext(ctx, projectCwd));
 		else if (!this.contexts.has(root)) throw new Error(`Cannot use project '${projectCwd}' until that project has been opened in this runtime.`);
 		let store = this.stores.get(root);
 		if (!store) {
 			store = new ScheduleStore(root, this.deps.storeRoot === undefined ? projectCwd : undefined);
 			this.stores.set(root, store);
+			this.restore(store);
+		} else if (contextChanged) {
 			this.restore(store);
 		}
 		this.store = store;

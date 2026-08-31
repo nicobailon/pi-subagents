@@ -6,6 +6,7 @@
 ### Added
 - Let native children with `outputSchema` require acceptance evidence in the same `structured_output` call via `acceptance.report: "on"`, while `"off"` keeps fenced acceptance reports. Thanks [@mapleluvr](https://github.com/mapleluvr) for #1770.
 - Add per-agent `excludeTools` deny-lists that compose with Pi's ambient or explicit child tool selection. Thanks [@expoli](https://github.com/expoli) for #1776.
+- Add session-only durable schedules that execute only in their creating session. Thanks [@yangfeng20](https://github.com/yangfeng20) for #1777.
 
 ### Fixed
 - Tolerate JSON-encoded acceptance objects from model tool calls by normalizing them before validation, while preserving clear failures for malformed strings. Thanks [@mapleluvr](https://github.com/mapleluvr) for #1781.
