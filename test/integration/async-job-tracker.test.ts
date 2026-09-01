@@ -1100,8 +1100,10 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.toolCount === 1, "changed status load");
 			await waitForCondition(() => ui.widgets.length > widgetsAfterStatusLoaded, "changed status widget replacement");
 
+			const requestsBeforeTerminal = ui.renderRequests;
 			writeStatus(4000, 1, "complete");
 			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.status === "complete", "terminal status load");
+			await waitForCondition(() => ui.renderRequests > requestsBeforeTerminal, "terminal status widget redraw");
 			const widgetsAfterTerminal = ui.widgets.length;
 			const requestsAfterTerminal = ui.renderRequests;
 			await new Promise((resolve) => setTimeout(resolve, 35));

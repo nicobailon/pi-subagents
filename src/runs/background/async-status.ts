@@ -24,6 +24,7 @@ import { validateAsyncStatusLaneMetadata } from "../shared/lane-metadata.ts";
 import { formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary } from "../../workflows/workflow-preflight.ts";
 import { workflowGraphStageNodes } from "../shared/workflow-graph.ts";
 import { formatTimeoutRecoveryLines, projectTimeoutRecovery } from "../shared/mutation-evidence.ts";
+import { formatWorkflowChecklistText, projectWorkflowChecklist } from "../../workflows/workflow-checklist.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -711,6 +712,17 @@ export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active as
 		if (run.preflight) lines.push(formatWorkflowPreflightPlanSummary(run.preflight, { indent: "  " }));
 		const preflightWarning = formatWorkflowPreflightWarningSummary(run.workflow?.preflightWarnings, { indent: "  " });
 		if (preflightWarning) lines.push(preflightWarning);
+		if (run.mode === "workflow") {
+			const checklist = projectWorkflowChecklist({
+				graph: run.workflowGraph,
+				steps: run.steps,
+				hostSteps: run.hostSteps,
+				preflight: run.preflight,
+				trace: run.workflow?.trace,
+				now: run.lastUpdate ?? run.endedAt ?? Date.now(),
+			});
+			lines.push(...formatWorkflowChecklistText(checklist, "  ", { includeItems: false }));
+		}
 		for (const step of run.steps) {
 			lines.push(`  ${formatStepLine(step)}`);
 			lines.push(...formatTimeoutRecoveryLines(step.timeoutRecovery, "    "));

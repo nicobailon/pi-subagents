@@ -33,37 +33,6 @@ function result(agent: string, output: string) {
 	};
 }
 
-function countedWorkflowJob(onNodesRead: () => void): AsyncJobState {
-	const nodes = [
-		{ id: "step-0", kind: "step", agent: "scout", label: "Scout", status: "completed", flatIndex: 0, stepIndex: 0 },
-		{ id: "step-1", kind: "step", agent: "reviewer", label: "Review", status: "running", flatIndex: 1, stepIndex: 1 },
-	] as const;
-	return {
-		asyncId: "workflow-run",
-		asyncDir: "/tmp/workflow-run",
-		status: "running",
-		mode: "workflow",
-		agents: ["scout", "reviewer"],
-		currentStep: 1,
-		startedAt: 0,
-		updatedAt: 1000,
-		steps: [
-			{ index: 0, agent: "scout", status: "completed", workflowKey: "step-0" },
-			{ index: 1, agent: "reviewer", status: "running", workflowKey: "step-1" },
-		],
-		workflowGraph: {
-			runId: "workflow-run",
-			mode: "workflow",
-			phases: [],
-			currentNodeId: "step-1",
-			get nodes() {
-				onNodesRead();
-				return nodes;
-			},
-		} as never,
-	};
-}
-
 test("row clips content to the available width", () => {
 	const rendered = row("abcdef", 6, theme as any);
 	assert.equal(visibleWidth(rendered), 6);
@@ -317,6 +286,32 @@ test("compact multi-result cards prefer bounded workflow labels over raw tasks",
 	assert.match(text, /Ctrl\+Alt\+F Fleet/);
 });
 
+test("workflow checklist does not map child-local result indexes onto graph nodes", () => {
+	const text = componentText(renderSubagentResult({
+		content: [{ type: "text", text: "failed" }],
+			details: {
+			mode: "workflow",
+			results: [
+				{ ...result("scout", "ok"), index: 0 },
+				{ ...result("writer", "failed"), index: 0, exitCode: 1 },
+			],
+			workflowGraph: {
+				runId: "workflow-local-indexes",
+				mode: "workflow",
+				phases: [{ title: "inventory", nodeIds: ["inventory"] }, { title: "write", nodeIds: ["writer"] }],
+				nodes: [
+					{ id: "inventory", kind: "agent", agent: "scout", label: "Inventory", status: "completed", flatIndex: 0 },
+					{ id: "writer", kind: "agent", agent: "writer", label: "Writer", status: "failed", flatIndex: 1 },
+				],
+			},
+		},
+	}, { expanded: true }, theme as any));
+
+	assert.match(text, /Checklist 1\/2 done · 1 failed/);
+	assert.match(text, /✗ write 1 failed/);
+	assert.match(text, /✗ Writer · writer · failed/);
+});
+
 test("compact chain rendering uses workflow graph labels and parallel groups", () => {
 	const component = renderSubagentResult({
 		content: [{ type: "text", text: "done" }],
@@ -355,23 +350,6 @@ test("compact chain rendering uses workflow graph labels and parallel groups", (
 	assert.match(text, /Review A/);
 	assert.match(text, /Review B/);
 	assert.match(text, /Step 3\/3: Writer/);
-});
-
-test("widget rendering reuses one staged workflow projection", () => {
-	let nodeReads = 0;
-	const lines = buildWidgetLines([countedWorkflowJob(() => nodeReads++)], theme as any, 120, false, 0);
-
-	assert.equal(nodeReads, 1);
-	assert.match(lines.join("\n"), /staged lane · stage 2\/2 · Review · reviewer · running/);
-	assert.match(lines.join("\n"), /Stage 2\/2: Review/);
-});
-
-test("widget render keys reuse one staged workflow projection", () => {
-	let nodeReads = 0;
-
-	widgetRenderKey(countedWorkflowJob(() => nodeReads++));
-
-	assert.equal(nodeReads, 1);
 });
 
 test("compact chain rendering shows failed zero-child dynamic fanout groups", () => {

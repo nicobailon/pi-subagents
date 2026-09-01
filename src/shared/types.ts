@@ -1217,6 +1217,8 @@ export interface SingleResult {
 	 * result row's array position.
 	 */
 	index: number;
+	/** Workflow child key that owns this result when returned from workflow details. */
+	workflowKey?: string;
 	agent: string;
 	task: string;
 	/** Human-readable display name for the child's own session (agent + task

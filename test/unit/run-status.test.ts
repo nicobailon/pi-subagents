@@ -360,6 +360,37 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("shows host steps in exact workflow status checklist", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-workflow-host-checklist-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-workflow-host");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-workflow-host",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				workflowGraph: { runId: "run-workflow-host", mode: "workflow", phases: [], nodes: [{ id: "ci", kind: "host-step", label: "CI", status: "running", hostStep: { version: 1, kind: "host-step", monitorKind: "ci", id: "ci", label: "CI", state: "running", updatedAt: 200 } }] },
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-workflow-host" }, {
+				asyncDirRoot: asyncRoot,
+				resultsDir: path.join(root, "results"),
+				kill: () => true,
+				now: () => 250,
+			});
+
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.match(text, /Workflow checklist: 0\/1 done · 1 active/);
+			assert.match(text, /CI 1 active/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("refuses to tail status outputFile paths outside the async directory", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-transcript-escape-"));
 		try {

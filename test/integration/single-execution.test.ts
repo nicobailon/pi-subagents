@@ -2400,6 +2400,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.match(result.content[0]?.text ?? "", /reviewed auth/);
 			assert.equal(result.details.mode, "workflow");
 			assert.equal(result.details.results.length, 2);
+			assert.deepEqual(result.details.results.map((entry) => entry.workflowKey), ["scan", "review"]);
 			assert.equal(result.details.workflow?.value && (result.details.workflow.value as { stateType?: unknown }).stateType, "object");
 			assert.ok(result.details.missionId);
 			const missionFiles = fs.readdirSync(path.join(agentDir, "missions", "projects"), { recursive: true })

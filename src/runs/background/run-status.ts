@@ -28,6 +28,8 @@ import { formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetD
 import { workflowGraphStageNodes } from "../shared/workflow-graph.ts";
 import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 import { formatTimeoutRecoveryLines } from "../shared/mutation-evidence.ts";
+import { formatWorkflowChecklistText, projectWorkflowChecklist } from "../../workflows/workflow-checklist.ts";
+import { validHostStepNodes } from "../shared/host-step-status.ts";
 
 interface RunStatusParams {
 	action?: string;
@@ -522,6 +524,14 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				status.mode === "workflow" && workflowReturnPreview !== undefined ? `Return: ${workflowReturnPreview}` : undefined,
 				status.mode === "workflow" && workflowEmitPreview !== undefined ? `Latest emit: ${workflowEmitPreview}` : undefined,
 				`Progress: ${progressLabel}`,
+				...(status.mode === "workflow" ? formatWorkflowChecklistText(projectWorkflowChecklist({
+					graph: status.workflowGraph,
+					steps: status.steps,
+					hostSteps: validHostStepNodes(status.workflowGraph),
+					preflight: status.preflight,
+					trace: status.workflow?.trace,
+					now: status.lastUpdate ?? status.endedAt ?? Date.now(),
+				}), "", { includeItems: false }) : []),
 				status.pendingAppends ? `Pending appends: ${status.pendingAppends}` : undefined,
 				`Started: ${started}`,
 				`Updated: ${updated}`,
