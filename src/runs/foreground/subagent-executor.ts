@@ -1314,6 +1314,9 @@ function appendStepToAsyncChain(input: {
 		waitToolEnabled: input.deps.waitToolEnabled,
 		waitToolDefaultTimeoutMs: input.deps.waitToolDefaultTimeoutMs,
 		contextForAgent: contextPolicy.contextForAgent,
+		worktreeBaseDir: input.deps.config.worktreeBaseDir,
+		worktreeProvider: input.deps.config.worktreeProvider,
+		worktreeBranchPrefix: input.deps.config.worktreeBranchPrefix,
 		asyncDir: resolved.location.asyncDir,
 		validateOutputBindings: false,
 		capabilityCeiling: intersectSubagentCapabilityCeilings(status.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(asyncCtx.currentSessionId)),
@@ -1687,6 +1690,8 @@ async function resumeExternalJobFollowUp(input: {
 		worktreeSetupHook: input.deps.config.worktreeSetupHook,
 		worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
 		worktreeBaseDir: input.deps.config.worktreeBaseDir,
+		worktreeProvider: input.deps.config.worktreeProvider,
+		worktreeBranchPrefix: input.deps.config.worktreeBranchPrefix,
 		controlConfig: resolveControlConfig(input.deps.config.control, undefined),
 		controlIntercomTarget: input.intercomBridge.active ? input.intercomBridge.orchestratorTarget : undefined,
 		childIntercomTarget: input.intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index) : undefined,
@@ -1943,6 +1948,8 @@ async function resumeAsyncRun(input: {
 			worktreeSetupHook: input.deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: input.deps.config.worktreeBaseDir,
+			worktreeProvider: input.deps.config.worktreeProvider,
+			worktreeBranchPrefix: input.deps.config.worktreeBranchPrefix,
 			controlConfig: resolveControlConfig(input.deps.config.control, input.params.control),
 			controlIntercomTarget: intercomBridge.active ? intercomBridge.orchestratorTarget : undefined,
 			childIntercomTarget: intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index) : undefined,
@@ -2056,7 +2063,11 @@ async function resumeAsyncRun(input: {
 		worktreeSetupHook: input.deps.config.worktreeSetupHook,
 		worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
 		worktreeBaseDir: input.deps.config.worktreeBaseDir,
-		worktree: input.params.worktree === true,
+		worktreeProvider: input.deps.config.worktreeProvider,
+		worktreeBranchPrefix: input.deps.config.worktreeBranchPrefix,
+		// A retained async child already owns the recorded worktree. Resume it in
+		// place rather than allocating a second provider worktree around it.
+		worktree: input.params.worktree === true && !("managedWorktree" in target && target.managedWorktree === true),
 		lane: input.params.lane ?? recoveryDescriptor?.lane,
 		controlConfig: recoveryDescriptor?.controlConfig ?? resolveControlConfig(input.deps.config.control, input.params.control),
 		intercomBridge: input.params.intercomBridge ?? recoveryDescriptor?.intercomBridge,
@@ -3255,6 +3266,8 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: deps.config.worktreeBaseDir,
+			worktreeProvider: deps.config.worktreeProvider,
+			worktreeBranchPrefix: deps.config.worktreeBranchPrefix,
 			controlConfig,
 			intercomBridge: params.intercomBridge,
 			controlIntercomTarget,
@@ -3291,6 +3304,10 @@ function createSingleWorktreeSetup(
 	setupHook: ExtensionConfig["worktreeSetupHook"],
 	setupHookTimeoutMs: ExtensionConfig["worktreeSetupHookTimeoutMs"],
 	baseDir: ExtensionConfig["worktreeBaseDir"],
+	provider: ExtensionConfig["worktreeProvider"],
+	branchPrefix: ExtensionConfig["worktreeBranchPrefix"],
+	label?: string,
+	task?: string,
 	beforeCreate?: (setup: WorktreeSetup) => void,
 ): { setup?: WorktreeSetup; errorResult?: AgentToolResult<Details> } {
 	if (!enabled) return {};
@@ -3302,6 +3319,10 @@ function createSingleWorktreeSetup(
 					? { hookPath: setupHook, ...(setupHookTimeoutMs === undefined ? {} : { timeoutMs: setupHookTimeoutMs }) }
 					: undefined,
 				baseDir,
+				provider,
+				branchPrefix,
+				labels: [label],
+				tasks: [task],
 				beforeCreate,
 			})),
 		};
@@ -3662,6 +3683,10 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		deps.config.worktreeSetupHook,
 		deps.config.worktreeSetupHookTimeoutMs,
 		deps.config.worktreeBaseDir,
+		deps.config.worktreeProvider,
+		deps.config.worktreeBranchPrefix,
+		params.lane?.key ?? params.workflowKey,
+		task,
 		(plannedSetup) => {
 			pendingHandoff = writePendingParallelHandoff({
 				manifestPath: parallelHandoffPath(artifactsDir, runId),
@@ -6245,6 +6270,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const canonicalParams = canonicalizeExecutionParams(effectiveParams, discoveredAgents, discovered.agentDiagnostics, unknownAgentDiagnosticContext);
 		if (canonicalParams.error) return buildRequestedModeError(effectiveParams, canonicalParams.error);
 		effectiveParams = canonicalParams.params!;
+		if (effectiveParams.worktree === undefined && deps.config.worktree !== undefined) {
+			effectiveParams = { ...effectiveParams, worktree: deps.config.worktree };
+		}
 		const modelScope = discovered.modelScope;
 		effectiveParams = applySingleAgentLaunchDefaults(effectiveParams, discoveredAgents);
 		// An agent-level defaultContext is a preference, unlike an explicit request.

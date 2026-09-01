@@ -45,6 +45,8 @@ export type AsyncResumeTarget = {
 	sessionName?: string;
 	index: number;
 	cwd?: string;
+	/** True when cwd is the retained managed worktree recorded by the handoff. */
+	managedWorktree?: boolean;
 	sessionFile?: string;
 	model?: string;
 	thinking?: string;
@@ -569,6 +571,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		...(statusSteps[index]?.sessionName ?? resultSteps[index]?.sessionName ? { sessionName: statusSteps[index]?.sessionName ?? resultSteps[index]?.sessionName } : {}),
 		index,
 		...(resumeCwd ? { cwd: resumeCwd } : {}),
+		...(managedWorktreeCwd ? { managedWorktree: true } : {}),
 		...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
 		...(stepModel ? { model: stepModel } : {}),
 		...(stepThinking ? { thinking: stepThinking } : {}),

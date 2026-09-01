@@ -124,6 +124,7 @@ import {
 	findWorktreeTaskCwdConflict,
 	formatWorktreeDiffSummary,
 	formatWorktreeTaskCwdConflict,
+	WORKTREE_AGENT_CWD_PLACEHOLDER,
 	type WorktreeSetup,
 } from "../shared/worktree.ts";
 import { findModelInfo, resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -185,6 +186,8 @@ interface SubagentRunConfig {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
+	worktreeProvider?: import("../../shared/types.ts").WorktreeProvider;
+	worktreeBranchPrefix?: string;
 	controlConfig?: ResolvedControlConfig;
 	controlIntercomTarget?: string;
 	childIntercomTargets?: Array<string | undefined>;
@@ -2339,6 +2342,8 @@ function requiredStatusStep(statusPayload: RunnerStatusPayload, index: number): 
 function setStatusWorktreeReference(statusStep: RunnerStatusStep, worktree: WorktreeSetup["worktrees"][number]): void {
 	statusStep.worktreePath = worktree.path;
 	statusStep.branch = worktree.branch;
+	if (worktree.provider) statusStep.provider = worktree.provider;
+	if (worktree.naming) statusStep.naming = worktree.naming;
 }
 
 function markParallelGroupSetupFailure(input: {
@@ -2419,6 +2424,18 @@ function markParallelGroupRunning(input: {
 	}));
 }
 
+function bindWorktreeCwd(step: SubagentStep, worktreeCwd: string): SubagentStep {
+	const bind = <T extends string | null | undefined>(value: T): T => value === null || value === undefined ? value : value.replaceAll(WORKTREE_AGENT_CWD_PLACEHOLDER, worktreeCwd) as T;
+	return {
+		...step,
+		task: bind(step.task) ?? step.task,
+		...(step.systemPrompt !== undefined ? { systemPrompt: bind(step.systemPrompt) } : {}),
+		...(step.outputPath !== undefined ? { outputPath: bind(step.outputPath) } : {}),
+		...(step.launchBindingTask !== undefined ? { launchBindingTask: bind(step.launchBindingTask) } : {}),
+		...(step.requestedCwd !== undefined ? { requestedCwd: bind(step.requestedCwd) } : {}),
+	};
+}
+
 function prepareParallelTaskRun(
 	task: SubagentStep,
 	cwd: string,
@@ -2427,8 +2444,9 @@ function prepareParallelTaskRun(
 ): { taskForRun: SubagentStep; taskCwd: string } {
 	if (!worktreeSetup) return { taskForRun: task, taskCwd: cwd };
 	const { cwd: _taskCwd, ...taskForRun } = task;
+	const boundTask = bindWorktreeCwd(taskForRun, worktreeSetup.worktrees[taskIndex]!.agentCwd);
 	return {
-		taskForRun,
+		taskForRun: boundTask,
 		taskCwd: worktreeSetup.worktrees[taskIndex]!.agentCwd,
 	};
 }
@@ -4475,6 +4493,10 @@ async function runSubagent(
 				try {
 					worktreeSetup = createWorktrees(cwd, `${id}-s${stepIndex}`, group.parallel.length, omitUndefinedProperties({
 						agents: group.parallel.map((task) => task.agent),
+						labels: group.parallel.map((task) => task.lane?.key ?? config.workflowKey ?? task.outputName ?? task.label),
+						tasks: group.parallel.map((task) => task.task),
+						provider: config.worktreeProvider,
+						branchPrefix: config.worktreeBranchPrefix,
 						setupHook: config.worktreeSetupHook
 							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs })
 							: undefined,
@@ -4907,6 +4929,10 @@ async function runSubagent(
 				try {
 					singleWorktreeSetup = createWorktrees(cwd, `${id}-s${stepIndex}`, 1, omitUndefinedProperties({
 						agents: [seqStep.agent],
+						labels: [seqStep.lane?.key ?? config.workflowKey ?? seqStep.outputName ?? seqStep.label],
+						tasks: [seqStep.task],
+						provider: config.worktreeProvider,
+						branchPrefix: config.worktreeBranchPrefix,
 						setupHook: config.worktreeSetupHook
 							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs })
 							: undefined,
@@ -4961,7 +4987,9 @@ async function runSubagent(
 			}));
 
 			flushPendingStepSteers(flatIndex);
-			const executionStep = singleWorktreeSetup ? { ...seqStep, cwd: singleCwd } : seqStep;
+			const executionStep = singleWorktreeSetup
+				? bindWorktreeCwd({ ...seqStep, cwd: singleCwd }, singleCwd)
+				: seqStep;
 			let singleResult: Awaited<ReturnType<typeof runSingleStepWithTimeout>>;
 			try {
 				singleResult = await runSingleStepWithTimeout(executionStep, compactOptional<SingleStepContext>({

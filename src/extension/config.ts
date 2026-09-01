@@ -9,6 +9,7 @@ import { getAgentDir } from "../shared/utils.ts";
 import { DEFAULT_MODEL_EXCLUSION_TTL_MS, MAX_MODEL_EXCLUSION_TTL_MS, setDefaultTTL } from "../runs/shared/model-exclusions.ts";
 import { validatePermissionConfig } from "../runs/shared/permissions.ts";
 import { MAX_ABANDONED_SLOT_RELEASE_AFTER_MS, MIN_ABANDONED_SLOT_RELEASE_AFTER_MS } from "../runs/background/active-async-capacity.ts";
+import { normalizeWorktreeBranchPrefix } from "../runs/shared/worktree.ts";
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
 const FLEET_KEYBINDING_ACTION_SET = new Set<string>(FLEET_KEYBINDING_ACTIONS);
@@ -138,6 +139,16 @@ function validateMainWindowRendererConfig(value: unknown): void {
 }
 
 function validateConfig(config: Record<string, unknown>): void {
+	if (config.worktree !== undefined && typeof config.worktree !== "boolean") {
+		throw new Error("config.worktree must be a boolean");
+	}
+	if (config.worktreeProvider !== undefined && config.worktreeProvider !== "auto" && config.worktreeProvider !== "native" && config.worktreeProvider !== "worktrunk") {
+		throw new Error('config.worktreeProvider must be "auto", "native", or "worktrunk"');
+	}
+	if (config.worktreeBranchPrefix !== undefined) {
+		if (typeof config.worktreeBranchPrefix !== "string") throw new Error("config.worktreeBranchPrefix must be a string");
+		normalizeWorktreeBranchPrefix(config.worktreeBranchPrefix);
+	}
 	if (config.defaultSubagentContext !== undefined && config.defaultSubagentContext !== "fresh" && config.defaultSubagentContext !== "fork") {
 		throw new Error('config.defaultSubagentContext must be "fresh" or "fork"');
 	}
@@ -229,6 +240,15 @@ export function loadConfig(): ExtensionConfig {
 		return readConfigForUpdate(configPath);
 	} catch (error) {
 		if (error instanceof PrunedForkConfigError) throw error;
+		// An explicitly requested worktree provider/prefix must not be silently
+		// discarded and replaced by the built-in defaults after validation fails.
+		try {
+			const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
+			if (raw && typeof raw === "object" && !Array.isArray(raw)
+				&& (Object.hasOwn(raw, "worktreeProvider") || Object.hasOwn(raw, "worktreeBranchPrefix"))) throw error;
+		} catch (readError) {
+			if (readError === error) throw error;
+		}
 		console.error(`Failed to load subagent config from '${configPath}':`, error);
 	}
 	return {};

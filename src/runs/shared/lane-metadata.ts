@@ -1,4 +1,4 @@
-import type { AsyncStatus, WorkflowLaneMetadata, WorkflowLaneMode } from "../../shared/types.ts";
+import type { AsyncStatus, ManagedWorktreeProvider, WorktreeNaming, WorkflowLaneMetadata, WorkflowLaneMode } from "../../shared/types.ts";
 
 export const WORKFLOW_LANE_KEY_MAX_BYTES = 128;
 export const WORKFLOW_LANE_SOURCE_REF_MAX_BYTES = 128;
@@ -8,6 +8,7 @@ export const WORKFLOW_LANE_OUTPUT_PATH_MAX_BYTES = 256;
 export const WORKFLOW_LANE_OUTPUT_PATHS_MAX = 10;
 export const WORKTREE_STATUS_PATH_MAX_BYTES = 4096;
 export const WORKTREE_STATUS_BRANCH_MAX_BYTES = 256;
+export const WORKTREE_STATUS_NAMING_LABEL_MAX_BYTES = 256;
 
 const WORKFLOW_LANE_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const WORKFLOW_LANE_MODES = new Set<WorkflowLaneMode>(["mutation", "review", "scout", "gate"]);
@@ -75,16 +76,36 @@ export function assertWorkflowLaneKey(lane: WorkflowLaneMetadata | undefined, wo
 export interface WorktreeStatusReference {
 	worktreePath: string;
 	branch: string;
+	provider?: ManagedWorktreeProvider;
+	naming?: WorktreeNaming;
+}
+
+function normalizeWorktreeNaming(value: unknown, label: string): WorktreeNaming {
+	assertPlainObject(value, label);
+	assertKnownFields(value, ["requestedBranch", "branchPrefix", "label", "sanitizedPathComponent", "collision", "collisionSuffix"], label);
+	const collision = value.collision;
+	if (collision !== undefined && collision !== "branch" && collision !== "path" && collision !== "both") throw new Error(`${label}.collision is invalid.`);
+	return {
+		requestedBranch: boundedNonEmptyString(value.requestedBranch, `${label}.requestedBranch`, WORKTREE_STATUS_BRANCH_MAX_BYTES),
+		branchPrefix: boundedNonEmptyString(value.branchPrefix, `${label}.branchPrefix`, WORKTREE_STATUS_BRANCH_MAX_BYTES),
+		label: boundedNonEmptyString(value.label, `${label}.label`, WORKTREE_STATUS_NAMING_LABEL_MAX_BYTES),
+		sanitizedPathComponent: boundedNonEmptyString(value.sanitizedPathComponent, `${label}.sanitizedPathComponent`, WORKTREE_STATUS_NAMING_LABEL_MAX_BYTES),
+		...(collision !== undefined ? { collision } : {}),
+		...(value.collisionSuffix !== undefined ? { collisionSuffix: boundedNonEmptyString(value.collisionSuffix, `${label}.collisionSuffix`, WORKTREE_STATUS_NAMING_LABEL_MAX_BYTES) } : {}),
+	};
 }
 
 /** Validate the display-only worktree fields copied into status.json. */
 export function normalizeWorktreeStatusReference(value: unknown, label = "worktree status reference"): WorktreeStatusReference | undefined {
 	if (value === undefined) return undefined;
 	assertPlainObject(value, label);
-	assertKnownFields(value, ["worktreePath", "branch"], label);
+	assertKnownFields(value, ["worktreePath", "branch", "provider", "naming"], label);
+	if (value.provider !== undefined && value.provider !== "native" && value.provider !== "worktrunk") throw new Error(`${label}.provider is invalid.`);
 	return {
 		worktreePath: boundedNonEmptyString(value.worktreePath, `${label}.worktreePath`, WORKTREE_STATUS_PATH_MAX_BYTES),
 		branch: boundedNonEmptyString(value.branch, `${label}.branch`, WORKTREE_STATUS_BRANCH_MAX_BYTES),
+		...(value.provider !== undefined ? { provider: value.provider as ManagedWorktreeProvider } : {}),
+		...(value.naming !== undefined ? { naming: normalizeWorktreeNaming(value.naming, `${label}.naming`) } : {}),
 	};
 }
 
@@ -100,6 +121,6 @@ export function validateAsyncStatusLaneMetadata(status: Pick<AsyncStatus, "runId
 		const hasPath = step.worktreePath !== undefined;
 		const hasBranch = step.branch !== undefined;
 		if (hasPath !== hasBranch) throw new Error(`${label}.steps[${index}] must include both worktreePath and branch.`);
-		if (hasPath) normalizeWorktreeStatusReference({ worktreePath: step.worktreePath, branch: step.branch }, `${label}.steps[${index}]`);
+		if (hasPath) normalizeWorktreeStatusReference({ worktreePath: step.worktreePath, branch: step.branch, ...(step.provider ? { provider: step.provider } : {}), ...(step.naming ? { naming: step.naming } : {}) }, `${label}.steps[${index}]`);
 	}
 }

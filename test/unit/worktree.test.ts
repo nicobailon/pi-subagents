@@ -10,7 +10,12 @@ import {
 	diffWorktrees,
 	findWorktreeTaskCwdConflict,
 	formatWorktreeDiffSummary,
+	buildWorktreeNaming,
+	normalizeWorktreeBranchPrefix,
 	resolveExpectedWorktreeAgentCwd,
+	resolveWorktreeProvider,
+	sanitizeWorktreePathComponent,
+	shouldDeferWorktreeCwd,
 	type WorktreeSetup,
 } from "../../src/runs/shared/worktree.ts";
 
@@ -50,18 +55,21 @@ function createHookScript(_repoDir: string, fileName: string, source: string): s
 const hookScriptSkip = process.platform === "win32"
 	? "Hook script execution differs on Windows CI environments."
 	: undefined;
+const worktrunkShimSkip = process.platform === "win32"
+	? "Windows Terminal installs a wt.exe app alias that can outrank test command shims."
+	: undefined;
 
 describe("worktree", () => {
 	it("createWorktrees returns expected structure", () => {
 		const repoDir = createRepo("pi-worktree-structure-");
 		let setup: WorktreeSetup | undefined;
 		try {
-			setup = createWorktrees(repoDir, "structure", 2);
+			setup = createWorktrees(repoDir, "structure", 2, { provider: "native" });
 			assert.equal(setup.worktrees.length, 2);
 			assert.equal(setup.cwd, git(repoDir, ["rev-parse", "--show-toplevel"]));
 			for (let i = 0; i < setup.worktrees.length; i++) {
 				const worktree = setup.worktrees[i]!;
-				assert.equal(worktree.branch, `pi-parallel-structure-${i}`);
+				assert.equal(worktree.branch, `pi-subagents/task-structure-s0-t${i}`);
 				assert.equal(worktree.index, i);
 				assert.equal(worktree.agentCwd, worktree.path);
 				assert.equal(worktree.nodeModulesLinked, false);
@@ -80,10 +88,11 @@ describe("worktree", () => {
 		let planned: WorktreeSetup | undefined;
 		try {
 			setup = createWorktrees(repoDir, "before-create", 1, {
+				provider: "native",
 				beforeCreate: (candidate) => {
 					planned = candidate;
 					assert.equal(fs.existsSync(candidate.worktrees[0]!.path), false);
-					assert.equal(candidate.worktrees[0]!.branch, "pi-parallel-before-create-0");
+					assert.equal(candidate.worktrees[0]!.branch, "pi-subagents/task-before-creat-s0-t0");
 				},
 			});
 			assert.equal(planned?.baseCommit, setup.baseCommit);
@@ -93,6 +102,129 @@ describe("worktree", () => {
 			if (setup) cleanupWorktrees(setup);
 			cleanupRepo(repoDir);
 		}
+	});
+
+	it("records Worktrunk ownership and uses its returned path", () => {
+		try { resolveWorktreeProvider("worktrunk"); } catch { return; }
+		const repoDir = createRepo("pi-worktree-worktrunk-");
+		let setup: WorktreeSetup | undefined;
+		try {
+			setup = createWorktrees(repoDir, "worktrunk-s0", 1, {
+				provider: "worktrunk",
+				agents: ["worker"],
+				labels: ["Review API"],
+				tasks: ["Review API behavior"],
+				branchPrefix: "pi-test/",
+			});
+			const worktree = setup.worktrees[0]!;
+			assert.equal(worktree.provider, "worktrunk");
+			assert.equal(worktree.branch, "pi-test/Review-API-1f1a55a7-worktrunk-s0-t0");
+			assert.equal(worktree.naming?.requestedBranch, worktree.branch);
+			assert.ok(fs.existsSync(worktree.path));
+			assert.notEqual(worktree.path, resolveExpectedWorktreeAgentCwd(repoDir, "worktrunk-s0", 0));
+		} finally {
+			if (setup) cleanupWorktrees(setup, { kind: "setup-rollback" });
+			cleanupRepo(repoDir);
+		}
+	});
+
+	it("rejects Worktrunk responses that point at the source checkout", { skip: worktrunkShimSkip }, () => {
+		const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-fake-source-wt-"));
+		const fakeScript = path.join(fakeBin, "wt.cjs");
+		const fakeWt = path.join(fakeBin, process.platform === "win32" ? "wt.cmd" : "wt");
+		fs.writeFileSync(fakeScript, `const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+if (args[0] === "--version") { console.log("wt v0.75.0"); process.exit(0); }
+if (args[0] === "switch" && args[1] === "--help") { console.log("--create --base --no-cd --no-hooks --format"); process.exit(0); }
+const repo = args[args.indexOf("-C") + 1];
+const branch = args[args.indexOf("--create") + 1];
+const base = args[args.indexOf("--base") + 1];
+const result = spawnSync("git", ["-C", repo, "checkout", "-b", branch], { encoding: "utf-8" });
+if (result.status !== 0) { process.stderr.write(result.stderr || result.stdout); process.exit(result.status || 1); }
+console.log(JSON.stringify({ action: "created", branch, path: repo, created_branch: true, base_branch: base }));
+`, "utf-8");
+		if (process.platform === "win32") fs.writeFileSync(fakeWt, `@echo off\r\n"${process.execPath}" "%~dp0wt.cjs" %*\r\n`, "utf-8");
+		else {
+			fs.writeFileSync(fakeWt, `#!/bin/sh\nexec "${process.execPath}" "${fakeScript}" "$@"\n`, "utf-8");
+			fs.chmodSync(fakeWt, 0o755);
+		}
+		const previousPath = process.env.PATH;
+		const previousWindowsPath = process.env.Path;
+		const previousPathExt = process.env.PATHEXT;
+		const repoDir = createRepo("pi-worktree-source-wt-");
+		try {
+			const originalBranch = git(repoDir, ["branch", "--show-current"]);
+			process.env.PATH = `${fakeBin}${path.delimiter}${previousPath ?? ""}`;
+			process.env.Path = `${fakeBin}${path.delimiter}${previousWindowsPath ?? previousPath ?? ""}`;
+			process.env.PATHEXT = [".CMD", ".EXE", ".BAT", previousPathExt ?? ""].filter(Boolean).join(path.delimiter);
+			assert.throws(
+				() => createWorktrees(repoDir, "source-path", 1, { provider: "worktrunk" }),
+				/source checkout path/i,
+			);
+			assert.equal(git(repoDir, ["branch", "--show-current"]), originalBranch);
+			assert.equal(git(repoDir, ["branch", "--list", "pi-subagents/task-source-path-s0-t0"]), "");
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+			if (previousWindowsPath === undefined) delete process.env.Path;
+			else process.env.Path = previousWindowsPath;
+			if (previousPathExt === undefined) delete process.env.PATHEXT;
+			else process.env.PATHEXT = previousPathExt;
+			cleanupRepo(repoDir);
+			fs.rmSync(fakeBin, { recursive: true, force: true });
+		}
+	});
+
+	it("falls back to native only when Worktrunk capability probing fails", () => {
+		const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-fake-wt-"));
+		const fakeWt = path.join(fakeBin, process.platform === "win32" ? "wt.cmd" : "wt");
+		fs.writeFileSync(fakeWt, process.platform === "win32" ? "@echo not-worktrunk\r\n" : "#!/bin/sh\nprintf 'not-worktrunk\\n'\n", "utf-8");
+		if (process.platform !== "win32") fs.chmodSync(fakeWt, 0o755);
+		const previousPath = process.env.PATH;
+		const previousWindowsPath = process.env.Path;
+		const previousPathExt = process.env.PATHEXT;
+		const repoDir = createRepo("pi-worktree-provider-fallback-");
+		let setup: WorktreeSetup | undefined;
+		try {
+			process.env.PATH = `${fakeBin}${path.delimiter}${previousPath ?? ""}`;
+			process.env.Path = `${fakeBin}${path.delimiter}${previousWindowsPath ?? previousPath ?? ""}`;
+			process.env.PATHEXT = [".CMD", ".EXE", ".BAT", previousPathExt ?? ""].filter(Boolean).join(path.delimiter);
+			assert.equal(resolveWorktreeProvider(undefined), "native");
+			assert.equal(shouldDeferWorktreeCwd(undefined), true);
+			assert.equal(resolveWorktreeProvider(undefined, " "), "native");
+			assert.equal(shouldDeferWorktreeCwd(undefined, " "), false);
+			assert.throws(() => createWorktrees(repoDir, "provider-fallback", 1, { baseDir: " " }), /cannot be empty/i);
+			setup = createWorktrees(repoDir, "provider-fallback", 1);
+			assert.equal(setup.worktrees[0]?.provider, "native");
+			assert.throws(() => resolveWorktreeProvider("worktrunk"), /Worktrunk provider is unavailable/i);
+		} finally {
+			if (setup) cleanupWorktrees(setup, { kind: "setup-rollback" });
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+			if (previousWindowsPath === undefined) delete process.env.Path;
+			else process.env.Path = previousWindowsPath;
+			if (previousPathExt === undefined) delete process.env.PATHEXT;
+			else process.env.PATHEXT = previousPathExt;
+			cleanupRepo(repoDir);
+			fs.rmSync(fakeBin, { recursive: true, force: true });
+		}
+	});
+
+	it("sanitizes readable names and validates provider branch namespaces", () => {
+		const naming = buildWorktreeNaming({
+			runId: "run-s3",
+			index: 4,
+			agent: "worker",
+			task: "Fix: API / paths",
+			branchPrefix: "pi-custom",
+		});
+		assert.equal(naming.requestedBranch, "pi-custom/worker-Fix-API-paths-17ad7139-run-s3-t4");
+		assert.equal(naming.branchPrefix, "pi-custom/");
+		assert.equal(sanitizeWorktreePathComponent("..."), "task");
+		assert.ok(Buffer.byteLength(sanitizeWorktreePathComponent("é".repeat(200)), "utf-8") <= 96);
+		assert.equal(buildWorktreeNaming({ runId: "run", index: 0, agent: "worker", task: "Fix\nAPI" }).label, "worker-Fix API");
+		assert.equal(normalizeWorktreeBranchPrefix("pi-custom/"), "pi-custom/");
+		assert.throws(() => normalizeWorktreeBranchPrefix("../unsafe"), /invalid/i);
 	});
 
 	it("createWorktrees maps subdirectory cwd to each agentCwd", () => {
@@ -629,7 +761,7 @@ process.stdout.write(JSON.stringify({ syntheticPaths: [] }));
 				() => createWorktrees(repoDir, runId, 2, { setupHook: { hookPath: path.relative(repoDir, hookPath) } }),
 				/worktree setup hook failed with exit code 1/i,
 			);
-			const branchList = git(repoDir, ["branch", "--list", `pi-parallel-${runId}-*`]);
+			const branchList = git(repoDir, ["branch", "--list", "pi-subagents/task-hook-cleanup-s0-t*"]);
 			assert.equal(branchList.trim(), "", "temporary branches should be cleaned up after setup failure");
 		} finally {
 			cleanupRepo(repoDir);

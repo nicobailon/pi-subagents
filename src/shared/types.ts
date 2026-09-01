@@ -382,6 +382,17 @@ export type SubagentResultStatus = "completed" | "failed" | "paused" | "stopped"
 export type SubagentOutputState = "present" | "absent" | "unknown";
 export type SubagentRunMode = "single" | "parallel" | "chain" | "workflow";
 export type SubagentResultMode = SubagentRunMode;
+export type WorktreeProvider = "auto" | "native" | "worktrunk";
+export type ManagedWorktreeProvider = Exclude<WorktreeProvider, "auto">;
+
+export interface WorktreeNaming {
+	requestedBranch: string;
+	branchPrefix: string;
+	label: string;
+	sanitizedPathComponent: string;
+	collision?: "branch" | "path" | "both";
+	collisionSuffix?: string;
+}
 
 export interface ParallelHandoffPatch {
 	path: string;
@@ -425,6 +436,10 @@ export interface ParallelHandoffCleanupTask {
 	index: number;
 	path: string;
 	branch: string;
+	/** Provider that allocated this worktree; omitted in old manifests. */
+	provider?: ManagedWorktreeProvider;
+	/** Branch/path naming evidence retained with the cleanup authority. */
+	naming?: WorktreeNaming;
 	worktreeRemoved: boolean;
 	branchRemoved: boolean;
 	preserved?: boolean;
@@ -1843,6 +1858,10 @@ export interface AsyncStatus {
 		worktreePath?: string;
 		/** Display-only branch copied at launch; handoff remains authoritative. */
 		branch?: string;
+		/** Display-only provisioning provider copied at launch; handoff remains authoritative. */
+		provider?: ManagedWorktreeProvider;
+		/** Display-only naming evidence copied at launch; handoff remains authoritative. */
+		naming?: WorktreeNaming;
 		/** Child run identity for workflow capacity reconciliation. */
 		runId?: string;
 		/** True only when this workflow child owns a detached async runner. */
@@ -2556,6 +2575,12 @@ export interface ExtensionConfig {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
+	/** Enable managed worktrees when a launch does not provide an explicit value. */
+	worktree?: boolean;
+	/** Worktree allocator selection. Defaults to auto. */
+	worktreeProvider?: WorktreeProvider;
+	/** Namespace used by managed worktree branches. Defaults to pi-subagents/. */
+	worktreeBranchPrefix?: string;
 	/** Where to store subagent artifact files. Defaults to "session" (the pi session directory, or OS temp when unavailable). Set to "project" for cwd/.pi/subagents. */
 	artifactDir?: ArtifactDirPreference;
 	/** Artifact cleanup retention. Set cleanupDays to 0 to disable cleanup. */

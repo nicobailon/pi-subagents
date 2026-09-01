@@ -4,6 +4,7 @@
 ## [Unreleased]
 
 ### Added
+- Make Worktrunk a first-class managed worktree provider with automatic selection when available and native Git fallback when not (#1800).
 - Let Fleet open selected async children in their child-specific Herdr inspector with plain-input guidance. Thanks to [@stekman08](https://github.com/stekman08) for #1790.
 
 ### Fixed

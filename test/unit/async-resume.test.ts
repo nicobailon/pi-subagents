@@ -98,6 +98,7 @@ describe("async resume lookup", () => {
 
 			const target = resolveAsyncResumeTarget({ id: "run-missing-cwd" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
 			assert.equal(target.cwd, worktreeCwd);
+			assert.equal(target.managedWorktree, true);
 			fs.rmSync(worktreeCwd, { recursive: true });
 
 			assert.throws(
@@ -138,6 +139,7 @@ describe("async resume lookup", () => {
 
 			const target = resolveAsyncResumeTarget({ id: "run-nested-cwd" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
 			assert.equal(target.cwd, worktreeCwd);
+			assert.equal(target.managedWorktree, true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
