@@ -13,6 +13,7 @@
 - Make workflow checklist phases the primary collapsed progress view while retaining child detail when expanded (#1810).
 
 ### Fixed
+- Isolate test agent-directory writes from inherited `PI_CODING_AGENT_DIR` during isolated runs. Thanks to [@mapleluvr](https://github.com/mapleluvr) for #1809.
 - Clear parent required-tool diagnostics when launching nested zero-tool children so a grandchild cannot overwrite and fail its parent's otherwise valid result. Thanks to [@robertvangor](https://github.com/robertvangor) for #1802.
 - Release active async capacity after terminal workflow settlement even when persisted step status remains stale. Thanks to [@boggylp](https://github.com/boggylp) for #1804.
 - Make `subagents.agentOverrides.<name>` replace matching custom-agent frontmatter fields, consistently with builtin agents. Thanks to [@expoli](https://github.com/expoli) for #1796.
