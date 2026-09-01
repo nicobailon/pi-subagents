@@ -113,6 +113,12 @@ function identity(value: unknown, field: string, maxLength: number = EXTERNAL_RU
 	return value;
 }
 
+function sessionIdentity(value: unknown, field: string): string {
+	if (typeof value !== "string" || value.trim().length === 0 || value.includes("\0")) throw new Error(`${field} must be a non-empty string without NUL characters.`);
+	if (value.length > EXTERNAL_RUN_LIMITS.maxSessionIdLength) throw new Error(`${field} must be at most ${EXTERNAL_RUN_LIMITS.maxSessionIdLength} characters.`);
+	return value;
+}
+
 function displayText(value: unknown, field: string, maxLength: number): string | undefined;
 function displayText(value: unknown, field: string, maxLength: number, required: true): string;
 function displayText(value: unknown, field: string, maxLength: number, required = false): string | undefined {
@@ -146,7 +152,7 @@ function validateRun(value: unknown): ExternalRun {
 	const transcriptPath = displayText(run.transcriptPath, "External run transcriptPath", EXTERNAL_RUN_LIMITS.maxPathLength);
 	return {
 		id: identity(run.id, "External run id"),
-		sessionId: identity(run.sessionId, "External run sessionId", EXTERNAL_RUN_LIMITS.maxSessionIdLength),
+		sessionId: sessionIdentity(run.sessionId, "External run sessionId"),
 		source: displayText(run.source, "External run source", EXTERNAL_RUN_LIMITS.maxTextLength, true),
 		label: displayText(run.label, "External run label", EXTERNAL_RUN_LIMITS.maxTextLength, true),
 		state: state(run.state, "External run state"),
@@ -217,7 +223,7 @@ export function registerExternalRun(input: ExternalRun): ExternalRun {
 
 /** Update display fields for a registered external job without changing its identity or owner. */
 export function updateExternalRun(sessionId: string, id: string, update: ExternalRunUpdate): ExternalRun {
-	const safeSessionId = identity(sessionId, "External run sessionId", EXTERNAL_RUN_LIMITS.maxSessionIdLength);
+	const safeSessionId = sessionIdentity(sessionId, "External run sessionId");
 	const safeId = identity(id, "External run id");
 	const patch = inputObject(update, "External run update", UPDATE_FIELDS);
 	const current = registry();
@@ -233,7 +239,7 @@ export function updateExternalRun(sessionId: string, id: string, update: Externa
 /** Remove a cached external job. The caller remains responsible for its process and artifacts. */
 export function unregisterExternalRun(sessionId: string, id: string): boolean {
 	const current = registry();
-	const runKey = key(identity(sessionId, "External run sessionId", EXTERNAL_RUN_LIMITS.maxSessionIdLength), identity(id, "External run id"));
+	const runKey = key(sessionIdentity(sessionId, "External run sessionId"), identity(id, "External run id"));
 	const deleted = current.runs.delete(runKey);
 	if (deleted) trustedRecords(current).delete(runKey);
 	return deleted;
@@ -249,7 +255,7 @@ function getErrorMessage(error: unknown): string {
 
 /** Read a bounded cached snapshot for one Pi session. This never invokes third-party code. */
 export function snapshotExternalRuns(sessionId: string, options: ExternalRunSnapshotOptions = {}): readonly ExternalRun[] {
-	const safeSessionId = identity(sessionId, "External-run snapshot sessionId", EXTERNAL_RUN_LIMITS.maxSessionIdLength);
+	const safeSessionId = sessionIdentity(sessionId, "External-run snapshot sessionId");
 	const current = registry();
 	const trusted = trustedRecords(current);
 	const sessionPrefix = `${safeSessionId}\0`;

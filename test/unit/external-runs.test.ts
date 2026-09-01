@@ -63,6 +63,37 @@ test("external runs register, update, list, and unregister cached display record
 	clearRegistry();
 });
 
+test("external run session identities preserve exact session file paths", () => {
+	clearRegistry();
+	try {
+		const sessionId = "/tmp/pi sessions/session-name\n/session.jsonl\n";
+		const registered = registerExternalRun({
+			id: "newline-session",
+			sessionId,
+			source: "tool",
+			label: "Newline session",
+			state: "running",
+			startedAt: 1,
+		});
+
+		assert.equal(registered.sessionId, sessionId);
+		assert.deepEqual(snapshotExternalRuns(sessionId), [registered]);
+		assert.equal(updateExternalRun(sessionId, registered.id, { state: "completed" }).state, "completed");
+		assert.equal(unregisterExternalRun(sessionId, registered.id), true);
+		assert.deepEqual(snapshotExternalRuns(sessionId), []);
+		assert.throws(
+			() => registerExternalRun({ ...registered, id: "nul-session", sessionId: "/tmp/session\0.jsonl" }),
+			/without NUL characters/,
+		);
+		assert.throws(
+			() => registerExternalRun({ ...registered, id: "blank-session", sessionId: " \n\t" }),
+			/non-empty string/,
+		);
+	} finally {
+		clearRegistry();
+	}
+});
+
 test("external snapshots reuse validated records, detect direct mutations, and clone reads", () => {
 	clearRegistry();
 	try {
