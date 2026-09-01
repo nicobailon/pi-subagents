@@ -16,6 +16,12 @@ import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
 import { SUBAGENT_CAPABILITY_CEILING_ENV, decodeSubagentCapabilityCeiling, encodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, type ResolvedSubagentCapabilityCeiling, type SubagentCapabilityAudit } from "./capability-ceiling.ts";
 
 const TASK_ARG_LIMIT = 8000;
+
+// Keep code-like task content out of macOS exec arguments, which endpoint-security
+// clients may inspect. Pi expands the @file argument to the same task content.
+export function shouldWriteTaskToFile(task: string, platform: NodeJS.Platform = process.platform): boolean {
+	return platform === "darwin" || task.length > TASK_ARG_LIMIT;
+}
 const PROMPT_RUNTIME_EXTENSION_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-prompt-runtime.ts");
 const FANOUT_CHILD_EXTENSION_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "extension", "fanout-child.ts");
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
@@ -271,7 +277,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		args.push(input.systemPromptMode === "replace" ? "--system-prompt" : "--append-system-prompt", promptPath);
 	}
 
-	if (input.task.length > TASK_ARG_LIMIT) {
+	if (shouldWriteTaskToFile(input.task)) {
 		if (!tempDir) {
 			tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
 		}

@@ -27,6 +27,7 @@ import {
 	PI_INTERCOM_SESSION_ID_ENV,
 	applyThinkingSuffix,
 	buildPiArgs,
+	shouldWriteTaskToFile,
 } from "../../src/runs/shared/pi-args.ts";
 
 const originalEnv = {
@@ -1090,6 +1091,38 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.equal(env[SUBAGENT_FANOUT_CHILD_ENV], "1");
 		assert.ok(extensionArgs.some((arg) => arg.endsWith(path.join("src", "extension", "fanout-child.ts"))));
 		assert.ok(extensionArgs.includes("./agent-allowed-ext.ts"));
+	});
+
+	it("selects task files explicitly by platform and size", () => {
+		assert.equal(shouldWriteTaskToFile("", "darwin"), true);
+		assert.equal(shouldWriteTaskToFile("short", "darwin"), true);
+		assert.equal(shouldWriteTaskToFile("short", "linux"), false);
+		assert.equal(shouldWriteTaskToFile("short", "win32"), false);
+		assert.equal(shouldWriteTaskToFile("x".repeat(8001), "linux"), true);
+	});
+
+	it("keeps task content out of macOS exec arguments", () => {
+		const task = "shell-like `command` $(command) $VALUE";
+		const { args, tempDir } = buildPiArgs({
+			baseArgs: ["-p"],
+			task,
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		try {
+			const taskArg = args.at(-1);
+			if (process.platform === "darwin") {
+				assert.ok(taskArg?.startsWith("@"));
+				assert.equal(fs.readFileSync(taskArg.slice(1), "utf-8"), `Task: ${task}`);
+				assert.ok(args.every((arg) => !arg.includes(task)));
+			} else {
+				assert.equal(taskArg, `Task: ${task}`);
+			}
+		} finally {
+			if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+		}
 	});
 
 	it("emits an empty prompt file when replace mode is used with an empty prompt", () => {
