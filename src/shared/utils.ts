@@ -237,6 +237,12 @@ export function findLatestSessionFile(sessionDir: string): string | null {
 	return latest ? latest.path : null;
 }
 
+const PI_TURN_TIMING_FOOTER = /(?:\r?\n)*\x1b\[38;2;136;136;136m✻ Turn took [^()\r\n]+ \(Total time [^·\r\n]+ · \d+ turns?\)\x1b\[0m[ \t]*$/u;
+
+function stripPiTurnTimingFooter(text: string): string {
+	return text.replace(PI_TURN_TIMING_FOOTER, "");
+}
+
 export function getFinalOutput(messages: Message[]): string {
 	const validTextParts: string[] = [];
 	for (let i = messages.length - 1; i >= 0; i--) {
@@ -246,21 +252,26 @@ export function getFinalOutput(messages: Message[]): string {
 			|| ("stopReason" in msg && msg.stopReason === "error");
 		if (hasAssistantError) continue;
 		const messageText = msg.content
-			.filter((part) => part.type === "text" && part.text.trim().length > 0)
-			.map((part) => part.type === "text" ? part.text : "")
+			.flatMap((part) => {
+				if (part.type !== "text") return [];
+				const text = stripPiTurnTimingFooter(part.text);
+				return text.trim().length > 0 ? [text] : [];
+			})
 			.join("\n");
 		for (let j = msg.content.length - 1; j >= 0; j--) {
 			const part = msg.content[j];
-			if (!part || part.type !== "text" || part.text.trim().length === 0) continue;
-			validTextParts.push(part.text);
-			if (/```acceptance[-_]report\s*\n[\s\S]*?```/i.test(part.text)) return messageText;
-			for (const match of part.text.matchAll(/```(?:json|jsonc|json5)\s*\n([\s\S]*?)```/gi)) {
+			if (!part || part.type !== "text") continue;
+			const text = stripPiTurnTimingFooter(part.text);
+			if (text.trim().length === 0) continue;
+			validTextParts.push(text);
+			if (/```acceptance[-_]report\s*\n[\s\S]*?```/i.test(text)) return messageText;
+			for (const match of text.matchAll(/```(?:json|jsonc|json5)\s*\n([\s\S]*?)```/gi)) {
 				const body = match[1] ?? "";
 				if (/"(?:criteriaSatisfied|criteria_satisfied)"/.test(body) && /"(?:changedFiles|changed_files|testsAddedOrUpdated|tests_added_or_updated|commandsRun|commands_run|validationOutput|validation_output|residualRisks|residual_risks|noStagedFiles|no_staged_files|diffSummary|diff_summary|reviewFindings|review_findings|manualNotes|manual_notes)"/.test(body)) {
 					return messageText;
 				}
 			}
-			if (/ACCEPTANCE_REPORT\s*:/i.test(part.text)) return messageText;
+			if (/ACCEPTANCE_REPORT\s*:/i.test(text)) return messageText;
 		}
 	}
 	return validTextParts[0] ?? "";

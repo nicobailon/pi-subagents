@@ -7,6 +7,7 @@
 - Let Fleet open selected async children in their child-specific Herdr inspector with plain-input guidance. Thanks to [@stekman08](https://github.com/stekman08) for #1790.
 
 ### Fixed
+- Strip the trailing Pi turn-timing footer from child output. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1792.
 - Preserve coordinated read-only intent when resuming direct async children and surface captured structured output in completion and status evidence. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1788.
 
 ## [0.62.0] - 2026-08-31

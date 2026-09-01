@@ -4153,6 +4153,40 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "async full output\nwith details");
 	});
 
+	it("removes Pi turn-timing telemetry from runtime-persisted background output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const report = "## Review\n\nVERDICT: FINDINGS";
+		const timingFooter = "\x1b[38;2;136;136;136m✻ Turn took 5m 54s (Total time 5m 54s · 2 turns)\x1b[0m";
+		mockPi.onCall({ output: `${report}\n\n${timingFooter}` });
+		const id = `async-timing-footer-${Date.now().toString(36)}`;
+		const outputPath = path.join(tempDir, "async-review.md");
+		executeAsyncSingle(id, {
+			agent: "reviewer",
+			task: "Review without modifying files",
+			agentConfig: makeAgent("reviewer", { tools: ["read", "grep", "find", "ls"] }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			output: outputPath,
+			acceptance: false,
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(fs.readFileSync(outputPath, "utf-8"), report);
+		assert.doesNotMatch(payload.summary ?? "", /Turn took/);
+		assert.doesNotMatch(payload.results[0]?.output ?? "", /Turn took/);
+	});
+
 	it("background single runs route relative outputs to outputBaseDir", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "async configured report" });
 		const id = `async-configured-output-base-${Date.now().toString(36)}`;
