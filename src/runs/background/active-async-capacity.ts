@@ -271,7 +271,6 @@ function workflowReleaseVerdict(owner: ActiveAsyncCapacityOwnerV1, status: Async
 	if (liveWorkflowRunIds.has(owner.runId)) return { state: "retained", reason: "workflow controller is still live" };
 	for (const step of status.steps ?? []) {
 		const label = step.workflowKey ?? step.agent;
-		if (step.status === "pending" || step.status === "running" || step.status === "paused") return { state: "retained", reason: `workflow child ${label} is still ${step.status}` };
 		if (typeof step.async !== "boolean") return { state: "retained", reason: `workflow child ${label} is missing async classification` };
 		if (!step.async) continue;
 		if (!step.runId) return { state: "retained", reason: `async workflow child ${label} is missing run id` };

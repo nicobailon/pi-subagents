@@ -10,6 +10,7 @@
 
 ### Fixed
 - Clear parent required-tool diagnostics when launching nested zero-tool children so a grandchild cannot overwrite and fail its parent's otherwise valid result. Thanks to [@robertvangor](https://github.com/robertvangor) for #1802.
+- Release active async capacity after terminal workflow settlement even when persisted step status remains stale. Thanks to [@boggylp](https://github.com/boggylp) for #1804.
 - Make `subagents.agentOverrides.<name>` replace matching custom-agent frontmatter fields, consistently with builtin agents. Thanks to [@expoli](https://github.com/expoli) for #1796.
 - Strip the trailing Pi turn-timing footer from child output. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1792.
 - Avoid injecting inferred acceptance reports into reviewer/read-only child prompts. Thanks [@expoli](https://github.com/expoli) for #1797.

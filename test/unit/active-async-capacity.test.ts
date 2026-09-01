@@ -344,7 +344,7 @@ describe("active async capacity", () => {
 		}
 	});
 
-	it("releases terminal workflows only after the controller is gone and async children have observed proof", () => {
+	it("releases terminal workflows despite stale step projections after the controller and async children stop", () => {
 		const rootDir = tempRoot();
 		const asyncRoot = path.join(rootDir, "runs");
 		const workflowDir = path.join(asyncRoot, "workflow");
@@ -353,14 +353,14 @@ describe("active async capacity", () => {
 			const workflow = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "workflow", kind: "workflow", asyncDir: workflowDir }, { rootDir });
 			assert.ok(workflow);
 			workflow.markWorkflowStarted();
-			writeJson(path.join(workflowDir, "status.json"), { runId: "workflow", sessionId: "session-a", mode: "workflow", state: "complete", startedAt: 100, steps: [{ agent: "worker", workflowKey: "foreground", async: false, status: "completed" }] });
+			writeJson(path.join(workflowDir, "status.json"), { runId: "workflow", sessionId: "session-a", mode: "workflow", state: "complete", startedAt: 100, steps: [{ agent: "worker", workflowKey: "foreground", async: false, status: "running" }] });
 			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir, liveWorkflowRunIds: new Set(["workflow"]) }), { used: 1, limit: 1 });
 			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 0, limit: 1 });
 
 			const second = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "workflow-2", kind: "workflow", asyncDir: workflowDir }, { rootDir });
 			assert.ok(second);
 			second.markWorkflowStarted();
-			writeJson(path.join(workflowDir, "status.json"), { runId: "workflow-2", sessionId: "session-a", mode: "workflow", state: "complete", startedAt: 100, steps: [{ agent: "worker", workflowKey: "async", runId: "child", async: true, status: "completed" }] });
+			writeJson(path.join(workflowDir, "status.json"), { runId: "workflow-2", sessionId: "session-a", mode: "workflow", state: "failed", startedAt: 100, steps: [{ agent: "worker", workflowKey: "async", runId: "child", async: true, status: "running" }] });
 			writeJson(path.join(childDir, "status.json"), { runId: "child", sessionId: "session-a", mode: "single", state: "complete", startedAt: 100, processTerminal: { version: 1, state: "unknown", runId: "child", runnerProcessInstanceId: "runner-child", reason: "process-tree-unverified" } });
 			writeJson(path.join(childDir, "process-terminal.json"), { version: 1, state: "unknown", runId: "child", runnerProcessInstanceId: "runner-child", reason: "process-tree-unverified" });
 			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 1, limit: 1 });
