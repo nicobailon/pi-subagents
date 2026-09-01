@@ -307,9 +307,13 @@ describe("subagent async widget rendering", () => {
 		};
 
 		const text = buildWidgetLines([job], theme, 180).join("\n");
-		assert.match(text, /ci: CI checks · running · provider:local-tests · PR #1614/);
-		assert.match(text, /gate: Review gate · inconclusive · provider:opaque-provider · reason:stale-head · stale · out:gate.json/);
+		assert.match(text, /CI checks 1 active/);
+		assert.match(text, /Review gate 1 blocked/);
 		assert.doesNotMatch(text, /async subagent .*CI checks/);
+
+		const expanded = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.match(expanded, /ci: CI checks · running · provider:local-tests · PR #1614/);
+		assert.match(expanded, /gate: Review gate · inconclusive · provider:opaque-provider · reason:stale-head · stale · out:gate.json/);
 	});
 
 	it("keeps simple one-off async rows on the existing fallback projection", () => {
@@ -928,14 +932,14 @@ describe("subagent async widget rendering", () => {
 
 	it("keeps the active runs.lanes stage in focus before collapsed history", () => {
 		resetWidgetLayout();
-		withStdoutSize(60, 120, () => {
+		withStdoutSize(30, 120, () => {
 			const stageKeys = ["scope-scout", "red-tests", "label-helpers", "summary-title", "detail-row", "tiers-noise", "validation", "minimality-challenge", "fresh-review"];
 			const nodeIds = stageKeys.map((key) => `issue-1695.${key}`);
-			const statuses = stageKeys.map((_, index) => index < 3 ? "completed" : index === 3 ? "running" : "pending");
+			const statuses = stageKeys.map((_, index) => index < 7 ? "completed" : index === 7 ? "running" : "pending");
 			const workflowGraph = {
 				runId: "workflow-1695",
 				mode: "workflow",
-				phases: [{ title: "issue-1695 staged lane", nodeIds }],
+				phases: stageKeys.map((title, index) => ({ title, nodeIds: [nodeIds[index]!] })),
 				nodes: stageKeys.map((key, index) => ({
 					id: nodeIds[index],
 					kind: "step",
@@ -945,7 +949,7 @@ describe("subagent async widget rendering", () => {
 					flatIndex: index,
 					stepIndex: index,
 				})),
-				currentNodeId: nodeIds[3],
+				currentNodeId: nodeIds[7],
 			};
 			const job = {
 				asyncId: "workflow-1695",
@@ -953,11 +957,11 @@ describe("subagent async widget rendering", () => {
 				status: "running",
 				mode: "workflow",
 				agents: ["scout", "worker"],
-				currentStep: 3,
-				stepsTotal: 4,
+				currentStep: 7,
+				stepsTotal: stageKeys.length,
 				updatedAt: 200,
 				workflowGraph,
-				steps: stageKeys.slice(0, 4).map((key, index) => ({
+				steps: stageKeys.slice(0, 8).map((key, index) => ({
 					index,
 					agent: index === 0 ? "scout" : "worker",
 					status: statuses[index],
@@ -973,14 +977,13 @@ describe("subagent async widget rendering", () => {
 			renderWidget(ui.ctx as never, [job]);
 			const lines = renderWidgetLines(ui.widgets.at(-1));
 			const text = lines.join("\n");
-			const activeIndex = lines.findIndex((line) => line.includes("summary-title"));
-			const hiddenIndex = lines.findIndex((line) => /lines hidden/.test(line));
-			assert.ok(hiddenIndex >= 0, `collapsed history should expose a hidden-lines marker:\n${text}`);
-			assert.ok(activeIndex >= 0, `active stage should remain visible:\n${text}`);
-			assert.ok(activeIndex < hiddenIndex, `active stage must precede the hidden-lines marker:\n${text}`);
-			assert.match(text, /stage\s+4\/9/i);
-			assert.match(text, /summary-title task/);
-			assert.match(lines[activeIndex]!, /worker/);
+			assert.match(text, /7\/9 done · 1 active · 1 queued/);
+			assert.match(text, /minimality-challenge 1 active/);
+			assert.match(text, /fresh-review 1 queued/);
+			assert.match(text, /bottleneck · minimality-challenge/);
+			assert.match(text, /Press configured-expand-key for live detail/);
+			assert.doesNotMatch(text, /label-helpers/);
+			assert.doesNotMatch(text, /Step \d+\/9|task:|workspace:|out(?:put)?:/i);
 		});
 		resetWidgetLayout();
 	});
@@ -1018,7 +1021,7 @@ describe("subagent async widget rendering", () => {
 			stepsTotal: stages.length,
 			workflowGraph,
 			steps: stages,
-		}], theme, 220, false).join("\n");
+		}], theme, 220, true).join("\n");
 		const rowIndex = (label: string): number => text.split("\n").findIndex((line) => line.includes(label));
 		const completed = rowIndex("completed-history");
 		const failed = rowIndex("failed-stage");

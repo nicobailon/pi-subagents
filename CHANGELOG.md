@@ -9,6 +9,9 @@
 - Make Worktrunk a first-class managed worktree provider with automatic selection when available and native Git fallback when not (#1800).
 - Let Fleet open selected async children in their child-specific Herdr inspector with plain-input guidance. Thanks to [@stekman08](https://github.com/stekman08) for #1790.
 
+### Changed
+- Make workflow checklist phases the primary collapsed progress view while retaining child detail when expanded (#1810).
+
 ### Fixed
 - Clear parent required-tool diagnostics when launching nested zero-tool children so a grandchild cannot overwrite and fail its parent's otherwise valid result. Thanks to [@robertvangor](https://github.com/robertvangor) for #1802.
 - Release active async capacity after terminal workflow settlement even when persisted step status remains stale. Thanks to [@boggylp](https://github.com/boggylp) for #1804.

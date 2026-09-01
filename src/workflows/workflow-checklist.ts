@@ -404,10 +404,11 @@ export function formatWorkflowChecklistPhase(phase: WorkflowChecklistPhase): str
 	return counts.length ? `${phase.label} ${counts.join(" · ")}` : phase.label;
 }
 
-export function formatWorkflowChecklistBottleneck(item: WorkflowChecklistItem | undefined): string | undefined {
+export function formatWorkflowChecklistBottleneck(item: WorkflowChecklistItem | undefined, options: { includeOutput?: boolean } = {}): string | undefined {
 	if (!item) return undefined;
 	const identity = [item.label, item.agent && item.agent !== item.label ? item.agent : undefined].filter((value): value is string => Boolean(value)).join(" · ") || item.key;
-	const details = [item.context ? `(${item.context})` : undefined, item.currentTool ? `${item.currentTool}${item.durationMs !== undefined ? ` ${formatDurationText(item.durationMs)}` : ""}` : undefined, !item.currentTool && item.currentPath ? item.currentPath : undefined, !item.currentTool && item.durationMs !== undefined ? formatDurationText(item.durationMs) : undefined, item.toolCount !== undefined ? `${item.toolCount} tools` : undefined, item.outputName ? `out:${item.outputName}` : undefined, item.error ? `error:${item.error.replace(/\bOutput:/g, "output:")}` : undefined].filter((value): value is string => Boolean(value));
+	const includeOutput = options.includeOutput ?? true;
+	const details = [item.context ? `(${item.context})` : undefined, item.currentTool ? `${item.currentTool}${item.durationMs !== undefined ? ` ${formatDurationText(item.durationMs)}` : ""}` : undefined, !item.currentTool && item.currentPath ? item.currentPath : undefined, !item.currentTool && item.durationMs !== undefined ? formatDurationText(item.durationMs) : undefined, item.toolCount !== undefined ? `${item.toolCount} tools` : undefined, includeOutput && item.outputName ? `out:${item.outputName}` : undefined, item.error ? `error:${item.error.replace(/\bOutput:/g, "output:")}` : undefined].filter((value): value is string => Boolean(value));
 	return [identity, ...details].join(" · ");
 }
 
