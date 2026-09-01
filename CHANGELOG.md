@@ -8,6 +8,7 @@
 
 ### Fixed
 - Strip the trailing Pi turn-timing footer from child output. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1792.
+- Avoid injecting inferred acceptance reports into reviewer/read-only child prompts. Thanks [@expoli](https://github.com/expoli) for #1797.
 - Preserve coordinated read-only intent when resuming direct async children and surface captured structured output in completion and status evidence. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1788.
 - Keep macOS subagent tasks out of argv by delivering them through temporary files. Thanks [@josephkallas](https://github.com/josephkallas) for #1793.
 

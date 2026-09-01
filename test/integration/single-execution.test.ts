@@ -5118,6 +5118,16 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.doesNotMatch(call.args.join("\n"), /## Acceptance Contract/);
 	});
 
+	it("does not inject inferred acceptance into reviewer prompts", async () => {
+		mockPi.onCall({ output: "VERDICT: PASS" });
+		const result = await runSync(tempDir, [makeAgent("reviewer", { tools: ["read"], completionGuard: false })], "reviewer", "Review the diff and return findings only.", {
+			runId: "reviewer-inferred-acceptance",
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.doesNotMatch(readCall().args.join("\n"), /## Acceptance Contract/);
+	});
+
 	it("agent contract v1 keeps acceptance rejection out of execution status", async () => {
 		mockPi.onCall({ output: "Done\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"no proof\"}]}\n```" });
 		const agents = [makeAgent("worker", { tools: ["read"], completionGuard: false })];
@@ -8172,7 +8182,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 
 		const result = await runSync(tempDir, makeAgentConfigs(["slow"]), "slow", "Slow task", {
-			timeoutMs: 150,
+			timeoutMs: 1000,
 			outputPath: reportPath,
 			outputMode: "file-only",
 			acceptance: false,

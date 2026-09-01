@@ -393,7 +393,7 @@ Acceptance evidence levels are `auto`, `none`, `attested`, `checked`, and `verif
 Review is a separate gate configured with `acceptance.review`:
 
 - Async, risky, and dynamic writer contexts infer checked evidence plus `review: { agent: "reviewer", required: true }`.
-- Read-only tasks infer lightweight attestation.
+- Reviewer/read-only calls infer no acceptance by default; explicit acceptance requests still apply.
 - Normal writer tasks infer checked evidence without review.
 
 Agent frontmatter or `subagents.agentOverrides` may set `acceptanceRole: "read-only" | "writer"` for ambiguous tasks. Explicit task mutation or no-edit intent wins over that role, while omitted metadata preserves the existing reviewer/scout/worker name heuristics. The role affects acceptance inference only and does not change tool access.
@@ -420,7 +420,7 @@ Acceptance provenance is stored separately from child prose. `evidenceStatus` pr
 
 ### The acceptance report
 
-For `attested` or stricter levels, the child prompt includes a standardized acceptance section and asks for a fenced `acceptance-report` JSON block. With `outputSchema`, set `acceptance.report: "on"` to require the same report in the final `structured_output` call, or `"off"` to keep the fenced-report path. Omitting `report` preserves the default behavior. Runs without `outputSchema` never gain a standalone structured-output tool from this option.
+For `attested` or stricter levels, the child prompt includes a standardized acceptance section and asks for a fenced `acceptance-report` JSON block. Reviewer/read-only inference resolves to `none`, so it does not add this section; explicit acceptance still does. With `outputSchema`, set `acceptance.report: "on"` to require the same report in the final `structured_output` call, or `"off"` to keep the fenced-report path. Omitting `report` preserves the default behavior. Runs without `outputSchema` never gain a standalone structured-output tool from this option.
 
 The parser canonicalizes known enum synonyms, snake_case report keys and wrappers, underscore fence tags, unambiguous scalar arrays, string booleans, and criterion-id separators. Unknown or ambiguous keys and enum values fail with field-level diagnostics. Explicit empty `changedFiles` and `testsAddedOrUpdated` arrays are recorded as not applicable; missing fields and empty required command or validation evidence still fail.
 

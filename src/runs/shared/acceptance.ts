@@ -100,12 +100,13 @@ function inferLevel(input: {
 	const writeTask = taskMayWrite
 		|| (input.acceptanceRole === "writer" && !readOnlyTask)
 		|| (input.acceptanceRole === undefined && /\bworker\b/.test(agent) && !readOnlyTask);
-	const inferredReadOnly = readOnlyTask || (input.acceptanceRole === "read-only" && !taskMayWrite);
+	const inferredReadOnly = readOnlyTask || ((readOnlyAgent || input.acceptanceRole === "read-only") && !taskMayWrite);
 	const roleResolvesReadOnly = input.acceptanceRole !== undefined && inferredReadOnly;
+	const dynamicResolvesReadOnly = inferredReadOnly && !writeTask;
 	const keywordRiskReadOnly = input.acceptanceRole === undefined ? intent.kind === "read-only" : inferredReadOnly;
 	const risky = Boolean(input.async && writeTask)
-		|| (Boolean(input.dynamic) && !roleResolvesReadOnly)
-		|| (Boolean(input.dynamicGroup) && !roleResolvesReadOnly)
+		|| (Boolean(input.dynamic) && !roleResolvesReadOnly && !dynamicResolvesReadOnly)
+		|| (Boolean(input.dynamicGroup) && !roleResolvesReadOnly && !dynamicResolvesReadOnly)
 		|| (!keywordRiskReadOnly && /\b(?:release|migration|migrate|security|data[- ]loss|destructive|post-review|fix pass)\b/.test(task));
 
 	if (risky) {
@@ -131,7 +132,7 @@ function inferLevel(input: {
 	if (readOnlyAgent || readOnlyTask) {
 		reasons.push(input.acceptanceRole === "read-only" && !readOnlyTask ? "declared read-only acceptance role" : readOnlyAgent ? "read-only/reviewer-style agent" : "read-only task wording");
 		return {
-			level: "attested",
+			level: "none",
 			reasons,
 			criteria: ["Return concrete findings with file paths and severity when applicable"],
 			evidence: ["review-findings", "residual-risks"],
@@ -205,6 +206,10 @@ export function normalizeGateAcceptance(gate: unknown, acceptance: AcceptanceInp
 
 function explicitAcceptanceCanDisable(explicit: AcceptanceConfig): boolean {
 	return explicit.level === "none" && typeof explicit.reason === "string" && explicit.reason.trim().length > 0;
+}
+
+function explicitAcceptanceRequestsPolicy(explicit: AcceptanceConfig): boolean {
+	return (explicit.level !== undefined && explicit.level !== "auto") || Object.keys(explicit).some((key) => key !== "level");
 }
 
 function unsupportedEvidenceKindMessage(pathLabel: string, item: unknown): string {
@@ -437,12 +442,13 @@ export function resolveEffectiveAcceptance(input: {
 		};
 	}
 	const inferred = inferLevel(input);
+	const inferredLevel = inferred.level === "none" && explicitAcceptanceRequestsPolicy(explicit) ? "attested" : inferred.level;
 	const level = explicitAcceptanceCanDisable(explicit)
 		? "none"
 		: explicitLevel === "auto"
-			? inferred.level
-			: (LEVEL_RANK[explicitLevel] >= LEVEL_RANK[inferred.level] ? explicitLevel : inferred.level);
-	const evidence = unique([...(level === inferred.level ? inferred.evidence : requiredEvidenceForLevel(level)), ...(explicit.evidence ?? [])]);
+			? inferredLevel
+			: (LEVEL_RANK[explicitLevel] >= LEVEL_RANK[inferredLevel] ? explicitLevel : inferredLevel);
+	const evidence = unique([...(level === inferredLevel ? inferred.evidence : requiredEvidenceForLevel(level)), ...(explicit.evidence ?? [])]);
 	const criteria = normalizeCriteria(
 		(explicit.criteria?.length ? explicit.criteria : inferred.criteria) as Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }>,
 		evidence,
@@ -452,8 +458,8 @@ export function resolveEffectiveAcceptance(input: {
 		level,
 		explicit: input.explicit !== undefined,
 		inferredReason: inferred.reasons,
-		criteria,
-		evidence,
+		criteria: level === "none" ? [] : criteria,
+		evidence: level === "none" ? [] : evidence,
 		verify: explicit.verify ?? [],
 		review,
 		stopRules: explicit.stopRules ?? [],
