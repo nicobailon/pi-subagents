@@ -4,6 +4,7 @@
 ## [Unreleased]
 
 ### Added
+- Add settings-driven extra agent scan directories with one-segment wildcard expansion. Thanks to [@mystery4f](https://github.com/mystery4f) for #1801.
 - Make Worktrunk a first-class managed worktree provider with automatic selection when available and native Git fallback when not (#1800).
 - Let Fleet open selected async children in their child-specific Herdr inspector with plain-input guidance. Thanks to [@stekman08](https://github.com/stekman08) for #1790.
 
