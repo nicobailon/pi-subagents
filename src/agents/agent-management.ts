@@ -250,13 +250,25 @@ function withDeclaredExtensionPaths(config: AgentConfig, filePath: string): Agen
 export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 	const { extensions: _extensions, ...withoutExtensions } = agent;
 	const base = agent.override?.base;
+	const description = base?.description ?? agent.description;
+	const frontmatterFields = agent.source === "builtin" || agent.source === "runtime" ? undefined : readAgentFrontmatterFields(agent.filePath);
+	const hasDeclaredField = (...fields: string[]) => frontmatterFields === undefined || fields.some((field) => frontmatterFields.has(field));
+	const withoutSettingsDefaults = (config: AgentConfig): AgentConfig => {
+		if (!frontmatterFields) return config;
+		const next = { ...config };
+		if (!hasDeclaredField("model")) delete next.model;
+		if (!hasDeclaredField("thinking")) delete next.thinking;
+		return next;
+	};
 	const {
 		override: _override,
+		description: _description,
 		output: _output,
 		outputMode: _outputMode,
 		defaultReads: _defaultReads,
 		model: _model,
 		fallbackModels: _fallbackModels,
+		fast: _fast,
 		thinking: _thinking,
 		systemPromptMode: _systemPromptMode,
 		inheritProjectContext: _inheritProjectContext,
@@ -271,26 +283,30 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		tools: _tools,
 		excludeTools: _excludeTools,
 		mcpDirectTools: _mcpDirectTools,
+		allowNestedSubagents: _allowNestedSubagents,
 		subagentOnlyExtensions: _subagentOnlyExtensions,
 		mutationTools: _mutationTools,
 		completionGuard: _completionGuard,
+		toolBudget: _toolBudget,
 		...editable
 	} = withoutExtensions;
 	if (!base) {
-		return withDeclaredExtensionPaths({
+		return withDeclaredExtensionPaths(withoutSettingsDefaults({
 			...withoutExtensions,
 			...(agent.extensionsFromDefault ? {} : agent.extensions !== undefined ? { extensions: [...agent.extensions] } : {}),
-		}, agent.filePath);
+		}), agent.filePath);
 	}
 
 	return withDeclaredExtensionPaths({
 		...editable,
+		description,
 		...(base.output !== undefined ? { output: base.output } : {}),
 		...(base.outputMode !== undefined ? { outputMode: base.outputMode } : {}),
 		...(base.defaultReads !== undefined ? { defaultReads: [...base.defaultReads] } : {}),
-		...(base.model !== undefined ? { model: base.model } : {}),
+		...(base.model !== undefined && hasDeclaredField("model") ? { model: base.model } : {}),
 		...(base.fallbackModels !== undefined ? { fallbackModels: [...base.fallbackModels] } : {}),
-		...(base.thinking !== undefined ? { thinking: base.thinking } : {}),
+		...(base.fast !== undefined ? { fast: base.fast } : {}),
+		...(base.thinking !== undefined && hasDeclaredField("thinking") ? { thinking: base.thinking } : {}),
 		systemPromptMode: base.systemPromptMode,
 		inheritProjectContext: base.inheritProjectContext,
 		inheritGlobalContext: base.inheritGlobalContext,
@@ -304,10 +320,12 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		...(base.tools !== undefined ? { tools: [...base.tools] } : {}),
 		...(base.excludeTools !== undefined ? { excludeTools: [...base.excludeTools] } : {}),
 		...(base.mcpDirectTools !== undefined ? { mcpDirectTools: [...base.mcpDirectTools] } : {}),
+		...(base.allowNestedSubagents !== undefined ? { allowNestedSubagents: base.allowNestedSubagents } : {}),
 		...(base.extensions !== undefined ? { extensions: [...base.extensions] } : {}),
 		...(base.subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions: [...base.subagentOnlyExtensions] } : {}),
 		...(base.mutationTools !== undefined ? { mutationTools: [...base.mutationTools] } : {}),
 		...(base.completionGuard !== undefined ? { completionGuard: base.completionGuard } : {}),
+		...(base.toolBudget !== undefined ? { toolBudget: base.toolBudget } : {}),
 	}, agent.filePath);
 }
 

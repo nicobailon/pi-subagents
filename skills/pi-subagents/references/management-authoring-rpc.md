@@ -85,7 +85,7 @@ subagent({ action: "reset", agent: "reviewer" })
 Use management actions when the system needs to create or edit subagents on
 demand without dropping into raw file editing.
 
-Management actions create or update user/project agent files. `config.name` is the local frontmatter name; optional `config.package` registers and looks up the runtime name as `{package}.{name}`. Use the dotted runtime name for `get`, `update`, `delete`, slash commands, and scripted workflow steps. For small builtin changes such as a model swap, prefer `subagents.agentOverrides` in settings. Durable `.chain.md` definitions are legacy records, not a current authoring target; use `workflowScript` or `/prompt-workflow` for repeatable orchestration.
+Management actions create or update user/project agent files. `config.name` is the local frontmatter name; optional `config.package` registers and looks up the runtime name as `{package}.{name}`. Use the dotted runtime name for `get`, `update`, `delete`, slash commands, and scripted workflow steps. For small agent changes such as a model swap, prefer `subagents.agentOverrides` in settings. Durable `.chain.md` definitions are legacy records, not a current authoring target; use `workflowScript` or `/prompt-workflow` for repeatable orchestration.
 
 ## Creating and Editing Agents by File
 

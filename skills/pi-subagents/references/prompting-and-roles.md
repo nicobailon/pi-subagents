@@ -185,7 +185,7 @@ Builtin `worker` and `delegate` use strict tool allowlists and do not inherit am
 
 Builtin agents inherit the current Pi default model unless a run, user setting, project setting, or `subagents.defaultModel` overrides `model`. The table records recommended tier routing, not shipped hard defaults; explicit run, user, or project settings still win. Keep the parent/orchestrator on the ordinary strong default model unless parent/user policy says otherwise. Override builtin defaults before copying full agent files when a small tweak is enough.
 
-Set `subagents.defaultThinking` to apply a shared thinking level to builtin, package, user, and project agents whose frontmatter leaves `thinking` unset. Project settings win over user settings; explicit frontmatter (including `thinking: false`), `agentOverrides.<name>.thinking`, and per-run overrides remain more specific. This setting affects child agents only and does not change the parent session's default thinking level.
+Set `subagents.defaultThinking` to apply a shared thinking level to builtin, package, user, and project agents whose frontmatter leaves `thinking` unset. Project settings win over user settings; matching `agentOverrides.<name>.thinking` and per-run overrides replace frontmatter, while an explicit frontmatter value remains in effect when no matching override is set. This setting affects child agents only and does not change the parent session's default thinking level.
 
 ```json
 {
@@ -288,8 +288,8 @@ Use `fallbackModels` when a tier has provider quota or availability risk. Prefer
 If a provider rejects model IDs with thinking suffixes, use
 `subagents.disableThinking: true` in user or project settings to clear bundled
 builtin thinking defaults globally. A higher-precedence per-agent `thinking`
-override can opt one builtin back in. Existing custom-agent frontmatter remains authoritative.
+override can opt one builtin back in or replace custom-agent frontmatter thinking.
 
-Set `subagents.defaultExtensions` to give agents without an `extensions` field a shared child extension allowlist. Omit it to preserve ambient extension discovery, set it to `[]` to disable ambient extensions by default, or use `agentOverrides.<name>.extensions` for one agent. Explicit custom-agent frontmatter still wins.
+Set `subagents.defaultExtensions` to give agents without an `extensions` field a shared child extension allowlist. Omit it to preserve ambient extension discovery, set it to `[]` to disable ambient extensions by default, or use `agentOverrides.<name>.extensions` for one agent. A matching override replaces custom-agent frontmatter for that field.
 
 Tool description modes live in `~/.pi/agent/extensions/subagent/config.json`, not `subagents` settings. The default uses split prompt metadata: a short tool description plus active `promptSnippet` and `promptGuidelines`. Set `toolDescriptionMode` to `full` or `compact` to force one description string, or `custom` to read `subagent-tool-description.md` from the project config dir or agent dir; invalid custom files fall back to full mode and the safety guidance is still appended.

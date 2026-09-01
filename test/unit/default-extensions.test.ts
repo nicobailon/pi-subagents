@@ -117,7 +117,7 @@ describe("subagents.defaultExtensions", () => {
 		);
 		assert.deepEqual(
 			agents.find((agent) => agent.name === "explicit")?.extensions,
-			[path.join(tempProject, ".pi", "agents", "frontmatter.ts")],
+			["./ignored.ts"],
 		);
 	});
 

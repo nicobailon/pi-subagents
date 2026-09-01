@@ -7,6 +7,7 @@
 - Let Fleet open selected async children in their child-specific Herdr inspector with plain-input guidance. Thanks to [@stekman08](https://github.com/stekman08) for #1790.
 
 ### Fixed
+- Make `subagents.agentOverrides.<name>` replace matching custom-agent frontmatter fields, consistently with builtin agents. Thanks to [@expoli](https://github.com/expoli) for #1796.
 - Strip the trailing Pi turn-timing footer from child output. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1792.
 - Avoid injecting inferred acceptance reports into reviewer/read-only child prompts. Thanks [@expoli](https://github.com/expoli) for #1797.
 - Preserve coordinated read-only intent when resuming direct async children and surface captured structured output in completion and status evidence. Thanks [@fkhawajagh](https://github.com/fkhawajagh) for #1788.

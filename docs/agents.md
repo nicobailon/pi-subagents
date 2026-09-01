@@ -189,9 +189,9 @@ The `researcher` builtin uses `web_search`, `fetch_content`, and `get_search_con
 pi install npm:pi-web-access
 ```
 
-## Overriding builtins
+## Overriding builtins and custom agents
 
-You can override selected builtin fields without copying the whole agent. Overrides live in settings:
+You can override selected agent fields without copying the whole agent. Overrides live in settings:
 
 - User: `~/.pi/agent/settings.json`
 - Project: project config settings file (`.pi/settings.json` in standard Pi)
@@ -213,9 +213,9 @@ Supported override fields: `description`, `output`, `outputMode`, `defaultReads`
 
 - `description` replaces the discovered description for builtin and custom agents, which lets list output show deployment-specific routing or model metadata.
 - Use `output: false`, `defaultReads: false`, `defaultContext: false`, or `acceptanceRole: false` to clear an inherited value.
-- Use `tools: "inherit"` on a builtin when that one role should omit its bundled tool allowlist and receive Pi's normal builtins and ambient extensions. This keeps strict tools as the default for other builtins.
+- Use `tools: "inherit"` when that one role should omit its bundled or frontmatter tool allowlist and receive Pi's normal builtins and ambient extensions.
 - Project overrides beat user overrides.
-- Matching user and project agents also receive override fields that their frontmatter leaves unset, so a shared project config agent can keep the persona while local settings choose the model.
+- Matching package, user, and project agents also receive override fields, which replace the same fields declared in their frontmatter. This lets a shared agent keep its persona while local settings choose the effective model, context, tools, or other supported options.
 
 Disable and restore:
 

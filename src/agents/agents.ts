@@ -113,6 +113,8 @@ interface BuiltinAgentOverrideInfo {
 	scope: "user" | "project";
 	path: string;
 	base: BuiltinAgentOverrideBase;
+	fields?: string[];
+	fieldScopes?: Record<string, Array<"user" | "project">>;
 }
 
 export interface AgentModelSourceInfo {
@@ -1348,9 +1350,19 @@ function applyBuiltinOverride(
 	override: BuiltinAgentOverrideConfig,
 	meta: { scope: "user" | "project"; path: string },
 ): AgentConfig {
+	const overrideInfo: BuiltinAgentOverrideInfo = {
+		...meta,
+		base: agent.override?.base ?? cloneOverrideBase(agent),
+		fields: [...new Set([...(agent.override?.fields ?? []), ...Object.keys(override)])].sort(),
+		fieldScopes: Object.fromEntries(Object.entries({ ...(agent.override?.fieldScopes ?? {}) }).map(([field, scopes]) => [field, [...scopes]])),
+	};
+	for (const field of Object.keys(override)) {
+		const scopes = overrideInfo.fieldScopes![field] ?? [];
+		overrideInfo.fieldScopes![field] = [...new Set([...scopes, meta.scope])].sort();
+	}
 	const next: AgentConfig = {
 		...agent,
-		override: { ...meta, base: cloneOverrideBase(agent) },
+		override: overrideInfo,
 	};
 
 	if (override.description !== undefined) next.description = override.description;
@@ -1450,128 +1462,12 @@ function applyBuiltinOverrides(
 	});
 }
 
-export function agentHasFrontmatterField(agent: AgentConfig, ...fields: string[]): boolean {
-	const frontmatterFields = agentFrontmatterFields.get(agent);
-	return frontmatterFields ? fields.some((field) => frontmatterFields.has(field)) : false;
-}
-
 function applyCustomAgentOverride(
 	agent: AgentConfig,
 	override: BuiltinAgentOverrideConfig,
 	meta: { scope: "user" | "project"; path: string },
 ): AgentConfig {
-	let next: AgentConfig | undefined;
-	let anyFilled = false;
-
-	const mutable = (): AgentConfig => {
-		next ??= { ...agent };
-		return next;
-	};
-
-	const fill = <K extends keyof AgentConfig>(
-		field: K,
-		frontmatterFields: string[],
-		value: AgentConfig[K],
-	): void => {
-		if (agentHasFrontmatterField(agent, ...frontmatterFields)) return;
-		const target = mutable();
-		if (value === undefined) delete target[field]; else target[field] = value;
-		anyFilled = true;
-	};
-
-	if (override.description !== undefined) {
-		mutable().description = override.description;
-		anyFilled = true;
-	}
-	if (override.output !== undefined) {
-		fill("output", ["output"], override.output === false ? undefined : override.output);
-	}
-	if (override.outputMode !== undefined) {
-		fill("outputMode", ["outputMode"], override.outputMode);
-	}
-	if (override.defaultReads !== undefined) {
-		fill("defaultReads", ["defaultReads"], override.defaultReads === false ? undefined : [...override.defaultReads]);
-	}
-	if (override.model !== undefined && !agentHasFrontmatterField(agent, "model")) {
-		const target = mutable();
-		if (override.model === false) delete target.model; else target.model = override.model;
-		delete target.modelSource;
-		anyFilled = true;
-	}
-	if (override.defaultProvider !== undefined) {
-		fill("modelProvider", ["modelProvider", "defaultProvider"], override.defaultProvider === false ? undefined : override.defaultProvider);
-	}
-	if (override.fallbackModels !== undefined) {
-		fill(
-			"fallbackModels",
-			["fallbackModels"],
-			override.fallbackModels === false ? undefined : [...override.fallbackModels],
-		);
-	}
-	if (override.fast !== undefined) {
-		fill("fast", ["fast"], override.fast);
-	}
-	if (override.thinking !== undefined) {
-		fill("thinking", ["thinking"], override.thinking === false ? undefined : override.thinking);
-	}
-	if (override.systemPromptMode !== undefined) {
-		fill("systemPromptMode", ["systemPromptMode"], override.systemPromptMode);
-	}
-	if (override.inheritProjectContext !== undefined) {
-		fill("inheritProjectContext", ["inheritProjectContext"], override.inheritProjectContext);
-	}
-	if (override.inheritGlobalContext !== undefined) {
-		fill("inheritGlobalContext", ["inheritGlobalContext"], override.inheritGlobalContext);
-	}
-	if (override.inheritSkills !== undefined) {
-		fill("inheritSkills", ["inheritSkills"], override.inheritSkills);
-	}
-	if (override.defaultContext !== undefined) {
-		fill("defaultContext", ["defaultContext"], override.defaultContext === false ? undefined : override.defaultContext);
-	}
-	if (override.acceptanceRole !== undefined) {
-		fill("acceptanceRole", ["acceptanceRole"], override.acceptanceRole === false ? undefined : override.acceptanceRole);
-	}
-	if (override.disabled !== undefined) {
-		// Custom agent files cannot set `disabled`, so project overrides replace user overrides.
-		mutable().disabled = override.disabled;
-		anyFilled = true;
-	}
-	if (override.skills !== undefined) {
-		fill("skills", ["skill", "skills"], override.skills === false ? undefined : [...override.skills]);
-	}
-	if (override.tools !== undefined && !agentHasFrontmatterField(agent, "tools")) {
-		applyToolsOverride(mutable(), override.tools);
-		anyFilled = true;
-	}
-	if (override.excludeTools !== undefined) {
-		fill("excludeTools", ["excludeTools"], override.excludeTools === false ? undefined : [...override.excludeTools]);
-	}
-	if (override.allowNestedSubagents !== undefined) {
-		fill("allowNestedSubagents", ["allowNestedSubagents"], override.allowNestedSubagents);
-	}
-	if (override.extensions !== undefined) {
-		fill("extensions", ["extensions"], override.extensions === false ? undefined : [...override.extensions]);
-	}
-	if (override.subagentOnlyExtensions !== undefined) {
-		fill(
-			"subagentOnlyExtensions",
-			["subagentOnlyExtensions"],
-			override.subagentOnlyExtensions === false ? undefined : [...override.subagentOnlyExtensions],
-		);
-	}
-	if (override.mutationTools !== undefined) {
-		fill("mutationTools", ["mutationTools"], override.mutationTools === false ? undefined : [...override.mutationTools]);
-	}
-	if (override.completionGuard !== undefined) {
-		fill("completionGuard", ["completionGuard"], override.completionGuard);
-	}
-	if (override.toolBudget !== undefined) {
-		fill("toolBudget", ["toolBudget"], override.toolBudget === false ? undefined : override.toolBudget);
-	}
-
-	if (!anyFilled || !next) return agent;
-	next.override = { ...meta, base: agent.override?.base ?? cloneOverrideBase(agent) };
+	const next = applyBuiltinOverride(agent, override, meta);
 	const frontmatterFields = agentFrontmatterFields.get(agent);
 	if (frontmatterFields) agentFrontmatterFields.set(next, frontmatterFields);
 	return next;

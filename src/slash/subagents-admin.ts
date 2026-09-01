@@ -2,7 +2,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
-	agentHasFrontmatterField,
 	discoverAgentsAll,
 	EXTRA_AGENT_DIRS_ENV,
 	frontmatterNameForConfig,
@@ -116,18 +115,15 @@ type AgentSelection =
 
 function savesThroughSettings(agent: AgentConfig, field: EditableOverrideField): boolean {
 	if (agent.source === "builtin") return true;
-	if (agent.source === "package") {
-		if (field === "systemPrompt") return false;
-		return !agentHasFrontmatterField(agent, field);
-	}
+	if (agent.source === "package") return true;
 	if (!agent.override) return false;
+	if (agent.override.fields?.includes(field) === true) return true;
 	// A lower-scope override can flow into a higher-scope custom agent with the
 	// same name. Persist that agent's edits in its own frontmatter instead of
 	// rewriting the shared lower-scope override used by another agent.
 	if (agent.source !== agent.override.scope) return false;
-	// Custom-agent overrides fill only fields absent from frontmatter. Compare the
-	// effective value with the pre-override base so an override on one field does
-	// not redirect edits to an unrelated frontmatter-owned field.
+	// Compare the effective value with the pre-override base so an override on one
+	// field does not redirect edits to an unrelated frontmatter-owned field.
 	return agent[field] !== agent.override.base[field];
 }
 
@@ -256,10 +252,12 @@ async function chooseThinking(ctx: ExtensionContext, agent: AgentConfig): Promis
 }
 
 async function chooseOverrideScope(ctx: ExtensionContext, agent: AgentConfig): Promise<"user" | "project" | undefined> {
-	if (agent.override?.scope) return agent.override.scope;
 	const d = discoverAgentsAll(ctx.cwd);
+	if (agent.override?.scope) {
+		return agent.source === "project" && agent.override.scope === "user" && d.projectSettingsPath ? "project" : agent.override.scope;
+	}
 	if (!d.projectSettingsPath || !ctx.hasUI) return "user";
-	const choice = await ctx.ui.select(`Save builtin override for ${agent.name}`, ["user", "project"]);
+	const choice = await ctx.ui.select(`Save subagent override for ${agent.name}`, ["user", "project"]);
 	return choice === "user" || choice === "project" ? choice : undefined;
 }
 
@@ -271,6 +269,18 @@ function persistSettingsField(
 	value: string | undefined,
 ): { filePath: string; overridden: boolean } {
 	const base = agent.override?.base ?? buildBuiltinBase(agent);
+	const shadowsLowerScope = scope === "project" && agent.override?.fieldScopes?.[field]?.includes("user") === true;
+	if (shadowsLowerScope && (value === undefined || value === base[field])) {
+		const filePath = field === "model"
+			? mergeBuiltinAgentOverride(ctx.cwd, agent.name, scope, { model: value ?? base.model ?? false })
+			: field === "thinking"
+				? mergeBuiltinAgentOverride(ctx.cwd, agent.name, scope, { thinking: value ?? (base.thinking === false ? "off" : base.thinking) ?? false })
+				: mergeBuiltinAgentOverride(ctx.cwd, agent.name, scope, { systemPrompt: value ?? base.systemPrompt });
+		return {
+			filePath,
+			overridden: true,
+		};
+	}
 	if (value === undefined || value === base[field]) {
 		return {
 			filePath: removeBuiltinAgentOverrideFields(ctx.cwd, agent.name, scope, [field]).path,
@@ -358,13 +368,15 @@ async function saveAgentSystemPrompt(ctx: ExtensionContext, agent: AgentConfig, 
 }
 
 async function editSystemPrompt(ctx: ExtensionContext, agent: AgentConfig): Promise<string | null> {
-	if (!savesThroughSettings(agent, "systemPrompt")) {
+	const saveThroughSettings = savesThroughSettings(agent, "systemPrompt");
+	if (!saveThroughSettings) {
 		const readOnlyMessage = readOnlyAgentMessage(agent, "systemPrompt");
 		if (readOnlyMessage) return readOnlyMessage;
 	}
 	const edited = await ctx.ui.editor(`Edit '${agent.name}' system prompt`, agent.systemPrompt ?? "");
 	if (edited === undefined) return null;
-	if (edited.replace(/\s+$/, "") === (agent.systemPrompt ?? "").replace(/\s+$/, "")) {
+	const projectOwnsLowerScopeOverride = agent.source === "project" && agent.override?.scope === "user" && discoverAgentsAll(ctx.cwd).projectSettingsPath;
+	if (edited.replace(/\s+$/, "") === (agent.systemPrompt ?? "").replace(/\s+$/, "") && !(saveThroughSettings && projectOwnsLowerScopeOverride)) {
 		return `System prompt for '${agent.name}' left unchanged.`;
 	}
 	return saveAgentSystemPrompt(ctx, agent, edited);
