@@ -47,6 +47,7 @@ import {
 	buildPiArgs,
 	projectLaunchResolvedChildExtensions,
 	resolvePiLaunchToolPlan,
+	shouldDeliverTaskViaFile,
 } from "../../src/runs/shared/pi-args.ts";
 
 const originalEnv = {
@@ -693,7 +694,7 @@ describe("buildPiArgs task delivery", () => {
 		return ref ? ref.slice(1) : undefined;
 	}
 
-	it("delivers short tasks inline by default", () => {
+	it("delivers short tasks through the platform default", () => {
 		const { args } = buildPiArgs({
 			baseArgs: ["-p"],
 			task: "hello",
@@ -702,8 +703,13 @@ describe("buildPiArgs task delivery", () => {
 			inheritSkills: false,
 		});
 
-		assert.ok(args.includes("Task: hello"));
-		assert.equal(taskFileFromArgs(args), undefined);
+		if (process.platform === "darwin") {
+			assert.ok(taskFileFromArgs(args), "expected an @task.md argv reference on macOS");
+			assert.ok(!args.includes("Task: hello"));
+		} else {
+			assert.ok(args.includes("Task: hello"));
+			assert.equal(taskFileFromArgs(args), undefined);
+		}
 	});
 
 	it("delivers tasks over the argv limit via a temp file by default", () => {
@@ -737,7 +743,6 @@ describe("buildPiArgs task delivery", () => {
 		assert.ok(!args.includes("Task: hello"));
 	});
 
-
 	it("falls back to auto when PI_SUBAGENT_TASK_DELIVERY is invalid", () => {
 		process.env.PI_SUBAGENT_TASK_DELIVERY = "carrier-pigeon";
 		const { args } = buildPiArgs({
@@ -764,6 +769,13 @@ describe("buildPiArgs task delivery", () => {
 
 		assert.ok(taskFileFromArgs(args), "expected an @task.md argv reference");
 		assert.ok(!args.includes("Task: hello"));
+	});
+
+	it("selects file delivery for macOS or over-limit tasks", () => {
+		assert.equal(shouldDeliverTaskViaFile("short", "auto", "darwin"), true);
+		assert.equal(shouldDeliverTaskViaFile("short", "auto", "linux"), false);
+		assert.equal(shouldDeliverTaskViaFile("short", "auto", "win32"), false);
+		assert.equal(shouldDeliverTaskViaFile("x".repeat(8001), "auto", "linux"), true);
 	});
 });
 
@@ -1340,7 +1352,8 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.deepEqual(requestedNames, [serverName, serverName]);
 		assert.equal(serverLaunch.args[serverLaunch.args.indexOf("--tools") + 1], "read,runtime-github_search_repositories,runtime-github_create_issue");
 		assert.equal(toolLaunch.args[toolLaunch.args.indexOf("--tools") + 1], "read,runtime-github_search_repositories");
-		assert.ok(serverLaunch.args.indexOf("--mcp-config") < serverLaunch.args.indexOf("Task: hello"));
+		const serverTaskArgIndex = serverLaunch.args.findIndex((arg) => arg === "Task: hello" || arg.endsWith("task.md"));
+		assert.ok(serverLaunch.args.indexOf("--mcp-config") < serverTaskArgIndex);
 		for (const launch of [serverLaunch, toolLaunch]) {
 			const configPath = launch.args[launch.args.indexOf("--mcp-config") + 1];
 			assert.ok(configPath);

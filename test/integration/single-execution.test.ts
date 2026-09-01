@@ -5953,7 +5953,12 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.finalOutput, "Recovered via file delivery");
 		assert.equal(mockPi.callCount(), 2);
 		const [firstArgs, retryArgs] = readAllCallArgs();
-		assert.ok(firstArgs?.includes("Task: Do work"), "first attempt should deliver the task inline");
+		const firstTaskArg = firstArgs?.find((arg) => arg === "Task: Do work" || arg.endsWith("task.md"));
+		if (process.platform === "darwin") {
+			assert.ok(firstTaskArg?.startsWith("@"), "first attempt should deliver the task through a file on macOS");
+		} else {
+			assert.equal(firstTaskArg, "Task: Do work", "first attempt should deliver the task inline");
+		}
 		const retryTaskArg = retryArgs?.at(-1) ?? "";
 		assert.ok(
 			retryTaskArg.startsWith("@") && retryTaskArg.endsWith("task.md"),

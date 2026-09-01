@@ -56,7 +56,7 @@ afterEach(() => {
 function readPromptFile(result: { tempDir?: string }): string {
 	assert.ok(result.tempDir, "expected a temp dir from buildPiArgs");
 	const files = fs.readdirSync(result.tempDir);
-	const promptFile = files.find((f: string) => f.endsWith(".md"));
+	const promptFile = files.find((f: string) => f.endsWith(".md") && f !== "task.md");
 	assert.ok(promptFile, "expected a prompt.md file");
 	return fs.readFileSync(path.join(result.tempDir, promptFile), "utf-8");
 }

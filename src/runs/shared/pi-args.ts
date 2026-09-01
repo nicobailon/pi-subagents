@@ -93,11 +93,12 @@ export function resolveSubagentTaskDelivery(
 		: "auto";
 }
 
-function shouldDeliverTaskViaFile(
+export function shouldDeliverTaskViaFile(
 	task: string,
 	delivery: SubagentTaskDelivery,
+	platform: NodeJS.Platform = process.platform,
 ): boolean {
-	return delivery === "file" || task.length > TASK_ARG_LIMIT;
+	return delivery === "file" || platform === "darwin" || task.length > TASK_ARG_LIMIT;
 }
 const MAX_LAUNCH_RESOLVED_EXTENSION_IDS = 32;
 const PROMPT_RUNTIME_EXTENSION_PATH = path.join(
