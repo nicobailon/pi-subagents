@@ -846,6 +846,11 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	);
 	env[RUNTIME_EXTENSION_ACK_PATH_ENV] = runtimeAcknowledgedExtensionsPath;
 	let toolDiagnosticPath: string | undefined;
+	// Child launch environments are merged over process.env. Explicitly clear
+	// parent-scoped diagnostics so a nested zero-tool child cannot validate
+	// against, or overwrite, its parent's required-tool report.
+	env[REQUIRED_CHILD_TOOLS_ENV] = undefined;
+	env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV] = undefined;
 	if (toolPlan.requiredChildTools.length > 0) {
 		if (!tempDir)
 			tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));

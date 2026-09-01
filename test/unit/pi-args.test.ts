@@ -1045,6 +1045,27 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.equal(env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV], toolDiagnosticPath);
 	});
 
+	it("clears inherited tool diagnostics for nested zero-tool children", () => {
+		const inheritedDiagnosticPath = "/tmp/parent-tool-diagnostic.json";
+		const { env, toolDiagnosticPath } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "repair retained output",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: [],
+		});
+		const spawnEnv = {
+			[REQUIRED_CHILD_TOOLS_ENV]: JSON.stringify(["read", "bash"]),
+			[CHILD_TOOL_DIAGNOSTIC_PATH_ENV]: inheritedDiagnosticPath,
+			...env,
+		};
+
+		assert.equal(toolDiagnosticPath, undefined);
+		assert.equal(spawnEnv[REQUIRED_CHILD_TOOLS_ENV], undefined);
+		assert.equal(spawnEnv[CHILD_TOOL_DIAGNOSTIC_PATH_ENV], undefined);
+	});
+
 	it("strips the legacy supervisor pairing from requirements", () => {
 		const { args, env } = buildPiArgs({
 			baseArgs: ["-p"],
