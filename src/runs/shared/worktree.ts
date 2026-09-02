@@ -455,6 +455,20 @@ function resolveWorktreeDedicatedRoot(configuredBaseDir: string | undefined, rep
 }
 
 /**
+ * Creates the project folder (parents included) so `git worktree add` can create
+ * the leaf inside it. Must only run after `assertSafeWorktreeLocation` accepted
+ * the planned leaf — an unsafe base must never be materialized on disk.
+ */
+function ensureProjectWorktreeDir(dedicatedRoot: string, repoRoot: string): void {
+	try {
+		fs.mkdirSync(path.join(dedicatedRoot, path.basename(repoRoot)), { recursive: true });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`failed to create worktree base directory ${dedicatedRoot}: ${message}`);
+	}
+}
+
+/**
  * Creates the project folder (parents included) so `git worktree add` can
  * create the leaf inside it. Call only after the planned location passes the
  * safety checks below.

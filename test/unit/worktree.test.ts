@@ -506,6 +506,30 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 		}
 	});
 
+	it("does not mkdir inside the checkout when rejecting unsafe locations", () => {
+		const repoDir = createRepo("pi-worktree-no-mkdir-inside-");
+		try {
+			assert.throws(
+				() => createWorktrees(repoDir, "inside-self", 1, { baseDir: repoDir }),
+				/inside the repository/i,
+			);
+			assert.throws(
+				() => resolveExpectedWorktreeAgentCwd(repoDir, "inside-self", 0, repoDir),
+				/inside the repository/i,
+			);
+			assert.equal(fs.existsSync(path.join(repoDir, path.basename(repoDir))), false);
+
+			assert.throws(
+				() => createWorktrees(repoDir, "rel-worktrees", 1, { baseDir: "worktrees" }),
+				/inside the repository/i,
+			);
+			assert.equal(fs.existsSync(path.join(repoDir, "worktrees")), false);
+			assert.equal(fs.existsSync(path.join(repoDir, "worktrees", path.basename(repoDir))), false);
+		} finally {
+			cleanupRepo(repoDir);
+		}
+	});
+
 	it("createWorktrees rejects dirty repositories", () => {
 		const repoDir = createRepo("pi-worktree-dirty-");
 		try {
