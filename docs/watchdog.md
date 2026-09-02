@@ -143,7 +143,7 @@ Watchdog blockers:
 
 The acceptance ledger carries `watchdog-blocker: failed — Unresolved watchdog blocker: Claims tests passed without running them`. If the child did follow the blocker with a turn, the line reads `(addressed)` and the check passes. A `(stalemate)` blocker stays unresolved even with a turn after it. See [Findings reach the orchestrator](#findings-reach-the-orchestrator) for the data shapes.
 
-### Launch rules
+### Launch rule violations
 
 Checked before any child starts; see [Launch rules](#launch-rules).
 
