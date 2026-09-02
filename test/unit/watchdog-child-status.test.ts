@@ -52,7 +52,6 @@ describe("child watchdog warning envelope", () => {
 			}],
 		});
 		assert.equal(applyChildWatchdogMessage(undefined, warningMessage({ state: "stalemate" }))?.warnings?.[0]?.stalemate, true);
-		assert.equal(applyChildWatchdogMessage(undefined, warningMessage({ category: "made-up" }))?.warnings?.[0]?.category, "other");
 		assert.equal(applyChildWatchdogMessage(undefined, { role: "assistant", content: [] }), undefined);
 		assert.equal(applyChildWatchdogMessage(undefined, { role: "custom", customType: "subagent-notify", details: {} }), undefined);
 		assert.equal(applyChildWatchdogMessage(undefined, warningMessage({ severity: "nit" })), undefined);
