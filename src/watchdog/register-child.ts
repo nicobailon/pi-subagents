@@ -125,6 +125,7 @@ export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[
 	});
 	onRuntimeEvent("session_shutdown", () => {
 		currentContext = undefined;
+		diffBaseline = undefined;
 		runtime.dispose();
 		emitStatus("idle");
 	});

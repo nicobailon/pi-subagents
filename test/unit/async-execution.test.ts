@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -60,6 +62,32 @@ describe("async runner execution", () => {
 		assert.ok("error" in result);
 		assert.ok(result.error.startsWith(`Unknown agent: missing\nEffective cwd: ${path.resolve(ctx.cwd, override)}`));
 		assert.doesNotMatch(result.error, /arbitrary \(project\)/);
+	});
+
+	it("loads launch rules from the resolved async step cwd", () => {
+		const repo = fs.mkdtempSync(path.join(os.tmpdir(), "async-step-rules-"));
+		const app = path.join(repo, "packages", "app");
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = path.join(repo, "agent-home");
+		try {
+			fs.mkdirSync(path.join(app, ".pi"), { recursive: true });
+			fs.writeFileSync(path.join(app, ".pi", "settings.json"), JSON.stringify({ subagents: { watchdog: { rules: { action: "block", roleModels: { worker: { deny: ["mock/*"] } } } } } }, null, 2), "utf-8");
+			const result = buildAsyncRunnerSteps("async-step-rules", {
+				chain: [{ agent: "worker", task: "Do work", cwd: "packages/app" }],
+				agents: [{ ...agent("worker"), model: "mock/denied" }],
+				ctx: { ...ctx, cwd: repo },
+				cwd: repo,
+				asyncDir: path.join(repo, ".pi", "subagents", "async-step-rules"),
+				maxSubagentDepth: 1,
+			});
+
+			assert.ok("error" in result);
+			assert.match(result.error, /Launch blocked by subagents\.watchdog\.rules: Agent 'worker' was launched with denied model 'mock\/denied'/);
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			fs.rmSync(repo, { recursive: true, force: true });
+		}
 	});
 
 	it("formats interactive yield and headless auto-drain guidance separately", () => {

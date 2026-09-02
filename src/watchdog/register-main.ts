@@ -444,6 +444,7 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 	pi.on("session_compact", () => runtime.reset("session compact", { clearScope: true }));
 	pi.on("session_shutdown", () => {
 		currentContext = undefined;
+		diffBaseline = undefined;
 		runtime.dispose();
 	});
 

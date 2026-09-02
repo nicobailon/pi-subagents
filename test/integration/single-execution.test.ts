@@ -8103,7 +8103,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			const settingsPath = path.join(tempDir, ".pi", "settings.json");
 			const writeRules = (action: "warn" | "block") => {
 				fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-				fs.writeFileSync(settingsPath, JSON.stringify({ subagents: { watchdog: { rules: { action, roleModels: { echo: { deny: ["mock/*"], note: "echo must not use mock models" } } } } } }, null, 2), "utf-8");
+				fs.writeFileSync(settingsPath, JSON.stringify({ subagents: { watchdog: { rules: { action, roleModels: { echo: { deny: ["mock/*"], note: "echo must not use mock models" } }, forbidAfterLaunch: ["bash"] } } } }, null, 2), "utf-8");
 			};
 			const sent: unknown[] = [];
 			const watchdog = new MainWatchdogRuntime({ cwd: tempDir, displayWarning: (details) => { sent.push(details); } });
@@ -8126,7 +8126,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.equal(blocked.isError, true);
 			assert.match(blocked.content[0]?.text ?? "", /Launch blocked by subagents\.watchdog\.rules: Agent 'echo' was launched with denied model 'mock\/test-model'/);
 			assert.equal(mockPi.callCount(), callsBefore, "a blocked launch never starts the child");
+			assert.equal(watchdog.handleToolCall({ toolName: "bash" }, { cwd: tempDir }), undefined);
 			assert.equal(sent.length, 0);
+
+			const workflowBlocked = await executor.execute("rules-workflow-block", { async: false, workflowScript: `return runs.run("one", { agent: "echo", task: "Do work", model: "mock/test-model" });` }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(workflowBlocked.isError, true);
+			assert.match(workflowBlocked.content[0]?.text ?? "", /Launch blocked by subagents\.watchdog\.rules: Agent 'echo' was launched with denied model 'mock\/test-model'/);
+			assert.equal(mockPi.callCount(), callsBefore, "a blocked workflow child never starts the child");
+			assert.equal(watchdog.handleToolCall({ toolName: "bash" }, { cwd: tempDir }), undefined);
 
 			writeRules("warn");
 			mockPi.onCall({ output: "warned but ran" });
@@ -8136,6 +8143,24 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.equal(sent.length, 1);
 			assert.match((sent[0] as { summary?: string }).summary ?? "", /denied model 'mock\/test-model'/);
 			assert.match((sent[0] as { evidence?: string }).evidence ?? "", /echo must not use mock models/);
+			writeRules("block");
+			assert.match(watchdog.handleToolCall({ toolName: "bash" }, { cwd: tempDir })?.reason ?? "", /after a subagent launch/);
+		});
+	});
+
+	it("loads workflow launch rules from the resolved workflow cwd", async () => {
+		await withIsolatedWatchdogSettings(tempDir, async () => {
+			const workflowCwd = path.join(tempDir, "packages", "app");
+			const settingsPath = path.join(workflowCwd, ".pi", "settings.json");
+			fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+			fs.writeFileSync(settingsPath, JSON.stringify({ subagents: { watchdog: { rules: { action: "block", minStages: { echo: 2 } } } } }, null, 2), "utf-8");
+			const executor = makeExecutor([makeAgent("echo")]);
+
+			const blocked = await executor.execute("workflow-rules-cwd", { async: false, cwd: "packages/app", workflowScript: `return runs.run("one", { agent: "echo", task: "Do work" });` }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+
+			assert.equal(blocked.isError, true);
+			assert.match(blocked.content[0]?.text ?? "", /Launch blocked by subagents\.watchdog\.rules: Agent 'echo' is launched 1 time; the configured minimum is 2\./);
+			assert.equal(mockPi.callCount(), 0);
 		});
 	});
 

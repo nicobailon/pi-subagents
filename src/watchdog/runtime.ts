@@ -163,7 +163,6 @@ export class MainWatchdogRuntime {
 	private userPrompt: string | undefined;
 	private waiters: Waiter[] = [];
 	private lastWarning: WatchdogWarningDetails | undefined;
-	private displayedWarningSequence = 0;
 	private lastError: string | undefined;
 	private lastReviewInputSignature: string | undefined;
 	private turnStartChangeSignature: WatchdogRepoChangeSignature | undefined;
@@ -469,7 +468,6 @@ export class MainWatchdogRuntime {
 		this.ruleWarningsThisRun.add(violation.summary);
 		const details = normalizeWatchdogWarningDetails(ruleViolationWarning(violation), { state: "displayed", displayedAt: new Date().toISOString() });
 		this.lastWarning = details;
-		this.displayedWarningSequence++;
 		this.displayWarning?.(details, { deliverAs: "steer" });
 		return true;
 	}
@@ -674,7 +672,6 @@ export class MainWatchdogRuntime {
 		};
 		if (correction) {
 			this.lastWarning = details;
-			this.displayedWarningSequence++;
 			this.displayWarning?.(details, { deliverAs: "steer" });
 			return;
 		}
@@ -698,7 +695,6 @@ export class MainWatchdogRuntime {
 			: details;
 		this.stalemate = stalemate;
 		this.lastWarning = delivered;
-		this.displayedWarningSequence++;
 		this.displayWarning?.(delivered, stalemate ? { deliverAs: "hold" } : undefined);
 	}
 

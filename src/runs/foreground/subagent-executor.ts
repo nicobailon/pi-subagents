@@ -3332,6 +3332,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			lane: params.lane,
 			workflowAwaitAsync: params.workflowAwaitAsync,
 		}));
+		if (asyncResult.isError !== true) deps.watchdog?.noteLaunch();
 		return waitForWorkflowAsyncSingleResult(params, asyncResult, { runId: id, task: params.task ?? "", signal: data.signal, state: deps.state, kill: deps.kill });
 	}
 
@@ -3821,6 +3822,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		? new Promise<Awaited<ReturnType<typeof runSync>>>((resolve) => { resolveDetachedWorkflowChild = resolve; })
 		: undefined;
 	try {
+		deps.watchdog?.noteLaunch();
 		const launched = await runSync(ctx.cwd, agents, params.agent!, task, compactOptional<Parameters<typeof runSync>[4]>({
 			permissions: deps.config.permissions,
 			runtimeSnapshotHost: deps.pi,
@@ -4788,13 +4790,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			};
 		}
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
-		if (!normalizedAction) {
-			deps.watchdog?.noteLaunch();
-			if (typeof requestParams.workflowScript === "string") {
-				const stageRuleError = applyWorkflowStageRules(deps, requestParams.cwd ?? ctx.cwd, requestParams.workflowScript);
-				if (stageRuleError) return buildRequestedModeError(requestParams, stageRuleError);
-			}
-		}
 		if (normalizedAction === "resume" && requestParams.extensionBindings !== undefined) return buildRequestedModeError(requestParams, "extensionBindings is not supported with action='resume'; resume uses the original retained child binding.");
 		let workflowResource: { permit: WorkflowResourcePermit; provenance: WorkflowResourceProvenanceV1; authority: WorkflowResourceAuthority } | undefined;
 		if (workflowResourcePermit) {
@@ -4829,6 +4824,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
 			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);
 			const workflowCwd = resolveRequestedCwd(parentCwd, requestParams.cwd);
+			const stageRuleError = applyWorkflowStageRules(deps, workflowCwd, requestParams.workflowScript);
+			if (stageRuleError) return buildRequestedModeError(requestParams, stageRuleError);
 			const discoverWorkflowAgents = (cwd: string, scope: AgentScope) => deps.discoverAgents(cwd, scope, workflowParentModel?.provider);
 			const workflowAgents = discoverWorkflowAgents(workflowCwd, resolveExecutionAgentScope(requestParams.agentScope)).agents;
 			const workflowArtifactConfig: ArtifactConfig = omitUndefinedProperties({

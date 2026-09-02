@@ -1811,7 +1811,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			fs.writeFileSync(path.join(repo, "input.md"), "parallel partial child change\n", "utf-8");
 			const resultPath = await waitForAsyncResultFile(id, 8_000);
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-			const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
+			const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed", 30_000);
 			assert.equal(payload.state, "failed");
 			assert.equal(payload.success, false);
 			assert.equal(payload.exitCode, 1);

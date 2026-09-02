@@ -940,7 +940,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
 			}
 		}
-		const launchRules = loadWatchdogLaunchRules(ctx.cwd);
+		const launchRules = loadWatchdogLaunchRules(stepCwd);
 		const ruleViolations = evaluateLaunchRules(launchRules, { agent: a.name, model: modelCandidates[0] ?? model });
 		if (ruleViolations.length) {
 			if (launchRules?.action === "block") throw new AsyncStartValidationError(`Launch blocked by subagents.watchdog.rules: ${ruleViolations.map((violation) => violation.summary).join(" ")}`);
