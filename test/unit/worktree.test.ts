@@ -37,11 +37,19 @@ function createRepo(prefix: string): string {
 	fs.writeFileSync(path.join(repoDir, "tracked.txt"), "initial\n", "utf-8");
 	git(repoDir, ["add", "-A"]);
 	git(repoDir, ["commit", "-m", "initial commit"]);
-	return repoDir;
+	// Keep the returned path identical to `git rev-parse --show-toplevel` (realpaths
+	// symlinked tmpdir prefixes on macOS) so absolute path assertions line up.
+	return fs.realpathSync(repoDir);
 }
 
 function cleanupRepo(repoDir: string): void {
 	try { fs.rmSync(repoDir, { recursive: true, force: true }); } catch {}
+}
+
+/** Removes only this repo's nested project folder; never the shared dedicated root. */
+function cleanupProjectWorktrees(repoDir: string, baseDir?: string): void {
+	const dedicatedRoot = baseDir ?? path.join(path.dirname(repoDir), "worktrees");
+	try { fs.rmSync(path.join(dedicatedRoot, path.basename(repoDir)), { recursive: true, force: true }); } catch {}
 }
 
 function createHookScript(_repoDir: string, fileName: string, source: string): string {
@@ -78,6 +86,7 @@ describe("worktree", () => {
 			}
 		} finally {
 			if (setup) cleanupWorktrees(setup);
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -100,6 +109,7 @@ describe("worktree", () => {
 			assert.equal(fs.existsSync(setup.worktrees[0]!.path), true);
 		} finally {
 			if (setup) cleanupWorktrees(setup);
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -241,6 +251,7 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 			assert.equal(setup.worktrees[0]!.agentCwd, path.join(setup.worktrees[0]!.path, "packages", "app"));
 		} finally {
 			if (setup) cleanupWorktrees(setup);
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -256,9 +267,17 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 		try {
 			assert.equal(
 				resolveExpectedWorktreeAgentCwd(nestedDir, "preview", 2),
-				path.join(os.tmpdir(), "pi-worktree-preview-2", "packages", "app"),
+				path.join(
+					path.dirname(repoDir),
+					"worktrees",
+					path.basename(repoDir),
+					"pi-worktree-preview-2",
+					"packages",
+					"app",
+				),
 			);
 		} finally {
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -269,12 +288,15 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 		let setup: WorktreeSetup | undefined;
 		try {
 			setup = createWorktrees(repoDir, "base-dir", 1, { baseDir });
-			assert.equal(setup.worktrees[0]!.path, path.join(baseDir, "pi-worktree-base-dir-0"));
+			assert.equal(
+				setup.worktrees[0]!.path,
+				path.join(baseDir, path.basename(repoDir), "pi-worktree-base-dir-0"),
+			);
 			assert.ok(fs.existsSync(baseDir), "configured base directory should be created");
 		} finally {
 			if (setup) cleanupWorktrees(setup);
 			cleanupRepo(repoDir);
-			fs.rmSync(path.dirname(baseDir), { recursive: true, force: true });
+			cleanupProjectWorktrees(repoDir, baseDir);
 		}
 	});
 
@@ -347,7 +369,10 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 		try {
 			process.env.PI_SUBAGENTS_WORKTREE_DIR = baseDir;
 			setup = createWorktrees(repoDir, "env-base-dir", 1);
-			assert.equal(setup.worktrees[0]!.path, path.join(baseDir, "pi-worktree-env-base-dir-0"));
+			assert.equal(
+				setup.worktrees[0]!.path,
+				path.join(baseDir, path.basename(repoDir), "pi-worktree-env-base-dir-0"),
+			);
 		} finally {
 			if (setup) cleanupWorktrees(setup);
 			if (previous === undefined) {
@@ -356,7 +381,76 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 				process.env.PI_SUBAGENTS_WORKTREE_DIR = previous;
 			}
 			cleanupRepo(repoDir);
-			fs.rmSync(baseDir, { recursive: true, force: true });
+			cleanupProjectWorktrees(repoDir, baseDir);
+		}
+	});
+
+	it("nests default worktrees under sibling worktrees project folder", () => {
+		const repoDir = fs.realpathSync(createRepo("pi-worktree-nest-default-"));
+		const previous = process.env.PI_SUBAGENTS_WORKTREE_DIR;
+		try {
+			delete process.env.PI_SUBAGENTS_WORKTREE_DIR;
+			const agentCwd = resolveExpectedWorktreeAgentCwd(repoDir, "nest-default", 0);
+			assert.equal(
+				agentCwd,
+				path.join(path.dirname(repoDir), "worktrees", path.basename(repoDir), "pi-worktree-nest-default-0"),
+			);
+			assert.notEqual(path.dirname(agentCwd), os.tmpdir());
+		} finally {
+			if (previous === undefined) delete process.env.PI_SUBAGENTS_WORKTREE_DIR;
+			else process.env.PI_SUBAGENTS_WORKTREE_DIR = previous;
+			fs.rmSync(path.join(path.dirname(repoDir), "worktrees", path.basename(repoDir)), { recursive: true, force: true });
+			cleanupRepo(repoDir);
+		}
+	});
+
+	it("nests configured base directory under project folder", () => {
+		const repoDir = fs.realpathSync(createRepo("pi-worktree-nest-base-dir-"));
+		const baseDir = path.join(os.tmpdir(), `pi-worktree-nest-base-${Date.now().toString(36)}`, "nested");
+		let setup: WorktreeSetup | undefined;
+		try {
+			setup = createWorktrees(repoDir, "nest-base-dir", 1, { baseDir });
+			const projectDir = path.join(baseDir, path.basename(repoDir));
+			assert.equal(setup.worktrees[0]!.path, path.join(projectDir, "pi-worktree-nest-base-dir-0"));
+			assert.ok(fs.existsSync(projectDir), "nested project directory should exist");
+			assert.ok(fs.existsSync(setup.worktrees[0]!.path), "nested worktree leaf should exist");
+		} finally {
+			if (setup) cleanupWorktrees(setup);
+			fs.rmSync(path.join(baseDir, path.basename(repoDir)), { recursive: true, force: true });
+			cleanupRepo(repoDir);
+		}
+	});
+
+	it("nests PI_SUBAGENTS_WORKTREE_DIR under project folder", () => {
+		const repoDir = fs.realpathSync(createRepo("pi-worktree-nest-env-"));
+		const previous = process.env.PI_SUBAGENTS_WORKTREE_DIR;
+		const baseDir = path.join(os.tmpdir(), `pi-worktree-nest-env-base-${Date.now().toString(36)}`);
+		let setup: WorktreeSetup | undefined;
+		try {
+			process.env.PI_SUBAGENTS_WORKTREE_DIR = baseDir;
+			setup = createWorktrees(repoDir, "nest-env", 1);
+			assert.equal(
+				setup.worktrees[0]!.path,
+				path.join(baseDir, path.basename(repoDir), "pi-worktree-nest-env-0"),
+			);
+		} finally {
+			if (setup) cleanupWorktrees(setup);
+			if (previous === undefined) delete process.env.PI_SUBAGENTS_WORKTREE_DIR;
+			else process.env.PI_SUBAGENTS_WORKTREE_DIR = previous;
+			fs.rmSync(path.join(baseDir, path.basename(repoDir)), { recursive: true, force: true });
+			cleanupRepo(repoDir);
+		}
+	});
+
+	it("rejects empty worktree base directory", () => {
+		const repoDir = createRepo("pi-worktree-empty-base-");
+		try {
+			assert.throws(
+				() => createWorktrees(repoDir, "empty-base", 1, { baseDir: "   " }),
+				/worktree base directory cannot be empty/,
+			);
+		} finally {
+			cleanupRepo(repoDir);
 		}
 	});
 
@@ -383,6 +477,7 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 			assert.equal(setup.worktrees.length, 1);
 		} finally {
 			if (setup) cleanupWorktrees(setup);
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -463,6 +558,7 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 			assert.match(summary, /Full patches:/);
 		} finally {
 			if (setup) cleanupWorktrees(setup, { kind: "setup-rollback" });
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -490,6 +586,7 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 			}
 		} finally {
 			if (setup) cleanupWorktrees(setup);
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -517,6 +614,7 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 			setup = undefined;
 		} finally {
 			if (setup) cleanupWorktrees(setup, { kind: "setup-rollback" });
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -541,6 +639,7 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 			setup = undefined;
 		} finally {
 			if (setup) cleanupWorktrees(setup, { kind: "setup-rollback" });
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -571,6 +670,7 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 			setup = undefined;
 		} finally {
 			if (setup) cleanupWorktrees(setup, { kind: "setup-rollback" });
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -594,6 +694,7 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 			assert.equal(fs.realpathSync(symlinkPath), fs.realpathSync(nodeModulesDir));
 		} finally {
 			if (setup) cleanupWorktrees(setup);
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -623,6 +724,7 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 			assert.equal(fs.lstatSync(path.join(setup.worktrees[0]!.path, "node_modules")).isSymbolicLink(), true);
 		} finally {
 			if (setup) cleanupWorktrees(setup, { kind: "setup-rollback" });
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -646,6 +748,7 @@ process.stdout.write(JSON.stringify({ syntheticPaths: [".venv"] }));
 			assert.ok(setup.worktrees[0]!.syntheticPaths.includes(".venv"));
 		} finally {
 			if (setup) cleanupWorktrees(setup);
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -666,6 +769,7 @@ process.stdout.write(JSON.stringify({ syntheticPaths: [] }));
 			assert.equal(setup.worktrees.length, 1);
 		} finally {
 			if (setup) cleanupWorktrees(setup);
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -696,6 +800,7 @@ process.stdout.write(JSON.stringify({ syntheticPaths: ["tracked.txt"] }));
 				/cannot mark tracked paths as synthetic/i,
 			);
 		} finally {
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -714,6 +819,7 @@ process.stdout.write(JSON.stringify({ syntheticPaths: [payload.worktreePath + "/
 				/synthetic path must be relative/i,
 			);
 		} finally {
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -740,6 +846,7 @@ process.stdout.write(JSON.stringify({ syntheticPaths: [".env.local"] }));
 			assert.doesNotMatch(patch, /\.env\.local/);
 		} finally {
 			if (setup) cleanupWorktrees(setup, { kind: "setup-rollback" });
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -764,6 +871,7 @@ process.stdout.write(JSON.stringify({ syntheticPaths: [] }));
 			const branchList = git(repoDir, ["branch", "--list", "pi-subagents/task-hook-cleanup-s0-t*"]);
 			assert.equal(branchList.trim(), "", "temporary branches should be cleaned up after setup failure");
 		} finally {
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});
@@ -786,6 +894,7 @@ setTimeout(() => {
 				/timed out/i,
 			);
 		} finally {
+			cleanupProjectWorktrees(repoDir);
 			cleanupRepo(repoDir);
 		}
 	});

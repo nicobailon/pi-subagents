@@ -428,31 +428,48 @@ export function shouldDeferWorktreeCwd(requested: WorktreeProvider | undefined, 
 	return (requested ?? DEFAULT_WORKTREE_PROVIDER) !== "native" && !hasConfiguredWorktreeBaseDir(baseDir);
 }
 
-function resolveWorktreeBaseDir(configuredBaseDir: string | undefined, repoRoot: string): string {
+/**
+ * Resolves the dedicated worktree root: the configured base directory or
+ * PI_SUBAGENTS_WORKTREE_DIR when set, otherwise a `worktrees` folder sibling
+ * to the repository. Managed leaves always nest one level deeper under the
+ * project folder (`basename(repoRoot)`).
+ */
+function resolveWorktreeDedicatedRoot(configuredBaseDir: string | undefined, repoRoot: string): string {
 	const rawBaseDir = configuredBaseDir ?? process.env.PI_SUBAGENTS_WORKTREE_DIR;
-	if (rawBaseDir === undefined || (configuredBaseDir === undefined && !rawBaseDir.trim())) return os.tmpdir();
+	let expanded: string;
+	if (rawBaseDir === undefined || (configuredBaseDir === undefined && !rawBaseDir.trim())) {
+		expanded = path.join(path.dirname(repoRoot), "worktrees");
+	} else {
+		const trimmed = rawBaseDir.trim();
+		if (!trimmed) throw new Error("worktree base directory cannot be empty");
 
-	const trimmed = rawBaseDir.trim();
-	if (!trimmed) throw new Error("worktree base directory cannot be empty");
-
-	const expanded = trimmed.startsWith("~/") ? path.join(os.homedir(), trimmed.slice(2)) : trimmed;
-	const resolved = path.isAbsolute(expanded) ? expanded : path.resolve(repoRoot, expanded);
+		const candidate = trimmed.startsWith("~/") ? path.join(os.homedir(), trimmed.slice(2)) : trimmed;
+		expanded = path.isAbsolute(candidate) ? candidate : path.resolve(repoRoot, candidate);
+	}
 	const extensionsDir = normalizeComparableCwd(path.join(getAgentDir(), "extensions"));
-	const relativeToExtensions = path.relative(extensionsDir, normalizeComparableCwd(resolved));
+	const relativeToExtensions = path.relative(extensionsDir, normalizeComparableCwd(expanded));
 	if (!relativeToExtensions || (!relativeToExtensions.startsWith(`..${path.sep}`) && relativeToExtensions !== ".." && !path.isAbsolute(relativeToExtensions))) {
 		throw new Error(`worktree base directory cannot be inside Pi extensions directory: ${extensionsDir}. Choose a directory outside it.`);
 	}
-	try {
-		fs.mkdirSync(resolved, { recursive: true });
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`failed to create worktree base directory ${resolved}: ${message}`);
-	}
-	return resolved;
+	return expanded;
 }
 
-function buildNativeWorktreePath(baseDir: string, runId: string, index: number): string {
-	return path.join(baseDir, `pi-worktree-${sanitizeWorktreePathComponent(runId, 120)}-${index}`);
+/**
+ * Creates the project folder (parents included) so `git worktree add` can
+ * create the leaf inside it. Call only after the planned location passes the
+ * safety checks below.
+ */
+function ensureProjectWorktreeDir(dedicatedRoot: string, repoRoot: string): void {
+	try {
+		fs.mkdirSync(path.join(dedicatedRoot, path.basename(repoRoot)), { recursive: true });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`failed to create worktree base directory ${dedicatedRoot}: ${message}`);
+	}
+}
+
+function buildNativeWorktreePath(dedicatedRoot: string, repoRoot: string, runId: string, index: number): string {
+	return path.join(dedicatedRoot, path.basename(repoRoot), `pi-worktree-${sanitizeWorktreePathComponent(runId, 120)}-${index}`);
 }
 
 function resolveRepoCwdRelative(cwd: string): string {
@@ -470,7 +487,9 @@ function resolveRepoCwdRelative(cwd: string): string {
 export function resolveExpectedWorktreeAgentCwd(cwd: string, runId: string, index: number, baseDir?: string): string {
 	const cwdRelative = resolveRepoCwdRelative(cwd);
 	const repoRoot = runGitChecked(cwd, ["rev-parse", "--show-toplevel"]).trim();
-	const worktreePath = buildNativeWorktreePath(resolveWorktreeBaseDir(baseDir, repoRoot), runId, index);
+	const dedicatedRoot = resolveWorktreeDedicatedRoot(baseDir, repoRoot);
+	const worktreePath = buildNativeWorktreePath(dedicatedRoot, repoRoot, runId, index);
+	assertSafeWorktreeLocation(worktreePath, repoRoot, dedicatedRoot);
 	return cwdRelative ? path.join(worktreePath, cwdRelative) : worktreePath;
 }
 
@@ -660,13 +679,15 @@ function createNativeWorktree(
 	baseCommit: string,
 	setupHook: ResolvedWorktreeSetupHook | undefined,
 	agent: string | undefined,
-	baseDir: string,
+	dedicatedRoot: string,
 	labels: Array<string | undefined> | undefined,
 	tasks: Array<string | undefined> | undefined,
 	branchPrefix: string | undefined,
 ): WorktreeInfo {
 	const naming = buildWorktreeNaming({ runId, index, agent, label: labels?.[index], task: tasks?.[index], branchPrefix });
-	const worktreePath = buildNativeWorktreePath(baseDir, runId, index);
+	const worktreePath = buildNativeWorktreePath(dedicatedRoot, toplevel, runId, index);
+	assertSafeWorktreeLocation(worktreePath, toplevel, dedicatedRoot);
+	ensureProjectWorktreeDir(dedicatedRoot, toplevel);
 	const add = runGit(toplevel, ["worktree", "add", worktreePath, "-b", naming.requestedBranch, baseCommit]);
 	if (add.status !== 0) {
 		const message = add.stderr.trim() || add.stdout.trim() || `failed to create worktree ${worktreePath}`;
@@ -1047,9 +1068,9 @@ export function createWorktrees(cwd: string, runId: string, count: number, optio
 	if (!Number.isSafeInteger(count) || count < 0) throw new Error("worktree count must be a non-negative integer");
 	const repo = resolveRepoState(cwd);
 	const setupHook = resolveWorktreeSetupHook(repo.toplevel, options?.setupHook);
-	let provider = resolveWorktreeProvider(options?.provider, options?.baseDir);
+	const provider = resolveWorktreeProvider(options?.provider, options?.baseDir);
 	const branchPrefix = normalizeWorktreeBranchPrefix(options?.branchPrefix);
-	let baseDir = provider === "native" ? resolveWorktreeBaseDir(options?.baseDir, repo.toplevel) : undefined;
+	const dedicatedRoot = provider === "native" ? resolveWorktreeDedicatedRoot(options?.baseDir, repo.toplevel) : undefined;
 	const worktrees: WorktreeInfo[] = [];
 
 	try {
@@ -1059,7 +1080,8 @@ export function createWorktrees(cwd: string, runId: string, count: number, optio
 				baseCommit: repo.baseCommit,
 				worktrees: Array.from({ length: count }, (_, index) => {
 					const naming = buildWorktreeNaming({ runId, index, agent: options?.agents?.[index], label: options?.labels?.[index], task: options?.tasks?.[index], branchPrefix });
-					const worktreePath = buildNativeWorktreePath(baseDir!, runId, index);
+					const worktreePath = buildNativeWorktreePath(dedicatedRoot!, repo.toplevel, runId, index);
+					assertSafeWorktreeLocation(worktreePath, repo.toplevel, dedicatedRoot!);
 					return {
 						path: worktreePath,
 						agentCwd: repo.cwdRelative ? path.join(worktreePath, repo.cwdRelative) : worktreePath,
@@ -1082,7 +1104,7 @@ export function createWorktrees(cwd: string, runId: string, count: number, optio
 					repo.baseCommit,
 					setupHook,
 					options?.agents?.[index],
-					baseDir!,
+					dedicatedRoot!,
 					options?.labels,
 					options?.tasks,
 					branchPrefix,
