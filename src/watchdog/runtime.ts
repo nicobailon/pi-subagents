@@ -9,7 +9,7 @@ import {
 	watchdogWarningFromLspDiagnostics,
 	type WatchdogLspDiagnosticsFunction,
 } from "./lsp-diagnostics.ts";
-import { evaluateToolRules, ruleViolationWarning, type WatchdogRuleViolation } from "./rules.ts";
+import { ruleViolationWarning, type WatchdogRuleViolation } from "./rules.ts";
 import { WatchdogScopeArtifact } from "./scope.ts";
 import { resolveWatchdogConfig } from "./settings.ts";
 import { formatWatchdogTurnDelta } from "./turn-delta.ts";
@@ -17,7 +17,6 @@ import {
 	type ResolvedWatchdogConfig,
 	type WatchdogEndpointConfig,
 	type WatchdogLspRuntimeSnapshot,
-	type WatchdogRulesConfig,
 	type WatchdogRuntimeStatus,
 	type WatchdogSettingsError,
 	type WatchdogSettingsResult,
@@ -175,7 +174,6 @@ export class MainWatchdogRuntime {
 	private lastBoundaryIdentity: string | undefined;
 	private boundaryRepeats = 0;
 	private stalemate = false;
-	private launchedThisRun = false;
 	private ruleWarningsThisRun = new Set<string>();
 	private midRunGeneration = 0;
 	private activeReviewAbortController: AbortController | undefined;
@@ -279,7 +277,6 @@ export class MainWatchdogRuntime {
 		this.observedRepoEditThisTurn = false;
 		this.toolResultsThisRun = 0;
 		this.midRunReviewing = false;
-		this.launchedThisRun = false;
 		this.ruleWarningsThisRun.clear();
 		if (options.clearLspLedger) {
 			this.lspLedger.reset();
@@ -436,30 +433,6 @@ export class MainWatchdogRuntime {
 			if (this.activeAgentEndAbortController === lspAbortController) this.activeAgentEndAbortController = undefined;
 			if (this.activeAgentEndId === agentEndId) this.activeAgentEndId = undefined;
 		}
-	}
-
-	/** Configured launch rules, independent of whether the model review is enabled. */
-	getRules(cwd = this.cwd): WatchdogRulesConfig | undefined {
-		this.refreshConfig(cwd);
-		return this.configResult.ok ? this.configResult.config.rules : undefined;
-	}
-
-	/** Called by the executor when a child launch starts in the current run. */
-	noteLaunch(): void {
-		this.launchedThisRun = true;
-	}
-
-	/** forbidAfterLaunch check for the main session's tool calls; returns a block result or undefined. */
-	handleToolCall(event: unknown, ctx: ContextLike): { block: true; reason: string } | undefined {
-		if (this.disposed || !this.launchedThisRun) return undefined;
-		const toolName = (event as { toolName?: unknown } | undefined)?.toolName;
-		if (typeof toolName !== "string") return undefined;
-		const rules = this.getRules(ctx.cwd);
-		const violation = evaluateToolRules(rules, { toolName });
-		if (!violation) return undefined;
-		if (rules?.action === "block") return { block: true, reason: `${violation.summary} ${violation.recommendedAction}` };
-		this.displayRuleWarning(violation);
-		return undefined;
 	}
 
 	/** Display a rule violation once per run as a steered concern. Returns false when already shown. */

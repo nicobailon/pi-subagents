@@ -118,7 +118,7 @@ Children also run the mid-run cadence reviews described under scope monitoring. 
 
 ### Seeing the diff
 
-Every reviewer, main or child, gets a read-only `watchdog_diff` tool alongside `read`, `grep`, `find`, and `ls`. It shows the repository diff against the commit that was current when the session started (tracked changes, later commits included, plus untracked files as additions), optionally narrowed to one path or reduced to per-file counts. A child in a managed worktree therefore sees exactly its own changes; a child in a shared cwd also sees changes that were already pending when it started. Sessions outside a git repository do not get the tool.
+Every reviewer, main or child, gets a read-only `watchdog_diff` tool alongside `read`, `grep`, `find`, and `ls`. It shows the repository diff against the commit that was current when the session started (tracked changes, later commits included) and lists untracked paths for the reviewer to open with `read`, optionally narrowed to one path or reduced to per-file counts. A child in a managed worktree therefore sees exactly its own changes; a child in a shared cwd also sees changes that were already pending when it started. Sessions outside a git repository do not get the tool.
 
 ### Findings reach the orchestrator
 
@@ -127,11 +127,10 @@ A child watchdog warning is displayed inside the child session and also lifted i
 - **Envelope.** Every warning is summarized on the result's `watchdog.warnings` (severity, category, summary, evidence, recommended action, `addressed`, `stalemate`), bounded to the last 20. `addressed` becomes true when a later assistant turn in the child followed the warning. Workflow status files carry the same list per step.
 - **Acceptance.** When a watchdog was attached, acceptance evaluation adds the runtime check `watchdog-blocker`. A blocker that no turn followed, or that reached stalemate, fails the check with `Unresolved watchdog blocker: <summary>`, which rejects explicit acceptance like any other failed check.
 - **Notify.** Completion notices list blockers after the result preview as `Watchdog blockers:` with one `- <agent>: <summary> (addressed | unaddressed | stalemate)` line each. Fleet and status views show a `wd:<n>` chip for unresolved blockers.
-- **Live.** A blocker is also posted to the parent immediately over the supervisor channel as a non-reply `watchdog_blocker` notice, so an orchestrator can react before the child exits. Concerns stay in the envelope only.
 
 ## Launch rules
 
-`subagents.watchdog.rules` holds deterministic checks that run before a child starts. They need no model call and apply whether or not the model review is enabled.
+`subagents.watchdog.rules` pins which models each role may run on. The check runs before a child starts, needs no model call, and applies whether or not the model review is enabled.
 
 ```json
 {
@@ -143,9 +142,7 @@ A child watchdog warning is displayed inside the child session and also lifted i
           "scout": { "allow": ["openai-codex/gpt-5.6-luna:max"] },
           "oracle": { "deny": ["*"], "note": "oracle is for hard questions only; ask before launching" },
           "worker": { "deny": ["openai-codex/gpt-5.6-sol:high"] }
-        },
-        "minStages": { "worker": 2 },
-        "forbidAfterLaunch": ["bg_wait"]
+        }
       }
     }
   }
@@ -153,9 +150,7 @@ A child watchdog warning is displayed inside the child session and also lifted i
 ```
 
 - `action`: `warn` (default) steers a watchdog concern into the orchestrator's transcript and lets the launch proceed; `block` returns a tool error and starts nothing.
-- `roleModels.<agent>.allow` / `deny`: globs (`*`, `?`) matched against the resolved `provider/id[:thinking]` and against the bare `provider/id`. `deny` wins. An optional `note` is included in the warning text. Evaluated for direct launches, workflow children, and chain or parallel steps.
-- `minStages.<agent>`: a workflowScript that launches `<agent>` at least once but fewer than N times, or a direct single launch of `<agent>`, triggers the rule. Literal `agent:` names in `runs.run` and `runs.all` are counted; dynamic agent expressions are not.
-- `forbidAfterLaunch`: tool names the orchestrator should not call after a subagent launch in the same run. Checked on every `tool_call`; `block` refuses the call with the rule as the reason.
+- `roleModels.<agent>.allow` / `deny`: globs (`*`, `?`) matched against the resolved `provider/id[:thinking]` and against the bare `provider/id`. `deny` wins. An optional `note` is included in the warning text. Evaluated for direct launches, workflow children, and chain or parallel steps. Rules are read from the settings visible at the launch cwd.
 
 `/subagents-watchdog status` reports the number of configured rules and the action.
 

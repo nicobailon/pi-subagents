@@ -148,8 +148,6 @@ export interface WatchdogRoleModelRule {
 export interface WatchdogRulesConfig {
 	action: "warn" | "block";
 	roleModels: Record<string, WatchdogRoleModelRule>;
-	minStages: Record<string, number>;
-	forbidAfterLaunch: string[];
 }
 
 export interface ResolvedWatchdogConfig {

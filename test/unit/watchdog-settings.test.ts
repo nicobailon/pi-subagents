@@ -196,8 +196,6 @@ describe("watchdog settings", () => {
 					rules: {
 						action: "block",
 						roleModels: { scout: { allow: ["openai-codex/gpt-5.6-luna:max"] }, oracle: { deny: ["*"], note: "ask first" } },
-						minStages: { worker: 2 },
-						forbidAfterLaunch: ["bg_wait"],
 					},
 				},
 			},
@@ -207,8 +205,6 @@ describe("watchdog settings", () => {
 		assert.deepEqual(result.config.rules, {
 			action: "block",
 			roleModels: { scout: { allow: ["openai-codex/gpt-5.6-luna:max"] }, oracle: { deny: ["*"], note: "ask first" } },
-			minStages: { worker: 2 },
-			forbidAfterLaunch: ["bg_wait"],
 		});
 		assert.equal(resolveWatchdogConfig(tempProject, { session: { enabled: true } }).config.rules?.action, "block");
 
@@ -216,8 +212,6 @@ describe("watchdog settings", () => {
 		assert.match(resolveWatchdogConfig(tempProject).errors[0]?.message ?? "", /invalid 'subagents\.watchdog\.rules\.action'; expected 'warn' or 'block'/);
 		writeJson(userSettingsPath(), { subagents: { watchdog: { rules: { roleModels: { scout: { allowed: ["x"] } } } } } });
 		assert.match(resolveWatchdogConfig(tempProject).errors[0]?.message ?? "", /unknown field 'subagents\.watchdog\.rules\.roleModels\.scout\.allowed'/);
-		writeJson(userSettingsPath(), { subagents: { watchdog: { rules: { minStages: { worker: 0 } } } } });
-		assert.match(resolveWatchdogConfig(tempProject).errors[0]?.message ?? "", /invalid 'subagents\.watchdog\.rules\.minStages\.worker'/);
 		writeJson(userSettingsPath(), { subagents: { watchdog: {} } });
 		assert.equal(resolveWatchdogConfig(tempProject).config.rules, undefined);
 	});

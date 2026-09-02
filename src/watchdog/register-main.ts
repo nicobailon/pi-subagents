@@ -427,10 +427,6 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 		rememberContext(ctx);
 		runtime.handleTurnEnd(event, ctx);
 	});
-	pi.on("tool_call", (event, ctx) => {
-		rememberContext(ctx);
-		return runtime.handleToolCall(event, ctx);
-	});
 	pi.on("tool_result", (_event, ctx) => {
 		rememberContext(ctx);
 		runtime.handleToolResult(ctx);

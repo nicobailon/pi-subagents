@@ -949,41 +949,6 @@ describe("main watchdog runtime", () => {
 		assert.equal(snapshot.stalemate, false);
 	});
 
-	it("enforces forbidAfterLaunch tool rules only after a launch in the current run", () => {
-		const delivered: Array<{ warning: WatchdogWarningDetails; options?: unknown }> = [];
-		let action: "warn" | "block" = "warn";
-		const runtime = new MainWatchdogRuntime({
-			resolveConfig: () => configResult({ ...enabledConfig({ main: { enabled: false } }), rules: { action, roleModels: {}, minStages: {}, forbidAfterLaunch: ["bg_wait"] } }),
-			displayWarning: (details, options) => { delivered.push({ warning: details, options }); },
-		});
-		const ctx = { cwd: "/tmp/project" };
-
-		runtime.handleBeforeAgentStart({ prompt: "Ship it." }, ctx);
-		assert.equal(runtime.handleToolCall({ toolName: "bg_wait" }, ctx), undefined, "no launch yet");
-		assert.equal(delivered.length, 0);
-
-		runtime.noteLaunch();
-		assert.equal(runtime.handleToolCall({ toolName: "read" }, ctx), undefined);
-		assert.equal(runtime.handleToolCall({ toolName: "bg_wait" }, ctx), undefined, "warn mode never blocks");
-		assert.equal(delivered.length, 1);
-		assert.deepEqual(delivered[0]?.options, { deliverAs: "steer" });
-		assert.equal(delivered[0]?.warning.category, "missed-constraint");
-		assert.match(delivered[0]?.warning.summary ?? "", /'bg_wait' was called after a subagent launch/);
-		runtime.handleToolCall({ toolName: "bg_wait" }, ctx);
-		assert.equal(delivered.length, 1, "identical rule warnings show once per run");
-
-		runtime.handleBeforeAgentStart({ prompt: "Next turn." }, ctx);
-		assert.equal(runtime.handleToolCall({ toolName: "bg_wait" }, ctx), undefined, "a new run resets the launch flag");
-		assert.equal(delivered.length, 1);
-
-		action = "block";
-		runtime.noteLaunch();
-		assert.deepEqual(runtime.handleToolCall({ toolName: "bg_wait" }, ctx), {
-			block: true,
-			reason: "Tool 'bg_wait' was called after a subagent launch in this run. Return control and let the completion notification wake this session instead.",
-		});
-	});
-
 	it("session on/off overrides explicit main enabled settings", () => {
 		const runtime = new MainWatchdogRuntime({
 			resolveConfig: (_cwd, options) => {

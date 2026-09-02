@@ -418,8 +418,6 @@ The child uses one dedicated coordination tool, `contact_supervisor`, with a `re
 - `interview_request` — structured input
 - `progress_update` — short non-blocking updates when a discovery changes the plan
 
-The parent can also receive `watchdog_blocker` notices with the same non-reply delivery. They are posted by an attached child watchdog, not by the child model, and carry the blocker text; see [Watchdog](watchdog.md#findings-reach-the-orchestrator).
-
 Children should not ask for clarification when the only conflict is review-only/no-edit versus progress-writing or artifact-writing instructions; no-edit wins.
 
 The parent replies with `subagent_supervisor({ action: "reply", replyTo, message })` or checks pending requests with `subagent_supervisor({ action: "pending" })`. Supervisor messages are scoped to the exact Pi session id that spawned the child. A second Pi session in the same repository does not receive those requests.

@@ -104,7 +104,7 @@ const WATCHDOG_FIELDS = new Set([
 	"lsp",
 	"rules",
 ]);
-const RULES_FIELDS = new Set(["action", "roleModels", "minStages", "forbidAfterLaunch"]);
+const RULES_FIELDS = new Set(["action", "roleModels"]);
 const ROLE_MODEL_RULE_FIELDS = new Set(["allow", "deny", "note"]);
 const GUIDANCE_FIELDS = new Set(["watchdogMd"]);
 const SCOPE_FIELDS = new Set(["enabled"]);
@@ -287,7 +287,7 @@ function parseRoleModelRule(value: unknown, field: string, meta: ParseMeta): Wat
 function parseRules(value: unknown, field: string, meta: ParseMeta): WatchdogRulesConfig {
 	const input = parseObject(value, field, meta);
 	assertKnownFields(input, RULES_FIELDS, field, meta);
-	const rules: WatchdogRulesConfig = { action: "warn", roleModels: {}, minStages: {}, forbidAfterLaunch: [] };
+	const rules: WatchdogRulesConfig = { action: "warn", roleModels: {} };
 	if ("action" in input) rules.action = parseEnum(input.action, `${field}.action`, meta, ["warn", "block"] as const);
 	if ("roleModels" in input) {
 		for (const [agent, rule] of Object.entries(parseObject(input.roleModels, `${field}.roleModels`, meta))) {
@@ -295,13 +295,6 @@ function parseRules(value: unknown, field: string, meta: ParseMeta): WatchdogRul
 			rules.roleModels[agent] = parseRoleModelRule(rule, `${field}.roleModels.${agent}`, meta);
 		}
 	}
-	if ("minStages" in input) {
-		for (const [agent, count] of Object.entries(parseObject(input.minStages, `${field}.minStages`, meta))) {
-			if (!agent.trim()) throw invalid(meta, `${field}.minStages`, "agent names to be non-empty");
-			rules.minStages[agent] = parseInteger(count, `${field}.minStages.${agent}`, meta, "a positive integer", (candidate) => candidate >= 1);
-		}
-	}
-	if ("forbidAfterLaunch" in input) rules.forbidAfterLaunch = parseStringList(input.forbidAfterLaunch, `${field}.forbidAfterLaunch`, meta);
 	return rules;
 }
 

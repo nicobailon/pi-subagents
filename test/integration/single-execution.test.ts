@@ -8103,7 +8103,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			const settingsPath = path.join(tempDir, ".pi", "settings.json");
 			const writeRules = (action: "warn" | "block") => {
 				fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-				fs.writeFileSync(settingsPath, JSON.stringify({ subagents: { watchdog: { rules: { action, roleModels: { echo: { deny: ["mock/*"], note: "echo must not use mock models" } }, forbidAfterLaunch: ["bash"] } } } }, null, 2), "utf-8");
+				fs.writeFileSync(settingsPath, JSON.stringify({ subagents: { watchdog: { rules: { action, roleModels: { echo: { deny: ["mock/*"], note: "echo must not use mock models" } } } } } }, null, 2), "utf-8");
 			};
 			const sent: unknown[] = [];
 			const watchdog = new MainWatchdogRuntime({ cwd: tempDir, displayWarning: (details) => { sent.push(details); } });
@@ -8126,16 +8126,22 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.equal(blocked.isError, true);
 			assert.match(blocked.content[0]?.text ?? "", /Launch blocked by subagents\.watchdog\.rules: Agent 'echo' was launched with denied model 'mock\/test-model'/);
 			assert.equal(mockPi.callCount(), callsBefore, "a blocked launch never starts the child");
-			assert.equal(watchdog.handleToolCall({ toolName: "bash" }, { cwd: tempDir }), undefined);
 			assert.equal(sent.length, 0);
 
 			const workflowBlocked = await executor.execute("rules-workflow-block", { async: false, workflowScript: `return runs.run("one", { agent: "echo", task: "Do work", model: "mock/test-model" });` }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.equal(workflowBlocked.isError, true);
 			assert.match(workflowBlocked.content[0]?.text ?? "", /Launch blocked by subagents\.watchdog\.rules: Agent 'echo' was launched with denied model 'mock\/test-model'/);
 			assert.equal(mockPi.callCount(), callsBefore, "a blocked workflow child never starts the child");
-			assert.equal(watchdog.handleToolCall({ toolName: "bash" }, { cwd: tempDir }), undefined);
 
+			const nestedSettings = path.join(tempDir, "packages", "app", ".pi", "settings.json");
+			fs.mkdirSync(path.dirname(nestedSettings), { recursive: true });
+			fs.writeFileSync(nestedSettings, JSON.stringify({ subagents: { watchdog: { rules: { action: "block", roleModels: { echo: { deny: ["mock/*"] } } } } } }, null, 2), "utf-8");
 			writeRules("warn");
+			const nestedBlocked = await executor.execute("rules-workflow-cwd", { async: false, cwd: "packages/app", workflowScript: `return runs.run("one", { agent: "echo", task: "Do work", model: "mock/test-model" });` }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(nestedBlocked.isError, true, "rules load from the resolved workflow cwd");
+			assert.equal(mockPi.callCount(), callsBefore);
+
+
 			mockPi.onCall({ output: "warned but ran" });
 			const warned = await executor.execute("rules-warn", { async: false, agent: "echo", task: "Do work", model: "mock/test-model" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.equal(warned.isError, undefined, warned.content[0]?.text);
@@ -8143,30 +8149,17 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.equal(sent.length, 1);
 			assert.match((sent[0] as { summary?: string }).summary ?? "", /denied model 'mock\/test-model'/);
 			assert.match((sent[0] as { evidence?: string }).evidence ?? "", /echo must not use mock models/);
-			writeRules("block");
-			assert.match(watchdog.handleToolCall({ toolName: "bash" }, { cwd: tempDir })?.reason ?? "", /after a subagent launch/);
 		});
 	});
 
-	it("loads workflow launch rules from the resolved workflow cwd", async () => {
-		await withIsolatedWatchdogSettings(tempDir, async () => {
-			const workflowCwd = path.join(tempDir, "packages", "app");
-			const settingsPath = path.join(workflowCwd, ".pi", "settings.json");
-			fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-			fs.writeFileSync(settingsPath, JSON.stringify({ subagents: { watchdog: { rules: { action: "block", minStages: { echo: 2 } } } } }, null, 2), "utf-8");
-			const executor = makeExecutor([makeAgent("echo")]);
-
-			const blocked = await executor.execute("workflow-rules-cwd", { async: false, cwd: "packages/app", workflowScript: `return runs.run("one", { agent: "echo", task: "Do work" });` }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
-
-			assert.equal(blocked.isError, true);
-			assert.match(blocked.content[0]?.text ?? "", /Launch blocked by subagents\.watchdog\.rules: Agent 'echo' is launched 1 time; the configured minimum is 2\./);
-			assert.equal(mockPi.callCount(), 0);
-		});
-	});
-
-	it("fails explicit acceptance when a child watchdog blocker is never followed by a turn", async () => {
+	it("fails explicit acceptance on an unaddressed child watchdog blocker and passes once a turn follows it", async () => {
 		await withIsolatedWatchdogSettings(tempDir, async () => {
 			writeWatchdogSettings(tempDir);
+			const agents = makeAgentConfigs(["echo"]);
+			const acceptance = { level: "checked" as const, criteria: ["Ship it"] };
+			type WatchdogResult = RunSyncResult & { watchdog?: { warnings?: Array<{ severity: string; addressed: boolean }> } };
+			const blockerCheck = (result: RunSyncResult) => result.acceptance?.runtimeChecks?.find((entry) => entry.id === "watchdog-blocker");
+
 			mockPi.onCall({
 				jsonl: [
 					childWatchdogWarning("concern", "Minor naming concern"),
@@ -8174,27 +8167,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 					childWatchdogWarning("blocker", "Claims tests passed without running them"),
 				],
 			});
-			const agents = makeAgentConfigs(["echo"]);
+			const unaddressed = await runSync(tempDir, agents, "echo", "Task", { runId: "watchdog-child-run", acceptance }) as WatchdogResult;
+			assert.deepEqual(unaddressed.watchdog?.warnings?.map((warning) => [warning.severity, warning.addressed]), [["concern", true], ["blocker", false]]);
+			assert.equal(blockerCheck(unaddressed)?.status, "failed");
+			assert.match(blockerCheck(unaddressed)?.message ?? "", /Unresolved watchdog blocker: Claims tests passed without running them/);
+			assert.equal(unaddressed.acceptance?.status, "rejected");
+			assert.equal(unaddressed.exitCode, 1);
+			assert.match(unaddressed.error ?? "", /Unresolved watchdog blocker/);
 
-			const result = await runSync(tempDir, agents, "echo", "Task", {
-				runId: "watchdog-child-run",
-				acceptance: { level: "checked", criteria: ["Ship it"] },
-			});
-
-			const warnings = (result as RunSyncResult & { watchdog?: { warnings?: Array<{ severity: string; summary: string; addressed: boolean; stalemate: boolean }> } }).watchdog?.warnings;
-			assert.deepEqual(warnings?.map((warning) => [warning.severity, warning.addressed]), [["concern", true], ["blocker", false]]);
-			const check = result.acceptance?.runtimeChecks?.find((entry) => entry.id === "watchdog-blocker");
-			assert.equal(check?.status, "failed");
-			assert.match(check?.message ?? "", /Unresolved watchdog blocker: Claims tests passed without running them/);
-			assert.equal(result.acceptance?.status, "rejected");
-			assert.equal(result.exitCode, 1);
-			assert.match(result.error ?? "", /Unresolved watchdog blocker/);
-		});
-	});
-
-	it("passes the watchdog acceptance check when the child addressed the blocker", async () => {
-		await withIsolatedWatchdogSettings(tempDir, async () => {
-			writeWatchdogSettings(tempDir);
 			mockPi.onCall({
 				jsonl: [
 					events.assistantMessage("first pass"),
@@ -8202,18 +8182,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 					events.assistantMessage(ACCEPTANCE_REPORT_OUTPUT),
 				],
 			});
-			const agents = makeAgentConfigs(["echo"]);
-
-			const result = await runSync(tempDir, agents, "echo", "Task", {
-				runId: "watchdog-child-run",
-				acceptance: { level: "checked", criteria: ["Ship it"] },
-			});
-
-			const warnings = (result as RunSyncResult & { watchdog?: { warnings?: Array<{ addressed: boolean }> } }).watchdog?.warnings;
-			assert.equal(warnings?.[0]?.addressed, true);
-			const check = result.acceptance?.runtimeChecks?.find((entry) => entry.id === "watchdog-blocker");
-			assert.equal(check?.status, "passed");
-			assert.equal(result.exitCode, 0, result.error);
+			const addressed = await runSync(tempDir, agents, "echo", "Task", { runId: "watchdog-child-run-2", acceptance }) as WatchdogResult;
+			assert.equal(addressed.watchdog?.warnings?.[0]?.addressed, true);
+			assert.equal(blockerCheck(addressed)?.status, "passed");
+			assert.equal(addressed.exitCode, 0, addressed.error);
 		});
 	});
 

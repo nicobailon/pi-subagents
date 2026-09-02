@@ -27,9 +27,7 @@ const CHANNEL_SAFETY_POLL_MS = 5000;
 const STALE_EMPTY_CHANNEL_AGE_MS = 60 * 1000;
 const STALE_EMPTY_CHANNEL_CLEANUP_INTERVAL_MS = 60 * 1000;
 
-type SupervisorReason = "need_decision" | "interview_request" | "progress_update" | "watchdog_blocker";
-/** Reasons that never wait for a reply. `watchdog_blocker` is posted by the child watchdog, not by the child model. */
-export type SupervisorNoticeReason = "progress_update" | "watchdog_blocker";
+type SupervisorReason = "need_decision" | "interview_request" | "progress_update";
 
 interface SupervisorRequest {
 	type: "subagent.supervisor.request";
@@ -149,12 +147,7 @@ function readChildMetadata(): {
 function reasonHeading(reason: SupervisorReason): string {
 	if (reason === "interview_request") return "Subagent requests a structured supervisor interview.";
 	if (reason === "progress_update") return "Subagent progress update.";
-	if (reason === "watchdog_blocker") return "Subagent watchdog raised a blocker.";
 	return "Subagent needs a supervisor decision.";
-}
-
-function reasonExpectsReply(reason: SupervisorReason): boolean {
-	return reason === "need_decision" || reason === "interview_request";
 }
 
 function formatChildMessage(input: {
@@ -238,22 +231,27 @@ async function waitForReply(channelDir: string, requestId: string, deadline: num
 	throw new Error("Timed out waiting for supervisor reply.");
 }
 
-function writeSupervisorRequestFile(
-	metadata: NonNullable<ReturnType<typeof readChildMetadata>>,
-	params: ContactSupervisorParams,
-	timing: { createdAt: number; expiresAt?: number },
-): string {
+async function sendSupervisorRequest(params: ContactSupervisorParams, signal?: AbortSignal): Promise<AgentToolResult<Record<string, unknown>>> {
+	const metadata = readChildMetadata();
+	if (!metadata) throw new Error("Native supervisor channel is not available for this subagent.");
+	if (params.reason !== "progress_update" && !params.message?.trim() && params.reason !== "interview_request") {
+		throw new Error("message is required for supervisor decisions.");
+	}
 	ensureSupervisorChannelDir(metadata.channelDir);
 	const requestId = randomUUID();
+	const expectsReply = params.reason !== "progress_update";
+	const createdAt = Date.now();
+	const replyDeadline = createdAt + askTimeoutMs();
+	const expiresAt = expectsReply ? replyDeadline : undefined;
 	const message = formatChildMessage({ ...metadata, reason: params.reason, message: params.message, interview: params.interview });
 	const request: SupervisorRequest = {
 		type: "subagent.supervisor.request",
 		id: requestId,
-		createdAt: timing.createdAt,
-		...(timing.expiresAt !== undefined ? { expiresAt: timing.expiresAt } : {}),
+		createdAt,
+		...(expiresAt !== undefined ? { expiresAt } : {}),
 		reason: params.reason,
 		message,
-		expectsReply: reasonExpectsReply(params.reason),
+		expectsReply,
 		...(metadata.orchestratorTarget ? { orchestratorTarget: metadata.orchestratorTarget } : {}),
 		...(metadata.orchestratorSessionId ? { orchestratorSessionId: metadata.orchestratorSessionId } : {}),
 		runId: metadata.runId,
@@ -265,30 +263,6 @@ function writeSupervisorRequestFile(
 	const serialized = JSON.stringify(request, null, "\t");
 	if (Buffer.byteLength(serialized, "utf-8") > MAX_MESSAGE_BYTES) throw new Error("Supervisor request is too large.");
 	writeAtomicJson(requestPath(metadata.channelDir, requestId), request);
-	return requestId;
-}
-
-/**
- * Post a non-reply notice to the parent session. Used by the child watchdog for blockers;
- * returns `delivered: false` when this process is not a supervised child.
- */
-export function postSupervisorNotice(reason: SupervisorNoticeReason, message: string): { delivered: boolean; requestId?: string } {
-	const metadata = readChildMetadata();
-	if (!metadata) return { delivered: false };
-	const requestId = writeSupervisorRequestFile(metadata, { reason, message }, { createdAt: Date.now() });
-	return { delivered: true, requestId };
-}
-
-async function sendSupervisorRequest(params: ContactSupervisorParams, signal?: AbortSignal): Promise<AgentToolResult<Record<string, unknown>>> {
-	const metadata = readChildMetadata();
-	if (!metadata) throw new Error("Native supervisor channel is not available for this subagent.");
-	if (params.reason === "need_decision" && !params.message?.trim()) {
-		throw new Error("message is required for supervisor decisions.");
-	}
-	const expectsReply = reasonExpectsReply(params.reason);
-	const createdAt = Date.now();
-	const replyDeadline = createdAt + askTimeoutMs();
-	const requestId = writeSupervisorRequestFile(metadata, params, { createdAt, ...(expectsReply ? { expiresAt: replyDeadline } : {}) });
 
 	if (!expectsReply) {
 		return {
@@ -342,7 +316,7 @@ function parseRequestFile(file: string, channelDir: string): PendingSupervisorRe
 		const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as Partial<SupervisorRequest>;
 		if (parsed.type !== "subagent.supervisor.request") return undefined;
 		if (typeof parsed.id !== "string" || !parsed.id) return undefined;
-		if (parsed.reason !== "need_decision" && parsed.reason !== "interview_request" && parsed.reason !== "progress_update" && parsed.reason !== "watchdog_blocker") return undefined;
+		if (parsed.reason !== "need_decision" && parsed.reason !== "interview_request" && parsed.reason !== "progress_update") return undefined;
 		if (typeof parsed.message !== "string" || !parsed.message) return undefined;
 		if (typeof parsed.runId !== "string" || typeof parsed.agent !== "string" || typeof parsed.childIndex !== "number") return undefined;
 		return { ...parsed as SupervisorRequest, channelDir, requestFile: file };

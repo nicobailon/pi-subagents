@@ -1500,34 +1500,6 @@ function directRunsAllKeys(call: AstNode): Array<{ key: string; node: AstNode }>
 	});
 }
 
-/**
- * Count literal `agent:` names in direct runs.run and runs.all calls. Dynamic agent
- * expressions are not counted. Returns an empty map when the script does not parse.
- */
-export function countWorkflowScriptAgentLaunches(script: string): Record<string, number> {
-	const counts: Record<string, number> = {};
-	let root: AstNode;
-	try {
-		const parser = requireFromPackage(resolveWorkflowParserEntry()) as { parse(source: string, options: Record<string, unknown>): unknown };
-		root = parser.parse(`(async () => {\n${script}\n})()`, { ecmaVersion: "latest", sourceType: "script" }) as AstNode;
-	} catch {
-		return counts;
-	}
-	const record = (paramsNode: unknown) => {
-		if (!astNode(paramsNode)) return;
-		const agent = literalString(directObjectPropertyValue(paramsNode, "agent"));
-		if (agent !== undefined) counts[agent] = (counts[agent] ?? 0) + 1;
-	};
-	walkAst(root, (node) => {
-		if (directRunsCall(node, "run")) record(Array.isArray(node.arguments) ? node.arguments[1] : undefined);
-		if (directRunsCall(node, "all")) {
-			const args = Array.isArray(node.arguments) ? node.arguments : [];
-			if (astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements)) for (const item of args[0].elements) record(item);
-		}
-	});
-	return counts;
-}
-
 /** Parse a workflowScript and apply only rules that are decidable from its local syntax. */
 export function validateWorkflowScript(script: string): WorkflowScriptValidationResult {
 	const errors: WorkflowScriptValidationError[] = [];
