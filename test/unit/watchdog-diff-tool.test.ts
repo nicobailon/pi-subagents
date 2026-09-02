@@ -37,7 +37,7 @@ describe("watchdog diff tool", () => {
 	it("captures the session baseline and reports no changes when clean", async () => {
 		const baseline = captureWatchdogDiffBaseline(path.join(repo, "src"));
 		assert.ok(baseline);
-		assert.equal(fs.realpathSync(baseline.root), fs.realpathSync(repo));
+		assert.equal(fs.realpathSync.native(baseline.root), fs.realpathSync.native(repo), "git expands Windows 8.3 short names; compare native real paths");
 		assert.equal(baseline.ref, git("rev-parse", "HEAD").trim());
 		assert.match(await run(createWatchdogDiffTool(baseline)), /^No changes since baseline/);
 		assert.equal(captureWatchdogDiffBaseline(os.tmpdir()), undefined);
