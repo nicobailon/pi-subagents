@@ -950,6 +950,31 @@ setTimeout(() => {
 			cleanupRepo(repoDir);
 		}
 	});
+
+	it("configuration docs describe nested worktree default", () => {
+		const configuration = fs.readFileSync(
+			path.resolve(import.meta.dirname, "..", "..", "docs", "configuration.md"),
+			"utf-8",
+		);
+		assert.match(configuration, /\{dirname\(repoRoot\)\}\/worktrees/);
+		assert.match(configuration, /\{dedicatedRoot\}\/\{projectName\}\/pi-worktree-\{runId\}-\{index\}/);
+		assert.match(configuration, /PI_SUBAGENTS_WORKTREE_DIR/);
+		assert.doesNotMatch(configuration, /The default remains the system temp directory/);
+	});
+
+	it("workflow docs point at nested worktree layout", () => {
+		const workflows = fs.readFileSync(
+			path.resolve(import.meta.dirname, "..", "..", "docs", "workflows.md"),
+			"utf-8",
+		);
+		const sectionStart = workflows.indexOf("## Worktree isolation");
+		assert.notEqual(sectionStart, -1, "Worktree isolation section missing");
+		const rest = workflows.slice(sectionStart);
+		const nextHeading = rest.indexOf("\n## ", 1);
+		const section = nextHeading === -1 ? rest : rest.slice(0, nextHeading);
+		assert.match(section, /\{dirname\(repoRoot\)\}\/worktrees/);
+		assert.match(section, /\{parent\}\/worktrees\/\{project\}\/pi-worktree-\{runId\}-\{index\}/);
+	});
 });
 
 describe("manifest-backed worktree discard", () => {
