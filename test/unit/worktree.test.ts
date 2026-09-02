@@ -454,6 +454,58 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 		}
 	});
 
+	it("rejects worktree paths that would land inside the repository checkout", () => {
+		const repoDir = createRepo("pi-worktree-inside-");
+		const repoParent = path.dirname(repoDir);
+		const leakedLeaf = "pi-worktree-inside-0";
+		try {
+			assert.throws(
+				() => createWorktrees(repoDir, "inside", 1, { baseDir: repoParent }),
+				/inside the repository/i,
+			);
+			assert.throws(
+				() => resolveExpectedWorktreeAgentCwd(repoDir, "inside", 0, repoParent),
+				/inside the repository/i,
+			);
+
+			const porcelain = git(repoDir, ["worktree", "list", "--porcelain"]);
+			const worktreeLines = porcelain.split("\n").filter((line) => line.startsWith("worktree "));
+			assert.deepEqual(worktreeLines, [`worktree ${repoDir}`]);
+			assert.equal(fs.existsSync(path.join(repoDir, leakedLeaf)), false);
+			assert.equal(fs.existsSync(path.join(repoParent, leakedLeaf)), false);
+		} finally {
+			cleanupRepo(repoDir);
+		}
+	});
+
+	it("rejects worktree paths that are direct children of the repository parent", () => {
+		const repoDir = createRepo("pi-worktree-parent-child-");
+		const repoParent = path.dirname(repoDir);
+		const dedicatedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-parent-child-root-"));
+		const projectDir = path.join(dedicatedRoot, path.basename(repoDir));
+		const leakedLeaf = path.join(repoParent, "pi-worktree-parent-child-0");
+		try {
+			fs.symlinkSync(repoParent, projectDir, process.platform === "win32" ? "junction" : "dir");
+			assert.throws(
+				() => createWorktrees(repoDir, "parent-child", 1, { baseDir: dedicatedRoot }),
+				/direct child of the repository parent/i,
+			);
+			assert.throws(
+				() => resolveExpectedWorktreeAgentCwd(repoDir, "parent-child", 0, dedicatedRoot),
+				/direct child of the repository parent/i,
+			);
+
+			const porcelain = git(repoDir, ["worktree", "list", "--porcelain"]);
+			const worktreeLines = porcelain.split("\n").filter((line) => line.startsWith("worktree "));
+			assert.deepEqual(worktreeLines, [`worktree ${repoDir}`]);
+			assert.equal(fs.existsSync(leakedLeaf), false);
+		} finally {
+			try { fs.rmSync(leakedLeaf, { recursive: true, force: true }); } catch {}
+			fs.rmSync(dedicatedRoot, { recursive: true, force: true });
+			cleanupRepo(repoDir);
+		}
+	});
+
 	it("createWorktrees rejects dirty repositories", () => {
 		const repoDir = createRepo("pi-worktree-dirty-");
 		try {

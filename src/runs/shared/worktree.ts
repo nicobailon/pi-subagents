@@ -472,6 +472,36 @@ function buildNativeWorktreePath(dedicatedRoot: string, repoRoot: string, runId:
 	return path.join(dedicatedRoot, path.basename(repoRoot), `pi-worktree-${sanitizeWorktreePathComponent(runId, 120)}-${index}`);
 }
 
+function isPathInside(parent: string, child: string): boolean {
+	const relative = path.relative(parent, child);
+	if (!relative || relative === ".") return true;
+	return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function isStrictChildPath(parent: string, child: string): boolean {
+	const relative = path.relative(parent, child);
+	return Boolean(relative) && relative !== "." && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+/** Fail closed before `git worktree add`: reject unsafe planned/realpath locations. */
+function assertSafeWorktreeLocation(worktreePath: string, repoRoot: string, dedicatedRoot: string): void {
+	const resolvedLeaf = normalizeComparableCwd(worktreePath);
+	const resolvedRepoRoot = normalizeComparableCwd(repoRoot);
+	const projectDir = normalizeComparableCwd(path.join(dedicatedRoot, path.basename(repoRoot)));
+	const repoParent = normalizeComparableCwd(path.dirname(resolvedRepoRoot));
+	const leafParent = normalizeComparableCwd(path.dirname(resolvedLeaf));
+
+	if (isPathInside(resolvedRepoRoot, resolvedLeaf)) {
+		throw new Error(`worktree path would land inside the repository checkout: ${resolvedLeaf}`);
+	}
+	if (leafParent === repoParent) {
+		throw new Error(`worktree path would be a direct child of the repository parent: ${resolvedLeaf}`);
+	}
+	if (!isStrictChildPath(projectDir, resolvedLeaf)) {
+		throw new Error(`worktree path must be a strict child of the project worktree directory ${projectDir}: ${resolvedLeaf}`);
+	}
+}
+
 function resolveRepoCwdRelative(cwd: string): string {
 	const repoCheck = runGit(cwd, ["rev-parse", "--is-inside-work-tree"]);
 	if (repoCheck.status !== 0 || repoCheck.stdout.trim() !== "true") {
