@@ -205,46 +205,6 @@ async function withIsolatedWatchdogSettings<T>(projectDir: string, run: () => Pr
 	}
 }
 
-function childWatchdogWarning(severity: "concern" | "blocker", summary: string, state: "displayed" | "stalemate" = "displayed") {
-	return {
-		type: "message_end",
-		message: {
-			role: "custom",
-			customType: "subagent_watchdog_warning",
-			content: `<subagent_watchdog severity="${severity}">${summary}</subagent_watchdog>`,
-			display: true,
-			details: {
-				severity,
-				category: "test-gap",
-				source: "child",
-				agent: "echo",
-				runId: "watchdog-child-run",
-				summary,
-				evidence: "The transcript claims tests passed but no test command ran.",
-				recommendedAction: "Run the focused test before finishing.",
-				state,
-				displayedAt: new Date().toISOString(),
-			},
-			timestamp: Date.now(),
-		},
-	};
-}
-
-const ACCEPTANCE_REPORT_OUTPUT = [
-	"done",
-	"```acceptance-report",
-	JSON.stringify({
-		criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "implemented" }],
-		changedFiles: ["src/file.ts"],
-		testsAddedOrUpdated: ["test/file.test.ts"],
-		commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
-		validationOutput: ["tests passed"],
-		residualRisks: [],
-		noStagedFiles: true,
-	}),
-	"```",
-].join("\n");
-
 function childWatchdogStatus(phase: "idle" | "reviewing" | "stale" | "failed", seq: number) {
 	return {
 		type: CHILD_WATCHDOG_STATUS_EVENT,
@@ -8141,7 +8101,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.equal(nestedBlocked.isError, true, "rules load from the resolved workflow cwd");
 			assert.equal(mockPi.callCount(), callsBefore);
 
-
 			mockPi.onCall({ output: "warned but ran" });
 			const warned = await executor.execute("rules-warn", { async: false, agent: "echo", task: "Do work", model: "mock/test-model" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.equal(warned.isError, undefined, warned.content[0]?.text);
@@ -8160,13 +8119,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			type WatchdogResult = RunSyncResult & { watchdog?: { warnings?: Array<{ severity: string; addressed: boolean }> } };
 			const blockerCheck = (result: RunSyncResult) => result.acceptance?.runtimeChecks?.find((entry) => entry.id === "watchdog-blocker");
 
-			mockPi.onCall({
-				jsonl: [
-					childWatchdogWarning("concern", "Minor naming concern"),
-					events.assistantMessage(ACCEPTANCE_REPORT_OUTPUT),
-					childWatchdogWarning("blocker", "Claims tests passed without running them"),
-				],
-			});
+			mockPi.onCall({ jsonl: [events.watchdogWarning("concern", "Minor naming concern"), events.acceptanceReport(), events.watchdogWarning("blocker", "Claims tests passed without running them")] });
 			const unaddressed = await runSync(tempDir, agents, "echo", "Task", { runId: "watchdog-child-run", acceptance }) as WatchdogResult;
 			assert.deepEqual(unaddressed.watchdog?.warnings?.map((warning) => [warning.severity, warning.addressed]), [["concern", true], ["blocker", false]]);
 			assert.equal(blockerCheck(unaddressed)?.status, "failed");
@@ -8175,13 +8128,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.equal(unaddressed.exitCode, 1);
 			assert.match(unaddressed.error ?? "", /Unresolved watchdog blocker/);
 
-			mockPi.onCall({
-				jsonl: [
-					events.assistantMessage("first pass"),
-					childWatchdogWarning("blocker", "Claims tests passed without running them"),
-					events.assistantMessage(ACCEPTANCE_REPORT_OUTPUT),
-				],
-			});
+			mockPi.onCall({ jsonl: [events.assistantMessage("first pass"), events.watchdogWarning("blocker", "Claims tests passed without running them"), events.acceptanceReport()] });
 			const addressed = await runSync(tempDir, agents, "echo", "Task", { runId: "watchdog-child-run-2", acceptance }) as WatchdogResult;
 			assert.equal(addressed.watchdog?.warnings?.[0]?.addressed, true);
 			assert.equal(blockerCheck(addressed)?.status, "passed");

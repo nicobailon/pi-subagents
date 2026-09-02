@@ -21,8 +21,8 @@ import type {
 	ResolvedAcceptanceGate,
 	SingleResult,
 	SubagentRunMode,
+	ChildWatchdogProgress,
 } from "../../shared/types.ts";
-import type { ChildWatchdogProgress } from "../../shared/types.ts";
 import { unresolvedChildWatchdogBlockers } from "../../watchdog/child-status.ts";
 import { isAgentContractV1 } from "./agent-contract.ts";
 import { classifyTaskMutationIntent, stripSeverityCompounds, taskMayMutate } from "./task-intent.ts";

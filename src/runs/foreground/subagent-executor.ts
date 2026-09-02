@@ -27,7 +27,7 @@ import { normalizePublicSubagentExecution, validateWorkflowCapacityOverrides } f
 import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
-import { evaluateLaunchRules, loadWatchdogLaunchRules, sendRuleViolationWarning, type WatchdogRuleViolation } from "../../watchdog/rules.ts";
+import { evaluateLaunchRule, loadWatchdogLaunchRules } from "../../watchdog/rules.ts";
 import { buildModelCandidates, normalizeParentModel, resolveEffectiveSubagentModel, resolveModelOrigin, type ModelOrigin, type ParentModel } from "../shared/model-fallback.ts";
 import { formatRetainedChildren, listRetainedChildren } from "../background/retained-children.ts";
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
@@ -2773,28 +2773,14 @@ function resolveToolBudget(
 	return { ...(resolved.budget === undefined ? {} : { toolBudget: resolved.budget }), ...(resolved.error === undefined ? {} : { error: resolved.error }) };
 }
 
-function notifyRuleViolations(deps: ExecutorDeps, violations: WatchdogRuleViolation[]): void {
-	for (const violation of violations) {
-		if (deps.watchdog) deps.watchdog.displayRuleWarning(violation);
-		else sendRuleViolationWarning(deps.pi as { sendMessage?: (message: unknown, options?: unknown) => unknown }, violation);
-	}
-}
-
-/**
- * Deterministic launch rules from subagents.watchdog.rules. Returns an error message when the
- * launch must be blocked; warnings are displayed and undefined is returned.
- */
-function applyLaunchRules(deps: ExecutorDeps, cwd: string, input: { agent: string; model?: string }): string | undefined {
+/** subagents.watchdog.rules at launch: the block message, or a displayed warning and undefined. */
+function applyLaunchRules(deps: ExecutorDeps, cwd: string, agent: string, model: string | undefined): string | undefined {
 	const rules = loadWatchdogLaunchRules(cwd);
-	const violations = evaluateLaunchRules(rules, input);
-	if (!violations.length) return undefined;
-	if (rules?.action === "block") return `Launch blocked by subagents.watchdog.rules: ${violations.map((violation) => violation.summary).join(" ")}`;
-	notifyRuleViolations(deps, violations);
+	const violation = evaluateLaunchRule(rules, agent, model);
+	if (!violation) return undefined;
+	if (rules?.action === "block") return `Launch blocked by subagents.watchdog.rules: ${violation.summary}`;
+	deps.watchdog?.displayRuleWarning(violation);
 	return undefined;
-}
-
-function parentModelString(parentModel: ParentModel | undefined): string | undefined {
-	return parentModel ? `${parentModel.provider}/${parentModel.id}` : undefined;
 }
 
 function resolveEffectiveToolBudget(input: { stepBudget?: ToolBudgetConfig; runBudget?: ResolvedToolBudget; agentBudget?: ToolBudgetConfig; configBudget?: ToolBudgetConfig }): { toolBudget?: ResolvedToolBudget; error?: string } {
@@ -3254,7 +3240,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 				source: modelOrigin === "explicit" ? "explicit" : "inherited",
 			});
 		const modelOverrideFromParent = modelOrigin === "inherited";
-		const launchRuleError = applyLaunchRules(deps, effectiveCwd, { agent: a.name, model: modelOverride ?? parentModelString(parentModel) });
+		const launchRuleError = applyLaunchRules(deps, effectiveCwd, a.name, modelOverride ?? (parentModel && `${parentModel.provider}/${parentModel.id}`));
 		if (launchRuleError) return toExecutionErrorResult(params, new Error(launchRuleError), data.contextPolicy.contextSummary);
 		const asyncResult = executeAsyncSingle(id, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
 			agent: params.agent!,
@@ -3691,7 +3677,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		},
 	);
 	const modelOverrideFromParent = modelOrigin === "inherited";
-	const launchRuleError = applyLaunchRules(deps, effectiveCwd, { agent: agentConfig.name, model: modelOverride ?? parentModelString(parentModel) });
+	const launchRuleError = applyLaunchRules(deps, effectiveCwd, agentConfig.name, modelOverride ?? (parentModel && `${parentModel.provider}/${parentModel.id}`));
 	if (launchRuleError) return toExecutionErrorResult(params, new Error(launchRuleError), data.contextPolicy.contextSummary);
 	let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
 	let readsOverride: string[] | false | undefined = params.reads;

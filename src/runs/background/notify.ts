@@ -262,14 +262,9 @@ function formatCorrelationLines(details: SubagentNotifyDetails): string[] {
 
 const WATCHDOG_BLOCKERS_HEADING = "Watchdog blockers:";
 
-function watchdogBlockerState(blocker: SubagentNotifyWatchdogBlocker): "addressed" | "unaddressed" | "stalemate" {
-	if (blocker.stalemate) return "stalemate";
-	return blocker.addressed ? "addressed" : "unaddressed";
-}
-
 function formatWatchdogBlockerLines(details: SubagentNotifyDetails): string[] {
 	if (!details.watchdogBlockers?.length) return [];
-	return [WATCHDOG_BLOCKERS_HEADING, ...details.watchdogBlockers.map((blocker) => `- ${blocker.agent}: ${blocker.summary} (${watchdogBlockerState(blocker)})`)];
+	return [WATCHDOG_BLOCKERS_HEADING, ...details.watchdogBlockers.map((blocker) => `- ${blocker.agent}: ${blocker.summary} (${blocker.stalemate ? "stalemate" : blocker.addressed ? "addressed" : "unaddressed"})`)];
 }
 
 // The notice line carries one state. A stalemate blocker was held without a continuation,

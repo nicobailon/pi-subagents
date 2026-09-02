@@ -216,9 +216,7 @@ export function buildWatchdogSystemPrompt(ctx: Pick<ExtensionContext, "cwd">, op
 		`Working directory: ${ctx.cwd}`,
 		"Review only the supplied parent turn delta. Inspect repository files only when needed to verify a concrete concern.",
 		options.hasScope ? "When the review input includes a Current scope block, treat newer scope prompts as superseding/mutating older prompts and use category='scope-drift' for work that serves no current scope item." : undefined,
-		options.hasDiff
-			? "You are read-only. You may use read, grep, find, ls, and watchdog_diff (the full repo diff since the session baseline; pass a path to narrow it). Do not edit files, run shell commands, spawn agents, or mutate state."
-			: "You are read-only. You may use read, grep, find, and ls. Do not edit files, run shell commands, spawn agents, or mutate state.",
+		`You are read-only. You may use ${options.hasDiff ? "read, grep, find, ls, and watchdog_diff (the full repo diff since the session baseline; pass a path to narrow it)" : "read, grep, find, and ls"}. Do not edit files, run shell commands, spawn agents, or mutate state.`,
 		"Emit warnings only by calling watchdog_warn. Freeform assistant text is ignored and must not be used to report warnings.",
 		"Emit only medium/high confidence actionable concerns or blockers: missed user constraints, correctness risks, test gaps that matter, unsafe changes, stale facts, loop risks, or scope drift.",
 		"Do not emit nits, style preferences, low-confidence guesses, informational notes, praise, or summaries.",
@@ -279,7 +277,7 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 		});
 		const diffBaseline = options.diffBaseline?.();
 		const tools = [
-			...(options.createReadOnlyTools ?? createReadOnlyTools)(ctx.cwd).filter((tool) => WATCHDOG_ALLOWED_TOOL_NAMES.has(tool.name) && tool.name !== "watchdog_warn" && tool.name !== WATCHDOG_DIFF_TOOL_NAME),
+			...(options.createReadOnlyTools ?? createReadOnlyTools)(ctx.cwd).filter((tool) => WATCHDOG_ALLOWED_TOOL_NAMES.has(tool.name) && tool.name !== "watchdog_warn"),
 			createWatchdogWarnTool(request),
 			...(diffBaseline ? [createWatchdogDiffTool(diffBaseline)] : []),
 		];

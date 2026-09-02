@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
+import { WATCHDOG_GUIDANCE_MAX_CHARS } from "../../src/watchdog/guidance.ts";
 import {
 	createAssistantMessageEventStream,
 	fauxAssistantMessage,
@@ -246,13 +247,17 @@ describe("main watchdog review adapter", () => {
 		try {
 			process.env.PI_CODING_AGENT_DIR = path.join(dir, "agent");
 			fs.mkdirSync(path.join(dir, "project", ".pi"), { recursive: true });
-			fs.writeFileSync(path.join(dir, "project", ".pi", "WATCHDOG.md"), "Never accept skipped tests.", "utf-8");
+			fs.writeFileSync(path.join(dir, "project", ".pi", "WATCHDOG.md"), "Never accept skipped tests.\n", "utf-8");
+			fs.mkdirSync(path.join(dir, "agent"), { recursive: true });
+			fs.writeFileSync(path.join(dir, "agent", "WATCHDOG.md"), "u".repeat(WATCHDOG_GUIDANCE_MAX_CHARS), "utf-8");
 			const current = model("openai", "gpt-guidance");
 			const ctx = { ...(createCtx({ current }) as object), cwd: path.join(dir, "project") } as never;
 			const { streamFn, calls } = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
 
 			await createMainWatchdogReview(ctx, { streamFn })(request(enabledConfig(), []));
-			assert.match(String(calls[0]?.context.systemPrompt ?? ""), /Standing instructions from WATCHDOG\.md \(project first, then user\):\nNever accept skipped tests\./);
+			const prompt = String(calls[0]?.context.systemPrompt ?? "");
+			assert.match(prompt, /Standing instructions from WATCHDOG\.md \(project first, then user\):\nNever accept skipped tests\.\n\nu+$/);
+			assert.equal(prompt.split("(project first, then user):\n")[1]?.length, WATCHDOG_GUIDANCE_MAX_CHARS, "combined guidance is capped from the head");
 
 			const disabled = enabledConfig();
 			disabled.guidance = { watchdogMd: false };

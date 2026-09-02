@@ -176,6 +176,27 @@ export const events = {
 		};
 	},
 
+	/** Final assistant turn carrying a satisfied acceptance report. */
+	acceptanceReport(): object {
+		const report = { criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "implemented" }], changedFiles: ["src/file.ts"], testsAddedOrUpdated: ["test/file.test.ts"], commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }], validationOutput: ["tests passed"], residualRisks: [], noStagedFiles: true };
+		return events.assistantMessage(["done", "```acceptance-report", JSON.stringify(report), "```"].join("\n"));
+	},
+
+	/** A child watchdog warning custom message as the child watchdog writes it into the child JSONL. */
+	watchdogWarning(severity: "concern" | "blocker", summary: string): object {
+		return {
+			type: "message_end",
+			message: {
+				role: "custom",
+				customType: "subagent_watchdog_warning",
+				content: `<subagent_watchdog severity="${severity}">${summary}</subagent_watchdog>`,
+				display: true,
+				details: { severity, category: "test-gap", source: "child", agent: "worker", summary, evidence: "The transcript claims tests passed but no test command ran.", recommendedAction: "Run the focused test before finishing.", state: "displayed", displayedAt: new Date().toISOString() },
+				timestamp: Date.now(),
+			},
+		};
+	},
+
 	/** Assistant write tool call plus its successful tool result, as one completed write. */
 	completedWrite(filePath: string, content: string, model = "mock/test-model"): object[] {
 		const id = `write-${++writeCallSeq}`;

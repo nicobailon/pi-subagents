@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { countWatchdogRules, evaluateLaunchRules, ruleViolationWarning, watchdogGlobMatch } from "../../src/watchdog/rules.ts";
+import { evaluateLaunchRule, ruleViolationWarning, watchdogGlobMatch } from "../../src/watchdog/rules.ts";
 import type { WatchdogRulesConfig } from "../../src/watchdog/types.ts";
 
 describe("watchdog launch rules", () => {
@@ -16,25 +16,22 @@ describe("watchdog launch rules", () => {
 
 	it("applies deny before allow, matches the base model when the suffix differs, and shapes a concern", () => {
 		const config: WatchdogRulesConfig = { action: "warn", roleModels: { scout: { allow: ["openai-codex/gpt-5.6-luna"], deny: ["openai-codex/gpt-5.6-sol*"], note: "scout is cheap" } } };
-		assert.deepEqual(evaluateLaunchRules(config, { agent: "scout", model: "openai-codex/gpt-5.6-luna:max" }), []);
-		const denied = evaluateLaunchRules(config, { agent: "scout", model: "openai-codex/gpt-5.6-sol:high" });
-		assert.equal(denied.length, 1);
-		assert.match(denied[0]?.summary ?? "", /denied model 'openai-codex\/gpt-5\.6-sol:high'/);
-		assert.match(denied[0]?.evidence ?? "", /scout is cheap/);
-		const outside = evaluateLaunchRules(config, { agent: "scout", model: "anthropic/claude-opus-4-8" });
-		assert.match(outside[0]?.summary ?? "", /not in its allowed list/);
-		assert.match(outside[0]?.recommendedAction ?? "", /openai-codex\/gpt-5\.6-luna/);
-		assert.deepEqual(evaluateLaunchRules(config, { agent: "worker", model: "anthropic/claude-opus-4-8" }), [], "other roles are unaffected");
-		assert.deepEqual(evaluateLaunchRules(config, { agent: "scout" }), [], "an unknown model cannot be judged");
-		assert.deepEqual(evaluateLaunchRules(undefined, { agent: "scout", model: "x/y" }), []);
+		assert.equal(evaluateLaunchRule(config, "scout", "openai-codex/gpt-5.6-luna:max"), undefined);
+		const denied = evaluateLaunchRule(config, "scout", "openai-codex/gpt-5.6-sol:high");
+		assert.match(denied?.summary ?? "", /denied model 'openai-codex\/gpt-5\.6-sol:high'/);
+		assert.match(denied?.evidence ?? "", /scout is cheap/);
+		const outside = evaluateLaunchRule(config, "scout", "anthropic/claude-opus-4-8");
+		assert.match(outside?.summary ?? "", /not in its allowed list/);
+		assert.match(outside?.recommendedAction ?? "", /openai-codex\/gpt-5\.6-luna/);
+		assert.equal(evaluateLaunchRule(config, "worker", "anthropic/claude-opus-4-8"), undefined, "other roles are unaffected");
+		assert.equal(evaluateLaunchRule(config, "scout", undefined), undefined, "an unknown model cannot be judged");
+		assert.equal(evaluateLaunchRule(undefined, "scout", "x/y"), undefined);
 
-		const warning = ruleViolationWarning(denied[0]!);
+		const warning = ruleViolationWarning(denied!);
 		assert.equal(warning.severity, "concern");
 		assert.equal(warning.category, "missed-constraint");
 		assert.equal(warning.confidence, "high");
 		assert.equal(warning.source, "main");
 		assert.equal(warning.agent, "scout");
-		assert.equal(countWatchdogRules(config), 1);
-		assert.equal(countWatchdogRules(undefined), 0);
 	});
 });

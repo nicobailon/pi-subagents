@@ -88,11 +88,7 @@ export class WatchdogEmissionGuard {
 		this.startModelUpdate();
 	}
 
-	/**
-	 * `allowRepeatOf` names one warning identity that may be accepted again even though it was
-	 * already accepted. The runtime uses it at boundary reviews so a persisting finding can keep
-	 * nudging the agent until the stalemate threshold, instead of being dropped as a duplicate.
-	 */
+	/** `allowRepeatOf`: one already-accepted identity that may repeat (boundary re-findings before stalemate). */
 	evaluate(warning: WatchdogWarning, options: { allowRepeatOf?: string } = {}): WatchdogEmissionDecision {
 		if (isContentFree(warning.summary) || isContentFree(warning.evidence) || isContentFree(warning.recommendedAction)) {
 			return { accepted: false, reason: "content-free" };

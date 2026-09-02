@@ -156,12 +156,10 @@ import { decodeSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type 
 import {
 	CHILD_WATCHDOG_CONFIG_ENV,
 	acceptChildWatchdogEvent,
-	appendChildWatchdogWarning,
+	applyChildWatchdogMessage,
 	childWatchdogIsActive,
-	childWatchdogWarningFromMessage,
 	decodeChildWatchdogConfig,
 	isChildWatchdogStatusEvent,
-	markChildWatchdogWarningsAddressed,
 	resolveChildWatchdogConfig,
 	type ChildWatchdogStateSnapshot,
 } from "../../watchdog/child-status.ts";
@@ -857,12 +855,8 @@ function runPiStreaming(
 				if (text) writeOutputText(text);
 
 				if (childWatchdogConfig && event.type === "message_end") {
-					const watchdogWarning = childWatchdogWarningFromMessage(event.message);
-					if (watchdogWarning) updateChildWatchdogState(appendChildWatchdogWarning(childWatchdogState, watchdogWarning));
-					else if (event.message.role === "assistant") {
-						const addressed = markChildWatchdogWarningsAddressed(childWatchdogState);
-						if (addressed) updateChildWatchdogState(addressed);
-					}
+					const next = applyChildWatchdogMessage(childWatchdogState, event.message);
+					if (next) updateChildWatchdogState(next);
 				}
 				if (event.type !== "message_end" || event.message.role !== "assistant") return;
 				const hasToolCall = assistantStartsToolCall(event.message);
@@ -3596,16 +3590,12 @@ async function runSubagent(
 			return;
 		}
 		if (event.type === "message_end") {
-			const watchdogWarning = childWatchdogWarningFromMessage(event.message);
-			if (watchdogWarning) {
-				step.watchdog = appendChildWatchdogWarning(step.watchdog, watchdogWarning, now);
+			const next = applyChildWatchdogMessage(step.watchdog, event.message, now);
+			if (next) step.watchdog = next;
+			if (next && (event.message as { role?: unknown } | undefined)?.role === "custom") {
 				statusPayload.lastUpdate = now;
 				writeStatusPayload(false);
 				return;
-			}
-			if (event.message?.role === "assistant") {
-				const addressed = markChildWatchdogWarningsAddressed(step.watchdog);
-				if (addressed) step.watchdog = addressed;
 			}
 		}
 		if (event.type === "tool_execution_start" && event.toolName) {

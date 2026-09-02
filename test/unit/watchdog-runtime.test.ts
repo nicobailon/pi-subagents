@@ -343,7 +343,7 @@ describe("main watchdog runtime", () => {
 		await runtime.handleAgentEnd({ type: "agent_end", messages: [] }, { cwd: "/tmp/project" });
 
 		assert.equal(reviewedDelta.length, 24_000, "head + marker + tail fill the cap exactly");
-		assert.match(reviewedDelta, /^Assistant:\nx+\n\n\[\.\.\. \d+ characters omitted \.\.\.\]\n\nx+$/);
+		assert.match(reviewedDelta, /^Assistant:\nx+\n\n\[\.\.\. about \d+ characters omitted \.\.\.\]\n\nx+$/);
 		assert.equal(reviewedDelta.indexOf("\n\n[..."), 6_000, "the first 6,000 characters are kept as the head");
 	});
 
@@ -925,7 +925,7 @@ describe("main watchdog runtime", () => {
 		assert.equal(delivered.length, 3, "repeats keep nudging until the stalemate threshold");
 		assert.equal(delivered[0]?.options, undefined);
 		assert.equal(delivered[1]?.options, undefined);
-		assert.deepEqual(delivered[2]?.options, { deliverAs: "hold" });
+		assert.deepEqual(delivered[2]?.options, { triggerTurn: false });
 		assert.equal(delivered[2]?.warning.state, "stalemate");
 		assert.equal(delivered[2]?.warning.stalemateRepeats, 3);
 		let snapshot = runtime.getSnapshot();

@@ -115,11 +115,9 @@ import { consumeWorkflowChildPermit } from "../../shared/workflow-child-permit.t
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleState, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import {
 	acceptChildWatchdogEvent,
-	appendChildWatchdogWarning,
+	applyChildWatchdogMessage,
 	childWatchdogIsActive,
-	childWatchdogWarningFromMessage,
 	isChildWatchdogStatusEvent,
-	markChildWatchdogWarningsAddressed,
 	resolveChildWatchdogConfig,
 	type ChildWatchdogStateSnapshot,
 } from "../../watchdog/child-status.ts";
@@ -1122,12 +1120,8 @@ async function runSingleAttempt(
 			if (evt.type === "message_end" && evt.message) {
 				result.messages!.push(evt.message);
 				if (childWatchdog) {
-					const watchdogWarning = childWatchdogWarningFromMessage(evt.message);
-					if (watchdogWarning) updateChildWatchdogState(appendChildWatchdogWarning(childWatchdogState, watchdogWarning));
-					else if (evt.message.role === "assistant") {
-						const addressed = markChildWatchdogWarningsAddressed(childWatchdogState);
-						if (addressed) updateChildWatchdogState(addressed);
-					}
+					const next = applyChildWatchdogMessage(childWatchdogState, evt.message);
+					if (next) updateChildWatchdogState(next);
 				}
 				if (evt.message.role === "assistant") {
 					result.usage.turns++;

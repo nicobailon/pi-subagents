@@ -811,19 +811,9 @@ describe("watchdog blockers in completion notices", () => {
 		const grouped = formatGroupedCompletion([details, { agent: "scout", status: "completed", resultPreview: "ok" }]);
 		assert.match(grouped, /Watchdog blockers:\n- worker: Claims tests passed without running them \(unaddressed\)/);
 		assert.equal(grouped.split("Watchdog blockers:").length, 2);
-	});
 
-	it("omits the watchdog block when no blockers were raised", () => {
-		const details = buildCompletionDetails({
-			id: "run-2",
-			agent: "worker",
-			success: true,
-			summary: "done",
-			exitCode: 0,
-			watchdog: { phase: "idle", seq: 1, lastUpdate: 1, warnings: [{ severity: "concern", category: "other", summary: "c", evidence: "e", recommendedAction: "r", addressed: true, stalemate: false }] },
-			sessionId: "session-1",
-		});
-		assert.equal(details.watchdogBlockers, undefined);
-		assert.doesNotMatch(formatSingleCompletion(details), /Watchdog blockers/);
+		const concernOnly = buildCompletionDetails({ id: "run-2", agent: "worker", success: true, summary: "done", exitCode: 0, sessionId: "session-1", watchdog: { phase: "idle", seq: 1, lastUpdate: 1, warnings: [{ severity: "concern", category: "other", summary: "c", evidence: "e", recommendedAction: "r", addressed: true, stalemate: false }] } });
+		assert.equal(concernOnly.watchdogBlockers, undefined);
+		assert.doesNotMatch(formatSingleCompletion(concernOnly), /Watchdog blockers/);
 	});
 });

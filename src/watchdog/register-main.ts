@@ -5,7 +5,6 @@ import { SLASH_TEXT_RESULT_TYPE } from "../shared/types.ts";
 import { captureWatchdogDiffBaseline, type WatchdogDiffBaseline } from "./diff-tool.ts";
 import { recommendStrongWatchdogModel, resolveWatchdogModelInput, parseWatchdogThinkingInput } from "./model-selection.ts";
 import { renderWatchdogWarning } from "./render.ts";
-import { countWatchdogRules } from "./rules.ts";
 import { createMainWatchdogReview } from "./review.ts";
 import { MainWatchdogRuntime, type WatchdogReviewFunction } from "./runtime.ts";
 import { getWatchdogUserSettingsPath, writeUserWatchdogEnabled, writeWatchdogModelSettings } from "./settings.ts";
@@ -123,7 +122,7 @@ export function buildWatchdogStatus(snapshot: ReturnType<MainWatchdogRuntime["ge
 		recommendationLine(ctx),
 		`Agent-end timeout: ${snapshot.config.agentEndTimeoutMs}ms`,
 		`Stalemate: ${snapshot.boundaryRepeats}/${snapshot.config.stalemateRepeats}${snapshot.stalemate ? " · stopped" : ""}`,
-		`Rules: ${snapshot.config.rules ? `${countWatchdogRules(snapshot.config.rules)} configured · ${snapshot.config.rules.action}` : "none"}`,
+		`Rules: ${snapshot.config.rules ? `${Object.keys(snapshot.config.rules.roleModels).length} role models · ${snapshot.config.rules.action}` : "none"}`,
 		`Review model call: ${snapshot.reviewDescription}`,
 	];
 	if (snapshot.failedReviews > 0) lines.push(`Failed reviews: ${snapshot.failedReviews}`);
@@ -387,12 +386,7 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 		review: options.review ?? createMainWatchdogReview(() => currentContext, { getThinkingLevel: () => pi.getThinkingLevel(), diffBaseline: () => diffBaseline }),
 		reviewDescription: options.review ? "injected seam" : "real model review",
 		reviewChangesOnly: true,
-		displayWarning: (details, delivery) => {
-			const message = createWatchdogWarningMessage(details, { display: true, details });
-			if (delivery?.deliverAs === "steer") pi.sendMessage(message, { deliverAs: "steer" });
-			else if (delivery?.deliverAs === "hold") pi.sendMessage(message, { triggerTurn: false });
-			else pi.sendMessage(message);
-		},
+		displayWarning: (details, options) => pi.sendMessage(createWatchdogWarningMessage(details, { display: true, details }), options),
 	});
 
 	pi.registerMessageRenderer<WatchdogWarningDetails>(SUBAGENT_WATCHDOG_WARNING_TYPE, (message, renderOptions, theme) => {
@@ -440,7 +434,6 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 	pi.on("session_compact", () => runtime.reset("session compact", { clearScope: true }));
 	pi.on("session_shutdown", () => {
 		currentContext = undefined;
-		diffBaseline = undefined;
 		runtime.dispose();
 	});
 

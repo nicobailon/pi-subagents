@@ -198,31 +198,6 @@ async function withIsolatedWatchdogSettings<T>(projectDir: string, run: () => Pr
 	}
 }
 
-function childWatchdogWarning(runId: string, severity: "concern" | "blocker", summary: string) {
-	return {
-		type: "message_end",
-		message: {
-			role: "custom",
-			customType: "subagent_watchdog_warning",
-			content: `<subagent_watchdog severity="${severity}">${summary}</subagent_watchdog>`,
-			display: true,
-			details: {
-				severity,
-				category: "test-gap",
-				source: "child",
-				agent: "worker",
-				runId,
-				summary,
-				evidence: "The transcript claims tests passed but no test command ran.",
-				recommendedAction: "Run the focused test before finishing.",
-				state: "displayed",
-				displayedAt: new Date().toISOString(),
-			},
-			timestamp: Date.now(),
-		},
-	};
-}
-
 function childWatchdogStatus(runId: string, phase: "idle" | "reviewing" | "stale" | "failed", seq: number) {
 	return {
 		type: CHILD_WATCHDOG_STATUS_EVENT,
@@ -5947,25 +5922,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		await withIsolatedWatchdogSettings(tempDir, async () => {
 			writeWatchdogSettings(tempDir);
 			const id = `async-watchdog-blocker-${Date.now().toString(36)}`;
-			mockPi.onCall({
-				jsonl: [
-					events.assistantMessage([
-						"done",
-						"```acceptance-report",
-						JSON.stringify({
-							criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "implemented" }],
-							changedFiles: ["src/file.ts"],
-							testsAddedOrUpdated: ["test/file.test.ts"],
-							commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
-							validationOutput: ["tests passed"],
-							residualRisks: [],
-							noStagedFiles: true,
-						}),
-						"```",
-					].join("\n")),
-					childWatchdogWarning(id, "blocker", "Claims tests passed without running them"),
-				],
-			});
+			mockPi.onCall({ jsonl: [events.acceptanceReport(), events.watchdogWarning("blocker", "Claims tests passed without running them")] });
 
 			executeAsyncSingle(id, {
 				agent: "worker",

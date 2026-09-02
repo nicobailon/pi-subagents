@@ -75,12 +75,9 @@ export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[
 		review: createMainWatchdogReview(() => currentContext, { getThinkingLevel: () => pi.getThinkingLevel(), diffBaseline: () => diffBaseline }),
 		reviewDescription: "child model review",
 		reviewChangesOnly: true,
-		displayWarning: (details, delivery) => {
+		displayWarning: (details, options) => {
 			const childDetails = childWarningDetails(details, childConfig);
-			const message = createWatchdogWarningMessage(childDetails, { display: true, details: childDetails });
-			if (delivery?.deliverAs === "steer") pi.sendMessage(message, { deliverAs: "steer" });
-			else if (delivery?.deliverAs === "hold") pi.sendMessage(message, { triggerTurn: false });
-			else pi.sendMessage(message);
+			pi.sendMessage(createWatchdogWarningMessage(childDetails, { display: true, details: childDetails }), options);
 		},
 	});
 	const rememberContext = (ctx: ExtensionContext) => {
@@ -116,7 +113,6 @@ export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[
 	});
 	onRuntimeEvent("session_shutdown", () => {
 		currentContext = undefined;
-		diffBaseline = undefined;
 		runtime.dispose();
 		emitStatus("idle");
 	});

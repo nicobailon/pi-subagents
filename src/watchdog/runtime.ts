@@ -80,13 +80,14 @@ interface MainWatchdogRuntimeOptions {
 	resolveConfig?: (cwd: string, options?: { session?: Record<string, unknown> }) => WatchdogSettingsResult;
 	review?: WatchdogReviewFunction;
 	reviewDescription?: string;
-	displayWarning?: (warning: WatchdogWarningDetails, options?: { deliverAs?: WatchdogWarningDelivery }) => void;
+	displayWarning?: (warning: WatchdogWarningDetails, options?: WatchdogWarningSendOptions) => void;
 	reviewChangesOnly?: boolean;
 	lspDiagnostics?: WatchdogLspDiagnosticsFunction;
 	repoChangeSignature?: typeof computeWatchdogRepoChangeSignature;
 }
 
-export type WatchdogWarningDelivery = "steer" | "hold";
+/** Passed straight to pi.sendMessage: steer mid-run corrections, hold a stalemate without a turn. */
+export type WatchdogWarningSendOptions = { deliverAs: "steer" } | { triggerTurn: false };
 
 type ContextLike = Pick<ExtensionContext, "cwd">;
 type ReviewDeltaOutcome = "completed" | "timeout" | "stale";
@@ -96,20 +97,12 @@ const MAX_REVIEW_INPUT_CHARS = 24_000;
 const REVIEW_INPUT_HEAD_CHARS = 6_000;
 const REVIEW_DELTA_SEPARATOR = "\n\n---\n\n";
 
-/**
- * Keep the start of an over-long review text (the task and early decisions) and its end
- * (the latest work) instead of only the tail, so the reviewer keeps the framing.
- */
+/** Keep the head (task and early decisions) and the tail (latest work) of over-long review text. */
 export function boundWatchdogReviewText(text: string, cap = MAX_REVIEW_INPUT_CHARS): string {
 	if (text.length <= cap) return text;
 	const head = Math.min(REVIEW_INPUT_HEAD_CHARS, Math.floor(cap / 4));
-	// The marker length depends on the digit count; settle it in two passes.
-	let omitted = text.length - cap;
-	let marker = `\n\n[... ${omitted} characters omitted ...]\n\n`;
-	omitted = text.length - cap + marker.length;
-	marker = `\n\n[... ${omitted} characters omitted ...]\n\n`;
-	const tail = cap - head - marker.length;
-	return `${text.slice(0, head)}${marker}${text.slice(text.length - tail)}`;
+	const marker = `\n\n[... about ${text.length - cap} characters omitted ...]\n\n`;
+	return `${text.slice(0, head)}${marker}${text.slice(text.length - (cap - head - marker.length))}`;
 }
 
 function errorMessage(error: unknown): string {
@@ -134,7 +127,7 @@ export class MainWatchdogRuntime {
 	private readonly review: WatchdogReviewFunction;
 	private readonly reviewConnected: boolean;
 	private readonly reviewDescription: string;
-	private readonly displayWarning: ((warning: WatchdogWarningDetails, options?: { deliverAs?: WatchdogWarningDelivery }) => void) | undefined;
+	private readonly displayWarning: ((warning: WatchdogWarningDetails, options?: WatchdogWarningSendOptions) => void) | undefined;
 	private readonly reviewChangesOnly: boolean;
 	private readonly lspDiagnostics: WatchdogLspDiagnosticsFunction;
 	private readonly repoChangeSignature: typeof computeWatchdogRepoChangeSignature;
@@ -668,7 +661,7 @@ export class MainWatchdogRuntime {
 			: details;
 		this.stalemate = stalemate;
 		this.lastWarning = delivered;
-		this.displayWarning?.(delivered, stalemate ? { deliverAs: "hold" } : undefined);
+		this.displayWarning?.(delivered, stalemate ? { triggerTurn: false } : undefined);
 	}
 
 	// At a boundary review the previous boundary finding may come back; it is not a duplicate to

@@ -1,5 +1,5 @@
 import type { ChildWatchdogProgress, ChildWatchdogWarningSummary } from "../shared/types.ts";
-import { SUBAGENT_WATCHDOG_WARNING_TYPE, WATCHDOG_WARNING_CATEGORIES, type ResolvedWatchdogConfig, type WatchdogCadenceConfig, type WatchdogLspConfig } from "./types.ts";
+import { SUBAGENT_WATCHDOG_WARNING_TYPE, WATCHDOG_WARNING_CATEGORIES, type ResolvedWatchdogConfig, type WatchdogCadenceConfig, type WatchdogCategory, type WatchdogLspConfig } from "./types.ts";
 
 /** Warnings retained per child; older warnings drop first. */
 export const CHILD_WATCHDOG_WARNING_LIMIT = 20;
@@ -207,29 +207,14 @@ export function acceptChildWatchdogEvent(input: {
 	};
 }
 
-/**
- * Lift a child watchdog warning custom message (as it appears in the child's JSONL
- * `message_end` event) into a bounded envelope summary. Returns undefined for any other message.
- */
-export function childWatchdogWarningFromMessage(message: unknown): ChildWatchdogWarningSummary | undefined {
-	if (!message || typeof message !== "object") return undefined;
-	const candidate = message as { role?: unknown; customType?: unknown; details?: unknown };
-	if (candidate.role !== "custom" || candidate.customType !== SUBAGENT_WATCHDOG_WARNING_TYPE) return undefined;
-	const details = candidate.details as {
-		severity?: unknown;
-		category?: unknown;
-		summary?: unknown;
-		evidence?: unknown;
-		recommendedAction?: unknown;
-		displayedAt?: unknown;
-		state?: unknown;
-	} | undefined;
-	if (!details || typeof details !== "object") return undefined;
+/** A child watchdog warning custom message (from the child's JSONL `message_end`) as an envelope summary. */
+function childWatchdogWarningFromMessage(message: unknown): ChildWatchdogWarningSummary | undefined {
+	const candidate = message as { role?: unknown; customType?: unknown; details?: Record<string, unknown> } | undefined;
+	if (candidate?.role !== "custom" || candidate.customType !== SUBAGENT_WATCHDOG_WARNING_TYPE) return undefined;
+	const details = candidate.details ?? {};
 	if (details.severity !== "concern" && details.severity !== "blocker") return undefined;
 	if (typeof details.summary !== "string" || typeof details.evidence !== "string" || typeof details.recommendedAction !== "string") return undefined;
-	const category = typeof details.category === "string" && (WATCHDOG_WARNING_CATEGORIES as readonly string[]).includes(details.category)
-		? details.category as ChildWatchdogWarningSummary["category"]
-		: "other";
+	const category = (WATCHDOG_WARNING_CATEGORIES as readonly unknown[]).includes(details.category) ? details.category as WatchdogCategory : "other";
 	return {
 		severity: details.severity,
 		category,
@@ -242,15 +227,19 @@ export function childWatchdogWarningFromMessage(message: unknown): ChildWatchdog
 	};
 }
 
-export function appendChildWatchdogWarning(current: ChildWatchdogStateSnapshot | undefined, warning: ChildWatchdogWarningSummary, now = Date.now()): ChildWatchdogStateSnapshot {
-	const warnings = [...(current?.warnings ?? []), warning].slice(-CHILD_WATCHDOG_WARNING_LIMIT);
-	return current ? { ...current, warnings } : { phase: "idle", seq: 0, lastUpdate: now, warnings };
-}
-
-/** Returns a new snapshot when at least one warning was still unaddressed; otherwise undefined. */
-export function markChildWatchdogWarningsAddressed(current: ChildWatchdogStateSnapshot | undefined): ChildWatchdogStateSnapshot | undefined {
-	if (!current?.warnings?.some((warning) => !warning.addressed)) return undefined;
-	return { ...current, warnings: current.warnings.map((warning) => warning.addressed ? warning : { ...warning, addressed: true }) };
+/**
+ * Fold one child `message_end` into the warning envelope: a watchdog warning is appended
+ * (bounded to the last CHILD_WATCHDOG_WARNING_LIMIT), an assistant turn marks earlier warnings
+ * addressed. Returns undefined when nothing changed.
+ */
+export function applyChildWatchdogMessage(current: ChildWatchdogStateSnapshot | undefined, message: unknown, now = Date.now()): ChildWatchdogStateSnapshot | undefined {
+	const warning = childWatchdogWarningFromMessage(message);
+	if (warning) {
+		const warnings = [...(current?.warnings ?? []), warning].slice(-CHILD_WATCHDOG_WARNING_LIMIT);
+		return current ? { ...current, warnings } : { phase: "idle", seq: 0, lastUpdate: now, warnings };
+	}
+	if ((message as { role?: unknown } | undefined)?.role !== "assistant" || !current?.warnings?.some((entry) => !entry.addressed)) return undefined;
+	return { ...current, warnings: current.warnings.map((entry) => entry.addressed ? entry : { ...entry, addressed: true }) };
 }
 
 /** Blockers the child never followed with a turn, or that reached stalemate. */
