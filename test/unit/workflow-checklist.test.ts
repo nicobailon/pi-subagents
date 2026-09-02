@@ -181,6 +181,24 @@ test("workflow checklist does not turn unmatched preflight metadata into queued 
 	assert.deepEqual(mismatchedRuntime.phases.flatMap((phase) => phase.items).map((item) => item.key), ["pr14-quality"]);
 });
 
+test("workflow checklist prefers specific dotted preflight lanes over generated aliases", () => {
+	const projection = projectWorkflowChecklist({
+		preflight: {
+			version: 1,
+			coverage: "partial",
+			lanes: [
+				{ key: "writer", mode: "mutation" },
+				{ key: "writer.quality", mode: "review" },
+			],
+		},
+		trace: [{ operation: "run", key: "writer.quality.deep", generatedLaneKey: "writer", state: "started", agent: "reviewer" }],
+	});
+
+	assert.equal(projection.total, 1);
+	assert.deepEqual(projection.phases.map((phase) => phase.label), ["writer.quality"]);
+	assert.equal(projection.phases[0]?.items[0]?.preflight?.mode, "review");
+});
+
 test("workflow checklist text exposes aggregate, phase, and bottleneck signals with bounded errors", () => {
 	const projection = projectWorkflowChecklist({
 		trace: [{ operation: "run", key: "review", state: "failed", label: "reviewer", agent: "reviewer", error: "Output: secret details" }],

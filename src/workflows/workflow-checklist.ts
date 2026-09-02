@@ -1,5 +1,6 @@
 import type { AsyncJobStep, HostStepNodeV1, WorkflowGraphNode, WorkflowGraphSnapshot, WorkflowPreflightLaneV1, WorkflowPreflightV1 } from "../shared/types.ts";
 import { sanitizeDisplayText } from "../shared/display-text.ts";
+import { workflowPreflightLaneForRuntimeKey } from "./workflow-preflight.ts";
 
 export type WorkflowChecklistState = "complete" | "running" | "queued" | "blocked" | "failed" | "paused" | "stopped";
 
@@ -189,8 +190,8 @@ function duration(step: Pick<WorkflowChecklistStep, "durationMs" | "startedAt" |
 	return end === undefined ? undefined : Math.max(0, end - startedAt);
 }
 
-function laneFor(key: string, phase: string, lanes: ReadonlyMap<string, WorkflowPreflightLaneV1>): WorkflowPreflightLaneV1 | undefined {
-	return lanes.get(key) ?? lanes.get(phase) ?? [...lanes.values()].find((lane) => key.startsWith(`${lane.key}.`));
+function laneFor(preflight: WorkflowPreflightV1 | undefined, key: string, preferredKeys: readonly (string | undefined)[] = []): WorkflowPreflightLaneV1 | undefined {
+	return workflowPreflightLaneForRuntimeKey(preflight, key, preferredKeys);
 }
 
 function stepKey(step: WorkflowChecklistStep): string | undefined {
@@ -264,7 +265,7 @@ function traceSources(trace: readonly WorkflowChecklistTraceEntry[] | undefined)
 }
 
 function traceItem(entry: WorkflowChecklistTraceEntry, index: number, preflight: WorkflowPreflightLaneV1 | undefined): WorkflowChecklistItem {
-	const phase = keyText(entry.generatedLaneKey ?? entry.phase ?? preflight?.key, "Workflow");
+	const phase = keyText(preflight?.key ?? entry.generatedLaneKey ?? entry.phase, "Workflow");
 	const item = stepItem({ key: entry.key, label: entry.label, phase, agent: entry.agent, status: entry.state === "started" ? "running" : entry.state, durationMs: entry.durationMs, error: entry.error }, index, phase, entry.key, entry.label ?? entry.key, preflight);
 	if (entry.operation === "host") item.kind = "host";
 	return item;
@@ -317,7 +318,6 @@ function finalize(phase: WorkflowChecklistPhase): void {
 
 export function projectWorkflowChecklist(input: WorkflowChecklistInput): WorkflowChecklistProjection {
 	const phases = new Map<string, WorkflowChecklistPhase>();
-	const lanes = new Map((input.preflight?.lanes ?? []).map((lane) => [lane.key, lane]));
 	const steps = (input.steps ?? []) as readonly WorkflowChecklistStep[];
 	const nodes = graphNodes(input.graph);
 	const trace = traceSources(input.trace);
@@ -354,25 +354,26 @@ export function projectWorkflowChecklist(input: WorkflowChecklistInput): Workflo
 		if (matches.length) {
 			for (const match of matches) {
 				usedSteps.add(match.index);
-				add(phases, phase, applyNow(mergeNodeStep(node, match.step, phase, traceByKey.get(stepKey(match.step) ?? node.id), laneFor(node.id, phase, lanes)), input.now));
+				add(phases, phase, applyNow(mergeNodeStep(node, match.step, phase, traceByKey.get(stepKey(match.step) ?? node.id), laneFor(input.preflight, node.id, [phase])), input.now));
 			}
 			continue;
 		}
-		add(phases, phase, applyNow(mergeNodeStep(node, { key: node.id, label: node.label, phase, agent: node.agent, status: node.status, outputName: node.outputName, error: node.error, acceptance: node.acceptanceStatus ? { status: node.acceptanceStatus } : undefined }, phase, traceByKey.get(node.id), laneFor(node.id, phase, lanes)), input.now));
+		add(phases, phase, applyNow(mergeNodeStep(node, { key: node.id, label: node.label, phase, agent: node.agent, status: node.status, outputName: node.outputName, error: node.error, acceptance: node.acceptanceStatus ? { status: node.acceptanceStatus } : undefined }, phase, traceByKey.get(node.id), laneFor(input.preflight, node.id, [phase])), input.now));
 	}
 
 	for (const [index, step] of steps.entries()) {
 		if (usedSteps.has(index)) continue;
 		const key = keyText(stepKey(step), `step-${index + 1}`);
 		const traceEntry = traceByKey.get(key);
-		const phase = keyText(step.phase ?? laneFor(key, "", lanes)?.key ?? traceEntry?.generatedLaneKey ?? traceEntry?.phase, "Workflow");
-		add(phases, phase, applyNow(stepItem(step, index, phase, key, step.label ?? step.key ?? step.agent, laneFor(key, phase, lanes)), input.now));
+		const lane = laneFor(input.preflight, key, [step.phase, traceEntry?.generatedLaneKey, traceEntry?.phase]);
+		const phase = keyText(lane?.key ?? step.phase ?? traceEntry?.generatedLaneKey ?? traceEntry?.phase, "Workflow");
+		add(phases, phase, applyNow(stepItem(step, index, phase, key, step.label ?? step.key ?? step.agent, lane), input.now));
 	}
 
 	for (const host of hostById.values()) add(phases, keyText(host.label, "Host"), hostItem(host, keyText(host.label, "Host")));
 	for (const entry of trace) {
 		if (graphKeys.has(entry.key) || stepKeys.has(entry.key) || hostKeys.has(entry.key)) continue;
-		const item = traceItem(entry, phases.size, laneFor(entry.key, entry.generatedLaneKey ?? entry.phase ?? "", lanes));
+		const item = traceItem(entry, phases.size, laneFor(input.preflight, entry.key, [entry.generatedLaneKey, entry.phase]));
 		add(phases, item.phase, item);
 	}
 
