@@ -10,7 +10,6 @@ export const CHILD_WATCHDOG_PHASES = ["idle", "reviewing", "stale", "failed"] as
 export type ChildWatchdogPhase = typeof CHILD_WATCHDOG_PHASES[number];
 
 export interface ChildWatchdogConfig {
-	enabled: boolean;
 	runId?: string;
 	agent?: string;
 	childIndex?: number;
@@ -37,14 +36,7 @@ export interface ChildWatchdogStatusEvent {
 	reason?: string;
 }
 
-export interface ChildWatchdogStateSnapshot {
-	phase: ChildWatchdogPhase;
-	seq: number;
-	lastUpdate: number;
-	reason?: string;
-	timedOut?: boolean;
-	warnings?: ChildWatchdogWarningSummary[];
-}
+export type ChildWatchdogStateSnapshot = ChildWatchdogProgress;
 
 export function resolveChildWatchdogConfig(input: {
 	config: ResolvedWatchdogConfig;
@@ -59,7 +51,6 @@ export function resolveChildWatchdogConfig(input: {
 	const thinking = override?.thinking ?? input.config.children.thinking;
 	const cadence = override?.cadence ?? input.config.children.cadence ?? input.config.cadence;
 	return {
-		enabled: true,
 		...(input.runId ? { runId: input.runId } : {}),
 		...(input.agent ? { agent: input.agent } : {}),
 		...(input.childIndex !== undefined ? { childIndex: input.childIndex } : {}),
@@ -72,10 +63,6 @@ export function resolveChildWatchdogConfig(input: {
 		stalemateRepeats: input.config.stalemateRepeats,
 		cadence: { everyNTools: cadence.everyNTools ?? null },
 	};
-}
-
-export function encodeChildWatchdogConfig(config: ChildWatchdogConfig | undefined): string | undefined {
-	return config ? JSON.stringify(config) : undefined;
 }
 
 function childConfigObject(value: unknown, field: string): Record<string, unknown> {
@@ -142,7 +129,7 @@ export function decodeChildWatchdogConfig(raw: string | undefined): ChildWatchdo
 	if (!raw) return undefined;
 	const parsed = childConfigObject(JSON.parse(raw), "root");
 	if (parsed.enabled === false) return undefined;
-	if (parsed.enabled !== true) throw new Error("Invalid child watchdog config: enabled must be true or false.");
+	if ("enabled" in parsed && parsed.enabled !== true) throw new Error("Invalid child watchdog config: enabled must be true or false.");
 	const thinking = parsed.thinking;
 	if (thinking !== undefined && typeof thinking !== "string" && thinking !== false) {
 		throw new Error("Invalid child watchdog config: thinking must be a string or false.");
@@ -152,7 +139,6 @@ export function decodeChildWatchdogConfig(raw: string | undefined): ChildWatchdo
 	const childIndex = childConfigOptionalIndex(parsed, "childIndex");
 	const model = childConfigOptionalString(parsed, "model");
 	return {
-		enabled: true,
 		...(runId ? { runId } : {}),
 		...(agent ? { agent } : {}),
 		...(childIndex !== undefined ? { childIndex } : {}),

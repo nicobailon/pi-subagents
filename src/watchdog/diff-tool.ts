@@ -36,18 +36,12 @@ export function captureWatchdogDiffBaseline(cwd: string): WatchdogDiffBaseline |
 }
 
 function validatePath(value: string | undefined): string | undefined {
-	if (value === undefined) return undefined;
-	const trimmed = value.trim();
+	const trimmed = value?.trim();
 	if (!trimmed) return undefined;
 	if (trimmed.startsWith("-")) throw new Error("watchdog_diff path must not start with '-'.");
 	if (path.isAbsolute(trimmed)) throw new Error("watchdog_diff path must be relative to the repo root.");
 	if (trimmed.split(/[\\/]/).includes("..")) throw new Error("watchdog_diff path must not contain '..'.");
 	return trimmed;
-}
-
-function untrackedFiles(root: string, pathFilter: string | undefined): string[] {
-	const result = runGit(root, ["ls-files", "--others", "--exclude-standard", "-z", "--", ...(pathFilter ? [pathFilter] : [])]);
-	return result.ok ? result.stdout.split("\0").filter(Boolean) : [];
 }
 
 function bound(text: string): string {
@@ -68,7 +62,8 @@ export function createWatchdogDiffTool(baseline: WatchdogDiffBaseline): AgentToo
 			const pathFilter = validatePath(params.path);
 			const diff = runGit(baseline.root, ["diff", "--no-color", "--no-ext-diff", ...(params.stat === true ? ["--stat"] : []), baseline.ref, "--", ...(pathFilter ? [pathFilter] : [])]);
 			if (!diff.ok) throw new Error(`git diff failed: ${diff.stderr || "unknown error"}`);
-			const untracked = untrackedFiles(baseline.root, pathFilter);
+			const untrackedResult = runGit(baseline.root, ["ls-files", "--others", "--exclude-standard", "-z", "--", ...(pathFilter ? [pathFilter] : [])]);
+			const untracked = untrackedResult.ok ? untrackedResult.stdout.split("\0").filter(Boolean) : [];
 			const sections = [diff.stdout.trimEnd()];
 			if (untracked.length) {
 				const shown = untracked.slice(0, MAX_UNTRACKED_FILES);

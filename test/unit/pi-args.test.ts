@@ -459,7 +459,6 @@ describe("buildPiArgs session wiring", () => {
 			inheritProjectContext: false,
 			inheritSkills: false,
 			childWatchdog: {
-				enabled: true,
 				runId: "run-1",
 				agent: "worker",
 				childIndex: 2,
@@ -474,7 +473,6 @@ describe("buildPiArgs session wiring", () => {
 		const encoded = withWatchdog.env[CHILD_WATCHDOG_CONFIG_ENV];
 		assert.equal(typeof encoded, "string");
 		assert.deepEqual(JSON.parse(encoded ?? "{}"), {
-			enabled: true,
 			runId: "run-1",
 			agent: "worker",
 			childIndex: 2,

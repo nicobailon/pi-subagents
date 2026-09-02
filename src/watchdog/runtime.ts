@@ -426,13 +426,12 @@ export class MainWatchdogRuntime {
 		}
 	}
 
-	displayRuleWarning(violation: WatchdogRuleViolation): boolean {
-		if (this.disposed || this.ruleWarningsThisRun.has(violation.summary)) return false;
+	displayRuleWarning(violation: WatchdogRuleViolation): void {
+		if (this.disposed || this.ruleWarningsThisRun.has(violation.summary)) return;
 		this.ruleWarningsThisRun.add(violation.summary);
 		const details = normalizeWatchdogWarningDetails(ruleViolationWarning(violation), { state: "displayed", displayedAt: new Date().toISOString() });
 		this.lastWarning = details;
 		this.displayWarning?.(details, { deliverAs: "steer" });
-		return true;
 	}
 
 	recordDisplayedWarning(warning: WatchdogWarning): WatchdogWarningDetails {

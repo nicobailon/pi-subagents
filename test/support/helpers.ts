@@ -183,7 +183,7 @@ export const events = {
 	},
 
 	/** A child watchdog warning custom message as the child watchdog writes it into the child JSONL. */
-	watchdogWarning(severity: "concern" | "blocker", summary: string): object {
+	watchdogWarning(severity: "concern" | "blocker", summary: string, overrides: Record<string, unknown> = {}): object {
 		return {
 			type: "message_end",
 			message: {
@@ -191,7 +191,7 @@ export const events = {
 				customType: "subagent_watchdog_warning",
 				content: `<subagent_watchdog severity="${severity}">${summary}</subagent_watchdog>`,
 				display: true,
-				details: { severity, category: "test-gap", source: "child", agent: "worker", summary, evidence: "The transcript claims tests passed but no test command ran.", recommendedAction: "Run the focused test before finishing.", state: "displayed", displayedAt: new Date().toISOString() },
+				details: { severity, category: "test-gap", source: "child", agent: "worker", summary, evidence: "The transcript claims tests passed but no test command ran.", recommendedAction: "Run the focused test before finishing.", state: "displayed", displayedAt: new Date().toISOString(), ...overrides },
 				timestamp: Date.now(),
 			},
 		};

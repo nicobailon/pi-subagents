@@ -47,7 +47,6 @@ import {
 } from "./tool-availability.ts";
 import {
 	CHILD_WATCHDOG_CONFIG_ENV,
-	encodeChildWatchdogConfig,
 	type ChildWatchdogConfig,
 } from "../../watchdog/child-status.ts";
 import { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV } from "../background/wait-config.ts";
@@ -1031,9 +1030,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	const encodedToolBudget = encodeToolBudgetEnv(input.toolBudget);
 	if (encodedToolBudget) env[TOOL_BUDGET_ENV] = encodedToolBudget;
 	env[TOOL_BUDGET_ZERO_AUTH_ENV] = input.allowZeroToolBudget ? "1" : undefined;
-	const encodedChildWatchdog = encodeChildWatchdogConfig(input.childWatchdog);
-	if (encodedChildWatchdog)
-		env[CHILD_WATCHDOG_CONFIG_ENV] = encodedChildWatchdog;
+	if (input.childWatchdog) env[CHILD_WATCHDOG_CONFIG_ENV] = JSON.stringify(input.childWatchdog);
 
 	env[SUBAGENT_PARENT_SESSION_ENV] =
 		input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";

@@ -11,7 +11,7 @@ export interface WatchdogRuleViolation {
 	recommendedAction: string;
 }
 
-export function loadWatchdogLaunchRules(cwd: string): WatchdogRulesConfig | undefined {
+function loadWatchdogLaunchRules(cwd: string): WatchdogRulesConfig | undefined {
 	const result = resolveWatchdogConfig(cwd);
 	return result.ok ? result.config.rules : undefined;
 }
@@ -52,6 +52,15 @@ export function evaluateLaunchRule(rules: WatchdogRulesConfig | undefined, agent
 
 export function ruleViolationWarning(violation: WatchdogRuleViolation): WatchdogWarning {
 	return { severity: "concern", category: "missed-constraint", confidence: "high", source: "main", ...violation };
+}
+
+export function applyWatchdogLaunchRules(input: { cwd: string; agent: string; model?: string; warn?: (violation: WatchdogRuleViolation) => void }): string | undefined {
+	const rules = loadWatchdogLaunchRules(input.cwd);
+	const violation = evaluateLaunchRule(rules, input.agent, input.model);
+	if (!violation) return undefined;
+	if (rules?.action === "block") return `Launch blocked by subagents.watchdog.rules: ${violation.summary}`;
+	input.warn?.(violation);
+	return undefined;
 }
 
 /** For launch paths without a main watchdog runtime (background chain steps). */

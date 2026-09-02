@@ -27,7 +27,7 @@ import { normalizePublicSubagentExecution, validateWorkflowCapacityOverrides } f
 import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
-import { evaluateLaunchRule, loadWatchdogLaunchRules } from "../../watchdog/rules.ts";
+import { applyWatchdogLaunchRules } from "../../watchdog/rules.ts";
 import { buildModelCandidates, normalizeParentModel, resolveEffectiveSubagentModel, resolveModelOrigin, type ModelOrigin, type ParentModel } from "../shared/model-fallback.ts";
 import { formatRetainedChildren, listRetainedChildren } from "../background/retained-children.ts";
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
@@ -2773,15 +2773,6 @@ function resolveToolBudget(
 	return { ...(resolved.budget === undefined ? {} : { toolBudget: resolved.budget }), ...(resolved.error === undefined ? {} : { error: resolved.error }) };
 }
 
-function applyLaunchRules(deps: ExecutorDeps, cwd: string, agent: string, model: string | undefined): string | undefined {
-	const rules = loadWatchdogLaunchRules(cwd);
-	const violation = evaluateLaunchRule(rules, agent, model);
-	if (!violation) return undefined;
-	if (rules?.action === "block") return `Launch blocked by subagents.watchdog.rules: ${violation.summary}`;
-	deps.watchdog?.displayRuleWarning(violation);
-	return undefined;
-}
-
 function resolveEffectiveToolBudget(input: { stepBudget?: ToolBudgetConfig; runBudget?: ResolvedToolBudget; agentBudget?: ToolBudgetConfig; configBudget?: ToolBudgetConfig }): { toolBudget?: ResolvedToolBudget; error?: string } {
 	if (input.stepBudget !== undefined) return resolveToolBudget(input.stepBudget, "toolBudget");
 	if (input.runBudget !== undefined) return { toolBudget: input.runBudget };
@@ -3239,7 +3230,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 				source: modelOrigin === "explicit" ? "explicit" : "inherited",
 			});
 		const modelOverrideFromParent = modelOrigin === "inherited";
-		const launchRuleError = applyLaunchRules(deps, effectiveCwd, a.name, modelOverride ?? (parentModel && `${parentModel.provider}/${parentModel.id}`));
+		const launchRuleError = applyWatchdogLaunchRules({ cwd: effectiveCwd, agent: a.name, model: modelOverride ?? (parentModel && `${parentModel.provider}/${parentModel.id}`), warn: (violation) => deps.watchdog?.displayRuleWarning(violation) });
 		if (launchRuleError) return toExecutionErrorResult(params, new Error(launchRuleError), data.contextPolicy.contextSummary);
 		const asyncResult = executeAsyncSingle(id, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
 			agent: params.agent!,
@@ -3676,7 +3667,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		},
 	);
 	const modelOverrideFromParent = modelOrigin === "inherited";
-	const launchRuleError = applyLaunchRules(deps, effectiveCwd, agentConfig.name, modelOverride ?? (parentModel && `${parentModel.provider}/${parentModel.id}`));
+	const launchRuleError = applyWatchdogLaunchRules({ cwd: effectiveCwd, agent: agentConfig.name, model: modelOverride ?? (parentModel && `${parentModel.provider}/${parentModel.id}`), warn: (violation) => deps.watchdog?.displayRuleWarning(violation) });
 	if (launchRuleError) return toExecutionErrorResult(params, new Error(launchRuleError), data.contextPolicy.contextSummary);
 	let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
 	let readsOverride: string[] | false | undefined = params.reads;

@@ -12,25 +12,10 @@ import {
 	unresolvedChildWatchdogBlockers,
 } from "../../src/watchdog/child-status.ts";
 import { DEFAULT_WATCHDOG_CONFIG } from "../../src/watchdog/settings.ts";
+import { events } from "../support/helpers.ts";
 
 function warningMessage(overrides: Record<string, unknown> = {}) {
-	return {
-		role: "custom",
-		customType: "subagent_watchdog_warning",
-		content: "<subagent_watchdog/>",
-		display: true,
-		details: {
-			severity: "blocker",
-			category: "correctness",
-			source: "child",
-			summary: "Claims tests passed without running them",
-			evidence: "No test command appears in the transcript.",
-			recommendedAction: "Run the focused test before finishing.",
-			displayedAt: "2026-09-01T00:00:00.000Z",
-			state: "displayed",
-			...overrides,
-		},
-	};
+	return (events.watchdogWarning("blocker", "Claims tests passed without running them", { category: "correctness", evidence: "No test command appears in the transcript.", displayedAt: "2026-09-01T00:00:00.000Z", ...overrides }) as { message: object }).message;
 }
 
 describe("child watchdog warning envelope", () => {
@@ -123,7 +108,6 @@ describe("child watchdog status helpers", () => {
 
 	it("decodes child watchdog config and rejects malformed enabled payloads", () => {
 		const payload = {
-			enabled: true,
 			runId: "run-1",
 			agent: "worker",
 			childIndex: 1,

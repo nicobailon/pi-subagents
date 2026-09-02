@@ -53,7 +53,7 @@ function writeStatus(event: unknown): void {
 
 export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[CHILD_WATCHDOG_CONFIG_ENV]): MainWatchdogRuntime | undefined {
 	const childConfig = decodeChildWatchdogConfig(rawConfig);
-	if (!childConfig?.enabled) return undefined;
+	if (!childConfig) return undefined;
 	let currentContext: ExtensionContext | undefined;
 	let diffBaseline: WatchdogDiffBaseline | undefined;
 	let seq = 0;

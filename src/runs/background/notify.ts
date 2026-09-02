@@ -14,7 +14,7 @@ import {
 	createCompletionBatcher,
 	resolveCompletionBatchConfig,
 } from "./completion-batcher.ts";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type ChildWatchdogProgress, type ParallelHandoffReference, type ScheduleOrigin, type SubagentState } from "../../shared/types.ts";
+import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type ChildWatchdogProgress, type ChildWatchdogWarningSummary, type ParallelHandoffReference, type ScheduleOrigin, type SubagentState } from "../../shared/types.ts";
 import { safeTerminalText } from "../../shared/display-text.ts";
 import { resolveSubagentResultStatus } from "../../intercom/result-intercom.ts";
 import { isUnexplainedProcessSignal } from "../shared/process-signal.ts";
@@ -31,12 +31,7 @@ export interface SubagentNotifyChildOutput {
 	previewUnavailableReason?: string;
 }
 
-export interface SubagentNotifyWatchdogBlocker {
-	agent: string;
-	summary: string;
-	addressed: boolean;
-	stalemate: boolean;
-}
+export type SubagentNotifyWatchdogBlocker = Pick<ChildWatchdogWarningSummary, "summary" | "addressed" | "stalemate"> & { agent: string };
 
 export interface SubagentNotifyDetails {
 	agent: string;

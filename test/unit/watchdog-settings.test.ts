@@ -83,8 +83,9 @@ describe("watchdog settings", () => {
 					enabled: true,
 					stalemateRepeats: 5,
 					children: {
+						cadence: { everyNTools: 10 },
 						overrides: {
-							worker: { enabled: true, model: "anthropic/claude-test" },
+							worker: { enabled: true, model: "anthropic/claude-test", cadence: { everyNTools: 5 } },
 						},
 					},
 					guidance: { watchdogMd: false },
@@ -126,11 +127,13 @@ describe("watchdog settings", () => {
 		assert.equal(result.config.guidance.watchdogMd, false);
 		assert.deepEqual(result.config.scope, { enabled: false });
 		assert.deepEqual(result.config.cadence, { everyNTools: 10 });
+		assert.deepEqual(result.config.children.cadence, { everyNTools: 10 });
 		assert.deepEqual(result.config.lsp, { enabled: false, timeoutMs: 1500, maxFiles: 4, maxDiagnostics: 7 });
 		assert.deepEqual(result.config.children.overrides.worker, {
 			enabled: false,
 			model: "anthropic/claude-test",
 			thinking: "medium",
+			cadence: { everyNTools: 5 },
 		});
 		assert.deepEqual(result.config.children.overrides.reviewer, { enabled: false });
 	});
@@ -172,40 +175,19 @@ describe("watchdog settings", () => {
 		);
 	});
 
-	it("parses child cadence at the children and override levels", () => {
-		writeJson(userSettingsPath(), {
-			subagents: {
-				watchdog: {
-					children: { cadence: { everyNTools: 10 }, overrides: { worker: { cadence: { everyNTools: 5 } } } },
-				},
-			},
-		});
-		const result = resolveWatchdogConfig(tempProject);
-		assert.equal(result.ok, true, result.errors[0]?.message);
-		assert.deepEqual(result.config.children.cadence, { everyNTools: 10 });
-		assert.deepEqual(result.config.children.overrides.worker?.cadence, { everyNTools: 5 });
-
-		writeJson(userSettingsPath(), { subagents: { watchdog: { children: { cadence: { everyNTools: 4 } } } } });
-		assert.match(resolveWatchdogConfig(tempProject).errors[0]?.message ?? "", /invalid 'subagents\.watchdog\.children\.cadence\.everyNTools'/);
-	});
-
 	it("parses launch rules and rejects malformed rule fields", () => {
-		writeJson(userSettingsPath(), {
-			subagents: {
-				watchdog: {
-					rules: {
-						action: "block",
-						roleModels: { scout: { allow: ["openai-codex/gpt-5.6-luna:max"] }, oracle: { deny: ["*"], note: "ask first" } },
-					},
-				},
-			},
-		});
-		const result = resolveWatchdogConfig(tempProject);
-		assert.equal(result.ok, true, result.errors[0]?.message);
-		assert.deepEqual(result.config.rules, {
+		const rules = {
 			action: "block",
 			roleModels: { scout: { allow: ["openai-codex/gpt-5.6-luna:max"] }, oracle: { deny: ["*"], note: "ask first" } },
+		} as const;
+		writeJson(userSettingsPath(), {
+			subagents: {
+				watchdog: { rules },
+			},
 		});
+		const result = resolveWatchdogConfig(tempProject);
+		assert.equal(result.ok, true, result.errors[0]?.message);
+		assert.deepEqual(result.config.rules, rules);
 		assert.equal(resolveWatchdogConfig(tempProject, { session: { enabled: true } }).config.rules?.action, "block");
 
 		writeJson(userSettingsPath(), { subagents: { watchdog: { rules: { action: "shout" } } } });
@@ -240,6 +222,9 @@ describe("watchdog settings", () => {
 		result = resolveWatchdogConfig(tempProject);
 		assert.equal(result.ok, false);
 		assert.match(result.errors[0]?.message ?? "", /invalid 'subagents\.watchdog\.cadence\.everyNTools'/);
+
+		writeJson(userSettingsPath(), { subagents: { watchdog: { children: { cadence: { everyNTools: 4 } } } } });
+		assert.match(resolveWatchdogConfig(tempProject).errors[0]?.message ?? "", /invalid 'subagents\.watchdog\.children\.cadence\.everyNTools'/);
 	});
 
 	it("rejects invalid LSP config at settings load", () => {

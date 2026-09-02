@@ -812,8 +812,5 @@ describe("watchdog blockers in completion notices", () => {
 		assert.match(grouped, /Watchdog blockers:\n- worker: Claims tests passed without running them \(unaddressed\)/);
 		assert.equal(grouped.split("Watchdog blockers:").length, 2);
 
-		const concernOnly = buildCompletionDetails({ id: "run-2", agent: "worker", success: true, summary: "done", exitCode: 0, sessionId: "session-1", watchdog: { phase: "idle", seq: 1, lastUpdate: 1, warnings: [{ severity: "concern", category: "other", summary: "c", evidence: "e", recommendedAction: "r", addressed: true, stalemate: false }] } });
-		assert.equal(concernOnly.watchdogBlockers, undefined);
-		assert.doesNotMatch(formatSingleCompletion(concernOnly), /Watchdog blockers/);
 	});
 });

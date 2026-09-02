@@ -16,7 +16,7 @@ import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { planChildLaunch, resolveStepBehavior, suppressProgressForReadOnlyTask, type ResolvedStepBehavior } from "../shared/child-launch-plan.ts";
 import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
 import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
-import { evaluateLaunchRule, loadWatchdogLaunchRules, sendRuleViolationWarning } from "../../watchdog/rules.ts";
+import { applyWatchdogLaunchRules, sendRuleViolationWarning } from "../../watchdog/rules.ts";
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveExistingReadInstructionPaths, resolveExistingReadPaths, writeInitialProgressFile, type ChainStep, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
@@ -940,10 +940,8 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
 			}
 		}
-		const launchRules = loadWatchdogLaunchRules(stepCwd);
-		const ruleViolation = evaluateLaunchRule(launchRules, a.name, modelCandidates[0] ?? model);
-		if (ruleViolation && launchRules?.action === "block") throw new AsyncStartValidationError(`Launch blocked by subagents.watchdog.rules: ${ruleViolation.summary}`);
-		if (ruleViolation) sendRuleViolationWarning(ctx.pi, ruleViolation);
+		const launchRuleError = applyWatchdogLaunchRules({ cwd: stepCwd, agent: a.name, model: modelCandidates[0] ?? model, warn: (violation) => sendRuleViolationWarning(ctx.pi, violation) });
+		if (launchRuleError) throw new AsyncStartValidationError(launchRuleError);
 		const fast = s.fast ?? params.fast ?? a.fast;
 		const toolPlan = resolvePiLaunchToolPlan({
 			tools: a.tools,

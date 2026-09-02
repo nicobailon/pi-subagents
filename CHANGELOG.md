@@ -1,18 +1,17 @@
 # Changelog
 
-
 ## [Unreleased]
 
 ### Added
-- Add deterministic watchdog launch rules under `subagents.watchdog.rules`: per-role model allow/deny globs that warn or block before a child starts.
-- Give watchdog reviewers a read-only `watchdog_diff` tool showing the repo diff since the session-start commit plus untracked paths, with optional path narrowing and stat mode.
-- Run cadence reviews inside child watchdogs, configurable per role through `children.cadence` and `children.overrides.<agent>.cadence` (defaulting to the top-level cadence). Over-long review input now keeps its head and tail instead of only the tail.
-- Lift child watchdog warnings into the parent: the result envelope carries `watchdog.warnings`, acceptance adds a `watchdog-blocker` runtime check that fails on unaddressed or stalemate blockers, completion notices list `Watchdog blockers:`, and Fleet shows a `wd:<n>` chip.
-- Load standing watchdog reviewer instructions from `WATCHDOG.md` in the project config directory and the agent directory, appended to the reviewer system prompt on every review.
+- Add watchdog launch rules under `subagents.watchdog.rules`: per-role model allow/deny globs that warn or block before a child starts.
+- Give watchdog reviewers a read-only `watchdog_diff` tool for the session-start diff, untracked paths, path narrowing, and stat mode.
+- Run child watchdog cadence reviews through `children.cadence` and `children.overrides.<agent>.cadence`, and keep both the head and tail of over-long review input.
+- Lift child watchdog warnings into parent results, acceptance (`watchdog-blocker`), completion notices, and Fleet `wd:<n>` chips.
+- Load standing watchdog reviewer instructions from project and agent `WATCHDOG.md` files on every review.
 
 ### Changed
-- Removed watchdog settings keys that had no runtime effect: `delivery`, `showDuringRun`, `syncBacklog`, `lateWarningPolicy`, `compactAtPercent`, `reviewRetryDelayMs`, `maxReviewFailures`, `asyncCompletion`, and `guidance.systemPromptPath`. They are now rejected as unknown fields.
-- Removed watchdog auto-follow. A displayed boundary warning already continues the run on pi 0.84+; repeated identical boundary warnings now stop after `subagents.watchdog.stalemateRepeats` and are shown without continuing. The `autoFollow` settings block is rejected as unknown.
+- Reject no-op watchdog settings: `delivery`, `showDuringRun`, `syncBacklog`, `lateWarningPolicy`, `compactAtPercent`, `reviewRetryDelayMs`, `maxReviewFailures`, `asyncCompletion`, and `guidance.systemPromptPath`.
+- Remove watchdog auto-follow. Pi 0.84+ already continues after displayed boundary warnings; repeated identical warnings stop after `subagents.watchdog.stalemateRepeats`. The `autoFollow` settings block is now unknown.
 
 ## [0.63.0] - 2026-09-01
 
