@@ -86,7 +86,6 @@ interface MainWatchdogRuntimeOptions {
 	repoChangeSignature?: typeof computeWatchdogRepoChangeSignature;
 }
 
-/** Passed straight to pi.sendMessage: steer mid-run corrections, hold a stalemate without a turn. */
 export type WatchdogWarningSendOptions = { deliverAs: "steer" } | { triggerTurn: false };
 
 type ContextLike = Pick<ExtensionContext, "cwd">;
@@ -97,7 +96,6 @@ const MAX_REVIEW_INPUT_CHARS = 24_000;
 const REVIEW_INPUT_HEAD_CHARS = 6_000;
 const REVIEW_DELTA_SEPARATOR = "\n\n---\n\n";
 
-/** Keep the head (task and early decisions) and the tail (latest work) of over-long review text. */
 export function boundWatchdogReviewText(text: string, cap = MAX_REVIEW_INPUT_CHARS): string {
 	if (text.length <= cap) return text;
 	const head = Math.min(REVIEW_INPUT_HEAD_CHARS, Math.floor(cap / 4));
@@ -428,7 +426,6 @@ export class MainWatchdogRuntime {
 		}
 	}
 
-	/** Display a rule violation once per run as a steered concern. Returns false when already shown. */
 	displayRuleWarning(violation: WatchdogRuleViolation): boolean {
 		if (this.disposed || this.ruleWarningsThisRun.has(violation.summary)) return false;
 		this.ruleWarningsThisRun.add(violation.summary);
@@ -644,10 +641,8 @@ export class MainWatchdogRuntime {
 		this.deliverBoundaryWarning(details);
 	}
 
-	// A displayed boundary warning continues the run on its own (the host steers it into a
-	// continuation). When the same warning identity comes back from consecutive boundary
-	// reviews, the agent is not making progress: mark it a stalemate and hold the warning so
-	// it is visible without continuing the run.
+	// A displayed boundary warning continues the run; the same identity back from consecutive
+	// boundaries means no progress, so it is shown held instead of continuing again.
 	private deliverBoundaryWarning(details: WatchdogWarningDetails): void {
 		const identity = details.identity ?? reviewInputSignature([details.severity, details.summary, details.evidence].join("\n"));
 		if (this.lastBoundaryIdentity === identity) this.boundaryRepeats++;
@@ -664,8 +659,7 @@ export class MainWatchdogRuntime {
 		this.displayWarning?.(delivered, stalemate ? { triggerTurn: false } : undefined);
 	}
 
-	// At a boundary review the previous boundary finding may come back; it is not a duplicate to
-	// suppress but a repeat to count. Once stalemate is reached, repeats are duplicates again.
+	// The previous boundary finding is a repeat to count, not a duplicate, until stalemate.
 	private repeatableBoundaryIdentity(): string | undefined {
 		return this.waitingAtAgentEnd && !this.stalemate ? this.lastBoundaryIdentity : undefined;
 	}

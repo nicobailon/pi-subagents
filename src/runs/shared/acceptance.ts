@@ -1362,7 +1362,6 @@ export async function evaluateAcceptance(input: {
 	reportOptional?: boolean;
 	artifactsDir?: string;
 	runId?: string;
-	/** Child watchdog envelope; present only when a watchdog was attached to the child. */
 	watchdog?: ChildWatchdogProgress;
 }): Promise<AcceptanceLedger> {
 	const acceptance = input.acceptance;

@@ -10,7 +10,6 @@ export interface WatchdogRuleViolation {
 	recommendedAction: string;
 }
 
-/** Deterministic launch rules, read from settings at launch time. Undefined when none are configured. */
 export function loadWatchdogLaunchRules(cwd: string): WatchdogRulesConfig | undefined {
 	const result = resolveWatchdogConfig(cwd);
 	return result.ok ? result.config.rules : undefined;
@@ -27,7 +26,7 @@ function modelMatches(patterns: string[], model: string): string | undefined {
 	return patterns.find((pattern) => watchdogGlobMatch(pattern, model) || watchdogGlobMatch(pattern, base));
 }
 
-/** Role model allow/deny check for one launch. Deny wins; an unknown model cannot be judged. */
+/** Deny wins over allow; an unknown model cannot be judged. */
 export function evaluateLaunchRule(rules: WatchdogRulesConfig | undefined, agent: string, model: string | undefined): WatchdogRuleViolation | undefined {
 	const roleRule = rules?.roleModels[agent];
 	if (!roleRule || !model) return undefined;
@@ -54,7 +53,7 @@ export function ruleViolationWarning(violation: WatchdogRuleViolation): Watchdog
 	return { severity: "concern", category: "missed-constraint", confidence: "high", source: "main", ...violation };
 }
 
-/** Steered display for launch paths without a main watchdog runtime (background chain steps). */
+/** For launch paths without a main watchdog runtime (background chain steps). */
 export function sendRuleViolationWarning(pi: { sendMessage?: (message: unknown, options?: unknown) => unknown } | undefined, violation: WatchdogRuleViolation): void {
 	if (typeof pi?.sendMessage !== "function") return;
 	const warning = ruleViolationWarning(violation);

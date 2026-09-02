@@ -895,7 +895,6 @@ export interface SubagentResultIntercomPayload {
 // Progress Tracking
 // ============================================================================
 
-/** One warning the child watchdog displayed inside the child session, lifted into the parent envelope. */
 export interface ChildWatchdogWarningSummary extends Pick<WatchdogWarningDetails, "severity" | "category" | "summary" | "evidence" | "recommendedAction" | "displayedAt"> {
 	/** True when a later assistant turn in the child followed the warning. */
 	addressed: boolean;

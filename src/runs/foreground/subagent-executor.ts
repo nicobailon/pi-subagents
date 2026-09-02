@@ -2773,7 +2773,6 @@ function resolveToolBudget(
 	return { ...(resolved.budget === undefined ? {} : { toolBudget: resolved.budget }), ...(resolved.error === undefined ? {} : { error: resolved.error }) };
 }
 
-/** subagents.watchdog.rules at launch: the block message, or a displayed warning and undefined. */
 function applyLaunchRules(deps: ExecutorDeps, cwd: string, agent: string, model: string | undefined): string | undefined {
 	const rules = loadWatchdogLaunchRules(cwd);
 	const violation = evaluateLaunchRule(rules, agent, model);

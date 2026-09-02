@@ -7,7 +7,6 @@ export const WATCHDOG_DIFF_TOOL_NAME = "watchdog_diff";
 export const WATCHDOG_DIFF_MAX_CHARS = 24_000;
 const MAX_UNTRACKED_FILES = 50;
 
-/** Repo root plus the commit the review compares against, captured when the session starts. */
 export interface WatchdogDiffBaseline {
 	root: string;
 	ref: string;
@@ -25,7 +24,7 @@ function runGit(root: string, args: string[]): { ok: boolean; stdout: string; st
 	return { ok: result.status === 0, stdout: result.stdout ?? "", stderr: (result.stderr ?? "").trim() };
 }
 
-/** Capture the current commit so later diffs cover everything since the session began, including child commits. */
+/** HEAD at session start, so later child commits still show in the diff. */
 export function captureWatchdogDiffBaseline(cwd: string): WatchdogDiffBaseline | undefined {
 	const toplevel = runGit(cwd, ["rev-parse", "--show-toplevel"]);
 	if (!toplevel.ok) return undefined;
@@ -57,11 +56,7 @@ function bound(text: string): string {
 	return `${text.slice(0, WATCHDOG_DIFF_MAX_CHARS - marker.length)}${marker}`;
 }
 
-/**
- * Read-only diff of the repo against the session-start baseline: tracked changes (including
- * later commits) via `git diff <baseline>`, plus a list of untracked paths the reviewer can
- * open with `read`. In a shared cwd, changes already pending when the session started also appear.
- */
+/** In a shared cwd, changes already pending when the session started also appear. */
 export function createWatchdogDiffTool(baseline: WatchdogDiffBaseline): AgentTool<typeof WatchdogDiffParams, { chars: number }> {
 	return {
 		name: WATCHDOG_DIFF_TOOL_NAME,

@@ -73,7 +73,6 @@ export interface WatchdogWarningMessage {
 }
 
 export interface WatchdogGuidanceConfig {
-	/** Load standing reviewer instructions from WATCHDOG.md (project config dir, then agent dir). */
 	watchdogMd: boolean;
 }
 
@@ -144,7 +143,6 @@ export interface WatchdogRoleModelRule {
 	note?: string;
 }
 
-/** Deterministic launch-shape rules evaluated before a child starts; no model call. */
 export interface WatchdogRulesConfig {
 	action: "warn" | "block";
 	roleModels: Record<string, WatchdogRoleModelRule>;

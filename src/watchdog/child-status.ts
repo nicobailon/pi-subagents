@@ -1,7 +1,6 @@
 import type { ChildWatchdogProgress, ChildWatchdogWarningSummary } from "../shared/types.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE, WATCHDOG_WARNING_CATEGORIES, type ResolvedWatchdogConfig, type WatchdogCadenceConfig, type WatchdogCategory, type WatchdogLspConfig } from "./types.ts";
 
-/** Warnings retained per child; older warnings drop first. */
 export const CHILD_WATCHDOG_WARNING_LIMIT = 20;
 
 export const CHILD_WATCHDOG_CONFIG_ENV = "PI_SUBAGENT_WATCHDOG_CHILD_CONFIG";
@@ -207,7 +206,6 @@ export function acceptChildWatchdogEvent(input: {
 	};
 }
 
-/** A child watchdog warning custom message (from the child's JSONL `message_end`) as an envelope summary. */
 function childWatchdogWarningFromMessage(message: unknown): ChildWatchdogWarningSummary | undefined {
 	const candidate = message as { role?: unknown; customType?: unknown; details?: Record<string, unknown> } | undefined;
 	if (candidate?.role !== "custom" || candidate.customType !== SUBAGENT_WATCHDOG_WARNING_TYPE) return undefined;
@@ -227,11 +225,7 @@ function childWatchdogWarningFromMessage(message: unknown): ChildWatchdogWarning
 	};
 }
 
-/**
- * Fold one child `message_end` into the warning envelope: a watchdog warning is appended
- * (bounded to the last CHILD_WATCHDOG_WARNING_LIMIT), an assistant turn marks earlier warnings
- * addressed. Returns undefined when nothing changed.
- */
+/** A watchdog warning message is appended; an assistant turn marks earlier warnings addressed. Undefined when unchanged. */
 export function applyChildWatchdogMessage(current: ChildWatchdogStateSnapshot | undefined, message: unknown, now = Date.now()): ChildWatchdogStateSnapshot | undefined {
 	const warning = childWatchdogWarningFromMessage(message);
 	if (warning) {
@@ -242,7 +236,6 @@ export function applyChildWatchdogMessage(current: ChildWatchdogStateSnapshot | 
 	return { ...current, warnings: current.warnings.map((entry) => entry.addressed ? entry : { ...entry, addressed: true }) };
 }
 
-/** Blockers the child never followed with a turn, or that reached stalemate. */
 export function unresolvedChildWatchdogBlockers(progress: Pick<ChildWatchdogProgress, "warnings"> | undefined): ChildWatchdogWarningSummary[] {
 	return (progress?.warnings ?? []).filter((warning) => warning.severity === "blocker" && (!warning.addressed || warning.stalemate));
 }

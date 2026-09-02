@@ -12,10 +12,7 @@ function readOptional(filePath: string): string {
 	}
 }
 
-/**
- * Standing reviewer instructions, read fresh for every review: `<project config dir>/WATCHDOG.md`
- * first, then `<agent dir>/WATCHDOG.md`, joined and capped at WATCHDOG_GUIDANCE_MAX_CHARS from the head.
- */
+/** Read fresh on every review; project file first, then user file. */
 export function loadWatchdogGuidance(cwd: string, enabled: boolean): string {
 	if (!enabled) return "";
 	const sections = [getProjectConfigDir(cwd), getAgentDir()].map((dir) => readOptional(path.join(dir, "WATCHDOG.md"))).filter(Boolean);

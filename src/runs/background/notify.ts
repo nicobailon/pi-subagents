@@ -54,7 +54,6 @@ export interface SubagentNotifyDetails {
 	handoffPath?: string;
 	/** Present when a durable schedule launched the run. */
 	scheduleOrigin?: ScheduleOrigin;
-	/** Child watchdog blockers lifted from the run and its children. */
 	watchdogBlockers?: SubagentNotifyWatchdogBlocker[];
 }
 
@@ -267,8 +266,7 @@ function formatWatchdogBlockerLines(details: SubagentNotifyDetails): string[] {
 	return [WATCHDOG_BLOCKERS_HEADING, ...details.watchdogBlockers.map((blocker) => `- ${blocker.agent}: ${blocker.summary} (${blocker.stalemate ? "stalemate" : blocker.addressed ? "addressed" : "unaddressed"})`)];
 }
 
-// The notice line carries one state. A stalemate blocker was held without a continuation,
-// so it parses back as unaddressed; acceptance treats it as unresolved either way.
+// A stalemate blocker parses back as unaddressed; acceptance treats both as unresolved.
 function parseWatchdogBlockerLines(lines: string[]): SubagentNotifyWatchdogBlocker[] {
 	const blockers: SubagentNotifyWatchdogBlocker[] = [];
 	for (const line of lines) {

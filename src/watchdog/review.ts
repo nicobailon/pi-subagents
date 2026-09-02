@@ -54,7 +54,6 @@ export interface CreateMainWatchdogReviewOptions {
 	streamFn?: StreamFn;
 	createReadOnlyTools?: (cwd: string) => AgentTool[];
 	getThinkingLevel?: () => ThinkingLevel | undefined;
-	/** Repo baseline for the watchdog_diff tool; when undefined the tool is not offered. */
 	diffBaseline?: () => WatchdogDiffBaseline | undefined;
 }
 
