@@ -2,7 +2,7 @@ import { sanitizeDisplayText, truncateDisplayText } from "../../shared/display-t
 import { formatModelThinking } from "../../shared/formatters.ts";
 import type { AsyncJobState, AsyncJobStep, HostStepFreshnessV1, HostStepMonitorKind, HostStepNodeV1, HostStepState, HostStepVerdict, NestedRunSummary, NestedStepSummary, SubagentRunMode, WorkflowGraphSnapshot, WorkflowPreflightLaneV1, WorkflowPreflightV1 } from "../../shared/types.ts";
 import { HOST_STEP_MAX_COUNT, HOST_STEP_MAX_DETAIL_CHARS, HOST_STEP_MAX_LABEL_CHARS, HOST_STEP_MAX_PROVIDER_CHARS, HOST_STEP_MAX_REASON_CHARS, HOST_STEP_MAX_REF_CHARS, HOST_STEP_MAX_ROLE_CHARS, HOST_STEP_MAX_TARGET_CHARS, hostStepReportName, parseHostStepNode, validHostStepNodes } from "./host-step-status.ts";
-import { workflowKeyMatchesPreflightLane } from "../../workflows/workflow-preflight.ts";
+import { workflowPreflightLaneForRuntimeKey } from "../../workflows/workflow-preflight.ts";
 import { workflowGraphStageNodes } from "./workflow-graph.ts";
 
 export const ASYNC_STATUS_SNAPSHOT_KIND = "pi-subagents.async-status-snapshot";
@@ -483,9 +483,8 @@ export function projectAsyncWorkflowRows(
 	const graph = isWorkflowGraph(hostStepsOrPreflight) ? hostStepsOrPreflight : undefined;
 	const hostSteps = isWorkflowPreflight(hostStepsOrPreflight) || graph ? undefined : hostStepsOrPreflight;
 	const loaded = steps ?? [];
-	const preflightForKey = (key: string, groupKeys: readonly (string | undefined)[] = []): WorkflowPreflightLaneV1 | undefined => preflight?.lanes.find((lane) =>
-		groupKeys.includes(lane.key) || workflowKeyMatchesPreflightLane(key, lane.key),
-	);
+	const preflightForKey = (key: string, groupKeys: readonly (string | undefined)[] = []): WorkflowPreflightLaneV1 | undefined =>
+		workflowPreflightLaneForRuntimeKey(preflight, key, groupKeys);
 	if (graph) {
 		const loadedIndexesByKey = new Map<string, number[]>();
 		for (const [index, step] of loaded.entries()) {

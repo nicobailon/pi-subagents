@@ -13,6 +13,7 @@ import {
 	formatWorkflowPreflightWarningSummary,
 	normalizeWorkflowPreflight,
 	validateWorkflowPreflight,
+	workflowPreflightLaneForRuntimeKey,
 	workflowPreflightWarnings,
 } from "../../src/workflows/workflow-preflight.ts";
 
@@ -119,6 +120,21 @@ describe("workflow preflight metadata", () => {
 		assert.deepEqual(workflowPreflightWarnings(manyLanes, [], { settled: false }), []);
 		assert.ok(workflowPreflightWarnings(manyLanes, [], { settled: true }).some((warning) => warning.includes("declared lane 'declared-0' was not launched")));
 		assert.ok(WORKFLOW_PREFLIGHT_MAX_CLAIMS > 0);
+	});
+
+	it("selects exact lanes before generated or dotted-root matches", () => {
+		const overlapping = {
+			version: 1 as const,
+			coverage: "partial" as const,
+			lanes: [
+				{ key: "writer", mode: "mutation" as const },
+				{ key: "writer.quality", mode: "review" as const },
+			],
+		};
+
+		assert.equal(workflowPreflightLaneForRuntimeKey(overlapping, "writer.quality")?.mode, "review");
+		assert.equal(workflowPreflightLaneForRuntimeKey(overlapping, "writer.quality.deep")?.mode, "review");
+		assert.equal(workflowPreflightLaneForRuntimeKey(overlapping, "generated", ["writer"])?.mode, "mutation");
 	});
 
 	it("treats exact and direct dotted keys as declared lane stages by convention", () => {

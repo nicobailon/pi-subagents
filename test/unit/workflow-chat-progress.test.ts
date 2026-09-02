@@ -343,6 +343,22 @@ describe("workflow chat progress rendering", () => {
 		]);
 	});
 
+	it("prefers an exact preflight lane over an earlier broad declaration", () => {
+		const preflight = {
+			version: 1 as const,
+			coverage: "partial" as const,
+			lanes: [
+				{ key: "writer", mode: "mutation" as const },
+				{ key: "writer.quality", mode: "review" as const },
+			],
+		};
+		const rows = buildWorkflowChatProgressRows([
+			{ operation: "run", key: "writer.quality", state: "started", agent: "reviewer" },
+		], preflight);
+
+		assert.equal(rows[0]?.preflight?.mode, "review");
+	});
+
 	it("uses the compact plan preview for collapsed workflow launch output", () => {
 		const preflight = {
 			version: 1 as const,

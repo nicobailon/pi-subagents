@@ -206,6 +206,21 @@ describe("async status projection", () => {
 		]);
 	});
 
+	it("prefers an exact preflight lane over an earlier broad declaration", () => {
+		const rows = projectAsyncWorkflowRows([
+			{ agent: "reviewer", workflowKey: "writer.quality", status: "running" },
+		], {
+			version: 1,
+			coverage: "partial",
+			lanes: [
+				{ key: "writer", mode: "mutation" },
+				{ key: "writer.quality", mode: "review" },
+			],
+		});
+
+		assert.equal(rows[0]?.preflight?.mode, "review");
+	});
+
 	it("projects known runs.lanes stages from the workflow graph, including pending stages", () => {
 		const rows = projectAsyncWorkflowRows([{
 			agent: "scout",

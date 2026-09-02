@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Details, WorkflowPreflightLaneV1, WorkflowPreflightV1 } from "../shared/types.ts";
-import { workflowKeyMatchesPreflightLane } from "./workflow-preflight.ts";
+import { workflowPreflightLaneForRuntimeKey } from "./workflow-preflight.ts";
 
 export const WORKFLOW_CHAT_PROGRESS_MODES = ["auto", "off", "live-card"] as const;
 export type WorkflowChatProgressMode = typeof WORKFLOW_CHAT_PROGRESS_MODES[number];
@@ -124,7 +124,7 @@ export function buildWorkflowChatProgressRows(trace: NonNullable<Details["workfl
 			}
 			continue;
 		}
-		const lane = preflight?.lanes.find((candidate) => workflowKeyMatchesPreflightLane(entry.key, candidate.key, entry.generatedLaneKey));
+		const lane = workflowPreflightLaneForRuntimeKey(preflight, entry.key, [entry.generatedLaneKey]);
 		const next: WorkflowChatProgressRow = existing ?? { key: entry.key, state: "running" };
 		if (lane && !next.preflight) next.preflight = lane;
 		next.state = entry.state === "completed"
