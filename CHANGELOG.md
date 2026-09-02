@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Replace collapsed async workflow role rollups with a compact lane view while keeping full details available when expanded (#1827). Thanks [@nicobailon](https://github.com/nicobailon).
+
 ## [0.64.0] - 2026-09-02
 
 ### Highlights

@@ -91,17 +91,28 @@ function resetWidgetLayout(): void {
 }
 
 describe("subagent async widget rendering", () => {
-	it("renders compact workflow plan status by default and keeps details expanded", () => {
+	it("renders compact workflow lanes by default and keeps details expanded", () => {
 		const job = {
-			asyncId: "workflow-preflight",
+			asyncId: "a6b9aa6b-workflow",
 			asyncDir: "/tmp/workflow-preflight",
 			status: "running",
 			mode: "workflow",
+			description: "Review workflow",
+			toolCount: 5,
+			startedAt: 100,
+			updatedAt: 2_600,
 			preflight: {
 				version: 1,
 				coverage: "partial",
-				lanes: [{ key: "review", mode: "review", claims: ["src/tui"], expectedOutput: "review.md" }],
+				lanes: [
+					{ key: "write", mode: "mutation", decision: "apply the smallest fix", claims: ["src/tui"], expectedOutput: "fix.md" },
+					{ key: "review", mode: "review", decision: "check the compact surface", claims: ["src/tui"], expectedOutput: "review.md" },
+				],
 			},
+			steps: [
+				{ index: 0, workflowKey: "review", agent: "reviewer", label: "Review the compact surface", status: "running", toolCount: 2 },
+				{ index: 1, workflowKey: "write", agent: "worker", label: "Apply the smallest fix", status: "complete", toolCount: 3 },
+			],
 			workflow: {
 				trace: [],
 				emits: [],
@@ -110,18 +121,50 @@ describe("subagent async widget rendering", () => {
 			},
 		};
 		const compact = buildWidgetLines([job], theme, 180).join("\n");
-		assert.match(compact, /Plan: 1 lane · review/);
-		assert.match(compact, /Plan note: 1 preflight mismatch · expand for debug\./);
-		assert.doesNotMatch(compact, /key \| mode \| decision \| claims \| expected output \| independence/);
-		assert.doesNotMatch(compact, /review \| review \|/);
-		assert.doesNotMatch(compact, /Preflight advisory/);
+		assert.match(compact, /async workflow: Review workflow ─ background/);
+		assert.match(compact, /id: a6b9aa6b · 1\/2 done · 1 active · 5 tool uses · 2\.5s/);
+		assert.match(compact, /write · worker\/mutation · apply the smallest fix · src\/tui · fix\.md/);
+		assert.match(compact, /review · reviewer\/review · active · check the compact surface · src\/tui · review\.md/);
+		assert.doesNotMatch(compact, /Plan:|Plan note:|preflight mismatch|Preflight advisory/);
+		assert.doesNotMatch(compact, /decision:|claims:|expected:/);
+		assert.doesNotMatch(compact, /output:\s|next:/i);
 
 		const expanded = buildWidgetLines([job], theme, 180, true).join("\n");
-		assert.match(expanded, /Preflight: v1 · partial · 1 lane/);
-		assert.match(expanded, /review \| review \|/);
+		assert.match(expanded, /Preflight: v1 · partial · 2 lanes/);
+		assert.match(expanded, /write \| mutation \| apply the smallest fix \| src\/tui \| fix\.md/);
+		assert.match(expanded, /review \| review \| check the compact surface \| src\/tui \| review\.md/);
 		assert.match(expanded, /expected output \| independence/);
 		assert.match(expanded, /Preflight warnings:/);
 		assert.match(expanded, /review\.extra.*without a declared lane/);
+	});
+
+	it("degrades compact workflow rows without preflight metadata", () => {
+		const job = {
+			asyncId: "workflow-fallback-123",
+			asyncDir: "/tmp/workflow-fallback",
+			status: "running",
+			mode: "workflow",
+			steps: [
+				{ index: 0, workflowKey: "scope", agent: "scout", label: "Scope the request", description: "Inspect the repository", status: "complete", outputName: "scope.md" },
+				{ index: 1, workflowKey: "implement", agent: "worker", label: "Implement the fix", description: "Change only the renderer", status: "running", outputName: "fix.md" },
+			],
+		};
+		const compact = buildWidgetLines([job], theme, 180).join("\n");
+		assert.match(compact, /async workflow: workflow ─ background/);
+		assert.match(compact, /scope · scout · Scope the request/);
+		assert.match(compact, /implement · worker · active · Implement the fix/);
+		assert.doesNotMatch(compact, /Plan:|next:|output:/i);
+
+		const narrow = buildWidgetLines([job], theme, 72);
+		assert.match(narrow[1] ?? "", /id: workflow · 1\/2 done · 1 active/);
+		for (const line of narrow) assert.ok(visibleWidth(line) <= 72, `workflow row exceeds width: ${visibleWidth(line)}`);
+		const tightHeader = buildWidgetLines([{ ...job, description: "backlog-wave" }], theme, 40)[0] ?? "";
+		assert.match(tightHeader, /async workflow backlog-wave · background/);
+		assert.doesNotMatch(tightHeader, /workflow:/);
+		const longJob = { ...job, steps: job.steps.map((step, index) => ({ ...step, label: `${step.label} ${"with a deliberately long lane description ".repeat(4)}`, description: index === 1 ? `${step.description} ${"and more detail ".repeat(8)}` : step.description })) };
+		const truncated = buildWidgetLines([longJob], theme, 72);
+		assert.match(truncated[1] ?? "", /id: workflow · 1\/2 done · 1 active/);
+		assert.ok(truncated.some((line) => line.includes("...")), "narrow lane rows should be truncated");
 	});
 
 	it("projects known workflow metadata into a compact lane row", () => {
@@ -307,13 +350,33 @@ describe("subagent async widget rendering", () => {
 		};
 
 		const text = buildWidgetLines([job], theme, 180).join("\n");
-		assert.match(text, /CI checks 1 active/);
-		assert.match(text, /Review gate 1 blocked/);
-		assert.doesNotMatch(text, /async subagent .*CI checks/);
+		assert.match(text, /async workflow: host-run ─ background/);
+		assert.match(text, /id: host-run · 0\/2 done · 1 active · 1 blocked/);
+		assert.match(text, /ci-1 · active · CI checks/);
+		assert.match(text, /gate-1 · blocked · Review gate/);
+		assert.match(text, /bottleneck · gate-1 · blocked/);
+		assert.doesNotMatch(text, /Plan:|next:|output:/i);
 
 		const expanded = buildWidgetLines([job], theme, 180, true).join("\n");
 		assert.match(expanded, /ci: CI checks · running · provider:local-tests · PR #1614/);
 		assert.match(expanded, /gate: Review gate · inconclusive · provider:opaque-provider · reason:stale-head · stale · out:gate.json/);
+	});
+
+	it("chooses the most severe compact workflow bottleneck", () => {
+		const text = buildWidgetLines([{
+			asyncId: "workflow-bottleneck-severity",
+			asyncDir: "/tmp/workflow-bottleneck-severity",
+			status: "running",
+			mode: "workflow",
+			steps: [
+				{ index: 0, workflowKey: "paused-first", agent: "worker", status: "paused" },
+				{ index: 1, workflowKey: "failed-later", agent: "reviewer", status: "failed", error: "review failed" },
+			],
+		}], theme, 180).join("\n");
+		assert.match(text, /paused-first · worker · paused/);
+		assert.match(text, /failed-later · reviewer · failed/);
+		assert.match(text, /bottleneck · failed-later · failed/);
+		assert.doesNotMatch(text, /bottleneck · paused-first/);
 	});
 
 	it("keeps simple one-off async rows on the existing fallback projection", () => {
@@ -930,7 +993,7 @@ describe("subagent async widget rendering", () => {
 		resetWidgetLayout();
 	});
 
-	it("keeps the active runs.lanes stage in focus before collapsed history", () => {
+	it("renders loaded workflow lanes without normal-running bottleneck noise", () => {
 		resetWidgetLayout();
 		withStdoutSize(30, 120, () => {
 			const stageKeys = ["scope-scout", "red-tests", "label-helpers", "summary-title", "detail-row", "tiers-noise", "validation", "minimality-challenge", "fresh-review"];
@@ -973,17 +1036,16 @@ describe("subagent async widget rendering", () => {
 					...(index < 3 ? { lastActivityAt: 100 } : { currentTool: "read", currentToolStartedAt: 190, lastActivityAt: 195 }),
 				})),
 			};
-			const ui = createUiContext();
-			renderWidget(ui.ctx as never, [job]);
-			const lines = renderWidgetLines(ui.widgets.at(-1));
+			const lines = buildWidgetLines([job], theme, 220);
 			const text = lines.join("\n");
-			assert.match(text, /7\/9 done · 1 active · 1 queued/);
-			assert.match(text, /minimality-challenge 1 active/);
-			assert.match(text, /fresh-review 1 queued/);
-			assert.match(text, /bottleneck · minimality-challenge/);
-			assert.match(text, /Press configured-expand-key for live detail/);
-			assert.doesNotMatch(text, /label-helpers/);
-			assert.doesNotMatch(text, /Step \d+\/9|task:|workspace:|out(?:put)?:/i);
+			assert.match(text, /async workflow: workflow ─ background/);
+			assert.match(text, /id: workflow · 7\/9 done · 1 active · 1 queued/);
+			assert.match(text, /issue-1695\.minimality-challenge · worker · active/);
+			assert.match(text, /issue-1695\.fresh-review · worker · queued/);
+			assert.doesNotMatch(text, /bottleneck ·/);
+			assert.match(text, /Press configured-expand-key for details/);
+			assert.match(text, /label-helpers/);
+			assert.doesNotMatch(text, /Step \d+\/9|task:|workspace:|out(?:put)?:|next:/i);
 		});
 		resetWidgetLayout();
 	});

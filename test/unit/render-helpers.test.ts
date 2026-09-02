@@ -312,7 +312,7 @@ test("workflow checklist does not map child-local result indexes onto graph node
 	assert.match(text, /✗ Writer · writer · failed/);
 });
 
-test("collapsed workflow widgets lead with checklist phases while expanded widgets keep child detail", () => {
+test("collapsed async workflow widgets render compact lane rows while expanded widgets keep child detail", () => {
 	const now = 50_000;
 	const workflowGraph = {
 		runId: "workflow-collapsed",
@@ -354,11 +354,12 @@ test("collapsed workflow widgets lead with checklist phases while expanded widge
 	const collapsed = buildWidgetLines([job], theme, 240).join("\n");
 	assert.match(collapsed, /1\/5 done · 1 active · 3 queued/);
 	assert.match(collapsed, /✓ inventory/);
-	assert.match(collapsed, /writers 1 active · 1 queued/);
-	assert.match(collapsed, /◦ reviews 1 queued/);
-	assert.match(collapsed, /◦ gates 1 queued/);
-	assert.match(collapsed, /bottleneck/);
-	assert.match(collapsed, /Press configured-expand-key for live detail · Ctrl\+Alt\+F Fleet/);
+	assert.match(collapsed, /writer-a · writer · active/);
+	assert.match(collapsed, /writer-b · writer · queued/);
+	assert.match(collapsed, /review · reviewer · queued/);
+	assert.match(collapsed, /gate · reviewer · queued/);
+	assert.doesNotMatch(collapsed, /bottleneck/);
+	assert.match(collapsed, /Press configured-expand-key for details · Ctrl\+Alt\+F Fleet/);
 	assert.equal((collapsed.match(/1\/5 done · 1 active · 3 queued/g) ?? []).length, 1);
 	assert.doesNotMatch(collapsed, /Step \d\/\d|task:|workspace:|ref:|out(?:put)?:/i);
 
@@ -381,7 +382,9 @@ test("collapsed workflow widgets lead with checklist phases while expanded widge
 			{ index: 1, agent: "scout", status: "running" },
 		],
 	} as AsyncJobState], theme, 240).join("\n");
-	assert.match(generic, /Workflow 2 active/);
+	assert.match(generic, /id: workflow · 0\/2 done · 2 active/);
+	assert.match(generic, /step-1 · reviewer · active · reviewer/);
+	assert.match(generic, /step-2 · scout · active · scout/);
 });
 
 test("compact foreground workflow results use checklist phases instead of child rows", () => {
