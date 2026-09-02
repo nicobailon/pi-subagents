@@ -343,7 +343,7 @@ describe("workflow chat progress rendering", () => {
 		]);
 	});
 
-	it("prefers an exact preflight lane over an earlier broad declaration", () => {
+	it("prefers a specific preflight lane over an earlier broad generated alias", () => {
 		const preflight = {
 			version: 1 as const,
 			coverage: "partial" as const,
@@ -353,7 +353,7 @@ describe("workflow chat progress rendering", () => {
 			],
 		};
 		const rows = buildWorkflowChatProgressRows([
-			{ operation: "run", key: "writer.quality", state: "started", agent: "reviewer" },
+			{ operation: "run", key: "writer.quality.deep", generatedLaneKey: "writer", state: "started", agent: "reviewer" },
 		], preflight);
 
 		assert.equal(rows[0]?.preflight?.mode, "review");

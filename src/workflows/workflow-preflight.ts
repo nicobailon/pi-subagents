@@ -160,16 +160,17 @@ export function workflowPreflightLaneForRuntimeKey(
 	if (!lanes) return undefined;
 	const exact = lanes.find((lane) => lane.key === key);
 	if (exact) return exact;
+	let closestRoot: WorkflowPreflightLaneV1 | undefined;
+	for (const lane of lanes) {
+		if (key.startsWith(`${lane.key}.`) && (!closestRoot || lane.key.length > closestRoot.key.length)) closestRoot = lane;
+	}
+	if (closestRoot) return closestRoot;
 	for (const preferredKey of preferredKeys) {
 		if (!preferredKey) continue;
 		const preferred = lanes.find((lane) => lane.key === preferredKey);
 		if (preferred) return preferred;
 	}
-	let closestRoot: WorkflowPreflightLaneV1 | undefined;
-	for (const lane of lanes) {
-		if (key.startsWith(`${lane.key}.`) && (!closestRoot || lane.key.length > closestRoot.key.length)) closestRoot = lane;
-	}
-	return closestRoot;
+	return undefined;
 }
 
 function declaredLaneCoversWorkflowKey(entry: WorkflowTraceLike, laneKey: string): boolean {

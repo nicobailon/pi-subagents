@@ -133,7 +133,7 @@ describe("workflow preflight metadata", () => {
 		};
 
 		assert.equal(workflowPreflightLaneForRuntimeKey(overlapping, "writer.quality")?.mode, "review");
-		assert.equal(workflowPreflightLaneForRuntimeKey(overlapping, "writer.quality.deep")?.mode, "review");
+		assert.equal(workflowPreflightLaneForRuntimeKey(overlapping, "writer.quality.deep", ["writer"])?.mode, "review");
 		assert.equal(workflowPreflightLaneForRuntimeKey(overlapping, "generated", ["writer"])?.mode, "mutation");
 	});
 

@@ -206,9 +206,9 @@ describe("async status projection", () => {
 		]);
 	});
 
-	it("prefers an exact preflight lane over an earlier broad declaration", () => {
+	it("prefers a specific preflight lane over an earlier broad phase alias", () => {
 		const rows = projectAsyncWorkflowRows([
-			{ agent: "reviewer", workflowKey: "writer.quality", status: "running" },
+			{ agent: "reviewer", workflowKey: "writer.quality.deep", phase: "writer", status: "running" },
 		], {
 			version: 1,
 			coverage: "partial",
