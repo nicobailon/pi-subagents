@@ -468,6 +468,7 @@ describe("buildPiArgs session wiring", () => {
 				maxWarnings: 1,
 				lsp: { enabled: false, timeoutMs: 50, maxFiles: 2, maxDiagnostics: 3 },
 				stalemateRepeats: 2,
+				cadence: { everyNTools: null },
 			},
 		});
 		const encoded = withWatchdog.env[CHILD_WATCHDOG_CONFIG_ENV];
@@ -482,6 +483,7 @@ describe("buildPiArgs session wiring", () => {
 			maxWarnings: 1,
 			lsp: { enabled: false, timeoutMs: 50, maxFiles: 2, maxDiagnostics: 3 },
 			stalemateRepeats: 2,
+			cadence: { everyNTools: null },
 		});
 	});
 });

@@ -6,6 +6,7 @@ import { Type, type Static } from "typebox";
 import { resolveModelCandidate } from "../runs/shared/model-fallback.ts";
 import { agentStreamOptions } from "../shared/agent-stream-options.ts";
 import { resolveEffectiveThinking, splitKnownThinkingSuffix, THINKING_LEVELS, toModelInfo } from "../shared/model-info.ts";
+import { createWatchdogDiffTool, WATCHDOG_DIFF_TOOL_NAME, type WatchdogDiffBaseline } from "./diff-tool.ts";
 import { loadWatchdogGuidance } from "./guidance.ts";
 import type { WatchdogReviewFunction, WatchdogReviewRequest } from "./runtime.ts";
 import {
@@ -19,7 +20,7 @@ import {
 	type WatchdogWarning,
 } from "./types.ts";
 
-const WATCHDOG_ALLOWED_TOOL_NAMES = new Set(["read", "grep", "find", "ls", "watchdog_warn"]);
+const WATCHDOG_ALLOWED_TOOL_NAMES = new Set(["read", "grep", "find", "ls", "watchdog_warn", WATCHDOG_DIFF_TOOL_NAME]);
 
 const WatchdogWarnParams = Type.Object({
 	severity: Type.String({ enum: WATCHDOG_WARNING_SEVERITIES, description: "concern for actionable risk, blocker for a likely wrong or unsafe outcome" }),
@@ -53,6 +54,8 @@ export interface CreateMainWatchdogReviewOptions {
 	streamFn?: StreamFn;
 	createReadOnlyTools?: (cwd: string) => AgentTool[];
 	getThinkingLevel?: () => ThinkingLevel | undefined;
+	/** Repo baseline for the watchdog_diff tool; when undefined the tool is not offered. */
+	diffBaseline?: () => WatchdogDiffBaseline | undefined;
 }
 
 function fullModelId(model: Pick<RegistryModel, "provider" | "id">): string {
@@ -206,14 +209,16 @@ function createWatchdogWarnTool(request: WatchdogReviewRequest): AgentTool<typeo
 	};
 }
 
-export function buildWatchdogSystemPrompt(ctx: Pick<ExtensionContext, "cwd">, options: { hasScope?: boolean; guidance?: string } = {}): string {
+export function buildWatchdogSystemPrompt(ctx: Pick<ExtensionContext, "cwd">, options: { hasScope?: boolean; guidance?: string; hasDiff?: boolean } = {}): string {
 	const guidance = options.guidance?.trim();
 	return [
 		"You are the main-session subagent watchdog for Pi.",
 		`Working directory: ${ctx.cwd}`,
 		"Review only the supplied parent turn delta. Inspect repository files only when needed to verify a concrete concern.",
 		options.hasScope ? "When the review input includes a Current scope block, treat newer scope prompts as superseding/mutating older prompts and use category='scope-drift' for work that serves no current scope item." : undefined,
-		"You are read-only. You may use read, grep, find, and ls. Do not edit files, run shell commands, spawn agents, or mutate state.",
+		options.hasDiff
+			? "You are read-only. You may use read, grep, find, ls, and watchdog_diff (the full repo diff since the session baseline; pass a path to narrow it). Do not edit files, run shell commands, spawn agents, or mutate state."
+			: "You are read-only. You may use read, grep, find, and ls. Do not edit files, run shell commands, spawn agents, or mutate state.",
 		"Emit warnings only by calling watchdog_warn. Freeform assistant text is ignored and must not be used to report warnings.",
 		"Emit only medium/high confidence actionable concerns or blockers: missed user constraints, correctness risks, test gaps that matter, unsafe changes, stale facts, loop risks, or scope drift.",
 		"Do not emit nits, style preferences, low-confidence guesses, informational notes, praise, or summaries.",
@@ -272,15 +277,18 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 			env: auth.env || streamOptions?.env ? { ...(auth.env ?? {}), ...(streamOptions?.env ?? {}) } : undefined,
 			headers: { ...(streamOptions?.headers ?? {}), ...(auth.headers ?? {}) },
 		});
+		const diffBaseline = options.diffBaseline?.();
 		const tools = [
-			...(options.createReadOnlyTools ?? createReadOnlyTools)(ctx.cwd).filter((tool) => WATCHDOG_ALLOWED_TOOL_NAMES.has(tool.name) && tool.name !== "watchdog_warn"),
+			...(options.createReadOnlyTools ?? createReadOnlyTools)(ctx.cwd).filter((tool) => WATCHDOG_ALLOWED_TOOL_NAMES.has(tool.name) && tool.name !== "watchdog_warn" && tool.name !== WATCHDOG_DIFF_TOOL_NAME),
 			createWatchdogWarnTool(request),
+			...(diffBaseline ? [createWatchdogDiffTool(diffBaseline)] : []),
 		];
 		const agent = new Agent({
 			initialState: {
 				systemPrompt: buildWatchdogSystemPrompt(ctx, {
 					hasScope: request.hasScope,
 					guidance: loadWatchdogGuidance(ctx.cwd, request.config.guidance.watchdogMd),
+					hasDiff: diffBaseline !== undefined,
 				}),
 				model: selection.model,
 				thinkingLevel: selection.thinkingLevel,

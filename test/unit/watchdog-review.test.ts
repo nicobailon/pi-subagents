@@ -266,6 +266,20 @@ describe("main watchdog review adapter", () => {
 		}
 	});
 
+	it("offers watchdog_diff only when a repo baseline is available", async () => {
+		const current = model("openai", "gpt-diff");
+		const ctx = createCtx({ current });
+		const withBaseline = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
+		await createMainWatchdogReview(ctx, { streamFn: withBaseline.streamFn, diffBaseline: () => ({ root: "/tmp/watchdog-review", ref: "abc123" }) })(request(enabledConfig(), []));
+		assert.deepEqual(withBaseline.calls[0]?.context.tools?.map((tool) => tool.name).sort(), ["find", "grep", "ls", "read", "watchdog_diff", "watchdog_warn"]);
+		assert.match(String(withBaseline.calls[0]?.context.systemPrompt ?? ""), /watchdog_diff/);
+
+		const without = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
+		await createMainWatchdogReview(ctx, { streamFn: without.streamFn, diffBaseline: () => undefined })(request(enabledConfig(), []));
+		assert.deepEqual(without.calls[0]?.context.tools?.map((tool) => tool.name).sort(), ["find", "grep", "ls", "read", "watchdog_warn"]);
+		assert.doesNotMatch(String(without.calls[0]?.context.systemPrompt ?? ""), /watchdog_diff/);
+	});
+
 	it("does not expose mutating tools to the watchdog agent", async () => {
 		const current = model("openai", "gpt-readonly");
 		const ctx = createCtx({ current });

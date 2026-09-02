@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { postSupervisorNotice } from "../intercom/native-supervisor-channel.ts";
+import { captureWatchdogDiffBaseline, type WatchdogDiffBaseline } from "./diff-tool.ts";
 import { formatWatchdogWarningRenderText } from "./render.ts";
 import { MainWatchdogRuntime } from "./runtime.ts";
 import { createMainWatchdogReview } from "./review.ts";
@@ -26,6 +27,7 @@ export function childResolvedConfig(config: ChildWatchdogConfig): ResolvedWatchd
 			...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
 		},
 		stalemateRepeats: config.stalemateRepeats,
+		cadence: { ...config.cadence },
 		children: {
 			...DEFAULT_WATCHDOG_CONFIG.children,
 			watchdogTailTimeoutMs: config.watchdogTailTimeoutMs,
@@ -55,6 +57,7 @@ export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[
 	const childConfig = decodeChildWatchdogConfig(rawConfig);
 	if (!childConfig?.enabled) return undefined;
 	let currentContext: ExtensionContext | undefined;
+	let diffBaseline: WatchdogDiffBaseline | undefined;
 	let seq = 0;
 	const emitStatus = (phase: ChildWatchdogPhase, reason?: string): void => {
 		writeStatus({
@@ -71,7 +74,7 @@ export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[
 	const resolved = childResolvedConfig(childConfig);
 	const runtime = new MainWatchdogRuntime({
 		resolveConfig: () => ({ ok: true, config: resolved, errors: [], sources: [{ scope: "session", exists: true }] }),
-		review: createMainWatchdogReview(() => currentContext, { getThinkingLevel: () => pi.getThinkingLevel() }),
+		review: createMainWatchdogReview(() => currentContext, { getThinkingLevel: () => pi.getThinkingLevel(), diffBaseline: () => diffBaseline }),
 		reviewDescription: "child model review",
 		reviewChangesOnly: true,
 		displayWarning: (details, delivery) => {
@@ -95,6 +98,7 @@ export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[
 	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => void;
 	onRuntimeEvent("session_start", (_event, ctx) => {
 		rememberContext(ctx);
+		diffBaseline = captureWatchdogDiffBaseline(ctx.cwd);
 		runtime.bindSession(ctx);
 		emitStatus("idle");
 	});
@@ -105,6 +109,10 @@ export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[
 	onRuntimeEvent("turn_end", (event, ctx) => {
 		rememberContext(ctx);
 		runtime.handleTurnEnd(event, ctx);
+	});
+	onRuntimeEvent("tool_result", (_event, ctx) => {
+		rememberContext(ctx);
+		runtime.handleToolResult(ctx);
 	});
 	onRuntimeEvent("agent_end", async (event, ctx) => {
 		rememberContext(ctx);

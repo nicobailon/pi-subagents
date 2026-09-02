@@ -89,6 +89,18 @@ describe("child watchdog warning envelope", () => {
 });
 
 describe("child watchdog status helpers", () => {
+	it("resolves child cadence from override, then children, then the top-level cadence", () => {
+		const base = { ...DEFAULT_WATCHDOG_CONFIG, enabled: true, children: { ...DEFAULT_WATCHDOG_CONFIG.children, enabled: true, overrides: {} } };
+		assert.deepEqual(resolveChildWatchdogConfig({ config: base, agent: "worker" })?.cadence, { everyNTools: null });
+		const root = { ...base, cadence: { everyNTools: 20 } };
+		assert.deepEqual(resolveChildWatchdogConfig({ config: root, agent: "worker" })?.cadence, { everyNTools: 20 });
+		const children = { ...root, children: { ...root.children, cadence: { everyNTools: 10 } } };
+		assert.deepEqual(resolveChildWatchdogConfig({ config: children, agent: "worker" })?.cadence, { everyNTools: 10 });
+		const override = { ...children, children: { ...children.children, overrides: { worker: { cadence: { everyNTools: 5 } } } } };
+		assert.deepEqual(resolveChildWatchdogConfig({ config: override, agent: "worker" })?.cadence, { everyNTools: 5 });
+		assert.deepEqual(resolveChildWatchdogConfig({ config: override, agent: "reviewer" })?.cadence, { everyNTools: 10 });
+	});
+
 	it("preserves child model and explicit override thinking when resolving config", () => {
 		const config = resolveChildWatchdogConfig({
 			config: {
@@ -128,6 +140,7 @@ describe("child watchdog status helpers", () => {
 			maxWarnings: null,
 			lsp: { enabled: false, timeoutMs: 50, maxFiles: 2, maxDiagnostics: 3 },
 			stalemateRepeats: 3,
+			cadence: { everyNTools: 10 },
 		};
 		const config = decodeChildWatchdogConfig(JSON.stringify(payload));
 
@@ -140,6 +153,10 @@ describe("child watchdog status helpers", () => {
 		assert.throws(
 			() => decodeChildWatchdogConfig(JSON.stringify({ ...payload, stalemateRepeats: 0 })),
 			/stalemateRepeats/,
+		);
+		assert.throws(
+			() => decodeChildWatchdogConfig(JSON.stringify({ ...payload, cadence: { everyNTools: 3 } })),
+			/cadence\.everyNTools/,
 		);
 	});
 

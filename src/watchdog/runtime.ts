@@ -92,7 +92,24 @@ type ReviewDeltaOutcome = "completed" | "timeout" | "stale";
 
 const DEFAULT_REVIEW: WatchdogReviewFunction = () => ({ warnings: [] });
 const MAX_REVIEW_INPUT_CHARS = 24_000;
+const REVIEW_INPUT_HEAD_CHARS = 6_000;
 const REVIEW_DELTA_SEPARATOR = "\n\n---\n\n";
+
+/**
+ * Keep the start of an over-long review text (the task and early decisions) and its end
+ * (the latest work) instead of only the tail, so the reviewer keeps the framing.
+ */
+export function boundWatchdogReviewText(text: string, cap = MAX_REVIEW_INPUT_CHARS): string {
+	if (text.length <= cap) return text;
+	const head = Math.min(REVIEW_INPUT_HEAD_CHARS, Math.floor(cap / 4));
+	// The marker length depends on the digit count; settle it in two passes.
+	let omitted = text.length - cap;
+	let marker = `\n\n[... ${omitted} characters omitted ...]\n\n`;
+	omitted = text.length - cap + marker.length;
+	marker = `\n\n[... ${omitted} characters omitted ...]\n\n`;
+	const tail = cap - head - marker.length;
+	return `${text.slice(0, head)}${marker}${text.slice(text.length - tail)}`;
+}
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -757,7 +774,7 @@ export class MainWatchdogRuntime {
 	private appendBoundedDelta(delta: string): void {
 		let entry = delta.trim();
 		if (!entry) return;
-		if (entry.length > MAX_REVIEW_INPUT_CHARS) entry = entry.slice(-MAX_REVIEW_INPUT_CHARS);
+		if (entry.length > MAX_REVIEW_INPUT_CHARS) entry = boundWatchdogReviewText(entry);
 		this.pendingDeltas.push(entry);
 		this.pendingDeltaChars += entry.length;
 		while (this.pendingDeltas.length > 1 && this.pendingDeltaChars + (this.pendingDeltas.length - 1) * REVIEW_DELTA_SEPARATOR.length > MAX_REVIEW_INPUT_CHARS) {
@@ -773,7 +790,7 @@ export class MainWatchdogRuntime {
 			? ["Changed repo paths:", ...changeSignature.changedPaths.slice(0, 200).map((file) => `- ${file}`)].join("\n")
 			: "";
 		const contextPieces = [scopeBlock, changes, lspBlock].filter(Boolean);
-		if (!contextPieces.length) return input.length > MAX_REVIEW_INPUT_CHARS ? input.slice(-MAX_REVIEW_INPUT_CHARS) : input;
+		if (!contextPieces.length) return boundWatchdogReviewText(input);
 
 		const maxContextLength = Math.floor(MAX_REVIEW_INPUT_CHARS / 2);
 		const maxPieceLength = Math.max(1_000, Math.floor(maxContextLength / contextPieces.length));
@@ -782,11 +799,7 @@ export class MainWatchdogRuntime {
 			: piece).join(REVIEW_DELTA_SEPARATOR);
 		const separatorLength = input ? REVIEW_DELTA_SEPARATOR.length : 0;
 		const inputBudget = MAX_REVIEW_INPUT_CHARS - boundedContext.length - separatorLength;
-		const boundedInput = inputBudget <= 0
-			? ""
-			: input.length > inputBudget
-				? input.slice(-inputBudget)
-				: input;
+		const boundedInput = inputBudget <= 0 ? "" : boundWatchdogReviewText(input, inputBudget);
 		return [boundedContext, boundedInput].filter(Boolean).join(REVIEW_DELTA_SEPARATOR);
 	}
 

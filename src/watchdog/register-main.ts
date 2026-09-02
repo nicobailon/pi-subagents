@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { Text } from "@earendil-works/pi-tui";
 import { resolveEffectiveThinking, splitKnownThinkingSuffix, THINKING_LEVELS, type ThinkingLevel } from "../shared/model-info.ts";
 import { SLASH_TEXT_RESULT_TYPE } from "../shared/types.ts";
+import { captureWatchdogDiffBaseline, type WatchdogDiffBaseline } from "./diff-tool.ts";
 import { recommendStrongWatchdogModel, resolveWatchdogModelInput, parseWatchdogThinkingInput } from "./model-selection.ts";
 import { renderWatchdogWarning } from "./render.ts";
 import { createMainWatchdogReview } from "./review.ts";
@@ -376,11 +377,12 @@ async function handleWatchdogCommand(
 
 export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatchdogOptions = {}): MainWatchdogRuntime {
 	let currentContext: ExtensionContext | undefined;
+	let diffBaseline: WatchdogDiffBaseline | undefined;
 	const rememberContext = (ctx: ExtensionContext) => {
 		currentContext = ctx;
 	};
 	const runtime = options.runtime ?? new MainWatchdogRuntime({
-		review: options.review ?? createMainWatchdogReview(() => currentContext, { getThinkingLevel: () => pi.getThinkingLevel() }),
+		review: options.review ?? createMainWatchdogReview(() => currentContext, { getThinkingLevel: () => pi.getThinkingLevel(), diffBaseline: () => diffBaseline }),
 		reviewDescription: options.review ? "injected seam" : "real model review",
 		reviewChangesOnly: true,
 		displayWarning: (details, delivery) => {
@@ -412,6 +414,7 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 
 	pi.on("session_start", (_event, ctx) => {
 		rememberContext(ctx);
+		diffBaseline = captureWatchdogDiffBaseline(ctx.cwd);
 		runtime.bindSession(ctx);
 	});
 	pi.on("before_agent_start", (event, ctx) => {

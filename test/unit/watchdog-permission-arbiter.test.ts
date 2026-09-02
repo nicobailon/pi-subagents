@@ -47,6 +47,7 @@ const childConfig = JSON.stringify({
 	maxWarnings: null,
 	lsp: { enabled: false, timeoutMs: 100, maxFiles: 1, maxDiagnostics: 1 },
 	stalemateRepeats: 2,
+	cadence: { everyNTools: null },
 });
 
 describe("watchdog permission arbiter", () => {
@@ -96,6 +97,7 @@ describe("watchdog permission arbiter", () => {
 					maxWarnings: null,
 					lsp: { enabled: false, timeoutMs: 100, maxFiles: 1, maxDiagnostics: 1 },
 					stalemateRepeats: 2,
+					cadence: { everyNTools: null },
 				}),
 			}),
 			new Promise((resolve) => setTimeout(() => resolve("hung"), 100)),

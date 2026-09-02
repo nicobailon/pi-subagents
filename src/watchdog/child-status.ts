@@ -1,5 +1,5 @@
 import type { ChildWatchdogProgress, ChildWatchdogWarningSummary } from "../shared/types.ts";
-import { SUBAGENT_WATCHDOG_WARNING_TYPE, WATCHDOG_WARNING_CATEGORIES, type ResolvedWatchdogConfig, type WatchdogLspConfig } from "./types.ts";
+import { SUBAGENT_WATCHDOG_WARNING_TYPE, WATCHDOG_WARNING_CATEGORIES, type ResolvedWatchdogConfig, type WatchdogCadenceConfig, type WatchdogLspConfig } from "./types.ts";
 
 /** Warnings retained per child; older warnings drop first. */
 export const CHILD_WATCHDOG_WARNING_LIMIT = 20;
@@ -22,6 +22,8 @@ export interface ChildWatchdogConfig {
 	thinking?: string | false;
 	lsp: WatchdogLspConfig;
 	stalemateRepeats: number;
+	/** Mid-run review cadence; everyNTools null means boundary reviews only. */
+	cadence: WatchdogCadenceConfig;
 }
 
 export interface ChildWatchdogStatusEvent {
@@ -56,6 +58,7 @@ export function resolveChildWatchdogConfig(input: {
 	if (!enabled) return undefined;
 	const model = override?.model ?? input.config.children.model;
 	const thinking = override?.thinking ?? input.config.children.thinking;
+	const cadence = override?.cadence ?? input.config.children.cadence ?? input.config.cadence;
 	return {
 		enabled: true,
 		...(input.runId ? { runId: input.runId } : {}),
@@ -68,6 +71,7 @@ export function resolveChildWatchdogConfig(input: {
 		...(thinking !== undefined ? { thinking } : {}),
 		lsp: { ...input.config.lsp },
 		stalemateRepeats: input.config.stalemateRepeats,
+		cadence: { everyNTools: cadence.everyNTools ?? null },
 	};
 }
 
@@ -105,6 +109,14 @@ function childConfigNullableNonNegativeInteger(input: Record<string, unknown>, f
 	if (value === null) return null;
 	if (typeof value === "number" && Number.isInteger(value) && value >= 0) return value;
 	throw new Error(`Invalid child watchdog config: ${field} must be null or a non-negative integer.`);
+}
+
+function childConfigCadence(value: unknown): WatchdogCadenceConfig {
+	const input = childConfigObject(value, "cadence");
+	const everyNTools = input.everyNTools;
+	if (everyNTools === null) return { everyNTools: null };
+	if (typeof everyNTools === "number" && Number.isInteger(everyNTools) && everyNTools >= 5) return { everyNTools };
+	throw new Error("Invalid child watchdog config: cadence.everyNTools must be null or an integer >= 5.");
 }
 
 function childConfigLsp(value: unknown): WatchdogLspConfig {
@@ -152,6 +164,7 @@ export function decodeChildWatchdogConfig(raw: string | undefined): ChildWatchdo
 		...(thinking !== undefined ? { thinking: thinking as string | false } : {}),
 		lsp: childConfigLsp(parsed.lsp),
 		stalemateRepeats: childConfigPositiveInteger(parsed, "stalemateRepeats"),
+		cadence: childConfigCadence(parsed.cadence),
 	};
 }
 

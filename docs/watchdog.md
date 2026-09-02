@@ -114,6 +114,12 @@ For child subagent watchdogs, use `subagents.watchdog.children.model` as the def
 
 Child watchdogs are opt-in and follow the same edit-gated rule: read-only children do not trigger watchdog reviews, while writer children are reviewed at their own `agent_end` if their worktree changed.
 
+Children also run the mid-run cadence reviews described under scope monitoring. The cadence comes from `subagents.watchdog.children.overrides.<agent>.cadence`, then `subagents.watchdog.children.cadence`, then the top-level `subagents.watchdog.cadence`. Cadence reviews are not edit-gated, so a worker that wanders without editing is still checked every N tool results.
+
+### Seeing the diff
+
+Every reviewer, main or child, gets a read-only `watchdog_diff` tool alongside `read`, `grep`, `find`, and `ls`. It shows the repository diff against the commit that was current when the session started (tracked changes, later commits included, plus untracked files as additions), optionally narrowed to one path or reduced to per-file counts. A child in a managed worktree therefore sees exactly its own changes; a child in a shared cwd also sees changes that were already pending when it started. Sessions outside a git repository do not get the tool.
+
 ### Findings reach the orchestrator
 
 A child watchdog warning is displayed inside the child session and also lifted into the parent:

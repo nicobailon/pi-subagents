@@ -104,8 +104,8 @@ const GUIDANCE_FIELDS = new Set(["watchdogMd"]);
 const SCOPE_FIELDS = new Set(["enabled"]);
 const CADENCE_FIELDS = new Set(["everyNTools"]);
 const ENDPOINT_FIELDS = new Set(["enabled", "model", "thinking"]);
-const CHILDREN_FIELDS = new Set(["enabled", "model", "thinking", "watchdogTailTimeoutMs", "overrides"]);
-const CHILD_OVERRIDE_FIELDS = new Set(["enabled", "model", "thinking"]);
+const CHILDREN_FIELDS = new Set(["enabled", "model", "thinking", "watchdogTailTimeoutMs", "cadence", "overrides"]);
+const CHILD_OVERRIDE_FIELDS = new Set(["enabled", "model", "thinking", "cadence"]);
 const LSP_FIELDS = new Set(["enabled", "timeoutMs", "maxFiles", "maxDiagnostics"]);
 
 function cloneDefaultConfig(): ResolvedWatchdogConfig {
@@ -226,6 +226,7 @@ function parseChildOverridePatch(value: unknown, field: string, meta: ParseMeta)
 	if ("enabled" in input) patch.enabled = parseBoolean(input.enabled, `${field}.enabled`, meta);
 	if ("model" in input) patch.model = parseNonEmptyString(input.model, `${field}.model`, meta);
 	if ("thinking" in input) patch.thinking = parseThinking(input.thinking, `${field}.thinking`, meta);
+	if ("cadence" in input) patch.cadence = parseCadencePatch(input.cadence, `${field}.cadence`, meta);
 	return patch;
 }
 
@@ -239,6 +240,7 @@ function parseChildrenPatch(value: unknown, field: string, meta: ParseMeta): Wat
 	if ("watchdogTailTimeoutMs" in input) {
 		patch.watchdogTailTimeoutMs = parseInteger(input.watchdogTailTimeoutMs, `${field}.watchdogTailTimeoutMs`, meta, "a positive integer", (candidate) => candidate >= 1);
 	}
+	if ("cadence" in input) patch.cadence = parseCadencePatch(input.cadence, `${field}.cadence`, meta);
 	if ("overrides" in input) {
 		const overrides = parseObject(input.overrides, `${field}.overrides`, meta);
 		patch.overrides = {};

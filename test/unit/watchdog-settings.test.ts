@@ -172,6 +172,23 @@ describe("watchdog settings", () => {
 		);
 	});
 
+	it("parses child cadence at the children and override levels", () => {
+		writeJson(userSettingsPath(), {
+			subagents: {
+				watchdog: {
+					children: { cadence: { everyNTools: 10 }, overrides: { worker: { cadence: { everyNTools: 5 } } } },
+				},
+			},
+		});
+		const result = resolveWatchdogConfig(tempProject);
+		assert.equal(result.ok, true, result.errors[0]?.message);
+		assert.deepEqual(result.config.children.cadence, { everyNTools: 10 });
+		assert.deepEqual(result.config.children.overrides.worker?.cadence, { everyNTools: 5 });
+
+		writeJson(userSettingsPath(), { subagents: { watchdog: { children: { cadence: { everyNTools: 4 } } } } });
+		assert.match(resolveWatchdogConfig(tempProject).errors[0]?.message ?? "", /invalid 'subagents\.watchdog\.children\.cadence\.everyNTools'/);
+	});
+
 	it("rejects removed watchdog fields as unknown", () => {
 		const removed: Array<[Record<string, unknown>, RegExp]> = [
 			[{ autoFollow: { blockers: true } }, /unknown field 'subagents\.watchdog\.autoFollow'/],

@@ -95,10 +95,13 @@ export interface WatchdogChildOverrideConfig {
 	enabled?: boolean;
 	model?: string;
 	thinking?: string | false;
+	cadence?: Partial<WatchdogCadenceConfig>;
 }
 
 export interface WatchdogChildrenConfig extends WatchdogEndpointConfig {
 	watchdogTailTimeoutMs: number;
+	/** Mid-run cadence for child watchdogs; defaults to the top-level cadence. */
+	cadence?: Partial<WatchdogCadenceConfig>;
 	overrides: Record<string, WatchdogChildOverrideConfig>;
 }
 
