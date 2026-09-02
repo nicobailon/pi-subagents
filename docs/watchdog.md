@@ -90,6 +90,15 @@ Scopey-style profile:
 
 A warning displayed at `agent_end` is steered into the transcript, so Pi continues the run and the agent sees it before finishing. When consecutive boundary reviews keep raising the same warning, the agent is not making progress: after `subagents.watchdog.stalemateRepeats` identical warnings in a row (default 3) the watchdog marks the warning `stalemate` and shows it without continuing the run. A new user prompt resets the count.
 
+## Standing instructions
+
+The watchdog reads standing reviewer instructions from `WATCHDOG.md` on every review, so edits take effect without restarting Pi. Two locations are read, project first and then user:
+
+- `<project>/.pi/WATCHDOG.md` (the project config directory)
+- `~/.pi/agent/WATCHDOG.md` (the agent directory)
+
+Both files are concatenated and capped at 8,000 characters from the head. Use them for project rules the reviewer should hold the agent to, such as "never accept skipped tests" or "do not raise backwards compatibility unless the task requires it". Set `subagents.watchdog.guidance.watchdogMd` to `false` to ignore both files.
+
 ## LSP diagnostics
 
 When the watchdog is enabled, it also checks changed TypeScript and JavaScript files for fresh language-server diagnostics before the model review.

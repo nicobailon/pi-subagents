@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import {
@@ -40,7 +43,6 @@ function cloneConfig(): ResolvedWatchdogConfig {
 			...DEFAULT_WATCHDOG_CONFIG.children,
 			overrides: { ...DEFAULT_WATCHDOG_CONFIG.children.overrides },
 		},
-		asyncCompletion: { ...DEFAULT_WATCHDOG_CONFIG.asyncCompletion },
 		lsp: { ...DEFAULT_WATCHDOG_CONFIG.lsp },
 	};
 }
@@ -236,6 +238,32 @@ describe("main watchdog review adapter", () => {
 
 		assert.equal(streamAborted, true);
 		assert.equal(result?.stopReason, "aborted");
+	});
+
+	it("includes WATCHDOG.md guidance in the system prompt", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "watchdog-review-guidance-"));
+		const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+		try {
+			process.env.PI_CODING_AGENT_DIR = path.join(dir, "agent");
+			fs.mkdirSync(path.join(dir, "project", ".pi"), { recursive: true });
+			fs.writeFileSync(path.join(dir, "project", ".pi", "WATCHDOG.md"), "Never accept skipped tests.", "utf-8");
+			const current = model("openai", "gpt-guidance");
+			const ctx = { ...(createCtx({ current }) as object), cwd: path.join(dir, "project") } as never;
+			const { streamFn, calls } = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
+
+			await createMainWatchdogReview(ctx, { streamFn })(request(enabledConfig(), []));
+			assert.match(String(calls[0]?.context.systemPrompt ?? ""), /Standing instructions from WATCHDOG\.md \(project first, then user\):\nNever accept skipped tests\./);
+
+			const disabled = enabledConfig();
+			disabled.guidance = { watchdogMd: false };
+			const second = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
+			await createMainWatchdogReview(ctx, { streamFn: second.streamFn })(request(disabled, []));
+			assert.doesNotMatch(String(second.calls[0]?.context.systemPrompt ?? ""), /Standing instructions/);
+		} finally {
+			if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("does not expose mutating tools to the watchdog agent", async () => {

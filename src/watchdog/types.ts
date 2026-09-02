@@ -18,7 +18,7 @@ export type WatchdogCategory = typeof WATCHDOG_WARNING_CATEGORIES[number];
 export const WATCHDOG_WARNING_CONFIDENCES = ["medium", "high"] as const;
 export type WatchdogConfidence = typeof WATCHDOG_WARNING_CONFIDENCES[number];
 
-export const WATCHDOG_WARNING_SOURCES = ["main", "child", "async-completion", "lsp"] as const;
+export const WATCHDOG_WARNING_SOURCES = ["main", "child", "lsp"] as const;
 export type WatchdogWarningSource = typeof WATCHDOG_WARNING_SOURCES[number];
 
 export const WATCHDOG_LSP_DIAGNOSTIC_SEVERITIES = ["error", "warning", "info", "hint"] as const;
@@ -41,14 +41,6 @@ export const WATCHDOG_WARNING_STATES = [
 	"suppressed",
 ] as const;
 export type WatchdogWarningState = typeof WATCHDOG_WARNING_STATES[number];
-
-export const WATCHDOG_LATE_WARNING_POLICIES = ["show-stale-no-autofollow"] as const;
-export type WatchdogLateWarningPolicy = typeof WATCHDOG_LATE_WARNING_POLICIES[number];
-
-export const WATCHDOG_DELIVERY_MODES = ["held"] as const;
-export type WatchdogDeliveryMode = typeof WATCHDOG_DELIVERY_MODES[number];
-
-export type WatchdogSyncBacklog = "off" | number;
 
 export interface WatchdogWarning {
 	severity: WatchdogSeverity;
@@ -81,8 +73,8 @@ export interface WatchdogWarningMessage {
 }
 
 export interface WatchdogGuidanceConfig {
+	/** Load standing reviewer instructions from WATCHDOG.md (project config dir, then agent dir). */
 	watchdogMd: boolean;
-	systemPromptPath: string | null;
 }
 
 export interface WatchdogScopeConfig {
@@ -108,10 +100,6 @@ export interface WatchdogChildOverrideConfig {
 export interface WatchdogChildrenConfig extends WatchdogEndpointConfig {
 	watchdogTailTimeoutMs: number;
 	overrides: Record<string, WatchdogChildOverrideConfig>;
-}
-
-export interface WatchdogAsyncCompletionConfig {
-	enabled: boolean;
 }
 
 export interface WatchdogLspConfig {
@@ -149,11 +137,7 @@ export interface WatchdogLspRuntimeSnapshot extends WatchdogLspResult {
 
 export interface ResolvedWatchdogConfig {
 	enabled: boolean;
-	delivery: WatchdogDeliveryMode;
-	showDuringRun: boolean;
-	syncBacklog: WatchdogSyncBacklog;
 	agentEndTimeoutMs: number;
-	lateWarningPolicy: WatchdogLateWarningPolicy;
 	severityThreshold: WatchdogSeverity;
 	maxWarnings: number | null;
 	guidance: WatchdogGuidanceConfig;
@@ -163,11 +147,7 @@ export interface ResolvedWatchdogConfig {
 	cadence: WatchdogCadenceConfig;
 	main: WatchdogEndpointConfig;
 	children: WatchdogChildrenConfig;
-	asyncCompletion: WatchdogAsyncCompletionConfig;
 	lsp: WatchdogLspConfig;
-	compactAtPercent: number;
-	reviewRetryDelayMs: number;
-	maxReviewFailures: number;
 }
 
 export interface WatchdogSettingsError {

@@ -6,6 +6,7 @@ import { Type, type Static } from "typebox";
 import { resolveModelCandidate } from "../runs/shared/model-fallback.ts";
 import { agentStreamOptions } from "../shared/agent-stream-options.ts";
 import { resolveEffectiveThinking, splitKnownThinkingSuffix, THINKING_LEVELS, toModelInfo } from "../shared/model-info.ts";
+import { loadWatchdogGuidance } from "./guidance.ts";
 import type { WatchdogReviewFunction, WatchdogReviewRequest } from "./runtime.ts";
 import {
 	WATCHDOG_WARNING_CATEGORIES,
@@ -205,7 +206,8 @@ function createWatchdogWarnTool(request: WatchdogReviewRequest): AgentTool<typeo
 	};
 }
 
-function buildWatchdogSystemPrompt(ctx: ExtensionContext, options: { hasScope?: boolean } = {}): string {
+export function buildWatchdogSystemPrompt(ctx: Pick<ExtensionContext, "cwd">, options: { hasScope?: boolean; guidance?: string } = {}): string {
+	const guidance = options.guidance?.trim();
 	return [
 		"You are the main-session subagent watchdog for Pi.",
 		`Working directory: ${ctx.cwd}`,
@@ -217,6 +219,7 @@ function buildWatchdogSystemPrompt(ctx: ExtensionContext, options: { hasScope?: 
 		"Do not emit nits, style preferences, low-confidence guesses, informational notes, praise, or summaries.",
 		"If the turn is clean, call no tools and end normally.",
 		"Use severity='blocker' only when the issue should stop acceptance until addressed; otherwise use severity='concern'.",
+		guidance ? `\nStanding instructions from WATCHDOG.md (project first, then user):\n${guidance}` : undefined,
 	].filter((line): line is string => Boolean(line)).join("\n");
 }
 
@@ -275,7 +278,10 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 		];
 		const agent = new Agent({
 			initialState: {
-				systemPrompt: buildWatchdogSystemPrompt(ctx, { hasScope: request.hasScope }),
+				systemPrompt: buildWatchdogSystemPrompt(ctx, {
+					hasScope: request.hasScope,
+					guidance: loadWatchdogGuidance(ctx.cwd, request.config.guidance.watchdogMd),
+				}),
 				model: selection.model,
 				thinkingLevel: selection.thinkingLevel,
 				tools,

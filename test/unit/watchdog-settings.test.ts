@@ -51,9 +51,7 @@ describe("watchdog settings", () => {
 		assert.equal(result.config.enabled, false);
 		assert.equal(result.config.main.enabled, false);
 		assert.equal(result.config.children.enabled, false);
-		assert.equal(result.config.asyncCompletion.enabled, false);
-		assert.equal(result.config.delivery, "held");
-		assert.equal(result.config.showDuringRun, false);
+		assert.equal(result.config.guidance.watchdogMd, true);
 		assert.equal(result.config.agentEndTimeoutMs, 30_000);
 		assert.equal(result.config.children.watchdogTailTimeoutMs, 120_000);
 		assert.equal(result.config.stalemateRepeats, 3);
@@ -89,7 +87,7 @@ describe("watchdog settings", () => {
 							worker: { enabled: true, model: "anthropic/claude-test" },
 						},
 					},
-					guidance: { systemPromptPath: "/tmp/user-watchdog.md" },
+					guidance: { watchdogMd: false },
 					scope: { enabled: false },
 					cadence: { everyNTools: 10 },
 				},
@@ -125,7 +123,7 @@ describe("watchdog settings", () => {
 		assert.equal(result.config.main.enabled, true);
 		assert.equal(result.config.main.model, "openai/gpt-test");
 		assert.equal(result.config.stalemateRepeats, 2);
-		assert.equal(result.config.guidance.systemPromptPath, "/tmp/user-watchdog.md");
+		assert.equal(result.config.guidance.watchdogMd, false);
 		assert.deepEqual(result.config.scope, { enabled: false });
 		assert.deepEqual(result.config.cadence, { everyNTools: 10 });
 		assert.deepEqual(result.config.lsp, { enabled: false, timeoutMs: 1500, maxFiles: 4, maxDiagnostics: 7 });
@@ -174,18 +172,20 @@ describe("watchdog settings", () => {
 		);
 	});
 
-	it("rejects removed auto-follow settings as unknown fields", () => {
-		writeJson(userSettingsPath(), {
-			subagents: {
-				watchdog: {
-					autoFollow: { blockers: true },
-				},
-			},
-		});
-
-		const result = resolveWatchdogConfig(tempProject);
-		assert.equal(result.ok, false);
-		assert.match(result.errors[0]?.message ?? "", /unknown field 'subagents\.watchdog\.autoFollow'/);
+	it("rejects removed watchdog fields as unknown", () => {
+		const removed: Array<[Record<string, unknown>, RegExp]> = [
+			[{ autoFollow: { blockers: true } }, /unknown field 'subagents\.watchdog\.autoFollow'/],
+			[{ syncBacklog: "off" }, /unknown field 'subagents\.watchdog\.syncBacklog'/],
+			[{ showDuringRun: false }, /unknown field 'subagents\.watchdog\.showDuringRun'/],
+			[{ guidance: { systemPromptPath: "/tmp/x.md" } }, /unknown field 'subagents\.watchdog\.guidance\.systemPromptPath'/],
+			[{ asyncCompletion: { enabled: true } }, /unknown field 'subagents\.watchdog\.asyncCompletion'/],
+		];
+		for (const [watchdog, expected] of removed) {
+			writeJson(userSettingsPath(), { subagents: { watchdog } });
+			const result = resolveWatchdogConfig(tempProject);
+			assert.equal(result.ok, false, JSON.stringify(watchdog));
+			assert.match(result.errors[0]?.message ?? "", expected);
+		}
 	});
 
 	it("rejects invalid scope and cadence config at settings load", () => {

@@ -3,7 +3,11 @@
 
 ## [Unreleased]
 
+### Added
+- Load standing watchdog reviewer instructions from `WATCHDOG.md` in the project config directory and the agent directory, appended to the reviewer system prompt on every review.
+
 ### Changed
+- Removed watchdog settings keys that had no runtime effect: `delivery`, `showDuringRun`, `syncBacklog`, `lateWarningPolicy`, `compactAtPercent`, `reviewRetryDelayMs`, `maxReviewFailures`, `asyncCompletion`, and `guidance.systemPromptPath`. They are now rejected as unknown fields.
 - Removed watchdog auto-follow. A displayed boundary warning already continues the run on pi 0.84+; repeated identical boundary warnings now stop after `subagents.watchdog.stalemateRepeats` and are shown without continuing. The `autoFollow` settings block is rejected as unknown.
 
 ## [0.63.0] - 2026-09-01

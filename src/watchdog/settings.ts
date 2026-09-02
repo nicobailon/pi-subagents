@@ -3,25 +3,19 @@ import * as path from "node:path";
 import { THINKING_LEVELS, type ThinkingLevel } from "../shared/model-info.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import {
-	WATCHDOG_DELIVERY_MODES,
-	WATCHDOG_LATE_WARNING_POLICIES,
 	WATCHDOG_WARNING_SEVERITIES,
 	type ResolvedWatchdogConfig,
-	type WatchdogAsyncCompletionConfig,
 	type WatchdogChildOverrideConfig,
 	type WatchdogChildrenConfig,
-	type WatchdogDeliveryMode,
 	type WatchdogEndpointConfig,
 	type WatchdogCadenceConfig,
 	type WatchdogGuidanceConfig,
-	type WatchdogLateWarningPolicy,
 	type WatchdogScopeConfig,
 	type WatchdogLspConfig,
 	type WatchdogSettingsError,
 	type WatchdogSettingsResult,
 	type WatchdogSettingsSource,
 	type WatchdogSeverity,
-	type WatchdogSyncBacklog,
 } from "./types.ts";
 
 type WatchdogGuidancePatch = Partial<WatchdogGuidanceConfig>;
@@ -32,7 +26,6 @@ type WatchdogChildOverridePatch = Partial<WatchdogChildOverrideConfig>;
 type WatchdogChildrenPatch = Partial<Omit<WatchdogChildrenConfig, "overrides">> & {
 	overrides?: Record<string, WatchdogChildOverridePatch>;
 };
-type WatchdogAsyncCompletionPatch = Partial<WatchdogAsyncCompletionConfig>;
 type WatchdogLspPatch = Partial<WatchdogLspConfig>;
 
 export type WatchdogSettingsWriteScope = "user" | "project";
@@ -49,13 +42,12 @@ export interface WatchdogModelSettingsWrite {
 	thinking?: ThinkingLevel | false | null;
 }
 
-type WatchdogConfigPatch = Partial<Omit<ResolvedWatchdogConfig, "guidance" | "scope" | "cadence" | "main" | "children" | "asyncCompletion" | "lsp">> & {
+type WatchdogConfigPatch = Partial<Omit<ResolvedWatchdogConfig, "guidance" | "scope" | "cadence" | "main" | "children" | "lsp">> & {
 	guidance?: WatchdogGuidancePatch;
 	scope?: WatchdogScopePatch;
 	cadence?: WatchdogCadencePatch;
 	main?: WatchdogEndpointPatch;
 	children?: WatchdogChildrenPatch;
-	asyncCompletion?: WatchdogAsyncCompletionPatch;
 	lsp?: WatchdogLspPatch;
 };
 
@@ -66,16 +58,11 @@ interface ParseMeta {
 
 export const DEFAULT_WATCHDOG_CONFIG: ResolvedWatchdogConfig = {
 	enabled: false,
-	delivery: "held",
-	showDuringRun: false,
-	syncBacklog: "off",
 	agentEndTimeoutMs: 30_000,
-	lateWarningPolicy: "show-stale-no-autofollow",
 	severityThreshold: "concern",
 	maxWarnings: null,
 	guidance: {
 		watchdogMd: true,
-		systemPromptPath: null,
 	},
 	stalemateRepeats: 3,
 	scope: {
@@ -92,27 +79,17 @@ export const DEFAULT_WATCHDOG_CONFIG: ResolvedWatchdogConfig = {
 		watchdogTailTimeoutMs: 120_000,
 		overrides: {},
 	},
-	asyncCompletion: {
-		enabled: false,
-	},
 	lsp: {
 		enabled: true,
 		timeoutMs: 3_000,
 		maxFiles: 20,
 		maxDiagnostics: 50,
 	},
-	compactAtPercent: 80,
-	reviewRetryDelayMs: 1_000,
-	maxReviewFailures: 3,
 };
 
 const WATCHDOG_FIELDS = new Set([
 	"enabled",
-	"delivery",
-	"showDuringRun",
-	"syncBacklog",
 	"agentEndTimeoutMs",
-	"lateWarningPolicy",
 	"severityThreshold",
 	"maxWarnings",
 	"guidance",
@@ -121,19 +98,14 @@ const WATCHDOG_FIELDS = new Set([
 	"cadence",
 	"main",
 	"children",
-	"asyncCompletion",
 	"lsp",
-	"compactAtPercent",
-	"reviewRetryDelayMs",
-	"maxReviewFailures",
 ]);
-const GUIDANCE_FIELDS = new Set(["watchdogMd", "systemPromptPath"]);
+const GUIDANCE_FIELDS = new Set(["watchdogMd"]);
 const SCOPE_FIELDS = new Set(["enabled"]);
 const CADENCE_FIELDS = new Set(["everyNTools"]);
 const ENDPOINT_FIELDS = new Set(["enabled", "model", "thinking"]);
 const CHILDREN_FIELDS = new Set(["enabled", "model", "thinking", "watchdogTailTimeoutMs", "overrides"]);
 const CHILD_OVERRIDE_FIELDS = new Set(["enabled", "model", "thinking"]);
-const ASYNC_COMPLETION_FIELDS = new Set(["enabled"]);
 const LSP_FIELDS = new Set(["enabled", "timeoutMs", "maxFiles", "maxDiagnostics"]);
 
 function cloneDefaultConfig(): ResolvedWatchdogConfig {
@@ -147,7 +119,6 @@ function cloneDefaultConfig(): ResolvedWatchdogConfig {
 			...DEFAULT_WATCHDOG_CONFIG.children,
 			overrides: {},
 		},
-		asyncCompletion: { ...DEFAULT_WATCHDOG_CONFIG.asyncCompletion },
 		lsp: { ...DEFAULT_WATCHDOG_CONFIG.lsp },
 	};
 }
@@ -210,21 +181,11 @@ function parseEnum<T extends string>(value: unknown, field: string, meta: ParseM
 	throw invalid(meta, field, values.map((item) => `'${item}'`).join(" or "));
 }
 
-function parseSyncBacklog(value: unknown, field: string, meta: ParseMeta): WatchdogSyncBacklog {
-	if (value === "off") return "off";
-	return parseInteger(value, field, meta, "'off' or a positive integer", (candidate) => candidate >= 1);
-}
-
 function parseGuidancePatch(value: unknown, field: string, meta: ParseMeta): WatchdogGuidancePatch {
 	const input = parseObject(value, field, meta);
 	assertKnownFields(input, GUIDANCE_FIELDS, field, meta);
 	const patch: WatchdogGuidancePatch = {};
 	if ("watchdogMd" in input) patch.watchdogMd = parseBoolean(input.watchdogMd, `${field}.watchdogMd`, meta);
-	if ("systemPromptPath" in input) {
-		patch.systemPromptPath = input.systemPromptPath === null
-			? null
-			: parseNonEmptyString(input.systemPromptPath, `${field}.systemPromptPath`, meta);
-	}
 	return patch;
 }
 
@@ -289,14 +250,6 @@ function parseChildrenPatch(value: unknown, field: string, meta: ParseMeta): Wat
 	return patch;
 }
 
-function parseAsyncCompletionPatch(value: unknown, field: string, meta: ParseMeta): WatchdogAsyncCompletionPatch {
-	const input = parseObject(value, field, meta);
-	assertKnownFields(input, ASYNC_COMPLETION_FIELDS, field, meta);
-	const patch: WatchdogAsyncCompletionPatch = {};
-	if ("enabled" in input) patch.enabled = parseBoolean(input.enabled, `${field}.enabled`, meta);
-	return patch;
-}
-
 function parseLspPatch(value: unknown, field: string, meta: ParseMeta): WatchdogLspPatch {
 	const input = parseObject(value, field, meta);
 	assertKnownFields(input, LSP_FIELDS, field, meta);
@@ -313,14 +266,8 @@ function parseWatchdogPatch(value: unknown, field: string, meta: ParseMeta): Wat
 	assertKnownFields(input, WATCHDOG_FIELDS, field, meta);
 	const patch: WatchdogConfigPatch = {};
 	if ("enabled" in input) patch.enabled = parseBoolean(input.enabled, `${field}.enabled`, meta);
-	if ("delivery" in input) patch.delivery = parseEnum<WatchdogDeliveryMode>(input.delivery, `${field}.delivery`, meta, WATCHDOG_DELIVERY_MODES);
-	if ("showDuringRun" in input) patch.showDuringRun = parseBoolean(input.showDuringRun, `${field}.showDuringRun`, meta);
-	if ("syncBacklog" in input) patch.syncBacklog = parseSyncBacklog(input.syncBacklog, `${field}.syncBacklog`, meta);
 	if ("agentEndTimeoutMs" in input) {
 		patch.agentEndTimeoutMs = parseInteger(input.agentEndTimeoutMs, `${field}.agentEndTimeoutMs`, meta, "a positive integer", (candidate) => candidate >= 1);
-	}
-	if ("lateWarningPolicy" in input) {
-		patch.lateWarningPolicy = parseEnum<WatchdogLateWarningPolicy>(input.lateWarningPolicy, `${field}.lateWarningPolicy`, meta, WATCHDOG_LATE_WARNING_POLICIES);
 	}
 	if ("severityThreshold" in input) {
 		patch.severityThreshold = parseEnum<WatchdogSeverity>(input.severityThreshold, `${field}.severityThreshold`, meta, WATCHDOG_WARNING_SEVERITIES);
@@ -336,17 +283,7 @@ function parseWatchdogPatch(value: unknown, field: string, meta: ParseMeta): Wat
 	if ("cadence" in input) patch.cadence = parseCadencePatch(input.cadence, `${field}.cadence`, meta);
 	if ("main" in input) patch.main = parseEndpointPatch(input.main, `${field}.main`, meta);
 	if ("children" in input) patch.children = parseChildrenPatch(input.children, `${field}.children`, meta);
-	if ("asyncCompletion" in input) patch.asyncCompletion = parseAsyncCompletionPatch(input.asyncCompletion, `${field}.asyncCompletion`, meta);
 	if ("lsp" in input) patch.lsp = parseLspPatch(input.lsp, `${field}.lsp`, meta);
-	if ("compactAtPercent" in input) {
-		patch.compactAtPercent = parseInteger(input.compactAtPercent, `${field}.compactAtPercent`, meta, "an integer from 50 through 95", (candidate) => candidate >= 50 && candidate <= 95);
-	}
-	if ("reviewRetryDelayMs" in input) {
-		patch.reviewRetryDelayMs = parseInteger(input.reviewRetryDelayMs, `${field}.reviewRetryDelayMs`, meta, "a positive integer", (candidate) => candidate >= 1);
-	}
-	if ("maxReviewFailures" in input) {
-		patch.maxReviewFailures = parseInteger(input.maxReviewFailures, `${field}.maxReviewFailures`, meta, "a positive integer", (candidate) => candidate >= 1);
-	}
 	return patch;
 }
 
