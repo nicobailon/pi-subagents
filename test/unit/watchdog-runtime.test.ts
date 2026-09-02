@@ -6,19 +6,17 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { DEFAULT_WATCHDOG_CONFIG } from "../../src/watchdog/settings.ts";
 import { MainWatchdogRuntime, type WatchdogReviewFunction } from "../../src/watchdog/runtime.ts";
-import type { ResolvedWatchdogConfig, WatchdogLspResult, WatchdogSettingsResult, WatchdogWarning } from "../../src/watchdog/types.ts";
+import type { ResolvedWatchdogConfig, WatchdogLspResult, WatchdogSettingsResult, WatchdogWarning, WatchdogWarningDetails } from "../../src/watchdog/types.ts";
 
 function cloneConfig(): ResolvedWatchdogConfig {
 	return {
 		...DEFAULT_WATCHDOG_CONFIG,
 		guidance: { ...DEFAULT_WATCHDOG_CONFIG.guidance },
-		autoFollow: { ...DEFAULT_WATCHDOG_CONFIG.autoFollow },
 		scope: { ...DEFAULT_WATCHDOG_CONFIG.scope },
 		cadence: { ...DEFAULT_WATCHDOG_CONFIG.cadence },
 		main: { ...DEFAULT_WATCHDOG_CONFIG.main },
 		children: {
 			...DEFAULT_WATCHDOG_CONFIG.children,
-			autoFollow: { ...DEFAULT_WATCHDOG_CONFIG.children.autoFollow },
 			overrides: { ...DEFAULT_WATCHDOG_CONFIG.children.overrides },
 		},
 		asyncCompletion: { ...DEFAULT_WATCHDOG_CONFIG.asyncCompletion },
@@ -40,7 +38,6 @@ function enabledConfig(overrides: Partial<ResolvedWatchdogConfig> = {}): Resolve
 	if (overrides.lsp) config.lsp = { ...config.lsp, ...overrides.lsp };
 	if (overrides.scope) config.scope = { ...config.scope, ...overrides.scope };
 	if (overrides.cadence) config.cadence = { ...config.cadence, ...overrides.cadence };
-	if (overrides.autoFollow) config.autoFollow = { ...config.autoFollow, ...overrides.autoFollow };
 	return config;
 }
 
@@ -173,7 +170,6 @@ describe("main watchdog runtime", () => {
 		assert.equal(snapshot.lastWarning?.state, "displayed");
 		assert.equal(displayed.length, 1);
 		assert.equal((displayed[0] as { state?: string }).state, "displayed");
-		assert.equal(snapshot.autoFollowQueued, false);
 	});
 
 	it("drops stale async warning callbacks after reset", async () => {
@@ -205,7 +201,7 @@ describe("main watchdog runtime", () => {
 		assert.equal(snapshot.lastWarning, undefined);
 	});
 
-	it("treats failed review stop reasons as failed and never auto-follows", async () => {
+	it("treats failed review stop reasons as failed", async () => {
 		const runtime = new MainWatchdogRuntime({
 			resolveConfig: () => configResult(enabledConfig()),
 			review: () => ({ stopReason: "length" }),
@@ -218,7 +214,6 @@ describe("main watchdog runtime", () => {
 		assert.equal(snapshot.status, "failed");
 		assert.match(snapshot.lastError ?? "", /stop reason 'length'/);
 		assert.equal(snapshot.failedReviews, 1);
-		assert.equal(snapshot.autoFollowQueued, false);
 	});
 
 	it("marks unresolved agent-end review work stale on timeout", async () => {
@@ -240,7 +235,6 @@ describe("main watchdog runtime", () => {
 		const snapshot = runtime.getSnapshot();
 		assert.equal(snapshot.status, "stale");
 		assert.equal(snapshot.staleReviews, 1);
-		assert.equal(snapshot.autoFollowQueued, false);
 		runtime.reset("cleanup");
 	});
 
@@ -303,7 +297,6 @@ describe("main watchdog runtime", () => {
 		const snapshot = runtime.getSnapshot();
 		assert.equal(snapshot.status, "stale");
 		assert.equal(snapshot.lastWarning, undefined);
-		assert.equal(snapshot.autoFollowQueued, false);
 	});
 
 	it("invalidates an in-flight review when refreshed config disables the watchdog", async () => {
@@ -879,73 +872,6 @@ describe("main watchdog runtime", () => {
 		assert.deepEqual((delivered[0] as { options?: unknown }).options, { deliverAs: "steer" });
 	});
 
-	it("auto-follows agent-end blockers, respects max attempts, and real prompts reset attempts", async () => {
-		const sent: string[] = [];
-		const runtime = new MainWatchdogRuntime({
-			resolveConfig: () => configResult(enabledConfig({ autoFollow: { blockers: true, maxAttempts: 1, stalemateRepeats: 3 } })),
-			sendUserMessage: (message) => sent.push(message),
-			review: (request) => {
-				assert.equal(request.emitWarning({ ...warning(), severity: "blocker", summary: "Needs fixing" }), true);
-				return { stopReason: "stop" };
-			},
-		});
-
-		runtime.handleBeforeAgentStart({ prompt: "Patch carefully." }, { cwd: "/tmp/project" });
-		runtime.enqueueDelta("Assistant:\nBad patch.");
-		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
-		assert.equal(sent.length, 1);
-		assert.match(sent[0] ?? "", /Watchdog auto-follow/);
-		assert.equal(runtime.getSnapshot().autoFollowAttempts, 1);
-
-		runtime.handleBeforeAgentStart({ prompt: sent[0] }, { cwd: "/tmp/project" });
-		runtime.enqueueDelta("Assistant:\nStill bad.");
-		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
-		assert.equal(sent.length, 1);
-
-		runtime.handleBeforeAgentStart({ prompt: "Human says try again with a different edit." }, { cwd: "/tmp/project" });
-		runtime.enqueueDelta("Assistant:\nBad again in a different way.");
-		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
-		assert.equal(sent.length, 2);
-		assert.equal(runtime.getSnapshot().autoFollowAttempts, 1);
-	});
-
-	it("keeps a racing real prompt authoritative while a queued auto-follow is pending", async () => {
-		const sent: string[] = [];
-		let reviewedDelta = "";
-		let blockerSummary = "First blocker";
-		const runtime = new MainWatchdogRuntime({
-			resolveConfig: () => configResult(enabledConfig({ autoFollow: { blockers: true, maxAttempts: 1, stalemateRepeats: 5 } })),
-			sendUserMessage: (message) => sent.push(message),
-			review: (request) => {
-				reviewedDelta = request.delta;
-				assert.equal(request.emitWarning({ ...warning(), severity: "blocker", summary: blockerSummary }), true);
-				return { stopReason: "stop" };
-			},
-		});
-
-		runtime.handleBeforeAgentStart({ prompt: "Patch carefully." }, { cwd: "/tmp/project" });
-		runtime.enqueueDelta("Assistant:\nBad patch.");
-		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
-		assert.equal(sent.length, 1);
-		assert.equal(runtime.getSnapshot().autoFollowAttempts, 1);
-
-		// A real user prompt arrives before the queued auto-follow turn starts.
-		blockerSummary = "Second blocker";
-		runtime.handleBeforeAgentStart({ prompt: "Human: also update the docs." }, { cwd: "/tmp/project" });
-		runtime.enqueueDelta("Assistant:\nStill bad.");
-		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
-		assert.match(reviewedDelta, /also update the docs\./);
-		assert.equal(sent.length, 2, "real prompt resets attempts so a new blocker auto-follows again");
-
-		// The originally queued auto-follow prompt then arrives and stays excluded from scope.
-		blockerSummary = "Third blocker";
-		runtime.handleBeforeAgentStart({ prompt: sent[0] }, { cwd: "/tmp/project" });
-		runtime.enqueueDelta("Assistant:\nStill bad again.");
-		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
-		assert.doesNotMatch(reviewedDelta, /Watchdog auto-follow: address this blocker/);
-		assert.equal(sent.length, 2, "auto-follow turn must not reset the attempt counter");
-	});
-
 	it("cancels an in-flight cadence review so the agent-end boundary review still runs", async () => {
 		let releaseFirstReview!: () => void;
 		let reviewCalls = 0;
@@ -979,56 +905,48 @@ describe("main watchdog runtime", () => {
 		assert.equal(snapshot.status, "idle");
 	});
 
-	it("stops auto-following repeated blocker identities at stalemate threshold", async () => {
-		const sent: string[] = [];
+	it("marks the third consecutive identical boundary warning as stalemate and delivers it held", async () => {
+		const delivered: Array<{ warning: WatchdogWarningDetails; options?: unknown }> = [];
 		const runtime = new MainWatchdogRuntime({
-			resolveConfig: () => configResult(enabledConfig({ autoFollow: { blockers: true, maxAttempts: 5, stalemateRepeats: 2 } })),
-			sendUserMessage: (message) => sent.push(message),
+			resolveConfig: () => configResult(enabledConfig({ stalemateRepeats: 3 })),
+			displayWarning: (details, options) => { delivered.push({ warning: details, options }); },
 			review: (request) => {
-				assert.equal(request.emitWarning({ ...warning(), severity: "blocker", summary: "Same blocker" }), true);
+				request.emitWarning({ ...warning(), severity: "blocker", summary: "Same blocker" });
 				return { stopReason: "stop" };
 			},
 		});
 
 		runtime.handleBeforeAgentStart({ prompt: "Patch carefully." }, { cwd: "/tmp/project" });
-		runtime.enqueueDelta("Assistant:\nBad patch.");
-		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
-		assert.equal(sent.length, 1);
+		for (const delta of ["Assistant:\nBad patch.", "Assistant:\nStill bad.", "Assistant:\nStill bad again."]) {
+			runtime.enqueueDelta(delta);
+			await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
+		}
 
-		runtime.handleBeforeAgentStart({ prompt: sent[0] }, { cwd: "/tmp/project" });
-		runtime.enqueueDelta("Assistant:\nStill bad but not identical input.");
-		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
-
-		const snapshot = runtime.getSnapshot();
-		assert.equal(sent.length, 1);
-		assert.equal(snapshot.autoFollowStalemate, true);
+		assert.equal(delivered.length, 3, "repeats keep nudging until the stalemate threshold");
+		assert.equal(delivered[0]?.options, undefined);
+		assert.equal(delivered[1]?.options, undefined);
+		assert.deepEqual(delivered[2]?.options, { deliverAs: "hold" });
+		assert.equal(delivered[2]?.warning.state, "stalemate");
+		assert.equal(delivered[2]?.warning.stalemateRepeats, 3);
+		let snapshot = runtime.getSnapshot();
+		assert.equal(snapshot.stalemate, true);
+		assert.equal(snapshot.boundaryRepeats, 3);
 		assert.equal(snapshot.lastWarning?.state, "stalemate");
-	});
 
-	it("does not auto-follow stale blocker warnings", async () => {
-		let emitWarning!: (candidate: WatchdogWarning) => boolean;
-		let finishReview!: () => void;
-		let started!: () => void;
-		const reviewStarted = new Promise<void>((resolve) => { started = resolve; });
-		const sent: string[] = [];
-		const runtime = new MainWatchdogRuntime({
-			resolveConfig: () => configResult(enabledConfig({ agentEndTimeoutMs: 5 })),
-			sendUserMessage: (message) => sent.push(message),
-			review: async (request) => {
-				emitWarning = request.emitWarning;
-				started();
-				await new Promise<void>((resolve) => { finishReview = resolve; });
-			},
-		});
+		// After stalemate the same finding is a plain duplicate again: no further delivery.
+		runtime.enqueueDelta("Assistant:\nStill bad, fourth time.");
+		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
+		assert.equal(delivered.length, 3);
 
-		runtime.enqueueDelta("Assistant:\nStill working");
-		const end = runtime.handleAgentEnd({ type: "agent_end", messages: [] }, { cwd: "/tmp/project" });
-		await reviewStarted;
-		await end;
-		assert.equal(emitWarning({ ...warning(), severity: "blocker" }), false);
-		finishReview();
-		await tick();
-		assert.equal(sent.length, 0);
+		// A real prompt resets the counter.
+		runtime.handleBeforeAgentStart({ prompt: "Human: try a different approach." }, { cwd: "/tmp/project" });
+		runtime.enqueueDelta("Assistant:\nNew attempt.");
+		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: "/tmp/project" });
+		assert.equal(delivered.length, 4);
+		assert.equal(delivered[3]?.options, undefined);
+		snapshot = runtime.getSnapshot();
+		assert.equal(snapshot.boundaryRepeats, 1);
+		assert.equal(snapshot.stalemate, false);
 	});
 
 	it("session on/off overrides explicit main enabled settings", () => {

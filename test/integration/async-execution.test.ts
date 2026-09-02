@@ -198,7 +198,7 @@ async function withIsolatedWatchdogSettings<T>(projectDir: string, run: () => Pr
 	}
 }
 
-function childWatchdogStatus(runId: string, phase: "idle" | "reviewing" | "autofollow" | "settling" | "stale" | "failed", seq: number, followUpPending = false) {
+function childWatchdogStatus(runId: string, phase: "idle" | "reviewing" | "stale" | "failed", seq: number) {
 	return {
 		type: CHILD_WATCHDOG_STATUS_EVENT,
 		runId,
@@ -208,7 +208,6 @@ function childWatchdogStatus(runId: string, phase: "idle" | "reviewing" | "autof
 		seq,
 		phase,
 		ts: Date.now() + seq,
-		followUpPending,
 	};
 }
 

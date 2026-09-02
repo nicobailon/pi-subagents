@@ -23,11 +23,7 @@ export function childResolvedConfig(config: ChildWatchdogConfig): ResolvedWatchd
 			...(config.model ? { model: config.model } : {}),
 			...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
 		},
-		autoFollow: {
-			blockers: config.autoFollowBlockers,
-			maxAttempts: config.autoFollowMaxAttempts,
-			stalemateRepeats: config.stalemateRepeats,
-		},
+		stalemateRepeats: config.stalemateRepeats,
 		children: {
 			...DEFAULT_WATCHDOG_CONFIG.children,
 			watchdogTailTimeoutMs: config.watchdogTailTimeoutMs,
@@ -58,7 +54,7 @@ export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[
 	if (!childConfig?.enabled) return undefined;
 	let currentContext: ExtensionContext | undefined;
 	let seq = 0;
-	const emitStatus = (phase: ChildWatchdogPhase, followUpPending = false, reason?: string): void => {
+	const emitStatus = (phase: ChildWatchdogPhase, reason?: string): void => {
 		writeStatus({
 			type: CHILD_WATCHDOG_STATUS_EVENT,
 			...(childConfig.runId ? { runId: childConfig.runId } : {}),
@@ -67,7 +63,6 @@ export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[
 			seq: ++seq,
 			phase,
 			ts: Date.now(),
-			followUpPending,
 			...(reason ? { reason } : {}),
 		});
 	};
@@ -77,9 +72,12 @@ export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[
 		review: createMainWatchdogReview(() => currentContext, { getThinkingLevel: () => pi.getThinkingLevel() }),
 		reviewDescription: "child model review",
 		reviewChangesOnly: true,
-		displayWarning: (details) => {
+		displayWarning: (details, delivery) => {
 			const childDetails = childWarningDetails(details, childConfig);
-			pi.sendMessage(createWatchdogWarningMessage(childDetails, { display: true, details: childDetails }));
+			const message = createWatchdogWarningMessage(childDetails, { display: true, details: childDetails });
+			if (delivery?.deliverAs === "steer") pi.sendMessage(message, { deliverAs: "steer" });
+			else if (delivery?.deliverAs === "hold") pi.sendMessage(message, { triggerTurn: false });
+			else pi.sendMessage(message);
 		},
 	});
 	const rememberContext = (ctx: ExtensionContext) => {
@@ -104,8 +102,8 @@ export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[
 		emitStatus("reviewing");
 		await runtime.handleAgentEnd(event, ctx);
 		const snapshot = runtime.getSnapshot(ctx.cwd);
-		if (snapshot.status === "failed") emitStatus("failed", false, snapshot.lastError);
-		else if (snapshot.status === "stale") emitStatus("stale", false, "review stale");
+		if (snapshot.status === "failed") emitStatus("failed", snapshot.lastError);
+		else if (snapshot.status === "stale") emitStatus("stale", "review stale");
 		else emitStatus("idle");
 	});
 	onRuntimeEvent("session_shutdown", () => {

@@ -73,7 +73,7 @@ describe("async status helpers", () => {
 				outputFile,
 				steps: [
 					{ agent: "scout", status: "complete", durationMs: 10, description: "Inspect auth only" },
-					{ agent: "worker", status: "running", durationMs: 20, description: "Patch billing only", contextLimit: 128_000, toolBudgetBlocked: true, watchdog: { phase: "stale", seq: 2, lastUpdate: 200, followUpPending: false } },
+					{ agent: "worker", status: "running", durationMs: 20, description: "Patch billing only", contextLimit: 128_000, toolBudgetBlocked: true, watchdog: { phase: "stale", seq: 2, lastUpdate: 200 } },
 				],
 			});
 			const descriptor = createRunFanoutBudget("run-a", 64);

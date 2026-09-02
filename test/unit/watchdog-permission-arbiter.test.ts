@@ -46,8 +46,6 @@ const childConfig = JSON.stringify({
 	agentEndTimeoutMs: 1_000,
 	maxWarnings: null,
 	lsp: { enabled: false, timeoutMs: 100, maxFiles: 1, maxDiagnostics: 1 },
-	autoFollowBlockers: false,
-	autoFollowMaxAttempts: null,
 	stalemateRepeats: 2,
 });
 
@@ -97,8 +95,6 @@ describe("watchdog permission arbiter", () => {
 					agentEndTimeoutMs: 5,
 					maxWarnings: null,
 					lsp: { enabled: false, timeoutMs: 100, maxFiles: 1, maxDiagnostics: 1 },
-					autoFollowBlockers: false,
-					autoFollowMaxAttempts: null,
 					stalemateRepeats: 2,
 				}),
 			}),

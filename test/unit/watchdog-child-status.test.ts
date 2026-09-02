@@ -49,8 +49,6 @@ describe("child watchdog status helpers", () => {
 			agentEndTimeoutMs: 200,
 			maxWarnings: null,
 			lsp: { enabled: false, timeoutMs: 50, maxFiles: 2, maxDiagnostics: 3 },
-			autoFollowBlockers: true,
-			autoFollowMaxAttempts: 2,
 			stalemateRepeats: 3,
 		};
 		const config = decodeChildWatchdogConfig(JSON.stringify(payload));
@@ -60,14 +58,6 @@ describe("child watchdog status helpers", () => {
 		assert.throws(
 			() => decodeChildWatchdogConfig(JSON.stringify({ ...payload, lsp: { ...payload.lsp, timeoutMs: 0 } })),
 			/lsp\.timeoutMs/,
-		);
-		assert.throws(
-			() => decodeChildWatchdogConfig(JSON.stringify({ ...payload, autoFollowBlockers: undefined })),
-			/autoFollowBlockers/,
-		);
-		assert.throws(
-			() => decodeChildWatchdogConfig(JSON.stringify({ ...payload, autoFollowBlockers: "yes" })),
-			/autoFollowBlockers/,
 		);
 		assert.throws(
 			() => decodeChildWatchdogConfig(JSON.stringify({ ...payload, stalemateRepeats: 0 })),
@@ -84,12 +74,11 @@ describe("child watchdog status helpers", () => {
 			seq: 1,
 			phase: "reviewing",
 			ts: 10,
-			followUpPending: false,
 		} as const;
 
 		assert.equal(isChildWatchdogStatusEvent(firstEvent), true);
 		const first = acceptChildWatchdogEvent({ event: firstEvent, runId: "run-1", agent: "worker", childIndex: 0, current: undefined });
-		assert.deepEqual(first, { phase: "reviewing", seq: 1, lastUpdate: 10, followUpPending: false });
+		assert.deepEqual(first, { phase: "reviewing", seq: 1, lastUpdate: 10 });
 		assert.equal(childWatchdogIsActive(first), true);
 		assert.equal(acceptChildWatchdogEvent({ event: firstEvent, current: first, runId: "run-1", agent: "worker", childIndex: 0 }), undefined);
 		assert.equal(acceptChildWatchdogEvent({ event: { ...firstEvent, seq: 2, runId: undefined }, current: first, runId: "run-1", agent: "worker", childIndex: 0 }), undefined);

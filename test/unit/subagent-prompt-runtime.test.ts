@@ -185,8 +185,6 @@ describe("subagent prompt runtime", () => {
 				agentEndTimeoutMs: 5,
 				maxWarnings: null,
 				lsp: { enabled: false, timeoutMs: 100, maxFiles: 1, maxDiagnostics: 1 },
-				autoFollowBlockers: false,
-				autoFollowMaxAttempts: null,
 				stalemateRepeats: 2,
 			});
 			const handlers: Array<(event: { toolName?: string; input?: unknown }, ctx: { signal?: AbortSignal }) => unknown> = [];
@@ -699,8 +697,6 @@ describe("subagent prompt runtime", () => {
 			agentEndTimeoutMs: 500,
 			maxWarnings: null,
 			lsp: { enabled: false, timeoutMs: 3000, maxFiles: 20, maxDiagnostics: 50 },
-			autoFollowBlockers: false,
-			autoFollowMaxAttempts: 3,
 			stalemateRepeats: 2,
 		});
 		const handlersWith = new Map<string, unknown[]>();

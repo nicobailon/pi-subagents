@@ -3,7 +3,7 @@ import type { ResolvedWatchdogConfig, WatchdogLspConfig } from "./types.ts";
 export const CHILD_WATCHDOG_CONFIG_ENV = "PI_SUBAGENT_WATCHDOG_CHILD_CONFIG";
 export const CHILD_WATCHDOG_STATUS_EVENT = "subagent.watchdog.status";
 
-export const CHILD_WATCHDOG_PHASES = ["idle", "reviewing", "autofollow", "settling", "stale", "failed"] as const;
+export const CHILD_WATCHDOG_PHASES = ["idle", "reviewing", "stale", "failed"] as const;
 export type ChildWatchdogPhase = typeof CHILD_WATCHDOG_PHASES[number];
 
 export interface ChildWatchdogConfig {
@@ -17,8 +17,6 @@ export interface ChildWatchdogConfig {
 	model?: string;
 	thinking?: string | false;
 	lsp: WatchdogLspConfig;
-	autoFollowBlockers: boolean;
-	autoFollowMaxAttempts: number | null;
 	stalemateRepeats: number;
 }
 
@@ -31,7 +29,6 @@ export interface ChildWatchdogStatusEvent {
 	seq: number;
 	phase: ChildWatchdogPhase;
 	ts: number;
-	followUpPending: boolean;
 	reason?: string;
 }
 
@@ -39,7 +36,6 @@ export interface ChildWatchdogStateSnapshot {
 	phase: ChildWatchdogPhase;
 	seq: number;
 	lastUpdate: number;
-	followUpPending: boolean;
 	reason?: string;
 	timedOut?: boolean;
 }
@@ -66,9 +62,7 @@ export function resolveChildWatchdogConfig(input: {
 		...(model ? { model } : {}),
 		...(thinking !== undefined ? { thinking } : {}),
 		lsp: { ...input.config.lsp },
-		autoFollowBlockers: input.config.children.autoFollow.blockers,
-		autoFollowMaxAttempts: input.config.children.autoFollow.maxAttempts,
-		stalemateRepeats: input.config.children.autoFollow.stalemateRepeats,
+		stalemateRepeats: input.config.stalemateRepeats,
 	};
 }
 
@@ -106,12 +100,6 @@ function childConfigNullableNonNegativeInteger(input: Record<string, unknown>, f
 	if (value === null) return null;
 	if (typeof value === "number" && Number.isInteger(value) && value >= 0) return value;
 	throw new Error(`Invalid child watchdog config: ${field} must be null or a non-negative integer.`);
-}
-
-function childConfigBoolean(input: Record<string, unknown>, field: string): boolean {
-	const value = input[field];
-	if (typeof value === "boolean") return value;
-	throw new Error(`Invalid child watchdog config: ${field} must be a boolean.`);
 }
 
 function childConfigLsp(value: unknown): WatchdogLspConfig {
@@ -158,8 +146,6 @@ export function decodeChildWatchdogConfig(raw: string | undefined): ChildWatchdo
 		...(model ? { model } : {}),
 		...(thinking !== undefined ? { thinking: thinking as string | false } : {}),
 		lsp: childConfigLsp(parsed.lsp),
-		autoFollowBlockers: childConfigBoolean(parsed, "autoFollowBlockers"),
-		autoFollowMaxAttempts: childConfigNullableNonNegativeInteger(parsed, "autoFollowMaxAttempts"),
 		stalemateRepeats: childConfigPositiveInteger(parsed, "stalemateRepeats"),
 	};
 }
@@ -173,14 +159,13 @@ export function isChildWatchdogStatusEvent(value: unknown): value is ChildWatchd
 		&& event.seq >= 0
 		&& typeof event.ts === "number"
 		&& Number.isFinite(event.ts)
-		&& typeof event.followUpPending === "boolean"
 		&& typeof event.phase === "string"
 		&& (CHILD_WATCHDOG_PHASES as readonly string[]).includes(event.phase);
 }
 
 export function childWatchdogIsActive(snapshot: ChildWatchdogStateSnapshot | undefined): boolean {
 	if (!snapshot) return false;
-	return snapshot.followUpPending || snapshot.phase === "reviewing" || snapshot.phase === "autofollow" || snapshot.phase === "settling";
+	return snapshot.phase === "reviewing";
 }
 
 export function acceptChildWatchdogEvent(input: {
@@ -199,7 +184,6 @@ export function acceptChildWatchdogEvent(input: {
 		phase: input.event.phase,
 		seq: input.event.seq,
 		lastUpdate: input.event.ts,
-		followUpPending: input.event.followUpPending,
 		...(input.event.reason ? { reason: input.event.reason } : {}),
 	};
 }

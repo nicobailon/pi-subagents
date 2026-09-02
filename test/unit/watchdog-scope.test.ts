@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { WatchdogScopeArtifact, isWatchdogAutoFollowPromptEvent, markWatchdogAutoFollowPromptEvent } from "../../src/watchdog/scope.ts";
+import { WatchdogScopeArtifact } from "../../src/watchdog/scope.ts";
 
 describe("watchdog scope artifact", () => {
 	it("keeps bounded prompts in newest-last order", () => {
@@ -22,12 +22,5 @@ describe("watchdog scope artifact", () => {
 		scope.reset();
 		assert.deepEqual(scope.snapshot(), []);
 		assert.equal(scope.render(), "");
-	});
-
-	it("marks auto-follow prompt events without string sniffing", () => {
-		const event = markWatchdogAutoFollowPromptEvent({ prompt: "Watchdog auto-follow: address this blocker" });
-
-		assert.equal(isWatchdogAutoFollowPromptEvent(event), true);
-		assert.equal(isWatchdogAutoFollowPromptEvent({ prompt: "Watchdog auto-follow: address this blocker" }), false);
 	});
 });

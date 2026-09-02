@@ -3,6 +3,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Removed watchdog auto-follow. A displayed boundary warning already continues the run on pi 0.84+; repeated identical boundary warnings now stop after `subagents.watchdog.stalemateRepeats` and are shown without continuing. The `autoFollow` settings block is rejected as unknown.
+
 ## [0.63.0] - 2026-09-01
 
 ### Highlights

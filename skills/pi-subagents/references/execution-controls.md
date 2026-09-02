@@ -337,9 +337,10 @@ child changes land. Enabled watchdogs also run changed-file TypeScript/JavaScrip
 LSP diagnostics before the model pass when `typescript-language-server` is available.
 They keep bounded current-scope context from real user prompts (`watchdog.scope.enabled`)
 and can optionally run non-blocking Scopey-style cadence reviews every N tool results
-(`watchdog.cadence.everyNTools`). Cadence corrections and blocker auto-follow prompts
-are always transcript-visible; choose the watchdog model that matches the desired
-cheap-monitor vs strong-reviewer policy.
+(`watchdog.cadence.everyNTools`). Cadence corrections and boundary warnings are always
+transcript-visible; a boundary warning continues the run so the agent can act on it, and
+repeated identical warnings stop after `watchdog.stalemateRepeats`. Choose the watchdog
+model that matches the desired cheap-monitor vs strong-reviewer policy.
 
 Prefer a strong complementary model (for example Opus 4.8 high paired against a
 GPT 5.5 main session, or the reverse). Recommendation and configuration:

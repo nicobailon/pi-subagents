@@ -35,11 +35,9 @@ function cloneConfig(): ResolvedWatchdogConfig {
 	return {
 		...DEFAULT_WATCHDOG_CONFIG,
 		guidance: { ...DEFAULT_WATCHDOG_CONFIG.guidance },
-		autoFollow: { ...DEFAULT_WATCHDOG_CONFIG.autoFollow },
 		main: { ...DEFAULT_WATCHDOG_CONFIG.main },
 		children: {
 			...DEFAULT_WATCHDOG_CONFIG.children,
-			autoFollow: { ...DEFAULT_WATCHDOG_CONFIG.children.autoFollow },
 			overrides: { ...DEFAULT_WATCHDOG_CONFIG.children.overrides },
 		},
 		asyncCompletion: { ...DEFAULT_WATCHDOG_CONFIG.asyncCompletion },

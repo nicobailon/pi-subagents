@@ -779,7 +779,6 @@ async function runSingleAttempt(
 					phase: "stale",
 					seq: (childWatchdogState?.seq ?? 0) + 1,
 					lastUpdate: Date.now(),
-					followUpPending: false,
 					reason: "child watchdog tail timeout",
 					timedOut: true,
 				});

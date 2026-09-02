@@ -63,7 +63,7 @@ Default strong-reviewer profile:
 
 ## Scope monitoring
 
-When enabled, the watchdog keeps a bounded in-memory current-scope artifact from real user prompts and prepends it to review input by default (`subagents.watchdog.scope.enabled`). Newer prompts supersede and mutate older prompts, so the reviewer can flag work that no longer serves the current scope as `scope-drift`. Watchdog auto-follow prompts are not recorded as scope.
+When enabled, the watchdog keeps a bounded in-memory current-scope artifact from real user prompts and prepends it to review input by default (`subagents.watchdog.scope.enabled`). Newer prompts supersede and mutate older prompts, so the reviewer can flag work that no longer serves the current scope as `scope-drift`.
 
 You can opt into Scopey-style scope monitoring, inspired by [Scopey](https://github.com/ArchAstro/scopey), by setting `subagents.watchdog.cadence.everyNTools` to run additional non-blocking reviews every N tool results. Cadence warnings are transcript-visible and delivered with Pi's `steer` mode after the current tool boundary; they are never hidden. The same configured watchdog model is used for all checks, so choose a cheap model for frequent monitoring or a strong model for rarer adversarial review.
 
@@ -80,19 +80,15 @@ Scopey-style profile:
       },
       "scope": { "enabled": true },
       "cadence": { "everyNTools": 10 },
-      "autoFollow": {
-        "blockers": true,
-        "maxAttempts": 3,
-        "stalemateRepeats": 3
-      }
+      "stalemateRepeats": 3
     }
   }
 }
 ```
 
-## Auto-follow
+## Stalemate
 
-When the watchdog displays a blocker at `agent_end`, the `subagents.watchdog.autoFollow` policy can queue a visible follow-up user message asking the agent to address it. Auto-follow only runs while the watchdog is enabled, respects `maxAttempts`, and stops on repeated identical blockers using `stalemateRepeats`.
+A warning displayed at `agent_end` is steered into the transcript, so Pi continues the run and the agent sees it before finishing. When consecutive boundary reviews keep raising the same warning, the agent is not making progress: after `subagents.watchdog.stalemateRepeats` identical warnings in a row (default 3) the watchdog marks the warning `stalemate` and shows it without continuing the run. A new user prompt resets the count.
 
 ## LSP diagnostics
 

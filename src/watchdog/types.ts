@@ -61,7 +61,6 @@ export interface WatchdogWarning {
 	agent?: string;
 	runId?: string;
 	stale?: boolean;
-	autoFollowAttempt?: number;
 	state?: WatchdogWarningState;
 }
 
@@ -79,12 +78,6 @@ export interface WatchdogWarningMessage {
 	content: string;
 	display: boolean;
 	details: WatchdogWarningDetails;
-}
-
-export interface WatchdogAutoFollowConfig {
-	blockers: boolean;
-	maxAttempts: number | null;
-	stalemateRepeats: number;
 }
 
 export interface WatchdogGuidanceConfig {
@@ -114,13 +107,11 @@ export interface WatchdogChildOverrideConfig {
 
 export interface WatchdogChildrenConfig extends WatchdogEndpointConfig {
 	watchdogTailTimeoutMs: number;
-	autoFollow: WatchdogAutoFollowConfig;
 	overrides: Record<string, WatchdogChildOverrideConfig>;
 }
 
 export interface WatchdogAsyncCompletionConfig {
 	enabled: boolean;
-	autoFollowBlockers: boolean;
 }
 
 export interface WatchdogLspConfig {
@@ -166,7 +157,8 @@ export interface ResolvedWatchdogConfig {
 	severityThreshold: WatchdogSeverity;
 	maxWarnings: number | null;
 	guidance: WatchdogGuidanceConfig;
-	autoFollow: WatchdogAutoFollowConfig;
+	/** Consecutive identical boundary warnings before the watchdog stops continuing the run. */
+	stalemateRepeats: number;
 	scope: WatchdogScopeConfig;
 	cadence: WatchdogCadenceConfig;
 	main: WatchdogEndpointConfig;

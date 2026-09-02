@@ -467,8 +467,6 @@ describe("buildPiArgs session wiring", () => {
 				agentEndTimeoutMs: 500,
 				maxWarnings: 1,
 				lsp: { enabled: false, timeoutMs: 50, maxFiles: 2, maxDiagnostics: 3 },
-				autoFollowBlockers: true,
-				autoFollowMaxAttempts: 3,
 				stalemateRepeats: 2,
 			},
 		});
@@ -483,8 +481,6 @@ describe("buildPiArgs session wiring", () => {
 			agentEndTimeoutMs: 500,
 			maxWarnings: 1,
 			lsp: { enabled: false, timeoutMs: 50, maxFiles: 2, maxDiagnostics: 3 },
-			autoFollowBlockers: true,
-			autoFollowMaxAttempts: 3,
 			stalemateRepeats: 2,
 		});
 	});

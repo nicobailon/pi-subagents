@@ -17,7 +17,6 @@ describe("watchdog warning formatting and rendering", () => {
 			agent: "main",
 			runId: "run-1",
 			stale: true,
-			autoFollowAttempt: 2,
 		});
 
 		assert.match(content, /^<subagent_watchdog severity="blocker" category="correctness" source="main" guidance="weigh, don't blindly obey">/);
@@ -28,7 +27,7 @@ describe("watchdog warning formatting and rendering", () => {
 		assert.match(content, /<agent>main<\/agent>/);
 		assert.match(content, /<run_id>run-1<\/run_id>/);
 		assert.match(content, /<stale>true<\/stale>/);
-		assert.match(content, /<auto_follow_attempt>2<\/auto_follow_attempt>/);
+		assert.doesNotMatch(content, /auto_follow/);
 		assert.match(content, /<blocker_guidance>/);
 	});
 
@@ -54,8 +53,8 @@ describe("watchdog warning formatting and rendering", () => {
 			category: "loop-risk",
 			source: "main",
 			summary: "Repeated blocker",
-			evidence: "The same issue survived another auto-follow.",
-			recommendedAction: "Stop auto-follow and ask for user review.",
+			evidence: "The same issue survived another continuation.",
+			recommendedAction: "Ask for user review.",
 			state: "stalemate",
 			stalemateRepeats: 3,
 		};
@@ -65,10 +64,10 @@ describe("watchdog warning formatting and rendering", () => {
 		const failed = formatWatchdogWarningRenderText({ ...base, state: "failed", error: "provider aborted" });
 		const displayed = formatWatchdogWarningRenderText({ ...base, state: "displayed" });
 
-		assert.match(stalemate, /Subagent watchdog Blocker \(stalemate · auto-follow stopped\): Repeated blocker/);
-		assert.match(stalemate, /Auto-follow stopped after 3 repeated blocker warnings\./);
-		assert.match(stale, /Subagent watchdog Concern \(stale · no auto-follow\): Repeated blocker/);
-		assert.match(stale, /must not auto-follow/);
+		assert.match(stalemate, /Subagent watchdog Blocker \(stalemate\): Repeated blocker/);
+		assert.match(stalemate, /Same warning 3 times in a row; the watchdog stopped continuing the run\./);
+		assert.match(stale, /Subagent watchdog Concern \(stale\): Repeated blocker/);
+		assert.match(stale, /arrived after the watchdog catch-up timeout\./);
 		assert.match(failed, /failed review/);
 		assert.match(failed, /Failure: provider aborted/);
 		assert.match(displayed, /Subagent watchdog Blocker \(displayed\): Repeated blocker/);

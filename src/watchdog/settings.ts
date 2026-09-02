@@ -8,7 +8,6 @@ import {
 	WATCHDOG_WARNING_SEVERITIES,
 	type ResolvedWatchdogConfig,
 	type WatchdogAsyncCompletionConfig,
-	type WatchdogAutoFollowConfig,
 	type WatchdogChildOverrideConfig,
 	type WatchdogChildrenConfig,
 	type WatchdogDeliveryMode,
@@ -25,14 +24,12 @@ import {
 	type WatchdogSyncBacklog,
 } from "./types.ts";
 
-type WatchdogAutoFollowPatch = Partial<WatchdogAutoFollowConfig>;
 type WatchdogGuidancePatch = Partial<WatchdogGuidanceConfig>;
 type WatchdogScopePatch = Partial<WatchdogScopeConfig>;
 type WatchdogCadencePatch = Partial<WatchdogCadenceConfig>;
 type WatchdogEndpointPatch = Partial<WatchdogEndpointConfig>;
 type WatchdogChildOverridePatch = Partial<WatchdogChildOverrideConfig>;
-type WatchdogChildrenPatch = Partial<Omit<WatchdogChildrenConfig, "autoFollow" | "overrides">> & {
-	autoFollow?: WatchdogAutoFollowPatch;
+type WatchdogChildrenPatch = Partial<Omit<WatchdogChildrenConfig, "overrides">> & {
 	overrides?: Record<string, WatchdogChildOverridePatch>;
 };
 type WatchdogAsyncCompletionPatch = Partial<WatchdogAsyncCompletionConfig>;
@@ -52,9 +49,8 @@ export interface WatchdogModelSettingsWrite {
 	thinking?: ThinkingLevel | false | null;
 }
 
-type WatchdogConfigPatch = Partial<Omit<ResolvedWatchdogConfig, "guidance" | "autoFollow" | "scope" | "cadence" | "main" | "children" | "asyncCompletion" | "lsp">> & {
+type WatchdogConfigPatch = Partial<Omit<ResolvedWatchdogConfig, "guidance" | "scope" | "cadence" | "main" | "children" | "asyncCompletion" | "lsp">> & {
 	guidance?: WatchdogGuidancePatch;
-	autoFollow?: WatchdogAutoFollowPatch;
 	scope?: WatchdogScopePatch;
 	cadence?: WatchdogCadencePatch;
 	main?: WatchdogEndpointPatch;
@@ -81,11 +77,7 @@ export const DEFAULT_WATCHDOG_CONFIG: ResolvedWatchdogConfig = {
 		watchdogMd: true,
 		systemPromptPath: null,
 	},
-	autoFollow: {
-		blockers: true,
-		maxAttempts: 3,
-		stalemateRepeats: 3,
-	},
+	stalemateRepeats: 3,
 	scope: {
 		enabled: true,
 	},
@@ -98,16 +90,10 @@ export const DEFAULT_WATCHDOG_CONFIG: ResolvedWatchdogConfig = {
 	children: {
 		enabled: false,
 		watchdogTailTimeoutMs: 120_000,
-		autoFollow: {
-			blockers: true,
-			maxAttempts: 3,
-			stalemateRepeats: 3,
-		},
 		overrides: {},
 	},
 	asyncCompletion: {
 		enabled: false,
-		autoFollowBlockers: false,
 	},
 	lsp: {
 		enabled: true,
@@ -130,7 +116,7 @@ const WATCHDOG_FIELDS = new Set([
 	"severityThreshold",
 	"maxWarnings",
 	"guidance",
-	"autoFollow",
+	"stalemateRepeats",
 	"scope",
 	"cadence",
 	"main",
@@ -142,26 +128,23 @@ const WATCHDOG_FIELDS = new Set([
 	"maxReviewFailures",
 ]);
 const GUIDANCE_FIELDS = new Set(["watchdogMd", "systemPromptPath"]);
-const AUTO_FOLLOW_FIELDS = new Set(["blockers", "maxAttempts", "stalemateRepeats"]);
 const SCOPE_FIELDS = new Set(["enabled"]);
 const CADENCE_FIELDS = new Set(["everyNTools"]);
 const ENDPOINT_FIELDS = new Set(["enabled", "model", "thinking"]);
-const CHILDREN_FIELDS = new Set(["enabled", "model", "thinking", "watchdogTailTimeoutMs", "autoFollow", "overrides"]);
+const CHILDREN_FIELDS = new Set(["enabled", "model", "thinking", "watchdogTailTimeoutMs", "overrides"]);
 const CHILD_OVERRIDE_FIELDS = new Set(["enabled", "model", "thinking"]);
-const ASYNC_COMPLETION_FIELDS = new Set(["enabled", "autoFollowBlockers"]);
+const ASYNC_COMPLETION_FIELDS = new Set(["enabled"]);
 const LSP_FIELDS = new Set(["enabled", "timeoutMs", "maxFiles", "maxDiagnostics"]);
 
 function cloneDefaultConfig(): ResolvedWatchdogConfig {
 	return {
 		...DEFAULT_WATCHDOG_CONFIG,
 		guidance: { ...DEFAULT_WATCHDOG_CONFIG.guidance },
-		autoFollow: { ...DEFAULT_WATCHDOG_CONFIG.autoFollow },
 		scope: { ...DEFAULT_WATCHDOG_CONFIG.scope },
 		cadence: { ...DEFAULT_WATCHDOG_CONFIG.cadence },
 		main: { ...DEFAULT_WATCHDOG_CONFIG.main },
 		children: {
 			...DEFAULT_WATCHDOG_CONFIG.children,
-			autoFollow: { ...DEFAULT_WATCHDOG_CONFIG.children.autoFollow },
 			overrides: {},
 		},
 		asyncCompletion: { ...DEFAULT_WATCHDOG_CONFIG.asyncCompletion },
@@ -245,20 +228,6 @@ function parseGuidancePatch(value: unknown, field: string, meta: ParseMeta): Wat
 	return patch;
 }
 
-function parseAutoFollowPatch(value: unknown, field: string, meta: ParseMeta): WatchdogAutoFollowPatch {
-	const input = parseObject(value, field, meta);
-	assertKnownFields(input, AUTO_FOLLOW_FIELDS, field, meta);
-	const patch: WatchdogAutoFollowPatch = {};
-	if ("blockers" in input) patch.blockers = parseBoolean(input.blockers, `${field}.blockers`, meta);
-	if ("maxAttempts" in input) {
-		patch.maxAttempts = parseNullableInteger(input.maxAttempts, `${field}.maxAttempts`, meta, "null or a positive integer", (candidate) => candidate >= 1);
-	}
-	if ("stalemateRepeats" in input) {
-		patch.stalemateRepeats = parseInteger(input.stalemateRepeats, `${field}.stalemateRepeats`, meta, "a positive integer", (candidate) => candidate >= 1);
-	}
-	return patch;
-}
-
 function parseScopePatch(value: unknown, field: string, meta: ParseMeta): WatchdogScopePatch {
 	const input = parseObject(value, field, meta);
 	assertKnownFields(input, SCOPE_FIELDS, field, meta);
@@ -309,7 +278,6 @@ function parseChildrenPatch(value: unknown, field: string, meta: ParseMeta): Wat
 	if ("watchdogTailTimeoutMs" in input) {
 		patch.watchdogTailTimeoutMs = parseInteger(input.watchdogTailTimeoutMs, `${field}.watchdogTailTimeoutMs`, meta, "a positive integer", (candidate) => candidate >= 1);
 	}
-	if ("autoFollow" in input) patch.autoFollow = parseAutoFollowPatch(input.autoFollow, `${field}.autoFollow`, meta);
 	if ("overrides" in input) {
 		const overrides = parseObject(input.overrides, `${field}.overrides`, meta);
 		patch.overrides = {};
@@ -326,7 +294,6 @@ function parseAsyncCompletionPatch(value: unknown, field: string, meta: ParseMet
 	assertKnownFields(input, ASYNC_COMPLETION_FIELDS, field, meta);
 	const patch: WatchdogAsyncCompletionPatch = {};
 	if ("enabled" in input) patch.enabled = parseBoolean(input.enabled, `${field}.enabled`, meta);
-	if ("autoFollowBlockers" in input) patch.autoFollowBlockers = parseBoolean(input.autoFollowBlockers, `${field}.autoFollowBlockers`, meta);
 	return patch;
 }
 
@@ -362,7 +329,9 @@ function parseWatchdogPatch(value: unknown, field: string, meta: ParseMeta): Wat
 		patch.maxWarnings = parseNullableInteger(input.maxWarnings, `${field}.maxWarnings`, meta, "null or a non-negative integer", (candidate) => candidate >= 0);
 	}
 	if ("guidance" in input) patch.guidance = parseGuidancePatch(input.guidance, `${field}.guidance`, meta);
-	if ("autoFollow" in input) patch.autoFollow = parseAutoFollowPatch(input.autoFollow, `${field}.autoFollow`, meta);
+	if ("stalemateRepeats" in input) {
+		patch.stalemateRepeats = parseInteger(input.stalemateRepeats, `${field}.stalemateRepeats`, meta, "a positive integer", (candidate) => candidate >= 1);
+	}
 	if ("scope" in input) patch.scope = parseScopePatch(input.scope, `${field}.scope`, meta);
 	if ("cadence" in input) patch.cadence = parseCadencePatch(input.cadence, `${field}.cadence`, meta);
 	if ("main" in input) patch.main = parseEndpointPatch(input.main, `${field}.main`, meta);

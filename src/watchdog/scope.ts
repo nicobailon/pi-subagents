@@ -1,5 +1,3 @@
-export const WATCHDOG_AUTO_FOLLOW_PROMPT_MARKER = Symbol("subagent-watchdog-auto-follow-prompt");
-
 const MAX_SCOPE_ENTRIES = 8;
 const MAX_SCOPE_ENTRY_CHARS = 2_000;
 const MAX_SCOPE_TOTAL_CHARS = 16_000;
@@ -50,13 +48,4 @@ export class WatchdogScopeArtifact {
 			if (removed) total -= removed.prompt.length;
 		}
 	}
-}
-
-export function isWatchdogAutoFollowPromptEvent(event: unknown): boolean {
-	return Boolean(event && typeof event === "object" && (event as { [WATCHDOG_AUTO_FOLLOW_PROMPT_MARKER]?: unknown })[WATCHDOG_AUTO_FOLLOW_PROMPT_MARKER]);
-}
-
-export function markWatchdogAutoFollowPromptEvent<T extends object>(event: T): T {
-	Object.defineProperty(event, WATCHDOG_AUTO_FOLLOW_PROMPT_MARKER, { value: true });
-	return event;
 }

@@ -895,10 +895,9 @@ export interface SubagentResultIntercomPayload {
 // ============================================================================
 
 export interface ChildWatchdogProgress {
-	phase: "idle" | "reviewing" | "autofollow" | "settling" | "stale" | "failed";
+	phase: "idle" | "reviewing" | "stale" | "failed";
 	seq: number;
 	lastUpdate: number;
-	followUpPending: boolean;
 	reason?: string;
 	timedOut?: boolean;
 }

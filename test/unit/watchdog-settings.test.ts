@@ -56,7 +56,7 @@ describe("watchdog settings", () => {
 		assert.equal(result.config.showDuringRun, false);
 		assert.equal(result.config.agentEndTimeoutMs, 30_000);
 		assert.equal(result.config.children.watchdogTailTimeoutMs, 120_000);
-		assert.equal(result.config.autoFollow.maxAttempts, 3);
+		assert.equal(result.config.stalemateRepeats, 3);
 		assert.deepEqual(result.config.scope, { enabled: true });
 		assert.deepEqual(result.config.cadence, { everyNTools: null });
 		assert.deepEqual(result.config.lsp, { enabled: true, timeoutMs: 3000, maxFiles: 20, maxDiagnostics: 50 });
@@ -83,9 +83,8 @@ describe("watchdog settings", () => {
 			subagents: {
 				watchdog: {
 					enabled: true,
-					autoFollow: { blockers: true, maxAttempts: 5 },
+					stalemateRepeats: 5,
 					children: {
-						autoFollow: { maxAttempts: 4 },
 						overrides: {
 							worker: { enabled: true, model: "anthropic/claude-test" },
 						},
@@ -99,11 +98,10 @@ describe("watchdog settings", () => {
 		writeJson(projectSettingsPath(), {
 			subagents: {
 				watchdog: {
-					autoFollow: { stalemateRepeats: 2 },
+					stalemateRepeats: 2,
 					lsp: { enabled: false, timeoutMs: 1500, maxFiles: 4, maxDiagnostics: 7 },
 					main: { model: "openai/gpt-test" },
 					children: {
-						autoFollow: { blockers: false },
 						overrides: {
 							worker: { thinking: "medium" },
 							reviewer: { enabled: false },
@@ -115,7 +113,6 @@ describe("watchdog settings", () => {
 
 		const result = resolveWatchdogConfig(tempProject, {
 			session: {
-				autoFollow: { maxAttempts: null },
 				children: {
 					overrides: {
 						worker: { enabled: false },
@@ -127,12 +124,11 @@ describe("watchdog settings", () => {
 		assert.equal(result.ok, true);
 		assert.equal(result.config.main.enabled, true);
 		assert.equal(result.config.main.model, "openai/gpt-test");
-		assert.deepEqual(result.config.autoFollow, { blockers: true, maxAttempts: null, stalemateRepeats: 2 });
+		assert.equal(result.config.stalemateRepeats, 2);
 		assert.equal(result.config.guidance.systemPromptPath, "/tmp/user-watchdog.md");
 		assert.deepEqual(result.config.scope, { enabled: false });
 		assert.deepEqual(result.config.cadence, { everyNTools: 10 });
 		assert.deepEqual(result.config.lsp, { enabled: false, timeoutMs: 1500, maxFiles: 4, maxDiagnostics: 7 });
-		assert.deepEqual(result.config.children.autoFollow, { blockers: false, maxAttempts: 4, stalemateRepeats: 3 });
 		assert.deepEqual(result.config.children.overrides.worker, {
 			enabled: false,
 			model: "anthropic/claude-test",
@@ -176,6 +172,20 @@ describe("watchdog settings", () => {
 			(error: unknown) => error instanceof Error
 				&& error.message === `Watchdog settings in '${userSettingsPath()}' have unknown field 'subagents.watchdog.children.overrides.worker.mode'.`,
 		);
+	});
+
+	it("rejects removed auto-follow settings as unknown fields", () => {
+		writeJson(userSettingsPath(), {
+			subagents: {
+				watchdog: {
+					autoFollow: { blockers: true },
+				},
+			},
+		});
+
+		const result = resolveWatchdogConfig(tempProject);
+		assert.equal(result.ok, false);
+		assert.match(result.errors[0]?.message ?? "", /unknown field 'subagents\.watchdog\.autoFollow'/);
 	});
 
 	it("rejects invalid scope and cadence config at settings load", () => {
