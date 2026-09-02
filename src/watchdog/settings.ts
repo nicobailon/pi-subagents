@@ -12,6 +12,8 @@ import {
 	type WatchdogGuidanceConfig,
 	type WatchdogScopeConfig,
 	type WatchdogLspConfig,
+	type WatchdogRoleModelRule,
+	type WatchdogRulesConfig,
 	type WatchdogSettingsError,
 	type WatchdogSettingsResult,
 	type WatchdogSettingsSource,
@@ -42,7 +44,8 @@ export interface WatchdogModelSettingsWrite {
 	thinking?: ThinkingLevel | false | null;
 }
 
-type WatchdogConfigPatch = Partial<Omit<ResolvedWatchdogConfig, "guidance" | "scope" | "cadence" | "main" | "children" | "lsp">> & {
+type WatchdogConfigPatch = Partial<Omit<ResolvedWatchdogConfig, "guidance" | "scope" | "cadence" | "main" | "children" | "lsp" | "rules">> & {
+	rules?: WatchdogRulesConfig;
 	guidance?: WatchdogGuidancePatch;
 	scope?: WatchdogScopePatch;
 	cadence?: WatchdogCadencePatch;
@@ -99,7 +102,10 @@ const WATCHDOG_FIELDS = new Set([
 	"main",
 	"children",
 	"lsp",
+	"rules",
 ]);
+const RULES_FIELDS = new Set(["action", "roleModels", "minStages", "forbidAfterLaunch"]);
+const ROLE_MODEL_RULE_FIELDS = new Set(["allow", "deny", "note"]);
 const GUIDANCE_FIELDS = new Set(["watchdogMd"]);
 const SCOPE_FIELDS = new Set(["enabled"]);
 const CADENCE_FIELDS = new Set(["everyNTools"]);
@@ -263,6 +269,42 @@ function parseLspPatch(value: unknown, field: string, meta: ParseMeta): Watchdog
 	return patch;
 }
 
+function parseStringList(value: unknown, field: string, meta: ParseMeta): string[] {
+	if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || !entry.trim())) throw invalid(meta, field, "an array of non-empty strings");
+	return value.map((entry: string) => entry.trim());
+}
+
+function parseRoleModelRule(value: unknown, field: string, meta: ParseMeta): WatchdogRoleModelRule {
+	const input = parseObject(value, field, meta);
+	assertKnownFields(input, ROLE_MODEL_RULE_FIELDS, field, meta);
+	const rule: WatchdogRoleModelRule = {};
+	if ("allow" in input) rule.allow = parseStringList(input.allow, `${field}.allow`, meta);
+	if ("deny" in input) rule.deny = parseStringList(input.deny, `${field}.deny`, meta);
+	if ("note" in input) rule.note = parseNonEmptyString(input.note, `${field}.note`, meta);
+	return rule;
+}
+
+function parseRules(value: unknown, field: string, meta: ParseMeta): WatchdogRulesConfig {
+	const input = parseObject(value, field, meta);
+	assertKnownFields(input, RULES_FIELDS, field, meta);
+	const rules: WatchdogRulesConfig = { action: "warn", roleModels: {}, minStages: {}, forbidAfterLaunch: [] };
+	if ("action" in input) rules.action = parseEnum(input.action, `${field}.action`, meta, ["warn", "block"] as const);
+	if ("roleModels" in input) {
+		for (const [agent, rule] of Object.entries(parseObject(input.roleModels, `${field}.roleModels`, meta))) {
+			if (!agent.trim()) throw invalid(meta, `${field}.roleModels`, "agent names to be non-empty");
+			rules.roleModels[agent] = parseRoleModelRule(rule, `${field}.roleModels.${agent}`, meta);
+		}
+	}
+	if ("minStages" in input) {
+		for (const [agent, count] of Object.entries(parseObject(input.minStages, `${field}.minStages`, meta))) {
+			if (!agent.trim()) throw invalid(meta, `${field}.minStages`, "agent names to be non-empty");
+			rules.minStages[agent] = parseInteger(count, `${field}.minStages.${agent}`, meta, "a positive integer", (candidate) => candidate >= 1);
+		}
+	}
+	if ("forbidAfterLaunch" in input) rules.forbidAfterLaunch = parseStringList(input.forbidAfterLaunch, `${field}.forbidAfterLaunch`, meta);
+	return rules;
+}
+
 function parseWatchdogPatch(value: unknown, field: string, meta: ParseMeta): WatchdogConfigPatch {
 	const input = parseObject(value, field, meta);
 	assertKnownFields(input, WATCHDOG_FIELDS, field, meta);
@@ -286,6 +328,7 @@ function parseWatchdogPatch(value: unknown, field: string, meta: ParseMeta): Wat
 	if ("main" in input) patch.main = parseEndpointPatch(input.main, `${field}.main`, meta);
 	if ("children" in input) patch.children = parseChildrenPatch(input.children, `${field}.children`, meta);
 	if ("lsp" in input) patch.lsp = parseLspPatch(input.lsp, `${field}.lsp`, meta);
+	if ("rules" in input) patch.rules = parseRules(input.rules, `${field}.rules`, meta);
 	return patch;
 }
 

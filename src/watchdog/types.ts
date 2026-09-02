@@ -138,6 +138,20 @@ export interface WatchdogLspRuntimeSnapshot extends WatchdogLspResult {
 	updatedAt?: string;
 }
 
+export interface WatchdogRoleModelRule {
+	allow?: string[];
+	deny?: string[];
+	note?: string;
+}
+
+/** Deterministic launch-shape rules evaluated before a child starts; no model call. */
+export interface WatchdogRulesConfig {
+	action: "warn" | "block";
+	roleModels: Record<string, WatchdogRoleModelRule>;
+	minStages: Record<string, number>;
+	forbidAfterLaunch: string[];
+}
+
 export interface ResolvedWatchdogConfig {
 	enabled: boolean;
 	agentEndTimeoutMs: number;
@@ -151,6 +165,7 @@ export interface ResolvedWatchdogConfig {
 	main: WatchdogEndpointConfig;
 	children: WatchdogChildrenConfig;
 	lsp: WatchdogLspConfig;
+	rules?: WatchdogRulesConfig;
 }
 
 export interface WatchdogSettingsError {

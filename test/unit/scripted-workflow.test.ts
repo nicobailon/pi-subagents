@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { Worker } from "node:worker_threads";
-import { formatWorkflowJsonPreview, previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
+import { countWorkflowScriptAgentLaunches, formatWorkflowJsonPreview, previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
 
 describe("scripted workflow runtime", () => {
 	it("uses ordinary statement-body return semantics", async () => {
@@ -2497,5 +2497,18 @@ describe("scripted workflow runtime", () => {
 		assert.deepEqual(children.map((child) => child.key), ["a", "b", "c"]);
 		assert.ok(children.every((child) => child.ok), "every child should still report success");
 		assert.equal(result.children.filter((child) => !child.ok).length, 0);
+	});
+});
+
+describe("workflow script agent launch counts", () => {
+	it("counts literal agents in direct runs.run and runs.all calls", () => {
+		const counts = countWorkflowScriptAgentLaunches([
+			`const a = await runs.run("plan", { agent: "worker", task: "plan" });`,
+			`const [b, c] = await runs.all([{ key: "x", agent: "worker", task: "x" }, { key: "y", agent: "reviewer", task: "y" }]);`,
+			`const d = await runs.run("dyn", { agent: chosen, task: "z" });`,
+			`return runs.run("done", { agent: "worker", resume: a.runId, task: "finish" });`,
+		].join("\n"));
+		assert.deepEqual(counts, { worker: 3, reviewer: 1 });
+		assert.deepEqual(countWorkflowScriptAgentLaunches("return (;"), {});
 	});
 });

@@ -4,6 +4,7 @@
 ## [Unreleased]
 
 ### Added
+- Add deterministic watchdog launch rules under `subagents.watchdog.rules`: per-role model allow/deny globs, minimum workflow stages per agent, and tools forbidden after a launch, each warning or blocking before a child starts.
 - Give watchdog reviewers a read-only `watchdog_diff` tool showing the repo diff since the session-start commit, with untracked files, optional path narrowing, and stat mode.
 - Run cadence reviews inside child watchdogs, configurable per role through `children.cadence` and `children.overrides.<agent>.cadence` (defaulting to the top-level cadence). Over-long review input now keeps its head and tail instead of only the tail.
 - Lift child watchdog warnings into the parent: the result envelope carries `watchdog.warnings`, acceptance adds a `watchdog-blocker` runtime check that fails on unaddressed or stalemate blockers, completion notices list `Watchdog blockers:`, Fleet shows a `wd:<n>` chip, and blockers are posted live to the parent as non-reply `watchdog_blocker` supervisor notices.

@@ -5,6 +5,7 @@ import { SLASH_TEXT_RESULT_TYPE } from "../shared/types.ts";
 import { captureWatchdogDiffBaseline, type WatchdogDiffBaseline } from "./diff-tool.ts";
 import { recommendStrongWatchdogModel, resolveWatchdogModelInput, parseWatchdogThinkingInput } from "./model-selection.ts";
 import { renderWatchdogWarning } from "./render.ts";
+import { countWatchdogRules } from "./rules.ts";
 import { createMainWatchdogReview } from "./review.ts";
 import { MainWatchdogRuntime, type WatchdogReviewFunction } from "./runtime.ts";
 import { getWatchdogUserSettingsPath, writeUserWatchdogEnabled, writeWatchdogModelSettings } from "./settings.ts";
@@ -122,6 +123,7 @@ export function buildWatchdogStatus(snapshot: ReturnType<MainWatchdogRuntime["ge
 		recommendationLine(ctx),
 		`Agent-end timeout: ${snapshot.config.agentEndTimeoutMs}ms`,
 		`Stalemate: ${snapshot.boundaryRepeats}/${snapshot.config.stalemateRepeats}${snapshot.stalemate ? " · stopped" : ""}`,
+		`Rules: ${snapshot.config.rules ? `${countWatchdogRules(snapshot.config.rules)} configured · ${snapshot.config.rules.action}` : "none"}`,
 		`Review model call: ${snapshot.reviewDescription}`,
 	];
 	if (snapshot.failedReviews > 0) lines.push(`Failed reviews: ${snapshot.failedReviews}`);
@@ -424,6 +426,10 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 	pi.on("turn_end", (event, ctx) => {
 		rememberContext(ctx);
 		runtime.handleTurnEnd(event, ctx);
+	});
+	pi.on("tool_call", (event, ctx) => {
+		rememberContext(ctx);
+		return runtime.handleToolCall(event, ctx);
 	});
 	pi.on("tool_result", (_event, ctx) => {
 		rememberContext(ctx);

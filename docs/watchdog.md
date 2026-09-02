@@ -129,6 +129,36 @@ A child watchdog warning is displayed inside the child session and also lifted i
 - **Notify.** Completion notices list blockers after the result preview as `Watchdog blockers:` with one `- <agent>: <summary> (addressed | unaddressed | stalemate)` line each. Fleet and status views show a `wd:<n>` chip for unresolved blockers.
 - **Live.** A blocker is also posted to the parent immediately over the supervisor channel as a non-reply `watchdog_blocker` notice, so an orchestrator can react before the child exits. Concerns stay in the envelope only.
 
+## Launch rules
+
+`subagents.watchdog.rules` holds deterministic checks that run before a child starts. They need no model call and apply whether or not the model review is enabled.
+
+```json
+{
+  "subagents": {
+    "watchdog": {
+      "rules": {
+        "action": "warn",
+        "roleModels": {
+          "scout": { "allow": ["openai-codex/gpt-5.6-luna:max"] },
+          "oracle": { "deny": ["*"], "note": "oracle is for hard questions only; ask before launching" },
+          "worker": { "deny": ["openai-codex/gpt-5.6-sol:high"] }
+        },
+        "minStages": { "worker": 2 },
+        "forbidAfterLaunch": ["bg_wait"]
+      }
+    }
+  }
+}
+```
+
+- `action`: `warn` (default) steers a watchdog concern into the orchestrator's transcript and lets the launch proceed; `block` returns a tool error and starts nothing.
+- `roleModels.<agent>.allow` / `deny`: globs (`*`, `?`) matched against the resolved `provider/id[:thinking]` and against the bare `provider/id`. `deny` wins. An optional `note` is included in the warning text. Evaluated for direct launches, workflow children, and chain or parallel steps.
+- `minStages.<agent>`: a workflowScript that launches `<agent>` at least once but fewer than N times, or a direct single launch of `<agent>`, triggers the rule. Literal `agent:` names in `runs.run` and `runs.all` are counted; dynamic agent expressions are not.
+- `forbidAfterLaunch`: tool names the orchestrator should not call after a subagent launch in the same run. Checked on every `tool_call`; `block` refuses the call with the rule as the reason.
+
+`/subagents-watchdog status` reports the number of configured rules and the action.
+
 ## Agent-driven configuration
 
 Agents can configure the same values through the tool when you ask them to set up the watchdog:

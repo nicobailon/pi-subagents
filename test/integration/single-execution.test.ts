@@ -8098,6 +8098,47 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 	});
 
+	it("blocks or warns on launches that violate configured watchdog rules", async () => {
+		await withIsolatedWatchdogSettings(tempDir, async () => {
+			const settingsPath = path.join(tempDir, ".pi", "settings.json");
+			const writeRules = (action: "warn" | "block") => {
+				fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+				fs.writeFileSync(settingsPath, JSON.stringify({ subagents: { watchdog: { rules: { action, roleModels: { echo: { deny: ["mock/*"], note: "echo must not use mock models" } } } } } }, null, 2), "utf-8");
+			};
+			const sent: unknown[] = [];
+			const watchdog = new MainWatchdogRuntime({ cwd: tempDir, displayWarning: (details) => { sent.push(details); } });
+			const executor = createSubagentExecutor!({
+				pi: { events: createEventBus(), getSessionName: () => undefined },
+				state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+				config: {},
+				asyncByDefault: false,
+				watchdog,
+				tempArtifactsDir: tempDir,
+				getSubagentSessionRoot: () => path.join(tempDir, ".pi/subagents", "sessions"),
+				expandTilde: (value: string) => value,
+				discoverAgents: () => ({ agents: [makeAgent("echo")] }),
+				allowMutatingManagementActions: true,
+			} as never);
+			const callsBefore = mockPi.callCount();
+
+			writeRules("block");
+			const blocked = await executor.execute("rules-block", { async: false, agent: "echo", task: "Do work", model: "mock/test-model" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(blocked.isError, true);
+			assert.match(blocked.content[0]?.text ?? "", /Launch blocked by subagents\.watchdog\.rules: Agent 'echo' was launched with denied model 'mock\/test-model'/);
+			assert.equal(mockPi.callCount(), callsBefore, "a blocked launch never starts the child");
+			assert.equal(sent.length, 0);
+
+			writeRules("warn");
+			mockPi.onCall({ output: "warned but ran" });
+			const warned = await executor.execute("rules-warn", { async: false, agent: "echo", task: "Do work", model: "mock/test-model" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(warned.isError, undefined, warned.content[0]?.text);
+			assert.equal(mockPi.callCount(), callsBefore + 1);
+			assert.equal(sent.length, 1);
+			assert.match((sent[0] as { summary?: string }).summary ?? "", /denied model 'mock\/test-model'/);
+			assert.match((sent[0] as { evidence?: string }).evidence ?? "", /echo must not use mock models/);
+		});
+	});
+
 	it("fails explicit acceptance when a child watchdog blocker is never followed by a turn", async () => {
 		await withIsolatedWatchdogSettings(tempDir, async () => {
 			writeWatchdogSettings(tempDir);

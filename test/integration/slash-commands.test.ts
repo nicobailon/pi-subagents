@@ -292,6 +292,7 @@ describe("subagents watchdog slash command", { skip: !available ? "watchdog comm
 				assert.match(content, /Subagent watchdog/);
 				assert.match(content, /Main: off \(default off\)/);
 				assert.match(content, /Runtime: idle/);
+				assert.match(content, /Rules: none/);
 				assert.match(content, /Review model call: real model review/);
 				assert.match(content, /Sources:/);
 			});

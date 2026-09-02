@@ -27,6 +27,7 @@ import { normalizePublicSubagentExecution, validateWorkflowCapacityOverrides } f
 import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
+import { evaluateLaunchRules, loadWatchdogLaunchRules, sendRuleViolationWarning, type WatchdogRuleViolation } from "../../watchdog/rules.ts";
 import { buildModelCandidates, normalizeParentModel, resolveEffectiveSubagentModel, resolveModelOrigin, type ModelOrigin, type ParentModel } from "../shared/model-fallback.ts";
 import { formatRetainedChildren, listRetainedChildren } from "../background/retained-children.ts";
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
@@ -112,7 +113,7 @@ import { createMissionWorkflowState } from "../../missions/workflow-state.ts";
 import { resolveAuthorityDecision } from "../../policy/authority.ts";
 import { handleHerdrInspectorAction, HERDR_INSPECTOR_ACTIONS } from "../../inspectors/herdr/actions.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
-import { previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowLanePlan, type WorkflowReceiptResumeReference, type WorkflowScriptChildResult, type WorkflowScriptTraceEntry, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
+import { countWorkflowScriptAgentLaunches, previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowLanePlan, type WorkflowReceiptResumeReference, type WorkflowScriptChildResult, type WorkflowScriptTraceEntry, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
 import { executeWorkflowHostCommand, resolveWorkflowHostOutputClaimPath, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "../../workflows/host-command.ts";
 import { buildWorkflowReceipt, resolveWorkflowReceiptResumeEntry, writeWorkflowReceipt, type WorkflowReceipt, type WorkflowReceiptState } from "../../workflows/workflow-receipt.ts";
 import { upsertHostStep, validHostStepNodes } from "../shared/host-step-status.ts";
@@ -2772,6 +2773,41 @@ function resolveToolBudget(
 	return { ...(resolved.budget === undefined ? {} : { toolBudget: resolved.budget }), ...(resolved.error === undefined ? {} : { error: resolved.error }) };
 }
 
+function notifyRuleViolations(deps: ExecutorDeps, violations: WatchdogRuleViolation[]): void {
+	for (const violation of violations) {
+		if (deps.watchdog) deps.watchdog.displayRuleWarning(violation);
+		else sendRuleViolationWarning(deps.pi as { sendMessage?: (message: unknown, options?: unknown) => unknown }, violation);
+	}
+}
+
+/**
+ * Deterministic launch rules from subagents.watchdog.rules. Returns an error message when the
+ * launch must be blocked; warnings are displayed and undefined is returned.
+ */
+function applyLaunchRules(deps: ExecutorDeps, cwd: string, input: { agent: string; model?: string; stageCount?: number }): string | undefined {
+	const rules = loadWatchdogLaunchRules(cwd);
+	const violations = evaluateLaunchRules(rules, input);
+	if (!violations.length) return undefined;
+	if (rules?.action === "block") return `Launch blocked by subagents.watchdog.rules: ${violations.map((violation) => violation.summary).join(" ")}`;
+	notifyRuleViolations(deps, violations);
+	return undefined;
+}
+
+function applyWorkflowStageRules(deps: ExecutorDeps, cwd: string, script: string): string | undefined {
+	const rules = loadWatchdogLaunchRules(cwd);
+	if (!rules || Object.keys(rules.minStages).length === 0) return undefined;
+	const counts = countWorkflowScriptAgentLaunches(script);
+	const violations = Object.keys(rules.minStages).flatMap((agent) => evaluateLaunchRules(rules, { agent, stageCount: counts[agent] ?? 0 }));
+	if (!violations.length) return undefined;
+	if (rules.action === "block") return `Launch blocked by subagents.watchdog.rules: ${violations.map((violation) => violation.summary).join(" ")}`;
+	notifyRuleViolations(deps, violations);
+	return undefined;
+}
+
+function parentModelString(parentModel: ParentModel | undefined): string | undefined {
+	return parentModel ? `${parentModel.provider}/${parentModel.id}` : undefined;
+}
+
 function resolveEffectiveToolBudget(input: { stepBudget?: ToolBudgetConfig; runBudget?: ResolvedToolBudget; agentBudget?: ToolBudgetConfig; configBudget?: ToolBudgetConfig }): { toolBudget?: ResolvedToolBudget; error?: string } {
 	if (input.stepBudget !== undefined) return resolveToolBudget(input.stepBudget, "toolBudget");
 	if (input.runBudget !== undefined) return { toolBudget: input.runBudget };
@@ -3229,6 +3265,12 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 				source: modelOrigin === "explicit" ? "explicit" : "inherited",
 			});
 		const modelOverrideFromParent = modelOrigin === "inherited";
+		const launchRuleError = applyLaunchRules(deps, effectiveCwd, {
+			agent: a.name,
+			model: modelOverride ?? parentModelString(parentModel),
+			...(params.workflowParentRunId === undefined ? { stageCount: 1 } : {}),
+		});
+		if (launchRuleError) return toExecutionErrorResult(params, new Error(launchRuleError), data.contextPolicy.contextSummary);
 		const asyncResult = executeAsyncSingle(id, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
 			agent: params.agent!,
 			task: shouldForkAgent(contextPolicy, params.agent!) ? wrapForkTask(params.task ?? "") : (params.task ?? ""),
@@ -3664,6 +3706,12 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		},
 	);
 	const modelOverrideFromParent = modelOrigin === "inherited";
+	const launchRuleError = applyLaunchRules(deps, effectiveCwd, {
+		agent: agentConfig.name,
+		model: modelOverride ?? parentModelString(parentModel),
+		...(params.workflowParentRunId === undefined ? { stageCount: 1 } : {}),
+	});
+	if (launchRuleError) return toExecutionErrorResult(params, new Error(launchRuleError), data.contextPolicy.contextSummary);
 	let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
 	let readsOverride: string[] | false | undefined = params.reads;
 	const rawOutput = params.output !== undefined ? params.output : agentConfig.output;
@@ -4740,6 +4788,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			};
 		}
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
+		if (!normalizedAction) {
+			deps.watchdog?.noteLaunch();
+			if (typeof requestParams.workflowScript === "string") {
+				const stageRuleError = applyWorkflowStageRules(deps, requestParams.cwd ?? ctx.cwd, requestParams.workflowScript);
+				if (stageRuleError) return buildRequestedModeError(requestParams, stageRuleError);
+			}
+		}
 		if (normalizedAction === "resume" && requestParams.extensionBindings !== undefined) return buildRequestedModeError(requestParams, "extensionBindings is not supported with action='resume'; resume uses the original retained child binding.");
 		let workflowResource: { permit: WorkflowResourcePermit; provenance: WorkflowResourceProvenanceV1; authority: WorkflowResourceAuthority } | undefined;
 		if (workflowResourcePermit) {
