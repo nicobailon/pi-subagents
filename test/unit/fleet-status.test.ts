@@ -1006,6 +1006,27 @@ describe("below-editor subagent FleetView", () => {
 		assert.deepEqual(workflow?.workflowRows?.map((row) => row.name), ["review (reviewer)"]);
 	});
 
+	it("keeps advisory preflight declarations out of Fleet runtime rows and counts", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("workflow-preflight", {
+			asyncId: "workflow-preflight",
+			asyncDir: "/tmp/workflow-preflight",
+			status: "running",
+			mode: "workflow",
+			startedAt: 10,
+			updatedAt: 20,
+			preflight: { version: 1, coverage: "partial", lanes: [{ key: "pr14", mode: "review" }] },
+			steps: [{ agent: "reviewer", workflowKey: "pr14-quality", status: "running" }],
+		});
+
+		const workflow = collectFleetStatusEntries(state).find((entry) => entry.key === "async:workflow-preflight");
+		assert.deepEqual(workflow?.workflowRows?.map((row) => [row.name, row.state]), [["pr14-quality (reviewer)", "running"]]);
+		assert.deepEqual(
+			workflow?.workflowChecklist && { total: workflow.workflowChecklist.total, running: workflow.workflowChecklist.running, queued: workflow.workflowChecklist.queued },
+			{ total: 1, running: 1, queued: 0 },
+		);
+	});
+
 	it("renders bounded workflow progress rows under the workflow parent", () => {
 		const state = stateForTest();
 		const workflowJob = {

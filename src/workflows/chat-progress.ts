@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Details, WorkflowPreflightLaneV1, WorkflowPreflightV1 } from "../shared/types.ts";
+import { workflowKeyMatchesPreflightLane } from "./workflow-preflight.ts";
 
 export const WORKFLOW_CHAT_PROGRESS_MODES = ["auto", "off", "live-card"] as const;
 export type WorkflowChatProgressMode = typeof WORKFLOW_CHAT_PROGRESS_MODES[number];
@@ -111,7 +112,6 @@ function cleanLabel(value: unknown): string | undefined {
 
 export function buildWorkflowChatProgressRows(trace: NonNullable<Details["workflow"]>["trace"], preflight?: WorkflowPreflightV1): WorkflowChatProgressRow[] {
 	const rows = new Map<string, WorkflowChatProgressRow>();
-	for (const lane of preflight?.lanes ?? []) rows.set(lane.key, { key: lane.key, state: "planned", preflight: lane });
 	for (const entry of trace) {
 		if (entry.operation !== "run") continue;
 		const existing = rows.get(entry.key);
@@ -124,8 +124,9 @@ export function buildWorkflowChatProgressRows(trace: NonNullable<Details["workfl
 			}
 			continue;
 		}
+		const lane = preflight?.lanes.find((candidate) => workflowKeyMatchesPreflightLane(entry.key, candidate.key, entry.generatedLaneKey));
 		const next: WorkflowChatProgressRow = existing ?? { key: entry.key, state: "running" };
-		if (existing?.preflight) next.preflight = existing.preflight;
+		if (lane && !next.preflight) next.preflight = lane;
 		next.state = entry.state === "completed"
 			? "complete"
 			: entry.state === "failed"

@@ -189,9 +189,9 @@ describe("async status projection", () => {
 		assert.deepEqual(rows, []);
 	});
 
-	it("projects stored preflight lanes as planned rows and merges launched facts", () => {
+	it("annotates authoritative children without projecting unmatched preflight lanes", () => {
 		const rows = projectAsyncWorkflowRows([
-			{ agent: "worker", workflowKey: "writer", label: "Writer", status: "running" },
+			{ agent: "worker", workflowKey: "writer.implementation", label: "Writer", status: "running" },
 		], {
 			version: 1,
 			coverage: "complete",
@@ -202,8 +202,7 @@ describe("async status projection", () => {
 		});
 
 		assert.deepEqual(rows.map((row) => ({ name: row.name, state: row.state, mode: row.preflight?.mode })), [
-			{ name: "writer · Writer (worker)", state: "running", mode: "mutation" },
-			{ name: "review", state: "planned", mode: "review" },
+			{ name: "writer.implementation · Writer (worker)", state: "running", mode: "mutation" },
 		]);
 	});
 

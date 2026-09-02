@@ -391,6 +391,39 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("keeps preflight as a plan hint outside the runtime checklist", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-workflow-preflight-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-workflow-preflight");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-workflow-preflight",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				preflight: { version: 1, lanes: [{ key: "pr14", mode: "review" }] },
+				steps: [{ agent: "reviewer", workflowKey: "pr14-quality", status: "running" }],
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-workflow-preflight" }, {
+				asyncDirRoot: asyncRoot,
+				resultsDir: path.join(root, "results"),
+				kill: () => true,
+				now: () => 250,
+			});
+
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.match(text, /Plan: 1 lane · pr14/);
+			assert.match(text, /Workflow checklist: 0\/1 done · 1 active/);
+			assert.doesNotMatch(text, /1 queued/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("refuses to tail status outputFile paths outside the async directory", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-transcript-escape-"));
 		try {

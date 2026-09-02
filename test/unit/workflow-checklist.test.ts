@@ -154,15 +154,31 @@ test("workflow checklist keeps graph acceptance blockers ahead of stale running 
 	assert.equal(projection.phases[1]!.items[1]!.state, "blocked");
 });
 
-test("workflow checklist does not duplicate preflight lanes already represented by graph nodes", () => {
+test("workflow checklist uses preflight only to annotate authoritative work", () => {
 	const projection = projectWorkflowChecklist({
 		graph: graph(),
-		preflight: { version: 1, lanes: [{ key: "writer-b", mode: "mutation" }, { key: "writers", mode: "mutation" }, { key: "deploy", mode: "gate" }] },
+		preflight: { version: 1, coverage: "partial", lanes: [{ key: "writer-b", mode: "mutation" }, { key: "writers", mode: "mutation" }, { key: "deploy", mode: "gate" }] },
 	});
 
-	assert.equal(projection.total, 6);
-	assert.deepEqual(projection.phases.map((phase) => phase.label), ["inventory", "writers", "reviews", "gate", "deploy"]);
-	assert.equal(projection.phases.at(-1)?.items[0]?.state, "queued");
+	assert.equal(projection.total, 5);
+	assert.deepEqual(projection.phases.map((phase) => phase.label), ["inventory", "writers", "reviews", "gate"]);
+	assert.equal(projection.queued, 1);
+	assert.equal(projection.phases[2]?.items[0]?.key, "review");
+});
+
+test("workflow checklist does not turn unmatched preflight metadata into queued work", () => {
+	const preflight = { version: 1 as const, coverage: "partial" as const, lanes: [{ key: "pr14", mode: "review" as const }] };
+	const declarationOnly = projectWorkflowChecklist({ preflight });
+	const mismatchedRuntime = projectWorkflowChecklist({
+		preflight,
+		trace: [{ operation: "run", key: "pr14-quality", state: "started", agent: "reviewer" }],
+	});
+
+	assert.deepEqual(declarationOnly, { phases: [], total: 0, done: 0, running: 0, queued: 0, blocked: 0, failed: 0, paused: 0, stopped: 0 });
+	assert.equal(mismatchedRuntime.total, 1);
+	assert.equal(mismatchedRuntime.running, 1);
+	assert.equal(mismatchedRuntime.queued, 0);
+	assert.deepEqual(mismatchedRuntime.phases.flatMap((phase) => phase.items).map((item) => item.key), ["pr14-quality"]);
 });
 
 test("workflow checklist text exposes aggregate, phase, and bottleneck signals with bounded errors", () => {

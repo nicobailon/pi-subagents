@@ -151,5 +151,11 @@ describe("workflow preflight metadata", () => {
 
 		const exactTrace = [{ operation: "run", key: "audit", state: "completed" as const }];
 		assert.deepEqual(workflowPreflightWarnings(lanes, exactTrace, { settled: true }), []);
+
+		const hyphenatedTrace = [{ operation: "run", key: "audit-quality", state: "completed" as const }];
+		assert.deepEqual(workflowPreflightWarnings(lanes, hyphenatedTrace, { settled: true }), [
+			"Preflight advisory: workflow key 'audit-quality' launched without a declared lane.",
+			"Preflight advisory: declared lane 'audit' was not launched.",
+		]);
 	});
 });

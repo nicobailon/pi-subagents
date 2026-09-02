@@ -146,8 +146,12 @@ function declaredKeys(preflight: WorkflowPreflightV1): Set<string> {
  * Treat declared lane keys as plan roots: `lane` is the lane itself and
  * `lane.stage` is a stage by convention, even without generated provenance.
  */
+export function workflowKeyMatchesPreflightLane(key: string, laneKey: string, generatedLaneKey?: string): boolean {
+	return generatedLaneKey === laneKey || key === laneKey || key.startsWith(`${laneKey}.`);
+}
+
 function declaredLaneCoversWorkflowKey(entry: WorkflowTraceLike, laneKey: string): boolean {
-	return entry.key === laneKey || entry.key.startsWith(`${laneKey}.`);
+	return workflowKeyMatchesPreflightLane(entry.key, laneKey, entry.generatedLaneKey);
 }
 
 function keyCoveredByDeclaredLane(entry: WorkflowTraceLike, declared: ReadonlySet<string>): boolean {

@@ -13,6 +13,9 @@
 - Reject no-op watchdog settings: `delivery`, `showDuringRun`, `syncBacklog`, `lateWarningPolicy`, `compactAtPercent`, `reviewRetryDelayMs`, `maxReviewFailures`, `asyncCompletion`, and `guidance.systemPromptPath`.
 - Remove watchdog auto-follow. Pi 0.84+ already continues after displayed boundary warnings; repeated identical warnings stop after `subagents.watchdog.stalemateRepeats`. The `autoFollow` settings block is now unknown.
 
+### Fixed
+- Keep advisory preflight lanes out of runtime workflow rows and queued checklist counts (#1821). Thanks [@stekman08](https://github.com/stekman08).
+
 ## [0.63.0] - 2026-09-01
 
 ### Highlights

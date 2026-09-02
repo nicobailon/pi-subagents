@@ -323,10 +323,8 @@ export function projectWorkflowChecklist(input: WorkflowChecklistInput): Workflo
 	const trace = traceSources(input.trace);
 	const traceByKey = new Map(trace.map((entry) => [entry.key, entry]));
 	const phaseByNode = new Map<string, string>();
-	const graphPhaseLabels = new Set<string>();
 	for (const phase of input.graph?.phases ?? []) {
 		const title = keyText(phase.title, "Workflow");
-		graphPhaseLabels.add(title);
 		phaseFor(phases, title);
 		for (const nodeId of phase.nodeIds) if (!phaseByNode.has(nodeId)) phaseByNode.set(nodeId, title);
 	}
@@ -377,7 +375,6 @@ export function projectWorkflowChecklist(input: WorkflowChecklistInput): Workflo
 		const item = traceItem(entry, phases.size, laneFor(entry.key, entry.generatedLaneKey ?? entry.phase ?? "", lanes));
 		add(phases, item.phase, item);
 	}
-	for (const lane of input.preflight?.lanes ?? []) if (!graphKeys.has(lane.key) && !graphPhaseLabels.has(lane.key) && !phases.get(lane.key)?.items.length) add(phases, lane.key, { key: lane.key, label: lane.key, phase: lane.key, state: "queued", preflight: lane });
 
 	const finalized = [...phases.values()].filter((phase) => phase.items.length > 0);
 	for (const phase of finalized) {
