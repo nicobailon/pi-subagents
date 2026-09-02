@@ -346,4 +346,115 @@ describe("worktree cleanup plan", () => {
 			fs.rmSync(baseDir, { recursive: true, force: true });
 		}
 	});
+
+	it("treats nested project directory as cleanup containment root", () => {
+		const repo = createRepo("pi-cleanup-plan-nested-root-");
+		const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-cleanup-plan-nested-base-"));
+		let setup: WorktreeSetup | undefined;
+		try {
+			setup = createWorktrees(repo, "nested-root", 1, { baseDir });
+			const manifestPath = path.join(repo, ".pi", "subagents", "artifacts", "handoff.json");
+			writeManifest({ repo, manifestPath, setup });
+			const plan = buildPlan({ repo, worktreeBaseDir: baseDir, now: 60_000, planId: "nested-root-plan" });
+			assert.equal(plan.baseDirs[0], path.join(baseDir, path.basename(repo)));
+			assert.equal(plan.entries[0]?.decision, "remove");
+			assert.equal(plan.entries[0]?.state, "safe");
+		} finally {
+			removeGeneratedWorktrees(repo, setup);
+			fs.rmSync(repo, { recursive: true, force: true });
+			fs.rmSync(baseDir, { recursive: true, force: true });
+		}
+	});
+
+	it("uses sibling worktrees project folder as default cleanup containment root", () => {
+		const repo = createRepo("pi-cleanup-plan-default-root-");
+		const previous = process.env.PI_SUBAGENTS_WORKTREE_DIR;
+		delete process.env.PI_SUBAGENTS_WORKTREE_DIR;
+		try {
+			const plan = buildPlan({ repo, now: 61_000, planId: "default-root-plan" });
+			assert.equal(plan.baseDirs[0], path.join(path.dirname(repo), "worktrees", path.basename(repo)));
+		} finally {
+			if (previous === undefined) delete process.env.PI_SUBAGENTS_WORKTREE_DIR;
+			else process.env.PI_SUBAGENTS_WORKTREE_DIR = previous;
+			fs.rmSync(repo, { recursive: true, force: true });
+		}
+	});
+
+	it("marks flat dedicatedRoot leaves ineligible", () => {
+		const repo = createRepo("pi-cleanup-plan-flat-leaf-");
+		const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-cleanup-plan-flat-base-"));
+		const worktreePath = path.join(baseDir, "pi-worktree-flat-0");
+		const branch = "pi-parallel-flat-0";
+		let setup: WorktreeSetup | undefined;
+		try {
+			git(repo, ["worktree", "add", "-b", branch, worktreePath]);
+			setup = {
+				cwd: repo,
+				worktrees: [{
+					path: worktreePath,
+					agentCwd: worktreePath,
+					branch,
+					index: 0,
+					nodeModulesLinked: false,
+					syntheticPaths: [],
+				}],
+				baseCommit: git(repo, ["rev-parse", "HEAD"]),
+			};
+			const manifestPath = path.join(repo, ".pi", "subagents", "artifacts", "handoff.json");
+			writeManifest({ repo, manifestPath, setup, preserved: true });
+			const plan = buildPlan({ repo, worktreeBaseDir: baseDir, now: 62_000, planId: "flat-leaf-plan" });
+			const entry = entriesByPath(plan).get(__testables.realpathExisting(worktreePath)) ?? plan.entries[0];
+			assert.equal(entry?.decision, "keep");
+			assert.equal(entry?.state, "ineligible");
+			assert.match(entry?.reasons.join(" ") ?? "", /outside configured base directory|outside the project worktree directory/i);
+		} finally {
+			removeGeneratedWorktrees(repo, setup);
+			fs.rmSync(repo, { recursive: true, force: true });
+			fs.rmSync(baseDir, { recursive: true, force: true });
+		}
+	});
+
+	it("marks checkout-internal worktrees ineligible when base is the repos parent", () => {
+		const repo = createRepo("pi-cleanup-plan-checkout-internal-");
+		const worktreePath = path.join(repo, "pi-worktree-internal-0");
+		const branch = "pi-parallel-internal-0";
+		let setup: WorktreeSetup | undefined;
+		try {
+			git(repo, ["worktree", "add", "-b", branch, worktreePath]);
+			setup = {
+				cwd: repo,
+				worktrees: [{
+					path: worktreePath,
+					agentCwd: worktreePath,
+					branch,
+					index: 0,
+					nodeModulesLinked: false,
+					syntheticPaths: [],
+				}],
+				baseCommit: git(repo, ["rev-parse", "HEAD"]),
+			};
+			const manifestPath = path.join(repo, ".pi", "subagents", "artifacts", "handoff.json");
+			writeManifest({ repo, manifestPath, setup, preserved: true });
+			const plan = buildPlan({ repo, worktreeBaseDir: path.dirname(repo), now: 63_000, planId: "checkout-internal-plan" });
+			const entry = entriesByPath(plan).get(__testables.realpathExisting(worktreePath)) ?? plan.entries[0];
+			assert.equal(entry?.decision, "keep");
+			assert.equal(entry?.state, "ineligible");
+			assert.notEqual(entry?.decision, "remove");
+		} finally {
+			removeGeneratedWorktrees(repo, setup);
+			fs.rmSync(repo, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects empty cleanup worktree base directory", () => {
+		const repo = createRepo("pi-cleanup-plan-empty-base-");
+		try {
+			assert.throws(
+				() => buildWorktreeCleanupPlan({ repo, worktreeBaseDir: "   " }),
+				/worktree base directory cannot be empty/,
+			);
+		} finally {
+			fs.rmSync(repo, { recursive: true, force: true });
+		}
+	});
 });

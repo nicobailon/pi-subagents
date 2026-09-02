@@ -243,12 +243,22 @@ function resolveRepoRoot(repo: string): string {
 	return realpathExisting(toplevel);
 }
 
-function resolveCleanupBaseDir(repoRoot: string, configuredBaseDir: string | undefined): string {
-	const raw = configuredBaseDir ?? process.env.PI_SUBAGENTS_WORKTREE_DIR ?? os.tmpdir();
-	const trimmed = raw.trim();
-	if (!trimmed) throw new Error("worktree base directory cannot be empty");
-	const expanded = trimmed.startsWith("~/") ? path.join(os.homedir(), trimmed.slice(2)) : trimmed;
-	return path.resolve(path.isAbsolute(expanded) ? expanded : path.resolve(repoRoot, expanded));
+function resolveCleanupBaseDir(repoRoot: string, configuredBaseDir: string | undefined, requestedRepo: string): string {
+	const raw = configuredBaseDir ?? process.env.PI_SUBAGENTS_WORKTREE_DIR;
+	let dedicatedRoot: string;
+	if (raw === undefined) {
+		dedicatedRoot = path.join(path.dirname(path.resolve(requestedRepo)), "worktrees");
+	} else {
+		const trimmed = raw.trim();
+		if (!trimmed) throw new Error("worktree base directory cannot be empty");
+		const expanded = trimmed.startsWith("~/") ? path.join(os.homedir(), trimmed.slice(2)) : trimmed;
+		dedicatedRoot = path.isAbsolute(expanded) ? expanded : path.resolve(repoRoot, expanded);
+	}
+	return path.resolve(path.join(dedicatedRoot, path.basename(repoRoot)));
+}
+
+function cleanupContainmentInvalid(repoRoot: string, projectDir: string): boolean {
+	return samePath(projectDir, repoRoot) || pathInside(repoRoot, projectDir, true);
 }
 
 export function parseGitWorktreeList(raw: string): GitWorktreeRecord[] {
@@ -579,6 +589,7 @@ function isPatchCaptured(record: ManifestMetadataRecord, worktreePath: string): 
 function buildManagedEntry(input: {
 	repoRoot: string;
 	baseDir: string;
+	containmentInvalid?: boolean;
 	targetHead: string;
 	rootPath: string;
 	git: GitWorktreeRecord;
@@ -605,7 +616,7 @@ function buildManagedEntry(input: {
 	if (pathInspection.missing) return blockedEntry(entry, "stale", "unknown", "worktree path is missing from disk");
 	if (pathInspection.symlink) return blockedEntry(entry, "unknown", "unknown", "worktree path is a symlink; cleanup requires a real directory");
 	if (!pathInspection.directory || !pathInspection.realpath) return blockedEntry(entry, "unknown", "unknown", "worktree path is not a directory");
-	if (!pathInside(baseDir, pathInspection.realpath, true)) return blockedEntry(entry, "ineligible", "keep", `worktree real path is outside configured base directory '${baseDir}'`);
+	if (input.containmentInvalid || !pathInside(baseDir, pathInspection.realpath, true)) return blockedEntry(entry, "ineligible", "keep", `worktree real path is outside configured base directory '${baseDir}'`);
 
 	if (rootPath === comparablePath(pathInspection.realpath)) return blockedEntry(entry, "ineligible", "keep", "worktree is the repository root");
 	if (!git.branch) return blockedEntry(entry, "unknown", "unknown", "detached worktrees have no metadata-recorded branch");
@@ -724,7 +735,8 @@ export function buildWorktreeCleanupPlan(input: BuildWorktreeCleanupPlanInput): 
 	const repoRoot = resolveRepoRoot(input.repo);
 	const now = input.now ?? Date.now();
 	if (!Number.isFinite(now)) throw new Error("worktree cleanup plan timestamp must be finite");
-	const baseDir = resolveCleanupBaseDir(repoRoot, input.worktreeBaseDir);
+	const baseDir = resolveCleanupBaseDir(repoRoot, input.worktreeBaseDir, input.repo);
+	const containmentInvalid = cleanupContainmentInvalid(repoRoot, baseDir);
 	const gitRecords = listGitWorktrees(repoRoot);
 	const targetHead = runGitChecked(repoRoot, ["rev-parse", "HEAD"]);
 	const rootPath = comparablePath(repoRoot);
@@ -749,6 +761,7 @@ export function buildWorktreeCleanupPlan(input: BuildWorktreeCleanupPlanInput): 
 		else entries.push(buildManagedEntry({
 			repoRoot,
 			baseDir,
+			containmentInvalid,
 			targetHead,
 			rootPath,
 			git,
