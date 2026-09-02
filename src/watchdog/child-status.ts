@@ -1,5 +1,5 @@
 import type { ChildWatchdogProgress, ChildWatchdogWarningSummary } from "../shared/types.ts";
-import { SUBAGENT_WATCHDOG_WARNING_TYPE, WATCHDOG_WARNING_CATEGORIES, type ResolvedWatchdogConfig, type WatchdogCadenceConfig, type WatchdogCategory, type WatchdogLspConfig } from "./types.ts";
+import { SUBAGENT_WATCHDOG_WARNING_TYPE, type ResolvedWatchdogConfig, type WatchdogCadenceConfig, type WatchdogCategory, type WatchdogLspConfig } from "./types.ts";
 
 export const CHILD_WATCHDOG_WARNING_LIMIT = 20;
 
@@ -212,10 +212,9 @@ function childWatchdogWarningFromMessage(message: unknown): ChildWatchdogWarning
 	const details = candidate.details ?? {};
 	if (details.severity !== "concern" && details.severity !== "blocker") return undefined;
 	if (typeof details.summary !== "string" || typeof details.evidence !== "string" || typeof details.recommendedAction !== "string") return undefined;
-	const category = (WATCHDOG_WARNING_CATEGORIES as readonly unknown[]).includes(details.category) ? details.category as WatchdogCategory : "other";
 	return {
 		severity: details.severity,
-		category,
+		category: details.category as WatchdogCategory,
 		summary: details.summary,
 		evidence: details.evidence,
 		recommendedAction: details.recommendedAction,

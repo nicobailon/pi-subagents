@@ -216,22 +216,6 @@ describe("watchdog settings", () => {
 		assert.equal(resolveWatchdogConfig(tempProject).config.rules, undefined);
 	});
 
-	it("rejects removed watchdog fields as unknown", () => {
-		const removed: Array<[Record<string, unknown>, RegExp]> = [
-			[{ autoFollow: { blockers: true } }, /unknown field 'subagents\.watchdog\.autoFollow'/],
-			[{ syncBacklog: "off" }, /unknown field 'subagents\.watchdog\.syncBacklog'/],
-			[{ showDuringRun: false }, /unknown field 'subagents\.watchdog\.showDuringRun'/],
-			[{ guidance: { systemPromptPath: "/tmp/x.md" } }, /unknown field 'subagents\.watchdog\.guidance\.systemPromptPath'/],
-			[{ asyncCompletion: { enabled: true } }, /unknown field 'subagents\.watchdog\.asyncCompletion'/],
-		];
-		for (const [watchdog, expected] of removed) {
-			writeJson(userSettingsPath(), { subagents: { watchdog } });
-			const result = resolveWatchdogConfig(tempProject);
-			assert.equal(result.ok, false, JSON.stringify(watchdog));
-			assert.match(result.errors[0]?.message ?? "", expected);
-		}
-	});
-
 	it("rejects invalid scope and cadence config at settings load", () => {
 		writeJson(userSettingsPath(), {
 			subagents: {

@@ -1,3 +1,4 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { splitKnownThinkingSuffix } from "../shared/model-info.ts";
 import { resolveWatchdogConfig } from "./settings.ts";
 import type { WatchdogRulesConfig, WatchdogWarning } from "./types.ts";
@@ -54,8 +55,7 @@ export function ruleViolationWarning(violation: WatchdogRuleViolation): Watchdog
 }
 
 /** For launch paths without a main watchdog runtime (background chain steps). */
-export function sendRuleViolationWarning(pi: { sendMessage?: (message: unknown, options?: unknown) => unknown } | undefined, violation: WatchdogRuleViolation): void {
-	if (typeof pi?.sendMessage !== "function") return;
+export function sendRuleViolationWarning(pi: Pick<ExtensionAPI, "sendMessage">, violation: WatchdogRuleViolation): void {
 	const warning = ruleViolationWarning(violation);
 	pi.sendMessage(createWatchdogWarningMessage(warning, { display: true, details: { state: "displayed", displayedAt: new Date().toISOString() } }), { deliverAs: "steer" });
 }

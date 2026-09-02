@@ -943,7 +943,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const launchRules = loadWatchdogLaunchRules(stepCwd);
 		const ruleViolation = evaluateLaunchRule(launchRules, a.name, modelCandidates[0] ?? model);
 		if (ruleViolation && launchRules?.action === "block") throw new AsyncStartValidationError(`Launch blocked by subagents.watchdog.rules: ${ruleViolation.summary}`);
-		if (ruleViolation) sendRuleViolationWarning(ctx.pi as { sendMessage?: (message: unknown, options?: unknown) => unknown }, ruleViolation);
+		if (ruleViolation) sendRuleViolationWarning(ctx.pi, ruleViolation);
 		const fast = s.fast ?? params.fast ?? a.fast;
 		const toolPlan = resolvePiLaunchToolPlan({
 			tools: a.tools,
