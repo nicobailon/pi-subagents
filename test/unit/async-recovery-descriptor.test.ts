@@ -49,6 +49,31 @@ describe("async recovery descriptor", () => {
 		}
 	});
 
+	it("accepts the fast launch setting written by async execution", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-fast-"));
+		try {
+			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({
+				version: 1,
+				runFanoutBudget: runFanoutBudget("run-fast"),
+				sourceRunId: "run-fast",
+				agent: "worker",
+				cwd: root,
+				fast: true,
+				systemPromptMode: "replace",
+				inheritGlobalContext: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 2,
+				share: false,
+			}), "utf-8");
+
+			assert.equal(readAsyncRecoveryDescriptor(root)?.fast, true);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("defaults inheritGlobalContext from inheritProjectContext for descriptors from older versions", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-legacy-global-context-"));
 		try {
