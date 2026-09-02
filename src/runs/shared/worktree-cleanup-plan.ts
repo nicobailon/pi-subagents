@@ -243,11 +243,11 @@ function resolveRepoRoot(repo: string): string {
 	return realpathExisting(toplevel);
 }
 
-function resolveCleanupBaseDir(repoRoot: string, configuredBaseDir: string | undefined, requestedRepo: string): string {
+function resolveCleanupBaseDir(repoRoot: string, configuredBaseDir: string | undefined): string {
 	const raw = configuredBaseDir ?? process.env.PI_SUBAGENTS_WORKTREE_DIR;
 	let dedicatedRoot: string;
 	if (raw === undefined) {
-		dedicatedRoot = path.join(path.dirname(path.resolve(requestedRepo)), "worktrees");
+		dedicatedRoot = path.join(path.dirname(repoRoot), "worktrees");
 	} else {
 		const trimmed = raw.trim();
 		if (!trimmed) throw new Error("worktree base directory cannot be empty");
@@ -735,7 +735,7 @@ export function buildWorktreeCleanupPlan(input: BuildWorktreeCleanupPlanInput): 
 	const repoRoot = resolveRepoRoot(input.repo);
 	const now = input.now ?? Date.now();
 	if (!Number.isFinite(now)) throw new Error("worktree cleanup plan timestamp must be finite");
-	const baseDir = resolveCleanupBaseDir(repoRoot, input.worktreeBaseDir, input.repo);
+	const baseDir = resolveCleanupBaseDir(repoRoot, input.worktreeBaseDir);
 	const containmentInvalid = cleanupContainmentInvalid(repoRoot, baseDir);
 	const gitRecords = listGitWorktrees(repoRoot);
 	const targetHead = runGitChecked(repoRoot, ["rev-parse", "HEAD"]);
