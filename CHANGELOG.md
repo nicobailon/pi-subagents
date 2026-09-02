@@ -15,6 +15,7 @@
 
 ### Fixed
 - Keep advisory preflight lanes out of runtime workflow rows and queued checklist counts (#1821). Thanks [@stekman08](https://github.com/stekman08).
+- Preserve effective thinking in completed async step results. Thanks to [@Nickonomic](https://github.com/Nickonomic) for #1823.
 
 ## [0.63.0] - 2026-09-01
 
