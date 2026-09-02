@@ -56,12 +56,26 @@ function hasArgMatcher(response) {
 	return Object.prototype.hasOwnProperty.call(response ?? {}, "matchArgIncludes");
 }
 
+function resolveTaskFileArg(arg) {
+	if (typeof arg !== "string" || !arg.startsWith("@") || !arg.endsWith("task.md")) return arg;
+	try {
+		return fs.readFileSync(arg.slice(1), "utf-8");
+	} catch {
+		return arg;
+	}
+}
+
+function resolveTaskFileArgs(args) {
+	return args.map(resolveTaskFileArg);
+}
+
 function responseMatchesArgs(response, args) {
 	const matcher = response?.matchArgIncludes;
 	if (matcher === undefined) return true;
 	const needles = Array.isArray(matcher) ? matcher : [matcher];
 	if (needles.length === 0) return true;
-	const haystack = args.join("\n");
+	const effectiveArgs = resolveTaskFileArgs(args);
+	const haystack = `${args.join("\n")}\n${effectiveArgs.join("\n")}`;
 	return needles.every((needle) => typeof needle === "string" && haystack.includes(needle));
 }
 
@@ -360,9 +374,10 @@ async function main() {
 	}
 	writeSessionFile(args);
 	writeToolDiagnostic(response);
+	const effectiveArgs = resolveTaskFileArgs(args);
 	const callPath = path.join(queueDir, `call-${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}.json`);
 	const callTempPath = `${callPath}.tmp-${process.pid}-${Date.now()}`;
-	fs.writeFileSync(callTempPath, JSON.stringify({ args, cwd: process.cwd(), systemPrompts: readSystemPromptRecords(args), requiredChildTools: readRequiredToolsEnv() }), "utf-8");
+	fs.writeFileSync(callTempPath, JSON.stringify({ args, effectiveArgs, cwd: process.cwd(), systemPrompts: readSystemPromptRecords(args), requiredChildTools: readRequiredToolsEnv() }), "utf-8");
 	fs.renameSync(callTempPath, callPath);
 
 	if (typeof response.delay === "number" && response.delay > 0) {

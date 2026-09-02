@@ -15,7 +15,7 @@ import * as fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createEventBus, createMockPi, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir, tryImport } from "../support/helpers.ts";
+import { createEventBus, createMockPi, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir, resolveMockPiCallArgs, tryImport } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
 import { deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest } from "../../src/runs/background/control-channel.ts";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
@@ -158,6 +158,7 @@ interface AsyncStatusPayload {
 
 interface MockPiCallRecord {
 	args?: string[];
+	effectiveArgs?: string[];
 	systemPrompts?: Array<{ mode?: string; path?: string; text?: string; error?: string }>;
 	requiredChildTools?: string[];
 }
@@ -382,7 +383,7 @@ async function waitForMockPiCall(mockPi: MockPi, index: number, timeoutMs = 30_0
 		if (callFile) {
 			const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
 			assert.ok(Array.isArray(payload.args), "expected recorded args");
-			return { args: payload.args, systemPrompts: payload.systemPrompts ?? [] };
+			return { args: resolveMockPiCallArgs(payload), systemPrompts: payload.systemPrompts ?? [] };
 		}
 		if (Date.now() > deadline) assert.fail(`Timed out waiting for recorded mock pi call ${index}`);
 		await new Promise((resolve) => setTimeout(resolve, 100));
@@ -401,7 +402,7 @@ function readLastMockPiArgs(mockPi: MockPi): string[] {
 	assert.ok(callFile, "expected a recorded mock pi call");
 	const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
 	assert.ok(Array.isArray(payload.args), "expected recorded args");
-	return payload.args;
+	return resolveMockPiCallArgs(payload);
 }
 
 function readMockPiArgs(mockPi: MockPi, index: number): string[] {
@@ -412,7 +413,7 @@ function readMockPiArgs(mockPi: MockPi, index: number): string[] {
 	assert.ok(callFile, `expected recorded call ${index}`);
 	const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
 	assert.ok(Array.isArray(payload.args), "expected recorded args");
-	return payload.args;
+	return resolveMockPiCallArgs(payload);
 }
 
 function readMockPiRequiredTools(mockPi: MockPi, index: number): string[] {
@@ -431,9 +432,10 @@ function readMockPiArgsMatching(mockPi: MockPi, text: string): string[] {
 		.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
 		.sort();
 	for (const callFile of callFiles) {
-		const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as { args?: string[] };
+		const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
 		assert.ok(Array.isArray(payload.args), "expected recorded args");
-		if (payload.args.join("\n").includes(text)) return payload.args;
+		const args = resolveMockPiCallArgs(payload);
+		if (args.join("\n").includes(text)) return args;
 	}
 	assert.fail(`expected recorded call containing ${text}`);
 }
@@ -1378,8 +1380,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		await waitForMockPiCall(mockPi, 0);
 		const callFile = fs.readdirSync(mockPi.dir).find((name) => name.endsWith(".json"));
 		assert.ok(callFile);
-		const call = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as { args?: string[] };
-		assert.match(call.args?.join("\n") ?? "", new RegExp(sentinel));
+		const call = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
+		assert.match(resolveMockPiCallArgs(call).join("\n"), new RegExp(sentinel));
 
 		const payload = await readAsyncPayload(id);
 		const artifactPaths = payload.results[0]?.artifactPaths;
@@ -2476,7 +2478,10 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(fs.readFileSync(artifactPaths[0], "utf-8"), "chain first report");
 		assert.equal(fs.readFileSync(artifactPaths[1], "utf-8"), "chain second report");
 		const calls = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).sort();
-		const taskArgs = calls.map((name) => (JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as MockPiCallRecord).args?.at(-1) ?? "");
+		const taskArgs = calls.map((name) => {
+			const call = JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as MockPiCallRecord;
+			return resolveMockPiCallArgs(call).at(-1) ?? "";
+		});
 		assert.ok(taskArgs.find((task) => task.includes("Write first"))?.includes(path.join("parallel-0", "0-worker", "context.md")));
 		assert.ok(taskArgs.find((task) => task.includes("Write second"))?.includes(path.join("parallel-0", "1-worker", "context.md")));
 	});

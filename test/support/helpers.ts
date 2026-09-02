@@ -13,6 +13,10 @@ export function createMockPi(): MockPi {
 	return _createMockPi();
 }
 
+export function resolveMockPiCallArgs(call: { args?: readonly string[]; effectiveArgs?: readonly string[] }): string[] {
+	return [...(call.effectiveArgs ?? call.args ?? [])];
+}
+
 export function createTempDir(prefix = "pi-subagent-test-"): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }

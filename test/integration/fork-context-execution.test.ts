@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
-import { createEventBus, createMockPi, createTempDir, events, removeTempDir, tryImport } from "../support/helpers.ts";
+import { createEventBus, createMockPi, createTempDir, events, removeTempDir, resolveMockPiCallArgs, tryImport } from "../support/helpers.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey } from "../../src/runs/background/active-async-capacity.ts";
 import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
@@ -161,23 +161,23 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 			.sort()
 			.at(-1);
 		assert.ok(callFile, "expected a recorded mock pi call");
-		return readRecordedArgs(callFile);
+		return readRecordedArgs(callFile, true);
 	}
 
 	function readAllCallArgs(): string[][] {
 		return fs.readdirSync(mockPi.dir)
 			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
 			.sort()
-			.map(readRecordedArgs);
+			.map((name) => readRecordedArgs(name));
 	}
 
-	function readRecordedArgs(callFile: string): string[] {
-		const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8"));
+	function readRecordedArgs(callFile: string, effective = false): string[] {
+		const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as { args?: string[]; effectiveArgs?: string[] };
 		assert.equal(typeof payload, "object", "expected recorded args payload");
 		assert.notEqual(payload, null, "expected recorded args payload");
 		assert.ok("args" in payload, "expected recorded args payload");
 		assert.ok(Array.isArray(payload.args), "expected recorded args");
-		return payload.args;
+		return effective ? resolveMockPiCallArgs(payload) : payload.args;
 	}
 
 	function readSessionArgsFromCalls(): string[] {
@@ -190,16 +190,6 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 				return sessionFile;
 			})
 			.filter((sessionFile): sessionFile is string => Boolean(sessionFile));
-	}
-
-	function readCallArgsForTask(taskText: string): string[] {
-		const args = readAllCallArgs().find((callArgs) => {
-			const prompt = callArgs.at(-1) ?? "";
-			return prompt.startsWith(`Task: ${taskText}\n`)
-				|| prompt.includes(`\n\nTask:\n${taskText}\n`);
-		});
-		assert.ok(args, `expected a recorded mock pi call for task '${taskText}'`);
-		return args;
 	}
 
 	function isTaskFileArg(arg: string): boolean {
@@ -317,7 +307,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		);
 
 		assert.equal(result.isError, undefined);
-		const args = readCallArgs();
+		const args = readAllCallArgs()[0] ?? [];
 		const taskArg = args.at(-1) ?? "";
 		if (process.platform === "darwin") {
 			assert.ok(isTaskFileArg(taskArg));
@@ -1323,7 +1313,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		);
 
 		assert.equal(result.isError, undefined);
-		const args = readCallArgs();
+		const args = readAllCallArgs()[0] ?? [];
 		const taskArg = args.at(-1) ?? "";
 		if (process.platform === "darwin") {
 			assert.ok(isTaskFileArg(taskArg));

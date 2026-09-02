@@ -24,6 +24,7 @@ import {
 	makeAgent,
 	makeMinimalCtx,
 	events,
+	resolveMockPiCallArgs,
 	tryImport,
 } from "../support/helpers.ts";
 import registerSubagentExtension from "../../src/extension/index.ts";
@@ -166,6 +167,7 @@ interface RunSyncResult {
 
 interface MockPiCallRecord {
 	args?: string[];
+	effectiveArgs?: string[];
 	cwd?: string;
 	systemPrompts?: Array<{ mode?: string; path?: string; text?: string; error?: string }>;
 }
@@ -339,7 +341,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		removeTempDir(tempDir);
 	});
 
-	function readCall(): { args: string[]; cwd?: string; systemPrompts: NonNullable<MockPiCallRecord["systemPrompts"]> } {
+	function readCall(): { args: string[]; effectiveArgs?: string[]; cwd?: string; systemPrompts: NonNullable<MockPiCallRecord["systemPrompts"]> } {
 		const callFile = fs.readdirSync(mockPi.dir)
 			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
 			.sort()
@@ -347,18 +349,22 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(callFile, "expected a recorded mock pi call");
 		const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
 		assert.ok(Array.isArray(payload.args), "expected recorded args");
-		return { args: payload.args, cwd: payload.cwd, systemPrompts: payload.systemPrompts ?? [] };
+		return { args: payload.args, effectiveArgs: payload.effectiveArgs, cwd: payload.cwd, systemPrompts: payload.systemPrompts ?? [] };
 	}
 
 	function readCallArgs(): string[] {
-		return readCall().args;
+		const call = readCall();
+		return resolveMockPiCallArgs(call);
 	}
 
-	function readAllCallArgs(): string[][] {
+	function readAllCallArgs(effective = false): string[][] {
 		return fs.readdirSync(mockPi.dir)
 			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
 			.sort()
-			.map((name) => (JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as MockPiCallRecord).args);
+			.map((name) => {
+				const call = JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as MockPiCallRecord;
+				return effective ? resolveMockPiCallArgs(call) : call.args ?? [];
+			});
 	}
 
 	function makeExecutor(
@@ -6787,7 +6793,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const [firstArgs, resumedArgs] = readAllCallArgs();
 		assert.equal(firstArgs?.[firstArgs.indexOf("--session") + 1], sessionFile);
 		assert.equal(resumedArgs?.[resumedArgs.indexOf("--session") + 1], sessionFile);
-		assert.match(resumedArgs?.at(-1) ?? "", /Continue from the current files and transcript/);
+		assert.match(readAllCallArgs(true)[1]?.at(-1) ?? "", /Continue from the current files and transcript/);
 		assert.equal(fs.readFileSync(path.join(tempDir, "side-effect.txt"), "utf-8"), "done");
 	});
 
@@ -7332,7 +7338,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 
 		const call = readCall();
-		const taskArg = call.args.at(-1) ?? "";
+		const taskArg = resolveMockPiCallArgs(call).at(-1) ?? "";
 		const systemPrompt = call.systemPrompts[0]?.text ?? "";
 		assert.equal(result.isError, undefined);
 		assert.match(taskArg, new RegExp(`Write your findings to exactly this path: ${escapeRegExp(overridePath)}`));
@@ -7359,7 +7365,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 
 		const call = readCall();
-		const taskArg = call.args.at(-1) ?? "";
+		const taskArg = resolveMockPiCallArgs(call).at(-1) ?? "";
 		const systemPrompt = call.systemPrompts[0]?.text ?? "";
 		assert.equal(result.isError, undefined);
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "complete read-only analysis");
