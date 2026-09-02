@@ -115,8 +115,11 @@ import { consumeWorkflowChildPermit } from "../../shared/workflow-child-permit.t
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleState, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import {
 	acceptChildWatchdogEvent,
+	appendChildWatchdogWarning,
 	childWatchdogIsActive,
+	childWatchdogWarningFromMessage,
 	isChildWatchdogStatusEvent,
+	markChildWatchdogWarningsAddressed,
 	resolveChildWatchdogConfig,
 	type ChildWatchdogStateSnapshot,
 } from "../../watchdog/child-status.ts";
@@ -1118,6 +1121,14 @@ async function runSingleAttempt(
 
 			if (evt.type === "message_end" && evt.message) {
 				result.messages!.push(evt.message);
+				if (childWatchdog) {
+					const watchdogWarning = childWatchdogWarningFromMessage(evt.message);
+					if (watchdogWarning) updateChildWatchdogState(appendChildWatchdogWarning(childWatchdogState, watchdogWarning));
+					else if (evt.message.role === "assistant") {
+						const addressed = markChildWatchdogWarningsAddressed(childWatchdogState);
+						if (addressed) updateChildWatchdogState(addressed);
+					}
+				}
 				if (evt.message.role === "assistant") {
 					result.usage.turns++;
 					progress.turnCount = result.usage.turns;
@@ -2230,6 +2241,7 @@ async function runSyncCompletionInner(
 				reportOptional: isAgentContractV1(options.agentContract),
 				artifactsDir: options.artifactsDir,
 				runId: options.runId,
+				watchdog: result.watchdog,
 			});
 		}
 	} catch (error) {

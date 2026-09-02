@@ -8,6 +8,7 @@ import {
 	NATIVE_SUPERVISOR_TOOL_NAME,
 	createNativeSupervisorChannel,
 	ensureSupervisorChannelDir,
+	postSupervisorNotice,
 	registerNativeSupervisorClient,
 	resolveSupervisorChannelDir,
 } from "../../src/intercom/native-supervisor-channel.ts";
@@ -792,5 +793,57 @@ describe("native supervisor channel", () => {
 		);
 
 		assert.deepEqual(fs.readdirSync(path.join(channelDir, "requests")), []);
+	});
+
+	it("posts watchdog blocker notices as non-reply requests the parent displays and removes", () => {
+		const runId = `run-${randomUUID()}`;
+		const sessionId = `session-${randomUUID()}`;
+		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
+		createdChannels.push(channelDir);
+		process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = "shared-name";
+		process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = sessionId;
+		process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
+		process.env[SUBAGENT_RUN_ID_ENV] = runId;
+		process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
+		process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+
+		const posted = postSupervisorNotice("watchdog_blocker", "Subagent watchdog Blocker: claims tests passed without running them");
+		assert.equal(posted.delivered, true);
+		assert.ok(posted.requestId);
+		const written = JSON.parse(fs.readFileSync(requestFile(runId, posted.requestId!), "utf-8")) as { reason?: string; expectsReply?: boolean; expiresAt?: number; message?: string };
+		assert.equal(written.reason, "watchdog_blocker");
+		assert.equal(written.expectsReply, false);
+		assert.equal(written.expiresAt, undefined);
+		assert.match(written.message ?? "", /^Subagent watchdog raised a blocker\./);
+
+		const sent: Array<{ message: { content?: string; details?: { id?: string; reason?: string; expectsReply?: boolean } }; options?: { triggerTurn?: boolean } }> = [];
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: { getSessionId: () => sessionId, getSessionFile: () => null, getEntries: () => [] },
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: (message: { content?: string; details?: { id?: string; reason?: string; expectsReply?: boolean } }, options?: { triggerTurn?: boolean }) => { sent.push({ message, options }); },
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(sessionId, ctx), { platform: "darwin" });
+		channel.start();
+		channel.dispose();
+
+		assert.equal(sent.length, 1);
+		assert.equal(sent[0]?.message.details?.id, posted.requestId);
+		assert.equal(sent[0]?.message.details?.reason, "watchdog_blocker");
+		assert.equal(sent[0]?.message.details?.expectsReply, false);
+		assert.deepEqual(sent[0]?.options, { triggerTurn: true });
+		assert.match(sent[0]?.message.content ?? "", /claims tests passed without running them/);
+		assert.doesNotMatch(sent[0]?.message.content ?? "", /Reply with/);
+		assert.equal(fs.existsSync(requestFile(runId, posted.requestId!)), false, "non-reply notices are removed once displayed");
+	});
+
+	it("reports undelivered watchdog notices outside a supervised child", () => {
+		for (const key of Object.keys(savedEnv)) delete process.env[key];
+		assert.deepEqual(postSupervisorNotice("watchdog_blocker", "unused"), { delivered: false });
 	});
 });

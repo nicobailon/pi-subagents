@@ -4,6 +4,7 @@
 ## [Unreleased]
 
 ### Added
+- Lift child watchdog warnings into the parent: the result envelope carries `watchdog.warnings`, acceptance adds a `watchdog-blocker` runtime check that fails on unaddressed or stalemate blockers, completion notices list `Watchdog blockers:`, Fleet shows a `wd:<n>` chip, and blockers are posted live to the parent as non-reply `watchdog_blocker` supervisor notices.
 - Load standing watchdog reviewer instructions from `WATCHDOG.md` in the project config directory and the agent directory, appended to the reviewer system prompt on every review.
 
 ### Changed

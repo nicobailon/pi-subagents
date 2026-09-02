@@ -15,6 +15,7 @@ import type { ThinkingLevel } from "./model-info.ts";
 import type { GlobalMissionIndexRecord, MissionRecord, MissionStoreConfig } from "../missions/types.ts";
 import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
 import type { WorkflowChildPermitContext } from "./workflow-child-permit.ts";
+import type { WatchdogCategory } from "../watchdog/types.ts";
 
 // ============================================================================
 // Basic Types
@@ -894,12 +895,26 @@ export interface SubagentResultIntercomPayload {
 // Progress Tracking
 // ============================================================================
 
+/** One warning the child watchdog displayed inside the child session, lifted into the parent envelope. */
+export interface ChildWatchdogWarningSummary {
+	severity: "concern" | "blocker";
+	category: WatchdogCategory;
+	summary: string;
+	evidence: string;
+	recommendedAction: string;
+	displayedAt?: string;
+	/** True when a later assistant turn in the child followed the warning. */
+	addressed: boolean;
+	stalemate: boolean;
+}
+
 export interface ChildWatchdogProgress {
 	phase: "idle" | "reviewing" | "stale" | "failed";
 	seq: number;
 	lastUpdate: number;
 	reason?: string;
 	timedOut?: boolean;
+	warnings?: ChildWatchdogWarningSummary[];
 }
 
 export interface AgentProgress {

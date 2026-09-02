@@ -1,4 +1,8 @@
-import type { ResolvedWatchdogConfig, WatchdogLspConfig } from "./types.ts";
+import type { ChildWatchdogProgress, ChildWatchdogWarningSummary } from "../shared/types.ts";
+import { SUBAGENT_WATCHDOG_WARNING_TYPE, WATCHDOG_WARNING_CATEGORIES, type ResolvedWatchdogConfig, type WatchdogLspConfig } from "./types.ts";
+
+/** Warnings retained per child; older warnings drop first. */
+export const CHILD_WATCHDOG_WARNING_LIMIT = 20;
 
 export const CHILD_WATCHDOG_CONFIG_ENV = "PI_SUBAGENT_WATCHDOG_CHILD_CONFIG";
 export const CHILD_WATCHDOG_STATUS_EVENT = "subagent.watchdog.status";
@@ -38,6 +42,7 @@ export interface ChildWatchdogStateSnapshot {
 	lastUpdate: number;
 	reason?: string;
 	timedOut?: boolean;
+	warnings?: ChildWatchdogWarningSummary[];
 }
 
 export function resolveChildWatchdogConfig(input: {
@@ -185,5 +190,57 @@ export function acceptChildWatchdogEvent(input: {
 		seq: input.event.seq,
 		lastUpdate: input.event.ts,
 		...(input.event.reason ? { reason: input.event.reason } : {}),
+		...(input.current?.warnings?.length ? { warnings: input.current.warnings } : {}),
 	};
+}
+
+/**
+ * Lift a child watchdog warning custom message (as it appears in the child's JSONL
+ * `message_end` event) into a bounded envelope summary. Returns undefined for any other message.
+ */
+export function childWatchdogWarningFromMessage(message: unknown): ChildWatchdogWarningSummary | undefined {
+	if (!message || typeof message !== "object") return undefined;
+	const candidate = message as { role?: unknown; customType?: unknown; details?: unknown };
+	if (candidate.role !== "custom" || candidate.customType !== SUBAGENT_WATCHDOG_WARNING_TYPE) return undefined;
+	const details = candidate.details as {
+		severity?: unknown;
+		category?: unknown;
+		summary?: unknown;
+		evidence?: unknown;
+		recommendedAction?: unknown;
+		displayedAt?: unknown;
+		state?: unknown;
+	} | undefined;
+	if (!details || typeof details !== "object") return undefined;
+	if (details.severity !== "concern" && details.severity !== "blocker") return undefined;
+	if (typeof details.summary !== "string" || typeof details.evidence !== "string" || typeof details.recommendedAction !== "string") return undefined;
+	const category = typeof details.category === "string" && (WATCHDOG_WARNING_CATEGORIES as readonly string[]).includes(details.category)
+		? details.category as ChildWatchdogWarningSummary["category"]
+		: "other";
+	return {
+		severity: details.severity,
+		category,
+		summary: details.summary,
+		evidence: details.evidence,
+		recommendedAction: details.recommendedAction,
+		...(typeof details.displayedAt === "string" ? { displayedAt: details.displayedAt } : {}),
+		addressed: false,
+		stalemate: details.state === "stalemate",
+	};
+}
+
+export function appendChildWatchdogWarning(current: ChildWatchdogStateSnapshot | undefined, warning: ChildWatchdogWarningSummary, now = Date.now()): ChildWatchdogStateSnapshot {
+	const warnings = [...(current?.warnings ?? []), warning].slice(-CHILD_WATCHDOG_WARNING_LIMIT);
+	return current ? { ...current, warnings } : { phase: "idle", seq: 0, lastUpdate: now, warnings };
+}
+
+/** Returns a new snapshot when at least one warning was still unaddressed; otherwise undefined. */
+export function markChildWatchdogWarningsAddressed(current: ChildWatchdogStateSnapshot | undefined): ChildWatchdogStateSnapshot | undefined {
+	if (!current?.warnings?.some((warning) => !warning.addressed)) return undefined;
+	return { ...current, warnings: current.warnings.map((warning) => warning.addressed ? warning : { ...warning, addressed: true }) };
+}
+
+/** Blockers the child never followed with a turn, or that reached stalemate. */
+export function unresolvedChildWatchdogBlockers(progress: Pick<ChildWatchdogProgress, "warnings"> | undefined): ChildWatchdogWarningSummary[] {
+	return (progress?.warnings ?? []).filter((warning) => warning.severity === "blocker" && (!warning.addressed || warning.stalemate));
 }

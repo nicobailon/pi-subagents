@@ -1,4 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { postSupervisorNotice } from "../intercom/native-supervisor-channel.ts";
+import { formatWatchdogWarningRenderText } from "./render.ts";
 import { MainWatchdogRuntime } from "./runtime.ts";
 import { createMainWatchdogReview } from "./review.ts";
 import { DEFAULT_WATCHDOG_CONFIG } from "./settings.ts";
@@ -78,6 +80,13 @@ export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[
 			if (delivery?.deliverAs === "steer") pi.sendMessage(message, { deliverAs: "steer" });
 			else if (delivery?.deliverAs === "hold") pi.sendMessage(message, { triggerTurn: false });
 			else pi.sendMessage(message);
+			if (childDetails.severity !== "blocker") return;
+			// Blockers also reach the parent live; the notice is advisory and must never break the child.
+			try {
+				postSupervisorNotice("watchdog_blocker", formatWatchdogWarningRenderText(childDetails));
+			} catch {
+				// Envelope, acceptance, and notify still carry the blocker after the child exits.
+			}
 		},
 	});
 	const rememberContext = (ctx: ExtensionContext) => {

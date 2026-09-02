@@ -114,6 +114,15 @@ For child subagent watchdogs, use `subagents.watchdog.children.model` as the def
 
 Child watchdogs are opt-in and follow the same edit-gated rule: read-only children do not trigger watchdog reviews, while writer children are reviewed at their own `agent_end` if their worktree changed.
 
+### Findings reach the orchestrator
+
+A child watchdog warning is displayed inside the child session and also lifted into the parent:
+
+- **Envelope.** Every warning is summarized on the result's `watchdog.warnings` (severity, category, summary, evidence, recommended action, `addressed`, `stalemate`), bounded to the last 20. `addressed` becomes true when a later assistant turn in the child followed the warning. Workflow status files carry the same list per step.
+- **Acceptance.** When a watchdog was attached, acceptance evaluation adds the runtime check `watchdog-blocker`. A blocker that no turn followed, or that reached stalemate, fails the check with `Unresolved watchdog blocker: <summary>`, which rejects explicit acceptance like any other failed check.
+- **Notify.** Completion notices list blockers after the result preview as `Watchdog blockers:` with one `- <agent>: <summary> (addressed | unaddressed | stalemate)` line each. Fleet and status views show a `wd:<n>` chip for unresolved blockers.
+- **Live.** A blocker is also posted to the parent immediately over the supervisor channel as a non-reply `watchdog_blocker` notice, so an orchestrator can react before the child exits. Concerns stay in the envelope only.
+
 ## Agent-driven configuration
 
 Agents can configure the same values through the tool when you ask them to set up the watchdog:

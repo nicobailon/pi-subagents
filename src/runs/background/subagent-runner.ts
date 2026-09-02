@@ -156,9 +156,12 @@ import { decodeSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type 
 import {
 	CHILD_WATCHDOG_CONFIG_ENV,
 	acceptChildWatchdogEvent,
+	appendChildWatchdogWarning,
 	childWatchdogIsActive,
+	childWatchdogWarningFromMessage,
 	decodeChildWatchdogConfig,
 	isChildWatchdogStatusEvent,
+	markChildWatchdogWarningsAddressed,
 	resolveChildWatchdogConfig,
 	type ChildWatchdogStateSnapshot,
 } from "../../watchdog/child-status.ts";
@@ -853,6 +856,14 @@ function runPiStreaming(
 				const text = extractTextFromContent(event.message.content);
 				if (text) writeOutputText(text);
 
+				if (childWatchdogConfig && event.type === "message_end") {
+					const watchdogWarning = childWatchdogWarningFromMessage(event.message);
+					if (watchdogWarning) updateChildWatchdogState(appendChildWatchdogWarning(childWatchdogState, watchdogWarning));
+					else if (event.message.role === "assistant") {
+						const addressed = markChildWatchdogWarningsAddressed(childWatchdogState);
+						if (addressed) updateChildWatchdogState(addressed);
+					}
+				}
 				if (event.type !== "message_end" || event.message.role !== "assistant") return;
 				const hasToolCall = assistantStartsToolCall(event.message);
 				if (event.message.model) {
@@ -2166,6 +2177,7 @@ async function runSingleStepInner(
 			reportOptional: isAgentContractV1(step.agentContract),
 			artifactsDir: ctx.artifactsDir,
 			runId: ctx.id,
+			watchdog: finalResult?.watchdog,
 		}))
 		: undefined;
 	const stoppedAfterAcceptance = finalResult?.stopped === true || ctx.stopSignal?.aborted === true;
@@ -3582,6 +3594,19 @@ async function runSubagent(
 			statusPayload.lastUpdate = now;
 			writeStatusPayload(false);
 			return;
+		}
+		if (event.type === "message_end") {
+			const watchdogWarning = childWatchdogWarningFromMessage(event.message);
+			if (watchdogWarning) {
+				step.watchdog = appendChildWatchdogWarning(step.watchdog, watchdogWarning, now);
+				statusPayload.lastUpdate = now;
+				writeStatusPayload(false);
+				return;
+			}
+			if (event.message?.role === "assistant") {
+				const addressed = markChildWatchdogWarningsAddressed(step.watchdog);
+				if (addressed) step.watchdog = addressed;
+			}
 		}
 		if (event.type === "tool_execution_start" && event.toolName) {
 			const mutates = isMutatingTool(event.toolName, event.args, flatSteps[flatIndex]?.mutationTools);

@@ -2,13 +2,91 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
 	CHILD_WATCHDOG_STATUS_EVENT,
+	CHILD_WATCHDOG_WARNING_LIMIT,
 	acceptChildWatchdogEvent,
+	appendChildWatchdogWarning,
 	childWatchdogIsActive,
+	childWatchdogWarningFromMessage,
 	decodeChildWatchdogConfig,
 	isChildWatchdogStatusEvent,
+	markChildWatchdogWarningsAddressed,
 	resolveChildWatchdogConfig,
+	unresolvedChildWatchdogBlockers,
 } from "../../src/watchdog/child-status.ts";
 import { DEFAULT_WATCHDOG_CONFIG } from "../../src/watchdog/settings.ts";
+
+function warningMessage(overrides: Record<string, unknown> = {}) {
+	return {
+		role: "custom",
+		customType: "subagent_watchdog_warning",
+		content: "<subagent_watchdog/>",
+		display: true,
+		details: {
+			severity: "blocker",
+			category: "correctness",
+			source: "child",
+			summary: "Claims tests passed without running them",
+			evidence: "No test command appears in the transcript.",
+			recommendedAction: "Run the focused test before finishing.",
+			displayedAt: "2026-09-01T00:00:00.000Z",
+			state: "displayed",
+			...overrides,
+		},
+	};
+}
+
+describe("child watchdog warning envelope", () => {
+	it("lifts watchdog warning custom messages and ignores other messages", () => {
+		const warning = childWatchdogWarningFromMessage(warningMessage());
+		assert.deepEqual(warning, {
+			severity: "blocker",
+			category: "correctness",
+			summary: "Claims tests passed without running them",
+			evidence: "No test command appears in the transcript.",
+			recommendedAction: "Run the focused test before finishing.",
+			displayedAt: "2026-09-01T00:00:00.000Z",
+			addressed: false,
+			stalemate: false,
+		});
+		assert.equal(childWatchdogWarningFromMessage(warningMessage({ state: "stalemate" }))?.stalemate, true);
+		assert.equal(childWatchdogWarningFromMessage(warningMessage({ category: "made-up" }))?.category, "other");
+		assert.equal(childWatchdogWarningFromMessage({ role: "assistant", content: [] }), undefined);
+		assert.equal(childWatchdogWarningFromMessage({ role: "custom", customType: "subagent-notify", details: {} }), undefined);
+		assert.equal(childWatchdogWarningFromMessage(warningMessage({ severity: "nit" })), undefined);
+	});
+
+	it("appends bounded warnings, keeps them across status events, and marks them addressed", () => {
+		const warning = childWatchdogWarningFromMessage(warningMessage())!;
+		let snapshot = appendChildWatchdogWarning(undefined, warning, 5);
+		assert.deepEqual(snapshot, { phase: "idle", seq: 0, lastUpdate: 5, warnings: [warning] });
+		for (let index = 0; index < CHILD_WATCHDOG_WARNING_LIMIT + 5; index++) {
+			snapshot = appendChildWatchdogWarning(snapshot, { ...warning, summary: `warning ${index}` });
+		}
+		assert.equal(snapshot.warnings?.length, CHILD_WATCHDOG_WARNING_LIMIT);
+		assert.equal(snapshot.warnings?.at(-1)?.summary, `warning ${CHILD_WATCHDOG_WARNING_LIMIT + 4}`);
+
+		const status = acceptChildWatchdogEvent({
+			current: snapshot,
+			event: { type: CHILD_WATCHDOG_STATUS_EVENT, seq: 1, phase: "reviewing", ts: 10 },
+		});
+		assert.equal(status?.warnings?.length, CHILD_WATCHDOG_WARNING_LIMIT, "status events keep the warning envelope");
+
+		assert.equal(unresolvedChildWatchdogBlockers(status).length, CHILD_WATCHDOG_WARNING_LIMIT);
+		const addressed = markChildWatchdogWarningsAddressed(status);
+		assert.ok(addressed);
+		assert.equal(addressed.warnings?.every((entry) => entry.addressed), true);
+		assert.equal(unresolvedChildWatchdogBlockers(addressed).length, 0);
+		assert.equal(markChildWatchdogWarningsAddressed(addressed), undefined, "nothing left to address");
+		assert.equal(markChildWatchdogWarningsAddressed(undefined), undefined);
+	});
+
+	it("treats stalemate blockers as unresolved even when a turn followed, and never concerns", () => {
+		const blocker = childWatchdogWarningFromMessage(warningMessage({ state: "stalemate" }))!;
+		const concern = childWatchdogWarningFromMessage(warningMessage({ severity: "concern" }))!;
+		const snapshot = markChildWatchdogWarningsAddressed(appendChildWatchdogWarning(appendChildWatchdogWarning(undefined, blocker), concern))!;
+		assert.deepEqual(unresolvedChildWatchdogBlockers(snapshot).map((entry) => entry.severity), ["blocker"]);
+	});
+});
 
 describe("child watchdog status helpers", () => {
 	it("preserves child model and explicit override thinking when resolving config", () => {

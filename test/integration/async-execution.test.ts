@@ -198,6 +198,31 @@ async function withIsolatedWatchdogSettings<T>(projectDir: string, run: () => Pr
 	}
 }
 
+function childWatchdogWarning(runId: string, severity: "concern" | "blocker", summary: string) {
+	return {
+		type: "message_end",
+		message: {
+			role: "custom",
+			customType: "subagent_watchdog_warning",
+			content: `<subagent_watchdog severity="${severity}">${summary}</subagent_watchdog>`,
+			display: true,
+			details: {
+				severity,
+				category: "test-gap",
+				source: "child",
+				agent: "worker",
+				runId,
+				summary,
+				evidence: "The transcript claims tests passed but no test command ran.",
+				recommendedAction: "Run the focused test before finishing.",
+				state: "displayed",
+				displayedAt: new Date().toISOString(),
+			},
+			timestamp: Date.now(),
+		},
+	};
+}
+
 function childWatchdogStatus(runId: string, phase: "idle" | "reviewing" | "stale" | "failed", seq: number) {
 	return {
 		type: CHILD_WATCHDOG_STATUS_EVENT,
@@ -5915,6 +5940,53 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const watchdog = (payload.results[0] as { watchdog?: { phase?: string; timedOut?: boolean } }).watchdog;
 			assert.equal(watchdog?.phase, "stale");
 			assert.equal(watchdog?.timedOut, true);
+		});
+	});
+
+	it("background runs carry unaddressed child watchdog blockers into the result payload and acceptance", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		await withIsolatedWatchdogSettings(tempDir, async () => {
+			writeWatchdogSettings(tempDir);
+			const id = `async-watchdog-blocker-${Date.now().toString(36)}`;
+			mockPi.onCall({
+				jsonl: [
+					events.assistantMessage([
+						"done",
+						"```acceptance-report",
+						JSON.stringify({
+							criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "implemented" }],
+							changedFiles: ["src/file.ts"],
+							testsAddedOrUpdated: ["test/file.test.ts"],
+							commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+							validationOutput: ["tests passed"],
+							residualRisks: [],
+							noStagedFiles: true,
+						}),
+						"```",
+					].join("\n")),
+					childWatchdogWarning(id, "blocker", "Claims tests passed without running them"),
+				],
+			});
+
+			executeAsyncSingle(id, {
+				agent: "worker",
+				task: "Do work",
+				agentConfig: makeAgent("worker"),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				sessionRoot: path.join(tempDir, "sessions"),
+				maxSubagentDepth: 2,
+				acceptance: { level: "checked", criteria: ["Ship it"] },
+			});
+
+			const resultPath = await waitForAsyncResultFile(id, 10_000);
+			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+			assert.equal(payload.success, false);
+			const child = payload.results[0] as AsyncResultPayload["results"][number] & { watchdog?: { warnings?: Array<{ severity: string; addressed: boolean; summary: string }> } };
+			assert.deepEqual(child.watchdog?.warnings?.map((warning) => [warning.severity, warning.addressed]), [["blocker", false]]);
+			const check = child.acceptance?.runtimeChecks?.find((entry) => entry.id === "watchdog-blocker");
+			assert.equal(check?.status, "failed");
+			assert.match(check?.message ?? "", /Unresolved watchdog blocker/);
 		});
 	});
 

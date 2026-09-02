@@ -205,6 +205,46 @@ async function withIsolatedWatchdogSettings<T>(projectDir: string, run: () => Pr
 	}
 }
 
+function childWatchdogWarning(severity: "concern" | "blocker", summary: string, state: "displayed" | "stalemate" = "displayed") {
+	return {
+		type: "message_end",
+		message: {
+			role: "custom",
+			customType: "subagent_watchdog_warning",
+			content: `<subagent_watchdog severity="${severity}">${summary}</subagent_watchdog>`,
+			display: true,
+			details: {
+				severity,
+				category: "test-gap",
+				source: "child",
+				agent: "echo",
+				runId: "watchdog-child-run",
+				summary,
+				evidence: "The transcript claims tests passed but no test command ran.",
+				recommendedAction: "Run the focused test before finishing.",
+				state,
+				displayedAt: new Date().toISOString(),
+			},
+			timestamp: Date.now(),
+		},
+	};
+}
+
+const ACCEPTANCE_REPORT_OUTPUT = [
+	"done",
+	"```acceptance-report",
+	JSON.stringify({
+		criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "implemented" }],
+		changedFiles: ["src/file.ts"],
+		testsAddedOrUpdated: ["test/file.test.ts"],
+		commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+		validationOutput: ["tests passed"],
+		residualRisks: [],
+		noStagedFiles: true,
+	}),
+	"```",
+].join("\n");
+
 function childWatchdogStatus(phase: "idle" | "reviewing" | "stale" | "failed", seq: number) {
 	return {
 		type: CHILD_WATCHDOG_STATUS_EVENT,
@@ -8055,6 +8095,59 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			const watchdog = (result as RunSyncResult & { watchdog?: { phase?: string; timedOut?: boolean } }).watchdog;
 			assert.equal(watchdog?.phase, "stale");
 			assert.equal(watchdog?.timedOut, true);
+		});
+	});
+
+	it("fails explicit acceptance when a child watchdog blocker is never followed by a turn", async () => {
+		await withIsolatedWatchdogSettings(tempDir, async () => {
+			writeWatchdogSettings(tempDir);
+			mockPi.onCall({
+				jsonl: [
+					childWatchdogWarning("concern", "Minor naming concern"),
+					events.assistantMessage(ACCEPTANCE_REPORT_OUTPUT),
+					childWatchdogWarning("blocker", "Claims tests passed without running them"),
+				],
+			});
+			const agents = makeAgentConfigs(["echo"]);
+
+			const result = await runSync(tempDir, agents, "echo", "Task", {
+				runId: "watchdog-child-run",
+				acceptance: { level: "checked", criteria: ["Ship it"] },
+			});
+
+			const warnings = (result as RunSyncResult & { watchdog?: { warnings?: Array<{ severity: string; summary: string; addressed: boolean; stalemate: boolean }> } }).watchdog?.warnings;
+			assert.deepEqual(warnings?.map((warning) => [warning.severity, warning.addressed]), [["concern", true], ["blocker", false]]);
+			const check = result.acceptance?.runtimeChecks?.find((entry) => entry.id === "watchdog-blocker");
+			assert.equal(check?.status, "failed");
+			assert.match(check?.message ?? "", /Unresolved watchdog blocker: Claims tests passed without running them/);
+			assert.equal(result.acceptance?.status, "rejected");
+			assert.equal(result.exitCode, 1);
+			assert.match(result.error ?? "", /Unresolved watchdog blocker/);
+		});
+	});
+
+	it("passes the watchdog acceptance check when the child addressed the blocker", async () => {
+		await withIsolatedWatchdogSettings(tempDir, async () => {
+			writeWatchdogSettings(tempDir);
+			mockPi.onCall({
+				jsonl: [
+					events.assistantMessage("first pass"),
+					childWatchdogWarning("blocker", "Claims tests passed without running them"),
+					events.assistantMessage(ACCEPTANCE_REPORT_OUTPUT),
+				],
+			});
+			const agents = makeAgentConfigs(["echo"]);
+
+			const result = await runSync(tempDir, agents, "echo", "Task", {
+				runId: "watchdog-child-run",
+				acceptance: { level: "checked", criteria: ["Ship it"] },
+			});
+
+			const warnings = (result as RunSyncResult & { watchdog?: { warnings?: Array<{ addressed: boolean }> } }).watchdog?.warnings;
+			assert.equal(warnings?.[0]?.addressed, true);
+			const check = result.acceptance?.runtimeChecks?.find((entry) => entry.id === "watchdog-blocker");
+			assert.equal(check?.status, "passed");
+			assert.equal(result.exitCode, 0, result.error);
 		});
 	});
 
