@@ -8,7 +8,7 @@ Foreground runs stream progress in the conversation while they run. They default
 
 A foreground child is a pi session created inside the parent Pi process, not a second `pi` process. All foreground children of one parent share one model runtime, created on the first launch and released when the parent session shuts down. The child loads pi-subagents' own hooks (prompt runtime, fast mode, fanout) as inline extensions, plus the agent's configured `extensions`, `subagentOnlyExtensions`, path-like `tools` entries, and the permission-system extension when permission rules apply; it never loads the parent's ambient extensions. The task is delivered as the session prompt and the system prompt is passed to the session directly. A run timeout, tool timeout, interrupt, or stop aborts the child session and disposes it. Detach keeps the session running inside the parent and publishes the same receipt and completion notification as before.
 
-Background children are still separate `pi` processes launched by the detached runner.
+A background child is a pi session created inside the detached runner process. The runner builds the same launch (hooks, tool plan, typed runtime config) from the step it received in its config, mirrors the session's events into `events.jsonl`, `output-<index>.log`, and the transcript, and consumes the parent's file control inbox: interrupt and stop abort the child session, and steer requests are delivered with the session's `steer` or `followUp`. Background children load the parent's ambient extensions unless the agent sets `extensions` or the capability ceiling denies extensions; foreground children never do.
 
 Live progress shows compact detail for single, chain, and parallel modes: a bounded one-line task, current tool, recent output, token counts, aggregate cost, duration, activity freshness, current-tool duration, and chain graph metadata when available. Workflow `label` metadata wins over raw task text in compact multi-child cards.
 
@@ -191,7 +191,7 @@ The status/result fields are: `lifecycleArtifactVersion`, `runId`/`id`, `session
 
 ### Runtime extension acknowledgement
 
-Cooperating child extensions can acknowledge child-runtime registration by emitting `subagent:acknowledge-extension` on the child session's `pi.events` bus with payload `{ id: string }`. Foreground children capture the acknowledgement in memory; spawned background children write it to a file the runner reads.
+Cooperating child extensions can acknowledge child-runtime registration by emitting `subagent:acknowledge-extension` on the child session's `pi.events` bus with payload `{ id: string }`. The process that hosts the child session (the parent for foreground children, the runner for background children) captures the acknowledgement in memory.
 
 Acknowledgement ids are self-declared opaque strings. They must be non-empty, at most 128 characters, contain only `A-Z`, `a-z`, `0-9`, `.`, `_`, `:`, `@`, `+`, or `-`, and must not contain `/`, `\`, or `..`.
 
@@ -205,21 +205,13 @@ The reported `runtimeAcknowledgedExtensions` projection is `{ version: 1, source
 
 Lifecycle artifact v3 adds `process-terminal-candidate.json` (private runner evidence) and `process-terminal.json` (the public proof projection).
 
-A proof is `observed` only after the live parent observes the exact detached runner's `close` event, every recorded child writer has a close record, and any tracked canonical-session lease is free. If the observer is unavailable, the proof is `unknown`; do not infer process exit from `endedAt`, result-file existence, PID disappearance, or lease-directory absence.
+A proof is `observed` only after the live parent observes the exact detached runner's `close` event and any tracked canonical-session lease is free. Children run inside the runner process, so the candidate records no separate writer processes. If the observer is unavailable, the proof is `unknown`; do not infer process exit from `endedAt`, result-file existence, PID disappearance, or lease-directory absence.
 
 The `subagent:process-terminal` event and RPC `ping.capabilities.processTerminalProof` expose this status. Process proof is point-in-time evidence and remains separate from execution success or stopped/non-resumable state.
 
-### Child-protocol bounds
+### Child session events
 
-The async runner reads spawned children over stdout with bounded child-protocol handling:
-
-- A child JSONL line above 16 MiB fails with structured `protocolError` code `protocol_output_limit`. Oversized Pi `turn_end` and `agent_end` aggregates are the exception because they duplicate granular events, so the runner replaces them with bounded lifecycle records while preserving `agent_end.willRetry`.
-- Stderr retains only its latest 128 KiB.
-- Split UTF-8 and final unterminated JSON events remain valid.
-- `agent_end.willRetry` defers completion until the child settles.
-
-Foreground children run in-process, so there is no stdout protocol for them: the parent subscribes to the child session's events directly. The `events.jsonl` artifact still mirrors those events, with `message_update` projected the same way pi's JSON mode prints it.
-- Current Pi builds use `agent_settled` as the terminal watermark; older builds retain the bounded terminal-message fallback.
+Both launch paths subscribe to the child session's event stream directly; there is no stdout protocol. The `events.jsonl` artifact mirrors those events with `message_update` dropped, and the transcript records them with `message_update` projected the same way pi's JSON mode prints it. `agent_end.willRetry` defers completion until the child settles, and `agent_settled` is the terminal watermark; a child whose run does not settle shortly after its terminal event is aborted and finished without it.
 
 ## Workflow and debug artifacts
 

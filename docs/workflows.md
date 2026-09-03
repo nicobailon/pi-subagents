@@ -446,7 +446,7 @@ export PI_SUBAGENT_MAX_DEPTH=1
 export PI_SUBAGENT_MAX_DEPTH=0
 ```
 
-`PI_SUBAGENT_DEPTH` is internal and propagated automatically. Do not set it manually.
+`PI_SUBAGENT_MAX_DEPTH` applies to the top-level parent; children inherit their limit through their runtime config, and their own depth is tracked there too.
 
 ## Prompt-template integration
 

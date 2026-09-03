@@ -309,7 +309,9 @@ Semantics:
 - Providers share a registry through `Symbol.for("pi-subagents.background-work.v1")`, allowing independently loaded extension modules to meet in one Pi process.
 - Registration is reload-safe: a new provider with the same name replaces the old callback, and the old disposer cannot remove the replacement. Call the disposer during extension shutdown when possible.
 
-Children do not gain provider tools or extensions automatically. Add `bg_wait` to the child agent's `tools` allowlist and load each provider through `extensions` or `subagentOnlyExtensions`. The parent's effective `waitTool` setting reaches every child: foreground children receive it in their in-process runtime config, and async, resume, chain, parallel, and fanout launches serialize it into the spawned child's environment, where `PI_SUBAGENT_WAIT_TOOL_ENABLED` keeps precedence.
+Children do not gain provider tools or extensions automatically. Add `bg_wait` to the child agent's `tools` allowlist and load each provider through `extensions` or `subagentOnlyExtensions`. The parent's effective `waitTool` setting reaches every child through its typed runtime config; `PI_SUBAGENT_WAIT_TOOL_ENABLED` keeps precedence in the parent.
+
+Foreground children never load the parent's ambient extensions: they share the parent's process, and pi caches extension modules per process, so loading an ambient extension twice would share its module state. Agents that need MCP tools (`mcpDirectTools`, or MCP tools from an ambient adapter such as pi-mcp-adapter) or models from a provider extension must run as background children (`async: true`), which load the ambient extensions inside the detached runner process unless the agent sets `extensions` or the capability ceiling denies extensions.
 
 ## External job provider bridge
 
@@ -432,11 +434,14 @@ The main runtime files in this repository:
 | `src/agents/agents.ts` | Agent and chain discovery, frontmatter parsing. |
 | `src/runs/foreground/subagent-executor.ts` | Main execution routing for single, parallel, chain, management, status, interrupt, and doctor actions. |
 | `src/runs/foreground/execution.ts` | Core foreground `runSync` handling: drives one in-process child session per attempt. |
-| `src/runs/foreground/child-session.ts` | In-process child session factory (`createAgentSession` behind an injectable seam) and the shared model runtime. |
-| `src/runs/foreground/child-launch.ts` | Builds the tool plan, typed child runtime config, and session launch for a foreground child. |
-| `src/runs/shared/child-runtime-config.ts` | `ChildRuntimeConfig`: everything the child-side hooks need; spawned children read it from their environment once. |
+| `src/runs/shared/child-session.ts` | In-process child session factory (`createAgentSession` behind an injectable seam) and the shared model runtime; used by both launch paths. |
+| `src/runs/shared/child-launch.ts` | Builds the tool plan, typed child runtime config, and session launch for a child in either host process. |
+| `src/runs/shared/child-tool-plan.ts` | Tool, MCP, and extension resolution for a child launch. |
+| `src/runs/shared/child-runtime-config.ts` | `ChildRuntimeConfig`: everything the child-side hooks need. |
 | `src/runs/shared/child-hooks.ts` | The inline hook extensions every child gets (prompt runtime, fast mode, fanout). |
-| `src/runs/background/subagent-runner.ts` | Detached async runner (spawns `pi` processes). |
+| `src/runs/background/subagent-runner.ts` | Detached async runner; hosts background child sessions in its own process. |
+| `src/runs/background/run-child-session.ts` | Drives one background child session and mirrors its events into the run artifacts. |
+| `src/runs/background/runner-aliases.ts` | Aliases the host peer packages to the installed pi package for the runner (`JITI_ALIAS`). |
 | `src/runs/background/async-execution.ts` | Background launch support. |
 | `src/runs/background/async-status.ts` | Status discovery and formatting for async runs. |
 | `src/workflows/scripted-workflow.ts` / `src/runs/foreground/subagent-executor.ts` | Scripted workflow orchestration and child launch routing. |
