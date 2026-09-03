@@ -112,7 +112,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./preflight": "./src/api/preflight.ts",
 		"./control-channel": "./src/api/control-channel.ts",
 		"./intercom-bridge": "./src/api/intercom-bridge.ts",
-		"./pi-args": "./src/api/pi-args.ts",
+		"./child-tool-plan": "./src/api/child-tool-plan.ts",
 		"./shared-types": "./src/api/shared-types.ts",
 		"./project-panes": "./src/api/project-panes.ts",
 	});
@@ -145,9 +145,9 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(typeof controlChannel.requestAsyncStop, "function");
 	const intercomBridge = await import("pi-subagents/intercom-bridge");
 	assert.equal(typeof intercomBridge.resolveIntercomSessionTarget, "function");
-	const piArgs = await import("pi-subagents/pi-args");
-	assert.equal(typeof piArgs.resolvePiLaunchToolPlan, "function");
-	assert.deepEqual(Object.keys(piArgs).sort(), ["resolvePiLaunchToolPlan"]);
+	const childToolPlan = await import("pi-subagents/child-tool-plan");
+	assert.equal(typeof childToolPlan.resolvePiLaunchToolPlan, "function");
+	assert.deepEqual(Object.keys(childToolPlan).sort(), ["resolvePiLaunchToolPlan"]);
 	const sharedTypes = await import("pi-subagents/shared-types");
 	assert.equal(typeof sharedTypes.wrapForkTask, "function");
 	assert.equal(typeof sharedTypes.DEFAULT_FORK_PREAMBLE, "string");
