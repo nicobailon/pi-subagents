@@ -109,6 +109,21 @@ describe("agent management config parsing", () => {
 		assert.equal(JSON.stringify(capabilities).includes("SYSTEM_PROMPT_SENTINEL"), false);
 	});
 
+	it("reports bundled reviewer supervisor contact without mutation tools in capabilities", () => {
+		const listed = handleManagementAction("list", { agentScope: "project", capabilities: true }, {
+			cwd: tempDir,
+			modelRegistry: { getAvailable: () => [] },
+		});
+
+		assert.equal(listed.isError, false);
+		const capabilities = listed.details?.agentCapabilities;
+		assert.ok(capabilities);
+		const reviewer = capabilities.agents.find((agent) => agent.name === "reviewer");
+		assert.ok(reviewer, "reviewer builtin should be present in capability output");
+		assert.deepEqual(reviewer.tools.names, ["read", "grep", "find", "ls", "contact_supervisor"]);
+		assert.match(readText(listed), /Tools: read, grep, find, ls, contact_supervisor/);
+	});
+
 	it("reports passive external CLI availability for present and absent commands", () => {
 		const agentsDir = path.join(tempDir, ".pi", "agents");
 		fs.mkdirSync(agentsDir, { recursive: true });

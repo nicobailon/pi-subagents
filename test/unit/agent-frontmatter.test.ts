@@ -1862,7 +1862,7 @@ Do work
 		}
 	});
 
-	it("worker and delegate include the child-facing supervisor tool", () => {
+	it("bundled standard agents expose the child-facing supervisor tool with bounded allowlists", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-supervisor-tool-"));
 		const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-supervisor-tool-home-"));
 		tempDirs.push(dir);
@@ -1874,10 +1874,16 @@ Do work
 			process.env.HOME = homeDir;
 			process.env.USERPROFILE = homeDir;
 			const agents = discoverAgentsAll(dir).builtin;
-			for (const name of ["worker", "delegate"]) {
+			const expectedTools = {
+				worker: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+				delegate: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+				reviewer: ["read", "grep", "find", "ls", "contact_supervisor"],
+				scout: ["read", "grep", "find", "ls", "bash", "write", "contact_supervisor"],
+			};
+			for (const [name, tools] of Object.entries(expectedTools)) {
 				const agent = agents.find((candidate) => candidate.name === name);
 				assert.ok(agent, `${name} builtin should be discovered`);
-				assert.deepEqual(agent?.tools, ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"]);
+				assert.deepEqual(agent?.tools, tools);
 			}
 		} finally {
 			if (previousHome === undefined) delete process.env.HOME;
