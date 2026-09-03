@@ -690,7 +690,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(reused.content[0]?.text ?? "", /already consumed/);
 		assert.equal(mockPi.callCount(), 2);
 
-		mockPi.onCall({ stderr: "spawned child failed", exitCode: 1 });
+		mockPi.onCall({ stderr: "child failed", exitCode: 1 });
 		const failedPermit = permitFor("spawn-failure");
 		const spawnFailure = await run("spawn-failure", script, failedPermit);
 		assert.equal(spawnFailure.isError, true);
@@ -8631,7 +8631,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	for (const toolName of ["intercom", "contact_supervisor"]) {
-		it(`detaches cleanly on ${toolName} handoff without aborting the child process`, async () => {
+		it(`detaches cleanly on ${toolName} handoff without aborting the child session`, async () => {
 			const eventBus = createEventBus();
 			let accepted = false;
 			eventBus.on(INTERCOM_DETACH_RESPONSE_EVENT, (payload) => {

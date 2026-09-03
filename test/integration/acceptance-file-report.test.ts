@@ -3,7 +3,7 @@
  * child wrote to its configured output file (recovered from its write tool
  * calls) versus the assistant text, ordered by outputMode, including parallel
  * children with the distinct configured paths required after #420. Runs the
- * full spawn → stream-parse → acceptance pipeline against the mock pi CLI.
+ * full launch, event, and acceptance pipeline against the scripted child session.
  */
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";

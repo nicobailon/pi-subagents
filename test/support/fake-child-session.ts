@@ -110,7 +110,7 @@ function claimNextResponse(dir: string, haystack: string): FakeChildResponse {
 	return { output: "ok" };
 }
 
-/** Synthetic argv mirroring what the spawned child received, so call assertions read the same shape. */
+/** Synthetic argv in the shape existing call assertions read; a child session receives no argv. */
 export function fakeChildArgs(launch: ChildSessionLaunch, task: string): string[] {
 	const args: string[] = ["--mode", "json", "-p"];
 	if (launch.storage.kind === "file") args.push("--session", launch.storage.sessionFile);
