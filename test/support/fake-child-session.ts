@@ -397,6 +397,8 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 			disposeCalls += 1;
 			for (const record of sessions) {
 				if (record.session?.detached) continue;
+				if (record.session) record.session.shutDown = true;
+				await record.session?.abort();
 				record.aborted = true;
 				record.disposed = true;
 			}

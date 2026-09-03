@@ -192,6 +192,16 @@ describe("in-process foreground child", () => {
 		assert.equal(terminal?.detachedReason, "user request");
 		assert.equal(mockPi.sessions[0]?.disposed, true);
 	});
+
+	it("reports a parent session shutdown as the reason an attached child stopped", async () => {
+		mockPi.onCall({ hangUntilAbort: true });
+		const run = runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "shutdown-attached" });
+		await waitFor(() => mockPi.sessions[0]?.task !== undefined);
+		await disposeChildSessions();
+		const result = await run;
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.error, "Subagent stopped because the parent session shut down.");
+	});
 });
 
 /** A pi module stub whose loader reads `process.env` after an await, the way a real extension load does. */

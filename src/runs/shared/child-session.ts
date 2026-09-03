@@ -89,6 +89,8 @@ export interface ChildSession {
 	readonly modelId: string | undefined;
 	/** Set by the foreground host once the run detached; `factory.dispose()` leaves such children running. */
 	detached?: boolean;
+	/** Set by `factory.dispose()` before it aborts the child, so the host can report the stop truthfully. */
+	shutDown?: boolean;
 }
 
 export interface ChildSessionFactory {
@@ -223,6 +225,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 		},
 		async dispose() {
 			const children = [...live].filter((child) => !child.detached);
+			for (const child of children) child.shutDown = true;
 			await Promise.allSettled(children.map((child) => child.abort()));
 			for (const child of children) {
 				try { child.dispose(); } catch { /* best effort */ }
