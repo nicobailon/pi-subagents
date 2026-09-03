@@ -1160,15 +1160,6 @@ export interface AcceptanceLedger {
 	};
 }
 
-export interface ProtocolOutputLimit {
-	code: "protocol_output_limit";
-	stream: "stdout" | "stderr";
-	limitBytes: number;
-	observedBytes: number;
-	diagnosticPrefix: string;
-	diagnosticTail: string;
-}
-
 export interface LaunchResolvedChildExtensionsV1 {
 	version: 1;
 	/** This is parent-resolved launch intent, not child-runtime acknowledgement that extensions loaded. */
@@ -1263,7 +1254,6 @@ export interface SingleResult {
 	 * a signal to reduce input size or re-decompose the task.
 	 */
 	contextOverflow?: boolean;
-	protocolError?: ProtocolOutputLimit;
 	sessionFile?: string;
 	skills?: string[];
 	skillsWarning?: string;
@@ -2340,7 +2330,7 @@ export interface RunSyncOptions {
 	/** Exact discovery provenance for an unknown-agent error; omission uses defensive fallback discovery. */
 	unknownAgentDiagnosticContext?: import("../agents/agents.ts").UnknownAgentDiagnosticContext;
 	/** Session factory for the in-process child; defaults to the process-wide factory. */
-	childSessionFactory?: import("../runs/foreground/child-session.ts").ChildSessionFactory;
+	childSessionFactory?: import("../runs/shared/child-session.ts").ChildSessionFactory;
 	/** The launching executor's own child runtime when it is itself an in-process child. */
 	childRuntime?: import("../runs/shared/child-runtime-config.ts").ChildRuntimeConfig;
 	/** Fires once the child session exists and can be steered. */
@@ -2792,8 +2782,11 @@ export interface SubagentDepthContext {
 	maxDepth?: number;
 }
 
+/** Operator override for the top-level parent; children inherit their limit through their runtime config. */
+export const SUBAGENT_MAX_DEPTH_ENV = "PI_SUBAGENT_MAX_DEPTH";
+
 export function resolveCurrentMaxSubagentDepth(configMaxDepth?: number, runtime?: SubagentDepthContext): number {
-	return normalizeMaxSubagentDepth(runtime ? runtime.maxDepth : process.env.PI_SUBAGENT_MAX_DEPTH)
+	return normalizeMaxSubagentDepth(runtime ? runtime.maxDepth : process.env[SUBAGENT_MAX_DEPTH_ENV])
 		?? normalizeMaxSubagentDepth(configMaxDepth)
 		?? DEFAULT_SUBAGENT_MAX_DEPTH;
 }
@@ -2804,8 +2797,9 @@ export function resolveChildMaxSubagentDepth(parentMaxDepth: number, agentMaxDep
 	return normalizedAgent === undefined ? normalizedParent : Math.min(normalizedParent, normalizedAgent);
 }
 
+/** Depth of the executor itself: 0 for a top-level parent, its own child depth otherwise. */
 export function resolveCurrentSubagentDepth(runtime?: SubagentDepthContext): number {
-	const depth = runtime ? runtime.depth : Number(process.env.PI_SUBAGENT_DEPTH ?? "0");
+	const depth = runtime ? runtime.depth : 0;
 	return Number.isFinite(depth) ? depth : 0;
 }
 
@@ -2816,10 +2810,11 @@ export function checkSubagentDepth(configMaxDepth?: number, runtime?: SubagentDe
 	return { blocked, depth, maxDepth };
 }
 
-export function getSubagentDepthEnv(maxDepth?: number, runtime?: SubagentDepthContext): Record<string, string> {
+/** Depth context handed to a child launched by an executor at `runtime` (undefined for a top-level parent). */
+export function resolveChildDepth(maxDepth?: number, runtime?: SubagentDepthContext): Required<SubagentDepthContext> {
 	return {
-		PI_SUBAGENT_DEPTH: String(resolveCurrentSubagentDepth(runtime) + 1),
-		PI_SUBAGENT_MAX_DEPTH: String(normalizeMaxSubagentDepth(maxDepth) ?? resolveCurrentMaxSubagentDepth(undefined, runtime)),
+		depth: resolveCurrentSubagentDepth(runtime) + 1,
+		maxDepth: normalizeMaxSubagentDepth(maxDepth) ?? resolveCurrentMaxSubagentDepth(undefined, runtime),
 	};
 }
 

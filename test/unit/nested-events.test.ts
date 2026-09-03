@@ -9,35 +9,15 @@ import {
 	hasLiveNestedDescendants,
 	nestedSummaryFromAsyncStatus,
 	parseNestedEventRecords,
+	inheritedNestedParentAddressOf,
+	inheritedNestedRouteOf,
 	projectNestedEvents,
-	resolveNestedParentAddressFromEnv,
-	resolveNestedRouteFromEnv,
 	updateAsyncJobNestedProjection,
 	updateForegroundNestedProjection,
 	writeNestedEvent,
 } from "../../src/runs/shared/nested-events.ts";
-import {
-	SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV,
-	SUBAGENT_PARENT_CHILD_INDEX_ENV,
-	SUBAGENT_PARENT_CONTROL_INBOX_ENV,
-	SUBAGENT_PARENT_DEPTH_ENV,
-	SUBAGENT_PARENT_EVENT_SINK_ENV,
-	SUBAGENT_PARENT_PATH_ENV,
-	SUBAGENT_PARENT_ROOT_RUN_ID_ENV,
-	SUBAGENT_PARENT_RUN_ID_ENV,
-} from "../../src/runs/shared/pi-args.ts";
 
 const routes: Array<{ eventSink: string }> = [];
-const savedEnv = {
-	[SUBAGENT_PARENT_EVENT_SINK_ENV]: process.env[SUBAGENT_PARENT_EVENT_SINK_ENV],
-	[SUBAGENT_PARENT_CONTROL_INBOX_ENV]: process.env[SUBAGENT_PARENT_CONTROL_INBOX_ENV],
-	[SUBAGENT_PARENT_ROOT_RUN_ID_ENV]: process.env[SUBAGENT_PARENT_ROOT_RUN_ID_ENV],
-	[SUBAGENT_PARENT_RUN_ID_ENV]: process.env[SUBAGENT_PARENT_RUN_ID_ENV],
-	[SUBAGENT_PARENT_CHILD_INDEX_ENV]: process.env[SUBAGENT_PARENT_CHILD_INDEX_ENV],
-	[SUBAGENT_PARENT_DEPTH_ENV]: process.env[SUBAGENT_PARENT_DEPTH_ENV],
-	[SUBAGENT_PARENT_PATH_ENV]: process.env[SUBAGENT_PARENT_PATH_ENV],
-	[SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV]: process.env[SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV],
-};
 
 async function removeDirWithRetry(dir: string): Promise<void> {
 	let lastError: unknown;
@@ -56,10 +36,6 @@ async function removeDirWithRetry(dir: string): Promise<void> {
 afterEach(async () => {
 	for (const route of routes.splice(0)) {
 		await removeDirWithRetry(path.dirname(route.eventSink));
-	}
-	for (const [key, value] of Object.entries(savedEnv)) {
-		if (value === undefined) delete process.env[key];
-		else process.env[key] = value;
 	}
 });
 
@@ -123,17 +99,18 @@ describe("nested route index", () => {
 });
 
 describe("nested event route validation", () => {
-	it("resolves nested parent addresses with full inherited path", () => {
-		process.env[SUBAGENT_PARENT_RUN_ID_ENV] = "nested-parent";
-		process.env[SUBAGENT_PARENT_CHILD_INDEX_ENV] = "2";
-		process.env[SUBAGENT_PARENT_DEPTH_ENV] = "3";
-		process.env[SUBAGENT_PARENT_PATH_ENV] = JSON.stringify([
-			{ runId: "root-run", stepIndex: 0, agent: "root-agent" },
-			{ runId: "../unsafe", stepIndex: 1, agent: "bad" },
-			{ runId: "nested-parent", stepIndex: 2, agent: "nested-agent" },
-		]);
-
-		assert.deepEqual(resolveNestedParentAddressFromEnv(), {
+	it("resolves nested parent addresses from the inherited child runtime", () => {
+		assert.deepEqual(inheritedNestedParentAddressOf({
+			nestedParent: {
+				parentRunId: "nested-parent",
+				parentChildIndex: 2,
+				depth: 3,
+				path: [
+					{ runId: "root-run", stepIndex: 0, agent: "root-agent" },
+					{ runId: "nested-parent", stepIndex: 2, agent: "nested-agent" },
+				],
+			},
+		}), {
 			parentRunId: "nested-parent",
 			parentStepIndex: 2,
 			depth: 3,
@@ -142,26 +119,33 @@ describe("nested event route validation", () => {
 				{ runId: "nested-parent", stepIndex: 2, agent: "nested-agent" },
 			],
 		});
+		assert.deepEqual(inheritedNestedParentAddressOf({ nestedParent: { parentRunId: "nested-parent", depth: 1, path: [] } }), {
+			parentRunId: "nested-parent",
+			depth: 1,
+			path: [{ runId: "nested-parent" }],
+		});
 	});
 
-	it("ignores unsafe nested parent ids from env", () => {
-		process.env[SUBAGENT_PARENT_RUN_ID_ENV] = "../unsafe";
-		process.env[SUBAGENT_PARENT_CHILD_INDEX_ENV] = "2";
-
-		assert.equal(resolveNestedParentAddressFromEnv(), undefined);
+	it("ignores unsafe nested parent ids and missing parents", () => {
+		assert.equal(inheritedNestedParentAddressOf({ nestedParent: { parentRunId: "../unsafe", parentChildIndex: 2, depth: 1, path: [] } }), undefined);
+		assert.equal(inheritedNestedParentAddressOf({}), undefined);
+		assert.equal(inheritedNestedParentAddressOf(undefined), undefined);
 	});
 
-	it("resolves only matching contained routes from env", () => {
+	it("resolves only matching contained routes from the inherited child runtime", () => {
 		const route = trackRoute();
-		process.env[SUBAGENT_PARENT_EVENT_SINK_ENV] = route.eventSink;
-		process.env[SUBAGENT_PARENT_CONTROL_INBOX_ENV] = route.controlInbox;
-		process.env[SUBAGENT_PARENT_ROOT_RUN_ID_ENV] = route.rootRunId;
-		process.env[SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV] = route.capabilityToken;
+		assert.deepEqual(inheritedNestedRouteOf({ nestedRoute: route }), route);
+		assert.equal(inheritedNestedRouteOf({}), undefined);
 
-		assert.deepEqual(resolveNestedRouteFromEnv(), route);
-
-		process.env[SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV] = "wrong-token";
-		assert.throws(() => resolveNestedRouteFromEnv(), /capability token/);
+		const originalError = console.error;
+		const logged: unknown[] = [];
+		console.error = (...args: unknown[]) => { logged.push(args[1]); };
+		try {
+			assert.equal(inheritedNestedRouteOf({ nestedRoute: { ...route, capabilityToken: "wrong-token" } }), undefined);
+		} finally {
+			console.error = originalError;
+		}
+		assert.match(String(logged[0]), /capability token/);
 	});
 });
 

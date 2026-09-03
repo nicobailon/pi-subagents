@@ -59,7 +59,7 @@ import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
 import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightSpawnBudget, preflightSpawnBudgetGrant, reserveSpawnBudget } from "../shared/spawn-budget.ts";
-import { claimRunFanoutBatch, claimRunFanoutBatchWithCommit, createRunFanoutBudget, decodeRunFanoutBudgetDescriptor, formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor, RunFanoutLimitError, RUN_FANOUT_BUDGET_ENV, writeRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
+import { claimRunFanoutBatch, claimRunFanoutBatchWithCommit, createRunFanoutBudget, formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor, RunFanoutLimitError, writeRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
@@ -93,7 +93,7 @@ import { promotePausedWorkflowIfSettled, reconcileDetachedWorkflowChildCompletio
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveAsyncRootResultPath, waitForImportedAsyncRoot } from "../background/chain-root-attachment.ts";
 import { resultFilePath, writeAsyncResultFile } from "../background/result-files.ts";
-import { attachRootChildrenToSteps, createNestedRoute, findNestedControlResult, resolveInheritedNestedRoute, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, snapshotNestedEventFiles, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedRoute, type NestedRunResolutionScope } from "../shared/nested-events.ts";
+import { attachRootChildrenToSteps, createNestedRoute, findNestedControlResult, inheritedNestedParentAddressOf, inheritedNestedRouteOf, resolveNestedAsyncDir, snapshotNestedEventFiles, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedParentAddress, type NestedRoute, type NestedRunResolutionScope } from "../shared/nested-events.ts";
 import type { ChildRuntimeConfig } from "../shared/child-runtime-config.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
@@ -442,24 +442,15 @@ interface ExecutorDeps {
 }
 
 function inheritedNestedRoute(deps: Pick<ExecutorDeps, "childRuntime">): NestedRoute | undefined {
-	if (!deps.childRuntime) return resolveInheritedNestedRouteFromEnv();
-	return deps.childRuntime.nestedRoute ? resolveInheritedNestedRoute(deps.childRuntime.nestedRoute) : undefined;
+	return inheritedNestedRouteOf(deps.childRuntime);
 }
 
-function inheritedNestedParentAddress(deps: Pick<ExecutorDeps, "childRuntime">): ReturnType<typeof resolveNestedParentAddressFromEnv> {
-	if (!deps.childRuntime) return resolveNestedParentAddressFromEnv();
-	const parent = deps.childRuntime.nestedParent;
-	if (!parent) return undefined;
-	return {
-		parentRunId: parent.parentRunId,
-		...(parent.parentChildIndex !== undefined ? { parentStepIndex: parent.parentChildIndex } : {}),
-		depth: parent.depth,
-		path: parent.path.length ? parent.path : [{ runId: parent.parentRunId, ...(parent.parentChildIndex !== undefined ? { stepIndex: parent.parentChildIndex } : {}) }],
-	};
+function inheritedNestedParentAddress(deps: Pick<ExecutorDeps, "childRuntime">): NestedParentAddress | undefined {
+	return inheritedNestedParentAddressOf(deps.childRuntime);
 }
 
 function inheritedRunFanoutBudget(deps: Pick<ExecutorDeps, "childRuntime">): RunFanoutBudgetDescriptor | undefined {
-	return deps.childRuntime ? deps.childRuntime.runFanoutBudget : decodeRunFanoutBudgetDescriptor(process.env[RUN_FANOUT_BUDGET_ENV]);
+	return deps.childRuntime?.runFanoutBudget;
 }
 
 type ForkSessionFileForTask = (agentName: string, idx?: number, modelOverride?: string, modelOverrideFromParent?: boolean, modelOrigin?: ModelOrigin) => string | undefined;
@@ -1322,6 +1313,7 @@ function appendStepToAsyncChain(input: {
 		modelScope: discoveredForAppend.modelScope,
 		interactive: input.ctx.hasUI,
 		permissions: input.deps.config.permissions,
+		childRuntime: input.deps.childRuntime,
 	});
 	const built = buildAsyncRunnerSteps(resolved.id, compactOptional<Parameters<typeof buildAsyncRunnerSteps>[1]>({
 		chain: wrapChainTasksForFork(chain, contextPolicy),
@@ -1702,6 +1694,7 @@ async function resumeExternalJobFollowUp(input: {
 			modelScope: input.modelScope,
 			interactive: input.ctx.hasUI,
 			permissions: input.deps.config.permissions,
+			childRuntime: input.deps.childRuntime,
 		}),
 		cwd: input.effectiveCwd,
 		artifactsDir,
@@ -1954,6 +1947,7 @@ async function resumeAsyncRun(input: {
 				modelScope,
 				interactive: input.ctx.hasUI,
 		permissions: input.deps.config.permissions,
+		childRuntime: input.deps.childRuntime,
 			}),
 			availableModels,
 			cwd: effectiveCwd,
@@ -2057,6 +2051,7 @@ async function resumeAsyncRun(input: {
 			modelScope,
 			interactive: input.ctx.hasUI,
 		permissions: input.deps.config.permissions,
+		childRuntime: input.deps.childRuntime,
 		}),
 		cwd: effectiveCwd,
 		maxOutput: input.params.maxOutput ?? recoveryDescriptor?.maxOutput,
@@ -3210,6 +3205,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		modelScope: data.modelScope,
 		interactive: ctx.hasUI,
 		permissions: deps.config.permissions,
+		childRuntime: deps.childRuntime,
 	});
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth, deps.childRuntime);
@@ -6798,7 +6794,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						parentStepIndex: nestedParentAddress.parentStepIndex,
 						depth: nestedParentAddress.depth,
 						path: nestedParentAddress.path,
-						ownerIntercomTarget: deps.childRuntime ? deps.childRuntime.intercomSessionName : process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
+						ownerIntercomTarget: deps.childRuntime?.intercomSessionName,
 						leafIntercomTarget,
 						intercomTarget: leafIntercomTarget,
 						ownerState: state === "running" ? "live" : "gone",

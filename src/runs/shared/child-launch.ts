@@ -1,8 +1,8 @@
 /**
- * Builds the in-process launch for one foreground child: the tool plan, the
- * typed child runtime config the hooks read, and the session launch input.
- * This is the in-process counterpart of `buildPiArgs`, which encodes the same
- * facts as argv and environment for spawned background children.
+ * Builds the in-process launch for one child: the tool plan, the typed child
+ * runtime config the hooks read, and the session launch input. Foreground
+ * children are built in the parent process; background children are built in
+ * the detached runner from the step it received in its config.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -10,29 +10,53 @@ import type { ChildWatchdogConfig, ChildWatchdogStatusEvent } from "../../watchd
 import type { ThinkingLevel } from "../../shared/model-info.ts";
 import { intersectThinkingCeilings } from "../../shared/thinking-ceiling.ts";
 import {
-	getSubagentDepthEnv,
+	resolveChildDepth,
 	type LaunchResolvedChildExtensionsV1,
 	type ResolvedToolBudget,
 	type RunFanoutBudgetDescriptor,
 } from "../../shared/types.ts";
-import type { NestedPathEntry } from "../shared/nested-path.ts";
-import type { McpRuntimeSnapshotHost } from "../shared/mcp-direct-tool-allowlist.ts";
-import type { PermissionRules } from "../shared/permissions.ts";
-import type { StructuredOutputRuntime } from "../shared/structured-output.ts";
-import type { ChildToolDiagnostic } from "../shared/tool-availability.ts";
+import type { NestedPathEntry } from "./nested-path.ts";
+import type { McpConfig, McpRuntimeSnapshotHost } from "./mcp-direct-tool-allowlist.ts";
+import type { PermissionRules } from "./permissions.ts";
+import type { StructuredOutputRuntime } from "./structured-output.ts";
+import type { ChildToolDiagnostic } from "./tool-availability.ts";
 import type { RuntimeAcknowledgedChildExtensionsV1 } from "../../shared/types.ts";
-import { projectRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
-import { intersectSubagentCapabilityCeilings, type ResolvedSubagentCapabilityCeiling, type SubagentCapabilityAudit } from "../shared/capability-ceiling.ts";
+import { projectRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
+import { encodeExtensionBindings, PI_SUBAGENT_EXTENSION_BINDINGS_ENV, type ExtensionBindings } from "./extension-bindings.ts";
+import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "./capability-ceiling.ts";
 import {
 	isSubagentRuntimeExtensionPath,
 	projectLaunchResolvedChildExtensions,
 	resolvePiLaunchToolPlan,
 	supervisorChannelDir,
 	type PiLaunchToolPlan,
-} from "../shared/pi-args.ts";
-import type { ChildRuntimeConfig } from "../shared/child-runtime-config.ts";
-import { createChildHooks } from "../shared/child-hooks.ts";
+} from "./child-tool-plan.ts";
+import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
+import { createChildHooks } from "./child-hooks.ts";
 import type { ChildSessionLaunch, ChildSessionStorage } from "./child-session.ts";
+
+/** Environment variable pi-mcp-adapter reads for the tools a child may expose. */
+export const MCP_DIRECT_TOOLS_ENV = "MCP_DIRECT_TOOLS";
+
+/**
+ * The parts of the launching executor's own child runtime that a child it
+ * launches inherits. Serialized into the background runner config; the
+ * foreground path passes the executor's full `ChildRuntimeConfig`.
+ */
+export type InheritedChildRuntime = Pick<ChildRuntimeConfig, "depth" | "maxDepth" | "nestedRoute" | "nestedParent" | "capabilityCeiling" | "thinkingCeiling" | "runFanoutBudget">;
+
+export function inheritedChildRuntime(config: ChildRuntimeConfig | undefined): InheritedChildRuntime | undefined {
+	if (!config) return undefined;
+	return {
+		depth: config.depth,
+		...(config.maxDepth !== undefined ? { maxDepth: config.maxDepth } : {}),
+		...(config.nestedRoute ? { nestedRoute: config.nestedRoute } : {}),
+		...(config.nestedParent ? { nestedParent: config.nestedParent } : {}),
+		...(config.capabilityCeiling ? { capabilityCeiling: config.capabilityCeiling } : {}),
+		...(config.thinkingCeiling ? { thinkingCeiling: config.thinkingCeiling } : {}),
+		...(config.runFanoutBudget ? { runFanoutBudget: config.runFanoutBudget } : {}),
+	};
+}
 
 export interface BuildInProcessChildLaunchInput {
 	parentSessionId?: string;
@@ -53,6 +77,9 @@ export interface BuildInProcessChildLaunchInput {
 	subagentOnlyExtensions?: string[];
 	systemPrompt?: string | null;
 	mcpDirectTools?: string[];
+	mcpConfig?: McpConfig;
+	runtimeServerNames?: string[];
+	extensionBindings?: ExtensionBindings;
 	cwd: string;
 	intercomSessionName?: string;
 	sessionName?: string;
@@ -78,7 +105,14 @@ export interface BuildInProcessChildLaunchInput {
 	maxSubagentDepth?: number;
 	runtimeSnapshotHost?: McpRuntimeSnapshotHost;
 	/** The launching executor's own child runtime when it is itself an in-process child. */
-	inherited?: ChildRuntimeConfig;
+	inherited?: InheritedChildRuntime;
+	/**
+	 * Which process hosts the session. The parent never loads ambient extensions
+	 * or writes child environment values (it shares its process with the parent
+	 * session); the runner loads ambient extensions when the tool plan allows
+	 * them and exposes the child environment external extensions read.
+	 */
+	host: "parent" | "runner";
 }
 
 export interface InProcessChildCapture {
@@ -106,8 +140,19 @@ function escapeXmlAttr(value: string): string {
 		.replace(/>/g, "&gt;");
 }
 
-function inheritedCapabilityCeiling(inherited: ChildRuntimeConfig | undefined): ResolvedSubagentCapabilityCeiling | undefined {
+function inheritedCapabilityCeiling(inherited: InheritedChildRuntime | undefined): ResolvedSubagentCapabilityCeiling | undefined {
 	return inherited?.capabilityCeiling;
+}
+
+/** Environment values external child extensions read; only the runner applies them. */
+function childProcessEnv(input: BuildInProcessChildLaunchInput, toolPlan: PiLaunchToolPlan): Record<string, string | undefined> {
+	const env: Record<string, string | undefined> = {};
+	env[PI_SUBAGENT_EXTENSION_BINDINGS_ENV] = encodeExtensionBindings(input.extensionBindings);
+	if (!toolPlan.capabilityCeiling && input.mcpDirectTools?.length) env[MCP_DIRECT_TOOLS_ENV] = input.mcpDirectTools.join(",");
+	else if (toolPlan.capabilityCeiling && toolPlan.effectiveMcpSelections.length && !toolPlan.capabilityCeiling.denyExtensions) {
+		env[MCP_DIRECT_TOOLS_ENV] = toolPlan.effectiveMcpSelections.map((selection) => selection.selector).join(",");
+	} else env[MCP_DIRECT_TOOLS_ENV] = "__none__";
+	return env;
 }
 
 function childStorage(input: BuildInProcessChildLaunchInput): ChildSessionStorage {
@@ -131,6 +176,8 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		extensions: input.extensions,
 		subagentOnlyExtensions: input.subagentOnlyExtensions,
 		mcpDirectTools: input.mcpDirectTools,
+		mcpConfig: input.mcpConfig,
+		runtimeServerNames: input.runtimeServerNames,
 		cwd: input.cwd,
 		requireReadTool: input.requireReadTool,
 		structuredOutput: Boolean(input.structuredOutput),
@@ -155,7 +202,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		...(parentRunId ? [{ runId: parentRunId, stepIndex: parentChildIndex, agent: input.childAgentName }] : []),
 	];
 	const nestedRoute = fanout ? (input.nestedRoute ?? inheritedRoute) : undefined;
-	const depthEnv = getSubagentDepthEnv(input.maxSubagentDepth, inherited);
+	const childDepth = resolveChildDepth(input.maxSubagentDepth, inherited);
 	const permissions = input.permissionRules && Object.keys(input.permissionRules).length > 0
 		? { rules: input.permissionRules, ...(input.permissionAuditPath ? { auditPath: input.permissionAuditPath } : {}) }
 		: undefined;
@@ -187,8 +234,8 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		...(nestedRoute ? { nestedRoute } : {}),
 		...(fanout && parentRunId ? { nestedParent: { parentRunId, parentChildIndex, depth: parentDepth, path: parentPath } } : {}),
 		...(fanout && (input.runFanoutBudget ?? inherited?.runFanoutBudget) ? { runFanoutBudget: input.runFanoutBudget ?? inherited?.runFanoutBudget } : {}),
-		depth: Number(depthEnv.PI_SUBAGENT_DEPTH),
-		maxDepth: Number(depthEnv.PI_SUBAGENT_MAX_DEPTH),
+		depth: childDepth.depth,
+		maxDepth: childDepth.maxDepth,
 		...(toolPlan.capabilityCeiling ? { capabilityCeiling: toolPlan.capabilityCeiling } : {}),
 		...(thinkingCeiling ? { thinkingCeiling } : {}),
 		inheritProjectContext: input.inheritProjectContext,
@@ -227,11 +274,12 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 	};
 
 	const extensionPaths = toolPlan.extensionArgs.filter((extensionPath) => !isSubagentRuntimeExtensionPath(extensionPath));
+	const ambientExtensions = input.host === "runner" && !toolPlan.disableAmbientExtensions;
 	const launchResolvedExtensions = projectLaunchResolvedChildExtensions({
 		runtimeExtensions: toolPlan.runtimeExtensions,
 		configuredExtensions: toolPlan.configuredExtensions,
 		extensionArgs: toolPlan.extensionArgs,
-		disableAmbientExtensions: true,
+		disableAmbientExtensions: !ambientExtensions,
 	});
 	const taggedPrompt = input.systemPrompt !== undefined && input.systemPrompt !== null
 		? `<active_agent name="${escapeXmlAttr(input.childAgentName)}"/>\n\n${input.systemPrompt}`
@@ -243,7 +291,9 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		...(toolPlan.explicitToolAllowlist ? { tools: toolPlan.effectiveToolAllowlist } : {}),
 		...(!toolPlan.explicitToolAllowlist && toolPlan.excludeTools.length > 0 ? { excludeTools: toolPlan.excludeTools } : {}),
 		extensionPaths,
+		ambientExtensions,
 		hooks: createChildHooks(config),
+		...(input.host === "runner" ? { processEnv: childProcessEnv(input, toolPlan) } : {}),
 		runtime: config,
 		noSkills: !input.inheritSkills,
 		noContextFiles: !input.inheritProjectContext,
@@ -265,12 +315,4 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		warnings: toolPlan.warnings,
 		...(toolPlan.capabilityAudit ? { capabilityAudit: toolPlan.capabilityAudit } : {}),
 	};
-}
-
-export function intersectInheritedCapabilityCeiling(
-	ceiling: ResolvedSubagentCapabilityCeiling | undefined,
-	inherited: ChildRuntimeConfig | undefined,
-	envCeiling: ResolvedSubagentCapabilityCeiling | undefined,
-): ResolvedSubagentCapabilityCeiling | undefined {
-	return intersectSubagentCapabilityCeilings(ceiling, inherited ? inherited.capabilityCeiling : envCeiling);
 }

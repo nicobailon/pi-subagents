@@ -11,25 +11,9 @@ import {
 	registerNativeSupervisorClient,
 	resolveSupervisorChannelDir,
 } from "../../src/intercom/native-supervisor-channel.ts";
-import {
-	SUBAGENT_CHILD_AGENT_ENV,
-	SUBAGENT_CHILD_INDEX_ENV,
-	SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
-	SUBAGENT_ORCHESTRATOR_TARGET_ENV,
-	SUBAGENT_RUN_ID_ENV,
-	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
-} from "../../src/runs/shared/pi-args.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, type SubagentState } from "../../src/shared/types.ts";
 
 const createdChannels: string[] = [];
-const savedEnv = {
-	[SUBAGENT_CHILD_AGENT_ENV]: process.env[SUBAGENT_CHILD_AGENT_ENV],
-	[SUBAGENT_CHILD_INDEX_ENV]: process.env[SUBAGENT_CHILD_INDEX_ENV],
-	[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV]: process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV],
-	[SUBAGENT_ORCHESTRATOR_TARGET_ENV]: process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV],
-	[SUBAGENT_RUN_ID_ENV]: process.env[SUBAGENT_RUN_ID_ENV],
-	[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV]: process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV],
-};
 
 function makeState(sessionId: string | null, ctx: unknown): SubagentState {
 	return {
@@ -102,15 +86,7 @@ async function waitForCondition(condition: () => boolean, description: string): 
 	}
 }
 
-function restoreEnv(): void {
-	for (const [key, value] of Object.entries(savedEnv)) {
-		if (value === undefined) delete process.env[key];
-		else process.env[key] = value;
-	}
-}
-
 afterEach(() => {
-	restoreEnv();
 	delete process.env.PI_INTERCOM_ASK_TIMEOUT_MS;
 	for (const channel of createdChannels.splice(0)) fs.rmSync(channel, { recursive: true, force: true });
 });
@@ -769,12 +745,6 @@ describe("native supervisor channel", () => {
 		const runId = `run-${randomUUID()}`;
 		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
 		createdChannels.push(channelDir);
-		process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = "shared-name";
-		process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = "session-parent";
-		process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
-		process.env[SUBAGENT_RUN_ID_ENV] = runId;
-		process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
-		process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
 		const registeredTools = new Map<string, { execute: (_id: string, params: { reason: string; message?: string }, signal?: AbortSignal) => Promise<unknown> | unknown }>();
 		const pi = {
 			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
@@ -782,7 +752,14 @@ describe("native supervisor channel", () => {
 				registeredTools.set(tool.name, tool);
 			},
 		};
-		registerNativeSupervisorClient(pi as never);
+		registerNativeSupervisorClient(pi as never, {
+			channelDir,
+			runId,
+			agent: "worker",
+			childIndex: 0,
+			orchestratorTarget: "shared-name",
+			orchestratorSessionId: "session-parent",
+		});
 		const controller = new AbortController();
 		controller.abort();
 

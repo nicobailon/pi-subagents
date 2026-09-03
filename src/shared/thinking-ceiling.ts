@@ -1,8 +1,6 @@
 import { resolveEffectiveThinking, THINKING_LEVELS, type ThinkingLevel } from "./model-info.ts";
 export type { ThinkingLevel } from "./model-info.ts";
 
-export const SUBAGENT_THINKING_CEILING_ENV = "PI_SUBAGENT_THINKING_CEILING";
-
 const thinkingLevelRanks = new Map<ThinkingLevel, number>(THINKING_LEVELS.map((level, index) => [level, index]));
 
 export function parseThinkingLevel(value: unknown, field = "thinking level"): ThinkingLevel {
@@ -26,10 +24,6 @@ export function intersectThinkingCeilings(...ceilings: Array<ThinkingLevel | und
 	return active.reduce((lowest, ceiling) => compareThinkingLevels(ceiling, lowest) < 0 ? ceiling : lowest);
 }
 
-export function decodeThinkingCeiling(value: string | undefined): ThinkingLevel | undefined {
-	if (value === undefined || value === "") return undefined;
-	return parseThinkingLevel(value, "inherited thinking ceiling");
-}
 
 export interface ThinkingCeilingCheck {
 	model?: string;

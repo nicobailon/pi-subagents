@@ -147,7 +147,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(typeof intercomBridge.resolveIntercomSessionTarget, "function");
 	const piArgs = await import("pi-subagents/pi-args");
 	assert.equal(typeof piArgs.resolvePiLaunchToolPlan, "function");
-	assert.equal("buildPiArgs" in piArgs, false);
+	assert.deepEqual(Object.keys(piArgs).sort(), ["resolvePiLaunchToolPlan"]);
 	const sharedTypes = await import("pi-subagents/shared-types");
 	assert.equal(typeof sharedTypes.wrapForkTask, "function");
 	assert.equal(typeof sharedTypes.DEFAULT_FORK_PREAMBLE, "string");

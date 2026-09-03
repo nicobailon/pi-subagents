@@ -1,13 +1,8 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import type { RuntimeAcknowledgedChildExtensionsV1 } from "../../shared/types.ts";
 
 export const RUNTIME_EXTENSION_ACK_EVENT = "subagent:acknowledge-extension";
-export const RUNTIME_EXTENSION_ACK_PATH_ENV = "PI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS";
 export const MAX_RUNTIME_ACKNOWLEDGED_EXTENSION_IDS = 32;
 export const MAX_RUNTIME_ACKNOWLEDGED_EXTENSION_ID_LENGTH = 128;
-// Generous bound for a valid capture (32 ids x 128 chars plus envelope); larger files are child misbehavior.
-export const MAX_RUNTIME_ACKNOWLEDGED_EXTENSION_FILE_BYTES = 64 * 1024;
 
 export function isRuntimeAcknowledgedExtensionId(value: unknown): value is string {
 	return typeof value === "string"
@@ -46,26 +41,4 @@ export function sanitizeRuntimeAcknowledgedExtensions(value: unknown): RuntimeAc
 		? Math.max(0, Math.floor(raw.omitted))
 		: 0;
 	return { ...projected, omitted: projected.omitted + omitted };
-}
-
-export function readRuntimeAcknowledgedExtensions(filePath: string | undefined): RuntimeAcknowledgedChildExtensionsV1 | undefined {
-	if (!filePath) return undefined;
-	try {
-		if (fs.statSync(filePath).size > MAX_RUNTIME_ACKNOWLEDGED_EXTENSION_FILE_BYTES) return undefined;
-		const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown;
-		return sanitizeRuntimeAcknowledgedExtensions(parsed);
-	} catch {
-		return undefined;
-	}
-}
-
-export function writeRuntimeAcknowledgedExtensions(filePath: string, ids: Iterable<unknown>): void {
-	const projection = projectRuntimeAcknowledgedExtensions(ids);
-	try {
-		fs.mkdirSync(path.dirname(filePath), { recursive: true });
-		if (projection) fs.writeFileSync(filePath, JSON.stringify(projection), { mode: 0o600 });
-		else fs.rmSync(filePath, { force: true });
-	} catch {
-		// Runtime acknowledgement is best-effort observability only.
-	}
 }

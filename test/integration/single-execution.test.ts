@@ -42,17 +42,10 @@ import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RE
 import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
-import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
-import { createRunFanoutBudget, encodeRunFanoutBudgetDescriptor, RUN_FANOUT_BUDGET_ENV } from "../../src/runs/shared/run-fanout-budget.ts";
+import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { MainWatchdogRuntime } from "../../src/watchdog/runtime.ts";
-import { MAX_CHILD_PENDING_LINE_BYTES } from "../../src/runs/shared/child-protocol.ts";
-import {
-	SUBAGENT_CHILD_ENV,
-	SUBAGENT_PARENT_CHILD_INDEX_ENV,
-	SUBAGENT_PARENT_DEPTH_ENV,
-	SUBAGENT_PARENT_RUN_ID_ENV,
-} from "../../src/runs/shared/pi-args.ts";
-import { createNestedRoute, nestedRouteEnv, parseNestedEventRecords } from "../../src/runs/shared/nested-events.ts";
+import { SUBAGENT_CHILD_ENV, type ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
+import { createNestedRoute, parseNestedEventRecords } from "../../src/runs/shared/nested-events.ts";
 import { resolveMissionStoreLocation } from "../../src/missions/store.ts";
 import { missionStatePath } from "../../src/missions/workflow-state.ts";
 import { discardPreservedWorktrees } from "../../src/runs/shared/parallel-handoff.ts";
@@ -115,7 +108,6 @@ interface RunSyncResult {
 	task?: string;
 	messages: unknown[];
 	error?: string;
-	protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number };
 	model?: string;
 	skills?: string[];
 	skillsWarning?: string;
@@ -375,9 +367,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		handleScheduledRunAction?: Parameters<typeof createSubagentExecutor>[0]["handleScheduledRunAction"],
 		piEvents = createEventBus(),
 		discoverAgentsForCwd?: (cwd: string) => typeof agents,
+		childRuntime?: ChildRuntimeConfig,
 	) {
 		return createSubagentExecutor!({
 			pi: { events: piEvents, getSessionName: () => undefined },
+			...(childRuntime ? { childRuntime } : {}),
 			state: {
 				baseCwd: tempDir,
 				currentSessionId: initialSpawnState?.sessionId ?? null,
@@ -4107,7 +4101,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 	it("passes an agent-level tool budget to an async single child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const toolBudget = { soft: 100, hard: 150, block: "*" as const };
-		mockPi.onCall({ echoEnv: [TOOL_BUDGET_ENV] });
+		mockPi.onCall({ output: "budget probe done" });
 		const executor = makeExecutor([makeAgent("echo", { toolBudget })]);
 		let asyncDir: string | undefined;
 		let resultPath: string | undefined;
@@ -4133,8 +4127,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 				await new Promise((resolve) => setTimeout(resolve, 20));
 			}
 			assert.equal(persisted.state, "complete");
-			const childEnv = JSON.parse(persisted.results?.[0]?.output ?? "{}") as Record<string, string | null>;
-			assert.deepEqual(JSON.parse(childEnv[TOOL_BUDGET_ENV] ?? "null"), toolBudget);
+			assert.deepEqual(readCall().runtime?.toolBudget, toolBudget);
 			assert.equal(mockPi.callCount(), 1);
 			const processTerminalPath = path.join(asyncDir!, "process-terminal.json");
 			let processTerminal: { state?: string } = {};
@@ -4642,10 +4635,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	it("qualifies inherited nested claims with the generated nested run id", async () => {
 		mockPi.onCall({ output: "nested completed" });
 		const descriptor = createRunFanoutBudget("root-run", 2);
-		const previous = process.env[RUN_FANOUT_BUDGET_ENV];
 		try {
-			process.env[RUN_FANOUT_BUDGET_ENV] = encodeRunFanoutBudgetDescriptor({ ...descriptor, parentPath: "tasks[0]" });
-			const executor = makeExecutor([makeAgent("echo")]);
+			const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, {
+				fanoutChild: true,
+				depth: 1,
+				waitTool: { enabled: true },
+				fast: false,
+				runFanoutBudget: { ...descriptor, parentPath: "tasks[0]" },
+			});
 			const result = await executor.execute("nested", { agent: "echo", task: "Nested work" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 
 			assert.equal(result.isError, undefined, result.content[0]?.text ?? "nested run failed");
@@ -4654,8 +4651,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			const claim = JSON.parse(fs.readFileSync(path.join(descriptor.directory, "claims", claims[0]!), "utf-8")) as { path: string };
 			assert.match(claim.path, /^tasks\[0\]\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/single$/);
 		} finally {
-			if (previous === undefined) delete process.env[RUN_FANOUT_BUDGET_ENV];
-			else process.env[RUN_FANOUT_BUDGET_ENV] = previous;
 			fs.rmSync(descriptor.directory, { recursive: true, force: true });
 		}
 	});
@@ -5005,16 +5000,15 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	it("emits resolved model and thinking for nested foreground starts", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "nested result" });
 		const route = createNestedRoute("root-nested-model");
-		const envPatch = {
-			...nestedRouteEnv(route),
-			[SUBAGENT_PARENT_RUN_ID_ENV]: "parent-run",
-			[SUBAGENT_PARENT_CHILD_INDEX_ENV]: "2",
-			[SUBAGENT_PARENT_DEPTH_ENV]: "1",
-		};
-		const savedEnv = Object.fromEntries(Object.keys(envPatch).map((key) => [key, process.env[key]]));
 		try {
-			Object.assign(process.env, envPatch);
-			const executor = makeExecutor([makeAgent("echo", { model: "openai/gpt-5-mini", thinking: "high" })]);
+			const executor = makeExecutor([makeAgent("echo", { model: "openai/gpt-5-mini", thinking: "high" })], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, {
+				fanoutChild: true,
+				depth: 1,
+				waitTool: { enabled: true },
+				fast: false,
+				nestedRoute: route,
+				nestedParent: { parentRunId: "parent-run", parentChildIndex: 2, depth: 1, path: [] },
+			});
 
 			const result = await executor.execute(
 				"nested-model-start",
@@ -5033,10 +5027,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.equal(started?.child.thinking, "high");
 			assert.deepEqual(started?.child.steps, [{ agent: "echo", status: "running", model: "openai/gpt-5-mini", thinking: "high" }]);
 		} finally {
-			for (const [key, value] of Object.entries(savedEnv)) {
-				if (value === undefined) delete process.env[key];
-				else process.env[key] = value;
-			}
 			fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
 		}
 	});
@@ -6057,19 +6047,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.model, "github-copilot/gpt-5-mini");
 		assert.deepEqual(result.attemptedModels, ["github-copilot/gpt-5-mini"]);
-	});
-
-	it("projects an oversized turn_end aggregate without losing the foreground result", async () => {
-		mockPi.onCall({ jsonl: [
-			events.assistantMessage("result before oversized aggregate"),
-			{ type: "turn_end", message: {}, toolResults: [{ content: "x".repeat(MAX_CHILD_PENDING_LINE_BYTES) }] },
-			{ type: "agent_end", willRetry: false },
-			{ type: "agent_settled" },
-		] });
-		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Read parallel images", { acceptance: false });
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.protocolError, undefined);
-		assert.equal(getFinalOutput(result.messages), "result before oversized aggregate");
 	});
 
 	it("cancels final drain while agent_end reports a retry and waits for agent_settled", async () => {
@@ -7755,7 +7732,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const result = await runSync(tempDir, agents, "extension-worker", "Use fixture search", { runId: "missing-extension-tool" });
 
 		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /requested unavailable child tools: fixture_search/);
+		assert.match(result.error ?? "", /ran as a foreground child, which never loads the parent's ambient extensions, and these child tools were unavailable: fixture_search/);
+		assert.match(result.error ?? "", /must run as background children \(`async: true`\)/);
 		assert.match(result.error ?? "", /subagentOnlyExtensions/);
 		assert.match(result.error ?? "", /strict allowlist/);
 		assert.equal(result.modelAttempts?.length, 1);
@@ -7768,12 +7746,12 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const result = await runSync(tempDir, agents, "worker", "Implement the requested source fix", { runId: "missing-implementation-tool" });
 
 		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /requested unavailable child tools: fixture_search/);
+		assert.match(result.error ?? "", /these child tools were unavailable: fixture_search/);
 		assert.doesNotMatch(result.error ?? "", /completed without making edits/);
 		assert.equal(result.effects?.fileMutation?.status, "blocked");
 		assert.equal(result.effects?.fileMutation?.expected, true);
 		assert.equal(result.effects?.fileMutation?.attempted, false);
-		assert.match(result.effects?.fileMutation?.message ?? "", /requested unavailable child tools: fixture_search/);
+		assert.match(result.effects?.fileMutation?.message ?? "", /these child tools were unavailable: fixture_search/);
 	});
 
 	it("passes custom tool extensions through even when explicit extensions are allowlisted", { skip: process.platform === "win32" ? "extension path resolution intermittent on Windows CI" : undefined }, async () => {

@@ -9,7 +9,6 @@ import {
 	type RunFanoutRejection,
 } from "../../shared/types.ts";
 
-export const RUN_FANOUT_BUDGET_ENV = "PI_SUBAGENT_RUN_FANOUT_BUDGET";
 const RUN_FANOUT_ROOT = path.join(TEMP_ROOT_DIR, "run-fanout-budgets");
 
 interface ManifestV1 {
@@ -124,18 +123,6 @@ export function readRunFanoutBudgetDescriptor(asyncDir: string | undefined): Run
 	}
 }
 
-export function encodeRunFanoutBudgetDescriptor(descriptor: RunFanoutBudgetDescriptor): string {
-	return Buffer.from(JSON.stringify(validateRunFanoutBudgetDescriptor(descriptor)), "utf-8").toString("base64url");
-}
-
-export function decodeRunFanoutBudgetDescriptor(encoded: string | undefined): RunFanoutBudgetDescriptor | undefined {
-	if (!encoded) return undefined;
-	try {
-		return validateRunFanoutBudgetDescriptor(JSON.parse(Buffer.from(encoded, "base64url").toString("utf-8")));
-	} catch (error) {
-		throw new Error(`Invalid inherited run fan-out budget: ${error instanceof Error ? error.message : String(error)}`);
-	}
-}
 
 interface AdmissionLockOwner {
 	pid: number;

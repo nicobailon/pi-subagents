@@ -1,18 +1,17 @@
 /**
  * Scripted in-process child sessions for tests.
  *
- * Foreground runs create their child through `ChildSessionFactory`. This
- * factory replays the same scripted responses `createMockPi()` queues for
- * spawned background children, so one `mockPi.onCall(...)` feeds whichever
- * launch path a test exercises. Raw stdout is parsed as JSON event lines;
- * responses that only make sense for a process (exit signals, stderr capture,
- * protocol limits) are not supported here.
+ * Foreground runs and the detached async runner create their children through
+ * `ChildSessionFactory`. This factory replays the responses `createMockPi()`
+ * queues, so one `mockPi.onCall(...)` feeds whichever launch path a test
+ * exercises. Raw stdout is parsed as JSON event lines; `stderr` only names the
+ * failure a non-zero `exitCode` raises.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ChildSession, ChildSessionEvent, ChildSessionFactory, ChildSessionLaunch } from "../../src/runs/foreground/child-session.ts";
+import type { ChildSession, ChildSessionEvent, ChildSessionFactory, ChildSessionLaunch } from "../../src/runs/shared/child-session.ts";
 
 export interface FakeChildResponse {
 	output?: string;
@@ -120,7 +119,7 @@ export function fakeChildArgs(launch: ChildSessionLaunch, task: string): string[
 		if (launch.tools.length > 0) args.push("--tools", launch.tools.join(","));
 		else args.push("--no-tools");
 	} else if (launch.excludeTools?.length) args.push("--exclude-tools", launch.excludeTools.join(","));
-	args.push("--no-extensions");
+	if (!launch.ambientExtensions) args.push("--no-extensions");
 	for (const extensionPath of launch.extensionPaths) args.push("--extension", extensionPath);
 	if (launch.noContextFiles) args.push("--no-context-files");
 	if (launch.noSkills) args.push("--no-skills");
@@ -219,10 +218,17 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 				fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
 				fs.writeFileSync(sessionFile, "", { flag: "a" });
 			} else if (launch.storage.kind === "dir") {
-				sessionFile = path.join(launch.storage.sessionDir, `${new Date().toISOString().replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
+				// A real session writes its file on the first message; the scripted child leaves the directory empty.
 				fs.mkdirSync(launch.storage.sessionDir, { recursive: true });
-				fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 1, id: sessionId, timestamp: new Date().toISOString(), cwd: launch.cwd })}\n`);
 			}
+			/** Steers are also appended to `steers.jsonl` in the queue dir so a test can observe a child hosted in another process. */
+			const recordSteer = (text: string, mode: "steer" | "followUp"): void => {
+				try {
+					fs.appendFileSync(path.join(queueDir(), "steers.jsonl"), `${JSON.stringify({ sessionId, text, mode })}\n`, "utf-8");
+				} catch {
+					// Observability for tests only.
+				}
+			};
 			const emit = (event: unknown): void => {
 				const typed = event as ChildSessionEvent & { message?: AgentMessage };
 				if ((typed.type === "message_end" || typed.type === "tool_result_end") && typed.message) messages.push(typed.message);
@@ -350,9 +356,11 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 							tools: launch.tools,
 							excludeTools: launch.excludeTools,
 							extensionPaths: launch.extensionPaths,
+							ambientExtensions: launch.ambientExtensions,
 							hooks: launch.hooks.map((hook) => hook.name),
 							noSkills: launch.noSkills,
 							noContextFiles: launch.noContextFiles,
+							processEnv: launch.processEnv,
 						},
 						runtime: { ...launch.runtime, structuredOutput: launch.runtime.structuredOutput ? { schema: launch.runtime.structuredOutput.schema, acceptanceReport: launch.runtime.structuredOutput.acceptanceReport } : undefined },
 					}), "utf-8");
@@ -365,9 +373,11 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 				},
 				async steer(text) {
 					record.steers.push({ text, mode: "steer" });
+					recordSteer(text, "steer");
 				},
 				async followUp(text) {
 					record.steers.push({ text, mode: "followUp" });
+					recordSteer(text, "followUp");
 				},
 				async abort() {
 					record.aborted = true;

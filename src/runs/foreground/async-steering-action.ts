@@ -5,7 +5,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import type { AsyncStatus, Details, SubagentState, ToolBudgetConfig } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
-import { consumeSteerAcks, deliverInterruptRequest, queueRevivalBrief, requestAsyncSteer, type SteerDeliveryMode, type SteerRequest } from "../background/control-channel.ts";
+import { deliverInterruptRequest, queueRevivalBrief, requestAsyncSteer, type SteerDeliveryMode, type SteerRequest } from "../background/control-channel.ts";
 import { resolveAsyncResumeTarget } from "../background/async-resume.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { actionResultFromSteeringStatus, claimSteeringRecovery, createSteeringStatus, recordSteeringRequest, remainingSteeringRecoveryLimits, steeringReceipt, updateSteeringTarget, waitForSteeringAction } from "../background/steering.ts";
@@ -195,22 +195,6 @@ export async function steerAsyncRun(input: {
 				await new Promise<void>((resolve) => setTimeout(resolve, 50));
 			}
 			if (!paused) throw new Error("Source run did not reach confirmed paused state within 15 seconds; no replacement was launched and the recovery claim remains committed to prevent a delayed duplicate.");
-			let lateAckRecorded = false;
-			for (const ack of consumeSteerAcks(asyncDir)) {
-				if (!paused.steering?.recent.some((request) => request.id === ack.requestId && request.targets.some((target) => target.index === ack.index))) continue;
-				const state = ack.state === "delivered" ? "late" : "failed";
-				const reason = ack.state === "delivered" ? "acknowledged after recovery commit" : ack.message;
-				updateSteeringTarget(paused.steering, ack.requestId, ack.index, state, ack.ts, { reason });
-				const stepSteering = paused.steps?.[ack.index]?.steering;
-				if (stepSteering) updateSteeringTarget(stepSteering, ack.requestId, ack.index, state, ack.ts, { reason });
-				lateAckRecorded = true;
-				try {
-					fs.appendFileSync(path.join(asyncDir, "events.jsonl"), `${JSON.stringify({ type: ack.state === "delivered" ? "subagent.steer.delivered" : "subagent.steer.failed", ts: ack.ts, runId: status.runId, requestId: ack.requestId, index: ack.index, late: true, message: ack.message })}\n`);
-				} catch {
-					// Status remains authoritative when diagnostic event persistence fails.
-				}
-			}
-			if (lateAckRecorded) writeAtomicJson(path.join(asyncDir, "status.json"), paused);
 			let recoveryTarget;
 			try {
 				recoveryTarget = resolveAsyncResumeTarget(

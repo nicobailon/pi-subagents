@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
-import { afterEach, describe, it } from "node:test";
+import * as os from "node:os";
+import { describe, it } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { buildPiArgs, deriveForkPromptCacheKey, SUBAGENT_FORK_CACHE_KEY_ENV } from "../../src/runs/shared/pi-args.ts";
+import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
+import { deriveForkPromptCacheKey } from "../../src/runs/shared/child-tool-plan.ts";
 import { rewriteForkCacheProviderRequest } from "../../src/runs/shared/subagent-prompt-runtime.ts";
 
-const originalForkCacheKey = process.env[SUBAGENT_FORK_CACHE_KEY_ENV];
-
 const baseLaunch = {
-	baseArgs: [] as string[],
-	task: "test",
+	host: "parent" as const,
+	cwd: os.tmpdir(),
+	childAgentName: "worker",
+	childIndex: 0,
 	sessionEnabled: false,
 	inheritProjectContext: false,
 	inheritGlobalContext: false,
@@ -18,11 +20,6 @@ const baseLaunch = {
 function providerContext(api: string): Pick<ExtensionContext, "model"> {
 	return { model: { api } };
 }
-
-afterEach(() => {
-	if (originalForkCacheKey === undefined) delete process.env[SUBAGENT_FORK_CACHE_KEY_ENV];
-	else process.env[SUBAGENT_FORK_CACHE_KEY_ENV] = originalForkCacheKey;
-});
 
 describe("fork prompt cache keys", () => {
 	it("derives a bounded sibling cache key from the parent session id", () => {
@@ -43,13 +40,11 @@ describe("fork prompt cache keys", () => {
 		assert.notEqual(deriveForkPromptCacheKey(`${prefix}/one.jsonl`), deriveForkPromptCacheKey(`${prefix}/two.jsonl`));
 	});
 
-	it("passes the explicit fork cache key without inheriting ambient values", () => {
-		process.env[SUBAGENT_FORK_CACHE_KEY_ENV] = "leaked-parent-value";
-
-		assert.equal(buildPiArgs(baseLaunch).env[SUBAGENT_FORK_CACHE_KEY_ENV], undefined);
+	it("passes only the explicit fork cache key to the child config", () => {
+		assert.equal(buildInProcessChildLaunch(baseLaunch).config.forkCacheKey, undefined);
 
 		const forkCacheKey = deriveForkPromptCacheKey("parent-session");
-		assert.equal(buildPiArgs({ ...baseLaunch, forkCacheKey }).env[SUBAGENT_FORK_CACHE_KEY_ENV], forkCacheKey);
+		assert.equal(buildInProcessChildLaunch({ ...baseLaunch, forkCacheKey }).config.forkCacheKey, forkCacheKey);
 	});
 
 	it("rewrites only existing OpenAI-style string prompt cache keys", () => {

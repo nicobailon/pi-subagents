@@ -31,6 +31,16 @@ afterEach(() => {
 	}
 });
 
+const RUNNER_CHILD_SESSION_FACTORY = path.resolve(import.meta.dirname, "../support/runner-child-session-factory.ts");
+
+/** Queue one scripted response every child session the runner creates replays. */
+function scriptChildSessions(dir: string, response: object): string {
+	const queueDir = path.join(dir, "child-sessions");
+	fs.mkdirSync(queueDir, { recursive: true });
+	fs.writeFileSync(path.join(queueDir, "default-response.json"), JSON.stringify(response), "utf-8");
+	return queueDir;
+}
+
 function runProcess(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<number | null> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(command, args, { cwd, stdio: "inherit", shell: false, env });
@@ -56,7 +66,7 @@ async function waitForFileCount(dir: string, count: number): Promise<void> {
 }
 
 describe("Orca progress-tab observer", () => {
-	it("mirrors a native Pi child without replacing its execution path", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+	it("mirrors an in-process Pi child without replacing its execution path", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-orca-native-"));
 		tempDirs.push(dir);
 		const asyncDir = path.join(dir, "async");
@@ -72,7 +82,7 @@ describe("Orca progress-tab observer", () => {
 			{ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "native Pi result" }], stopReason: "stop", usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
 			{ type: "agent_settled" },
 		];
-		const fakePi = writeNodeCommand(dir, "pi", `for (const event of ${JSON.stringify(childEvents)}) process.stdout.write(JSON.stringify(event)+'\\n')`);
+		const queueDir = scriptChildSessions(dir, { jsonl: childEvents });
 
 		const resultPath = path.join(dir, "result.json");
 		const configPath = path.join(dir, "config.json");
@@ -93,6 +103,7 @@ describe("Orca progress-tab observer", () => {
 			artifactConfig: { enabled: false },
 			asyncDir,
 			resultMode: "single",
+			childSessionFactoryModule: RUNNER_CHILD_SESSION_FACTORY,
 		}));
 		const repo = path.resolve(import.meta.dirname, "../..");
 		const exitCode = await runProcess(
@@ -103,7 +114,7 @@ describe("Orca progress-tab observer", () => {
 				...process.env,
 				PI_CODING_AGENT_DIR: agentDir,
 				PI_SUBAGENT_ORCA_BINARY: fakeOrca,
-				PI_SUBAGENT_PI_BINARY: fakePi,
+				MOCK_PI_QUEUE_DIR: queueDir,
 				ORCA_TEST_CAPTURE: capture,
 			},
 		);
@@ -132,7 +143,7 @@ describe("Orca progress-tab observer", () => {
 		fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
 		fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ orcaProgressTabs: { enabled: true } }));
 		const fakeOrca = writeNodeCommand(dir, "orca", "const fs=require('fs'),path=require('path');const args=process.argv.slice(2);fs.writeFileSync(path.join(process.env.ORCA_TEST_CAPTURE_DIR, process.pid+'.json'),JSON.stringify(args))");
-		const fakePi = writeNodeCommand(dir, "pi", "process.stdout.write(JSON.stringify({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'parallel result'}]}})+'\\n')");
+		const queueDir = scriptChildSessions(dir, { output: "parallel result" });
 
 		const resultPath = path.join(dir, "result.json");
 		const configPath = path.join(dir, "config.json");
@@ -152,6 +163,7 @@ describe("Orca progress-tab observer", () => {
 			artifactConfig: { enabled: false },
 			asyncDir,
 			resultMode: "parallel",
+			childSessionFactoryModule: RUNNER_CHILD_SESSION_FACTORY,
 		}));
 		const repo = path.resolve(import.meta.dirname, "../..");
 		const exitCode = await runProcess(
@@ -162,7 +174,7 @@ describe("Orca progress-tab observer", () => {
 				...process.env,
 				PI_CODING_AGENT_DIR: agentDir,
 				PI_SUBAGENT_ORCA_BINARY: fakeOrca,
-				PI_SUBAGENT_PI_BINARY: fakePi,
+				MOCK_PI_QUEUE_DIR: queueDir,
 				ORCA_TEST_CAPTURE_DIR: captures,
 			},
 		);

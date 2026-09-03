@@ -8,8 +8,6 @@ import {
 	claimRunFanoutBatch,
 	claimRunFanoutBatchWithCommit,
 	createRunFanoutBudget,
-	decodeRunFanoutBudgetDescriptor,
-	encodeRunFanoutBudgetDescriptor,
 	getRunFanoutBudgetSnapshot,
 	RunFanoutLimitError,
 	validateRunFanoutBudgetDescriptor,
@@ -120,8 +118,7 @@ describe("run fan-out budget", () => {
 	it("persists claims and rejects the responsible next path at the exact cap", () => {
 		const descriptor = budget(2);
 		assert.deepEqual(claimRunFanoutBatch(descriptor, ["tasks[0]", "tasks[1]"]), { used: 2, limit: 2, remaining: 0 });
-		const restored = decodeRunFanoutBudgetDescriptor(encodeRunFanoutBudgetDescriptor(descriptor));
-		assert.deepEqual(getRunFanoutBudgetSnapshot(restored!), { used: 2, limit: 2, remaining: 0 });
+		assert.deepEqual(getRunFanoutBudgetSnapshot(descriptor), { used: 2, limit: 2, remaining: 0 });
 		assert.throws(() => claimRunFanoutBatch(descriptor, ["tasks[2]"]), (error: unknown) => {
 			assert.ok(error instanceof RunFanoutLimitError);
 			assert.equal(error.rejection.path, "tasks[2]");

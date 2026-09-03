@@ -6,7 +6,7 @@ import { discoverAgents } from "../agents/agents.ts";
 import { getArtifactsDir } from "../shared/artifacts.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { resolveWaitToolConfig } from "../runs/background/wait-config.ts";
-import { readChildRuntimeConfigFromEnv, type ChildRuntimeConfig } from "../runs/shared/child-runtime-config.ts";
+import type { ChildRuntimeConfig } from "../runs/shared/child-runtime-config.ts";
 import { readNestedControlRequests, resolveInheritedNestedRoute, type NestedRoute, writeNestedControlResult } from "../runs/shared/nested-events.ts";
 import { deliverSubagentIntercomMessageEvent } from "../intercom/result-intercom.ts";
 import { resolveSubagentIntercomTarget } from "../intercom/intercom-bridge.ts";
@@ -141,12 +141,8 @@ function startNestedControlInboxListener(pi: ExtensionAPI, state: SubagentState,
 	return () => clearInterval(timer);
 }
 
-/**
- * Register the child-side `subagent` tool for fanout-authorized children.
- * Spawned children read their config from the environment; in-process children
- * receive it from the parent.
- */
-export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, childConfig: ChildRuntimeConfig = readChildRuntimeConfigFromEnv()): void {
+/** Register the child-side `subagent` tool for fanout-authorized children. */
+export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, childConfig: ChildRuntimeConfig): void {
 	if (!childConfig.fanoutChild) return;
 
 	const globalStore = globalThis as Record<string, unknown>;

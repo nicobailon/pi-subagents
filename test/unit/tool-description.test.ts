@@ -15,7 +15,7 @@ import {
 	SUBAGENT_TOOL_PROMPT_GUIDELINES,
 	SUBAGENT_TOOL_PROMPT_SNIPPET,
 } from "../../src/extension/tool-description.ts";
-import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
+import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/child-runtime-config.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -26,7 +26,6 @@ function escapeRegex(value: string): string {
 function parentToolEnv(agentDir?: string): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 	delete env[SUBAGENT_CHILD_ENV];
-	delete env[SUBAGENT_FANOUT_CHILD_ENV];
 	if (agentDir) env.PI_CODING_AGENT_DIR = agentDir;
 	return env;
 }

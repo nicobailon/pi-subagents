@@ -6,14 +6,11 @@ import { describe, it } from "node:test";
 import {
 	closeSteerInbox,
 	consumeInterruptRequest,
-	consumeSteerAcks,
-	consumeSteerCapabilities,
 	consumeSteerRequests,
 	consumeStopRequest,
 	consumeStopRequestPayload,
 	consumeStopRequestPayloads,
 	deliverInterruptRequest,
-	enqueueStepSteer,
 	interruptRequestPath,
 	MAX_STEER_QUEUE_SIZE,
 	queueRevivalBrief,
@@ -21,16 +18,10 @@ import {
 	requestAsyncInterrupt,
 	requestAsyncSteer,
 	requestAsyncStop,
-	steerAckPathFromDir,
-	steerAcksDir,
 	steerInboxClosedPath,
-	steerCapabilityPath,
 	stopRequestsDir,
-	writeSteerAck,
-	writeSteerCapability,
 	stopRequestPath,
 	steerRequestsDir,
-	stepSteerInboxDir,
 	watchAsyncControlInbox,
 } from "../../src/runs/background/control-channel.ts";
 
@@ -265,19 +256,6 @@ describe("control channel: request file", () => {
 		}
 	});
 
-	it("enqueues a steer request for a specific child inbox", () => {
-		const asyncDir = tmpAsyncDir("pi-control-step-steer-");
-		try {
-			enqueueStepSteer(asyncDir, 2, { type: "steer", id: "s1", ts: 300, message: "focus", targetIndexes: [0, 1] });
-			const request = JSON.parse(fs.readFileSync(path.join(stepSteerInboxDir(asyncDir, 2), fs.readdirSync(stepSteerInboxDir(asyncDir, 2))[0]!), "utf-8"));
-			assert.equal(request.targetIndex, 2);
-			assert.equal(request.targetIndexes, undefined);
-			assert.equal(request.message, "focus");
-		} finally {
-			cleanup(asyncDir);
-		}
-	});
-
 	it("bounds retained revival briefs and keeps them FIFO", () => {
 		const asyncDir = tmpAsyncDir("pi-control-revival-brief-");
 		try {
@@ -308,47 +286,6 @@ describe("control channel: request file", () => {
 		}
 	});
 
-	it("writes strict capabilities and acknowledgments with safe paths", () => {
-		const asyncDir = tmpAsyncDir("pi-control-steer-ack-");
-		try {
-			const capabilityPath = writeSteerCapability(asyncDir, { index: 0, pid: 42, readyAt: 100, supported: true });
-			assert.equal(capabilityPath, steerCapabilityPath(asyncDir, 0));
-			writeSteerAck(asyncDir, { requestId: "../request", index: 0, ts: 101, state: "queued", deliveryStatus: "queued", message: "accepted" });
-			assert.equal(path.dirname(steerAckPathFromDir(steerAcksDir(asyncDir, 0), "../request")), steerAcksDir(asyncDir, 0));
-			assert.deepEqual(consumeSteerCapabilities(asyncDir), [{ type: "steer-capability", protocolVersion: 1, index: 0, pid: 42, readyAt: 100, supported: true }]);
-			assert.deepEqual(consumeSteerAcks(asyncDir), [{ type: "steer-ack", protocolVersion: 1, requestId: "../request", index: 0, ts: 101, state: "queued", deliveryStatus: "queued", message: "accepted" }]);
-			assert.deepEqual(consumeSteerAcks(asyncDir), []);
-		} finally {
-			cleanup(asyncDir);
-		}
-	});
-
-	it("preserves queued and delivered receipts for the same request", () => {
-		const asyncDir = tmpAsyncDir("pi-control-steer-ack-order-");
-		try {
-			writeSteerAck(asyncDir, { requestId: "follow", index: 0, ts: 101, state: "queued", deliveryStatus: "queued", message: "queued" });
-			writeSteerAck(asyncDir, { requestId: "follow", index: 0, ts: 102, state: "delivered", deliveryStatus: "delivered", message: "delivered" });
-			assert.deepEqual(consumeSteerAcks(asyncDir).map((ack) => ack.state), ["queued", "delivered"]);
-		} finally {
-			cleanup(asyncDir);
-		}
-	});
-
-	it("ignores malformed capabilities and acknowledgments", () => {
-		const asyncDir = tmpAsyncDir("pi-control-steer-malformed-");
-		try {
-			fs.mkdirSync(path.join(asyncDir, "control", "steer-capabilities"), { recursive: true });
-			fs.writeFileSync(steerCapabilityPath(asyncDir, 0), JSON.stringify({ type: "steer-capability", protocolVersion: 99 }), "utf-8");
-			fs.mkdirSync(steerAcksDir(asyncDir, 0), { recursive: true });
-			fs.writeFileSync(path.join(steerAcksDir(asyncDir, 0), "bad.json"), JSON.stringify({ type: "steer-ack", protocolVersion: 1, requestId: "", index: 0, ts: 1, state: "delivered", message: "bad" }), "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "control", "steer-acks", "1"), "not a directory", "utf-8");
-			writeSteerAck(asyncDir, { requestId: "valid", index: 2, ts: 2, state: "delivered", message: "accepted" });
-			assert.deepEqual(consumeSteerCapabilities(asyncDir), []);
-			assert.deepEqual(consumeSteerAcks(asyncDir), [{ type: "steer-ack", protocolVersion: 1, requestId: "valid", index: 2, ts: 2, state: "delivered", message: "accepted" }]);
-		} finally {
-			cleanup(asyncDir);
-		}
-	});
 });
 
 describe("control channel: deliverInterruptRequest", () => {

@@ -6,14 +6,13 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/subagent-wait.ts";
-import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
+import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/child-runtime-config.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 function parentToolEnv(agentDir?: string): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 	delete env[SUBAGENT_CHILD_ENV];
-	delete env[SUBAGENT_FANOUT_CHILD_ENV];
 	delete env[WAIT_TOOL_ENABLED_ENV];
 	if (agentDir) env.PI_CODING_AGENT_DIR = agentDir;
 	return env;
@@ -1141,7 +1140,7 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
-	it("returns before registering anything for non-fanout children", () => {
+	it("returns before registering anything in a child-hosting process", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
 			const calls = [];
@@ -1169,16 +1168,15 @@ describe("subagent extension child mode", () => {
 				"--eval",
 				script,
 			],
-			{ cwd: projectRoot, env: { ...parentToolEnv(), [SUBAGENT_CHILD_ENV]: "1", [SUBAGENT_FANOUT_CHILD_ENV]: "0" }, stdio: "pipe" },
+			{ cwd: projectRoot, env: { ...parentToolEnv(), [SUBAGENT_CHILD_ENV]: "1" }, stdio: "pipe" },
 		);
 	});
 
-	it("returns before registering anything for fanout children", () => {
+	it("returns before registering anything when the child host flag is set after import", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
-			import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
+			import { SUBAGENT_CHILD_ENV } from "./src/runs/shared/child-runtime-config.ts";
 			process.env[SUBAGENT_CHILD_ENV] = "1";
-			process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
 			const calls = [];
 			const fakePi = new Proxy({}, {
 				get(target, prop) {
@@ -1213,9 +1211,9 @@ describe("subagent extension child mode", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
 			import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
-			import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
+			import { SUBAGENT_CHILD_ENV } from "./src/runs/shared/child-runtime-config.ts";
 			process.env[SUBAGENT_CHILD_ENV] = "1";
-			process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
+			const childRuntime = { fanoutChild: true, depth: 1, waitTool: { enabled: true }, fast: false };
 
 			const registeredNames = new Set();
 			const registrations = [];
@@ -1234,7 +1232,7 @@ describe("subagent extension child mode", () => {
 			}
 
 			registerSubagentExtension(makePi("index.ts"));
-			registerFanoutChildSubagentExtension(makePi("fanout-child.ts"));
+			registerFanoutChildSubagentExtension(makePi("fanout-child.ts"), childRuntime);
 			if (registrations.length !== 1 || registrations[0].name !== "subagent" || registrations[0].source !== "fanout-child.ts") {
 				throw new Error("expected only fanout-child.ts to register subagent, got " + JSON.stringify(registrations));
 			}
@@ -1258,16 +1256,13 @@ describe("subagent extension child mode", () => {
 		const script = String.raw`
 			import assert from "node:assert/strict";
 			import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
-			import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
-			process.env[SUBAGENT_CHILD_ENV] = "1";
-			process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
 			let registeredTool;
 			const fakePi = {
 				events: { on() { return () => {}; }, emit() {} },
 				registerTool(tool) { registeredTool = tool; },
 				getSessionName() { return undefined; },
 			};
-			registerFanoutChildSubagentExtension(fakePi);
+			registerFanoutChildSubagentExtension(fakePi, { fanoutChild: true, depth: 1, waitTool: { enabled: true }, fast: false });
 			if (!registeredTool) throw new Error("tool not registered");
 			const ctx = {
 				cwd: process.cwd(),

@@ -1,19 +1,30 @@
 /**
- * In-process child sessions for foreground runs.
+ * In-process child sessions.
  *
- * A foreground child is a pi `AgentSession` created inside the parent process.
- * The factory is injectable so tests can script a child without the real
- * runtime; the default implementation wraps `createAgentSession` from the host
- * pi package and shares one `ModelRuntime` across every child it creates.
+ * A child is a pi `AgentSession` created inside the process that owns it: the
+ * parent pi process for foreground children, the detached runner process for
+ * background children. The factory is injectable so tests can script a child
+ * without the real runtime; the default implementation wraps
+ * `createAgentSession` from a pi package module and shares one `ModelRuntime`
+ * across every child it creates.
  */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "../../shared/utils.ts";
-import type { ChildRuntimeConfig } from "../shared/child-runtime-config.ts";
+import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 
 export interface ChildSessionEvent {
 	type: string;
 	[key: string]: unknown;
+}
+
+/** Mirror pi's JSON event projection: `message_update` drops the partial message. */
+export function projectChildSessionEventForJson(event: ChildSessionEvent): unknown {
+	if (event.type !== "message_update") return event;
+	const assistantMessageEvent = event.assistantMessageEvent as Record<string, unknown> | undefined;
+	if (!assistantMessageEvent || typeof assistantMessageEvent !== "object") return event;
+	const { partial: _partial, ...delta } = assistantMessageEvent;
+	return { type: "message_update", usage: (event.message as { usage?: unknown } | undefined)?.usage, assistantMessageEvent: delta };
 }
 
 export interface ChildSessionExtensionError {
@@ -43,11 +54,22 @@ export interface ChildSessionLaunch {
 	excludeTools?: string[];
 	/** Extension files loaded for this child in addition to the inline hooks. */
 	extensionPaths: string[];
+	/**
+	 * Discover the ambient extensions (agent dir, project, settings) the way a
+	 * `pi` process would. False loads only `extensionPaths` and `hooks`.
+	 */
+	ambientExtensions: boolean;
 	hooks: ChildHookExtension[];
 	noSkills: boolean;
 	noContextFiles: boolean;
 	systemPrompt?: string;
 	appendSystemPrompt?: string;
+	/**
+	 * Environment values that extensions loaded into the child read from
+	 * `process.env`. Applied to the hosting process before the session is
+	 * created; an undefined value removes the variable.
+	 */
+	processEnv?: Record<string, string | undefined>;
 	/** The typed runtime config the hooks were built from; informational for factories. */
 	runtime: ChildRuntimeConfig;
 	onExtensionError?: (error: ChildSessionExtensionError) => void;
@@ -73,19 +95,35 @@ export interface ChildSessionFactory {
 	dispose(): Promise<void>;
 }
 
-type PiCodingAgentModule = typeof import("@earendil-works/pi-coding-agent");
+export type PiCodingAgentModule = typeof import("@earendil-works/pi-coding-agent");
 
-async function loadPiCodingAgent(): Promise<PiCodingAgentModule> {
-	return import("@earendil-works/pi-coding-agent");
+export interface DefaultChildSessionFactoryOptions {
+	/**
+	 * Loads the pi package the sessions are created from. The parent process
+	 * uses the host's in-process module; the detached runner imports the
+	 * installed package by absolute path.
+	 */
+	loadPiCodingAgent?: () => Promise<PiCodingAgentModule>;
+}
+
+function applyProcessEnv(values: Record<string, string | undefined> | undefined): void {
+	if (!values) return;
+	for (const [name, value] of Object.entries(values)) {
+		if (value === undefined) delete process.env[name];
+		else process.env[name] = value;
+	}
 }
 
 /**
  * Default factory: real pi sessions sharing one `ModelRuntime`, created lazily
  * on the first child launch and dropped on `dispose()`.
  */
-export function createDefaultChildSessionFactory(): ChildSessionFactory {
+export function createDefaultChildSessionFactory(options: DefaultChildSessionFactoryOptions = {}): ChildSessionFactory {
+	const loadPiCodingAgent = options.loadPiCodingAgent ?? (() => import("@earendil-works/pi-coding-agent"));
 	let runtime: ReturnType<PiCodingAgentModule["ModelRuntime"]["create"]> | undefined;
 	const live = new Set<ChildSession>();
+	/** Extension shutdowns still running for disposed children; `dispose()` waits for them. */
+	const shutdowns = new Set<Promise<void>>();
 	const sharedRuntime = async (pi: PiCodingAgentModule) => {
 		runtime ??= pi.ModelRuntime.create().catch((error: unknown) => {
 			runtime = undefined;
@@ -99,11 +137,12 @@ export function createDefaultChildSessionFactory(): ChildSessionFactory {
 			const modelRuntime = await sharedRuntime(pi);
 			const agentDir = getAgentDir();
 			const settingsManager = pi.SettingsManager.create(launch.cwd, agentDir);
+			applyProcessEnv(launch.processEnv);
 			const loader = new pi.DefaultResourceLoader({
 				cwd: launch.cwd,
 				agentDir,
 				settingsManager,
-				noExtensions: true,
+				noExtensions: !launch.ambientExtensions,
 				noSkills: launch.noSkills,
 				noPromptTemplates: true,
 				noThemes: true,
@@ -143,6 +182,19 @@ export function createDefaultChildSessionFactory(): ChildSessionFactory {
 				onError: (error) => launch.onExtensionError?.({ extensionPath: error.extensionPath, event: error.event, error: error.error }),
 			});
 			let disposed = false;
+			// pi's own hosts emit `session_shutdown` before disposing a session so the
+			// extensions loaded into it (ambient extensions included) release their
+			// watchers, servers, and timers. Do the same, then dispose.
+			const shutdown = async (): Promise<void> => {
+				try {
+					const runner = session.extensionRunner;
+					if (runner.hasHandlers("session_shutdown")) await runner.emit({ type: "session_shutdown", reason: "quit" });
+				} catch (error) {
+					launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
+				} finally {
+					session.dispose();
+				}
+			};
 			const child: ChildSession = {
 				subscribe: (listener) => session.subscribe((event) => listener(event as unknown as ChildSessionEvent)),
 				prompt: (text) => session.prompt(text),
@@ -153,7 +205,9 @@ export function createDefaultChildSessionFactory(): ChildSessionFactory {
 					if (disposed) return;
 					disposed = true;
 					live.delete(child);
-					session.dispose();
+					const pending = shutdown();
+					shutdowns.add(pending);
+					void pending.finally(() => shutdowns.delete(pending));
 				},
 				get messages() { return session.messages; },
 				get sessionFile() { return session.sessionFile; },
@@ -170,12 +224,14 @@ export function createDefaultChildSessionFactory(): ChildSessionFactory {
 			for (const child of children) {
 				try { child.dispose(); } catch { /* best effort */ }
 			}
+			await Promise.allSettled([...shutdowns]);
 			runtime = undefined;
 		},
 	};
 }
 
 let activeFactory: ChildSessionFactory | undefined;
+let activeFactoryModule: string | undefined;
 
 /** The process-wide factory foreground runs use unless a run passes its own. */
 export function childSessionFactory(): ChildSessionFactory {
@@ -189,6 +245,19 @@ export function childSessionFactory(): ChildSessionFactory {
  */
 export function setChildSessionFactory(factory: ChildSessionFactory | undefined): void {
 	activeFactory = factory;
+}
+
+/**
+ * Module path the detached background runner imports its child session factory
+ * from. Tests point it at a scripted factory; production launches leave it
+ * unset and the runner creates real sessions from the installed pi package.
+ */
+export function childSessionFactoryModule(): string | undefined {
+	return activeFactoryModule;
+}
+
+export function setChildSessionFactoryModule(modulePath: string | undefined): void {
+	activeFactoryModule = modulePath;
 }
 
 /** Abort and dispose every live in-process child and release the shared runtime. */

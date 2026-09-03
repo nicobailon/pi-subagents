@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
 	DEFAULT_TOOL_BUDGET_BLOCK,
-	decodeToolBudgetEnv,
-	encodeToolBudgetEnv,
 	initialToolBudgetState,
 	shouldBlockToolForBudget,
 	toolBudgetBlockedMessage,
@@ -39,14 +37,6 @@ describe("tool-budget module", () => {
 		assert.equal(validateToolBudgetConfig({ soft: 5, hard: 4 }).error, "toolBudget.soft must be <= toolBudget.hard.");
 		assert.equal(validateToolBudgetConfig({ hard: 4, block: [] }).error, "toolBudget.block must contain at least one tool name.");
 		assert.equal(validateToolBudgetConfig({ hard: 4, block: [""] }).error, "toolBudget.block must contain non-empty tool names.");
-	});
-
-	it("serializes and decodes env config", () => {
-		const budget = { soft: 2, hard: 4, block: ["read"] };
-		assert.deepEqual(decodeToolBudgetEnv(encodeToolBudgetEnv(budget)), budget);
-		const zeroBudget = { hard: 0, block: "*" as const };
-		assert.throws(() => decodeToolBudgetEnv(encodeToolBudgetEnv(zeroBudget)), /PI_SUBAGENT_TOOL_BUDGET\.hard must be an integer >= 1/);
-		assert.deepEqual(decodeToolBudgetEnv(encodeToolBudgetEnv(zeroBudget), { allowZero: true }), zeroBudget);
 	});
 
 	it("tracks state and block decisions", () => {

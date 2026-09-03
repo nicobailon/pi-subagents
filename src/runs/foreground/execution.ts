@@ -63,11 +63,11 @@ import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import { resolvePermissionRules } from "../shared/permissions.ts";
-import { applyThinkingSuffix, deriveForkPromptCacheKey } from "../shared/pi-args.ts";
+import { applyThinkingSuffix, deriveForkPromptCacheKey } from "../shared/child-tool-plan.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
-import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
-import { resolveEffectiveThinking, type ThinkingLevel } from "../../shared/model-info.ts";
-import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
+import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
+import { resolveEffectiveThinking } from "../../shared/model-info.ts";
+import { assertThinkingWithinCeiling, intersectThinkingCeilings } from "../../shared/thinking-ceiling.ts";
 import { MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, MISSING_STRUCTURED_OUTPUT_CALL_ERROR } from "../shared/structured-output.ts";
 import { formatMidToolExitError, isOrdinaryToolForMidToolExit } from "../shared/process-signal.ts";
 import { formatChildToolDiagnostic } from "../shared/tool-availability.ts";
@@ -99,7 +99,7 @@ import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.t
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
 import { consumeWorkflowChildPermit } from "../../shared/workflow-child-permit.ts";
-import { projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleState } from "../shared/child-protocol.ts";
+import { projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleState } from "../shared/child-lifecycle.ts";
 import {
 	acceptChildWatchdogEvent,
 	applyChildWatchdogMessage,
@@ -109,8 +109,8 @@ import {
 	type ChildWatchdogStateSnapshot,
 	type ChildWatchdogStatusEvent,
 } from "../../watchdog/child-status.ts";
-import { buildInProcessChildLaunch } from "./child-launch.ts";
-import { childSessionFactory, type ChildSession, type ChildSessionEvent } from "./child-session.ts";
+import { buildInProcessChildLaunch } from "../shared/child-launch.ts";
+import { childSessionFactory, projectChildSessionEventForJson, type ChildSession, type ChildSessionEvent } from "../shared/child-session.ts";
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
 const acceptanceOutputByResult = new WeakMap<SingleResult, string>();
@@ -343,22 +343,6 @@ type AbortRecoverySingleResult = SingleResult & { [AFTER_COMPACTION_SETTLEMENT]?
 
 const STOPPED_BEFORE_COMPLETION_ERROR = "Subagent stopped before completion.";
 
-/** Mirror pi's JSON event projection: `message_update` drops the partial message. */
-function projectJsonlEvent(event: ChildSessionEvent): unknown {
-	if (event.type !== "message_update") return event;
-	const assistantMessageEvent = event.assistantMessageEvent as Record<string, unknown> | undefined;
-	if (!assistantMessageEvent || typeof assistantMessageEvent !== "object") return event;
-	const { partial: _partial, ...delta } = assistantMessageEvent;
-	return { type: "message_update", usage: (event.message as { usage?: unknown } | undefined)?.usage, assistantMessageEvent: delta };
-}
-
-function inheritedEnvCapabilityCeiling(options: RunSyncOptions): ResolvedSubagentCapabilityCeiling | undefined {
-	return options.childRuntime ? options.childRuntime.capabilityCeiling : decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]);
-}
-
-function inheritedEnvThinkingCeiling(options: RunSyncOptions): ThinkingLevel | undefined {
-	return options.childRuntime ? options.childRuntime.thinkingCeiling : decodeThinkingCeiling(process.env[SUBAGENT_THINKING_CEILING_ENV]);
-}
 
 async function runSingleAttempt(
 	runtimeCwd: string,
@@ -449,6 +433,7 @@ async function runSingleAttempt(
 		maxSubagentDepth: options.maxSubagentDepth,
 		runtimeSnapshotHost: options.runtimeSnapshotHost,
 		inherited: options.childRuntime,
+		host: "parent",
 	});
 	const { toolPlan, capabilityAudit, warnings, launchResolvedExtensions, capture } = launch;
 	if (!shared.launchWarnings.emitted && warnings.length > 0) {
@@ -989,7 +974,7 @@ async function runSingleAttempt(
 
 		const processEvent = (evt: ChildSessionEvent & { message?: Message; toolName?: string; toolCallId?: string; args?: unknown; willRetry?: unknown }) => {
 			if (lifecycleFinished) return;
-			jsonlWriter.writeLine(JSON.stringify(projectJsonlEvent(evt)));
+			jsonlWriter.writeLine(JSON.stringify(projectChildSessionEventForJson(evt)));
 			shared.transcriptWriter?.writeChildEvent(evt);
 			shared.orcaProgressTab?.event(evt);
 			if (evt.type === "compaction_start") compactionStartedReceived = true;
@@ -1279,7 +1264,7 @@ async function runSingleAttempt(
 			sessionSettled = true;
 			clearFinalDrainTimers();
 			const diagnostic = capture.toolDiagnostic();
-			const toolDiagnosticError = diagnostic ? formatChildToolDiagnostic(diagnostic) : undefined;
+			const toolDiagnosticError = diagnostic ? formatChildToolDiagnostic(diagnostic, { host: "parent" }) : undefined;
 			toolAvailabilityError = toolDiagnosticError;
 			result.runtimeAcknowledgedExtensions = capture.runtimeAcknowledgedExtensions();
 			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
@@ -1641,7 +1626,7 @@ async function runSyncCompletionInner(
 	}
 	options = {
 		...options,
-		capabilityCeiling: intersectSubagentCapabilityCeilings(options.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(options.parentSessionId), inheritedEnvCapabilityCeiling(options)),
+		capabilityCeiling: intersectSubagentCapabilityCeilings(options.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(options.parentSessionId), options.childRuntime?.capabilityCeiling),
 	};
 	const childSessionName = deriveChildSessionName({ agent: agentName, task });
 	const agent = agents.find((a) => a.name === agentName);
@@ -1663,7 +1648,7 @@ async function runSyncCompletionInner(
 		thinkingCeiling: intersectThinkingCeilings(
 			options.thinkingCeiling,
 			agent.maxThinking,
-			inheritedEnvThinkingCeiling(options),
+			options.childRuntime?.thinkingCeiling,
 		),
 	};
 	try {

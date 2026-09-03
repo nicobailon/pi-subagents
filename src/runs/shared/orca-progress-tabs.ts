@@ -56,7 +56,8 @@ export interface OrcaProgressTab {
 	append(text: string): void;
 	section(input: { agent: string; index: number; count: number }): void;
 	event(event: { type?: string; message?: Message; toolName?: string; args?: unknown }): void;
-	finish(status: "completed" | "failed" | "stopped", sessionFile?: string): void;
+	/** Resolves once the mirrored log and its done marker are on disk, so a host may exit afterwards. */
+	finish(status: "completed" | "failed" | "stopped", sessionFile?: string): Promise<void>;
 }
 
 function executableFile(candidate: string): boolean {
@@ -475,7 +476,7 @@ export function createOrcaProgressTab(input: {
 			}
 		},
 		finish(status, sessionFile) {
-			if (!available || finished) return;
+			if (!available || finished) return Promise.resolve();
 			finished = true;
 			const sessionId = status === "completed" ? resolvePiSessionId(sessionFile) : undefined;
 			let verifiedSessionFile: string | undefined;
@@ -488,11 +489,15 @@ export function createOrcaProgressTab(input: {
 			const truncation = truncated ? `\n[progress mirror truncated at ${MAX_MIRROR_BYTES} bytes]\n` : "";
 			let footer = `${truncation}\n${"─".repeat(48)}\n${terminalMessage}\n`;
 			if (scheduledBytes + Buffer.byteLength(footer) > MAX_MIRROR_BYTES) footer = `\n${status}\n`;
-			logStream.end(footer, () => {
-				if (!available) return;
-				try { fs.writeFileSync(donePath, `${status}\n`, { encoding: "utf-8", mode: 0o600 }); } catch { /* best effort */ }
-				cleanupPaths = [logPath, donePath];
-				scheduleDeferredCleanup();
+			return new Promise<void>((resolve) => {
+				logStream.end(footer, () => {
+					if (available) {
+						try { fs.writeFileSync(donePath, `${status}\n`, { encoding: "utf-8", mode: 0o600 }); } catch { /* best effort */ }
+						cleanupPaths = [logPath, donePath];
+						scheduleDeferredCleanup();
+					}
+					resolve();
+				});
 			});
 		},
 	};

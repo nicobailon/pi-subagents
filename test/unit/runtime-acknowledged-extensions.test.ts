@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { MAX_RUNTIME_ACKNOWLEDGED_EXTENSION_FILE_BYTES, isRuntimeAcknowledgedExtensionId, projectRuntimeAcknowledgedExtensions, readRuntimeAcknowledgedExtensions, sanitizeRuntimeAcknowledgedExtensions } from "../../src/runs/shared/runtime-acknowledged-extensions.ts";
+import { isRuntimeAcknowledgedExtensionId, projectRuntimeAcknowledgedExtensions, sanitizeRuntimeAcknowledgedExtensions } from "../../src/runs/shared/runtime-acknowledged-extensions.ts";
 
 describe("runtime acknowledged extension projection", () => {
 	it("validates opaque ids without path-like content", () => {
@@ -36,17 +34,5 @@ describe("runtime acknowledged extension projection", () => {
 		});
 		assert.equal(sanitizeRuntimeAcknowledgedExtensions({ version: 1, source: "launch-resolved", ids: ["ok"] }), undefined);
 		assert.equal(sanitizeRuntimeAcknowledgedExtensions({ version: 1, source: "child-runtime", ids: ["bad/path"] }), undefined);
-	});
-
-	it("rejects oversized capture files without reading them", (t) => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "runtime-ack-"));
-		t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-		const filePath = path.join(dir, "ack.json");
-
-		fs.writeFileSync(filePath, "x".repeat(MAX_RUNTIME_ACKNOWLEDGED_EXTENSION_FILE_BYTES + 1));
-		assert.equal(readRuntimeAcknowledgedExtensions(filePath), undefined);
-
-		fs.writeFileSync(filePath, JSON.stringify({ version: 1, source: "child-runtime", ids: ["ok"], omitted: 0 }));
-		assert.deepEqual(readRuntimeAcknowledgedExtensions(filePath), { version: 1, source: "child-runtime", ids: ["ok"], omitted: 0 });
 	});
 });

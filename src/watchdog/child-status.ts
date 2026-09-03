@@ -3,7 +3,6 @@ import { SUBAGENT_WATCHDOG_WARNING_TYPE, type ResolvedWatchdogConfig, type Watch
 
 export const CHILD_WATCHDOG_WARNING_LIMIT = 20;
 
-export const CHILD_WATCHDOG_CONFIG_ENV = "PI_SUBAGENT_WATCHDOG_CHILD_CONFIG";
 export const CHILD_WATCHDOG_STATUS_EVENT = "subagent.watchdog.status";
 
 export const CHILD_WATCHDOG_PHASES = ["idle", "reviewing", "stale", "failed"] as const;

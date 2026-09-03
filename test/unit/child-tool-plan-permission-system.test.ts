@@ -9,11 +9,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { buildInProcessChildLaunch, type BuildInProcessChildLaunchInput } from "../../src/runs/shared/child-launch.ts";
 import {
-	buildPiArgs,
 	resolvePermissionSystemExtension,
 	resolvePiLaunchToolPlan,
-} from "../../src/runs/shared/pi-args.ts";
+} from "../../src/runs/shared/child-tool-plan.ts";
 
 const originalEnv = {
 	HOME: process.env.HOME,
@@ -23,7 +23,7 @@ const originalEnv = {
 const tempRoots: string[] = [];
 
 function createFixture() {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-args-perm-"));
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "child-tool-plan-perm-"));
 	tempRoots.push(root);
 	const home = path.join(root, "home");
 	const agentDir = path.join(home, ".pi", "agent");
@@ -53,12 +53,25 @@ afterEach(() => {
 	tempRoots.length = 0;
 });
 
-function readPromptFile(result: { tempDir?: string }): string {
-	assert.ok(result.tempDir, "expected a temp dir from buildPiArgs");
-	const files = fs.readdirSync(result.tempDir);
-	const promptFile = files.find((f: string) => f.endsWith(".md") && f !== "task.md");
-	assert.ok(promptFile, "expected a prompt.md file");
-	return fs.readFileSync(path.join(result.tempDir, promptFile), "utf-8");
+function childLaunch(overrides: Partial<BuildInProcessChildLaunchInput> = {}): BuildInProcessChildLaunchInput {
+	return {
+		host: "parent",
+		cwd: process.cwd(),
+		sessionEnabled: false,
+		inheritProjectContext: false,
+		inheritGlobalContext: false,
+		inheritSkills: false,
+		childAgentName: "worker",
+		childIndex: 0,
+		...overrides,
+	};
+}
+
+/** The system prompt the child session receives (append mode by default). */
+function childSystemPrompt(result: ReturnType<typeof buildInProcessChildLaunch>): string {
+	const prompt = result.session.systemPrompt ?? result.session.appendSystemPrompt;
+	assert.ok(prompt !== undefined, "expected a child system prompt");
+	return prompt;
 }
 
 function escapeRegExp(value: string): string {
@@ -235,20 +248,11 @@ describe("resolvePiLaunchToolPlan with permission system", () => {
 			JSON.stringify({ name: "test", pi: { extensions: ["./src/index.ts"] } }),
 		);
 
-		const { args } = buildPiArgs({
-			baseArgs: ["-p"],
-			task: "test task",
-			sessionEnabled: false,
-			inheritProjectContext: false,
-			inheritSkills: false,
-		});
-		const extensionArgs = args.filter(
-			(arg, index) => args[index - 1] === "--extension",
-		);
+		const { session } = buildInProcessChildLaunch(childLaunch());
 		assert.equal(
-			extensionArgs.includes(path.join(extDir, "src", "index.ts")),
+			session.extensionPaths.includes(path.join(extDir, "src", "index.ts")),
 			false,
-			"permission system extension should not be emitted without native rules",
+			"permission system extension should not be loaded without native rules",
 		);
 	});
 
@@ -266,20 +270,10 @@ describe("resolvePiLaunchToolPlan with permission system", () => {
 			JSON.stringify({ name: "test", pi: { extensions: ["./src/index.ts"] } }),
 		);
 
-		const { args } = buildPiArgs({
-			baseArgs: ["-p"],
-			task: "test task",
-			sessionEnabled: false,
-			inheritProjectContext: false,
-			inheritSkills: false,
-			permissionRules: { write: "ask" },
-		});
-		const extensionArgs = args.filter(
-			(arg, index) => args[index - 1] === "--extension",
-		);
+		const { session } = buildInProcessChildLaunch(childLaunch({ permissionRules: { write: "ask" } }));
 		assert.ok(
-			extensionArgs.includes(path.join(extDir, "src", "index.ts")),
-			"permission system extension should be emitted when native rules are active",
+			session.extensionPaths.includes(path.join(extDir, "src", "index.ts")),
+			"permission system extension should be loaded when native rules are active",
 		);
 	});
 
@@ -329,23 +323,15 @@ describe("resolvePiLaunchToolPlan with permission system", () => {
 	});
 });
 
-describe("buildPiArgs <active_agent> tag injection", () => {
+describe("child launch <active_agent> tag injection", () => {
 	it("prepends <active_agent> tag when childAgentName is set", () => {
 		const { agentDir } = createFixture();
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 
-		const result = buildPiArgs({
-			baseArgs: ["-p"],
-			task: "test task",
-			sessionEnabled: false,
+		const promptContent = childSystemPrompt(buildInProcessChildLaunch(childLaunch({
 			systemPrompt: "You are a helpful assistant.",
-			inheritProjectContext: false,
-			inheritSkills: false,
 			childAgentName: "reviewer",
-			promptFileStem: "reviewer",
-		});
-
-		const promptContent = readPromptFile(result);
+		})));
 		assert.ok(
 			promptContent.startsWith('<active_agent name="reviewer"/>'),
 			`expected prompt to start with <active_agent> tag, got: ${promptContent.slice(0, 100)}`,
@@ -356,45 +342,29 @@ describe("buildPiArgs <active_agent> tag injection", () => {
 		);
 	});
 
-	it("does NOT inject tag when childAgentName is not set", () => {
+	it("passes no system prompt when the agent has none", () => {
 		const { agentDir } = createFixture();
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 
-		const result = buildPiArgs({
-			baseArgs: ["-p"],
-			task: "test task",
-			sessionEnabled: false,
-			systemPrompt: "You are a helper.",
-			inheritProjectContext: false,
-			inheritSkills: false,
-			promptFileStem: "test",
-		});
-
-		const promptContent = readPromptFile(result);
-		assert.equal(
-			promptContent.includes("<active_agent"),
-			false,
-			"should not inject tag when no childAgentName",
-		);
-		assert.equal(promptContent, "You are a helper.");
+		const { session } = buildInProcessChildLaunch(childLaunch({ childAgentName: "helper" }));
+		assert.equal(session.systemPrompt, undefined);
+		assert.equal(session.appendSystemPrompt, undefined);
 	});
 
-	it("does NOT inject tag when systemPrompt is empty", () => {
+	it("replaces the system prompt in replace mode", () => {
 		const { agentDir } = createFixture();
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 
-		const result = buildPiArgs({
-			baseArgs: ["-p"],
-			task: "test task",
-			sessionEnabled: false,
-			systemPrompt: "",
-			inheritProjectContext: false,
-			inheritSkills: false,
-			childAgentName: "worker",
-			promptFileStem: "worker",
-		});
+		const { session } = buildInProcessChildLaunch(childLaunch({ systemPrompt: "You are a helper.", systemPromptMode: "replace", childAgentName: "helper" }));
+		assert.equal(session.systemPrompt, '<active_agent name="helper"/>\n\nYou are a helper.');
+		assert.equal(session.appendSystemPrompt, undefined);
+	});
 
-		const promptContent = readPromptFile(result);
+	it("injects the tag even when systemPrompt is empty", () => {
+		const { agentDir } = createFixture();
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+
+		const promptContent = childSystemPrompt(buildInProcessChildLaunch(childLaunch({ systemPrompt: "", childAgentName: "worker" })));
 		assert.ok(promptContent.startsWith('<active_agent name="worker"/>'));
 	});
 
@@ -402,18 +372,10 @@ describe("buildPiArgs <active_agent> tag injection", () => {
 		const { agentDir } = createFixture();
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 
-		const result = buildPiArgs({
-			baseArgs: ["-p"],
-			task: "test task",
-			sessionEnabled: false,
+		const promptContent = childSystemPrompt(buildInProcessChildLaunch(childLaunch({
 			systemPrompt: "System prompt here",
-			inheritProjectContext: false,
-			inheritSkills: false,
 			childAgentName: 'my "special" agent',
-			promptFileStem: "test",
-		});
-
-		const promptContent = readPromptFile(result);
+		})));
 		assert.ok(
 			promptContent.startsWith('<active_agent name="my &quot;special&quot; agent"/>'),
 			`expected escaped tag, got: ${promptContent.slice(0, 120)}`,

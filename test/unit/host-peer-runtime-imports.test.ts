@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { HOST_PEER_ALIASES, resolveHostPeerAliases } from "../../src/runs/background/runner-aliases.ts";
+import { resolveInstalledPiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
 import { resolveCompileFromPackageRoot, validateStructuredOutputValue } from "../../src/runs/shared/structured-output.ts";
 import type { JsonSchemaObject } from "../../src/shared/types.ts";
 
@@ -59,11 +61,12 @@ function resolveRelativeImport(fromFile: string, specifier: string): string | un
 	return candidates.find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
 }
 
-test("detached async runner's runtime import graph never reaches a host peer package (issues #334, #526)", () => {
+test("every host peer package the detached async runner imports is aliased to the installed pi package (issues #334, #526)", () => {
 	const entryPoint = path.join(projectRoot, "src", "runs", "background", "subagent-runner.ts");
 	const visited = new Set<string>([entryPoint]);
 	const queue: string[] = [entryPoint];
 	const violations: string[] = [];
+	const aliased = new Set(HOST_PEER_ALIASES.map((entry) => entry.specifier));
 
 	while (queue.length > 0) {
 		const file = queue.shift()!;
@@ -71,7 +74,7 @@ test("detached async runner's runtime import graph never reaches a host peer pac
 		for (const specifier of extractStaticImportSpecifiers(source)) {
 			const hostPeerMatch = matchingHostPeerPackage(specifier);
 			if (hostPeerMatch) {
-				violations.push(`${path.relative(projectRoot, file)} has a runtime import of '${specifier}' (host peer package '${hostPeerMatch}')`);
+				if (!aliased.has(specifier)) violations.push(`${path.relative(projectRoot, file)} imports '${specifier}' (host peer package '${hostPeerMatch}'), which has no runner alias`);
 				continue;
 			}
 			if (!specifier.startsWith(".")) continue;
@@ -86,8 +89,13 @@ test("detached async runner's runtime import graph never reaches a host peer pac
 		}
 	}
 
-	assert.equal(violations.length, 0, `runtime import graph reached host peer package(s):\n${violations.join("\n")}`);
+	assert.equal(violations.length, 0, `runtime import graph reaches host peer package(s) the runner does not alias:\n${violations.join("\n")}`);
 	assert.ok(visited.size > 20, `expected a non-trivial reachable file set (a broken resolver could undercount it), got ${visited.size}`);
+	const packageRoot = resolveInstalledPiPackageRoot();
+	assert.ok(packageRoot, "expected the pi package (or its test shim) to be resolvable");
+	const resolved = resolveHostPeerAliases(packageRoot);
+	assert.deepEqual(resolved.missing, []);
+	for (const specifier of aliased) assert.ok(fs.existsSync(resolved.aliases[specifier]!), `alias target for ${specifier} exists`);
 });
 
 function writeFakeTypeboxPackage(typeboxDir: string): void {

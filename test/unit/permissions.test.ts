@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-	decodePermissionRules,
-	encodePermissionRules,
 	permissionArgsPreview,
 	permissionDecision,
 	resolvePermissionRules,
@@ -31,9 +29,7 @@ describe("native child permissions", () => {
 		assert.throws(() => validatePermissionConfig({ rules: { write: "sometimes" } }), /allow, ask, or deny/);
 	});
 
-	it("round-trips only explicit non-allow rules and redacts bounded previews", () => {
-		const encoded = encodePermissionRules({ write: "ask" });
-		assert.deepEqual(decodePermissionRules(encoded), { write: "ask" });
+	it("redacts bounded argument previews", () => {
 		const preview = permissionArgsPreview({ token: "secret-value", content: `Bearer abcdefghijklmnop ${"x".repeat(3000)}` });
 		assert.doesNotMatch(preview, /secret-value|abcdefghijklmnop/);
 		assert.ok(Buffer.byteLength(preview) <= 2048);

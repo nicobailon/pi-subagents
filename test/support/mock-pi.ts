@@ -1,41 +1,20 @@
+/**
+ * Scripted child sessions for tests.
+ *
+ * `install()` replaces the process-wide foreground `ChildSessionFactory` with
+ * a scripted one and names the runner-side scripted factory module for
+ * background launches. Both replay the responses queued with `onCall()` from
+ * one directory, so a test scripts a child the same way whichever launch path
+ * it exercises.
+ */
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { setChildSessionFactory } from "../../src/runs/foreground/child-session.ts";
-import { createFakeChildSessions, type FakeChildSessionRecord } from "./fake-child-session.ts";
+import { setChildSessionFactory, setChildSessionFactoryModule } from "../../src/runs/shared/child-session.ts";
+import { createFakeChildSessions, type FakeChildResponse, type FakeChildSessionRecord } from "./fake-child-session.ts";
 
-interface MockPiResponse {
-	output?: string;
-	stderr?: string;
-	exitCode?: number;
-	signal?: NodeJS.Signals;
-	delay?: number;
-	waitForPath?: string;
-	keepAliveAfterFinalMessageMs?: number;
-	ignoreSigterm?: boolean;
-	jsonl?: unknown[];
-	stdoutRaw?: string;
-	stdoutBase64Chunks?: string[];
-	steps?: Array<{
-		delay?: number;
-		waitForPath?: string;
-		jsonl?: unknown[];
-		stdoutRaw?: string;
-		stdoutBase64Chunks?: string[];
-		stderr?: string;
-	}>;
-	echoEnv?: string[];
-	missingTools?: string[];
-	matchArgIncludes?: string | string[];
-	/** Files the mock child writes to disk before emitting output, standing in for its write-tool side effects. */
-	writeFiles?: Array<{ path: string; content: string }>;
-	/** Writes the structured-output capture file without emitting a structured_output tool event. */
-	structuredOutputCapture?: unknown;
-	structuredOutputAcceptanceReport?: unknown;
-	structuredOutputAcceptanceReportRaw?: string;
-	runtimeAcknowledgedExtensions?: unknown;
-}
+export type MockPiResponse = FakeChildResponse;
 
 export interface MockPi {
 	readonly dir: string;
@@ -50,19 +29,13 @@ export interface MockPi {
 	callCount(): number;
 }
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT_PATH = path.join(__dirname, "mock-pi-script.mjs");
+const RUNNER_FACTORY_MODULE = path.join(path.dirname(fileURLToPath(import.meta.url)), "runner-child-session-factory.ts");
 const CALL_PREFIX = "call-";
 const DEFAULT_RESPONSE_FILE = "default-response.json";
 const QUEUED_PREFIX = "pending-";
 
 function ensureDir(dir: string): void {
 	fs.mkdirSync(dir, { recursive: true });
-}
-
-function writeExecutable(filePath: string, content: string): void {
-	fs.writeFileSync(filePath, content, "utf-8");
-	fs.chmodSync(filePath, 0o755);
 }
 
 function listQueueFiles(queueDir: string, prefix: string): string[] {
@@ -79,30 +52,11 @@ export function createMockPi(): MockPi {
 	const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-mock-cli-"));
 	let queueGeneration = 0;
 	let queueDir = path.join(rootDir, `queue-${queueGeneration}`);
-	const binDir = path.join(rootDir, "bin");
-	const piPackageDir = path.join(rootDir, "pi-package");
-	const cliScriptPath = path.join(piPackageDir, "dist", "cli.mjs");
 	ensureDir(queueDir);
-	ensureDir(binDir);
-	ensureDir(path.dirname(cliScriptPath));
-	fs.copyFileSync(SCRIPT_PATH, cliScriptPath);
-	fs.writeFileSync(
-		path.join(piPackageDir, "package.json"),
-		JSON.stringify({ name: "@earendil-works/pi-coding-agent" }),
-		"utf-8",
-	);
-
-	const shellScriptPath = path.join(binDir, "pi");
-	const cmdScriptPath = path.join(binDir, "pi.cmd");
-	writeExecutable(shellScriptPath, `#!/bin/sh\nexec "${process.execPath}" "${cliScriptPath}" "$@"\n`);
-	writeExecutable(cmdScriptPath, `@echo off\r\n"${process.execPath}" "${cliScriptPath}" %*\r\n`);
 
 	const fakeSessions = createFakeChildSessions(() => queueDir);
 	let installed = false;
 	let nextSequence = 0;
-	let originalPath: string | undefined;
-	let originalPiBinary: string | undefined;
-	let originalArgv1: string | undefined;
 	let originalQueueEnv: string | undefined;
 
 	return {
@@ -119,31 +73,15 @@ export function createMockPi(): MockPi {
 			if (installed) return;
 			installed = true;
 			setChildSessionFactory(fakeSessions.factory);
-			originalPath = process.env.PATH;
-			originalPiBinary = process.env.PI_SUBAGENT_PI_BINARY;
+			setChildSessionFactoryModule(RUNNER_FACTORY_MODULE);
 			originalQueueEnv = process.env.MOCK_PI_QUEUE_DIR;
-			process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
-			if (process.platform === "win32") {
-				delete process.env.PI_SUBAGENT_PI_BINARY;
-				originalArgv1 = process.argv[1];
-				process.argv[1] = cliScriptPath;
-			} else {
-				process.env.PI_SUBAGENT_PI_BINARY = shellScriptPath;
-			}
 			process.env.MOCK_PI_QUEUE_DIR = queueDir;
 		},
 		uninstall() {
 			if (!installed) return;
 			installed = false;
 			setChildSessionFactory(undefined);
-			if (originalPath === undefined) delete process.env.PATH;
-			else process.env.PATH = originalPath;
-			if (originalPiBinary === undefined) delete process.env.PI_SUBAGENT_PI_BINARY;
-			else process.env.PI_SUBAGENT_PI_BINARY = originalPiBinary;
-			if (process.platform === "win32") {
-				if (originalArgv1 === undefined) delete process.argv[1];
-				else process.argv[1] = originalArgv1;
-			}
+			setChildSessionFactoryModule(undefined);
 			if (originalQueueEnv === undefined) delete process.env.MOCK_PI_QUEUE_DIR;
 			else process.env.MOCK_PI_QUEUE_DIR = originalQueueEnv;
 			try {

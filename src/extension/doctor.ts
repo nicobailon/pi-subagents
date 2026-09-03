@@ -4,7 +4,7 @@ import { discoverAgentsAll, type AgentSource } from "../agents/agents.ts";
 import { isAsyncAvailable } from "../runs/background/async-execution.ts";
 import { formatSpawnBudgetSummary, getSpawnBudgetSnapshot } from "../runs/shared/spawn-budget.ts";
 import { getActiveAsyncCapacitySnapshot, resolveAbandonedSlotReleaseAfterMs, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
-import { decodeRunFanoutBudgetDescriptor, formatRunFanoutBudget, getRunFanoutBudgetSnapshot, RUN_FANOUT_BUDGET_ENV } from "../runs/shared/run-fanout-budget.ts";
+
 import { diagnoseIntercomBridge, type IntercomBridgeDiagnostic } from "../intercom/intercom-bridge.ts";
 import { discoverAvailableSkills, type SkillSource } from "../agents/skills.ts";
 import {
@@ -178,14 +178,6 @@ function formatSpawnBudgetSection(input: DoctorReportInput): string[] {
 }
 
 function formatRunFanoutSection(input: DoctorReportInput): string[] {
-	try {
-		const inherited = decodeRunFanoutBudgetDescriptor(process.env[RUN_FANOUT_BUDGET_ENV]);
-		if (inherited) {
-			return [`- usage: ${formatRunFanoutBudget(getRunFanoutBudgetSnapshot(inherited)).replace(/^Run fan-out: /, "")}`, `- root run: ${inherited.rootRunId}`, "- reset boundary: cumulative claims are never released; a new top-level run creates a new budget"];
-		}
-	} catch (error) {
-		return [`- inherited budget: invalid — ${errorText(error)}`];
-	}
 	const configured = resolveMaxSubagentSpawnsPerRun(input.config.maxSubagentSpawnsPerRun);
 	const source = normalizeMaxSubagentSpawnsPerRun(process.env.PI_SUBAGENT_MAX_SPAWNS_PER_RUN) !== undefined
 		? "environment"

@@ -9,7 +9,8 @@ import { serializeAgent } from "../../src/agents/agent-serializer.ts";
 import { parseChain, serializeChain } from "../../src/agents/chain-serializer.ts";
 import { discoverAgents, discoverAgentsAll, inspectAgentDefinitionDirectory, type AgentConfig } from "../../src/agents/agents.ts";
 import { parseFrontmatter } from "../../src/agents/frontmatter.ts";
-import { buildPiArgs } from "../../src/runs/shared/pi-args.ts";
+import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
+import { applyThinkingSuffix } from "../../src/runs/shared/child-tool-plan.ts";
 import { THINKING_LEVELS } from "../../src/shared/model-info.ts";
 
 const tempDirs: string[] = [];
@@ -1514,19 +1515,19 @@ Do work
 			assert.ok(agent);
 			assert.equal(agent.thinking, false);
 
-			const { args } = buildPiArgs({
-				baseArgs: ["-p"],
-				task: "hello",
+			const { session } = buildInProcessChildLaunch({
+				host: "parent",
+				cwd: dir,
 				sessionEnabled: false,
-				model: agent.model,
-				thinking: agent.thinking,
+				model: applyThinkingSuffix(agent.model, agent.thinking),
 				inheritProjectContext: agent.inheritProjectContext,
+				inheritGlobalContext: agent.inheritGlobalContext,
 				inheritSkills: agent.inheritSkills,
+				childAgentName: agent.name,
+				childIndex: 0,
 			});
 
-			assert.ok(args.includes("--model"));
-			assert.ok(args.includes("glm-5.2-short-fast"));
-			assert.ok(!args.some((arg) => arg.includes(":false")));
+			assert.equal(session.model, "glm-5.2-short-fast");
 		}
 	});
 
@@ -1769,26 +1770,22 @@ Do work
 	});
 
 	it("adds the fast extension only for allowlisted native models", () => {
-		const allowed = buildPiArgs({
-			baseArgs: ["-p"],
-			task: "hello",
+		const launch = {
+			host: "parent" as const,
+			cwd: process.cwd(),
 			sessionEnabled: false,
-			model: "openai-codex/gpt-5.6-luna:low",
-			fast: true,
 			inheritProjectContext: false,
+			inheritGlobalContext: false,
 			inheritSkills: false,
-		});
+			childAgentName: "worker",
+			childIndex: 0,
+			fast: true,
+		};
+		const allowed = buildInProcessChildLaunch({ ...launch, model: "openai-codex/gpt-5.6-luna:low" });
 
-		assert.ok(allowed.args.some((arg) => arg.endsWith("fast-mode-extension.ts")));
-		assert.throws(() => buildPiArgs({
-			baseArgs: ["-p"],
-			task: "hello",
-			sessionEnabled: false,
-			model: "anthropic/claude-sonnet-4",
-			fast: true,
-			inheritProjectContext: false,
-			inheritSkills: false,
-		}), /fast mode supports only/);
+		assert.ok(allowed.toolPlan.runtimeExtensions.some((extensionPath) => extensionPath.endsWith("fast-mode-extension.ts")));
+		assert.deepEqual(allowed.session.hooks.map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:fast-mode"]);
+		assert.throws(() => buildInProcessChildLaunch({ ...launch, model: "anthropic/claude-sonnet-4" }), /fast mode supports only/);
 	});
 });
 

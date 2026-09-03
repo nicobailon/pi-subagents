@@ -4,14 +4,6 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import {
-	SUBAGENT_CHILD_AGENT_ENV,
-	SUBAGENT_CHILD_INDEX_ENV,
-	SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
-	SUBAGENT_ORCHESTRATOR_TARGET_ENV,
-	SUBAGENT_RUN_ID_ENV,
-	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
-} from "../runs/shared/pi-args.ts";
 import type { ChildSupervisorMetadata } from "../runs/shared/child-runtime-config.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, POLL_INTERVAL_MS, TEMP_ROOT_DIR, type ControlEvent, type IntercomEventBus, type SubagentState } from "../shared/types.ts";
 import { writeAtomicJson } from "../shared/atomic-json.ts";
@@ -123,29 +115,6 @@ function requestPath(channelDir: string, requestId: string): string {
 
 function replyPath(channelDir: string, requestId: string): string {
 	return path.join(channelDir, REPLIES_DIR, `${safeSegment(requestId)}.json`);
-}
-
-function readTextEnv(name: string): string | undefined {
-	const value = process.env[name]?.trim();
-	return value ? value : undefined;
-}
-
-function readChildMetadata(): ChildSupervisorMetadata | undefined {
-	const channelDir = readTextEnv(SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV);
-	const runId = readTextEnv(SUBAGENT_RUN_ID_ENV);
-	const agent = readTextEnv(SUBAGENT_CHILD_AGENT_ENV);
-	const rawIndex = readTextEnv(SUBAGENT_CHILD_INDEX_ENV);
-	const orchestratorSessionId = readTextEnv(SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV);
-	if (!channelDir || !runId || !agent || !orchestratorSessionId || rawIndex === undefined || !/^\d+$/.test(rawIndex)) return undefined;
-	return {
-		channelDir,
-		runId,
-		agent,
-		childIndex: Number(rawIndex),
-		orchestratorTarget: readTextEnv(SUBAGENT_ORCHESTRATOR_TARGET_ENV),
-		orchestratorSessionId,
-		childTarget: readTextEnv("PI_SUBAGENT_INTERCOM_SESSION_NAME"),
-	};
 }
 
 function reasonHeading(reason: SupervisorReason): string {
@@ -305,7 +274,7 @@ function hasTool(pi: ExtensionAPI, name: string): boolean {
  * Register the child-side `contact_supervisor` tool. Spawned children resolve
  * their channel metadata from the environment; in-process children pass it.
  */
-export function registerNativeSupervisorClient(pi: ExtensionAPI, metadata: ChildSupervisorMetadata | undefined = readChildMetadata()): void {
+export function registerNativeSupervisorClient(pi: ExtensionAPI, metadata: ChildSupervisorMetadata | undefined): void {
 	if (!metadata || hasTool(pi, "contact_supervisor")) return;
 	const tool: ToolDefinition<typeof ContactSupervisorParamsSchema, Record<string, unknown>> = {
 		name: "contact_supervisor",

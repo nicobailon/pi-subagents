@@ -5,8 +5,6 @@ export type PermissionDecision = "allow" | "ask" | "deny";
 export type PermissionRules = Record<string, PermissionDecision>;
 export interface PermissionConfig { rules?: PermissionRules }
 
-export const PERMISSION_POLICY_ENV = "PI_SUBAGENT_PERMISSION_POLICY";
-export const PERMISSION_AUDIT_PATH_ENV = "PI_SUBAGENT_PERMISSION_AUDIT_PATH";
 const INTERNAL_TOOLS = new Set(["contact_supervisor", "intercom", "bg_wait", "structured_output"]);
 const DECISIONS = new Set<PermissionDecision>(["allow", "ask", "deny"]);
 const MAX_POLICY_BYTES = 16 * 1024;
@@ -52,17 +50,6 @@ export function permissionDecision(rules: PermissionRules | undefined, toolName:
 	return rules?.[toolName] ?? "allow";
 }
 
-export function encodePermissionRules(rules: PermissionRules | undefined): string | undefined {
-	if (!rules || Object.keys(rules).length === 0) return undefined;
-	const encoded = JSON.stringify(rules);
-	if (Buffer.byteLength(encoded, "utf-8") > MAX_POLICY_BYTES) throw new Error("Resolved permission policy is too large.");
-	return encoded;
-}
-
-export function decodePermissionRules(encoded: string | undefined): PermissionRules | undefined {
-	if (!encoded?.trim()) return undefined;
-	return validatePermissionRules(JSON.parse(encoded), PERMISSION_POLICY_ENV);
-}
 
 function redact(value: unknown, key = "", depth = 0): unknown {
 	if (SECRET_KEY.test(key)) return "[redacted]";

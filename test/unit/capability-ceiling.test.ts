@@ -47,22 +47,25 @@ describe("subagent capability ceiling", () => {
 		assert.throws(() => parseSubagentCapabilityCeiling({ version: 2, allowedTools: ["read"], denyExtensions: true, sources: ["plan"] }), /version/);
 	});
 
-	it("combines inherited process policy with exact-session registrations", () => {
-		const previous = process.env.PI_SUBAGENT_CAPABILITY_CEILING_V1;
+	it("combines the inherited child runtime ceiling with exact-session registrations", () => {
 		const sessionId = `current-${Date.now()}-${Math.random()}`;
 		const handle = registerSubagentCapabilityCeiling({ sessionId, source: "local", ceiling: { allowedTools: ["grep", "read"] } });
 		try {
-			process.env.PI_SUBAGENT_CAPABILITY_CEILING_V1 = encodeSubagentCapabilityCeiling({ version: 1, allowedTools: ["read", "write"], denyExtensions: true, sources: ["ancestor"] });
-			assert.deepEqual(resolveCurrentSubagentCapabilityCeiling(sessionId), {
+			const inherited = decodeSubagentCapabilityCeiling(encodeSubagentCapabilityCeiling({ version: 1, allowedTools: ["read", "write"], denyExtensions: true, sources: ["ancestor"] }));
+			assert.deepEqual(resolveSubagentCapabilityCeiling(sessionId, inherited), {
 				version: 1,
 				allowedTools: ["read"],
 				denyExtensions: true,
 				sources: ["ancestor", "local"],
 			});
+			assert.deepEqual(resolveCurrentSubagentCapabilityCeiling(sessionId), {
+				version: 1,
+				allowedTools: ["grep", "read"],
+				denyExtensions: false,
+				sources: ["local"],
+			});
 		} finally {
 			handle.dispose();
-			if (previous === undefined) delete process.env.PI_SUBAGENT_CAPABILITY_CEILING_V1;
-			else process.env.PI_SUBAGENT_CAPABILITY_CEILING_V1 = previous;
 		}
 	});
 });

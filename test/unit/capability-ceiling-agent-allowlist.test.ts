@@ -11,7 +11,7 @@ import {
 	registerSubagentCapabilityCeiling,
 } from "../../src/api/capability-ceiling.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
-import { buildPiArgs } from "../../src/runs/shared/pi-args.ts";
+import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
 
 function agent(name: string): AgentConfig {
 	return {
@@ -84,19 +84,20 @@ describe("capability ceiling agent allowlist", () => {
 		assert.deepEqual(result.capabilityCeiling?.allowedAgents, ["reviewer"]);
 	});
 
-	it("includes allowedAgents in propagated launch env and audit metadata", () => {
-		const { env, capabilityAudit } = buildPiArgs({
-			baseArgs: [],
-			task: "Review",
+	it("includes allowedAgents in the child runtime config and audit metadata", () => {
+		const { config, capabilityAudit } = buildInProcessChildLaunch({
+			host: "parent",
+			cwd: process.cwd(),
 			sessionEnabled: false,
 			inheritProjectContext: false,
+			inheritGlobalContext: false,
 			inheritSkills: false,
 			childAgentName: "reviewer",
+			childIndex: 0,
 			capabilityCeiling: { version: 1, allowedAgents: ["reviewer"], allowedTools: ["read"], denyExtensions: true, sources: ["plan-mode"] },
 		});
 		assert.equal(capabilityAudit?.agentAllowed, true);
 		assert.deepEqual(capabilityAudit?.agentRestrictionSources, ["plan-mode"]);
-		assert.ok(env.PI_SUBAGENT_CAPABILITY_CEILING_V1);
-		assert.deepEqual(decodeSubagentCapabilityCeiling(env.PI_SUBAGENT_CAPABILITY_CEILING_V1)?.allowedAgents, ["reviewer"]);
+		assert.deepEqual(config.capabilityCeiling?.allowedAgents, ["reviewer"]);
 	});
 });

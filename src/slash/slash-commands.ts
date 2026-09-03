@@ -21,7 +21,6 @@ import { formatTokens, shortenPath } from "../shared/formatters.ts";
 import { listAsyncRuns, formatAsyncRunProgressLabel, type AsyncRunSummary } from "../runs/background/async-status.ts";
 import { encodeInspectReply, handleInspectRpcArgs, INSPECT_WIDGET_KEY } from "../runs/background/inspect-rpc.ts";
 import { listScheduledRunSummaries } from "../runs/background/scheduled-runs.ts";
-import { SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
 import { resolveAsyncStatusChild } from "../runs/shared/child-identity.ts";
 import { readStatus } from "../shared/utils.ts";
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
@@ -1027,11 +1026,6 @@ export function registerSlashCommands(
 			}
 			if (id) {
 				await runCommand(ctx, childId ? { action: "stop", id, childId } : { action: "stop", id });
-				return;
-			}
-
-			if (process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1") {
-				sendSlashText(pi, "Selector unavailable in child-safe fanout mode. Pass an explicit current-session top-level async run id, for example `/subagents-stop <run-id>` or `subagent({ action: \"stop\", id: \"<run-id>\" })`.");
 				return;
 			}
 

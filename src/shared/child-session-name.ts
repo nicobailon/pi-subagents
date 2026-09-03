@@ -6,7 +6,7 @@ import { PROMPT_REDACTED } from "./utils.ts";
  * the agent name and its task (or workflow node label). The parent computes it
  * once and threads it two ways:
  *
- *  1. Into the child process via `PI_SUBAGENT_SESSION_NAME`, where the prompt
+ *  1. Into the child's runtime config as `sessionName`, where the prompt
  *     runtime calls `pi.setSessionName(...)` so the child's own session file
  *     is identifiable in `pi --resume` and host session browsers.
  *  2. Into the `sessionName` field of result/progress payloads, so hosts

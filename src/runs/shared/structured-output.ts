@@ -7,10 +7,6 @@ import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
 import type { JsonSchemaObject } from "../../shared/types.ts";
 import type { ResolvedAcceptanceReportMode } from "./acceptance.ts";
 
-export const STRUCTURED_OUTPUT_SCHEMA_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA";
-export const STRUCTURED_OUTPUT_CAPTURE_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE";
-export const STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE";
-export const STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED";
 export const MISSING_STRUCTURED_OUTPUT_CALL_ERROR = "Missing structured_output call; this step has outputSchema and must finish by calling structured_output.";
 export const MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR = "Missing acceptanceReport in structured_output call; acceptance.report is \"on\".";
 
@@ -198,6 +194,23 @@ export function readStructuredOutputAcceptanceReport(runtime: StructuredOutputRu
 	} catch (error) {
 		return { error: `Failed to read structured output acceptance report: ${error instanceof Error ? error.message : String(error)}` };
 	}
+}
+
+/**
+ * Capture callback that persists the structured output (and acceptance report)
+ * to the runtime's files, for hosts that read the value back from disk.
+ */
+export function createStructuredOutputFileCapture(runtime: StructuredOutputRuntime): (value: unknown, acceptanceReport: unknown | undefined) => void {
+	return (value, acceptanceReport) => {
+		fs.mkdirSync(path.dirname(runtime.outputPath), { recursive: true });
+		if (runtime.acceptanceReportPath && acceptanceReport !== undefined) {
+			fs.mkdirSync(path.dirname(runtime.acceptanceReportPath), { recursive: true });
+			fs.writeFileSync(runtime.acceptanceReportPath, JSON.stringify(acceptanceReport), { mode: 0o600 });
+		} else if (runtime.acceptanceReportPath && fs.existsSync(runtime.acceptanceReportPath)) {
+			fs.unlinkSync(runtime.acceptanceReportPath);
+		}
+		fs.writeFileSync(runtime.outputPath, JSON.stringify(value), { mode: 0o600 });
+	};
 }
 
 export function clearStructuredOutputCaptures(runtime: StructuredOutputRuntime): string | undefined {

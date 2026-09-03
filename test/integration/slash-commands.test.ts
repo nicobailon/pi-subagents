@@ -9,7 +9,6 @@ import { registerAgent } from "../../src/api/agents.ts";
 import { clearRuntimeAgentsForPi } from "../../src/agents/runtime-agent-registry.ts";
 import { scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
-import { SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
 import { ASYNC_DIR, DIRS } from "../../src/shared/types.ts";
 import type { WatchdogReviewFunction } from "../../src/watchdog/runtime.ts";
