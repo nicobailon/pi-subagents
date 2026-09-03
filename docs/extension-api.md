@@ -99,7 +99,7 @@ If `pi-subagents` is a resolvable dependency of the consumer package, `pi-subage
 
 The installed owner applies the existing runtime-agent validation, collision checks, limits, runtime source metadata, and cleanup. If more than one owner listens, the first handler that writes `request.result` wins. Unsupported versions, malformed requests, and registration failures return `{ ok: false, error }`. No result means no compatible owner handled the event.
 
-This contract is process-local. It does not register agents in child processes or other Pi processes, and it does not change package discovery or package resolution.
+This contract is process-local. It does not register agents in child sessions or other Pi processes, and it does not change package discovery or package resolution.
 
 ## External jobs in FleetView
 
@@ -365,7 +365,7 @@ subagent({ action: "inspector.status", id: "<run-id>", index: 0 })
 subagent({ action: "inspector.close", id: "<run-id>", index: 0 })
 ```
 
-The inspector is a raw dashboard pane, not the child process and not a literal attach. It reads lifecycle/status/output/mission artifacts and sends `steer` or `stop` through pi-subagents' existing control inbox. Closing it never stops the run.
+The inspector is a raw dashboard pane, not the child session and not a literal attach. It reads lifecycle/status/output/mission artifacts and sends `steer` or `stop` through pi-subagents' existing control inbox. Closing it never stops the run.
 
 Herdr remains optional. Ordinary launches stay headless, and missing/older Herdr versions affect only Herdr-specific inspector and project-pane actions. FleetView opens the selected active async child with `H`. Use `focus` only with `inspector.open`; Herdr 0.7.5 cannot focus an arbitrary existing raw pane id.
 
@@ -449,4 +449,4 @@ The main runtime files in this repository:
 | `src/runs/shared/worktree.ts` | Git worktree isolation. |
 | `src/intercom/intercom-bridge.ts` | Runtime intercom bridge instructions and diagnostics. |
 | `src/extension/schemas.ts` / `src/shared/types.ts` | Tool schemas, shared types, and event constants. |
-| `test/unit/` / `test/integration/` / `test/e2e/` | Unit, loader-based integration, and real-session E2E tests. |
+| `test/unit/` / `test/integration/` | Unit and loader-based integration tests. |

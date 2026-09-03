@@ -64,7 +64,7 @@ describe("streamed progress snapshot bounds", () => {
 		assert.equal(boundStreamedToolCalls({ toolCalls: undefined, messages: undefined }), undefined);
 	});
 
-	it("bounds a pathological running snapshot well under the child-stdout protocol cap", () => {
+	it("bounds a pathological running snapshot", () => {
 		// Simulates a long, deep nested fan-out: many tool calls + long output lines.
 		const recentTools = Array.from({ length: 5000 }, (_, i) => ({ tool: "read", args: `services/pkg/file-${i}.ts`, endMs: i }));
 		const recentOutput = Array.from({ length: 50 }, () => "y".repeat(60_000));

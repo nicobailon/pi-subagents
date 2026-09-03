@@ -623,7 +623,7 @@ export function buildRevivedAsyncTask(target: AsyncResumeTarget, message: string
 		`Original agent: ${target.agent}`,
 		target.sessionFile ? `Original session file: ${target.sessionFile}` : undefined,
 		"",
-		"Use the stored session context as background. Answer the orchestrator's follow-up below. Do not assume the original child process is still alive.",
+		"Use the stored session context as background. Answer the orchestrator's follow-up below. Do not assume the original child session is still running.",
 		"",
 		"Follow-up:",
 		message,

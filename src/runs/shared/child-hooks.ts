@@ -12,9 +12,8 @@ export interface ChildHookExtension {
 
 /**
  * The child-side hooks pi-subagents installs in every child, keyed off the
- * launch config instead of the process environment. Spawned children load the
- * same registrations from `subagent-prompt-runtime.ts`, `fast-mode-extension.ts`,
- * and `fanout-child.ts` as extension files.
+ * launch config. The registrations live in `subagent-prompt-runtime.ts`,
+ * `fast-mode-extension.ts`, and `fanout-child.ts`.
  */
 export function createChildHooks(config: ChildRuntimeConfig): ChildHookExtension[] {
 	const hooks: ChildHookExtension[] = [

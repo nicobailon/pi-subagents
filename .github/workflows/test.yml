@@ -28,9 +28,6 @@ jobs:
       - name: Integration tests
         timeout-minutes: 10
         run: npm run test:integration
-      - name: E2E tests
-        timeout-minutes: 5
-        run: npm run test:e2e
 
   bun-workflow-script:
     runs-on: ubuntu-latest

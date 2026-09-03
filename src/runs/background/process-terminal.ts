@@ -115,7 +115,7 @@ export function writeProcessTerminalCandidate(asyncDir: string, candidate: Proce
 	writePrivateAtomicJson(processTerminalCandidatePath(asyncDir), candidate);
 }
 
-/** Establish ownership before authorizing a runner to launch any child process. */
+/** Establish ownership before authorizing a runner to start any child session. */
 export function initializeProcessTerminal(asyncDir: string, runId: string, runnerProcessInstanceId: string): void {
 	writeProcessTerminalCandidate(asyncDir, {
 		version: 1,

@@ -271,8 +271,8 @@ function hasTool(pi: ExtensionAPI, name: string): boolean {
 }
 
 /**
- * Register the child-side `contact_supervisor` tool. Spawned children resolve
- * their channel metadata from the environment; in-process children pass it.
+ * Register the child-side `contact_supervisor` tool. The host passes the
+ * channel metadata in the child runtime config.
  */
 export function registerNativeSupervisorClient(pi: ExtensionAPI, metadata: ChildSupervisorMetadata | undefined): void {
 	if (!metadata || hasTool(pi, "contact_supervisor")) return;

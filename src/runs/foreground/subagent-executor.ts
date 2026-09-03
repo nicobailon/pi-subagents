@@ -437,7 +437,7 @@ interface ExecutorDeps {
 	activateSupervisorTransport?: () => void;
 	refreshResultDelivery?: () => void;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
-	/** Set when this executor runs inside an in-process child; replaces the environment a spawned child would read. */
+	/** Set when this executor runs inside a child session; carries the runtime settings the host passes instead of environment variables. */
 	childRuntime?: ChildRuntimeConfig;
 }
 

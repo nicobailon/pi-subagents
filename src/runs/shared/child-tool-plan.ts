@@ -51,7 +51,7 @@ const SUBAGENT_RUNTIME_EXTENSION_PATHS = new Set([
 	FAST_MODE_EXTENSION_PATH,
 ].map((extensionPath) => path.normalize(extensionPath)));
 
-/** True for the extension files pi-subagents itself installs in spawned children. */
+/** True for the extension files pi-subagents itself installs in child sessions. */
 export function isSubagentRuntimeExtensionPath(extensionPath: string): boolean {
 	return SUBAGENT_RUNTIME_EXTENSION_PATHS.has(path.normalize(extensionPath));
 }
@@ -237,7 +237,7 @@ export function projectLaunchResolvedChildExtensions(
  * Resolve the permission-system extension entry point when installed.
  * Returns the absolute path to the extension's main module, or undefined
  * when the package is not installed. Callers can check `autoInject` config
- * to decide whether to include it in child processes.
+ * to decide whether to include it in child sessions.
  */
 export function resolvePermissionSystemExtension(): string | undefined {
 	const agentDir = getAgentDir();

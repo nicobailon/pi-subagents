@@ -101,9 +101,9 @@ export function planAbortRecovery(input: {
 	if (input.alreadyResumed) return settle("resume already attempted");
 	if (!input.sessionAvailable) return settle("retained session unavailable");
 	if (input.stopped || input.interrupted) return settle("explicit stop or interrupt");
-	// A compaction abort can leave the child process open until the runner's
-	// terminal drain sends SIGTERM. The compaction + settlement markers make
-	// that cleanup signal non-authoritative; explicit stop/interrupt still wins.
+	// An external-job runner reports a process signal when its terminal drain
+	// ends a child left open by a compaction abort. The compaction + settlement
+	// markers make that cleanup signal non-authoritative; explicit stop/interrupt still wins.
 	if (input.processSignal && !compactionAbortCandidate) return settle("process terminated by signal");
 	if (input.timedOut) return settle("elapsed timeout");
 	if (input.toolBudgetExhausted || input.usageBudgetExhausted) return settle("budget exhausted");

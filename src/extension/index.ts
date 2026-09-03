@@ -908,10 +908,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		const projectPaneOwnerRoot = path.resolve(ctx.cwd);
 		restoreHerdrProjectPaneSnapshots(state, [...new Set([...(state.herdrProjectPanes?.keys() ?? []), ...listHerdrProjectPaneRoots(projectPaneOwnerRoot), projectPaneOwnerRoot])]);
 		// Set PI_SUBAGENT_PARENT_SESSION for permission-system forwarding.
-		// Only set in the root session (the interactive UI session), not in
-		// child subagent processes — children inherit the parent's value
-		// through the process environment at spawn time and must not overwrite
-		// it with their own session identity.
+		// Only set in the root session (the interactive UI session), not in a
+		// child host: the runner process inherits the parent's value through
+		// its environment at spawn time and must not overwrite it with a child
+		// session's identity.
 		if (!process.env[SUBAGENT_CHILD_ENV]) {
 			const sessionId = ctx.sessionManager.getSessionId();
 			if (sessionId) {

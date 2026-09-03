@@ -53,7 +53,7 @@ function revivedTask(followUp: string): string {
 		"Original agent: worker",
 		"Original session file: /tmp/session.jsonl",
 		"",
-		"Use the stored session context as background. Answer the orchestrator's follow-up below. Do not assume the original child process is still alive.",
+		"Use the stored session context as background. Answer the orchestrator's follow-up below. Do not assume the original child session is still running.",
 		"",
 		"Follow-up:",
 		followUp,

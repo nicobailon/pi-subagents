@@ -1,6 +1,6 @@
 # Agents
 
-An agent is a markdown file: YAML frontmatter on top, a system prompt below. The frontmatter defines the specialist that runs in the child Pi process.
+An agent is a markdown file: YAML frontmatter on top, a system prompt below. The frontmatter defines the specialist that runs as the child session.
 
 ```yaml
 ---
@@ -392,7 +392,7 @@ How `tools` behaves:
 
 An allowlisted name does not load the extension that registers it. Load that provider through `extensions`, `subagentOnlyExtensions`, a path-like `tools` entry, or (background children only) normal Pi extension discovery.
 
-Ambient extensions depend on where the child runs. Foreground children are sessions inside the parent Pi process and never load the parent's ambient extensions, because that would start a second copy of every ambient extension, including this one, inside the parent process. Background children are sessions inside the detached runner process and load the ambient extensions unless the agent sets `extensions` or the capability ceiling denies extensions. Each child gets its own instances of the extensions it loads; the runner resets pi's per-process extension factory cache before each child load. Agents that need MCP tools (`mcpDirectTools`, or MCP tools from an ambient adapter such as pi-mcp-adapter) or models from a provider extension must therefore run as background children (`async: true`). A foreground launch of such an agent fails with a diagnostic that says exactly that.
+Ambient extensions depend on where the child runs. Foreground children are sessions inside the parent Pi process and never load the parent's ambient extensions, because that would start a second copy of every ambient extension, including this one, inside the parent process. Background children are sessions inside the detached runner process and load the ambient extensions unless the agent sets `extensions` or the capability ceiling denies extensions. Each child gets its own instances of the extensions it loads; the runner resets pi's per-process extension factory cache before each child load. The runner sets `MCP_DIRECT_TOOLS` and `PI_SUBAGENT_EXTENSION_BINDINGS` in its own process environment for each child, and one launch at a time holds them from that point through the child's `session_start`. An extension that reads those variables at load or during `session_start` sees its own child's values; one that reads them later can see the value of a sibling launched since. Agents that need MCP tools (`mcpDirectTools`, or MCP tools from an ambient adapter such as pi-mcp-adapter) or models from a provider extension must therefore run as background children (`async: true`). A foreground launch of such an agent fails with a diagnostic that says exactly that.
 
 More rules:
 

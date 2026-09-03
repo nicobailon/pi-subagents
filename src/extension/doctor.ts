@@ -206,7 +206,7 @@ function formatPermissionSystemSection(): string[] {
 	if (trimmed) {
 		lines.push(`- parent session: set (${trimmed})`);
 	} else {
-		lines.push("- parent session: not set — ask forwarding from subprocess children will not reach a parent UI");
+		lines.push("- parent session: not set — ask forwarding from background children will not reach a parent UI");
 	}
 	const isChild = process.env["PI_SUBAGENT_CHILD"] === "1";
 	lines.push(`- subagent process: ${isChild ? "yes (PI_SUBAGENT_CHILD=1)" : "no"}`);

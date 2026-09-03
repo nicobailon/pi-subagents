@@ -24,7 +24,7 @@ const READ_ONLY_BUILTIN_TOOLS = new Set([
 const CURSOR_FILE_MUTATION_THINKING =
 	/(?:^|\n)\s*Cursor (?:edit|write)\s*:/i;
 
-const REVIVED_TASK_PREFIX = /^You are reviving a previous subagent conversation\.\n\nOriginal run: .+\nOriginal agent: .+(?:\nOriginal session file: .+)?\n\nUse the stored session context as background\. Answer the orchestrator's follow-up below\. Do not assume the original child process is still alive\.\n\nFollow-up:\n/;
+const REVIVED_TASK_PREFIX = /^You are reviving a previous subagent conversation\.\n\nOriginal run: .+\nOriginal agent: .+(?:\nOriginal session file: .+)?\n\nUse the stored session context as background\. Answer the orchestrator's follow-up below\. Do not assume the original child session is still running\.\n\nFollow-up:\n/;
 const IMPLEMENTATION_CHALLENGE_FOLLOW_UP_PATTERN = /^(?:Run )?implementation challenge pass (?:one|two|\d+)(?:\s+and implement any better current[- ]scope change\.?|\s+for the accepted candidate\.\s+Reconsider it and implement any better current[- ]scope change\.?)?$/i;
 const NO_BETTER_CHANGE_NEEDED_PATTERN = /^\s*no (?:better|further|additional) (?:current[- ]scope )?(?:code |source |file )?(?:change|changes|edit|edits|patch|patches) (?:is|are) needed\b/i;
 const KEPT_CURRENT_IMPLEMENTATION_PATTERN = /\b(?:kept (?:the )?current (?:implementation|candidate|shape)|(?:the )?current (?:implementation|candidate|shape) was kept)\b/i;
