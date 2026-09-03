@@ -468,20 +468,6 @@ function ensureProjectWorktreeDir(dedicatedRoot: string, repoRoot: string): void
 	}
 }
 
-/**
- * Creates the project folder (parents included) so `git worktree add` can
- * create the leaf inside it. Call only after the planned location passes the
- * safety checks below.
- */
-function ensureProjectWorktreeDir(dedicatedRoot: string, repoRoot: string): void {
-	try {
-		fs.mkdirSync(path.join(dedicatedRoot, path.basename(repoRoot)), { recursive: true });
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`failed to create worktree base directory ${dedicatedRoot}: ${message}`);
-	}
-}
-
 function buildNativeWorktreePath(dedicatedRoot: string, repoRoot: string, runId: string, index: number): string {
 	return path.join(dedicatedRoot, path.basename(repoRoot), `pi-worktree-${sanitizeWorktreePathComponent(runId, 120)}-${index}`);
 }
@@ -504,7 +490,11 @@ function assertSafeWorktreeLocation(worktreePath: string, repoRoot: string, dedi
 	const projectDir = normalizeComparableCwd(path.join(dedicatedRoot, path.basename(repoRoot)));
 	const repoParent = normalizeComparableCwd(path.dirname(resolvedRepoRoot));
 	const leafParent = normalizeComparableCwd(path.dirname(resolvedLeaf));
+	const extensionsDir = normalizeComparableCwd(path.join(getAgentDir(), "extensions"));
 
+	if (isPathInside(extensionsDir, projectDir) || isPathInside(extensionsDir, resolvedLeaf)) {
+		throw new Error(`worktree path cannot be inside Pi extensions directory: ${extensionsDir}. Choose a directory outside it.`);
+	}
 	if (isPathInside(resolvedRepoRoot, resolvedLeaf)) {
 		throw new Error(`worktree path would land inside the repository checkout: ${resolvedLeaf}`);
 	}

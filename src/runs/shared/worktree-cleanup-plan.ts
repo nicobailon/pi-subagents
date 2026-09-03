@@ -13,6 +13,7 @@ import type {
 	ParallelHandoffGroup,
 	ParallelHandoffManifest,
 } from "../../shared/types.ts";
+import { getAgentDir } from "../../shared/utils.ts";
 import { isTerminalParallelHandoffChildStatus } from "./parallel-handoff.ts";
 
 export const WORKTREE_CLEANUP_PLAN_VERSION = 1 as const;
@@ -246,7 +247,7 @@ function resolveRepoRoot(repo: string): string {
 function resolveCleanupBaseDir(repoRoot: string, configuredBaseDir: string | undefined): string {
 	const raw = configuredBaseDir ?? process.env.PI_SUBAGENTS_WORKTREE_DIR;
 	let dedicatedRoot: string;
-	if (raw === undefined) {
+	if (raw === undefined || (configuredBaseDir === undefined && !raw.trim())) {
 		dedicatedRoot = path.join(path.dirname(repoRoot), "worktrees");
 	} else {
 		const trimmed = raw.trim();
@@ -258,7 +259,10 @@ function resolveCleanupBaseDir(repoRoot: string, configuredBaseDir: string | und
 }
 
 function cleanupContainmentInvalid(repoRoot: string, projectDir: string): boolean {
-	return samePath(projectDir, repoRoot) || pathInside(repoRoot, projectDir, true);
+	const extensionsDir = path.join(getAgentDir(), "extensions");
+	return samePath(projectDir, repoRoot)
+		|| pathInside(repoRoot, projectDir, true)
+		|| pathInside(extensionsDir, projectDir);
 }
 
 export function parseGitWorktreeList(raw: string): GitWorktreeRecord[] {
@@ -616,6 +620,8 @@ function buildManagedEntry(input: {
 	if (pathInspection.missing) return blockedEntry(entry, "stale", "unknown", "worktree path is missing from disk");
 	if (pathInspection.symlink) return blockedEntry(entry, "unknown", "unknown", "worktree path is a symlink; cleanup requires a real directory");
 	if (!pathInspection.directory || !pathInspection.realpath) return blockedEntry(entry, "unknown", "unknown", "worktree path is not a directory");
+	const extensionsDir = path.join(getAgentDir(), "extensions");
+	if (pathInside(extensionsDir, pathInspection.realpath)) return blockedEntry(entry, "ineligible", "keep", `worktree real path is inside Pi extensions directory '${extensionsDir}'`);
 	if (input.containmentInvalid || !pathInside(baseDir, pathInspection.realpath, true)) return blockedEntry(entry, "ineligible", "keep", `worktree real path is outside configured base directory '${baseDir}'`);
 
 	if (rootPath === comparablePath(pathInspection.realpath)) return blockedEntry(entry, "ineligible", "keep", "worktree is the repository root");

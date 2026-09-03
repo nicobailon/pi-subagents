@@ -361,6 +361,85 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 		}
 	});
 
+	it("rejects a final project directory inside Pi extensions", () => {
+		const sourceRepo = createRepo("pi-worktree-extension-project-");
+		const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-home-"));
+		const repoDir = path.join(tempHome, "extensions");
+		const agentDir = path.join(tempHome, ".pi", "agent");
+		const extensionsDir = path.join(agentDir, "extensions");
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const previousHome = process.env.HOME;
+		const previousUserProfile = process.env.USERPROFILE;
+		try {
+			fs.renameSync(sourceRepo, repoDir);
+			fs.mkdirSync(extensionsDir, { recursive: true });
+			process.env.PI_CODING_AGENT_DIR = agentDir;
+			process.env.HOME = tempHome;
+			process.env.USERPROFILE = tempHome;
+
+			assert.throws(
+				() => createWorktrees(repoDir, "extension-project", 1, { provider: "native", baseDir: agentDir }),
+				/worktree path cannot be inside Pi extensions directory/i,
+			);
+			assert.throws(
+				() => resolveExpectedWorktreeAgentCwd(repoDir, "extension-project", 0, agentDir),
+				/worktree path cannot be inside Pi extensions directory/i,
+			);
+			assert.deepEqual(git(repoDir, ["worktree", "list", "--porcelain"]).split("\n").filter((line) => line.startsWith("worktree ")), [`worktree ${git(repoDir, ["rev-parse", "--show-toplevel"])}`]);
+			assert.deepEqual(fs.readdirSync(extensionsDir), []);
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			if (previousHome === undefined) delete process.env.HOME;
+			else process.env.HOME = previousHome;
+			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = previousUserProfile;
+			cleanupRepo(repoDir);
+			cleanupRepo(sourceRepo);
+			fs.rmSync(tempHome, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a project directory symlink into Pi extensions", () => {
+		const repoDir = createRepo("pi-worktree-extension-project-symlink-");
+		const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-home-"));
+		const agentDir = path.join(tempHome, ".pi", "agent");
+		const extensionsDir = path.join(agentDir, "extensions");
+		const baseDir = path.join(tempHome, "worktree-root");
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const previousHome = process.env.HOME;
+		const previousUserProfile = process.env.USERPROFILE;
+		try {
+			fs.mkdirSync(extensionsDir, { recursive: true });
+			fs.mkdirSync(baseDir, { recursive: true });
+			fs.symlinkSync(extensionsDir, path.join(baseDir, path.basename(repoDir)), process.platform === "win32" ? "junction" : "dir");
+			process.env.PI_CODING_AGENT_DIR = agentDir;
+			process.env.HOME = tempHome;
+			process.env.USERPROFILE = tempHome;
+
+			assert.throws(
+				() => createWorktrees(repoDir, "extension-project-symlink", 1, { provider: "native", baseDir }),
+				/worktree path cannot be inside Pi extensions directory/i,
+			);
+			assert.throws(
+				() => resolveExpectedWorktreeAgentCwd(repoDir, "extension-project-symlink", 0, baseDir),
+				/worktree path cannot be inside Pi extensions directory/i,
+			);
+			assert.deepEqual(git(repoDir, ["worktree", "list", "--porcelain"]).split("\n").filter((line) => line.startsWith("worktree ")), [`worktree ${git(repoDir, ["rev-parse", "--show-toplevel"])}`]);
+			assert.deepEqual(fs.readdirSync(extensionsDir), []);
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			if (previousHome === undefined) delete process.env.HOME;
+			else process.env.HOME = previousHome;
+			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = previousUserProfile;
+			cleanupRepo(repoDir);
+			fs.rmSync(baseDir, { recursive: true, force: true });
+			fs.rmSync(tempHome, { recursive: true, force: true });
+		}
+	});
+
 	it("uses PI_SUBAGENTS_WORKTREE_DIR when no base directory is configured", () => {
 		const repoDir = createRepo("pi-worktree-env-base-dir-");
 		const previous = process.env.PI_SUBAGENTS_WORKTREE_DIR;
