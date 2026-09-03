@@ -659,6 +659,7 @@ async function runSingleAttempt(
 			}
 			if (!accepted) return false;
 			detached = true;
+			if (session) session.detached = true;
 			return true;
 		};
 
@@ -1352,6 +1353,7 @@ async function runSingleAttempt(
 					return;
 				}
 				session = created;
+				created.detached = detached;
 				unsubscribe = created.subscribe((event) => processEvent(event as Parameters<typeof processEvent>[0]));
 				if (abortedBySignal || interruptedByControl || result.timedOut) {
 					abortChild();

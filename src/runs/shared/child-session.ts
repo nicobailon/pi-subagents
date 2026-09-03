@@ -87,11 +87,13 @@ export interface ChildSession {
 	readonly sessionFile: string | undefined;
 	readonly sessionId: string;
 	readonly modelId: string | undefined;
+	/** Set by the foreground host once the run detached; `factory.dispose()` leaves such children running. */
+	detached?: boolean;
 }
 
 export interface ChildSessionFactory {
 	create(launch: ChildSessionLaunch): Promise<ChildSession>;
-	/** Abort and dispose every live child and release the shared runtime. */
+	/** Abort and dispose every live attached child; detached children keep running and hold the shared runtime. */
 	dispose(): Promise<void>;
 }
 
@@ -220,14 +222,13 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			return child;
 		},
 		async dispose() {
-			const children = [...live];
-			live.clear();
+			const children = [...live].filter((child) => !child.detached);
 			await Promise.allSettled(children.map((child) => child.abort()));
 			for (const child of children) {
 				try { child.dispose(); } catch { /* best effort */ }
 			}
 			await Promise.allSettled([...shutdowns]);
-			runtime = undefined;
+			if (live.size === 0) runtime = undefined;
 		},
 	};
 }

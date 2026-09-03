@@ -12,7 +12,7 @@ import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
 import { createMockPi, createTempDir, makeAgent, makeAgentConfigs, removeTempDir } from "../support/helpers.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
-import { createDefaultChildSessionFactory, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
+import { createDefaultChildSessionFactory, disposeChildSessions, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
 import { createNestedRoute } from "../../src/runs/shared/nested-events.ts";
 import { createStructuredOutputRuntime } from "../../src/runs/shared/structured-output.ts";
 import type { ForegroundChildSessionControls, SingleResult } from "../../src/shared/types.ts";
@@ -183,6 +183,8 @@ describe("in-process foreground child", () => {
 		assert.equal(receipt.detached, true);
 		assert.equal(receipt.detachedReason, "user request");
 		assert.equal(mockPi.sessions[0]?.aborted, false, "detach must not abort the session");
+		await disposeChildSessions();
+		assert.equal(mockPi.sessions[0]?.aborted, false, "parent session shutdown must not abort a detached child");
 		fs.writeFileSync(release, "go");
 		await waitFor(() => terminal !== undefined);
 		assert.equal(terminal?.exitCode, 0);
@@ -222,5 +224,20 @@ describe("default child session factory", () => {
 		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi({ bindExtensions: async () => { throw new Error("bind failed"); }, dispose: () => { disposed += 1; } }) });
 		await assert.rejects(factory.create(stubLaunch), /bind failed/);
 		assert.equal(disposed, 1);
+	});
+
+	it("leaves detached children running on dispose and keeps the shared runtime", async () => {
+		let aborted = 0;
+		let runtimes = 0;
+		const pi = stubPi({ abort: async () => { aborted += 1; } });
+		pi.ModelRuntime = { create: async () => { runtimes += 1; return {}; } } as unknown as PiCodingAgentModule["ModelRuntime"];
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
+		const child = await factory.create(stubLaunch);
+		child.detached = true;
+		await factory.dispose();
+		assert.equal(aborted, 0);
+		assert.equal(child.shutDown, undefined);
+		await factory.create(stubLaunch);
+		assert.equal(runtimes, 1, "runtime is kept while a detached child runs");
 	});
 });

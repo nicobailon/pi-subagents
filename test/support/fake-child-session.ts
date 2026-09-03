@@ -49,6 +49,7 @@ export interface FakeChildSessionRecord {
 	aborted: boolean;
 	disposed: boolean;
 	settled: boolean;
+	session?: ChildSession;
 }
 
 export interface FakeChildSessions {
@@ -389,11 +390,13 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 				get sessionId() { return sessionId; },
 				get modelId() { return model; },
 			};
+			record.session = session;
 			return session;
 		},
 		async dispose() {
 			disposeCalls += 1;
 			for (const record of sessions) {
+				if (record.session?.detached) continue;
 				record.aborted = true;
 				record.disposed = true;
 			}
