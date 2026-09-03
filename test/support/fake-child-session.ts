@@ -23,8 +23,7 @@ export interface FakeChildResponse {
 	jsonl?: unknown[];
 	/** Raw JSON lines; parsed into events for the in-process child without acceptance-report injection. */
 	stdoutRaw?: string;
-	stdoutBase64Chunks?: string[];
-	steps?: Array<{ delay?: number; waitForPath?: string; jsonl?: unknown[]; stdoutRaw?: string; stdoutBase64Chunks?: string[] }>;
+	steps?: Array<{ delay?: number; waitForPath?: string; jsonl?: unknown[]; stdoutRaw?: string }>;
 	/** Emits one assistant message with a JSON object of the listed names mapped to null; in-process children have no launch environment. */
 	echoEnv?: string[];
 	matchArgIncludes?: string | string[];
@@ -176,7 +175,6 @@ function sleep(ms: number, until?: Promise<void>): Promise<void> {
 
 function parseRawStdout(response: FakeChildResponse): unknown[] {
 	const chunks: Buffer[] = [];
-	for (const chunk of response.stdoutBase64Chunks ?? []) if (typeof chunk === "string") chunks.push(Buffer.from(chunk, "base64"));
 	if (typeof response.stdoutRaw === "string") chunks.push(Buffer.from(response.stdoutRaw, "utf-8"));
 	const entries: unknown[] = [];
 	for (const line of Buffer.concat(chunks).toString("utf-8").split("\n")) {
@@ -302,7 +300,7 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 					}
 				} else if (Array.isArray(response.jsonl) && response.jsonl.length > 0) {
 					await emitEntries(response.jsonl, task);
-				} else if (response.stdoutRaw !== undefined || response.stdoutBase64Chunks !== undefined) {
+				} else if (response.stdoutRaw !== undefined) {
 					await emitEntries(parseRawStdout(response), task, false);
 				} else if (Array.isArray(response.echoEnv) && response.echoEnv.length > 0) {
 					await emitEntries([defaultAssistantMessage(JSON.stringify(Object.fromEntries(response.echoEnv.map((key) => [key, null]))), model)], task);

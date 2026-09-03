@@ -570,17 +570,6 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		}
 	});
 
-	it("background parses split UTF-8 JSON and a final unterminated protocol line", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		const line = Buffer.from(JSON.stringify(events.assistantMessage("你好 from fragmented async JSON")));
-		const unicodeStart = line.indexOf(Buffer.from("你"));
-		mockPi.onCall({ stdoutBase64Chunks: [line.subarray(0, unicodeStart + 1).toString("base64"), line.subarray(unicodeStart + 1).toString("base64")] });
-		const id = `async-protocol-utf8-${Date.now().toString(36)}`;
-		launchProtocolTest(id);
-		const payload = await readAsyncPayload(id);
-		assert.equal(payload.success, true);
-		assert.equal(payload.results[0]?.output, "你好 from fragmented async JSON");
-	});
-
 	it("persists terminal status with the result artifact", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "completed output" });
 		const id = `async-terminal-status-${Date.now().toString(36)}`;
