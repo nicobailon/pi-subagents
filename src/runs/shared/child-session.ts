@@ -182,7 +182,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			await session.bindExtensions({
 				mode: "print",
 				onError: (error) => launch.onExtensionError?.({ extensionPath: error.extensionPath, event: error.event, error: error.error }),
-			});
+			}).catch((error: unknown) => { session.dispose(); throw error; });
 			let disposed = false;
 			// pi's own hosts emit `session_shutdown` before disposing a session so the
 			// extensions loaded into it (ambient extensions included) release their

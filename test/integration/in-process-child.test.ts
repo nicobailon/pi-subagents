@@ -216,4 +216,11 @@ describe("default child session factory", () => {
 		delete process.env.PI_SUBAGENT_TEST_ENV;
 		assert.deepEqual(seen, ["a", "b"]);
 	});
+
+	it("disposes the session when bindExtensions rejects", async () => {
+		let disposed = 0;
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi({ bindExtensions: async () => { throw new Error("bind failed"); }, dispose: () => { disposed += 1; } }) });
+		await assert.rejects(factory.create(stubLaunch), /bind failed/);
+		assert.equal(disposed, 1);
+	});
 });
