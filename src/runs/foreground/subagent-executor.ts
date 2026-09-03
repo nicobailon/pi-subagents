@@ -3782,7 +3782,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			},
 			detach: () => detachForeground?.("user request") === true,
 			steer: async (input: ForegroundSteerInput): Promise<ForegroundSteerOutcome> => {
-				if (!childSessionControls) return { state: "failed", reason: "Child session is not running yet." };
+				if (!childSessionControls) return { state: "failed", reason: CHILD_SESSION_NOT_RUNNING_YET };
 				try {
 					if (input.mode === "follow_up") {
 						await childSessionControls.followUp(input.message);
@@ -4249,6 +4249,7 @@ function workflowSteerReceipt(key: string, result: AgentToolResult<Details>): Wo
 	};
 }
 
+const CHILD_SESSION_NOT_RUNNING_YET = "Child session is not running yet.";
 const MAX_WORKFLOW_RESUME_HINT_BYTES = 1024;
 const MAX_WORKFLOW_CHILD_RUN_ID_BYTES = 256;
 const WORKFLOW_RESUME_HINT_PARENT_STATES = new Set(["complete", "failed", "partial"]);
@@ -4392,7 +4393,8 @@ export async function steerWorkflowChildByKey(input: {
 				mode: input.options.mode,
 				index: input.options.index,
 			});
-			return workflowSteerReceipt(input.key, result);
+			// The control registers before its child session exists; keep polling until the steer can route.
+			if (!result.details.steering?.targets.some((target) => target.reason === CHILD_SESSION_NOT_RUNNING_YET) || Date.now() >= deadline) return workflowSteerReceipt(input.key, result);
 		}
 
 		const workflowStatus = readStatus(path.join(asyncDirRoot, input.workflowRunId));

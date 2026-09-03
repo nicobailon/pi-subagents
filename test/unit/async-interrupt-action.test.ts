@@ -244,6 +244,22 @@ describe("async interrupt action", () => {
 		}
 	});
 
+	it("retries a foreground workflow-key steer until the child session is running", async () => {
+		const state = createState();
+		const workflowRunId = `workflow-key-early-${Date.now().toString(36)}`;
+		const childRunId = `${workflowRunId}-writer`;
+		const asyncDir = createRunningAsync(state, workflowRunId, { track: false, mode: "workflow" });
+		let attempts = 0;
+		createWorkflowForegroundControl(state, workflowRunId, childRunId, { steer: async () => ++attempts < 3 ? { state: "failed" as const, reason: "Child session is not running yet." } : { state: "delivered" as const } });
+		try {
+			const action = await steerWorkflowChildByKey({ state, workflowRunId, key: childRunId, message: "Early.", options: { ackTimeoutMs: 500 } });
+			assert.equal(action.state, "delivered");
+			assert.equal(attempts, 3);
+		} finally {
+			cleanup(workflowRunId, asyncDir);
+		}
+	});
+
 	it("routes a stable key to async steering without recovery", async () => {
 		const state = createState();
 		const workflowRunId = `workflow-key-async-${Date.now().toString(36)}`;
