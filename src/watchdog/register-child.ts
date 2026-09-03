@@ -42,24 +42,18 @@ function childWarningDetails(details: WatchdogWarningDetails, config: ChildWatch
 	};
 }
 
-function writeStatusToStdout(event: ChildWatchdogStatusEvent): void {
-	try {
-		process.stdout.write(`${JSON.stringify(event)}\n`);
-	} catch {
-		// Child watchdog status is advisory; stdout failures are handled by the child process itself.
-	}
-}
-
 /**
- * Register the child-side watchdog. Spawned children report status on stdout
- * (the parent's JSON event stream); in-process children pass a status sink.
+ * Register the child-side watchdog. Status events go to the sink the hosting
+ * process passed in the child runtime config; the host folds them into the
+ * child's event stream.
  */
 export function registerChildWatchdog(
 	pi: ExtensionAPI,
 	childConfig: ChildWatchdogConfig | undefined,
-	writeStatus: (event: ChildWatchdogStatusEvent) => void = writeStatusToStdout,
+	writeStatus: ((event: ChildWatchdogStatusEvent) => void) | undefined,
 ): MainWatchdogRuntime | undefined {
 	if (!childConfig) return undefined;
+	if (!writeStatus) throw new Error("Child watchdog status sink is missing; the host must pass ChildRuntimeConfig.watchdogStatus.");
 	let currentContext: ExtensionContext | undefined;
 	let diffBaseline: WatchdogDiffBaseline | undefined;
 	let seq = 0;

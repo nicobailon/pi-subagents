@@ -4,7 +4,8 @@
  * Foreground runs and the detached async runner create their children through
  * `ChildSessionFactory`. This factory replays the responses `createMockPi()`
  * queues, so one `mockPi.onCall(...)` feeds whichever launch path a test
- * exercises. Raw stdout is parsed as JSON event lines; `stderr` only names the
+ * exercises. A scripted `stdoutRaw` is parsed as JSON event lines so older
+ * fixtures still replay; there is no stdout transport. `stderr` only names the
  * failure a non-zero `exitCode` raises.
  */
 import * as fs from "node:fs";
@@ -12,6 +13,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ChildSession, ChildSessionEvent, ChildSessionFactory, ChildSessionLaunch } from "../../src/runs/shared/child-session.ts";
+import { isChildWatchdogStatusEvent } from "../../src/watchdog/child-status.ts";
 
 export interface FakeChildResponse {
 	output?: string;
@@ -244,7 +246,9 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 						if (providerError) sawProviderError = true;
 						if (!providerError && textPart && typeof textPart.text === "string" && (!sawProviderError || textPart.text.trim())) textPart.text = withAcceptanceReport(textPart.text, task);
 					}
-					emit(entry);
+					// A real child's watchdog hook reports through the host's sink, not the session stream.
+					if (isChildWatchdogStatusEvent(entry)) launch.runtime.watchdogStatus?.(entry);
+					else emit(entry);
 					await Promise.resolve();
 				}
 			};

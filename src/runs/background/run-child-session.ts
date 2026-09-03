@@ -16,6 +16,7 @@ import {
 	isChildWatchdogStatusEvent,
 	type ChildWatchdogConfig,
 	type ChildWatchdogStateSnapshot,
+	type ChildWatchdogStatusEvent,
 } from "../../watchdog/child-status.ts";
 import { projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleState } from "../shared/child-lifecycle.ts";
 import { formatSubagentModelVerificationError } from "../shared/model-fallback.ts";
@@ -84,6 +85,8 @@ export interface RunChildSessionInput {
 	registerTimeout?: (interrupt: (() => void) | undefined) => void;
 	registerStop?: (stop: (() => void) | undefined) => void;
 	registerSteer?: (steer: StepSteerHandler | undefined) => void;
+	/** Receives the sink the child's watchdog hook reports status through; the launch's `watchdogStatus` must forward to it. */
+	registerWatchdogStatus?: (sink: ((event: ChildWatchdogStatusEvent) => void) | undefined) => void;
 	timeoutMessage?: string;
 	stopMessage?: string;
 	onChildEvent?: (event: ChildEvent) => void;
@@ -507,6 +510,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 			input.registerTimeout?.(undefined);
 			input.registerStop?.(undefined);
 			input.registerSteer?.(undefined);
+			input.registerWatchdogStatus?.(undefined);
 			unsubscribe?.();
 			return Promise.resolve().then(() => session?.dispose()).catch(() => undefined);
 		};
@@ -585,6 +589,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				}
 				session = created;
 				unsubscribe = created.subscribe(processEvent);
+				input.registerWatchdogStatus?.((event) => processEvent(event as unknown as ChildSessionEvent));
 				input.registerSteer?.(async (request) => {
 					const text = formatSteerMessage(request);
 					const followUp = request.mode === "follow_up";

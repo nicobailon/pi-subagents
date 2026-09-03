@@ -148,13 +148,14 @@ import {
 	applyChildWatchdogMessage,
 	isChildWatchdogStatusEvent,
 	resolveChildWatchdogConfig,
+	type ChildWatchdogStatusEvent,
 } from "../../watchdog/child-status.ts";
 
 const INTERCOM_DETACH_RECEIPT = "Detached for intercom coordination before task completion.";
 
 // This process hosts child sessions. An ambient copy of pi-subagents loaded
-// into one of them must register nothing, the same way it did in a spawned
-// child process.
+// into one of them must register nothing; the variable marks the process as a
+// child host.
 process.env[SUBAGENT_CHILD_ENV] = "1";
 
 interface SubagentRunConfig {
@@ -1051,6 +1052,7 @@ async function runSingleStepInner(
 				childIndex: ctx.flatIndex,
 			})
 			: undefined;
+		let watchdogSink: ((event: ChildWatchdogStatusEvent) => void) | undefined;
 		const launch = buildInProcessChildLaunch(omitUndefinedProperties({
 			parentSessionId: step.parentSessionId,
 			forkCacheKey: step.context === "fork" ? deriveForkPromptCacheKey(step.parentSessionId) : undefined,
@@ -1093,6 +1095,7 @@ async function runSingleStepInner(
 				? path.join(ctx.artifactsDir, "permission-audit", `${ctx.id}-${ctx.flatIndex}.jsonl`)
 				: undefined,
 			childWatchdog,
+			watchdogStatus: (event) => watchdogSink?.(event),
 			waitToolEnabled: step.waitToolEnabled,
 			waitToolDefaultTimeoutMs: step.waitToolDefaultTimeoutMs,
 			thinkingCeiling: step.thinkingCeiling,
@@ -1175,6 +1178,7 @@ async function runSingleStepInner(
 			registerTimeout: ctx.registerTimeout,
 			registerStop: ctx.registerStop,
 			registerSteer: ctx.registerSteer,
+			registerWatchdogStatus: (sink) => { watchdogSink = sink; },
 			timeoutMessage: ctx.timeoutMessage,
 			stopMessage: ctx.stopMessage,
 			onChildEvent: ctx.onChildEvent,

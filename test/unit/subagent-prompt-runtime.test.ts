@@ -185,7 +185,7 @@ describe("subagent prompt runtime", () => {
 				return "off";
 			},
 			sendMessage() {},
-		} as { on(event: string, handler: unknown): void; getThinkingLevel(): string; sendMessage(): void }, childConfig({ childWatchdog: watchdogConfig }));
+		} as { on(event: string, handler: unknown): void; getThinkingLevel(): string; sendMessage(): void }, childConfig({ childWatchdog: watchdogConfig, watchdogStatus: () => {} }));
 
 		assert.ok((handlersWith.get("before_agent_start")?.length ?? 0) >= 2);
 		assert.ok((handlersWith.get("turn_end")?.length ?? 0) >= 1);
