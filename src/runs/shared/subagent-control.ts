@@ -138,6 +138,7 @@ export function buildControlEvent(input: {
 	tokens?: number;
 	toolCount?: number;
 	currentTool?: string;
+	toolCallId?: string;
 	currentToolDurationMs?: number;
 	currentPath?: string;
 	elapsedMs?: number;
@@ -170,6 +171,7 @@ export function buildControlEvent(input: {
 		...(input.tokens !== undefined ? { tokens: input.tokens } : {}),
 		...(input.toolCount !== undefined ? { toolCount: input.toolCount } : {}),
 		...(input.currentTool ? { currentTool: input.currentTool } : {}),
+		...(input.toolCallId ? { toolCallId: input.toolCallId } : {}),
 		...(input.currentToolDurationMs !== undefined ? { currentToolDurationMs: input.currentToolDurationMs } : {}),
 		...(input.currentPath ? { currentPath: input.currentPath } : {}),
 		...(elapsedMs !== undefined ? { elapsedMs } : {}),

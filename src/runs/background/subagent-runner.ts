@@ -538,6 +538,7 @@ interface ChildEvent {
 	type?: string;
 	message?: ChildMessage;
 	toolName?: string;
+	toolCallId?: string;
 	args?: Record<string, unknown>;
 	willRetry?: unknown;
 }
@@ -3636,6 +3637,7 @@ async function runSubagent(
 					tokens: step.tokens?.total,
 					toolCount: step.toolCount,
 					currentTool: step.currentTool,
+					toolCallId: event.toolCallId,
 					currentToolDurationMs: 0,
 					currentPath: step.currentPath,
 				})));

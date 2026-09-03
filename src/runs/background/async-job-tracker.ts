@@ -39,6 +39,8 @@ interface AsyncJobTrackerOptions {
 	watch?: typeof fs.watch;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
+	/** Resolve native supervisor requests without scanning supervisor mailboxes. */
+	supervisorRequestState?: (event: ControlEvent) => "pending" | "resolved" | "unknown";
 }
 
 const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
@@ -293,6 +295,15 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				if ((parsed as { type?: unknown }).type !== "subagent.control") return;
 				const record = parsed as { event?: ControlEvent; channels?: string[]; childIntercomTarget?: string; noticeText?: string; intercom?: { to?: string; message?: string } };
 				if (!record.event || !Array.isArray(record.channels)) return;
+				if (record.event.type === "needs_attention" && record.event.reason === "supervisor_request" && options.supervisorRequestState) {
+					let requestState: "pending" | "resolved" | "unknown" = "unknown";
+					try {
+						requestState = options.supervisorRequestState(record.event);
+					} catch (error) {
+						console.error(`Failed to resolve supervisor request state for async control event in '${job.asyncDir}':`, error);
+					}
+					if (requestState === "resolved") return;
+				}
 				const payload = {
 					event: record.event,
 					source: "async" as const,
