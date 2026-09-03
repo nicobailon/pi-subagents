@@ -9,6 +9,7 @@ import { getAgentDir } from "../../shared/utils.ts";
 import type { ManagedWorktreeProvider, WorktreeNaming, WorktreeProvider } from "../../shared/types.ts";
 
 export const DEFAULT_WORKTREE_PROVIDER: WorktreeProvider = "auto";
+export const DEFAULT_WORKTREE_BASE_REF = "HEAD";
 export const DEFAULT_WORKTREE_BRANCH_PREFIX = "pi-subagents/";
 /** Internal marker used to defer Worktrunk-dependent instruction paths to launch time. */
 export const WORKTREE_AGENT_CWD_PLACEHOLDER = path.join(path.parse(process.cwd()).root, "__pi_subagents_worktree_cwd__");
@@ -121,6 +122,8 @@ export interface CreateWorktreesOptions {
 	tasks?: Array<string | undefined>;
 	/** Worktree allocator selection; auto prefers Worktrunk when available. */
 	provider?: WorktreeProvider;
+	/** Git ref used as the worktree base; defaults to `HEAD`. */
+	baseRef?: string;
 	/** Branch namespace; defaults to `pi-subagents/`. */
 	branchPrefix?: string;
 	setupHook?: WorktreeSetupHookConfig;
@@ -159,6 +162,7 @@ interface GitResult {
 interface RepoState {
 	toplevel: string;
 	cwdRelative: string;
+	sourceCheckout: SourceCheckoutSnapshot;
 	baseCommit: string;
 }
 
@@ -193,7 +197,7 @@ function findGitWorktreePath(cwd: string, branch: string): string | undefined {
 	return undefined;
 }
 
-function resolveRepoState(cwd: string): RepoState {
+function resolveRepoState(cwd: string, requestedBaseRef: string | undefined): RepoState {
 	const cwdRelative = resolveRepoCwdRelative(cwd);
 	const toplevel = runGitChecked(cwd, ["rev-parse", "--show-toplevel"]).trim();
 
@@ -204,8 +208,17 @@ function resolveRepoState(cwd: string): RepoState {
 		throw new Error("worktree isolation requires a clean git working tree. Commit or stash changes first.");
 	}
 
-	const baseCommit = runGitChecked(toplevel, ["rev-parse", "HEAD"]).trim();
-	return { toplevel, cwdRelative, baseCommit };
+	const sourceHead = runGitChecked(toplevel, ["rev-parse", "HEAD"]).trim();
+	const sourceCheckout = snapshotSourceCheckout(toplevel, sourceHead);
+	const baseRef = normalizeWorktreeBaseRef(requestedBaseRef) ?? DEFAULT_WORKTREE_BASE_REF;
+	let baseCommit: string;
+	try {
+		baseCommit = runGitChecked(toplevel, ["rev-parse", "--verify", "--end-of-options", `${baseRef}^{commit}`]).trim();
+	} catch (error) {
+		throw new Error(`baseRef '${baseRef}' could not be resolved to a commit: ${error instanceof Error ? error.message : String(error)}`, { cause: error instanceof Error ? error : undefined });
+	}
+	if (!baseCommit) throw new Error(`baseRef '${baseRef}' could not be resolved to a commit`);
+	return { toplevel, cwdRelative, sourceCheckout, baseCommit };
 }
 
 function normalizeComparableCwd(cwd: string): string {
@@ -285,9 +298,17 @@ export function sanitizeWorktreePathComponent(value: string, maxBytes = WORKTREE
 }
 
 function validGitRef(ref: string): boolean {
-	if (!ref || Buffer.byteLength(ref, "utf-8") > 1024 || ref.startsWith("/") || ref.endsWith("/") || ref.includes("//") || ref.includes("..") || ref.includes("@{")) return false;
-	if (/[[\]\\~^:?*\u0000-\u0020]/u.test(ref) || ref.endsWith(".") || ref.endsWith(".lock")) return false;
+	if (!ref || ref === "@" || Buffer.byteLength(ref, "utf-8") > 1024 || ref.startsWith("/") || ref.endsWith("/") || ref.includes("//") || ref.includes("..") || ref.includes("@{")) return false;
+	if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(ref)) return false;
+	if (/[[\]\\~^:?*\u0000-\u0020\u007f]/u.test(ref) || ref.endsWith(".") || ref.endsWith(".lock")) return false;
 	return ref.split("/").every((component) => component.length > 0 && component !== "." && component !== ".." && !component.startsWith(".") && !component.endsWith(".") && !component.endsWith(".lock"));
+}
+
+/** Normalize and validate a configured worktree base ref without resolving it. */
+export function normalizeWorktreeBaseRef(value: unknown): string | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "string" || !validGitRef(value)) throw new Error("baseRef must be a valid Git ref");
+	return value;
 }
 
 /** Normalize and validate the configured Git branch namespace. */
@@ -776,13 +797,13 @@ function createWorktrunkWorktree(
 	runId: string,
 	index: number,
 	baseCommit: string,
+	sourceCheckout: SourceCheckoutSnapshot,
 	agents: string[] | undefined,
 	labels: Array<string | undefined> | undefined,
 	tasks: Array<string | undefined> | undefined,
 	branchPrefix: string | undefined,
 ): WorktreeInfo {
 	const naming = buildWorktreeNaming({ runId, index, agent: agents?.[index], label: labels?.[index], task: tasks?.[index], branchPrefix });
-	const sourceCheckout = snapshotSourceCheckout(toplevel, baseCommit);
 	const args = ["-C", toplevel, "switch", "--create", naming.requestedBranch, "--base", baseCommit, "--no-cd", "--no-hooks", "--format", "json"];
 	const result = runWorktrunk(args, toplevel);
 	if (result.status !== 0) {
@@ -1109,7 +1130,7 @@ function hasWorktreeChanges(diff: WorktreeDiff): boolean {
 
 export function createWorktrees(cwd: string, runId: string, count: number, options?: CreateWorktreesOptions): WorktreeSetup {
 	if (!Number.isSafeInteger(count) || count < 0) throw new Error("worktree count must be a non-negative integer");
-	const repo = resolveRepoState(cwd);
+	const repo = resolveRepoState(cwd, options?.baseRef);
 	const setupHook = resolveWorktreeSetupHook(repo.toplevel, options?.setupHook);
 	const provider = resolveWorktreeProvider(options?.provider, options?.baseDir);
 	const branchPrefix = normalizeWorktreeBranchPrefix(options?.branchPrefix);
@@ -1161,6 +1182,7 @@ export function createWorktrees(cwd: string, runId: string, count: number, optio
 					runId,
 					index,
 					repo.baseCommit,
+					repo.sourceCheckout,
 					options?.agents,
 					options?.labels,
 					options?.tasks,

@@ -341,12 +341,36 @@ describe("project schedule management", () => {
 			{ action: "schedule.create", id: "calendar", every: "day", at: "09:00", timezone: "UTC", workflowScript: "return runs.run('main', { agent: 'worker' })" },
 			{ action: "schedule.create", id: "two-targets", every: "1h", agent: "worker", workflowScript: "return 1" },
 			{ action: "schedule.create", id: "fork", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", context: "fork" },
+			{ action: "schedule.create", id: "invalid-base-ref", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", baseRef: "unsafe..ref" },
+			{ action: "schedule.create", id: "revision-alias-base-ref", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", baseRef: "@" },
+			{ action: "schedule.create", id: "object-id-base-ref", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", baseRef: "a".repeat(40) },
+			{ action: "schedule.create", id: "sha256-object-id-base-ref", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", baseRef: "a".repeat(64) },
 			{ action: "schedule.create", id: "mission-id", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", missionId: "mission-1" },
 			{ action: "schedule.create", id: "mission-off", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", mission: false },
 		] as const) {
 			const result = await h.manager.handleToolCall(params, h.ctx);
 			assert.equal(result.isError, true, JSON.stringify(params));
 		}
+	});
+
+	it("persists and forwards a scheduled workflow baseRef", async () => {
+		const h = harness();
+		const created = await h.manager.handleToolCall({
+			action: "schedule.create",
+			id: "base-ref",
+			every: "1h",
+			baseRef: "@/foo",
+			workflowScript: "return runs.run('main', { agent: 'worker' })",
+		}, h.ctx);
+		assert.equal(created.isError, undefined);
+		assert.equal(listScheduledRunSummaries(h.ctx.cwd, path.join(h.root, "stores"))[0]?.target.baseRef, "@/foo");
+
+		const running = h.manager.handleToolCall({ action: "schedule.run", id: "base-ref" }, h.ctx);
+		await flush();
+		assert.equal(h.launches[0]?.params.baseRef, "@/foo");
+		h.launches[0]!.resolve({ content: [{ type: "text", text: "Async" }], details: { mode: "workflow", results: [], asyncId: "base-ref-async" } });
+		const result = await running;
+		assert.equal(result.isError, undefined);
 	});
 
 	it("pauses, resumes, lists, and deletes an inactive schedule", async () => {

@@ -787,6 +787,8 @@ export interface SteeringRecoveryDescriptor {
 	agentContract?: AgentContract;
 	agent: string;
 	sessionFile?: string;
+	/** Git ref used to allocate managed worktrees for this run. */
+	baseRef?: string;
 	cwd: string;
 	model?: string;
 	modelProvider?: string;

@@ -1,3 +1,5 @@
+import { normalizeWorktreeBaseRef } from "../runs/shared/worktree.ts";
+
 export interface PublicSubagentExecutionParams {
 	action?: unknown;
 	capabilities?: unknown;
@@ -28,6 +30,7 @@ export interface PublicSubagentExecutionParams {
 	preflight?: unknown;
 	isolation?: unknown;
 	worktree?: unknown;
+	baseRef?: unknown;
 	lane?: unknown;
 	async?: unknown;
 	output?: unknown;
@@ -67,6 +70,14 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	for (const field of ["resource", "resourceProvenance", "workflowResource", "workflowResourceProvenance", "workflowResourcePermit", "resourcePermit", "permit"] as const) {
 		if (Object.hasOwn(params, field) && (params as Record<string, unknown>)[field] !== undefined) {
 			return { ok: false, error: "Public execution does not accept workflow resource provenance or permit fields.", mode: params.action === undefined ? "workflow" : "management" };
+		}
+	}
+	if (params.baseRef !== undefined) {
+		if (typeof params.baseRef !== "string") return { ok: false, error: "baseRef must be a valid Git ref.", mode: params.action === undefined ? "workflow" : "management" };
+		try {
+			normalizeWorktreeBaseRef(params.baseRef);
+		} catch (error) {
+			return { ok: false, error: error instanceof Error ? error.message : String(error), mode: params.action === undefined ? "workflow" : "management" };
 		}
 	}
 	if (params.workflowScript !== undefined && params.workflowScriptPath !== undefined) {
@@ -122,6 +133,9 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		return { ok: false, error: "action must be a non-empty management/control action, or omit action and use workflowScript.", mode: "management" };
 	}
 	const normalizedAction = typeof action === "string" ? action.trim() : undefined;
+	if (params.baseRef !== undefined && normalizedAction !== undefined && normalizedAction !== "resume" && normalizedAction !== "schedule.create") {
+		return { ok: false, error: "baseRef is only supported for child execution, resume, and schedule.create.", mode: "management" };
+	}
 	if (normalizedAction !== undefined && hasNamedWorkflow) {
 		return { ok: false, error: "Named workflow resource execution must omit action.", mode: "management" };
 	}

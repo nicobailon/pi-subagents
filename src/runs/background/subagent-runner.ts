@@ -182,6 +182,7 @@ interface SubagentRunConfig {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
+	baseRef?: string;
 	worktreeProvider?: import("../../shared/types.ts").WorktreeProvider;
 	worktreeBranchPrefix?: string;
 	controlConfig?: ResolvedControlConfig;
@@ -3781,6 +3782,7 @@ async function runSubagent(
 						labels: group.parallel.map((task) => task.lane?.key ?? config.workflowKey ?? task.outputName ?? task.label),
 						tasks: group.parallel.map((task) => task.task),
 						provider: config.worktreeProvider,
+						baseRef: config.baseRef,
 						branchPrefix: config.worktreeBranchPrefix,
 						setupHook: config.worktreeSetupHook
 							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs })
@@ -4215,6 +4217,7 @@ async function runSubagent(
 						labels: [seqStep.lane?.key ?? config.workflowKey ?? seqStep.outputName ?? seqStep.label],
 						tasks: [seqStep.task],
 						provider: config.worktreeProvider,
+						baseRef: config.baseRef,
 						branchPrefix: config.worktreeBranchPrefix,
 						setupHook: config.worktreeSetupHook
 							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs })

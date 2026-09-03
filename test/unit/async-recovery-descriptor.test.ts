@@ -49,6 +49,56 @@ describe("async recovery descriptor", () => {
 		}
 	});
 
+	it("accepts a safe baseRef in persisted recovery descriptors", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-base-ref-"));
+		try {
+			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({
+				version: 1,
+				baseRef: "@/foo",
+				runFanoutBudget: runFanoutBudget("run-base-ref"),
+				sourceRunId: "run-base-ref",
+				agent: "worker",
+				cwd: root,
+				systemPromptMode: "replace",
+				inheritGlobalContext: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 2,
+				share: false,
+			}), "utf-8");
+			assert.equal(readAsyncRecoveryDescriptor(root)?.baseRef, "@/foo");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects unsafe baseRef values in persisted recovery descriptors", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-bad-base-ref-"));
+		try {
+			for (const baseRef of ["refs/heads/unsafe..ref", "a".repeat(40), "a".repeat(64)] as const) {
+				fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({
+					version: 1,
+					baseRef,
+					runFanoutBudget: runFanoutBudget("run-bad-base-ref"),
+					sourceRunId: "run-bad-base-ref",
+					agent: "worker",
+					cwd: root,
+					systemPromptMode: "replace",
+					inheritGlobalContext: false,
+					inheritProjectContext: false,
+					inheritSkills: false,
+					outputMode: "inline",
+					maxSubagentDepth: 2,
+					share: false,
+				}), "utf-8");
+				assert.throws(() => readAsyncRecoveryDescriptor(root), /baseRef must be a valid Git ref/);
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("defaults inheritGlobalContext from inheritProjectContext for descriptors from older versions", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-legacy-global-context-"));
 		try {

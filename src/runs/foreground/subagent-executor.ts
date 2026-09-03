@@ -352,6 +352,8 @@ export interface SubagentParamsLike {
 	tasks?: TaskParam[];
 	concurrency?: number;
 	worktree?: boolean;
+	/** Git ref used as the managed worktree base. */
+	baseRef?: string;
 	context?: "fresh" | "fork" | "profile";
 	/** Per-run intercom bridge config. It replaces the global config for this launch only. */
 	intercomBridge?: IntercomBridgeConfig;
@@ -1966,6 +1968,7 @@ async function resumeAsyncRun(input: {
 			worktreeSetupHook: input.deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: input.deps.config.worktreeBaseDir,
+			baseRef: input.params.baseRef ?? target.recoveryDescriptor?.baseRef,
 			worktreeProvider: input.deps.config.worktreeProvider,
 			worktreeBranchPrefix: input.deps.config.worktreeBranchPrefix,
 			controlConfig: resolveControlConfig(input.deps.config.control, input.params.control),
@@ -2001,6 +2004,9 @@ async function resumeAsyncRun(input: {
 	}
 	if (target.source === "async" && asyncReviveRequiresRecoveryDescriptor(target)) {
 		return { content: [{ type: "text", text: `Async child '${target.runId}' is missing its required run fan-out recovery identity. Start a new run instead.` }], isError: true, details: { mode: "management", results: [] } };
+	}
+	if (input.params.baseRef !== undefined && "managedWorktree" in target && target.managedWorktree === true) {
+		return { content: [{ type: "text", text: "Cannot resume with baseRef: retained managed-worktree children continue in their existing worktree. Start a new worktree run from that base ref instead." }], isError: true, details: { mode: "management", results: [] } };
 	}
 	const runId = randomUUID();
 	const topLevelResume = depth === 0 && !inheritedNestedRoute(input.deps) && !input.params.workflowParentRunId;
@@ -2082,6 +2088,7 @@ async function resumeAsyncRun(input: {
 		worktreeSetupHook: input.deps.config.worktreeSetupHook,
 		worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
 		worktreeBaseDir: input.deps.config.worktreeBaseDir,
+		baseRef: input.params.baseRef ?? recoveryDescriptor?.baseRef,
 		worktreeProvider: input.deps.config.worktreeProvider,
 		worktreeBranchPrefix: input.deps.config.worktreeBranchPrefix,
 		// A retained async child already owns the recorded worktree. Resume it in
@@ -3288,6 +3295,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: deps.config.worktreeBaseDir,
+			baseRef: params.baseRef,
 			worktreeProvider: deps.config.worktreeProvider,
 			worktreeBranchPrefix: deps.config.worktreeBranchPrefix,
 			controlConfig,
@@ -3326,6 +3334,7 @@ function createSingleWorktreeSetup(
 	setupHook: ExtensionConfig["worktreeSetupHook"],
 	setupHookTimeoutMs: ExtensionConfig["worktreeSetupHookTimeoutMs"],
 	baseDir: ExtensionConfig["worktreeBaseDir"],
+	baseRef: string | undefined,
 	provider: ExtensionConfig["worktreeProvider"],
 	branchPrefix: ExtensionConfig["worktreeBranchPrefix"],
 	label?: string,
@@ -3341,6 +3350,7 @@ function createSingleWorktreeSetup(
 					? { hookPath: setupHook, ...(setupHookTimeoutMs === undefined ? {} : { timeoutMs: setupHookTimeoutMs }) }
 					: undefined,
 				baseDir,
+				baseRef,
 				provider,
 				branchPrefix,
 				labels: [label],
@@ -3707,6 +3717,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		deps.config.worktreeSetupHook,
 		deps.config.worktreeSetupHookTimeoutMs,
 		deps.config.worktreeBaseDir,
+		params.baseRef,
 		deps.config.worktreeProvider,
 		deps.config.worktreeBranchPrefix,
 		params.lane?.key ?? params.workflowKey,
@@ -4467,6 +4478,7 @@ export function prepareWorkflowLaunchParams(
 		const toolBudget = childParams.toolBudget ?? workflowDefaults.toolBudget;
 		const intercomBridge = childParams.intercomBridge ?? workflowDefaults.intercomBridge;
 		const worktree = childParams.worktree ?? workflowDefaults.worktree;
+		const baseRef = Object.hasOwn(childParams, "baseRef") ? childParams.baseRef : undefined;
 		const outputSchema = Object.hasOwn(childParams, "outputSchema") ? childParams.outputSchema : workflowDefaults.outputSchema;
 		if (outputSchema !== undefined) assertJsonSchemaObject(outputSchema, "outputSchema");
 		const agentContract = Object.hasOwn(childParams, "agentContract") ? childParams.agentContract : workflowDefaults.agentContract;
@@ -4486,6 +4498,7 @@ export function prepareWorkflowLaunchParams(
 			workflowKey,
 			...(lane ? { lane } : {}),
 			...(worktree !== undefined ? { worktree: worktree as boolean } : {}),
+			...(baseRef !== undefined ? { baseRef: baseRef as string } : {}),
 			...(outputSchema !== undefined ? { outputSchema: outputSchema as JsonSchemaObject } : {}),
 			...(agentContract !== undefined ? { agentContract: agentContract as AgentContract } : {}),
 			...(acceptance !== undefined ? { acceptance: acceptance as AcceptanceInput } : {}),

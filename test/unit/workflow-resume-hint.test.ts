@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
+import { parallelHandoffPath } from "../../src/runs/shared/parallel-handoff.ts";
 import { DIRS, type AsyncStatus, type SubagentState } from "../../src/shared/types.ts";
 
 const cleanupRoots: string[] = [];
@@ -65,6 +66,7 @@ function writeRetainedChild(input: {
 	sessionId: string;
 	state?: AsyncStatus["state"];
 	stepStatus?: NonNullable<AsyncStatus["steps"]>[number]["status"];
+	mode?: "single" | "workflow";
 	writeSession?: boolean;
 }): void {
 	const childDir = path.join(DIRS.async, input.childRunId);
@@ -76,13 +78,42 @@ function writeRetainedChild(input: {
 	fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify({
 		runId: input.childRunId,
 		sessionId: input.sessionId,
-		mode: "single",
+		mode: input.mode ?? "single",
 		state,
 		startedAt: 100,
 		endedAt: state === "complete" ? 200 : undefined,
 		cwd: input.root,
 		sessionFile,
 		steps: [{ agent: "worker", status: stepStatus, sessionFile }],
+	}), "utf-8");
+}
+
+function writeManagedWorktreeHandoff(root: string, childRunId: string): void {
+	const childDir = path.join(DIRS.async, childRunId);
+	const worktreePath = path.join(root, `${childRunId}-worktree`);
+	fs.mkdirSync(worktreePath, { recursive: true });
+	fs.writeFileSync(parallelHandoffPath(childDir), JSON.stringify({
+		version: 1,
+		runId: childRunId,
+		mode: "single",
+		source: "async",
+		cwd: root,
+		createdAt: 100,
+		updatedAt: 200,
+		groups: [{
+			stepIndex: 0,
+			baseCommit: "a".repeat(40),
+			repoRoot: root,
+			children: [{
+				index: 0,
+				taskIndex: 0,
+				agent: "worker",
+				status: "completed",
+				summary: "done",
+				patch: { path: path.join(root, "patch.diff"), branch: "work", changed: false, diffStat: "", filesChanged: 0, insertions: 0, deletions: 0 },
+			}],
+			cleanup: { state: "partial", pruned: false, tasks: [{ index: 0, path: worktreePath, branch: "work", worktreeRemoved: false, branchRemoved: false }] },
+		}],
 	}), "utf-8");
 }
 
@@ -172,6 +203,26 @@ describe("workflow keyed resume recovery hint", () => {
 		assert.equal(target.kind, "revive");
 		assert.equal(target.runId, childRunId);
 		cleanupRun(parentRunId);
+		cleanupRun(childRunId);
+	});
+
+	it("rejects explicit baseRef when resuming a retained managed-worktree child", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-managed-worktree-resume-base-ref-"));
+		cleanupRoots.push(root);
+		const { childRunId } = makeIds("managed-base-ref");
+		writeRetainedChild({ root, childRunId, sessionId: "session-1644", mode: "workflow" });
+		writeManagedWorktreeHandoff(root, childRunId);
+
+		const result = await createExecutor(createState("session-1644"), root).execute(
+			`managed-worktree-resume-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+			{ action: "resume", id: childRunId, message: "Continue", baseRef: "refs/heads/release", worktree: true },
+			new AbortController().signal,
+			undefined,
+			createContext(root),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content.map((part) => part.text ?? "").join("\n"), /retained managed-worktree children continue in their existing worktree/);
 		cleanupRun(childRunId);
 	});
 

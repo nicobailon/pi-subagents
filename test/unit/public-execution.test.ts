@@ -26,11 +26,12 @@ describe("public subagent execution normalization", () => {
 				output: true,
 			},
 		});
-		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", async: true }), {
+		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", async: true, baseRef: "@/foo" }), {
 			ok: true,
 			params: {
 				agent: "worker",
 				async: true,
+				baseRef: "@/foo",
 				output: true,
 			},
 		});
@@ -67,6 +68,27 @@ describe("public subagent execution normalization", () => {
 			normalizePublicSubagentExecution({ action: " schedule.create ", every: "1h", workflowScriptPath: "/tmp/workflow.js" }),
 			{ ok: true, params: { action: "schedule.create", every: "1h", workflowScriptPath: "/tmp/workflow.js" } },
 		);
+	});
+
+	it("rejects unsafe base refs at the public boundary", () => {
+		for (const baseRef of ["refs/heads/unsafe..ref", "branch name", "HEAD^{tree}", "@", "a".repeat(40), "a".repeat(64), 42]) {
+			const result = normalizePublicSubagentExecution({ agent: "worker", baseRef });
+			assert.equal(result.ok, false, String(baseRef));
+			if (!result.ok) assert.match(result.error, /baseRef must be a valid Git ref/);
+		}
+	});
+
+	it("rejects base refs on management actions that do not consume them", () => {
+		const result = normalizePublicSubagentExecution({ action: "list", baseRef: "refs/heads/release" });
+		assert.equal(result.ok, false);
+		if (!result.ok) assert.match(result.error, /baseRef is only supported/);
+	});
+
+	it("accepts base refs on resume because resume consumes them", () => {
+		assert.deepEqual(normalizePublicSubagentExecution({ action: " resume ", id: "run-1", message: "Continue", baseRef: "refs/heads/release" }), {
+			ok: true,
+			params: { action: "resume", id: "run-1", message: "Continue", baseRef: "refs/heads/release" },
+		});
 	});
 
 	it("rejects workflowScript with workflowScriptPath", () => {

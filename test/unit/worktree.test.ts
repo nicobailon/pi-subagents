@@ -11,6 +11,7 @@ import {
 	findWorktreeTaskCwdConflict,
 	formatWorktreeDiffSummary,
 	buildWorktreeNaming,
+	normalizeWorktreeBaseRef,
 	normalizeWorktreeBranchPrefix,
 	resolveExpectedWorktreeAgentCwd,
 	resolveWorktreeProvider,
@@ -546,14 +547,65 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 		}
 	});
 
-	it("createWorktrees rejects dirty repositories", () => {
+	it("createWorktrees rejects dirty repositories before resolving the requested base ref", () => {
 		const repoDir = createRepo("pi-worktree-dirty-");
 		try {
 			fs.writeFileSync(path.join(repoDir, "tracked.txt"), "dirty\n", "utf-8");
 			assert.throws(
-				() => createWorktrees(repoDir, "dirty", 1),
+				() => createWorktrees(repoDir, "dirty", 1, { baseRef: "unsafe..ref" }),
 				/worktree isolation requires a clean git working tree/i,
 			);
+		} finally {
+			cleanupRepo(repoDir);
+		}
+	});
+
+	it("allocates from baseRef while preserving source HEAD and propagating baseCommit to hooks and diffs", { skip: hookScriptSkip }, () => {
+		const repoDir = createRepo("pi-worktree-base-ref-");
+		const firstCommit = git(repoDir, ["rev-parse", "HEAD"]);
+		git(repoDir, ["branch", "release"]);
+		fs.writeFileSync(path.join(repoDir, "tracked.txt"), "second\n", "utf-8");
+		git(repoDir, ["add", "tracked.txt"]);
+		git(repoDir, ["commit", "-m", "second commit"]);
+		const sourceHead = git(repoDir, ["rev-parse", "HEAD"]);
+		const hookPath = createHookScript(repoDir, "base-ref-hook.mjs", `
+import * as fs from "node:fs";
+const payload = JSON.parse(fs.readFileSync(0, "utf-8"));
+fs.writeFileSync(payload.worktreePath + "/.base-commit", payload.baseCommit + "\\n", "utf-8");
+process.stdout.write(JSON.stringify({ syntheticPaths: [".base-commit"] }));
+`);
+	let setup: WorktreeSetup | undefined;
+	try {
+		setup = createWorktrees(repoDir, "base-ref", 1, {
+			provider: "native",
+			baseRef: "release",
+			setupHook: { hookPath: path.relative(repoDir, hookPath) },
+		});
+		const worktree = setup.worktrees[0]!;
+		assert.equal(setup.baseCommit, firstCommit);
+		assert.equal(git(worktree.path, ["rev-parse", "HEAD"]), firstCommit);
+		assert.equal(git(repoDir, ["rev-parse", "HEAD"]), sourceHead);
+		assert.equal(fs.readFileSync(path.join(worktree.path, ".base-commit"), "utf-8").trim(), firstCommit);
+		fs.writeFileSync(path.join(worktree.path, "tracked.txt"), "agent change\n", "utf-8");
+		const diffs = diffWorktrees(setup, ["worker"], path.join(repoDir, "artifacts", "base-ref"));
+		assert.equal(diffs[0]?.error, undefined);
+		assert.match(fs.readFileSync(diffs[0]!.patchPath, "utf-8"), /tracked\.txt/);
+	} finally {
+		if (setup) cleanupWorktrees(setup, { kind: "setup-rollback" });
+		cleanupRepo(repoDir);
+	}
+	});
+
+	it("rejects unsafe and unresolved base refs before allocation", () => {
+		const repoDir = createRepo("pi-worktree-invalid-base-ref-");
+		try {
+			for (const baseRef of ["unsafe..ref", "branch name", "HEAD^{tree}", "@", "a".repeat(40), "a".repeat(64)] as const) {
+				assert.throws(() => createWorktrees(repoDir, `invalid-${baseRef.length}`, 1, { provider: "native", baseRef }), /valid Git ref|could not be resolved/i);
+			}
+			git(repoDir, ["tag", "tree-object", "HEAD^{tree}"]);
+			assert.throws(() => createWorktrees(repoDir, "invalid-tree", 1, { provider: "native", baseRef: "tree-object" }), /could not be resolved to a commit/i);
+			assert.throws(() => createWorktrees(repoDir, "invalid-missing", 1, { provider: "native", baseRef: "refs/heads/missing" }), /could not be resolved to a commit/i);
+			assert.equal(git(repoDir, ["worktree", "list", "--porcelain"]).split("\n").filter((line) => line.startsWith("worktree ")).length, 1);
 		} finally {
 			cleanupRepo(repoDir);
 		}

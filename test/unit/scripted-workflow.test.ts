@@ -1429,6 +1429,46 @@ describe("scripted workflow runtime", () => {
 		);
 	});
 
+	it("passes per-child baseRef through runs.run and runs.all", async () => {
+		const launches: Array<{ key: string; baseRef: unknown }> = [];
+		await runWorkflowScript({
+			script: `
+				const one = await runs.run("one", { agent: "worker", task: "one", baseRef: "refs/heads/release" });
+				const rest = await runs.all([{ key: "two", agent: "worker", task: "two", baseRef: "refs/heads/topic" }]);
+				return [one.key, ...rest.map((entry) => entry.key)];
+			`,
+			timeoutMs: 2_000,
+			async launch(key, params) {
+				launches.push({ key, baseRef: params.baseRef });
+				return { key, ok: true, output: key, artifactPaths: [], results: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.deepEqual(launches, [
+			{ key: "one", baseRef: "refs/heads/release" },
+			{ key: "two", baseRef: "refs/heads/topic" },
+		]);
+	});
+
+	it("rejects revision aliases as workflow child baseRef values", async () => {
+		const launches: string[] = [];
+		for (const baseRef of ["@", "a".repeat(40), "a".repeat(64)] as const) {
+			await assert.rejects(
+				runWorkflowScript({
+					script: `await runs.run("alias", { agent: "worker", task: "alias", baseRef: ${JSON.stringify(baseRef)} });`,
+					timeoutMs: 2_000,
+					async launch(key) {
+						launches.push(key);
+						return { key, ok: true, output: key, artifactPaths: [], results: [] };
+					},
+					async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				}),
+				(error: unknown) => error instanceof WorkflowScriptError && /baseRef must be a valid Git ref/.test(error.message),
+			);
+		}
+		assert.deepEqual(launches, []);
+	});
+
 	it("passes per-child workflow controls through runs.run and runs.all", async () => {
 		const launches: Array<{ key: string; worktree: unknown; control: unknown }> = [];
 		await runWorkflowScript({

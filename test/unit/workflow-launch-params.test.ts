@@ -22,6 +22,45 @@ describe("workflow launch params", () => {
 		);
 	});
 
+	it("forwards workflow baseRef only to launches where it can affect allocation", () => {
+		assert.equal(
+			prepareWorkflowLaunchParams(
+				{ baseRef: "refs/heads/release" },
+				{ agent: "worker", task: "Run" },
+				"workflow-run",
+				"run",
+			).baseRef,
+			"refs/heads/release",
+		);
+		assert.equal(
+			prepareWorkflowLaunchParams(
+				{ baseRef: "refs/heads/release" },
+				{ resume: "retained-run", task: "Continue" },
+				"workflow-run",
+				"resume",
+			).baseRef,
+			undefined,
+		);
+		assert.equal(
+			prepareWorkflowLaunchParams(
+				{ baseRef: "refs/heads/release" },
+				{ resume: "retained-run", task: "Continue", baseRef: "refs/heads/topic" },
+				"workflow-run",
+				"resume-explicit",
+			).baseRef,
+			"refs/heads/topic",
+		);
+		assert.equal(
+			prepareWorkflowLaunchParams(
+				{ baseRef: "refs/heads/release" },
+				{ agent: "worker", task: "Run", baseRef: "refs/heads/topic" },
+				"workflow-run",
+				"override",
+			).baseRef,
+			"refs/heads/topic",
+		);
+	});
+
 	it("does not forward workflow capacity overrides to children", () => {
 		const params = prepareWorkflowLaunchParams(
 			{ globalConcurrencyLimit: 2, maxSubagentSpawnsPerRun: 3 },

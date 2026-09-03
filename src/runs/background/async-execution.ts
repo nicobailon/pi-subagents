@@ -185,6 +185,7 @@ interface AsyncChainParams {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
+	baseRef?: string;
 	worktreeProvider?: import("../../shared/types.ts").WorktreeProvider;
 	worktreeBranchPrefix?: string;
 	controlConfig?: ResolvedControlConfig;
@@ -254,6 +255,7 @@ interface AsyncSingleParams {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
+	baseRef?: string;
 	worktreeProvider?: import("../../shared/types.ts").WorktreeProvider;
 	worktreeBranchPrefix?: string;
 	worktree?: boolean;
@@ -1219,6 +1221,7 @@ export function executeAsyncChain(
 		worktreeSetupHook,
 		worktreeSetupHookTimeoutMs,
 		worktreeBaseDir,
+		baseRef,
 		worktreeProvider,
 		worktreeBranchPrefix,
 		controlConfig,
@@ -1355,6 +1358,7 @@ export function executeAsyncChain(
 				worktreeSetupHook,
 				worktreeSetupHookTimeoutMs,
 				worktreeBaseDir,
+				baseRef,
 				worktreeProvider,
 				worktreeBranchPrefix,
 				controlConfig,
@@ -1554,6 +1558,7 @@ export function executeAsyncSingle(
 		worktreeSetupHook,
 		worktreeSetupHookTimeoutMs,
 		worktreeBaseDir,
+		baseRef,
 		worktreeProvider,
 		worktreeBranchPrefix,
 		controlConfig,
@@ -1860,6 +1865,7 @@ export function executeAsyncSingle(
 		...(controlConfig ? { controlConfig } : {}),
 		...(params.context ? { context: params.context } : {}),
 		...(params.intercomBridge !== undefined ? { intercomBridge: params.intercomBridge } : {}),
+		...(params.baseRef !== undefined ? { baseRef: params.baseRef } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
 		...(resolvedToolBudget.budget ? { initialToolBudget: resolvedToolBudget.budget } : {}),
 		maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, recoveryAgentConfig.maxSubagentDepth),
@@ -1960,6 +1966,7 @@ export function executeAsyncSingle(
 				worktreeSetupHook,
 				worktreeSetupHookTimeoutMs,
 				worktreeBaseDir,
+				baseRef,
 				worktreeProvider,
 				worktreeBranchPrefix,
 				controlConfig,

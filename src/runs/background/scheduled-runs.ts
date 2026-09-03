@@ -14,6 +14,7 @@ import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-cei
 import { previewSimpleWorkflowRun } from "../../workflows/scripted-workflow.ts";
 import { resolveGitRepositoryIdentity } from "../../workflows/chat-progress.ts";
 import { getConfigDirName } from "../../shared/utils.ts";
+import { normalizeWorktreeBaseRef } from "../shared/worktree.ts";
 
 export const SCHEDULED_RUN_ACTIONS = [
 	"schedule.create",
@@ -39,7 +40,7 @@ export type ScheduleRunState = "running" | "skipped" | "missed" | "completed" | 
 export type ScheduleTrigger =
 	| { kind: "once"; at: string; nextRunAt?: string }
 	| { kind: "interval"; every: string; everyMs: number; anchorAt: string; nextRunAt: string };
-export type ScheduleTarget = { workflowScript: string };
+export type ScheduleTarget = { workflowScript: string; baseRef?: string };
 
 export interface ScheduleRecord {
 	schemaVersion: 1;
@@ -281,8 +282,15 @@ function readJson(file: string, label: string): unknown {
 
 function parseScheduleTarget(value: unknown, file: string): ScheduleTarget {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Schedule record '${file}' has invalid trigger or target.`);
-	const target = value as { workflowScript?: unknown; agent?: unknown; task?: unknown };
-	if (typeof target.workflowScript === "string" && target.workflowScript.trim()) return { workflowScript: target.workflowScript.trim() };
+	const target = value as { workflowScript?: unknown; baseRef?: unknown; agent?: unknown; task?: unknown };
+	if (typeof target.workflowScript === "string" && target.workflowScript.trim()) {
+		try {
+			const baseRef = normalizeWorktreeBaseRef(target.baseRef);
+			return { workflowScript: target.workflowScript.trim(), ...(baseRef === undefined ? {} : { baseRef }) };
+		} catch (error) {
+			throw new Error(`Schedule record '${file}' has an invalid baseRef: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
 	if (target.agent !== undefined || target.task !== undefined) throw new Error(`Schedule record '${file}' uses a removed legacy agent target; recreate it with target.workflowScript.`);
 	throw new Error(`Schedule record '${file}' requires a workflowScript target.`);
 }
@@ -429,9 +437,15 @@ function sanitizeTarget(params: SubagentParamsLike): { target?: ScheduleTarget; 
 	if (typeof params.workflowScript !== "string" || !params.workflowScript.trim()) return { error: "schedule.create requires a non-empty workflowScript." };
 	if (params.context === "fork") return { error: "Scheduled runs require fresh context." };
 	if (params.async === false) return { error: "Scheduled runs are always async." };
+	let baseRef: string | undefined;
+	try {
+		baseRef = normalizeWorktreeBaseRef(params.baseRef);
+	} catch (error) {
+		return { error: error instanceof Error ? error.message : String(error) };
+	}
 	const acceptanceErrors = validateExecutionAcceptance(params as Parameters<typeof validateExecutionAcceptance>[0]);
 	if (acceptanceErrors.length) return { error: acceptanceErrors.join(" ") };
-	return { target: { workflowScript: params.workflowScript.trim() } };
+	return { target: { workflowScript: params.workflowScript.trim(), ...(baseRef === undefined ? {} : { baseRef }) } };
 }
 
 function executionParams(schedule: ScheduleRecord): SubagentParamsLike {

@@ -95,6 +95,7 @@ subagent({
   id: "evening-review",
   name: "Evening review",
   at: "+30m",
+  baseRef: "refs/heads/release",
   workflowScript: `return runs.run("main", { agent: "reviewer", task: "Review the current diff." })`
 })
 ```
@@ -112,6 +113,7 @@ Manage schedules with `schedule.list`, `schedule.show`, `schedule.history`, `sch
 Behavior:
 
 - Runs always launch async with fresh context and disable automatic mission creation; mission attachment is deferred from this first slice.
+- An optional top-level `baseRef` selects the safe Git ref used by managed worktrees (default `HEAD`); it is persisted with the schedule and forwarded on every fire. The source checkout must still be clean.
 - Definitions, bounded history, append-only events, and per-run receipts are stored with mode `0600`.
 - `overlap` is currently fixed to `skip`; `catchUp` supports `latest` (default) and `none`.
 - `schedule.run-due` lets an external launcher start due project work without making `pi-subagents` a daemon.

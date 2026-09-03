@@ -15,6 +15,7 @@
 
 ### Added
 - Include sanitized excluded model/provider/reason/expiry evidence when no usable subagent candidates remain. Thanks [@AlexKucera](https://github.com/AlexKucera) for #1841.
+- Allow managed worktrees to start from a validated `baseRef` instead of always using `HEAD`. Thanks [@jaudiger](https://github.com/jaudiger) for #1842.
 
 ### Fixed
 - Show native supervisor requests and outbound replies as bounded TUI cards in parent sessions (#1845).
