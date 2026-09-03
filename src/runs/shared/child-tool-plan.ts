@@ -10,7 +10,6 @@ import { fileURLToPath } from "node:url";
 import {
 	formatUnresolvedMcpDirectToolSelectors,
 	resolveMcpDirectToolResolution,
-	type McpConfig,
 	type McpRuntimeSnapshotHost,
 	type ResolvedMcpDirectToolSelection,
 } from "./mcp-direct-tool-allowlist.ts";
@@ -135,8 +134,6 @@ export interface ResolvePiLaunchToolPlanInput {
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
 	mcpDirectTools?: string[];
-	mcpConfig?: McpConfig;
-	runtimeServerNames?: string[];
 	cwd?: string;
 	requireReadTool?: boolean;
 	structuredOutput?:
@@ -177,8 +174,6 @@ export interface PiLaunchToolPlan {
 	capabilityAudit?: SubagentCapabilityAudit;
 	/** Non-fatal launch warnings; they do not change behavior. */
 	warnings: string[];
-	mcpConfig?: McpConfig;
-	runtimeServerNames?: string[];
 }
 
 function extensionIdentifier(value: string): string {
@@ -200,19 +195,15 @@ function hasPermissionRules(rules: PermissionRules | undefined): boolean {
 	return rules !== undefined && Object.keys(rules).length > 0;
 }
 
-function filterRuntimeMcpConfig(
-	config: McpConfig,
-	runtimeServerNames: readonly string[],
-	effectiveRuntimeServerNames: readonly string[],
-): McpConfig {
-	const runtimeNames = new Set(runtimeServerNames);
-	const effectiveNames = new Set(effectiveRuntimeServerNames);
-	return {
-		...config,
-		mcpServers: Object.fromEntries(
-			Object.entries(config.mcpServers).filter(([name]) => !runtimeNames.has(name) || effectiveNames.has(name)),
-		),
-	};
+/**
+ * Children are pi sessions inside the parent or the runner process; a spawned
+ * `pi` received extra MCP server definitions as a CLI argument, but a session
+ * has no such input. Selecting a server that exists only in pi-mcp-adapter's
+ * runtime snapshot therefore cannot work and fails the launch.
+ */
+export function formatRuntimeSnapshotMcpServersError(agentName: string | undefined, serverNames: readonly string[]): string {
+	const subject = agentName ? `Agent '${agentName}'` : "Subagent";
+	return `${subject} selects MCP tools from servers that exist only in pi-mcp-adapter's runtime snapshot (${serverNames.join(", ")}). MCP servers from the runtime snapshot cannot be provided to in-process children; MCP tools must come from an ambient adapter extension in a background child (\`async: true\`), so add the server to the adapter's configuration file instead.`;
 }
 
 export function projectLaunchResolvedChildExtensions(
@@ -348,7 +339,10 @@ export function resolvePiLaunchToolPlan(
 			);
 	const mcpResolution = capabilityCeiling?.denyExtensions
 		? { selections: [], unresolvedSelectors: [] }
-		: resolveMcpDirectToolResolution(input.mcpDirectTools, input.cwd, input.runtimeSnapshotHost, input.mcpConfig);
+		: resolveMcpDirectToolResolution(input.mcpDirectTools, input.cwd, input.runtimeSnapshotHost);
+	if (mcpResolution.runtimeServerNames?.length) {
+		throw new Error(formatRuntimeSnapshotMcpServersError(input.agentName, mcpResolution.runtimeServerNames));
+	}
 	if (mcpResolution.unresolvedSelectors.length > 0) {
 		throw new Error(formatUnresolvedMcpDirectToolSelectors(mcpResolution.unresolvedSelectors));
 	}
@@ -364,14 +358,6 @@ export function resolvePiLaunchToolPlan(
 	const effectiveMcpTools = effectiveMcpSelections.map(
 		(selection) => selection.name,
 	);
-	const runtimeServerNames = mcpResolution.runtimeServerNames ?? input.runtimeServerNames ?? [];
-	const effectiveRuntimeServerNames = runtimeServerNames.filter((serverName) =>
-		effectiveMcpSelections.some((selection) => selection.selector.startsWith(`${serverName}/`)),
-	);
-	const effectiveMcpConfig = mcpResolution.mcpConfig ?? input.mcpConfig;
-	const filteredMcpConfig = effectiveMcpConfig
-		? filterRuntimeMcpConfig(effectiveMcpConfig, runtimeServerNames, effectiveRuntimeServerNames)
-		: undefined;
 	const explicitToolAllowlist =
 		input.tools !== undefined ||
 		(input.mcpDirectTools?.length ?? 0) > 0 ||
@@ -509,9 +495,6 @@ export function resolvePiLaunchToolPlan(
 		extensionArgs,
 		disableAmbientExtensions,
 		warnings,
-		...(effectiveRuntimeServerNames.length > 0 && filteredMcpConfig
-			? { mcpConfig: filteredMcpConfig, runtimeServerNames: effectiveRuntimeServerNames }
-			: {}),
 		...(capabilityAudit ? { capabilityAudit } : {}),
 	};
 }

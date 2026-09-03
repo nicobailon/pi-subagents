@@ -115,8 +115,11 @@ export function resolveMcpDirectToolResolution(
 		? mergeConfigs(config, { mcpServers: runtimeServers })
 		: config;
 	validateSelectedServerDefinitions(resolvedConfig, selectors);
+	const runtime = Object.keys(runtimeServers).length > 0
+		? { mcpConfig: resolvedConfig, runtimeServerNames: Object.keys(runtimeServers) }
+		: {};
 	const cache = loadMetadataCache();
-	if (!cache) return { selections: [], unresolvedSelectors: selectors };
+	if (!cache) return { selections: [], unresolvedSelectors: selectors, ...runtime };
 	const validMetadata: Record<string, ServerCacheEntry> = {};
 	for (const [serverName, definition] of Object.entries(resolvedConfig.mcpServers)) {
 		const serverCache = cache.servers[serverName];
@@ -131,9 +134,7 @@ export function resolveMcpDirectToolResolution(
 	return {
 		selections: grant.selections,
 		unresolvedSelectors: grant.unresolvedSelectors,
-		...(Object.keys(runtimeServers).length > 0
-			? { mcpConfig: resolvedConfig, runtimeServerNames: Object.keys(runtimeServers) }
-			: {}),
+		...runtime,
 	};
 }
 

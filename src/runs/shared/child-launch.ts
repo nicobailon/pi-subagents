@@ -16,7 +16,7 @@ import {
 	type RunFanoutBudgetDescriptor,
 } from "../../shared/types.ts";
 import type { NestedPathEntry } from "./nested-path.ts";
-import type { McpConfig, McpRuntimeSnapshotHost } from "./mcp-direct-tool-allowlist.ts";
+import type { McpRuntimeSnapshotHost } from "./mcp-direct-tool-allowlist.ts";
 import type { PermissionRules } from "./permissions.ts";
 import type { StructuredOutputRuntime } from "./structured-output.ts";
 import type { ChildToolDiagnostic } from "./tool-availability.ts";
@@ -77,8 +77,6 @@ export interface BuildInProcessChildLaunchInput {
 	subagentOnlyExtensions?: string[];
 	systemPrompt?: string | null;
 	mcpDirectTools?: string[];
-	mcpConfig?: McpConfig;
-	runtimeServerNames?: string[];
 	extensionBindings?: ExtensionBindings;
 	cwd: string;
 	intercomSessionName?: string;
@@ -176,8 +174,6 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		extensions: input.extensions,
 		subagentOnlyExtensions: input.subagentOnlyExtensions,
 		mcpDirectTools: input.mcpDirectTools,
-		mcpConfig: input.mcpConfig,
-		runtimeServerNames: input.runtimeServerNames,
 		cwd: input.cwd,
 		requireReadTool: input.requireReadTool,
 		structuredOutput: Boolean(input.structuredOutput),

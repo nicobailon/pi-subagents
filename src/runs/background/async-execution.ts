@@ -543,11 +543,11 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 		return { error: "upstream jiti for TypeScript execution could not be found; ensure package dependencies are installed" };
 	}
 	if (!piPackageRoot) {
-		return { error: `Could not resolve the installed ${PI_CODING_AGENT_PACKAGE} package; the async runner needs it to create child sessions.` };
+		return { error: `Background children require pi installed as the npm package (${PI_CODING_AGENT_PACKAGE}); a standalone pi binary has no package directory, so the async runner cannot create child sessions. Run this child in the foreground (async: false) or install pi from npm.` };
 	}
 	const hostPeerAliases = resolveHostPeerAliases(piPackageRoot);
 	if (hostPeerAliases.missing.length > 0) {
-		return { error: `Could not resolve host packages for the async runner from ${piPackageRoot}: ${hostPeerAliases.missing.join(", ")}.` };
+		return { error: `Background children require pi installed as the npm package (${PI_CODING_AGENT_PACKAGE}) with its dependencies; ${piPackageRoot} does not provide ${hostPeerAliases.missing.join(", ")}, so the async runner cannot create child sessions. A standalone pi binary cannot run background children.` };
 	}
 
 	fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
@@ -1016,8 +1016,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			thinking: resolveEffectiveThinking(model, effectiveThinking),
 			...(thinkingCeiling ? { thinkingCeiling } : {}),
 			launchResolvedExtensions,
-			...(toolPlan.mcpConfig ? { mcpConfig: toolPlan.mcpConfig } : {}),
-			...(toolPlan.runtimeServerNames ? { runtimeServerNames: toolPlan.runtimeServerNames } : {}),
 			modelCandidates: externalRunner ? undefined : modelCandidates,
 			...(primaryModelFromParent ? { skipPrimaryModelVerification: true } : {}),
 			...(availableModels && availableModels.length > 0 ? { modelVerificationRegistry: availableModels } : {}),
@@ -1912,8 +1910,6 @@ export function executeAsyncSingle(
 						extensions: agentConfig.extensions,
 						subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,
 						mcpDirectTools: agentConfig.mcpDirectTools,
-						...(toolPlan.mcpConfig ? { mcpConfig: toolPlan.mcpConfig } : {}),
-						...(toolPlan.runtimeServerNames ? { runtimeServerNames: toolPlan.runtimeServerNames } : {}),
 						mutationTools: agentConfig.mutationTools,
 						completionGuard: agentConfig.completionGuard,
 						systemPrompt,

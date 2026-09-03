@@ -14,7 +14,7 @@
 pi install npm:pi-subagents
 ```
 
-That is the only required step.
+That is the only required step. Background children require pi installed as the npm package (`@earendil-works/pi-coding-agent`): the detached runner imports pi's packages from that package directory. A standalone single-file pi binary has no package directory and cannot run background children; foreground children (`async: false`) still work there.
 
 ## Try this first
 
