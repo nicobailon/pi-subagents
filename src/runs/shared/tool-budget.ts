@@ -64,4 +64,3 @@ export function toolBudgetSoftNudge(budget: ResolvedToolBudget, toolCount: numbe
 export function toolBudgetBlockedMessage(budget: ResolvedToolBudget, toolName: string, toolCount: number): string {
 	return `Tool budget hard limit reached after ${toolCount} tool call${toolCount === 1 ? "" : "s"} (hard ${budget.hard}). The '${toolName}' tool is blocked so you can finalize from the context you already have.`;
 }
-

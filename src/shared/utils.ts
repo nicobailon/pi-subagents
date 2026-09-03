@@ -413,10 +413,9 @@ export function compactForegroundDetails(details: Details): Details {
  *
  * The completed-compaction helpers above bail out while a child is still
  * `running`, so a long or deeply nested fan-out streams full, unbounded progress on
- * every tick. Pi serializes each streamed `tool_execution_update` as a single
- * child-stdout line, which the parent reads under `MAX_CHILD_PENDING_LINE_BYTES`;
- * an unbounded running snapshot can cross that cap and kill the child with
- * `protocol_output_limit`.
+ * every tick. The parent records every streamed `tool_execution_update` in its
+ * transcript and `events.jsonl`, so an unbounded running snapshot grows those
+ * artifacts and the live display state without bound.
  *
  * These bound the STREAMED snapshot only. The final returned result keeps the full
  * live progress and message transcript, and every live-display consumer already

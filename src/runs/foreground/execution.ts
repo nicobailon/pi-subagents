@@ -278,8 +278,8 @@ function snapshotResult(result: SingleResult, progress: AgentProgress): SingleRe
 /**
  * Streaming variant of snapshotResult for `onUpdate` progress events: it drops the
  * unbounded `messages` transcript in favour of compact tool-call summaries so a
- * single `tool_execution_update` line stays well under the child-stdout protocol
- * cap (`MAX_CHILD_PENDING_LINE_BYTES`). Non-streaming consumers such as
+ * single `tool_execution_update` event stays small; the parent records every
+ * one in its transcript and `events.jsonl`. Non-streaming consumers such as
  * foreground detach receipts and terminal consumers use snapshotResult directly.
  */
 function snapshotStreamResult(result: SingleResult, progress: AgentProgress): SingleResult {
