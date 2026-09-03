@@ -89,6 +89,7 @@ import {
 	SUBAGENT_CONTROL_MESSAGE_TYPE,
 	type SubagentControlMessageDetails,
 } from "./control-notices.ts";
+import { teardownWorkflowControllers } from "./workflow-teardown.ts";
 
 export { loadConfig, resolveAsyncByDefault } from "./config.ts";
 
@@ -962,12 +963,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			runtimeCleaned = true;
 			const shuttingDownParentSession = parentSessionEnvValue;
 			// Workflow continuations retain their launch context; abort them before
-			// teardown so a reload cannot launch through a stale context.
-			for (const controller of state.workflowControllers?.values() ?? []) {
-				if (!controller.signal.aborted) controller.abort(new Error("Workflow stopped because the extension session was replaced or reloaded."));
-			}
-			state.workflowControllers?.clear();
-			state.workflowChildStops?.clear();
+			// teardown so a reload cannot launch through a stale context. Workflows
+			// whose child runs are all terminal are only assembling their result, so
+			// they get a bounded, unref'd grace window to flush it (#1833); a workflow
+			// that finishes in time delivers through the replacing runtime's normal
+			// result path, and expiry force-aborts with the same error. Workflows
+			// with any live child run still abort immediately, as before.
+			teardownWorkflowControllers(state);
 			clearRuntimeAgentsForPi(pi);
 			clearTimeout(resultIndexCleanupTimer);
 			clearTimeout(asyncRetentionTimer);
