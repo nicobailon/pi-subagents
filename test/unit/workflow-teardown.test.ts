@@ -142,6 +142,25 @@ describe("teardownWorkflowControllers", () => {
 		assert.equal(controller.signal.aborted, false, "flushed workflow must not be force-aborted after expiry");
 	});
 
+	it("skips the force abort when the map entry was replaced by a different controller", () => {
+		const fake = makeFakeTimers();
+		const job = makeJob("wf-replaced", ["completed"]);
+		const state = makeState(new Map([["wf-replaced", job]]), ["wf-replaced"]);
+		const staleController = state.workflowControllers!.get("wf-replaced")!;
+
+		teardownWorkflowControllers(state, { graceMs: 5, timers: fake.timers });
+
+		// A replacing runtime registered a fresh controller for the same run id
+		// before expiry; the replacement owns the run now and must survive the
+		// stale entry's grace expiry untouched.
+		const replacement = new AbortController();
+		state.workflowControllers!.set("wf-replaced", replacement);
+		fake.fire(0);
+
+		assert.equal(staleController.signal.aborted, false, "stale controller must be left alone at expiry");
+		assert.equal(replacement.signal.aborted, false, "replacement controller must not be aborted by the stale entry's expiry");
+	});
+
 	it("force-aborts on grace expiry with the standard teardown error", () => {
 		const fake = makeFakeTimers();
 		const job = makeJob("wf-stuck", ["completed"]);

@@ -63,7 +63,9 @@ export function workflowChildRunsAllTerminal(job: AsyncJobState | undefined): bo
  * removes its own controller from `state.workflowControllers` (its normal
  * settle path) and is skipped at expiry, while the rest are force-aborted
  * with the standard teardown error. Scheduling the timer keeps cleanup
- * synchronous; unref'ing it keeps process exit unblocked.
+ * synchronous; unref'ing the timer unblocks only the timer itself — the
+ * workflow worker thread still pins the event loop for the grace window, so
+ * callers that want a prompt exit pass `graceMs: 0`.
  */
 export function teardownWorkflowControllers(state: WorkflowTeardownState, options: WorkflowTeardownOptions = {}): WorkflowTeardownResult {
 	const graceMs = options.graceMs ?? WORKFLOW_TEARDOWN_GRACE_MS;
@@ -73,6 +75,11 @@ export function teardownWorkflowControllers(state: WorkflowTeardownState, option
 	const graceEntries: Array<{ runId: string; controller: AbortController }> = [];
 	for (const [runId, controller] of state.workflowControllers ?? []) {
 		if (controller.signal.aborted) continue;
+		// Accepted risk (#1833 QA): the all-terminal reading below is a snapshot.
+		// A sequential workflow resting between phases (await run(a); await sleep();
+		// await run(b)) can still launch one more lane through its stale launch
+		// context during the grace window; damage is bounded by the expiry force
+		// abort. A launch-admission latch is a possible follow-up if this bites.
 		if (workflowChildRunsAllTerminal(state.asyncJobs?.get(runId))) {
 			graceEntries.push({ runId, controller });
 			graceAbortsScheduled.push(runId);

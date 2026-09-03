@@ -969,7 +969,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			// that finishes in time delivers through the replacing runtime's normal
 			// result path, and expiry force-aborts with the same error. Workflows
 			// with any live child run still abort immediately, as before.
-			teardownWorkflowControllers(state);
+			// True parent-session shutdown skips the window (graceMs: 0): the process
+			// is exiting, nobody will deliver the flush, and the workflow worker
+			// thread is not unref'd, so the window would only delay exit.
+			teardownWorkflowControllers(state, shuttingDownParentSession ? { graceMs: 0 } : {});
 			clearRuntimeAgentsForPi(pi);
 			clearTimeout(resultIndexCleanupTimer);
 			clearTimeout(asyncRetentionTimer);
