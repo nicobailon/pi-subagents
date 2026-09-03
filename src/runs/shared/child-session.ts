@@ -106,6 +106,9 @@ export interface DefaultChildSessionFactoryOptions {
 	loadPiCodingAgent?: () => Promise<PiCodingAgentModule>;
 }
 
+/** Serializes env application through extension loading so parallel launches never observe each other's `processEnv`. */
+let loading: Promise<unknown> = Promise.resolve();
+
 function applyProcessEnv(values: Record<string, string | undefined> | undefined): void {
 	if (!values) return;
 	for (const [name, value] of Object.entries(values)) {
@@ -137,7 +140,6 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			const modelRuntime = await sharedRuntime(pi);
 			const agentDir = getAgentDir();
 			const settingsManager = pi.SettingsManager.create(launch.cwd, agentDir);
-			applyProcessEnv(launch.processEnv);
 			const loader = new pi.DefaultResourceLoader({
 				cwd: launch.cwd,
 				agentDir,
@@ -152,7 +154,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				...(launch.systemPrompt !== undefined ? { systemPrompt: launch.systemPrompt } : {}),
 				...(launch.appendSystemPrompt !== undefined ? { appendSystemPrompt: [launch.appendSystemPrompt] } : {}),
 			});
-			await loader.reload();
+			await (loading = loading.catch(() => {}).then(() => { applyProcessEnv(launch.processEnv); return loader.reload(); }));
 			const sessionManager = launch.storage.kind === "file"
 				? pi.SessionManager.open(launch.storage.sessionFile, undefined, launch.cwd)
 				: launch.storage.kind === "dir"

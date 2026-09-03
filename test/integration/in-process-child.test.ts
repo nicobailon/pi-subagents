@@ -12,6 +12,7 @@ import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
 import { createMockPi, createTempDir, makeAgent, makeAgentConfigs, removeTempDir } from "../support/helpers.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
+import { createDefaultChildSessionFactory, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
 import { createNestedRoute } from "../../src/runs/shared/nested-events.ts";
 import { createStructuredOutputRuntime } from "../../src/runs/shared/structured-output.ts";
 import type { ForegroundChildSessionControls, SingleResult } from "../../src/shared/types.ts";
@@ -188,5 +189,31 @@ describe("in-process foreground child", () => {
 		assert.equal(terminal?.finalOutput, "after detach");
 		assert.equal(terminal?.detachedReason, "user request");
 		assert.equal(mockPi.sessions[0]?.disposed, true);
+	});
+});
+
+/** A pi module stub whose loader reads `process.env` after an await, the way a real extension load does. */
+function stubPi(session: Record<string, unknown> = {}, onReload?: () => void): PiCodingAgentModule {
+	return {
+		ModelRuntime: { create: async () => ({}) },
+		SettingsManager: { create: () => ({}) },
+		DefaultResourceLoader: class { async reload() { await new Promise((resolve) => setTimeout(resolve, 10)); onReload?.(); } },
+		SessionManager: { inMemory: () => ({}) },
+		resolveCliModel: () => ({}),
+		createAgentSession: async () => ({ session: { bindExtensions: async () => {}, dispose() {}, extensionRunner: { hasHandlers: () => false }, subscribe: () => () => {}, prompt: async () => {}, abort: async () => {}, steer: async () => {}, followUp: async () => {}, messages: [], sessionId: "s", ...session } }),
+	} as unknown as PiCodingAgentModule;
+}
+const stubLaunch: ChildSessionLaunch = { cwd: process.cwd(), storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] };
+
+describe("default child session factory", () => {
+	it("serializes process env through extension loading across concurrent launches", async () => {
+		const seen: string[] = [];
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi({}, () => { seen.push(process.env.PI_SUBAGENT_TEST_ENV ?? ""); }) });
+		await Promise.all([
+			factory.create({ ...stubLaunch, processEnv: { PI_SUBAGENT_TEST_ENV: "a" } }),
+			factory.create({ ...stubLaunch, processEnv: { PI_SUBAGENT_TEST_ENV: "b" } }),
+		]);
+		delete process.env.PI_SUBAGENT_TEST_ENV;
+		assert.deepEqual(seen, ["a", "b"]);
 	});
 });
