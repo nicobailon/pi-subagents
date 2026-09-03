@@ -382,7 +382,7 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 					record.aborted = true;
 					abortResolve?.();
 				},
-				dispose() {
+				async dispose() {
 					record.disposed = true;
 				},
 				get messages() { return messages; },

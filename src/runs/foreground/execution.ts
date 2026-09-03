@@ -779,12 +779,8 @@ async function runSingleAttempt(
 			void jsonlWriter.close().catch(() => {
 				// JSONL artifact flush is best effort.
 			});
-			try {
-				session?.dispose();
-			} catch {
-				// Disposal is best effort; the session is no longer observed.
-			}
-			resolve(code);
+			// Report the run only after the child's extensions have shut down.
+			void Promise.resolve().then(() => session?.dispose()).catch(() => undefined).then(() => resolve(code));
 		};
 
 		const drainPendingControlEvents = (): ControlEvent[] | undefined => {
@@ -1349,7 +1345,7 @@ async function runSingleAttempt(
 					},
 				});
 				if (lifecycleFinished) {
-					created.dispose();
+					void created.dispose();
 					return;
 				}
 				session = created;

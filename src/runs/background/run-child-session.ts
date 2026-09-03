@@ -494,7 +494,8 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 			}
 		};
 
-		const finish = (): void => {
+		/** Stops observing the child and returns when its extensions have shut down. */
+		const finish = (): Promise<void> => {
 			clearFinalDrainTimers();
 			clearWatchdogTailTimer();
 			clearAllToolTimeouts();
@@ -507,18 +508,14 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 			input.registerStop?.(undefined);
 			input.registerSteer?.(undefined);
 			unsubscribe?.();
-			try {
-				session?.dispose();
-			} catch {
-				// Disposal is best effort; the session is no longer observed.
-			}
+			return Promise.resolve().then(() => session?.dispose()).catch(() => undefined);
 		};
 
-		/** The child run ended (or was forced to end); fold in the outcome. */
+		/** The child run ended (or was forced to end); fold in the outcome once the child's shutdown work is done. */
 		const settle = (promptError: unknown, forced = false): void => {
 			if (settled) return;
 			settled = true;
-			finish();
+			const closed = finish();
 			const finalOutput = getFinalOutput(messages);
 			let finalError = error ?? assistantError;
 			if (!finalError && promptError !== undefined) {
@@ -534,7 +531,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				: interrupted || (forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal)
 					? 0
 					: finalError || promptError !== undefined ? 1 : 0;
-			resolve(omitUndefined({
+			void closed.then(() => resolve(omitUndefined({
 				exitCode,
 				messages,
 				usage,
@@ -556,7 +553,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				currentToolArgs,
 				currentPath,
 				afterCompactionSettlement: afterCompactionSettlement || undefined,
-			}));
+			})));
 		};
 
 		input.registerInterrupt?.(() => {
@@ -583,7 +580,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 					},
 				});
 				if (settled) {
-					created.dispose();
+					void created.dispose();
 					return;
 				}
 				session = created;

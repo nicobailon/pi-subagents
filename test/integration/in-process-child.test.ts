@@ -12,7 +12,7 @@ import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
 import { createMockPi, createTempDir, makeAgent, makeAgentConfigs, removeTempDir } from "../support/helpers.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
-import { createDefaultChildSessionFactory, disposeChildSessions, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
+import { childSessionFactory, createDefaultChildSessionFactory, disposeChildSessions, type ChildSessionFactory, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
 import { createNestedRoute } from "../../src/runs/shared/nested-events.ts";
 import { createStructuredOutputRuntime } from "../../src/runs/shared/structured-output.ts";
 import type { ForegroundChildSessionControls, SingleResult } from "../../src/shared/types.ts";
@@ -145,6 +145,24 @@ describe("in-process foreground child", () => {
 		assert.equal(mockPi.sessions[0]?.disposed, true);
 	});
 
+	it("reports the run only after the child session's shutdown work finished", async () => {
+		mockPi.onCall({ output: "done" });
+		let shutdownDone = false;
+		const inner = childSessionFactory();
+		const wrapped: ChildSessionFactory = {
+			...inner,
+			create: async (launch) => {
+				const session = await inner.create(launch);
+				const dispose = session.dispose.bind(session);
+				session.dispose = () => dispose().then(() => new Promise<void>((resolve) => setTimeout(() => { shutdownDone = true; resolve(); }, 30)));
+				return session;
+			},
+		};
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "dispose-order", childSessionFactory: wrapped });
+		assert.equal(result.exitCode, 0);
+		assert.equal(shutdownDone, true);
+	});
+
 	it("captures structured output in memory", async () => {
 		const structured = createStructuredOutputRuntime({ type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, tempDir);
 		mockPi.onCall({ structuredOutput: { ok: true } });
@@ -218,15 +236,43 @@ function stubPi(session: Record<string, unknown> = {}, onReload?: () => void): P
 const stubLaunch: ChildSessionLaunch = { cwd: process.cwd(), storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] };
 
 describe("default child session factory", () => {
-	it("serializes process env through extension loading across concurrent launches", async () => {
+	it("serializes process env through extension loading and session start across concurrent launches", async () => {
 		const seen: string[] = [];
-		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi({}, () => { seen.push(process.env.PI_SUBAGENT_TEST_ENV ?? ""); }) });
+		const bound: string[] = [];
+		const bindExtensions = async () => { await new Promise((resolve) => setTimeout(resolve, 10)); bound.push(process.env.PI_SUBAGENT_TEST_ENV ?? ""); };
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi({ bindExtensions }, () => { seen.push(process.env.PI_SUBAGENT_TEST_ENV ?? ""); }) });
 		await Promise.all([
 			factory.create({ ...stubLaunch, processEnv: { PI_SUBAGENT_TEST_ENV: "a" } }),
 			factory.create({ ...stubLaunch, processEnv: { PI_SUBAGENT_TEST_ENV: "b" } }),
 		]);
 		delete process.env.PI_SUBAGENT_TEST_ENV;
 		assert.deepEqual(seen, ["a", "b"]);
+		assert.deepEqual(bound, ["a", "b"]);
+	});
+
+	it("marks each child's loader as reloaded so pi resets its extension cache", async () => {
+		const flags: boolean[] = [];
+		const pi = stubPi();
+		pi.DefaultResourceLoader = class { loaded = false; async reload() { flags.push(this.loaded); } } as unknown as PiCodingAgentModule["DefaultResourceLoader"];
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
+		await factory.create(stubLaunch);
+		await factory.create(stubLaunch);
+		assert.deepEqual(flags, [true, true]);
+	});
+
+	it("reports a missing extension cache reset when the child loads extension files", async () => {
+		const errors: string[] = [];
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi() });
+		await factory.create({ ...stubLaunch, onExtensionError: (error) => errors.push(error.extensionPath) });
+		await factory.create({ ...stubLaunch, extensionPaths: ["/tmp/ext.ts"], onExtensionError: (error) => errors.push(error.extensionPath) });
+		assert.deepEqual(errors, ["<loader>"]);
+	});
+
+	it("disposes the session when bindExtensions throws synchronously", async () => {
+		let disposed = 0;
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi({ bindExtensions: () => { throw new Error("sync bind failed"); }, dispose: () => { disposed += 1; } }) });
+		await assert.rejects(factory.create(stubLaunch), /sync bind failed/);
+		assert.equal(disposed, 1);
 	});
 
 	it("disposes the session when bindExtensions rejects", async () => {

@@ -66,8 +66,9 @@ export interface ChildSessionLaunch {
 	appendSystemPrompt?: string;
 	/**
 	 * Environment values that extensions loaded into the child read from
-	 * `process.env`. Applied to the hosting process before the session is
-	 * created; an undefined value removes the variable.
+	 * `process.env`. Applied to the hosting process while the session is created
+	 * and its extensions load and start; launches in one process take that
+	 * window one at a time. An undefined value removes the variable.
 	 */
 	processEnv?: Record<string, string | undefined>;
 	/** The typed runtime config the hooks were built from; informational for factories. */
@@ -82,7 +83,8 @@ export interface ChildSession {
 	steer(text: string): Promise<void>;
 	followUp(text: string): Promise<void>;
 	abort(): Promise<void>;
-	dispose(): void;
+	/** Emits `session_shutdown` to the child's extensions and disposes the session; resolves once that shutdown work is done. */
+	dispose(): Promise<void>;
 	readonly messages: readonly AgentMessage[];
 	readonly sessionFile: string | undefined;
 	readonly sessionId: string;
@@ -112,8 +114,21 @@ export interface DefaultChildSessionFactoryOptions {
 	shutdownTimeoutMs?: number;
 }
 
-/** Serializes env application through extension loading so parallel launches never observe each other's `processEnv`. */
+/** One launch at a time from env application through `session_start`, so parallel launches never observe each other's `processEnv` while their extensions load and start. */
 let loading: Promise<unknown> = Promise.resolve();
+
+/**
+ * pi caches extension factories per process and clears that cache only when a
+ * loader reloads a second time, so every child in one process would share each
+ * extension's module state. Marking the child's loader as already loaded makes
+ * its first `reload()` clear the cache, so the child gets its own instances the
+ * way a separate process had them. The flag is a private field of pi's loader.
+ */
+function resetExtensionCacheOnReload(loader: object): boolean {
+	if (!("loaded" in loader)) return false;
+	(loader as { loaded: boolean }).loaded = true;
+	return true;
+}
 
 function applyProcessEnv(values: Record<string, string | undefined> | undefined): void {
 	if (!values) return;
@@ -161,36 +176,49 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				...(launch.systemPrompt !== undefined ? { systemPrompt: launch.systemPrompt } : {}),
 				...(launch.appendSystemPrompt !== undefined ? { appendSystemPrompt: [launch.appendSystemPrompt] } : {}),
 			});
-			await (loading = loading.catch(() => {}).then(() => { applyProcessEnv(launch.processEnv); return loader.reload(); }));
-			const sessionManager = launch.storage.kind === "file"
-				? pi.SessionManager.open(launch.storage.sessionFile, undefined, launch.cwd)
-				: launch.storage.kind === "dir"
-					? pi.SessionManager.create(launch.cwd, launch.storage.sessionDir)
-					: launch.storage.kind === "memory"
-						? pi.SessionManager.inMemory(launch.cwd)
-						: pi.SessionManager.create(launch.cwd);
-			const resolvedModel = launch.model
-				? pi.resolveCliModel({ cliModel: launch.model, modelRuntime })
-				: undefined;
-			if (resolvedModel?.error) throw new Error(resolvedModel.error);
-			const { session } = await pi.createAgentSession({
-				cwd: launch.cwd,
-				agentDir,
-				modelRuntime,
-				...(resolvedModel?.model ? { model: resolvedModel.model } : {}),
-				...(resolvedModel?.thinkingLevel ? { thinkingLevel: resolvedModel.thinkingLevel } : {}),
-				...(launch.tools ? { tools: launch.tools } : {}),
-				...(launch.excludeTools?.length ? { excludeTools: launch.excludeTools } : {}),
-				resourceLoader: loader,
-				sessionManager,
-				settingsManager,
-				sessionStartEvent: { type: "session_start", reason: "startup" },
-			});
-			await session.bindExtensions({
-				mode: "print",
-				onError: (error) => launch.onExtensionError?.({ extensionPath: error.extensionPath, event: error.event, error: error.error }),
-			}).catch((error: unknown) => { session.dispose(); throw error; });
-			let disposed = false;
+			const open = async () => {
+				applyProcessEnv(launch.processEnv);
+				if (!resetExtensionCacheOnReload(loader) && (launch.ambientExtensions || launch.extensionPaths.length)) launch.onExtensionError?.({ extensionPath: "<loader>", event: "load", error: new Error("pi's extension cache reset is unavailable; extensions loaded into this child share module state with other sessions in this process.") });
+				await loader.reload();
+				const sessionManager = launch.storage.kind === "file"
+					? pi.SessionManager.open(launch.storage.sessionFile, undefined, launch.cwd)
+					: launch.storage.kind === "dir"
+						? pi.SessionManager.create(launch.cwd, launch.storage.sessionDir)
+						: launch.storage.kind === "memory"
+							? pi.SessionManager.inMemory(launch.cwd)
+							: pi.SessionManager.create(launch.cwd);
+				const resolvedModel = launch.model
+					? pi.resolveCliModel({ cliModel: launch.model, modelRuntime })
+					: undefined;
+				if (resolvedModel?.error) throw new Error(resolvedModel.error);
+				const { session } = await pi.createAgentSession({
+					cwd: launch.cwd,
+					agentDir,
+					modelRuntime,
+					...(resolvedModel?.model ? { model: resolvedModel.model } : {}),
+					...(resolvedModel?.thinkingLevel ? { thinkingLevel: resolvedModel.thinkingLevel } : {}),
+					...(launch.tools ? { tools: launch.tools } : {}),
+					...(launch.excludeTools?.length ? { excludeTools: launch.excludeTools } : {}),
+					resourceLoader: loader,
+					sessionManager,
+					settingsManager,
+					sessionStartEvent: { type: "session_start", reason: "startup" },
+				});
+				try {
+					await session.bindExtensions({
+						mode: "print",
+						onError: (error) => launch.onExtensionError?.({ extensionPath: error.extensionPath, event: error.event, error: error.error }),
+					});
+				} catch (error) {
+					session.dispose();
+					throw error;
+				}
+				return session;
+			};
+			const opened = loading.catch(() => {}).then(open);
+			loading = opened;
+			const session = await opened;
+			let pending: Promise<void> | undefined;
 			// pi's own hosts emit `session_shutdown` before disposing a session so the
 			// extensions loaded into it (ambient extensions included) release their
 			// watchers, servers, and timers. Do the same, then dispose.
@@ -211,12 +239,14 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				followUp: (text) => session.followUp(text),
 				abort: () => session.abort(),
 				dispose: () => {
-					if (disposed) return;
-					disposed = true;
-					live.delete(child);
-					const pending = shutdown();
-					shutdowns.add(pending);
-					void pending.finally(() => shutdowns.delete(pending));
+					if (!pending) {
+						live.delete(child);
+						const shutdownDone = shutdown();
+						pending = shutdownDone;
+						shutdowns.add(shutdownDone);
+						void shutdownDone.finally(() => shutdowns.delete(shutdownDone));
+					}
+					return pending;
 				},
 				get messages() { return session.messages; },
 				get sessionFile() { return session.sessionFile; },
@@ -231,7 +261,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			for (const child of children) child.shutDown = true;
 			await Promise.allSettled(children.map((child) => child.abort()));
 			for (const child of children) {
-				try { child.dispose(); } catch { /* best effort */ }
+				try { void child.dispose(); } catch { /* best effort */ }
 			}
 			await Promise.allSettled([...shutdowns]);
 			if (live.size === 0) runtime = undefined;
