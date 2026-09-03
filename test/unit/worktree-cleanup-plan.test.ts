@@ -366,21 +366,6 @@ describe("worktree cleanup plan", () => {
 		}
 	});
 
-	it("uses sibling worktrees project folder as default cleanup containment root", () => {
-		const repo = createRepo("pi-cleanup-plan-default-root-");
-		const previous = process.env.PI_SUBAGENTS_WORKTREE_DIR;
-		delete process.env.PI_SUBAGENTS_WORKTREE_DIR;
-		try {
-			const plan = buildPlan({ repo, now: 61_000, planId: "default-root-plan" });
-			const realRepo = fs.realpathSync(repo);
-			assert.equal(plan.baseDirs[0], path.join(path.dirname(realRepo), "worktrees", path.basename(realRepo)));
-		} finally {
-			if (previous === undefined) delete process.env.PI_SUBAGENTS_WORKTREE_DIR;
-			else process.env.PI_SUBAGENTS_WORKTREE_DIR = previous;
-			fs.rmSync(repo, { recursive: true, force: true });
-		}
-	});
-
 	it("uses git toplevel parent as default cleanup root when input.repo is a subdirectory", () => {
 		const repo = createRepo("pi-cleanup-plan-subdir-root-");
 		const previous = process.env.PI_SUBAGENTS_WORKTREE_DIR;
@@ -392,7 +377,7 @@ describe("worktree cleanup plan", () => {
 			const manifestPath = path.join(repo, ".pi", "subagents", "artifacts", "handoff.json");
 			writeManifest({ repo, manifestPath, setup });
 			const plan = buildPlan({ repo: path.join(repo, "packages", "app"), now: 61_500, planId: "subdir-root-plan" });
-			const realRepo = fs.realpathSync(repo);
+			const realRepo = __testables.realpathExisting(repo);
 			assert.equal(plan.baseDirs[0], path.join(path.dirname(realRepo), "worktrees", path.basename(realRepo)));
 			const entry = entriesByPath(plan).get(__testables.realpathExisting(setup.worktrees[0]!.path)) ?? plan.entries[0];
 			assert.equal(entry?.decision, "remove");

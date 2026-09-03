@@ -214,7 +214,13 @@ function normalizeComparableCwd(cwd: string): string {
 	const missingSegments: string[] = [];
 	while (true) {
 		try {
-			return path.join(fs.realpathSync(existing), ...missingSegments.reverse());
+			let realpath: string;
+			try {
+				realpath = fs.realpathSync.native(existing);
+			} catch {
+				realpath = fs.realpathSync(existing);
+			}
+			return path.join(realpath, ...missingSegments.reverse());
 		} catch {
 			const parent = path.dirname(existing);
 			if (parent === existing) return resolved;
@@ -447,11 +453,14 @@ function resolveWorktreeDedicatedRoot(configuredBaseDir: string | undefined, rep
 		expanded = path.isAbsolute(candidate) ? candidate : path.resolve(repoRoot, candidate);
 	}
 	const extensionsDir = normalizeComparableCwd(path.join(getAgentDir(), "extensions"));
-	const relativeToExtensions = path.relative(extensionsDir, normalizeComparableCwd(expanded));
-	if (!relativeToExtensions || (!relativeToExtensions.startsWith(`..${path.sep}`) && relativeToExtensions !== ".." && !path.isAbsolute(relativeToExtensions))) {
+	if (isPathInside(extensionsDir, normalizeComparableCwd(expanded))) {
 		throw new Error(`worktree base directory cannot be inside Pi extensions directory: ${extensionsDir}. Choose a directory outside it.`);
 	}
 	return expanded;
+}
+
+function buildNativeProjectPath(dedicatedRoot: string, repoRoot: string): string {
+	return path.join(dedicatedRoot, path.basename(repoRoot));
 }
 
 /**
@@ -461,7 +470,7 @@ function resolveWorktreeDedicatedRoot(configuredBaseDir: string | undefined, rep
  */
 function ensureProjectWorktreeDir(dedicatedRoot: string, repoRoot: string): void {
 	try {
-		fs.mkdirSync(path.join(dedicatedRoot, path.basename(repoRoot)), { recursive: true });
+		fs.mkdirSync(buildNativeProjectPath(dedicatedRoot, repoRoot), { recursive: true });
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		throw new Error(`failed to create worktree base directory ${dedicatedRoot}: ${message}`);
@@ -469,7 +478,7 @@ function ensureProjectWorktreeDir(dedicatedRoot: string, repoRoot: string): void
 }
 
 function buildNativeWorktreePath(dedicatedRoot: string, repoRoot: string, runId: string, index: number): string {
-	return path.join(dedicatedRoot, path.basename(repoRoot), `pi-worktree-${sanitizeWorktreePathComponent(runId, 120)}-${index}`);
+	return path.join(buildNativeProjectPath(dedicatedRoot, repoRoot), `pi-worktree-${sanitizeWorktreePathComponent(runId, 120)}-${index}`);
 }
 
 function isPathInside(parent: string, child: string): boolean {
@@ -487,7 +496,7 @@ function isStrictChildPath(parent: string, child: string): boolean {
 function assertSafeWorktreeLocation(worktreePath: string, repoRoot: string, dedicatedRoot: string): void {
 	const resolvedLeaf = normalizeComparableCwd(worktreePath);
 	const resolvedRepoRoot = normalizeComparableCwd(repoRoot);
-	const projectDir = normalizeComparableCwd(path.join(dedicatedRoot, path.basename(repoRoot)));
+	const projectDir = normalizeComparableCwd(buildNativeProjectPath(dedicatedRoot, repoRoot));
 	const repoParent = normalizeComparableCwd(path.dirname(resolvedRepoRoot));
 	const leafParent = normalizeComparableCwd(path.dirname(resolvedLeaf));
 	const extensionsDir = normalizeComparableCwd(path.join(getAgentDir(), "extensions"));
@@ -1131,7 +1140,7 @@ export function createWorktrees(cwd: string, runId: string, count: number, optio
 			options?.beforeCreate?.(plannedSetup);
 			for (let index = 0; index < count; index++) {
 				worktrees.push(createNativeWorktree(
-						 repo.toplevel,
+					repo.toplevel,
 					repo.cwdRelative,
 					runId,
 					index,

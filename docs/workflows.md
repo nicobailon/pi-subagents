@@ -369,7 +369,7 @@ Each child uses the existing worktree lifecycle: it branches from clean HEAD, jo
 
 A top-level `{ workflowScript, worktree: true }` makes isolation the default for every workflow child. An individual child can override that default with `worktree: false`. Keep one writer when parallel writes are not intentionally isolated.
 
-Each managed worktree lives at `{dedicatedRoot}/{projectName}/pi-worktree-{runId}-{index}` — in path terms `{parent}/worktrees/{project}/pi-worktree-{runId}-{index}`. With `worktreeBaseDir` and `PI_SUBAGENTS_WORKTREE_DIR` unset, `{dedicatedRoot}` defaults to `{dirname(repoRoot)}/worktrees`: a `worktrees` directory beside the repository checkout, under the repo's parent. The config key and environment variable override only the dedicated root; the `{projectName}/pi-worktree-{runId}-{index}` nesting under it always applies. Configure the worktree base directory and setup hook in [configuration.md](configuration.md).
+When native Git worktree allocation is used, each managed worktree lives at `{dedicatedRoot}/{projectName}/pi-worktree-{runId}-{index}` — in path terms `{parent}/worktrees/{project}/pi-worktree-{runId}-{index}`. With `worktreeBaseDir` and `PI_SUBAGENTS_WORKTREE_DIR` unset and native allocation selected, `{dedicatedRoot}` defaults to `{dirname(repoRoot)}/worktrees`, a `worktrees` directory alongside the repository checkout. The config key and environment variable override only the native dedicated root; the `{projectName}/pi-worktree-{runId}-{index}` nesting under it always applies for native allocation. Configure the worktree provider, base directory, and setup hook in [configuration.md](configuration.md).
 
 ### Lane metadata lifecycle
 

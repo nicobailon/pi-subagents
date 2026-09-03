@@ -593,7 +593,7 @@ function isPatchCaptured(record: ManifestMetadataRecord, worktreePath: string): 
 function buildManagedEntry(input: {
 	repoRoot: string;
 	baseDir: string;
-	containmentInvalid?: boolean;
+	containmentInvalid: boolean;
 	targetHead: string;
 	rootPath: string;
 	git: GitWorktreeRecord;
