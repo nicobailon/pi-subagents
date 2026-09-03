@@ -13,6 +13,9 @@
 - Replace collapsed async workflow role rollups with a compact lane view while keeping full details available when expanded (#1827).
 - Expose `contact_supervisor` in bundled reviewer and scout tool allowlists without adding mutation tools (#1846).
 
+### Added
+- Include sanitized excluded model/provider/reason/expiry evidence when no usable subagent candidates remain. Thanks [@AlexKucera](https://github.com/AlexKucera) for #1841.
+
 ### Fixed
 - Suppress stale async supervisor-request notices after the native request has already been answered (#1838). Thanks [@VladimirGVP](https://github.com/VladimirGVP).
 - Flush async workflow result assembly after session replacement when every child is already terminal, without permitting stale-context launches (#1833). Thanks [@redcomet168](https://github.com/redcomet168).

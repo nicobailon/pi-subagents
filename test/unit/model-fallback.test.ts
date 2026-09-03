@@ -290,9 +290,51 @@ describe("model fallback helpers", () => {
 			(error: unknown) => {
 				const message = String(error);
 				return /No usable subagent models remain after registry, scope, and cached-exclusion filtering/.test(message)
+					&& /excluded: openai\/gpt-5-mini — model: gpt-5-mini; provider: openai; reason: \[redacted\]; expires: \d{4}-\d{2}-\d{2}T/.test(message)
+					&& /excluded: .*anthropic\/claude-sonnet-4/.test(message)
 					&& !message.includes("sk-secret-token-xyz");
 			},
 		);
+	});
+
+	it("bounds and sanitizes excluded-candidate evidence", () => {
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message: unknown) => warnings.push(String(message));
+		const candidates = Array.from({ length: 21 }, (_, index) => ({
+			provider: index === 0 ? "sk-provider-secret" : "diagnostic-provider",
+			id: index === 0 ? "sk-model-secret" : `diagnostic-model-${index}`,
+			fullId: index === 0 ? "sk-provider-secret/sk-model-secret" : `diagnostic-provider/diagnostic-model-${index}`,
+		}));
+		for (const [index, candidate] of candidates.entries()) {
+			recordModelFailure({
+				modelId: candidate.id,
+				provider: candidate.provider,
+				reason: index === 0 ? "Bearer sk-secret-token-xyz\n" + "long-reason-".repeat(100) : `failure-${index}`,
+			});
+		}
+
+		try {
+			assert.throws(
+				() => buildModelCandidates(candidates[0]!.fullId, candidates.slice(1).map((candidate) => candidate.fullId), candidates),
+				(error: unknown) => {
+					const message = String(error);
+					assert.match(message, /excluded: \[redacted\]\/\[redacted\] — model: \[redacted\]; provider: \[redacted\]/);
+					assert.match(message, /reason: \[redacted\] long-reason-/);
+					assert.doesNotMatch(message, /sk-provider-secret|sk-model-secret|sk-secret-token-xyz/);
+					assert.doesNotMatch(message, /[\r\n]/);
+					assert.match(message, /diagnostic-model-19/);
+					assert.doesNotMatch(message, /diagnostic-model-20/);
+					assert.match(message, /\.\.\. and 1 more/);
+					assert.equal((message.match(/reason: /g) ?? []).length, 20);
+					return true;
+				},
+			);
+		} finally {
+			console.warn = originalWarn;
+		}
+		assert.equal(warnings.length, 21);
+		assert.doesNotMatch(warnings.join("\n"), /sk-provider-secret|sk-model-secret|sk-secret-token-xyz/);
 	});
 
 	it("trusts an inherited parent model outside the registry", () => {

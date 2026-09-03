@@ -284,6 +284,31 @@ function enforceModelScopes(
 	for (const violation of violations) (onWarn ?? defaultScopeWarn)(violation);
 }
 
+const MODEL_EXCLUSION_DIAGNOSTIC_MAX_LENGTH = 240;
+const MODEL_EXCLUSION_DIAGNOSTIC_MAX_ENTRIES = 20;
+
+function sanitizeModelExclusionDiagnostic(value: string | undefined, fallback: string): string {
+	const normalized = typeof value === "string"
+		? value.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").trim()
+		: "";
+	return redactSecretValues(normalized || fallback).slice(0, MODEL_EXCLUSION_DIAGNOSTIC_MAX_LENGTH);
+}
+
+function formatModelExclusionExpiry(expiresAt: number): string {
+	if (!Number.isFinite(expiresAt)) return "unknown";
+	const date = new Date(expiresAt);
+	return Number.isNaN(date.getTime()) ? "unknown" : date.toISOString();
+}
+
+function formatExcludedCandidateEvidence(candidate: string, exclusion: NonNullable<ReturnType<typeof findModelExclusion>>): string {
+	const { provider, modelId } = parseModelKey(candidate);
+	const displayCandidate = sanitizeModelExclusionDiagnostic(candidate, "unknown");
+	const displayModel = sanitizeModelExclusionDiagnostic(modelId, "unknown");
+	const displayProvider = sanitizeModelExclusionDiagnostic(provider ?? exclusion.provider, "unspecified");
+	const reason = sanitizeModelExclusionDiagnostic(exclusion.reason, "runtime-failure");
+	return `${displayCandidate} — model: ${displayModel}; provider: ${displayProvider}; reason: ${reason}; expires: ${formatModelExclusionExpiry(exclusion.expiresAt)}`;
+}
+
 function throwForExplicitModelExclusion(model: string): void {
 	const exclusion = findModelExclusion(model);
 	if (!exclusion) return;
@@ -419,9 +444,15 @@ export function buildModelCandidates(
 	if (!primaryModel) throwForUnresolvedEnforcedInheritScope(options?.scope, true);
 	const origin = options?.origin ?? (options?.primaryModelFromParent ? "inherited" : "configured");
 	const scopes = configuredScopes(options?.scope);
+	type ExcludedCandidate = { candidate: string; exclusion: NonNullable<ReturnType<typeof findModelExclusion>> };
+	const excludedCandidates: ExcludedCandidate[] = [];
+	let excludedCandidateCount = 0;
 	const warnCachedExclusion = (candidate: string, exclusion: NonNullable<ReturnType<typeof findModelExclusion>>) => {
-		const reason = redactSecretValues((exclusion.reason ?? "runtime-failure").replace(/[\u0000-\u001f\u007f]+/g, " ")).slice(0, 240);
-		console.warn(`[pi-subagents] Skipping model '${candidate}' due to a cached exclusion (reason: ${reason}; expires: ${new Date(exclusion.expiresAt).toISOString()}).`);
+		excludedCandidateCount++;
+		if (excludedCandidates.length < MODEL_EXCLUSION_DIAGNOSTIC_MAX_ENTRIES) excludedCandidates.push({ candidate, exclusion });
+		const displayCandidate = sanitizeModelExclusionDiagnostic(candidate, "unknown");
+		const reason = sanitizeModelExclusionDiagnostic(exclusion.reason, "runtime-failure");
+		console.warn(`[pi-subagents] Skipping model '${displayCandidate}' due to a cached exclusion (reason: ${reason}; expires: ${formatModelExclusionExpiry(exclusion.expiresAt)}).`);
 	};
 	if (origin === "explicit" && primaryModel) {
 		const normalized = resolveRequiredSubagentModelCandidate(primaryModel.trim(), availableModels, preferredProvider);
@@ -455,7 +486,14 @@ export function buildModelCandidates(
 	const resolved = filterFallbackCandidates(candidates, { onExcluded: warnCachedExclusion });
 	if (resolved.length === 0) {
 		if (skippedPrimary) resolveRequiredSubagentModelCandidate(skippedPrimary, availableModels, preferredProvider);
-		if (candidates.length > 0) throw new Error(ZERO_USABLE_MODEL_CANDIDATES_ERROR);
+		if (candidates.length > 0) {
+			const shownExclusions = excludedCandidates;
+			const omittedExclusions = excludedCandidateCount - shownExclusions.length;
+			const evidence = shownExclusions.length > 0
+				? ` (excluded: ${shownExclusions.map(({ candidate, exclusion }) => formatExcludedCandidateEvidence(candidate, exclusion)).join("; ")}${omittedExclusions > 0 ? `; ... and ${omittedExclusions} more` : ""})`
+				: "";
+			throw new Error(`${ZERO_USABLE_MODEL_CANDIDATES_ERROR}${evidence}`);
+		}
 		return resolved;
 	}
 	if (skippedPrimary) {
