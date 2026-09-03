@@ -5205,6 +5205,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							globalConcurrencyLimit: requestParams.globalConcurrencyLimit ?? deps.config.globalConcurrencyLimit,
 							timeoutMs: timeout,
 							signal: controller.signal,
+							continueAfterAbortWhenChildrenSettled: (abortError) => {
+								if (abortError.message !== "Workflow stopped because the extension session was replaced or reloaded.") return false;
+								const activeAsyncChild = [...(deps.state.asyncJobs?.values() ?? [])].some((job) => job.parentWorkflowRunId === workflowRunId && (job.status === "queued" || job.status === "running"));
+								const activeForegroundChild = [...deps.state.foregroundControls.values()].some((control) => control.parentWorkflowRunId === workflowRunId && (control.activeChildren?.size ?? 0) > 0);
+								return !activeAsyncChild && !activeForegroundChild;
+							},
 							registerStopChild: (stop) => {
 								if (stop) deps.state.workflowChildStops?.set(workflowRunId, stop);
 								else deps.state.workflowChildStops?.delete(workflowRunId);

@@ -2264,6 +2264,68 @@ describe("scripted workflow runtime", () => {
 		assert.equal(childAborted, true);
 	});
 
+	it("flushes result assembly after abort when every child is terminal", async () => {
+		const controller = new AbortController();
+		let launchCount = 0;
+		const result = await runWorkflowScript({
+			script: `const child = await runs.run("done", { agent: "worker", task: "finish" }); return { phase: "assembled", output: child.output };`,
+			signal: controller.signal,
+			continueAfterAbortWhenChildrenSettled: (error) => error.message === "Workflow stopped because the extension session was replaced or reloaded.",
+			onTrace(trace) {
+				if (!controller.signal.aborted && trace.some((entry) => entry.operation === "run" && entry.key === "done" && entry.state === "completed")) controller.abort(new Error("Workflow stopped because the extension session was replaced or reloaded."));
+			},
+			async launch(key) {
+				launchCount += 1;
+				return { key, ok: true, output: "child output", artifactPaths: [], results: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.deepEqual(result.value, { phase: "assembled", output: "child output" });
+		assert.equal(launchCount, 1);
+	});
+
+	it("fails closed with diagnostics when graceful-abort eligibility throws", async () => {
+		const controller = new AbortController();
+		await assert.rejects(
+			runWorkflowScript({
+				script: `await runs.run("done", { agent: "worker", task: "finish" }); return { phase: "assembled" };`,
+				signal: controller.signal,
+				continueAfterAbortWhenChildrenSettled: () => { throw new Error("liveness unavailable"); },
+				onTrace(trace) {
+					if (!controller.signal.aborted && trace.some((entry) => entry.operation === "run" && entry.key === "done" && entry.state === "completed")) controller.abort(new Error("Workflow stopped because the extension session was replaced or reloaded."));
+				},
+				async launch(key) {
+					return { key, ok: true, output: "child output", artifactPaths: [], results: [] };
+				},
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && /liveness unavailable/.test(error.message),
+		);
+	});
+
+	it("fails closed if assembly tries to launch after a graceful abort", async () => {
+		const controller = new AbortController();
+		let launchCount = 0;
+		await assert.rejects(
+			runWorkflowScript({
+				script: `await runs.run("done", { agent: "worker", task: "finish" }); return runs.run("late", { agent: "worker", task: "must not launch" });`,
+				signal: controller.signal,
+				continueAfterAbortWhenChildrenSettled: (error) => error.message === "Workflow stopped because the extension session was replaced or reloaded.",
+				onTrace(trace) {
+					if (!controller.signal.aborted && trace.some((entry) => entry.operation === "run" && entry.key === "done" && entry.state === "completed")) controller.abort(new Error("Workflow stopped because the extension session was replaced or reloaded."));
+				},
+				async launch(key) {
+					launchCount += 1;
+					return { key, ok: true, output: "child output", artifactPaths: [], results: [] };
+				},
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.message === "Workflow stopped because the extension session was replaced or reloaded.",
+		);
+		assert.equal(launchCount, 1);
+	});
+
 	it("ignores a queued child launch message after workflow abort", async () => {
 		const originalOn = Worker.prototype.on;
 		const controller = new AbortController();

@@ -10,6 +10,7 @@ import { normalizeWorkflowHostCommandParams, type WorkflowHostCommandParams, typ
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const requireFromPackage = createRequire(import.meta.url);
+const WORKFLOW_ASSEMBLY_FLUSH_TIMEOUT_MS = 5_000;
 
 export interface WorkflowScriptValidationError {
 	message: string;
@@ -1070,6 +1071,8 @@ export interface RunWorkflowScriptOptions {
 	oneUsePermit?: { claim: (key: string) => string | undefined };
 	timeoutMs?: number;
 	signal?: AbortSignal;
+	/** Let an async workflow flush pure result assembly after reload once every child is terminal. */
+	continueAfterAbortWhenChildrenSettled?: (abortError: Error) => boolean;
 	/** Maximum children executing concurrently within this workflow. Defaults to 20. */
 	globalConcurrencyLimit?: number;
 	admit?: (calls: Array<{ key: string; params: Record<string, unknown> }>) => void | Promise<void>;
@@ -1682,6 +1685,9 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	let acceptanceRecoveryBarrier: { key: string } | undefined;
 	let settled = false;
 	let finishing = false;
+	let assemblyAbortRequested = false;
+	let assemblyFlushTimer: ReturnType<typeof setTimeout> | undefined;
+	let abortError: Error | undefined;
 
 	const partial = (): Omit<WorkflowScriptResult, "value"> => ({ emits, console: consoleEntries, trace, children: childOrder.flatMap((key) => {
 		const child = children.get(key);
@@ -1750,6 +1756,10 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		const finish = (outcome: { value: unknown } | { error: Error & { workflowErrorKind?: unknown } }) => {
 			if (settled || finishing) return;
 			finishing = true;
+			if (assemblyFlushTimer !== undefined) {
+				clearTimeout(assemblyFlushTimer);
+				assemblyFlushTimer = undefined;
+			}
 			childController.abort("error" in outcome ? outcome.error : new Error("Workflow script completed."));
 			void Promise.allSettled([...steers.values(), ...hostCalls.values()].map(({ promise }) => promise)).then(() => {
 				if (settled) return;
@@ -1781,6 +1791,26 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				: typeof signalReason === "string"
 					? new Error(signalReason)
 					: new Error("Workflow script aborted.");
+			if (finishing) return;
+			abortError = error;
+			const allChildrenSettled = launches.size > 0
+				&& [...launches.keys()].every((key) => children.has(key));
+			let mayFlushAssembly = false;
+			try {
+				mayFlushAssembly = options.continueAfterAbortWhenChildrenSettled?.(error) === true;
+			} catch (callbackError) {
+				const callbackMessage = callbackError instanceof Error ? callbackError.message : String(callbackError);
+				return finish({ error: new Error(`Workflow assembly flush eligibility failed: ${callbackMessage}`) });
+			}
+			if (mayFlushAssembly && allChildrenSettled) {
+				// A reloaded async workflow may already be past its last child launch.
+				// Keep the worker alive for pure result assembly, but abort the child
+				// signal so any later launch or side effect cannot use stale context.
+				assemblyAbortRequested = true;
+				childController.abort(error);
+				assemblyFlushTimer = setTimeout(() => finish({ error }), WORKFLOW_ASSEMBLY_FLUSH_TIMEOUT_MS);
+				return;
+			}
 			for (const key of launches.keys()) {
 				if (children.has(key)) continue;
 				stoppedLaunches.add(key);
@@ -1873,6 +1903,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				return;
 			}
 			if (message.type !== "call" || typeof message.callId !== "number" || typeof message.method !== "string" || !isRecord(message.args)) return;
+			if (assemblyAbortRequested) return finish({ error: abortError ?? new Error("Workflow context was replaced or reloaded.") });
 
 			const respond = (promise: Promise<unknown>, responsePath?: string, onBoundaryError?: (error: unknown) => void) => {
 				void promise.then(

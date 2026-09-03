@@ -1386,6 +1386,58 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.rmSync(resultPath, { force: true });
 	});
 
+	it("flushes async workflow assembly after cleanup once children are terminal", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "child output" });
+		const asyncJobs: SubagentState["asyncJobs"] = new Map();
+		const workflowControllers = new Map<string, AbortController>();
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, asyncJobs, workflowControllers);
+		const started = await executor.execute(
+			`workflow-reload-assembly-${Date.now()}`,
+			{
+				async: true,
+				mission: false,
+				workflowScript: `const child = await runs.run("work", { agent: "echo", task: "Finish child" }); let checksum = 0; for (let index = 0; index < 100000000; index += 1) checksum = (checksum + index) % 97; return { phase: "assembled", output: child.output, checksum };`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(started.isError, undefined, started.content[0]?.text ?? "workflow launch failed");
+		const workflowRunId = started.details.asyncId;
+		assert.ok(workflowRunId);
+		const asyncDir = started.details.asyncDir;
+		assert.ok(asyncDir);
+		const statusPath = path.join(asyncDir, "status.json");
+		let childCompleted = false;
+		for (let attempt = 0; attempt < 500; attempt += 1) {
+			const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as { workflow?: { trace?: Array<{ key?: string; state?: string }> } };
+			childCompleted = status.workflow?.trace?.some((entry) => entry.key === "work" && entry.state === "completed") ?? false;
+			if (childCompleted) break;
+			await new Promise((resolve) => setTimeout(resolve, 2));
+		}
+		assert.equal(childCompleted, true, "expected the child to settle before simulating session cleanup");
+		const controller = workflowControllers.get(workflowRunId);
+		assert.ok(controller, "expected a live workflow controller before simulated cleanup");
+		controller.abort(new Error("Workflow stopped because the extension session was replaced or reloaded."));
+		workflowControllers.clear();
+		asyncJobs.clear();
+
+		let finalStatus: { state?: string; workflow?: { value?: unknown } } = {};
+		for (let attempt = 0; attempt < 500; attempt += 1) {
+			finalStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as typeof finalStatus;
+			if (finalStatus.state === "complete" || finalStatus.state === "failed" || finalStatus.state === "stopped") break;
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		assert.equal(finalStatus.state, "complete");
+		assert.deepEqual(finalStatus.workflow?.value, { phase: "assembled", output: "child output", checksum: 39 });
+		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
+		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { state?: string; workflow?: { value?: unknown } };
+		assert.equal(result.state, "complete");
+		assert.deepEqual(result.workflow?.value, finalStatus.workflow?.value);
+		fs.rmSync(asyncDir, { recursive: true, force: true });
+		fs.rmSync(resultPath, { force: true });
+	});
+
 	it("delivers a terminal Darwin workflow failure after demand disappears", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const state: SubagentState = {
 			baseCwd: tempDir,
