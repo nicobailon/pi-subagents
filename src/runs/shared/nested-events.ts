@@ -147,7 +147,12 @@ export function resolveNestedRouteFromEnv(env: NodeJS.ProcessEnv = process.env):
 	const controlInbox = env[SUBAGENT_PARENT_CONTROL_INBOX_ENV];
 	const capabilityToken = env[SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV];
 	if (!rootRunId || !eventSink || !controlInbox || !capabilityToken) return undefined;
-	const route = { rootRunId, eventSink, controlInbox, capabilityToken };
+	return resolveNestedRoute({ rootRunId, eventSink, controlInbox, capabilityToken });
+}
+
+/** Validate a route handed to an in-process child against its on-disk metadata. */
+export function resolveNestedRoute(route: NestedRoute): NestedRoute {
+	const { rootRunId, capabilityToken } = route;
 	validateRouteShape(route);
 	const routeFile = path.join(commonRouteRoot(route), ROUTE_FILE);
 	const metadata = JSON.parse(fs.readFileSync(routeFile, "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown };
@@ -160,6 +165,15 @@ export function resolveNestedRouteFromEnv(env: NodeJS.ProcessEnv = process.env):
 export function resolveInheritedNestedRouteFromEnv(env: NodeJS.ProcessEnv = process.env): NestedRoute | undefined {
 	try {
 		return resolveNestedRouteFromEnv(env);
+	} catch (error) {
+		console.error("Ignoring invalid nested subagent event route:", error);
+		return undefined;
+	}
+}
+
+export function resolveInheritedNestedRoute(route: NestedRoute): NestedRoute | undefined {
+	try {
+		return resolveNestedRoute(route);
 	} catch (error) {
 		console.error("Ignoring invalid nested subagent event route:", error);
 		return undefined;

@@ -192,10 +192,6 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 			.filter((sessionFile): sessionFile is string => Boolean(sessionFile));
 	}
 
-	function isTaskFileArg(arg: string): boolean {
-		return arg.startsWith("@") && arg.endsWith("task.md");
-	}
-
 	function readSessionArg(args: string[]): string {
 		const sessionIndex = args.indexOf("--session");
 		assert.notEqual(sessionIndex, -1);
@@ -309,11 +305,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.equal(result.isError, undefined);
 		const args = readAllCallArgs()[0] ?? [];
 		const taskArg = args.at(-1) ?? "";
-		if (process.platform === "darwin") {
-			assert.ok(isTaskFileArg(taskArg));
-		} else {
-			assert.ok(taskArg.startsWith("Task: \n\n## Acceptance Contract"));
-		}
+		assert.ok(taskArg.startsWith("Task: \n\n## Acceptance Contract"));
 	});
 
 	it("fails pruned fork model auth before child spawn", async () => {
@@ -1315,11 +1307,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.equal(result.isError, undefined);
 		const args = readAllCallArgs()[0] ?? [];
 		const taskArg = args.at(-1) ?? "";
-		if (process.platform === "darwin") {
-			assert.ok(isTaskFileArg(taskArg));
-		} else {
-			assert.ok(taskArg.startsWith(`Task: ${task}\n\n## Acceptance Contract`));
-		}
+		assert.ok(taskArg.startsWith(`Task: ${task}\n\n## Acceptance Contract`));
 		const modelIndex = args.indexOf("--model");
 		assert.notEqual(modelIndex, -1);
 		assert.equal(args[modelIndex + 1], "anthropic/claude-haiku-4-5");

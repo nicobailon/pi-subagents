@@ -28,10 +28,6 @@ describe("nested child Pi process visibility", () => {
 		assert.ok(terminalStatusWrite > resultWrite, `${sourcePath} must not expose terminal status before the terminal result`);
 	});
 
-	it("hides foreground child Pi process windows on Windows", () => {
-		assertNestedPiSpawnHidesWindows("src/runs/foreground/execution.ts");
-	});
-
 	it("hides background child Pi process windows on Windows", () => {
 		assertNestedPiSpawnHidesWindows("src/runs/background/subagent-runner.ts");
 	});

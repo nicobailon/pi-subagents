@@ -5,11 +5,10 @@ import { createMainWatchdogReview } from "./review.ts";
 import { DEFAULT_WATCHDOG_CONFIG } from "./settings.ts";
 import { createWatchdogWarningMessage } from "./warning-format.ts";
 import {
-	CHILD_WATCHDOG_CONFIG_ENV,
 	CHILD_WATCHDOG_STATUS_EVENT,
-	decodeChildWatchdogConfig,
 	type ChildWatchdogConfig,
 	type ChildWatchdogPhase,
+	type ChildWatchdogStatusEvent,
 } from "./child-status.ts";
 import type { ResolvedWatchdogConfig, WatchdogWarningDetails } from "./types.ts";
 
@@ -43,7 +42,7 @@ function childWarningDetails(details: WatchdogWarningDetails, config: ChildWatch
 	};
 }
 
-function writeStatus(event: unknown): void {
+function writeStatusToStdout(event: ChildWatchdogStatusEvent): void {
 	try {
 		process.stdout.write(`${JSON.stringify(event)}\n`);
 	} catch {
@@ -51,8 +50,15 @@ function writeStatus(event: unknown): void {
 	}
 }
 
-export function registerChildWatchdog(pi: ExtensionAPI, rawConfig = process.env[CHILD_WATCHDOG_CONFIG_ENV]): MainWatchdogRuntime | undefined {
-	const childConfig = decodeChildWatchdogConfig(rawConfig);
+/**
+ * Register the child-side watchdog. Spawned children report status on stdout
+ * (the parent's JSON event stream); in-process children pass a status sink.
+ */
+export function registerChildWatchdog(
+	pi: ExtensionAPI,
+	childConfig: ChildWatchdogConfig | undefined,
+	writeStatus: (event: ChildWatchdogStatusEvent) => void = writeStatusToStdout,
+): MainWatchdogRuntime | undefined {
 	if (!childConfig) return undefined;
 	let currentContext: ExtensionContext | undefined;
 	let diffBaseline: WatchdogDiffBaseline | undefined;

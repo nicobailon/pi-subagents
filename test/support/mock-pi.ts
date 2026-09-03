@@ -2,6 +2,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { setChildSessionFactory } from "../../src/runs/foreground/child-session.ts";
+import { createFakeChildSessions, type FakeChildSessionRecord } from "./fake-child-session.ts";
 
 interface MockPiResponse {
 	output?: string;
@@ -37,6 +39,10 @@ interface MockPiResponse {
 
 export interface MockPi {
 	readonly dir: string;
+	/** In-process foreground child sessions created since the last reset, in launch order. */
+	readonly sessions: FakeChildSessionRecord[];
+	/** Number of times the foreground child session factory was disposed. */
+	readonly disposeCalls: number;
 	install(): void;
 	uninstall(): void;
 	onCall(response: MockPiResponse): void;
@@ -91,6 +97,7 @@ export function createMockPi(): MockPi {
 	writeExecutable(shellScriptPath, `#!/bin/sh\nexec "${process.execPath}" "${cliScriptPath}" "$@"\n`);
 	writeExecutable(cmdScriptPath, `@echo off\r\n"${process.execPath}" "${cliScriptPath}" %*\r\n`);
 
+	const fakeSessions = createFakeChildSessions(() => queueDir);
 	let installed = false;
 	let nextSequence = 0;
 	let originalPath: string | undefined;
@@ -102,9 +109,16 @@ export function createMockPi(): MockPi {
 		get dir() {
 			return queueDir;
 		},
+		get sessions() {
+			return fakeSessions.sessions;
+		},
+		get disposeCalls() {
+			return fakeSessions.disposeCalls;
+		},
 		install() {
 			if (installed) return;
 			installed = true;
+			setChildSessionFactory(fakeSessions.factory);
 			originalPath = process.env.PATH;
 			originalPiBinary = process.env.PI_SUBAGENT_PI_BINARY;
 			originalQueueEnv = process.env.MOCK_PI_QUEUE_DIR;
@@ -121,6 +135,7 @@ export function createMockPi(): MockPi {
 		uninstall() {
 			if (!installed) return;
 			installed = false;
+			setChildSessionFactory(undefined);
 			if (originalPath === undefined) delete process.env.PATH;
 			else process.env.PATH = originalPath;
 			if (originalPiBinary === undefined) delete process.env.PI_SUBAGENT_PI_BINARY;
@@ -147,6 +162,7 @@ export function createMockPi(): MockPi {
 		},
 		reset() {
 			nextSequence = 0;
+			fakeSessions.reset();
 			queueGeneration += 1;
 			queueDir = path.join(rootDir, `queue-${queueGeneration}`);
 			ensureDir(queueDir);

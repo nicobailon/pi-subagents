@@ -4,38 +4,33 @@ import * as path from "node:path";
 import type { BeforeProviderRequestEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.ts";
 import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
-import { decodePermissionRules, permissionDecision, PERMISSION_AUDIT_PATH_ENV, PERMISSION_POLICY_ENV } from "./permissions.ts";
+import { permissionDecision } from "./permissions.ts";
 import { consumeSteerRequestsFromDir, MAX_STEER_QUEUE_SIZE, steerAckPathFromDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type SteerDeliveryStatus, type SteerRequest } from "../background/control-channel.ts";
-import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_FORK_CACHE_KEY_ENV, SUBAGENT_INHERIT_GLOBAL_CONTEXT_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
-import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV, isRuntimeAcknowledgedExtensionId, writeRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
-import { createStructuredOutputToolParameters, MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV, STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
+import { RUNTIME_EXTENSION_ACK_EVENT, isRuntimeAcknowledgedExtensionId } from "./runtime-acknowledged-extensions.ts";
+import { createStructuredOutputToolParameters, MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, validateStructuredOutputValue } from "./structured-output.ts";
 import { validateAcceptanceReport } from "./acceptance.ts";
-import {
-	CHILD_TOOL_DIAGNOSTIC_PATH_ENV,
-	formatChildToolDiagnostic,
-	MCP_DIRECT_CHILD_TOOLS_ENV,
-	REQUIRED_CHILD_TOOLS_ENV,
-	writeChildToolDiagnostic,
-	type ChildToolDiagnostic,
-} from "./tool-availability.ts";
-import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge } from "./tool-budget.ts";
-import type { JsonSchemaObject, ResolvedToolBudget, SubagentState } from "../../shared/types.ts";
+import { formatChildToolDiagnostic } from "./tool-availability.ts";
+import { shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge } from "./tool-budget.ts";
+import type { ResolvedToolBudget, SubagentState } from "../../shared/types.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { getAgentDir, resolveWatchPath } from "../../shared/utils.ts";
 import { registerChildWatchdog } from "../../watchdog/register-child.ts";
-import { CHILD_WATCHDOG_CONFIG_ENV, decodeChildWatchdogConfig } from "../../watchdog/child-status.ts";
+import type { ChildWatchdogConfig } from "../../watchdog/child-status.ts";
 import { requestWatchdogPermission, type WatchdogPermissionRequest, type WatchdogPermissionResult } from "../../watchdog/permission-arbiter.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../watchdog/types.ts";
-import { resolveWaitToolConfig } from "../background/wait-config.ts";
 import { registerWaitTool } from "../background/wait-tool.ts";
 import { drainOutstandingWork } from "../background/auto-drain.ts";
+import {
+	childSupervisorMetadata,
+	evaluateChildToolDiagnostic,
+	readChildRuntimeConfigFromEnv,
+	type ChildPermissions,
+	type ChildRuntimeConfig,
+	type ChildSteerInbox,
+} from "./child-runtime-config.ts";
 
-const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
-const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
-export const SUBAGENT_INTERCOM_SESSION_NAME_ENV = "PI_SUBAGENT_INTERCOM_SESSION_NAME";
-/** Human-readable child display name (agent + task excerpt) set by the parent
- *  at launch; applied via pi.setSessionName when no intercom target exists. */
-export const SUBAGENT_SESSION_NAME_ENV = "PI_SUBAGENT_SESSION_NAME";
+export { SUBAGENT_INTERCOM_SESSION_NAME_ENV, SUBAGENT_SESSION_NAME_ENV } from "./child-runtime-config.ts";
+
 const STEERING_LEGACY_SETTLE_FALLBACK_MS = 1000;
 const STEERING_SAFETY_POLL_INTERVAL_MS = 5000;
 
@@ -77,45 +72,8 @@ const PROJECT_CONTEXT_LEGACY_HEADER = "\n\n# Project Context\n\nProject-specific
 const SKILLS_HEADER = "\n\nThe following skills provide specialized instructions for specific tasks.";
 const DATE_HEADER = "\nCurrent date:";
 
-function readBooleanEnv(name: string): boolean | undefined {
-	const value = process.env[name];
-	if (value === undefined) return undefined;
-	return value !== "0";
-}
-
-function readRequiredChildTools(): string[] | undefined {
-	const encoded = process.env[REQUIRED_CHILD_TOOLS_ENV]?.trim();
-	if (!encoded) return undefined;
-	const required = JSON.parse(encoded) as unknown;
-	if (!Array.isArray(required) || required.some((name) => typeof name !== "string" || !name)) {
-		throw new Error(`Invalid ${REQUIRED_CHILD_TOOLS_ENV} payload.`);
-	}
-	return required;
-}
-
-function readMcpDirectChildTools(): string[] | undefined {
-	const encoded = process.env[MCP_DIRECT_CHILD_TOOLS_ENV]?.trim();
-	if (!encoded) return undefined;
-	try {
-		const tools = JSON.parse(encoded) as unknown;
-		if (!Array.isArray(tools) || tools.some((name) => typeof name !== "string" || !name)) return undefined;
-		return tools;
-	} catch {
-		return undefined;
-	}
-}
-
-function refreshChildToolDiagnostic(pi: ExtensionAPI): ChildToolDiagnostic | undefined {
-	const filePath = process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV]?.trim();
-	const required = readRequiredChildTools();
-	if (!filePath || !required) return undefined;
-	const available = pi.getAllTools().map((tool) => tool.name);
-	return writeChildToolDiagnostic(filePath, required, available, process.env[SUBAGENT_CHILD_AGENT_ENV]?.trim(), readMcpDirectChildTools());
-}
-
-function registerRuntimeExtensionAcknowledgements(pi: ExtensionAPI): void {
-	const outputPath = process.env[RUNTIME_EXTENSION_ACK_PATH_ENV]?.trim();
-	if (!outputPath) return;
+function registerRuntimeExtensionAcknowledgements(pi: ExtensionAPI, sink: ((ids: string[]) => void) | undefined): void {
+	if (!sink) return;
 	const ids: string[] = [];
 	let finalized = false;
 	const acknowledge = (payload: unknown): undefined => {
@@ -127,7 +85,7 @@ function registerRuntimeExtensionAcknowledgements(pi: ExtensionAPI): void {
 	const finalize = (): undefined => {
 		if (finalized) return undefined;
 		finalized = true;
-		writeRuntimeAcknowledgedExtensions(outputPath, ids);
+		sink(ids);
 		return undefined;
 	};
 	try {
@@ -252,7 +210,7 @@ function stripChildBoundaryInstructions(prompt: string): string {
 
 export function rewriteSubagentPrompt(
 	prompt: string,
-	options: { inheritProjectContext: boolean; inheritGlobalContext: boolean; inheritSkills: boolean; fanoutChild?: boolean },
+	options: { inheritProjectContext: boolean; inheritGlobalContext: boolean; inheritSkills: boolean; fanoutChild?: boolean; structuredOutput?: boolean },
 ): string {
 	let rewritten = prompt;
 	if (!options.inheritProjectContext) {
@@ -267,7 +225,7 @@ export function rewriteSubagentPrompt(
 	rewritten = stripSubagentOrchestrationSkill(rewritten);
 	rewritten = stripChildBoundaryInstructions(rewritten);
 	const boundary = options.fanoutChild ? CHILD_FANOUT_BOUNDARY_INSTRUCTIONS : CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS;
-	const structured = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] ? `\n\n${STRUCTURED_OUTPUT_INSTRUCTIONS}` : "";
+	const structured = options.structuredOutput ? `\n\n${STRUCTURED_OUTPUT_INSTRUCTIONS}` : "";
 	return `${boundary}${structured}\n\n${rewritten}`;
 }
 
@@ -303,14 +261,14 @@ const PROMPT_CACHE_KEY_APIS = new Set([
 	"openai-responses",
 ]);
 
-export function rewriteForkCacheProviderRequest(event: BeforeProviderRequestEvent, ctx?: Pick<ExtensionContext, "model">): unknown {
-	const forkCacheKey = process.env[SUBAGENT_FORK_CACHE_KEY_ENV]?.trim();
-	if (!forkCacheKey || !PROMPT_CACHE_KEY_APIS.has(ctx?.model?.api ?? "")) return undefined;
+export function rewriteForkCacheProviderRequest(event: BeforeProviderRequestEvent, ctx: Pick<ExtensionContext, "model"> | undefined, forkCacheKey: string | undefined): unknown {
+	const key = forkCacheKey?.trim();
+	if (!key || !PROMPT_CACHE_KEY_APIS.has(ctx?.model?.api ?? "")) return undefined;
 	if (!event || typeof event !== "object") return undefined;
 	const payload = event.payload;
 	if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
 	if (typeof (payload as { prompt_cache_key?: unknown }).prompt_cache_key !== "string") return undefined;
-	return { ...payload, prompt_cache_key: forkCacheKey };
+	return { ...payload, prompt_cache_key: key };
 }
 
 function portableToolId(id: string): string {
@@ -348,8 +306,8 @@ function stripAssistantSubagentToolCallBlocks(message: unknown): unknown | undef
 	return { ...m, content: filteredContent };
 }
 
-export function stripParentOnlySubagentMessages(messages: unknown[], options: { sanitizeToolIds?: boolean } = {}): unknown[] {
-	const preserveCurrentFanoutToolHistory = process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1";
+export function stripParentOnlySubagentMessages(messages: unknown[], options: { sanitizeToolIds?: boolean; preserveFanoutToolHistory?: boolean } = {}): unknown[] {
+	const preserveCurrentFanoutToolHistory = options.preserveFanoutToolHistory === true;
 	const sanitizeToolIds = options.sanitizeToolIds ?? true;
 	let changed = false;
 	const filtered: unknown[] = [];
@@ -382,23 +340,20 @@ export function formatSteerMessage(request: SteerRequest): string {
 
 export function registerPermissionGate(
 	pi: ExtensionAPI,
+	permissions: ChildPermissions | undefined,
+	childWatchdog: ChildWatchdogConfig | undefined,
 	requestPermission: (request: WatchdogPermissionRequest) => Promise<WatchdogPermissionResult> = requestWatchdogPermission,
 ): void {
-	const rules = decodePermissionRules(process.env[PERMISSION_POLICY_ENV]);
-	if (!rules) return;
+	const rules = permissions?.rules;
+	if (!rules || Object.keys(rules).length === 0) return;
+	const rawWatchdogConfig = childWatchdog ? JSON.stringify(childWatchdog) : undefined;
+	const timeoutMs = childWatchdog?.agentEndTimeoutMs ?? 30_000;
 	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: { toolName?: string; input?: unknown }, ctx: ExtensionContext) => unknown) => void;
 	onRuntimeEvent("tool_call", async (event, ctx) => {
 		const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
 		const decision = permissionDecision(rules, toolName);
 		if (decision === "allow") return undefined;
 		if (decision === "deny") return { block: true, reason: `Blocked by pi-subagents permission rule: '${toolName}' is denied.` };
-		const rawWatchdogConfig = process.env[CHILD_WATCHDOG_CONFIG_ENV];
-		let timeoutMs = 30_000;
-		try {
-			timeoutMs = decodeChildWatchdogConfig(rawWatchdogConfig)?.agentEndTimeoutMs ?? timeoutMs;
-		} catch {
-			// The arbiter reports invalid configuration with the concrete decode error.
-		}
 		if (ctx.signal?.aborted) return { block: true, reason: "Blocked by pi-subagents permission rule: Watchdog permission decision was cancelled." };
 		let timeout: ReturnType<typeof setTimeout> | undefined;
 		let abort: (() => void) | undefined;
@@ -410,7 +365,7 @@ export function registerPermissionGate(
 					toolName,
 					args: event.input ?? {},
 					rawWatchdogConfig,
-					auditPath: process.env[PERMISSION_AUDIT_PATH_ENV],
+					auditPath: permissions.auditPath,
 					...(ctx.signal ? { signal: ctx.signal } : {}),
 				}),
 				new Promise<WatchdogPermissionResult>((resolve) => {
@@ -454,8 +409,14 @@ function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undef
 	});
 }
 
+/**
+ * File-inbox steering for spawned children. In-process children have no inbox;
+ * the parent steers them through their session directly.
+ */
 export function registerSteeringInbox(
 	pi: ExtensionAPI,
+	inbox: ChildSteerInbox | undefined,
+	childIndex: number | undefined,
 	deps: {
 		watch?: typeof fs.watch;
 		nativeRealpath?: (filePath: string) => string;
@@ -465,12 +426,11 @@ export function registerSteeringInbox(
 		timers?: Pick<typeof globalThis, "setInterval" | "clearInterval">;
 	} = {},
 ): void {
-	const steerInbox = process.env[SUBAGENT_STEER_INBOX_ENV]?.trim();
-	if (!steerInbox) return;
-	const capabilityPath = process.env[SUBAGENT_STEER_CAPABILITY_ENV]?.trim();
-	const ackDir = process.env[SUBAGENT_STEER_ACK_DIR_ENV]?.trim();
+	if (!inbox) return;
+	const steerInbox = inbox.inboxDir;
+	const capabilityPath = inbox.capabilityPath;
+	const ackDir = inbox.ackDir;
 	const sendUserMessage = (pi as { sendUserMessage?: (content: string, options?: { deliverAs: "steer" | "followUp" }) => unknown }).sendUserMessage;
-	const childIndex = Number(process.env[SUBAGENT_CHILD_INDEX_ENV]);
 	const pending = new Map<string, Array<{ request: SteerRequest; deliveryStatus: SteerDeliveryStatus }>>();
 	const queued: Array<{ request: SteerRequest; ready: boolean }> = [];
 	let disposed = false;
@@ -485,8 +445,9 @@ export function registerSteeringInbox(
 	let safetyInterval: NodeJS.Timeout | undefined;
 	let settleFallback: NodeJS.Timeout | undefined;
 	const legacySettleFallbackMs = deps.legacySettleFallbackMs ?? STEERING_LEGACY_SETTLE_FALLBACK_MS;
+	const validIndex = childIndex !== undefined && Number.isInteger(childIndex) && childIndex >= 0;
 	const acknowledge = (request: SteerRequest, state: "delivered" | "queued" | "failed", message: string, deliveryStatus?: SteerDeliveryStatus): void => {
-		if (!ackDir || !Number.isInteger(childIndex) || childIndex < 0) return;
+		if (!ackDir || !validIndex) return;
 		writeSteerAckAt(steerAckPathFromDir(ackDir, request.id), {
 			requestId: request.id,
 			index: childIndex,
@@ -497,7 +458,7 @@ export function registerSteeringInbox(
 		});
 	};
 	const publishCapability = (): void => {
-		if (!capabilityPath || !Number.isInteger(childIndex) || childIndex < 0) return;
+		if (!capabilityPath || !validIndex) return;
 		writeSteerCapabilityAt(capabilityPath, { index: childIndex, pid: process.pid, readyAt: Date.now(), supported: canSteer });
 	};
 	const flush = (): void => {
@@ -686,13 +647,56 @@ export function registerSteeringInbox(
 	});
 }
 
-export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
-	registerRuntimeExtensionAcknowledgements(pi);
-	registerSteeringInbox(pi);
-	registerPermissionGate(pi);
-	registerToolBudget(pi, decodeToolBudgetEnv(process.env[TOOL_BUDGET_ENV], { allowZero: process.env[TOOL_BUDGET_ZERO_AUTH_ENV] === "1" }));
-	registerChildWatchdog(pi);
-	const waitToolConfig = resolveWaitToolConfig();
+function registerStructuredOutputTool(pi: ExtensionAPI, structured: NonNullable<ChildRuntimeConfig["structuredOutput"]>): void {
+	const required = structured.acceptanceReport === "required";
+	const parameters = createStructuredOutputToolParameters(structured.schema, { acceptanceReport: structured.acceptanceReport });
+	const registerTool = pi.registerTool as unknown as (tool: {
+		name: string;
+		label: string;
+		description: string;
+		parameters: unknown;
+		execute: (_id: string, params: { value: unknown; acceptanceReport?: unknown }) => Promise<unknown>;
+	}) => void;
+	registerTool({
+		name: "structured_output",
+		label: "Structured Output",
+		description: "Submit the required final structured output for this subagent step. This terminates the step.",
+		parameters,
+		async execute(_id: string, params: { value: unknown; acceptanceReport?: unknown }) {
+			const validation = await validateStructuredOutputValue(structured.schema, params.value);
+			if (validation.status === "invalid") {
+				throw new Error(`Structured output validation failed: ${validation.message}`);
+			}
+			if (required && params.acceptanceReport === undefined) {
+				throw new Error(MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR);
+			}
+			if (required && params.acceptanceReport !== undefined) {
+				const acceptanceValidation = validateAcceptanceReport(params.acceptanceReport, "acceptanceReport");
+				if (!acceptanceValidation.report) {
+					throw new Error(`Invalid structured output acceptance report: ${acceptanceValidation.errors.join("; ")}`);
+				}
+			}
+			structured.capture(params.value, structured.acceptanceReport ? params.acceptanceReport : undefined);
+			return {
+				content: [{ type: "text", text: "Structured output captured." }],
+				details: {},
+				terminate: true,
+			};
+		},
+	});
+}
+
+/**
+ * Register every child-side hook the prompt runtime owns. Spawned children call
+ * this from the extension entry point with the environment-derived config;
+ * in-process children receive the config from the parent.
+ */
+export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig = readChildRuntimeConfigFromEnv()): void {
+	registerRuntimeExtensionAcknowledgements(pi, config.runtimeAcknowledgements);
+	registerSteeringInbox(pi, config.steerInbox, config.childIndex);
+	registerPermissionGate(pi, config.permissions, config.childWatchdog);
+	registerToolBudget(pi, config.toolBudget);
+	registerChildWatchdog(pi, config.childWatchdog, config.watchdogStatus);
 	const waitState = {
 		baseCwd: "",
 		currentSessionId: null,
@@ -707,12 +711,13 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		watcherRestartTimer: null,
 		resultFileCoalescer: { schedule: () => false, clear: () => {} },
 	} as unknown as SubagentState;
-	if (typeof pi.registerTool === "function") registerWaitTool(pi, waitState, waitToolConfig.enabled, undefined, waitToolConfig.defaultTimeoutMs);
+	if (typeof pi.registerTool === "function") registerWaitTool(pi, waitState, config.waitTool.enabled, undefined, config.waitTool.defaultTimeoutMs);
+	const supervisorMetadata = childSupervisorMetadata(config);
 	let nativeSupervisorClientRegistered = false;
 	const registerNativeSupervisorClientOnce = (): void => {
 		if (nativeSupervisorClientRegistered) return;
 		nativeSupervisorClientRegistered = true;
-		registerNativeSupervisorClient(pi);
+		registerNativeSupervisorClient(pi, supervisorMetadata);
 	};
 	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown, ctx?: ExtensionContext) => unknown) => void;
 	onRuntimeEvent("session_start", (_event: unknown, ctx?: ExtensionContext) => {
@@ -721,72 +726,24 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		registerNativeSupervisorClientOnce();
 	});
 	onRuntimeEvent("agent_start", () => {
-		const diagnostic = refreshChildToolDiagnostic(pi);
+		if (!config.requiredTools) return;
+		const diagnostic = evaluateChildToolDiagnostic(config, pi.getAllTools().map((tool) => tool.name));
+		config.toolDiagnostic?.(diagnostic);
 		if (diagnostic) throw new Error(formatChildToolDiagnostic(diagnostic));
 	});
 	onRuntimeEvent("agent_end", async (_event: unknown, ctx: unknown) => {
 		if ((ctx as { hasUI?: boolean } | undefined)?.hasUI === true) return;
 		await drainOutstandingWork({ state: waitState, events: pi.events });
 	});
-	const structuredOutputPath = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
-	const structuredAcceptanceReportPath = process.env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV];
-	const structuredAcceptanceReportRequired = process.env[STRUCTURED_OUTPUT_ACCEPTANCE_REQUIRED_ENV] === "1";
-	const structuredSchemaPath = process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
-	if (structuredOutputPath && structuredSchemaPath) {
-		const schema = JSON.parse(fs.readFileSync(structuredSchemaPath, "utf-8")) as JsonSchemaObject;
-		const acceptanceReportMode = structuredAcceptanceReportPath
-			? structuredAcceptanceReportRequired ? "required" as const : "optional" as const
-			: undefined;
-		const parameters = createStructuredOutputToolParameters(schema, { acceptanceReport: acceptanceReportMode });
-		const registerTool = pi.registerTool as unknown as (tool: {
-			name: string;
-			label: string;
-			description: string;
-			parameters: unknown;
-			execute: (_id: string, params: { value: unknown; acceptanceReport?: unknown }) => Promise<unknown>;
-		}) => void;
-		registerTool({
-			name: "structured_output",
-			label: "Structured Output",
-			description: "Submit the required final structured output for this subagent step. This terminates the step.",
-			parameters,
-			async execute(_id: string, params: { value: unknown; acceptanceReport?: unknown }) {
-				const validation = await validateStructuredOutputValue(schema, params.value);
-				if (validation.status === "invalid") {
-					throw new Error(`Structured output validation failed: ${validation.message}`);
-				}
-				if (structuredAcceptanceReportRequired && params.acceptanceReport === undefined) {
-					throw new Error(MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR);
-				}
-				if (structuredAcceptanceReportRequired && params.acceptanceReport !== undefined) {
-					const acceptanceValidation = validateAcceptanceReport(params.acceptanceReport, "acceptanceReport");
-					if (!acceptanceValidation.report) {
-						throw new Error(`Invalid structured output acceptance report: ${acceptanceValidation.errors.join("; ")}`);
-					}
-				}
-				fs.mkdirSync(path.dirname(structuredOutputPath), { recursive: true });
-				if (structuredAcceptanceReportPath && params.acceptanceReport !== undefined) {
-					fs.mkdirSync(path.dirname(structuredAcceptanceReportPath), { recursive: true });
-					fs.writeFileSync(structuredAcceptanceReportPath, JSON.stringify(params.acceptanceReport), { mode: 0o600 });
-				} else if (structuredAcceptanceReportPath && fs.existsSync(structuredAcceptanceReportPath)) {
-					fs.unlinkSync(structuredAcceptanceReportPath);
-				}
-				fs.writeFileSync(structuredOutputPath, JSON.stringify(params.value), { mode: 0o600 });
-				return {
-					content: [{ type: "text", text: "Structured output captured." }],
-					details: { path: structuredOutputPath },
-					terminate: true,
-				};
-			},
-		});
-	}
+	if (config.structuredOutput) registerStructuredOutputTool(pi, config.structuredOutput);
 
-	onRuntimeEvent("before_provider_request", (event: unknown, ctx?: ExtensionContext) => rewriteForkCacheProviderRequest(event as BeforeProviderRequestEvent, ctx));
+	onRuntimeEvent("before_provider_request", (event: unknown, ctx?: ExtensionContext) => rewriteForkCacheProviderRequest(event as BeforeProviderRequestEvent, ctx, config.forkCacheKey));
 
 	onRuntimeEvent("context", (event: unknown, ctx?: ExtensionContext) => {
 		if (!event || typeof event !== "object" || !("messages" in event) || !Array.isArray(event.messages)) return undefined;
 		const messages = stripParentOnlySubagentMessages(event.messages, {
 			sanitizeToolIds: !COMPOSITE_TOOL_ID_APIS.has(ctx?.model?.api ?? ""),
+			preserveFanoutToolHistory: config.fanoutChild,
 		});
 		if (messages === event.messages) return undefined;
 		return { messages };
@@ -798,24 +755,21 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		// The intercom target is a routing address and always wins; the display
 		// name (agent + task excerpt, computed by the parent at launch) only
 		// applies when the bridge is not addressing this child.
-		const intercomSessionName = process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV]?.trim();
-		const displaySessionName = process.env[SUBAGENT_SESSION_NAME_ENV]?.trim();
-		const childSessionName = intercomSessionName || displaySessionName;
+		const childSessionName = config.intercomSessionName || config.sessionName;
 		if (childSessionName && typeof pi.setSessionName === "function") {
 			pi.setSessionName(childSessionName);
 		}
 
-		const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);
-		const inheritGlobalContext = readBooleanEnv(SUBAGENT_INHERIT_GLOBAL_CONTEXT_ENV);
-		const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);
-		const fanoutChild = readBooleanEnv(SUBAGENT_FANOUT_CHILD_ENV);
+		const { inheritProjectContext, inheritGlobalContext, inheritSkills } = config;
+		const fanoutChild = config.fanoutChild;
 		let rewritten = event.systemPrompt;
-		if (inheritProjectContext !== undefined || inheritGlobalContext !== undefined || inheritSkills !== undefined || fanoutChild !== undefined) {
+		if (inheritProjectContext !== undefined || inheritGlobalContext !== undefined || inheritSkills !== undefined || fanoutChild) {
 			rewritten = rewriteSubagentPrompt(event.systemPrompt, {
 				inheritProjectContext: inheritProjectContext ?? true,
 				inheritGlobalContext: inheritGlobalContext ?? true,
 				inheritSkills: inheritSkills ?? true,
-				fanoutChild: fanoutChild === true,
+				fanoutChild,
+				structuredOutput: Boolean(config.structuredOutput),
 			});
 		}
 		if (rewritten === event.systemPrompt) return;

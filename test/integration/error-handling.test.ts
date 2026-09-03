@@ -130,13 +130,13 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 		removeTempDir(tempDir);
 	});
 
-	it("captures stderr on non-zero exit", async () => {
+	it("reports a child session failure as the run error", async () => {
 		mockPi.onCall({ exitCode: 2, stderr: "Fatal: out of memory" });
 		const agents = makeAgentConfigs(["crash"]);
 
 		const result = await runSync(tempDir, agents, "crash", "Do heavy work", {});
 
-		assert.equal(result.exitCode, 2);
+		assert.equal(result.exitCode, 1);
 		assert.ok(result.error?.includes("out of memory"));
 	});
 
@@ -170,23 +170,9 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 		const result = await runSync(tempDir, agents, "worker", "Do work", {});
 
 		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /exited during 'bash' tool execution \(exit 0\)/);
+		assert.match(result.error ?? "", /ended during 'bash' tool execution before the tool completed/);
 		assert.match(result.error ?? "", /Earlier assistant output is not a terminal result/);
 		assert.doesNotMatch(result.error ?? "", /cold-start/);
-	});
-
-	it("includes an unexpected process signal in a mid-tool exit diagnosis", { skip: process.platform === "win32" ? "signal delivery differs on Windows" : undefined }, async () => {
-		mockPi.onCall({
-			jsonl: [events.toolStart("bash", { command: "wait" })],
-			signal: "SIGTERM",
-		});
-		const agents = makeAgentConfigs(["worker"]);
-
-		const result = await runSync(tempDir, agents, "worker", "Do work", {});
-
-		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /exited during 'bash' tool execution/);
-		assert.match(result.error ?? "", /signal SIGTERM/);
 	});
 
 	it("keeps a terminal answer authoritative over an earlier tool timeout", async () => {

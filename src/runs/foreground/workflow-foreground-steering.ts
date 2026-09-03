@@ -1,20 +1,10 @@
 import { randomUUID } from "node:crypto";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Details, ForegroundRunControl, SubagentState } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { steeringReceipt } from "../background/steering.ts";
-import {
-	consumeSteerAckFromDir,
-	readSteerCapability,
-	steerAcksDir,
-	steerCapabilityPath,
-	stepSteerInboxDir,
-	writeSteerRequestToExistingDir,
-	type SteerDeliveryMode,
-	type SteerRequest,
-} from "../background/control-channel.ts";
+import type { SteerDeliveryMode } from "../background/control-channel.ts";
 
 export interface WorkflowForegroundSteeringTarget {
 	control: ForegroundRunControl;
@@ -40,7 +30,6 @@ function activeWorkflowError(state: SubagentState, workflowRunId: string, asyncD
 function controlIsLiveInWorkflow(control: ForegroundRunControl, workflowRunId: string, sessionId: string): boolean {
 	return control.parentWorkflowRunId === workflowRunId
 		&& control.sessionId === sessionId
-		&& Boolean(control.workflowSteeringDir)
 		&& (control.activeChildren?.size ?? 0) > 0;
 }
 
@@ -77,17 +66,18 @@ function managementError(message: string): AgentToolResult<Details> {
 	return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
 }
 
+/**
+ * Steer a live workflow-owned foreground child through its in-process session.
+ * `steer` (and `auto`) interrupt the child at its next safe point; `follow_up`
+ * queues the message until the current run settles.
+ */
 export async function steerWorkflowForegroundTarget(input: {
 	target: WorkflowForegroundSteeringTarget;
 	message: string;
 	mode?: SteerDeliveryMode;
 	index?: number;
-	signal?: AbortSignal;
-	ackTimeoutMs?: number;
 }): Promise<AgentToolResult<Details>> {
 	const { control, sourceRunId } = input.target;
-	const routeDir = control.workflowSteeringDir;
-	if (!routeDir || !fs.existsSync(routeDir)) return managementError(`Foreground run '${control.runId}' has no live workflow steering route.`);
 	const activeIndexes = [...(control.activeChildren?.keys() ?? [])].sort((left, right) => left - right);
 	const index = input.index ?? (activeIndexes.length === 1 ? activeIndexes[0] : undefined);
 	if (index === undefined) {
@@ -95,94 +85,30 @@ export async function steerWorkflowForegroundTarget(input: {
 			? `Foreground run '${control.runId}' has no live child session.`
 			: `Foreground run '${control.runId}' has ${activeIndexes.length} live child sessions; provide index.`);
 	}
-	if (!activeIndexes.includes(index)) return managementError(`Foreground run '${control.runId}' child ${index} is not live.`);
-	const capability = readSteerCapability(routeDir, index);
-	if (capability?.supported === false) return managementError(`Foreground run '${control.runId}' child ${index} does not support steering.`);
+	const child = control.activeChildren?.get(index);
+	if (!child) return managementError(`Foreground run '${control.runId}' child ${index} is not live.`);
+	if (!child.steer) return managementError(`Foreground run '${control.runId}' child ${index} does not support steering.`);
 
-	const request: SteerRequest = {
-		type: "steer",
-		id: randomUUID(),
-		ts: Date.now(),
-		message: input.message.trim(),
-		...(input.mode && input.mode !== "steer" ? { mode: input.mode } : {}),
-		targetIndex: index,
-		source: "steer-action",
-	};
-	try {
-		writeSteerRequestToExistingDir(stepSteerInboxDir(routeDir, index), request);
-	} catch (error) {
-		if (typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
-			return managementError(`Foreground run '${control.runId}' has no live workflow steering route.`);
-		}
-		return managementError(`Failed to queue steering for foreground run ${control.runId}: ${error instanceof Error ? error.message : String(error)}`);
-	}
-
-	const deadline = Date.now() + (input.ackTimeoutMs ?? 3_000);
-	let ack;
-	let routeRemoved = false;
-	while (Date.now() <= deadline) {
-		ack = consumeSteerAckFromDir(steerAcksDir(routeDir, index), request.id);
-		if (ack || input.signal?.aborted) break;
-		if (!fs.existsSync(routeDir)) {
-			routeRemoved = true;
-			break;
-		}
-		await new Promise<void>((resolve) => setTimeout(resolve, Math.min(50, Math.max(1, deadline - Date.now()))));
-	}
-	if (routeRemoved || (!ack && !input.signal?.aborted && !fs.existsSync(routeDir))) {
-		return managementError(`Foreground run '${control.runId}' has no live child session.`);
-	}
-	const target = ack?.state === "delivered"
-		? { index, state: "delivered" as const, deliveredAt: ack.ts }
-		: ack?.state === "queued"
+	const message = input.message.trim();
+	const requestId = randomUUID();
+	const outcome = await child.steer({ message, ...(input.mode && input.mode !== "steer" ? { mode: input.mode } : {}) });
+	const target = outcome.state === "delivered"
+		? { index, state: "delivered" as const, deliveredAt: Date.now() }
+		: outcome.state === "queued"
 			? { index, state: "queued" as const }
-			: ack?.state === "failed"
-				? { index, state: "failed" as const, reason: ack.message }
-				: { index, state: "pending" as const };
+			: { index, state: "failed" as const, reason: outcome.reason };
 	const steering = {
-		requestId: request.id,
-		state: ack?.state === "delivered" ? "delivered" as const : ack?.state === "failed" ? "failed" as const : "pending" as const,
-		deliveryStatus: ack?.state === "delivered" ? "delivered" as const : "queued" as const,
+		requestId,
+		state: outcome.state === "delivered" ? "delivered" as const : outcome.state === "failed" ? "failed" as const : "pending" as const,
+		deliveryStatus: outcome.state === "delivered" ? "delivered" as const : "queued" as const,
 		sourceRunId,
 		targets: [target],
 	};
-	if (input.signal?.aborted) {
-		return { content: [{ type: "text", text: steeringReceipt(request.message, `Steering pending for foreground run ${control.runId} (request ${request.id}); caller aborted before acknowledgment.`) }], details: { mode: "management", results: [], steering } };
+	if (outcome.state === "delivered") {
+		return { content: [{ type: "text", text: steeringReceipt(message, `Steering delivered for foreground run ${control.runId} (request ${requestId}).`) }], details: { mode: "management", results: [], steering } };
 	}
-	if (ack?.state === "delivered") {
-		return { content: [{ type: "text", text: steeringReceipt(request.message, `Steering delivered for foreground run ${control.runId} (request ${request.id}).`) }], details: { mode: "management", results: [], steering } };
+	if (outcome.state === "queued") {
+		return { content: [{ type: "text", text: steeringReceipt(message, `Steering queued for foreground run ${control.runId} (request ${requestId}).`) }], details: { mode: "management", results: [], steering } };
 	}
-	if (ack?.state === "queued") {
-		return { content: [{ type: "text", text: steeringReceipt(request.message, `Steering queued for foreground run ${control.runId} (request ${request.id}).`) }], details: { mode: "management", results: [], steering } };
-	}
-	if (ack?.state === "failed") {
-		return { content: [{ type: "text", text: steeringReceipt(request.message, `Steering failed for foreground run ${control.runId} (request ${request.id}): ${ack.message}`) }], isError: true, details: { mode: "management", results: [], steering } };
-	}
-	return { content: [{ type: "text", text: steeringReceipt(request.message, `Steering pending for foreground run ${control.runId} (request ${request.id}); no acknowledgment was received.`) }], details: { mode: "management", results: [], steering } };
-}
-
-export function workflowForegroundSteeringDir(asyncDirRoot: string, workflowRunId: string, childRunId: string): string {
-	return path.join(asyncDirRoot, workflowRunId, "control", "workflow-foreground", childRunId);
-}
-
-export function removeWorkflowForegroundSteeringRoute(control: ForegroundRunControl): void {
-	if (!control.workflowSteeringDir) return;
-	try {
-		fs.rmSync(control.workflowSteeringDir, { recursive: true, force: true });
-	} catch (error) {
-		console.warn(`[pi-subagents] Failed to remove workflow foreground steering route '${control.workflowSteeringDir}': ${error instanceof Error ? error.message : String(error)}`);
-	}
-}
-
-export function workflowForegroundSteeringLaunchOptions(control: ForegroundRunControl | undefined, index: number): Pick<import("../../shared/types.ts").RunSyncOptions, "steerInboxDir" | "steerCapabilityPath" | "steerAckDir"> {
-	if (!control?.workflowSteeringDir) return {};
-	const steerInboxDir = stepSteerInboxDir(control.workflowSteeringDir, index);
-	const steerAckDir = steerAcksDir(control.workflowSteeringDir, index);
-	fs.mkdirSync(steerInboxDir, { recursive: true });
-	fs.mkdirSync(steerAckDir, { recursive: true });
-	return {
-		steerInboxDir,
-		steerCapabilityPath: steerCapabilityPath(control.workflowSteeringDir, index),
-		steerAckDir,
-	};
+	return { content: [{ type: "text", text: steeringReceipt(message, `Steering failed for foreground run ${control.runId} (request ${requestId}): ${outcome.reason ?? "unknown error"}`) }], isError: true, details: { mode: "management", results: [], steering } };
 }

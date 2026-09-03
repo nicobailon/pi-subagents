@@ -545,7 +545,6 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			const liveWorkflowControls = status.mode === "workflow" && deps.state?.currentSessionId === status.sessionId && deps.state?.workflowControllers?.has(status.runId)
 				? [...(deps.state?.foregroundControls.values() ?? [])].filter((control) => control.parentWorkflowRunId === status.runId
 					&& control.sessionId === status.sessionId
-					&& Boolean(control.workflowSteeringDir && fs.existsSync(control.workflowSteeringDir))
 					&& (control.activeChildren?.size ?? 0) > 0)
 				: [];
 			let hasExternalJobFollowUpHint = false;

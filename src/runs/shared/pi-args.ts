@@ -115,6 +115,16 @@ const FAST_MODE_EXTENSION_PATH = path.join(
 	path.dirname(fileURLToPath(import.meta.url)),
 	"fast-mode-extension.ts",
 );
+const SUBAGENT_RUNTIME_EXTENSION_PATHS = new Set([
+	PROMPT_RUNTIME_EXTENSION_PATH,
+	FANOUT_CHILD_EXTENSION_PATH,
+	FAST_MODE_EXTENSION_PATH,
+].map((extensionPath) => path.normalize(extensionPath)));
+
+/** True for the extension files pi-subagents itself installs in spawned children. */
+export function isSubagentRuntimeExtensionPath(extensionPath: string): boolean {
+	return SUBAGENT_RUNTIME_EXTENSION_PATHS.has(path.normalize(extensionPath));
+}
 const FAST_MODE_ALLOWED_MODELS = new Set([
 	"openai-codex/gpt-5.6-luna",
 	"openai-codex/gpt-5.6-sol",
@@ -246,7 +256,7 @@ function sanitizeSupervisorChannelSegment(value: string): string {
 	);
 }
 
-function supervisorChannelDir(
+export function supervisorChannelDir(
 	runId: string,
 	agent: string,
 	childIndex: number,

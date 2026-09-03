@@ -53,7 +53,7 @@ describe("fork prompt cache keys", () => {
 	});
 
 	it("rewrites only existing OpenAI-style string prompt cache keys", () => {
-		process.env[SUBAGENT_FORK_CACHE_KEY_ENV] = "pi-fork:parent-session";
+		const forkCacheKey = "pi-fork:parent-session";
 		const payload = {
 			model: "test-model",
 			input: [{ role: "user", content: "hello" }],
@@ -61,30 +61,29 @@ describe("fork prompt cache keys", () => {
 		};
 
 		assert.deepEqual(
-			rewriteForkCacheProviderRequest({ type: "before_provider_request", payload }, providerContext("openai-responses")),
+			rewriteForkCacheProviderRequest({ type: "before_provider_request", payload }, providerContext("openai-responses"), forkCacheKey),
 			{ ...payload, prompt_cache_key: "pi-fork:parent-session" },
 		);
 		assert.deepEqual(
-			rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { ...payload, prompt_cache_key: "pi-fork:parent-session" } }, providerContext("openai-responses")),
+			rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { ...payload, prompt_cache_key: "pi-fork:parent-session" } }, providerContext("openai-responses"), forkCacheKey),
 			{ ...payload, prompt_cache_key: "pi-fork:parent-session" },
 		);
 	});
 
 	it("does not add prompt cache keys or touch non-OpenAI payloads", () => {
-		process.env[SUBAGENT_FORK_CACHE_KEY_ENV] = "pi-fork:parent-session";
+		const forkCacheKey = "pi-fork:parent-session";
 
-		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: "raw" }, providerContext("openai-responses")), undefined);
-		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: [] }, providerContext("openai-responses")), undefined);
-		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test" } }, providerContext("openai-responses")), undefined);
-		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: undefined } }, providerContext("openai-responses")), undefined);
-		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: "child" } }, providerContext("anthropic-messages")), undefined);
-		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: "child" } }, providerContext("unknown-api")), undefined);
+		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: "raw" }, providerContext("openai-responses"), forkCacheKey), undefined);
+		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: [] }, providerContext("openai-responses"), forkCacheKey), undefined);
+		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test" } }, providerContext("openai-responses"), forkCacheKey), undefined);
+		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: undefined } }, providerContext("openai-responses"), forkCacheKey), undefined);
+		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: "child" } }, providerContext("anthropic-messages"), forkCacheKey), undefined);
+		assert.equal(rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: "child" } }, providerContext("unknown-api"), forkCacheKey), undefined);
 	});
 
 	it("is a no-op when fork cache affinity is not configured", () => {
-		delete process.env[SUBAGENT_FORK_CACHE_KEY_ENV];
 		assert.equal(
-			rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: "child" } }, providerContext("openai-responses")),
+			rewriteForkCacheProviderRequest({ type: "before_provider_request", payload: { model: "test", prompt_cache_key: "child" } }, providerContext("openai-responses"), undefined),
 			undefined,
 		);
 	});

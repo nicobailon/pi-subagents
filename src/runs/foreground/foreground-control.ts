@@ -14,6 +14,7 @@ interface BeginForegroundChildInput {
 	thinking?: string;
 	interrupt: () => boolean;
 	detach?: () => boolean;
+	steer?: ForegroundChildControl["steer"];
 }
 
 function copyProgress(target: ForegroundChildControl, progress: AgentProgress | undefined): void {
@@ -56,6 +57,7 @@ function syncCurrentChild(control: ForegroundRunControl, child: ForegroundChildC
 	control.toolCount = child.toolCount;
 	control.interrupt = child.interrupt;
 	control.detach = child.detach;
+	control.steer = child.steer;
 	control.updatedAt = child.updatedAt;
 }
 
@@ -79,6 +81,7 @@ function clearCurrentChild(control: ForegroundRunControl): void {
 	control.toolCount = undefined;
 	control.interrupt = undefined;
 	control.detach = undefined;
+	control.steer = undefined;
 }
 
 export function retainForegroundSchedulingOwner(control: ForegroundRunControl): void {
@@ -122,6 +125,7 @@ export function beginForegroundChild(control: ForegroundRunControl, input: Begin
 			return true;
 		};
 	}
+	if (input.steer) child.steer = input.steer;
 	control.activeChildren ??= new Map();
 	control.activeChildren.set(input.index, child);
 	registerLivePromptAudit(control, input.index, input.authoredTask, input.effectivePrompt, {

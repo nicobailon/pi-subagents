@@ -204,7 +204,6 @@ export function collectFleetSnapshot(
 		if (!control.parentWorkflowRunId
 			|| !workflowParentIds.has(control.parentWorkflowRunId)
 			|| !belongsToCurrentSession(control.sessionId, state.currentSessionId)
-			|| !control.workflowSteeringDir
 			|| activeChildCount === 0) continue;
 		liveWorkflowForegroundControls.add(control);
 		workflowForegroundChildCounts.set(control.parentWorkflowRunId, (workflowForegroundChildCounts.get(control.parentWorkflowRunId) ?? 0) + activeChildCount);

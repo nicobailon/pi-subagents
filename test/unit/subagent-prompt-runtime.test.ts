@@ -23,6 +23,7 @@ import { getAgentDir } from "../../src/shared/utils.ts";
 import { PERMISSION_POLICY_ENV } from "../../src/runs/shared/permissions.ts";
 import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, formatChildToolDiagnostic, MCP_DIRECT_CHILD_TOOLS_ENV, readChildToolDiagnostic, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
+import { readChildRuntimeConfigFromEnv } from "../../src/runs/shared/child-runtime-config.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../src/watchdog/types.ts";
 import registerSubagentPromptRuntime, {
 	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
@@ -152,11 +153,11 @@ describe("subagent prompt runtime", () => {
 		const handlers: Array<(event: { toolName?: string; input?: unknown }, ctx?: unknown) => unknown> = [];
 		const pi = { on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx?: unknown) => unknown) { if (event === "tool_call") handlers.push(handler); } };
 		delete process.env[PERMISSION_POLICY_ENV];
-		registerPermissionGate(pi as never);
+		registerPermissionGate(pi as never, readChildRuntimeConfigFromEnv().permissions, undefined);
 		assert.equal(handlers.length, 0);
 
 		process.env[PERMISSION_POLICY_ENV] = JSON.stringify({ write: "deny" });
-		registerPermissionGate(pi as never);
+		registerPermissionGate(pi as never, readChildRuntimeConfigFromEnv().permissions, undefined);
 		assert.equal(handlers.length, 1);
 		assert.equal(await handlers[0]!({ toolName: "bash", input: { command: "rm -rf /" } }), undefined);
 		assert.equal(await handlers[0]!({ toolName: "contact_supervisor", input: {} }), undefined);
@@ -168,7 +169,7 @@ describe("subagent prompt runtime", () => {
 		process.env[PERMISSION_POLICY_ENV] = JSON.stringify({ write: "ask" });
 		const askHandlers: Array<(event: { toolName?: string; input?: unknown }, ctx: unknown) => unknown> = [];
 		const requests: Array<{ toolName: string; args: unknown }> = [];
-		registerPermissionGate({ on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx: unknown) => unknown) { if (event === "tool_call") askHandlers.push(handler); } } as never, async (request) => {
+		registerPermissionGate({ on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx: unknown) => unknown) { if (event === "tool_call") askHandlers.push(handler); } } as never, readChildRuntimeConfigFromEnv().permissions, readChildRuntimeConfigFromEnv().childWatchdog, async (request) => {
 			requests.push({ toolName: request.toolName, args: request.args });
 			return { approved: true, reason: "approved by watchdog", source: "watchdog" };
 		});
@@ -189,7 +190,7 @@ describe("subagent prompt runtime", () => {
 				cadence: { everyNTools: null },
 			});
 			const handlers: Array<(event: { toolName?: string; input?: unknown }, ctx: { signal?: AbortSignal }) => unknown> = [];
-			registerPermissionGate({ on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx: { signal?: AbortSignal }) => unknown) { if (event === "tool_call") handlers.push(handler); } } as never, async () => new Promise(() => undefined));
+			registerPermissionGate({ on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx: { signal?: AbortSignal }) => unknown) { if (event === "tool_call") handlers.push(handler); } } as never, readChildRuntimeConfigFromEnv().permissions, readChildRuntimeConfigFromEnv().childWatchdog, async () => new Promise(() => undefined));
 
 			const result = await Promise.race([
 				handlers[0]!({ toolName: "write", input: { path: "out.txt" } }, { signal: undefined }),
@@ -287,7 +288,7 @@ describe("subagent prompt runtime", () => {
 					handlers.set(event, handler);
 				},
 				sendUserMessage() {},
-			} as { on(event: string, handler: (payload?: unknown) => unknown): void; sendUserMessage(): void }, {
+			} as { on(event: string, handler: (payload?: unknown) => unknown): void; sendUserMessage(): void }, readChildRuntimeConfigFromEnv().steerInbox, readChildRuntimeConfigFromEnv().childIndex, {
 				platform: "linux",
 				nativeRealpath(target) {
 					assert.equal(target, inbox);
@@ -329,7 +330,7 @@ describe("subagent prompt runtime", () => {
 					handlers.set(event, handler);
 				},
 				sendUserMessage() {},
-			} as { on(event: string, handler: (payload?: unknown) => unknown): void; sendUserMessage(): void }, {
+			} as { on(event: string, handler: (payload?: unknown) => unknown): void; sendUserMessage(): void }, readChildRuntimeConfigFromEnv().steerInbox, readChildRuntimeConfigFromEnv().childIndex, {
 				platform: "darwin",
 				watch: (() => { watchCalls += 1; throw new Error("Darwin must not use fs.watch."); }) as typeof fs.watch,
 				timers: {
@@ -394,7 +395,7 @@ describe("subagent prompt runtime", () => {
 			registerSteeringInbox({
 				on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); },
 				sendUserMessage(content: string, options?: { deliverAs?: string }) { sent.push({ content, deliverAs: options?.deliverAs }); },
-			} as never);
+			} as never, readChildRuntimeConfigFromEnv().steerInbox, readChildRuntimeConfigFromEnv().childIndex);
 			handlers.get("session_start")?.({});
 			handlers.get("agent_start")?.({});
 			handlers.get("turn_start")?.({});
@@ -450,7 +451,7 @@ describe("subagent prompt runtime", () => {
 			registerSteeringInbox({
 				on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); },
 				sendUserMessage(content: string, options?: { deliverAs?: string }) { sent.push({ content, deliverAs: options?.deliverAs }); },
-			} as never);
+			} as never, readChildRuntimeConfigFromEnv().steerInbox, readChildRuntimeConfigFromEnv().childIndex);
 			handlers.get("session_start")?.({});
 			handlers.get("agent_start")?.({});
 			handlers.get("turn_start")?.({});
@@ -487,7 +488,7 @@ describe("subagent prompt runtime", () => {
 			registerSteeringInbox({
 				on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); },
 				sendUserMessage(content: string, options?: { deliverAs?: string }) { sent.push({ content, deliverAs: options?.deliverAs }); },
-			} as never);
+			} as never, readChildRuntimeConfigFromEnv().steerInbox, readChildRuntimeConfigFromEnv().childIndex);
 			handlers.get("session_start")?.({});
 			handlers.get("agent_start")?.({});
 			handlers.get("turn_start")?.({});
@@ -520,7 +521,7 @@ describe("subagent prompt runtime", () => {
 			registerSteeringInbox({
 				on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); },
 				sendUserMessage(content: string, options?: { deliverAs?: string }) { sent.push({ content, deliverAs: options?.deliverAs }); },
-			} as never, { legacySettleFallbackMs: 5 });
+			} as never, readChildRuntimeConfigFromEnv().steerInbox, readChildRuntimeConfigFromEnv().childIndex, { legacySettleFallbackMs: 5 });
 			handlers.get("session_start")?.({});
 			handlers.get("agent_start")?.({});
 			handlers.get("turn_start")?.({});
@@ -552,7 +553,7 @@ describe("subagent prompt runtime", () => {
 			registerSteeringInbox({
 				on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); },
 				sendUserMessage(content: string) { sent.push(content); },
-			} as never);
+			} as never, readChildRuntimeConfigFromEnv().steerInbox, readChildRuntimeConfigFromEnv().childIndex);
 			handlers.get("session_start")?.({});
 			writeSteerRequestToDir(inbox, { type: "steer", id: "first", ts: 1, message: "Focus on tests." });
 			handlers.get("message_start")?.({});
@@ -583,7 +584,7 @@ describe("subagent prompt runtime", () => {
 			registerSteeringInbox({
 				on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); },
 				sendUserMessage(content: string, options?: { deliverAs?: string }) { sent.push({ content, deliverAs: options?.deliverAs }); },
-			} as never);
+			} as never, readChildRuntimeConfigFromEnv().steerInbox, readChildRuntimeConfigFromEnv().childIndex);
 			handlers.get("session_start")?.({});
 			writeSteerRequestToDir(inbox, { type: "steer", id: "compact", ts: 1, message: "Keep this guidance." });
 			handlers.get("message_start")?.({});
@@ -614,7 +615,7 @@ describe("subagent prompt runtime", () => {
 			process.env[SUBAGENT_STEER_ACK_DIR_ENV] = path.join(dir, "control", "steer-acks", "0");
 			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
 			const handlers = new Map<string, (payload?: unknown) => unknown>();
-			registerSteeringInbox({ on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); }, sendUserMessage() {} } as never);
+			registerSteeringInbox({ on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); }, sendUserMessage() {} } as never, readChildRuntimeConfigFromEnv().steerInbox, readChildRuntimeConfigFromEnv().childIndex);
 			handlers.get("session_start")?.({});
 			writeSteerRequestToDir(inbox, { type: "steer", id: "pending", ts: 1, message: "Unconfirmed guidance." });
 			handlers.get("message_start")?.({});
@@ -638,7 +639,7 @@ describe("subagent prompt runtime", () => {
 			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
 			const handlers = new Map<string, (payload?: unknown) => unknown>();
 			const sent: string[] = [];
-			registerSteeringInbox({ on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); }, sendUserMessage(content: string) { sent.push(content); } } as never);
+			registerSteeringInbox({ on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); }, sendUserMessage(content: string) { sent.push(content); } } as never, readChildRuntimeConfigFromEnv().steerInbox, readChildRuntimeConfigFromEnv().childIndex);
 			handlers.get("session_start")?.({});
 			writeSteerRequestToDir(inbox, { type: "steer", id: "one", ts: 1, message: "same guidance" });
 			writeSteerRequestToDir(inbox, { type: "steer", id: "two", ts: 2, message: "same guidance" });
@@ -661,7 +662,7 @@ describe("subagent prompt runtime", () => {
 			process.env[SUBAGENT_STEER_ACK_DIR_ENV] = path.join(dir, "control", "steer-acks", "0");
 			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
 			const handlers = new Map<string, (payload?: unknown) => unknown>();
-			registerSteeringInbox({ on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); } } as never);
+			registerSteeringInbox({ on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); } } as never, readChildRuntimeConfigFromEnv().steerInbox, readChildRuntimeConfigFromEnv().childIndex);
 			handlers.get("session_start")?.({});
 			assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "capability.json"), "utf-8")).supported, false);
 			writeSteerRequestToDir(inbox, { type: "steer", id: "unsupported", ts: 1, message: "guidance" });
@@ -1185,9 +1186,7 @@ describe("subagent prompt runtime", () => {
 		const subagentResult = { role: "toolResult", toolName: "subagent", content: "OK" };
 		const subagentCall = { role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { agent: "delegate" } }] };
 		const instruction = { role: "custom", customType: "subagent-orchestration-instructions", content: "Subagent orchestration is enabled." };
-		process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
-
-		assert.deepEqual(stripParentOnlySubagentMessages([user, subagentCall, subagentResult, instruction]), [user, subagentCall, subagentResult]);
+		assert.deepEqual(stripParentOnlySubagentMessages([user, subagentCall, subagentResult, instruction], { preserveFanoutToolHistory: true }), [user, subagentCall, subagentResult]);
 	});
 
 	it("defers native supervisor registration until runtime events and respects installed pi-intercom tools", async () => {
@@ -1450,6 +1449,8 @@ describe("subagent prompt runtime", () => {
 
 	it("rewrites the final child-visible prompt through before_agent_start", async () => {
 		let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) | undefined;
+		process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = "0";
+		process.env.PI_SUBAGENT_INHERIT_SKILLS = "0";
 		registerSubagentPromptRuntime({
 			on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) {
 				if (event === "before_agent_start") beforeAgentStart = handler;
@@ -1458,8 +1459,6 @@ describe("subagent prompt runtime", () => {
 		} as { on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void; getAllTools(): Array<{ name: string }> });
 
 		assert.ok(beforeAgentStart, "expected before_agent_start handler");
-		process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = "0";
-		process.env.PI_SUBAGENT_INHERIT_SKILLS = "0";
 
 		const rewritten = await beforeAgentStart?.({ systemPrompt: BASE_PROMPT });
 		assert.ok(rewritten);
@@ -1470,16 +1469,15 @@ describe("subagent prompt runtime", () => {
 
 	it("uses the fanout boundary through before_agent_start when fanout env is set", async () => {
 		let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) | undefined;
+		process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = "1";
+		process.env.PI_SUBAGENT_INHERIT_SKILLS = "1";
+		process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
 		registerSubagentPromptRuntime({
 			on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) {
 				if (event === "before_agent_start") beforeAgentStart = handler;
 			},
 			getAllTools: () => [{ name: "intercom" }, { name: "contact_supervisor" }],
 		} as { on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void; getAllTools(): Array<{ name: string }> });
-
-		process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = "1";
-		process.env.PI_SUBAGENT_INHERIT_SKILLS = "1";
-		process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
 
 		const rewritten = await beforeAgentStart?.({ systemPrompt: BASE_PROMPT });
 		assert.ok(rewritten);

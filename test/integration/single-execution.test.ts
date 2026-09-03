@@ -42,21 +42,14 @@ import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RE
 import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
-import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
-import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV } from "../../src/runs/shared/tool-budget.ts";
+import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
 import { createRunFanoutBudget, encodeRunFanoutBudgetDescriptor, RUN_FANOUT_BUDGET_ENV } from "../../src/runs/shared/run-fanout-budget.ts";
 import { MainWatchdogRuntime } from "../../src/watchdog/runtime.ts";
-import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
+import { MAX_CHILD_PENDING_LINE_BYTES } from "../../src/runs/shared/child-protocol.ts";
 import {
 	SUBAGENT_CHILD_ENV,
-	SUBAGENT_FANOUT_CHILD_ENV,
-	SUBAGENT_STEER_ACK_DIR_ENV,
-	SUBAGENT_STEER_CAPABILITY_ENV,
-	SUBAGENT_STEER_INBOX_ENV,
 	SUBAGENT_PARENT_CHILD_INDEX_ENV,
-	SUBAGENT_PARENT_CONTROL_INBOX_ENV,
 	SUBAGENT_PARENT_DEPTH_ENV,
-	SUBAGENT_PARENT_EVENT_SINK_ENV,
 	SUBAGENT_PARENT_RUN_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import { createNestedRoute, nestedRouteEnv, parseNestedEventRecords } from "../../src/runs/shared/nested-events.ts";
@@ -170,6 +163,10 @@ interface MockPiCallRecord {
 	effectiveArgs?: string[];
 	cwd?: string;
 	systemPrompts?: Array<{ mode?: string; path?: string; text?: string; error?: string }>;
+	/** In-process child session launch (foreground children). */
+	launch?: { cwd: string; storage: { kind: string; sessionFile?: string; sessionDir?: string }; model?: string; tools?: string[]; excludeTools?: string[]; extensionPaths: string[]; hooks: string[]; noSkills: boolean; noContextFiles: boolean };
+	/** Typed child runtime config the in-process hooks received. */
+	runtime?: Record<string, unknown> & { sessionName?: string; intercomSessionName?: string; orchestratorTarget?: string; runId?: string; agent?: string; childIndex?: number; fanoutChild?: boolean; nestedParent?: { parentRunId: string; parentChildIndex?: number; depth: number }; depth?: number; maxDepth?: number; waitTool?: { enabled: boolean }; inheritProjectContext?: boolean; inheritSkills?: boolean; toolBudget?: unknown };
 }
 
 function writeWatchdogSettings(projectDir: string, tailMs = 120_000): void {
@@ -341,7 +338,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		removeTempDir(tempDir);
 	});
 
-	function readCall(): { args: string[]; effectiveArgs?: string[]; cwd?: string; systemPrompts: NonNullable<MockPiCallRecord["systemPrompts"]> } {
+	function readCall(): { args: string[]; effectiveArgs?: string[]; cwd?: string; systemPrompts: NonNullable<MockPiCallRecord["systemPrompts"]>; launch: MockPiCallRecord["launch"]; runtime: MockPiCallRecord["runtime"] } {
 		const callFile = fs.readdirSync(mockPi.dir)
 			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
 			.sort()
@@ -349,7 +346,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(callFile, "expected a recorded mock pi call");
 		const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
 		assert.ok(Array.isArray(payload.args), "expected recorded args");
-		return { args: payload.args, effectiveArgs: payload.effectiveArgs, cwd: payload.cwd, systemPrompts: payload.systemPrompts ?? [] };
+		return { args: payload.args, effectiveArgs: payload.effectiveArgs, cwd: payload.cwd, systemPrompts: payload.systemPrompts ?? [], launch: payload.launch, runtime: payload.runtime };
 	}
 
 	function readCallArgs(): string[] {
@@ -417,8 +414,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(output, "Hello from mock agent");
 	});
 
-	it("derives a child session name and passes it to the child env", async () => {
-		mockPi.onCall({ echoEnv: ["PI_SUBAGENT_SESSION_NAME"] });
+	it("derives a child session name and passes it to the child runtime config", async () => {
+		mockPi.onCall({ output: "hello" });
 		const agents = makeAgentConfigs(["echo"]);
 
 		const result = await runSync(tempDir, agents, "echo", "Say hello to the world", {});
@@ -426,8 +423,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.sessionName, "echo: Say hello to the world");
 		assert.equal(result.progressSummary?.sessionName, "echo: Say hello to the world");
-		const echoed = JSON.parse(getFinalOutput(result.messages));
-		assert.equal(echoed.PI_SUBAGENT_SESSION_NAME, "echo: Say hello to the world");
+		assert.equal(readCall().runtime?.sessionName, "echo: Say hello to the world");
 	});
 
 	it("rejects invalid foreground cwd before spawning Pi", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -1270,7 +1266,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("starts workflow scripts asynchronously with a portable internal run id", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ echoEnv: [SUBAGENT_STEER_INBOX_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_ACK_DIR_ENV] });
+		mockPi.onCall({ output: "async child done" });
 		const asyncJobs: SubagentState["asyncJobs"] = new Map();
 		const executor = makeExecutor([makeAgent("echo", { aliases: ["helper"] })], { missions: { globalIndex: false } }, false, undefined, true, asyncJobs);
 		const workflowCwd = path.join(tempDir, "workflow-cwd");
@@ -1364,11 +1360,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			{ agent: "echo", sessionName: "echo: Async work", workflowKey: "work" },
 		]);
 		assert.deepEqual(persistedResult.results?.[0]?.usage, { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 });
-		const steeringEnv = JSON.parse(persistedResult.results?.[0]?.output ?? "null") as Record<string, string | null>;
-		assert.match(steeringEnv[SUBAGENT_STEER_INBOX_ENV] ?? "", /control[/\\]workflow-foreground[/\\].+[/\\]control[/\\]steer-targets[/\\]0$/);
-		assert.match(steeringEnv[SUBAGENT_STEER_CAPABILITY_ENV] ?? "", /control[/\\]workflow-foreground[/\\].+[/\\]control[/\\]steer-capabilities[/\\]0\.json$/);
-		assert.match(steeringEnv[SUBAGENT_STEER_ACK_DIR_ENV] ?? "", /control[/\\]workflow-foreground[/\\].+[/\\]control[/\\]steer-acks[/\\]0$/);
-		assert.equal(fs.existsSync(path.join(result.details.asyncDir!, "control", "workflow-foreground", persistedResult.results?.[0]?.runId ?? "missing")), false);
+		assert.equal(readCall().runtime?.steerInbox, undefined, "in-process workflow children are steered through their session, not a file inbox");
+		assert.equal(fs.existsSync(path.join(result.details.asyncDir!, "control", "workflow-foreground")), false);
 		assert.match(persistedResult.summary ?? "", /Return: \{\n  "answer": 42\n\}/);
 		assert.deepEqual(persistedResult.workflow?.value, { answer: 42 });
 		assert.equal(persistedResult.workflow?.receipt, undefined, "status/result workflow projection must stay receipt-free");
@@ -1938,7 +1931,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	it("notifies the parent when an async workflow child needs attention", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [
-				{ jsonl: [events.toolStart("read", { path: "src/example.ts" }), events.toolEnd("read"), events.toolResult("read", "contents"), events.assistantMessage("Started")] },
+				{ jsonl: [events.toolStart("read", { path: "src/example.ts" }), events.toolEnd("read"), events.toolResult("read", "contents"), mockAssistantMessage("Started", "tool_use")] },
 				{ delay: 2_500, jsonl: [events.assistantMessage("Done")] },
 			],
 		});
@@ -2256,13 +2249,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			if (status.steps?.some((step) => step.workflowKey === "review" && step.status === "running")) break;
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
-		let childCall: string | undefined;
-		for (let attempt = 0; attempt < 100 && !childCall; attempt++) {
-			childCall = fs.readdirSync(mockPi.dir).find((name) => /^call-\d+-\d+-/.test(name));
-			if (!childCall) await new Promise((resolve) => setTimeout(resolve, 20));
+		for (let attempt = 0; attempt < 100 && mockPi.sessions[0]?.task === undefined; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
-		const childPid = Number(childCall?.match(/^call-\d+-(\d+)-/)?.[1]);
-		assert.equal(Number.isInteger(childPid) && childPid > 0, true);
+		assert.equal(mockPi.sessions.length, 1);
 
 		const stopped = await executor.execute(
 			"stop-workflow-child",
@@ -2288,18 +2278,13 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		let childSettled = false;
 		for (let attempt = 0; attempt < 100; attempt++) {
-			try {
-				process.kill(childPid, 0);
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code === "ESRCH") {
-					childSettled = true;
-					break;
-				}
-				throw error;
+			if (mockPi.sessions[0]?.aborted && mockPi.sessions[0]?.disposed) {
+				childSettled = true;
+				break;
 			}
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
-		assert.equal(childSettled, true, "child process must settle after the workflow stop");
+		assert.equal(childSettled, true, "child session must be aborted and disposed after the workflow stop");
 		await new Promise((resolve) => setTimeout(resolve, 50));
 		status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
 		assert.equal(status.steps?.[0]?.status, "stopped");
@@ -4106,7 +4091,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(unmarkedDelegated.isError, true);
 		assert.match(unmarkedDelegated.content[0]?.text ?? "", /toolBudget\.hard must be an integer >= 1/);
 
-		mockPi.onCall({ echoEnv: [TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV] });
+		mockPi.onCall({ output: "answered" });
 		const structuredDelegated = await executor.executeDelegated(
 			"structured-delegated-zero-budget",
 			{ ...params, delegatedAllowZeroToolBudget: true },
@@ -4116,9 +4101,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 		assert.equal(structuredDelegated.isError, undefined);
 		assert.deepEqual(structuredDelegated.details.toolBudget, zeroBudget);
-		const env = JSON.parse(structuredDelegated.content[0]?.text ?? "{}") as Record<string, string>;
-		assert.deepEqual(JSON.parse(env[TOOL_BUDGET_ENV] ?? "null"), zeroBudget);
-		assert.equal(env[TOOL_BUDGET_ZERO_AUTH_ENV], "1");
+		assert.deepEqual(readCall().runtime?.toolBudget, zeroBudget);
 		assert.equal(mockPi.callCount(), 1);
 	});
 
@@ -5574,45 +5557,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.details.results[0]?.acceptance?.status, "checked");
 	});
 
-	it("surfaces corrupt outputSchema acceptance sidecar read errors", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({
-			stdoutRaw: [
-				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
-				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
-				{ type: "tool_execution_end", toolName: "structured_output" },
-			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
-			structuredOutputCapture: { ok: true },
-			structuredOutputAcceptanceReportRaw: "{not-json",
-		});
-		const executor = makeExecutor([makeAgent("echo")]);
-
-		const result = await executor.execute(
-			"workflow-schema-acceptance-corrupt-sidecar",
-			{
-				async: false,
-				acceptance: { level: "checked", report: "on", criteria: [{ id: "proof", must: "Return required proof" }] },
-				workflowScript: `
-					const child = await runs.run("schema", {
-						agent: "echo",
-						task: "Return structured data",
-						outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }
-					});
-					if (!child.ok) throw new Error(child.error);
-					return child;
-				`,
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		const child = result.details.results[0];
-		assert.equal(result.isError, true);
-		assert.equal(child?.structuredOutput?.ok, true);
-		assert.match(child?.error ?? "", /Failed to read structured output acceptance report/);
-		assert.doesNotMatch(child?.error ?? "", /Structured acceptance report not found/);
-	});
-
 	it("accepts recovered tool errors before valid structured output but rejects later errors", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const recoveredError = { type: "tool_result_end", message: { role: "toolResult", toolName: "read", isError: true, content: [{ type: "text", text: "EISDIR" }] } };
 		const structuredEvents = [
@@ -5643,7 +5587,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(terminal.details?.results?.[0]?.error ?? "", /read failed/);
 	});
 
-	it("rejects structured output capture files that were not produced by the structured_output tool", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("rejects structured output captured without a structured_output tool call", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "spoofed", structuredOutputCapture: { ok: true } });
 		const executor = makeExecutor([makeAgent("echo")]);
 
@@ -5985,57 +5929,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 0);
 	});
 
-	it("retries a zero-activity startup exit on the same model", async () => {
-		mockPi.onCall({ exitCode: 1 });
-		mockPi.onCall({ output: "Recovered after startup race" });
-		const agents = [makeAgent("worker", {
-			model: "openai/gpt-5-mini",
-			fallbackModels: ["anthropic/claude-sonnet-4"],
-		})];
-
-		const result = await runSync(tempDir, agents, "worker", "Do work", {
-			runId: "startup-retry-sync",
-			acceptance: false,
-		});
-
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.model, "openai/gpt-5-mini");
-		assert.equal(result.finalOutput, "Recovered after startup race");
-		assert.deepEqual(result.attemptedModels, ["openai/gpt-5-mini"]);
-		assert.deepEqual(result.modelAttempts?.map((attempt) => attempt.success), [false, true]);
-		assert.match(result.progress.recentOutput.join("\n"), /\[startup-retry\].*same model/i);
-		assert.equal(result.progress.recentOutput.filter((line) => line.startsWith("[startup-retry]")).length, 1);
-		assert.equal(mockPi.callCount(), 2);
-	});
-
-	it("escalates to file task delivery after a zero-activity SIGKILL startup exit", { skip: process.platform === "win32" ? "POSIX child signal reporting is unavailable on Windows" : false }, async () => {
-		mockPi.onCall({ signal: "SIGKILL" });
-		mockPi.onCall({ output: "Recovered via file delivery" });
-		const agents = [makeAgent("worker", { model: "openai/gpt-5-mini" })];
-
-		const result = await runSync(tempDir, agents, "worker", "Do work", {
-			runId: "startup-sigkill-file-delivery-sync",
-			acceptance: false,
-		});
-
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.finalOutput, "Recovered via file delivery");
-		assert.equal(mockPi.callCount(), 2);
-		const [firstArgs, retryArgs] = readAllCallArgs();
-		const firstTaskArg = firstArgs?.find((arg) => arg === "Task: Do work" || arg.endsWith("task.md"));
-		if (process.platform === "darwin") {
-			assert.ok(firstTaskArg?.startsWith("@"), "first attempt should deliver the task through a file on macOS");
-		} else {
-			assert.equal(firstTaskArg, "Task: Do work", "first attempt should deliver the task inline");
-		}
-		const retryTaskArg = retryArgs?.at(-1) ?? "";
-		assert.ok(
-			retryTaskArg.startsWith("@") && retryTaskArg.endsWith("task.md"),
-			`retry should reference a task file instead of inline argv, got: ${retryTaskArg}`,
-		);
-		assert.match(result.progress.recentOutput.join("\n"), /\[startup-retry\].*file task delivery/i);
-	});
-
 	it("does not retry a non-zero exit after tool activity", async () => {
 		mockPi.onCall({ jsonl: [events.toolStart("read", { path: "package.json" })], exitCode: 1 });
 		mockPi.onCall({ output: "must not run" });
@@ -6072,73 +5965,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.modelAttempts?.length, 1);
 		assert.equal(mockPi.callCount(), 1);
 		assert.ok(result.error?.includes("context"), "error should mention context overflow");
-	});
-
-	it("does not retry non-SIGKILL signaled child exits", { skip: process.platform === "win32" ? "POSIX child signal reporting is unavailable on Windows" : false }, async () => {
-		mockPi.onCall({ signal: "SIGTERM" });
-		mockPi.onCall({ output: "must not run" });
-		const agents = [makeAgent("worker", { model: "openai/gpt-5-mini" })];
-
-		const result = await runSync(tempDir, agents, "worker", "Do work", {
-			runId: "startup-no-retry-after-signal",
-			acceptance: false,
-		});
-
-		assert.equal(result.exitCode, 1);
-		assert.equal(result.processSignal, "SIGTERM");
-		assert.equal(result.error, "Subagent process terminated by signal SIGTERM.");
-		assert.equal(result.modelAttempts?.length, 1);
-		assert.equal(mockPi.callCount(), 1);
-	});
-
-	it("prefers signal termination errors over stderr tails", { skip: process.platform === "win32" ? "POSIX child signal reporting is unavailable on Windows" : false }, async () => {
-		mockPi.onCall({ stderr: "INFO benign startup line\n", signal: "SIGTERM" });
-		const agents = [makeAgent("worker", { model: "openai/gpt-5-mini" })];
-
-		const result = await runSync(tempDir, agents, "worker", "Do work", {
-			runId: "signal-error-over-stderr",
-			acceptance: false,
-		});
-
-		assert.equal(result.exitCode, 1);
-		assert.equal(result.processSignal, "SIGTERM");
-		assert.equal(result.error, "Subagent process terminated by signal SIGTERM.");
-		assert.doesNotMatch(result.error ?? "", /INFO benign startup line/);
-	});
-
-	it("does not retry a child exit with raw stdout diagnostics", async () => {
-		mockPi.onCall({ stdoutRaw: "configuration failed before protocol startup\n", exitCode: 1 });
-		mockPi.onCall({ output: "must not run" });
-		const agents = [makeAgent("worker", { model: "openai/gpt-5-mini" })];
-
-		const result = await runSync(tempDir, agents, "worker", "Do work", {
-			runId: "startup-no-retry-after-stdout-diagnostic",
-			acceptance: false,
-		});
-
-		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /configuration failed before protocol startup/);
-		assert.equal(result.modelAttempts?.length, 1);
-		assert.equal(mockPi.callCount(), 1);
-	});
-
-	it("reports an actionable error after startup retries are exhausted", async () => {
-		mockPi.onCall({ exitCode: 1 });
-		const agents = [makeAgent("worker", {
-			model: "openai/gpt-5-mini",
-			fallbackModels: ["anthropic/claude-sonnet-4"],
-		})];
-
-		const result = await runSync(tempDir, agents, "worker", "Do work", {
-			runId: "startup-retry-exhausted-sync",
-			acceptance: false,
-		});
-
-		assert.equal(result.exitCode, 1);
-		assert.equal(result.modelAttempts?.length, 4);
-		assert.deepEqual(result.attemptedModels, ["openai/gpt-5-mini"]);
-		assert.match(result.error ?? "", /failed to start after 4 attempts.*concurrent Pi startup race/i);
-		assert.equal(mockPi.callCount(), 4);
 	});
 
 	it("handles long tasks via temp file (ENAMETOOLONG prevention)", async () => {
@@ -6233,18 +6059,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(result.attemptedModels, ["github-copilot/gpt-5-mini"]);
 	});
 
-	it("parses split UTF-8 JSON and a final unterminated protocol line", async () => {
-		const line = Buffer.from(JSON.stringify(events.assistantMessage("你好 from fragmented JSON")));
-		const unicodeStart = line.indexOf(Buffer.from("你"));
-		mockPi.onCall({ stdoutBase64Chunks: [
-			line.subarray(0, unicodeStart + 1).toString("base64"),
-			line.subarray(unicodeStart + 1).toString("base64"),
-		] });
-		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Read fragmented output", { acceptance: false });
-		assert.equal(result.exitCode, 0);
-		assert.equal(getFinalOutput(result.messages), "你好 from fragmented JSON");
-	});
-
 	it("projects an oversized turn_end aggregate without losing the foreground result", async () => {
 		mockPi.onCall({ jsonl: [
 			events.assistantMessage("result before oversized aggregate"),
@@ -6256,23 +6070,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.protocolError, undefined);
 		assert.equal(getFinalOutput(result.messages), "result before oversized aggregate");
-	});
-
-	it("fails with protocol_output_limit when a child emits an oversized stdout line", async () => {
-		mockPi.onCall({ stdoutRaw: "x".repeat(MAX_CHILD_PENDING_LINE_BYTES + 1) });
-		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Emit malformed output", { acceptance: false });
-		assert.equal(result.exitCode, 1);
-		assert.equal(result.protocolError?.code, "protocol_output_limit");
-		assert.equal(result.protocolError?.stream, "stdout");
-		assert.match(result.error ?? "", /protocol_output_limit/);
-	});
-
-	it("keeps only a bounded UTF-8 stderr tail", async () => {
-		mockPi.onCall({ output: "failed", stderr: `${"x".repeat(MAX_CHILD_STDERR_BYTES + 1024)}终`, exitCode: 1 });
-		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Fail noisily", { acceptance: false });
-		assert.equal(result.exitCode, 1);
-		assert.ok(Buffer.byteLength(result.error ?? "") <= MAX_CHILD_STDERR_BYTES);
-		assert.match(result.error ?? "", /终$/);
 	});
 
 	it("cancels final drain while agent_end reports a retry and waits for agent_settled", async () => {
@@ -6320,42 +6117,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.usage.turns, 1);
 		assert.equal(result.usage.input, 100); // from mock
 		assert.equal(result.usage.output, 50); // from mock
-	});
-
-	it("advances to a fallback model after a recovered startup race and provider failure", async () => {
-		mockPi.onCall({ exitCode: 1 });
-		mockPi.onCall({
-			jsonl: [{
-				type: "message_end",
-				message: {
-					role: "assistant",
-					content: [{ type: "text", text: "temporary provider failure" }],
-					model: "openai/gpt-5-mini",
-					errorMessage: "rate limit exceeded",
-					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
-				},
-			}],
-			exitCode: 1,
-		});
-		mockPi.onCall({ output: "Recovered on fallback" });
-		const agents = [makeAgent("echo", {
-			model: "openai/gpt-5-mini",
-			fallbackModels: ["anthropic/claude-sonnet-4"],
-		})];
-
-		const result = await runSync(tempDir, agents, "echo", "Task", {
-			runId: "startup-then-fallback-sync",
-			acceptance: false,
-		});
-
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.model, "anthropic/claude-sonnet-4");
-		assert.deepEqual(result.attemptedModels, [
-			"openai/gpt-5-mini",
-			"anthropic/claude-sonnet-4",
-		]);
-		assert.deepEqual(result.modelAttempts?.map((attempt) => attempt.success), [false, false, true]);
-		assert.equal(mockPi.callCount(), 3);
 	});
 
 	it("retries with fallback models on retryable provider failures", async () => {
@@ -7880,8 +7641,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.readFileSync(result.artifactPaths.outputPath, "utf-8"), "full saved output\nwith details");
 	});
 
-	it("passes maxSubagentDepth through to child execution env", async () => {
-		mockPi.onCall({ echoEnv: ["PI_SUBAGENT_DEPTH", "PI_SUBAGENT_MAX_DEPTH"] });
+	it("passes maxSubagentDepth through to the child runtime config", async () => {
+		mockPi.onCall({ output: "ok" });
 		const agents = makeAgentConfigs(["echo"]);
 		const prevDepth = process.env.PI_SUBAGENT_DEPTH;
 		const prevMaxDepth = process.env.PI_SUBAGENT_MAX_DEPTH;
@@ -7895,10 +7656,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			});
 
 			assert.equal(result.exitCode, 0);
-			assert.deepEqual(JSON.parse(result.finalOutput ?? "{}"), {
-				PI_SUBAGENT_DEPTH: "1",
-				PI_SUBAGENT_MAX_DEPTH: "1",
-			});
+			assert.equal(readCall().runtime?.depth, 1);
+			assert.equal(readCall().runtime?.maxDepth, 1);
 		} finally {
 			if (prevDepth === undefined) delete process.env.PI_SUBAGENT_DEPTH;
 			else process.env.PI_SUBAGENT_DEPTH = prevDepth;
@@ -7908,19 +7667,17 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("passes the effective wait-tool setting through to child execution", async () => {
-		mockPi.onCall({ echoEnv: [WAIT_TOOL_ENABLED_ENV] });
+		mockPi.onCall({ output: "ok" });
 		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
 			runId: "wait-tool-env",
 			waitToolEnabled: false,
 		});
 		assert.equal(result.exitCode, 0);
-		assert.deepEqual(JSON.parse(result.finalOutput ?? "{}"), {
-			[WAIT_TOOL_ENABLED_ENV]: "false",
-		});
+		assert.deepEqual(readCall().runtime?.waitTool, { enabled: false });
 	});
 
-	it("passes prompt inheritance env flags through to child execution", async () => {
-		mockPi.onCall({ echoEnv: ["PI_SUBAGENT_INHERIT_PROJECT_CONTEXT", "PI_SUBAGENT_INHERIT_SKILLS"] });
+	it("passes prompt inheritance flags through to child execution", async () => {
+		mockPi.onCall({ output: "ok" });
 		const agents = [makeAgent("echo", {
 			systemPromptMode: "replace",
 			inheritProjectContext: false,
@@ -7932,78 +7689,47 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 
 		assert.equal(result.exitCode, 0);
-		assert.deepEqual(JSON.parse(result.finalOutput ?? "{}"), {
-			PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: "0",
-			PI_SUBAGENT_INHERIT_SKILLS: "0",
-		});
+		const call = readCall();
+		assert.equal(call.runtime?.inheritProjectContext, false);
+		assert.equal(call.runtime?.inheritSkills, false);
+		assert.equal(call.launch?.noContextFiles, true);
+		assert.equal(call.launch?.noSkills, true);
 	});
 
-	it("passes fanout routing env only when nested fanout is explicitly authorized", async () => {
-		const envKeys = [
-			SUBAGENT_FANOUT_CHILD_ENV,
-			SUBAGENT_PARENT_EVENT_SINK_ENV,
-			SUBAGENT_PARENT_CONTROL_INBOX_ENV,
-			SUBAGENT_PARENT_RUN_ID_ENV,
-			SUBAGENT_PARENT_CHILD_INDEX_ENV,
-		];
-		const saved = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
-		try {
-			process.env[SUBAGENT_PARENT_EVENT_SINK_ENV] = "/tmp/inherited/events.jsonl";
-			process.env[SUBAGENT_PARENT_CONTROL_INBOX_ENV] = "/tmp/inherited/control";
-			process.env[SUBAGENT_PARENT_RUN_ID_ENV] = "inherited-run";
-			process.env[SUBAGENT_PARENT_CHILD_INDEX_ENV] = "7";
+	it("passes fanout routing only when nested fanout is explicitly authorized", async () => {
+		mockPi.onCall({ output: "ok" });
+		const fanoutAgents = [makeAgent("delegator", { tools: ["read", "subagent"] })];
+		const fanout = await runSync(tempDir, fanoutAgents, "delegator", "Task", { runId: "fanout-run", index: 2 });
+		assert.equal(fanout.exitCode, 0);
+		const fanoutRuntime = readCall().runtime;
+		assert.equal(fanoutRuntime?.fanoutChild, true);
+		assert.equal(fanoutRuntime?.nestedParent?.parentRunId, "fanout-run");
+		assert.equal(fanoutRuntime?.nestedParent?.parentChildIndex, 2);
+		assert.equal(fanoutRuntime?.nestedParent?.depth, 1);
 
-			mockPi.onCall({ echoEnv: envKeys });
-			const fanoutAgents = [makeAgent("delegator", { tools: ["read", "subagent"] })];
-			const fanout = await runSync(tempDir, fanoutAgents, "delegator", "Task", { runId: "fanout-run", index: 2 });
-			assert.equal(fanout.exitCode, 0);
-			assert.deepEqual(JSON.parse(fanout.finalOutput ?? "{}"), {
-				PI_SUBAGENT_FANOUT_CHILD: "1",
-				PI_SUBAGENT_PARENT_EVENT_SINK: "/tmp/inherited/events.jsonl",
-				PI_SUBAGENT_PARENT_CONTROL_INBOX: "/tmp/inherited/control",
-				PI_SUBAGENT_PARENT_RUN_ID: "fanout-run",
-				PI_SUBAGENT_PARENT_CHILD_INDEX: "2",
-			});
+		mockPi.reset();
+		mockPi.onCall({ output: "ok" });
+		const inheritedToolAgents = [makeAgent("inherited-delegator", { allowNestedSubagents: true })];
+		const inheritedToolFanout = await runSync(tempDir, inheritedToolAgents, "inherited-delegator", "Task", { runId: "inherited-tool-fanout", index: 3 });
+		assert.equal(inheritedToolFanout.exitCode, 0);
+		const inheritedRuntime = readCall().runtime;
+		assert.equal(inheritedRuntime?.fanoutChild, true);
+		assert.equal(inheritedRuntime?.nestedParent?.parentRunId, "inherited-tool-fanout");
+		assert.equal(inheritedRuntime?.nestedParent?.parentChildIndex, 3);
 
-			mockPi.onCall({ echoEnv: envKeys });
-			const inheritedToolAgents = [makeAgent("inherited-delegator", { allowNestedSubagents: true })];
-			const inheritedToolFanout = await runSync(tempDir, inheritedToolAgents, "inherited-delegator", "Task", { runId: "inherited-tool-fanout", index: 3 });
-			assert.equal(inheritedToolFanout.exitCode, 0);
-			assert.deepEqual(JSON.parse(inheritedToolFanout.finalOutput ?? "{}"), {
-				PI_SUBAGENT_FANOUT_CHILD: "1",
-				PI_SUBAGENT_PARENT_EVENT_SINK: "/tmp/inherited/events.jsonl",
-				PI_SUBAGENT_PARENT_CONTROL_INBOX: "/tmp/inherited/control",
-				PI_SUBAGENT_PARENT_RUN_ID: "inherited-tool-fanout",
-				PI_SUBAGENT_PARENT_CHILD_INDEX: "3",
-			});
-
-			mockPi.onCall({ echoEnv: envKeys });
-			const nonFanoutAgents = [makeAgent("worker", { tools: ["read"] })];
-			const nonFanout = await runSync(tempDir, nonFanoutAgents, "worker", "Task", { runId: "non-fanout-run" });
-			assert.equal(nonFanout.exitCode, 0);
-			assert.deepEqual(JSON.parse(nonFanout.finalOutput ?? "{}"), {
-				PI_SUBAGENT_FANOUT_CHILD: "0",
-				PI_SUBAGENT_PARENT_EVENT_SINK: "",
-				PI_SUBAGENT_PARENT_CONTROL_INBOX: "",
-				PI_SUBAGENT_PARENT_RUN_ID: "",
-				PI_SUBAGENT_PARENT_CHILD_INDEX: "",
-			});
-		} finally {
-			for (const key of envKeys) {
-				if (saved[key] === undefined) delete process.env[key];
-				else process.env[key] = saved[key];
-			}
-		}
+		mockPi.reset();
+		mockPi.onCall({ output: "ok" });
+		const nonFanoutAgents = [makeAgent("worker", { tools: ["read"] })];
+		const nonFanout = await runSync(tempDir, nonFanoutAgents, "worker", "Task", { runId: "non-fanout-run" });
+		assert.equal(nonFanout.exitCode, 0);
+		const workerRuntime = readCall().runtime;
+		assert.equal(workerRuntime?.fanoutChild, false);
+		assert.equal(workerRuntime?.nestedParent, undefined);
+		assert.equal(workerRuntime?.nestedRoute, undefined);
 	});
 
 	it("passes supervisor metadata through to child execution", async () => {
-		mockPi.onCall({ echoEnv: [
-			"PI_SUBAGENT_INTERCOM_SESSION_NAME",
-			"PI_SUBAGENT_ORCHESTRATOR_TARGET",
-			"PI_SUBAGENT_RUN_ID",
-			"PI_SUBAGENT_CHILD_AGENT",
-			"PI_SUBAGENT_CHILD_INDEX",
-		] });
+		mockPi.onCall({ output: "ok" });
 		const agents = makeAgentConfigs(["echo"]);
 
 		const result = await runSync(tempDir, agents, "echo", "Task", {
@@ -8014,13 +7740,12 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 
 		assert.equal(result.exitCode, 0);
-		assert.deepEqual(JSON.parse(result.finalOutput ?? "{}"), {
-			PI_SUBAGENT_INTERCOM_SESSION_NAME: "subagent-echo-78f659a3-3",
-			PI_SUBAGENT_ORCHESTRATOR_TARGET: "subagent-chat-parent",
-			PI_SUBAGENT_RUN_ID: "78f659a3",
-			PI_SUBAGENT_CHILD_AGENT: "echo",
-			PI_SUBAGENT_CHILD_INDEX: "2",
-		});
+		const runtime = readCall().runtime;
+		assert.equal(runtime?.intercomSessionName, "subagent-echo-78f659a3-3");
+		assert.equal(runtime?.orchestratorTarget, "subagent-chat-parent");
+		assert.equal(runtime?.runId, "78f659a3");
+		assert.equal(runtime?.agent, "echo");
+		assert.equal(runtime?.childIndex, 2);
 	});
 
 	it("fails with actionable diagnostics when a requested extension tool is not loaded", async () => {
@@ -8063,11 +7788,12 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 
 		assert.equal(result.exitCode, 0);
-		const args = readCallArgs();
-		const extensionArgs = args.filter((arg, index) => args[index - 1] === "--extension");
-		assert.ok(extensionArgs.some((arg) => arg.endsWith(path.join("src", "runs", "shared", "subagent-prompt-runtime.ts"))));
-		assert.ok(extensionArgs.some((arg) => arg.replace(/\\/g, "/").endsWith("custom-tool.ts")));
-		assert.ok(extensionArgs.some((arg) => arg.replace(/\\/g, "/").endsWith("allowed-ext.ts")));
+		const call = readCall();
+		assert.ok(call.launch?.hooks.includes("pi-subagents:prompt-runtime"));
+		const extensionPaths = call.launch?.extensionPaths ?? [];
+		assert.ok(extensionPaths.some((entry) => entry.replace(/\\/g, "/").endsWith("custom-tool.ts")));
+		assert.ok(extensionPaths.some((entry) => entry.replace(/\\/g, "/").endsWith("allowed-ext.ts")));
+		assert.ok(!extensionPaths.some((entry) => entry.endsWith("subagent-prompt-runtime.ts")), "runtime hooks are inline, not extension files");
 	});
 
 	it("passes subagent-only extensions through to child execution", { skip: process.platform === "win32" ? "extension path resolution intermittent on Windows CI" : undefined }, async () => {
@@ -8082,10 +7808,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 
 		assert.equal(result.exitCode, 0);
-		const args = readCallArgs();
-		const extensionArgs = args.filter((arg, index) => args[index - 1] === "--extension");
-		assert.ok(extensionArgs.some((arg) => arg.endsWith(path.join("src", "runs", "shared", "subagent-prompt-runtime.ts"))));
-		assert.ok(extensionArgs.some((arg) => arg.replace(/\\/g, "/").endsWith("child-only-tool.ts")));
+		const call = readCall();
+		assert.ok(call.launch?.hooks.includes("pi-subagents:prompt-runtime"));
+		assert.ok((call.launch?.extensionPaths ?? []).some((entry) => entry.replace(/\\/g, "/").endsWith("child-only-tool.ts")));
 	});
 
 	it("ignores child watchdog status when foreground child watchdogs are not configured", async () => {
@@ -8883,7 +8608,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		for (let attempt = 0; attempt < 100 && !terminal; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
 		assert.ok(terminal);
 		assert.equal(terminal.interrupted, true, "explicit control interrupt must remain active after detach");
-		assert.equal(terminal.processSignal, "SIGINT");
 		assert.equal(terminal.detached, undefined);
 	});
 
@@ -9072,35 +8796,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const timeoutResult = await timeoutTerminal;
 		assert.equal(timeoutResult.timedOut, true);
 		assert.equal(timeoutResult.exitCode, 1);
-	});
-
-	it("enforces the stdout protocol limit after foreground detachment", async () => {
-		const eventBus = createEventBus();
-		mockPi.onCall({ steps: [
-			{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
-			{ delay: 100, stdoutRaw: "x".repeat(MAX_CHILD_PENDING_LINE_BYTES + 1) },
-			{ delay: 5000 },
-		] });
-		let detachEmitted = false;
-		let recoveredResult: RunSyncResult | undefined;
-		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Detach then emit malformed output", {
-			runId: "detached-protocol-limit",
-			allowIntercomDetach: true,
-			intercomEvents: eventBus,
-			acceptance: false,
-			onUpdate: (update) => {
-				if (detachEmitted) return;
-				const progress = (update as { details?: { progress?: Array<{ currentTool?: string }> } }).details?.progress;
-				if (!Array.isArray(progress) || !progress.some((item) => item.currentTool === "contact_supervisor")) return;
-				detachEmitted = true;
-				eventBus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "detached-protocol-request" });
-			},
-			onDetachedExit: (postExit) => { recoveredResult = postExit as RunSyncResult; },
-		});
-		assert.equal(result.exitCode, -2);
-		for (let attempt = 0; attempt < 100 && !recoveredResult; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
-		assert.equal(recoveredResult?.exitCode, 1);
-		assert.equal(recoveredResult?.protocolError?.code, "protocol_output_limit");
 	});
 
 	it("does not save a detached placeholder to an explicit file-only output", async () => {
@@ -9316,20 +9011,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(intercomResult.exitCode, -2);
 		assert.equal(intercomResult.detached, true);
 		assert.equal(firstDetachResponse, true);
-	});
-
-	it("returns actionable guidance for ambient extension registration conflicts", async () => {
-		mockPi.onCall({
-			exitCode: 1,
-			stderr: 'Error: Failed to load extension "/tmp/pi-mcp-adapter-clone/index.ts": Tool "mcpScript" conflicts with /tmp/pi-mcp-adapter/index.ts',
-		});
-		const agents = makeAgentConfigs(["echo"]);
-
-		const result = await runSync(tempDir, agents, "echo", "Task", {});
-
-		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /loaded conflicting ambient Pi extensions/);
-		assert.match(result.error ?? "", /"echo":\{"extensions":\[\]\}/);
 	});
 
 	it("handles stderr without exit code as info (not error)", async () => {

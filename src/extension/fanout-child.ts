@@ -6,8 +6,8 @@ import { discoverAgents } from "../agents/agents.ts";
 import { getArtifactsDir } from "../shared/artifacts.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { resolveWaitToolConfig } from "../runs/background/wait-config.ts";
-import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
-import { readNestedControlRequests, resolveNestedRouteFromEnv, type NestedRoute, writeNestedControlResult } from "../runs/shared/nested-events.ts";
+import { readChildRuntimeConfigFromEnv, type ChildRuntimeConfig } from "../runs/shared/child-runtime-config.ts";
+import { readNestedControlRequests, resolveInheritedNestedRoute, type NestedRoute, writeNestedControlResult } from "../runs/shared/nested-events.ts";
 import { deliverSubagentIntercomMessageEvent } from "../intercom/result-intercom.ts";
 import { resolveSubagentIntercomTarget } from "../intercom/intercom-bridge.ts";
 import { createSubagentParamsSchema } from "./schemas.ts";
@@ -51,12 +51,8 @@ function createChildSafeState(): SubagentState {
 	};
 }
 
-function resolveNestedControlRoute(): NestedRoute | undefined {
-	try {
-		return resolveNestedRouteFromEnv();
-	} catch {
-		return undefined;
-	}
+function resolveNestedControlRoute(config: ChildRuntimeConfig): NestedRoute | undefined {
+	return config.nestedRoute ? resolveInheritedNestedRoute(config.nestedRoute) : undefined;
 }
 
 function nestedControlRouteKey(route: NestedRoute): string {
@@ -145,8 +141,13 @@ function startNestedControlInboxListener(pi: ExtensionAPI, state: SubagentState,
 	return () => clearInterval(timer);
 }
 
-export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): void {
-	if (process.env[SUBAGENT_CHILD_ENV] !== "1" || process.env[SUBAGENT_FANOUT_CHILD_ENV] !== "1") return;
+/**
+ * Register the child-side `subagent` tool for fanout-authorized children.
+ * Spawned children read their config from the environment; in-process children
+ * receive it from the parent.
+ */
+export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, childConfig: ChildRuntimeConfig = readChildRuntimeConfigFromEnv()): void {
+	if (!childConfig.fanoutChild) return;
 
 	const globalStore = globalThis as Record<string, unknown>;
 	const registeredKey = "__piSubagentFanoutChildRegisteredApis";
@@ -172,6 +173,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 		expandTilde,
 		discoverAgents,
 		allowMutatingManagementActions: false,
+		childRuntime: childConfig,
 	});
 
 	const params = createSubagentParamsSchema();
@@ -190,7 +192,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 	};
 
 	pi.registerTool(tool);
-	const route = resolveNestedControlRoute();
+	const route = resolveNestedControlRoute(childConfig);
 	if (!route) return;
 	const listenerCleanupKey = "__piSubagentFanoutChildNestedControlInboxCleanups";
 	const listenerCleanups = globalStore[listenerCleanupKey] instanceof Map

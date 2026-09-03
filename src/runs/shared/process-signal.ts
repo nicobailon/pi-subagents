@@ -4,9 +4,12 @@ export function formatProcessSignalError(signal: string): string {
 
 export function formatMidToolExitError(input: {
 	toolName: string;
-	exitCode: number | null;
+	exitCode?: number | null;
 	processSignal?: string | null;
 }): string {
+	if (input.exitCode === undefined && !input.processSignal) {
+		return `Subagent session ended during '${input.toolName}' tool execution before the tool completed. Earlier assistant output is not a terminal result.`;
+	}
 	const terminal = [`exit ${input.exitCode ?? "unknown"}`, ...(input.processSignal ? [`signal ${input.processSignal}`] : [])].join(", ");
 	return `Subagent process exited during '${input.toolName}' tool execution (${terminal}) before the tool completed. Earlier assistant output is not a terminal result.`;
 }
