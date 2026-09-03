@@ -17,6 +17,7 @@
 - Include sanitized excluded model/provider/reason/expiry evidence when no usable subagent candidates remain. Thanks [@AlexKucera](https://github.com/AlexKucera) for #1841.
 
 ### Fixed
+- Show native supervisor requests and outbound replies as bounded TUI cards in parent sessions (#1845).
 - Suppress stale async supervisor-request notices after the native request has already been answered (#1838). Thanks [@VladimirGVP](https://github.com/VladimirGVP).
 - Flush async workflow result assembly after session replacement when every child is already terminal, without permitting stale-context launches (#1833). Thanks [@redcomet168](https://github.com/redcomet168).
 - Accept calendar/platform `claude --version` output during Claude Code adapter preflight while retaining required launch-flag validation. Thanks [@drouhard](https://github.com/drouhard).

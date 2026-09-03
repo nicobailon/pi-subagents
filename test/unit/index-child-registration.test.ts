@@ -1107,12 +1107,14 @@ describe("subagent extension child mode", () => {
 			const events = { on() { return () => {}; }, emit() {} };
 			const commands = [];
 			const renderers = [];
+			const entryRenderers = [];
 			const fakePi = new Proxy({
 				events,
 				registerTool() {},
 				registerCommand(name) { commands.push(name); },
 				registerShortcut() {},
 				registerMessageRenderer(type) { renderers.push(type); },
+				registerEntryRenderer(type) { entryRenderers.push(type); },
 				sendMessage() {},
 				getSessionName() { return undefined; },
 			}, {
@@ -1124,6 +1126,8 @@ describe("subagent extension child mode", () => {
 			registerSubagentExtension(fakePi);
 			if (!commands.includes("subagents-watchdog")) throw new Error("watchdog command not registered: " + commands.join(", "));
 			if (!renderers.includes("subagent_watchdog_warning")) throw new Error("watchdog renderer not registered: " + renderers.join(", "));
+			if (!renderers.includes("subagent_supervisor_request")) throw new Error("supervisor request renderer not registered: " + renderers.join(", "));
+			if (!entryRenderers.includes("subagent_supervisor_reply")) throw new Error("supervisor reply entry renderer not registered: " + entryRenderers.join(", "));
 		`;
 
 		execFileSync(

@@ -8,6 +8,13 @@ import type { ChildSupervisorMetadata } from "../runs/shared/child-runtime-confi
 import { INTERCOM_DETACH_REQUEST_EVENT, POLL_INTERVAL_MS, TEMP_ROOT_DIR, type ControlEvent, type IntercomEventBus, type SubagentState } from "../shared/types.ts";
 import { writeAtomicJson } from "../shared/atomic-json.ts";
 import { shouldUseNativeFsWatch } from "../shared/watch-strategy.ts";
+import {
+	SUPERVISOR_REQUEST_MESSAGE_TYPE,
+	SUPERVISOR_REPLY_ENTRY_TYPE,
+	supervisorReplyHint,
+	type SupervisorReason,
+	type SupervisorReplyEntryData,
+} from "./supervisor-ui.ts";
 
 const SUPERVISOR_CHANNEL_ROOT = path.join(TEMP_ROOT_DIR, "supervisor-channels");
 const REQUESTS_DIR = "requests";
@@ -23,8 +30,6 @@ const MAX_SUPERVISOR_REQUEST_CORRELATIONS = 256;
 const SUPERVISOR_REQUEST_CORRELATION_RETENTION_MS = 10 * 60 * 1000;
 
 export type SupervisorRequestState = "pending" | "resolved" | "unknown";
-
-type SupervisorReason = "need_decision" | "interview_request" | "progress_update";
 
 interface SupervisorRequest {
 	type: "subagent.supervisor.request";
@@ -522,7 +527,7 @@ function requestVisibleText(request: PendingSupervisorRequest): string {
 	return lines.join("\n");
 }
 
-function writeReply(request: PendingSupervisorRequest, message: string): void {
+function writeReply(request: PendingSupervisorRequest, message: string): SupervisorReply {
 	if (!message.trim()) throw new Error("message is required for supervisor replies.");
 	const reply: SupervisorReply = {
 		type: "subagent.supervisor.reply",
@@ -532,6 +537,30 @@ function writeReply(request: PendingSupervisorRequest, message: string): void {
 	};
 	writeAtomicJson(replyPath(request.channelDir, request.id), reply);
 	removeRequestFile(request.requestFile);
+	return reply;
+}
+
+function appendSupervisorReplyEntry(pi: ExtensionAPI, request: PendingSupervisorRequest, reply: SupervisorReply): void {
+	const appendEntry = (pi as unknown as {
+		appendEntry?: (customType: string, data?: SupervisorReplyEntryData) => void;
+	}).appendEntry;
+	if (typeof appendEntry !== "function") return;
+	try {
+		appendEntry.call(pi, SUPERVISOR_REPLY_ENTRY_TYPE, {
+			requestId: request.id,
+			replyTo: request.id,
+			reason: request.reason,
+			runId: request.runId,
+			agent: request.agent,
+			childIndex: request.childIndex,
+			...(request.childTarget ? { childTarget: request.childTarget } : {}),
+			message: reply.message,
+			createdAt: reply.createdAt,
+		});
+	} catch (error) {
+		// The reply file is authoritative; a UI journal failure must not undo a delivered reply.
+		console.error("Failed to journal native supervisor reply:", error);
+	}
 }
 
 function resolvePendingRequest(pending: Map<string, PendingSupervisorRequest>, params: IntercomParams): PendingSupervisorRequest {
@@ -567,7 +596,7 @@ function publicPendingRequests(pending: Map<string, PendingSupervisorRequest>): 
 	}));
 }
 
-function buildParentSupervisorTool(pending: Map<string, PendingSupervisorRequest>, state: SubagentState, onLifecycle: SupervisorRequestLifecycleObserver): ToolDefinition<typeof IntercomParamsSchema, Record<string, unknown>> {
+function buildParentSupervisorTool(pi: ExtensionAPI, pending: Map<string, PendingSupervisorRequest>, state: SubagentState, onLifecycle: SupervisorRequestLifecycleObserver): ToolDefinition<typeof IntercomParamsSchema, Record<string, unknown>> {
 	return {
 		name: NATIVE_SUPERVISOR_TOOL_NAME,
 		label: "Subagent Supervisor",
@@ -585,7 +614,8 @@ function buildParentSupervisorTool(pending: Map<string, PendingSupervisorRequest
 			}
 			if (input.action === "reply") {
 				const request = resolvePendingRequest(pending, input);
-				writeReply(request, input.message ?? "");
+				const reply = writeReply(request, input.message ?? "");
+				appendSupervisorReplyEntry(pi, request, reply);
 				onLifecycle(request, "resolved");
 				pending.delete(request.id);
 				clearForegroundSupervisorAttention(request, pending, state);
@@ -676,7 +706,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	};
 
 	const registerParentTools = (): void => {
-		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(buildParentSupervisorTool(pending, state, observeRequestLifecycle));
+		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(buildParentSupervisorTool(pi, pending, state, observeRequestLifecycle));
 	};
 
 	const cleanupStaleChannelsIfDue = (): void => {
@@ -717,16 +747,20 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 				removeRequestFile(request.requestFile);
 			}
 			pi.sendMessage({
-				customType: "subagent_supervisor_request",
+				customType: SUPERVISOR_REQUEST_MESSAGE_TYPE,
 				content: requestVisibleText(request),
 				display: true,
 				details: {
 					id: request.id,
+					requestId: request.id,
 					reason: request.reason,
 					expectsReply: request.expectsReply,
 					runId: request.runId,
 					agent: request.agent,
 					childIndex: request.childIndex,
+					...(request.childTarget ? { childTarget: request.childTarget } : {}),
+					...(request.interview !== undefined ? { interview: request.interview } : {}),
+					...(request.expectsReply ? { replyTo: request.id, replyHint: supervisorReplyHint(request.id) } : {}),
 				},
 			}, { triggerTurn: true });
 			if (request.expectsReply) {
