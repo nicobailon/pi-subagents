@@ -108,6 +108,8 @@ export interface DefaultChildSessionFactoryOptions {
 	 * installed package by absolute path.
 	 */
 	loadPiCodingAgent?: () => Promise<PiCodingAgentModule>;
+	/** Upper bound on a disposed child's `session_shutdown` handlers before the session is dropped anyway. */
+	shutdownTimeoutMs?: number;
 }
 
 /** Serializes env application through extension loading so parallel launches never observe each other's `processEnv`. */
@@ -127,6 +129,7 @@ function applyProcessEnv(values: Record<string, string | undefined> | undefined)
  */
 export function createDefaultChildSessionFactory(options: DefaultChildSessionFactoryOptions = {}): ChildSessionFactory {
 	const loadPiCodingAgent = options.loadPiCodingAgent ?? (() => import("@earendil-works/pi-coding-agent"));
+	const shutdownTimeoutMs = options.shutdownTimeoutMs ?? 5_000;
 	let runtime: ReturnType<PiCodingAgentModule["ModelRuntime"]["create"]> | undefined;
 	const live = new Set<ChildSession>();
 	/** Extension shutdowns still running for disposed children; `dispose()` waits for them. */
@@ -194,7 +197,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			const shutdown = async (): Promise<void> => {
 				try {
 					const runner = session.extensionRunner;
-					if (runner.hasHandlers("session_shutdown")) await runner.emit({ type: "session_shutdown", reason: "quit" });
+					if (runner.hasHandlers("session_shutdown")) await Promise.race([runner.emit({ type: "session_shutdown", reason: "quit" }), new Promise((resolve) => setTimeout(resolve, shutdownTimeoutMs).unref?.())]);
 				} catch (error) {
 					launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
 				} finally {

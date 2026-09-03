@@ -250,4 +250,10 @@ describe("default child session factory", () => {
 		await factory.create(stubLaunch);
 		assert.equal(runtimes, 1, "runtime is kept while a detached child runs");
 	});
+
+	it("bounds the wait for a stuck session_shutdown handler", { timeout: 2_000 }, async () => {
+		const factory = createDefaultChildSessionFactory({ shutdownTimeoutMs: 50, loadPiCodingAgent: async () => stubPi({ extensionRunner: { hasHandlers: () => true, emit: () => new Promise(() => {}) } }) });
+		(await factory.create(stubLaunch)).dispose();
+		await factory.dispose();
+	});
 });

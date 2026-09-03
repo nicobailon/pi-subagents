@@ -4797,10 +4797,10 @@ async function runSubagent(
 	}), (filePath, content) => runPersistence.write(filePath, { content }, (_path, payload) => {
 		fs.writeFileSync(_path, (payload as { content: string }).content, "utf-8");
 	}));
-	// Storage-capacity retries may still hold the final status or result; give
-	// them a bounded window before the runner exits.
-	const drainDeadline = Date.now() + 30_000;
-	while (runPersistence.pendingCount() + indexPersistence.pendingCount() > 0 && Date.now() < drainDeadline) {
+	// The run is committed: release the child sessions first, then wait for the
+	// storage-capacity retries that may still hold the final status or result.
+	await childSessions.dispose().catch((error: unknown) => console.error("Failed to dispose runner child sessions:", error));
+	while (runPersistence.pendingCount() + indexPersistence.pendingCount() > 0) {
 		await new Promise((resolve) => setTimeout(resolve, 200));
 	}
 	runPersistence.dispose();
