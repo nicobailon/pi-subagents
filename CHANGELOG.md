@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Changed
+- Foreground children now run as pi sessions inside the parent process instead of spawned `pi` processes. All foreground children of one parent share one model runtime; the task is the session prompt, the system prompt is passed directly, structured output and tool diagnostics are captured in memory, and timeouts, interrupts, and stops abort the child session. Foreground workflow children are steered through their session instead of a file inbox. Foreground children load only pi-subagents' hooks plus the agent's configured extensions, never the parent's ambient extensions. `PI_SUBAGENT_PI_BINARY` and `PI_SUBAGENT_TASK_DELIVERY` now apply to background children only.
+- The child-side hooks (`subagent-prompt-runtime.ts`, `fanout-child.ts`, `fast-mode-extension.ts`) take one typed `ChildRuntimeConfig` instead of reading `PI_SUBAGENT_*` environment variables; spawned background children build it from their environment once with `readChildRuntimeConfigFromEnv`.
 - Replace collapsed async workflow role rollups with a compact lane view while keeping full details available when expanded (#1827). Thanks [@nicobailon](https://github.com/nicobailon).
 
 ### Fixed
