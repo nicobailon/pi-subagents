@@ -1284,7 +1284,7 @@ function workflowChecklistItemPriority(state: WorkflowChecklistState): number {
 	return 6;
 }
 
-function workflowChecklistItemLine(item: WorkflowChecklistItem, theme: Theme, indent: string, frame?: number): string {
+function workflowChecklistItemLine(item: WorkflowChecklistItem, theme: Theme, indent: string, frame: number | undefined, includeError: boolean): string {
 	const identity = [item.label, item.agent && item.agent !== item.label ? item.agent : undefined].filter(Boolean).join(" · ");
 	const context = contextModeBadge(theme, item.context);
 	const state = item.state === "complete" ? "" : ` ${theme.fg("dim", `· ${workflowChecklistStateLabel(item.state)}`)}`;
@@ -1294,15 +1294,26 @@ function workflowChecklistItemLine(item: WorkflowChecklistItem, theme: Theme, in
 		!item.currentTool && item.durationMs !== undefined ? formatDuration(item.durationMs) : undefined,
 		item.toolCount !== undefined ? `${item.toolCount} tools` : undefined,
 		item.outputName ? `out:${item.outputName}` : undefined,
-		item.error ? `error:${oneLine(item.error)}` : undefined,
+		includeError && item.error ? `error:${oneLine(item.error)}` : undefined,
 	].filter(Boolean).join(" · ");
 	return `${indent}${workflowChecklistGlyph(item, theme, frame)} ${theme.bold(identity || item.key)}${context}${state}${details ? ` ${theme.fg("dim", `· ${details}`)}` : ""}`;
 }
 
 const COLLAPSED_WORKFLOW_PHASE_LIMIT = 4;
 
-function workflowChecklistWidgetLines(checklist: WorkflowChecklistProjection | undefined, theme: Theme, indent: string, expanded: boolean, frame?: number, includeSummary = true, limitPhases = !expanded, includeBottleneckOutput = expanded): string[] {
+interface WorkflowChecklistWidgetOptions {
+	includeSummary?: boolean;
+	limitPhases?: boolean;
+	includeBottleneckOutput?: boolean;
+	includeItemErrors?: boolean;
+}
+
+function workflowChecklistWidgetLines(checklist: WorkflowChecklistProjection | undefined, theme: Theme, indent: string, expanded: boolean, frame?: number, options: WorkflowChecklistWidgetOptions = {}): string[] {
 	if (!checklist?.total) return [];
+	const includeSummary = options.includeSummary ?? true;
+	const limitPhases = options.limitPhases ?? !expanded;
+	const includeBottleneckOutput = options.includeBottleneckOutput ?? expanded;
+	const includeItemErrors = options.includeItemErrors ?? true;
 	const lines = includeSummary ? [`${indent}${theme.fg("dim", `Checklist ${formatWorkflowChecklistSummary(checklist)}`)}`] : [];
 	const phases = !limitPhases || checklist.phases.length <= COLLAPSED_WORKFLOW_PHASE_LIMIT
 		? checklist.phases
@@ -1326,11 +1337,11 @@ function workflowChecklistWidgetLines(checklist: WorkflowChecklistProjection | u
 		lines.push(`${indent}${glyph} ${theme.bold(formatWorkflowChecklistPhase(phase))}`);
 		if (expanded) {
 			for (const item of [...phase.items].sort((left, right) => workflowChecklistItemPriority(left.state) - workflowChecklistItemPriority(right.state))) {
-				lines.push(workflowChecklistItemLine(item, theme, `${indent}  `, frame));
+				lines.push(workflowChecklistItemLine(item, theme, `${indent}  `, frame, includeItemErrors));
 			}
 		}
 	}
-	const bottleneck = formatWorkflowChecklistBottleneck(checklist.bottleneck, { includeOutput: includeBottleneckOutput });
+	const bottleneck = formatWorkflowChecklistBottleneck(checklist.bottleneck, { includeOutput: includeBottleneckOutput, includeError: !expanded });
 	if (bottleneck) {
 		const tone = checklist.bottleneck?.state === "blocked" || checklist.bottleneck?.state === "failed" ? "error" : checklist.bottleneck?.state === "running" ? "accent" : "warning";
 		lines.push(`${indent}${theme.fg(tone, `bottleneck · ${bottleneck}`)}`);
@@ -2371,7 +2382,7 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width, frame);
 	const lines: string[] = [
 		...(expanded ? workflowPreflightLines(job) : []),
-		...workflowChecklistWidgetLines(projection.checklist, theme, "  ", expanded, frame),
+		...workflowChecklistWidgetLines(projection.checklist, theme, "  ", expanded, frame, { includeItemErrors: !expanded }),
 	];
 	const group = activeParallelWidgetGroup(job);
 	if (group) {
@@ -2767,7 +2778,7 @@ function buildWidgetLinesWithProjection(jobs: AsyncJobState[], theme: Theme, wid
 			: [
 				`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
 				...widgetLaneDetailLines(job, theme, projection),
-				...workflowChecklistWidgetLines(projection.checklist, theme, "  ", expanded, frame),
+				...workflowChecklistWidgetLines(projection.checklist, theme, "  ", expanded, frame, { includeItemErrors: !expanded || !job.steps?.length }),
 				...widgetParallelAgentDetails(job, theme, expanded, width, frame),
 			];
 		items.push([
@@ -2991,7 +3002,7 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 	if (d.preflight) c.addChild(new Text(truncLine(theme.fg("dim", formatWorkflowPreflightPlanSummary(d.preflight, { indent: rowIndent })), width), 0, 0));
 	if (phase) c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Phase  ${phase}`), width), 0, 0));
 	const checklist = projectWorkflowChecklist({ hostSteps: workflow?.receipt?.hostSteps, preflight: d.preflight, trace: workflow?.trace, now: Date.now() });
-	for (const line of workflowChecklistWidgetLines(checklist, theme, rowIndent, false, frame, true, !expanded, expanded)) {
+	for (const line of workflowChecklistWidgetLines(checklist, theme, rowIndent, false, frame, { limitPhases: !expanded, includeBottleneckOutput: expanded })) {
 		c.addChild(new Text(truncLine(line, width), 0, 0));
 	}
 	if (rows.length === 0) {
@@ -3073,7 +3084,7 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 	const detailIndent = mainWindowIndent(layout, 2);
 	c.addChild(new Text(truncLine(`${glyph} ${theme.fg("toolTitle", theme.bold(d.mode))}${contextBadge}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`, width), 0, 0));
 	if (checklistPrimary) {
-		for (const line of workflowChecklistWidgetLines(workflowChecklist, theme, rowIndent, false, frame, false)) {
+		for (const line of workflowChecklistWidgetLines(workflowChecklist, theme, rowIndent, false, frame, { includeSummary: false })) {
 			c.addChild(new Text(truncLine(line, width), 0, 0));
 		}
 		if (hasRunning || workflowChecklist.running > 0) c.addChild(new Text(truncLine(theme.fg("accent", `${rowIndent}${liveDetailHintText()}`), width), 0, 0));
@@ -3424,7 +3435,7 @@ export function renderSubagentResult(
 		c.addChild(new Text(fit(`  ${chainVis}`), 0, 0));
 	}
 	const workflowChecklist = foregroundWorkflowChecklist(d);
-	for (const line of workflowChecklistWidgetLines(workflowChecklist, theme, "  ", true, frame)) {
+	for (const line of workflowChecklistWidgetLines(workflowChecklist, theme, "  ", true, frame, { includeItemErrors: false })) {
 		c.addChild(new Text(fit(line), 0, 0));
 	}
 

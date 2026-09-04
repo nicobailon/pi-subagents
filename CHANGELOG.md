@@ -6,6 +6,7 @@
 - Hide the idle `Async runs 0/∞` Fleet summary while preserving finite and occupied capacity meters. Thanks to [@youssefsiam38](https://github.com/youssefsiam38) for #1892.
 - Supply Pi 0.85.0’s missing server dependency for background children, including extensions importing the public SDK, while preserving host-provided packages.
 - Avoid repeating structured metadata and reply instructions in native supervisor request cards. Thanks to [@youssefsiam38](https://github.com/youssefsiam38) for #1893.
+- Fail foreground children before provider work when required tools are unavailable, honor omitted workflow child async defaults while awaiting completion, and avoid duplicate workflow failure diagnostics. Thanks to [@youssefsiam38](https://github.com/youssefsiam38) for #1891.
 
 ## [0.65.1] - 2026-09-04
 

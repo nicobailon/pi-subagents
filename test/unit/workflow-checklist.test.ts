@@ -81,6 +81,20 @@ test("workflow checklist preserves explicit host monitor verdicts and trace lane
 	assert.match(formatWorkflowChecklistBottleneck(projection.bottleneck) ?? "", /CI/);
 });
 
+test("workflow checklist renders a failed item error only once when item details are included", () => {
+	const projection = projectWorkflowChecklist({
+		steps: [{ workflowKey: "review", agent: "reviewer", status: "failed", error: "review failed with details" }],
+	});
+
+	const expanded = formatWorkflowChecklistText(projection).join("\n");
+	assert.equal(expanded.match(/review failed with details/g)?.length, 1);
+	assert.doesNotMatch(expanded, /bottleneck .*error:review failed with details/);
+
+	const collapsed = formatWorkflowChecklistText(projection, "", { includeItems: false }).join("\n");
+	assert.equal(collapsed.match(/review failed with details/g)?.length, 1);
+	assert.match(collapsed, /bottleneck .*error:review failed with details/);
+});
+
 test("workflow checklist counts one host monitor when host status and trace share an id", () => {
 	const host: HostStepNodeV1 = {
 		version: 1,

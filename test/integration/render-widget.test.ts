@@ -379,6 +379,19 @@ describe("subagent async widget rendering", () => {
 		assert.doesNotMatch(text, /bottleneck · paused-first/);
 	});
 
+	it("renders a workflow failure detail once in expanded checklist output", () => {
+		const detail = "review failed with one canonical diagnostic";
+		const text = buildWidgetLines([{
+			asyncId: "workflow-error-dedup",
+			asyncDir: "/tmp/workflow-error-dedup",
+			status: "failed",
+			mode: "workflow",
+			steps: [{ index: 0, workflowKey: "review", agent: "reviewer", status: "failed", error: detail }],
+		}], theme, 180, true).join("\n");
+
+		assert.equal(text.match(new RegExp(detail, "g"))?.length, 1, text);
+	});
+
 	it("keeps simple one-off async rows on the existing fallback projection", () => {
 		const job = {
 			asyncId: "simple-run",

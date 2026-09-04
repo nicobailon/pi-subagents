@@ -4,7 +4,7 @@ import { prepareWorkflowLaunchParams, promptAuditRedoParams, resolveRevivalContr
 import { resolveControlConfig } from "../../src/runs/shared/subagent-control.ts";
 
 describe("workflow launch params", () => {
-	it("keeps omitted workflow child async foreground", () => {
+	it("preserves omitted workflow child async defaults and awaits background resolution", () => {
 		assert.deepEqual(
 			prepareWorkflowLaunchParams(
 				{},
@@ -15,7 +15,7 @@ describe("workflow launch params", () => {
 			{
 				agent: "worker",
 				task: "Run",
-				async: false,
+				workflowAwaitAsync: true,
 				workflowParentRunId: "workflow-run",
 				workflowKey: "run",
 			},
@@ -131,7 +131,8 @@ describe("workflow launch params", () => {
 			"run",
 			{ parentDeadlineAt },
 		);
-		assert.equal(params.async, false);
+		assert.equal(params.async, undefined);
+		assert.equal(params.workflowAwaitAsync, true);
 		assert.equal(params.timeoutMs, undefined);
 		assert.equal(params.workflowParentDeadlineAt, parentDeadlineAt);
 	});
@@ -238,7 +239,7 @@ describe("workflow launch params", () => {
 				agent: "worker",
 				task: "Run",
 				intercomBridge: { mode: "off" },
-				async: false,
+				workflowAwaitAsync: true,
 				workflowParentRunId: "workflow-run",
 				workflowKey: "isolated",
 			},
@@ -265,7 +266,7 @@ describe("workflow launch params", () => {
 				agent: "worker",
 				task: "Implement",
 				worktree: true,
-				async: false,
+				workflowAwaitAsync: true,
 				workflowParentRunId: "workflow-run",
 				workflowKey: "gated",
 				acceptance: { level: "verified", verify: [{ id: "gate", command: "npm test" }] },

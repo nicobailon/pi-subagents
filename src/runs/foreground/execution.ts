@@ -983,6 +983,20 @@ async function runSingleAttempt(
 				compactionStartedReceived = false;
 				afterCompactionSettlement = false;
 			}
+			if (evt.type === "agent_start") {
+				const diagnostic = capture.toolDiagnostic();
+				if (diagnostic) {
+					const message = formatChildToolDiagnostic(diagnostic, { host: "parent" });
+					toolAvailabilityError = message;
+					result.error = message;
+					result.finalOutput = message;
+					progress.status = "failed";
+					progress.error = message;
+					fireUpdate();
+					abortChild();
+					return;
+				}
+			}
 			const lifecycleAction = projectChildLifecycle(evt, false, childLifecycleState);
 			if (evt.type === "agent_settled" && lifecycleAction === "start-drain") {
 				agentSettledReceived = true;
