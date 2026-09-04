@@ -17,6 +17,7 @@ export interface SupervisorRequestMessageDetails {
 	childIndex?: number;
 	childTarget?: string;
 	interview?: unknown;
+	requestBody?: string;
 	replyHint?: string;
 }
 
@@ -107,7 +108,7 @@ function optionalString(value: unknown): boolean {
 
 function requestDetails(value: unknown): SupervisorRequestMessageDetails | undefined {
 	if (!isRecord(value)) return undefined;
-	if (!optionalString(value.id) || !optionalString(value.requestId) || !optionalString(value.replyHint) || !optionalString(value.runId) || !optionalString(value.agent) || !optionalString(value.childTarget)) return undefined;
+	if (!optionalString(value.id) || !optionalString(value.requestId) || !optionalString(value.replyHint) || !optionalString(value.requestBody) || !optionalString(value.runId) || !optionalString(value.agent) || !optionalString(value.childTarget)) return undefined;
 	if (value.reason !== undefined && !isSupervisorReason(value.reason)) return undefined;
 	if (value.expectsReply !== undefined && typeof value.expectsReply !== "boolean") return undefined;
 	if (value.childIndex !== undefined && (typeof value.childIndex !== "number" || !Number.isFinite(value.childIndex))) return undefined;
@@ -153,7 +154,7 @@ function requestLines(message: SupervisorMessageLike, details: SupervisorRequest
 	if (details.childTarget) lines.push(`Child target: ${boundedField(details.childTarget)}`);
 	lines.push(`Request ID: ${requestId}`);
 	if (details.expectsReply) lines.push(`Reply with: ${displayText(details.replyHint ?? supervisorReplyHint(requestId), MAX_BODY_CHARS, expanded)}`);
-	lines.push("", "Request:", displayText(contentText(message.content) || "(no request body)", MAX_BODY_CHARS, expanded));
+	lines.push("", "Request:", displayText((details.requestBody ?? contentText(message.content)) || "(no request body)", MAX_BODY_CHARS, expanded));
 	if (details.interview !== undefined) lines.push("", "Interview shape:", interviewText(details.interview, expanded));
 	return lines;
 }

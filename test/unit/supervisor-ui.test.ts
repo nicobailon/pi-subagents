@@ -37,7 +37,15 @@ describe("native supervisor UI", () => {
 			childTarget: "child-worker",
 			replyHint: `subagent_supervisor({ action: "reply", replyTo: "${requestId}", message: "..." })`,
 			interview: { approved: "boolean", rationale: "string" },
-		}, "Should this change be applied?");
+			requestBody: "Should this change be applied?",
+		}, [
+			"Subagent requests a structured supervisor interview.",
+			"Run: run-1845",
+			"Agent: worker",
+			"Child index: 2",
+			"Should this change be applied?",
+			`Reply with: subagent_supervisor({ action: "reply", replyTo: "${requestId}", message: "..." })`,
+		].join("\n"));
 		const text = output.join("\n");
 
 		assert.match(text, /Supervisor interview request/);
@@ -51,6 +59,10 @@ describe("native supervisor UI", () => {
 		assert.match(text, /Interview shape:/);
 		assert.match(text, /approved/);
 		assert.match(text, /Should this change be applied/);
+		assert.equal(text.match(/Run: run-1845/g)?.length, 1);
+		assert.equal(text.match(/Agent: worker/g)?.length, 1);
+		assert.equal(text.match(/Child index: 2/g)?.length, 1);
+		assert.equal(text.match(/Reply with:/g)?.length, 1);
 	});
 
 	it("omits reply hints for progress updates and renders durable reply metadata", () => {
