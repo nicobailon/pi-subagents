@@ -309,6 +309,24 @@ function formatExcludedCandidateEvidence(candidate: string, exclusion: NonNullab
 	return `${displayCandidate} — model: ${displayModel}; provider: ${displayProvider}; reason: ${reason}; expires: ${formatModelExclusionExpiry(exclusion.expiresAt)}`;
 }
 
+const MODEL_UNAVAILABLE_EXCLUSION_PATTERNS = [
+	/model.*not found/i,
+	/unknown model/i,
+	/model.*unavailable/i,
+	/model.*disabled/i,
+];
+
+function isCurrentRegistryModel(candidate: string, availableModels: AvailableModelInfo[] | undefined): boolean {
+	if (!availableModels || availableModels.length === 0) return false;
+	const { baseModel } = splitThinkingSuffix(candidate);
+	return availableModels.some((entry) => entry.fullId === baseModel);
+}
+
+function ignoreStaleModelUnavailableExclusion(candidate: string, exclusion: NonNullable<ReturnType<typeof findModelExclusion>>, availableModels: AvailableModelInfo[] | undefined): boolean {
+	const reason = exclusion.reason ?? "";
+	return MODEL_UNAVAILABLE_EXCLUSION_PATTERNS.some((pattern) => pattern.test(reason)) && isCurrentRegistryModel(candidate, availableModels);
+}
+
 function throwForExplicitModelExclusion(model: string): void {
 	const exclusion = findModelExclusion(model);
 	if (!exclusion) return;
@@ -487,7 +505,10 @@ export function buildModelCandidates(
 		seen.add(normalized);
 		candidates.push(normalized);
 	}
-	const resolved = filterFallbackCandidates(candidates, { onExcluded: warnCachedExclusion });
+	const resolved = filterFallbackCandidates(candidates, {
+		onExcluded: warnCachedExclusion,
+		ignoreExclusion: (candidate, exclusion) => ignoreStaleModelUnavailableExclusion(candidate, exclusion, availableModels),
+	});
 	if (resolved.length === 0) {
 		if (skippedPrimary) resolveRequiredSubagentModelCandidate(skippedPrimary, availableModels, preferredProvider);
 		if (candidates.length === 0 && skippedFallback) resolveRequiredSubagentModelCandidate(skippedFallback, availableModels, preferredProvider);

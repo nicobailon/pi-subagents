@@ -317,6 +317,7 @@ export function parseModelKey(fullId: string): { provider?: string; modelId: str
 export function filterFallbackCandidates(candidates: string[], opts?: {
 	now?: number;
 	onExcluded?: (candidate: string, exclusion: Readonly<ModelExclusion>) => void;
+	ignoreExclusion?: (candidate: string, exclusion: Readonly<ModelExclusion>) => boolean;
 }): string[] {
 	ensureLoaded();
 	invalidateAuthExclusions();
@@ -326,7 +327,7 @@ export function filterFallbackCandidates(candidates: string[], opts?: {
 	for (const raw of candidates) {
 		if (!raw || seen.has(raw)) continue;
 		const { provider: candidateProvider, modelId: candidateModelId } = parseModelKey(raw);
-		const exclusion = exclusions.find((entry) => entryMatches(entry, candidateModelId, candidateProvider, timestamp));
+		const exclusion = exclusions.find((entry) => entryMatches(entry, candidateModelId, candidateProvider, timestamp) && opts?.ignoreExclusion?.(raw, entry) !== true);
 		if (exclusion) {
 			opts?.onExcluded?.(raw, exclusion);
 			continue;

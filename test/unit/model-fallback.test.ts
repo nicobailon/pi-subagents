@@ -277,6 +277,40 @@ describe("model fallback helpers", () => {
 		);
 	});
 
+	it("ignores stale model-not-found exclusions when the model is back in the registry", () => {
+		recordModelFailure({
+			modelId: "gpt-5-mini",
+			provider: "openai",
+			reason: 'Model "openai/gpt-5-mini" not found. Use --list-models to see available models.',
+		});
+		assert.deepEqual(buildModelCandidates("openai/gpt-5-mini", undefined, availableModels), ["openai/gpt-5-mini"]);
+	});
+
+	it("keeps provider-wide exclusions when ignoring a stale model-not-found entry", () => {
+		recordModelFailure({ provider: "openai", reason: "quota exceeded" });
+		recordModelFailure({
+			modelId: "gpt-5-mini",
+			provider: "openai",
+			reason: 'Model "openai/gpt-5-mini" not found. Use --list-models to see available models.',
+		});
+		assert.throws(
+			() => buildModelCandidates("openai/gpt-5-mini", undefined, availableModels),
+			/No usable subagent models remain after registry, scope, and cached-exclusion filtering/,
+		);
+	});
+
+	it("keeps explicit stale model-not-found exclusions strict", () => {
+		recordModelFailure({
+			modelId: "gpt-5-mini",
+			provider: "openai",
+			reason: 'Model "openai/gpt-5-mini" not found. Use --list-models to see available models.',
+		});
+		assert.throws(
+			() => buildModelCandidates("openai/gpt-5-mini", ["anthropic/claude-sonnet-4"], availableModels, undefined, { origin: "explicit" }),
+			/Requested subagent model 'openai\/gpt-5-mini' is excluded and cannot be replaced by a fallback/,
+		);
+	});
+
 	it("keeps an explicit cached-excluded primary strict even when fallbacks exist", () => {
 		recordModelFailure({ modelId: "gpt-5-mini", provider: "openai", reason: "sk-secret-token-xyz" });
 		assert.throws(
