@@ -768,6 +768,13 @@ describe("scripted workflow runtime", () => {
 			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 		});
 		assert.equal(launches[0]?.gate, "npm test");
+		await runWorkflowScript({
+			script: `return runs.run("gated-disabled", { agent: "worker", gate: "npm test", acceptance: false });`,
+			async launch(key, params) { launches.push(params); return { key, ok: true, output: "done", artifactPaths: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.equal(launches[1]?.gate, "npm test");
+		assert.equal(launches[1]?.acceptance, false);
 		await assert.rejects(
 			runWorkflowScript({
 				script: `return runs.run("invalid", { agent: "worker", gate: "npm test", acceptance: "checked" });`,

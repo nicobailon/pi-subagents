@@ -1238,7 +1238,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				{
 					workflowScript: `return await runs.run("gated", { agent: "worker", task: "run", gate: "npm test" });`,
 					async: true,
-					acceptance: false,
+					acceptance: "checked",
 				},
 				new AbortController().signal,
 				undefined,

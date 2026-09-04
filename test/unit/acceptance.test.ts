@@ -1312,6 +1312,16 @@ describe("acceptance gates", () => {
 		const conflictingGate = normalizeGateAcceptance("npm test", "checked");
 		assert.equal(conflictingGate.ok, false);
 		assert.match(conflictingGate.error, /cannot be combined with acceptance/);
+		assert.match(conflictingGate.error, /Both fields were present: gate="npm test" acceptance="checked"/);
+		const oversizedAcceptance = normalizeGateAcceptance("npm test", { level: "checked", evidence: ["a".repeat(200)] });
+		assert.equal(oversizedAcceptance.ok, false);
+		assert.match(oversizedAcceptance.error || "", /Both fields were present/);
+		assert.ok(!(oversizedAcceptance.error || "").includes("a".repeat(200)));
+		const disabledAcceptance = normalizeGateAcceptance("npm test", false);
+		assert.deepEqual(disabledAcceptance, {
+			ok: true,
+			acceptance: { level: "verified", verify: [{ id: "gate", command: "npm test" }] },
+		});
 	});
 
 	it("keeps explicit acceptance.verify arrays as existing verified acceptance", async () => {

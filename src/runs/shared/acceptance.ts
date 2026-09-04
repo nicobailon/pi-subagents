@@ -202,8 +202,28 @@ export function normalizeGateAcceptance(gate: unknown, acceptance: AcceptanceInp
 		return normalized.error ? { ok: false, error: normalized.error } : { ok: true, acceptance: normalized.value as AcceptanceInput };
 	}
 	if (typeof gate !== "string" || !gate.trim()) return { ok: false, error: "gate must be a non-empty command string." };
-	if (acceptance !== undefined) return { ok: false, error: "gate cannot be combined with acceptance; use one gate command or acceptance.verify." };
+	// `acceptance: false` is the deprecated "disable acceptance" shorthand. It carries no
+	// verification intent that could conflict with a gate, so the gate wins instead of erroring:
+	// a caller that disables acceptance policy and asks for a gate command wants the gate.
+	if (acceptance === false) return { ok: true, acceptance: { level: "verified", verify: [{ id: "gate", command: gate.trim() }] } };
+	if (acceptance !== undefined) return { ok: false, error: "gate cannot be combined with acceptance; use one gate command or acceptance.verify." + describeGateAcceptanceConflict(gate, acceptance) };
 	return { ok: true, acceptance: { level: "verified", verify: [{ id: "gate", command: gate.trim() }] } };
+}
+
+// Renders the offending gate and acceptance values, bounded, so a rejected call can be
+// diagnosed from the error alone. Without this, a caller that keeps sending both fields
+// cannot see from the message what it actually sent.
+export function describeGateAcceptanceConflict(gate: unknown, acceptance: unknown): string {
+	const render = (value: unknown): string => {
+		let encoded: string;
+		try {
+			encoded = JSON.stringify(value) ?? String(value);
+		} catch {
+			encoded = String(value);
+		}
+		return encoded.length > 120 ? `${encoded.slice(0, 120)}...` : encoded;
+	};
+	return ` Both fields were present: gate=${render(gate)} acceptance=${render(acceptance)}.`;
 }
 
 function explicitAcceptanceCanDisable(explicit: AcceptanceConfig): boolean {
