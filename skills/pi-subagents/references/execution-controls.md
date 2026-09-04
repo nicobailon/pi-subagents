@@ -246,9 +246,13 @@ Use diagnostics when setup or child startup looks wrong:
 subagent({ action: "doctor" })
 ```
 
+### Failed lane recovery and execution-mode fallback
+
+A failure in the subagent workflow, child launch, prompt runtime, extension loading, or child tooling setup is a lane infrastructure blocker, not permission to silently change execution mode. Stop and report the exact failure, run/status, and repo/cwd/worktree/branch/ref state. Retry or fix the `subagent` path only through a clear same-protocol retry; before retrying or asking the owner, verify the worktree is clean or capture the partial diff. For backlog lanes and other subagent-governed workflows, switching to `interactive_shell`, `pi -ne`, Codex/Claude/Cursor CLI, a foreground agent, or another external mode requires explicit owner approval. Pi core may print a generic `pi -ne` extension-load hint; that hint is outside this package and is not protocol-approved fallback. This execution-mode boundary does not prohibit configured native model/provider fallback.
+
 ### External terminal work
 
-Use native `subagent` runs for unattended implementation, review, and gate work that needs managed isolation, durable artifacts, and process controls. Use `interactive_shell` for visible terminal work, alternate CLIs, trust prompts, and recovery.
+Use native `subagent` runs for unattended implementation, review, and gate work that needs managed isolation, durable artifacts, and process controls. Use `interactive_shell` for visible terminal work, alternate CLIs, trust prompts, or recovery only when the user explicitly requests that mode or the task is outside the governed subagent protocol; it is not an implicit replacement for a failed `subagent` lane.
 
 A cooperating terminal runtime can register read-only external records through `pi-subagents/external-runs`. Records include the source, session, state, optional report path, and completion reason. They are observations only: pi-subagents does not start, stop, steer, or otherwise own the foreign process. Run unattended raw terminal agents in an explicit isolated cwd or worktree; do not use a live project checkout as disposable review space.
 

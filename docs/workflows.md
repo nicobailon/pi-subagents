@@ -19,6 +19,14 @@ Child-safety boundaries are enforced at runtime:
 - By default, children do not register the `subagent` tool and receive boundary instructions that they are not the parent orchestrator and must not propose or run subagents.
 - The explicit exception is an agent whose resolved builtin `tools` includes `subagent`; that child gets a child-safe `subagent` tool for the fanout work the parent assigned, still bounded by `maxSubagentDepth`.
 
+### Failed lane recovery and execution-mode boundaries
+
+A failure in the subagent workflow, child launch, prompt runtime, extension loading, or child tooling setup is a lane infrastructure blocker. It is not permission to silently retry through `interactive_shell`, `pi -ne`, Codex/Claude/Cursor CLI, a foreground agent, or another external execution mode.
+
+Stop and report the exact failure, run/status, and repository/cwd/worktree/branch/ref state. Before a same-protocol retry or asking the owner, verify the worktree is clean or capture the partial diff. Retry or fix the `subagent` path only through a clear same-protocol action. For backlog lanes and other subagent-governed workflows, external/foreground/CLI fallback requires explicit owner approval. `interactive_shell` remains valid when the user explicitly requests visible foreground/CLI work or the task is outside the governed subagent protocol.
+
+Pi core may print a generic `pi -ne` extension-load hint; that out-of-repo hint is not protocol-approved fallback. Configured native model/provider fallback remains governed by its own contract and does not authorize an execution-mode switch.
+
 ## Prompt shortcuts
 
 The package includes reusable prompt templates for common workflows. You do not need them, but they are handy when you want the same shape every time:

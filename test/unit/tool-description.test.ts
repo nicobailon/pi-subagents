@@ -35,7 +35,7 @@ describe("registered subagent tool description", () => {
 		const description = buildSubagentToolDescription();
 		const metadata = buildSubagentToolPromptMetadata();
 		assert.equal(description, DEFAULT_SUBAGENT_TOOL_DESCRIPTION);
-		assert.equal(Buffer.byteLength(description), 3301);
+		assert.equal(Buffer.byteLength(description), 4240);
 		assert.match(description, /workflowScriptPath.*request cwd/i);
 		assert.match(description, /script inputs are mutually exclusive/i);
 		assert.match(description, /runs\.lanes\(\[\{key,stages:/);
@@ -63,6 +63,10 @@ describe("registered subagent tool description", () => {
 		assert.match(promptGuidelines, /advanced workflows.*action: \"guide\", topic: \"workflows\"/i);
 		assert.doesNotMatch(promptGuidelines, /runs\.lanes|runs\.host|workflow key identifies one result lane|action: \"models\"|External CLI agents|ordinary child subagents/i);
 		assert.match(description, /External CLI agents.*model override.*native Pi tools/i);
+		assert.match(description, /subagent workflow.*child launch.*prompt runtime.*extension load.*child tooling setup.*lane infrastructure blocker/i);
+		assert.match(description, /exact failure.*run\/status.*repo\/cwd\/worktree\/branch\/ref.*clean.*partial diff.*before retrying or asking.*same-protocol retry/i);
+		assert.match(description, /interactive_shell.*pi -ne.*Codex\/Claude\/Cursor CLI.*foreground agent.*external mode.*explicit owner approval/i);
+		assert.match(description, /Pi core.*pi -ne.*out-of-repo.*not protocol-approved fallback/i);
 		assert.doesNotMatch(promptGuidelines, /ordinary children are not orchestrators/i);
 	});
 
@@ -104,6 +108,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /suffix on the model string.*off\/minimal\/low\/medium\/high\/xhigh\/max/i);
 		assert.match(description, /suffix wins over the agent's thinking default/i);
 		assert.match(description, /watchdog\.configure' and is ignored on dispatch/i);
+		assert.match(description, /lane infrastructure blocker.*explicit owner approval/i);
 	});
 
 	it("offers a compact mode that keeps the two-tier contract and safety guidance", () => {
@@ -135,6 +140,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /Per-run thinking is a suffix on the model string.*off\/minimal\/low\/medium\/high\/xhigh\/max/i);
 		assert.match(description, /suffix wins over the agent's thinking default/i);
 		assert.match(description, /watchdog\.configure' and is ignored on dispatch/i);
+		assert.match(description, /lane infrastructure blocker.*explicit owner approval/i);
 		assert.ok(description.length < FULL_SUBAGENT_TOOL_DESCRIPTION.length);
 	});
 
@@ -178,6 +184,18 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
 		assert.match(description, /ordinary child subagents are not orchestrators/i);
 		assert.match(description, /status\.json/);
+	});
+
+	it("deduplicates compact placeholder safety guidance in custom descriptions", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-compact-custom-"));
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-agent-"));
+		fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+		fs.writeFileSync(path.join(cwd, ".pi", "subagent-tool-description.md"), "{{compactDescription}}", "utf-8");
+
+		const description = buildSubagentToolDescription({ toolDescriptionMode: "custom" }, { cwd, agentDir });
+
+		assert.equal(description.split("lane infrastructure blocker").length - 1, 1);
+		assert.ok(description.endsWith(SUBAGENT_SAFETY_GUIDANCE));
 	});
 
 	it("keeps mandatory safety guidance last when custom prose embeds it before an override", () => {

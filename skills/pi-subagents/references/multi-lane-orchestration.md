@@ -46,6 +46,8 @@ After a writer produces a candidate, run the required fresh-context, read-only r
 
 Use stable lane-qualified artifact paths for reports and review output. A handoff states the lane status, repository and worktree, changed files, validation, open decisions, next action, and artifact or receipt paths. Copy only the final evidence to memory, a mission record, or a PR/comment, then remove scratch files from the active worktree before closing the lane.
 
+For backlog lanes and other subagent-governed workflows, a setup/runtime/tooling failure remains an infrastructure blocker. Preserve the exact failure, run/status, and repository/cwd/worktree/branch/ref state; verify a clean worktree or capture any partial diff before a same-protocol retry or asking the owner. Do not start another writer or switch to an external, foreground, or CLI execution mode without explicit owner approval.
+
 Keep a worktree until its handoff is durable, no run owns it, and no later gate needs it. Clean up only inside the recorded authority boundary. If a run stops or needs attention, preserve its worktree and artifacts, record the last known state and recovery owner, then resume that run or create one replacement lane from the handoff. Do not start another writer while worktree ownership is uncertain.
 
 Before completion, inspect the board. Every lane must be terminal or blocked with a named next action. Confirm one writer per repo/cwd or worktree, required validation, required fresh read-only review, and a durable handoff. The parent reports outcomes, evidence, residual risks, and the next decision.

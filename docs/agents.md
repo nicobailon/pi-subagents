@@ -58,7 +58,7 @@ The Pi async run remains the source of truth for status, artifacts, wake/wait, m
 
 ### Advisory runner data boundary
 
-External CLI agents use their own runner contract. Do not pass native Pi child options such as model override, structured output, acceptance/agent contract, tool budgets, fast mode, fork context, skills, or native Pi tools unless the adapter explicitly implements them.
+External CLI agents use their own runner contract. They are deliberate execution modes, not implicit recovery paths for a failed native `subagent` workflow. For backlog lanes and other subagent-governed workflows, switching to an external, foreground, or CLI runner requires explicit owner approval after the exact failure/run/worktree state is recorded and the worktree is verified clean or its partial diff is captured. Do not pass native Pi child options such as model override, structured output, acceptance/agent contract, tool budgets, fast mode, fork context, skills, or native Pi tools unless the adapter explicitly implements them.
 
 The built-in `codex-exec` and `codex-exec-writer` profiles are the supported Codex one-shot modes. Both require an installed and authenticated Codex CLI. The adapters own `codex exec --json` argv with ignored user config and rules, ephemeral sessions, approval policy `never`, and a final-message artifact.
 
