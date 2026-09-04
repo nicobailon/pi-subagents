@@ -17,6 +17,9 @@ const WORKTREE_NAMING_COMPONENT_MAX_BYTES = 96;
 const WORKTREE_NAMING_LABEL_MAX_BYTES = 256;
 const WORKTREE_NAMING_BRANCH_MAX_BYTES = 256;
 const WORKTREE_COMMAND_OUTPUT_MAX_BYTES = 128 * 1024;
+export const MACHINE_DIFF_OPTIONS = ["--no-color", "--no-ext-diff", "--no-textconv", "--default-prefix", "--line-prefix=", "--no-relative"] as const;
+const MACHINE_PATCH_OPTIONS = [...MACHINE_DIFF_OPTIONS, "--binary"] as const;
+const PATCH_VALIDATION_OPTIONS = ["apply", "--check", "--cached", "--reverse", "--binary", "--whitespace=nowarn"] as const;
 
 export interface WorktreeNamingInput {
 	runId: string;
@@ -168,8 +171,8 @@ interface RepoState {
 
 const DEFAULT_WORKTREE_SETUP_HOOK_TIMEOUT_MS = 30000;
 
-function runGit(cwd: string, args: string[]): GitResult {
-	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8", windowsHide: true, shell: false });
+function runGit(cwd: string, args: string[], env?: NodeJS.ProcessEnv): GitResult {
+	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8", windowsHide: true, shell: false, ...(env ? { env: { ...process.env, ...env } } : {}) });
 	return {
 		stdout: result.stdout ?? "",
 		stderr: result.stderr ?? "",
@@ -185,6 +188,53 @@ function runGitChecked(cwd: string, args: string[]): string {
 		throw new Error(message);
 	}
 	return result.stdout;
+}
+
+/** Validate a captured patch against the worktree index without changing either. */
+export function validateWorktreePatch(worktreePath: string, patchPath: string): string | undefined {
+	const result = runGit(worktreePath, [...PATCH_VALIDATION_OPTIONS, patchPath]);
+	if (result.status === 0) return undefined;
+	return result.stderr.trim() || result.stdout.trim() || `git -C ${worktreePath} apply --check failed`;
+}
+
+function currentWorktreePatch(worktreePath: string, baseCommit: string): { patch?: string; error?: string } {
+	let tempDir: string;
+	try {
+		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-index-"));
+	} catch (error) {
+		return { error: error instanceof Error ? error.message : String(error) };
+	}
+	const env = { GIT_INDEX_FILE: path.join(tempDir, "index") };
+	try {
+		const readTree = runGit(worktreePath, ["read-tree", "HEAD"], env);
+		if (readTree.status !== 0) return { error: readTree.stderr.trim() || readTree.stdout.trim() || "git read-tree failed" };
+		const add = runGit(worktreePath, ["add", "-A"], env);
+		if (add.status !== 0) return { error: add.stderr.trim() || add.stdout.trim() || "git add failed" };
+		const diff = runGit(worktreePath, ["diff", "--cached", ...MACHINE_PATCH_OPTIONS, baseCommit], env);
+		if (diff.status !== 0) return { error: diff.stderr.trim() || diff.stdout.trim() || "git diff failed" };
+		return { patch: diff.stdout };
+	} finally {
+		try {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		} catch {
+			// Cleanup safety depends on preserving the worktree, not on best-effort temp-index deletion.
+		}
+	}
+}
+
+export function validateWorktreePatchRepresentsCurrentWorktree(worktreePath: string, baseCommit: string, patchPath: string): string | undefined {
+	const validationError = validateWorktreePatch(worktreePath, patchPath);
+	if (validationError) return validationError;
+	let capturedPatch: string;
+	try {
+		capturedPatch = fs.readFileSync(patchPath, "utf-8");
+	} catch (error) {
+		return error instanceof Error ? error.message : String(error);
+	}
+	const current = currentWorktreePatch(worktreePath, baseCommit);
+	if (current.error) return current.error;
+	if (capturedPatch !== current.patch) return "captured handoff patch does not match current worktree changes";
+	return undefined;
 }
 
 function findGitWorktreePath(cwd: string, branch: string): string | undefined {
@@ -957,14 +1007,17 @@ function captureWorktreeDiff(
 ): WorktreeDiff {
 	removeSyntheticPathsBeforeDiff(worktree);
 	runGitChecked(worktree.path, ["add", "-A"]);
-	const diffStat = runGitChecked(worktree.path, ["diff", "--cached", "--stat", setup.baseCommit]).trim();
-	const patch = runGitChecked(worktree.path, ["diff", "--cached", setup.baseCommit]);
-	const numstat = runGitChecked(worktree.path, ["diff", "--cached", "--numstat", setup.baseCommit]);
+	const diffStat = runGitChecked(worktree.path, ["diff", "--cached", ...MACHINE_DIFF_OPTIONS, "--stat", setup.baseCommit]).trim();
+	const patch = runGitChecked(worktree.path, ["diff", "--cached", ...MACHINE_PATCH_OPTIONS, setup.baseCommit]);
+	const numstat = runGitChecked(worktree.path, ["diff", "--cached", ...MACHINE_DIFF_OPTIONS, "--numstat", setup.baseCommit]);
 	fs.writeFileSync(patchPath, patch, "utf-8");
 
 	if (!patch.trim()) {
 		return emptyDiff(worktree.index, agent, worktree.branch, patchPath);
 	}
+
+	const validationError = validateWorktreePatch(worktree.path, patchPath);
+	if (validationError) throw new Error(`captured worktree patch is not machine-applyable: ${validationError}`);
 
 	const parsed = parseNumstat(numstat);
 	return {
@@ -1034,7 +1087,7 @@ function cleanupSingleWorktree(
 			errors.push(`synthetic path cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
 		}
 		const status = runGit(worktree.path, ["status", "--porcelain"]);
-		const baseDiff = runGit(worktree.path, ["diff", "--quiet", setup.baseCommit, "--"]);
+		const baseDiff = runGit(worktree.path, ["diff", "--quiet", ...MACHINE_DIFF_OPTIONS, setup.baseCommit, "--"]);
 		if (status.status !== 0 || (baseDiff.status !== 0 && baseDiff.status !== 1)) {
 			const reason = status.status !== 0
 				? status.stderr.trim() || status.stdout.trim() || "git status failed"
@@ -1055,13 +1108,25 @@ function cleanupSingleWorktree(
 		const hasWork = status.stdout.trim().length > 0 || baseDiff.status === 1;
 		if (hasWork && intent.kind === "preserve") {
 			const captured = (intent.capturedDiffs ?? setup.capturedDiffs)?.find((diff) => diff.index === worktree.index);
-			const patchCaptured = captured !== undefined
+			let patchValidationError: string | undefined;
+			let patchCaptured = false;
+			if (captured !== undefined
 				&& captured.error === undefined
 				&& fs.existsSync(captured.patchPath)
-				&& fs.statSync(captured.patchPath).size > 0
-				&& handoffRecordsPatch(intent.handoffManifestPath, captured.patchPath);
+				&& handoffRecordsPatch(intent.handoffManifestPath, captured.patchPath)) {
+				try {
+					if (fs.statSync(captured.patchPath).size > 0) {
+						patchValidationError = validateWorktreePatchRepresentsCurrentWorktree(worktree.path, setup.baseCommit, captured.patchPath);
+						patchCaptured = patchValidationError === undefined;
+					}
+				} catch (error) {
+					patchValidationError = error instanceof Error ? error.message : String(error);
+				}
+			}
 			if (!patchCaptured) {
-				const reason = "worktree contains changes that are not represented by a captured handoff patch";
+				const reason = patchValidationError
+					? `captured handoff patch failed validation: ${patchValidationError}`
+					: "worktree contains changes that are not represented by a captured handoff patch";
 				return {
 					index: worktree.index,
 					path: worktree.path,

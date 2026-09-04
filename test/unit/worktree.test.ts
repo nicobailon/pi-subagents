@@ -705,6 +705,53 @@ process.stdout.write(JSON.stringify({ syntheticPaths: [".base-commit"] }));
 		}
 	});
 
+	it("captures applyable patches despite external diffs and display configuration", { skip: hookScriptSkip }, () => {
+		const repoDir = createRepo("pi-worktree-diff-external-");
+		const externalDiffPath = createHookScript(repoDir, "external-diff.mjs", `
+process.stdout.write("corrupt external diff output\\n");
+`);
+		let setup: WorktreeSetup | undefined;
+		try {
+			git(repoDir, ["config", "diff.external", externalDiffPath]);
+			git(repoDir, ["config", "color.ui", "always"]);
+			git(repoDir, ["config", "diff.noprefix", "true"]);
+			git(repoDir, ["config", "diff.linePrefix", "corrupt display prefix "]);
+			git(repoDir, ["config", "diff.relative", "true"]);
+			setup = createWorktrees(repoDir, "diff-external", 1);
+			const worktree = setup.worktrees[0]!;
+			fs.writeFileSync(path.join(worktree.path, "tracked.txt"), "external-safe\n", "utf-8");
+
+			const diffs = diffWorktrees(setup, ["worker"], path.join(repoDir, "artifacts", "external"));
+			assert.equal(diffs[0]?.error, undefined);
+			const patch = fs.readFileSync(diffs[0]!.patchPath, "utf-8");
+			assert.match(patch, /^diff --git a\/tracked\.txt b\/tracked\.txt/m);
+			assert.doesNotMatch(patch, /corrupt external diff output|corrupt display prefix|\u001b/);
+			assert.equal(git(worktree.path, ["apply", "--check", "--cached", "--reverse", diffs[0]!.patchPath]), "");
+		} finally {
+			if (setup) cleanupWorktrees(setup, { kind: "setup-rollback" });
+			cleanupRepo(repoDir);
+		}
+	});
+
+	it("includes binary data in captured patches", () => {
+		const repoDir = createRepo("pi-worktree-diff-binary-");
+		let setup: WorktreeSetup | undefined;
+		try {
+			setup = createWorktrees(repoDir, "diff-binary", 1);
+			const worktree = setup.worktrees[0]!;
+			fs.writeFileSync(path.join(worktree.path, "binary.dat"), Buffer.from([0, 1, 2, 255, 0, 3]));
+
+			const diffs = diffWorktrees(setup, ["worker"], path.join(repoDir, "artifacts", "binary"));
+			assert.equal(diffs[0]?.error, undefined);
+			const patch = fs.readFileSync(diffs[0]!.patchPath, "utf-8");
+			assert.match(patch, /GIT binary patch/);
+			assert.equal(git(worktree.path, ["apply", "--check", "--cached", "--reverse", diffs[0]!.patchPath]), "");
+		} finally {
+			if (setup) cleanupWorktrees(setup, { kind: "setup-rollback" });
+			cleanupRepo(repoDir);
+		}
+	});
+
 	it("cleanupWorktrees removes worktrees and branches", () => {
 		const repoDir = createRepo("pi-worktree-cleanup-");
 		let setup: WorktreeSetup | undefined;
@@ -783,6 +830,31 @@ process.stdout.write(JSON.stringify({ syntheticPaths: [".base-commit"] }));
 		}
 	});
 
+	it("does not let trusted external diff hide uncaptured committed work during cleanup", { skip: hookScriptSkip }, () => {
+		const repoDir = createRepo("pi-worktree-cleanup-external-diff-");
+		const externalDiffPath = createHookScript(repoDir, "external-diff-clean.mjs", "process.exit(0);");
+		let setup: WorktreeSetup | undefined;
+		try {
+			git(repoDir, ["config", "diff.external", externalDiffPath]);
+			git(repoDir, ["config", "diff.trustExitCode", "true"]);
+			setup = createWorktrees(repoDir, "cleanup-external-diff", 1);
+			const worktree = setup.worktrees[0]!;
+			fs.writeFileSync(path.join(worktree.path, "committed.txt"), "unlanded work\n", "utf-8");
+			git(worktree.path, ["add", "committed.txt"]);
+			git(worktree.path, ["commit", "-m", "unlanded work"]);
+
+			const cleanup = cleanupWorktrees(setup);
+			assert.equal(cleanup.state, "partial");
+			assert.equal(cleanup.tasks[0]?.preserved, true);
+			assert.match(cleanup.tasks[0]?.reason ?? "", /not represented by a captured handoff patch/);
+			assert.equal(fs.existsSync(worktree.path), true);
+			assert.notEqual(git(repoDir, ["branch", "--list", worktree.branch]), "");
+		} finally {
+			if (setup) cleanupWorktrees(setup, { kind: "setup-rollback" });
+			cleanupRepo(repoDir);
+		}
+	});
+
 	it("removes dirty worktrees only after their captured patch is recorded in the handoff manifest", () => {
 		const repoDir = createRepo("pi-worktree-captured-");
 		let setup: WorktreeSetup | undefined;
@@ -803,7 +875,21 @@ process.stdout.write(JSON.stringify({ syntheticPaths: [".base-commit"] }));
 				version: 1,
 				groups: [{ children: [{ patch: { path: diffs[0]!.patchPath } }] }],
 			}), "utf-8");
-			const cleanup = cleanupWorktrees(setup, { kind: "preserve", capturedDiffs: diffs, handoffManifestPath });
+			fs.writeFileSync(diffs[0]!.patchPath, "corrupt patch\n", "utf-8");
+			const invalidPatch = cleanupWorktrees(setup, { kind: "preserve", capturedDiffs: diffs, handoffManifestPath });
+			assert.equal(invalidPatch.state, "partial");
+			assert.match(invalidPatch.tasks[0]?.reason ?? "", /failed validation/);
+			assert.equal(fs.existsSync(worktreePath), true);
+
+			const validatedDiffs = diffWorktrees(setup, ["worker"], path.join(repoDir, "artifacts", "captured"));
+			fs.writeFileSync(path.join(worktreePath, "late.txt"), "late\n", "utf-8");
+			const stalePatch = cleanupWorktrees(setup, { kind: "preserve", capturedDiffs: validatedDiffs, handoffManifestPath });
+			assert.equal(stalePatch.state, "partial");
+			assert.match(stalePatch.tasks[0]?.reason ?? "", /does not match current worktree changes/);
+			assert.equal(fs.existsSync(worktreePath), true);
+
+			const currentDiffs = diffWorktrees(setup, ["worker"], path.join(repoDir, "artifacts", "captured"));
+			const cleanup = cleanupWorktrees(setup, { kind: "preserve", capturedDiffs: currentDiffs, handoffManifestPath });
 			assert.equal(cleanup.state, "complete");
 			assert.equal(fs.existsSync(worktreePath), false);
 			setup = undefined;

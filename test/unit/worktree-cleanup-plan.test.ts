@@ -30,6 +30,18 @@ function createRepo(prefix: string): string {
 	return repo;
 }
 
+function createHookScript(fileName: string, source: string): string {
+	const hooksDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-cleanup-plan-hook-script-"));
+	const hookPath = path.join(hooksDir, fileName);
+	fs.writeFileSync(hookPath, `#!/usr/bin/env node\n${source}\n`, "utf-8");
+	fs.chmodSync(hookPath, 0o755);
+	return hookPath;
+}
+
+const hookScriptSkip = process.platform === "win32"
+	? "Hook script execution differs on Windows CI environments."
+	: undefined;
+
 function removeGeneratedWorktrees(repo: string, setup: WorktreeSetup | undefined): void {
 	for (const worktree of setup?.worktrees ?? []) {
 		try { execFileSync("git", ["-C", repo, "worktree", "remove", "--force", worktree.path], { stdio: "ignore" }); } catch {}
@@ -101,7 +113,7 @@ function writeManifest(input: {
 			},
 		}],
 	}, null, 2), "utf-8");
-	if (patch.changed) fs.writeFileSync(patch.path, "captured patch\n", "utf-8");
+	if (patch.changed) fs.writeFileSync(patch.path, execFileSync("git", ["-C", worktree.path, "diff", "--binary", baseCommit, "HEAD"], { encoding: "utf-8" }), "utf-8");
 }
 
 function entriesByPath(plan: WorktreeCleanupPlan): Map<string, WorktreeCleanupPlan["entries"][number]> {
@@ -287,6 +299,33 @@ describe("worktree cleanup plan", () => {
 			assert.equal(captured.entries[0]?.decision, "remove");
 			assert.equal(captured.entries[0]?.state, "safe");
 			assert.equal(captured.entries[0]?.willDeleteBranch, false);
+		} finally {
+			removeGeneratedWorktrees(repo, setup);
+			fs.rmSync(repo, { recursive: true, force: true });
+			fs.rmSync(baseDir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not let trusted external diff hide cleanup-plan divergence", { skip: hookScriptSkip }, () => {
+		const repo = createRepo("pi-cleanup-plan-external-diff-");
+		const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-cleanup-plan-base-"));
+		const externalDiffPath = createHookScript("external-diff-plan.mjs", "process.exit(0);");
+		let setup: WorktreeSetup | undefined;
+		try {
+			setup = createWorktrees(repo, "external-diff", 1, { baseDir });
+			const manifestPath = path.join(repo, ".pi", "subagents", "artifacts", "handoff.json");
+			writeManifest({ repo, manifestPath, setup });
+			const worktree = setup.worktrees[0]!;
+			fs.writeFileSync(path.join(worktree.path, "unmerged.txt"), "unmerged\n", "utf-8");
+			git(worktree.path, ["add", "unmerged.txt"]);
+			git(worktree.path, ["commit", "-m", "unmerged"]);
+			git(repo, ["config", "diff.external", externalDiffPath]);
+			git(repo, ["config", "diff.trustExitCode", "true"]);
+
+			const plan = buildPlan({ repo, worktreeBaseDir: baseDir, now: 40_000, planId: "external-diff-plan" });
+			assert.equal(plan.entries[0]?.decision, "keep");
+			assert.equal(plan.entries[0]?.state, "ineligible");
+			assert.match(plan.entries[0]?.reasons.join(" ") ?? "", /neither preserved.*nor merged/i);
 		} finally {
 			removeGeneratedWorktrees(repo, setup);
 			fs.rmSync(repo, { recursive: true, force: true });
