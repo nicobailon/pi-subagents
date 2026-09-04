@@ -575,7 +575,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const id = `async-terminal-status-${Date.now().toString(36)}`;
 		launchProtocolTest(id);
 		await waitForAsyncResultFile(id);
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
 		assert.equal(status.state, "complete");
 		assert.equal(status.endedAt !== undefined, true);
 	});
