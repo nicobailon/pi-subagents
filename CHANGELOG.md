@@ -14,6 +14,8 @@
 - Allow managed worktrees to start from a validated `baseRef` instead of always using `HEAD`. Thanks [@jaudiger](https://github.com/jaudiger) for #1842.
 
 ### Fixed
+- Drop only malformed persisted model-exclusion entries and rewrite the cleaned cache.
+- Stop live workflow children when a run-level stop targets an in-memory async workflow controller.
 - Ignore stale authentication-related model exclusions after Pi's `auth.json` is refreshed, while preserving quota, rate-limit, overload, and model-unavailable exclusions. Thanks [@wesleyfei1](https://github.com/wesleyfei1) for #1835.
 - Show native supervisor requests and outbound replies as bounded TUI cards in parent sessions (#1845).
 - Suppress stale async supervisor-request notices after the native request has already been answered (#1838). Thanks [@VladimirGVP](https://github.com/VladimirGVP).

@@ -1165,7 +1165,7 @@ async function runSingleStepInner(
 			launch,
 			prompt: `Task: ${attemptTask}`,
 			childWatchdog,
-			childEventContext: { eventsPath, runId: ctx.id, stepIndex: ctx.flatIndex, agent: step.agent },
+			childEventContext: { runId: ctx.id, stepIndex: ctx.flatIndex, agent: step.agent },
 			appendChildEvent: (event) => appendDiagnosticJsonl(eventsPath, JSON.stringify(event), typeof event.type === "string" ? event.type : undefined),
 			writeOutputLine: (line) => {
 				try {
@@ -1186,7 +1186,6 @@ async function runSingleStepInner(
 			transcriptWriter,
 			toolTimeoutMs: ctx.toolTimeoutMs,
 			runDeadlineAt: ctx.deadlineAt,
-			orcaProgressTab: ctx.orcaProgressTab,
 			expectedModelForVerification,
 			modelVerificationRegistry: step.modelVerificationRegistry,
 			mutationTools: step.mutationTools,

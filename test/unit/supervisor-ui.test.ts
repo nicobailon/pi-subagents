@@ -66,7 +66,6 @@ describe("native supervisor UI", () => {
 
 		const replyOutput = renderReply({
 			requestId: "request-1",
-			replyTo: "request-1",
 			reason: "need_decision",
 			runId: "run-1",
 			agent: "worker",
@@ -80,6 +79,11 @@ describe("native supervisor UI", () => {
 		assert.match(text, /Reply to: request-1/);
 		assert.match(text, /Approved; continue\./);
 		assert.match(text, /child-worker/);
+	});
+
+	it("ignores malformed request and reply metadata", () => {
+		assert.equal(renderSupervisorRequest({ content: "request", details: { id: "request-1", expectsReply: true, replyHint: ["bad"] } }, { expanded: true }, identityTheme as never), undefined);
+		assert.equal(renderSupervisorReply({ data: { requestId: "request-1", runId: "run-1", agent: "worker", childIndex: 0, message: ["bad"], createdAt: 123 } }, { expanded: true }, identityTheme as never), undefined);
 	});
 
 	it("sanitizes and bounds collapsed untrusted content at narrow widths", () => {

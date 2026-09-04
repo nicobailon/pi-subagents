@@ -957,10 +957,17 @@ describe("subagent extension RPC bridge", () => {
 				state: "running",
 				startedAt: 100,
 				lastUpdate: 100,
-				steps: [{ agent: "worker", status: "running", workflowKey: "slow", startedAt: 100 }],
+				steps: [
+					{ agent: "worker", status: "running", childId: "child-slow", workflowKey: "slow", startedAt: 100 },
+					{ agent: "worker", status: "completed", workflowKey: "done", startedAt: 100, endedAt: 120 },
+				],
 			}, null, 2), "utf-8");
 			const controller = new AbortController();
-			const state = { workflowControllers: new Map([["workflow-run-stop", controller]]) } as SubagentState;
+			const calls: Array<{ childId: string; message?: string }> = [];
+			const state = {
+				workflowControllers: new Map([["workflow-run-stop", controller]]),
+				workflowChildStops: new Map([["workflow-run-stop", (childId: string, message?: string) => { calls.push({ childId, message }); return true; }]]),
+			} as SubagentState;
 			const bridge = registerSubagentRpcBridge({
 				events,
 				getContext: () => ctx(),
@@ -976,6 +983,7 @@ describe("subagent extension RPC bridge", () => {
 			assert.equal((reply as { data: { runId?: string; state?: string; childId?: string } }).data.runId, "workflow-run-stop");
 			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
 			assert.equal((reply as { data: { childId?: string } }).data.childId, undefined);
+			assert.deepEqual(calls, [{ childId: "child-slow", message: "Workflow stopped by RPC." }]);
 			assert.equal(controller.signal.aborted, true);
 			assert.equal(controller.signal.reason instanceof Error ? controller.signal.reason.message : String(controller.signal.reason), "Workflow stopped by RPC.");
 			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), false);

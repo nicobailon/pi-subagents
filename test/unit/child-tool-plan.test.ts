@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { formatRuntimeSnapshotMcpServersError, resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
+import { resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
 import { MCP_RUNTIME_SNAPSHOT_EVENT, MCP_RUNTIME_SNAPSHOT_VERSION, type McpRuntimeSnapshotHost } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
 
 /** A parent whose pi-mcp-adapter answers snapshot requests for one runtime-only server. */
@@ -24,9 +24,8 @@ describe("child tool plan", () => {
 		try {
 			assert.throws(
 				() => resolvePiLaunchToolPlan({ tools: ["read"], mcpDirectTools: ["runtime-only/search"], cwd, agentName: "browser", runtimeSnapshotHost: runtimeSnapshotHost("runtime-only") }),
-				new RegExp(`^Error: ${formatRuntimeSnapshotMcpServersError("browser", ["runtime-only"]).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`),
+				/cannot be provided to in-process children; MCP tools must come from an ambient adapter extension in a background child/,
 			);
-			assert.match(formatRuntimeSnapshotMcpServersError("browser", ["runtime-only"]), /cannot be provided to in-process children; MCP tools must come from an ambient adapter extension in a background child/);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}

@@ -133,22 +133,21 @@ function ensureLoaded(): void {
 		const data = JSON.parse(raw);
 		if (data.version === 1) {
 			if (!Array.isArray(data.exclusions)) throw new Error("Model exclusion store version 1 must contain an exclusions array.");
-			for (let index = 0; index < data.exclusions.length; index++) {
-				const entry = data.exclusions[index];
-				if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error(`Model exclusion store entry ${index} must be an object.`);
-				if (entry.reason !== undefined && typeof entry.reason !== "string") throw new Error(`Model exclusion store entry ${index} has an invalid reason.`);
-				for (const field of ["recordedAt", "expiresAt"] as const) {
-					const timestamp = entry[field];
-					if (typeof timestamp !== "number" || !Number.isFinite(timestamp) || timestamp <= 0 || timestamp > MAX_DATE_TIMESTAMP_MS) {
-						throw new Error(`Model exclusion store entry ${index} has an invalid ${field}.`);
-					}
-				}
-			}
 			const now = Date.now();
-			exclusions = (data.exclusions ?? []).filter((e: ModelExclusion) => e.expiresAt > now);
+			let droppedInvalid = false;
+			exclusions = data.exclusions.flatMap((entry: unknown, index: number) => {
+				const result = readPersistedExclusion(entry, index);
+				if (!result.ok) {
+					droppedInvalid = true;
+					console.warn(`[model-exclusions] Ignoring invalid exclusion: ${result.message}`);
+					return [];
+				}
+				return [result.exclusion];
+			}).filter((e: ModelExclusion) => e.expiresAt > now);
 			const shortened = loadedTTLCeilingMs !== undefined && shortenExclusionsToTTL(exclusions, loadedTTLCeilingMs, now);
 			exclusions = deduplicate(exclusions);
-			if (shortened) schedulePersist();
+			if (droppedInvalid) flushPersist();
+			else if (shortened) schedulePersist();
 		}
 		invalidateAuthExclusions();
 	} catch (error) {
@@ -156,6 +155,32 @@ function ensureLoaded(): void {
 			console.error(`[model-exclusions] Failed to load exclusions from ${getExclusionsFilePath()}:`, error);
 		}
 	}
+}
+
+type PersistedExclusionRead =
+	| { ok: true; exclusion: ModelExclusion }
+	| { ok: false; message: string };
+
+function invalidPersistedExclusion(index: number, message: string): PersistedExclusionRead {
+	return { ok: false, message: `Model exclusion store entry ${index} ${message}.` };
+}
+
+function readPersistedExclusion(entry: unknown, index: number): PersistedExclusionRead {
+	if (!entry || typeof entry !== "object" || Array.isArray(entry)) return invalidPersistedExclusion(index, "must be an object");
+	const candidate = entry as { modelId?: unknown; provider?: unknown; reason?: unknown; recordedAt?: unknown; expiresAt?: unknown };
+	const { modelId, provider, reason } = candidate;
+	if (modelId !== undefined && (typeof modelId !== "string" || modelId.length === 0)) return invalidPersistedExclusion(index, "has an invalid modelId");
+	if (provider !== undefined && (typeof provider !== "string" || provider.length === 0)) return invalidPersistedExclusion(index, "has an invalid provider");
+	if (reason !== undefined && typeof reason !== "string") return invalidPersistedExclusion(index, "has an invalid reason");
+	const { recordedAt, expiresAt } = candidate;
+	if (typeof recordedAt !== "number" || !Number.isFinite(recordedAt) || recordedAt <= 0 || recordedAt > MAX_DATE_TIMESTAMP_MS) return invalidPersistedExclusion(index, "has an invalid recordedAt");
+	if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt) || expiresAt <= 0 || expiresAt > MAX_DATE_TIMESTAMP_MS) return invalidPersistedExclusion(index, "has an invalid expiresAt");
+	const metadata = { ...(reason === undefined ? {} : { reason }), recordedAt, expiresAt };
+	if (modelId === undefined) {
+		if (provider === undefined) return invalidPersistedExclusion(index, "must include modelId or provider");
+		return { ok: true, exclusion: { provider, ...metadata } };
+	}
+	return { ok: true, exclusion: { modelId, ...(provider === undefined ? {} : { provider }), ...metadata } };
 }
 
 function dedupKey(entry: ModelExclusion): string {
@@ -230,7 +255,7 @@ export function clearExclusions(): void {
  */
 function entryMatches(entry: ModelExclusion, candidateModelId: string, candidateProvider: string | undefined, now: number): boolean {
 	if (entry.expiresAt <= now) return false;
-	if (entry.modelId) {
+	if (entry.modelId !== undefined) {
 		if (entry.modelId !== candidateModelId) return false;
 		return !entry.provider || !candidateProvider || entry.provider === candidateProvider;
 	}

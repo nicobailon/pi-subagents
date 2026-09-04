@@ -14,11 +14,11 @@ export type AsyncStatusChildResolution =
 	| { ok: false; code: "not_found" | "ambiguous"; message: string };
 
 export function asyncStatusChildIdentity(step: AsyncStatusStep, index: number): string {
-	return step.workflowKey ?? step.runId ?? `step:${index}`;
+	return asyncStatusChildIdentityCandidates(step, index)[0]!;
 }
 
 export function asyncStatusChildIdentityCandidates(step: AsyncStatusStep, index: number): string[] {
-	return [...new Set([step.workflowKey, step.runId, `step:${index}`].filter((value): value is string => typeof value === "string" && value.length > 0))];
+	return [...new Set([step.childId, step.workflowKey, step.runId, `step:${index}`].filter((value): value is string => typeof value === "string" && value.length > 0))];
 }
 
 export function resolveAsyncStatusChild(
@@ -48,4 +48,15 @@ export function resolveAsyncStatusChild(
 
 export function isStoppableAsyncStatusStep(step: AsyncStatusStep): boolean {
 	return step.status === "pending" || step.status === "running";
+}
+
+export function stopStoppableAsyncStatusChildren(
+	status: Pick<AsyncStatus, "steps">,
+	stopChild: ((childId: string, message?: string) => boolean) | undefined,
+	message: string,
+): void {
+	if (!stopChild) return;
+	for (const [index, step] of (status.steps ?? []).entries()) {
+		if (isStoppableAsyncStatusStep(step)) stopChild(asyncStatusChildIdentity(step, index), message);
+	}
 }

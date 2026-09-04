@@ -515,14 +515,14 @@ function refreshPendingRequests(pending: Map<string, PendingSupervisorRequest>, 
 }
 
 function formatPendingLine(request: PendingSupervisorRequest): string {
-	const replyHint = request.expectsReply ? ` Reply: ${NATIVE_SUPERVISOR_TOOL_NAME}({ action: "reply", replyTo: "${request.id}", message: "..." })` : "";
+	const replyHint = request.expectsReply ? ` Reply: ${supervisorReplyHint(request.id)}` : "";
 	return `- ${request.id}: ${request.agent} [${request.runId}#${request.childIndex}] ${request.reason}.${replyHint}`;
 }
 
 function requestVisibleText(request: PendingSupervisorRequest): string {
 	const lines = [request.message];
 	if (request.expectsReply) {
-		lines.push("", `Reply with: ${NATIVE_SUPERVISOR_TOOL_NAME}({ action: "reply", replyTo: "${request.id}", message: "..." })`);
+		lines.push("", `Reply with: ${supervisorReplyHint(request.id)}`);
 	}
 	return lines.join("\n");
 }
@@ -548,7 +548,6 @@ function appendSupervisorReplyEntry(pi: ExtensionAPI, request: PendingSupervisor
 	try {
 		appendEntry.call(pi, SUPERVISOR_REPLY_ENTRY_TYPE, {
 			requestId: request.id,
-			replyTo: request.id,
 			reason: request.reason,
 			runId: request.runId,
 			agent: request.agent,
@@ -760,7 +759,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 					childIndex: request.childIndex,
 					...(request.childTarget ? { childTarget: request.childTarget } : {}),
 					...(request.interview !== undefined ? { interview: request.interview } : {}),
-					...(request.expectsReply ? { replyTo: request.id, replyHint: supervisorReplyHint(request.id) } : {}),
+					...(request.expectsReply ? { replyHint: supervisorReplyHint(request.id) } : {}),
 				},
 			}, { triggerTurn: true });
 			if (request.expectsReply) {

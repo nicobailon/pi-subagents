@@ -97,7 +97,7 @@ import { attachRootChildrenToSteps, createNestedRoute, findNestedControlResult, 
 import type { ChildRuntimeConfig } from "../shared/child-runtime-config.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
-import { isStoppableAsyncStatusStep, resolveAsyncStatusChild } from "../shared/child-identity.ts";
+import { isStoppableAsyncStatusStep, resolveAsyncStatusChild, stopStoppableAsyncStatusChildren } from "../shared/child-identity.ts";
 import { inspectSubagentStatus } from "../background/run-status.ts";
 import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 import { externalJobFollowUpRequestDigest, externalJobFollowUpRequestId, externalJobFollowUpRunId, externalJobPromptDigest, externalJobStableJson } from "../shared/external-job-runner.ts";
@@ -6170,9 +6170,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (action === "stop") {
 				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
 				const workflowController = targetRunId ? deps.state.workflowControllers?.get(targetRunId) : undefined;
-				if (workflowController) {
+				if (workflowController && targetRunId) {
+					const stopChild = deps.state.workflowChildStops?.get(targetRunId);
 					if (paramsWithResolvedCwd.childId !== undefined) {
-						const workflowRunId = targetRunId!;
+						const workflowRunId = targetRunId;
 						const asyncJob = deps.state.asyncJobs.get(workflowRunId);
 						if (!asyncJob?.asyncDir) return { content: [{ type: "text", text: `Status file not found for async workflow '${workflowRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
 						const status = readStatus(asyncJob.asyncDir);
@@ -6180,7 +6181,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const resolution = resolveAsyncStatusChild(status, paramsWithResolvedCwd.childId);
 						if (!resolution.ok) return { content: [{ type: "text", text: resolution.message }], isError: true, details: { mode: "management", results: [] } };
 						if (!isStoppableAsyncStatusStep(resolution.child.step)) return { content: [{ type: "text", text: `Child '${paramsWithResolvedCwd.childId}' in async run '${targetRunId}' is ${resolution.child.step.status}; stop only supports pending or running children.` }], isError: true, details: { mode: "management", results: [] } };
-						const stopChild = deps.state.workflowChildStops?.get(targetRunId!);
 						if (!stopChild) return { content: [{ type: "text", text: `Workflow ${targetRunId} child stop is unavailable in this extension runtime.` }], isError: true, details: { mode: "management", results: [] } };
 						if (!stopChild(resolution.child.id, `Workflow child '${resolution.child.id}' stopped.`)) return { content: [{ type: "text", text: `Child '${paramsWithResolvedCwd.childId}' in workflow ${workflowRunId} is not available to stop.` }], isError: true, details: { mode: "management", results: [] } };
 						try {
@@ -6205,6 +6205,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						}
 						return { content: [{ type: "text", text: `Stop requested for child ${resolution.child.id} in async workflow ${workflowRunId}.` }], details: { mode: "management", results: [] } };
 					}
+					const asyncJob = deps.state.asyncJobs.get(targetRunId);
+					const status = asyncJob?.asyncDir ? readStatus(asyncJob.asyncDir) : undefined;
+					if (status) stopStoppableAsyncStatusChildren(status, stopChild, "Workflow stopped.");
 					workflowController.abort(new Error("Workflow stopped."));
 					return { content: [{ type: "text", text: `Stop requested for async workflow ${targetRunId}.` }], details: { mode: "management", results: [] } };
 				}

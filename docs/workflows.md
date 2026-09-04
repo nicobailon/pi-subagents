@@ -371,7 +371,7 @@ A top-level `{ workflowScript, worktree: true }` makes isolation the default for
 
 Use `baseRef` to branch managed worktrees from a named commit or branch instead of the default `HEAD`. For example, `{ workflowScript, worktree: true, baseRef: "refs/heads/release" }` applies the release ref to children unless a child supplies its own `baseRef`. The source checkout must still be clean, and the ref must resolve to a commit before any worktree is allocated.
 
-When native Git worktree allocation is used, each managed worktree lives at `{dedicatedRoot}/{projectName}/pi-worktree-{runId}-{index}` — in path terms `{parent}/worktrees/{project}/pi-worktree-{runId}-{index}`. With `worktreeBaseDir` and `PI_SUBAGENTS_WORKTREE_DIR` unset and native allocation selected, `{dedicatedRoot}` defaults to `{dirname(repoRoot)}/worktrees`, a `worktrees` directory alongside the repository checkout. The config key and environment variable override only the native dedicated root; the `{projectName}/pi-worktree-{runId}-{index}` nesting under it always applies for native allocation. Configure the worktree provider, base directory, and setup hook in [configuration.md](configuration.md).
+Configure the worktree provider, native path layout, base directory, and setup hook in [configuration.md](configuration.md).
 
 ### Lane metadata lifecycle
 

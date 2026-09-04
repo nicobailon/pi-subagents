@@ -22,14 +22,12 @@ import { projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleSt
 import { formatSubagentModelVerificationError } from "../shared/model-fallback.ts";
 import { isMutatingTool, resolveCurrentPath } from "../shared/long-running-guard.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } from "../shared/tool-timeout.ts";
-import type { OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import type { InProcessChildLaunch } from "../shared/child-launch.ts";
 import { projectChildSessionEventForJson, type ChildSession, type ChildSessionEvent, type ChildSessionFactory } from "../shared/child-session.ts";
 import { formatSteerMessage } from "../shared/subagent-prompt-runtime.ts";
 import type { SteerDeliveryStatus, SteerRequest } from "./control-channel.ts";
 
 export interface ChildEventContext {
-	eventsPath: string;
 	runId: string;
 	stepIndex: number;
 	agent: string;
@@ -93,7 +91,6 @@ export interface RunChildSessionInput {
 	transcriptWriter?: ChildTranscriptWriter;
 	toolTimeoutMs?: number;
 	runDeadlineAt?: number;
-	orcaProgressTab?: OrcaProgressTab;
 	expectedModelForVerification?: string;
 	modelVerificationRegistry?: Array<{ provider: string; id: string; fullId: string }>;
 	mutationTools?: readonly string[];

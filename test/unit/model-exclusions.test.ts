@@ -22,6 +22,18 @@ import {
 
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 const testAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-model-exclusions-auth-"));
+
+function captureConsole(method: "error" | "warn", run: () => void): unknown[][] {
+	const original = console[method];
+	const messages: unknown[][] = [];
+	console[method] = (...args: unknown[]) => messages.push(args);
+	try {
+		run();
+	} finally {
+		console[method] = original;
+	}
+	return messages;
+}
 process.env.PI_CODING_AGENT_DIR = testAgentDir;
 const authPath = path.join(testAgentDir, "auth.json");
 
@@ -259,64 +271,39 @@ describe("model exclusions — persistence", () => {
 
 	it("reports corrupt persisted exclusions and starts empty", () => {
 		fs.writeFileSync(getExclusionsFilePath(), "not json", "utf-8");
-		const originalError = console.error;
-		const errors: unknown[][] = [];
-		console.error = (...args: unknown[]) => errors.push(args);
-		try {
-			reloadFromDisk();
-		} finally {
-			console.error = originalError;
-		}
+		const errors = captureConsole("error", reloadFromDisk);
 		assert.equal(getExcludedCount(), 0);
 		assert.equal(errors.length, 1);
 		assert.match(String(errors[0]?.[0]), /Failed to load exclusions/);
 	});
 
-	it("rejects persisted exclusions with invalid timestamps", () => {
-		for (const [field, value] of [
-			["expiresAt", null],
-			["expiresAt", 0],
-			["expiresAt", 9_000_000_000_000_000],
-			["recordedAt", null],
-			["recordedAt", -1],
-			["recordedAt", 9_000_000_000_000_000],
+	it("drops malformed persisted exclusions", () => {
+		for (const [patch, expected] of [
+			[{ expiresAt: null }, /invalid expiresAt/],
+			[{ expiresAt: 0 }, /invalid expiresAt/],
+			[{ expiresAt: 9_000_000_000_000_000 }, /invalid expiresAt/],
+			[{ recordedAt: null }, /invalid recordedAt/],
+			[{ recordedAt: -1 }, /invalid recordedAt/],
+			[{ recordedAt: 9_000_000_000_000_000 }, /invalid recordedAt/],
+			[{ reason: null }, /invalid reason/],
+			[{ reason: 503 }, /invalid reason/],
+			[{ reason: { bad: true } }, /invalid reason/],
+			[{ reason: ["503"] }, /invalid reason/],
+			[{ modelId: 42 }, /invalid modelId/],
+			[{ modelId: "" }, /invalid modelId/],
+			[{ provider: 42 }, /invalid provider/],
+			[{ modelId: undefined, provider: "" }, /invalid provider/],
+			[{ modelId: undefined, provider: undefined }, /must include modelId or provider/],
 		] as const) {
 			const now = Date.now();
-			const entry = { modelId: "gpt-4", provider: "openai", reason: "503", recordedAt: now, expiresAt: now + 60_000, [field]: value };
+			const entry = { modelId: "gpt-4", provider: "openai", reason: "503", recordedAt: now, expiresAt: now + 60_000, ...patch };
 			fs.writeFileSync(getExclusionsFilePath(), JSON.stringify({ version: 1, exclusions: [entry] }), "utf-8");
-			const originalError = console.error;
-			const errors: unknown[][] = [];
-			console.error = (...args: unknown[]) => errors.push(args);
-			try {
-				reloadFromDisk();
-			} finally {
-				console.error = originalError;
-			}
+			const warnings = captureConsole("warn", reloadFromDisk);
 			assert.equal(getExcludedCount(), 0);
-			assert.equal(errors.length, 1);
-			assert.match(String(errors[0]?.[1]), new RegExp(`invalid ${field}`));
-		}
-	});
-
-	it("rejects persisted exclusions with non-string reasons", () => {
-		for (const reason of [null, 503, { bad: true }, ["503"]]) {
-			const now = Date.now();
-			fs.writeFileSync(getExclusionsFilePath(), JSON.stringify({
-				version: 1,
-				exclusions: [{ modelId: "gpt-4", provider: "openai", reason, recordedAt: now, expiresAt: now + 60_000 }],
-			}), "utf-8");
-			const originalError = console.error;
-			const errors: unknown[][] = [];
-			console.error = (...args: unknown[]) => errors.push(args);
-			try {
-				reloadFromDisk();
-			} finally {
-				console.error = originalError;
-			}
+			assert.equal(warnings.length, 1);
+			assert.match(String(warnings[0]?.[0]), expected);
+			assert.equal(captureConsole("warn", reloadFromDisk).length, 0);
 			assert.equal(getExcludedCount(), 0);
-			assert.equal(errors.length, 1);
-			assert.match(String(errors[0]?.[1]), /invalid reason/);
-			assert.deepEqual(filterFallbackCandidates(["openai/gpt-4", "anthropic/claude-3"]), ["openai/gpt-4", "anthropic/claude-3"]);
 		}
 	});
 });

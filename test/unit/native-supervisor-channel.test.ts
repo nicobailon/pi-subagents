@@ -705,7 +705,6 @@ describe("native supervisor channel", () => {
 				childIndex: 2,
 				childTarget: "child-worker",
 				interview: { approved: "boolean", rationale: "string" },
-				replyTo: requestId,
 				replyHint: `subagent_supervisor({ action: "reply", replyTo: "${requestId}", message: "..." })`,
 			});
 
@@ -720,7 +719,6 @@ describe("native supervisor channel", () => {
 			assert.deepEqual(journalState, { replyExistsAtAppend: true, requestExistsAtAppend: false });
 			assert.deepEqual({ ...entries[0]?.data, createdAt: undefined }, {
 				requestId,
-				replyTo: requestId,
 				reason: "interview_request",
 				runId,
 				agent: "worker",

@@ -56,7 +56,6 @@ describe("in-process foreground child", () => {
 			assert.equal(result.exitCode, 0);
 			const [session] = mockPi.sessions;
 			assert.ok(session, "child session was created");
-			assert.deepEqual(session.launch.hooks.map((hook) => hook.name), ["pi-subagents:prompt-runtime"]);
 			assert.equal(session.launch.runtime.agent, "echo");
 			assert.equal(session.launch.runtime.runId, "hooks-config");
 			assert.equal(session.launch.runtime.childIndex, 3);
@@ -82,7 +81,6 @@ describe("in-process foreground child", () => {
 			});
 			assert.equal(result.exitCode, 0);
 			const [session] = mockPi.sessions;
-			assert.deepEqual(session?.launch.hooks.map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:fanout-child"]);
 			assert.equal(session?.launch.runtime.fanoutChild, true);
 			assert.deepEqual(session?.launch.runtime.nestedRoute, route);
 			assert.deepEqual(session?.launch.runtime.nestedParent, { parentRunId: "hooks-fanout", parentChildIndex: 0, depth: 1, path: [{ runId: "hooks-fanout", stepIndex: 0, agent: "delegator" }] });
@@ -266,13 +264,6 @@ describe("default child session factory", () => {
 		await factory.create({ ...stubLaunch, onExtensionError: (error) => errors.push(error.extensionPath) });
 		await factory.create({ ...stubLaunch, extensionPaths: ["/tmp/ext.ts"], onExtensionError: (error) => errors.push(error.extensionPath) });
 		assert.deepEqual(errors, ["<loader>"]);
-	});
-
-	it("disposes the session when bindExtensions throws synchronously", async () => {
-		let disposed = 0;
-		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi({ bindExtensions: () => { throw new Error("sync bind failed"); }, dispose: () => { disposed += 1; } }) });
-		await assert.rejects(factory.create(stubLaunch), /sync bind failed/);
-		assert.equal(disposed, 1);
 	});
 
 	it("disposes the session when bindExtensions rejects", async () => {

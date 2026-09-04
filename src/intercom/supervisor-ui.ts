@@ -17,13 +17,11 @@ export interface SupervisorRequestMessageDetails {
 	childIndex?: number;
 	childTarget?: string;
 	interview?: unknown;
-	replyTo?: string;
 	replyHint?: string;
 }
 
 export interface SupervisorReplyEntryData {
 	requestId: string;
-	replyTo: string;
 	reason?: SupervisorReason;
 	runId: string;
 	agent: string;
@@ -95,14 +93,43 @@ function interviewText(interview: unknown, expanded: boolean): string {
 	return displayText(serialized, MAX_INTERVIEW_CHARS, expanded);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isSupervisorReason(value: unknown): value is SupervisorReason {
+	return value === "need_decision" || value === "interview_request" || value === "progress_update";
+}
+
+function optionalString(value: unknown): boolean {
+	return value === undefined || typeof value === "string";
+}
+
 function requestDetails(value: unknown): SupervisorRequestMessageDetails | undefined {
-	if (!value || typeof value !== "object") return undefined;
-	return value as SupervisorRequestMessageDetails;
+	if (!isRecord(value)) return undefined;
+	if (!optionalString(value.id) || !optionalString(value.requestId) || !optionalString(value.replyHint) || !optionalString(value.runId) || !optionalString(value.agent) || !optionalString(value.childTarget)) return undefined;
+	if (value.reason !== undefined && !isSupervisorReason(value.reason)) return undefined;
+	if (value.expectsReply !== undefined && typeof value.expectsReply !== "boolean") return undefined;
+	if (value.childIndex !== undefined && (typeof value.childIndex !== "number" || !Number.isFinite(value.childIndex))) return undefined;
+	return value;
 }
 
 function replyData(value: unknown): SupervisorReplyEntryData | undefined {
-	if (!value || typeof value !== "object") return undefined;
-	return value as SupervisorReplyEntryData;
+	if (!isRecord(value)) return undefined;
+	if (typeof value.requestId !== "string" || typeof value.runId !== "string" || typeof value.agent !== "string" || typeof value.message !== "string") return undefined;
+	if (value.reason !== undefined && !isSupervisorReason(value.reason)) return undefined;
+	if (value.childTarget !== undefined && typeof value.childTarget !== "string") return undefined;
+	if (typeof value.childIndex !== "number" || !Number.isFinite(value.childIndex) || typeof value.createdAt !== "number" || !Number.isFinite(value.createdAt)) return undefined;
+	return {
+		requestId: value.requestId,
+		...(value.reason === undefined ? {} : { reason: value.reason }),
+		runId: value.runId,
+		agent: value.agent,
+		childIndex: value.childIndex,
+		...(value.childTarget === undefined ? {} : { childTarget: value.childTarget }),
+		message: value.message,
+		createdAt: value.createdAt,
+	};
 }
 
 function withRequestId(details: SupervisorRequestMessageDetails): string {
@@ -132,7 +159,7 @@ function requestLines(message: SupervisorMessageLike, details: SupervisorRequest
 }
 
 function replyLines(data: SupervisorReplyEntryData, expanded: boolean): string[] {
-	const requestId = boundedField(data.requestId || data.replyTo);
+	const requestId = boundedField(data.requestId);
 	const lines = [
 		...(data.reason ? [`Reason: ${boundedField(data.reason)}`] : []),
 		`Run: ${boundedField(data.runId)}`,
