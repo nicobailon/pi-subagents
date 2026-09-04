@@ -785,6 +785,26 @@ describe("scripted workflow runtime", () => {
 		);
 	});
 
+	it("reuses a gated key when acceptance false is explicit", async () => {
+		const launches: string[] = [];
+		const result = await runWorkflowScript({
+			script: `
+				const first = await runs.run("g", { agent: "worker", gate: "npm test" });
+				const second = await runs.run("g", { agent: "worker", gate: "npm test", acceptance: false });
+				return { first: first.key, second: second.key };
+			`,
+			timeoutMs: 2_000,
+			async launch(key) {
+				launches.push(key);
+				return { key, ok: true, output: "ok", artifactPaths: [], results: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.deepEqual(result.value, { first: "g", second: "g" });
+		assert.deepEqual(launches, ["g"]);
+	});
+
 	it("rejects retained resume with gate", async () => {
 		await assert.rejects(
 			runWorkflowScript({

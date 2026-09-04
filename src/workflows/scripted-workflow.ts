@@ -75,6 +75,12 @@ function stableRunJson(value) {
   return JSON.stringify(value) ?? "undefined";
 }
 
+function canonicalRunParams(params) {
+  if (params.gate === undefined || params.acceptance !== false) return params;
+  const { acceptance: _acceptance, ...withoutAcceptance } = params;
+  return withoutAcceptance;
+}
+
 function isDirectWorkflowScriptPromiseHandlerCall() {
   const stack = new Error().stack;
   if (typeof stack !== "string") return false;
@@ -446,7 +452,7 @@ function validateLaneSpecs(laneSpecs) {
       validateLaneStageBounds(validationParams, stageLabel);
       validateRunCall(generatedKey, validationParams, stageLabel, validationFingerprints);
       const existingFingerprint = runFingerprints.get(generatedKey);
-      if (existingFingerprint !== undefined && (resume === "previous" || existingFingerprint !== stableRunJson(params))) {
+      if (existingFingerprint !== undefined && (resume === "previous" || existingFingerprint !== stableRunJson(canonicalRunParams(params)))) {
         throw new Error("runs.lanes generated child key '" + generatedKey + "' is already used with incompatible launch params.");
       }
       stages.push({ key: stageKey, generatedKey, resume, params });
@@ -658,7 +664,7 @@ function validateRunCall(key, params, label, fingerprints) {
   if (params.resume !== undefined && (typeof params.task !== "string" || !params.task.trim())) throw new Error(label + " resume requires a non-empty task follow-up.");
   validateExtensionBindings(params.extensionBindings, label);
   assertJsonValue(params, label + " params");
-  const fingerprint = stableRunJson(params);
+  const fingerprint = stableRunJson(canonicalRunParams(params));
   const existing = fingerprints.get(key);
   if (existing !== undefined && existing !== fingerprint) throw new Error("Duplicate workflow key '" + key + "' used with incompatible launch params.");
   fingerprints.set(key, fingerprint);
@@ -1384,6 +1390,12 @@ function stableJson(value: unknown): string {
 	return JSON.stringify(value) ?? "undefined";
 }
 
+function canonicalRunParams(params: Record<string, unknown>): Record<string, unknown> {
+	if (params.gate === undefined || params.acceptance !== false) return params;
+	const { acceptance: _acceptance, ...withoutAcceptance } = params;
+	return withoutAcceptance;
+}
+
 function validateKey(value: unknown, owner = "runs.run"): string {
 	if (typeof value !== "string" || !KEY_PATTERN.test(value)) {
 		throw new Error(`${owner} key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.`);
@@ -2096,7 +2108,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					}
 					return result;
 				});
-			const fingerprint = stableJson(params);
+			const fingerprint = stableJson(canonicalRunParams(params));
 			const existing = launches.get(key);
 			if (existing) {
 				if (existing.fingerprint !== fingerprint) return respond(Promise.reject(new Error(`Duplicate workflow key '${key}' used with incompatible launch params.`)));
