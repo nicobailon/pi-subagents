@@ -4,6 +4,7 @@
 
 ### Fixed
 - Lazy-load prompt audit optional Pi peers. Thanks [@VladimirGVP](https://github.com/VladimirGVP) for #1860.
+- Key subagent children launched under an explicit `sessionDir` by their run id so concurrent children resolve distinct session files instead of sharing `run-0`.
 
 ## [0.65.0] - 2026-09-04
 
