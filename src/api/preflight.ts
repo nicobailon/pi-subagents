@@ -73,6 +73,7 @@ export interface SubagentLaunchContractInput {
 	/** Current parent leaf required before an implicit `defaultContext: fork` stays `fork`. */
 	parentLeafId?: string | null;
 	sessionRoot?: string;
+	/** Caller directory used as a root keyed by the child run id ("preflight" placeholder when runId is omitted). */
 	sessionDir?: string;
 	runId?: string;
 	/** Root run id supplied by a host when projecting nested async lifecycle paths. */
@@ -380,7 +381,10 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	const artifactsDir = artifactsEnabled ? getArtifactsDir(input.parentSessionFile ?? null, effectiveCwd, input.artifactDir) : undefined;
 	const artifactPaths = artifactsDir ? getArtifactPaths(artifactsDir, runId, agent.name, 0) : undefined;
 	const outputPath = resolveSingleOutputPath(behavior.output, effectiveCwd, effectiveCwd, artifactsDir ? path.join(artifactsDir, "outputs", runId) : undefined);
-	const sessionRoot = input.sessionDir ? path.resolve(input.sessionDir) : input.sessionRoot ? path.join(path.resolve(input.sessionRoot), runId) : undefined;
+	// An explicit sessionDir is a root keyed by the child run id, matching the
+	// sibling sessionRoot derivation; hosts omitting runId get the documented
+	// deterministic "preflight" placeholder.
+	const sessionRoot = input.sessionDir ? path.join(path.resolve(input.sessionDir), runId) : input.sessionRoot ? path.join(path.resolve(input.sessionRoot), runId) : undefined;
 	const sessionDir = sessionRoot ? path.join(sessionRoot, "run-0") : undefined;
 	const lifecycleAsyncDir = input.nestedRootRunId
 		? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", input.nestedRootRunId, runId)

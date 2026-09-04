@@ -2734,6 +2734,53 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.readFileSync(path.join(tempDir, "workflow-report.monitor.md"), "utf-8"), "second report");
 	});
 
+	it("keys concurrent workflow children under distinct run-id session roots for an explicit sessionDir", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "first child" });
+		mockPi.onCall({ output: "second child" });
+		const sessionDir = path.join(tempDir, "fanout-sessions");
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"workflow-session-dir-fanout",
+			{
+				async: false,
+				sessionDir,
+				workflowScript: `
+					const children = await runs.all([
+						{ key: "first", agent: "echo", task: "First" },
+						{ key: "second", agent: "echo", task: "Second" }
+					]);
+					return children.map(({ key }) => key);
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		const sessionArgs = readAllCallArgs(true)
+			.map((args) => {
+				const index = args.indexOf("--session");
+				return index >= 0 ? args[index + 1] : undefined;
+			})
+			.filter((value): value is string => value !== undefined);
+		assert.equal(sessionArgs.length, 2, `expected two --session child args, got ${JSON.stringify(sessionArgs)}`);
+		const [firstSession, secondSession] = sessionArgs;
+		assert.notEqual(firstSession, secondSession);
+		for (const sessionFile of sessionArgs) {
+			const relative = path.relative(sessionDir, sessionFile);
+			const segments = relative.split(path.sep);
+			assert.match(segments[0]!, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+			assert.deepEqual(segments.slice(1), ["run-0", "session.jsonl"]);
+		}
+		const runIdDirs = fs.readdirSync(sessionDir).sort();
+		assert.equal(runIdDirs.length, 2);
+		for (const runIdDir of runIdDirs) {
+			assert.deepEqual(fs.readdirSync(path.join(sessionDir, runIdDir)), ["run-0"]);
+		}
+	});
+
 	it("maps a task-requested report path to the workflow-saved child output", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "review report" });
 		const requestedReport = path.join(tempDir, "requested-review.md");

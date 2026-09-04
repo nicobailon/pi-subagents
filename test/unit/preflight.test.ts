@@ -157,6 +157,43 @@ Project prompt.
 		}
 	});
 
+	it("projects concurrent children under distinct run-id roots for an explicit sessionDir", async () => {
+		const cwd = path.join(tempDir, "repo-session-dir-keying");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "worker.md"), `---\nname: worker\ndescription: Project worker\n---\nWorker.\n`);
+		const sessionDir = path.join(tempDir, "caller-sessions");
+		const runIds = ["run-123", "run-456"];
+
+		const projected = await Promise.all(runIds.map((runId) => resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			task: "Inspect the repo",
+			runId,
+			sessionDir,
+		})));
+		assert.ok(projected.every((result) => result.ok));
+		for (const [index, result] of projected.entries()) {
+			if (!result.ok) continue;
+			const runId = runIds[index]!;
+			assert.equal(result.contract.roots.sessionFile, path.join(sessionDir, runId, "run-0", "session.jsonl"));
+			assert.equal(result.contract.roots.sessionDir, path.join(sessionDir, runId, "run-0"));
+			assert.equal(result.contract.roots.sessionRoot, path.join(sessionDir, runId));
+		}
+		assert.notEqual(projected[0]!.contract?.roots.sessionFile, projected[1]!.contract?.roots.sessionFile);
+
+		const withoutRunId = await resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			task: "Inspect the repo",
+			sessionDir,
+		});
+		assert.equal(withoutRunId.ok, true);
+		if (withoutRunId.ok) {
+			assert.equal(withoutRunId.contract.roots.sessionFile, path.join(sessionDir, "preflight", "run-0", "session.jsonl"));
+			assert.equal(withoutRunId.contract.roots.sessionDir, path.join(sessionDir, "preflight", "run-0"));
+		}
+	});
+
 	it("binds canonical extension metadata into public preflight provenance", async () => {
 		const cwd = path.join(tempDir, "bindings-repo");
 		fs.mkdirSync(cwd, { recursive: true });

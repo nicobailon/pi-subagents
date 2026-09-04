@@ -6551,7 +6551,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 
 		let sessionRoot: string;
 		if (effectiveParams.sessionDir) {
-			sessionRoot = path.resolve(deps.expandTilde(effectiveParams.sessionDir));
+			// An explicit sessionDir is a root keyed by this launch's run id so
+			// concurrent children resolve distinct per-child session files.
+			sessionRoot = path.join(path.resolve(deps.expandTilde(effectiveParams.sessionDir)), runId);
 		} else {
 			const baseSessionRoot = deps.config.defaultSessionDir
 				? path.resolve(deps.expandTilde(deps.config.defaultSessionDir))
