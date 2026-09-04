@@ -287,6 +287,54 @@ describe("async retention cleanup", () => {
 		}
 	});
 
+	it("does not reclaim a live replacement owner after a reused pid identity changes", async () => {
+		const roots = makeRoots();
+		try {
+			const reusedPid = process.pid + 100_000;
+			const lockDir = path.join(roots.root, ".async-retention.lock");
+			const ownerPath = path.join(lockDir, "owner.json");
+			const replacementOwner = {
+				version: 1,
+				token: "replacement-token",
+				pid: reusedPid,
+				hostname: "test-host",
+				processStartIdentity: "replacement-process",
+				startedAt: NOW,
+			};
+			fs.mkdirSync(lockDir);
+			fs.writeFileSync(ownerPath, JSON.stringify({
+				version: 1,
+				token: "old-token",
+				pid: reusedPid,
+				hostname: "test-host",
+				processStartIdentity: "old-process",
+				startedAt: NOW,
+			}));
+
+			let currentIdentity = "old-process";
+			const options = {
+				...cleanupOptions(roots),
+				hostname: "test-host",
+				processStartIdentity: "cleaner-process",
+				isProcessAlive: (pid: number) => pid === reusedPid || pid === process.pid,
+				getProcessStartIdentity: (pid: number) => pid === reusedPid ? currentIdentity : "cleaner-process",
+			};
+			const first = await cleanupAsyncRetention(options);
+			assert.equal(first.acquired, false);
+			assert.equal(first.skipped["lock-busy"], 1);
+
+			fs.writeFileSync(ownerPath, JSON.stringify(replacementOwner));
+			currentIdentity = "replacement-process";
+			const second = await cleanupAsyncRetention(options);
+
+			assert.equal(second.acquired, false);
+			assert.equal(second.skipped["lock-busy"], 1);
+			assert.deepEqual(JSON.parse(fs.readFileSync(ownerPath, "utf-8")), replacementOwner);
+		} finally {
+			fs.rmSync(roots.root, { recursive: true, force: true });
+		}
+	});
+
 	it("limits result candidates to the cleanup batch", async () => {
 		const roots = makeRoots();
 		try {

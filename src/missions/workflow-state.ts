@@ -18,6 +18,12 @@ export interface MissionWorkflowState {
 	set(key: string, value: unknown): void;
 }
 
+export interface MissionWorkflowStateOptions {
+	isProcessAlive?: (pid: number) => boolean;
+	getProcessStartKey?: (pid: number) => string | undefined;
+	retryDelaysMs?: readonly number[];
+}
+
 export function missionStatePath(location: MissionStoreLocation, missionId: string): string {
 	return path.join(location.missionDir, validateMissionId(missionId), "state.json");
 }
@@ -66,13 +72,26 @@ function windowsProcessStartKey(pid: number): string | undefined {
 	}
 }
 
+let currentProcessKey: string | undefined | null = null;
+
 function processStartKey(pid: number): string | undefined {
+	// Foreign PIDs can be reused while this process lives, so resolve them afresh.
+	if (pid !== process.pid) return computeProcessStartKey(pid);
+	if (currentProcessKey === null) currentProcessKey = computeProcessStartKey(pid);
+	return currentProcessKey;
+}
+
+function computeProcessStartKey(pid: number): string | undefined {
 	if (process.platform === "linux") return linuxProcessStartKey(pid) ?? psProcessStartKey(pid);
 	if (process.platform === "win32") return windowsProcessStartKey(pid);
 	return undefined;
 }
 
-const CURRENT_PROCESS_KEY = processStartKey(process.pid);
+interface StateLockOptions {
+	isProcessAlive: (pid: number) => boolean;
+	getProcessStartKey: (pid: number) => string | undefined;
+	retryDelaysMs: readonly number[];
+}
 
 function readStateLockOwner(lockPath: string): StateLockOwner | undefined {
 	try {
@@ -91,13 +110,13 @@ function readStateLockOwner(lockPath: string): StateLockOwner | undefined {
 	return undefined;
 }
 
-function stateLockIsStale(lockPath: string, now = Date.now()): boolean {
+function stateLockIsStale(lockPath: string, options: StateLockOptions, now = Date.now()): boolean {
 	const owner = readStateLockOwner(lockPath);
 	if (owner) {
-		if (!isProcessAlive(owner.pid)) return true;
+		if (!options.isProcessAlive(owner.pid)) return true;
 		if (owner.processKey) {
-			const currentProcessKey = owner.pid === process.pid ? CURRENT_PROCESS_KEY : processStartKey(owner.pid);
-			if (currentProcessKey) return owner.processKey !== currentProcessKey;
+			const observedProcessKey = options.getProcessStartKey(owner.pid);
+			if (observedProcessKey) return owner.processKey !== observedProcessKey;
 			if (owner.pid === process.pid) return true;
 		}
 		return false;
@@ -140,11 +159,11 @@ function waitForStateLock(delayMs: number | undefined, lockPath: string): void {
 	waitForFileSystemRetry(delayMs);
 }
 
-function reclaimStaleStateLock(lockPath: string, reclaimPath: string): boolean {
-	if (!stateLockIsStale(lockPath)) return false;
+function reclaimStaleStateLock(lockPath: string, reclaimPath: string, options: StateLockOptions): boolean {
+	if (!stateLockIsStale(lockPath, options)) return false;
 	if (!tryMakeDirectory(reclaimPath, 0o700)) return false;
 	try {
-		if (!stateLockIsStale(lockPath)) return false;
+		if (!stateLockIsStale(lockPath, options)) return false;
 		fs.rmSync(lockPath, { recursive: true, force: true });
 		return true;
 	} finally {
@@ -152,7 +171,7 @@ function reclaimStaleStateLock(lockPath: string, reclaimPath: string): boolean {
 	}
 }
 
-function withStateFileLock<T>(filePath: string, operation: () => T): T {
+function withStateFileLock<T>(filePath: string, operation: () => T, options: StateLockOptions): T {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	const lockPath = `${filePath}.lock`;
 	const reclaimPath = `${lockPath}.reclaim`;
@@ -163,7 +182,7 @@ function withStateFileLock<T>(filePath: string, operation: () => T): T {
 				fs.rmSync(reclaimPath, { recursive: true, force: true });
 				continue;
 			}
-			waitForStateLock(DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS[attempt], lockPath);
+			waitForStateLock(options.retryDelaysMs[attempt], lockPath);
 			continue;
 		}
 		let acquired = false;
@@ -171,17 +190,18 @@ function withStateFileLock<T>(filePath: string, operation: () => T): T {
 			acquired = tryMakeDirectory(lockPath, 0o700);
 		} catch (error) {
 			if (isRetryableFileSystemError(error)) {
-				waitForStateLock(DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS[attempt], lockPath);
+				waitForStateLock(options.retryDelaysMs[attempt], lockPath);
 				continue;
 			}
 			throw new Error(`Failed to acquire mission state lock '${lockPath}': ${error instanceof Error ? error.message : String(error)}`);
 		}
 		if (!acquired) {
-			if (reclaimStaleStateLock(lockPath, reclaimPath)) continue;
-			waitForStateLock(DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS[attempt], lockPath);
+			if (reclaimStaleStateLock(lockPath, reclaimPath, options)) continue;
+			waitForStateLock(options.retryDelaysMs[attempt], lockPath);
 			continue;
 		}
-		owner = { pid: process.pid, token: randomUUID(), createdAt: Date.now(), ...(CURRENT_PROCESS_KEY ? { processKey: CURRENT_PROCESS_KEY } : {}) };
+		const key = options.getProcessStartKey(process.pid);
+		owner = { pid: process.pid, token: randomUUID(), createdAt: Date.now(), ...(key ? { processKey: key } : {}) };
 		try {
 			fs.writeFileSync(path.join(lockPath, "owner.json"), JSON.stringify(owner), { encoding: "utf-8", mode: 0o600 });
 		} catch (error) {
@@ -205,8 +225,14 @@ function validateStateKey(value: unknown): string {
 	return value;
 }
 
-export function createMissionWorkflowState(location: MissionStoreLocation, missionId: string): MissionWorkflowState {
+export function createMissionWorkflowState(location: MissionStoreLocation, missionId: string, options: MissionWorkflowStateOptions = {}): MissionWorkflowState {
 	const filePath = missionStatePath(location, missionId);
+	const getProcessStartKey = options.getProcessStartKey ?? processStartKey;
+	const lockOptions: StateLockOptions = {
+		isProcessAlive: options.isProcessAlive ?? isProcessAlive,
+		getProcessStartKey,
+		retryDelaysMs: options.retryDelaysMs ?? DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS,
+	};
 	let loaded = false;
 	let values: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
 
@@ -254,7 +280,7 @@ export function createMissionWorkflowState(location: MissionStoreLocation, missi
 				writePrivateAtomicJson(filePath, next);
 				values = next;
 				loaded = true;
-			});
+			}, lockOptions);
 		},
 	};
 }

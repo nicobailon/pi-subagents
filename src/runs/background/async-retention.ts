@@ -320,7 +320,16 @@ function readCursor(root: string): RetentionCursor {
 	return value?.version === 1 ? value as unknown as RetentionCursor : { version: 1 };
 }
 
+let currentProcessStartIdentity: string | undefined | null = null;
+
 function processStartIdentity(pid: number): string | undefined {
+	// Foreign PIDs can be reused while this process lives, so resolve them afresh.
+	if (pid !== process.pid) return computeProcessStartIdentity(pid);
+	if (currentProcessStartIdentity === null) currentProcessStartIdentity = computeProcessStartIdentity(pid);
+	return currentProcessStartIdentity;
+}
+
+function computeProcessStartIdentity(pid: number): string | undefined {
 	if (process.platform === "linux") {
 		try {
 			const stat = fs.readFileSync(`/proc/${pid}/stat`).toString("utf8");
