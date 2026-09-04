@@ -258,6 +258,36 @@ describe("default child session factory", () => {
 		assert.deepEqual(flags, [true, true]);
 	});
 
+	it("resolves models from providers queued during child extension loading", async () => {
+		const registeredProviders: string[] = [];
+		const registeredNativeProviders: string[] = [];
+		let pendingRuntime: { pendingProviderRegistrations: unknown[]; pendingNativeProviderRegistrations: unknown[] } | undefined;
+		const pi = stubPi();
+		pi.ModelRuntime = { create: async () => ({ registerProvider: (name: string) => { registeredProviders.push(name); }, registerNativeProvider: (provider: { id: string }) => { registeredNativeProviders.push(provider.id); } }) } as unknown as PiCodingAgentModule["ModelRuntime"];
+		pi.DefaultResourceLoader = class {
+			runtime = {
+				pendingProviderRegistrations: [{ name: "router", config: { models: [{ id: "mimo-v2.5" }] }, extensionPath: "/extensions/router.ts" }],
+				pendingNativeProviderRegistrations: [{ provider: { id: "native-router", models: [{ id: "native-model" }] }, extensionPath: "/extensions/native-router.ts" }],
+			};
+			async reload() { pendingRuntime = this.runtime; }
+			getExtensions() { return { extensions: [], errors: [], runtime: this.runtime }; }
+		} as unknown as PiCodingAgentModule["DefaultResourceLoader"];
+		pi.resolveCliModel = (({ cliModel }) => {
+			assert.equal(cliModel, "router/mimo-v2.5");
+			assert.deepEqual(registeredProviders, ["router"]);
+			assert.deepEqual(registeredNativeProviders, ["native-router"]);
+			return { model: { provider: "router", id: "mimo-v2.5" } };
+		}) as unknown as PiCodingAgentModule["resolveCliModel"];
+		pi.createAgentSession = (async ({ model }) => ({ session: { bindExtensions: async () => {}, dispose() {}, extensionRunner: { hasHandlers: () => false }, subscribe: () => () => {}, prompt: async () => {}, abort: async () => {}, steer: async () => {}, followUp: async () => {}, messages: [], sessionId: "s", model } })) as unknown as PiCodingAgentModule["createAgentSession"];
+
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
+		const child = await factory.create({ ...stubLaunch, model: "router/mimo-v2.5" });
+
+		assert.equal(child.modelId, "router/mimo-v2.5");
+		assert.deepEqual(pendingRuntime?.pendingProviderRegistrations, []);
+		assert.deepEqual(pendingRuntime?.pendingNativeProviderRegistrations, []);
+	});
+
 	it("reports a missing extension cache reset when the child loads extension files", async () => {
 		const errors: string[] = [];
 		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi() });

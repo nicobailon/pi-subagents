@@ -250,6 +250,19 @@ describe("model fallback helpers", () => {
 		assert.equal(warnings.some((warning) => warning.includes("Skipping primary model 'does-not-exist'")), false);
 	});
 
+	it("fails closed when fallback-only configuration resolves no candidates", () => {
+		const originalWarn = console.warn;
+		console.warn = () => {};
+		try {
+			assert.throws(
+				() => buildModelCandidates(undefined, ["does-not-exist"], availableModels),
+				/Unknown subagent model 'does-not-exist'/,
+			);
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+
 	it("keeps an explicit unknown primary strict even when fallbacks exist", () => {
 		assert.throws(
 			() => buildModelCandidates("does-not-exist", ["anthropic/claude-sonnet-4"], availableModels, undefined, { origin: "explicit" }),
@@ -295,6 +308,20 @@ describe("model fallback helpers", () => {
 					&& !message.includes("sk-secret-token-xyz");
 			},
 		);
+	});
+
+	it("keeps cached-exclusion diagnostics when an unrelated fallback is unavailable", () => {
+		recordModelFailure({ modelId: "gpt-5-mini", provider: "openai", reason: "sk-secret-token-xyz" });
+		const originalWarn = console.warn;
+		console.warn = () => {};
+		try {
+			assert.throws(
+				() => buildModelCandidates("openai/gpt-5-mini", ["does-not-exist"], availableModels),
+				/No usable subagent models remain after registry, scope, and cached-exclusion filtering/,
+			);
+		} finally {
+			console.warn = originalWarn;
+		}
 	});
 
 	it("bounds and sanitizes excluded-candidate evidence", () => {

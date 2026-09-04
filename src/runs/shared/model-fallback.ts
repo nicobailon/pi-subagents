@@ -464,6 +464,7 @@ export function buildModelCandidates(
 	const candidates: string[] = [];
 	const rawCandidates = [primaryModel, ...(fallbackModels ?? [])];
 	let skippedPrimary: string | undefined;
+	let skippedFallback: string | undefined;
 	for (let index = 0; index < rawCandidates.length; index++) {
 		const raw = rawCandidates[index];
 		if (!raw) continue;
@@ -473,7 +474,10 @@ export function buildModelCandidates(
 			: resolveSubagentModelCandidate(model, availableModels, preferredProvider);
 		if (!normalized) {
 			if (index === 0) skippedPrimary = model;
-			else console.warn(`[pi-subagents] Skipping fallback model '${model}' because it is unavailable in this environment.`);
+			else {
+				skippedFallback ??= model;
+				console.warn(`[pi-subagents] Skipping fallback model '${model}' because it is unavailable in this environment.`);
+			}
 			continue;
 		}
 		if (seen.has(normalized)) continue;
@@ -486,6 +490,7 @@ export function buildModelCandidates(
 	const resolved = filterFallbackCandidates(candidates, { onExcluded: warnCachedExclusion });
 	if (resolved.length === 0) {
 		if (skippedPrimary) resolveRequiredSubagentModelCandidate(skippedPrimary, availableModels, preferredProvider);
+		if (candidates.length === 0 && skippedFallback) resolveRequiredSubagentModelCandidate(skippedFallback, availableModels, preferredProvider);
 		if (candidates.length > 0) {
 			const shownExclusions = excludedCandidates;
 			const omittedExclusions = excludedCandidateCount - shownExclusions.length;

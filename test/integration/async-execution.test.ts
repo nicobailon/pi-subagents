@@ -861,6 +861,24 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	it("rejects fallback-only configurations with no launch candidates before spawn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
+		mockPi.onCall({ output: "should not spawn" });
+		const launch = executeAsyncSingle(`async-fallback-only-zero-candidates-${Date.now().toString(36)}`, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { fallbackModels: ["does-not-exist"], completionGuard: false }),
+			availableModels: [{ provider: "mock", id: "fallback", fullId: "mock/fallback" }],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+		assert.equal(launch.isError, true);
+		assert.match(launch.content[0]?.text ?? "", /Unknown subagent model 'does-not-exist'/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("rejects an explicit non-strict out-of-scope model before spawn even when a fallback exists", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
 		mockPi.onCall({ output: "should not spawn" });
 		const launch = executeAsyncSingle(`async-explicit-scope-${Date.now().toString(36)}`, {

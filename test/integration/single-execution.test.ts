@@ -5919,6 +5919,21 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	it("fails closed before spawn when fallback-only configuration resolves no launch candidates", async () => {
+		mockPi.onCall({ output: "should not spawn" });
+		const agents = [makeAgent("worker", { fallbackModels: ["does-not-exist"] })];
+
+		await assert.rejects(
+			runSync(tempDir, agents, "worker", "Do work", {
+				runId: "fallback-only-zero-candidates",
+				acceptance: false,
+				availableModels: [{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" }],
+			}),
+			/Unknown subagent model 'does-not-exist'/,
+		);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("does not retry a non-zero exit after tool activity", async () => {
 		mockPi.onCall({ jsonl: [events.toolStart("read", { path: "package.json" })], exitCode: 1 });
 		mockPi.onCall({ output: "must not run" });
