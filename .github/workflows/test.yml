@@ -7,15 +7,10 @@ on:
     branches: [main]
 
 jobs:
-  test-shards:
+  test:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
-        category: [unit, integration]
-        shard: [1, 2, 3, 4]
-        exclude:
-          - category: unit
-            shard: 4
       fail-fast: false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -27,44 +22,12 @@ jobs:
       - name: Install devDependencies
         run: npm ci --ignore-scripts
       - name: Typecheck
-        if: matrix.category == 'unit' && matrix.shard == 2
         run: npm run typecheck
-      - name: CI routing checks
-        if: matrix.category == 'unit' && matrix.shard == 2
-        run: node --test test/support/ci-shards-checks.mjs
-      - name: Test shard (two isolated file processes)
-        timeout-minutes: ${{ matrix.category == 'integration' && 10 || 20 }}
-        run: node test/support/ci-shards.mjs run ${{ matrix.category }} ${{ matrix.shard }} ci-results
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-${{ matrix.os }}-${{ matrix.category }}-${{ matrix.shard }}
-          path: ci-results/
-          if-no-files-found: error
-
-  # Preserve branch-protection names: test (ubuntu-latest), test (windows-latest).
-  # Both gates deliberately wait for and require the entire producer matrix.
-  test:
-    needs: test-shards
-    if: always()
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-      fail-fast: false
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: test-${{ matrix.os }}-*
-          path: ci-results
-          merge-multiple: true
-      - name: Require every successful shard and exact file coverage
-        run: node test/support/ci-shards.mjs aggregate ci-results ${{ runner.os == 'Windows' && 'win32' || 'linux' }} "${{ needs.test-shards.result }}"
+      - name: Unit tests
+        run: npm test
+      - name: Integration tests
+        timeout-minutes: 10
+        run: npm run test:integration
 
   bun-workflow-script:
     runs-on: ubuntu-latest
