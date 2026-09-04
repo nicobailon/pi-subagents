@@ -178,6 +178,16 @@ describe("below-editor subagent FleetView", () => {
 			assert.ok(compactLines[0]!.includes("↓/← to inspect"));
 			assert.ok(visibleWidth(compactLines[0]!) <= 80);
 
+			state.activeAsyncCapacity = { used: 0, limit: 0 };
+			const unlimitedIdleSummary = component.render(80)[0]!;
+			assert.match(unlimitedIdleSummary, /7 active agents/);
+			assert.doesNotMatch(unlimitedIdleSummary, /Async runs 0\/∞/);
+			state.activeAsyncCapacity = { used: 2, limit: 0 };
+			assert.match(component.render(80)[0]!, /Async runs 2\/∞/);
+			state.activeAsyncCapacity = { used: 0, limit: 4 };
+			assert.match(component.render(80)[0]!, /Async runs 0\/4/);
+			state.activeAsyncCapacity = { used: 2, limit: 4 };
+
 			assert.deepEqual(fleet.handleKey("\x1b[B"), { consume: true });
 			const expandedLines = component.render(80);
 			assert.ok(expandedLines.some((line) => line.includes("> main")));

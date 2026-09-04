@@ -666,7 +666,7 @@ export class SubagentFleetStatus {
 			const capacity = this.state.activeAsyncCapacity;
 			const hasNativeRows = workEntries.some((entry) => !entry.external);
 			const showNativeSummary = hasNativeRows || Boolean(capacity?.used);
-			const asyncRuns = capacity && showNativeSummary ? `Async runs ${capacity.used}/${capacity.limit || "∞"}` : "";
+			const asyncRuns = capacity && showNativeSummary && (capacity.used > 0 || capacity.limit > 0) ? `Async runs ${capacity.used}/${capacity.limit || "∞"}` : "";
 			const activeEntries = activeLeafAgentCount(workEntries);
 			const noun = workEntries.some((entry) => entry.external) ? "job" : "agent";
 			const agents = activeEntries > 0 ? `${activeEntries} active ${noun}${activeEntries === 1 ? "" : "s"}` : "";

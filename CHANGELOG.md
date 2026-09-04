@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Hide the idle `Async runs 0/∞` Fleet summary while preserving finite and occupied capacity meters. Thanks to [@youssefsiam38](https://github.com/youssefsiam38) for #1892.
+
 ## [0.65.1] - 2026-09-04
 
 ### Highlights
