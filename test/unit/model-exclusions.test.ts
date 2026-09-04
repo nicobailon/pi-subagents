@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import { afterEach, beforeEach, describe, it } from "node:test";
+import * as os from "node:os";
+import * as path from "node:path";
+import { after, afterEach, beforeEach, describe, it } from "node:test";
 import {
 	clearExclusions,
 	DEFAULT_MODEL_EXCLUSION_TTL_MS,
+	findModelExclusion,
 	filterFallbackCandidates,
 	flushPersist,
 	getExcludedCount,
@@ -17,15 +20,32 @@ import {
 	type ModelExclusion,
 } from "../../src/runs/shared/model-exclusions.ts";
 
+const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+const testAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-model-exclusions-auth-"));
+process.env.PI_CODING_AGENT_DIR = testAgentDir;
+const authPath = path.join(testAgentDir, "auth.json");
+
 // The exclusion store is a process-wide singleton persisted under TEMP_ROOT_DIR
 // (isolated per test run by test/support/isolated-temp-root.mjs). Clear it
 // before/after each test so cases don't leak state into each other.
 beforeEach(() => {
 	setDefaultTTL(DEFAULT_MODEL_EXCLUSION_TTL_MS);
 	fs.rmSync(getExclusionsFilePath(), { force: true });
+	fs.rmSync(authPath, { force: true });
 	clearExclusions();
 });
-afterEach(() => clearExclusions());
+afterEach(() => {
+	clearExclusions();
+	fs.rmSync(authPath, { force: true });
+});
+after(() => {
+	if (previousAgentDir === undefined) {
+		delete process.env.PI_CODING_AGENT_DIR;
+	} else {
+		process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	}
+	fs.rmSync(testAgentDir, { recursive: true, force: true });
+});
 
 describe("model exclusions — record & query", () => {
 	it("excludes a recorded model", () => {
@@ -165,6 +185,50 @@ describe("model exclusions — filtering fallback candidates", () => {
 });
 
 describe("model exclusions — persistence", () => {
+	it("keeps an auth exclusion after reload when auth.json is unchanged", () => {
+		fs.mkdirSync(path.dirname(authPath), { recursive: true });
+		fs.writeFileSync(authPath, JSON.stringify({ openai: { access: "credential-a" } }), "utf-8");
+		const authMtime = new Date(Date.now() - 1_000);
+		fs.utimesSync(authPath, authMtime, authMtime);
+		recordModelFailure({ modelId: "gpt-4", provider: "openai", reason: "invalid oauth token" });
+		reloadFromDisk();
+		assert.equal(isExcluded("gpt-4", "openai"), true);
+	});
+
+	it("invalidates an auth exclusion after auth.json is modified", () => {
+		fs.mkdirSync(path.dirname(authPath), { recursive: true });
+		fs.writeFileSync(authPath, JSON.stringify({ openai: { access: "credential-a" } }), "utf-8");
+		recordModelFailure({ modelId: "gpt-4", provider: "openai", reason: "invalid oauth token" });
+		const { recordedAt } = JSON.parse(fs.readFileSync(getExclusionsFilePath(), "utf-8")).exclusions[0] as ModelExclusion;
+		const newerAuthMtime = new Date(recordedAt + 1_000);
+		fs.utimesSync(authPath, newerAuthMtime, newerAuthMtime);
+		reloadFromDisk();
+		assert.equal(findModelExclusion("openai/gpt-4"), undefined);
+		assert.equal(isExcluded("gpt-4", "openai"), false);
+	});
+
+	it("keeps a non-auth exclusion after auth.json is modified", () => {
+		fs.mkdirSync(path.dirname(authPath), { recursive: true });
+		fs.writeFileSync(authPath, JSON.stringify({ openai: { access: "credential-a" } }), "utf-8");
+		recordModelFailure({ modelId: "gpt-4", provider: "openai", reason: "quota exceeded" });
+		const { recordedAt } = JSON.parse(fs.readFileSync(getExclusionsFilePath(), "utf-8")).exclusions[0] as ModelExclusion;
+		const newerAuthMtime = new Date(recordedAt + 1_000);
+		fs.utimesSync(authPath, newerAuthMtime, newerAuthMtime);
+		reloadFromDisk();
+		assert.equal(isExcluded("gpt-4", "openai"), true);
+	});
+
+	it("does not persist credential contents in the exclusion store", () => {
+		const accessToken = "access-token-secret";
+		const refreshToken = "refresh-token-secret";
+		fs.mkdirSync(path.dirname(authPath), { recursive: true });
+		fs.writeFileSync(authPath, JSON.stringify({ openai: { access: accessToken, refresh: refreshToken } }), "utf-8");
+		recordModelFailure({ modelId: "gpt-4", provider: "openai", reason: "invalid oauth token" });
+		const persisted = fs.readFileSync(getExclusionsFilePath(), "utf-8");
+		assert.equal(persisted.includes(accessToken), false);
+		assert.equal(persisted.includes(refreshToken), false);
+	});
+
 	it("survives a reload from disk", () => {
 		recordModelFailure({ modelId: "gpt-4", provider: "openai", reason: "429" });
 		reloadFromDisk();

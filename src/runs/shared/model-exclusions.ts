@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { splitKnownThinkingSuffix } from "../../shared/model-info.ts";
 import { TEMP_ROOT_DIR } from "../../shared/types.ts";
+import { getAgentDir } from "../../shared/utils.ts";
 
 export const EXCLUSIONS_PATH_ENV = "PI_MODEL_EXCLUSIONS_PATH";
 
@@ -29,6 +30,43 @@ let defaultTTLMs = DEFAULT_MODEL_EXCLUSION_TTL_MS;
 let loadedTTLCeilingMs: number | undefined;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let persistSeq = 0;
+
+const AUTH_FAILURE_PATTERNS = [
+	/auth(?:entication)?/i,
+	/unauthori[sz]ed/i,
+	/forbidden/i,
+	/api key/i,
+	/token expired/i,
+	/invalid key/i,
+];
+
+function isAuthModelExclusion(entry: ModelExclusion): boolean {
+	const reason = entry.reason;
+	return typeof reason === "string" && AUTH_FAILURE_PATTERNS.some((pattern) => pattern.test(reason));
+}
+
+function getAuthStoreMtimeMs(): number | undefined {
+	const authStorePath = path.join(getAgentDir(), "auth.json");
+	try {
+		const stats = fs.statSync(authStorePath);
+		return stats.isFile() && Number.isFinite(stats.mtimeMs) ? stats.mtimeMs : undefined;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+			console.error(`[model-exclusions] Failed to stat Pi auth store at ${authStorePath}; preserving auth-related exclusions:`, error);
+		}
+		return undefined;
+	}
+}
+
+function invalidateAuthExclusions(): void {
+	if (!exclusions.some(isAuthModelExclusion)) return;
+	const authStoreMtimeMs = getAuthStoreMtimeMs();
+	if (authStoreMtimeMs === undefined) return;
+	const retained = exclusions.filter((entry) => !isAuthModelExclusion(entry) || authStoreMtimeMs <= entry.recordedAt);
+	if (retained.length === exclusions.length) return;
+	exclusions = retained;
+	schedulePersist();
+}
 
 /**
  * Override the default TTL applied to newly recorded model exclusions.
@@ -112,6 +150,7 @@ function ensureLoaded(): void {
 			exclusions = deduplicate(exclusions);
 			if (shortened) schedulePersist();
 		}
+		invalidateAuthExclusions();
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
 			console.error(`[model-exclusions] Failed to load exclusions from ${getExclusionsFilePath()}:`, error);
@@ -165,6 +204,7 @@ export function recordModelFailure(options: RecordModelFailureOptions): void {
  */
 export function clearExpiredExclusions(): void {
 	ensureLoaded();
+	invalidateAuthExclusions();
 	prune(exclusions, Date.now());
 	schedulePersist();
 }
@@ -202,6 +242,7 @@ function entryMatches(entry: ModelExclusion, candidateModelId: string, candidate
  */
 export function isExcluded(modelId: string, provider: string): boolean {
 	ensureLoaded();
+	invalidateAuthExclusions();
 	return exclusions.some((entry) => entryMatches(entry, modelId, provider, Date.now()));
 }
 
@@ -213,6 +254,7 @@ export function isExcluded(modelId: string, provider: string): boolean {
  */
 export function findModelExclusion(fullId: string, now = Date.now()): Readonly<ModelExclusion> | undefined {
 	ensureLoaded();
+	invalidateAuthExclusions();
 	const { provider, modelId } = parseModelKey(fullId);
 	return exclusions.find((entry) => entryMatches(entry, modelId, provider, now));
 }
@@ -252,6 +294,7 @@ export function filterFallbackCandidates(candidates: string[], opts?: {
 	onExcluded?: (candidate: string, exclusion: Readonly<ModelExclusion>) => void;
 }): string[] {
 	ensureLoaded();
+	invalidateAuthExclusions();
 	const timestamp = opts?.now ?? Date.now();
 	const seen = new Set<string>();
 	const filtered: string[] = [];
