@@ -4,6 +4,7 @@
 
 ### Fixed
 - Hide the idle `Async runs 0/∞` Fleet summary while preserving finite and occupied capacity meters. Thanks to [@youssefsiam38](https://github.com/youssefsiam38) for #1892.
+- Supply Pi 0.85.0’s missing server dependency for background children, including extensions importing the public SDK, while preserving host-provided packages.
 
 ## [0.65.1] - 2026-09-04
 

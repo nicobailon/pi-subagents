@@ -46,3 +46,23 @@ jobs:
         run: >-
           bun test test/unit/scripted-workflow.test.ts
           --test-name-pattern "portable workflow parity|regex literals|template expressions|portable plain helper|nested plain helper|unawaited child launch|unawaited runs.all|directly returned runs.run|docs-style awaited|awaited native Promise|Promise.resolve|Promise.all|then chain|new Promise wrapper"
+
+  pi085-clean-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.19.0
+      - name: Real Pi 0.85.0 background child smoke
+        run: node --experimental-strip-types test/smoke/pi085-clean-install.mjs "${{ runner.temp }}/pi085-smoke"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pi085-smoke-logs
+          path: |
+            ${{ runner.temp }}/pi085-smoke/*.log
+            ${{ runner.temp }}/pi085-smoke/aliases.json
+            ${{ runner.temp }}/pi085-smoke/host/package-lock.json
+            ${{ runner.temp }}/pi085-smoke/extension/package-lock.json

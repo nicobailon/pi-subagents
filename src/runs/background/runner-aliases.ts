@@ -7,11 +7,12 @@
  * this extension and are not installed next to it. pi's own extension loader
  * aliases those specifiers to the copies shipped inside the installed pi
  * package; the parent computes the same map and hands it to the runner
- * through `JITI_ALIAS`, so the runner's child sessions and hooks share one
- * copy of every host package.
+ * through `JITI_ALIAS`, so child sessions and hooks retain host API identity.
+ * Only Pi 0.85.0's missing server exports may come from this extension.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const JITI_ALIAS_ENV = "JITI_ALIAS";
 
@@ -37,6 +38,7 @@ export const HOST_PEER_ALIASES: ReadonlyArray<{ specifier: string; pkg: string; 
 
 interface PackageManifest {
 	name?: unknown;
+	version?: unknown;
 	main?: unknown;
 	exports?: unknown;
 }
@@ -118,14 +120,33 @@ export function findHostPeerPackageDir(piPackageRoot: string, pkg: string): stri
 }
 
 /** The alias map the runner needs, or the specifiers that could not be resolved. */
-export function resolveHostPeerAliases(piPackageRoot: string): { aliases: Record<string, string>; missing: string[] } {
+export function resolveHostPeerAliases(
+	piPackageRoot: string,
+	extensionRoot = fileURLToPath(new URL("../../../", import.meta.url)),
+): { aliases: Record<string, string>; missing: string[]; supplemental: string[] } {
 	const aliases: Record<string, string> = {};
 	const missing: string[] = [];
+	const supplemental: string[] = [];
 	for (const { specifier, pkg, subpath } of HOST_PEER_ALIASES) {
 		const packageDir = findHostPeerPackageDir(piPackageRoot, pkg);
-		const target = packageDir ? resolvePackageSubpath(packageDir, subpath) : undefined;
+		let target = packageDir ? resolvePackageSubpath(packageDir, subpath) : undefined;
+		// Pi 0.85.0 omitted this runtime dependency. Never replace working host
+		// exports or extend this exact version contract to other peers/hosts.
+		if ((!target || !fs.existsSync(target))
+			&& (specifier === "@earendil-works/pi-server" || specifier === "@earendil-works/pi-server/unix")
+			&& readManifest(piPackageRoot)?.version === "0.85.0"
+			&& (!packageDir || readManifest(packageDir)?.version === "0.85.0")) {
+			const localDir = findHostPeerPackageDir(extensionRoot, pkg);
+			if (localDir && readManifest(localDir)?.version === "0.85.0") {
+				const localTarget = resolvePackageSubpath(localDir, subpath);
+				if (localTarget && fs.existsSync(localTarget)) {
+					target = localTarget;
+					supplemental.push(specifier);
+				}
+			}
+		}
 		if (target && fs.existsSync(target)) aliases[specifier] = target;
 		else missing.push(specifier);
 	}
-	return { aliases, missing };
+	return { aliases, missing, supplemental };
 }

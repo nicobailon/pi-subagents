@@ -586,7 +586,10 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			stdoutFd = fs.openSync(logPaths.stdoutPath, "a");
 			stderrFd = fs.openSync(logPaths.stderrPath, "a");
 		}
-		const proc = spawn(nodeCommand, [jitiCliPath, runner, cfgPath], {
+		const preload = hostPeerAliases.supplemental.length > 0
+			? ["--import", new URL("../../../runner-server-preload.mjs", import.meta.url).href]
+			: [];
+		const proc = spawn(nodeCommand, [...preload, jitiCliPath, runner, cfgPath], {
 			cwd,
 			...backgroundProcessOptions(),
 			stdio: ["ignore", stdoutFd ?? "ignore", stderrFd ?? "ignore"],

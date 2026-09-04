@@ -90,6 +90,7 @@
     }
   },
   "dependencies": {
+    "@earendil-works/pi-server": "0.85.0",
     "acorn": "8.18.0",
     "jiti": "2.7.0",
     "typebox": "1.1.38",

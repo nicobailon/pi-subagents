@@ -189,3 +189,63 @@ test("validateStructuredOutputValue validates values against a JSON Schema", asy
 	assert.equal(invalid.status, "invalid");
 	assert.ok(invalid.status === "invalid" && invalid.message.length > 0);
 });
+
+test("server supplementation is host-first, missing-only, and restricted to matching 0.85.0", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-server-alias-"));
+	const host = path.join(root, "host");
+	const extension = path.join(root, "extension");
+	const server = "@earendil-works/pi-server";
+	function writePackage(dir: string, name: string, version: string, exports: Record<string, string> = {}) {
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, version, exports }));
+		for (const target of Object.values(exports)) fs.writeFileSync(path.join(dir, target), "export {};\n");
+	}
+	const localServer = path.join(extension, "node_modules", server);
+	const hostServer = path.join(host, "node_modules", server);
+	const exports = { ".": "./public.mjs", "./unix": "./unix.mjs" };
+	try {
+		writePackage(host, "@earendil-works/pi-coding-agent", "0.85.0", { ".": "./sdk.mjs" });
+		writePackage(localServer, server, "0.85.0", exports);
+		writePackage(path.join(extension, "node_modules", "@earendil-works/pi-tui"), "@earendil-works/pi-tui", "0.85.0", exports);
+		let result = resolveHostPeerAliases(host, extension);
+		assert.deepEqual(result.supplemental, [server, `${server}/unix`]);
+		assert.equal(result.aliases[server], path.join(localServer, "public.mjs"));
+		assert.ok(result.missing.includes("@earendil-works/pi-tui"), "other missing peers stay closed");
+
+		writePackage(hostServer, server, "0.85.0", { ".": "./host.mjs" });
+		result = resolveHostPeerAliases(host, extension);
+		assert.equal(result.aliases[server], path.join(hostServer, "host.mjs"));
+		assert.deepEqual(result.supplemental, [`${server}/unix`]);
+		writePackage(hostServer, server, "0.86.0", { ".": "./host.mjs" });
+		assert.ok(resolveHostPeerAliases(host, extension).missing.includes(`${server}/unix`));
+		fs.rmSync(hostServer, { recursive: true });
+
+		for (const version of ["0.84.0", "0.85.1", "0.85.0-test"]) {
+			writePackage(host, "@earendil-works/pi-coding-agent", version, { ".": "./sdk.mjs" });
+			assert.deepEqual(resolveHostPeerAliases(host, extension).supplemental, []);
+		}
+		writePackage(host, "@earendil-works/pi-coding-agent", "0.85.0", { ".": "./sdk.mjs" });
+		writePackage(localServer, server, "0.85.1", exports);
+		assert.deepEqual(resolveHostPeerAliases(host, extension).supplemental, []);
+		writePackage(localServer, server, "0.85.0", exports);
+		fs.unlinkSync(path.join(localServer, "unix.mjs"));
+		assert.ok(resolveHostPeerAliases(host, extension).missing.includes(`${server}/unix`));
+
+		// Complete hosts retain wildcard support and never need the preload.
+		writePackage(host, "@earendil-works/pi-coding-agent", "0.86.0", { ".": "./sdk.mjs" });
+		writePackage(hostServer, server, "0.86.0", exports);
+		result = resolveHostPeerAliases(host, extension);
+		assert.deepEqual(result.supplemental, []);
+		assert.equal(result.aliases[`${server}/unix`], path.join(hostServer, "unix.mjs"));
+		for (const pkg of new Set(HOST_PEER_ALIASES.map(entry => entry.pkg))) {
+			const entries = HOST_PEER_ALIASES.filter(entry => entry.pkg === pkg);
+			const targets = Object.fromEntries(entries.map((entry, index) => [entry.subpath, `./export-${index}.mjs`]));
+			writePackage(pkg === "@earendil-works/pi-coding-agent" ? host : path.join(host, "node_modules", pkg), pkg, "0.86.0", targets);
+		}
+		result = resolveHostPeerAliases(host, extension);
+		assert.deepEqual(result.missing, []);
+		assert.deepEqual(result.supplemental, []);
+	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
