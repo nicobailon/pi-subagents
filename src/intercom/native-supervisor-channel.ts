@@ -128,8 +128,6 @@ function reasonHeading(reason: SupervisorReason): string {
 	return "Subagent needs a supervisor decision.";
 }
 
-const STRUCTURED_REPLY_INSTRUCTION = "Structured response requested. Reply with JSON, optionally fenced in ```json, matching the requested interview shape.";
-
 function parseStructuredReply(message: string): { value?: unknown; error?: string } {
 	const trimmed = message.trim();
 	const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1]?.trim();
@@ -493,32 +491,7 @@ function formatPendingLine(request: PendingSupervisorRequest): string {
 	return `- ${request.id}: ${request.agent} [${request.runId}#${request.childIndex}] ${request.reason}.${replyHint}`;
 }
 
-function legacyRequestBody(request: PendingSupervisorRequest): string | undefined {
-	const prefix = [
-		reasonHeading(request.reason),
-		`Run: ${request.runId}`,
-		`Agent: ${request.agent}`,
-		`Child index: ${request.childIndex}`,
-		...(request.childTarget ? [`Child intercom target: ${request.childTarget}`] : []),
-	].join("\n");
-	if (request.message !== prefix && !request.message.startsWith(`${prefix}\n`)) return undefined;
-	let body = request.message.slice(prefix.length).replace(/^\n+/, "");
-	if (request.reason === "interview_request") {
-		const suffix = [STRUCTURED_REPLY_INSTRUCTION, ...(request.interview !== undefined ? [JSON.stringify(request.interview, null, "\t")] : [])].join("\n");
-		if (body === suffix) return "";
-		const marker = `\n\n${suffix}`;
-		if (body.endsWith(marker)) body = body.slice(0, -marker.length);
-	}
-	return body.trim();
-}
-
 function requestVisibleText(request: PendingSupervisorRequest): string {
-	const legacyBody = legacyRequestBody(request);
-	if (legacyBody !== undefined) {
-		const lines = [request.message];
-		if (request.expectsReply) lines.push("", `Reply with: ${supervisorReplyHint(request.id)}`);
-		return lines.join("\n").trimEnd();
-	}
 	const lines = [
 		reasonHeading(request.reason),
 		`Run: ${request.runId}`,
@@ -531,7 +504,7 @@ function requestVisibleText(request: PendingSupervisorRequest): string {
 	if (request.reason === "interview_request") {
 		lines.push(
 			"",
-			STRUCTURED_REPLY_INSTRUCTION,
+			"Structured response requested. Reply with JSON, optionally fenced in ```json, matching the requested interview shape.",
 		);
 		if (request.interview !== undefined) lines.push(JSON.stringify(request.interview, null, "\t"));
 	}
@@ -771,7 +744,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 					childIndex: request.childIndex,
 					...(request.childTarget ? { childTarget: request.childTarget } : {}),
 					...(request.interview !== undefined ? { interview: request.interview } : {}),
-					requestBody: legacyRequestBody(request) ?? request.message,
+					requestBody: request.message,
 					...(request.expectsReply ? { replyHint: supervisorReplyHint(request.id) } : {}),
 				},
 			}, { triggerTurn: true });

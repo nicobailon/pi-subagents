@@ -772,41 +772,6 @@ describe("native supervisor channel", () => {
 		assert.equal(sent[0]?.details?.requestBody, "");
 	});
 
-	it("normalizes pending legacy request bodies without duplicating model metadata", () => {
-		const currentSessionId = `session-${randomUUID()}`;
-		const runId = `run-${randomUUID()}`;
-		const legacyMessage = [
-			"Subagent needs a supervisor decision.",
-			`Run: ${runId}`,
-			"Agent: worker",
-			"Child index: 0",
-			"",
-			"Choose the safer option.",
-		].join("\n");
-		writeRequest({ sessionId: currentSessionId, runId, reason: "need_decision", message: legacyMessage });
-		const sent: Array<{ content?: string; details?: Record<string, unknown> }> = [];
-		const ctx = {
-			cwd: process.cwd(),
-			hasUI: false,
-			sessionManager: { getSessionId: () => currentSessionId, getSessionFile: () => null, getEntries: () => [] },
-		};
-		const pi = {
-			getAllTools: () => [],
-			registerTool: () => {},
-			sendMessage: (message: { content?: string; details?: Record<string, unknown> }) => { sent.push(message); },
-			getSessionName: () => "shared-name",
-		};
-		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
-
-		channel.start();
-		channel.dispose();
-
-		assert.equal(sent.length, 1);
-		assert.equal(sent[0]?.content?.match(new RegExp(`Run: ${runId}`, "g"))?.length, 1);
-		assert.equal(sent[0]?.content?.match(/Agent: worker/g)?.length, 1);
-		assert.equal(sent[0]?.details?.requestBody, "Choose the safer option.");
-	});
-
 	it("suppresses resolved, expired, and inactive requests before displaying them", () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const resolvedRunId = `run-${randomUUID()}`;
