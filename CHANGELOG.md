@@ -5,6 +5,7 @@
 ### Fixed
 - Bound foreground workflow run identities to filesystem-safe segments across progress, child, and receipt records. Thanks [@jstillwa](https://github.com/jstillwa) for #1875.
 - Lazy-load prompt audit optional Pi peers. Thanks [@VladimirGVP](https://github.com/VladimirGVP) for #1860.
+- Use registered provider streams for intent arbitration only when their API matches the model. Thanks [@pwguler](https://github.com/pwguler) for #1874.
 - Key subagent children launched under an explicit `sessionDir` by their run id so concurrent children resolve distinct session files instead of sharing `run-0`. Thanks to [@dat9uy](https://github.com/dat9uy) for #1859 and #1858.
 - Configure proxy-aware HTTP dispatch in detached background runners. Thanks to [@jasonrale](https://github.com/jasonrale) for #1867/#1866.
 - Ignore stale model-not-found exclusions once the active model registry contains that model again. Thanks [@x1prog](https://github.com/x1prog) for #1862.

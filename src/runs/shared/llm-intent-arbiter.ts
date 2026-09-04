@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
-import { Agent, type AgentTool, type StreamFn } from "@earendil-works/pi-agent-core";
-import { convertToLlm, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { streamSimple } from "@earendil-works/pi-ai/compat";
+import type { Agent, AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ProviderHeaders } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { agentStreamOptions } from "../../shared/agent-stream-options.ts";
@@ -52,7 +51,11 @@ export function mapArbiterDecision(
 
 interface ArbiterRuntime {
 	model: NonNullable<RegistryModel>;
-	baseStreamFn: StreamFn;
+	/** Explicit override; it always wins over a registered provider stream. */
+	explicitStreamFn?: StreamFn;
+	/** Registered provider stream, usable only when its api matches the model. */
+	registeredStreamFn?: StreamFn;
+	registeredApi?: string;
 	timeoutMs: number;
 }
 
@@ -71,6 +74,10 @@ export interface TaskMutationArbiterOptions {
 }
 
 const DEFAULT_ARBITER_TIMEOUT_MS = 10_000;
+
+function registeredApiMatches(registeredApi: string | undefined, modelApi: string | undefined): boolean {
+	return registeredApi !== undefined && registeredApi === modelApi;
+}
 
 type RegistryModel = ReturnType<NonNullable<ExtensionContext["modelRegistry"]["find"]>>;
 
@@ -103,15 +110,12 @@ function resolveArbiterRuntime(
 	const registry = ctx.modelRegistry as {
 		getRegisteredProviderConfig?: (provider: string) => { api?: string; streamSimple?: StreamFn } | undefined;
 	};
-	const modelApi = (model as { api?: string }).api;
 	const registered = registry.getRegisteredProviderConfig?.(model.provider);
-	const baseStreamFn = options?.streamFn
-		?? (registered?.streamSimple && registered.api === modelApi
-			? registered.streamSimple
-			: streamSimple);
 	return {
 		model,
-		baseStreamFn,
+		explicitStreamFn: options?.streamFn,
+		registeredStreamFn: registered?.streamSimple,
+		registeredApi: registered?.api,
 		timeoutMs: options?.timeoutMs ?? DEFAULT_ARBITER_TIMEOUT_MS,
 	};
 }
@@ -164,6 +168,18 @@ async function runArbitration(
 	auth: ArbiterAuth,
 	task: string,
 ): Promise<TaskMutationVerdict> {
+	// The detached runner cannot resolve the optional Pi peers statically
+	// (same shape as the prompt-audit fix), and the arbiter only runs in the
+	// parent when a completion-guard rescue needs it, so load them here.
+	const [{ Agent }, { convertToLlm }, { streamSimple }] = await Promise.all([
+		import("@earendil-works/pi-agent-core"),
+		import("@earendil-works/pi-coding-agent"),
+		import("@earendil-works/pi-ai/compat"),
+	]);
+	const modelApi = (runtime.model as { api?: string }).api;
+	const streamFn: StreamFn = runtime.explicitStreamFn
+		?? (registeredApiMatches(runtime.registeredApi, modelApi) ? runtime.registeredStreamFn : undefined)
+		?? streamSimple;
 	let decision: DecisionParams | undefined;
 	const tool: AgentTool<typeof DecisionParams, { recorded: boolean }> = {
 		name: "task_mutation_decision",
@@ -190,7 +206,7 @@ async function runArbitration(
 			tools: [tool],
 		},
 		convertToLlm,
-		...agentStreamOptions(authWrappedStreamFn(runtime.baseStreamFn, auth)),
+		...agentStreamOptions(authWrappedStreamFn(streamFn, auth)),
 		getApiKey: (providerName) =>
 			providerName === runtime.model.provider ? auth.apiKey : undefined,
 		beforeToolCall: async ({ toolCall }) =>

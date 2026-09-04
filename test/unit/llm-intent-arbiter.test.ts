@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
+import {
+	createAssistantMessageEventStream,
+	fauxAssistantMessage,
+	fauxToolCall,
+	type AssistantMessage,
+} from "@earendil-works/pi-ai";
+import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import {
 	arbitrateCompletionGuardRescue,
 	createTaskMutationArbiter,
@@ -12,15 +20,43 @@ import {
 const GUARD_ERROR =
 	"Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes.";
 
-function fakeCtx(overrides: { models?: Array<{ provider?: string; id?: string; api?: string }> } = {}) {
+function fakeCtx(overrides: {
+	models?: Array<{ provider?: string; id?: string; api?: string }>;
+	providerConfig?: { api?: string; streamSimple?: StreamFn };
+} = {}) {
 	const models = overrides.models ?? [{ provider: "test", id: "model-1", api: "test-api" }];
 	return {
 		model: models[0],
 		modelRegistry: {
 			getAvailable: () => models,
-			getRegisteredProviderConfig: () => undefined,
+			getRegisteredProviderConfig: () => overrides.providerConfig,
 		},
 	} as never;
+}
+
+function responseStream(message: AssistantMessage) {
+	const stream = createAssistantMessageEventStream();
+	queueMicrotask(() => stream.push({ type: "done", reason: message.stopReason, message }));
+	return stream;
+}
+
+function decisionResponses(source: string): AssistantMessage[] {
+	return [
+		fauxAssistantMessage(fauxToolCall("task_mutation_decision", {
+			classification: "read_only",
+			confidence: "high",
+			reason: `${source} stream selected`,
+		}), { stopReason: "toolUse" }),
+		fauxAssistantMessage("done", { stopReason: "stop" }),
+	];
+}
+
+function decisionStream(source: string, calls: string[]): StreamFn {
+	const responses = decisionResponses(source);
+	return () => {
+		calls.push(source);
+		return responseStream(responses.shift() ?? fauxAssistantMessage("done", { stopReason: "stop" }));
+	};
 }
 
 function stubArbiter(verdict: "read-only" | "implementation" | "unavailable" | "throw"): TaskMutationArbiter {
@@ -163,6 +199,54 @@ describe("maybeRescueCompletionGuardFailure", () => {
 		const rescued = await maybeRescueCompletionGuardFailure(result, "task", stubArbiter("read-only"));
 		assert.equal(rescued, false);
 		assert.equal(result.exitCode, 1);
+	});
+});
+
+describe("arbiter stream selection", () => {
+	it("uses a registered provider stream when its API matches the model", async () => {
+		const calls: string[] = [];
+		const arbiter = createTaskMutationArbiter(fakeCtx({
+			models: [{ provider: "registered", id: "model-1", api: "registered-api" }],
+			providerConfig: { api: "registered-api", streamSimple: decisionStream("registered", calls) },
+		}))!;
+
+		assert.equal(await arbiter("task"), "read-only");
+		assert.deepEqual(calls, ["registered", "registered"]);
+	});
+
+	it("lets an explicit stream override a mismatched registered provider", async () => {
+		const calls: string[] = [];
+		const registeredCalls: string[] = [];
+		const arbiter = createTaskMutationArbiter(fakeCtx({
+			models: [{ provider: "registered", id: "model-1", api: "model-api" }],
+			providerConfig: { api: "registered-api", streamSimple: decisionStream("registered", registeredCalls) },
+		}), { streamFn: decisionStream("explicit", calls) })!;
+
+		assert.equal(await arbiter("task"), "read-only");
+		assert.deepEqual(calls, ["explicit", "explicit"]);
+		assert.deepEqual(registeredCalls, []);
+	});
+
+	it("falls back to compat streamSimple for a mismatched registered provider", async () => {
+		const compat = registerFauxProvider({
+			api: "llm-intent-arbiter-compat-test",
+			provider: "compat-provider",
+			models: [{ id: "model-1", reasoning: false }],
+		});
+		try {
+			compat.setResponses(decisionResponses("compat"));
+			const registeredCalls: string[] = [];
+			const arbiter = createTaskMutationArbiter(fakeCtx({
+				models: [{ provider: "registered", id: "model-1", api: compat.api }],
+				providerConfig: { api: "registered-api", streamSimple: decisionStream("registered", registeredCalls) },
+			}))!;
+
+			assert.equal(await arbiter("task"), "read-only");
+			assert.deepEqual(registeredCalls, []);
+			assert.equal(compat.state.callCount, 2);
+		} finally {
+			compat.unregister();
+		}
 	});
 });
 
