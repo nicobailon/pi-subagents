@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Lazy-load prompt audit optional Pi peers. Thanks [@VladimirGVP](https://github.com/VladimirGVP) for #1860.
+
 ## [0.65.0] - 2026-09-04
 
 ### Highlights
