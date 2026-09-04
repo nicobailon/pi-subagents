@@ -5,6 +5,7 @@
 ### Fixed
 - Lazy-load prompt audit optional Pi peers. Thanks [@VladimirGVP](https://github.com/VladimirGVP) for #1860.
 - Key subagent children launched under an explicit `sessionDir` by their run id so concurrent children resolve distinct session files instead of sharing `run-0`. Thanks to [@dat9uy](https://github.com/dat9uy) for #1859 and #1858.
+- Alias `@earendil-works/pi-agent-core/node` to Pi's exact `./node` export for detached runners. Thanks [@plopezlpz](https://github.com/plopezlpz) for #1871.
 
 ## [0.65.0] - 2026-09-04
 
