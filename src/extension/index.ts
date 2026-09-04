@@ -469,7 +469,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		fleetJobs: new Map(),
 		foregroundRuns: new Map(),
 		foregroundControls: new Map(),
-		retainedForegroundNestedRoutes: new Map(),
 		lastForegroundControlId: null,
 		cleanupTimers: new Map(),
 		lastUiContext: null,
@@ -495,7 +494,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const mainWatchdog = registerMainWatchdog(pi);
 	const resultDeliveryOwnership = createResultDeliveryOwnership(state);
 	const completionNotifier = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch, ownership: resultDeliveryOwnership });
-	const retainedNestedRouteTracker = createRetainedNestedRouteTracker(state);
+	let retainedNestedRouteTracker: ReturnType<typeof createRetainedNestedRouteTracker> | undefined;
 	const fleetStatus = fleetViewEnabled
 		? new SubagentFleetStatus(state, async (itemKey) => {
 			const ctx = withLastUiContext((current) => current);
@@ -597,7 +596,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	}, ASYNC_RETENTION_DELAY_MS);
 	asyncRetentionTimer.unref?.();
 
-	const executor = createSubagentExecutor({
+	const executorDeps: Parameters<typeof createSubagentExecutor>[0] = {
 		pi,
 		state,
 		config,
@@ -612,8 +611,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		discoverAgents: discoverAgentsForRuntime,
 		activateSupervisorTransport: () => supervisorChannel.activateTransport(),
 		refreshResultDelivery: () => refreshResultDelivery(),
-		trackRetainedNestedRoute: retainedNestedRouteTracker.track,
-	});
+		trackRetainedNestedRoute: undefined,
+	};
+	const executor = createSubagentExecutor(executorDeps);
 	executorScheduled = executor.executeScheduled;
 
 	pi.registerMessageRenderer<SupervisorRequestMessageDetails>(SUPERVISOR_REQUEST_MESSAGE_TYPE, renderSupervisorRequest);
@@ -948,7 +948,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		cleanupSessionArtifacts(ctx);
 		logSlowPhase("session-artifact-cleanup", phaseStartedAt);
 		state.foregroundControls.clear();
-		retainedNestedRouteTracker.clear();
+		retainedNestedRouteTracker?.clear();
+		retainedNestedRouteTracker = undefined;
+		executorDeps.trackRetainedNestedRoute = undefined;
 		state.lastForegroundControlId = null;
 		phaseStartedAt = Date.now();
 		resetJobs(ctx);
@@ -1010,7 +1012,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			for (const timer of state.cleanupTimers.values()) clearTimeout(timer);
 			state.cleanupTimers.clear();
 			state.asyncJobs.clear();
-			retainedNestedRouteTracker.clear();
+			retainedNestedRouteTracker?.clear();
+			retainedNestedRouteTracker = undefined;
+			executorDeps.trackRetainedNestedRoute = undefined;
 			for (const unsubscribe of eventUnsubscribes) {
 				try {
 					unsubscribe();
@@ -1107,13 +1111,18 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		releaseHostSessionLiveness();
 		const sessionId = ctx.sessionManager.getSessionId();
 		const sessionFile = ctx.sessionManager.getSessionFile();
-		releaseHostSessionLiveness = sessionId
+		const liveness = sessionId
 			? registerPiWebSessionLiveness({
 				sessionId,
 				...(sessionFile ? { sessionFile } : {}),
 				isActive: () => hasLiveSubagentWork(state) || completionNotifier.hasPendingDelivery(),
 			})
-			: () => {};
+			: { registered: false, release: () => {} };
+		releaseHostSessionLiveness = liveness.release;
+		if (liveness.registered) {
+			retainedNestedRouteTracker = createRetainedNestedRouteTracker(state);
+			executorDeps.trackRetainedNestedRoute = retainedNestedRouteTracker.track;
+		}
 		herdrStatusBridge.sessionStarted({
 			hasUI: ctx.hasUI === true,
 			runs: activeHerdrRuns(),

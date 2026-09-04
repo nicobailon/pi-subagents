@@ -22,6 +22,12 @@ interface SessionLivenessRegistration {
 	isActive(): boolean;
 }
 
+export interface PiWebSessionLivenessHandle {
+	/** True only when the compatible host accepted the provider registration. */
+	registered: boolean;
+	release: () => void;
+}
+
 type LiveWorkState = Pick<SubagentState, "asyncJobs" | "foregroundControls" | "retainedForegroundNestedRoutes">;
 
 function resolveRegistry(): PiWebSessionLivenessRegistry | null {
@@ -55,9 +61,9 @@ export function hasLiveSubagentWork(state: LiveWorkState): boolean {
 	return false;
 }
 
-export function registerPiWebSessionLiveness(registration: SessionLivenessRegistration): () => void {
+export function registerPiWebSessionLiveness(registration: SessionLivenessRegistration): PiWebSessionLivenessHandle {
 	const registry = resolveRegistry();
-	if (!registry) return () => {};
+	if (!registry) return { registered: false, release: () => {} };
 	try {
 		const release = registry.register({
 			name: "pi-subagents",
@@ -65,10 +71,10 @@ export function registerPiWebSessionLiveness(registration: SessionLivenessRegist
 			...(registration.sessionFile ? { sessionFile: registration.sessionFile } : {}),
 			isActive: registration.isActive,
 		});
-		if (typeof release === "function") return release;
+		if (typeof release === "function") return { registered: true, release };
 		console.error("Failed to register pi-web session liveness: host registry returned no release function.");
 	} catch (error) {
 		console.error("Failed to register pi-web session liveness:", error);
 	}
-	return () => {};
+	return { registered: false, release: () => {} };
 }

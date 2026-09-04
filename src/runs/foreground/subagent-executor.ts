@@ -531,9 +531,9 @@ function loadWorkflowScriptPath(params: SubagentParamsLike, runtimeCwd: string):
 export function removeForegroundControlIfIdle(state: SubagentState, runId: string, trackRetainedNestedRoute?: (rootRunId: string) => void): boolean {
 	const control = state.foregroundControls.get(runId);
 	if (control && (!foregroundSchedulingSettled(control) || (control.activeChildren?.size ?? 0) > 0)) return false;
-	if (control?.nestedRoute) {
+	if (control?.nestedRoute && trackRetainedNestedRoute) {
 		try {
-			if (retainLiveForegroundNestedRoute(state, control.nestedRoute)) trackRetainedNestedRoute?.(runId);
+			if (retainLiveForegroundNestedRoute(state, control.nestedRoute)) trackRetainedNestedRoute(runId);
 		} catch (error) {
 			console.error(`Failed to retain live nested descendants for foreground run '${runId}':`, error);
 		}

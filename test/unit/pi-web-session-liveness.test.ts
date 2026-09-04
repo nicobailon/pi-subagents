@@ -9,6 +9,7 @@ import {
 	retainLiveForegroundNestedRoute,
 } from "../../src/integrations/pi-web-session-liveness.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
+import { createRetainedNestedRouteTracker } from "../../src/runs/background/retained-nested-route-tracker.ts";
 import { removeForegroundControlIfIdle } from "../../src/runs/foreground/subagent-executor.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
@@ -108,6 +109,60 @@ describe("pi-web session liveness integration", () => {
 		assert.equal(hasLiveSubagentWork(state), true, "the synchronous probe reads only its cached projection");
 	});
 
+	it("does not retain foreground nested routes without a host registration", () => {
+		const state = makeState() as SubagentState;
+		const route = nestedRoute("unregistered-foreground-root");
+		writeNestedState(route, "running", 100);
+		state.foregroundControls.set(route.rootRunId, {
+			runId: route.rootRunId,
+			mode: "single",
+			startedAt: 1,
+			updatedAt: 1,
+			schedulingOwners: 0,
+			activeChildren: new Map(),
+			nestedRoute: route,
+		});
+
+		const liveness = registerPiWebSessionLiveness({ sessionId: "session-a", isActive: () => true });
+		assert.equal(liveness.registered, false);
+		assert.equal(removeForegroundControlIfIdle(state, route.rootRunId), true);
+		assert.equal(state.retainedForegroundNestedRoutes, undefined);
+	});
+
+	it("retains and tracks foreground nested routes after host registration", () => {
+		const state = makeState() as SubagentState;
+		const route = nestedRoute("registered-foreground-root");
+		writeNestedState(route, "running", 100);
+		state.foregroundControls.set(route.rootRunId, {
+			runId: route.rootRunId,
+			mode: "single",
+			startedAt: 1,
+			updatedAt: 1,
+			schedulingOwners: 0,
+			activeChildren: new Map(),
+			nestedRoute: route,
+		});
+		(globalThis as Record<PropertyKey, unknown>)[Symbol.for(PI_WEB_SESSION_LIVENESS_REGISTRY_KEY)] = {
+			version: 1,
+			register() {
+				return () => {};
+			},
+		};
+		const liveness = registerPiWebSessionLiveness({ sessionId: "session-a", isActive: () => true });
+		const tracker = liveness.registered
+			? createRetainedNestedRouteTracker(state, { platform: "win32", pollIntervalMs: 60_000 })
+			: undefined;
+		try {
+			assert.equal(liveness.registered, true);
+			assert.ok(tracker);
+			assert.equal(removeForegroundControlIfIdle(state, route.rootRunId, tracker.track), true);
+			assert.equal(state.retainedForegroundNestedRoutes?.has(route.rootRunId), true);
+		} finally {
+			tracker?.clear();
+			liveness.release();
+		}
+	});
+
 	it("transfers a live nested route before removing its settled foreground control", () => {
 		const state = makeState() as SubagentState;
 		const route = nestedRoute("settled-foreground-root");
@@ -143,8 +198,8 @@ describe("pi-web session liveness integration", () => {
 			sessionId: "session-a",
 			isActive: () => true,
 		});
-		releaseWithoutHost();
-
+		assert.equal(releaseWithoutHost.registered, false);
+		releaseWithoutHost.release();
 		let registered = false;
 		(globalThis as Record<PropertyKey, unknown>)[Symbol.for(PI_WEB_SESSION_LIVENESS_REGISTRY_KEY)] = {
 			version: 2,
@@ -153,7 +208,8 @@ describe("pi-web session liveness integration", () => {
 				return () => {};
 			},
 		};
-		registerPiWebSessionLiveness({ sessionId: "session-a", isActive: () => true });
+		const incompatible = registerPiWebSessionLiveness({ sessionId: "session-a", isActive: () => true });
+		assert.equal(incompatible.registered, false);
 		assert.equal(registered, false);
 	});
 
@@ -174,6 +230,7 @@ describe("pi-web session liveness integration", () => {
 			sessionFile: "/tmp/session-a.jsonl",
 			isActive: () => active,
 		});
+		assert.equal(release.registered, true);
 		assert.equal(provider?.name, "pi-subagents");
 		assert.equal(provider?.sessionId, "session-a");
 		assert.equal(provider?.sessionFile, "/tmp/session-a.jsonl");
@@ -181,7 +238,7 @@ describe("pi-web session liveness integration", () => {
 		active = false;
 		assert.equal(provider?.isActive(), false);
 
-		release();
+		release.release();
 		assert.equal(released, 1);
 	});
 });
