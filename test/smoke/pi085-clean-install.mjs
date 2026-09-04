@@ -16,7 +16,7 @@ for (const dir of [host, extension, cwd, path.join(root, "home")]) fs.mkdirSync(
 assert.ok(!fs.existsSync(path.join(host, "node_modules")), "requires a pristine host install");
 assert.ok(!fs.existsSync(path.join(extension, "node_modules")), "requires a pristine extension install");
 const env = {
-	...process.env, HOME: path.join(root, "home"), PI_CODING_AGENT_DIR: path.join(root, "agent"),
+	...process.env, HOME: path.join(root, "home"), USERPROFILE: path.join(root, "home"), PI_CODING_AGENT_DIR: path.join(root, "agent"),
 	XDG_CACHE_HOME: path.join(root, "cache"), npm_config_cache: path.join(root, "npm-cache"),
 	NODE_COMPILE_CACHE: path.join(root, "node-cache"), JITI_FS_CACHE: "false", PI_OFFLINE: "1",
 };
