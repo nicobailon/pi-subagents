@@ -10,6 +10,7 @@ import { DEFAULT_MODEL_EXCLUSION_TTL_MS, MAX_MODEL_EXCLUSION_TTL_MS, setDefaultT
 import { validatePermissionConfig } from "../runs/shared/permissions.ts";
 import { MAX_ABANDONED_SLOT_RELEASE_AFTER_MS, MIN_ABANDONED_SLOT_RELEASE_AFTER_MS } from "../runs/background/active-async-capacity.ts";
 import { normalizeWorktreeBranchPrefix } from "../runs/shared/worktree.ts";
+import { validateModelResponseAliases } from "../shared/model-response-aliases.ts";
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
 const FLEET_KEYBINDING_ACTION_SET = new Set<string>(FLEET_KEYBINDING_ACTIONS);
@@ -104,20 +105,6 @@ function validateModelExclusionsConfig(value: unknown): void {
 	const defaultTtlMs = (value as Record<string, unknown>).defaultTtlMs;
 	if (defaultTtlMs !== undefined && (typeof defaultTtlMs !== "number" || !Number.isFinite(defaultTtlMs) || defaultTtlMs <= 0 || defaultTtlMs > MAX_MODEL_EXCLUSION_TTL_MS)) {
 		throw new Error(`config.modelExclusions.defaultTtlMs must be a finite positive number no greater than ${MAX_MODEL_EXCLUSION_TTL_MS}`);
-	}
-}
-
-function validateModelResponseAliases(value: unknown): void {
-	if (value === undefined) return;
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.modelResponseAliases must be a JSON object");
-	for (const [candidate, aliases] of Object.entries(value)) {
-		const slash = candidate.indexOf("/");
-		if (slash <= 0 || !candidate.slice(0, slash).trim() || !candidate.slice(slash + 1).trim()) {
-			throw new Error(`config.modelResponseAliases key ${JSON.stringify(candidate)} must be a non-empty provider/model ID`);
-		}
-		if (!Array.isArray(aliases) || aliases.some((alias) => typeof alias !== "string" || !alias.trim())) {
-			throw new Error(`config.modelResponseAliases[${JSON.stringify(candidate)}] must be an array of non-empty response ID strings`);
-		}
 	}
 }
 

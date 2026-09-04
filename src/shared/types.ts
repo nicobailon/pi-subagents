@@ -779,6 +779,8 @@ export interface RunFanoutRejection extends RunFanoutBudgetSnapshot {
 }
 
 export interface SteeringRecoveryDescriptor {
+	/** Captured response identity authority; absence means no declared aliases on revival. */
+	modelResponseAliases?: Record<string, string[]>;
 	version: 1;
 	launchContractDigest?: string;
 	extensionBindings?: ExtensionBindings;
@@ -2047,6 +2049,7 @@ export interface ForegroundResumeChild {
 	agentContract?: AgentContract;
 	/** Private bounded launch fields needed to preserve the child contract on resume. */
 	resumeContract?: {
+		modelResponseAliases?: Record<string, string[]>;
 		outputSchema?: JsonSchemaObject;
 		agentContract?: AgentContract;
 		acceptance?: AcceptanceInput;

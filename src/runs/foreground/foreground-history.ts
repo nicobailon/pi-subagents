@@ -5,6 +5,7 @@ import { DIRS } from "../../shared/types.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { utf8Tail } from "../../shared/utf8.ts";
 import { validateAcceptanceInput } from "../shared/acceptance.ts";
+import { validateModelResponseAliases } from "../../shared/model-response-aliases.ts";
 
 export const MAX_REMEMBERED_FOREGROUND_RUNS = 50;
 const HISTORY_VERSION = 1;
@@ -71,11 +72,12 @@ function isRestorableResumeContract(value: unknown): boolean {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
 	try {
 		if (Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_RESUME_CONTRACT_BYTES) return false;
+		validateModelResponseAliases((value as ForegroundResumeChild["resumeContract"])?.modelResponseAliases);
 	} catch {
 		return false;
 	}
 	const contract = value as NonNullable<ForegroundResumeChild["resumeContract"]>;
-	if (Object.keys(contract).some((key) => !["outputSchema", "agentContract", "acceptance", "output", "outputMode"].includes(key))) return false;
+	if (Object.keys(contract).some((key) => !["modelResponseAliases", "outputSchema", "agentContract", "acceptance", "output", "outputMode"].includes(key))) return false;
 	if (contract.outputSchema !== undefined && (!contract.outputSchema || typeof contract.outputSchema !== "object" || Array.isArray(contract.outputSchema))) return false;
 	if (contract.agentContract !== undefined && (!contract.agentContract || typeof contract.agentContract !== "object" || Array.isArray(contract.agentContract) || contract.agentContract.version !== 1)) return false;
 	if (validateAcceptanceInput(contract.acceptance).length > 0) return false;

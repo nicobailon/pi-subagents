@@ -5123,6 +5123,56 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(args[args.indexOf("--model") + 1], "mock/fallback");
 	});
 
+	it("revival preserves captured response aliases and their absence after config changes", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const route = "databricks-bedrock/ias-claude-opus-5";
+		const agents = [makeAgent("worker", { model: route, completionGuard: false })];
+		const cases = [
+			{ original: { [route]: ["original-echo"] }, current: {}, echo: "original-echo", success: true },
+			{ original: { [route]: ["original-echo"] }, current: { [route]: ["new-echo"] }, echo: "new-echo", success: false },
+			{ original: undefined, current: { [route]: ["new-echo"] }, echo: "new-echo", success: false },
+		];
+		for (const [index, scenario] of cases.entries()) {
+			const parentSessionFile = path.join(tempDir, `alias-parent-${index}.jsonl`);
+			const sessionFile = path.join(tempDir, `alias-child-${index}.jsonl`);
+			const header = JSON.stringify({ type: "session", version: 1, id: `alias-${index}`, cwd: fs.realpathSync(tempDir) });
+			fs.writeFileSync(parentSessionFile, `${header}\n`);
+			fs.writeFileSync(sessionFile, `${header}\n`);
+			const ctx = {
+				...makeMinimalCtx(tempDir),
+				modelRegistry: { getAvailable: () => [{ provider: "databricks-bedrock", id: "ias-claude-opus-5" }] },
+				sessionManager: {
+					getSessionId: () => `alias-session-${index}`,
+					getSessionFile: () => parentSessionFile,
+					getLeafId: () => "leaf",
+					openSession: () => ({ createBranchedSession: () => sessionFile }),
+				},
+			};
+			mockPi.onCall({ jsonl: [events.assistantMessage("Initial work", route)] });
+			const launch = await makeAsyncExecutor(agents, { modelResponseAliases: scenario.original }).execute(
+				`alias-launch-${index}`, { agent: "worker", task: "Do work", async: true, context: "fork", acceptance: false },
+				new AbortController().signal, undefined, ctx,
+			) as AsyncExecutionResult;
+			assert.ok(!launch.isError, launch.content[0]?.text);
+			assert.ok(launch.details.asyncId);
+			assert.equal((await readAsyncPayload(launch.details.asyncId)).success, true);
+
+			// A new executor must recover the durable launch declaration, not its current settings.
+			mockPi.onCall({ jsonl: [events.assistantMessage("Continued work", scenario.echo)] });
+			const resumed = await makeAsyncExecutor(agents, { modelResponseAliases: scenario.current }).execute(
+				`alias-revive-${index}`, { action: "resume", id: launch.details.asyncId, message: "Continue", acceptance: false },
+				new AbortController().signal, undefined, ctx,
+			) as AsyncExecutionResult;
+			assert.ok(!resumed.isError, resumed.content[0]?.text);
+			assert.ok(resumed.details.asyncId);
+			const payload = await readAsyncPayload(resumed.details.asyncId);
+			assert.equal(payload.success, scenario.success, `case ${index}: ${payload.results[0]?.error}`);
+			if (!scenario.success) assert.match(payload.results[0]?.error ?? "", /model_verification_failed/);
+			const args = readMockPiArgs(mockPi, index * 2 + 1);
+			assert.equal(args[args.indexOf("--model") + 1], route);
+			assert.equal(args[args.indexOf("--session") + 1], sessionFile);
+		}
+	});
+
 	it("aligns initial and resumed background forked sessions with an explicit child cwd", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Forked async work" });
 		const parentCwd = fs.realpathSync(tempDir);
