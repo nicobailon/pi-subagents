@@ -1,6 +1,5 @@
-import { Agent, type StreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { convertToLlm, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { streamSimple } from "@earendil-works/pi-ai/compat";
+import type { Agent, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import { agentStreamOptions } from "../../shared/agent-stream-options.ts";
 import type { ForegroundRunControl } from "../../shared/types.ts";
@@ -64,6 +63,11 @@ export async function rewritePromptWithGuidance(input: {
 }): Promise<string> {
 	const model = input.ctx.model;
 	if (!model) throw new Error("Prompt redo needs the current session model to rewrite the authored task.");
+	const [{ Agent }, { convertToLlm }, { streamSimple }] = await Promise.all([
+		import("@earendil-works/pi-agent-core"),
+		import("@earendil-works/pi-coding-agent"),
+		import("@earendil-works/pi-ai/compat"),
+	]);
 	const auth = await resolveRewriteAuth(input.ctx, model);
 	const registeredProvider = (input.ctx.modelRegistry as {
 		getRegisteredProviderConfig?: (provider: string) => { api?: string; streamSimple?: StreamFn } | undefined;
