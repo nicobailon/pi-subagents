@@ -47,6 +47,7 @@ import {
 import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, SUBAGENT_CONTROL_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type ChildWatchdogProgress, type ControlEvent, type SubagentState } from "../../src/shared/types.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index.ts";
 import { encodeIndexSegment } from "../../src/runs/background/index-segment.ts";
+import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
@@ -344,7 +345,26 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	it("passes an agent-level tool budget to an async single child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const toolBudget = { soft: 100, hard: 150, block: "*" as const };
 		mockPi.onCall({ output: "budget probe done" });
-		const executor = makeExecutor([makeAgent("echo", { toolBudget })]);
+		const ctx = makeMinimalCtx(tempDir);
+		const state: SubagentState = {
+			baseCwd: tempDir,
+			currentSessionId: ctx.sessionManager.getSessionId(),
+			asyncJobs: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+		};
+		const piEvents = createEventBus();
+		const executor = createSubagentExecutor!({
+			pi: { events: piEvents, getSessionName: () => undefined },
+			state,
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => path.join(tempDir, ".pi/subagents", "sessions"),
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents: [makeAgent("echo", { toolBudget })] }),
+			allowMutatingManagementActions: true,
+		});
 		let asyncDir: string | undefined;
 		let resultPath: string | undefined;
 
@@ -354,7 +374,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 				{ agent: "echo", task: "Run the async budget probe", async: true },
 				new AbortController().signal,
 				undefined,
-				makeMinimalCtx(tempDir),
+				ctx,
 			);
 
 			assert.equal(result.isError, undefined, result.content[0]?.text ?? "async launch failed");
@@ -362,22 +382,22 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			asyncDir = result.details.asyncDir;
 			resultPath = path.join(DIRS.results, `${result.details.asyncId}.json`);
 
-			let persisted: { state?: string; results?: Array<{ output?: string }> } = {};
-			for (let attempt = 0; attempt < 200; attempt++) {
-				if (fs.existsSync(resultPath)) persisted = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
-				if (persisted.state === "complete" || persisted.state === "failed") break;
-				await new Promise((resolve) => setTimeout(resolve, 20));
-			}
+			const status = JSON.parse(fs.readFileSync(path.join(asyncDir!, "status.json"), "utf-8")) as { runId?: string; sessionId?: string };
+			assert.equal(status.runId, result.details.asyncId);
+			assert.equal(status.sessionId, state.currentSessionId);
+			const waited = await waitForSubagents({ id: result.details.asyncId, timeoutMs: 30_000 }, undefined, {
+				state,
+				events: piEvents,
+			});
+			assert.equal(waited.isError, undefined, JSON.stringify(waited));
+			assert.equal(waited.details.wait, undefined, JSON.stringify(waited));
+			assert.equal(waited.details.completions?.find((completion) => completion.runId === result.details.asyncId)?.state, "complete", JSON.stringify(waited));
+			const persisted = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { state?: string };
 			assert.equal(persisted.state, "complete");
 			assert.deepEqual(readCall().runtime?.toolBudget, toolBudget);
 			assert.equal(mockPi.callCount(), 1);
 			const processTerminalPath = path.join(asyncDir!, "process-terminal.json");
-			let processTerminal: { state?: string } = {};
-			for (let attempt = 0; attempt < 100; attempt++) {
-				if (fs.existsSync(processTerminalPath)) processTerminal = JSON.parse(fs.readFileSync(processTerminalPath, "utf-8"));
-				if (processTerminal.state && processTerminal.state !== "pending") break;
-				await new Promise((resolve) => setTimeout(resolve, 20));
-			}
+			const processTerminal = JSON.parse(fs.readFileSync(processTerminalPath, "utf-8")) as { state?: string };
 			assert.match(processTerminal.state ?? "", /^(observed|unknown)$/);
 		} finally {
 			if (asyncDir) fs.rmSync(asyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });

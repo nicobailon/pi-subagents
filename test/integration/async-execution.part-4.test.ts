@@ -19,7 +19,7 @@ import {
 	childWatchdogStatus, available, isAsyncAvailable, executeAsyncSingle,
 	executeAsyncChain, ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR, escapeRegExp,
 	createRepo, waitForAsyncResultFile, waitForAsyncState, tempDir, mockPi,
-	readAsyncPayload,
+	readAsyncPayload, waitForMockPiCall,
 } from "../support/async-execution-fixture.ts";
 
 describe("async execution utilities", { skip: !available ? "pi packages not available" : undefined }, () => {
@@ -175,12 +175,12 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	it("background ignores child watchdog status when child watchdogs are not configured", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		await withIsolatedWatchdogSettings(tempDir, async () => {
 			const id = `async-watchdog-unconfigured-${Date.now().toString(36)}`;
+			const terminalReleasePath = path.join(tempDir, `${id}-release`);
 			mockPi.onCall({
-				jsonl: [events.assistantMessage("async-done-without-watchdog-config"), childWatchdogStatus(id, "reviewing", 1)],
+				steps: [{ waitForPath: terminalReleasePath, jsonl: [events.assistantMessage("async-done-without-watchdog-config"), childWatchdogStatus(id, "reviewing", 1)] }],
 				keepAliveAfterFinalMessageMs: 10000,
 			});
 
-			const start = Date.now();
 			executeAsyncSingle(id, {
 				agent: "worker",
 				task: "Do work",
@@ -192,6 +192,10 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				maxSubagentDepth: 2,
 			});
 
+			await waitForMockPiCall(mockPi, 0);
+			// Measure final drain, not detached runner startup; terminal emission is still gated.
+			const start = Date.now();
+			fs.writeFileSync(terminalReleasePath, "release", "utf-8");
 			const resultPath = await waitForAsyncResultFile(id, 10_000);
 			const elapsed = Date.now() - start;
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
