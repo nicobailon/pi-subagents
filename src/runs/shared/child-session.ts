@@ -121,8 +121,8 @@ type QueuedNativeProviderRegistration = { provider: Parameters<ModelRuntimeInsta
 interface LoaderWithExtensions {
 	getExtensions(): {
 		runtime: {
-			pendingProviderRegistrations: QueuedProviderRegistration[];
-			pendingNativeProviderRegistrations: QueuedNativeProviderRegistration[];
+			pendingProviderRegistrations?: QueuedProviderRegistration[];
+			pendingNativeProviderRegistrations?: QueuedNativeProviderRegistration[];
 		};
 	};
 }
@@ -151,25 +151,29 @@ function applyProcessEnv(values: Record<string, string | undefined> | undefined)
 	}
 }
 
-function flushQueuedProviderRegistrations(loader: object, modelRuntime: ModelRuntimeInstance, onError: ((error: ChildSessionExtensionError) => void) | undefined): void {
+async function flushQueuedProviderRegistrations(loader: object, modelRuntime: ModelRuntimeInstance, onError: ((error: ChildSessionExtensionError) => void) | undefined): Promise<void> {
 	if (!("getExtensions" in loader) || typeof loader.getExtensions !== "function") return;
 	const { runtime } = (loader as LoaderWithExtensions).getExtensions();
-	for (const { name, config, extensionPath } of runtime.pendingProviderRegistrations) {
+	let registered = false;
+	for (const { name, config, extensionPath } of runtime.pendingProviderRegistrations ?? []) {
 		try {
 			modelRuntime.registerProvider(name, config);
+			registered = true;
 		} catch (error) {
 			onError?.({ extensionPath, event: "register_provider", error });
 		}
 	}
-	runtime.pendingProviderRegistrations = [];
-	for (const { provider, extensionPath } of runtime.pendingNativeProviderRegistrations) {
+	if (Array.isArray(runtime.pendingProviderRegistrations)) runtime.pendingProviderRegistrations = [];
+	for (const { provider, extensionPath } of runtime.pendingNativeProviderRegistrations ?? []) {
 		try {
 			modelRuntime.registerNativeProvider(provider);
+			registered = true;
 		} catch (error) {
 			onError?.({ extensionPath, event: "register_provider", error });
 		}
 	}
-	runtime.pendingNativeProviderRegistrations = [];
+	if (Array.isArray(runtime.pendingNativeProviderRegistrations)) runtime.pendingNativeProviderRegistrations = [];
+	if (registered) await modelRuntime.refresh({ allowNetwork: false });
 }
 
 /**
@@ -224,7 +228,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				applyProcessEnv(launch.processEnv);
 				if (!resetExtensionCacheOnReload(loader) && (launch.ambientExtensions || launch.extensionPaths.length)) launch.onExtensionError?.({ extensionPath: "<loader>", event: "load", error: new Error("pi's extension cache reset is unavailable; extensions loaded into this child share module state with other sessions in this process.") });
 				await loader.reload();
-				flushQueuedProviderRegistrations(loader, modelRuntime, launch.onExtensionError);
+				await flushQueuedProviderRegistrations(loader, modelRuntime, launch.onExtensionError);
 				const sessionManager = launch.storage.kind === "file"
 					? pi.SessionManager.open(launch.storage.sessionFile, undefined, launch.cwd)
 					: launch.storage.kind === "dir"

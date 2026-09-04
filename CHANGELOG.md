@@ -5,6 +5,7 @@
 ### Fixed
 - Clarify that subagent lane infrastructure failures require an explicit owner-approved execution-mode fallback, with exact state and worktree evidence checks before retrying (#1879).
 - Resolve workflow and async-retention process identities lazily without memoizing foreign PIDs. Thanks to [@ducaoya](https://github.com/ducaoya) for #1878.
+- Refresh child session models after loading extension-registered providers and tolerate Pi runtimes without native provider queues. Thanks [@kevinkirkup](https://github.com/kevinkirkup) for #1885.
 - Bound foreground workflow run identities to filesystem-safe segments across progress, child, and receipt records. Thanks [@jstillwa](https://github.com/jstillwa) for #1875.
 - Lazy-load prompt audit optional Pi peers. Thanks [@VladimirGVP](https://github.com/VladimirGVP) for #1860.
 - Use registered provider streams for intent arbitration only when their API matches the model. Thanks [@pwguler](https://github.com/pwguler) for #1874.
