@@ -2,7 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+- Simplify retained-route liveness, dispatcher setup, and internal types without changing launch or cleanup contracts.
+
 ### Fixed
+- Keep pi-web parent sessions alive while subagent work or completion delivery remains active. Thanks to [@vcing](https://github.com/vcing) for #1857.
 - Clarify that subagent lane infrastructure failures require an explicit owner-approved execution-mode fallback, with exact state and worktree evidence checks before retrying (#1879).
 - Resolve workflow and async-retention process identities lazily without memoizing foreign PIDs. Thanks to [@ducaoya](https://github.com/ducaoya) for #1878.
 - Refresh child session models after loading extension-registered providers and tolerate Pi runtimes without native provider queues. Thanks [@kevinkirkup](https://github.com/kevinkirkup) for #1885.
@@ -14,7 +18,7 @@
 - Ignore stale model-not-found exclusions once the active model registry contains that model again. Thanks [@x1prog](https://github.com/x1prog) for #1862.
 - Alias `@earendil-works/pi-agent-core/node` to Pi's exact `./node` export for detached runners. Thanks [@plopezlpz](https://github.com/plopezlpz) for #1871.
 - Alias host peer subpath imports for detached runners. Thanks to [@pwguler](https://github.com/pwguler) for #1880.
-- Initialize Pi's global theme before child sessions bind their extensions, so extensions reading `ctx.ui.theme` no longer throw "Theme not initialized. Call initTheme() first." in subagent runs (detached background runners in particular). Thanks [@danielmarbach](https://github.com/danielmarbach) for #1865.
+- Initialize Pi's global theme before child extensions access `ctx.ui.theme`, including in detached runners. Thanks [@danielmarbach](https://github.com/danielmarbach) for #1865.
 - Capture managed-worktree handoff patches with machine-safe diff settings and validate them before cleanup. Thanks [@jeanduplessis](https://github.com/jeanduplessis) for #1868.
 
 ## [0.65.0] - 2026-09-04
@@ -38,7 +42,6 @@
 - Add `contact_supervisor` to the bundled reviewer and scout tool allowlists without adding mutation tools (#1846).
 
 ### Fixed
-- Keep pi-web parent sessions alive while subagent work or completion delivery remains active. Thanks to [@vcing](https://github.com/vcing) for #1857.
 - Drop only malformed persisted model-exclusion entries and rewrite the cleaned cache.
 - Stop live workflow children when a run-level stop targets an in-memory async workflow controller.
 - Fail closed when a fallback-only model configuration resolves no launch candidates. Thanks [@AdenosineTP](https://github.com/AdenosineTP) for #1853.

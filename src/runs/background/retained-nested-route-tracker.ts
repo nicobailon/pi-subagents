@@ -37,9 +37,7 @@ export function createRetainedNestedRouteTracker(
 			return;
 		}
 		try {
-			retained.children = projectNestedEvents(retained.route).children;
-			retained.awaitingFirstRefresh = false;
-			if (hasLiveNestedDescendants(retained.children)) return;
+			if (hasLiveNestedDescendants(projectNestedEvents(retained).children)) return;
 			state.retainedForegroundNestedRoutes?.delete(rootRunId);
 			close(rootRunId);
 		} catch (error) {
@@ -73,7 +71,7 @@ export function createRetainedNestedRouteTracker(
 		if (!retained) return;
 		if (shouldUseNativeFsWatch("retained-nested-route-tracker", options.platform) && !watchers.has(rootRunId)) {
 			try {
-				const watcher = watch(retained.route.eventSink, () => scheduleRefresh(rootRunId));
+				const watcher = watch(retained.eventSink, () => scheduleRefresh(rootRunId));
 				watcher.on("error", () => close(rootRunId));
 				watcher.unref?.();
 				watchers.set(rootRunId, watcher);

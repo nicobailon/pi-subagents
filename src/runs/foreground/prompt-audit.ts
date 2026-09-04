@@ -1,6 +1,6 @@
 import type { Agent, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Model, ProviderHeaders } from "@earendil-works/pi-ai";
+import type { ProviderHeaders } from "@earendil-works/pi-ai";
 import { agentStreamOptions } from "../../shared/agent-stream-options.ts";
 import type { ForegroundRunControl } from "../../shared/types.ts";
 export type PromptAuditView = "authored" | "runtime" | "effective";
@@ -20,7 +20,7 @@ export interface LivePromptAudit {
 
 const livePrompts = new WeakMap<ForegroundRunControl, Map<number, LivePromptAudit>>();
 
-type RegistryModel = Model<any>;
+type RegistryModel = NonNullable<ExtensionContext["model"]>;
 
 function fullModelId(model: Pick<RegistryModel, "provider" | "id">): string {
 	return `${model.provider}/${model.id}`;

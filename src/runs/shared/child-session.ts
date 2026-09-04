@@ -115,17 +115,6 @@ export interface DefaultChildSessionFactoryOptions {
 }
 
 type ModelRuntimeInstance = Awaited<ReturnType<PiCodingAgentModule["ModelRuntime"]["create"]>>;
-type QueuedProviderRegistration = { name: string; config: Parameters<ModelRuntimeInstance["registerProvider"]>[1]; extensionPath: string };
-type QueuedNativeProviderRegistration = { provider: Parameters<ModelRuntimeInstance["registerNativeProvider"]>[0]; extensionPath: string };
-
-interface LoaderWithExtensions {
-	getExtensions(): {
-		runtime: {
-			pendingProviderRegistrations?: QueuedProviderRegistration[];
-			pendingNativeProviderRegistrations?: QueuedNativeProviderRegistration[];
-		};
-	};
-}
 
 /** One launch at a time from env application through `session_start`, so parallel launches never observe each other's `processEnv` while their extensions load and start. */
 let loading: Promise<unknown> = Promise.resolve();
@@ -151,9 +140,9 @@ function applyProcessEnv(values: Record<string, string | undefined> | undefined)
 	}
 }
 
-async function flushQueuedProviderRegistrations(loader: object, modelRuntime: ModelRuntimeInstance, onError: ((error: ChildSessionExtensionError) => void) | undefined): Promise<void> {
+async function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModule["DefaultResourceLoader"]>, modelRuntime: ModelRuntimeInstance, onError: ((error: ChildSessionExtensionError) => void) | undefined): Promise<void> {
 	if (!("getExtensions" in loader) || typeof loader.getExtensions !== "function") return;
-	const { runtime } = (loader as LoaderWithExtensions).getExtensions();
+	const { runtime } = loader.getExtensions();
 	let registered = false;
 	for (const { name, config, extensionPath } of runtime.pendingProviderRegistrations ?? []) {
 		try {
@@ -200,15 +189,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			const modelRuntime = await sharedRuntime(pi);
 			const agentDir = getAgentDir();
 			const settingsManager = pi.SettingsManager.create(launch.cwd, agentDir);
-			// Headless child processes (the detached async runner in particular)
-			// never run pi's main-mode startup, so the global theme registry stays
-			// uninitialized and any extension reading `ctx.ui.theme` throws
-			// "Theme not initialized. Call initTheme() first." on every event it
-			// handles. Initialize the theme from the configured settings here,
-			// mirroring the `initTheme(settingsManager.getTheme(), ...)` call
-			// main-mode makes in main.js. Re-initializing in a process where main
-			// already initialized is idempotent (same theme name), and load errors
-			// fall back to the built-in dark theme exactly like main-mode.
+			// Headless sessions skip Pi's CLI theme setup; extensions still need ctx.ui.theme.
 			if (typeof pi.initTheme === "function") pi.initTheme(settingsManager.getTheme());
 			const loader = new pi.DefaultResourceLoader({
 				cwd: launch.cwd,

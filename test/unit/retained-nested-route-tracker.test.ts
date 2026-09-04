@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -8,6 +9,12 @@ import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/neste
 import type { SubagentState } from "../../src/shared/types.ts";
 
 const routeRoots: string[] = [];
+
+class Watcher extends EventEmitter implements fs.FSWatcher {
+	close() { this.emit("close"); }
+	ref() { return this; }
+	unref() { return this; }
+}
 
 function route(rootRunId: string) {
 	const value = createNestedRoute(rootRunId);
@@ -66,9 +73,6 @@ describe("retained foreground nested route tracker", () => {
 		assert.equal(retainLiveForegroundNestedRoute(state, nestedRoute), true);
 		writeState(nestedRoute, "complete", 200);
 
-		const retained = state.retainedForegroundNestedRoutes?.get(nestedRoute.rootRunId);
-		assert.equal(retained?.awaitingFirstRefresh, true);
-
 		const tracker = createRetainedNestedRouteTracker(state, { platform: "win32", pollIntervalMs: 60_000 });
 		try {
 			tracker.track(nestedRoute.rootRunId);
@@ -85,22 +89,15 @@ describe("retained foreground nested route tracker", () => {
 		writeState(nestedRoute, "running", 100);
 		assert.equal(retainLiveForegroundNestedRoute(state, nestedRoute), true);
 
-		let watcherError: (() => void) | undefined;
+		const watcher = new Watcher();
 		const tracker = createRetainedNestedRouteTracker(state, {
 			platform: "linux",
 			pollIntervalMs: 10,
-			watch: (() => ({
-				close: () => undefined,
-				on: (event: string, listener: () => void) => {
-					if (event === "error") watcherError = listener;
-					return undefined;
-				},
-				unref: () => undefined,
-			} as unknown as fs.FSWatcher)) as typeof fs.watch,
+			watch: () => watcher,
 		});
 		try {
 			tracker.track(nestedRoute.rootRunId);
-			watcherError?.();
+			watcher.emit("error", new Error("watch failed"));
 			writeState(nestedRoute, "complete", 200);
 			await waitFor(() => !state.retainedForegroundNestedRoutes?.has(nestedRoute.rootRunId));
 		} finally {
@@ -129,7 +126,8 @@ describe("retained foreground nested route tracker", () => {
 		}
 	});
 
-	it("refreshes promptly from native watch events", async () => {
+	it("refreshes promptly from native watch events", (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout"] });
 		const state: Pick<SubagentState, "retainedForegroundNestedRoutes"> = {};
 		const nestedRoute = route("watched-root");
 		writeState(nestedRoute, "running", 100);
@@ -137,23 +135,25 @@ describe("retained foreground nested route tracker", () => {
 
 		let notify: (() => void) | undefined;
 		let closed = 0;
+		const watcher = new Watcher();
+		watcher.on("close", () => { closed += 1; });
 		const tracker = createRetainedNestedRouteTracker(state, {
 			platform: "linux",
 			pollIntervalMs: 60_000,
+			// SAFETY: the tracker uses only fs.watch(path, listener), not the options overloads.
 			watch: ((_path: fs.PathLike, listener: fs.WatchListener<string>) => {
 				notify = () => listener("rename", "event.json");
-				return {
-					close: () => { closed += 1; },
-					on: () => undefined,
-					unref: () => undefined,
-				} as unknown as fs.FSWatcher;
+				return watcher;
 			}) as typeof fs.watch,
 		});
 		try {
 			tracker.track(nestedRoute.rootRunId);
+			t.mock.timers.tick(25);
+			assert.equal(state.retainedForegroundNestedRoutes?.has(nestedRoute.rootRunId), true);
 			writeState(nestedRoute, "complete", 200);
 			notify?.();
-			await waitFor(() => !state.retainedForegroundNestedRoutes?.has(nestedRoute.rootRunId));
+			t.mock.timers.tick(25);
+			assert.equal(state.retainedForegroundNestedRoutes?.has(nestedRoute.rootRunId), false);
 			assert.equal(closed, 1);
 		} finally {
 			tracker.clear();

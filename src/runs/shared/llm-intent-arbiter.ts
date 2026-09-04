@@ -75,10 +75,6 @@ export interface TaskMutationArbiterOptions {
 
 const DEFAULT_ARBITER_TIMEOUT_MS = 10_000;
 
-function registeredApiMatches(registeredApi: string | undefined, modelApi: string | undefined): boolean {
-	return registeredApi !== undefined && registeredApi === modelApi;
-}
-
 type RegistryModel = ReturnType<NonNullable<ExtensionContext["modelRegistry"]["find"]>>;
 
 function resolveArbiterModel(
@@ -168,17 +164,14 @@ async function runArbitration(
 	auth: ArbiterAuth,
 	task: string,
 ): Promise<TaskMutationVerdict> {
-	// The detached runner cannot resolve the optional Pi peers statically
-	// (same shape as the prompt-audit fix), and the arbiter only runs in the
-	// parent when a completion-guard rescue needs it, so load them here.
+	// Keep optional Pi peers out of the detached runner's static import graph.
 	const [{ Agent }, { convertToLlm }, { streamSimple }] = await Promise.all([
 		import("@earendil-works/pi-agent-core"),
 		import("@earendil-works/pi-coding-agent"),
 		import("@earendil-works/pi-ai/compat"),
 	]);
-	const modelApi = (runtime.model as { api?: string }).api;
 	const streamFn: StreamFn = runtime.explicitStreamFn
-		?? (registeredApiMatches(runtime.registeredApi, modelApi) ? runtime.registeredStreamFn : undefined)
+		?? (runtime.registeredApi !== undefined && runtime.registeredApi === runtime.model.api ? runtime.registeredStreamFn : undefined)
 		?? streamSimple;
 	let decision: DecisionParams | undefined;
 	const tool: AgentTool<typeof DecisionParams, { recorded: boolean }> = {

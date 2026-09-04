@@ -1,46 +1,23 @@
 import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 
-/**
- * Detached runners bypass pi's CLI entry points, so pi core's
- * configureHttpDispatcher() never runs here and the global fetch keeps Node's
- * default dispatcher, which silently ignores *_proxy (once observed as
- * deterministic upstream 403s on a region-gated model). Mirror the host setup
- * with the locally resolvable undici copy; every step is best-effort and falls
- * back to previous behavior instead of breaking startup.
- */
-const requireFromRunner = createRequire(import.meta.url);
+// Detached runners skip Pi's CLI proxy setup. Keep fetch on the same Undici dispatcher.
 function ensureProxyAwareHttpDispatcher(): void {
 	try {
-		const undici = requireFromRunner("undici") as {
-			EnvHttpProxyAgent?: new (opts?: Record<string, unknown>) => unknown;
-			setGlobalDispatcher?: (dispatcher: unknown) => void;
-			install?: () => void;
-		};
-		if (typeof undici?.EnvHttpProxyAgent !== "function") return;
+		// SAFETY: require loads the pinned direct dependency described by these types.
+		const undici = createRequire(import.meta.url)("undici") as typeof import("undici");
 		const dispatcher = new undici.EnvHttpProxyAgent({ allowH2: false });
-		try {
-			const { EventEmitter } = requireFromRunner("node:events") as {
-				EventEmitter: new (...args: unknown[]) => { on(event: string, listener: () => void): unknown };
-			};
-			if (dispatcher instanceof EventEmitter) dispatcher.on("error", () => {});
-		} catch {
-			// Error-listener hardening is best-effort only.
-		}
-		undici.setGlobalDispatcher?.(dispatcher);
-		// Route pi-ai's global-fetch calls through this dispatcher (parity with host).
-		undici.install?.();
+		// Fetch rejects stream errors; the listener prevents an unhandled EventEmitter error.
+		EventEmitter.prototype.on.call(dispatcher, "error", () => {});
+		undici.setGlobalDispatcher(dispatcher);
+		undici.install();
 	} catch (error) {
-		// Fall back to previous behavior, but leave a breadcrumb for next time.
-		try {
-			console.error(`[pi-subagents] proxy-aware HTTP dispatcher not installed: ${error instanceof Error ? error.message : String(error)}`);
-		} catch {
-			// Logging must never break runner startup.
-		}
+		console.error(`[pi-subagents] proxy-aware HTTP dispatcher not installed: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 ensureProxyAwareHttpDispatcher();

@@ -197,7 +197,7 @@ export function validateWorktreePatch(worktreePath: string, patchPath: string): 
 	return result.stderr.trim() || result.stdout.trim() || `git -C ${worktreePath} apply --check failed`;
 }
 
-function currentWorktreePatch(worktreePath: string, baseCommit: string): { patch?: string; error?: string } {
+function currentWorktreePatch(worktreePath: string, baseCommit: string): { patch: string } | { error: string } {
 	let tempDir: string;
 	try {
 		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-index-"));
@@ -232,7 +232,7 @@ export function validateWorktreePatchRepresentsCurrentWorktree(worktreePath: str
 		return error instanceof Error ? error.message : String(error);
 	}
 	const current = currentWorktreePatch(worktreePath, baseCommit);
-	if (current.error) return current.error;
+	if ("error" in current) return current.error || "failed to capture current worktree patch";
 	if (capturedPatch !== current.patch) return "captured handoff patch does not match current worktree changes";
 	return undefined;
 }

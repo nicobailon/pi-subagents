@@ -2202,12 +2202,7 @@ export interface SubagentState {
 	/** Live async session roots created by this parent executor, keyed by run id. */
 	liveAsyncSessionRoots?: Map<string, string>;
 	/** Foreground nested routes retained after their direct parent settles, keyed by root run id. */
-	retainedForegroundNestedRoutes?: Map<string, {
-		route: NestedRouteInfo;
-		children: NestedRunSummary[];
-		/** Conservative guard until the tracker observes a post-registration refresh. */
-		awaitingFirstRefresh: boolean;
-	}>;
+	retainedForegroundNestedRoutes?: Map<string, NestedRouteInfo>;
 	/** Last valid parent session model observed for this session; used when continuation contexts omit ctx.model. */
 	lastParentModel?: { provider: string; id: string };
 	subagentInProgress?: boolean;

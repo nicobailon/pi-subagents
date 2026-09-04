@@ -16,11 +16,7 @@ interface PiWebSessionLivenessRegistry {
 	register(provider: PiWebSessionLivenessProvider): () => void;
 }
 
-interface SessionLivenessRegistration {
-	sessionId: string;
-	sessionFile?: string;
-	isActive(): boolean;
-}
+type SessionLivenessRegistration = Omit<PiWebSessionLivenessProvider, "name">;
 
 export interface PiWebSessionLivenessHandle {
 	/** True only when the compatible host accepted the provider registration. */
@@ -42,7 +38,7 @@ export function retainLiveForegroundNestedRoute(state: Pick<SubagentState, "reta
 	const nested = projectNestedEvents(route);
 	if (!hasLiveNestedDescendants(nested.children)) return false;
 	state.retainedForegroundNestedRoutes ??= new Map();
-	state.retainedForegroundNestedRoutes.set(route.rootRunId, { route, children: nested.children, awaitingFirstRefresh: true });
+	state.retainedForegroundNestedRoutes.set(route.rootRunId, route);
 	return true;
 }
 
@@ -55,10 +51,7 @@ export function hasLiveSubagentWork(state: LiveWorkState): boolean {
 			|| (control.activeChildren?.size ?? 0) > 0
 			|| hasLiveNestedDescendants(control.nestedChildren)) return true;
 	}
-	for (const retained of state.retainedForegroundNestedRoutes?.values() ?? []) {
-		if (retained.awaitingFirstRefresh || hasLiveNestedDescendants(retained.children)) return true;
-	}
-	return false;
+	return (state.retainedForegroundNestedRoutes?.size ?? 0) > 0;
 }
 
 export function registerPiWebSessionLiveness(registration: SessionLivenessRegistration): PiWebSessionLivenessHandle {

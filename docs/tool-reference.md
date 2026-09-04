@@ -120,7 +120,7 @@ The complete plain-JSON inventory is validated before the first launch (maximum 
 | `share` | boolean | false | Upload session export to GitHub Gist. |
 | `sessionDir` | string | derived | Override session log directory. |
 | `acceptance` | string/object/false | inferred | Configure evidence gates. See [Acceptance gates](#acceptance-gates). |
-| `gate` | string | - | One host-run verification command, shorthand for `acceptance: { level: "verified", verify: [{ id: "gate", command }] }`. Also valid on individual `runs.run`/`runs.all` items. Cannot be combined with `acceptance`, and is rejected with retained `resume`. |
+| `gate` | string | - | One host-run verification command, shorthand for `acceptance: { level: "verified", verify: [{ id: "gate", command }] }`. Also valid on individual `runs.run`/`runs.all` items. Rejects `acceptance` except `false` (treated as omitted), and rejects retained `resume`. |
 
 ### Budget guidance for writers
 
@@ -391,7 +391,7 @@ When one host-run command is the entire verification contract, use the `gate` sh
 { workflowScript: `return runs.run("impl", { agent: "worker", task: "Implement the fix", gate: "npm test" })` }
 ```
 
-`gate` normalizes to verified acceptance with that single command, so the runtime executes it on the host and records the result as evidence. Verification results are memoized per tracked workspace state and effective environment, so an unchanged tree does not rerun the same command. Use explicit `acceptance.verify` when you need multiple commands, timeouts, or custom criteria. `gate` cannot be combined with `acceptance` and is rejected on retained `resume` items. With `worktree: true`, the gate runs inside the child's managed worktree.
+`gate` normalizes to verified acceptance with that single command, so the runtime executes it on the host and records the result as evidence. Verification results are memoized per tracked workspace state and effective environment, so an unchanged tree does not rerun the same command. Use explicit `acceptance.verify` when you need multiple commands, timeouts, or custom criteria. `gate` rejects `acceptance` except `false` (treated as omitted), and rejects retained `resume` items. With `worktree: true`, the gate runs inside the child's managed worktree.
 
 ### Levels and inference
 

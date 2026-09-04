@@ -9,7 +9,6 @@ import {
 	retainLiveForegroundNestedRoute,
 } from "../../src/integrations/pi-web-session-liveness.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
-import { createRetainedNestedRouteTracker } from "../../src/runs/background/retained-nested-route-tracker.ts";
 import { removeForegroundControlIfIdle } from "../../src/runs/foreground/subagent-executor.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
@@ -49,7 +48,7 @@ function writeNestedState(route: ReturnType<typeof nestedRoute>, state: "running
 	});
 }
 
-function makeState(): Pick<SubagentState, "asyncJobs" | "foregroundControls"> {
+function makeState(): Parameters<typeof hasLiveSubagentWork>[0] {
 	return {
 		asyncJobs: new Map(),
 		foregroundControls: new Map(),
@@ -127,40 +126,6 @@ describe("pi-web session liveness integration", () => {
 		assert.equal(liveness.registered, false);
 		assert.equal(removeForegroundControlIfIdle(state, route.rootRunId), true);
 		assert.equal(state.retainedForegroundNestedRoutes, undefined);
-	});
-
-	it("retains and tracks foreground nested routes after host registration", () => {
-		const state = makeState() as SubagentState;
-		const route = nestedRoute("registered-foreground-root");
-		writeNestedState(route, "running", 100);
-		state.foregroundControls.set(route.rootRunId, {
-			runId: route.rootRunId,
-			mode: "single",
-			startedAt: 1,
-			updatedAt: 1,
-			schedulingOwners: 0,
-			activeChildren: new Map(),
-			nestedRoute: route,
-		});
-		(globalThis as Record<PropertyKey, unknown>)[Symbol.for(PI_WEB_SESSION_LIVENESS_REGISTRY_KEY)] = {
-			version: 1,
-			register() {
-				return () => {};
-			},
-		};
-		const liveness = registerPiWebSessionLiveness({ sessionId: "session-a", isActive: () => true });
-		const tracker = liveness.registered
-			? createRetainedNestedRouteTracker(state, { platform: "win32", pollIntervalMs: 60_000 })
-			: undefined;
-		try {
-			assert.equal(liveness.registered, true);
-			assert.ok(tracker);
-			assert.equal(removeForegroundControlIfIdle(state, route.rootRunId, tracker.track), true);
-			assert.equal(state.retainedForegroundNestedRoutes?.has(route.rootRunId), true);
-		} finally {
-			tracker?.clear();
-			liveness.release();
-		}
 	});
 
 	it("transfers a live nested route before removing its settled foreground control", () => {

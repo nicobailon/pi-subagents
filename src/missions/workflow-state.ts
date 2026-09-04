@@ -87,11 +87,7 @@ function computeProcessStartKey(pid: number): string | undefined {
 	return undefined;
 }
 
-interface StateLockOptions {
-	isProcessAlive: (pid: number) => boolean;
-	getProcessStartKey: (pid: number) => string | undefined;
-	retryDelaysMs: readonly number[];
-}
+type StateLockOptions = Required<MissionWorkflowStateOptions>;
 
 function readStateLockOwner(lockPath: string): StateLockOwner | undefined {
 	try {
@@ -227,10 +223,9 @@ function validateStateKey(value: unknown): string {
 
 export function createMissionWorkflowState(location: MissionStoreLocation, missionId: string, options: MissionWorkflowStateOptions = {}): MissionWorkflowState {
 	const filePath = missionStatePath(location, missionId);
-	const getProcessStartKey = options.getProcessStartKey ?? processStartKey;
 	const lockOptions: StateLockOptions = {
 		isProcessAlive: options.isProcessAlive ?? isProcessAlive,
-		getProcessStartKey,
+		getProcessStartKey: options.getProcessStartKey ?? processStartKey,
 		retryDelaysMs: options.retryDelaysMs ?? DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS,
 	};
 	let loaded = false;
