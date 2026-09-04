@@ -348,15 +348,43 @@ async function waitForAsyncResultFile(id: string, timeoutMs = 15_000): Promise<s
 	while (!fs.existsSync(resultPath)) {
 		if (Date.now() > deadline) {
 			const asyncDir = path.join(ASYNC_DIR, id);
-			const status = readIfExists(path.join(asyncDir, "status.json"));
-			const stdout = readIfExists(path.join(asyncDir, "runner.stdout.log"));
-			const stderr = readIfExists(path.join(asyncDir, "runner.stderr.log"));
+			// Summarize before teardown; never print free-form output, prompts or tokens.
+			const evidence = ["status.json", "runner-startup-proceed.json", "process-terminal.json", "events.jsonl", "runner.stdout.log", "runner.stderr.log"].map((name) => {
+				let text: string;
+				try {
+					text = fs.readFileSync(path.join(asyncDir, name), "utf-8");
+				} catch (error) {
+					const code = (error as NodeJS.ErrnoException).code;
+					return `${name}: ${code === "ENOENT" ? "absent" : `unreadable (${code ?? "unknown"})`}`;
+				}
+				if (!text.length) return `${name}: empty`;
+				const size = `${Buffer.byteLength(text)} bytes (contents withheld)`;
+				if (name !== "status.json") return `${name}: readable, ${size}`;
+				try {
+					const status = JSON.parse(text) as AsyncStatusPayload;
+					const knownState = (value: unknown) => ["pending", "running", "complete", "failed", "cancelled"].includes(String(value)) ? value : "other/absent";
+					return `${name}: ${JSON.stringify({ state: knownState(status.state), steps: status.steps?.map((step) => knownState(step.status)), endedAtPresent: typeof status.endedAt === "number" })}`;
+				} catch {
+					return `${name}: invalid status JSON, ${size}`;
+				}
+			});
+			// The current fixture queue proves prompt entry, not per-run identity or settlement.
+			const queueDir = process.env.MOCK_PI_QUEUE_DIR;
+			let mockEvidence = "mock queue: not configured";
+			if (queueDir) {
+				try {
+					const calls = fs.readdirSync(queueDir).filter((name) => name.startsWith("call-") && name.endsWith(".json"));
+					mockEvidence = `mock queue: readable, prompt call records=${calls.length} (current fixture, not correlated to run)`;
+				} catch (error) {
+					const code = (error as NodeJS.ErrnoException).code;
+					mockEvidence = `mock queue: ${code === "ENOENT" ? "absent" : `unreadable (${code ?? "unknown"})`}`;
+				}
+			}
 			assert.fail([
 				`Timed out waiting for async result file: ${resultPath}`,
-				status ? `status.json: ${status}` : undefined,
-				stdout ? `runner stdout: ${stdout}` : undefined,
-				stderr ? `runner stderr: ${stderr}` : undefined,
-			].filter(Boolean).join("\n"));
+				mockEvidence,
+				...evidence,
+			].join("\n"));
 		}
 		await new Promise((resolve) => setTimeout(resolve, 100));
 	}
@@ -506,7 +534,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	}
 
 	function launchProtocolTest(id: string): void {
-		executeAsyncSingle(id, {
+		const receipt = executeAsyncSingle(id, {
 			agent: "worker",
 			task: "Exercise child protocol",
 			agentConfig: makeAgent("worker", { completionGuard: false }),
@@ -517,6 +545,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			maxSubagentDepth: 2,
 			acceptance: false,
 		});
+		assert.equal(receipt.isError === true, false, "protocol launch must succeed");
+		assert.equal(receipt.details.asyncId === id, true, "protocol launch must identify the requested run");
+		assert.equal(receipt.details.asyncDir === path.join(ASYNC_DIR, id), true, "protocol launch must identify the expected artifacts");
 	}
 
 	it("reports jiti availability as boolean", () => {
@@ -567,6 +598,39 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			if (resultPath) fs.rmSync(resultPath, { recursive: true, force: true });
 			if (pendingPath) fs.rmSync(pendingPath, { force: true });
 			fs.rmSync(resultIndexPath, { recursive: true, force: true });
+		}
+	});
+
+	it("summarizes result-wait evidence without exposing artifact contents", async () => {
+		const id = `async-wait-diagnostic-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, id);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		try {
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ state: "running", steps: [{ status: "pending" }], task: "secret-prompt" }));
+			fs.writeFileSync(path.join(asyncDir, "runner.stdout.log"), "");
+			fs.mkdirSync(path.join(asyncDir, "runner.stderr.log"));
+			fs.writeFileSync(path.join(asyncDir, "runner-startup-proceed.json"), JSON.stringify({ token: "secret-token" }));
+			fs.writeFileSync(path.join(asyncDir, "events.jsonl"), "secret-event-output\n");
+			const checkTimeout = async (stepState: string, callCount: number) => {
+				await assert.rejects(waitForAsyncResultFile(id, -1), (error: unknown) => {
+					assert.ok(error instanceof Error);
+					assert.match(error.message, new RegExp(`"steps":\\["${stepState}"\\]`));
+					assert.ok(error.message.includes(`mock queue: readable, prompt call records=${callCount}`));
+					assert.match(error.message, /runner.stdout.log: empty/);
+					assert.match(error.message, /runner.stderr.log: unreadable \(EISDIR\)/);
+					assert.match(error.message, /process-terminal.json: absent/);
+					assert.match(error.message, /runner-startup-proceed.json: readable, \d+ bytes \(contents withheld\)/);
+					assert.match(error.message, /events.jsonl: readable/);
+					assert.doesNotMatch(error.message, /secret-/);
+					return true;
+				});
+			};
+			await checkTimeout("pending", 0);
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ state: "running", steps: [{ status: "running" }] }));
+			fs.writeFileSync(path.join(mockPi.dir, "call-diagnostic.json"), JSON.stringify({ task: "secret-mock-prompt" }));
+			await checkTimeout("running", 1);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
 		}
 	});
 
@@ -1774,7 +1838,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	it("marks async parallel runs that exceed timeoutMs as timed out", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({ delay: 5_000, output: "one done" });
 		mockPi.onCall({ delay: 5_000, output: "two done" });
-		const repo = createRepo("pi-subagents-parallel-timeout-recovery-");
+		// This fixture owns real parallel deadline enforcement; dirty recovery is
+		// covered below with mutation ordered before an explicit timeout request.
+		const repo = createRepo("pi-subagents-parallel-timeout-");
 		try {
 			const id = `async-timeout-parallel-${Date.now().toString(36)}`;
 			executeAsyncChain(id, {
@@ -1801,8 +1867,6 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				timeoutMs: 1_500,
 			});
 
-			await waitForMockPiCall(mockPi, 1, 10_000);
-			fs.writeFileSync(path.join(repo, "input.md"), "parallel partial child change\n", "utf-8");
 			const resultPath = await waitForAsyncResultFile(id, 8_000);
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed", 30_000);
@@ -1819,9 +1883,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.deepEqual(status.steps?.map((step) => step.status), ["failed", "failed"]);
 			assert.deepEqual(status.steps?.map((step) => step.timedOut), [true, true]);
 			assert.deepEqual(status.steps?.map((step) => step.error), ["Subagent timed out after 1500ms.", "Subagent timed out after 1500ms."]);
-			assert.deepEqual(status.steps?.map((step) => step.timeoutRecovery?.changedFiles), [["input.md"], ["input.md"]]);
+			assert.deepEqual(status.steps?.map((step) => step.timeoutRecovery?.changedFiles), [[], []]);
 			assert.deepEqual(payload.results.map((result) => result.timedOut), [true, true]);
-			assert.deepEqual(payload.results.map((result) => result.timeoutRecovery?.changedFiles), [["input.md"], ["input.md"]]);
+			assert.deepEqual(payload.results.map((result) => result.timeoutRecovery?.changedFiles), [[], []]);
 			assert.ok(payload.results.every((result) => /Recovery summary:/.test(result.output ?? "")));
 			assert.equal(mockPi.callCount(), 2);
 		} finally {
@@ -1856,8 +1920,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	});
 
 	it("classifies a timed-out dirty child with a missing requested report as recovery-needed", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
-		mockPi.onCall({ delay: 5_000, output: "too late" });
 		const repo = createRepo("pi-subagents-timeout-recovery-");
+		const changedPath = path.join(repo, "input.md");
+		const partialChange = "partial child change\n";
+		mockPi.onCall({
+			writeFiles: [{ path: changedPath, content: partialChange }],
+			steps: [{ waitForPath: path.join(tempDir, "unreleased-dirty-child") }],
+		});
 		try {
 			const id = `async-timeout-recovery-${Date.now().toString(36)}`;
 			const outputPath = path.join(repo, "missing-report.md");
@@ -1875,11 +1944,15 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				},
 				shareEnabled: false,
 				maxSubagentDepth: 2,
-				timeoutMs: 1200,
 			});
 
-			await waitForMockPiCall(mockPi, 0, 10_000);
-			fs.writeFileSync(path.join(repo, "input.md"), "partial child change\n", "utf-8");
+			// The child writes after its mutation baseline, then stays blocked.
+			// Observe that write before requesting timeout so recovery cannot
+			// collect evidence before the mutation, regardless of startup speed.
+			await waitForAsyncState(id, (candidate) =>
+				candidate.steps?.[0]?.status === "running"
+				&& fs.readFileSync(changedPath, "utf-8") === partialChange);
+			deliverTimeoutRequest({ asyncDir: path.join(ASYNC_DIR, id), source: "test" });
 			const payload = await readAsyncPayload(id);
 			const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
 			const result = payload.results[0];
@@ -1887,6 +1960,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const statusRecovery = status.steps?.[0]?.timeoutRecovery;
 			assert.equal(payload.success, false);
 			assert.equal(payload.state, "failed");
+			assert.equal(payload.timedOut, true);
 			assert.equal(result?.timedOut, true);
 			assert.equal(result?.success, false);
 			assert.equal(fs.existsSync(outputPath), false);
@@ -1900,7 +1974,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.match(result?.output ?? "", /Recovery summary:/);
 			assert.match(result?.output ?? "", /Warning: Inspect partial changes before retrying/);
 			assert.equal(status.state, "failed");
+			assert.equal(status.timedOut, true);
 			assert.equal(status.steps?.[0]?.status, "failed");
+			assert.equal(status.steps?.[0]?.timedOut, true);
 			assert.deepEqual(statusRecovery?.changedFiles, ["input.md"]);
 			assert.equal(statusRecovery?.recoveryNeeded, true);
 			assert.equal(statusRecovery?.reportStatus, "missing");
