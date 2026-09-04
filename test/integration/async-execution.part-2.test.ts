@@ -51,7 +51,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		});
 
 		assert.equal(result.isError, undefined);
-		const call = await waitForMockPiCall(mockPi, 0, 10_000);
+		const call = await waitForMockPiCall(mockPi, 0);
 		assert.match(call.args.at(-1) ?? "", /\{outputs\.name\}/);
 		const payload = await readAsyncPayload(id);
 		assert.equal(payload.success, true);
