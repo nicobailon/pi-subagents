@@ -128,13 +128,16 @@ function isNotFoundError(error: unknown): boolean {
 	return typeof error === "object"
 		&& error !== null
 		&& "code" in error
-		&& (error as NodeJS.ErrnoException).code === "ENOENT";
+		&& ((error as NodeJS.ErrnoException).code === "ENOENT" || (error as NodeJS.ErrnoException).code === "ENAMETOOLONG");
 }
 
 /**
  * Read async job status from disk (with mtime-based caching)
  */
 export function readStatus(asyncDir: string): AsyncStatus | null {
+	if (Buffer.byteLength(path.basename(asyncDir), "utf-8") > 255) {
+		return null;
+	}
 	const statusPath = path.join(asyncDir, "status.json");
 
 	let stat: fs.Stats;

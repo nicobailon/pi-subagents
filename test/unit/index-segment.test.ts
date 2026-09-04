@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { ACTIVE_RUN_INDEX_DIR, readActiveRunToolCallIndex, releaseActiveRunIndex, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { encodeIndexSegment, indexSegmentAliases, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
+import { readStatus } from "../../src/shared/utils.ts";
 
 describe("bounded index segments", () => {
 	it("preserves legacy encoding for short values and hashes oversized opaque ids", () => {
@@ -90,6 +91,20 @@ describe("bounded index segments", () => {
 			assert.doesNotThrow(() => releaseActiveRunIndex(asyncDir));
 		} finally {
 			console.error = originalError;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("readStatus safely handles oversized directory paths without throwing ENAMETOOLONG", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-read-status-long-path-"));
+		try {
+			const longSegment = "x".repeat(300);
+			const longDir = path.join(root, longSegment);
+			assert.doesNotThrow(() => {
+				const status = readStatus(longDir);
+				assert.equal(status, null);
+			});
+		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
