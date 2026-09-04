@@ -19,6 +19,7 @@ export const JITI_ALIAS_ENV = "JITI_ALIAS";
 export const HOST_PEER_ALIASES: ReadonlyArray<{ specifier: string; pkg: string; subpath: string }> = [
 	{ specifier: "@earendil-works/pi-coding-agent", pkg: "@earendil-works/pi-coding-agent", subpath: "." },
 	{ specifier: "@earendil-works/pi-agent-core", pkg: "@earendil-works/pi-agent-core", subpath: "." },
+	{ specifier: "@earendil-works/pi-agent-core/node", pkg: "@earendil-works/pi-agent-core", subpath: "./node" },
 	{ specifier: "@earendil-works/pi-tui", pkg: "@earendil-works/pi-tui", subpath: "." },
 	{ specifier: "@earendil-works/pi-ai", pkg: "@earendil-works/pi-ai", subpath: "./compat" },
 	{ specifier: "@earendil-works/pi-ai/compat", pkg: "@earendil-works/pi-ai", subpath: "./compat" },
