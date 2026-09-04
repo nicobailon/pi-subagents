@@ -192,9 +192,11 @@ describe("registerSubagentNotify", () => {
 		});
 		try {
 			const pending = notifier.deliver(completionResult({ id: "delayed-unclaimed" }));
+			assert.equal(notifier.hasPendingDelivery(), true);
 			state.currentSessionId = "session-b";
 			clock.advance(150);
 			assert.equal(await pending, false);
+			assert.equal(notifier.hasPendingDelivery(), false);
 			assert.equal(sent.length, 0);
 		} finally {
 			notifier.dispose();
@@ -217,8 +219,10 @@ describe("registerSubagentNotify", () => {
 		const clock = createFakeClock();
 		const { notifier, sent } = createBatchingPi(clock);
 		const pending = notifier.deliver(completionResult({ id: "dispose-pending" }));
+		assert.equal(notifier.hasPendingDelivery(), true);
 		notifier.dispose();
 		assert.equal(await pending, false);
+		assert.equal(notifier.hasPendingDelivery(), false);
 		clock.advance(1000);
 		assert.equal(sent.length, 0);
 	});

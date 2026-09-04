@@ -675,6 +675,68 @@ describe("subagent extension child mode", () => {
 		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" });
 	});
 
+	it("registers pi-web liveness for the current session and releases it on shutdown", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			import { currentCompletionOwnerId } from "./src/shared/completion-owner.ts";
+			const handlers = new Map();
+			const listeners = new Map();
+			const events = {
+				on(channel, handler) {
+					let set = listeners.get(channel);
+					if (!set) listeners.set(channel, set = new Set());
+					set.add(handler);
+					return () => set.delete(handler);
+				},
+				emit(channel, payload) {
+					for (const handler of [...(listeners.get(channel) ?? [])]) handler(payload);
+				},
+			};
+			const pi = new Proxy({
+				events,
+				on(channel, handler) { handlers.set(channel, handler); },
+				registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+				sendMessage() {}, getSessionName() { return undefined; },
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			const sessionId = "liveness-" + crypto.randomUUID();
+			const sessionFile = "/tmp/" + sessionId + ".jsonl";
+			let provider;
+			let released = 0;
+			const registryKey = Symbol.for("@agegr/pi-web/session-liveness/v1");
+			globalThis[registryKey] = {
+				version: 1,
+				register(value) {
+					provider = value;
+					return () => { released += 1; };
+				},
+			};
+			const ctx = {
+				cwd: process.cwd(), hasUI: false,
+				ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
+				sessionManager: { getSessionId() { return sessionId; }, getSessionFile() { return sessionFile; }, getEntries() { return []; } },
+				modelRegistry: { getAvailable() { return []; } },
+			};
+			registerSubagentExtension(pi);
+			handlers.get("session_start")({ reason: "startup" }, ctx);
+			if (provider?.name !== "pi-subagents" || provider?.sessionId !== sessionId || provider?.sessionFile !== sessionFile) {
+				throw new Error("liveness provider did not preserve exact session identity: " + JSON.stringify(provider));
+			}
+			if (provider.isActive()) throw new Error("idle runtime reported live work");
+			const completionOwnerId = currentCompletionOwnerId();
+			events.emit("subagent:async-started", { id: "run-1", sessionId: sessionFile, completionOwnerId, mode: "single", agent: "worker", asyncDir: "/tmp/" + sessionId + "-run" });
+			if (!provider.isActive()) throw new Error("queued async work was not reported live");
+			events.emit("subagent:async-complete", { id: "run-1", sessionId: sessionFile, completionOwnerId, success: true, summary: "done" });
+			if (!provider.isActive()) throw new Error("pending completion delivery was not reported live");
+			const deliveryDeadline = Date.now() + 2000;
+			while (provider.isActive() && Date.now() < deliveryDeadline) await new Promise((resolve) => setTimeout(resolve, 10));
+			if (provider.isActive()) throw new Error("retained terminal work was reported live after delivery");
+			await handlers.get("session_shutdown")({ reason: "quit" });
+			if (released !== 1) throw new Error("liveness registration was not released exactly once: " + released);
+			delete globalThis[registryKey];
+		`;
+		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" });
+	});
+
 	it("keeps independent extension runtimes active in one process", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";

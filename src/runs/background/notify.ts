@@ -123,6 +123,7 @@ export interface RegisterSubagentNotifyOptions {
 
 export interface CompletionNotifier {
 	deliver(result: CompletionNotification): Promise<boolean>;
+	hasPendingDelivery(): boolean;
 	dispose(): void;
 }
 
@@ -628,6 +629,7 @@ export default function registerSubagentNotify(
 
 	return {
 		deliver,
+		hasPendingDelivery: () => pending.size > 0,
 		dispose() {
 			if (disposed) return;
 			disposed = true;

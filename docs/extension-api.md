@@ -414,6 +414,8 @@ Detached children do not stop when the session does. They are the host process's
 
 This matters because "is the parent busy?" is the wrong idle signal. A parent that launches a detached run and hands control back — which is what the async launch output tells it to do — is not prompting, streaming, compacting, or running a shell command. A host that reaps sessions on those signals alone will dispose exactly the session that was waiting to be woken.
 
+When pi-subagents runs inside a compatible pi-web host, it discovers the versioned `Symbol.for("@agegr/pi-web/session-liveness/v1")` registry and registers one provider for the current session. The provider reports live `queued`/`running` async jobs, active nested descendants (including foreground routes retained after their direct parent settles), foreground controls that still have a scheduling owner or active child, and completion notifications waiting for their batch-delivery timer. Retained terminal history, future schedules, and wait subscriptions do not make a session live by themselves. The registration is replaced on session changes and released during runtime shutdown or reload; other hosts remain unaffected.
+
 If your host reclaims idle sessions, keep a session alive while it still has live detached work:
 
 - Read run state from the status files under the async run directory rather than from event traffic. A long, quiet workflow sends almost nothing to the parent, so recent-activity heuristics conclude the wrong thing.
@@ -431,6 +433,7 @@ The main runtime files in this repository:
 | File | Purpose |
 |------|---------|
 | `src/extension/index.ts` | Extension registration, tool registration, message/render wiring. |
+| `src/integrations/pi-web-session-liveness.ts` | Optional pi-web idle-eviction liveness bridge. |
 | `src/agents/agents.ts` | Agent and chain discovery, frontmatter parsing. |
 | `src/runs/foreground/subagent-executor.ts` | Main execution routing for single, parallel, chain, management, status, interrupt, and doctor actions. |
 | `src/runs/foreground/execution.ts` | Core foreground `runSync` handling: drives one in-process child session per attempt. |

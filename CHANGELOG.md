@@ -27,6 +27,7 @@
 - Add `contact_supervisor` to the bundled reviewer and scout tool allowlists without adding mutation tools (#1846).
 
 ### Fixed
+- Keep pi-web parent sessions alive while subagent work or completion delivery remains active. Thanks to [@vcing](https://github.com/vcing) for #1857.
 - Drop only malformed persisted model-exclusion entries and rewrite the cleaned cache.
 - Stop live workflow children when a run-level stop targets an in-memory async workflow controller.
 - Fail closed when a fallback-only model configuration resolves no launch candidates. Thanks [@AdenosineTP](https://github.com/AdenosineTP) for #1853.

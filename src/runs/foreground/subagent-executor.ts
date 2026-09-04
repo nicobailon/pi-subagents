@@ -60,6 +60,7 @@ import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBrid
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
 import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightSpawnBudget, preflightSpawnBudgetGrant, reserveSpawnBudget } from "../shared/spawn-budget.ts";
 import { claimRunFanoutBatch, claimRunFanoutBatchWithCommit, createRunFanoutBudget, formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor, RunFanoutLimitError, writeRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
+import { retainLiveForegroundNestedRoute } from "../../integrations/pi-web-session-liveness.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
@@ -438,6 +439,7 @@ interface ExecutorDeps {
 	allowMutatingManagementActions?: boolean;
 	activateSupervisorTransport?: () => void;
 	refreshResultDelivery?: () => void;
+	trackRetainedNestedRoute?: (rootRunId: string) => void;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	/** Set when this executor runs inside a child session; carries the runtime settings the host passes instead of environment variables. */
 	childRuntime?: ChildRuntimeConfig;
@@ -526,9 +528,16 @@ function loadWorkflowScriptPath(params: SubagentParamsLike, runtimeCwd: string):
 	return { params: { ...rest, workflowScript } };
 }
 
-function removeForegroundControlIfIdle(state: SubagentState, runId: string): boolean {
+export function removeForegroundControlIfIdle(state: SubagentState, runId: string, trackRetainedNestedRoute?: (rootRunId: string) => void): boolean {
 	const control = state.foregroundControls.get(runId);
 	if (control && (!foregroundSchedulingSettled(control) || (control.activeChildren?.size ?? 0) > 0)) return false;
+	if (control?.nestedRoute) {
+		try {
+			if (retainLiveForegroundNestedRoute(state, control.nestedRoute)) trackRetainedNestedRoute?.(runId);
+		} catch (error) {
+			console.error(`Failed to retain live nested descendants for foreground run '${runId}':`, error);
+		}
+	}
 	state.foregroundControls.delete(runId);
 	if (state.lastForegroundControlId === runId) state.lastForegroundControlId = null;
 	return true;
@@ -3911,7 +3920,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 						try {
 							if (foregroundControl) finishForegroundChild(foregroundControl, 0);
 						} finally {
-							removeForegroundControlIfIdle(deps.state, runId);
+							removeForegroundControlIfIdle(deps.state, runId, deps.trackRetainedNestedRoute);
 						}
 					}
 				}
@@ -6904,7 +6913,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (activeAsyncCapacity && !activeAsyncCapacity.owner.runnerStartedAt) activeAsyncCapacity.rollback();
 			if (foregroundControl) {
 				settleForegroundSchedulingOwner(foregroundControl);
-				removeForegroundControlIfIdle(deps.state, runId);
+				removeForegroundControlIfIdle(deps.state, runId, deps.trackRetainedNestedRoute);
 			}
 		}
 

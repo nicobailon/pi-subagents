@@ -45,7 +45,7 @@ function trackRoute(rootRunId = "root-run") {
 	return route;
 }
 
-function child(id: string, state: "queued" | "running" | "complete" | "failed" | "paused", ts: number, parentRunId = "root-run") {
+function child(id: string, state: "queued" | "running" | "complete" | "failed" | "paused" | "rejected", ts: number, parentRunId = "root-run") {
 	return {
 		id,
 		parentRunId,
@@ -308,6 +308,27 @@ describe("nested event parsing and projection", () => {
 				}],
 			}],
 		}]), true);
+	});
+
+	it("preserves rejected nested states across the event and registry boundary", () => {
+		const route = trackRoute("rejected-root");
+		writeNestedEvent(route, {
+			type: "subagent.nested.completed",
+			ts: 300,
+			parentRunId: route.rootRunId,
+			parentStepIndex: 0,
+			child: {
+				...child("rejected-child", "rejected", 300, route.rootRunId),
+				parentStepIndex: 0,
+				path: [{ runId: route.rootRunId, stepIndex: 0 }],
+				steps: [{ agent: "leaf", status: "rejected" }],
+			},
+		});
+
+		const registry = projectNestedEvents(route);
+		assert.equal(registry.children[0]?.state, "rejected");
+		assert.equal(registry.children[0]?.steps?.[0]?.status, "rejected");
+		assert.equal(hasLiveNestedDescendants(registry.children), false);
 	});
 
 	it("accepts only complete numeric token usage at the nested event boundary", () => {

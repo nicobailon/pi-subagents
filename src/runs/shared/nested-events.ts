@@ -286,7 +286,7 @@ function sanitizeTurnBudget(value: unknown): TurnBudgetState | undefined {
 }
 
 function sanitizeState(value: unknown, fallback: NestedRunState): NestedRunState {
-	return value === "queued" || value === "running" || value === "complete" || value === "failed" || value === "partial" || value === "paused" || value === "stopped"
+	return value === "queued" || value === "running" || value === "complete" || value === "failed" || value === "partial" || value === "paused" || value === "stopped" || value === "rejected"
 		? value
 		: fallback;
 }
@@ -296,7 +296,7 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 	const raw = input as Record<string, unknown>;
 	const agent = stringValue(raw.agent, 128);
 	if (!agent) return undefined;
-	const status = raw.status === "pending" || raw.status === "running" || raw.status === "complete" || raw.status === "completed" || raw.status === "failed" || raw.status === "paused" || raw.status === "stopped"
+	const status = raw.status === "pending" || raw.status === "running" || raw.status === "complete" || raw.status === "completed" || raw.status === "failed" || raw.status === "partial" || raw.status === "paused" || raw.status === "stopped" || raw.status === "rejected"
 		? raw.status
 		: "pending";
 	const model = stringValue(raw.model);
@@ -438,7 +438,7 @@ export function parseNestedEventRecords(content: string, route: NestedRoute): Ne
 }
 
 function terminal(state: NestedRunState): boolean {
-	return state === "complete" || state === "failed" || state === "partial" || state === "paused" || state === "stopped";
+	return state === "complete" || state === "failed" || state === "partial" || state === "paused" || state === "rejected" || state === "stopped";
 }
 
 function mergeBoundedChildren(existing: NestedRunSummary[] | undefined, incoming: NestedRunSummary[] | undefined): NestedRunSummary[] | undefined {

@@ -54,6 +54,8 @@ import {
 	type SupervisorRequestMessageDetails,
 } from "../intercom/supervisor-ui.ts";
 import { registerHerdrStatusBridge, type HerdrStatusRun } from "../integrations/herdr-status.ts";
+import { hasLiveSubagentWork, registerPiWebSessionLiveness } from "../integrations/pi-web-session-liveness.ts";
+import { createRetainedNestedRouteTracker } from "../runs/background/retained-nested-route-tracker.ts";
 import { listHerdrProjectPaneRoots, restoreHerdrProjectPaneSnapshots } from "../inspectors/herdr/project-panes.ts";
 import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
@@ -467,6 +469,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		fleetJobs: new Map(),
 		foregroundRuns: new Map(),
 		foregroundControls: new Map(),
+		retainedForegroundNestedRoutes: new Map(),
 		lastForegroundControlId: null,
 		cleanupTimers: new Map(),
 		lastUiContext: null,
@@ -492,6 +495,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const mainWatchdog = registerMainWatchdog(pi);
 	const resultDeliveryOwnership = createResultDeliveryOwnership(state);
 	const completionNotifier = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch, ownership: resultDeliveryOwnership });
+	const retainedNestedRouteTracker = createRetainedNestedRouteTracker(state);
 	const fleetStatus = fleetViewEnabled
 		? new SubagentFleetStatus(state, async (itemKey) => {
 			const ctx = withLastUiContext((current) => current);
@@ -510,6 +514,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	let executorScheduled: ((id: string, params: SubagentParamsLike, signal: AbortSignal, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
 	let goalTurnId = 0;
 	let parentSessionEnvValue: string | null = null;
+	let releaseHostSessionLiveness = () => {};
 	const scheduledStoreRoot = config.scheduledRuns?.storeRoot === undefined ? undefined : resolveScheduledStoreRoot(config.scheduledRuns.storeRoot);
 	const scheduledRunManager = createScheduledRunManager({
 		config,
@@ -607,6 +612,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		discoverAgents: discoverAgentsForRuntime,
 		activateSupervisorTransport: () => supervisorChannel.activateTransport(),
 		refreshResultDelivery: () => refreshResultDelivery(),
+		trackRetainedNestedRoute: retainedNestedRouteTracker.track,
 	});
 	executorScheduled = executor.executeScheduled;
 
@@ -942,6 +948,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		cleanupSessionArtifacts(ctx);
 		logSlowPhase("session-artifact-cleanup", phaseStartedAt);
 		state.foregroundControls.clear();
+		retainedNestedRouteTracker.clear();
 		state.lastForegroundControlId = null;
 		phaseStartedAt = Date.now();
 		resetJobs(ctx);
@@ -978,6 +985,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			if (runtimeCleaned) return;
 			runtimeCleaned = true;
 			const shuttingDownParentSession = parentSessionEnvValue;
+			releaseHostSessionLiveness();
+			releaseHostSessionLiveness = () => {};
 			// Workflow continuations retain their launch context; abort them before
 			// teardown so a reload cannot launch through a stale context.
 			for (const controller of state.workflowControllers?.values() ?? []) {
@@ -1001,6 +1010,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			for (const timer of state.cleanupTimers.values()) clearTimeout(timer);
 			state.cleanupTimers.clear();
 			state.asyncJobs.clear();
+			retainedNestedRouteTracker.clear();
 			for (const unsubscribe of eventUnsubscribes) {
 				try {
 					unsubscribe();
@@ -1094,6 +1104,16 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		installRuntime(ctx);
 		const recovering = event.reason === "startup" || event.reason === "reload" || event.reason === "resume";
 		resetSessionState(ctx, recovering, event.previousSessionFile);
+		releaseHostSessionLiveness();
+		const sessionId = ctx.sessionManager.getSessionId();
+		const sessionFile = ctx.sessionManager.getSessionFile();
+		releaseHostSessionLiveness = sessionId
+			? registerPiWebSessionLiveness({
+				sessionId,
+				...(sessionFile ? { sessionFile } : {}),
+				isActive: () => hasLiveSubagentWork(state) || completionNotifier.hasPendingDelivery(),
+			})
+			: () => {};
 		herdrStatusBridge.sessionStarted({
 			hasUI: ctx.hasUI === true,
 			runs: activeHerdrRuns(),
