@@ -696,6 +696,47 @@ describe("renderSubagentResult fork indicator", () => {
 		assert.match(expanded, /✓ five · completed/);
 	});
 
+	it("keeps mixed workflow host diagnostics visible once while deduplicating child errors", () => {
+		const hostError = "CI command failed: executable not found";
+		const childError = "Child review failed";
+		for (const childFailed of [false, true]) {
+			const result = {
+				content: [{ type: "text" as const, text: "workflow failed" }],
+				isError: true,
+				details: {
+					mode: "workflow" as const,
+					results: [{
+						agent: "reviewer",
+						task: "Review changes",
+						exitCode: childFailed ? 1 : 0,
+						error: childFailed ? childError : undefined,
+						finalOutput: childFailed ? "" : "Review complete",
+						messages: [],
+						usage: emptyUsage,
+					}],
+					workflow: {
+						value: "workflow finished",
+						trace: [],
+						emits: [],
+						console: [],
+						receipt: {
+							hostSteps: [{
+								version: 1, kind: "host-step", monitorKind: "command",
+								id: "ci", label: "CI", state: "error", detail: hostError,
+								exitCode: 127, updatedAt: 1,
+							}],
+						},
+					},
+				},
+			};
+			for (const expanded of childFailed ? [true] : [false, true]) {
+				const text = withTerminalWidth(220, () => renderSubagentResult!(result, { expanded }, theme).render(220).join("\n"));
+				assert.equal(text.split(hostError).length - 1, 1, text);
+				if (expanded) assert.equal(text.split(childError).length - 1, childFailed ? 1 : 0, text);
+			}
+		}
+	});
+
 	it("renders a stale-running interrupted aggregate as paused", () => {
 		const result = {
 			content: [{ type: "text" as const, text: "paused" }],

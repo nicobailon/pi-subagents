@@ -1337,7 +1337,7 @@ function workflowChecklistWidgetLines(checklist: WorkflowChecklistProjection | u
 		lines.push(`${indent}${glyph} ${theme.bold(formatWorkflowChecklistPhase(phase))}`);
 		if (expanded) {
 			for (const item of [...phase.items].sort((left, right) => workflowChecklistItemPriority(left.state) - workflowChecklistItemPriority(right.state))) {
-				lines.push(workflowChecklistItemLine(item, theme, `${indent}  `, frame, includeItemErrors));
+				lines.push(workflowChecklistItemLine(item, theme, `${indent}  `, frame, includeItemErrors || item.kind === "host"));
 			}
 		}
 	}
