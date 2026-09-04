@@ -66,13 +66,25 @@ function windowsProcessStartKey(pid: number): string | undefined {
 	}
 }
 
+const processStartKeyCache = new Map<number, string | undefined>();
+
 function processStartKey(pid: number): string | undefined {
-	if (process.platform === "linux") return linuxProcessStartKey(pid) ?? psProcessStartKey(pid);
-	if (process.platform === "win32") return windowsProcessStartKey(pid);
-	return undefined;
+	const cached = processStartKeyCache.get(pid);
+	if (processStartKeyCache.has(pid)) return cached;
+	let value: string | undefined;
+	if (process.platform === "linux") value = linuxProcessStartKey(pid) ?? psProcessStartKey(pid);
+	else if (process.platform === "win32") value = windowsProcessStartKey(pid);
+	processStartKeyCache.set(pid, value);
+	return value;
 }
 
-const CURRENT_PROCESS_KEY = processStartKey(process.pid);
+let currentProcessKey: string | undefined | null = null;
+
+/** Lazily resolve the current process start key; a process start time never changes, so it is memoized. */
+function currentProcessStartKey(): string | undefined {
+	if (currentProcessKey === null) currentProcessKey = processStartKey(process.pid);
+	return currentProcessKey;
+}
 
 function readStateLockOwner(lockPath: string): StateLockOwner | undefined {
 	try {
@@ -96,7 +108,7 @@ function stateLockIsStale(lockPath: string, now = Date.now()): boolean {
 	if (owner) {
 		if (!isProcessAlive(owner.pid)) return true;
 		if (owner.processKey) {
-			const currentProcessKey = owner.pid === process.pid ? CURRENT_PROCESS_KEY : processStartKey(owner.pid);
+			const currentProcessKey = owner.pid === process.pid ? currentProcessStartKey() : processStartKey(owner.pid);
 			if (currentProcessKey) return owner.processKey !== currentProcessKey;
 			if (owner.pid === process.pid) return true;
 		}
@@ -181,7 +193,8 @@ function withStateFileLock<T>(filePath: string, operation: () => T): T {
 			waitForStateLock(DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS[attempt], lockPath);
 			continue;
 		}
-		owner = { pid: process.pid, token: randomUUID(), createdAt: Date.now(), ...(CURRENT_PROCESS_KEY ? { processKey: CURRENT_PROCESS_KEY } : {}) };
+		const key = currentProcessStartKey();
+		owner = { pid: process.pid, token: randomUUID(), createdAt: Date.now(), ...(key ? { processKey: key } : {}) };
 		try {
 			fs.writeFileSync(path.join(lockPath, "owner.json"), JSON.stringify(owner), { encoding: "utf-8", mode: 0o600 });
 		} catch (error) {

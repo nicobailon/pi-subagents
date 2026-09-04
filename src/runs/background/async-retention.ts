@@ -320,7 +320,17 @@ function readCursor(root: string): RetentionCursor {
 	return value?.version === 1 ? value as unknown as RetentionCursor : { version: 1 };
 }
 
+const processStartIdentityCache = new Map<number, string | undefined>();
+
 function processStartIdentity(pid: number): string | undefined {
+	const cached = processStartIdentityCache.get(pid);
+	if (processStartIdentityCache.has(pid)) return cached;
+	const value = computeProcessStartIdentity(pid);
+	processStartIdentityCache.set(pid, value);
+	return value;
+}
+
+function computeProcessStartIdentity(pid: number): string | undefined {
 	if (process.platform === "linux") {
 		try {
 			const stat = fs.readFileSync(`/proc/${pid}/stat`).toString("utf8");
