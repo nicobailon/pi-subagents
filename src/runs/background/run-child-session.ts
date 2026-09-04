@@ -93,6 +93,7 @@ export interface RunChildSessionInput {
 	runDeadlineAt?: number;
 	expectedModelForVerification?: string;
 	modelVerificationRegistry?: Array<{ provider: string; id: string; fullId: string }>;
+	modelResponseAliases?: Record<string, string[]>;
 	mutationTools?: readonly string[];
 }
 
@@ -468,7 +469,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				if (event.message.model) {
 					model = event.message.model;
 					if (input.expectedModelForVerification && !hasToolCall) {
-						const modelVerificationError = formatSubagentModelVerificationError(input.expectedModelForVerification, event.message.model, input.modelVerificationRegistry);
+						const modelVerificationError = formatSubagentModelVerificationError(input.expectedModelForVerification, event.message.model, input.modelVerificationRegistry, input.modelResponseAliases);
 						if (modelVerificationError && !error) error = modelVerificationError;
 					}
 				}

@@ -41,6 +41,7 @@ export interface RunnerSubagentStep {
 	/** The primary model is inherited from the parent session and should not be verified against the child-reported active registry model. */
 	skipPrimaryModelVerification?: boolean;
 	modelVerificationRegistry?: Array<{ provider: string; id: string; fullId: string; contextWindow?: number }>;
+	modelResponseAliases?: Record<string, string[]>;
 	tools?: string[];
 	excludeTools?: string[];
 	allowNestedSubagents?: boolean;

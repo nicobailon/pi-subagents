@@ -86,6 +86,26 @@ describe("model fallback helpers", () => {
 		);
 	});
 
+	it("accepts exact response aliases only for the resolved candidate route", () => {
+		const route = "databricks-bedrock/ias-claude-opus-5";
+		const registry = [{ provider: "databricks-bedrock", id: "ias-claude-opus-5", fullId: route }];
+		const aliases = { [route]: ["claude-opus-5"] };
+		const candidate = resolveModelCandidate("ias-claude-opus-5:high", registry)!;
+		assert.equal(candidate, `${route}:high`);
+		assert.equal(formatSubagentModelVerificationError(candidate, "claude-opus-5", registry, aliases), undefined);
+		for (const expected of ["other-provider/ias-claude-opus-5", "databricks-bedrock/other-route", "ias-claude-opus-5"]) {
+			assert.match(formatSubagentModelVerificationError(expected, "claude-opus-5", registry, aliases) ?? "", /model_verification_failed/);
+		}
+		for (const observed of ["wrong-provider/claude-opus-5", "claude-opus-4", "opus-5", "Claude-Opus-5", "claude-opus-5:high"]) {
+			assert.match(formatSubagentModelVerificationError(candidate, observed, registry, aliases) ?? "", /model_verification_failed/);
+		}
+		for (const map of [undefined, {}, { [route]: [] }]) {
+			assert.match(formatSubagentModelVerificationError(candidate, "claude-opus-5", registry, map) ?? "", /model_verification_failed/);
+		}
+		assert.equal(formatSubagentModelVerificationError(candidate, "response:high", registry, { [route]: ["response:high"] }), undefined);
+		assert.match(formatSubagentModelVerificationError(candidate, "response", registry, { [route]: ["response:high"] }) ?? "", /model_verification_failed/);
+	});
+
 	it("resolves unique owner/name ids when the owner is not a registered provider", () => {
 		const registry = [
 			...availableModels,

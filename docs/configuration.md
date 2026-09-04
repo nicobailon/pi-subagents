@@ -32,6 +32,22 @@ Add recursive user or project agent roots with `subagents.agentScanDirs` in Pi s
 
 Entries support `~` expansion. A single `*` path segment expands one directory level, so package-like folders can each expose an `agents/` directory. Missing directories are ignored. Fixed user/project agent directories still win over same-name agents from scan roots.
 
+## `modelResponseAliases`
+
+In `~/.pi/agent/extensions/subagent/config.json` (top-level, not under `subagents`):
+
+```json
+{
+  "modelResponseAliases": {
+    "databricks-bedrock/ias-claude-opus-5": ["claude-opus-5"]
+  }
+}
+```
+
+Optionally accept exact response model IDs for an exact provider-qualified launch candidate. Keys use the resolved `provider/model` ID without its thinking suffix, including for fallback attempts; values are arrays of non-empty response ID strings. Alias matching is exact and case-sensitive, with no fuzzy or suffix matching. Empty arrays add no accepted IDs; malformed declarations fail config loading.
+
+This is your explicit assertion that the declared response IDs identify the requested model, not proof from model output. It does not rewrite the outgoing model or provider route, authorize fallback models, or bypass verification for other routes. Foreground and background runs use the captured config. Without a matching declaration, existing strict verification remains unchanged.
+
 ## `modelExclusions`
 
 ```json

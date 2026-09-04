@@ -107,6 +107,20 @@ function validateModelExclusionsConfig(value: unknown): void {
 	}
 }
 
+function validateModelResponseAliases(value: unknown): void {
+	if (value === undefined) return;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.modelResponseAliases must be a JSON object");
+	for (const [candidate, aliases] of Object.entries(value)) {
+		const slash = candidate.indexOf("/");
+		if (slash <= 0 || !candidate.slice(0, slash).trim() || !candidate.slice(slash + 1).trim()) {
+			throw new Error(`config.modelResponseAliases key ${JSON.stringify(candidate)} must be a non-empty provider/model ID`);
+		}
+		if (!Array.isArray(aliases) || aliases.some((alias) => typeof alias !== "string" || !alias.trim())) {
+			throw new Error(`config.modelResponseAliases[${JSON.stringify(candidate)}] must be an array of non-empty response ID strings`);
+		}
+	}
+}
+
 function validateOrcaProgressTabsConfig(value: unknown): void {
 	if (value === undefined) return;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.orcaProgressTabs must be a JSON object");
@@ -177,6 +191,7 @@ function validateConfig(config: Record<string, unknown>): void {
 	validateArtifactConfig(config.artifactConfig);
 	validateCapacityConfig(config.capacity);
 	validateModelExclusionsConfig(config.modelExclusions);
+	validateModelResponseAliases(config.modelResponseAliases);
 	validateMainWindowRendererConfig(config.mainWindowRenderer);
 	validateOrcaProgressTabsConfig(config.orcaProgressTabs);
 }
@@ -240,12 +255,12 @@ export function loadConfig(): ExtensionConfig {
 		return readConfigForUpdate(configPath);
 	} catch (error) {
 		if (error instanceof PrunedForkConfigError) throw error;
-		// An explicitly requested worktree provider/prefix must not be silently
+		// Explicit route identity and worktree policies must not be silently
 		// discarded and replaced by the built-in defaults after validation fails.
 		try {
 			const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
 			if (raw && typeof raw === "object" && !Array.isArray(raw)
-				&& (Object.hasOwn(raw, "worktreeProvider") || Object.hasOwn(raw, "worktreeBranchPrefix"))) throw error;
+				&& (Object.hasOwn(raw, "worktreeProvider") || Object.hasOwn(raw, "worktreeBranchPrefix") || Object.hasOwn(raw, "modelResponseAliases"))) throw error;
 		} catch (readError) {
 			if (readError === error) throw error;
 		}

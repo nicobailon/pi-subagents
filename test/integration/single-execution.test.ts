@@ -6073,6 +6073,34 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.model, "anthropic/claude-sonnet-4");
 	});
 
+	it("forwards configured response aliases to the resolved foreground fallback without rewriting its route", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ jsonl: [], stderr: "429 rate limit exceeded", exitCode: 1 });
+		mockPi.onCall({ jsonl: [events.assistantMessage("Declared echo accepted", "claude-opus-5")] });
+		const executor = makeExecutor([makeAgent("echo", {
+			model: "mock/primary",
+			fallbackModels: ["ias-claude-opus-5:high"],
+		})], { modelResponseAliases: { "databricks-bedrock/ias-claude-opus-5": ["claude-opus-5"] } });
+		const result = await executor.executePublic(
+			"foreground-response-alias-fallback",
+			{ agent: "echo", task: "Say hello", async: false, context: "fresh", acceptance: false },
+			new AbortController().signal,
+			undefined,
+			{
+				...makeMinimalCtx(tempDir),
+				modelRegistry: { getAvailable: () => [
+					{ provider: "mock", id: "primary" },
+					{ provider: "databricks-bedrock", id: "ias-claude-opus-5" },
+				] },
+			},
+		);
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
+		assert.deepEqual(result.details.results[0]?.attemptedModels, ["mock/primary", "databricks-bedrock/ias-claude-opus-5:high"]);
+		assert.equal(result.details.results[0]?.model, "databricks-bedrock/ias-claude-opus-5:high");
+		const args = readAllCallArgs()[1]!;
+		assert.equal(args[args.indexOf("--model") + 1], "databricks-bedrock/ias-claude-opus-5:high");
+		assert.equal(mockPi.callCount(), 2);
+	});
+
 	it("fails when a configured provider-qualified model starts on a different child model", async () => {
 		mockPi.onCall({ jsonl: [events.assistantMessage("wrong provider", "openai-codex/gpt-5.6-sol")] });
 		const agents = [makeAgent("echo", { model: "opencode-go/ox-alpha-free:max" })];
@@ -6080,6 +6108,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const result = await runSync(tempDir, agents, "echo", "Task", {
 			runId: "foreground-model-verification-mismatch",
 			acceptance: false,
+			modelResponseAliases: { "opencode-go/ox-alpha-free": ["declared-echo"] },
 			availableModels: [
 				{ provider: "opencode-go", id: "ox-alpha-free", fullId: "opencode-go/ox-alpha-free" },
 				{ provider: "openai-codex", id: "gpt-5.6-sol", fullId: "openai-codex/gpt-5.6-sol" },

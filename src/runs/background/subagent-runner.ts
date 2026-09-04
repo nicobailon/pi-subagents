@@ -1206,6 +1206,7 @@ async function runSingleStepInner(
 			runDeadlineAt: ctx.deadlineAt,
 			expectedModelForVerification,
 			modelVerificationRegistry: step.modelVerificationRegistry,
+			modelResponseAliases: step.modelResponseAliases,
 			mutationTools: step.mutationTools,
 		}));
 		const toolDiagnostic = run.exitCode === 0 && !run.error ? launch.capture.toolDiagnostic() : undefined;

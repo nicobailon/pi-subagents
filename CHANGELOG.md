@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Accept explicitly configured response model aliases for exact provider-qualified child launch routes without changing requests or default verification. Thanks to [@drudko-ias](https://github.com/drudko-ias) for #1897.
 - Hide the idle `Async runs 0/∞` Fleet summary while preserving finite and occupied capacity meters. Thanks to [@youssefsiam38](https://github.com/youssefsiam38) for #1892.
 - Supply Pi 0.85.0’s missing server dependency for background children, including extensions importing the public SDK, while preserving host-provided packages.
 - Avoid repeating structured metadata and reply instructions in native supervisor request cards. Thanks to [@youssefsiam38](https://github.com/youssefsiam38) for #1893.

@@ -18,9 +18,17 @@ export function splitThinkingSuffix(model: string): { baseModel: string; thinkin
 	return splitKnownThinkingSuffix(model);
 }
 
-export function formatSubagentModelVerificationError(expectedModel: string, observedModel: string, availableModels: AvailableModelInfo[] | undefined): string | undefined {
+/** Aliases apply only to the resolved launch candidate (without its thinking suffix) and the exact raw response ID. */
+export function formatSubagentModelVerificationError(
+	expectedModel: string,
+	observedModel: string,
+	availableModels: AvailableModelInfo[] | undefined,
+	modelResponseAliases?: Record<string, string[]>,
+): string | undefined {
 	if (!availableModels || availableModels.length === 0) return undefined;
 	const expectedBase = splitThinkingSuffix(expectedModel).baseModel;
+	if (modelResponseAliases && Object.hasOwn(modelResponseAliases, expectedBase)
+		&& modelResponseAliases[expectedBase]?.includes(observedModel)) return undefined;
 	const observedBase = splitThinkingSuffix(observedModel).baseModel;
 	if (expectedBase === observedBase) return undefined;
 	const expectedEntry = availableModels.find((entry) => entry.fullId === expectedBase);
