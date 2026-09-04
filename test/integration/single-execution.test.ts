@@ -40,6 +40,7 @@ import {
 } from "../../src/api/delegation.ts";
 import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, SUBAGENT_CONTROL_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type ChildWatchdogProgress, type ControlEvent, type SubagentState } from "../../src/shared/types.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index.ts";
+import { encodeIndexSegment } from "../../src/runs/background/index-segment.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
@@ -678,14 +679,17 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 
 		mockPi.onCall({ output: "permitted child" });
-		const permit = permitFor("permitted");
-		const allowed = await run("permitted", script, permit);
-		assert.equal(allowed.isError, undefined, allowed.content[0]?.text ?? "permitted workflow failed");
+		const longRunId = `permitted-${"x".repeat(300)}`;
+		const boundedLongRunId = encodeIndexSegment(longRunId);
+		const permit = permitFor(boundedLongRunId);
+		const allowed = await run(longRunId, script, permit);
+		assert.equal(allowed.isError, undefined, allowed.content[0]?.text ?? "long permitted workflow failed");
+		assert.equal(allowed.details.runId, boundedLongRunId);
 		assert.equal(workflowChildPermitConsumed(permit), true);
 		assert.equal(mockPi.callCount(), 2);
 		assert.doesNotMatch(JSON.stringify(allowed), /permit-secret-package|__workflowChildPermit/);
 
-		const reused = await run("permitted", script, permit);
+		const reused = await run(longRunId, script, permit);
 		assert.equal(reused.isError, true);
 		assert.match(reused.content[0]?.text ?? "", /already consumed/);
 		assert.equal(mockPi.callCount(), 2);

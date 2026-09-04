@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import { buildWorkflowChatProgressRows, isSameGitRepository, resolveWorkflowChatProgress } from "../../src/workflows/chat-progress.ts";
 import { renderSubagentResult } from "../../src/tui/render.ts";
 import { bindMissionWorkflowChildAsyncLaunch, createSubagentExecutor, foregroundResultIntercomStatus, missionWorkflowChildStatus, runMissionWorkflowChild, shouldSuppressRoutineResultIntercom } from "../../src/runs/foreground/subagent-executor.ts";
+import { encodeIndexSegment } from "../../src/runs/background/index-segment.ts";
 import { readMissionBinding } from "../../src/missions/lifecycle.ts";
 import { createMission, readMission } from "../../src/missions/store.ts";
 import { DIRS, type Details, type SingleResult, type SubagentState } from "../../src/shared/types.ts";
@@ -110,12 +111,14 @@ describe("workflow chat progress policy", () => {
 });
 
 describe("workflow chat progress rendering", () => {
-	it("emits live-card updates for same-repo watched workflowScript runs", async () => {
+	it("emits live-card updates with bounded workflow ids", async () => {
 		const repo = createRepo("pi-workflow-progress-executor-");
+		const toolCallId = `wf-live-${"x".repeat(300)}`;
+		const workflowRunId = encodeIndexSegment(toolCallId);
 		try {
 			const updates: Array<{ details?: Details }> = [];
 			const result = await createExecutor().execute(
-				"wf-live",
+				toolCallId,
 				{ workflowScript: `return await runs.run("scout", { agent: "missing-agent", task: "scan", phase: "Validation", label: "Find renderer seam" });`, async: false },
 				new AbortController().signal,
 				(update) => updates.push(update),
@@ -124,16 +127,19 @@ describe("workflow chat progress rendering", () => {
 			assert.equal(result.isError, true);
 			const liveUpdate = updates.find((update) => update.details?.chatProgress?.mode === "live-card");
 			assert.ok(liveUpdate, "expected a live-card update");
+			assert.equal(liveUpdate.details?.runId, workflowRunId);
+			assert.equal(liveUpdate.details?.workflowChildren?.workflowRunId, workflowRunId);
 			assert.equal(liveUpdate.details?.workflow?.trace[0]?.key, "scout");
 			assert.equal(liveUpdate.details?.workflow?.trace[0]?.phase, "Validation");
 			assert.equal(liveUpdate.details?.workflow?.trace[0]?.label, "Find renderer seam");
 			const ledgerChild = result.details.mission?.workflowChildren[0];
 			assert.equal(ledgerChild?.key, "scout");
-			assert.equal(ledgerChild?.workflowRunId, "wf-live");
+			assert.equal(ledgerChild?.workflowRunId, workflowRunId);
 			assert.equal(ledgerChild?.agent, "missing-agent");
 			assert.equal(ledgerChild?.phase, "Validation");
 			assert.equal(ledgerChild?.status, "failed");
 			assert.equal(ledgerChild?.heartbeat?.status, "failed");
+			assert.equal(result.details.workflowChildren?.workflowRunId, workflowRunId);
 		} finally {
 			fs.rmSync(repo, { recursive: true, force: true });
 		}

@@ -135,6 +135,9 @@ function isNotFoundError(error: unknown): boolean {
  * Read async job status from disk (with mtime-based caching)
  */
 export function readStatus(asyncDir: string): AsyncStatus | null {
+	if (Buffer.byteLength(path.basename(asyncDir), "utf-8") > 255) {
+		return null;
+	}
 	const statusPath = path.join(asyncDir, "status.json");
 
 	let stat: fs.Stats;
