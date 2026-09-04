@@ -284,6 +284,17 @@ function pathContainsSegments(filePath: string, ...segments: string[]): boolean 
 	return segments.every((segment) => filePath.split(path.sep).includes(segment));
 }
 
+async function waitForFileContent(filePath: string, expected: string): Promise<string> {
+	for (let attempt = 0; attempt < 300; attempt++) {
+		if (fs.existsSync(filePath)) {
+			const content = fs.readFileSync(filePath, "utf-8");
+			if (content.includes(expected)) return content;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	return fs.readFileSync(filePath, "utf-8");
+}
+
 function writePackageSkill(packageRoot: string, skillName: string): void {
 	const skillDir = path.join(packageRoot, "skills", skillName);
 	fs.mkdirSync(skillDir, { recursive: true });
@@ -1590,10 +1601,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 		assert.equal(workflowResult.state, "complete");
 		assert.match(workflowResult.results?.[0]?.output ?? "", /Async: external/);
-		for (let attempt = 0; attempt < 300 && !fs.existsSync(markerPath); attempt++) {
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
-		assert.equal(fs.readFileSync(markerPath, "utf-8"), "started");
+		assert.equal(await waitForFileContent(markerPath, "started"), "started");
 		assert.equal(mockPi.callCount(), 0);
 
 		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
@@ -1644,10 +1652,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
 		assert.ok(result.details.asyncId);
 		assert.match(result.content[0]?.text ?? "", /Async: external/);
-		for (let attempt = 0; attempt < 300 && !fs.existsSync(markerPath); attempt++) {
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
-		assert.equal(fs.readFileSync(markerPath, "utf-8"), "started");
+		assert.equal(await waitForFileContent(markerPath, "started"), "started");
 		assert.equal(mockPi.callCount(), 0);
 
 		const resultPath = path.join(DIRS.results, `${result.details.asyncId}.json`);
@@ -1693,10 +1698,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
 		assert.ok(result.details.asyncId);
-		for (let attempt = 0; attempt < 300 && !fs.existsSync(markerPath); attempt++) {
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
-		assert.equal(fs.readFileSync(markerPath, "utf-8"), "started");
+		assert.equal(await waitForFileContent(markerPath, "started"), "started");
 		assert.equal(mockPi.callCount(), 0);
 
 		const resultPath = path.join(DIRS.results, `${result.details.asyncId}.json`);
@@ -1733,10 +1735,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined);
 		assert.doesNotMatch(result.content[0]?.text ?? "", /Unknown subagent model/);
-		for (let attempt = 0; attempt < 300 && !fs.existsSync(markerPath); attempt++) {
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
-		assert.equal(fs.readFileSync(markerPath, "utf-8"), "started");
+		assert.equal(await waitForFileContent(markerPath, "started"), "started");
 		assert.equal(mockPi.callCount(), 0);
 
 		assert.ok(result.details.asyncId);
