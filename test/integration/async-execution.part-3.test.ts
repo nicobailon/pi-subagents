@@ -11,6 +11,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
+import { childSessionFactoryModule, setChildSessionFactoryModule } from "../../src/runs/shared/child-session.ts";
 import { createEventBus, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir } from "../support/helpers.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey } from "../../src/runs/background/active-async-capacity.ts";
@@ -736,6 +738,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const id = `async-parallel-shared-cwd-mutation-${Date.now().toString(36)}`;
 		let runnerStarted = false;
 		const observer = observeSharedCwdRunner(id);
+		const originalFactoryModule = childSessionFactoryModule();
 		const failures: unknown[] = [];
 		let reported = false;
 		const reportFailure = () => {
@@ -745,6 +748,29 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			catch { t.diagnostic("#1906 failure snapshot unavailable (contents withheld)"); }
 		};
 		try {
+			assert.ok(originalFactoryModule, "expected the installed scripted runner factory");
+			const factoryPath = path.join(tempDir, "shared-cwd-exit-phases.mjs");
+			fs.writeFileSync(factoryPath, `
+import { writeSync } from "node:fs";
+import createFactory from ${JSON.stringify(pathToFileURL(originalFactoryModule).href)};
+export default function() {
+  const factory = createFactory();
+  let invocation = 0;
+  const mark = (phase, call) => writeSync(process.stderr.fd, "#1906 phase=" + phase + " invocation=" + call + " ts=" + Date.now() + " pid=" + process.pid + "\\n");
+  process.once("exit", () => mark("exit", 0));
+  return {
+    create(...args) { return factory.create(...args); },
+    async dispose() {
+      const call = ++invocation;
+      mark("dispose-entry", call);
+      const result = await factory.dispose();
+      mark("dispose-return", call);
+      return result;
+    },
+  };
+}
+`);
+			setChildSessionFactoryModule(factoryPath);
 			const launch = observer.launch(() => executeAsyncChain(id, {
 				chain: [{
 					parallel: [
@@ -792,7 +818,10 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			} catch (error) {
 				failures.push(error);
 				reportFailure();
-			} finally { observer.dispose(); }
+			} finally {
+				setChildSessionFactoryModule(originalFactoryModule);
+				observer.dispose();
+			}
 		}
 		if (failures.length === 1) throw failures[0];
 		if (failures.length > 1) throw new AggregateError(failures, "Primary execution and cleanup/diagnostic failures", { cause: failures[0] });

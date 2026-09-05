@@ -402,6 +402,7 @@ export function observeSharedCwdRunner(id: string) {
 	const notifications: unknown[] = [];
 	const processes: Array<{ proc: ChildProcess; events: unknown[]; dispose: () => void }> = [];
 	let pid: number | undefined;
+	let signalZero: { at: number; state: string } | undefined;
 	const diagnosticChannel = channel("child_process");
 	const onProcess = (message: unknown) => {
 		const proc = record(message).process;
@@ -443,6 +444,17 @@ export function observeSharedCwdRunner(id: string) {
 		// One bounded read per known file, only after failure. No arbitrary text escapes.
 		snapshot() {
 			const snapshotAt = Date.now();
+			const matched = processes.filter(({ proc }) => pid !== undefined && proc.pid === pid);
+			const processState = matched.map(({ proc }) => ({
+				exitCode: proc.exitCode,
+				signalCode: proc.signalCode === null ? null : known(proc.signalCode, ["SIGTERM", "SIGKILL", "SIGINT", "SIGABRT", "SIGSEGV"]) ?? "other",
+			}));
+			// PID presence is not identity or cleanup authority. Probe at most once.
+			if (!signalZero && matched.length === 1 && pid !== undefined) {
+				const at = Date.now();
+				try { process.kill(pid, 0); signalZero = { at, state: "present" }; }
+				catch (error) { signalZero = { at, state: known(record(error).code, ["ESRCH", "EPERM", "EACCES", "EINVAL"]) ?? "other" }; }
+			}
 			const files = ["process-terminal.json", "process-terminal-candidate.json", "status.json", "result", "events.jsonl", "runner.stdout.log", "runner.stderr.log"].map((name) => {
 				const file = name === "result" ? path.join(RESULTS_DIR, `${id}.json`) : path.join(ASYNC_DIR, id, name);
 				let fd: number | undefined;
@@ -457,7 +469,18 @@ export function observeSharedCwdRunner(id: string) {
 					const buffer = Buffer.alloc(Math.min(size, limit));
 					const text = buffer.subarray(0, fs.readSync(fd, buffer, 0, buffer.length, offset)).toString("utf-8");
 					const base = { name, readAt, size, truncated: offset > 0 };
-					if (name.endsWith(".log")) return { ...base, markers: ["ENOENT", "EACCES", "EPERM", "EBUSY", "ENOSPC", "SyntaxError", "TypeError", "UnhandledPromiseRejection"].filter((marker) => text.includes(marker)) };
+					if (name.endsWith(".log")) {
+						const phases = [];
+						for (const line of text.split("\n").slice(offset > 0 ? 1 : 0)) {
+							const match = /^#1906 phase=(dispose-entry|dispose-return|exit) invocation=(\d{1,16}) ts=(\d{1,16}) pid=(\d{1,16})$/.exec(line);
+							if (!match || matched.length !== 1) continue;
+							const [invocation, ts, markerPid] = match.slice(2).map(Number);
+							if (![invocation, ts, markerPid].every(Number.isSafeInteger) || markerPid !== pid || ts <= 0) continue;
+							if (match[1] === "exit" ? invocation !== 0 : invocation < 1) continue;
+							phases.push({ phase: match[1], invocation, ts, pid: markerPid });
+						}
+						return { ...base, markers: ["ENOENT", "EACCES", "EPERM", "EBUSY", "ENOSPC", "SyntaxError", "TypeError", "UnhandledPromiseRejection"].filter((marker) => text.includes(marker)), phases: phases.slice(-16) };
+					}
 					if (name === "events.jsonl") {
 						let parseErrors = 0;
 						const lifecycle = [];
@@ -474,7 +497,7 @@ export function observeSharedCwdRunner(id: string) {
 				} catch (error) { return { name, readAt, state: error instanceof SyntaxError ? "invalid-json" : errorCode(error) }; }
 				finally { if (fd !== undefined) fs.closeSync(fd); }
 			});
-			return { snapshotAt, finishedAt: Date.now(), waitElapsedMs: typeof marks.waitStartedAt === "number" ? snapshotAt - marks.waitStartedAt : undefined, files };
+			return { snapshotAt, finishedAt: Date.now(), waitElapsedMs: typeof marks.waitStartedAt === "number" ? snapshotAt - marks.waitStartedAt : undefined, processState, signalZero, files };
 		},
 		dispose() { for (const entry of processes) entry.dispose(); },
 	};
