@@ -643,27 +643,10 @@ function stopAsyncRun(
 				message: `Stop requested for async run ${initialRunId}.`,
 			};
 		}
-		try {
-			deliverStopRequest({
-				asyncDir: location.asyncDir,
-				pid: initialStatus.pid,
-				kill: options.kill,
-				now: options.now,
-				source: "rpc-stop",
-				...(child ? { targetIndex: child.index, childId: child.id } : {}),
-			});
-		} catch (error) {
-			throw new SubagentRpcError("execution_failed", error instanceof Error ? error.message : String(error));
-		}
-		if (child) emitChildStopping(initialRunId, location.asyncDir, child);
-		return {
-			runId: initialRunId,
-			asyncDir: location.asyncDir,
-			previousState: initialStatus.state,
-			state: "stopping",
-			...(child ? { childId: child.id } : {}),
-			message: child ? `Stop requested for child ${child.id} in async run ${initialRunId}.` : `Stop requested for async run ${initialRunId}.`,
-		};
+		// Workflow controls live in-process; a persisted run directory cannot restore them.
+		throw new SubagentRpcError("invalid_state", child
+			? `Child '${child.id}' in workflow ${initialRunId} has no live stop callback available.`
+			: `Workflow ${initialRunId} has no live run controller available to stop.`);
 	}
 
 	let status;

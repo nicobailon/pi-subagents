@@ -12,6 +12,7 @@
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
 
 ### Fixed
+- Return `invalid_state` instead of queuing unreachable workflow stop requests when live workflow controllers are unavailable (#1965).
 - Keep the async status widget in place across progress updates instead of re-registering it behind other extensions' widgets (#1931). Thanks to [@DraconDev](https://github.com/DraconDev).
 - Wait for workflow-owned root result publication before declaring retained workflow resumes missing on Windows (#1906).
 - Recognize raw `REQUEST_LIMIT_EXCEEDED` rate limits and keep context-overflow errors out of the model exclusion cache (#1955, #1957). Thanks to [@slyons-vamp](https://github.com/slyons-vamp).

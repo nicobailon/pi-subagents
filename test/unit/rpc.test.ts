@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { consumeStopRequestPayload, stopRequestPath } from "../../src/runs/background/control-channel.ts";
+import { consumeStopRequestPayload, stopRequestPath, stopRequestsDir } from "../../src/runs/background/control-channel.ts";
 import {
 	SUBAGENT_RPC_PROTOCOL_VERSION,
 	SUBAGENT_RPC_READY_EVENT,
@@ -1037,7 +1037,7 @@ describe("subagent extension RPC bridge", () => {
 		}
 	});
 
-	it("stops reload-recovered workflows through the durable control channel", async () => {
+	for (const scenario of ["no-state", "empty-maps", "child-no-state", "child-controller-only", "child-callback-false", "run-callback-only"] as const) it(`rejects workflow stop without the required live control: ${scenario}`, async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-stop-workflow-"));
 		try {
 			const events = new FakeEvents();
@@ -1045,6 +1045,14 @@ describe("subagent extension RPC bridge", () => {
 			const resultsDir = path.join(root, "results");
 			const asyncDir = path.join(asyncRoot, "workflow-run");
 			let killCalls = 0;
+			const controller = new AbortController();
+			const calls: string[] = [];
+			const stopChild = (childId: string) => { calls.push(childId); return false; };
+			const childId = scenario.startsWith("child-") ? "worker" : undefined;
+			const state = scenario === "no-state" || scenario === "child-no-state" ? undefined : {
+				workflowControllers: new Map(scenario === "child-controller-only" || scenario === "child-callback-false" ? [["workflow-run", controller]] : []),
+				workflowChildStops: new Map(scenario === "child-callback-false" || scenario === "run-callback-only" ? [["workflow-run", stopChild]] : []),
+			} as SubagentState;
 			fs.mkdirSync(asyncDir, { recursive: true });
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 				runId: "workflow-run",
@@ -1054,10 +1062,15 @@ describe("subagent extension RPC bridge", () => {
 				pid: 4242,
 				startedAt: 100,
 				lastUpdate: 100,
-				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+				steps: [
+					{ workflowKey: "worker", agent: "worker", status: "running", startedAt: 100 },
+					{ workflowKey: "sibling", agent: "worker", status: "running", startedAt: 100 },
+				],
 			}, null, 2), "utf-8");
+			const statusBefore = fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8");
 			const bridge = registerSubagentRpcBridge({
 				events,
+				state,
 				getContext: () => ctx(),
 				execute: async () => assert.fail("stop should not call executor"),
 				asyncDirRoot: asyncRoot,
@@ -1069,13 +1082,18 @@ describe("subagent extension RPC bridge", () => {
 				now: () => 150,
 			});
 
-			const reply = await request(events, "stop-workflow", "stop", { id: "workflow-run" });
+			const reply = await request(events, "stop-workflow", "stop", { id: "workflow-run", ...(childId ? { childId } : {}) });
 
-			assert.equal(reply.success, true);
-			assert.equal((reply as { data: { runId?: string; state?: string; message?: string } }).data.runId, "workflow-run");
-			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
-			assert.match((reply as { data: { message?: string } }).data.message ?? "", /Stop requested for async run workflow-run/);
-			assert.equal(consumeStopRequestPayload(asyncDir)?.type, "stop");
+			assert.equal(reply.success, false);
+			assert.equal((reply as { error: { code: string } }).error.code, "invalid_state");
+			assert.match((reply as { error: { message: string } }).error.message,
+				scenario === "child-callback-false" ? /not available to stop/ : childId ? /no live stop callback/ : /no live run controller/);
+			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), false);
+			assert.equal(fs.existsSync(stopRequestsDir(asyncDir)), false);
+			assert.equal(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"), statusBefore);
+			assert.equal(events.emitted.some(({ event }) => event === SUBAGENT_CHILD_STATUS_EVENT), false);
+			assert.equal(controller.signal.aborted, false);
+			assert.deepEqual(calls, scenario === "child-callback-false" ? ["worker"] : []);
 			assert.equal(killCalls, 0);
 
 			bridge.dispose();
