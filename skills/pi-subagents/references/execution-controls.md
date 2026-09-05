@@ -258,7 +258,7 @@ A cooperating terminal runtime can register read-only external records through `
 
 ### Scheduled subagent runs
 
-Schedules are durable project records under `.pi/subagents/schedules/`. They are enabled by default; set `{ "scheduledRuns": { "enabled": false } }` in `~/.pi/agent/extensions/subagent/config.json` to disable them. Only schedule explicit work the user asked for.
+Schedules are durable project records under `.pi/subagents/schedules/`. They are enabled by default; set `{ "scheduledRuns": { "enabled": false } }` in `~/.pi/agent/extensions/subagent/config.json` to disable them. Only schedule explicit work the user asked for. To keep schedules outside the project repository, set `{ "scheduledRuns": { "storeRoot": "~/.pi/subagent-schedules" } }` in the same config: `storeRoot` accepts an absolute path or a `~/`-prefixed path, and records land under `<storeRoot>/<sha256(cwd) first 20 hex>/<scheduleId>/`.
 
 ```typescript
 // One-shot reviewer
@@ -326,6 +326,19 @@ subagent({ action: "steer", id: "abc123", message: "Focus on the failing test." 
 ```
 
 The action waits up to three seconds for the child Pi session to accept the correlated user input and returns a request id with `delivered`, `scheduled`, `pending`, `partial`, `recovered`, or `failed` plus per-child states. Indexed pending children return `scheduled` immediately. Only a top-level single-child run may automatically interrupt after a missed acknowledgment and recover after confirmed pause within a further 15 seconds. Recovery preserves the original child contract and only its remaining deadline, turn, and tool budgets. If the session is missing, a budget is exhausted, the pause cannot be confirmed, or replacement launch fails, the source remains paused when pausing succeeded and the action returns the exact failure. Chain, parallel, and nested runs never auto-interrupt; inspect their per-child outcomes and handle failures explicitly. A late acknowledgment is recorded and cannot cancel committed recovery.
+
+Steering supports three delivery modes via the `mode` parameter (`steer` is the default):
+
+- `mode: "steer"` — interrupt the child at the next safe point of its current turn and deliver the message.
+- `mode: "follow_up"` — do not interrupt; append to a bounded FIFO queue delivered at the next turn boundary. Completed or paused retained children receive the message as a revival brief (`queueRevivalBrief`) when they are revived.
+- `mode: "auto"` — deliver immediately when the child is between turns; otherwise queue it as `follow_up` would.
+
+```typescript
+subagent({ action: "steer", id: "abc123", mode: "follow_up", message: "After this step, also validate the config file." })
+subagent({ action: "steer", id: "abc123", mode: "auto", message: "Switch to the failing test now." })
+```
+
+Receipts reflect the chosen mode: direct delivery returns `delivered`; a queued message surfaces through the per-child states until it is delivered at the next turn boundary.
 
 ## Watchdog
 
