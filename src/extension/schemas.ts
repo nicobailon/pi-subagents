@@ -77,6 +77,8 @@ const AcceptanceEvidenceKinds = [
 	"manual-notes",
 ];
 
+// Provider boolean branches intentionally overapproximate false-only runtime inputs.
+// Restricted function-declaration converters only support string enum members.
 const AcceptanceOverride = Type.Unsafe({
 	anyOf: [
 		{ type: "string", enum: ["auto", "attested", "checked"] },
@@ -89,10 +91,10 @@ const AcceptanceOverride = Type.Unsafe({
 		{
 			type: "string",
 		},
-		{ type: "boolean", enum: [false] },
+		{ type: "boolean" },
 		{ type: "object", additionalProperties: true },
 	],
-	description: `Optional acceptance policy. Prefer an inline JSON object. JSON-encoded object strings are tolerated only during input normalization; invalid strings fail closed. Reviewer/read-only calls, omit acceptance. { level: "checked", evidence: ["commands-run", "changed-files"] }. Supported evidence kinds: ${AcceptanceEvidenceKinds.join(",")}. acceptance.review.required.`,
+	description: `Optional acceptance policy. false disables acceptance; true is invalid. Prefer an inline JSON object. JSON-encoded object strings are tolerated only during input normalization; invalid strings fail closed. Reviewer/read-only calls, omit acceptance. { level: "checked", evidence: ["commands-run", "changed-files"] }. Supported evidence kinds: ${AcceptanceEvidenceKinds.join(",")}. acceptance.review.required.`,
 });
 
 const AgentContractOverride = Type.Object({
@@ -257,7 +259,7 @@ export const ChainItem = Type.Object({
 const MissionLaunchOverride = Type.Unsafe({
 	anyOf: [
 		{ type: "object", additionalProperties: true },
-		{ type: "boolean", enum: [false] },
+		{ type: "boolean" },
 	],
 });
 const MissionUpdateOverride = Type.Unsafe({ type: "object", additionalProperties: true });
@@ -317,7 +319,7 @@ const SubagentParamProperties = {
 	scope: Type.Optional(Type.String({ enum: ["session", "user", "project"], description: "Scope for action='watchdog.configure'. Defaults to session to avoid persistent settings writes unless user/project is explicit." })),
 	target: Type.Optional(Type.String({ enum: ["main", "children", "child"], description: "Target for watchdog actions." })),
 	focus: Type.Optional(Type.Boolean({ description: "Focus the new Herdr pane for inspector.open or project.open." })),
-	thinking: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "boolean", enum: [false] }], description: "Thinking level for action='watchdog.configure' only (off/minimal/low/medium/high/xhigh/max, inherit, or false for off). Ignored on dispatch; set per-run child thinking with a suffix on the model string, e.g. model: 'provider/id:high'." })),
+	thinking: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "boolean" }], description: "Thinking level for action='watchdog.configure' only (off/minimal/low/medium/high/xhigh/max, inherit, or false for off; true is invalid). Ignored on dispatch; set per-run child thinking with a suffix on the model string, e.g. model: 'provider/id:high'." })),
 	at: Type.Optional(Type.String({ description: "One-shot trigger for action='schedule.create': a relative delay such as '+10m' or an ISO timestamp with timezone." })),
 	every: Type.Optional(Type.String({ description: "Fixed recurring interval for action='schedule.create', such as '30m', '6h', '2d', or '2w'." })),
 	sessionOnly: Type.Optional(Type.Boolean()),
@@ -326,7 +328,7 @@ const SubagentParamProperties = {
 	overlap: Type.Optional(Type.String({ enum: ["skip"], description: "Overlap policy. This slice supports skip only." })),
 	catchUp: Type.Optional(Type.String({ enum: ["none", "latest"], description: "Missed occurrence policy for recurring schedules. Defaults to latest." })),
 	missionId: Type.Optional(Type.String({ description: "Mission id." })),
-	mission: Type.Optional(Type.Unsafe({ ...MissionLaunchOverride, description: "Mission object, or false for no mission. Set exactly one non-empty title or summary; objective and labels are optional. goal may only be true and then requires budget.tokens." })),
+	mission: Type.Optional(Type.Unsafe({ ...MissionLaunchOverride, description: "Mission object, or false for no mission; true is invalid. Set exactly one non-empty title or summary; objective and labels are optional. goal may only be true and then requires budget.tokens." })),
 	missionUpdate: Type.Optional(Type.Unsafe({ ...MissionUpdateOverride, description: "Mission update: objective, goal false or {paused:boolean}, budget, summary, labels, decisions, artifacts, or delivery receipts." })),
 	missionStatus: Type.Optional(Type.String({ description: "Mission status." })),
 	missionScope: Type.Optional(Type.String({ description: "Mission list scope: project (default) or global pointer index." })),

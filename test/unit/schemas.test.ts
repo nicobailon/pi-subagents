@@ -535,6 +535,10 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 				if (!current.value || typeof current.value !== "object") continue;
 
 				const node = current.value as JsonSchemaNode;
+				// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Inspecting JSON Schema enum representation is the portability contract under test.
+				if (Array.isArray(node.enum) && node.enum.some((value) => typeof value !== "string")) {
+					rejectedPaths.push(`${current.path}.enum`);
+				}
 				if (Array.isArray(node.type)) {
 					rejectedPaths.push(`${current.path}.type`);
 				}
@@ -606,6 +610,13 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		assert.ok(CompileSchema, "TypeBox compiler should exist");
 		const validator = CompileSchema(SubagentParams);
+		// Transport accepts both booleans; semantic boundaries still reject unsupported true.
+		for (const field of ["acceptance", "mission", "thinking"]) {
+			assert.deepEqual(anyOfBranches(SubagentParams.properties[field]).find((branch) => branch.type === "boolean"), { type: "boolean" });
+			assert.equal(validator.Check({ [field]: false }), true);
+			assert.equal(validator.Check({ [field]: true }), true);
+			assert.equal(validator.Check({ [field]: 123 }), false);
+		}
 		const validValues = [
 			{ skill: "review" },
 			{ workflowScript: "return await runs.run(\"one\", {agent: \"reviewer\", task: \"check\"})" },
@@ -626,7 +637,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ output: 123 },
 			{ timeoutMs: 0 },
 			{ maxRuntimeMs: -1 },
-			{ agent: "worker", task: "Fix", acceptance: true },
 			{ config: [] },
 			{ config: null },
 			{ agent: "worker", task: "Fix", toolBudget: { hard: 0 } },

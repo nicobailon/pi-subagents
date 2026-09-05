@@ -1220,6 +1220,17 @@ describe("acceptance gates", () => {
 		assert.match(errors.join("\n"), /acceptance\.review\.required/);
 	});
 
+	it("rejects transport-permitted true acceptance before execution, including nested inputs", () => {
+		const errors = validateExecutionAcceptance({
+			acceptance: true,
+			tasks: [{ acceptance: true }],
+			chain: [{ acceptance: true }, { parallel: [{ acceptance: true }] }, { parallel: { acceptance: true } }],
+		});
+		const paths = ["acceptance", "tasks[0].acceptance", "chain[0].acceptance", "chain[1].parallel[0].acceptance", "chain[2].parallel.acceptance"];
+		assert.equal(errors.length, paths.length);
+		paths.forEach((path, index) => assert.ok(errors[index]?.startsWith(`${path} must be a string level, false, or an object.`)));
+	});
+
 	it("requires outputSchema for explicit structured acceptance report mode", () => {
 		const schema = { type: "object" as const };
 		const errors = validateExecutionAcceptance({
