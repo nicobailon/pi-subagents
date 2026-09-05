@@ -5,6 +5,8 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { arbitrateCompletionGuardRescue, createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
 
 // Detached runners skip Pi's CLI proxy setup. Keep fetch on the same Undici dispatcher.
 function ensureProxyAwareHttpDispatcher(): void {
@@ -1125,6 +1127,15 @@ async function runSingleStepInner(
 			inherited: ctx.inheritedChildRuntime,
 			host: "runner",
 		}));
+		let intentModelContext: Pick<ExtensionContext, "model" | "modelRegistry"> | undefined;
+		launch.session.hooks.push({
+			name: "pi-subagents:completion-intent",
+			factory: (pi) => pi.on("session_start", (_event, childCtx) => {
+				// Keep only the attempt's model services. The shared factory runtime
+				// outlives child disposal; no live session or auth work is retained here.
+				intentModelContext = { model: childCtx.model, modelRegistry: childCtx.modelRegistry };
+			}),
+		});
 		if (effectiveStructuredOutput && launch.config.structuredOutput) {
 			// The runner reads the value back from the runtime's files after the run.
 			launch.config.structuredOutput.capture = createStructuredOutputFileCapture(effectiveStructuredOutput);
@@ -1283,8 +1294,21 @@ async function runSingleStepInner(
 			}))
 			: undefined;
 		const mutationAttemptObserved = run.observedMutationAttempt === true || completionMutationEvidence?.attemptedMutation === true;
+		let arbitration = { triggered: completionGuard?.triggered === true && !mutationAttemptObserved, rescued: false };
+		if (arbitration.triggered) {
+			const modelContext = intentModelContext;
+			arbitration = await arbitrateCompletionGuardRescue({
+				guardTriggered: true,
+				task: taskForCompletionGuard,
+				// Construct lazily too: the shared gate refuses overlength tasks before
+				// registry/auth/model work. The child has already shut down normally.
+				arbiter: modelContext ? async (task) => createTaskMutationArbiter(modelContext)?.(task) ?? "unavailable" : undefined,
+			});
+		}
 		const completionEvidence = planCompletionEvidence({
 			guard: completionGuard,
+			guardTriggered: arbitration.triggered,
+			arbiterRescued: arbitration.rescued,
 			completionGuardEnabled,
 			mutationCapable: hasMutationToolCapability(completionTools, completionToolPlan?.effectiveMcpTools ?? step.mcpDirectTools),
 			implementationMutationExpected: expectsImplementationMutation(step.agent, taskForCompletionGuard),

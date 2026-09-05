@@ -266,6 +266,23 @@ describe("createTaskMutationArbiter", () => {
 		assert.equal(createTaskMutationArbiter(fakeCtx({ models: [] })), undefined);
 	});
 
+	it("does not stream after explicit auth failure or an auth error", async () => {
+		for (const throws of [false, true]) {
+			let calls = 0;
+			const arbiter = createTaskMutationArbiter({
+				model: { provider: "test", id: "model-1", api: "test-api" },
+				modelRegistry: {
+					async getApiKeyAndHeaders() {
+						if (throws) throw new Error("auth unavailable");
+						return { ok: false, error: "auth unavailable" };
+					},
+				},
+			} as never, { streamFn: () => { calls++; throw new Error("must not stream"); } });
+			assert.equal(await arbiter!("Implement the fix"), "unavailable");
+			assert.equal(calls, 0);
+		}
+	});
+
 	it("returns a working arbiter bound to the host model", async () => {
 		const arbiter = createTaskMutationArbiter(fakeCtx(), {
 			streamFn: async () => {

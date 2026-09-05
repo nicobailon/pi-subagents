@@ -331,6 +331,8 @@ Field notes:
 | `maxSubagentDepth` | Tightens nested delegation for this agent's children. |
 | `memory` | Opt-in role-specific persistent memory. See below. |
 
+When the completion guard would flag missing edits, a model intent arbiter can rescue only a confident read-only task. Foreground uses the parent model; native background uses the child attempt's existing model services after child shutdown. Ordinary completions do not invoke classification or resolve arbiter auth. Disabled arbitration (`PI_SUBAGENTS_LLM_INTENT_ARBITER=0`), unavailable model/auth, errors, ambiguous intent, and tasks over 8,000 characters keep the guard result. The classification prompt has a 10-second timeout; preceding auth and module loading are outside that bound. This does not change capability limits or the v1 contract's default-off guard and explicit missing-effect semantics.
+
 ## Per-agent persistent memory
 
 A recurring custom agent can opt into a durable, role-specific memory scope with the `memory` frontmatter field:

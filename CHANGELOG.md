@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Rescue confident read-only background completions misclassified as implementation before publishing missing-edit failures (#1911). Thanks to [@yanqianglu](https://github.com/yanqianglu).
 - Keep background streaming status updates batched during long-running and attention states while publishing child activity transitions immediately (#1901).
 - Honor distinct output paths on retained workflow follow-ups, preserving the original report and returning the saved output references (#1903).
 - Keep worktree setup responsive and cancellable while preserving uncertain allocations for manual reconciliation (#1902).

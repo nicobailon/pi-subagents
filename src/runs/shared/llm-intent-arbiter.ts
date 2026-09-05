@@ -76,9 +76,10 @@ export interface TaskMutationArbiterOptions {
 const DEFAULT_ARBITER_TIMEOUT_MS = 10_000;
 
 type RegistryModel = ReturnType<NonNullable<ExtensionContext["modelRegistry"]["find"]>>;
+type ArbiterModelContext = Pick<ExtensionContext, "model" | "modelRegistry">;
 
 function resolveArbiterModel(
-	ctx: ExtensionContext,
+	ctx: ArbiterModelContext,
 	options?: TaskMutationArbiterOptions,
 ): NonNullable<RegistryModel> | null {
 	const registry = ctx.modelRegistry as {
@@ -98,7 +99,7 @@ function resolveArbiterModel(
 }
 
 function resolveArbiterRuntime(
-	ctx: ExtensionContext,
+	ctx: ArbiterModelContext,
 	options?: TaskMutationArbiterOptions,
 ): ArbiterRuntime | null {
 	const model = resolveArbiterModel(ctx, options);
@@ -117,9 +118,9 @@ function resolveArbiterRuntime(
 }
 
 async function resolveArbiterAuth(
-	ctx: ExtensionContext,
+	ctx: ArbiterModelContext,
 	model: RegistryModel,
-): Promise<ArbiterAuth> {
+): Promise<ArbiterAuth | undefined> {
 	const registry = ctx.modelRegistry as {
 		getApiKeyAndHeaders?: (m: RegistryModel) => Promise<{
 			ok: boolean;
@@ -135,14 +136,14 @@ async function resolveArbiterAuth(
 	if (!registry.getApiKeyAndHeaders) return {};
 	try {
 		const auth = await registry.getApiKeyAndHeaders(model);
-		if (auth.ok === false) return {};
+		if (auth.ok === false) return undefined;
 		return {
 			...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
 			...(auth.headers ? { headers: auth.headers } : {}),
 			...(auth.env ? { env: auth.env } : {}),
 		};
 	} catch {
-		return {};
+		return undefined;
 	}
 }
 
@@ -230,9 +231,9 @@ async function runArbitration(
 	}
 }
 
-/** Create a memoized arbiter bound to the parent session's model, or undefined when disabled/unavailable. */
+/** Create a memoized arbiter bound to the supplied model services, or undefined when disabled/unavailable. */
 export function createTaskMutationArbiter(
-	ctx: ExtensionContext,
+	ctx: ArbiterModelContext,
 	options?: TaskMutationArbiterOptions,
 ): TaskMutationArbiter | undefined {
 	if (process.env.PI_SUBAGENTS_LLM_INTENT_ARBITER === "0") return undefined;
@@ -244,7 +245,7 @@ export function createTaskMutationArbiter(
 		const cached = cache.get(key);
 		if (cached) return cached;
 		const auth = await resolveArbiterAuth(ctx, runtime.model);
-		const verdict = await runArbitration(runtime, auth, task);
+		const verdict = auth ? await runArbitration(runtime, auth, task) : "unavailable";
 		if (cache.size > 200) cache.clear();
 		cache.set(key, verdict);
 		return verdict;
