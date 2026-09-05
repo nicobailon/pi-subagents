@@ -77,6 +77,24 @@ describe("watchdog tool actions", () => {
 		assert.equal(result.isError, undefined);
 		assert.equal(runtime.getSnapshot(tempProject).config.main.model, "anthropic/claude-opus-4-8");
 		assert.equal(runtime.getSnapshot(tempProject).config.main.thinking, "low");
+		const off = handleWatchdogToolAction("watchdog.configure", { thinking: false }, ctx, runtime);
+		assert.equal(off.isError, undefined);
+		assert.equal(runtime.getSnapshot(tempProject).config.main.thinking, false);
+	});
+
+	it("rejects transport-permitted true thinking without changing session or settings", () => {
+		const runtime = new MainWatchdogRuntime({ cwd: tempProject });
+		const ctx = createCtx({ provider: "openai-codex", id: "gpt-5.5" });
+		const before = runtime.getSnapshot(tempProject).config.main;
+		for (const scope of ["session", "user"]) {
+			// SAFETY: Deliberately pass invalid tool JSON to prove the false-only runtime contract.
+			const result = handleWatchdogToolAction("watchdog.configure", { scope, thinking: true as never }, ctx, runtime);
+			assert.equal(result.isError, true);
+			assert.match(text(result), /Unsupported watchdog thinking 'true'/);
+			assert.deepEqual(runtime.getSnapshot(tempProject).config.main, before);
+		}
+		assert.equal(fs.existsSync(path.join(tempHome, ".pi", "agent", "settings.json")), false);
+		assert.equal(fs.existsSync(path.join(tempProject, ".pi", "settings.json")), false);
 	});
 
 	it("persists the recommended model when user scope is explicit", () => {

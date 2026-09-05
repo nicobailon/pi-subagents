@@ -36,6 +36,8 @@ describe("mission launch lifecycle", () => {
 			labels: ["review"],
 		});
 		assert.throws(() => validateMissionLaunch({}), /title or mission\.summary/);
+		assert.throws(() => validateMissionLaunch(true), /mission must be an object/);
+		assert.throws(() => validateMissionLaunch(false), /mission must be an object/);
 		assert.throws(() => validateMissionLaunch({ title: "Title", summary: "Summary" }), /cannot both be set/);
 		assert.throws(() => validateMissionLaunch({ title: " " }), /non-empty string/);
 		assert.throws(() => validateMissionLaunch({ title: "Title", goal: false }), /must be true/);
@@ -45,6 +47,13 @@ describe("mission launch lifecycle", () => {
 	it("creates missions by default for task launches and honors explicit opt-out", () => {
 		const test = projectFixture();
 		try {
+			assert.throws(() => prepareMissionLaunch({
+				params: { mission: true, task: "Invalid mission" },
+				projectRoot: test.projectRoot,
+				config: test.missionConfig,
+			}), /mission must be an object/);
+			assert.deepEqual(fs.readdirSync(test.projectRoot), [], "invalid mission must not create records");
+			assert.equal(fs.existsSync(test.missionConfig.globalIndexDir), false);
 			const binding = prepareMissionLaunch({
 				params: { task: "Map the auth flow" },
 				projectRoot: test.projectRoot,
