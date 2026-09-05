@@ -1893,7 +1893,8 @@ Do work
 			assert.match(researcherPrompt, /direct evidence, source interpretation, and researcher inference distinctly/);
 			assert.match(researcherPrompt, /Record contradictions.*Record missing evidence/);
 			assert.match(researcherPrompt, /Never invent dates, quotations, citations, or unsupported precision/);
-			assert.match(researcherPrompt, /If `source_check` is unavailable or fails, continue/);
+			assert.match(researcherPrompt, /`source_check` must be registered by the loaded provider before launch/);
+			assert.match(researcherPrompt, /If a registered `source_check` call fails, continue/);
 			assert.match(researcherPrompt, /\*\*Support:\*\* direct evidence \| interpretation\. \*\*Confidence:\*\* high \| medium \| low/);
 		} finally {
 			if (previousHome === undefined) delete process.env.HOME;
