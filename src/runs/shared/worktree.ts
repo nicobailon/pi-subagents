@@ -453,7 +453,7 @@ function validGitRef(ref: string): boolean {
 /** Normalize and validate a configured worktree base ref without resolving it. */
 export function normalizeWorktreeBaseRef(value: unknown): string | undefined {
 	if (value === undefined) return undefined;
-	if (typeof value !== "string" || !validGitRef(value)) throw new Error("baseRef must be a valid Git ref");
+	if (typeof value !== "string" || !validGitRef(value)) throw new Error("baseRef must be a valid Git ref: use HEAD or a supported named ref (for example, refs/heads/main). Full 40/64-character commit IDs and revision expressions are unsupported.");
 	return value;
 }
 

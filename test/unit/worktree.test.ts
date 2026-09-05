@@ -685,7 +685,7 @@ process.stdout.write(JSON.stringify({ syntheticPaths: [".base-commit"] }));
 		const repoDir = createRepo("pi-worktree-invalid-base-ref-");
 		try {
 			for (const baseRef of ["unsafe..ref", "branch name", "HEAD^{tree}", "@", "a".repeat(40), "a".repeat(64)] as const) {
-				await assert.rejects(() => createWorktrees(repoDir, `invalid-${baseRef.length}`, 1, { provider: "native", baseRef }), /valid Git ref|could not be resolved/i);
+				await assert.rejects(() => createWorktrees(repoDir, `invalid-${baseRef.length}`, 1, { provider: "native", baseRef }), /baseRef.*HEAD.*named ref.*40\/64-character commit IDs.*revision expressions.*unsupported/);
 			}
 			git(repoDir, ["tag", "tree-object", "HEAD^{tree}"]);
 			await assert.rejects(() => createWorktrees(repoDir, "invalid-tree", 1, { provider: "native", baseRef: "tree-object" }), /could not be resolved to a commit/i);
