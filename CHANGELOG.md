@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Keep background streaming status updates batched during long-running and attention states while publishing child activity transitions immediately (#1901).
+
 ## [0.65.1] - 2026-09-04
 
 ### Highlights

@@ -11,6 +11,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import { setChildSessionFactoryModule } from "../../src/runs/shared/child-session.ts";
 import { createEventBus, events, makeAgent, removeTempDir } from "../support/helpers.ts";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
 import type { AsyncResultPayload, AsyncStatusPayload } from "../support/async-execution-fixture.ts";
@@ -24,6 +26,129 @@ import {
 
 describe("async execution utilities", { skip: !available ? "pi packages not available" : undefined }, () => {
 	installAsyncExecutionHooks();
+
+	it("coalesces ordinary background status while publishing per-child activity transitions", { timeout: 30_000, skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async (t) => {
+		const id = `async-coalescing-${Date.now().toString(36)}`;
+		const statusPath = path.join(ASYNC_DIR, id, "status.json");
+		const reportPath = path.join(tempDir, `${id}-report.json`);
+		const factoryPath = path.join(tempDir, `${id}-factory.mjs`);
+		// Exercise the detached production runner through its child-session boundary.
+		// Only external time and successful filesystem publications are instrumented.
+		fs.writeFileSync(factoryPath, `
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { mock } from "node:test";
+const statusPath = ${JSON.stringify(statusPath)};
+const reportPath = ${JSON.stringify(reportPath)};
+const children = [];
+const report = { samples: [], transitions: [], terminal: [] };
+process.once("exit", () => fs.writeFileSync(reportPath, JSON.stringify(report)));
+let writes = 0, bytes = 0, replayed = false, finished = false;
+const read = () => JSON.parse(fs.readFileSync(statusPath, "utf8"));
+const rename = fs.renameSync;
+fs.renameSync = function(source, target) {
+  rename.call(this, source, target);
+  if (target === statusPath) {
+    writes++;
+    bytes += fs.statSync(target).size;
+    if (replayed && !finished && read().state !== "running") {
+      finished = true;
+      queueMicrotask(() => {
+        report.terminal.push(read());
+        mock.timers.tick(100);
+        report.terminal.push(read());
+        mock.timers.reset();
+      });
+    }
+  }
+};
+syncBuiltinESMExports();
+function replay() {
+  mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+  const emit = (index, event) => children[index].listener(event);
+  const stream = () => emit(1, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "x" } });
+  const transition = (index, event) => {
+    const before = writes;
+    emit(index, event);
+    report.transitions.push({ writes: writes - before, status: read() });
+  };
+  const sample = (state) => {
+    const beforeWrites = writes, beforeBytes = bytes;
+    for (let i = 0; i < 1000; i++) { stream(); mock.timers.tick(10); }
+    mock.timers.tick(100);
+    report.samples.push({ state, writes: writes - beforeWrites, bytes: bytes - beforeBytes, now: Date.now(), status: read() });
+  };
+  const start = { type: "tool_execution_start", toolName: "contact_supervisor", toolCallId: "decision", args: { reason: "need_decision", message: "Choose" } };
+  const end = { type: "tool_execution_end", toolName: "contact_supervisor", toolCallId: "decision" };
+  sample("unset");
+  transition(1, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "working" }], stopReason: "tool_use" } });
+  sample("active_long_running");
+  transition(0, start);
+  sample("needs_attention");
+  transition(1, start); // Aggregate attention is unchanged by either sibling transition.
+  transition(1, end);
+  transition(0, end);
+  const beforePending = writes;
+  stream(); // Leave an ordinary update pending when both children fail.
+  report.pendingWrites = writes - beforePending;
+  replayed = true;
+  for (const child of children) child.reject(new Error("scripted terminal failure"));
+}
+export default function() {
+  return {
+    async create() {
+      const child = {};
+      children.push(child);
+      return {
+        sessionId: "coalescing-" + children.length, sessionFile: undefined, modelId: undefined, messages: [],
+        subscribe(listener) { child.listener = listener; return () => {}; },
+        prompt() { return new Promise((resolve, reject) => { child.reject = reject; if (children.length === 2 && children.every(c => c.reject)) replay(); }); },
+        async steer() {}, async followUp() {}, async abort() {}, async dispose() {},
+      };
+    },
+    async dispose() {},
+  };
+}
+`);
+		const reportReady = new Promise<void>((resolve) => {
+			const watcher = fs.watch(tempDir, () => {
+				if (fs.existsSync(reportPath)) resolve();
+			});
+			t.after(() => watcher.close());
+		});
+		setChildSessionFactoryModule(factoryPath);
+		t.after(() => setChildSessionFactoryModule(fileURLToPath(new URL("../support/runner-child-session-factory.ts", import.meta.url))));
+		const launched = executeAsyncChain(id, {
+			chain: [{ parallel: [{ agent: "worker", task: "A" }, { agent: "worker", task: "B" }] }],
+			agents: [makeAgent("worker")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+			controlConfig: { enabled: true, needsAttentionAfterMs: 999_999, activeNoticeAfterTurns: 1, activeNoticeAfterMs: 999_999, activeNoticeAfterTokens: 999_999, failedToolAttemptsBeforeAttention: 3, notifyOn: ["active_long_running", "needs_attention"], notifyChannels: ["event", "async"] },
+		});
+		assert.notEqual(launched.isError, true);
+		await reportReady;
+		const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+		t.diagnostic(JSON.stringify(report.samples.map(({ state, writes, bytes }: { state: string; writes: number; bytes: number }) => ({ state, writes, bytes }))));
+		assert.deepEqual(report.samples.map((sample: { writes: number }) => sample.writes), [100, 100, 100]);
+		for (const sample of report.samples) {
+			assert.equal(sample.status.lastActivityAt, sample.now - 110);
+			assert.equal(sample.status.steps[1].lastActivityAt, sample.now - 110);
+		}
+		assert.deepEqual(report.transitions.map((entry: { writes: number }) => entry.writes), [1, 1, 1, 1, 1]);
+		assert.deepEqual(report.transitions.map((entry: { status: AsyncStatusPayload }) => entry.status.steps?.map(step => step.activityState)), [
+			[undefined, "active_long_running"], ["needs_attention", "active_long_running"],
+			["needs_attention", "needs_attention"], ["needs_attention", "active_long_running"], [undefined, "active_long_running"],
+		]);
+		assert.equal(report.samples[2].status.steps[1].turnCount, 1);
+		assert.equal(report.transitions[2].status.activityState, "needs_attention");
+		assert.equal(report.transitions[3].status.activityState, "needs_attention");
+		assert.equal(report.pendingWrites, 0);
+		assert.equal(report.terminal[0].state, "failed");
+		assert.deepEqual(report.terminal[1], report.terminal[0]);
+	});
 
 	it("does not start child work when initial async status cannot be written", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const id = `async-status-write-fail-${Date.now().toString(36)}`;

@@ -2222,7 +2222,7 @@ async function runSubagent(
 	};
 	const statusWriteCoalescer = createFileCoalescer(writeStatusPayloadNow, 100);
 	const writeStatusPayload = (immediate = true): void => {
-		if (immediate || statusPayload.state !== "running" || statusPayload.activityState !== undefined) {
+		if (immediate || statusPayload.state !== "running") {
 			if (!statusWriteCoalescer.flush(statusPath)) writeStatusPayloadNow();
 			return;
 		}
@@ -2878,6 +2878,7 @@ async function runSubagent(
 	const updateStepFromChildEvent = (flatIndex: number, event: ChildEvent): void => {
 		const step = statusPayload.steps[flatIndex];
 		if (!step) return;
+		const previousActivityState = step.activityState;
 		const now = Date.now();
 		statusPayload.currentStep = flatIndex;
 		if (isChildWatchdogStatusEvent(event)) {
@@ -3031,7 +3032,8 @@ async function runSubagent(
 		statusPayload.lastActivityAt = now;
 		statusPayload.lastUpdate = now;
 		maybeEmitActiveLongRunning(flatIndex, now);
-		writeStatusPayload(false);
+		// A sibling may keep aggregate attention unchanged; publish this step's transition.
+		writeStatusPayload(step.activityState !== previousActivityState);
 	};
 	const updateRunnerActivityState = (now: number): boolean => {
 		if (!controlConfig.enabled) return false;
