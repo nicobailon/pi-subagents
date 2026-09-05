@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Keep the fleet inspector roster stable by ordering active runs by start time instead of last activity heartbeat (#1923). Thanks to [@expoli](https://github.com/expoli) for #1924.
 - Rescue confident read-only background completions misclassified as implementation before publishing missing-edit failures (#1911). Thanks to [@yanqianglu](https://github.com/yanqianglu).
 - Keep background streaming status updates batched during long-running and attention states while publishing child activity transitions immediately (#1901).
 - Honor distinct output paths on retained workflow follow-ups, preserving the original report and returning the saved output references (#1903).
