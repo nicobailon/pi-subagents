@@ -115,6 +115,102 @@ describe("async chain root attachment", () => {
 		assert.equal(result.exitCode, 0);
 	});
 
+	for (const proofState of [undefined, "pending"]) it(`waits past the terminal grace for workflow-owned single publication with ${proofState ?? "absent"} root proof`, async (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+		const importedRoot = { ...root(), resultPath: path.join(tempDir, "root-run", "workflow-result.json") };
+		writeJson(path.join(importedRoot.asyncDir, "status.json"), {
+			runId: importedRoot.runId,
+			mode: "single",
+			parentWorkflowRunId: "workflow-parent",
+			state: "running",
+			pid: process.pid,
+			startedAt: 1,
+			...(proofState ? { processTerminal: { version: 1, runId: importedRoot.runId, runnerProcessInstanceId: "runner-instance", state: proofState } } : {}),
+			steps: [{ agent: "worker", status: "complete" }],
+		});
+
+		// The live publisher is this process; advance only the waiter's clock,
+		// leaving the real completed-step evidence intact until publication.
+		const waiting = waitForImportedAsyncRoot(importedRoot);
+		for (let poll = 0; poll < 3; poll++) {
+			t.mock.timers.tick(500);
+			await Promise.resolve();
+		}
+		assert.equal(Date.now(), 1_500);
+		assert.equal(fs.existsSync(importedRoot.resultPath), false);
+		writeJson(importedRoot.resultPath, {
+			state: "complete",
+			success: true,
+			results: [{ agent: "worker", output: "published after step completion", success: true }],
+		});
+		t.mock.timers.tick(500);
+		const result = await waiting;
+		assert.equal(result.success, true, result.error);
+		assert.equal(result.output, "published after step completion");
+	});
+
+	for (const state of ["complete", "failed", "partial", "paused", "stopped"]) {
+		it(`fails closed for a workflow-owned single root in ${state} without a result`, async () => {
+			const importedRoot = { ...root(), resultPath: path.join(tempDir, "root-run", "workflow-result.json") };
+			writeJson(path.join(importedRoot.asyncDir, "status.json"), {
+				runId: importedRoot.runId,
+				mode: "single",
+				parentWorkflowRunId: "workflow-parent",
+				state,
+				startedAt: 1,
+				steps: [{ agent: "worker", status: "complete" }],
+			});
+			const result = await waitForImportedAsyncRoot(importedRoot, { terminalResultGraceMs: 0 });
+			assert.equal(result.success, false);
+			assert.equal(result.exitCode, 1);
+			assert.match(result.error ?? "", state === "stopped" ? /stopped by user/ : /ended without a result file/);
+		});
+	}
+
+	for (const proofState of ["observed", "unknown", "not-started"]) {
+		it(`preserves missing-result failure with completed step and ${proofState} root proof`, async () => {
+			const importedRoot = { ...root(), resultPath: path.join(tempDir, "root-run", "workflow-result.json") };
+			writeJson(path.join(importedRoot.asyncDir, "status.json"), {
+				runId: importedRoot.runId,
+				mode: "single",
+				parentWorkflowRunId: "workflow-parent",
+				state: "running",
+				startedAt: 1,
+				processTerminal: {
+					version: 1,
+					runId: importedRoot.runId,
+					runnerProcessInstanceId: "runner-instance",
+					state: proofState,
+					...(proofState === "observed" ? { observedAt: 2, instances: [{ kind: "runner", processInstanceId: "runner-instance", closeObservedAt: 2, exitCode: 1, signal: null }] } : {}),
+					...(proofState === "unknown" ? { reason: "runner-candidate-missing" } : {}),
+				},
+				steps: [{ agent: "worker", status: "complete" }],
+			});
+			const result = await waitForImportedAsyncRoot(importedRoot, { terminalResultGraceMs: 0 });
+			assert.equal(result.success, false);
+			assert.equal(result.exitCode, 1);
+			assert.match(result.error ?? "", /ended without a result file/);
+		});
+	}
+
+	for (const mode of ["chain", "parallel"]) {
+		it(`preserves selected-index terminal fallback for a running workflow-owned ${mode} root`, async () => {
+			const importedRoot = root("root-run", 1);
+			writeJson(path.join(importedRoot.asyncDir, "status.json"), {
+				runId: importedRoot.runId,
+				mode,
+				parentWorkflowRunId: "workflow-parent",
+				state: "running",
+				startedAt: 1,
+				steps: [{ agent: "first", status: "running" }, { agent: "selected", status: "complete" }],
+			});
+			const result = await waitForImportedAsyncRoot(importedRoot, { terminalResultGraceMs: 0 });
+			assert.equal(result.agent, "selected");
+			assert.equal(result.success, false);
+			assert.match(result.error ?? "", /ended without a result file/);
+		});
+	}
+
 	it("imports a failed root as a failed first chain step", async () => {
 		const importedRoot = root();
 		writeJson(path.join(importedRoot.asyncDir, "status.json"), {
