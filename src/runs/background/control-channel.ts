@@ -471,6 +471,86 @@ export function deliverStopRequest(input: {
 }
 
 /**
+ * Workflow side: watch ONLY `steer-requests/` and route each request into
+ * `onSteer`. Deliberately narrower than `watchAsyncControlInbox`: workflow-mode
+ * runs handle interrupt, stop, and timeout through their in-memory controller,
+ * and nothing else consumes those inbox files for a workflow run, so consuming
+ * them here would silently discard a stop request. Uses the same watch strategy
+ * as the runner inbox (native `fs.watch` plus a safety poll, interval polling as
+ * the fallback) and the same up-front `check()` for a request that landed before
+ * the watcher was installed. Returns a disposer.
+ */
+export function watchAsyncSteerInbox(
+	asyncDir: string,
+	opts: {
+		onSteer: (request: SteerRequest) => void;
+		pollIntervalMs?: number;
+		safetyPollIntervalMs?: number;
+		platform?: NodeJS.Platform;
+		fs?: ControlChannelFs;
+		timers?: ControlChannelTimers;
+	},
+): () => void {
+	const fsImpl = opts.fs ?? fs;
+	const timers = opts.timers ?? { setInterval, clearInterval };
+	const dir = steerRequestsDir(asyncDir);
+	try {
+		fsImpl.mkdirSync(dir, { recursive: true });
+	} catch {
+		// Best effort, because the poll and watch paths below tolerate a missing dir.
+	}
+
+	let disposed = false;
+	const check = (): void => {
+		if (disposed) return;
+		try {
+			for (const request of consumeSteerRequests(asyncDir, fsImpl)) opts.onSteer(request);
+		} catch {
+			// Never let inbox errors crash the workflow.
+		}
+	};
+
+	// Handle a request that may have arrived before the watcher started.
+	check();
+
+	const watchers: fs.FSWatcher[] = [];
+	let interval: ReturnType<typeof setInterval> | undefined;
+	let safetyInterval: ReturnType<typeof setInterval> | undefined;
+	const startPolling = (): void => {
+		if (interval || disposed) return;
+		interval = timers.setInterval(check, opts.pollIntervalMs ?? POLL_INTERVAL_MS);
+		interval.unref?.();
+	};
+	try {
+		if (shouldUseNativeFsWatch("runner-control-inbox", opts.platform)) {
+			const watcher = fsImpl.watch(resolveWatchPath(dir, fsImpl.realpathSync.native), () => check());
+			watcher.on?.("error", startPolling);
+			watchers.push(watcher);
+			safetyInterval = timers.setInterval(check, opts.safetyPollIntervalMs ?? CONTROL_SAFETY_POLL_INTERVAL_MS);
+			safetyInterval.unref?.();
+		} else {
+			startPolling();
+		}
+	} catch {
+		startPolling();
+	}
+
+	return () => {
+		if (disposed) return;
+		disposed = true;
+		for (const watcher of watchers) {
+			try {
+				watcher.close();
+			} catch {
+				// ignore
+			}
+		}
+		if (interval) timers.clearInterval(interval);
+		if (safetyInterval) timers.clearInterval(safetyInterval);
+	};
+}
+
+/**
  * Runner side: watch the control inbox and route interrupt requests into
  * `onInterrupt`. Uses `fs.watch` when available and starts interval polling
  * only when native watching is unavailable or fails. Fires once per distinct
