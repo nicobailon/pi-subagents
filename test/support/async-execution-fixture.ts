@@ -263,6 +263,7 @@ interface TypesModule {
 interface ExecutorModule {
 	createSubagentExecutor?: (...args: unknown[]) => {
 		execute: (...args: unknown[]) => Promise<{ content: Array<{ text?: string }>; isError?: boolean; details?: { asyncId?: string } }>;
+		executePublic: (...args: unknown[]) => Promise<{ content: Array<{ text?: string }>; isError?: boolean; details?: { asyncId?: string } }>;
 	};
 }
 

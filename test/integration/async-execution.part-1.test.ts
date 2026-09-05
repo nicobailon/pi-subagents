@@ -15,6 +15,8 @@ import { syncBuiltinESMExports } from "node:module";
 import * as path from "node:path";
 import { events, makeAgent, makeMinimalCtx, resolveMockPiCallArgs } from "../support/helpers.ts";
 import { registerSubagentCapabilityCeiling } from "../../src/api/capability-ceiling.ts";
+import { registerWorkflowResource } from "../../src/api/workflow-resources.ts";
+import type { WorkflowReceipt } from "../../src/workflows/workflow-receipt.ts";
 import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
@@ -31,6 +33,70 @@ import {
 
 describe("async execution utilities", { skip: !available ? "pi packages not available" : undefined }, () => {
 	installAsyncExecutionHooks();
+
+	it("executes a registered mixed background workflow with captured grants after disposal", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const ctx = makeMinimalCtx(tempDir);
+		const command = `${JSON.stringify(process.execPath)} registered-check.cjs`;
+		fs.writeFileSync(path.join(tempDir, "registered-check.cjs"), `require("node:fs").writeFileSync("registered-marker", "ran"); console.log("background finite check passed");`);
+		const definition = { name: "test.background", version: 1, resolve: () => ({
+			script: `const child = await runs.run("review", { agent: "reviewer", task: "Review the change" }); if (!child.ok) throw new Error("Required review failed"); return await runs.host("check", ${JSON.stringify({ kind: "command", command, timeoutMs: 5000, output: "registered-check.log" })});`,
+			hostCommands: [{ key: "check", command }],
+		}) };
+		const registration = registerWorkflowResource({ sessionId: ctx.sessionManager.getSessionId(), definition });
+		const executor = makeAsyncExecutor([makeAgent("reviewer", { completionGuard: false })]);
+		mockPi.onCall({ output: "Background review completed" });
+		try {
+			const pending = executor.executePublic("registered-background", { workflow: definition.name, async: true }, new AbortController().signal, undefined, ctx);
+			// executePublic has synchronously captured the expansion; no timing-based wait.
+			registration.dispose();
+			const missing = await executor.executePublic("disposed-background", { workflow: definition.name, async: true }, new AbortController().signal, undefined, ctx);
+			assert.equal(missing.isError, true);
+			assert.match(missing.content[0]?.text ?? "", /Unknown workflow/);
+			const replacement = registerWorkflowResource({ sessionId: ctx.sessionManager.getSessionId(), definition: { ...definition, resolve: () => ({ script: "return 'replacement'" }) } });
+			try {
+				const launch = await pending;
+				assert.equal(launch.isError, undefined, launch.content[0]?.text);
+				const id = launch.details?.asyncId;
+				assert.ok(id);
+				const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf8")) as AsyncResultPayload & { workflowReceipt: { path: string; receipt: WorkflowReceipt } };
+				assert.equal(payload.success, true, payload.error);
+				assert.equal((await waitForAsyncState(id, (status) => status.state === "complete")).state, "complete");
+				assert.equal(payload.results[0]?.output, "Background review completed");
+				assert.equal(mockPi.callCount(), 1);
+				assert.equal(fs.readFileSync(path.join(tempDir, "registered-marker"), "utf8"), "ran");
+				assert.match(fs.readFileSync(path.join(tempDir, "registered-check.log"), "utf8"), /background finite check passed/);
+				assert.equal(payload.workflowReceipt.receipt.resource?.name, definition.name);
+				assert.equal(payload.workflowReceipt.receipt.state, "complete");
+				assert.equal(payload.workflowReceipt.receipt.entries.review.agent, "reviewer");
+				assert.ok(payload.workflowReceipt.receipt.entries.review.latestRunId);
+				assert.deepEqual(payload.workflowReceipt.receipt.hostSteps?.map(({ id, state, exitCode }) => ({ id, state, exitCode })), [{ id: "check", state: "done", exitCode: 0 }]);
+				assert.deepEqual(JSON.parse(fs.readFileSync(payload.workflowReceipt.path, "utf8")), payload.workflowReceipt.receipt);
+			} finally { replacement.dispose(); }
+		} finally { registration.dispose(); }
+	});
+
+	it("enforces the registered background command deadline and records terminal failure", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const ctx = makeMinimalCtx(tempDir);
+		const command = `${JSON.stringify(process.execPath)} finite-slow-check.cjs`;
+		fs.writeFileSync(path.join(tempDir, "finite-slow-check.cjs"), `console.log("finite slow check started"); setTimeout(() => console.log("unexpected completion"), 10000);`);
+		const registration = registerWorkflowResource({ sessionId: ctx.sessionManager.getSessionId(), definition: {
+			name: "test.deadline", version: 1, resolve: () => ({ script: `return await runs.host("check", ${JSON.stringify({ kind: "command", command, timeoutMs: 250, output: "deadline.log" })});`, hostCommands: [{ key: "check", command }] }),
+		} });
+		try {
+			const launch = await makeAsyncExecutor([]).executePublic("registered-deadline", { workflow: "test.deadline", async: true }, new AbortController().signal, undefined, ctx);
+			assert.equal(launch.isError, undefined, launch.content[0]?.text);
+			const id = launch.details?.asyncId;
+			assert.ok(id);
+			const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf8")) as AsyncResultPayload & { workflowReceipt: { receipt: WorkflowReceipt } };
+			assert.equal(payload.success, false);
+			assert.equal((await waitForAsyncState(id, (status) => status.state === "failed")).state, "failed");
+			assert.equal(payload.workflowReceipt.receipt.resource?.name, "test.deadline");
+			assert.equal(payload.workflowReceipt.receipt.state, "failed");
+			assert.deepEqual(payload.workflowReceipt.receipt.hostSteps?.map(({ state, reasonCode }) => ({ state, reasonCode })), [{ state: "error", reasonCode: "timed_out" }]);
+			assert.doesNotMatch(fs.readFileSync(path.join(tempDir, "deadline.log"), "utf8"), /unexpected completion/);
+			assert.equal(mockPi.callCount(), 0);
+		} finally { registration.dispose(); }
+	});
 
 	it("reports jiti availability as boolean", () => {
 		const result = isAsyncAvailable();

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { registerWorkflowResource, type WorkflowResourceDefinition } from "../../src/api/workflow-resources.ts";
 import {
 	authorizeWorkflowResourceHost,
 	consumeWorkflowResourcePermit,
@@ -8,6 +9,137 @@ import { resolveWorkflowResource } from "../../src/workflows/workflow-resources.
 import { runWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
 
 describe("named workflow resources", () => {
+	it("scopes registrations by session and snapshots definitions, args and issued grants", () => {
+		const args = { nested: { task: "original" } };
+		const expansion = { script: "return 'original';", hostCommands: [{ key: "check", command: " node check.mjs " }, { key: "other", command: "node other.mjs" }] };
+		const definition: WorkflowResourceDefinition = {
+			name: "acme.check", version: 2,
+			resolve(input) {
+				(input.nested as { task: string }).task = "changed";
+				return expansion;
+			},
+		};
+		const registration = registerWorkflowResource({ sessionId: "one", definition });
+		const other = registerWorkflowResource({ sessionId: "two", definition: { ...definition, resolve: () => ({ script: "return 'two';" }) } });
+		try {
+			definition.version = 99;
+			definition.resolve = () => ({ error: "replacement must not run" });
+			assert.throws(() => registerWorkflowResource({ sessionId: "one", definition }), /already registered/);
+			assert.equal(resolveWorkflowResource("acme.check", args).ok, false);
+			assert.equal(resolveWorkflowResource("acme.check", args, "wrong").ok, false);
+			const resolved = resolveWorkflowResource("acme.check", args, "one");
+			assert.equal(resolved.ok, true);
+			if (!resolved.ok) return;
+			assert.equal(args.nested.task, "original");
+			assert.equal(resolved.resource.provenance.version, 2);
+			expansion.script = "return 'changed';";
+			expansion.hostCommands[0].command = "node changed.mjs";
+			registration.dispose();
+			assert.equal(resolveWorkflowResource("acme.check", args, "one").ok, false);
+			const replacement = registerWorkflowResource({ sessionId: "one", definition: { ...definition, resolve: () => ({ script: "return 'new';" }) } });
+			try {
+				registration.dispose();
+				assert.equal(resolveWorkflowResource("acme.check", {}, "one").ok, true);
+				assert.equal(resolveWorkflowResource("acme.check", {}, "two").ok, true);
+				const consumed = consumeWorkflowResourcePermit(resolved.resource.permit, resolved.resource.script);
+				assert.equal(typeof consumed, "object");
+				assert.equal(resolved.resource.script, "return 'original';");
+				assert.equal(authorizeWorkflowResourceHost(resolved.resource.permit, "check", "node check.mjs"), undefined);
+				assert.equal(authorizeWorkflowResourceHost(resolved.resource.permit, "other", "node other.mjs"), undefined);
+				assert.match(authorizeWorkflowResourceHost(resolved.resource.permit, "check", "node other.mjs")!, /not allowed/);
+				assert.match(authorizeWorkflowResourceHost(resolved.resource.permit, "other", "node check.mjs")!, /not allowed/);
+				assert.match(authorizeWorkflowResourceHost(resolved.resource.permit, "check", "node changed.mjs")!, /not allowed/);
+				assert.match(consumeWorkflowResourcePermit(resolved.resource.permit, resolved.resource.script) as string, /already consumed/);
+				assert.equal(Object.isFrozen(typeof consumed === "object" && consumed.authority.host?.[0]), true);
+			} finally { replacement.dispose(); }
+		} finally { registration.dispose(); other.dispose(); }
+	});
+
+	it("lets trusted validation select fixed commands while task text remains data", async () => {
+		const registration = registerWorkflowResource({ sessionId: "binding", definition: {
+			name: "acme.review-check", version: 1,
+			resolve(args) {
+				if (Object.keys(args).some((key) => key !== "task" && key !== "check") || typeof args.task !== "string" || args.check !== "quick") return { error: "Only task and check=quick are supported." };
+				return { script: `return ${JSON.stringify(args.task)};`, hostCommands: [{ key: "check", command: "node check.mjs --quick" }] };
+			},
+		} });
+		try {
+			const task = `\"); await runs.host("injected", { command: "bad" }); //`;
+			const resolved = resolveWorkflowResource("acme.review-check", { task, check: "quick" }, "binding");
+			assert.equal(resolved.ok, true);
+			if (!resolved.ok) return;
+			const execution = await runWorkflowScript({
+				script: resolved.resource.script,
+				async launch() { throw new Error("No child expected"); },
+				async status() { throw new Error("No status expected"); },
+			});
+			assert.equal(execution.value, task);
+			for (const args of [{ task, check: "quick; bad" }, { task, check: "quick", flags: "--extra" }, { task, check: "quick", command: "bad" }, { task: new Date(), check: "quick" }, { task: "x".repeat(16385), check: "quick" }]) {
+				assert.equal(resolveWorkflowResource("acme.review-check", args, "binding").ok, false);
+			}
+		} finally { registration.dispose(); }
+	});
+
+	it("rejects invalid registrations and protects builtin names", () => {
+		const valid = { sessionId: "validation", definition: { name: "acme.check", version: 1, resolve: () => ({ script: "return true;" }) } };
+		for (const input of [
+			{ ...valid, sessionId: " " },
+			{ ...valid, trusted: true },
+			{ ...valid, definition: { ...valid.definition, name: "run-ci" } },
+			{ ...valid, definition: { ...valid.definition, name: "review" } },
+			{ ...valid, definition: { ...valid.definition, name: "bad name" } },
+			{ ...valid, definition: { ...valid.definition, version: 0 } },
+			{ ...valid, definition: { ...valid.definition, resolve: undefined } },
+			{ ...valid, definition: { ...valid.definition, issuerPackage: "trusted" } },
+		]) assert.throws(() => registerWorkflowResource(input as typeof valid));
+	});
+
+	it("contains throws, async results and malformed expansions without issuing permits", async () => {
+		const invalid = [
+			() => { throw new Error("x".repeat(5000)); },
+			() => Promise.reject(new Error("async rejection")),
+			() => ({ then(resolve: (value: unknown) => void) { resolve({ script: "return true;" }); } }),
+			() => null,
+			() => ({ script: " " }),
+			() => ({ script: "return true;", authority: {} }),
+			() => ({ error: 42 }),
+			() => ({ script: "return true;", hostCommands: { keys: ["a"], commands: ["node a.mjs"] } }),
+			() => ({ script: "return true;", hostCommands: [{ key: "a", command: "node a.mjs" }, { key: "a", command: "node b.mjs" }] }),
+			() => ({ script: "return true;", hostCommands: [{ key: "../a", command: "node a.mjs" }] }),
+			() => ({ script: "return true;", hostCommands: [{ key: "a", command: "node\0a" }] }),
+		];
+		for (const resolve of invalid) {
+			const registration = registerWorkflowResource({ sessionId: "invalid", definition: { name: "acme.invalid", version: 1, resolve: resolve as WorkflowResourceDefinition["resolve"] } });
+			try {
+				const result = resolveWorkflowResource("acme.invalid", {}, "invalid");
+				assert.equal(result.ok, false);
+				assert.equal("resource" in result, false);
+				if (!result.ok) assert.ok(result.error.length <= 4096);
+			} finally { registration.dispose(); }
+		}
+		await new Promise<void>((resolve) => setImmediate(resolve));
+	});
+
+	it("shares registrations across evaluated module copies and fails closed on registry version corruption", async () => {
+		const copy = await import(`../../src/workflows/workflow-resources.ts?copy=registration-test`);
+		const registration = copy.registerWorkflowResource({ sessionId: "copies", definition: { name: "acme.copy", version: 1, resolve: () => ({ script: "return true;" }) } });
+		const key = Symbol.for("pi-subagents.workflow-resources.v1");
+		const globals = globalThis as Record<PropertyKey, unknown>;
+		const saved = globals[key];
+		try {
+			assert.notEqual(copy.resolveWorkflowResource, resolveWorkflowResource);
+			const resolved = resolveWorkflowResource("acme.copy", {}, "copies");
+			assert.equal(resolved.ok, true);
+			if (resolved.ok) assert.equal(typeof consumeWorkflowResourcePermit(resolved.resource.permit, resolved.resource.script), "object");
+			for (const invalid of [null, { version: 2, bySession: new Map() }, { version: 1, bySession: [] }]) {
+				globals[key] = invalid;
+				assert.equal(resolveWorkflowResource("acme.copy", {}, "copies").ok, false);
+				assert.throws(() => copy.registerWorkflowResource({ sessionId: "copies", definition: { name: "acme.other", version: 1, resolve: () => ({ script: "return true;" }) } }), /registry/);
+			}
+		} finally { globals[key] = saved; registration.dispose(); }
+		assert.equal(resolveWorkflowResource("acme.copy", {}, "copies").ok, false);
+	});
+
 	it("resolves and executes an extension-owned named workflow script", async () => {
 		const resolved = resolveWorkflowResource("run-ci", { command: "npm test", timeoutMs: 1_000 });
 		assert.equal(resolved.ok, true);

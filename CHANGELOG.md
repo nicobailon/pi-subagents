@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
+
 ### Fixed
 - Rescue confident read-only background completions misclassified as implementation before publishing missing-edit failures (#1911). Thanks to [@yanqianglu](https://github.com/yanqianglu).
 - Keep background streaming status updates batched during long-running and attention states while publishing child activity transitions immediately (#1901).

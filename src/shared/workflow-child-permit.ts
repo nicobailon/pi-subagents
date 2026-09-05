@@ -117,12 +117,12 @@ export function workflowChildPermitConsumed(permit: WorkflowChildPermit): boolea
 }
 
 export interface WorkflowResourceHostAuthority {
-	keys: readonly string[];
-	commands: readonly string[];
+	key: string;
+	command: string;
 }
 
 export interface WorkflowResourceAuthority {
-	host?: WorkflowResourceHostAuthority;
+	host?: readonly WorkflowResourceHostAuthority[];
 }
 
 export interface WorkflowResourcePermitInput {
@@ -152,11 +152,17 @@ const resourceRecords = new WeakMap<object, WorkflowResourcePermitRecord>();
 function cloneWorkflowResourceAuthority(authority: WorkflowResourceAuthority): WorkflowResourceAuthority {
 	if (!authority || typeof authority !== "object" || Array.isArray(authority)) throw new Error("Workflow resource authority must be an object.");
 	if (authority.host === undefined) return Object.freeze({});
-	if (!authority.host || typeof authority.host !== "object" || Array.isArray(authority.host)) throw new Error("Workflow resource host authority must be an object.");
-	const { keys, commands } = authority.host;
-	if (!Array.isArray(keys) || keys.some((key) => typeof key !== "string" || !key.trim())) throw new Error("Workflow resource host authority keys must be non-empty strings.");
-	if (!Array.isArray(commands) || commands.some((command) => typeof command !== "string" || !command.trim())) throw new Error("Workflow resource host authority commands must be non-empty strings.");
-	return Object.freeze({ host: Object.freeze({ keys: Object.freeze([...keys]), commands: Object.freeze([...commands]) }) });
+	if (!Array.isArray(authority.host) || authority.host.length > 32) throw new Error("Workflow resource host authority must be an array of at most 32 grants.");
+	const keys = new Set<string>();
+	const host = Array.from(authority.host, (grant) => {
+		if (!grant || typeof grant !== "object" || Object.keys(grant).some((field) => field !== "key" && field !== "command")) throw new Error("Workflow resource host grant must contain only key and command.");
+		const { key, command } = grant;
+		if (typeof key !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(key) || keys.has(key)) throw new Error("Workflow resource host grant requires a unique safe key.");
+		if (typeof command !== "string" || !command.trim() || Buffer.byteLength(command.trim(), "utf8") > 16 * 1024 || command.includes("\0")) throw new Error("Workflow resource host grant requires a non-empty command of at most 16384 bytes without NUL.");
+		keys.add(key);
+		return Object.freeze({ key, command: command.trim() });
+	});
+	return Object.freeze({ host: Object.freeze(host) });
 }
 
 /** Package-internal permit for a workflow resource resolved by the extension. */
@@ -201,7 +207,6 @@ export function authorizeWorkflowResourceHost(permit: WorkflowResourcePermit, ke
 	if (!record || record.state !== "consumed") return "Workflow resource authority is unavailable.";
 	const host = record.authority.host;
 	if (!host) return "runs.host is not allowed for this workflow resource.";
-	if (!host.keys.includes(key)) return `runs.host('${key}') is not allowed for workflow resource '${record.resourceName}'.`;
-	if (!host.commands.includes(command.trim())) return `The command for runs.host('${key}') is not allowed for workflow resource '${record.resourceName}'.`;
+	if (!host.some((grant) => grant.key === key && grant.command === command.trim())) return `The command for runs.host('${key}') is not allowed for workflow resource '${record.resourceName}'.`;
 	return undefined;
 }

@@ -13,6 +13,7 @@
     "./agents": "./src/api/agents.ts",
     "./delegation": "./src/api/delegation.ts",
     "./capability-ceiling": "./src/api/capability-ceiling.ts",
+    "./workflow-resources": "./src/api/workflow-resources.ts",
     "./preflight": "./src/api/preflight.ts",
     "./control-channel": "./src/api/control-channel.ts",
     "./intercom-bridge": "./src/api/intercom-bridge.ts",

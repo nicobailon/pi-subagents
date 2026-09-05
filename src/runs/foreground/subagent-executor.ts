@@ -7039,7 +7039,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 		let publicParams = normalized.params as SubagentParamsLike;
 		if (publicParams.workflow !== undefined) {
-			const resolved = resolveWorkflowResource(publicParams.workflow, publicParams.args);
+			const resolved = resolveWorkflowResource(publicParams.workflow, publicParams.args, ctx.sessionManager.getSessionId() ?? undefined);
 			if (!resolved.ok) return Promise.resolve({ content: [{ type: "text", text: resolved.error }], isError: true, details: { mode: "workflow", results: [] } });
 			const { workflow: _workflow, args: _args, ...withoutResourceInput } = publicParams;
 			publicParams = { ...withoutResourceInput, workflowScript: resolved.resource.script };
