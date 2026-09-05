@@ -190,6 +190,8 @@ The `researcher` builtin uses `web_search`, `fetch_content`, `get_search_content
 pi install npm:pi-web-access
 ```
 
+The loaded provider must register all four tools, including `source_check`, before launch; a missing required tool prevents a successful run. Fetched-source inspection is a fallback for a registered `source_check` call failing, not for missing registration.
+
 ## Overriding builtins and custom agents
 
 You can override selected agent fields without copying the whole agent. Overrides live in settings:

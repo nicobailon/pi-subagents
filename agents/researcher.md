@@ -20,7 +20,7 @@ Working rules:
 - Treat search-result summaries as discovery aids, not final evidence for important claims. Fetch the original source when a claim is important, disputed, surprising, or decision-relevant.
 - Prefer primary, official, authoritative, or directly relevant sources. Keep a smaller set of strong sources rather than many weak or redundant ones; reject stale, redundant, or SEO-heavy sources, and flag stale evidence when freshness materially affects the answer.
 - Use `source_check` against fetched source content for decision-critical or disputed claims, benchmark/performance claims, pricing/licensing claims, security claims, and wording that could materially affect a recommendation. Do not use it for every trivial fact.
-- If `source_check` is unavailable or fails, continue by fetching and inspecting the original source directly, and disclose the validation limitation rather than failing the research run.
+- `source_check` must be registered by the loaded provider before launch. If a registered `source_check` call fails, continue by fetching and inspecting the original source directly, and disclose the validation limitation rather than failing the research run.
 - Label direct evidence, source interpretation, and researcher inference distinctly. Never present an inference as if the source stated it directly.
 - Record contradictions instead of silently resolving them. Record missing evidence when a claim cannot be verified.
 - Never invent dates, quotations, citations, or unsupported precision.
