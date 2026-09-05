@@ -926,6 +926,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ output: "restricted async done" });
 		const sessionId = `session-capability-${Date.now().toString(36)}`;
 		const handle = registerSubagentCapabilityCeiling({ sessionId, ceiling: { allowedTools: ["read"], denyExtensions: true }, source: "test" });
+		let waitForOwnedRun: (() => Promise<void>) | undefined;
 		try {
 			const executor = makeAsyncExecutor([makeAgent("worker", { tools: ["read", "write"], completionGuard: false })]);
 			const id = `async-capability-${Date.now().toString(36)}`;
@@ -938,12 +939,43 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				undefined,
 				ctx,
 			) as AsyncExecutionResult;
-			assert.equal(launch.isError, undefined);
 			const asyncId = launch.details.asyncId;
+			const asyncDir = launch.details.asyncDir;
+			if (asyncId && asyncDir) {
+				let terminalWait: Promise<void> | undefined;
+				waitForOwnedRun = () => terminalWait ??= (async () => {
+					const eventsPath = path.join(asyncDir, "events.jsonl");
+					const deadline = Date.now() + 10_000;
+					while (true) {
+						let journal = "";
+						try {
+							journal = fs.readFileSync(eventsPath, "utf-8");
+						} catch (error) {
+							if (!["ENOENT", "EINTR", "EAGAIN", "EBUSY"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+						}
+						// Only complete records for this run establish the final status/journal boundary.
+						const terminal = journal.split("\n").slice(0, -1).some((line) => {
+							try {
+								const event = JSON.parse(line);
+								return event?.type === "subagent.run.process_terminal" && event.runId === asyncId;
+							} catch {
+								return false;
+							}
+						});
+						if (terminal) break;
+						assert.ok(Date.now() <= deadline, `Timed out waiting for async event 'subagent.run.process_terminal': ${eventsPath}`);
+						await new Promise((resolve) => setTimeout(resolve, 50));
+					}
+				})();
+			}
+			assert.equal(launch.isError, undefined);
 			assert.ok(asyncId);
+			assert.ok(asyncDir);
+			assert.equal(asyncDir, path.join(ASYNC_DIR, asyncId));
 			const resultPath = await waitForAsyncResultFile(asyncId, 10_000);
+			await waitForOwnedRun!();
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-			const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, asyncId, "status.json"), "utf-8")) as AsyncStatusPayload;
+			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
 			assert.deepEqual(payload.capabilityCeiling, { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["test"] });
 			assert.deepEqual(payload.results[0]?.capabilityCeiling, payload.capabilityCeiling);
 			assert.deepEqual(status.capabilityCeiling, payload.capabilityCeiling);
@@ -951,7 +983,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.deepEqual(payload.capabilityAudit?.effectiveTools, ["read"]);
 			assert.deepEqual(payload.capabilityAudit?.removedTools, ["write", "contact_supervisor"]);
 			assert.equal(payload.capabilityAudit?.extensionsDenied, true);
-			const events = fs.readFileSync(path.join(ASYNC_DIR, asyncId, "events.jsonl"), "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+			const events = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8").trim().split("\n").map((line) => JSON.parse(line));
 			assert.ok(events.some((event) => event.type === "subagent.capability-ceiling.applied" && event.stepIndex === 0 && event.capabilityAudit?.removedTools?.includes("write")));
 			const metadataPath = payload.results[0]?.artifactPaths?.metadataPath;
 			assert.ok(metadataPath);
@@ -960,7 +992,12 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.deepEqual(metadata.capabilityCeiling, payload.capabilityCeiling);
 			assert.deepEqual(metadata.capabilityAudit?.removedTools, ["write", "contact_supervisor"]);
 		} finally {
-			handle.dispose();
+			try {
+				// Result/read/assertion failures must not skip an established owned-run wait.
+				await waitForOwnedRun?.();
+			} finally {
+				handle.dispose();
+			}
 		}
 	});
 
