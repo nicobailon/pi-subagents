@@ -34,6 +34,7 @@ export interface SubagentNotifyChildOutput {
 export type SubagentNotifyWatchdogBlocker = Pick<ChildWatchdogWarningSummary, "summary" | "addressed" | "stalemate"> & { agent: string };
 
 export interface SubagentNotifyDetails {
+	workflowReceiptPath?: string;
 	agent: string;
 	status: "completed" | "failed" | "paused" | "stopped";
 	source?: "async" | "foreground";
@@ -283,6 +284,7 @@ export function formatSingleCompletion(details: SubagentNotifyDetails): string {
 		: undefined;
 	return [
 		`${taskKind} ${details.status}: **${details.agent}**${details.taskInfo ?? ""}`,
+		details.workflowReceiptPath ? `Workflow receipt: ${details.workflowReceiptPath}` : undefined,
 		"",
 		scheduleLine,
 		scheduleLine ? "" : undefined,
@@ -303,7 +305,11 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 	const lines = content.split("\n");
 	const match = (lines[0] ?? "").match(/^(Background task|Detached foreground task) (completed|failed|paused|stopped): \*\*(.+?)\*\*(?:\s+(\([^)]*\)))?$/);
 	if (!match) return undefined;
-	let body = lines.slice(2);
+	// Only the header slot before the blank separator can carry a receipt.
+	// Identical lines anywhere in model output remain preview text.
+	const receiptHeader = lines[1]?.startsWith("Workflow receipt: ") && lines[2] === "";
+	const workflowReceiptPath = receiptHeader ? lines[1]!.slice("Workflow receipt: ".length) : undefined;
+	let body = lines.slice(receiptHeader ? 3 : 2);
 	// Restore the schedule origin so a re-rendered notice keeps its attribution and
 	// does not fold the line into the result preview.
 	const scheduleMatch = (body[0] ?? "").match(/^Scheduled run from \*\*(.+?)\*\* \(schedule (.+?)\)\.$/);
@@ -359,6 +365,7 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 		...(match[1] === "Detached foreground task" ? { source: "foreground" as const } : {}),
 		...(match[4] ? { taskInfo: match[4] } : {}),
 		...(parsedScheduleOrigin ? { scheduleOrigin: parsedScheduleOrigin } : {}),
+		...(workflowReceiptPath ? { workflowReceiptPath } : {}),
 		resultPreview,
 		...(handoffPath ? { handoffPath } : {}),
 		...(workflowRunId ? { workflowRunId } : {}),
@@ -377,6 +384,7 @@ export function formatGroupedCompletion(details: SubagentNotifyDetails[]): strin
 		if (!detail) continue;
 		const sessionLine = formatSessionLine(detail);
 		blocks.push(`${index + 1}. ${detail.agent}${detail.taskInfo ?? ""}${detail.scheduleOrigin ? ` — scheduled run from ${detail.scheduleOrigin.name ?? detail.scheduleOrigin.id} (schedule ${detail.scheduleOrigin.id})` : ""}`);
+		if (detail.workflowReceiptPath) blocks.push(`Workflow receipt: ${detail.workflowReceiptPath}`);
 		blocks.push(formatResultPreview(detail));
 		blocks.push(...formatWatchdogBlockerLines(detail));
 		if (detail.handoffPath) blocks.push(`Parallel handoff: ${detail.handoffPath}`);
@@ -448,6 +456,10 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		? result.parallelHandoff as { path?: unknown }
 		: undefined;
 	const handoffPath = typeof parallelHandoff?.path === "string" ? parallelHandoff.path : undefined;
+	const receipt = result.workflowReceipt;
+	const receiptPath = receipt && typeof receipt === "object" && !Array.isArray(receipt)
+		? (receipt as Record<string, unknown>).path : undefined;
+	const workflowReceiptPath = typeof receiptPath === "string" && receiptPath ? receiptPath : undefined;
 	const rawRunId = typeof result.runId === "string" ? result.runId : typeof result.id === "string" ? result.id : undefined;
 	const workflowRunId = (result.mode === "workflow" || agent === "workflow") && rawRunId ? rawRunId : undefined;
 	const directChild = !workflowRunId && result.results?.length === 1 ? result.results[0]! : undefined;
@@ -517,6 +529,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		agent,
 		status,
 		...(scheduleOrigin ? { scheduleOrigin } : {}),
+		...(workflowReceiptPath ? { workflowReceiptPath } : {}),
 		...(result.source ? { source: result.source } : {}),
 		...(taskInfo ? { taskInfo } : {}),
 		resultPreview,

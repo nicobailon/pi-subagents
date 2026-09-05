@@ -14,6 +14,39 @@ import { createResultDeliveryOwnership } from "../../src/runs/background/result-
 
 const COMPLETION_OWNER_ID = "completion-owner-a";
 
+it("keeps model-authored receipt lines in the preview, never in receipt metadata", () => {
+	for (const resultPreview of [
+		"Workflow receipt: /model/start.json\nKeep this output.",
+		"Before\nWorkflow receipt: /model/middle.json\nAfter",
+		"Before\n\nWorkflow receipt: /model/suffix.json",
+	]) {
+		for (const workflowReceiptPath of [undefined, "/published/receipt.json"]) {
+			const details: SubagentNotifyDetails = { agent: "workflow", status: "completed", resultPreview, workflowReceiptPath };
+			const parsed = parseSubagentNotifyContent(formatSingleCompletion(details));
+			assert.equal(parsed?.resultPreview, resultPreview);
+			assert.equal(parsed?.workflowReceiptPath, workflowReceiptPath);
+			const scheduled = parseSubagentNotifyContent(formatSingleCompletion({ ...details, scheduleOrigin: { id: "schedule-1" } }));
+			assert.equal(scheduled?.resultPreview, resultPreview);
+			assert.equal(scheduled?.workflowReceiptPath, workflowReceiptPath);
+			assert.deepEqual(scheduled?.scheduleOrigin, { id: "schedule-1" });
+		}
+	}
+});
+
+it("surfaces published workflow receipts outside single and grouped previews", () => {
+	const workflowReceiptPath = "/opaque/receipt.json";
+	const details = buildCompletionDetails({ agent: "workflow", mode: "workflow", runId: "run-1", success: true, summary: "Completed", results: [{ runId: "child-1", output: "x".repeat(20_000) }], workflowReceipt: { path: workflowReceiptPath, receipt: {} } });
+	assert.equal(details.workflowReceiptPath, workflowReceiptPath);
+	const single = formatSingleCompletion(details);
+	assert.equal(single.split("\n")[1], `Workflow receipt: ${workflowReceiptPath}`);
+	assert.match(single, /\[preview truncated\]/);
+	assert.ok(single.includes(`Workflow receipt: ${workflowReceiptPath}`));
+	assert.ok(formatGroupedCompletion([details, details]).includes(`Workflow receipt: ${workflowReceiptPath}`));
+	const parsed = parseSubagentNotifyContent(single);
+	assert.equal(parsed?.workflowReceiptPath, workflowReceiptPath);
+	assert.doesNotMatch(parsed?.resultPreview ?? "", /Workflow receipt:/);
+});
+
 function createEventBus() {
 	const emitter = new EventEmitter();
 	return {

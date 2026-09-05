@@ -96,6 +96,9 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 		})
 		: undefined;
 	const agent = asNonEmptyString(data.agent);
+	const receipt = data.workflowReceipt;
+	const workflowReceiptPath = receipt && typeof receipt === "object" && !Array.isArray(receipt)
+		? asNonEmptyString((receipt as Record<string, unknown>).path) : undefined;
 	const mode = asNonEmptyString(data.mode);
 	const state = asNonEmptyString(data.state);
 	const workflowChildren = parseWorkflowChildSummary(data.workflowChildren);
@@ -104,6 +107,7 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 		runId,
 		...(agent ? { agent } : {}),
 		...(mode ? { mode } : {}),
+		...(workflowReceiptPath ? { workflowReceiptPath } : {}),
 		...(state ? { state } : {}),
 		...(typeof data.success === "boolean" ? { success: data.success } : {}),
 		...(results && results.length > 0 ? { results } : {}),

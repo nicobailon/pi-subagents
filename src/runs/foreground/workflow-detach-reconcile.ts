@@ -94,7 +94,7 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 	}));
 }
 
-function reconcileWorkflowReceipt(status: AsyncStatus, childRunId: string, result: SingleResult, asyncDir: string, resolution: WorkflowTerminalResolution | undefined): WorkflowReceipt | undefined {
+function reconcileWorkflowReceipt(status: AsyncStatus, childRunId: string, result: SingleResult, asyncDir: string, resolution: WorkflowTerminalResolution | undefined): { receipt: WorkflowReceipt; path: string } | undefined {
 	const receiptRoot = path.dirname(asyncDir);
 	const receiptPath = workflowReceiptPath(receiptRoot, status.runId);
 	if (!fs.existsSync(receiptPath)) return undefined;
@@ -155,8 +155,7 @@ function reconcileWorkflowReceipt(status: AsyncStatus, childRunId: string, resul
 		delete next.workflowResolution;
 		delete next.recovery;
 	}
-	writeWorkflowReceipt(asyncDir, next);
-	return next;
+	return { receipt: next, path: writeWorkflowReceipt(asyncDir, next) };
 }
 
 function appendDetachedWorkflowEvent(asyncDir: string, event: Record<string, unknown>): void {
@@ -209,10 +208,13 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
 	let receipt: WorkflowReceipt | undefined;
+	let receiptPath: string | undefined;
 	let receiptError: string | undefined;
 	const resolution = classifyWorkflowSettlement(next, input.result.interrupted);
 	try {
-		receipt = reconcileWorkflowReceipt(next, input.childRunId, input.result, asyncDir, resolution);
+		const publication = reconcileWorkflowReceipt(next, input.childRunId, input.result, asyncDir, resolution);
+		receipt = publication?.receipt;
+		receiptPath = publication?.path;
 	} catch (error) {
 		receiptError = `Failed to reconcile async workflow receipt: ${error instanceof Error ? error.message : String(error)}`;
 	}
@@ -243,7 +245,7 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 			completionOwnerId: next.completionOwnerId,
 		},
 		receipt,
-		receiptPath: path.join(asyncDir, "workflow-receipt.json"),
+		receiptPath,
 		receiptPersistenceError: receiptError,
 		resolution,
 		terminalOutcome: receipt?.terminalOutcome,
@@ -283,6 +285,7 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 			agent: "workflow",
 			success: plan.status.state === "complete",
 			state: plan.status.state,
+			...(plan.publicResult.workflowReceipt ? { workflowReceipt: plan.publicResult.workflowReceipt } : {}),
 			...(resolution ? { workflowResolution: resolution } : {}),
 			...(plan.receipt?.terminalOutcome ? { terminalOutcome: plan.receipt.terminalOutcome } : {}),
 			recovery: plan.recovery,

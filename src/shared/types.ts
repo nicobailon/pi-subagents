@@ -1341,6 +1341,7 @@ export interface WaitCompletionChild {
  */
 export interface WaitCompletion {
 	runId: string;
+	workflowReceiptPath?: string;
 	agent?: string;
 	mode?: string;
 	state?: string;
@@ -1374,6 +1375,7 @@ export interface AgentCapabilityRow {
 
 export interface Details {
 	mode: SubagentResultMode | "management";
+	workflowReceiptPath?: string;
 	runId?: string;
 	/** Host tool-call id retained when it differs from the internal run id. */
 	toolCallId?: string;
@@ -1781,6 +1783,8 @@ export interface ExternalProcessStatus {
 }
 
 export interface AsyncStatus {
+	/** Exact reference returned by successful current workflow receipt publication. */
+	workflowReceiptPath?: string;
 	lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
 	runId: string;
 	/** Parent Pi process/window that owns local completion delivery. */

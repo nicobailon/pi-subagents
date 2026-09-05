@@ -58,6 +58,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				assert.equal(launch.isError, undefined, launch.content[0]?.text);
 				const id = launch.details?.asyncId;
 				assert.ok(id);
+				assert.equal(launch.details?.workflowReceiptPath, undefined);
+				const pendingStatus = await executor.executePublic("pending-receipt-status", { action: "status", id }, new AbortController().signal, undefined, ctx);
+				assert.equal(pendingStatus.details?.workflowReceiptPath, undefined);
 				const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf8")) as AsyncResultPayload & { workflowReceipt: { path: string; receipt: WorkflowReceipt } };
 				assert.equal(payload.success, true, payload.error);
 				assert.equal((await waitForAsyncState(id, (status) => status.state === "complete")).state, "complete");
@@ -71,6 +74,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				assert.ok(payload.workflowReceipt.receipt.entries.review.latestRunId);
 				assert.deepEqual(payload.workflowReceipt.receipt.hostSteps?.map(({ id, state, exitCode }) => ({ id, state, exitCode })), [{ id: "check", state: "done", exitCode: 0 }]);
 				assert.deepEqual(JSON.parse(fs.readFileSync(payload.workflowReceipt.path, "utf8")), payload.workflowReceipt.receipt);
+				for (const action of ["status", "debug.run"] as const) {
+					const inspected = await executor.executePublic(`receipt-${action}`, { action, id }, new AbortController().signal, undefined, ctx);
+					assert.equal(inspected.details?.workflowReceiptPath, payload.workflowReceipt.path);
+					assert.ok(inspected.content[0]?.text?.includes(`Workflow receipt: ${payload.workflowReceipt.path}`));
+				}
 			} finally { replacement.dispose(); }
 		} finally { registration.dispose(); }
 	});
