@@ -1,5 +1,5 @@
 import { stableJsonDigest } from "./launch-contract.ts";
-import type { WorkflowResourceProvenanceV1 } from "./types.ts";
+import type { WorkflowResourceProvenance } from "./types.ts";
 
 export interface WorkflowChildPermitInput {
 	issuerPackage: string;
@@ -143,7 +143,7 @@ interface WorkflowResourcePermitRecord {
 	resourceId: string;
 	scriptDigest: string;
 	authority: WorkflowResourceAuthority;
-	provenance: WorkflowResourceProvenanceV1;
+	provenance: WorkflowResourceProvenance;
 	state: "available" | "consumed";
 }
 
@@ -192,7 +192,7 @@ export function createWorkflowResourcePermit(input: WorkflowResourcePermitInput)
 	return permit;
 }
 
-export function consumeWorkflowResourcePermit(permit: WorkflowResourcePermit, script: string): { provenance: WorkflowResourceProvenanceV1; authority: WorkflowResourceAuthority } | string {
+export function consumeWorkflowResourcePermit(permit: WorkflowResourcePermit, script: string): { provenance: WorkflowResourceProvenance; authority: WorkflowResourceAuthority } | string {
 	const record = resourceRecords.get(permit as object);
 	if (!record) return "Workflow resource permit is invalid.";
 	if (record.state !== "available") return "Workflow resource permit is already consumed.";

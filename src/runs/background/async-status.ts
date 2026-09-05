@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { previewDisplayText } from "../../shared/display-text.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
-import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type HostStepNodeV1, type HostStepState, type LaunchResolvedChildExtensionsV1, type RuntimeAcknowledgedChildExtensionsV1, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TimeoutRecoveryProjection, type TokenUsage, type TurnBudgetState, type UsageBudgetState, type WorktreeNaming, type WorkflowPreflightV1, type WorkflowGraphSnapshot } from "../../shared/types.ts";
+import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type HostStepNode, type HostStepState, type LaunchResolvedChildExtensions, type RuntimeAcknowledgedChildExtensions, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TimeoutRecoveryProjection, type TokenUsage, type TurnBudgetState, type UsageBudgetState, type WorktreeNaming, type WorkflowPreflight, type WorkflowGraphSnapshot } from "../../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../shared/capability-ceiling.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, findNestedRouteForRootId, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
@@ -82,8 +82,8 @@ interface AsyncRunStepSummary {
 	effects?: AsyncJobStep["effects"];
 	processTerminal?: AsyncJobStep["processTerminal"];
 	timeoutRecovery?: TimeoutRecoveryProjection;
-	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
-	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
+	launchResolvedExtensions?: LaunchResolvedChildExtensions;
+	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
 	children?: NestedRunSummary[];
@@ -122,7 +122,7 @@ export interface AsyncRunSummary {
 	chainStepCount?: number;
 	pendingAppends?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
-	hostSteps?: HostStepNodeV1[];
+	hostSteps?: HostStepNode[];
 	workflowGraph?: AsyncStatus["workflowGraph"];
 	steps: AsyncRunStepSummary[];
 	sessionDir?: string;
@@ -135,8 +135,8 @@ export interface AsyncRunSummary {
 	nestedWarnings?: string[];
 	processTerminal?: AsyncStatus["processTerminal"];
 	runFanoutBudget?: AsyncStatus["runFanoutBudget"];
-	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
-	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
+	launchResolvedExtensions?: LaunchResolvedChildExtensions;
+	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
 	parentWorkflowRunId?: string;
@@ -144,7 +144,7 @@ export interface AsyncRunSummary {
 	lane?: AsyncStatus["lane"];
 	workflow?: Details["workflow"];
 	workflowChildren?: Details["workflowChildren"];
-	preflight?: WorkflowPreflightV1;
+	preflight?: WorkflowPreflight;
 }
 
 interface AsyncRunListOptions {

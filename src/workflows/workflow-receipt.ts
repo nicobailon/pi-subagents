@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
-import type { AcceptanceRecoveryMetadata, ExternalCliReceiptMetadata, WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState, WorkflowRecoveryAction, WorkflowResourceProvenanceV1, WorkflowTerminalOutcome, WorkflowTerminalResolution } from "../shared/types.ts";
+import type { AcceptanceRecoveryMetadata, ExternalCliReceiptMetadata, WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState, WorkflowRecoveryAction, WorkflowResourceProvenance, WorkflowTerminalOutcome, WorkflowTerminalResolution } from "../shared/types.ts";
 import type { WorkflowReceiptResumeReference, WorkflowScriptChildResult } from "./scripted-workflow.ts";
 import { parseWorkflowChildSummary } from "./workflow-child-summary.ts";
 import { HOST_STEP_MAX_COUNT, assertUniqueHostStepIds, parseHostStepNode } from "../runs/shared/host-step-status.ts";
@@ -39,7 +39,7 @@ export function buildWorkflowReceipt(input: {
 	children: WorkflowScriptChildResult[];
 	hostSteps?: WorkflowReceipt["hostSteps"];
 	workflowChildren?: WorkflowReceipt["workflowChildren"];
-	resource?: WorkflowResourceProvenanceV1;
+	resource?: WorkflowResourceProvenance;
 	terminalOutcome?: WorkflowTerminalOutcome;
 	createdAt?: number;
 }): WorkflowReceipt {
@@ -262,7 +262,7 @@ function parseWorkflowResolution(value: unknown, source: string): WorkflowTermin
 	return value;
 }
 
-function parseWorkflowResource(value: unknown, source: string): WorkflowResourceProvenanceV1 | undefined {
+function parseWorkflowResource(value: unknown, source: string): WorkflowResourceProvenance | undefined {
 	if (value === undefined) return undefined;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid workflow receipt '${source}': resource must be an object.`);
 	const resource = value as Record<string, unknown>;

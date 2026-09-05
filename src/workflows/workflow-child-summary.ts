@@ -1,4 +1,4 @@
-import type { AsyncStatus, WorkflowChildSummaryV1 } from "../shared/types.ts";
+import type { AsyncStatus, WorkflowChildSummary } from "../shared/types.ts";
 import type { WorkflowScriptChildResult, WorkflowScriptTraceEntry } from "./scripted-workflow.ts";
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -19,13 +19,13 @@ function requiredId(value: string, label: string): string {
 export function workflowChildSummary(input: {
 	parentToolCallId: string;
 	workflowRunId: string;
-	workflowState: WorkflowChildSummaryV1["workflowState"];
+	workflowState: WorkflowChildSummary["workflowState"];
 	inventoryComplete: boolean;
 	trace?: WorkflowScriptTraceEntry[];
 	children?: WorkflowScriptChildResult[];
 	steps?: NonNullable<AsyncStatus["steps"]>;
-}): WorkflowChildSummaryV1 {
-	const rows = new Map<string, WorkflowChildSummaryV1["children"][number]>();
+}): WorkflowChildSummary {
+	const rows = new Map<string, WorkflowChildSummary["children"][number]>();
 	for (const entry of input.trace ?? []) {
 		if (entry.operation !== "run" || !KEY_PATTERN.test(entry.key)) continue;
 		const previous = rows.get(entry.key);
@@ -93,7 +93,7 @@ export function workflowChildSummary(input: {
 	};
 }
 
-export function parseWorkflowChildSummary(value: unknown): WorkflowChildSummaryV1 | undefined {
+export function parseWorkflowChildSummary(value: unknown): WorkflowChildSummary | undefined {
 	if (value === undefined) return undefined;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("workflowChildren must be an object.");
 	const input = value as Record<string, unknown>;
@@ -102,7 +102,7 @@ export function parseWorkflowChildSummary(value: unknown): WorkflowChildSummaryV
 	if (input.version !== 1 || typeof input.inventoryComplete !== "boolean" || !Array.isArray(input.children)) throw new Error("workflowChildren is invalid.");
 	const workflowState = input.workflowState;
 	if (workflowState !== "queued" && workflowState !== "running" && workflowState !== "completed" && workflowState !== "failed" && workflowState !== "paused" && workflowState !== "stopped") throw new Error("workflowChildren.workflowState is invalid.");
-	const children = input.children.map((row): WorkflowChildSummaryV1["children"][number] => {
+	const children = input.children.map((row): WorkflowChildSummary["children"][number] => {
 		if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error("workflowChildren child row is invalid.");
 		const child = row as Record<string, unknown>;
 		if (Object.keys(child).some((key) => !["childId", "runId", "agent", "sessionName", "model", "thinking", "state"].includes(key))) throw new Error("workflowChildren child row has unsupported fields.");

@@ -6,7 +6,7 @@ import { afterEach, describe, it } from "node:test";
 import { buildWorkflowReceipt, readWorkflowReceipt, resolveWorkflowReceiptResume, workflowReceiptPath, writeWorkflowReceipt } from "../../src/workflows/workflow-receipt.ts";
 import { externalCliReceiptMetadata, resolveExternalCliRunnerStatus } from "../../src/runs/shared/external-cli-contract.ts";
 import type { WorkflowScriptChildResult } from "../../src/workflows/scripted-workflow.ts";
-import type { HostStepNodeV1 } from "../../src/shared/types.ts";
+import type { HostStepNode } from "../../src/shared/types.ts";
 import { parseWorkflowChildSummary, workflowChildSummary } from "../../src/workflows/workflow-child-summary.ts";
 
 const roots: string[] = [];
@@ -39,7 +39,7 @@ function child(key: string, overrides: Partial<WorkflowScriptChildResult> = {}):
 	};
 }
 
-function hostStep(overrides: Partial<HostStepNodeV1> = {}): HostStepNodeV1 {
+function hostStep(overrides: Partial<HostStepNode> = {}): HostStepNode {
 	return {
 		version: 1,
 		kind: "host-step",

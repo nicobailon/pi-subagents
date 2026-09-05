@@ -11,14 +11,14 @@ import {
 
 const RUN_FANOUT_ROOT = path.join(TEMP_ROOT_DIR, "run-fanout-budgets");
 
-interface ManifestV1 {
+interface FanoutBudgetManifest {
 	version: 1;
 	rootRunId: string;
 	limit: number;
 	createdAt: number;
 }
 
-interface ClaimV1 {
+interface FanoutBudgetClaim {
 	version: 1;
 	claimId: string;
 	path: string;
@@ -41,16 +41,16 @@ function safeRootRunId(rootRunId: string): string {
 	return rootRunId.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120) || randomUUID();
 }
 
-function parseManifest(value: unknown): ManifestV1 | undefined {
+function parseManifest(value: unknown): FanoutBudgetManifest | undefined {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	const manifest = value as Partial<ManifestV1>;
+	const manifest = value as Partial<FanoutBudgetManifest>;
 	if (manifest.version !== 1 || typeof manifest.rootRunId !== "string" || !manifest.rootRunId
 		|| !Number.isInteger(manifest.limit) || (manifest.limit ?? 0) <= 0
 		|| typeof manifest.createdAt !== "number" || !Number.isFinite(manifest.createdAt)) return undefined;
-	return manifest as ManifestV1;
+	return manifest as FanoutBudgetManifest;
 }
 
-function readManifest(directory: string): ManifestV1 {
+function readManifest(directory: string): FanoutBudgetManifest {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(fs.readFileSync(path.join(directory, "manifest.json"), "utf-8"));
@@ -84,7 +84,7 @@ export function createRunFanoutBudget(rootRunId: string, limit: number): RunFano
 	do directory = path.join(RUN_FANOUT_ROOT, `${safeRootRunId(rootRunId)}-${randomUUID()}`);
 	while (fs.existsSync(directory));
 	fs.mkdirSync(path.join(directory, "claims"), { recursive: true, mode: 0o700 });
-	const manifest: ManifestV1 = { version: 1, rootRunId, limit, createdAt: Date.now() };
+	const manifest: FanoutBudgetManifest = { version: 1, rootRunId, limit, createdAt: Date.now() };
 	fs.writeFileSync(path.join(directory, "manifest.json"), `${JSON.stringify(manifest)}\n`, { mode: 0o600, flag: "wx" });
 	return { version: 1, rootRunId, directory, limit };
 }
@@ -230,7 +230,7 @@ function commitRunFanoutBatch<T>(descriptor: RunFanoutBudgetDescriptor, paths: s
 						const fd = fs.openSync(slotPath, "wx", 0o600);
 						created.push(slotPath);
 						try {
-							const claim: ClaimV1 = { version: 1, claimId: randomUUID(), path: claimPath, claimedAt: Date.now() };
+							const claim: FanoutBudgetClaim = { version: 1, claimId: randomUUID(), path: claimPath, claimedAt: Date.now() };
 							fs.writeFileSync(fd, `${JSON.stringify(claim)}\n`, "utf-8");
 						} finally { fs.closeSync(fd); }
 						break;

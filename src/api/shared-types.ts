@@ -23,5 +23,5 @@ export {
 	type ManagedWorktreeProvider,
 	type WorktreeNaming,
 	type WorktreeProvider,
-	type WorkflowResourceProvenanceV1,
+	type WorkflowResourceProvenance,
 } from "../shared/types.ts";

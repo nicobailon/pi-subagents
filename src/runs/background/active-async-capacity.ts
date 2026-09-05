@@ -12,7 +12,7 @@ export const DEFAULT_ABANDONED_SLOT_RELEASE_AFTER_MS = 20 * 60 * 1000;
 export const MIN_ABANDONED_SLOT_RELEASE_AFTER_MS = 5 * 60 * 1000;
 export const MAX_ABANDONED_SLOT_RELEASE_AFTER_MS = 24 * 60 * 60 * 1000;
 
-export interface ActiveAsyncCapacityOwnerV1 {
+export interface ActiveAsyncCapacityOwner {
 	version: 1;
 	reservationToken: string;
 	ownerSessionId: string;
@@ -29,7 +29,7 @@ export interface ActiveAsyncCapacityOwnerV1 {
 }
 
 export interface ActiveAsyncCapacityHandle {
-	readonly owner: ActiveAsyncCapacityOwnerV1;
+	readonly owner: ActiveAsyncCapacityOwner;
 	markStarted(runnerProcessInstanceId: string): void;
 	markWorkflowStarted(): void;
 	rollback(): boolean;
@@ -44,7 +44,7 @@ interface CapacityOptions {
 	abandonedSlotReleaseAfterMs?: number | false;
 	pidLiveness?: (pid: number) => PidLiveness;
 	afterSlotRename?: (releasedDir: string) => void;
-	writeOwner?: (filePath: string, owner: ActiveAsyncCapacityOwnerV1) => void;
+	writeOwner?: (filePath: string, owner: ActiveAsyncCapacityOwner) => void;
 }
 
 export interface ActiveAsyncCapacityReleaseEvidence {
@@ -61,7 +61,7 @@ export type ActiveAsyncCapacityReleaseVerdict =
 	| { state: "not-owned"; reason: string };
 
 export interface ActiveAsyncCapacityInspection {
-	owner?: ActiveAsyncCapacityOwnerV1;
+	owner?: ActiveAsyncCapacityOwner;
 	relation: "current" | "source" | "none";
 	slotDir?: string;
 	release: ActiveAsyncCapacityReleaseVerdict;
@@ -100,9 +100,9 @@ function slotDir(poolDir: string, slot: number): string {
 	return path.join(poolDir, `slot-${slot}`);
 }
 
-function parseOwner(value: unknown): ActiveAsyncCapacityOwnerV1 | undefined {
+function parseOwner(value: unknown): ActiveAsyncCapacityOwner | undefined {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	const owner = value as Partial<ActiveAsyncCapacityOwnerV1>;
+	const owner = value as Partial<ActiveAsyncCapacityOwner>;
 	if (owner.version !== 1
 		|| typeof owner.reservationToken !== "string" || !owner.reservationToken
 		|| typeof owner.ownerSessionId !== "string" || !owner.ownerSessionId
@@ -116,10 +116,10 @@ function parseOwner(value: unknown): ActiveAsyncCapacityOwnerV1 | undefined {
 	if (owner.sourceRunId !== undefined && typeof owner.sourceRunId !== "string") return undefined;
 	if (owner.runnerProcessInstanceId !== undefined && (typeof owner.runnerProcessInstanceId !== "string" || !owner.runnerProcessInstanceId)) return undefined;
 	if (owner.runnerStartedAt !== undefined && (typeof owner.runnerStartedAt !== "number" || !Number.isFinite(owner.runnerStartedAt))) return undefined;
-	return owner as ActiveAsyncCapacityOwnerV1;
+	return owner as ActiveAsyncCapacityOwner;
 }
 
-function readOwner(dir: string): ActiveAsyncCapacityOwnerV1 | undefined {
+function readOwner(dir: string): ActiveAsyncCapacityOwner | undefined {
 	try {
 		return parseOwner(JSON.parse(fs.readFileSync(path.join(dir, "owner.json"), "utf-8")));
 	} catch {
@@ -142,7 +142,7 @@ function snapshotFor(sessionId: string, limit: number | undefined, rootDir: stri
 	return { used: occupiedSlots(sessionDir(sessionId, rootDir)).length, limit: limit ?? 0 };
 }
 
-function matchingOwner(dir: string, expected: ActiveAsyncCapacityOwnerV1): ActiveAsyncCapacityOwnerV1 | undefined {
+function matchingOwner(dir: string, expected: ActiveAsyncCapacityOwner): ActiveAsyncCapacityOwner | undefined {
 	const owner = readOwner(dir);
 	return owner?.reservationToken === expected.reservationToken
 		&& owner.runId === expected.runId
@@ -176,7 +176,7 @@ function withSlotClaim<T>(dir: string, operation: () => T): { acquired: true; va
 	}
 }
 
-function removeOwnedSlot(dir: string, expected: ActiveAsyncCapacityOwnerV1, options: CapacityOptions, requireUnstarted = false, release?: ActiveAsyncCapacityReleaseVerdict): boolean {
+function removeOwnedSlot(dir: string, expected: ActiveAsyncCapacityOwner, options: CapacityOptions, requireUnstarted = false, release?: ActiveAsyncCapacityReleaseVerdict): boolean {
 	if (requireUnstarted && (expected.runnerProcessInstanceId || expected.runnerStartedAt)) return false;
 	const claimed = withSlotClaim(dir, () => {
 		const current = matchingOwner(dir, expected);
@@ -193,7 +193,7 @@ function removeOwnedSlot(dir: string, expected: ActiveAsyncCapacityOwnerV1, opti
 	return claimed.acquired && claimed.value;
 }
 
-function appendAbandonedReleaseEvent(asyncDir: string, owner: ActiveAsyncCapacityOwnerV1, evidence: ActiveAsyncCapacityReleaseEvidence, now: number): void {
+function appendAbandonedReleaseEvent(asyncDir: string, owner: ActiveAsyncCapacityOwner, evidence: ActiveAsyncCapacityReleaseEvidence, now: number): void {
 	try {
 		const eventsPath = path.join(asyncDir, "events.jsonl");
 		fs.mkdirSync(path.dirname(eventsPath), { recursive: true });
@@ -213,7 +213,7 @@ function terminalState(state: AsyncStatus["state"]): boolean {
 	return state !== "queued" && state !== "running" && state !== "paused";
 }
 
-function runnerReleaseVerdict(owner: ActiveAsyncCapacityOwnerV1, status: AsyncStatus | null, options: CapacityOptions): ActiveAsyncCapacityReleaseVerdict {
+function runnerReleaseVerdict(owner: ActiveAsyncCapacityOwner, status: AsyncStatus | null, options: CapacityOptions): ActiveAsyncCapacityReleaseVerdict {
 	if (!status) return { state: "retained", reason: "status file is missing or unreadable" };
 	if (!owner.runnerProcessInstanceId) return { state: "retained", reason: "runner process identity has not been recorded" };
 	if (status.sessionId !== owner.ownerSessionId) return { state: "retained", reason: `status session ${status.sessionId ?? "unknown"} does not match owner session ${owner.ownerSessionId}` };
@@ -262,7 +262,7 @@ function abandonedRunnerReleaseVerdict(status: AsyncStatus, proofState: string, 
 	};
 }
 
-function workflowReleaseVerdict(owner: ActiveAsyncCapacityOwnerV1, status: AsyncStatus | null, liveWorkflowRunIds: ReadonlySet<string>): ActiveAsyncCapacityReleaseVerdict {
+function workflowReleaseVerdict(owner: ActiveAsyncCapacityOwner, status: AsyncStatus | null, liveWorkflowRunIds: ReadonlySet<string>): ActiveAsyncCapacityReleaseVerdict {
 	if (!status) return { state: "retained", reason: "status file is missing or unreadable" };
 	if (status.sessionId !== owner.ownerSessionId) return { state: "retained", reason: `status session ${status.sessionId ?? "unknown"} does not match owner session ${owner.ownerSessionId}` };
 	if (status.runId !== owner.runId) return { state: "retained", reason: `status run ${status.runId} does not match owner run ${owner.runId}` };
@@ -289,7 +289,7 @@ function workflowReleaseVerdict(owner: ActiveAsyncCapacityOwnerV1, status: Async
 	return { state: "releasable", reason: "workflow is terminal, controller is gone, and async children have observed proof" };
 }
 
-function ownerReleaseVerdict(owner: ActiveAsyncCapacityOwnerV1, liveWorkflowRunIds: ReadonlySet<string>, options: CapacityOptions): ActiveAsyncCapacityReleaseVerdict {
+function ownerReleaseVerdict(owner: ActiveAsyncCapacityOwner, liveWorkflowRunIds: ReadonlySet<string>, options: CapacityOptions): ActiveAsyncCapacityReleaseVerdict {
 	const status = readStatus(owner.asyncDir);
 	return owner.kind === "runner"
 		? runnerReleaseVerdict(owner, status, options)
@@ -364,7 +364,7 @@ export function getActiveAsyncCapacitySnapshot(
 	return reconcileActiveAsyncCapacity(sessionId, limit, options);
 }
 
-function createSlot(poolDir: string, owner: ActiveAsyncCapacityOwnerV1): boolean {
+function createSlot(poolDir: string, owner: ActiveAsyncCapacityOwner): boolean {
 	const destination = slotDir(poolDir, owner.slot);
 	fs.mkdirSync(poolDir, { recursive: true, mode: 0o700 });
 	try {
@@ -379,7 +379,7 @@ function createSlot(poolDir: string, owner: ActiveAsyncCapacityOwnerV1): boolean
 	return true;
 }
 
-function handleFor(owner: ActiveAsyncCapacityOwnerV1, limit: number, options: CapacityOptions, rollbackOwner?: ActiveAsyncCapacityOwnerV1): ActiveAsyncCapacityHandle {
+function handleFor(owner: ActiveAsyncCapacityOwner, limit: number, options: CapacityOptions, rollbackOwner?: ActiveAsyncCapacityOwner): ActiveAsyncCapacityHandle {
 	const rootDir = options.rootDir ?? ACTIVE_ASYNC_CAPACITY_DIR;
 	const writeOwner = options.writeOwner ?? writePrivateAtomicJson;
 	const dir = slotDir(sessionDir(owner.ownerSessionId, rootDir), owner.slot);
@@ -462,7 +462,7 @@ export function acquireActiveAsyncCapacity(
 	const poolDir = sessionDir(input.sessionId, rootDir);
 	const token = options.token?.() ?? randomUUID();
 	for (let slot = 0; slot < input.limit; slot++) {
-		const owner: ActiveAsyncCapacityOwnerV1 = {
+		const owner: ActiveAsyncCapacityOwner = {
 			version: 1,
 			reservationToken: token,
 			ownerSessionId: input.sessionId,
@@ -495,7 +495,7 @@ export function transferActiveAsyncCapacity(
 			if (!current || !status || status.runId !== input.sourceRunId || status.state === "queued" || status.state === "running") {
 				throw new Error(`Active async capacity source '${input.sourceRunId}' is not transferable.`);
 			}
-			const next: ActiveAsyncCapacityOwnerV1 = {
+			const next: ActiveAsyncCapacityOwner = {
 				...current,
 				runId: input.runId,
 				sourceRunId: input.sourceRunId,

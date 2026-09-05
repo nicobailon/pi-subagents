@@ -190,7 +190,7 @@ describe("acceptance gates", () => {
 		assert.equal(resolved.verify[0]?.id, "ok");
 	});
 
-	it("agent contract v1 disables inferred acceptance without changing current defaults", () => {
+	it("agent contract disables inferred acceptance without changing current defaults", () => {
 		const current = resolveEffectiveAcceptance({ agentName: "worker", acceptanceRole: "writer", task: "Implement the fix", mode: "single", async: true });
 		assert.equal(current.level, "checked");
 		assert.equal(current.review && current.review !== false ? current.review.required : undefined, true);
@@ -204,7 +204,7 @@ describe("acceptance gates", () => {
 		}
 	});
 
-	it("agent contract v1 keeps explicit acceptance report-optional and verify-only", async () => {
+	it("agent contract keeps explicit acceptance report-optional and verify-only", async () => {
 		const checked = resolveEffectiveAcceptance({
 			agentName: "worker",
 			task: "Implement the fix",

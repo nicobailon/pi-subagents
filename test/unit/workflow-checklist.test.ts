@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { formatWorkflowChecklistBottleneck, formatWorkflowChecklistText, projectWorkflowChecklist } from "../../src/workflows/workflow-checklist.ts";
-import type { HostStepNodeV1, WorkflowGraphSnapshot } from "../../src/shared/types.ts";
+import type { HostStepNode, WorkflowGraphSnapshot } from "../../src/shared/types.ts";
 
 function graph(): WorkflowGraphSnapshot {
 	return {
@@ -50,7 +50,7 @@ test("workflow checklist fuses graph phases with loaded child state without dupl
 });
 
 test("workflow checklist preserves explicit host monitor verdicts and trace lane identity", () => {
-	const host: HostStepNodeV1 = {
+	const host: HostStepNode = {
 		version: 1,
 		kind: "host-step",
 		monitorKind: "ci",
@@ -96,7 +96,7 @@ test("workflow checklist renders a failed item error only once when item details
 });
 
 test("workflow checklist counts one host monitor when host status and trace share an id", () => {
-	const host: HostStepNodeV1 = {
+	const host: HostStepNode = {
 		version: 1,
 		kind: "host-step",
 		monitorKind: "ci",

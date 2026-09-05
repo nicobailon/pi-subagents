@@ -16,7 +16,7 @@ import {
 import {
 	TEMP_ROOT_DIR,
 	type JsonSchemaObject,
-	type LaunchResolvedChildExtensionsV1,
+	type LaunchResolvedChildExtensions,
 } from "../../shared/types.ts";
 import { THINKING_LEVELS } from "../../shared/model-info.ts";
 import { getAgentDir } from "../../shared/utils.ts";
@@ -214,7 +214,7 @@ export function projectLaunchResolvedChildExtensions(
 		| "extensionArgs"
 		| "disableAmbientExtensions"
 	>,
-): LaunchResolvedChildExtensionsV1 {
+): LaunchResolvedChildExtensions {
 	const runtime = boundedExtensionIdentifiers(toolPlan.runtimeExtensions);
 	const configured = boundedExtensionIdentifiers(toolPlan.configuredExtensions);
 	const effective = boundedExtensionIdentifiers(toolPlan.extensionArgs);

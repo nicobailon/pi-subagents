@@ -4,10 +4,10 @@ import { writeAtomicJson, writePrivateAtomicJson } from "../../shared/atomic-jso
 import {
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 	type AsyncStatus,
-	type CanonicalSessionTerminalV1,
-	type ProcessInstanceExitV1,
+	type CanonicalSessionTerminal,
+	type ProcessInstanceExit,
 	type ProcessTerminalReason,
-	type ProcessTerminalV1,
+	type ProcessTerminal,
 } from "../../shared/types.ts";
 import { canonicalSessionId, inspectSessionLease } from "../shared/session-lease.ts";
 import { releaseActiveRunIndex } from "./active-run-index.ts";
@@ -16,7 +16,7 @@ export interface ProcessTerminalCandidate {
 	version: 1;
 	runId: string;
 	runnerProcessInstanceId: string;
-	writers: Record<string, ProcessInstanceExitV1[]>;
+	writers: Record<string, ProcessInstanceExit[]>;
 	expectedWriters?: Record<string, number>;
 	sessionFile?: string;
 	revivalLeaseToken?: string;
@@ -34,7 +34,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function validProcessInstance(value: unknown, kind?: "runner" | "pi-writer"): value is ProcessInstanceExitV1 {
+function validProcessInstance(value: unknown, kind?: "runner" | "pi-writer"): value is ProcessInstanceExit {
 	if (!isRecord(value)) return false;
 	if (typeof value.processInstanceId !== "string" || value.processInstanceId.length === 0) return false;
 	if (kind ? value.kind !== kind : (value.kind !== "runner" && value.kind !== "pi-writer")) return false;
@@ -56,7 +56,7 @@ function validProcessInstance(value: unknown, kind?: "runner" | "pi-writer"): va
 		&& (value.processTree.diagnostic === undefined || typeof value.processTree.diagnostic === "string");
 }
 
-function validInstance(value: unknown): value is ProcessInstanceExitV1 {
+function validInstance(value: unknown): value is ProcessInstanceExit {
 	return validProcessInstance(value, "pi-writer");
 }
 
@@ -78,7 +78,7 @@ export function readProcessTerminalCandidate(asyncDir: string): ProcessTerminalC
 		if (!isRecord(raw) || raw.version !== 1 || typeof raw.runId !== "string" || typeof raw.runnerProcessInstanceId !== "string" || !isRecord(raw.writers)) {
 			throw new Error(`Invalid process-terminal candidate in '${asyncDir}'.`);
 		}
-		const writers: Record<string, ProcessInstanceExitV1[]> = {};
+		const writers: Record<string, ProcessInstanceExit[]> = {};
 		for (const [index, entries] of Object.entries(raw.writers)) {
 			if (!Array.isArray(entries) || !entries.every(validInstance)) throw new Error(`Invalid writer process records for child '${index}'.`);
 			writers[index] = entries;
@@ -137,7 +137,7 @@ export function markProcessTerminalCandidateLeaseRelease(asyncDir: string, token
 	writeProcessTerminalCandidate(asyncDir, { ...candidate, revivalLeaseReleaseAcknowledged: acknowledged });
 }
 
-function unknownProof(runId: string, runnerProcessInstanceId: string, reason: ProcessTerminalReason, diagnostic?: string): ProcessTerminalV1 {
+function unknownProof(runId: string, runnerProcessInstanceId: string, reason: ProcessTerminalReason, diagnostic?: string): ProcessTerminal {
 	return { version: 1, state: "unknown", runId, runnerProcessInstanceId, reason, ...(diagnostic ? { diagnostic } : {}) };
 }
 
@@ -147,7 +147,7 @@ function resumeDisposition(state: string | undefined, sessionFile: string | unde
 	return sessionFile && fs.existsSync(sessionFile) ? "resumable" : "unavailable";
 }
 
-function sessionProjection(candidate: ProcessTerminalCandidate, lease: ReturnType<typeof inspectSessionLease>): CanonicalSessionTerminalV1 | undefined {
+function sessionProjection(candidate: ProcessTerminalCandidate, lease: ReturnType<typeof inspectSessionLease>): CanonicalSessionTerminal | undefined {
 	if (!candidate.sessionFile || lease.state !== "free") return undefined;
 	if (candidate.revivalLeaseToken && candidate.revivalLeaseReleaseAcknowledged !== true) return undefined;
 	return {
@@ -158,7 +158,7 @@ function sessionProjection(candidate: ProcessTerminalCandidate, lease: ReturnTyp
 	};
 }
 
-function validateProof(raw: unknown, asyncDir: string, fallback?: { runId?: string; runnerProcessInstanceId?: string }): raw is ProcessTerminalV1 {
+function validateProof(raw: unknown, asyncDir: string, fallback?: { runId?: string; runnerProcessInstanceId?: string }): raw is ProcessTerminal {
 	if (!isRecord(raw) || raw.version !== 1 || !["pending", "observed", "unknown", "not-started"].includes(String(raw.state)) || typeof raw.runId !== "string" || !raw.runId || typeof raw.runnerProcessInstanceId !== "string" || !raw.runnerProcessInstanceId) {
 		throw new Error(`Invalid process-terminal proof in '${asyncDir}'.`);
 	}
@@ -177,21 +177,21 @@ function validateProof(raw: unknown, asyncDir: string, fallback?: { runId?: stri
 	return true;
 }
 
-export function sanitizeProcessTerminal(value: unknown, fallback: { runId?: string; runnerProcessInstanceId?: string }, label = "status"): ProcessTerminalV1 | undefined {
+export function sanitizeProcessTerminal(value: unknown, fallback: { runId?: string; runnerProcessInstanceId?: string }, label = "status"): ProcessTerminal | undefined {
 	if (value === undefined) return undefined;
 	try {
 		validateProof(value, label, fallback);
-		return value as ProcessTerminalV1;
+		return value as ProcessTerminal;
 	} catch (error) {
 		return unknownProof(fallback.runId ?? label, fallback.runnerProcessInstanceId ?? "unknown", "proof-write-failed", errorMessage(error));
 	}
 }
 
-export function readProcessTerminal(asyncDir: string, fallback?: { runId?: string; runnerProcessInstanceId?: string }): ProcessTerminalV1 | undefined {
+export function readProcessTerminal(asyncDir: string, fallback?: { runId?: string; runnerProcessInstanceId?: string }): ProcessTerminal | undefined {
 	try {
 		const raw = JSON.parse(fs.readFileSync(processTerminalPath(asyncDir), "utf-8")) as unknown;
 		validateProof(raw, asyncDir, fallback);
-		return raw as ProcessTerminalV1;
+		return raw as ProcessTerminal;
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		return unknownProof(fallback?.runId ?? path.basename(asyncDir), fallback?.runnerProcessInstanceId ?? "unknown", "proof-write-failed", errorMessage(error));
@@ -199,12 +199,12 @@ export function readProcessTerminal(asyncDir: string, fallback?: { runId?: strin
 }
 
 function stepProcessTerminalProof(
-	proof: ProcessTerminalV1,
+	proof: ProcessTerminal,
 	childIndex: number,
-	state: ProcessTerminalV1["state"],
-	records: ProcessInstanceExitV1[],
-	resumeDispositionValue: ProcessTerminalV1["resumeDisposition"],
-): ProcessTerminalV1 {
+	state: ProcessTerminal["state"],
+	records: ProcessInstanceExit[],
+	resumeDispositionValue: ProcessTerminal["resumeDisposition"],
+): ProcessTerminal {
 	const base = {
 		version: 1 as const,
 		runId: proof.runId,
@@ -221,7 +221,7 @@ function stepProcessTerminalProof(
 	return { ...base, state };
 }
 
-function overlayStatus(asyncDir: string, proof: ProcessTerminalV1, candidate?: ProcessTerminalCandidate): void {
+function overlayStatus(asyncDir: string, proof: ProcessTerminal, candidate?: ProcessTerminalCandidate): void {
 	const statusPath = path.join(asyncDir, "status.json");
 	try {
 		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
@@ -244,13 +244,13 @@ export function finalizeProcessTerminal(
 	asyncDir: string,
 	runId: string,
 	runnerClose: RunnerCloseObservation,
-): ProcessTerminalV1 {
+): ProcessTerminal {
 	const existing = readProcessTerminal(asyncDir, { runId, runnerProcessInstanceId: runnerClose.processInstanceId });
 	if (existing && fs.existsSync(processTerminalPath(asyncDir))) {
 		if (existing.state === "observed" && existing.runId === runId && existing.runnerProcessInstanceId === runnerClose.processInstanceId) return existing;
 		if (existing.state === "unknown") return existing;
 	}
-	let proof: ProcessTerminalV1;
+	let proof: ProcessTerminal;
 	let candidateForOverlay: ProcessTerminalCandidate | undefined;
 	try {
 		const candidate = readProcessTerminalCandidate(asyncDir);
@@ -279,7 +279,7 @@ export function finalizeProcessTerminal(
 			} else if (allWriters.some((writer) => writer.kind === "pi-writer" && writer.processTree.state !== "observed")) {
 				proof = unknownProof(runId, runnerClose.processInstanceId, "process-tree-unverified");
 			} else {
-				const runner: ProcessInstanceExitV1 = { kind: "runner", ...runnerClose };
+				const runner: ProcessInstanceExit = { kind: "runner", ...runnerClose };
 				const canonicalSession = session && sessionProjection(candidate, session);
 				proof = {
 					version: 1,

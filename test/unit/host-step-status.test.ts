@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { AsyncStatus, HostStepNodeV1 } from "../../src/shared/types.ts";
+import type { AsyncStatus, HostStepNode } from "../../src/shared/types.ts";
 import {
 	HOST_STEP_MAX_LABEL_CHARS,
 	assertHostStepNode,
@@ -12,7 +12,7 @@ import {
 	validHostStepNodes,
 } from "../../src/runs/shared/host-step-status.ts";
 
-function hostStep(overrides: Partial<HostStepNodeV1> = {}): HostStepNodeV1 {
+function hostStep(overrides: Partial<HostStepNode> = {}): HostStepNode {
 	return {
 		version: 1,
 		kind: "host-step",
@@ -43,7 +43,7 @@ describe("host step status", () => {
 	it("rejects unbounded or incomplete terminal data", () => {
 		assert.throws(() => assertHostStepNode(hostStep({ label: "x".repeat(HOST_STEP_MAX_LABEL_CHARS + 1) }), "fixture"), /label exceeds/);
 		assert.throws(() => assertHostStepNode(hostStep({ state: "running", verdict: "pass" }), "fixture"), /verdict is only valid/);
-		assert.throws(() => assertHostStepNode(hostStep({ state: "done", verdict: "inconclusive", freshness: {} as HostStepNodeV1["freshness"] }), "fixture"), /expected/);
+		assert.throws(() => assertHostStepNode(hostStep({ state: "done", verdict: "inconclusive", freshness: {} as HostStepNode["freshness"] }), "fixture"), /expected/);
 		assert.throws(() => assertHostStepNode(hostStep({ state: "done", verdict: "pass", freshness: { expectedRef: "head", stale: true } }), "fixture"), /stale freshness/);
 		assert.throws(() => assertHostStepNode(hostStep({ exitCode: 1 }), "fixture"), /only valid for command/);
 		assert.throws(() => assertHostStepNode(hostStep({ monitorKind: "command", exitCode: 1 }), "fixture"), /only valid after command settlement/);

@@ -11,7 +11,7 @@ import type { ThinkingLevel } from "../../shared/model-info.ts";
 import { intersectThinkingCeilings } from "../../shared/thinking-ceiling.ts";
 import {
 	resolveChildDepth,
-	type LaunchResolvedChildExtensionsV1,
+	type LaunchResolvedChildExtensions,
 	type ResolvedToolBudget,
 	type RunFanoutBudgetDescriptor,
 } from "../../shared/types.ts";
@@ -20,7 +20,7 @@ import type { McpRuntimeSnapshotHost } from "./mcp-direct-tool-allowlist.ts";
 import type { PermissionRules } from "./permissions.ts";
 import type { StructuredOutputRuntime } from "./structured-output.ts";
 import type { ChildToolDiagnostic } from "./tool-availability.ts";
-import type { RuntimeAcknowledgedChildExtensionsV1 } from "../../shared/types.ts";
+import type { RuntimeAcknowledgedChildExtensions } from "../../shared/types.ts";
 import { projectRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
 import { encodeExtensionBindings, PI_SUBAGENT_EXTENSION_BINDINGS_ENV, type ExtensionBindings } from "./extension-bindings.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "./capability-ceiling.ts";
@@ -116,7 +116,7 @@ export interface BuildInProcessChildLaunchInput {
 export interface InProcessChildCapture {
 	structuredOutput(): { called: boolean; value?: unknown; acceptanceReport?: unknown; acceptanceReportProvided: boolean };
 	toolDiagnostic(): ChildToolDiagnostic | undefined;
-	runtimeAcknowledgedExtensions(): RuntimeAcknowledgedChildExtensionsV1 | undefined;
+	runtimeAcknowledgedExtensions(): RuntimeAcknowledgedChildExtensions | undefined;
 }
 
 export interface InProcessChildLaunch {
@@ -124,7 +124,7 @@ export interface InProcessChildLaunch {
 	config: ChildRuntimeConfig;
 	session: Omit<ChildSessionLaunch, "onExtensionError">;
 	capture: InProcessChildCapture;
-	launchResolvedExtensions: LaunchResolvedChildExtensionsV1;
+	launchResolvedExtensions: LaunchResolvedChildExtensions;
 	warnings: string[];
 	capabilityAudit?: SubagentCapabilityAudit;
 }
