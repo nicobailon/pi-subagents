@@ -114,7 +114,8 @@ export default function() {
 }
 `);
 		const reportReady = new Promise<void>((resolve) => {
-			const watcher = fs.watch(tempDir, () => {
+			// libuv compares expanded event paths against the watched directory (Windows 8.3 aliases differ).
+			const watcher = fs.watch(fs.realpathSync.native(tempDir), () => {
 				if (fs.existsSync(reportPath)) resolve();
 			});
 			t.after(() => watcher.close());
