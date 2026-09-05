@@ -35,7 +35,7 @@ describe("registered subagent tool description", () => {
 		const description = buildSubagentToolDescription();
 		const metadata = buildSubagentToolPromptMetadata();
 		assert.equal(description, DEFAULT_SUBAGENT_TOOL_DESCRIPTION);
-		assert.equal(Buffer.byteLength(description), 4240);
+		assert.equal(Buffer.byteLength(description), 4507);
 		assert.match(description, /workflowScriptPath.*request cwd/i);
 		assert.match(description, /script inputs are mutually exclusive/i);
 		assert.match(description, /runs\.lanes\(\[\{key,stages:/);
@@ -68,6 +68,13 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /interactive_shell.*pi -ne.*Codex\/Claude\/Cursor CLI.*foreground agent.*external mode.*explicit owner approval/i);
 		assert.match(description, /Pi core.*pi -ne.*out-of-repo.*not protocol-approved fallback/i);
 		assert.doesNotMatch(promptGuidelines, /ordinary children are not orchestrators/i);
+	});
+
+	it("explains managed worktree baseRef restrictions in every built-in description", () => {
+		for (const description of [DEFAULT_SUBAGENT_TOOL_DESCRIPTION, FULL_SUBAGENT_TOOL_DESCRIPTION, COMPACT_SUBAGENT_TOOL_DESCRIPTION]) {
+			assert.match(description, /baseRef.*HEAD.*named ref.*40\/64-character commit IDs.*revision expressions.*unsupported/);
+			assert.match(description, /Omitted baseRef defaults to HEAD resolved at worktree allocation/);
+		}
 	});
 
 	it("keeps the full description when configured", () => {

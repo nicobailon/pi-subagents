@@ -10,6 +10,7 @@ import type { AcceptanceRecoveryMetadata, HostStepNodeV1, SingleResult } from ".
 import { normalizeWorkflowHostCommandParams, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "./host-command.ts";
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const BASE_REF_VALIDATION_ERROR = "baseRef must be a valid Git ref: use HEAD or a supported named ref (for example, refs/heads/main). Full 40/64-character commit IDs and revision expressions are unsupported.";
 function validGitRef(ref: unknown): ref is string {
 	if (typeof ref !== "string" || !ref || ref === "@" || Buffer.byteLength(ref, "utf-8") > 1024 || ref.startsWith("/") || ref.endsWith("/") || ref.includes("//") || ref.includes("..") || ref.includes("@{")) return false;
 	if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(ref)) return false;
@@ -644,7 +645,7 @@ function validateRunCall(key, params, label, fingerprints) {
   }
   if (Object.prototype.hasOwnProperty.call(params, "clarify")) throw new Error(label + " does not support clarify UI.");
   if (params.worktree !== undefined && typeof params.worktree !== "boolean") throw new Error(label + " worktree must be true or false.");
-  if (params.baseRef !== undefined && (typeof params.baseRef !== "string" || !validGitRef(params.baseRef))) throw new Error(label + " baseRef must be a valid Git ref.");
+  if (params.baseRef !== undefined && (typeof params.baseRef !== "string" || !validGitRef(params.baseRef))) throw new Error(label + " baseRef must be a valid Git ref: use HEAD or a supported named ref (for example, refs/heads/main). Full 40/64-character commit IDs and revision expressions are unsupported.");
   validateLaneMetadata(params.lane, label + " lane", key);
   if (params.gate !== undefined && (typeof params.gate !== "string" || !params.gate.trim())) throw new Error(label + " gate must be a non-empty command string.");
   if (params.gate !== undefined && params.acceptance !== undefined && params.acceptance !== false) throw new Error(label + " gate cannot be combined with acceptance; use one gate command or acceptance.verify." + describeGateAcceptanceConflict(params.gate, params.acceptance));
@@ -1502,7 +1503,7 @@ function definitelyNonJson(node: AstNode, normalizeUndefined = false): string | 
 	if (node.type === "ObjectExpression" && Array.isArray(node.properties)) {
 		const values = new Map<string, AstNode>();
 		for (const property of node.properties) {
-			if (!astNode(property) || property.type !== "Property" || !astNode(property.value)) return undefined;
+			if (!astNode(property) || property.type !== "Property" || !astNode(property.value) || property.kind !== "init") return undefined;
 			const key = staticPropertyKey(property);
 			if (key === undefined) return undefined;
 			values.set(key, property.value);
@@ -1529,6 +1530,26 @@ function directObjectPropertyValue(node: AstNode, name: string): AstNode | undef
 		if (staticPropertyKey(property) === name) value = property.value;
 	}
 	return value;
+}
+
+function validateStaticBaseRef(params: AstNode, owner: string): WorkflowScriptValidationError[] {
+	if (params.type !== "ObjectExpression" || !Array.isArray(params.properties)) return [];
+	// Inspect the final definition only. A later spread or unknown key may overwrite it.
+	for (let index = params.properties.length - 1; index >= 0; index--) {
+		const property = params.properties[index];
+		if (!astNode(property) || property.type !== "Property") return [];
+		const key = staticPropertyKey(property);
+		if (key === undefined) return [];
+		if (key !== "baseRef") continue;
+		if (property.kind !== "init" || !astNode(property.value)) return [];
+		const valueNode = property.value;
+		const value = literalString(valueNode);
+		if ((value !== undefined || valueNode.type === "Literal") && !validGitRef(value)) {
+			return [{ message: `${owner} ${BASE_REF_VALIDATION_ERROR}`, ...nodeLocation(valueNode) }];
+		}
+		return [];
+	}
+	return [];
 }
 
 function directRunsAllKeys(call: AstNode): Array<{ key: string; node: AstNode }> {
@@ -1572,6 +1593,7 @@ export function validateWorkflowScript(script: string): WorkflowScriptValidation
 			const key = literalString(keyNode);
 			if (keyNode && key !== undefined && !KEY_PATTERN.test(key)) errors.push({ message: "runs.run key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.", ...nodeLocation(keyNode) });
 			if (astNode(args[1])) {
+				errors.push(...validateStaticBaseRef(args[1], "runs.run"));
 				const message = definitelyNonJson(args[1]);
 				if (message) errors.push({ message: `runs.run params are invalid: ${message}.`, ...nodeLocation(args[1]) });
 			}
@@ -1581,6 +1603,7 @@ export function validateWorkflowScript(script: string): WorkflowScriptValidation
 			const args = Array.isArray(node.arguments) ? node.arguments : [];
 			if (astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements)) {
 				for (const item of args[0].elements) if (astNode(item)) {
+					errors.push(...validateStaticBaseRef(item, "runs.all item"));
 					const message = definitelyNonJson(item);
 					if (message) errors.push({ message: `runs.all item params are invalid: ${message}.`, ...nodeLocation(item) });
 				}
@@ -2130,7 +2153,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				return respond(Promise.reject(new Error(`runs.run('${key}') worktree must be true or false.`)));
 			}
 			if (params.baseRef !== undefined && (typeof params.baseRef !== "string" || !validGitRef(params.baseRef))) {
-				return respond(Promise.reject(new Error(`runs.run('${key}') baseRef must be a valid Git ref.`)));
+				return respond(Promise.reject(new Error(`runs.run('${key}') ${BASE_REF_VALIDATION_ERROR}`)));
 			}
 			if (params.gate !== undefined && (typeof params.gate !== "string" || !params.gate.trim())) {
 				return respond(Promise.reject(new Error(`runs.run('${key}') gate must be a non-empty command string.`)));
