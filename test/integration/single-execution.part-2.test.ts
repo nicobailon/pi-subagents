@@ -87,6 +87,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			const address = server.address() as { port: number };
 			const hook = path.join(tempDir, ".git", "setup-hook.cjs");
 			fs.writeFileSync(hook, `#!${process.execPath}\nconst fs = require('node:fs');
+process.stdin.resume();
 if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
  const socket = require('node:net').connect(${address.port}, '127.0.0.1', () => socket.write('ready'));
  socket.on('data', data => { if (data.toString() === 'release') { socket.end(); console.log('{}'); } else socket.write('ack'); });
