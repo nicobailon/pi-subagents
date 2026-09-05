@@ -71,6 +71,10 @@ const PROMPT_WITH_EXPLICIT_SKILL = [
 const CONFIGURED_SKILLS_SECTION = "\n\nThe following configured skills are available to this subagent.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>configured-skill</name>\n    <description>explicit agent skill</description>\n    <location>/tmp/configured-skill/SKILL.md</location>\n  </skill>\n</available_skills>";
 
 describe("subagent prompt runtime", () => {
+	it("ignores an unconfigured path-based load", () => {
+		assert.doesNotThrow(() => registerSubagentPromptRuntime({} as never));
+	});
+
 	it("registers no permission hook by default and routes ask only to the watchdog arbiter", async () => {
 		const handlers: Array<(event: { toolName?: string; input?: unknown }, ctx?: unknown) => unknown> = [];
 		const pi = { on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx?: unknown) => unknown) { if (event === "tool_call") handlers.push(handler); } };
