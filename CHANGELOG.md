@@ -5,6 +5,10 @@
 ### Added
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
 
+### Changed
+
+- Document steer delivery modes and `scheduledRuns.storeRoot` in the bundled skill reference (`execution-controls.md`).
+
 ### Fixed
 - Clear recovered assistant errors on successful tool-use completion, including terminating structured output (#1919). Thanks to [@Jonathanm10](https://github.com/Jonathanm10).
 - Diagnose empty terminal text responses as empty-output failures rather than earlier exploratory tool errors (#1921).
