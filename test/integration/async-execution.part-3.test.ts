@@ -22,7 +22,7 @@ import {
 	createSubagentExecutor, escapeRegExp, createRepo, writePackageSkill,
 	waitForAsyncResultFile, waitForAsyncEvent, waitForAsyncState, waitForMockPiCall,
 	readLastMockPiArgs, readMockPiArgs, readMockPiArgsMatching, tempDir, mockPi,
-	makeAsyncExecutor, readAsyncPayload,
+	makeAsyncExecutor, readAsyncPayload, observeSharedCwdRunner,
 } from "../support/async-execution-fixture.ts";
 
 describe("async execution utilities", { skip: !available ? "pi packages not available" : undefined }, () => {
@@ -717,7 +717,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.doesNotMatch(eventsText, /Interrupt:/);
 	});
 
-	it("does not use shared-cwd sibling tracked edits as parallel completion-guard proof", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("does not use shared-cwd sibling tracked edits as parallel completion-guard proof", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async (t) => {
 		mockPi.onCall({
 			matchArgIncludes: "Edit tracked file",
 			delay: 50,
@@ -735,8 +735,17 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const repo = createRepo("pi-subagents-shared-cwd-mutation-guard-");
 		const id = `async-parallel-shared-cwd-mutation-${Date.now().toString(36)}`;
 		let runnerStarted = false;
+		const observer = observeSharedCwdRunner(id);
+		const failures: unknown[] = [];
+		let reported = false;
+		const reportFailure = () => {
+			if (reported) return;
+			reported = true;
+			try { t.diagnostic(`#1906 ${JSON.stringify({ ...observer.summary(), snapshot: observer.snapshot() })}`); }
+			catch { t.diagnostic("#1906 failure snapshot unavailable (contents withheld)"); }
+		};
 		try {
-			const launch = executeAsyncChain(id, {
+			const launch = observer.launch(() => executeAsyncChain(id, {
 				chain: [{
 					parallel: [
 						{ agent: "first", task: "Edit tracked file" },
@@ -746,24 +755,47 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				}],
 				resultMode: "parallel",
 				agents: [makeAgent("first"), makeAgent("second")],
-				ctx: { pi: { events: { emit() {} } }, cwd: repo, currentSessionId: "session-1" },
+				ctx: { pi: { events: { emit: observer.emit } }, cwd: repo, currentSessionId: "session-1" },
 				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 				shareEnabled: false,
 				maxSubagentDepth: 2,
-			});
+			}));
 			runnerStarted = !launch.isError;
 
 			const payload = await readAsyncPayload(id);
+			observer.marks.payloadReadAt = Date.now();
 			assert.equal(payload.results[0]?.success, true);
 			assert.equal(payload.results[0]?.effects?.fileMutation?.status, "observed");
 			assert.equal(payload.results[1]?.success, false);
 			assert.equal(payload.results[1]?.effects?.fileMutation?.status, "missing");
 			assert.equal(payload.results[1]?.effects?.fileMutation?.attempted, false);
 			assert.match(payload.results[1]?.error ?? "", /completed without making edits/);
+			observer.marks.assertionsCompletedAt = Date.now();
+		} catch (error) {
+			failures.push(error);
 		} finally {
-			if (runnerStarted) await waitForAsyncEvent(id, "subagent.run.process_terminal");
-			fs.rmSync(repo, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+			try {
+				if (runnerStarted) {
+					observer.marks.waitStartedAt = Date.now();
+					try { await waitForAsyncEvent(id, "subagent.run.process_terminal"); }
+					finally { observer.marks.waitFinishedAt = Date.now(); }
+				}
+				if (failures.length) reportFailure();
+				fs.rmSync(repo, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+				// Validate channel support/correlation without reading artifacts on success.
+				const summary = observer.summary();
+				t.diagnostic(`#1906 observer ${JSON.stringify(summary)}`);
+				if (runnerStarted) {
+					assert.equal(summary.correlatedProcesses, 1, "diagnostic channel must capture the started-event runner PID");
+					for (const type of ["spawn", "exit", "close"]) assert.ok(summary.processEvents.flat().some((event) => (event as { type: string }).type === type), `diagnostic runner ${type} must be observed`);
+				}
+			} catch (error) {
+				failures.push(error);
+				reportFailure();
+			} finally { observer.dispose(); }
 		}
+		if (failures.length === 1) throw failures[0];
+		if (failures.length > 1) throw new AggregateError(failures, "Primary execution and cleanup/diagnostic failures", { cause: failures[0] });
 	});
 
 	it("background implementation challenges keep explicit no-change reports successful", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

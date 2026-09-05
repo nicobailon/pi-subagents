@@ -9,7 +9,8 @@
 
 import { after, afterEach, before, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { ChildProcess, spawnSync } from "node:child_process";
+import { channel } from "node:diagnostics_channel";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -377,6 +378,106 @@ async function waitForAsyncResultFile(id: string, timeoutMs = 15_000): Promise<s
 		await new Promise((resolve) => setTimeout(resolve, 100));
 	}
 	return resultPath;
+}
+
+// #1906 only: observation, never a terminality predicate or process controller.
+export function observeSharedCwdRunner(id: string) {
+	const number = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : undefined;
+	const known = (value: unknown, values: string[]) => typeof value === "string" && values.includes(value) ? value : undefined;
+	const record = (value: unknown): Record<string, unknown> => value !== null && typeof value === "object" ? value as Record<string, unknown> : {};
+	const errorCode = (error: unknown) => known(record(error).code, ["ENOENT", "EACCES", "EPERM", "EBUSY", "EIO", "EMFILE", "ENFILE", "ENOSPC"]) ?? "other";
+	const project = (value: unknown) => {
+		const raw = record(value);
+		return {
+			runMatches: (raw.runId ?? raw.id) === id,
+			runnerProcessInstanceId: typeof raw.runnerProcessInstanceId === "string" && /^[a-zA-Z0-9:-]{1,128}$/.test(raw.runnerProcessInstanceId) ? raw.runnerProcessInstanceId : undefined,
+			state: known(raw.state, ["pending", "running", "complete", "failed", "cancelled", "observed", "unknown", "not-started"]),
+			reason: known(raw.reason, ["observer-unavailable", "runner-candidate-missing", "runner-instance-mismatch", "writer-close-unverified", "process-tree-unverified", "canonical-session-unavailable", "canonical-session-lease-active", "canonical-session-release-unverified", "proof-write-failed", "stale-repair"]),
+			pid: number(raw.pid), ts: number(raw.ts), timestamp: number(raw.timestamp),
+			startedAt: number(raw.startedAt), endedAt: number(raw.endedAt), observedAt: number(raw.observedAt),
+			exitCode: number(raw.exitCode), success: typeof raw.success === "boolean" ? raw.success : undefined,
+		};
+	};
+	const marks: Record<string, number | boolean> = {};
+	const notifications: unknown[] = [];
+	const processes: Array<{ proc: ChildProcess; events: unknown[]; dispose: () => void }> = [];
+	let pid: number | undefined;
+	const diagnosticChannel = channel("child_process");
+	const onProcess = (message: unknown) => {
+		const proc = record(message).process;
+		if (!(proc instanceof ChildProcess) || processes.length >= 8) return;
+		const events: unknown[] = [];
+		const add = (type: string, code?: unknown, signal?: unknown) => events.push({ type, at: Date.now(), pid: proc.pid, code: number(code) ?? (code === null ? null : undefined), signal: known(signal, ["SIGTERM", "SIGKILL", "SIGINT", "SIGABRT", "SIGSEGV"]) });
+		const spawn = () => add("spawn");
+		const error = (err: Error) => events.push({ type: "error", at: Date.now(), code: errorCode(err) });
+		const exit = (code: number | null, signal: NodeJS.Signals | null) => add("exit", code, signal);
+		const close = (code: number | null, signal: NodeJS.Signals | null) => add("close", code, signal);
+		proc.once("spawn", spawn).once("error", error).once("exit", exit).once("close", close);
+		processes.push({ proc, events, dispose: () => { proc.off("spawn", spawn).off("error", error).off("exit", exit).off("close", close); } });
+	};
+	return {
+		marks,
+		emit(type: string, value: unknown) {
+			const raw = record(value);
+			if (type === "subagent:async-started" && raw.id === id) pid = number(raw.pid);
+			else if (type !== "subagent:process-terminal" || raw.runId !== id) return;
+			if (notifications.length < 8) notifications.push({ type, at: Date.now(), ...project(raw) });
+		},
+		launch(run: () => AsyncExecutionResult) {
+			diagnosticChannel.subscribe(onProcess);
+			try {
+				const receipt = run();
+				marks.launchReturnedAt = Date.now();
+				marks.launchIsError = receipt.isError === true;
+				marks.launchIdMatches = receipt.details.asyncId === id;
+				return receipt;
+			} finally {
+				diagnosticChannel.unsubscribe(onProcess);
+				for (const entry of processes) if (pid === undefined || entry.proc.pid !== pid) entry.dispose();
+			}
+		},
+		summary() {
+			const matched = processes.filter(({ proc }) => pid !== undefined && proc.pid === pid);
+			return { id, pid, marks, notifications, capturedProcesses: processes.length, correlatedProcesses: matched.length, processEvents: matched.map(({ events }) => events) };
+		},
+		// One bounded read per known file, only after failure. No arbitrary text escapes.
+		snapshot() {
+			const snapshotAt = Date.now();
+			const files = ["process-terminal.json", "process-terminal-candidate.json", "status.json", "result", "events.jsonl", "runner.stdout.log", "runner.stderr.log"].map((name) => {
+				const file = name === "result" ? path.join(RESULTS_DIR, `${id}.json`) : path.join(ASYNC_DIR, id, name);
+				let fd: number | undefined;
+				const readAt = Date.now();
+				try {
+					fd = fs.openSync(file, "r");
+					const size = fs.fstatSync(fd).size;
+					const tail = name === "events.jsonl" || name.endsWith(".log");
+					const limit = name.endsWith(".log") ? 8192 : 65536;
+					if (!tail && size > limit) return { name, readAt, size, state: "oversized; not parsed" };
+					const offset = tail ? Math.max(0, size - limit) : 0;
+					const buffer = Buffer.alloc(Math.min(size, limit));
+					const text = buffer.subarray(0, fs.readSync(fd, buffer, 0, buffer.length, offset)).toString("utf-8");
+					const base = { name, readAt, size, truncated: offset > 0 };
+					if (name.endsWith(".log")) return { ...base, markers: ["ENOENT", "EACCES", "EPERM", "EBUSY", "ENOSPC", "SyntaxError", "TypeError", "UnhandledPromiseRejection"].filter((marker) => text.includes(marker)) };
+					if (name === "events.jsonl") {
+						let parseErrors = 0;
+						const lifecycle = [];
+						for (const line of text.split("\n").slice(offset > 0 ? 1 : 0).filter(Boolean)) {
+							try {
+								const event = record(JSON.parse(line));
+								if (["subagent.run.started", "subagent.run.completed", "subagent.run.process_terminal"].includes(String(event.type))) lifecycle.push({ type: event.type, ...project(event), proof: project(event.processTerminal) });
+							} catch { parseErrors++; }
+						}
+						return { ...base, parseErrors, lifecycle: lifecycle.slice(-16), terminalPresentInRead: lifecycle.some((event) => event.type === "subagent.run.process_terminal") };
+					}
+					const raw = record(JSON.parse(text));
+					return { ...base, ...project(raw), proof: project(raw.processTerminal), writers: ["0", "1"].map((index) => ({ index, count: Array.isArray(record(raw.writers)[index]) ? (record(raw.writers)[index] as unknown[]).length : undefined, expected: number(record(raw.expectedWriters)[index]) })) };
+				} catch (error) { return { name, readAt, state: error instanceof SyntaxError ? "invalid-json" : errorCode(error) }; }
+				finally { if (fd !== undefined) fs.closeSync(fd); }
+			});
+			return { snapshotAt, finishedAt: Date.now(), waitElapsedMs: typeof marks.waitStartedAt === "number" ? snapshotAt - marks.waitStartedAt : undefined, files };
+		},
+		dispose() { for (const entry of processes) entry.dispose(); },
+	};
 }
 
 async function waitForAsyncEvent(id: string, type: string, timeoutMs = 10_000): Promise<Record<string, unknown>> {
