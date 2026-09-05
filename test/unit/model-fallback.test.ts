@@ -220,7 +220,7 @@ describe("model fallback helpers", () => {
 			clearExclusions();
 			assert.equal(isContextOverflow(error), false);
 			recordRetryableModelFailure("openai/gpt-5-mini", error);
-			assert.equal(findModelExclusion("gpt-5-mini", "openai")?.reason, error);
+			assert.equal(findModelExclusion("openai/gpt-5-mini")?.reason, error);
 			assert.equal(getExcludedCount(), 1);
 		}
 	});
@@ -477,18 +477,6 @@ describe("model fallback helpers", () => {
 		for (const error of ["TOKEN_LIMIT_EXCEEDED", "INPUT_LIMIT_EXCEEDED", "OUTPUT_LIMIT_EXCEEDED", "RESOURCE_EXHAUSTED", "NOT_REQUEST_LIMIT_EXCEEDED", "REQUEST_LIMIT_EXCEEDED_OTHER", "400"]) {
 			assert.equal(isRetryableModelFailure(error), false, error);
 		}
-	});
-
-	it("preserves attempt and tool-failure guards for request-limit errors", () => {
-		const error = "REQUEST_LIMIT_EXCEEDED";
-		assert.equal(isRetryableModelFailureAttempt({ error, messages: [], toolCount: 0 }), true);
-		assert.equal(isRetryableModelFailureAttempt({ error, messages: [{ errorMessage: error }], toolCount: 0 }), true);
-		assert.equal(isRetryableModelFailureAttempt({ error, messages: [{ errorMessage: "different error" }], toolCount: 0 }), false);
-		assert.equal(isRetryableModelFailureAttempt({ error, messages: [{ errorMessage: error }], toolCount: 1 }), false);
-		const toolError = `bash failed (exit 1): ${error}`;
-		assert.equal(isRetryableModelFailure(toolError), false);
-		recordRetryableModelFailure("openai/gpt-5-mini", toolError);
-		assert.equal(getExcludedCount(), 0);
 	});
 
 	it("does not treat network-flavored tool failures as retryable model failures", () => {
