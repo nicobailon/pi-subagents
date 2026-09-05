@@ -578,7 +578,8 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		const asyncDir = path.join(DIRS.async, workflowRunId);
 		fs.mkdirSync(asyncDir, { recursive: true });
 		fs.mkdirSync(DIRS.results, { recursive: true });
-		const status = { ...pausedWorkflow("child-1"), runId: workflowRunId, sessionId: "session-1" };
+		const status = { ...pausedWorkflow("child-1"), runId: workflowRunId, sessionId: "session-1", workflowReceiptPath: "/stale/receipt.json" };
+		fs.writeFileSync(path.join(DIRS.results, `${workflowRunId}.json`), JSON.stringify({ workflowReceipt: { path: status.workflowReceiptPath, receipt: {} } }));
 		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
 		fs.writeFileSync(path.join(asyncDir, "workflow-receipt.json"), JSON.stringify({ version: 1, workflowRunId, state: "paused", createdAt: 1, entries: { detaches: { key: "wrong" } } }), "utf-8");
 		const state = {
@@ -597,6 +598,7 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		assert.equal(published.success, false);
 		assert.match(published.error ?? "", /evidence-persistence-failed/);
 		assert.equal(published.workflowReceipt, undefined);
+		assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8")).workflowReceiptPath, undefined);
 		const events = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
 		assert.match(events, /"type":"subagent.workflow.receipt_write_failed"/);
 		assert.match(events, /"type":"subagent.workflow.completed"/);

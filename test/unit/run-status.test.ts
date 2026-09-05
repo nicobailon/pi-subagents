@@ -22,6 +22,19 @@ function textContent(result: ReturnType<typeof inspectSubagentStatus>): string {
 }
 
 describe("async run status inspection", () => {
+	it("projects only published receipt references from result-only status", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-receipt-status-"));
+		try {
+			const resultPath = path.join(root, "receipt-run.json");
+			for (const workflowReceipt of [{ path: "/opaque/published.json", receipt: {} }, undefined, { path: 42 }, []]) {
+				fs.writeFileSync(resultPath, JSON.stringify({ runId: "receipt-run", mode: "workflow", success: true, workflowReceipt }));
+				const result = inspectSubagentStatus({ id: "receipt-run" }, { asyncDirRoot: path.join(root, "absent"), resultsDir: root });
+				const expected = workflowReceipt && "path" in workflowReceipt && typeof workflowReceipt.path === "string" ? workflowReceipt.path : undefined;
+				assert.equal(result.details?.workflowReceiptPath, expected);
+				assert.equal(textContent(result).includes("Workflow receipt:"), expected !== undefined);
+			}
+		} finally { fs.rmSync(root, { recursive: true, force: true }); }
+	});
 	afterEach(() => {
 		delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_JOB_PROVIDER_REGISTRY_KEY)];
 	});

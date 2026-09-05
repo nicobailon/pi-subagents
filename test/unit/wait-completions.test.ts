@@ -3,10 +3,16 @@ import { describe, it } from "node:test";
 import { toWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 
 describe("workflow wait completion projection", () => {
+	it("omits absent and malformed receipt references", () => {
+		for (const workflowReceipt of [undefined, null, [], "path", { path: "" }, { path: 42 }]) {
+			assert.equal("workflowReceiptPath" in toWaitCompletion({ workflowReceipt }, "run"), false);
+		}
+	});
 	it("retains the bounded workflow-child summary and excludes result output", () => {
 		const completion = toWaitCompletion({
 			agent: "workflow",
 			mode: "workflow",
+			workflowReceipt: { path: "/opaque/published-receipt.json", receipt: { output: "must not be copied" } },
 			state: "complete",
 			success: true,
 			workflowChildren: {
@@ -29,6 +35,7 @@ describe("workflow wait completion projection", () => {
 		}, "workflow-1");
 
 		assert.equal(completion.workflowChildren?.children[0]?.childId, "review");
+		assert.equal(completion.workflowReceiptPath, "/opaque/published-receipt.json");
 		assert.deepEqual(completion.results?.[0]?.usage, { input: 10, output: 2, cacheRead: 30, cacheWrite: 0, cost: 0.04, turns: 1 });
 		assert.equal(completion.results?.[0]?.sessionFile, "/sessions/run-1.jsonl");
 		assert.doesNotMatch(JSON.stringify(completion), /must not be copied/);

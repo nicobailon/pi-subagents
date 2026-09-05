@@ -337,6 +337,9 @@ function completionUsage(completions: WaitCompletion[] | undefined): Usage | und
 
 function result(text: string, isError = false, completions?: WaitCompletion[]): AgentToolResult<Details> {
 	const usage = completionUsage(completions);
+	for (const completion of completions ?? []) {
+		if (completion.workflowReceiptPath) text += `\nWorkflow receipt [${completion.runId}]: ${completion.workflowReceiptPath}`;
+	}
 	return {
 		content: [{ type: "text", text }],
 		...(isError ? { isError: true } : {}),
