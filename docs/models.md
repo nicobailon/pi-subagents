@@ -100,7 +100,11 @@ A setup that works well in practice: route agents by task shape instead of runni
 
 The routing rule: use the capability tiers (1–3) when the task is well-scoped, and the intent tier (4) when scoping or judging is the task itself.
 
-Give tier-4 agents cross-provider `fallbackModels` so subscription usage limits degrade gracefully instead of failing the run. Fallback triggers on retryable provider/model failures such as rate-limit, overload, unavailable-model, and provider-reported timeout errors. The outer run-level `timeoutMs` / `maxRuntimeMs` deadline is terminal and does not start another fallback attempt:
+Give tier-4 agents `fallbackModels` for retryable provider/model failures such as rate-limit, overload, unavailable-model, and provider-reported timeout errors **before any tool activity**. Once a tool has started, a provider failure (including HTTP 429) fails the run rather than replaying the task on another model. Ordinary task failures and the outer run-level `timeoutMs` / `maxRuntimeMs` deadline do not trigger fallback.
+
+Fallback uses native Pi sessions, not fresh `pi` CLI processes. Even when an exact session file is reopened, normal fallback resubmits the original task; retained history alone does not make automatic continuation after tool work safe.
+
+Example fallback configuration:
 
 ```yaml
 ---
