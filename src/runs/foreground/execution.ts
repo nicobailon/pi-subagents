@@ -1105,6 +1105,10 @@ async function runSingleAttempt(
 						}
 					}
 					if (evt.message.errorMessage) assistantError = evt.message.errorMessage;
+					else if (hasToolCall && evt.message.stopReason === "toolUse") {
+						// A recovered request can finish via a terminating tool, without a text stop.
+						assistantError = undefined;
+					}
 					const assistantText = extractTextFromContent(evt.message.content);
 					appendRecentOutput(progress, assistantText.split("\n").slice(-10));
 					// Final assistant message: start the settle drain window.

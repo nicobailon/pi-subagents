@@ -474,6 +474,10 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 					}
 				}
 				if (event.message.errorMessage) assistantError = event.message.errorMessage;
+				else if (hasToolCall && event.message.stopReason === "toolUse") {
+					// A recovered request can finish via a terminating tool, without a text stop.
+					assistantError = undefined;
+				}
 				const eventUsage = event.message.usage;
 				if (eventUsage) {
 					usage.turns++;
