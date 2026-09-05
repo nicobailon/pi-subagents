@@ -34,6 +34,7 @@ export interface SubagentNotifyChildOutput {
 export type SubagentNotifyWatchdogBlocker = Pick<ChildWatchdogWarningSummary, "summary" | "addressed" | "stalemate"> & { agent: string };
 
 export interface SubagentNotifyDetails {
+	workflowReceiptPath?: string;
 	agent: string;
 	status: "completed" | "failed" | "paused" | "stopped";
 	source?: "async" | "foreground";
@@ -250,6 +251,7 @@ function formatChildRun(child: { runId: string; workflowKey?: string; agent?: st
 function formatCorrelationLines(details: SubagentNotifyDetails): string[] {
 	return [
 		details.workflowRunId ? `Workflow run: ${details.workflowRunId}` : undefined,
+		details.workflowReceiptPath ? `Workflow receipt: ${details.workflowReceiptPath}` : undefined,
 		details.childRuns?.length ? `Child runs: ${details.childRuns.map(formatChildRun).join(", ")}` : undefined,
 		details.reconciledFromDetachedChild ? `Reconciled detached child: ${details.reconciledFromDetachedChild}` : undefined,
 	].filter((line): line is string => line !== undefined);
@@ -323,12 +325,14 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 	}
 	const sessionLine = sessionIndex >= 0 ? body[sessionIndex] : undefined;
 	const handoffIndex = body.findIndex((line) => line.startsWith("Parallel handoff: "));
+	const receiptIndex = body.findIndex((line) => line.startsWith("Workflow receipt: "));
+	const workflowReceiptPath = receiptIndex >= 0 ? body[receiptIndex]!.slice("Workflow receipt: ".length).trim() : undefined;
 	const workflowRunIndex = body.findIndex((line) => line.startsWith("Workflow run: "));
 	const childRunsIndex = body.findIndex((line) => line.startsWith("Child runs: "));
 	const reconciledIndex = body.findIndex((line) => line.startsWith("Reconciled detached child: "));
 	const watchdogIndex = body.findIndex((line) => line === WATCHDOG_BLOCKERS_HEADING);
 	const watchdogBlockers = watchdogIndex >= 0 ? parseWatchdogBlockerLines(body.slice(watchdogIndex + 1)) : [];
-	const metadataIndexes = [sessionIndex, handoffIndex, workflowRunIndex, childRunsIndex, reconciledIndex, watchdogIndex].filter((index) => index >= 0);
+	const metadataIndexes = [sessionIndex, handoffIndex, receiptIndex, workflowRunIndex, childRunsIndex, reconciledIndex, watchdogIndex].filter((index) => index >= 0);
 	const firstMetadataIndex = metadataIndexes.length ? Math.min(...metadataIndexes) : body.length;
 	const resultEnd = firstMetadataIndex > 0 && body[firstMetadataIndex - 1]?.trim() === "" ? firstMetadataIndex - 1 : firstMetadataIndex;
 	const resultPreview = body.slice(0, resultEnd).join("\n").trim() || "(no output)";
@@ -359,6 +363,7 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 		...(match[1] === "Detached foreground task" ? { source: "foreground" as const } : {}),
 		...(match[4] ? { taskInfo: match[4] } : {}),
 		...(parsedScheduleOrigin ? { scheduleOrigin: parsedScheduleOrigin } : {}),
+		...(workflowReceiptPath ? { workflowReceiptPath } : {}),
 		resultPreview,
 		...(handoffPath ? { handoffPath } : {}),
 		...(workflowRunId ? { workflowRunId } : {}),
@@ -448,6 +453,10 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		? result.parallelHandoff as { path?: unknown }
 		: undefined;
 	const handoffPath = typeof parallelHandoff?.path === "string" ? parallelHandoff.path : undefined;
+	const receipt = result.workflowReceipt;
+	const receiptPath = receipt && typeof receipt === "object" && !Array.isArray(receipt)
+		? (receipt as Record<string, unknown>).path : undefined;
+	const workflowReceiptPath = typeof receiptPath === "string" && receiptPath ? receiptPath : undefined;
 	const rawRunId = typeof result.runId === "string" ? result.runId : typeof result.id === "string" ? result.id : undefined;
 	const workflowRunId = (result.mode === "workflow" || agent === "workflow") && rawRunId ? rawRunId : undefined;
 	const directChild = !workflowRunId && result.results?.length === 1 ? result.results[0]! : undefined;
@@ -517,6 +526,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		agent,
 		status,
 		...(scheduleOrigin ? { scheduleOrigin } : {}),
+		...(workflowReceiptPath ? { workflowReceiptPath } : {}),
 		...(result.source ? { source: result.source } : {}),
 		...(taskInfo ? { taskInfo } : {}),
 		resultPreview,

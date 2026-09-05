@@ -88,6 +88,7 @@ function formatRunLifecycleDebug(input: { status: AsyncStatus; asyncDir: string;
 		`Run: ${status.runId}`,
 		`Dir: ${asyncDir}`,
 		`Status file: ${path.join(asyncDir, "status.json")}`,
+		status.workflowReceiptPath ? `Workflow receipt: ${status.workflowReceiptPath}` : undefined,
 		`Process terminal file: ${path.join(asyncDir, "process-terminal.json")}`,
 		`Session: ${status.sessionId ?? "unknown"}`,
 		`State: ${status.state}`,
@@ -423,7 +424,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				const capacity = inspectActiveAsyncCapacityOwner({ runId: diskStatus.runId, sessionId: diskStatus.sessionId, asyncDir }, { rootDir: deps.activeCapacityRoot, liveWorkflowRunIds: new Set(deps.state?.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: deps.abandonedSlotReleaseAfterMs });
 				return {
 					content: [{ type: "text", text: formatRunLifecycleDebug({ status: diskStatus, asyncDir, sidecarProcessTerminal: sidecar, overlayProcessTerminal: overlay, capacity }) }],
-					details: { mode: "single", results: [], ...((sidecar ?? overlay) ? { lifecycleStatus: { processTerminal: sidecar ?? overlay } } : {}) },
+					details: { mode: "single", results: [], ...(diskStatus.workflowReceiptPath ? { workflowReceiptPath: diskStatus.workflowReceiptPath } : {}), ...((sidecar ?? overlay) ? { lifecycleStatus: { processTerminal: sidecar ?? overlay } } : {}) },
 				};
 			}
 			if (params.view === "transcript") {
@@ -450,7 +451,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				const capacity = inspectActiveAsyncCapacityOwner({ runId: status.runId, sessionId: status.sessionId, asyncDir }, { rootDir: deps.activeCapacityRoot, liveWorkflowRunIds: new Set(deps.state?.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: deps.abandonedSlotReleaseAfterMs });
 				return {
 					content: [{ type: "text", text: formatRunLifecycleDebug({ status, asyncDir, sidecarProcessTerminal: sidecar, overlayProcessTerminal: overlay, capacity }) }],
-					details: { mode: "single", results: [], ...((sidecar ?? overlay) ? { lifecycleStatus: { processTerminal: sidecar ?? overlay } } : {}) },
+					details: { mode: "single", results: [], ...(status.workflowReceiptPath ? { workflowReceiptPath: status.workflowReceiptPath } : {}), ...((sidecar ?? overlay) ? { lifecycleStatus: { processTerminal: sidecar ?? overlay } } : {}) },
 				};
 			}
 			if (params.view === "transcript") {
@@ -626,6 +627,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				}
 			}
 			if (nestedWarning) lines.push(`Warning: ${nestedWarning}`);
+			if (status.workflowReceiptPath) lines.push(`Workflow receipt: ${status.workflowReceiptPath}`);
 			if (status.sessionFile) lines.push(`Session: ${status.sessionFile}`);
 			const allExternal = (status.steps?.length ?? 0) > 0 && status.steps!.every((step) => step.runner?.type === "external-cli" || step.runner?.type === "external-job");
 			if (status.state === "running" && !allExternal && status.mode !== "workflow") lines.push(`Steer running child: subagent({ action: "steer", id: "${status.runId}", message: "..." })`);
@@ -639,7 +641,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 
 			const workflowChildren = parseWorkflowChildSummary(status.workflowChildren);
 			if (workflowChildren && workflowChildren.workflowRunId !== status.runId) throw new Error("workflowChildren.workflowRunId does not match async status runId.");
-			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(status.preflight ? { preflight: status.preflight } : {}), ...(status.workflow?.preflightWarnings?.length ? { preflightWarnings: status.workflow.preflightWarnings } : {}), ...(workflowChildren ? { workflowChildren } : {}), ...(runFanoutBudget ? { runFanoutBudget } : {}), ...(processTerminal ? { lifecycleStatus: { processTerminal } } : {}) } };
+			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(status.workflowReceiptPath ? { workflowReceiptPath: status.workflowReceiptPath } : {}), ...(status.preflight ? { preflight: status.preflight } : {}), ...(status.workflow?.preflightWarnings?.length ? { preflightWarnings: status.workflow.preflightWarnings } : {}), ...(workflowChildren ? { workflowChildren } : {}), ...(runFanoutBudget ? { runFanoutBudget } : {}), ...(processTerminal ? { lifecycleStatus: { processTerminal } } : {}) } };
 		}
 	}
 
@@ -680,6 +682,11 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			const runId = data.runId ?? data.id ?? resolvedId;
 			const lines = [`Run: ${runId}`, data.toolCallId ? `Tool call: ${data.toolCallId}` : undefined, `State: ${status}`, `Result: ${resultPath}`].filter((line): line is string => Boolean(line));
 			if (data.parallelHandoff?.path) lines.push(`Parallel handoff: ${data.parallelHandoff.path}`);
+			const receipt = (data as Record<string, unknown>).workflowReceipt;
+			const receiptPath = receipt && typeof receipt === "object" && !Array.isArray(receipt)
+				? (receipt as Record<string, unknown>).path : undefined;
+			const workflowReceiptPath = typeof receiptPath === "string" && receiptPath ? receiptPath : undefined;
+			if (workflowReceiptPath) lines.push(`Workflow receipt: ${workflowReceiptPath}`);
 			const children = Array.isArray(data.results) ? data.results : data.agent ? [{ agent: data.agent, sessionFile: data.sessionFile }] : [];
 			lines.push(...formatTimeoutRecoveryLines(data.timeoutRecovery, "  "));
 			for (const [index, child] of children.entries()) {
@@ -694,7 +701,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			if (data.summary) lines.push("", data.summary);
 			const workflowChildren = parseWorkflowChildSummary((data as unknown as Record<string, unknown>).workflowChildren);
 			if (workflowChildren && workflowChildren.workflowRunId !== runId) throw new Error("workflowChildren.workflowRunId does not match the result run id.");
-			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(workflowChildren ? { workflowChildren } : {}) } };
+			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(workflowReceiptPath ? { workflowReceiptPath } : {}), ...(workflowChildren ? { workflowChildren } : {}) } };
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return {

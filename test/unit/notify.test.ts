@@ -14,6 +14,18 @@ import { createResultDeliveryOwnership } from "../../src/runs/background/result-
 
 const COMPLETION_OWNER_ID = "completion-owner-a";
 
+it("surfaces published workflow receipts outside single and grouped previews", () => {
+	const workflowReceiptPath = "/opaque/receipt.json";
+	const details = buildCompletionDetails({ agent: "workflow", mode: "workflow", runId: "run-1", success: true, summary: "x".repeat(20_000), workflowReceipt: { path: workflowReceiptPath, receipt: {} } });
+	assert.equal(details.workflowReceiptPath, workflowReceiptPath);
+	const single = formatSingleCompletion(details);
+	assert.ok(single.includes(`Workflow receipt: ${workflowReceiptPath}`));
+	assert.ok(formatGroupedCompletion([details, details]).includes(`Workflow receipt: ${workflowReceiptPath}`));
+	const parsed = parseSubagentNotifyContent(single);
+	assert.equal(parsed?.workflowReceiptPath, workflowReceiptPath);
+	assert.doesNotMatch(parsed?.resultPreview ?? "", /Workflow receipt:/);
+});
+
 function createEventBus() {
 	const emitter = new EventEmitter();
 	return {
