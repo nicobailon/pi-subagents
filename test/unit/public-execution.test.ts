@@ -74,7 +74,7 @@ describe("public subagent execution normalization", () => {
 		for (const baseRef of ["refs/heads/unsafe..ref", "branch name", "HEAD^{tree}", "@", "a".repeat(40), "a".repeat(64), 42]) {
 			const result = normalizePublicSubagentExecution({ agent: "worker", baseRef });
 			assert.equal(result.ok, false, String(baseRef));
-			if (!result.ok) assert.match(result.error, /baseRef must be a valid Git ref/);
+			if (!result.ok) assert.match(result.error, /baseRef.*HEAD.*named ref.*40\/64-character commit IDs.*revision expressions.*unsupported/);
 		}
 	});
 

@@ -73,7 +73,6 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		}
 	}
 	if (params.baseRef !== undefined) {
-		if (typeof params.baseRef !== "string") return { ok: false, error: "baseRef must be a valid Git ref.", mode: params.action === undefined ? "workflow" : "management" };
 		try {
 			normalizeWorktreeBaseRef(params.baseRef);
 		} catch (error) {
