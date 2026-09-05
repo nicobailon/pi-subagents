@@ -6,6 +6,7 @@
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
 
 ### Fixed
+- Wait for workflow-owned root result publication before declaring retained workflow resumes missing on Windows (#1906).
 - Resolve undici from the official npm registry in the lockfile for npm 12 compatibility (#1935). Thanks to [@chem](https://github.com/chem).
 - Fix background launches on stable Pi 0.85.1 without experimental packages, retaining Pi 0.85.0 support (#1944). Thanks to [@geril07](https://github.com/geril07).
 - Surface the published workflow receipt path in wait completions, notifications, and exact status/debug responses (#1938).
