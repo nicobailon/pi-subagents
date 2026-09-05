@@ -747,58 +747,27 @@ describe("completion formatting helpers", () => {
 		assert.equal(details.status, "completed");
 	});
 
-	it("surfaces structured output in workflow child previews when text is only a closing think-tag", () => {
+	it("surfaces structured output in workflow previews and direct notices for degenerate text", () => {
 		const summary = "Workflow completed with 1 child run(s). Return: { answer: 42 } Emitted: ready Trace: 2 event(s).";
-		const details = buildCompletionDetails({
-			id: "workflow-think-tag",
-			runId: "workflow-think-tag",
-			mode: "workflow",
-			agent: "workflow",
-			success: true,
-			summary,
-			results: [{
-				workflowKey: "review",
-				runId: "child-review",
-				agent: "delegate",
-				success: true,
-				outputState: "present",
-				outputReference: "/tmp/review.json",
-				output: "</think>",
-				structuredOutput: { ok: true },
-			}],
-		});
-
-		const content = formatSingleCompletion(details);
-		assert.equal(details.resultPreview, summary);
-		assert.ok(content.includes(summary));
-		assert.match(content, /key=review run=child-review status=completed/);
-		assert.match(content, /Saved output: \/tmp\/review\.json/);
-		assert.match(content, /Workflow run: workflow-think-tag/);
-		assert.match(content, /Child runs: review=child-review \(completed\)/);
-		assert.match(content, /    \|   "ok": true/);
-	});
-
-	it("surfaces structured output in direct notices when text is only a closing think-tag", () => {
-		const details = buildCompletionDetails({
-			id: "direct-think-tag",
-			agent: "delegate",
-			success: true,
-			summary: "delegate:\n</think>",
-			results: [{ agent: "delegate", success: true, outputState: "present", output: "</think>", structuredOutput: { ok: true } }],
-		});
-
-		assert.match(formatSingleCompletion(details), /"ok": true/);
-	});
-
-	it("uses structured output for whitespace and padded closing think-tags", () => {
-		for (const output of [" \n\t", " \n</think> \n"]) {
-			for (const agent of ["delegate", "workflow"]) {
-				const details = buildCompletionDetails({
-					id: "degenerate-run", agent, success: true, summary: `delegate:\n${output}`,
-					results: [{ agent: "delegate", success: true, output, structuredOutput: false }],
-				});
-				assert.match(formatSingleCompletion(details), /(?:Structured output:\n|    \| )false/);
-			}
+		for (const output of ["</think>", " \n\t", " \n</think> \n"]) {
+			const result = {
+				id: "workflow-think-tag", agent: "workflow", success: true, summary,
+				results: [{
+					workflowKey: "review", runId: "child-review", agent: "delegate", success: true,
+					outputState: "present" as const, outputReference: "/tmp/review.json", output, structuredOutput: false,
+				}],
+			};
+			const details = buildCompletionDetails(result);
+			const content = formatSingleCompletion(details);
+			assert.equal(details.resultPreview, summary);
+			assert.ok(content.includes(summary));
+			assert.match(content, /key=review run=child-review status=completed/);
+			assert.match(content, /Saved output: \/tmp\/review\.json/);
+			assert.match(content, /Workflow run: workflow-think-tag/);
+			assert.match(content, /Child runs: review=child-review \(completed\)/);
+			assert.match(content, /    \| false/);
+			const direct = buildCompletionDetails({ ...result, agent: "delegate", summary: `delegate:\n${output}` });
+			assert.match(formatSingleCompletion(direct), /Structured output:\nfalse/);
 		}
 	});
 
