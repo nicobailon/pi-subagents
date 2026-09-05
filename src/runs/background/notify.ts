@@ -190,11 +190,17 @@ function structuredOutputText(value: unknown): string | undefined {
 	}
 }
 
+function isDegenerateOutput(text: string): boolean {
+	return !text.trim() || text.trim() === "</think>";
+}
+
 function childInlinePreview(child: CompletionChild): { preview?: string; truncated?: boolean; unavailableReason?: string } {
 	const output = typeof child.output === "string" ? child.output : "";
 	const outputReference = childSavedOutputPath(child);
 	const referenceOnly = Boolean(outputReference && output.trim().startsWith("Output saved to:"));
-	const raw = child.outputState === "absent" || referenceOnly ? structuredOutputText(child.structuredOutput) : output || structuredOutputText(child.structuredOutput);
+	const raw = child.outputState === "absent" || referenceOnly
+		? structuredOutputText(child.structuredOutput)
+		: isDegenerateOutput(output) ? structuredOutputText(child.structuredOutput) ?? output : output;
 	if (!raw?.trim()) {
 		return { unavailableReason: referenceOnly ? "saved output is file-only" : "no safe inline output" };
 	}
@@ -468,10 +474,17 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		: undefined;
 	const directSummary = summary.trim();
 	const directAgent = typeof directChild?.agent === "string" ? directChild.agent : agent;
+	const directSummaryBody = directAgent && summary.trimStart().startsWith(`${directAgent}:\n`)
+		? summary.trimStart().slice(directAgent.length + 2)
+		: directSummary;
+	const directDegenerateSummary = directChild
+		&& isDegenerateOutput(typeof directChild.output === "string" ? directChild.output : "")
+		&& isDegenerateOutput(directSummaryBody)
+		&& structuredOutputText(directChild.structuredOutput) !== undefined;
 	const directNoOutputSummary = directChild && (!directSummary
 		|| directSummary === "(no output)"
 		|| (directAgent && directSummary === `${directAgent}:\n(no output)`));
-	const resultPreview = directStructuredPreview && directNoOutputSummary
+	const resultPreview = directStructuredPreview && (directNoOutputSummary || directDegenerateSummary)
 		? `Structured output:\n${directStructuredPreview}`
 		: summary;
 	const childRuns = result.results?.flatMap((child) => {
