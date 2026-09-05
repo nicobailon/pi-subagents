@@ -7,6 +7,7 @@
 
 ### Fixed
 - Fix background launches on stable Pi 0.85.1 without experimental packages, retaining Pi 0.85.0 support (#1944). Thanks to [@geril07](https://github.com/geril07).
+- Validate literal workflow `baseRef` values before execution and clarify supported refs (#1934, #1937). Thanks to [@jeanduplessis](https://github.com/jeanduplessis).
 - Preserve retained predecessor lineage in string-ID workflow continuations and receipts (#1920).
 - Clear recovered assistant errors on successful tool-use completion, including terminating structured output (#1919). Thanks to [@Jonathanm10](https://github.com/Jonathanm10).
 - Diagnose empty terminal text responses as empty-output failures rather than earlier exploratory tool errors (#1921).
