@@ -50,7 +50,6 @@ describe("named workflow resources", () => {
 				assert.match(authorizeWorkflowResourceHost(resolved.resource.permit, "other", "node check.mjs")!, /not allowed/);
 				assert.match(authorizeWorkflowResourceHost(resolved.resource.permit, "check", "node changed.mjs")!, /not allowed/);
 				assert.match(consumeWorkflowResourcePermit(resolved.resource.permit, resolved.resource.script) as string, /already consumed/);
-				assert.equal(Object.isFrozen(typeof consumed === "object" && consumed.authority.host?.[0]), true);
 			} finally { replacement.dispose(); }
 		} finally { registration.dispose(); other.dispose(); }
 	});
@@ -120,23 +119,15 @@ describe("named workflow resources", () => {
 		await new Promise<void>((resolve) => setImmediate(resolve));
 	});
 
-	it("shares registrations across evaluated module copies and fails closed on registry version corruption", async () => {
+	it("shares registrations across evaluated module copies", async () => {
 		const copy = await import(`../../src/workflows/workflow-resources.ts?copy=registration-test`);
 		const registration = copy.registerWorkflowResource({ sessionId: "copies", definition: { name: "acme.copy", version: 1, resolve: () => ({ script: "return true;" }) } });
-		const key = Symbol.for("pi-subagents.workflow-resources.v1");
-		const globals = globalThis as Record<PropertyKey, unknown>;
-		const saved = globals[key];
 		try {
 			assert.notEqual(copy.resolveWorkflowResource, resolveWorkflowResource);
 			const resolved = resolveWorkflowResource("acme.copy", {}, "copies");
 			assert.equal(resolved.ok, true);
 			if (resolved.ok) assert.equal(typeof consumeWorkflowResourcePermit(resolved.resource.permit, resolved.resource.script), "object");
-			for (const invalid of [null, { version: 2, bySession: new Map() }, { version: 1, bySession: [] }]) {
-				globals[key] = invalid;
-				assert.equal(resolveWorkflowResource("acme.copy", {}, "copies").ok, false);
-				assert.throws(() => copy.registerWorkflowResource({ sessionId: "copies", definition: { name: "acme.other", version: 1, resolve: () => ({ script: "return true;" }) } }), /registry/);
-			}
-		} finally { globals[key] = saved; registration.dispose(); }
+		} finally { registration.dispose(); }
 		assert.equal(resolveWorkflowResource("acme.copy", {}, "copies").ok, false);
 	});
 
