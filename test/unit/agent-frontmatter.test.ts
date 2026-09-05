@@ -1862,7 +1862,7 @@ Do work
 		}
 	});
 
-	it("bundled standard agents expose the child-facing supervisor tool with bounded allowlists", () => {
+	it("bundled standard agents keep bounded tool allowlists", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-supervisor-tool-"));
 		const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-supervisor-tool-home-"));
 		tempDirs.push(dir);
@@ -1879,12 +1879,23 @@ Do work
 				delegate: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
 				reviewer: ["read", "grep", "find", "ls", "contact_supervisor"],
 				scout: ["read", "grep", "find", "ls", "bash", "write", "contact_supervisor"],
+				researcher: ["read", "write", "web_search", "fetch_content", "get_search_content", "source_check"],
 			};
 			for (const [name, tools] of Object.entries(expectedTools)) {
 				const agent = agents.find((candidate) => candidate.name === name);
 				assert.ok(agent, `${name} builtin should be discovered`);
 				assert.deepEqual(agent?.tools, tools);
 			}
+
+			const researcherPrompt = agents.find((candidate) => candidate.name === "researcher")?.systemPrompt ?? "";
+			assert.match(researcherPrompt, /search-result summaries as discovery aids, not final evidence/);
+			assert.match(researcherPrompt, /source_check.*decision-critical or disputed claims/);
+			assert.match(researcherPrompt, /direct evidence, source interpretation, and researcher inference distinctly/);
+			assert.match(researcherPrompt, /Record contradictions.*Record missing evidence/);
+			assert.match(researcherPrompt, /Never invent dates, quotations, citations, or unsupported precision/);
+			assert.match(researcherPrompt, /`source_check` must be registered by the loaded provider before launch/);
+			assert.match(researcherPrompt, /If a registered `source_check` call fails, continue/);
+			assert.match(researcherPrompt, /\*\*Support:\*\* direct evidence \| interpretation\. \*\*Confidence:\*\* high \| medium \| low/);
 		} finally {
 			if (previousHome === undefined) delete process.env.HOME;
 			else process.env.HOME = previousHome;

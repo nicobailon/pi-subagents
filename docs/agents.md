@@ -184,11 +184,13 @@ Native `oracle` runs inside Pi and can use its configured read tools. The Claude
 | `external-job-requests/` and `external-job-responses/` | Host-mediated provider bridge | pending request, terminal response | Host process writes a matching response and removes the request | Bridge timeout or malformed request response | Requests are operation-scoped. Recovery sends `reattach`/`result`, not `start` or `follow-up`, when job metadata exists. `start` and `follow-up` use durable dispatch claims | Provider not registered, host bridge not loaded, malformed request, provider exception, ambiguous dispatch without a provider job id |
 | Provider artifact path | External provider | provider-defined terminal artifact | Provider returns `artifactPath`, or Pi writes returned text to `external-job-<index>.result.md` | Provider reports failure or no result | Existing artifact path is retained in `status.json` | Missing artifact with no text output returns a terminal message instead of inventing content |
 
-The `researcher` builtin uses `web_search`, `fetch_content`, and `get_search_content`. Those require [pi-web-access](https://github.com/nicobailon/pi-web-access):
+The `researcher` builtin uses `web_search`, `fetch_content`, `get_search_content`, and selective `source_check` validation. Those require [pi-web-access](https://github.com/nicobailon/pi-web-access):
 
 ```bash
 pi install npm:pi-web-access
 ```
+
+The loaded provider must register all four tools, including `source_check`, before launch; a missing required tool prevents a successful run. Fetched-source inspection is a fallback for a registered `source_check` call failing, not for missing registration.
 
 ## Overriding builtins and custom agents
 
