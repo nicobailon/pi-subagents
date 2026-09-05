@@ -3349,7 +3349,6 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 }
 
 async function createSingleWorktreeSetup(
-	enabled: boolean | undefined,
 	cwd: string,
 	runId: string,
 	agent: string,
@@ -3365,7 +3364,6 @@ async function createSingleWorktreeSetup(
 	signal?: AbortSignal,
 	deadlineAt?: number,
 ): Promise<{ setup?: WorktreeSetup; errorResult?: AgentToolResult<Details> }> {
-	if (!enabled) return {};
 	try {
 		return {
 			setup: await createWorktrees(cwd, runId, 1, omitUndefinedProperties({
@@ -3762,7 +3760,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const sourceCwd = effectiveCwd;
 	let pendingHandoff: Details["parallelHandoff"];
 	const { setup: worktreeSetup, errorResult: worktreeSetupError } = params.worktree ? await createSingleWorktreeSetup(
-		params.worktree,
 		sourceCwd,
 		runId,
 		params.agent!,

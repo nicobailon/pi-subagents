@@ -168,7 +168,6 @@ interface GitResult {
 interface RepoState {
 	toplevel: string;
 	cwdRelative: string;
-	sourceCheckout: SourceCheckoutSnapshot;
 	baseCommit: string;
 }
 
@@ -240,7 +239,6 @@ class SetupTransaction {
 		this.progress.command = { command, args };
 		if (this.progress.phase === "allocation") this.progress.attempts.at(-1)!.command = this.progress.command;
 		if (this.progress.phase === "hook") this.progress.attempts.find((attempt) => attempt.path === options.cwd)!.hookCommand = this.progress.command;
-		this.publish();
 		const result = await runSetupCommand(command, args, {
 			...options, signal: this.options.signal, deadlineAt: this.options.deadlineAt,
 			onSpawn: (process) => { Object.assign(this.progress.command!, process); this.publish(); },
@@ -356,9 +354,6 @@ async function resolveRepoState(tx: SetupTransaction, cwd: string, requestedBase
 		throw new Error("worktree isolation requires a clean git working tree. Commit or stash changes first.");
 	}
 
-	const sourceHead = (await tx.gitChecked(toplevel, ["rev-parse", "HEAD"])).trim();
-	const sourceBranch = await tx.git(toplevel, ["symbolic-ref", "--quiet", "--short", "HEAD"], [0, 1]);
-	const sourceCheckout = { head: sourceHead, ...(sourceBranch.status === 0 ? { branch: sourceBranch.stdout.trim() } : {}) };
 	const baseRef = normalizeWorktreeBaseRef(requestedBaseRef) ?? DEFAULT_WORKTREE_BASE_REF;
 	let baseCommit: string;
 	try {
@@ -369,7 +364,7 @@ async function resolveRepoState(tx: SetupTransaction, cwd: string, requestedBase
 		throw new Error(`baseRef '${baseRef}' could not be resolved to a commit: ${error instanceof Error ? error.message : String(error)}`, { cause: error instanceof Error ? error : undefined });
 	}
 	if (!baseCommit) throw new Error(`baseRef '${baseRef}' could not be resolved to a commit`);
-	return { toplevel, cwdRelative, sourceCheckout, baseCommit };
+	return { toplevel, cwdRelative, baseCommit };
 }
 
 function normalizeComparableCwd(cwd: string): string {
@@ -537,11 +532,6 @@ interface WorktrunkCapability {
 	reason?: string;
 }
 
-interface SourceCheckoutSnapshot {
-	head: string;
-	branch?: string;
-}
-
 function runWorktrunk(args: string[], cwd?: string): WorktreeCommandResult {
 	try {
 		const result = spawnSync("wt", args, {
@@ -589,7 +579,6 @@ export function resolveWorktreeProvider(requested: WorktreeProvider | undefined,
 	return "native";
 }
 
-/** Whether a launch must bind its worktree-dependent paths after allocation. */
 async function resolveSetupProvider(tx: SetupTransaction, requested: WorktreeProvider | undefined, baseDir?: string): Promise<ManagedWorktreeProvider> {
 	const selection = requested ?? DEFAULT_WORKTREE_PROVIDER;
 	if (selection !== "auto" && selection !== "native" && selection !== "worktrunk") throw new Error('worktree provider must be "auto", "native", or "worktrunk"');
@@ -617,6 +606,7 @@ async function resolveSetupProvider(tx: SetupTransaction, requested: WorktreePro
 	return "native";
 }
 
+/** Whether a launch must bind its worktree-dependent paths after allocation. */
 export function shouldDeferWorktreeCwd(requested: WorktreeProvider | undefined, baseDir?: string): boolean {
 	return (requested ?? DEFAULT_WORKTREE_PROVIDER) !== "native" && !hasConfiguredWorktreeBaseDir(baseDir);
 }
@@ -972,18 +962,13 @@ async function createWorktrunkWorktree(
 		const message = result.error?.message || result.stderr.trim() || result.stdout.trim() || "Worktrunk provisioning failed";
 		throw new Error(`Worktrunk provisioning failed: ${message}`);
 	}
-	let createdAllocation = false;
-	let returnedPath: string | undefined;
 	try {
 		const output = parseWorktrunkSwitchOutput(result.stdout);
-		createdAllocation = output.action === "created" && output.created_branch === true;
-		if (typeof output.path === "string" && path.isAbsolute(output.path)) returnedPath = path.resolve(output.path);
-		if (!createdAllocation || output.branch !== naming.requestedBranch || output.base_branch !== baseCommit) {
+		if (output.action !== "created" || output.created_branch !== true || output.branch !== naming.requestedBranch || output.base_branch !== baseCommit) {
 			throw new Error("Worktrunk provisioning returned inconsistent creation metadata");
 		}
 		if (typeof output.path !== "string" || !path.isAbsolute(output.path)) throw new Error("Worktrunk provisioning returned a non-absolute worktree path");
-		const worktreePathCandidate = returnedPath;
-		if (!worktreePathCandidate) throw new Error("Worktrunk provisioning returned a non-absolute worktree path");
+		const worktreePathCandidate = path.resolve(output.path);
 		let stat: fs.Stats;
 		try {
 			stat = fs.lstatSync(worktreePathCandidate);
@@ -1296,12 +1281,12 @@ async function compensateSetup(tx: SetupTransaction): Promise<WorktreeCleanupRep
 	const git = async (args: string[], acceptedExitCodes: readonly number[] = [0]) => {
 		if (setupPoison) throw new Error(setupPoison);
 		tx.progress.command = { command: "git", args: ["-C", setup.cwd, ...args] };
-		tx.publish();
 		const result = await runSetupCommand("git", tx.progress.command.args, {
 			deadlineAt: tx.options.deadlineAt, acceptedExitCodes,
 			onSpawn: (process) => { Object.assign(tx.progress.command!, process); tx.publish(); },
 		});
-		tx.progress.command.result = result;
+		const { stdout: _stdout, stderr: _stderr, ...metadata } = result;
+		tx.progress.command.result = metadata;
 		if (result.processTree?.state === "unknown") tx.unknown(result.error ?? "Rollback command settlement unverified");
 		tx.publish();
 		if (result.error || result.status === null || !acceptedExitCodes.includes(result.status)) throw result.error ?? new Error(result.stderr.trim() || "Rollback command failed");

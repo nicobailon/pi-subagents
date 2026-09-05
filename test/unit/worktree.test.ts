@@ -156,6 +156,33 @@ describe("worktree", () => {
 		}
 	});
 
+	it("compensates a rejected ready publication without retaining command output in snapshots", async () => {
+		const repoDir = createRepo("pi-worktree-ready-rejected-");
+		try {
+			await assert.rejects(() => createWorktrees(repoDir, "ready-rejected", 1, {
+				provider: "native",
+				onProgress: (snapshot) => {
+					if (snapshot.command?.result) {
+						assert.equal("stdout" in snapshot.command.result, false);
+						assert.equal("stderr" in snapshot.command.result, false);
+					}
+					if (snapshot.phase === "ready") throw new Error("ready publication rejected");
+				},
+			}), (error: unknown) => {
+				assert.ok(error instanceof WorktreeSetupError);
+				assert.match(error.message, /ready publication rejected/);
+				assert.equal(error.snapshot.cleanup?.state, "complete");
+				assert.equal(error.snapshot.cleanup.tasks.length, 1);
+				const task = error.snapshot.cleanup.tasks[0]!;
+				assert.equal(task.worktreeRemoved, true);
+				assert.equal(task.branchRemoved, true);
+				assert.equal(fs.existsSync(task.path), false);
+				assert.equal(git(repoDir, ["branch", "--list", task.branch]), "");
+				return true;
+			});
+		} finally { cleanupRepo(repoDir); }
+	});
+
 	it("records Worktrunk ownership and uses its returned path", async () => {
 		try { resolveWorktreeProvider("worktrunk"); } catch { return; }
 		const repoDir = createRepo("pi-worktree-worktrunk-");

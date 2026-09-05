@@ -616,7 +616,7 @@ export function parallelHandoffPath(baseDir: string, runId?: string): string {
 }
 
 /** Synchronous onProgress projection shared by setup owners; snapshots are cumulative. */
-export function writeWorktreeSetupHandoff(input: Omit<Parameters<typeof writePendingParallelHandoff>[0], "setup"> & {
+export function writeWorktreeSetupHandoff(input: Omit<Parameters<typeof writeParallelHandoffGroup>[0], "setup" | "diffs" | "results" | "cleanup" | "now"> & {
 	progress: WorktreeSetupProgress;
 }): ParallelHandoffReference | undefined {
 	const { progress, ...handoff } = input;
@@ -671,20 +671,6 @@ export function writeWorktreeSetupHandoff(input: Omit<Parameters<typeof writePen
 			}),
 		},
 	});
-}
-
-export function writePendingParallelHandoff(input: {
-	manifestPath: string;
-	runId: string;
-	mode: "single" | "parallel" | "chain";
-	source: "foreground" | "async";
-	cwd: string;
-	stepIndex: number;
-	flatStartIndex: number;
-	setup: WorktreeSetup;
-	laneBindings?: ParallelHandoffLaneBinding[];
-}): ParallelHandoffReference {
-	return writeParallelHandoffGroup({ ...input, diffs: [], results: [] });
 }
 
 export function formatParallelHandoffReference(reference: ParallelHandoffReference): string {

@@ -11,7 +11,6 @@ import {
 	recordParallelHandoffSupersession,
 	resolveParallelHandoffChild,
 	writeParallelHandoffGroup,
-	writePendingParallelHandoff,
 } from "../../src/runs/shared/parallel-handoff.ts";
 import type { ParallelHandoffManifest } from "../../src/shared/types.ts";
 import type { WorktreeCleanupReport, WorktreeDiff, WorktreeSetup } from "../../src/runs/shared/worktree.ts";
@@ -56,7 +55,8 @@ describe("parallel handoff", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parallel-handoff-pending-"));
 		try {
 			const manifestPath = path.join(dir, "handoff.json");
-			const reference = writePendingParallelHandoff({
+			const reference = writeParallelHandoffGroup({
+				diffs: [], results: [],
 				manifestPath,
 				runId: "run-pending",
 				mode: "parallel",
@@ -416,7 +416,8 @@ describe("parallel handoff", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parallel-handoff-merge-unknown-"));
 		try {
 			const manifestPath = path.join(dir, "handoff.json");
-			writePendingParallelHandoff({
+			writeParallelHandoffGroup({
+				diffs: [], results: [],
 				manifestPath,
 				runId: "lane-unknown",
 				mode: "single",
