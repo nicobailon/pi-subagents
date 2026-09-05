@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Clarify the documented pre-tool safety boundary for automatic model fallback (#1936). Thanks to [@peedrr](https://github.com/peedrr).
+
 ### Added
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
 
