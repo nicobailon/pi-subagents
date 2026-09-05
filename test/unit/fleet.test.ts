@@ -447,6 +447,29 @@ describe("native subagent fleet", () => {
 		}
 	});
 
+	it("keeps tracked missing-start rows stable across opposing heartbeat updates", () => {
+		const state = stateForTest();
+		state.fleetJobs = new Map();
+		for (const [id, startedAt, status] of [
+			["known", 100, "running"], ["unknown-b", undefined, "running"], ["unknown-a", undefined, "queued"],
+		] as const) {
+			state.fleetJobs.set(id, {
+				asyncId: id, asyncDir: `/tmp/${id}`, sessionId: "session-current", status, startedAt,
+			});
+		}
+		for (const direction of [1, -1]) {
+			let heartbeat = 500;
+			for (const job of state.fleetJobs.values()) job.updatedAt = heartbeat += direction * 10;
+			const snapshot = collectFleetSnapshot(state);
+			assert.equal(snapshot.error, undefined);
+			assert.deepEqual(snapshot.items.map((item) => item.key), ["async:unknown-a", "async:unknown-b", "async:known"]);
+			for (const item of snapshot.items) {
+				const job = state.fleetJobs.get(item.runId)!;
+				assert.equal(item.run?.startedAt, job.startedAt ?? job.updatedAt);
+			}
+		}
+	});
+
 	it("keeps tracked active workflows ahead of older failed terminal history", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-history-"));
 		try {
