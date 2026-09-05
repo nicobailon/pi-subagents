@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Clarify the documented pre-tool safety boundary for automatic model fallback (#1936). Thanks to [@peedrr](https://github.com/peedrr).
+
 ### Added
 - Add selective researcher source checks and explicit evidence, confidence, and uncertainty reporting (#1932). Thanks to [@Muskos](https://github.com/Muskos).
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
