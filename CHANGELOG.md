@@ -14,6 +14,7 @@
 - Document steer delivery modes and `scheduledRuns.storeRoot` in the bundled skill reference (`execution-controls.md`) (#1933). Thanks to [@G0-0000](https://github.com/G0-0000).
 
 ### Fixed
+- Keep the async status widget in place across progress updates instead of re-registering it behind other extensions' widgets (#1931). Thanks to [@DraconDev](https://github.com/DraconDev).
 - Wait for workflow-owned root result publication before declaring retained workflow resumes missing on Windows (#1906).
 - Recognize raw `REQUEST_LIMIT_EXCEEDED` rate limits and keep context-overflow errors out of the model exclusion cache (#1955, #1957). Thanks to [@slyons-vamp](https://github.com/slyons-vamp).
 - Emit synchronous workflow progress updates for RPC/headless and cross-repository hosts even when the live chat card is off (#1951). Thanks to [@yanqianglu](https://github.com/yanqianglu).

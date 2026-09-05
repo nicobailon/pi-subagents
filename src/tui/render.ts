@@ -2722,16 +2722,29 @@ function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[
 	return rendered.lines;
 }
 
-function buildWidgetComponent(jobs: AsyncJobState[], isExpanded: () => boolean): (_tui: unknown, theme: Theme) => Component {
-	return (_tui, theme) => {
+const asyncWidgetUpdates = new WeakMap<ExtensionContext["ui"], (jobs: AsyncJobState[]) => void>();
+
+function buildWidgetComponent(jobs: AsyncJobState[], ui: ExtensionContext["ui"]): (tui: { requestRender(): void }, theme: Theme) => Component {
+	return (tui, theme) => {
 		const container = new Container();
 		let cachedRenderWidth: number | undefined;
 		let cachedFrame: number | undefined;
 		let cachedExpanded: boolean | undefined;
 		let cachedLines: string[] | undefined;
+		const update = (nextJobs: AsyncJobState[]): void => {
+			jobs = nextJobs;
+			cachedLines = undefined;
+			tui.requestRender();
+		};
+		asyncWidgetUpdates.set(ui, update);
+		const component = Object.assign(container, {
+			dispose(): void {
+				if (asyncWidgetUpdates.get(ui) === update) asyncWidgetUpdates.delete(ui);
+			},
+		});
 		container.render = (renderWidth: number): string[] => {
 			const frame = Math.floor(Date.now() / WIDGET_ANIMATION_INTERVAL_MS);
-			const expanded = isExpanded();
+			const expanded = ui.getToolsExpanded?.() ?? false;
 			if (cachedLines && cachedRenderWidth === renderWidth && cachedFrame === frame && cachedExpanded === expanded) return cachedLines;
 			const width = Math.max(0, renderWidth - 2);
 			const projectionFor = workflowWidgetProjectionLookup();
@@ -2746,7 +2759,7 @@ function buildWidgetComponent(jobs: AsyncJobState[], isExpanded: () => boolean):
 			cachedLines = fitAdaptiveWidgetLines(jobs, buildLines, theme, width, expanded, frame, projectionFor).map((line) => paddedWidgetLine(line, renderWidth));
 			return cachedLines;
 		};
-		return container;
+		return component;
 	};
 }
 
@@ -2841,6 +2854,7 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void {
 	if (jobs.length === 0) {
 		resetWidgetLayoutSession();
+		asyncWidgetUpdates.delete(ctx.ui);
 		if (ctx.hasUI) ctx.ui.setWidget(WIDGET_KEY, undefined);
 		return;
 	}
@@ -2849,7 +2863,11 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
 		ctx.ui.setWidget(WIDGET_KEY, encodeAsyncStatusSnapshotWidget(jobs));
 		return;
 	}
-	ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, () => ctx.ui.getToolsExpanded?.() ?? false));
+	// Pi replaces a widget by deleting and reinserting its key. Update the mounted
+	// component instead so progress cannot move it past other extensions' widgets.
+	const update = asyncWidgetUpdates.get(ctx.ui);
+	if (update) update(jobs);
+	else ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, ctx.ui));
 }
 
 function renderSingleCompact(

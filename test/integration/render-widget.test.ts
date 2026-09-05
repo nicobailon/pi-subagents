@@ -91,6 +91,56 @@ function resetWidgetLayout(): void {
 }
 
 describe("subagent async widget rendering", () => {
+	it("updates the mounted async widget without changing host insertion order", () => {
+		type Widget = { render(width: number): string[]; dispose?(): void };
+		const widgets = new Map<string, Widget>();
+		let registrations = 0;
+		let renderRequests = 0;
+		const tui = { requestRender: () => { renderRequests += 1; } };
+		const ctx = {
+			hasUI: true,
+			ui: {
+				// Pi 0.85 setExtensionWidget disposes/deletes before inserting.
+				setWidget(key: string, factory: ((tui: typeof tui, theme: typeof theme) => Widget) | undefined) {
+					widgets.get(key)?.dispose?.();
+					widgets.delete(key);
+					if (factory) {
+						registrations += 1;
+						widgets.set(key, factory(tui, theme));
+					}
+				},
+			},
+		};
+		const job = { asyncId: "same-run", asyncDir: "/tmp/run", status: "running", agents: ["before-update"] };
+		const originalNow = Date.now;
+		try {
+			Date.now = () => 1_000;
+			renderWidget(ctx, [job]);
+			const mounted = widgets.get("subagent-async")!;
+			assert.match(mounted.render(180).join("\n"), /before-update/);
+			ctx.ui.setWidget("other-extension", () => ({ render: () => ["other"] }));
+			for (const agent of ["after-update", "latest-update"]) {
+				renderWidget({ ...ctx }, [{ ...job, agents: [agent] }]);
+				assert.deepEqual([...widgets.keys()], ["subagent-async", "other-extension"]);
+				assert.equal(widgets.get("subagent-async"), mounted);
+				assert.match(mounted.render(180).join("\n"), new RegExp(agent), "same-frame cache must be invalidated");
+			}
+			assert.equal(registrations, 2, "progress must not re-register either widget");
+			assert.equal(renderRequests, 2, "each update requests a repaint without a timer");
+
+			ctx.ui.setWidget("subagent-async", undefined);
+			renderWidget(ctx, [job]);
+			assert.notEqual(widgets.get("subagent-async"), mounted, "host disposal allows remounting");
+			renderWidget(ctx, []);
+			assert.deepEqual([...widgets.keys()], ["other-extension"]);
+			renderWidget(ctx, [job]);
+			assert.ok(widgets.has("subagent-async"), "cleared widgets can mount again");
+		} finally {
+			Date.now = originalNow;
+			renderWidget(ctx, []);
+		}
+	});
+
 	it("renders compact workflow lanes by default and keeps details expanded", () => {
 		const job = {
 			asyncId: "a6b9aa6b-workflow",
