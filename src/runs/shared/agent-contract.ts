@@ -1,6 +1,6 @@
 import type { AgentContract, EffectsProjection, ExecutionProjection, ReviewProjection, SingleResult } from "../../shared/types.ts";
 
-export function isAgentContractV1(contract: AgentContract | undefined): boolean {
+export function isAgentContract(contract: AgentContract | undefined): boolean {
 	return contract?.version === 1;
 }
 

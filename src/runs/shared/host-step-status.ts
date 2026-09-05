@@ -1,6 +1,6 @@
 import type {
 	AsyncStatus,
-	HostStepNodeV1,
+	HostStepNode,
 	HostStepState,
 	HostStepVerdict,
 	WorkflowGraphNode,
@@ -57,7 +57,7 @@ function assertTimestamp(value: unknown, field: string, source: string, required
 	if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new Error(`Invalid host step '${source}': ${field} must be a non-negative safe integer.`);
 }
 
-function assertFreshness(value: unknown, source: string): asserts value is HostStepNodeV1["freshness"] {
+function assertFreshness(value: unknown, source: string): asserts value is HostStepNode["freshness"] {
 	if (!isRecord(value)) throw new Error(`Invalid host step '${source}': freshness must be an object.`);
 	const unknownFields = Object.keys(value).filter((field) => !FRESHNESS_FIELDS.has(field));
 	if (unknownFields.length > 0) throw new Error(`Invalid host step '${source}': freshness has unsupported fields: ${unknownFields.join(", ")}.`);
@@ -70,7 +70,7 @@ function assertFreshness(value: unknown, source: string): asserts value is HostS
  * Validate the persisted host-step contract. This deliberately rejects unknown
  * fields and unbounded values so status and receipt loaders fail closed.
  */
-export function assertHostStepNode(value: unknown, source = "status"): asserts value is HostStepNodeV1 {
+export function assertHostStepNode(value: unknown, source = "status"): asserts value is HostStepNode {
 	if (!isRecord(value)) throw new Error(`Invalid host step '${source}': expected an object.`);
 	const unknownFields = Object.keys(value).filter((field) => !HOST_STEP_FIELDS.has(field));
 	if (unknownFields.length > 0) throw new Error(`Invalid host step '${source}': unsupported fields: ${unknownFields.join(", ")}.`);
@@ -105,7 +105,7 @@ export function assertHostStepNode(value: unknown, source = "status"): asserts v
 	assertTimestamp(value.deadlineAt, "deadlineAt", source);
 }
 
-export function parseHostStepNode(value: unknown, source = "status"): HostStepNodeV1 {
+export function parseHostStepNode(value: unknown, source = "status"): HostStepNode {
 	assertHostStepNode(value, source);
 	return {
 		...value,
@@ -113,7 +113,7 @@ export function parseHostStepNode(value: unknown, source = "status"): HostStepNo
 	};
 }
 
-export function assertUniqueHostStepIds(hostSteps: readonly HostStepNodeV1[], source = "status"): void {
+export function assertUniqueHostStepIds(hostSteps: readonly HostStepNode[], source = "status"): void {
 	const ids = new Set<string>();
 	for (const hostStep of hostSteps) {
 		if (ids.has(hostStep.id)) throw new Error(`Invalid host step '${source}': duplicate host step id '${hostStep.id}'.`);
@@ -122,11 +122,11 @@ export function assertUniqueHostStepIds(hostSteps: readonly HostStepNodeV1[], so
 }
 
 /** Return only valid host nodes so an untrusted in-memory projection fails closed. */
-export function validHostStepNodes(graph: WorkflowGraphSnapshot | undefined): HostStepNodeV1[] {
+export function validHostStepNodes(graph: WorkflowGraphSnapshot | undefined): HostStepNode[] {
 	const nodes = graph?.nodes ?? [];
 	const nodeIdCounts = new Map<string, number>();
 	for (const node of nodes) nodeIdCounts.set(node.id, (nodeIdCounts.get(node.id) ?? 0) + 1);
-	const hostSteps: HostStepNodeV1[] = [];
+	const hostSteps: HostStepNode[] = [];
 	for (const [index, node] of nodes.entries()) {
 		if (node.kind !== "host-step") continue;
 		try {
@@ -147,7 +147,7 @@ export function assertWorkflowGraphHostSteps(graph: WorkflowGraphSnapshot | unde
 	if (!Array.isArray(graph.nodes)) throw new Error(`Invalid host step '${source}.workflowGraph': nodes must be an array.`);
 	const hostStepCount = graph.nodes.filter((node) => node.kind === "host-step").length;
 	if (hostStepCount > HOST_STEP_MAX_COUNT) throw new Error(`Invalid host step '${source}': workflowGraph contains more than ${HOST_STEP_MAX_COUNT} host steps.`);
-	const hostSteps: HostStepNodeV1[] = [];
+	const hostSteps: HostStepNode[] = [];
 	for (const [index, node] of graph.nodes.entries()) {
 		if (node.kind !== "host-step") continue;
 		const hostStep = parseHostStepNode(node.hostStep, `${source}.workflowGraph.nodes[${index}].hostStep`);
@@ -161,7 +161,7 @@ export function assertWorkflowGraphHostSteps(graph: WorkflowGraphSnapshot | unde
 	}
 }
 
-export function hostStepWorkflowNode(hostStep: HostStepNodeV1): WorkflowGraphNode {
+export function hostStepWorkflowNode(hostStep: HostStepNode): WorkflowGraphNode {
 	assertHostStepNode(hostStep, hostStep.id);
 	return {
 		id: hostStep.id,
@@ -172,7 +172,7 @@ export function hostStepWorkflowNode(hostStep: HostStepNodeV1): WorkflowGraphNod
 	};
 }
 
-function workflowNodeStatus(hostStep: HostStepNodeV1): WorkflowNodeStatus {
+function workflowNodeStatus(hostStep: HostStepNode): WorkflowNodeStatus {
 	if (hostStep.state === "pending") return "pending";
 	if (hostStep.state === "running") return "running";
 	if (hostStep.state === "cancelled") return "stopped";
@@ -187,7 +187,7 @@ function workflowNodeStatus(hostStep: HostStepNodeV1): WorkflowNodeStatus {
  */
 export function upsertHostStep(input: {
 	status: AsyncStatus;
-	hostStep: HostStepNodeV1;
+	hostStep: HostStepNode;
 	persist: (status: AsyncStatus) => void;
 }): AsyncStatus {
 	const hostStep = parseHostStepNode(input.hostStep, input.hostStep.id);

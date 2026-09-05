@@ -1,4 +1,4 @@
-import type { WorkflowPreflightLaneV1, WorkflowPreflightV1 } from "../shared/types.ts";
+import type { WorkflowPreflightLane, WorkflowPreflight } from "../shared/types.ts";
 
 export const WORKFLOW_PREFLIGHT_VERSION = 1 as const;
 export const WORKFLOW_PREFLIGHT_MAX_LANES = 64;
@@ -11,7 +11,7 @@ export const WORKFLOW_PREFLIGHT_MAX_WARNINGS = 16;
 const WORKFLOW_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const PREFLIGHT_FIELDS = new Set(["version", "coverage", "lanes"]);
 const LANE_FIELDS = new Set(["key", "mode", "decision", "claims", "expectedOutput", "independence"]);
-const PREFLIGHT_MODES = new Set<WorkflowPreflightLaneV1["mode"]>(["mutation", "review", "scout", "gate"]);
+const PREFLIGHT_MODES = new Set<WorkflowPreflightLane["mode"]>(["mutation", "review", "scout", "gate"]);
 
 type WorkflowTraceLike = {
 	operation: string;
@@ -23,7 +23,7 @@ type WorkflowTraceLike = {
 
 export interface WorkflowPreflightValidationResult {
 	ok: boolean;
-	preflight?: WorkflowPreflightV1;
+	preflight?: WorkflowPreflight;
 	error?: string;
 }
 
@@ -60,18 +60,18 @@ function normalizeDisplayString(value: unknown, path: string): string {
 	return normalized;
 }
 
-function normalizeLane(value: unknown, index: number): WorkflowPreflightLaneV1 {
+function normalizeLane(value: unknown, index: number): WorkflowPreflightLane {
 	const path = `preflight.lanes[${index}]`;
 	assertPlainObject(value, path);
 	assertKnownFields(value, LANE_FIELDS, path);
 	const key = normalizeDisplayString(value.key, `${path}.key`);
 	if (!WORKFLOW_KEY_PATTERN.test(key)) throw new Error(`${path}.key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.`);
-	let mode: WorkflowPreflightLaneV1["mode"];
+	let mode: WorkflowPreflightLane["mode"];
 	if (value.mode !== undefined) {
-		if (typeof value.mode !== "string" || !PREFLIGHT_MODES.has(value.mode as WorkflowPreflightLaneV1["mode"])) {
+		if (typeof value.mode !== "string" || !PREFLIGHT_MODES.has(value.mode as WorkflowPreflightLane["mode"])) {
 			throw new Error(`${path}.mode must be one of: mutation, review, scout, gate.`);
 		}
-		mode = value.mode as WorkflowPreflightLaneV1["mode"];
+		mode = value.mode as WorkflowPreflightLane["mode"];
 	}
 	let claims: string[] | undefined;
 	if (value.claims !== undefined) {
@@ -97,7 +97,7 @@ function normalizeLane(value: unknown, index: number): WorkflowPreflightLaneV1 {
  * independent of workflowScript parsing: callers may describe dynamic fanout
  * without making the metadata a second execution graph.
  */
-export function normalizeWorkflowPreflight(input: unknown): WorkflowPreflightV1 | undefined {
+export function normalizeWorkflowPreflight(input: unknown): WorkflowPreflight | undefined {
 	if (input === undefined) return undefined;
 	assertPlainObject(input, "preflight");
 	assertKnownFields(input, PREFLIGHT_FIELDS, "preflight");
@@ -115,7 +115,7 @@ export function normalizeWorkflowPreflight(input: unknown): WorkflowPreflightV1 
 		if (seenKeys.has(lane.key)) throw new Error(`preflight.lanes contains duplicate key '${lane.key}'.`);
 		seenKeys.add(lane.key);
 	}
-	const normalized = { version: WORKFLOW_PREFLIGHT_VERSION, coverage, lanes } satisfies WorkflowPreflightV1;
+	const normalized = { version: WORKFLOW_PREFLIGHT_VERSION, coverage, lanes } satisfies WorkflowPreflight;
 	const depth = 1 + (lanes.length > 0 ? 1 : 0) + (lanes.some((lane) => lane.claims !== undefined) ? 1 : 0);
 	if (depth > WORKFLOW_PREFLIGHT_MAX_DEPTH) throw new Error(`preflight exceeds the maximum nesting depth of ${WORKFLOW_PREFLIGHT_MAX_DEPTH}.`);
 	const bytes = Buffer.byteLength(JSON.stringify(normalized), "utf8");
@@ -138,7 +138,7 @@ function warningLimit(messages: string[]): string[] {
 	return [...messages.slice(0, WORKFLOW_PREFLIGHT_MAX_WARNINGS - 1), `Preflight advisory: ${omitted} additional mismatch warning(s) omitted.`];
 }
 
-function declaredKeys(preflight: WorkflowPreflightV1): Set<string> {
+function declaredKeys(preflight: WorkflowPreflight): Set<string> {
 	return new Set(preflight.lanes.map((lane) => lane.key));
 }
 
@@ -152,15 +152,15 @@ export function workflowKeyMatchesPreflightLane(key: string, laneKey: string, ge
 
 /** Select the most specific advisory lane without allowing declaration order to override an exact runtime key. */
 export function workflowPreflightLaneForRuntimeKey(
-	preflight: WorkflowPreflightV1 | undefined,
+	preflight: WorkflowPreflight | undefined,
 	key: string,
 	preferredKeys: readonly (string | undefined)[] = [],
-): WorkflowPreflightLaneV1 | undefined {
+): WorkflowPreflightLane | undefined {
 	const lanes = preflight?.lanes;
 	if (!lanes) return undefined;
 	const exact = lanes.find((lane) => lane.key === key);
 	if (exact) return exact;
-	let closestRoot: WorkflowPreflightLaneV1 | undefined;
+	let closestRoot: WorkflowPreflightLane | undefined;
 	for (const lane of lanes) {
 		if (key.startsWith(`${lane.key}.`) && (!closestRoot || lane.key.length > closestRoot.key.length)) closestRoot = lane;
 	}
@@ -203,7 +203,7 @@ function unlaunchedWarning(key: string): string {
 
 /** Return bounded advisory mismatch warnings; these never reject a child launch. */
 export function workflowPreflightWarnings(
-	preflight: WorkflowPreflightV1 | undefined,
+	preflight: WorkflowPreflight | undefined,
 	trace: readonly WorkflowTraceLike[],
 	options: { settled?: boolean } = {},
 ): string[] {
@@ -218,7 +218,7 @@ export function workflowPreflightWarnings(
 }
 
 /** Attach the first undeclared-key warning to its first trace row for status/debug views. */
-export function annotateWorkflowPreflightTrace<T extends WorkflowTraceLike>(trace: readonly T[], preflight: WorkflowPreflightV1 | undefined): T[] {
+export function annotateWorkflowPreflightTrace<T extends WorkflowTraceLike>(trace: readonly T[], preflight: WorkflowPreflight | undefined): T[] {
 	if (!preflight) return [...trace];
 	const declared = declaredKeys(preflight);
 	const warned = new Set<string>();
@@ -235,14 +235,14 @@ function laneCell(value: string | undefined): string {
 
 const WORKFLOW_PREFLIGHT_PLAN_LABEL_LENGTH = 96;
 
-function planLaneLabel(lane: WorkflowPreflightLaneV1): string {
+function planLaneLabel(lane: WorkflowPreflightLane): string {
 	const value = lane.decision?.trim() || lane.key;
 	if (value.length <= WORKFLOW_PREFLIGHT_PLAN_LABEL_LENGTH) return value;
 	return `${value.slice(0, WORKFLOW_PREFLIGHT_PLAN_LABEL_LENGTH - 1).trimEnd()}…`;
 }
 
 /** Render the detailed bounded table reserved for tool output and expanded/debug views. */
-export function formatWorkflowPreflight(preflight: WorkflowPreflightV1 | undefined, options: { indent?: string } = {}): string {
+export function formatWorkflowPreflight(preflight: WorkflowPreflight | undefined, options: { indent?: string } = {}): string {
 	if (!preflight) return "";
 	const indent = options.indent ?? "";
 	const count = preflight.lanes.length;
@@ -263,7 +263,7 @@ export function formatWorkflowPreflight(preflight: WorkflowPreflightV1 | undefin
 	return lines.join("\n");
 }
 
-export function formatWorkflowPreflightSummary(preflight: WorkflowPreflightV1 | undefined): string {
+export function formatWorkflowPreflightSummary(preflight: WorkflowPreflight | undefined): string {
 	if (!preflight) return "";
 	const keys = preflight.lanes.slice(0, 4).map((lane) => lane.key).join(", ");
 	const remainder = preflight.lanes.length > 4 ? `, +${preflight.lanes.length - 4}` : "";
@@ -271,7 +271,7 @@ export function formatWorkflowPreflightSummary(preflight: WorkflowPreflightV1 | 
 }
 
 /** Render the operator-facing one-line plan shown in routine status views. */
-export function formatWorkflowPreflightPlanSummary(preflight: WorkflowPreflightV1 | undefined, options: { indent?: string } = {}): string {
+export function formatWorkflowPreflightPlanSummary(preflight: WorkflowPreflight | undefined, options: { indent?: string } = {}): string {
 	if (!preflight) return "";
 	const indent = options.indent ?? "";
 	const count = preflight.lanes.length;

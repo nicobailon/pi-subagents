@@ -8,7 +8,7 @@
 import type { Message } from "@earendil-works/pi-ai";
 import type { ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse } from "../../shared/utils.ts";
-import type { EffectsProjection, RuntimeAcknowledgedChildExtensionsV1, SubagentOutputState, ToolBudgetState, Usage } from "../../shared/types.ts";
+import type { EffectsProjection, RuntimeAcknowledgedChildExtensions, SubagentOutputState, ToolBudgetState, Usage } from "../../shared/types.ts";
 import {
 	acceptChildWatchdogEvent,
 	applyChildWatchdogMessage,
@@ -123,7 +123,7 @@ export interface RunChildSessionResult {
 	toolBudget?: ToolBudgetState;
 	toolBudgetBlocked?: boolean;
 	structuredOutput?: unknown;
-	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
+	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
 	abortRecoveryDiagnostic?: string;
 	effects?: EffectsProjection;
 }

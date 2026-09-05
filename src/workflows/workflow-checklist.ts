@@ -1,4 +1,4 @@
-import type { AsyncJobStep, HostStepNodeV1, WorkflowGraphNode, WorkflowGraphSnapshot, WorkflowPreflightLaneV1, WorkflowPreflightV1 } from "../shared/types.ts";
+import type { AsyncJobStep, HostStepNode, WorkflowGraphNode, WorkflowGraphSnapshot, WorkflowPreflightLane, WorkflowPreflight } from "../shared/types.ts";
 import { sanitizeDisplayText } from "../shared/display-text.ts";
 import { workflowPreflightLaneForRuntimeKey } from "./workflow-preflight.ts";
 
@@ -62,12 +62,12 @@ export interface WorkflowChecklistItem {
 	toolCount?: number;
 	outputName?: string;
 	error?: string;
-	preflight?: WorkflowPreflightLaneV1;
+	preflight?: WorkflowPreflightLane;
 	kind?: "child" | "host";
-	monitorKind?: HostStepNodeV1["monitorKind"];
+	monitorKind?: HostStepNode["monitorKind"];
 	provider?: string;
 	role?: string;
-	verdict?: HostStepNodeV1["verdict"];
+	verdict?: HostStepNode["verdict"];
 	target?: string;
 	reasonCode?: string;
 	stale?: boolean;
@@ -106,8 +106,8 @@ export interface WorkflowChecklistProjection {
 export interface WorkflowChecklistInput {
 	graph?: WorkflowGraphSnapshot;
 	steps?: readonly WorkflowChecklistStep[] | readonly AsyncJobStep[];
-	hostSteps?: readonly HostStepNodeV1[];
-	preflight?: WorkflowPreflightV1;
+	hostSteps?: readonly HostStepNode[];
+	preflight?: WorkflowPreflight;
 	trace?: readonly WorkflowChecklistTraceEntry[];
 	now?: number;
 }
@@ -190,7 +190,7 @@ function duration(step: Pick<WorkflowChecklistStep, "durationMs" | "startedAt" |
 	return end === undefined ? undefined : Math.max(0, end - startedAt);
 }
 
-function laneFor(preflight: WorkflowPreflightV1 | undefined, key: string, preferredKeys: readonly (string | undefined)[] = []): WorkflowPreflightLaneV1 | undefined {
+function laneFor(preflight: WorkflowPreflight | undefined, key: string, preferredKeys: readonly (string | undefined)[] = []): WorkflowPreflightLane | undefined {
 	return workflowPreflightLaneForRuntimeKey(preflight, key, preferredKeys);
 }
 
@@ -198,7 +198,7 @@ function stepKey(step: WorkflowChecklistStep): string | undefined {
 	return step.key ?? step.workflowKey ?? step.runId;
 }
 
-function stepItem(step: WorkflowChecklistStep, index: number, phase: string, key = stepKey(step) ?? `step-${index + 1}`, label = step.label ?? step.description ?? stepKey(step) ?? step.agent ?? key, preflight?: WorkflowPreflightLaneV1): WorkflowChecklistItem {
+function stepItem(step: WorkflowChecklistStep, index: number, phase: string, key = stepKey(step) ?? `step-${index + 1}`, label = step.label ?? step.description ?? stepKey(step) ?? step.agent ?? key, preflight?: WorkflowPreflightLane): WorkflowChecklistItem {
 	const state = checklistState(step);
 	return {
 		key: keyText(key, `step-${index + 1}`),
@@ -219,7 +219,7 @@ function stepItem(step: WorkflowChecklistStep, index: number, phase: string, key
 	};
 }
 
-function hostItem(host: HostStepNodeV1, phase: string, key = host.id): WorkflowChecklistItem {
+function hostItem(host: HostStepNode, phase: string, key = host.id): WorkflowChecklistItem {
 	const state = checklistState({ status: host.state, verdict: host.verdict, stale: host.freshness?.stale });
 	return {
 		key: keyText(key, "host-step"),
@@ -264,7 +264,7 @@ function traceSources(trace: readonly WorkflowChecklistTraceEntry[] | undefined)
 	return [...latest.values()];
 }
 
-function traceItem(entry: WorkflowChecklistTraceEntry, index: number, preflight: WorkflowPreflightLaneV1 | undefined): WorkflowChecklistItem {
+function traceItem(entry: WorkflowChecklistTraceEntry, index: number, preflight: WorkflowPreflightLane | undefined): WorkflowChecklistItem {
 	const phase = keyText(preflight?.key ?? entry.generatedLaneKey ?? entry.phase, "Workflow");
 	const item = stepItem({ key: entry.key, label: entry.label, phase, agent: entry.agent, status: entry.state === "started" ? "running" : entry.state, durationMs: entry.durationMs, error: entry.error }, index, phase, entry.key, entry.label ?? entry.key, preflight);
 	if (entry.operation === "host") item.kind = "host";
@@ -284,7 +284,7 @@ function add(phases: Map<string, WorkflowChecklistPhase>, phase: string, item: W
 	phaseFor(phases, phase).items.push(item);
 }
 
-function mergeNodeStep(node: WorkflowGraphNode, step: WorkflowChecklistStep, phase: string, trace: WorkflowChecklistTraceEntry | undefined, preflight: WorkflowPreflightLaneV1 | undefined): WorkflowChecklistItem {
+function mergeNodeStep(node: WorkflowGraphNode, step: WorkflowChecklistStep, phase: string, trace: WorkflowChecklistTraceEntry | undefined, preflight: WorkflowPreflightLane | undefined): WorkflowChecklistItem {
 	const state = checklistState(step);
 	const nodeState = checklistState({ status: node.status, acceptance: node.acceptanceStatus ? { status: node.acceptanceStatus } : undefined });
 	const status = TERMINAL_STATES.has(nodeState) && !TERMINAL_STATES.has(state)

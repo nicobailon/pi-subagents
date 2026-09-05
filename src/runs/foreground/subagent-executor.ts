@@ -65,7 +65,7 @@ import { retainLiveForegroundNestedRoute } from "../../integrations/pi-web-sessi
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
-import { isAgentContractV1 } from "../shared/agent-contract.ts";
+import { isAgentContract } from "../shared/agent-contract.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, outputPathMappingFromTask, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { assertJsonSchemaObject, cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
@@ -159,7 +159,7 @@ import {
 	type ForegroundSteerInput,
 	type ForegroundSteerOutcome,
 	type ForegroundRunControl,
-	type HostStepNodeV1,
+	type HostStepNode,
 	type IntercomBridgeConfig,
 	type IntercomEventBus,
 	type JsonSchemaObject,
@@ -176,7 +176,7 @@ import {
 	type ToolBudgetConfig,
 	type Usage,
 	type UsageBudgetConfig,
-	type WorkflowResourceProvenanceV1,
+	type WorkflowResourceProvenance,
 	type WorkflowGraphNode,
 	type WorkflowGraphSnapshot,
 	type WorkflowNodeStatus,
@@ -328,7 +328,7 @@ export interface SubagentParamsLike {
 	workflowScriptPath?: string;
 	globalConcurrencyLimit?: number;
 	maxSubagentSpawnsPerRun?: number;
-	preflight?: import("../../shared/types.ts").WorkflowPreflightV1;
+	preflight?: import("../../shared/types.ts").WorkflowPreflight;
 	chatProgress?: "auto" | "off" | "live-card";
 	isolation?: "none" | "worktree";
 	step?: ChainStep;
@@ -4582,7 +4582,7 @@ export function prepareWorkflowLaunchParams(
 		const outputSchema = Object.hasOwn(childParams, "outputSchema") ? childParams.outputSchema : workflowDefaults.outputSchema;
 		if (outputSchema !== undefined) assertJsonSchemaObject(outputSchema, "outputSchema");
 		const agentContract = Object.hasOwn(childParams, "agentContract") ? childParams.agentContract : workflowDefaults.agentContract;
-		if (agentContract !== undefined && !isAgentContractV1(agentContract as AgentContract)) throw new Error("agentContract must be { version: 1 }.");
+		if (agentContract !== undefined && !isAgentContract(agentContract as AgentContract)) throw new Error("agentContract must be { version: 1 }.");
 		const acceptance = Object.hasOwn(childParams, "acceptance") ? childParams.acceptance : workflowDefaults.acceptance;
 		const output = Object.hasOwn(childParams, "output") ? childParams.output : workflowDefaults.output;
 		if (output !== undefined && typeof output !== "string" && typeof output !== "boolean") throw new Error("output must be a path string or boolean.");
@@ -4764,7 +4764,7 @@ function workflowProgressUpdate(
 	chatProgress: WorkflowChatProgressProjection,
 	workflow: NonNullable<Details["workflow"]>,
 	workflowChildren?: Details["workflowChildren"],
-	preflight?: import("../../shared/types.ts").WorkflowPreflightV1,
+	preflight?: import("../../shared/types.ts").WorkflowPreflight,
 ): AgentToolResult<Details> {
 	// chatProgress controls the TUI projection, not transport-level progress.
 	return {
@@ -4878,7 +4878,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		let requestParams = normalizedGate.params;
 		const capacityOverrideError = validateWorkflowCapacityOverrides(requestParams);
 		if (capacityOverrideError) return buildRequestedModeError(requestParams, capacityOverrideError);
-		let workflowPreflight: import("../../shared/types.ts").WorkflowPreflightV1 | undefined;
+		let workflowPreflight: import("../../shared/types.ts").WorkflowPreflight | undefined;
 		try {
 			if (requestParams.preflight !== undefined && requestParams.workflowScript === undefined && requestParams.workflowScriptPath === undefined) {
 				throw new Error("preflight requires workflowScript or workflowScriptPath.");
@@ -4909,7 +4909,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
 		if (normalizedAction === "resume" && requestParams.extensionBindings !== undefined) return buildRequestedModeError(requestParams, "extensionBindings is not supported with action='resume'; resume uses the original retained child binding.");
-		let workflowResource: { permit: WorkflowResourcePermit; provenance: WorkflowResourceProvenanceV1; authority: WorkflowResourceAuthority } | undefined;
+		let workflowResource: { permit: WorkflowResourcePermit; provenance: WorkflowResourceProvenance; authority: WorkflowResourceAuthority } | undefined;
 		if (workflowResourcePermit) {
 			if (typeof requestParams.workflowScript !== "string") return buildRequestedModeError(requestParams, "Resolved workflow resource is missing its workflow script.");
 			const consumed = consumeWorkflowResourcePermit(workflowResourcePermit, requestParams.workflowScript);
@@ -5597,7 +5597,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				: workflowResource
 					? workflowResource.authority.host ? runHostCommand : undefined
 					: publicExecution ? undefined : runHostCommand;
-			const workflowHostSteps = new Map<string, HostStepNodeV1>();
+			const workflowHostSteps = new Map<string, HostStepNode>();
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [], ...(workflowResource ? { resource: workflowResource.provenance } : {}) };
 			let liveWorkflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: foregroundWorkflowRunId, workflowState: "running", inventoryComplete: false });
 			const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;

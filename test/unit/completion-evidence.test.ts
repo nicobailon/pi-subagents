@@ -23,7 +23,7 @@ describe("planCompletionEvidence", () => {
 			implementationMutationExpected: true,
 			mutationAttemptObserved: false,
 			mutationEvidence: evidence,
-			agentContractV1: false,
+			agentContractEnabled: false,
 		});
 
 		assert.equal(plan.guardTriggered, true);
@@ -37,14 +37,14 @@ describe("planCompletionEvidence", () => {
 		});
 	});
 
-	it("keeps agent contract v1 rejection in evidence without forcing execution failure", () => {
+	it("keeps agent contract rejection in evidence without forcing execution failure", () => {
 		const plan = planCompletionEvidence({
 			guard: { expectedMutation: true, attemptedMutation: false, triggered: true, blocked: false },
 			completionGuardEnabled: true,
 			mutationCapable: true,
 			implementationMutationExpected: true,
 			mutationAttemptObserved: false,
-			agentContractV1: true,
+			agentContractEnabled: true,
 		});
 
 		assert.equal(plan.guardTriggered, true);
@@ -59,7 +59,7 @@ describe("planCompletionEvidence", () => {
 			mutationCapable: false,
 			implementationMutationExpected: true,
 			mutationAttemptObserved: true,
-			agentContractV1: false,
+			agentContractEnabled: false,
 		});
 		assert.deepEqual(blocked.fileMutation, {
 			status: "blocked",
@@ -86,7 +86,7 @@ describe("planCompletionEvidence", () => {
 			implementationMutationExpected: true,
 			mutationAttemptObserved: false,
 			arbiterRescued: true,
-			agentContractV1: false,
+			agentContractEnabled: false,
 		});
 		assert.deepEqual(rescued.fileMutation, {
 			status: "not-applicable",
@@ -103,7 +103,7 @@ describe("planCompletionEvidence", () => {
 			mutationCapable: true,
 			implementationMutationExpected: true,
 			mutationAttemptObserved: false,
-			agentContractV1: false,
+			agentContractEnabled: false,
 		});
 		assert.equal(plan.mutationExpected, true);
 		assert.equal(plan.fileMutation, undefined);
@@ -117,7 +117,7 @@ describe("projectSettlementDiagnostic", () => {
 			mutationCapable: true,
 			implementationMutationExpected: true,
 			mutationAttemptObserved: false,
-			agentContractV1: false,
+			agentContractEnabled: false,
 		});
 		assert.deepEqual(projectSettlementDiagnostic(plan, {
 			terminalFailed: true,
@@ -139,7 +139,7 @@ describe("projectSettlementDiagnostic", () => {
 			mutationCapable: false,
 			implementationMutationExpected: false,
 			mutationAttemptObserved: false,
-			agentContractV1: false,
+			agentContractEnabled: false,
 		});
 		assert.equal(projectSettlementDiagnostic(plan, {
 			terminalFailed: false,

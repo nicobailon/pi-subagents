@@ -24,7 +24,7 @@ import type {
 	ChildWatchdogProgress,
 } from "../../shared/types.ts";
 import { unresolvedChildWatchdogBlockers } from "../../watchdog/child-status.ts";
-import { isAgentContractV1 } from "./agent-contract.ts";
+import { isAgentContract } from "./agent-contract.ts";
 import { classifyTaskMutationIntent, stripSeverityCompounds, taskMayMutate } from "./task-intent.ts";
 
 const LEVEL_RANK: Record<Exclude<AcceptanceLevel, "auto">, number> = {
@@ -435,7 +435,7 @@ export function resolveEffectiveAcceptance(input: {
 }): ResolvedAcceptanceConfig {
 	const explicit = normalizeAcceptanceInput(input.explicit);
 	const explicitLevel = normalizeLevel(explicit.level);
-	if (isAgentContractV1(input.agentContract)) {
+	if (isAgentContract(input.agentContract)) {
 		const level = explicitAcceptanceCanDisable(explicit) || explicitLevel === "auto"
 			? "none"
 			: explicitLevel;

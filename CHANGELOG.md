@@ -4,14 +4,12 @@
 
 ### Changed
 - Clarify the documented pre-tool safety boundary for automatic model fallback (#1936). Thanks to [@peedrr](https://github.com/peedrr).
+- Document steer delivery modes and `scheduledRuns.storeRoot` in the bundled skill reference (`execution-controls.md`) (#1933). Thanks to [@G0-0000](https://github.com/G0-0000).
+- Remove generation suffixes from developer-facing contract types and helpers; request shapes, format versions, and behavior are unchanged (#1913).
 
 ### Added
 - Add selective researcher source checks and explicit evidence, confidence, and uncertainty reporting (#1932). Thanks to [@Muskos](https://github.com/Muskos).
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
-
-### Changed
-
-- Document steer delivery modes and `scheduledRuns.storeRoot` in the bundled skill reference (`execution-controls.md`) (#1933). Thanks to [@G0-0000](https://github.com/G0-0000).
 
 ### Fixed
 - Wait for workflow-owned root result publication before declaring retained workflow resumes missing on Windows (#1906).

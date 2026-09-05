@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { AsyncJobState, HostStepNodeV1, WorkflowGraphSnapshot, WorkflowNodeStatus } from "../../src/shared/types.ts";
+import type { AsyncJobState, HostStepNode, WorkflowGraphSnapshot, WorkflowNodeStatus } from "../../src/shared/types.ts";
 import {
 	ASYNC_STATUS_SNAPSHOT_KIND,
 	ASYNC_STATUS_SNAPSHOT_VERSION,
@@ -15,7 +15,7 @@ function job(input: Partial<AsyncJobState> & Pick<AsyncJobState, "asyncId" | "st
 	} as AsyncJobState;
 }
 
-function hostStep(overrides: Partial<HostStepNodeV1> = {}): HostStepNodeV1 {
+function hostStep(overrides: Partial<HostStepNode> = {}): HostStepNode {
 	return {
 		version: 1,
 		kind: "host-step",

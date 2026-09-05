@@ -1534,7 +1534,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(mockPi.callCount(), 1);
 	});
 
-	it("agent contract v1 reports omitted acceptance separately without injecting a prompt", async () => {
+	it("agent contract reports omitted acceptance separately without injecting a prompt", async () => {
 		mockPi.onCall({ output: "Plan only" });
 		const agents = [makeAgent("worker", { tools: ["read", "write"] })];
 
@@ -1563,7 +1563,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.doesNotMatch(readCall().args.join("\n"), /## Acceptance Contract/);
 	});
 
-	it("agent contract v1 keeps acceptance rejection out of execution status", async () => {
+	it("agent contract keeps acceptance rejection out of execution status", async () => {
 		mockPi.onCall({ output: "Done\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"no proof\"}]}\n```" });
 		const agents = [makeAgent("worker", { tools: ["read"], completionGuard: false })];
 
@@ -1581,7 +1581,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.match(result.acceptance.runtimeChecks?.[0]?.message ?? "", /not-satisfied/);
 	});
 
-	it("agent contract v1 records explicit completion guard as an effect", async () => {
+	it("agent contract records explicit completion guard as an effect", async () => {
 		mockPi.onCall({ output: "Plan only" });
 		const agents = [makeAgent("worker", { tools: ["read", "write"], completionGuard: true })];
 

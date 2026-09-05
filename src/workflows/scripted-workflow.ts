@@ -6,7 +6,7 @@ import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../runs/shared/para
 import { HOST_STEP_MAX_COUNT } from "../runs/shared/host-step-status.ts";
 import { classifyTaskMutationIntent } from "../runs/shared/task-intent.ts";
 import { describeGateAcceptanceConflict } from "../runs/shared/acceptance.ts";
-import type { AcceptanceRecoveryMetadata, HostStepNodeV1, SingleResult } from "../shared/types.ts";
+import type { AcceptanceRecoveryMetadata, HostStepNode, SingleResult } from "../shared/types.ts";
 import { normalizeWorkflowHostCommandParams, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "./host-command.ts";
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -1115,7 +1115,7 @@ export interface RunWorkflowScriptOptions {
 	status: (keyOrRunId: string, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
 	steer?: (key: string, message: string, options: WorkflowSteerOptions, signal: AbortSignal) => Promise<WorkflowSteerResult>;
 	host?: (key: string, params: WorkflowHostCommandParams, signal: AbortSignal) => Promise<WorkflowHostCommandResult>;
-	onHostStep?: (hostStep: HostStepNodeV1) => void;
+	onHostStep?: (hostStep: HostStepNode) => void;
 	state?: {
 		get: (key: string) => unknown | Promise<unknown>;
 		set: (key: string, value: unknown) => void | Promise<void>;
@@ -1774,7 +1774,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			console.error("Workflow onLanePlan callback failed:", error);
 		}
 	};
-	const hostStepChanged = (hostStep: HostStepNodeV1) => {
+	const hostStepChanged = (hostStep: HostStepNode) => {
 		try {
 			options.onHostStep?.(hostStep);
 		} catch (error) {
@@ -2070,7 +2070,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				if (!options.host) return respond(Promise.reject(new Error("runs.host is unavailable in this host context.")));
 				if (hostCalls.size >= HOST_STEP_MAX_COUNT) return respond(Promise.reject(new Error(`workflowScript supports at most ${HOST_STEP_MAX_COUNT} runs.host calls.`)));
 				const startedAt = Date.now();
-				const startedStep: HostStepNodeV1 = {
+				const startedStep: HostStepNode = {
 					version: 1,
 					kind: "host-step",
 					monitorKind: "command",
