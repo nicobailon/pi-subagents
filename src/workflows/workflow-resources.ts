@@ -5,7 +5,7 @@ import {
 	type WorkflowResourceHostAuthority,
 	type WorkflowResourcePermit,
 } from "../shared/workflow-child-permit.ts";
-import type { WorkflowResourceProvenanceV1 } from "../shared/types.ts";
+import type { WorkflowResourceProvenance } from "../shared/types.ts";
 
 const RESOURCE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const MAX_ARGS_BYTES = 16 * 1024;
@@ -14,7 +14,7 @@ const MAX_STRING_BYTES = 16 * 1024;
 export interface ResolvedWorkflowResource {
 	script: string;
 	permit: WorkflowResourcePermit;
-	provenance: WorkflowResourceProvenanceV1;
+	provenance: WorkflowResourceProvenance;
 }
 
 export type WorkflowResourceResolution =
@@ -213,7 +213,7 @@ function resolveResource(nameValue: unknown, argsValue?: unknown, sessionId?: st
 		scriptDigest: stableJsonDigest(script),
 		authority: { host: hostCommands },
 	});
-	const provenance: WorkflowResourceProvenanceV1 = Object.freeze({
+	const provenance: WorkflowResourceProvenance = Object.freeze({
 		kind: "workflow",
 		name: resource.name,
 		version: resource.version,

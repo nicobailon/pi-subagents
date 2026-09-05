@@ -1,4 +1,4 @@
-import type { RuntimeAcknowledgedChildExtensionsV1 } from "../../shared/types.ts";
+import type { RuntimeAcknowledgedChildExtensions } from "../../shared/types.ts";
 
 export const RUNTIME_EXTENSION_ACK_EVENT = "subagent:acknowledge-extension";
 export const MAX_RUNTIME_ACKNOWLEDGED_EXTENSION_IDS = 32;
@@ -14,7 +14,7 @@ export function isRuntimeAcknowledgedExtensionId(value: unknown): value is strin
 		&& !value.includes("\\");
 }
 
-export function projectRuntimeAcknowledgedExtensions(ids: Iterable<unknown>): RuntimeAcknowledgedChildExtensionsV1 | undefined {
+export function projectRuntimeAcknowledgedExtensions(ids: Iterable<unknown>): RuntimeAcknowledgedChildExtensions | undefined {
 	const unique: string[] = [];
 	const seen = new Set<string>();
 	for (const id of ids) {
@@ -31,7 +31,7 @@ export function projectRuntimeAcknowledgedExtensions(ids: Iterable<unknown>): Ru
 	};
 }
 
-export function sanitizeRuntimeAcknowledgedExtensions(value: unknown): RuntimeAcknowledgedChildExtensionsV1 | undefined {
+export function sanitizeRuntimeAcknowledgedExtensions(value: unknown): RuntimeAcknowledgedChildExtensions | undefined {
 	if (!value || typeof value !== "object") return undefined;
 	const raw = value as Record<string, unknown>;
 	if (raw.version !== 1 || raw.source !== "child-runtime" || !Array.isArray(raw.ids)) return undefined;

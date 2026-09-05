@@ -94,7 +94,7 @@ import {
 } from "../shared/long-running-guard.ts";
 import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput } from "../shared/acceptance.ts";
 import { PROMPT_REDACTED } from "../../shared/utils.ts";
-import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
+import { attachContractProjections, isAgentContract } from "../shared/agent-contract.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
@@ -1501,7 +1501,7 @@ async function runSingleAttempt(
 			? `${timeoutMessage}\n\n${result.timeoutRecovery.message}\n\nPartial output before timeout:\n${fullOutput}`
 			: `${timeoutMessage}\n\n${result.timeoutRecovery.message}`;
 	}
-	const completionGuardEnabled = isAgentContractV1(options.agentContract) ? agent.completionGuard === true : agent.completionGuard !== false;
+	const completionGuardEnabled = isAgentContract(options.agentContract) ? agent.completionGuard === true : agent.completionGuard !== false;
 	const completionGuard = ((result.exitCode === 0 && !result.error) || toolAvailabilityError) && completionGuardEnabled
 		? evaluateCompletionMutationGuard({
 			agent: agent.name,
@@ -1541,7 +1541,7 @@ async function runSingleAttempt(
 		mutationAttemptObserved,
 		mutationEvidence,
 		arbiterRescued,
-		agentContractV1: isAgentContractV1(options.agentContract),
+		agentContractEnabled: isAgentContract(options.agentContract),
 	});
 	if (completionEvidence.fileMutation) {
 		result.effects = {
@@ -1737,7 +1737,7 @@ async function runSyncCompletionInner(
 		dynamicGroup: options.acceptanceContext?.dynamicGroup,
 		agentContract: options.agentContract,
 	});
-	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, { reportOptional: isAgentContractV1(options.agentContract), structuredOutput: Boolean(options.structuredOutput?.acceptanceReportPath) });
+	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, { reportOptional: isAgentContract(options.agentContract), structuredOutput: Boolean(options.structuredOutput?.acceptanceReportPath) });
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
 	options.onEffectivePrompt?.(taskWithAcceptance);
 	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
@@ -2063,7 +2063,7 @@ async function runSyncCompletionInner(
 					? { content: childWrittenOutput, path: options.outputPath, authoritative: options.outputMode === "file-only", durable: result.savedOutputPath !== undefined }
 					: undefined,
 				cwd: options.cwd ?? runtimeCwd,
-				reportOptional: isAgentContractV1(options.agentContract),
+				reportOptional: isAgentContract(options.agentContract),
 				artifactsDir: options.artifactsDir,
 				runId: options.runId,
 				watchdog: result.watchdog,
@@ -2075,7 +2075,7 @@ async function runSyncCompletionInner(
 	}
 	const acceptanceFailure = acceptanceFailureMessage(result.acceptance);
 	stripAcceptanceReportsFromMessages(result.messages);
-	if (acceptanceFailure && result.acceptance.explicit && result.exitCode === 0 && !result.interrupted && !result.timedOut && !isAgentContractV1(options.agentContract)) {
+	if (acceptanceFailure && result.acceptance.explicit && result.exitCode === 0 && !result.interrupted && !result.timedOut && !isAgentContract(options.agentContract)) {
 		result.exitCode = 1;
 		if (result.savedOutputPath) {
 			result.finalOutput = finalizeSingleOutput({
@@ -2108,7 +2108,7 @@ async function runSyncCompletionInner(
 			result.progress.error = result.error;
 		}
 	}
-	if (isAgentContractV1(options.agentContract)) attachContractProjections(result);
+	if (isAgentContract(options.agentContract)) attachContractProjections(result);
 	redactResultPrompt(result);
 	try {
 		persistResultMetadata(result);
@@ -2153,7 +2153,7 @@ export async function runSync(
 ): Promise<SingleResult> {
 	// Capture the strict contract before consumer-owned objects can be mutated
 	// after a detached receipt is published.
-	const strictContract = isAgentContractV1(options.agentContract);
+	const strictContract = isAgentContract(options.agentContract);
 	let detachedReason: string | undefined;
 	let publishedReceipt: SingleResult | undefined;
 	let activeDetachAttempt: ((reason?: string) => boolean) | undefined;

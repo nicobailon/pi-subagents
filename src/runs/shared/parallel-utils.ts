@@ -75,8 +75,8 @@ export interface RunnerSubagentStep {
 	launchBindingTask?: string;
 	launchContractDigest?: string;
 	extensionBindings?: import("./extension-bindings.ts").ExtensionBindings;
-	launchResolvedExtensions?: import("../../shared/types.ts").LaunchResolvedChildExtensionsV1;
-	runtimeAcknowledgedExtensions?: import("../../shared/types.ts").RuntimeAcknowledgedChildExtensionsV1;
+	launchResolvedExtensions?: import("../../shared/types.ts").LaunchResolvedChildExtensions;
+	runtimeAcknowledgedExtensions?: import("../../shared/types.ts").RuntimeAcknowledgedChildExtensions;
 	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
 	acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
 	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;

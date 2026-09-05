@@ -6,8 +6,8 @@ import {
 	TEMP_ROOT_DIR,
 	type AsyncJobState,
 	type AsyncStatus,
-	type LaunchResolvedChildExtensionsV1,
-	type RuntimeAcknowledgedChildExtensionsV1,
+	type LaunchResolvedChildExtensions,
+	type RuntimeAcknowledgedChildExtensions,
 	type NestedRouteInfo,
 	type TurnBudgetState,
 	type NestedRunSummary,
@@ -217,7 +217,7 @@ function sanitizeCost(value: unknown): NestedRunSummary["totalCost"] | undefined
 		: undefined;
 }
 
-function sanitizeLaunchResolvedExtensions(value: unknown): LaunchResolvedChildExtensionsV1 | undefined {
+function sanitizeLaunchResolvedExtensions(value: unknown): LaunchResolvedChildExtensions | undefined {
 	if (!value || typeof value !== "object") return undefined;
 	const raw = value as Record<string, unknown>;
 	if (raw.version !== 1 || raw.source !== "launch-resolved" || typeof raw.disableAmbientExtensions !== "boolean") return undefined;
@@ -241,7 +241,7 @@ function sanitizeLaunchResolvedExtensions(value: unknown): LaunchResolvedChildEx
 	};
 }
 
-function sanitizeRuntimeAcknowledgedExtensions(value: unknown): RuntimeAcknowledgedChildExtensionsV1 | undefined {
+function sanitizeRuntimeAcknowledgedExtensions(value: unknown): RuntimeAcknowledgedChildExtensions | undefined {
 	if (!value || typeof value !== "object") return undefined;
 	const raw = value as Record<string, unknown>;
 	if (raw.version !== 1 || raw.source !== "child-runtime" || !Array.isArray(raw.ids)) return undefined;
@@ -261,7 +261,7 @@ function sanitizeRuntimeAcknowledgedExtensions(value: unknown): RuntimeAcknowled
 	};
 }
 
-function runtimeAcknowledgedEntry(value: unknown): { runtimeAcknowledgedExtensions: RuntimeAcknowledgedChildExtensionsV1 } | Record<string, never> {
+function runtimeAcknowledgedEntry(value: unknown): { runtimeAcknowledgedExtensions: RuntimeAcknowledgedChildExtensions } | Record<string, never> {
 	const sanitized = sanitizeRuntimeAcknowledgedExtensions(value);
 	return sanitized ? { runtimeAcknowledgedExtensions: sanitized } : {};
 }

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createOwnedProcessTreeController } from "../background/owned-process-tree.ts";
-import type { ProcessTreeTerminalV1 } from "../../shared/types.ts";
+import type { ProcessTreeTerminal } from "../../shared/types.ts";
 
 export interface SetupCommandOptions {
 	cwd?: string;
@@ -26,7 +26,7 @@ export interface SetupCommandResult {
 	pid?: number;
 	processGroupId?: number;
 	/** Absent on normal completion: trusted command completion is NOT tree proof. */
-	processTree?: ProcessTreeTerminalV1;
+	processTree?: ProcessTreeTerminal;
 	outputIncomplete: boolean;
 }
 
@@ -80,7 +80,7 @@ export async function runSetupCommand(
 	result.pid = child.pid;
 	if (child.pid !== undefined && process.platform !== "win32") result.processGroupId = child.pid;
 	const tree = child.pid === undefined ? undefined : createOwnedProcessTreeController(child.pid);
-	let termination: Promise<ProcessTreeTerminalV1> | undefined;
+	let termination: Promise<ProcessTreeTerminal> | undefined;
 	let directSettled = false;
 	const releaseUnknownIO = () => {
 		if (!directSettled || result.processTree?.state !== "unknown") return;

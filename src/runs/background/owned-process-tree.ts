@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import type { ProcessTreeTerminalV1 } from "../../shared/types.ts";
+import type { ProcessTreeTerminal } from "../../shared/types.ts";
 
 const DEFAULT_TERM_GRACE_MS = 3000;
 const DEFAULT_KILL_VERIFY_MS = 1000;
@@ -52,25 +52,25 @@ async function waitUntilGroupTerminal(
 	}
 }
 
-function observed(processGroupId: number): ProcessTreeTerminalV1 {
+function observed(processGroupId: number): ProcessTreeTerminal {
 	return { state: "observed", mechanism: "posix-process-group", processGroupId, verifiedAt: Date.now() };
 }
 
 /** Owns one writer process group and arbitrates its cleanup exactly once. */
 export interface OwnedProcessTreeController {
-	terminate(): Promise<ProcessTreeTerminalV1>;
-	finishAfterWriterClose(): Promise<ProcessTreeTerminalV1>;
+	terminate(): Promise<ProcessTreeTerminal>;
+	finishAfterWriterClose(): Promise<ProcessTreeTerminal>;
 }
 
 export function createOwnedProcessTreeController(
 	pid: number,
 	options: { termGraceMs?: number; killVerifyMs?: number } = {},
 ): OwnedProcessTreeController {
-	let termination: Promise<ProcessTreeTerminalV1> | undefined;
+	let termination: Promise<ProcessTreeTerminal> | undefined;
 	const posixGroupOwned = process.platform !== "win32";
 	const target = posixGroupOwned ? -pid : pid;
 
-	const terminate = (): Promise<ProcessTreeTerminalV1> => {
+	const terminate = (): Promise<ProcessTreeTerminal> => {
 		if (termination) return termination;
 		termination = (async () => {
 			if (!posixGroupOwned) {
