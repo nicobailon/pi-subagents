@@ -285,6 +285,7 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 			agent: "workflow",
 			success: plan.status.state === "complete",
 			state: plan.status.state,
+			...(plan.publicResult.workflowReceipt ? { workflowReceipt: plan.publicResult.workflowReceipt } : {}),
 			...(resolution ? { workflowResolution: resolution } : {}),
 			...(plan.receipt?.terminalOutcome ? { terminalOutcome: plan.receipt.terminalOutcome } : {}),
 			recovery: plan.recovery,
