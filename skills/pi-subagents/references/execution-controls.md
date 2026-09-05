@@ -330,7 +330,7 @@ The action waits up to three seconds for the child Pi session to accept the corr
 Steering supports three delivery modes via the `mode` parameter (`steer` is the default):
 
 - `mode: "steer"` — interrupt the child at the next safe point of its current turn and deliver the message.
-- `mode: "follow_up"` — do not interrupt; append to a bounded FIFO queue delivered at the next turn boundary. Completed or paused retained children receive the message as a revival brief (`queueRevivalBrief`) when they are revived.
+- `mode: "follow_up"` — do not interrupt; append to a bounded FIFO queue delivered at the next turn boundary. Completed retained children (single-step runs in state `complete`) receive the message as a revival brief (`queueRevivalBrief`) when they are revived; paused children reject follow-up steering outright.
 - `mode: "auto"` — deliver immediately when the child is between turns; otherwise queue it as `follow_up` would.
 
 ```typescript
