@@ -6,6 +6,7 @@
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
 
 ### Fixed
+- Diagnose empty terminal text responses as empty-output failures rather than earlier exploratory tool errors (#1921).
 - Rescue confident read-only background completions misclassified as implementation before publishing missing-edit failures (#1911). Thanks to [@yanqianglu](https://github.com/yanqianglu).
 - Keep background streaming status updates batched during long-running and attention states while publishing child activity transitions immediately (#1901).
 - Honor distinct output paths on retained workflow follow-ups, preserving the original report and returning the saved output references (#1903).

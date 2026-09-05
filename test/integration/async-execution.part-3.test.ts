@@ -243,6 +243,51 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(payload.results[0]?.error ?? "", /ended during 'bash' tool execution before the tool completed/);
 	});
 
+	for (const terminal of [
+		{ name: "empty text stop", content: [{ type: "text", text: "" }], stopReason: "stop", error: /no output.*empty response/i },
+		{ name: "tool-call-only stop", content: [{ type: "toolCall", id: "read-1", name: "read", arguments: { path: "README.md" } }], stopReason: "toolUse", error: /grep failed.*Path not found/i },
+		{ name: "empty text length limit", content: [{ type: "text", text: "" }], stopReason: "length", error: /grep failed.*Path not found/i },
+	]) {
+		it(`background diagnoses ${terminal.name} after an exploratory tool error`, { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+			mockPi.onCall({
+				stdoutRaw: [
+					events.toolResult("grep", "Path not found", true),
+					events.toolResult("read", "recovered file contents"),
+					{
+						type: "message_end",
+						message: {
+							role: "assistant",
+							content: terminal.content,
+							model: "openai/gpt-5-mini",
+							stopReason: terminal.stopReason,
+							usage: { input: 0, output: 4, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+						},
+					},
+				].map((event) => JSON.stringify(event)).join("\n"),
+				exitCode: 0,
+			});
+			const id = `async-terminal-diagnosis-${Date.now().toString(36)}`;
+			executeAsyncSingle(id, {
+				agent: "worker",
+				task: "Do work",
+				agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini" }),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+			});
+
+			const resultPath = await waitForAsyncResultFile(id);
+			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+			assert.equal(payload.success, false);
+			assert.equal(payload.exitCode, 1);
+			assert.match(payload.results[0]?.error ?? "", terminal.error);
+			assert.equal(payload.results[0]?.output, "");
+			const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
+			assert.match(status.steps?.[0]?.error ?? "", terminal.error);
+		});
+	}
+
 	it("background runs prefer empty-output fallback over an earlier tool error", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			jsonl: [

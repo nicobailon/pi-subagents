@@ -2676,20 +2676,20 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 
 	it("prefers empty-output fallback over an earlier tool error", async () => {
 		mockPi.onCall({
-			jsonl: [
+			stdoutRaw: [
 				events.toolResult("read", "ENOENT: no such file or directory", true),
 				events.toolResult("read", "recovered file contents"),
 				{
 					type: "message_end",
 					message: {
 						role: "assistant",
-						content: [],
+						content: [{ type: "text", text: "" }],
 						model: "openai/gpt-5-mini",
 						stopReason: "stop",
-						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+						usage: { input: 0, output: 4, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
 					},
 				},
-			],
+			].map((event) => JSON.stringify(event)).join("\n"),
 			exitCode: 0,
 		});
 		mockPi.onCall({ output: "Recovered on fallback" });

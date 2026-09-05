@@ -457,8 +457,13 @@ export function hasEmptyTerminalAssistantResponse(messages: Message[]): boolean 
 	const lastAssistant = messages.findLast((message) => message.role === "assistant");
 	return lastAssistant?.role === "assistant"
 		&& Array.isArray(lastAssistant.content)
-		&& lastAssistant.content.length === 0
-		&& lastAssistant.usage.output === 0;
+		&& ((lastAssistant.content.length === 0 && lastAssistant.usage.output === 0)
+			|| (messages.at(-1) === lastAssistant
+				&& lastAssistant.stopReason === "stop"
+				&& !lastAssistant.errorMessage
+				&& lastAssistant.content.length > 0
+				// Token accounting can be nonzero even when no response text was emitted.
+				&& lastAssistant.content.every((part) => part.type === "text" && part.text === "")));
 }
 
 export function formatEmptyTerminalAssistantResponseError(messages: Message[]): string {
