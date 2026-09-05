@@ -330,11 +330,15 @@ describe("registered subagent tool description", () => {
 			registerSubagentExtension(fakePi);
 			const handler = beforeAgentStartHandlers.at(-1);
 			if (!handler) throw new Error("before_agent_start handler not registered");
-			const result = handler(
-				{ prompt: "hello", systemPrompt: "base prompt", systemPromptOptions: { cwd: process.cwd(), selectedTools: ${JSON.stringify(selectedTools)} } },
-				{ cwd: process.cwd(), model: { provider: "test", id: "test" }, sessionManager: { getSessionFile() { return undefined; }, getSessionId() { return "test-session"; } } },
-			);
-			process.stdout.write(JSON.stringify(result?.systemPrompt ?? null));
+			try {
+				const result = handler(
+					{ prompt: "hello", systemPrompt: "base prompt", systemPromptOptions: { cwd: process.cwd(), selectedTools: ${JSON.stringify(selectedTools)} } },
+					{ cwd: process.cwd(), model: { provider: "test", id: "test" }, sessionManager: { getSessionFile() { return undefined; }, getSessionId() { return "test-session"; } } },
+				);
+				process.stdout.write(JSON.stringify({ systemPrompt: result?.systemPrompt ?? null }));
+			} catch (error) {
+				process.stdout.write(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+			}
 		`;
 		const output = execFileSync(
 			process.execPath,
@@ -348,7 +352,9 @@ describe("registered subagent tool description", () => {
 			],
 			{ cwd: projectRoot, env: parentToolEnv(agentDir), encoding: "utf-8" },
 		);
-		return (JSON.parse(output) as string | null) ?? undefined;
+		const parsed = JSON.parse(output) as { systemPrompt?: string | null; error?: string };
+		if (parsed.error) throw new Error(parsed.error);
+		return parsed.systemPrompt ?? undefined;
 	}
 
 	function writeExtensionConfig(agentDir: string, config: Record<string, unknown>): void {
@@ -407,6 +413,16 @@ describe("registered subagent tool description", () => {
 		assert.match(prompt ?? "", /youtube-transcripts/);
 		assert.doesNotMatch(prompt ?? "", /Hidden helper/);
 		assert.equal(readAdvertisedSystemPrompt(agentDir, ["read"]), undefined);
+	});
+
+	it("propagates advertised-agent discovery failures to the host", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-advertised-prompt-error-"));
+		fs.writeFileSync(path.join(agentDir, "settings.json"), "{", "utf-8");
+
+		assert.throws(
+			() => readAdvertisedSystemPrompt(agentDir, ["subagent"]),
+			/Failed to parse settings file/,
+		);
 	});
 
 	it("registers the trimmed schema and description by default", () => {
