@@ -714,6 +714,53 @@ describe("completion formatting helpers", () => {
 		assert.equal(details.status, "completed");
 	});
 
+	it("surfaces structured output in workflow previews and direct notices for degenerate text", () => {
+		const summary = "Workflow completed with 1 child run(s). Return: { answer: 42 } Emitted: ready Trace: 2 event(s).";
+		for (const output of ["</think>", " \n\t", " \n</think> \n"]) {
+			const result = {
+				id: "workflow-think-tag", agent: "workflow", success: true, summary,
+				results: [{
+					workflowKey: "review", runId: "child-review", agent: "delegate", success: true,
+					outputState: "present" as const, outputReference: "/tmp/review.json", output, structuredOutput: false,
+				}],
+			};
+			const details = buildCompletionDetails(result);
+			const content = formatSingleCompletion(details);
+			assert.equal(details.resultPreview, summary);
+			assert.ok(content.includes(summary));
+			assert.match(content, /key=review run=child-review status=completed/);
+			assert.match(content, /Saved output: \/tmp\/review\.json/);
+			assert.match(content, /Workflow run: workflow-think-tag/);
+			assert.match(content, /Child runs: review=child-review \(completed\)/);
+			assert.match(content, /    \| false/);
+			const direct = buildCompletionDetails({ ...result, agent: "delegate", summary: `delegate:\n${output}` });
+			assert.match(formatSingleCompletion(direct), /Structured output:\nfalse/);
+		}
+	});
+
+	it("preserves meaningful prose and direct diagnostics alongside structured output", () => {
+		const output = "Review complete </think> with notes.";
+		const child = { agent: "delegate", success: true, output, structuredOutput: { ok: true } };
+		const workflow = buildCompletionDetails({ id: "prose-run", agent: "workflow", success: true, results: [child] });
+		assert.equal(workflow.childOutputs?.[0]?.preview, output);
+		const direct = buildCompletionDetails({ id: "prose-run", agent: "delegate", success: true, summary: `delegate:\n${output}`, results: [child] });
+		assert.equal(direct.resultPreview, `delegate:\n${output}`);
+		const diagnostic = "delegate:\n</think>\nError: validation failed.";
+		const failed = buildCompletionDetails({ id: "error-run", agent: "delegate", success: false, summary: diagnostic, results: [{ ...child, success: false, output: "</think>" }] });
+		assert.equal(failed.resultPreview, diagnostic);
+		assert.match(formatSingleCompletion(failed), /Background task failed/);
+	});
+
+	it("retains tag text when structured output is unavailable or unserializable", () => {
+		for (const structuredOutput of [undefined, 1n]) {
+			const child = { agent: "delegate", success: true, output: "</think>", structuredOutput };
+			const workflow = buildCompletionDetails({ id: "fallback-run", agent: "workflow", success: true, results: [child] });
+			assert.equal(workflow.childOutputs?.[0]?.preview, "</think>");
+			const direct = buildCompletionDetails({ id: "fallback-run", agent: "delegate", success: true, summary: "delegate:\n</think>", results: [child] });
+			assert.equal(direct.resultPreview, "delegate:\n</think>");
+		}
+	});
+
 	it("surfaces direct structured output when the completion has no text output", () => {
 		const details = buildCompletionDetails({
 			id: "structured-run",
