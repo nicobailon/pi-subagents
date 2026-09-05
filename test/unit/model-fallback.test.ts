@@ -212,6 +212,39 @@ describe("model fallback helpers", () => {
 		assert.equal(getExcludedCount(), 0);
 	});
 
+	it("does not cache the reported Databricks tool-message request error (issue #1955)", () => {
+		const model = "databricks/databricks-kimi-k3";
+		const error = 'Databricks error: {"error_code":"BAD_REQUEST","message":"{\\"error\\":\\"Upstream error: INVALID_ARGUMENT: Kimi K3 tool messages need a resolvable tool name: carry `tool`/`name`, or match a preceding assistant tool_call by order.\\"}"}';
+		assert.equal(isRetryableModelFailure(error), true);
+		const messages = [{ role: "assistant", errorMessage: error }];
+		assert.equal(isRetryableModelFailureAttempt({ error, messages, toolCount: 0 }), true);
+		assert.equal(isRetryableModelFailureAttempt({ error, messages, toolCount: 1 }), false);
+		recordRetryableModelFailure(model, error);
+		assert.equal(findModelExclusion(model), undefined);
+		assert.equal(getExcludedCount(), 0);
+		assert.deepEqual(buildModelCandidates(model, undefined, undefined), [model]);
+	});
+
+	it("does not cache request-shape errors despite retryable upstream prose", () => {
+		for (const error of [
+			"Bad Request: upstream rejected the request",
+			"BAD_REQUEST: upstream rejected the request",
+			"INVALID_ARGUMENT: upstream rejected the request",
+			"invalid_request_error: upstream rejected the request",
+		]) {
+			assert.equal(isRetryableModelFailure(error), true, error);
+			recordRetryableModelFailure("openai/gpt-5-mini", error);
+			assert.equal(getExcludedCount(), 0, error);
+		}
+	});
+
+	it("still caches rate limits that mention numeric request quotas", () => {
+		const error = "rate limit exceeded: 400 requests per minute";
+		recordRetryableModelFailure("openai/gpt-5-mini", error);
+		assert.equal(findModelExclusion("openai/gpt-5-mini")?.reason, error);
+		assert.equal(getExcludedCount(), 1);
+	});
+
 	it("still caches raw request limits and per-minute input-token rate quotas", () => {
 		for (const error of [
 			"REQUEST_LIMIT_EXCEEDED",

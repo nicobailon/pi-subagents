@@ -609,8 +609,13 @@ export function isRetryableModelFailureAttempt(input: { error: string | undefine
 	return Boolean(error && input.messages?.some((message) => messageError(message)?.trim() === error));
 }
 
+// Request-shape failures can match broad fallback signals such as "upstream",
+// but do not establish that the model is unhealthy for subsequent requests.
+const REQUEST_SHAPE_FAILURE_PATTERN = /\b(?:bad[ _]request|invalid[ _]argument|invalid_request_error)\b/i;
+
 export function recordRetryableModelFailure(model: string | undefined, error: string | undefined): void {
-	if (!model || !isRetryableModelFailure(error) || isContextOverflow(error)) return;
+	if (!model || !error || !isRetryableModelFailure(error) || isContextOverflow(error)) return;
+	if (REQUEST_SHAPE_FAILURE_PATTERN.test(error)) return;
 	const { provider, modelId } = parseModelKey(model);
 	recordModelFailure({ modelId, reason: error, ...(provider ? { provider } : {}) });
 }
