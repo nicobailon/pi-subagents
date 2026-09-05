@@ -13,6 +13,7 @@
 - Fix background launches on stable Pi 0.85.1 without experimental packages, retaining Pi 0.85.0 support (#1944). Thanks to [@geril07](https://github.com/geril07).
 - Surface the published workflow receipt path in wait completions, notifications, and exact status/debug responses (#1938).
 - Surface structured output in completion notices when text is blank or only a closing think-tag (#1945). Thanks to [@npfedwards](https://github.com/npfedwards).
+- Validate literal workflow `baseRef` values before execution and clarify supported refs (#1934, #1937). Thanks to [@jeanduplessis](https://github.com/jeanduplessis).
 - Preserve retained predecessor lineage in string-ID workflow continuations and receipts (#1920).
 - Clear recovered assistant errors on successful tool-use completion, including terminating structured output (#1919). Thanks to [@Jonathanm10](https://github.com/Jonathanm10).
 - Diagnose empty terminal text responses as empty-output failures rather than earlier exploratory tool errors (#1921).
