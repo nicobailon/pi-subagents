@@ -941,7 +941,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				makeMinimalCtx(tempDir),
 			);
 
-			assert.equal(result.isError, undefined);
+			assert.equal(result.isError, undefined, result.content[0]?.text);
 			if (workflow) {
 				const child = result.details!.workflow!.value as { runId: string; agent: string; continuation: { runIds: string[] } };
 				assert.equal(child.agent, "b");
