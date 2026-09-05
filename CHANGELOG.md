@@ -8,6 +8,7 @@
 - Remove generation suffixes from developer-facing contract types and helpers; request shapes, format versions, and behavior are unchanged (#1913).
 
 ### Added
+- Let agents opt into parent-prompt discovery with `advertise: true`.
 - Add selective researcher source checks and explicit evidence, confidence, and uncertainty reporting (#1932). Thanks to [@Muskos](https://github.com/Muskos).
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
 

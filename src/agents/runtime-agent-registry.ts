@@ -18,6 +18,7 @@ const MAX_FIELD_STRING_LENGTH = 8_192;
 export interface RuntimeAgentDefinition {
 	description: string;
 	systemPrompt: string;
+	advertise?: boolean;
 	aliases?: readonly string[];
 	tools?: readonly string[];
 	excludeTools?: readonly string[];
@@ -199,7 +200,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Runtime agent definition must be an object.");
 	const definition = value as Record<string, unknown>;
 	const supported = new Set([
-		"description", "systemPrompt", "aliases", "tools", "excludeTools", "allowNestedSubagents", "mcpDirectTools", "model", "fallbackModels", "thinking",
+		"description", "systemPrompt", "advertise", "aliases", "tools", "excludeTools", "allowNestedSubagents", "mcpDirectTools", "model", "fallbackModels", "thinking",
 		"systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "defaultContext", "defaultAsync", "defaultTimeoutMs",
 		"defaultToolTimeoutMs", "defaultAcceptance", "acceptanceRole", "runner", "skills", "skillPath",
 		"extensions", "subagentOnlyExtensions", "mutationTools", "output", "outputMode", "defaultReads", "defaultProgress", "interactive",
@@ -217,6 +218,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 	if (acceptanceRole !== undefined && acceptanceRole !== "read-only" && acceptanceRole !== "writer") throw new Error("Runtime agent definition acceptanceRole must be 'read-only' or 'writer'.");
 	const outputMode = definition.outputMode;
 	if (outputMode !== undefined && outputMode !== "inline" && outputMode !== "file-only") throw new Error("Runtime agent definition outputMode must be 'inline' or 'file-only'.");
+	const advertise = validateBoolean(definition.advertise, "Runtime agent definition advertise");
 	const aliases = validateStringList(definition.aliases, "Runtime agent definition aliases");
 	const tools = validateStringList(definition.tools, "Runtime agent definition tools");
 	const excludeTools = validateStringList(definition.excludeTools, "Runtime agent definition excludeTools");
@@ -248,6 +250,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 	return {
 		description: validateString(definition.description, "Runtime agent definition description", MAX_DESCRIPTION_LENGTH),
 		systemPrompt: validateString(definition.systemPrompt, "Runtime agent definition systemPrompt", MAX_SYSTEM_PROMPT_LENGTH),
+		...(advertise !== undefined ? { advertise } : {}),
 		...(aliases ? { aliases } : {}),
 		...(tools ? { tools } : {}),
 		...(excludeTools ? { excludeTools } : {}),
@@ -327,6 +330,7 @@ function toAgentConfig(name: string, definition: RuntimeAgentDefinition): AgentC
 	const agent: AgentConfig = {
 		name,
 		description: definition.description,
+		...(definition.advertise !== undefined ? { advertise: definition.advertise } : {}),
 		...(aliases ? { aliases } : {}),
 		...(definition.runner !== undefined ? { runner: definition.runner } : {}),
 		...(definition.tools !== undefined ? { tools: [...definition.tools] } : {}),
