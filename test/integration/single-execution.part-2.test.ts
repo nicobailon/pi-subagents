@@ -518,9 +518,20 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 				const eventsPath = path.join(asyncDir, "events.jsonl");
 				const deadline = Date.now() + 10_000;
 				while (true) {
-					const terminal = fs.existsSync(eventsPath) && fs.readFileSync(eventsPath, "utf-8")
-						.split("\n").filter(Boolean)
-						.some((line) => JSON.parse(line).type === "subagent.run.process_terminal");
+					let journal = "";
+					try {
+						journal = fs.readFileSync(eventsPath, "utf-8");
+					} catch (error) {
+						if (!["ENOENT", "EINTR", "EAGAIN", "EBUSY"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+					}
+					// Ignore an in-flight final record and malformed diagnostics, not terminal proof.
+					const terminal = journal.split("\n").slice(0, -1).some((line) => {
+						try {
+							return JSON.parse(line)?.type === "subagent.run.process_terminal";
+						} catch {
+							return false;
+						}
+					});
 					if (terminal) break;
 					assert.ok(Date.now() <= deadline, `Timed out waiting for async event 'subagent.run.process_terminal': ${eventsPath}`);
 					await new Promise((resolve) => setTimeout(resolve, 50));
