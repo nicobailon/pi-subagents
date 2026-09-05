@@ -492,9 +492,9 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 				ctx,
 			);
 
+			asyncDir = result.details.asyncDir;
 			assert.equal(result.isError, undefined, result.content[0]?.text ?? "async launch failed");
 			assert.ok(result.details.asyncId);
-			asyncDir = result.details.asyncDir;
 			resultPath = path.join(DIRS.results, `${result.details.asyncId}.json`);
 
 			const status = JSON.parse(fs.readFileSync(path.join(asyncDir!, "status.json"), "utf-8")) as { runId?: string; sessionId?: string };
@@ -511,11 +511,25 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			assert.equal(persisted.state, "complete");
 			assert.deepEqual(readCall().runtime?.toolBudget, toolBudget);
 			assert.equal(mockPi.callCount(), 1);
-			const processTerminalPath = path.join(asyncDir!, "process-terminal.json");
-			const processTerminal = JSON.parse(fs.readFileSync(processTerminalPath, "utf-8")) as { state?: string };
-			assert.match(processTerminal.state ?? "", /^(observed|unknown)$/);
 		} finally {
-			if (asyncDir) fs.rmSync(asyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+			// bg_wait completes at the logical result, not the parent's process-close publication.
+			// Await that publication even on assertion failure, before reading proof or deleting artifacts.
+			if (asyncDir) {
+				const eventsPath = path.join(asyncDir, "events.jsonl");
+				const deadline = Date.now() + 10_000;
+				while (true) {
+					const terminal = fs.existsSync(eventsPath) && fs.readFileSync(eventsPath, "utf-8")
+						.split("\n").filter(Boolean)
+						.some((line) => JSON.parse(line).type === "subagent.run.process_terminal");
+					if (terminal) break;
+					assert.ok(Date.now() <= deadline, `Timed out waiting for async event 'subagent.run.process_terminal': ${eventsPath}`);
+					await new Promise((resolve) => setTimeout(resolve, 50));
+				}
+				const processTerminalPath = path.join(asyncDir, "process-terminal.json");
+				const processTerminal = JSON.parse(fs.readFileSync(processTerminalPath, "utf-8")) as { state?: string };
+				assert.match(processTerminal.state ?? "", /^(observed|unknown)$/);
+				fs.rmSync(asyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+			}
 			if (resultPath) fs.rmSync(resultPath, { force: true });
 		}
 	});
