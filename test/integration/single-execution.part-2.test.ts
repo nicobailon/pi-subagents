@@ -1482,6 +1482,43 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		if (child?.artifactPaths?.outputPath) assert.match(fs.readFileSync(child.artifactPaths.outputPath, "utf-8"), /"note": "captured"/);
 	});
 
+	it("routes retained workflow follow-ups to distinct outputs without overwriting the writer report", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		for (const relative of [false, true]) {
+			const writerPath = path.join(tempDir, `writer-${relative}.md`);
+			const challengeOutput = relative ? "challenge-relative.md" : path.join(tempDir, "challenge-absolute.md");
+			mockPi.onCall({ output: "original writer report" });
+			mockPi.onCall({ output: "retained challenge report" });
+			const result = await makeExecutor([makeAgent("echo")], {}, true).execute(
+				`workflow-retained-output-${relative}`,
+				{
+					async: false,
+					workflowScript: `
+						const writer = await runs.run("writer", { agent: "echo", task: "Write report", acceptance: false, output: ${JSON.stringify(writerPath)} });
+						const challenge = await runs.run("challenge", { resume: writer.runId, task: "Challenge report", output: ${JSON.stringify(challengeOutput)} });
+						return { writer, challenge };
+					`,
+				},
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+			const { writer, challenge } = result.details.workflow?.value as { writer: { ok: boolean; runId: string; outputReference: string }; challenge: { ok: boolean; runId: string; outputReference: string } };
+			assert.equal(writer.ok, true);
+			assert.equal(challenge.ok, true);
+			assert.notEqual(challenge.runId, writer.runId);
+			assert.equal(writer.outputReference, writerPath);
+			const challengePath = relative ? path.join(TEMP_ARTIFACTS_DIR, "outputs", `workflow-retained-output-${relative}`, challengeOutput) : challengeOutput;
+			assert.equal(challenge.outputReference, challengePath);
+			assert.notEqual(challenge.outputReference, writer.outputReference);
+			assert.equal(fs.readFileSync(writer.outputReference, "utf-8"), "original writer report");
+			assert.equal(fs.readFileSync(challenge.outputReference, "utf-8"), "retained challenge report");
+			assert.deepEqual(result.details.results.map((child) => child.savedOutputPath), [writerPath, challengePath]);
+		}
+		assert.equal(mockPi.callCount(), 4);
+	});
+
 	it("applies explicit structured-output contract fields when resuming a foreground workflow child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const schema = { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } };
 		const firstSchema = { type: "object", required: ["first"], properties: { first: { type: "boolean" } } };

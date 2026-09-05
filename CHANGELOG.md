@@ -4,6 +4,7 @@
 
 ### Fixed
 - Keep background streaming status updates batched during long-running and attention states while publishing child activity transitions immediately (#1901).
+- Honor distinct output paths on retained workflow follow-ups, preserving the original report and returning the saved output references (#1903).
 
 ## [0.65.1] - 2026-09-04
 

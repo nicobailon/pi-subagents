@@ -32,6 +32,7 @@ export interface ImportedAsyncRootResult {
 	structuredOutputSchemaPath?: string;
 	acceptance?: AcceptanceLedger;
 	artifactPaths?: ArtifactPaths;
+	savedOutputPath?: string;
 	outputSaveError?: string;
 	transcriptPath?: string;
 	transcriptError?: string;
@@ -71,6 +72,7 @@ interface AsyncResultFile {
 		structuredOutputSchemaPath?: string;
 		acceptance?: AcceptanceLedger;
 		artifactPaths?: ArtifactPaths;
+		savedOutputPath?: string;
 		outputSaveError?: string;
 		transcriptPath?: string;
 		transcriptError?: string;
@@ -229,6 +231,7 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 		...(child?.structuredOutputSchemaPath ?? step?.structuredOutputSchemaPath ? { structuredOutputSchemaPath: child?.structuredOutputSchemaPath ?? step?.structuredOutputSchemaPath } : {}),
 		...(child?.acceptance ?? step?.acceptance ? { acceptance: child?.acceptance ?? step?.acceptance } : {}),
 		...(child?.artifactPaths ? { artifactPaths: child.artifactPaths } : {}),
+		...(child?.savedOutputPath ? { savedOutputPath: child.savedOutputPath } : {}),
 		...(child?.outputSaveError ? { outputSaveError: child.outputSaveError } : {}),
 		...(child?.transcriptPath ?? step?.transcriptPath ? { transcriptPath: child?.transcriptPath ?? step?.transcriptPath } : {}),
 		...(child?.transcriptError ? { transcriptError: child.transcriptError } : {}),

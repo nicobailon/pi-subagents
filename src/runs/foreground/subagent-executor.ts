@@ -2118,6 +2118,7 @@ async function resumeAsyncRun(input: {
 		availableModels,
 		output: input.params.output !== undefined ? input.params.output : foregroundContract?.output ?? recoveryDescriptor?.outputPath,
 		outputMode: input.params.outputMode ?? foregroundContract?.outputMode ?? recoveryDescriptor?.outputMode,
+		outputClaimPath: input.params.workflowOutputClaimPath,
 		...(agentContract ? { agentContract } : {}),
 		...(outputSchema ? { structuredOutputSchema: outputSchema } : {}),
 		...(recoveryDescriptor?.skills ? { skills: [...recoveryDescriptor.skills] } : {}),
@@ -2194,6 +2195,7 @@ async function resumeAsyncRun(input: {
 			...(completed.structuredOutputSchemaPath ? { structuredOutputSchemaPath: completed.structuredOutputSchemaPath } : {}),
 			...(completed.acceptance ? { acceptance: completed.acceptance } : {}),
 			...(completed.artifactPaths ? { artifactPaths: completed.artifactPaths } : {}),
+			...(completed.savedOutputPath ? { savedOutputPath: completed.savedOutputPath } : {}),
 			...(completed.outputSaveError ? { outputSaveError: completed.outputSaveError } : {}),
 			...(completed.transcriptPath ? { transcriptPath: completed.transcriptPath } : {}),
 			...(completed.transcriptError ? { transcriptError: completed.transcriptError } : {}),
@@ -3169,6 +3171,7 @@ async function waitForWorkflowAsyncSingleResult(
 		...(completed.structuredOutputSchemaPath ? { structuredOutputSchemaPath: completed.structuredOutputSchemaPath } : {}),
 		...(completed.acceptance ? { acceptance: completed.acceptance } : {}),
 		...(completed.artifactPaths ? { artifactPaths: completed.artifactPaths } : {}),
+		...(completed.savedOutputPath ? { savedOutputPath: completed.savedOutputPath } : {}),
 		...(completed.outputSaveError ? { outputSaveError: completed.outputSaveError } : {}),
 		...(completed.transcriptPath ? { transcriptPath: completed.transcriptPath } : {}),
 		...(completed.transcriptError ? { transcriptError: completed.transcriptError } : {}),
@@ -3468,7 +3471,9 @@ function resolveWorkflowChildOutputPath(input: {
 	key: string;
 	params: Record<string, unknown>;
 }): { path?: string; inherited: boolean } {
-	if (typeof input.params.resume === "string") {
+	const rawOutput = input.params.output;
+	const hasExplicitOutput = typeof rawOutput === "string" || typeof rawOutput === "boolean";
+	if (typeof input.params.resume === "string" && (!hasExplicitOutput || rawOutput === true || rawOutput === "true")) {
 		if (!input.state) return { path: undefined, inherited: false };
 		const index = input.params.index;
 		const target = resolveResumeTarget({
@@ -3477,15 +3482,16 @@ function resolveWorkflowChildOutputPath(input: {
 		}, input.state);
 		return { path: "recoveryDescriptor" in target ? target.recoveryDescriptor?.outputPath : undefined, inherited: false };
 	}
-	const rawOutput = input.params.output;
-	const hasExplicitOutput = typeof rawOutput === "string" || typeof rawOutput === "boolean";
 	const childCwd = typeof input.params.cwd === "string" ? resolveChildCwd(input.workflowCwd, input.params.cwd) : input.workflowCwd;
-	const agentScope = resolveExecutionAgentScope(input.params.agentScope ?? input.workflowAgentScope);
-	const discoveredAgents = input.discoverAgents(childCwd, agentScope).agents;
-	const agent = typeof input.params.agent === "string"
-		? resolveAgentName(input.params.agent, discoveredAgents).agent ?? resolveAgentName(input.params.agent, input.agents).agent
-		: undefined;
-	const agentOutput = typeof agent?.output === "string" ? agent.output : undefined;
+	let agentOutput: string | undefined;
+	if (rawOutput === true || rawOutput === "true" || (!hasExplicitOutput && !input.aggregateOutputPath)) {
+		const agentScope = resolveExecutionAgentScope(input.params.agentScope ?? input.workflowAgentScope);
+		const discoveredAgents = input.discoverAgents(childCwd, agentScope).agents;
+		const agent = typeof input.params.agent === "string"
+			? resolveAgentName(input.params.agent, discoveredAgents).agent ?? resolveAgentName(input.params.agent, input.agents).agent
+			: undefined;
+		agentOutput = typeof agent?.output === "string" ? agent.output : undefined;
+	}
 	const output = rawOutput === true || rawOutput === "true"
 		? agentOutput
 		: hasExplicitOutput
@@ -3574,7 +3580,7 @@ function prepareWorkflowChildLaunchParams(input: {
 		childParams = { ...input.childParams, output: input.outputOverride };
 	} else if (usesDefaultOutput && input.aggregateOutputPath !== undefined) {
 		childParams = { ...input.childParams, output: workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.parentWorkflowRunId, input.workflowKey) };
-	} else if (input.childParams.resume === undefined) {
+	} else if (input.childParams.resume === undefined || input.childParams.output !== undefined) {
 		const resolvedOutput = resolveWorkflowChildOutputPath({ ctxCwd: input.ctxCwd, workflowCwd: input.workflowCwd, artifactsDir: input.artifactsDir, workflowRunId: input.parentWorkflowRunId, aggregateOutputPath: input.aggregateOutputPath, configuredOutputBaseDir: input.configuredOutputBaseDir, discoverAgents: input.discoverAgents, agents: input.agents, workflowAgentScope: input.workflowAgentScope, key: input.workflowKey, params: input.childParams });
 		if (resolvedOutput.path) childParams = { ...input.childParams, output: resolvedOutput.path };
 	}
@@ -4519,6 +4525,7 @@ export function prepareWorkflowLaunchParams(
 			message: typeof childParams.task === "string" ? childParams.task.trim() : "",
 			workflowParentRunId: parentWorkflowRunId,
 			workflowKey,
+			...(options.outputClaimPath ? { workflowOutputClaimPath: options.outputClaimPath } : {}),
 			...(lane ? { lane } : {}),
 			...(worktree !== undefined ? { worktree: worktree as boolean } : {}),
 			...(baseRef !== undefined ? { baseRef: baseRef as string } : {}),
