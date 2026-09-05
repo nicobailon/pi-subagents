@@ -44,6 +44,7 @@ function writeAsyncRun(root: string, input: {
 	state?: "running" | "complete" | "failed";
 	mode?: "single" | "parallel" | "workflow";
 	lastUpdate?: number;
+	startedAt?: number;
 	agents?: string[];
 	contexts?: Array<"fresh" | "fork">;
 	models?: string[];
@@ -63,7 +64,7 @@ function writeAsyncRun(root: string, input: {
 		sessionId: input.sessionId ?? "session-current",
 		mode: input.mode ?? (agents.length > 1 ? "parallel" : "single"),
 		state,
-		startedAt: 100,
+		startedAt: input.startedAt ?? 100,
 		lastUpdate: input.lastUpdate ?? 200,
 		currentStep: 0,
 		steps: agents.map((agent, index) => ({
@@ -446,6 +447,29 @@ describe("native subagent fleet", () => {
 		}
 	});
 
+	it("keeps tracked missing-start rows stable across opposing heartbeat updates", () => {
+		const state = stateForTest();
+		state.fleetJobs = new Map();
+		for (const [id, startedAt, status] of [
+			["known", 100, "running"], ["unknown-b", undefined, "running"], ["unknown-a", undefined, "queued"],
+		] as const) {
+			state.fleetJobs.set(id, {
+				asyncId: id, asyncDir: `/tmp/${id}`, sessionId: "session-current", status, startedAt,
+			});
+		}
+		for (const direction of [1, -1]) {
+			let heartbeat = 500;
+			for (const job of state.fleetJobs.values()) job.updatedAt = heartbeat += direction * 10;
+			const snapshot = collectFleetSnapshot(state);
+			assert.equal(snapshot.error, undefined);
+			assert.deepEqual(snapshot.items.map((item) => item.key), ["async:unknown-a", "async:unknown-b", "async:known"]);
+			for (const item of snapshot.items) {
+				const job = state.fleetJobs.get(item.runId)!;
+				assert.equal(item.run?.startedAt, job.startedAt ?? job.updatedAt);
+			}
+		}
+	});
+
 	it("keeps tracked active workflows ahead of older failed terminal history", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-history-"));
 		try {
@@ -627,8 +651,8 @@ describe("native subagent fleet", () => {
 		});
 		const snapshot = collectFleetSnapshot(state);
 		assert.deepEqual(snapshot.items.map((item) => item.key), [
-			"foreground-active:child-2:0",
 			"foreground-active:child-1:0",
+			"foreground-active:child-2:0",
 			"async:unrelated",
 			"async:workflow-1",
 		]);
@@ -695,6 +719,26 @@ describe("native subagent fleet", () => {
 		assert.equal(snapshot.items[0]?.runId, "active-old");
 		assert.equal(snapshot.items.find((item) => item.runId === "terminal-21")?.state, "complete");
 		assert.ok(!snapshot.items.some((item) => item.runId === "terminal-0"));
+	});
+
+	it("orders active runs by start time so the roster stays stable while they emit", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-active-order-"));
+		try {
+			writeAsyncRun(root, { id: "worker-b", startedAt: 200, lastUpdate: 900 });
+			writeAsyncRun(root, { id: "worker-a", startedAt: 100, lastUpdate: 500 });
+			const state = stateForTest();
+			const keys = () => collectFleetSnapshot(state, { asyncDirRoot: root, resultsDir: path.join(root, "results") }).items.map((item) => item.key);
+			// First refresh: the run created first stays on top, even though worker-b emitted most recently.
+			assert.deepEqual(keys(), ["async:worker-a:0", "async:worker-b:0"]);
+			// Later activity on worker-b must not reorder the roster.
+			writeAsyncRun(root, { id: "worker-b", startedAt: 200, lastUpdate: 1500 });
+			assert.deepEqual(keys(), ["async:worker-a:0", "async:worker-b:0"]);
+			// A run started later still lands after the earlier ones.
+			writeAsyncRun(root, { id: "worker-c", startedAt: 300, lastUpdate: 300 });
+			assert.deepEqual(keys(), ["async:worker-a:0", "async:worker-b:0", "async:worker-c:0"]);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("accepts default Fleet navigation from Kitty CSI-u input", () => {
