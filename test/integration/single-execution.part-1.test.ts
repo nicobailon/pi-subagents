@@ -579,6 +579,24 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(fs.readdirSync(tempDir).sort(), before);
 	});
 
+	it("rejects invalid public workflow acceptance defaults before mission or script work", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const ctx = makeMinimalCtx(tempDir);
+		const params = { async: false, workflowScript: `return "workflow-default-ran";` };
+		const projectBefore = fs.readdirSync(tempDir, { recursive: true });
+		const agentBefore = fs.readdirSync(agentDir, { recursive: true });
+		const rejected = await executor.executePublic("invalid-workflow-default", { ...params, acceptance: true }, new AbortController().signal, undefined, ctx);
+		assert.equal(rejected.isError, true);
+		assert.match(rejected.content[0]?.text ?? "", /acceptance must be a string level, false, or an object/);
+		assert.equal(rejected.details.workflow, undefined, "invalid default must not execute the workflow");
+		assert.deepEqual(fs.readdirSync(tempDir, { recursive: true }), projectBefore, "invalid default must not create mission or workflow files");
+		assert.deepEqual(fs.readdirSync(agentDir, { recursive: true }), agentBefore, "invalid default must not create mission index files");
+		const accepted = await executor.executePublic("false-workflow-default", { ...params, acceptance: false }, new AbortController().signal, undefined, ctx);
+		assert.equal(accepted.isError, undefined, accepted.content[0]?.text);
+		assert.match(accepted.content[0]?.text ?? "", /workflow-default-ran/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("runs a workflow host command without launching a child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const scriptPath = path.join(tempDir, "host-command.cjs");
 		fs.writeFileSync(scriptPath, `process.stdout.write("host command passed\\n");`);
