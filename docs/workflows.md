@@ -356,6 +356,8 @@ known, or for explicit emergency hotfix lanes.
 
 For watched same-repo workflows, pass `async:false` only when the parent must block until completion. That blocking mode also shows the live in-chat workflow card. `chatProgress` can force `off` or `live-card` when the automatic policy is not what you want. Blocking workflows default to a 30-minute timeout; async workflows have no default timeout. See the [tool reference](tool-reference.md) for the full parameter list.
 
+Synchronous workflows publish trace and `emit(...)` updates through the tool update callback regardless of `chatProgress`, including RPC/headless and cross-repository runs. These updates include `details.workflow` and `details.workflowChildren`; `chatProgress: "off"` disables the live card, not transport progress. This is workflow lifecycle progress, not a live child transcript.
+
 The legacy `/chain`, `/parallel`, and `/run-chain` commands are not registered.
 
 ## Direct commands

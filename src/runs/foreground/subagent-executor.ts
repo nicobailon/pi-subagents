@@ -4759,14 +4759,14 @@ function applyWorkflowLaneTrace(graph: WorkflowGraphSnapshot, trace: WorkflowScr
 	else delete graph.currentNodeId;
 }
 
-function workflowChatProgressUpdate(
+function workflowProgressUpdate(
 	runId: string,
 	chatProgress: WorkflowChatProgressProjection,
 	workflow: NonNullable<Details["workflow"]>,
 	workflowChildren?: Details["workflowChildren"],
 	preflight?: import("../../shared/types.ts").WorkflowPreflightV1,
-): AgentToolResult<Details> | undefined {
-	if (chatProgress.mode !== "live-card") return undefined;
+): AgentToolResult<Details> {
+	// chatProgress controls the TUI projection, not transport-level progress.
 	return {
 		content: [{ type: "text", text: "Workflow running." }],
 		details: { mode: "workflow", runId, results: [], workflow, ...(preflight ? { preflight } : {}), ...(workflowChildren ? { workflowChildren } : {}), chatProgress },
@@ -5601,8 +5601,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
 			const workflowCapabilityCeiling = intersectSubagentCapabilityCeilings(requestParams.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(resolveCurrentSessionId(ctx.sessionManager)));
 			const sendWorkflowProgress = () => {
-				const update = workflowChatProgressUpdate(foregroundWorkflowRunId, chatProgress, liveWorkflow, liveWorkflowChildren, workflowPreflight);
-				if (update) onUpdate?.(update);
+				onUpdate?.(workflowProgressUpdate(foregroundWorkflowRunId, chatProgress, liveWorkflow, liveWorkflowChildren, workflowPreflight));
 			};
 			try {
 				const workflow = await runWorkflowScript({

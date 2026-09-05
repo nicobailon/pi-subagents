@@ -111,6 +111,68 @@ describe("workflow chat progress policy", () => {
 });
 
 describe("workflow chat progress rendering", () => {
+	for (const scenario of ["explicit off", "non-repository auto", "cross-repository auto"] as const) {
+		it(`emits foreground lifecycle updates before settlement with ${scenario}`, async () => {
+			const root = scenario === "non-repository auto"
+				? fs.mkdtempSync(path.join(os.tmpdir(), "pi-workflow-progress-headless-"))
+				: createRepo("pi-workflow-progress-off-");
+			const other = scenario === "cross-repository auto" ? createRepo("pi-workflow-progress-cross-") : undefined;
+			try {
+				const updates: Details[] = [];
+				let settled = false;
+				const result = await createExecutor().execute(
+					"wf-headless",
+					{
+						workflowScript: `return await runs.run("scout", { agent: "missing-agent", task: "scan" });`,
+						async: false,
+						chatProgress: scenario === "explicit off" ? "off" : "auto",
+						...(other ? { cwd: other } : {}),
+					},
+					new AbortController().signal,
+					(update) => {
+						assert.equal(settled, false);
+						updates.push(structuredClone(update.details));
+					},
+					ctx(root),
+				).then((result) => { settled = true; return result; });
+				assert.equal(result.isError, true);
+				assert.ok(updates.every((details) => details.chatProgress?.mode === "off"));
+				const started = updates.find((details) => details.workflowChildren?.children[0]?.state === "running");
+				assert.ok(started, "expected running child inventory before failure");
+				assert.equal(started.mode, "workflow");
+				assert.equal(started.runId, result.details.runId);
+				assert.equal(started.workflowChildren?.parentToolCallId, "wf-headless");
+				assert.equal(started.workflowChildren?.workflowRunId, result.details.runId);
+				assert.equal(started.workflowChildren?.inventoryComplete, false);
+				assert.equal(started.workflow?.trace[0]?.key, "scout");
+				assert.ok(updates.some((details) => details.workflow?.trace.some((entry) => entry.state === "failed")));
+				assert.equal(result.details.workflowChildren?.inventoryComplete, true);
+			} finally {
+				fs.rmSync(root, { recursive: true, force: true });
+				if (other) fs.rmSync(other, { recursive: true, force: true });
+			}
+		});
+	}
+
+	it("emits headless workflow values before returning final output without an update callback requirement", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-workflow-progress-emits-"));
+		try {
+			const updates: Details[] = [];
+			const params = { workflowScript: `emit({ phase: "checking" }); return "done";`, async: false, chatProgress: "off" as const };
+			const result = await createExecutor().execute("wf-emits", params, undefined, (update) => {
+				assert.equal(update.details.workflow?.value, undefined);
+				updates.push(structuredClone(update.details));
+			}, ctx(root));
+			assert.ok(updates.some((details) => details.workflow?.emits.some((value) => (value as { phase?: string }).phase === "checking")));
+			assert.equal(result.details.workflow?.value, "done");
+			assert.equal(result.isError, undefined);
+			const withoutCallback = await createExecutor().execute("wf-no-callback", params, undefined, undefined, ctx(root));
+			assert.equal(withoutCallback.details.workflow?.value, "done");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("emits live-card updates with bounded workflow ids", async () => {
 		const repo = createRepo("pi-workflow-progress-executor-");
 		const toolCallId = `wf-live-${"x".repeat(300)}`;
