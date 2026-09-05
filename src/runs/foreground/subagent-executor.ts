@@ -118,7 +118,7 @@ import { executeWorkflowHostCommand, resolveWorkflowHostOutputClaimPath, type Wo
 import { buildWorkflowReceipt, readWorkflowReceipt, workflowReceiptPath, resolveWorkflowReceiptResumeEntry, writeWorkflowReceipt, type WorkflowReceipt, type WorkflowReceiptState } from "../../workflows/workflow-receipt.ts";
 import { upsertHostStep, validHostStepNodes } from "../shared/host-step-status.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
-import { parseWorkflowChildSummary, workflowChildSummary } from "../../workflows/workflow-child-summary.ts";
+import { parseWorkflowChildSummary, workflowChildProgress, workflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 import { resolveWorkflowChatProgress, type WorkflowChatProgressProjection } from "../../workflows/chat-progress.ts";
 import { annotateWorkflowPreflightTrace, formatWorkflowPreflight, formatWorkflowPreflightWarnings, normalizeWorkflowPreflight, workflowPreflightWarnings } from "../../workflows/workflow-preflight.ts";
 import {
@@ -5599,10 +5599,18 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					: publicExecution ? undefined : runHostCommand;
 			const workflowHostSteps = new Map<string, HostStepNode>();
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [], ...(workflowResource ? { resource: workflowResource.provenance } : {}) };
-			let liveWorkflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: foregroundWorkflowRunId, workflowState: "running", inventoryComplete: false });
+			const childProgress = new Map<string, ReturnType<typeof workflowChildProgress>>();
+			let activityTimer: ReturnType<typeof setTimeout> | undefined;
+			let lastProgressAt = 0;
+			let workflowProgressClosed = false;
 			const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
 			const workflowCapabilityCeiling = intersectSubagentCapabilityCeilings(requestParams.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(resolveCurrentSessionId(ctx.sessionManager)));
 			const sendWorkflowProgress = () => {
+				if (workflowProgressClosed) return;
+				if (activityTimer) clearTimeout(activityTimer);
+				activityTimer = undefined;
+				lastProgressAt = Date.now();
+				const liveWorkflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: foregroundWorkflowRunId, workflowState: "running", inventoryComplete: false, trace: liveWorkflow.trace, progress: childProgress });
 				onUpdate?.(workflowProgressUpdate(foregroundWorkflowRunId, chatProgress, liveWorkflow, liveWorkflowChildren, workflowPreflight));
 			};
 			try {
@@ -5621,7 +5629,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const projectedTrace = annotateWorkflowPreflightTrace(trace, workflowPreflight);
 						const preflightWarnings = workflowPreflightWarnings(workflowPreflight, trace);
 						liveWorkflow = { ...liveWorkflow, trace: projectedTrace, ...(preflightWarnings.length ? { preflightWarnings } : {}) };
-						liveWorkflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: foregroundWorkflowRunId, workflowState: "running", inventoryComplete: false, trace });
+						for (const entry of trace) {
+							if (entry.operation === "run" && ["completed", "failed", "stopped", "detached"].includes(entry.state)) childProgress.delete(entry.key);
+						}
 						sendWorkflowProgress();
 					},
 					admit: (calls) => {
@@ -5677,6 +5687,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							return execute(randomUUID(), childRequest, workflowSignal, (update) => {
 								const progress = update.details.progress?.[0];
 								if (!progress) return;
+								if (onUpdate && !workflowProgressClosed) {
+									if (progress.status === "running") childProgress.set(key, workflowChildProgress(progress));
+									else childProgress.delete(key);
+									if (!activityTimer) {
+										const delay = 100 - (Date.now() - lastProgressAt);
+										if (delay <= 0) sendWorkflowProgress();
+										else activityTimer = setTimeout(sendWorkflowProgress, delay);
+									}
+								}
 								const progressStatus = progress.status === "completed" ? "completed" : progress.status === "failed" ? "failed" : "running";
 								recordMissionWorkflowChild(missionBinding, foregroundWorkflowRunId, key, {
 									status: progressStatus,
@@ -5757,6 +5776,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					isError: true,
 					details: compactOptional<Details>({ mode: "workflow", runId: foregroundWorkflowRunId, results: workflowDetailsResults(partial.children), ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflowChildren, totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: finalPreflightTrace, emits: partial.emits, console: partial.console, ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}), receipt }, chatProgress }),
 				}, workflowFanoutBudget));
+			} finally {
+				workflowProgressClosed = true;
+				if (activityTimer) clearTimeout(activityTimer);
+				childProgress.clear();
 			}
 		}
 		const directParams = requestParams;

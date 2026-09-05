@@ -174,6 +174,19 @@ export interface WorkflowLaneMetadata {
 	outputPaths?: string[];
 }
 
+/** Bounded foreground activity; excludes tool arguments and transcript content. */
+export interface WorkflowChildActivity {
+	currentTool?: string;
+	currentToolStartedAt?: number;
+	lastActivityAt?: number;
+	durationMs?: number;
+	toolCount?: number;
+	turnCount?: number;
+	tokens?: number;
+	inputTokens?: number;
+	outputTokens?: number;
+}
+
 export interface WorkflowChildSummary {
 	version: 1;
 	parentToolCallId: string;
@@ -188,6 +201,8 @@ export interface WorkflowChildSummary {
 		sessionName?: string;
 		model?: string;
 		thinking?: string;
+		/** Present only while a synchronous foreground child is running. */
+		activity?: WorkflowChildActivity;
 		state: "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "rejected" | "detached";
 	}>;
 }
