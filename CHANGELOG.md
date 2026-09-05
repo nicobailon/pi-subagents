@@ -14,6 +14,7 @@
 ### Fixed
 - Return `invalid_state` instead of queuing unreachable workflow stop requests when live workflow controllers are unavailable (#1965).
 - Forward bounded live tool activity, timing, model/effort, and counters for synchronous workflow children without forwarding transcripts (#1964).
+- Allow `action: "status", view: "transcript"` to inspect bounded live foreground child artifacts on demand (#1963).
 - Keep the async status widget in place across progress updates instead of re-registering it behind other extensions' widgets (#1931). Thanks to [@DraconDev](https://github.com/DraconDev).
 - Avoid caching request-shape provider errors as unhealthy model exclusions (#1955). Thanks to [@slyons-vamp](https://github.com/slyons-vamp).
 - Wait for workflow-owned root result publication before declaring retained workflow resumes missing on Windows (#1906).

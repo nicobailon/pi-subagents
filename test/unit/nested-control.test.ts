@@ -9,6 +9,7 @@ import { createNestedRoute, findNestedControlResult, projectNestedEvents, readNe
 import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
 import { ASYNC_DIR, type SubagentState } from "../../src/shared/types.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
+import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
 
 const routeRoots: string[] = [];
 const fanoutListenerCleanupKey = "__piSubagentFanoutChildNestedControlInboxCleanups";
@@ -164,8 +165,15 @@ describe("nested control routing", () => {
 		try {
 			const route = createNestedRun("nested-foreground");
 			const state = createState();
+			state.artifactDirPreference = "project";
+			const artifactRoot = getArtifactsDir(null, root, "project");
+			fs.mkdirSync(artifactRoot, { recursive: true });
+			fs.writeFileSync(getArtifactPaths(artifactRoot, "root-control", "orchestrator", 0).transcriptPath,
+				`${JSON.stringify({ recordType: "message", role: "assistant", text: "LIVE_FOREGROUND_ACTIVITY" })}\n`);
 			state.foregroundControls.set("root-control", {
 				runId: "root-control",
+				sessionId: "session",
+				cwd: root,
 				mode: "single",
 				startedAt: 1,
 				updatedAt: 1,
@@ -186,6 +194,12 @@ describe("nested control routing", () => {
 			const transcript = await createExecutor(state).execute("transcript", { action: "status", id: "root-control", index: 0, view: "transcript" }, new AbortController().signal, undefined, ctx(root));
 			assert.equal(transcript.isError, undefined);
 			assert.match(text(transcript), /^Transcript target: run root-control · child 0\nSpawn budget:/);
+			assert.match(text(transcript), /LIVE_FOREGROUND_ACTIVITY/);
+			for (const hasUI of [false, true]) {
+				const implicit = await createExecutor(state).execute("implicit-transcript", { action: "status", view: "transcript" }, new AbortController().signal, undefined, { ...ctx(root), hasUI });
+				assert.equal(implicit.isError, undefined);
+				assert.match(text(implicit), /LIVE_FOREGROUND_ACTIVITY/);
+			}
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

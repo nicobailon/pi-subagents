@@ -6123,7 +6123,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					}
 					return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots, abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) })));
 				}
-				if (paramsWithResolvedCwd.view === "fleet") {
+				if (paramsWithResolvedCwd.view === "fleet" || paramsWithResolvedCwd.view === "transcript") {
 					return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots, abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) })));
 				}
 				if (targetRunId) {
@@ -6132,12 +6132,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						if (resolved?.kind === "foreground") {
 							const foreground = getForegroundControl(deps.state, resolved.id);
 							if (foreground) {
-								if (paramsWithResolvedCwd.view === "transcript") {
-									return withBudget({
-										content: [{ type: "text", text: "Live foreground transcript is already visible in the expanded running subagent result. Persisted session transcript becomes inspectable after the foreground run completes when sessions are enabled." }],
-										details: { mode: "management", results: [] },
-									});
-								}
 								return withBudget(foregroundStatusResult(foreground));
 							}
 						}
@@ -6147,13 +6141,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					}
 				} else if (!hasDirectoryTarget) {
 					const foreground = getForegroundControl(deps.state, undefined);
-					if (foreground && paramsWithResolvedCwd.view !== "transcript") return withBudget(foregroundStatusResult(foreground));
-					if (foreground && paramsWithResolvedCwd.view === "transcript") {
-						return withBudget({
-							content: [{ type: "text", text: "Live foreground transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background transcript." }],
-							details: { mode: "management", results: [] },
-						});
-					}
+					if (foreground) return withBudget(foregroundStatusResult(foreground));
 				}
 				return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots, abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) })));
 			}

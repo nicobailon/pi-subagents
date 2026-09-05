@@ -9,6 +9,7 @@ import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { claimRunFanoutBatch, createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 import { TEMP_ROOT_DIR, type SubagentState } from "../../src/shared/types.ts";
+import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
 
 function errno(code: string): NodeJS.ErrnoException {
 	const error = new Error(code) as NodeJS.ErrnoException;
@@ -22,6 +23,80 @@ function textContent(result: ReturnType<typeof inspectSubagentStatus>): string {
 }
 
 describe("async run status inspection", () => {
+	it("inspects live foreground artifacts on demand with child selection, ownership and bounded tails", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-live-foreground-transcript-"));
+		try {
+			const artifactRoot = getArtifactsDir(null, root, "project");
+			fs.mkdirSync(artifactRoot, { recursive: true });
+			const control = {
+				runId: "live-foreground", sessionId: "current", mode: "parallel" as const, cwd: root, startedAt: 1, updatedAt: 1,
+				activeChildren: new Map([2, 5].map((index) => [index, { index, agent: "worker", startedAt: 1, updatedAt: 1 }])),
+			};
+			const state = {
+				baseCwd: root, currentSessionId: "current", artifactDirPreference: "project", asyncJobs: new Map(),
+				foregroundControls: new Map([[control.runId, control]]), lastForegroundControlId: control.runId,
+			} as unknown as SubagentState;
+			const deps = { state, asyncDirRoot: path.join(root, "runs"), resultsDir: path.join(root, "results") };
+			const file = getArtifactPaths(artifactRoot, control.runId, "worker", 5).transcriptPath;
+			const record = (text: string) => `${JSON.stringify({ recordType: "message", role: "assistant", text })}\n`;
+			fs.writeFileSync(file, record("first\nsecond\nthird"));
+			const inspect = (params = {}) => inspectSubagentStatus({ view: "transcript", ...params }, deps);
+			assert.match(textContent(inspect()), /requires index.*Active child indexes: 2, 5/);
+			const selected = inspect({ id: "live-fore", index: 5, lines: 2 });
+			assert.equal(selected.isError, undefined);
+			assert.match(textContent(selected), /Child: 5 \(worker\)/);
+			assert.match(textContent(selected), /tail truncated/);
+			assert.match(textContent(selected), /second\nthird$/);
+			assert.doesNotMatch(textContent(selected), /first/);
+			fs.appendFileSync(file, record("fresh activity"));
+			assert.match(textContent(inspect({ index: 5 })), /fresh activity/);
+			fs.appendFileSync(file, [
+				{ recordType: "tool_start", toolName: "bash", toolCallId: "tool-1", argsPreview: "pwd" },
+				{ recordType: "message", role: "toolResult", toolCallId: "tool-1", text: "tool output" },
+				{ recordType: "message", role: "user", text: "supervisor guidance" },
+			].map((event) => JSON.stringify(event) + "\n").join(""));
+			assert.match(textContent(inspect({ index: 5 })), /Tool: bash \(complete\)\npwd\ntool output\nSupervisor: supervisor guidance/);
+			assert.match(textContent(inspect({ index: 2 })), /Transcript unavailable/);
+			assert.doesNotMatch(textContent(inspect({ index: 2 })), /fresh activity/);
+			for (const index of [-1, 1.5, 99]) assert.equal(inspect({ index }).isError, true);
+			control.sessionId = "other";
+			assert.match(textContent(inspect({ id: control.runId, index: 5 })), /not owned by the current session/);
+			assert.doesNotMatch(textContent(inspect({ id: control.runId, index: 5 })), /fresh activity/);
+			state.currentSessionId = null;
+			assert.equal(inspect({ id: control.runId, index: 5 }).isError, true);
+			state.currentSessionId = control.sessionId = "current";
+			fs.writeFileSync(file, record("界".repeat(30_000)));
+			const bytes = textContent(inspect({ index: 5, lines: 500 }));
+			assert.match(bytes, /tail truncated/);
+			assert.ok(Buffer.byteLength(bytes.split("(tail truncated):\n")[1]!) <= 32 * 1024);
+			assert.doesNotMatch(bytes, /\uFFFD/);
+			fs.writeFileSync(file, Array.from({ length: 600 }, (_, index) => record(`record-${index}`)).join(""));
+			const records = textContent(inspect({ index: 5, lines: 100_000 }));
+			assert.match(records, /tail truncated/);
+			assert.equal(records.split("(tail truncated):\n")[1]!.split("\n").length, 240);
+			assert.doesNotMatch(records, /record-0\b/);
+			assert.match(records, /record-599/);
+			fs.writeFileSync(file, record("界\n".repeat(600)));
+			const lines = textContent(inspect({ index: 5, lines: 100_000 }));
+			assert.equal(lines.split("(tail truncated):\n")[1]!.split("\n").length, 500);
+			fs.writeFileSync(file, record("x".repeat(2 * 1024 * 1024)) + record("latest\u001b\u202e") + '{"partial":');
+			const tail = textContent(inspect({ index: 5 }));
+			assert.match(tail, /tail truncated/);
+			assert.match(tail, /latest/);
+			assert.doesNotMatch(tail, /[\u001b\u202e]/u);
+			fs.unlinkSync(file);
+			const outside = path.join(root, "outside.jsonl");
+			fs.writeFileSync(outside, record("OUTSIDE_SECRET"));
+			fs.symlinkSync(outside, file);
+			const refused = textContent(inspect({ index: 5 }));
+			assert.match(refused, /refused a symlink/);
+			assert.match(refused, /Transcript unavailable/);
+			assert.doesNotMatch(refused, /OUTSIDE_SECRET/);
+			control.activeChildren.clear();
+			assert.match(textContent(inspect()), /no active foreground child/);
+		} finally { fs.rmSync(root, { recursive: true, force: true }); }
+	});
+
 	it("projects only published receipt references from result-only status", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-receipt-status-"));
 		try {

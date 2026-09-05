@@ -2,12 +2,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { safeTerminalText } from "../../shared/display-text.ts";
+import { getArtifactPaths, getArtifactsDir } from "../../shared/artifacts.ts";
+import { readFleetTranscript } from "../../tui/fleet-transcript.ts";
 import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, formatWorkflowStageLine, listAsyncRuns } from "./async-status.ts";
 import { formatAsyncResultTranscript, formatAsyncRunTranscript, formatNestedRunTranscript, inspectSubagentFleet } from "./fleet-view.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { formatModelThinking } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
-import { DIRS, type AsyncStatus, type Details, type ForegroundResumeRun, type NestedRunSummary, type SteeringStatus, type SubagentState } from "../../shared/types.ts";
+import { DIRS, type AsyncStatus, type Details, type ForegroundRunControl, type ForegroundResumeRun, type NestedRunSummary, type SteeringStatus, type SubagentState } from "../../shared/types.ts";
 import { inspectActiveAsyncCapacityOwner, type ActiveAsyncCapacityInspection } from "./active-async-capacity.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
@@ -242,6 +244,54 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
 	return lines.join("\n");
 }
 
+/** Request-only snapshot of the same artifact used by Fleet; no session or output fallback. */
+function formatLiveForegroundTranscript(control: ForegroundRunControl, state: SubagentState, options: { index?: number; lines?: number }): string {
+	if (!state.currentSessionId || control.sessionId !== state.currentSessionId) {
+		throw new Error(`Foreground run '${control.runId}' is not owned by the current session.`);
+	}
+	if (options.index !== undefined && (!Number.isInteger(options.index) || options.index < 0)) {
+		throw new Error("Transcript index must be a non-negative integer.");
+	}
+	const children = control.activeChildren
+		? [...control.activeChildren.values()]
+		: control.currentAgent ? [{ index: control.currentIndex ?? 0, agent: control.currentAgent, sessionName: control.sessionName }] : [];
+	const header = [`Run: ${control.runId}`, "State: live foreground"];
+	if (children.length === 0) return `${header.map((line) => safeTerminalText(line)).join("\n")}\nTranscript unavailable: no active foreground child.`;
+	if (options.index === undefined && children.length > 1) {
+		throw new Error(`Transcript view requires index for foreground run '${control.runId}'. Active child indexes: ${children.map((child) => child.index).join(", ")}.`);
+	}
+	const child = options.index === undefined ? children[0]! : children.find((child) => child.index === options.index);
+	if (!child) throw new Error(`Transcript index ${options.index} is not an active foreground child of '${control.runId}'.`);
+	const root = getArtifactsDir(state.parentSessionFile ?? null, control.cwd ?? state.baseCwd, state.artifactDirPreference);
+	const transcriptPath = getArtifactPaths(root, control.runId, child.agent, child.index).transcriptPath;
+	const transcript = readFleetTranscript(transcriptPath, { trustedRoots: [root] });
+	const lineLimit = Number.isFinite(options.lines) ? Math.max(1, Math.min(500, Math.trunc(options.lines!))) : 80;
+	const allLines = transcript.events.flatMap((event) => {
+		const text = event.kind === "tool"
+			? [`Tool: ${event.name} (${event.status})`, event.argsPayload ?? event.args, event.output ?? event.error].filter(Boolean).join("\n")
+			: event.kind === "notice" ? event.text : `${event.kind === "assistant" ? "Assistant" : "Supervisor"}: ${event.text}`;
+		return text.split(/\r?\n/);
+	});
+	let body = allLines.slice(-lineLimit).join("\n");
+	let truncated = transcript.truncated || allLines.length > lineLimit
+		|| transcript.events.some((event) => event.kind === "tool" && event.outputTruncated)
+		|| body.includes("… message truncated");
+	const maxOutputBytes = 32 * 1024;
+	const bytes = Buffer.from(body);
+	if (bytes.length > maxOutputBytes) {
+		// Skip UTF-8 continuation bytes at the beginning of the bounded tail.
+		let start = bytes.length - maxOutputBytes;
+		while ((bytes[start]! & 0xc0) === 0x80) start++;
+		body = bytes.subarray(start).toString("utf-8");
+		truncated = true;
+	}
+	header.push(`Child: ${child.index} (${child.sessionName?.trim() || child.agent})`, `Transcript: ${transcriptPath}`);
+	if (transcript.warning) header.push(`Transcript warning: ${transcript.warning}`);
+	header.push(`Live transcript tail${truncated ? " (tail truncated)" : ""}:`);
+	if (!body) header.push("Transcript unavailable: no readable activity in the bounded artifact tail yet.");
+	return [...header.map((line) => safeTerminalText(line)), body].filter(Boolean).join("\n");
+}
+
 function formatRememberedForegroundTranscript(run: ForegroundResumeRun, options: { index?: number; lines?: number }): string {
 	let index = options.index;
 	if (index !== undefined && !Number.isInteger(index)) throw new Error("Transcript index must be an integer.");
@@ -314,6 +364,12 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		return inspectSubagentFleet(params, { asyncDirRoot, resultsDir, kill: deps.kill, now: deps.now, state: deps.state, childSafe: Boolean(deps.nested) });
 	}
 	if (!params.id && !params.runId && !params.dir) {
+		if (params.view === "transcript" && deps.state?.currentSessionId) {
+			const controls = [...deps.state.foregroundControls.values()].filter((control) => control.sessionId === currentSessionId);
+			const foreground = controls.find((control) => control.runId === deps.state?.lastForegroundControlId)
+				?? controls.sort((left, right) => right.updatedAt - left.updatedAt)[0];
+			if (foreground) return inspectSubagentStatus({ ...params, id: foreground.runId }, deps);
+		}
 		if (deps.nested) {
 			return {
 				content: [{ type: "text", text: "Child-safe subagent status requires an id when no foreground run is active." }],
@@ -354,6 +410,13 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		} else if (!params.dir && requestedId) {
 			const resolved = resolveSubagentRunId(requestedId, { asyncDirRoot, resultsDir, state: deps.state, nested: deps.nested });
 			if (resolved?.kind === "foreground") {
+				const control = deps.state?.foregroundControls.get(resolved.id);
+				if (control && deps.state && params.view === "transcript") {
+					return {
+						content: [{ type: "text", text: formatLiveForegroundTranscript(control, deps.state, params) }],
+						details: { mode: "management", results: [] },
+					};
+				}
 				const run = deps.state?.foregroundRuns?.get(resolved.id);
 				if (run) {
 					try {
