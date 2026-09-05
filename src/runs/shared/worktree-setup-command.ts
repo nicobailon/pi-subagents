@@ -54,10 +54,13 @@ export async function runSetupCommand(
 	if (options.hookTimeoutMs !== undefined && (!Number.isSafeInteger(options.hookTimeoutMs) || options.hookTimeoutMs <= 0)) {
 		throw new Error("Invalid setup hook timeout");
 	}
-	const cancellation = (): Error | undefined => options.signal?.aborted
-		? commandError("Worktree setup aborted", "ABORT_ERR")
-		: options.deadlineAt !== undefined && Date.now() >= options.deadlineAt
-			? commandError("Worktree setup deadline exceeded", "ETIMEDOUT") : undefined;
+	const cancellation = (): Error | undefined => {
+		if (options.signal?.aborted) return commandError("Worktree setup aborted", "ABORT_ERR");
+		if (options.deadlineAt !== undefined && Date.now() >= options.deadlineAt) {
+			return commandError("Worktree setup deadline exceeded", "ETIMEDOUT");
+		}
+		return undefined;
+	};
 	result.error = cancellation();
 	if (result.error) return result;
 
