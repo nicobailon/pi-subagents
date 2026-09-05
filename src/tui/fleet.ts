@@ -179,10 +179,15 @@ function asyncItems(run: AsyncRunSummary, description?: string): FleetItem[] {
 	}));
 }
 
-function orderFleetAsyncRuns(runs: AsyncRunSummary[], terminalLimit: number): AsyncRunSummary[] {
+function orderFleetAsyncRuns(runs: AsyncRunSummary[], terminalLimit: number, trackedJobs: Map<string, AsyncJobState>): AsyncRunSummary[] {
 	const updatedAt = (run: AsyncRunSummary) => run.lastUpdate ?? run.endedAt ?? run.startedAt;
 	const byNewest = (left: AsyncRunSummary, right: AsyncRunSummary) => updatedAt(right) - updatedAt(left);
-	const byStartedAt = (left: AsyncRunSummary, right: AsyncRunSummary) => left.startedAt - right.startedAt || left.id.localeCompare(right.id);
+	// Missing tracked starts must not inherit the summary's heartbeat-based display fallback.
+	const startedAt = (run: AsyncRunSummary) => {
+		const job = trackedJobs.get(run.id);
+		return job ? job.startedAt ?? 0 : run.startedAt;
+	};
+	const byStartedAt = (left: AsyncRunSummary, right: AsyncRunSummary) => startedAt(left) - startedAt(right) || left.id.localeCompare(right.id);
 	const active = runs.filter((run) => run.state === "queued" || run.state === "running").sort(byStartedAt);
 	const terminal = runs.filter((run) => run.state !== "queued" && run.state !== "running").sort(byNewest);
 	return [...active, ...terminal.slice(0, terminalLimit)];
@@ -273,7 +278,7 @@ export function collectFleetSnapshot(
 		} else {
 			runs = trackedRuns;
 		}
-		for (const run of orderFleetAsyncRuns(runs, options.limit ?? MAX_RECENT_ASYNC_RUNS)) {
+		for (const run of orderFleetAsyncRuns(runs, options.limit ?? MAX_RECENT_ASYNC_RUNS, trackedJobs)) {
 			items.push(...asyncItems(run, descriptions.get(run.id)));
 		}
 	} catch (cause) {
