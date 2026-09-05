@@ -42,7 +42,10 @@ const statusPath = ${JSON.stringify(statusPath)};
 const reportPath = ${JSON.stringify(reportPath)};
 const children = [];
 const report = { samples: [], transitions: [], terminal: [] };
-process.once("exit", () => fs.writeFileSync(reportPath, JSON.stringify(report)));
+process.once("exit", () => {
+  fs.writeFileSync(reportPath + ".tmp", JSON.stringify(report));
+  fs.renameSync(reportPath + ".tmp", reportPath);
+});
 let writes = 0, bytes = 0, replayed = false, finished = false;
 const read = () => JSON.parse(fs.readFileSync(statusPath, "utf8"));
 const rename = fs.renameSync;
