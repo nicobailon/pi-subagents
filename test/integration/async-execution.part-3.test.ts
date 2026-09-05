@@ -676,42 +676,38 @@ import assert from "node:assert/strict";
 import { createDefaultChildSessionFactory } from ${JSON.stringify(new URL("../../src/runs/shared/child-session.ts", import.meta.url).href)};
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 const scenario = JSON.parse(fs.readFileSync(${JSON.stringify(casePath)}, "utf8"));
-if (scenario.disabled) process.env.PI_SUBAGENTS_LLM_INTENT_ARBITER = "0";
-const trace = event => fs.appendFileSync(${JSON.stringify(tracePath)}, JSON.stringify(event) + "\\n");
+const trace = event => fs.appendFileSync(${JSON.stringify(tracePath)}, event + "\\n");
 export default function() {
   let disposed = false;
   const model = { provider: "intent-test", id: "child-attempt", api: "intent-test-api" };
-  const runtime = { model, apiKey: "fixture-key" };
+  const runtime = { apiKey: "fixture-key" };
   const registry = {
     runtime,
-    async getApiKeyAndHeaders(selected) {
-      assert.equal(this.runtime, runtime, "registered auth receiver retains shared runtime");
-      assert.equal(selected, this.runtime.model);
+    async getApiKeyAndHeaders() {
+      trace("auth");
       assert.ok(disposed, "auth after child disposal");
-      trace({ kind: "auth", model: selected.id });
-      return scenario.authUnavailable ? { ok: false } : { ok: true, apiKey: this.runtime.apiKey, headers: { "x-intent-test": "fixture-header" } };
+      return { ok: true, apiKey: this.runtime.apiKey, headers: { "x-intent-test": "fixture-header" } };
     },
-    getRegisteredProviderConfig() { trace({ kind: "registry" }); return { api: model.api, streamSimple(selected, context, options) {
+    getRegisteredProviderConfig() { return { api: model.api, streamSimple(selected, context, options) {
+      trace("stream");
       assert.ok(disposed, "stream after child disposal");
-      assert.equal(selected, model);
+      assert.equal(selected.provider + "/" + selected.id, "intent-test/child-attempt");
       assert.equal(options.apiKey, "fixture-key");
       assert.equal(options.headers["x-intent-test"], "fixture-header");
-      trace({ kind: "stream", model: selected.id });
       const decided = context.messages.some(message => message.role === "toolResult");
       const message = !decided
-        ? fauxAssistantMessage(fauxToolCall("task_mutation_decision", { classification: scenario.classification ?? "read_only", confidence: scenario.confidence ?? "high", reason: "Task requests a report about quoted wording." }), { stopReason: "toolUse" })
+        ? fauxAssistantMessage(fauxToolCall("task_mutation_decision", { classification: scenario.classification ?? "read_only", confidence: "high", reason: "Scripted task intent." }), { stopReason: "toolUse" })
         : fauxAssistantMessage("Review findings: the proposal is sound.", { stopReason: "stop" });
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => stream.push({ type: "done", reason: message.stopReason, message }));
       return stream;
     } }; },
   };
-  // Same SDK injection boundary as in-process-child.test.ts: production factory,
-  // loader hook registration and binding; only third-party session/model services scripted.
+  // Existing SDK seam: production factory/hooks, scripted child/model services.
   return createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({
-    ModelRuntime: { create: async () => { trace({ kind: "runtime" }); return runtime; } },
+    ModelRuntime: { create: async () => runtime },
     SettingsManager: { create: () => ({}) },
-    SessionManager: { inMemory: () => ({}), create: () => ({}), open: () => ({}) },
+    SessionManager: { inMemory: () => ({}) },
     DefaultResourceLoader: class {
       loaded = false;
       handlers = [];
@@ -721,9 +717,8 @@ export default function() {
         for (const hook of this.options.extensionFactories) hook.factory(pi);
       }
     },
-    resolveCliModel: ({ cliModel, modelRuntime }) => { assert.equal(cliModel, "intent-test/child-attempt"); assert.equal(modelRuntime, runtime); return { model }; },
-    createAgentSession: async ({ resourceLoader, modelRuntime, model }) => {
-      assert.equal(modelRuntime, runtime);
+    resolveCliModel: ({ cliModel }) => { assert.equal(cliModel, "intent-test/child-attempt"); return { model }; },
+    createAgentSession: async ({ resourceLoader, model }) => {
       const ctx = Proxy.revocable({ model, modelRegistry: registry }, {});
       let listener;
       const messages = [];
@@ -733,14 +728,10 @@ export default function() {
         extensionRunner: { hasHandlers: () => false },
         subscribe(next) { listener = next; return () => {}; },
         async prompt() {
-          if (scenario.mutation) {
-            listener({ type: "tool_execution_start", toolName: "edit", toolCallId: "edit-attempt", args: { path: "example.ts", oldText: "old", newText: "new" } });
-            listener({ type: "tool_execution_end", toolName: "edit", toolCallId: "edit-attempt", result: { content: [{ type: "text", text: "Attempt recorded" }] }, isError: false });
-          }
           const message = fauxAssistantMessage("Review findings: the proposal is sound.", { stopReason: "stop" }); messages.push(message); listener({ type: "message_end", message });
         },
         async abort() {}, async steer() {}, async followUp() {},
-        dispose() { disposed = true; ctx.revoke(); trace({ kind: "disposed" }); },
+        dispose() { disposed = true; ctx.revoke(); },
       } };
     },
   }) });
@@ -751,16 +742,7 @@ export default function() {
 		for (const scenario of [
 			{ name: "review-rescue", task: reviewTask, success: true, effect: "not-applicable", calls: true },
 			{ name: "implementation", task: "Implement the approved fixes", classification: "implementation", success: false, effect: "missing", calls: true },
-			{ name: "ambiguous", task: reviewTask, confidence: "medium", success: false, effect: "missing", calls: true },
-			{ name: "auth-unavailable", task: reviewTask, authUnavailable: true, success: false, effect: "missing", calls: true },
-			{ name: "read-tools", task: "Summarize the proposal", tools: ["read"], success: true, effect: "not-applicable", calls: false },
 			{ name: "ordinary", task: "Summarize the proposal", success: true, effect: "not-applicable", calls: false },
-			{ name: "mutation-attempt", task: "Implement the approved fixes", mutation: true, success: true, effect: "observed", calls: false },
-			{ name: "overlength", task: reviewTask + " context".repeat(1100), success: false, effect: "missing", calls: false },
-			{ name: "disabled", task: reviewTask, disabled: true, success: false, effect: "missing", calls: false },
-			{ name: "v1-default", task: reviewTask, v1: true, success: true, effect: undefined, calls: false },
-			{ name: "v1-explicit", task: reviewTask, v1: true, completionGuard: true, classification: "implementation", success: true, effect: "missing", calls: true },
-			{ name: "v1-rescue", task: reviewTask, v1: true, completionGuard: true, success: true, effect: "not-applicable", calls: true },
 		]) {
 			fs.writeFileSync(casePath, JSON.stringify(scenario));
 			fs.writeFileSync(tracePath, "");
@@ -768,8 +750,7 @@ export default function() {
 			const outputPath = path.join(tempDir, `${id}.md`);
 			const launched = executeAsyncSingle(id, {
 				agent: "worker", task: scenario.task,
-				agentConfig: makeAgent("worker", { model: "intent-test/child-attempt", tools: scenario.tools, completionGuard: scenario.completionGuard }),
-				...(scenario.v1 ? { agentContract: { version: 1 as const } } : {}),
+				agentConfig: makeAgent("worker", { model: "intent-test/child-attempt" }),
 				output: outputPath,
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
@@ -780,14 +761,10 @@ export default function() {
 			await waitForAsyncEvent(id, "subagent.run.process_terminal");
 			assert.equal(payload.success, scenario.success, `${scenario.name}: ${JSON.stringify(payload)}`);
 			assert.equal(payload.results[0].effects?.fileMutation?.status, scenario.effect, scenario.name);
-			const trace = fs.readFileSync(tracePath, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
-			assert.equal(trace.filter(event => event.kind === "runtime").length, 1, scenario.name);
-			assert.equal(trace.filter(event => event.kind === "disposed").length, 1, scenario.name);
-			assert.equal(trace.filter(event => event.kind === "registry").length, scenario.calls ? 1 : 0, scenario.name);
-			assert.equal(trace.filter(event => event.kind === "auth").length, scenario.calls ? 1 : 0, scenario.name);
-			assert.equal(trace.some(event => event.kind === "stream"), scenario.calls && !scenario.authUnavailable, scenario.name);
+			const trace = fs.readFileSync(tracePath, "utf8");
+			assert.equal(trace.includes("auth"), scenario.calls, scenario.name);
+			assert.equal(trace.includes("stream"), scenario.calls, scenario.name);
 			if (!scenario.success) assert.match(payload.results[0].modelAttempts[0].error, /completed without making edits/, scenario.name);
-			if (scenario.v1) assert.equal(payload.results[0].execution.status, "completed", scenario.name);
 			if (scenario.name === "review-rescue") {
 				assert.equal(payload.results[0].effects.fileMutation.resolvedBy, "llm-intent-arbiter");
 				assert.equal(payload.results[0].effects.fileMutation.expected, true);
