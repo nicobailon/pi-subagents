@@ -8,7 +8,7 @@
 
 ### Changed
 
-- Document steer delivery modes and `scheduledRuns.storeRoot` in the bundled skill reference (`execution-controls.md`).
+- Document steer delivery modes and `scheduledRuns.storeRoot` in the bundled skill reference (`execution-controls.md`) (#1933). Thanks to [@G0-0000](https://github.com/G0-0000).
 
 ### Fixed
 - Wait for workflow-owned root result publication before declaring retained workflow resumes missing on Windows (#1906).
