@@ -246,7 +246,7 @@ test("declared read-only builtin tools suppress implementation-word false positi
 		agent: "architect",
 		task: "Produce a proposal that implements the approved fix",
 		messages: [assistantText("Proposal only")],
-		tools: ["read", "grep", "find", "ls"],
+		tools: ["read", "grep", "find", "ls", "web_search", "fetch_content", "get_search_content", "source_check"],
 	});
 
 	assert.deepEqual(result, {
