@@ -264,6 +264,7 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 	const {
 		override: _override,
 		description: _description,
+		advertise: _advertise,
 		output: _output,
 		outputMode: _outputMode,
 		defaultReads: _defaultReads,
@@ -301,6 +302,7 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 	return withDeclaredExtensionPaths({
 		...editable,
 		description,
+		...(base.advertise !== undefined ? { advertise: base.advertise } : {}),
 		...(base.output !== undefined ? { output: base.output } : {}),
 		...(base.outputMode !== undefined ? { outputMode: base.outputMode } : {}),
 		...(base.defaultReads !== undefined ? { defaultReads: [...base.defaultReads] } : {}),
@@ -348,6 +350,7 @@ export function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<
 	if (hasKey(cfg, "name")) changed("name");
 	if (hasKey(cfg, "package")) changed("package");
 	if (hasKey(cfg, "description")) changed("description");
+	if (hasKey(cfg, "advertise")) changed("advertise");
 	if (hasKey(cfg, "aliases")) changed("alias", "aliases");
 	if (hasKey(cfg, "systemPrompt")) changed("systemPrompt");
 	if (hasKey(cfg, "runner")) changed("runner");
@@ -415,6 +418,11 @@ function parseTools(raw: string): { tools?: string[]; mcpDirectTools?: string[] 
 }
 
 function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): string | undefined {
+	if (hasKey(cfg, "advertise")) {
+		if (cfg.advertise === "") delete target.advertise;
+		else if (typeof cfg.advertise === "boolean") target.advertise = cfg.advertise;
+		else return "config.advertise must be a boolean or empty string when provided.";
+	}
 	if (hasKey(cfg, "aliases")) {
 		if (cfg.aliases === false || cfg.aliases === "") delete target.aliases;
 		else if (typeof cfg.aliases === "string") {
@@ -800,6 +808,7 @@ function agentCapabilityRow(agent: AgentConfig, options: { executable: boolean; 
 	return {
 		name: agent.name,
 		description: previewDisplayText(agent.description, 1000),
+		...(agent.advertise !== undefined ? { advertise: agent.advertise } : {}),
 		source: agent.source,
 		executable: options.executable,
 		restrictionSources: options.executable ? undefined : options.restrictionSources ?? [],
@@ -928,6 +937,7 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.defaultTimeoutMs !== undefined) lines.push(`Timeout: ${agent.defaultTimeoutMs}ms`);
 	if (agent.defaultAcceptance !== undefined) lines.push(`Acceptance: ${typeof agent.defaultAcceptance === "object" ? JSON.stringify(agent.defaultAcceptance) : String(agent.defaultAcceptance)}`);
 	if (agent.acceptanceRole) lines.push(`Acceptance role: ${agent.acceptanceRole}`);
+	if (agent.advertise !== undefined) lines.push(`Advertise in parent prompt: ${agent.advertise ? "true" : "false"}`);
 	if (agent.source === "builtin") lines.push(`Disabled: ${agent.disabled ? "true" : "false"}`);
 	if (agent.extensions !== undefined) lines.push(`Extensions: ${agent.extensions.length ? agent.extensions.join(", ") : "(none)"}`);
 	if (agent.subagentOnlyExtensions !== undefined) lines.push(`Subagent-only extensions: ${agent.subagentOnlyExtensions.length ? agent.subagentOnlyExtensions.join(", ") : "(none)"}`);

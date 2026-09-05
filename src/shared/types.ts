@@ -1376,6 +1376,7 @@ export interface AgentCapabilitiesSnapshot {
 export interface AgentCapabilityRow {
 	name: string;
 	description: string;
+	advertise?: boolean;
 	source: "builtin" | "package" | "user" | "project" | "runtime";
 	executable: boolean;
 	restrictionSources?: string[];

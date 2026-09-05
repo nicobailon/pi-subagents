@@ -96,6 +96,7 @@ A minimal agent file looks like this:
 name: my-agent
 package: code-analysis
 description: What this agent does
+advertise: true
 aliases: developer, coder
 model: provider/model-id
 thinking: high
@@ -111,7 +112,7 @@ skillPath: ./skills, ../shared-skills
 Your system prompt here.
 ```
 
-That is only a starting point. Omit `package` for the traditional unqualified runtime name. Common optional fields include:
+That is only a starting point. Omit `package` for the traditional unqualified runtime name. Set `advertise: true` only when the parent should receive this agent's name and description before deciding whether to delegate; advertisement is off by default. Common optional fields include:
 - `defaultProgress`
 - `defaultReads`
 - `output`

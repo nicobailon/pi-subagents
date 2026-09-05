@@ -20,6 +20,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { keyText, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import { discoverAgentSnapshot, discoverAgents, type AgentConfig, type AgentScope } from "../agents/agents.ts";
+import { appendAdvertisedAgentPrompt, buildAdvertisedAgentPrompt } from "../agents/advertised-agent-prompt.ts";
 import { clearRuntimeAgentsForPi, listRuntimeAgentConfigs, mergeRuntimeAgents } from "../agents/runtime-agent-registry.ts";
 import { registerRuntimeAgentEventListener } from "../agents/runtime-agent-events.ts";
 import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
@@ -425,6 +426,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	cleanupOldChainDirs();
 
 	const config = loadConfig();
+	let advertisedAgentPromptError: string | undefined;
 	// Apply the process-wide exclusion TTL before any child launch can record a model failure.
 	applyModelExclusionsConfig(config);
 	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
@@ -777,6 +779,26 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 
 	pi.registerTool(tool);
+
+	pi.on("before_agent_start", (event, ctx) => {
+		if (event.systemPromptOptions.selectedTools && !event.systemPromptOptions.selectedTools.includes("subagent")) return;
+		try {
+			const sessionId = state.currentSessionId ?? resolveCurrentSessionId(ctx.sessionManager);
+			const capabilityCeiling = resolveCurrentSubagentCapabilityCeiling(sessionId);
+			const advertisedPrompt = buildAdvertisedAgentPrompt(
+				discoverAgentsForRuntime(ctx.cwd, "both", ctx.model?.provider).agents,
+				capabilityCeiling,
+			);
+			advertisedAgentPromptError = undefined;
+			if (!advertisedPrompt) return;
+			return { systemPrompt: appendAdvertisedAgentPrompt(event.systemPrompt, advertisedPrompt) };
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (message !== advertisedAgentPromptError) console.error(`[pi-subagents] Failed to build advertised agent prompt: ${message}`);
+			advertisedAgentPromptError = message;
+			return;
+		}
+	});
 
 	registerWaitTool(pi, state, waitToolConfig.enabled, waitSubscriptionManager, waitToolConfig.defaultTimeoutMs);
 
