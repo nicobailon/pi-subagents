@@ -246,7 +246,26 @@ test("declared read-only builtin tools suppress implementation-word false positi
 		agent: "architect",
 		task: "Produce a proposal that implements the approved fix",
 		messages: [assistantText("Proposal only")],
-		tools: ["read", "grep", "find", "ls"],
+		tools: ["read", "grep", "find", "ls", "web_search", "fetch_content", "get_search_content", "source_check"],
+	});
+
+	assert.deepEqual(result, {
+		expectedMutation: false,
+		attemptedMutation: false,
+		triggered: false,
+		blocked: false,
+	});
+});
+
+test("source_check remains read-only for implementation-classified tasks", () => {
+	const task = "Implement the approved fix";
+	assert.equal(expectsImplementationMutation("architect", task), true);
+
+	const result = evaluateCompletionMutationGuard({
+		agent: "architect",
+		task,
+		messages: [assistantText("Validation only")],
+		tools: ["source_check"],
 	});
 
 	assert.deepEqual(result, {

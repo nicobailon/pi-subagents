@@ -4,6 +4,7 @@
 
 ### Added
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
+- Give the researcher `source_check` for validating important claims. Thanks to [@Muskos](https://github.com/Muskos) for #1932.
 
 ### Fixed
 - Preserve retained predecessor lineage in string-ID workflow continuations and receipts (#1920).
