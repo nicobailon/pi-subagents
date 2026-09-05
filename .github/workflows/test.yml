@@ -21,6 +21,15 @@ jobs:
           node-version: 24
       - name: Install devDependencies
         run: npm ci --ignore-scripts
+      - name: Temporary Windows isolated control for issue 1906
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          NODE_DISABLE_COMPILE_CACHE: '1'
+        run: |
+          node -e 'console.log(JSON.stringify({node:process.version,platform:process.platform,arch:process.arch,commit:process.env.GITHUB_SHA,runnerOS:process.env.RUNNER_OS,runnerArch:process.env.RUNNER_ARCH,imageOS:process.env.ImageOS,imageVersion:process.env.ImageVersion}))'
+          Write-Output "Checkout commit: $(git rev-parse HEAD)"
+          node --experimental-strip-types --import ./test/support/register-loader.mjs --test --test-name-pattern='does not use shared-cwd sibling tracked edits as parallel completion-guard proof' test/integration/async-execution.part-3.test.ts
       - name: Typecheck
         run: npm run typecheck
       - name: Unit tests
