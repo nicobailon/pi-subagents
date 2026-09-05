@@ -251,7 +251,6 @@ function formatChildRun(child: { runId: string; workflowKey?: string; agent?: st
 function formatCorrelationLines(details: SubagentNotifyDetails): string[] {
 	return [
 		details.workflowRunId ? `Workflow run: ${details.workflowRunId}` : undefined,
-		details.workflowReceiptPath ? `Workflow receipt: ${details.workflowReceiptPath}` : undefined,
 		details.childRuns?.length ? `Child runs: ${details.childRuns.map(formatChildRun).join(", ")}` : undefined,
 		details.reconciledFromDetachedChild ? `Reconciled detached child: ${details.reconciledFromDetachedChild}` : undefined,
 	].filter((line): line is string => line !== undefined);
@@ -285,6 +284,7 @@ export function formatSingleCompletion(details: SubagentNotifyDetails): string {
 		: undefined;
 	return [
 		`${taskKind} ${details.status}: **${details.agent}**${details.taskInfo ?? ""}`,
+		details.workflowReceiptPath ? `Workflow receipt: ${details.workflowReceiptPath}` : undefined,
 		"",
 		scheduleLine,
 		scheduleLine ? "" : undefined,
@@ -305,7 +305,11 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 	const lines = content.split("\n");
 	const match = (lines[0] ?? "").match(/^(Background task|Detached foreground task) (completed|failed|paused|stopped): \*\*(.+?)\*\*(?:\s+(\([^)]*\)))?$/);
 	if (!match) return undefined;
-	let body = lines.slice(2);
+	// Only the header slot before the blank separator can carry a receipt.
+	// Identical lines anywhere in model output remain preview text.
+	const receiptHeader = lines[1]?.startsWith("Workflow receipt: ") && lines[2] === "";
+	const workflowReceiptPath = receiptHeader ? lines[1]!.slice("Workflow receipt: ".length) : undefined;
+	let body = lines.slice(receiptHeader ? 3 : 2);
 	// Restore the schedule origin so a re-rendered notice keeps its attribution and
 	// does not fold the line into the result preview.
 	const scheduleMatch = (body[0] ?? "").match(/^Scheduled run from \*\*(.+?)\*\* \(schedule (.+?)\)\.$/);
@@ -325,14 +329,12 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 	}
 	const sessionLine = sessionIndex >= 0 ? body[sessionIndex] : undefined;
 	const handoffIndex = body.findIndex((line) => line.startsWith("Parallel handoff: "));
-	const receiptIndex = body.findIndex((line) => line.startsWith("Workflow receipt: "));
-	const workflowReceiptPath = receiptIndex >= 0 ? body[receiptIndex]!.slice("Workflow receipt: ".length).trim() : undefined;
 	const workflowRunIndex = body.findIndex((line) => line.startsWith("Workflow run: "));
 	const childRunsIndex = body.findIndex((line) => line.startsWith("Child runs: "));
 	const reconciledIndex = body.findIndex((line) => line.startsWith("Reconciled detached child: "));
 	const watchdogIndex = body.findIndex((line) => line === WATCHDOG_BLOCKERS_HEADING);
 	const watchdogBlockers = watchdogIndex >= 0 ? parseWatchdogBlockerLines(body.slice(watchdogIndex + 1)) : [];
-	const metadataIndexes = [sessionIndex, handoffIndex, receiptIndex, workflowRunIndex, childRunsIndex, reconciledIndex, watchdogIndex].filter((index) => index >= 0);
+	const metadataIndexes = [sessionIndex, handoffIndex, workflowRunIndex, childRunsIndex, reconciledIndex, watchdogIndex].filter((index) => index >= 0);
 	const firstMetadataIndex = metadataIndexes.length ? Math.min(...metadataIndexes) : body.length;
 	const resultEnd = firstMetadataIndex > 0 && body[firstMetadataIndex - 1]?.trim() === "" ? firstMetadataIndex - 1 : firstMetadataIndex;
 	const resultPreview = body.slice(0, resultEnd).join("\n").trim() || "(no output)";
@@ -382,6 +384,7 @@ export function formatGroupedCompletion(details: SubagentNotifyDetails[]): strin
 		if (!detail) continue;
 		const sessionLine = formatSessionLine(detail);
 		blocks.push(`${index + 1}. ${detail.agent}${detail.taskInfo ?? ""}${detail.scheduleOrigin ? ` — scheduled run from ${detail.scheduleOrigin.name ?? detail.scheduleOrigin.id} (schedule ${detail.scheduleOrigin.id})` : ""}`);
+		if (detail.workflowReceiptPath) blocks.push(`Workflow receipt: ${detail.workflowReceiptPath}`);
 		blocks.push(formatResultPreview(detail));
 		blocks.push(...formatWatchdogBlockerLines(detail));
 		if (detail.handoffPath) blocks.push(`Parallel handoff: ${detail.handoffPath}`);
