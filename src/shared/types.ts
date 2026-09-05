@@ -2373,7 +2373,7 @@ export interface RunSyncOptions {
 	/** Internal foreground receipt proposal; returns true only when the outer waiter accepted it. */
 	onDetachReceipt?: (result: SingleResult) => boolean;
 	/** Authoritative terminal result, emitted only after the full detached run finalizes. */
-	onDetachedExit?: (result: SingleResult) => void;
+	onDetachedExit?: (result: SingleResult) => void | Promise<void>;
 	controlConfig?: ResolvedControlConfig;
 	intercomSessionName?: string;
 	orchestratorIntercomTarget?: string;

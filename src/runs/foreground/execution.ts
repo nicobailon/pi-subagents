@@ -2247,13 +2247,13 @@ export async function runSync(
 	});
 
 	let terminalCallbackInvoked = false;
-	void authoritativeCompletion.then((terminalResult) => {
+	void authoritativeCompletion.then(async (terminalResult) => {
 		if (!detachedReason || terminalCallbackInvoked) return;
 		terminalCallbackInvoked = true;
 		terminalResult.detached = undefined;
 		terminalResult.detachedReason = detachedReason;
 		try {
-			options.onDetachedExit?.(terminalResult);
+			await options.onDetachedExit?.(terminalResult);
 		} catch {
 			// The authoritative result has settled. Consumer callback failures are
 			// contained here; each consumer owns cleanup through its own finally block.

@@ -23,6 +23,9 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
+import { createServer, type Socket } from "node:net";
+import { once } from "node:events";
+import { SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
 import {
 	createTempDir,
 	createEventBus,
@@ -66,6 +69,118 @@ import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-
 
 describe("single sync execution", { skip: !available ? "pi packages not available" : undefined }, () => {
 	installSingleExecutionHooks();
+
+	for (const mode of ["abort", "attached", "detached"] as const) {
+		it(`foreground setup lifecycle: ${mode}`, { skip: !createSubagentExecutor || process.platform === "win32" ? "requires real POSIX setup hook" : undefined, timeout: 20_000 }, async () => {
+			execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+			execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+			execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+			fs.writeFileSync(path.join(tempDir, "base.txt"), "base\n");
+			execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
+			execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
+			const holdPath = path.join(tempDir, ".git", "hold-hook");
+			const releaseChild = path.join(tempDir, ".git", "release-child");
+			const launchMarker = path.join(tempDir, ".git", "model-launched.txt");
+			const server = createServer();
+			server.listen(0, "127.0.0.1");
+			await once(server, "listening");
+			const address = server.address() as { port: number };
+			const hook = path.join(tempDir, ".git", "setup-hook.cjs");
+			fs.writeFileSync(hook, `#!${process.execPath}\nconst fs = require('node:fs');
+if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
+ const socket = require('node:net').connect(${address.port}, '127.0.0.1', () => socket.write('ready'));
+ socket.on('data', data => { if (data.toString() === 'release') { socket.end(); console.log('{}'); } else socket.write('ack'); });
+ setTimeout(() => process.exit(90), 15000).unref();
+}\n`, { mode: 0o755 });
+			const baseDir = createTempDir();
+			const bus = createEventBus();
+			const executor = makeExecutor([makeAgent("worker", { systemPrompt: "Intercom orchestration channel:" })], { worktreeBaseDir: baseDir, worktreeSetupHook: hook }, false, { sessionId: "session-123", count: 0 }, true, new Map(), undefined, undefined, bus);
+			let notified = false;
+			let notify!: () => void;
+			const notification = new Promise<void>((resolve) => { notify = resolve; });
+			bus.on(SUBAGENT_FOREGROUND_COMPLETE_EVENT, () => { notified = true; notify(); });
+			const controller = new AbortController();
+			let socket: Socket | undefined;
+			let child: Promise<ExecutorToolResult> | undefined;
+			let setup: Promise<ExecutorToolResult> | undefined;
+			try {
+				let childSettled = false;
+				let childCompleted!: () => void;
+				const completed = new Promise<void>((resolve) => { childCompleted = resolve; });
+				if (mode !== "abort") {
+					let childReady!: () => void;
+					const ready = new Promise<void>((resolve) => { childReady = resolve; });
+					mockPi.onCall({ steps: [{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Ready" })] }, { waitForPath: releaseChild, jsonl: [events.assistantMessage("child A done")] }] });
+					child = executor.execute("lifecycle-A", { async: false, agent: "worker", task: "A", worktree: true, acceptance: false }, controller.signal, (update) => {
+						if (update.details?.progress?.some((entry) => entry.currentTool === "contact_supervisor")) childReady();
+						if (update.details?.progress?.some((entry) => entry.status === "completed")) childCompleted();
+					}, makeMinimalCtx(tempDir));
+					void child.then(() => { childSettled = true; });
+					await Promise.race([ready, child.then((result) => { throw new Error(`A returned before ready: ${JSON.stringify(result)}`); })]);
+					if (mode === "detached") {
+						bus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "lifecycle-detach" });
+						assert.equal((await child).details.results[0]?.detached, true);
+					}
+				}
+				fs.writeFileSync(holdPath, "hold");
+				const connection = once(server, "connection");
+				mockPi.onCall({ output: "child B done", writeFiles: [{ path: launchMarker, content: "launched" }] });
+				const otherOwner = makeExecutor([makeAgent("worker")], { worktreeBaseDir: baseDir, worktreeSetupHook: hook });
+				setup = otherOwner.execute("lifecycle-B", { async: false, agent: "worker", task: "B", worktree: true, acceptance: false }, controller.signal, undefined, makeMinimalCtx(tempDir));
+				[socket] = await Promise.race([connection, setup.then((result) => { throw new Error(`Setup returned before hook ready: ${JSON.stringify(result)}`); })]) as [Socket];
+				await once(socket, "data"); // Real hook ready; the owner serviced I/O while setup remains held.
+				if (mode === "abort") {
+					controller.abort();
+					const result = await setup;
+					assert.equal(result.isError, true);
+					assert.equal(mockPi.callCount(), 0);
+					assert.equal(fs.existsSync(launchMarker), false, "aborted setup must not reach child side effects");
+					assert.ok(result.details.parallelHandoff?.path, result.content[0]?.text);
+					const handoff = JSON.parse(fs.readFileSync(result.details.parallelHandoff.path, "utf8"));
+					const cleanup = handoff.groups[0].cleanup;
+					assert.equal(cleanup.state, "complete");
+					assert.equal(cleanup.tasks.length, 1);
+					assert.match(cleanup.errors.join("\n"), /"processTree":"observed"/);
+					for (const task of cleanup.tasks) {
+						assert.equal(task.worktreeRemoved, true);
+						assert.equal(task.branchRemoved, true);
+						assert.equal(fs.existsSync(task.path), false);
+						assert.equal(execFileSync("git", ["branch", "--list", task.branch], { cwd: tempDir, encoding: "utf8" }).trim(), "");
+					}
+				} else {
+					fs.writeFileSync(releaseChild, "release");
+					await completed;
+					const ack = once(socket, "data");
+					socket.write("ping");
+					await ack;
+					assert.equal(mode === "detached" ? notified : childSettled, false, "A must await finalization behind B setup");
+					socket.write("release");
+					const [a, b] = await Promise.all([child!, setup]);
+					if (mode === "detached") await notification;
+					assert.equal(fs.readFileSync(launchMarker, "utf8"), "launched");
+					for (const result of [a, b]) {
+						assert.equal(result.isError, undefined, result.content[0]?.text);
+						assert.ok(result.details.parallelHandoff?.path);
+						const handoff = JSON.parse(fs.readFileSync(result.details.parallelHandoff.path, "utf8"));
+						assert.equal(handoff.groups[0].cleanup.state, "complete");
+						for (const task of handoff.groups[0].cleanup.tasks) {
+							assert.equal(task.worktreeRemoved, true);
+							assert.equal(task.branchRemoved, true);
+							assert.equal(fs.existsSync(task.path), false);
+						}
+					}
+				}
+			} finally {
+				controller.abort();
+				fs.writeFileSync(releaseChild, "release");
+				socket?.end("release");
+				await Promise.allSettled([child, setup]);
+				socket?.destroy();
+				await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+				removeTempDir(baseDir);
+			}
+		});
+	}
 
 	it("keeps async workflows failed when a coordinated child is mixed with a real failure", { skip: !createSubagentExecutor ? "executor unavailable" : undefined }, async () => {
 		mockPi.onCall({
@@ -1140,7 +1255,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.writeFileSync(path.join(repo, "base.txt"), "base\n", "utf-8");
 		execFileSync("git", ["add", "base.txt"], { cwd: repo });
 		execFileSync("git", ["commit", "-m", "base"], { cwd: repo, stdio: "ignore" });
-		const setup = createWorktrees(repo, "action", 1, { baseDir });
+		const setup = await createWorktrees(repo, "action", 1, { baseDir });
 		const worktree = setup.worktrees[0]!;
 		const manifestPath = path.join(repo, ".pi", "subagents", "artifacts", "handoff.json");
 		const baseCommit = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf-8" }).trim();

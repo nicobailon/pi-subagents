@@ -9,11 +9,16 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { once } from "node:events";
+import { createServer, type Socket } from "node:net";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setChildSessionFactoryModule } from "../../src/runs/shared/child-session.ts";
-import { createEventBus, events, makeAgent, removeTempDir } from "../support/helpers.ts";
+import { createEventBus, createTempDir, events, makeAgent, removeTempDir } from "../support/helpers.ts";
+import { deliverInterruptRequest, deliverStopRequest } from "../../src/runs/background/control-channel.ts";
+import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../src/shared/types.ts";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
 import type { AsyncResultPayload, AsyncStatusPayload } from "../support/async-execution-fixture.ts";
 import {
@@ -153,6 +158,122 @@ export default function() {
 		assert.equal(report.terminal[0].state, "failed");
 		assert.deepEqual(report.terminal[1], report.terminal[0]);
 	});
+
+	for (const mode of ["success", "stop", "pause", "deadline", "failure-before-JSON"] as const) {
+		it(`background setup lifecycle: ${mode}`, { skip: !isAsyncAvailable() || process.platform === "win32" ? "requires real POSIX setup executable" : undefined, timeout: 25_000 }, async () => {
+			const repo = createRepo("pi-background-setup-");
+			const baseDir = createTempDir();
+			const id = `async-setup-${mode}-${Date.now().toString(36)}`;
+			const asyncDir = path.join(ASYNC_DIR, id);
+			const marker = path.join(repo, ".git", "child-launched");
+			const allocatorFailure = mode === "failure-before-JSON";
+			const oldPath = process.env.PATH;
+			const server = createServer();
+			server.listen(0, "127.0.0.1");
+			await once(server, "listening");
+			const { port } = server.address() as { port: number };
+			const hook = path.join(baseDir, allocatorFailure ? "wt" : "setup-hook.cjs");
+			fs.writeFileSync(hook, `#!${process.execPath}
+const args = process.argv.slice(2);
+if (args.includes('--version')) { console.log('wt v0.75.0'); process.exit(0); }
+if (args.includes('--help')) { console.log('--create --base --no-cd --no-hooks --format'); process.exit(0); }
+if (${allocatorFailure}) require('node:child_process').execFileSync('git', ['branch', args[args.indexOf('--create') + 1]], { cwd: ${JSON.stringify(repo)} });
+const socket = require('node:net').connect(${port}, '127.0.0.1', () => socket.write('ready'));
+socket.on('data', data => {
+ if (data.toString() === 'release') { socket.end(); if (${allocatorFailure}) process.exitCode = 1; else console.log('{}'); }
+});
+setTimeout(() => process.exit(90), 15000).unref();
+`, { mode: 0o755 });
+			if (allocatorFailure) process.env.PATH = `${baseDir}${path.delimiter}${oldPath}`;
+			const bus = createEventBus();
+			let closed = false;
+			const terminal = new Promise<unknown>((resolve) => bus.on(SUBAGENT_PROCESS_TERMINAL_EVENT, (proof) => { closed = true; resolve(proof); }));
+			let socket: Socket | undefined;
+			let started = false;
+			try {
+				mockPi.onCall({ output: "finite setup completed", writeFiles: [{ path: marker, content: "launched" }] });
+				const connection = once(server, "connection", { signal: AbortSignal.timeout(20_000) });
+				const receipt = executeAsyncChain(id, {
+					chain: [{ agent: "worker", task: "Do work", worktree: true }],
+					agents: [makeAgent("worker", { completionGuard: false })],
+					ctx: { pi: { events: bus }, cwd: repo, currentSessionId: "session-1" },
+					artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+					shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2, acceptance: false,
+					...(allocatorFailure ? { worktreeProvider: "worktrunk" } : { worktreeProvider: "native", worktreeBaseDir: path.join(baseDir, "trees"), worktreeSetupHook: hook }),
+					...(mode === "deadline" ? { timeoutMs: 4_000 } : {}),
+				});
+				assert.equal(receipt.isError, undefined, receipt.content[0]?.text);
+				started = true;
+				[socket] = await Promise.race([connection, terminal.then((proof) => { throw new Error(`Runner closed before setup ready: ${JSON.stringify(proof)}`); })]) as [Socket];
+				assert.equal((await once(socket, "data"))[0].toString(), "ready");
+				const held = await waitForAsyncState(id, (status) => Boolean(status.parallelHandoff));
+				assert.equal(closed, false);
+				assert.equal(mockPi.callCount(), 0);
+				assert.equal(fs.existsSync(marker), false);
+				if (mode === "stop") deliverStopRequest({ asyncDir, source: "test" });
+				else if (mode === "pause") deliverInterruptRequest({ asyncDir, source: "test" });
+				else if (mode !== "deadline") socket.write("release");
+				const payload = await readAsyncPayload(id);
+				const proof = await terminal;
+				const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"));
+				const expected = mode === "success" ? "complete" : mode === "stop" ? "stopped" : mode === "pause" ? "paused" : "failed";
+				assert.equal(payload.state, expected);
+				assert.equal(status.state, expected);
+				assert.equal(status.steps[0].status, expected);
+				assert.equal(payload.success, mode === "success");
+				assert.equal(mockPi.callCount(), mode === "success" ? 1 : 0);
+				assert.equal(fs.existsSync(marker), mode === "success");
+				assert.ok(held.parallelHandoff?.path);
+				const handoff = JSON.parse(fs.readFileSync(held.parallelHandoff.path, "utf8"));
+				const group = handoff.groups[0];
+				if (allocatorFailure) {
+					assert.equal(status.steps[0].worktreePath, undefined);
+					assert.equal(status.steps[0].branch, undefined);
+					assert.deepEqual(group.cleanup.tasks, []);
+					assert.deepEqual(group.children, []);
+					assert.equal(group.cleanup.state, "partial");
+					assert.equal(group.cleanup.pruned, false);
+					assert.match(group.cleanup.errors.join("\n"), /manual reconciliation required/);
+					const attempt = group.cleanup.errors.find((entry: string) => entry.startsWith("Allocation attempt "));
+					const evidence = JSON.parse(attempt.slice("Allocation attempt ".length));
+					assert.equal(evidence.path, null);
+					assert.equal(evidence.validated, false);
+					assert.equal(evidence.command.status, 1);
+					assert.equal(evidence.command.processTree, "unknown");
+					assert.equal(execFileSync("git", ["branch", "--list", evidence.branch], { cwd: repo, encoding: "utf8" }).trim(), evidence.branch);
+					const persisted = JSON.parse(fs.readFileSync(path.join(asyncDir, "process-terminal.json"), "utf8"));
+					assert.equal(persisted.state, "unknown");
+					assert.equal(persisted.reason, "process-tree-unverified");
+					assert.deepEqual(proof, persisted, "actual runner close must not promote setup unknown with zero child writers");
+					const candidate = JSON.parse(fs.readFileSync(path.join(asyncDir, "process-terminal-candidate.json"), "utf8"));
+					assert.deepEqual(Object.values(candidate.writers).flat(), []);
+					assert.deepEqual(Object.values(candidate.expectedWriters), [0]);
+				} else if (mode === "deadline") {
+					assert.equal(payload.timedOut, true);
+					assert.equal(status.timedOut, true);
+					assert.ok(payload.deadlineAt! <= Date.now());
+					assert.equal(group.cleanup.pruned, false);
+					assert.equal(group.cleanup.tasks[0].preserved, true);
+					assert.equal(fs.existsSync(group.cleanup.tasks[0].path), true);
+				} else {
+					assert.equal(group.cleanup.state, "complete");
+					assert.equal(group.cleanup.tasks.length, 1);
+					assert.equal(group.cleanup.tasks[0].worktreeRemoved, true);
+					assert.equal(group.cleanup.tasks[0].branchRemoved, true);
+					assert.equal(fs.existsSync(group.cleanup.tasks[0].path), false);
+					assert.equal(execFileSync("git", ["branch", "--list", group.cleanup.tasks[0].branch], { cwd: repo, encoding: "utf8" }).trim(), "");
+				}
+			} finally {
+				socket?.end("release");
+				if (started && !closed) { deliverStopRequest({ asyncDir, source: "test-cleanup" }); await terminal; }
+				socket?.destroy();
+				await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+				if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath;
+				removeTempDir(baseDir);
+				removeTempDir(repo);
+			}
+		});
+	}
 
 	it("does not start child work when initial async status cannot be written", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const id = `async-status-write-fail-${Date.now().toString(36)}`;

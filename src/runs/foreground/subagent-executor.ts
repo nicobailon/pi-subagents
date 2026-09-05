@@ -71,7 +71,7 @@ import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOut
 import { assertJsonSchemaObject, cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage, toAgentToolUsage } from "../../shared/utils.ts";
 import { createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
-import { discardPreservedWorktrees, formatParallelHandoffError, formatParallelHandoffReference, formatStoredParallelHandoffCleanup, parallelHandoffPath, readParallelHandoffManifest, recordParallelHandoffMerge, recordParallelHandoffSupersession, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
+import { discardPreservedWorktrees, formatParallelHandoffError, formatParallelHandoffReference, formatStoredParallelHandoffCleanup, parallelHandoffPath, readParallelHandoffManifest, recordParallelHandoffMerge, recordParallelHandoffSupersession, writeParallelHandoffGroup, writeWorktreeSetupHandoff } from "../shared/parallel-handoff.ts";
 import { summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
 import {
 	attachNestedChildrenToResultChildren,
@@ -135,6 +135,8 @@ import { resolveWorkflowResource } from "../../workflows/workflow-resources.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
+	withWorktreeTransaction,
+	type WorktreeSetupProgress,
 	diffWorktrees,
 	formatWorktreeDiffSummary,
 	type WorktreeSetup,
@@ -3346,7 +3348,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 	return null;
 }
 
-function createSingleWorktreeSetup(
+async function createSingleWorktreeSetup(
 	enabled: boolean | undefined,
 	cwd: string,
 	runId: string,
@@ -3359,12 +3361,14 @@ function createSingleWorktreeSetup(
 	branchPrefix: ExtensionConfig["worktreeBranchPrefix"],
 	label?: string,
 	task?: string,
-	beforeCreate?: (setup: WorktreeSetup) => void,
-): { setup?: WorktreeSetup; errorResult?: AgentToolResult<Details> } {
+	onProgress?: (snapshot: WorktreeSetupProgress) => void,
+	signal?: AbortSignal,
+	deadlineAt?: number,
+): Promise<{ setup?: WorktreeSetup; errorResult?: AgentToolResult<Details> }> {
 	if (!enabled) return {};
 	try {
 		return {
-			setup: createWorktrees(cwd, runId, 1, omitUndefinedProperties({
+			setup: await createWorktrees(cwd, runId, 1, omitUndefinedProperties({
 				agents: [agent],
 				setupHook: setupHook
 					? { hookPath: setupHook, ...(setupHookTimeoutMs === undefined ? {} : { timeoutMs: setupHookTimeoutMs }) }
@@ -3375,7 +3379,9 @@ function createSingleWorktreeSetup(
 				branchPrefix,
 				labels: [label],
 				tasks: [task],
-				beforeCreate,
+				onProgress,
+				signal,
+				deadlineAt,
 			})),
 		};
 	} catch (error) {
@@ -3594,7 +3600,7 @@ function prepareWorkflowChildLaunchParams(input: {
 	return prepareWorkflowLaunchParams(input.workflowDefaults, childParams, input.parentWorkflowRunId, input.workflowKey, { ...input.options, externalAsyncRequired, outputClaimPath: input.outputClaimPath });
 }
 
-function finalizeSingleWorktreeHandoff(input: {
+async function finalizeSingleWorktreeHandoff(input: {
 	worktreeSetup: WorktreeSetup;
 	artifactsDir: string;
 	runId: string;
@@ -3603,55 +3609,78 @@ function finalizeSingleWorktreeHandoff(input: {
 	result: SingleResult;
 	workflowKey?: string;
 	lane?: import("../../shared/types.ts").WorkflowLaneMetadata;
-}): { suffix: string; reference?: NonNullable<Details["parallelHandoff"]> } {
-	const diffsDir = path.join(input.artifactsDir, "worktree-diffs", input.runId);
-	const diffs = diffWorktrees(input.worktreeSetup, [input.agent], diffsDir);
-	const diffSummary = formatWorktreeDiffSummary(diffs);
-	const manifestPath = parallelHandoffPath(input.artifactsDir, input.runId);
-	const handoff = {
-		manifestPath,
-		runId: input.runId,
-		mode: "single" as const,
-		source: "foreground" as const,
-		cwd: input.cwd,
-		stepIndex: 0,
-		flatStartIndex: 0,
-		setup: input.worktreeSetup,
-		laneBindings: input.workflowKey || input.lane ? [{ index: 0, taskIndex: 0, ...(input.workflowKey ? { workflowKey: input.workflowKey } : {}), runId: input.workflowKey ? input.runId : undefined, ...(input.lane ? { lane: input.lane } : {}) }] : undefined,
-		diffs,
-		results: [{
-			agent: input.result.agent,
-			...(input.workflowKey ? { workflowKey: input.workflowKey } : {}),
-			...(input.workflowKey ? { runId: input.runId } : {}),
-			...(input.lane ? { lane: input.lane } : {}),
-			status: resolveSubagentResultStatus(omitUndefinedProperties({
-				exitCode: input.result.exitCode,
-				interrupted: input.result.interrupted,
-				detached: input.result.detached,
-				state: input.result.stopped ? "stopped" : undefined,
-				processSignal: input.result.processSignal,
-				timedOut: input.result.timedOut,
-				stopped: input.result.stopped,
-				turnBudgetExceeded: input.result.turnBudgetExceeded,
-			})),
-			summary: resultSummaryForIntercom(input.result),
-			...(input.result.artifactPaths?.outputPath ? { outputPath: input.result.artifactPaths.outputPath } : {}),
-			...(input.result.structuredOutput !== undefined ? { structuredOutput: input.result.structuredOutput } : {}),
-			...(input.result.structuredOutputPath ? { structuredOutputPath: input.result.structuredOutputPath } : {}),
-			...(input.result.sessionFile ? { sessionPath: input.result.sessionFile } : {}),
-		}],
-	};
+}): Promise<{ suffix: string; reference?: NonNullable<Details["parallelHandoff"]> }> {
+	let admitted = false;
 	try {
-		writeParallelHandoffGroup(handoff);
-		const cleanup = cleanupWorktrees(input.worktreeSetup, { kind: "preserve", capturedDiffs: diffs, handoffManifestPath: manifestPath });
-		const reference = writeParallelHandoffGroup({ ...handoff, cleanup });
-		return {
-			suffix: [diffSummary, formatParallelHandoffReference(reference)].filter(Boolean).join("\n\n"),
-			reference,
-		};
+		return await withWorktreeTransaction(() => {
+			admitted = true;
+			const diffsDir = path.join(input.artifactsDir, "worktree-diffs", input.runId);
+			const diffs = diffWorktrees(input.worktreeSetup, [input.agent], diffsDir);
+			const diffSummary = formatWorktreeDiffSummary(diffs);
+			const manifestPath = parallelHandoffPath(input.artifactsDir, input.runId);
+			const handoff = {
+				manifestPath,
+				runId: input.runId,
+				mode: "single" as const,
+				source: "foreground" as const,
+				cwd: input.cwd,
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: input.worktreeSetup,
+				laneBindings: input.workflowKey || input.lane ? [{ index: 0, taskIndex: 0, ...(input.workflowKey ? { workflowKey: input.workflowKey } : {}), runId: input.workflowKey ? input.runId : undefined, ...(input.lane ? { lane: input.lane } : {}) }] : undefined,
+				diffs,
+				results: [{
+					agent: input.result.agent,
+					...(input.workflowKey ? { workflowKey: input.workflowKey } : {}),
+					...(input.workflowKey ? { runId: input.runId } : {}),
+					...(input.lane ? { lane: input.lane } : {}),
+					status: resolveSubagentResultStatus(omitUndefinedProperties({
+						exitCode: input.result.exitCode,
+						interrupted: input.result.interrupted,
+						detached: input.result.detached,
+						state: input.result.stopped ? "stopped" : undefined,
+						processSignal: input.result.processSignal,
+						timedOut: input.result.timedOut,
+						stopped: input.result.stopped,
+						turnBudgetExceeded: input.result.turnBudgetExceeded,
+					})),
+					summary: resultSummaryForIntercom(input.result),
+					...(input.result.artifactPaths?.outputPath ? { outputPath: input.result.artifactPaths.outputPath } : {}),
+					...(input.result.structuredOutput !== undefined ? { structuredOutput: input.result.structuredOutput } : {}),
+					...(input.result.structuredOutputPath ? { structuredOutputPath: input.result.structuredOutputPath } : {}),
+					...(input.result.sessionFile ? { sessionPath: input.result.sessionFile } : {}),
+				}],
+			};
+			try {
+				writeParallelHandoffGroup(handoff);
+				const cleanup = cleanupWorktrees(input.worktreeSetup, { kind: "preserve", capturedDiffs: diffs, handoffManifestPath: manifestPath });
+				const reference = writeParallelHandoffGroup({ ...handoff, cleanup });
+				return {
+					suffix: [diffSummary, formatParallelHandoffReference(reference)].filter(Boolean).join("\n\n"),
+					reference,
+				};
+			} catch (error) {
+				return { suffix: [diffSummary, formatParallelHandoffError(error)].filter(Boolean).join("\n\n") };
+			}
+		});
 	} catch (error) {
-		return { suffix: [diffSummary, formatParallelHandoffError(error)].filter(Boolean).join("\n\n") };
+		if (admitted) throw error;
+		const reference = retainSingleWorktreeHandoff(input, error);
+		return { suffix: `${formatParallelHandoffError(error)}\n\n${formatParallelHandoffReference(reference)}`, reference };
 	}
+}
+
+function retainSingleWorktreeHandoff(input: { worktreeSetup: WorktreeSetup; artifactsDir: string; runId: string; cwd: string }, error: unknown): NonNullable<Details["parallelHandoff"]> {
+	const reason = `Worktree finalization retained; manual reconciliation required: ${error instanceof Error ? error.message : String(error)}`;
+	return writeParallelHandoffGroup({
+		manifestPath: parallelHandoffPath(input.artifactsDir, input.runId), runId: input.runId,
+		mode: "single", source: "foreground", cwd: input.cwd, stepIndex: 0, flatStartIndex: 0,
+		setup: input.worktreeSetup, diffs: [], results: [],
+		cleanup: { state: "partial", pruned: false, errors: [reason], tasks: input.worktreeSetup.worktrees.map((worktree) => ({
+			index: worktree.index, path: worktree.path, branch: worktree.branch, provider: worktree.provider, naming: worktree.naming,
+			worktreeRemoved: false, branchRemoved: false, preserved: true, reason,
+		})) },
+	});
 }
 
 async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Promise<AgentToolResult<Details>> {
@@ -3732,7 +3761,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 
 	const sourceCwd = effectiveCwd;
 	let pendingHandoff: Details["parallelHandoff"];
-	const { setup: worktreeSetup, errorResult: worktreeSetupError } = createSingleWorktreeSetup(
+	const { setup: worktreeSetup, errorResult: worktreeSetupError } = params.worktree ? await createSingleWorktreeSetup(
 		params.worktree,
 		sourceCwd,
 		runId,
@@ -3745,8 +3774,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		deps.config.worktreeBranchPrefix,
 		params.lane?.key ?? params.workflowKey,
 		task,
-		(plannedSetup) => {
-			pendingHandoff = writePendingParallelHandoff({
+		(progress) => {
+			pendingHandoff = writeWorktreeSetupHandoff({
 				manifestPath: parallelHandoffPath(artifactsDir, runId),
 				runId,
 				mode: "single",
@@ -3754,13 +3783,42 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				cwd: sourceCwd,
 				stepIndex: 0,
 				flatStartIndex: 0,
-				setup: plannedSetup,
+				progress,
 				laneBindings: params.workflowKey || lane ? [{ index: 0, taskIndex: 0, ...(params.workflowKey ? { workflowKey: params.workflowKey, runId } : {}), ...(lane ? { lane } : {}) }] : undefined,
 			});
 		},
-	);
-	if (worktreeSetupError) return worktreeSetupError;
+		signal,
+		data.deadlineAt,
+	) : {};
+	if (worktreeSetupError) {
+		if (pendingHandoff) {
+			worktreeSetupError.details!.parallelHandoff = pendingHandoff;
+			worktreeSetupError.content.push({ type: "text", text: formatParallelHandoffReference(pendingHandoff) });
+		}
+		return worktreeSetupError;
+	}
 	const singleCwd = worktreeSetup?.worktrees[0]?.agentCwd ?? sourceCwd;
+	const cleanupSingleWorktree = async () => {
+		if (!worktreeSetup) return;
+		let admitted = false;
+		try { await withWorktreeTransaction(() => {
+			if (data.deadlineAt !== undefined && Date.now() >= data.deadlineAt) throw new Error("Run deadline expired before unlaunched worktree cleanup");
+			admitted = true;
+			const cleanup = cleanupWorktrees(worktreeSetup);
+			pendingHandoff = writeParallelHandoffGroup({
+				manifestPath: parallelHandoffPath(artifactsDir, runId), runId, mode: "single", source: "foreground",
+				cwd: sourceCwd, stepIndex: 0, flatStartIndex: 0, setup: worktreeSetup, diffs: [], results: [], cleanup,
+			});
+		}); }
+		catch (error) {
+			if (admitted) throw error;
+			pendingHandoff = retainSingleWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: sourceCwd }, error);
+		}
+	};
+	if (worktreeSetup && (signal?.aborted || (data.deadlineAt !== undefined && Date.now() >= data.deadlineAt))) {
+		await cleanupSingleWorktree();
+		return { content: [{ type: "text", text: "Subagent setup canceled before child launch." }], isError: true, details: { mode: "single", results: [], parallelHandoff: pendingHandoff } };
+	}
 
 	const authoredTask = task;
 	if (shouldForkAgent(contextPolicy, params.agent!)) {
@@ -3770,8 +3828,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, singleCwd, resolveSingleRunOutputBaseDir(deps, artifactsDir, runId));
 	const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
 	if (validationError) {
-		if (worktreeSetup) cleanupWorktrees(worktreeSetup);
-		return { content: [{ type: "text", text: validationError }], isError: true, details: { mode: "single", results: [] } };
+		await cleanupSingleWorktree();
+		return { content: [{ type: "text", text: validationError }], isError: true, details: { mode: "single", results: [], parallelHandoff: pendingHandoff } };
 	}
 	const structuredRuntime = params.outputSchema
 		? createStructuredOutputRuntime(params.outputSchema, artifactConfig.enabled ? path.join(artifactsDir, "structured-output", runId) : undefined, { acceptanceReport: resolveAcceptanceReportMode(params.acceptance) })
@@ -3904,14 +3962,14 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			onDetachReady: (detach) => {
 				detachForeground = detach;
 			},
-			onDetachedExit: (result) => {
+			onDetachedExit: async (result) => {
 				if (resolveDetachedWorkflowChild) {
 					resolveDetachedWorkflowChild(result);
 					return;
 				}
 				try {
 					if (worktreeSetup) {
-						finalizeSingleWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: sourceCwd, agent: params.agent!, result, workflowKey: params.workflowKey, lane });
+						await finalizeSingleWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: sourceCwd, agent: params.agent!, result, workflowKey: params.workflowKey, lane });
 					}
 					try {
 						updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events, notify: true });
@@ -3952,7 +4010,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		}));
 		r = launched.detached && detachedWorkflowChild ? await detachedWorkflowChild : launched;
 	} catch (error) {
-		if (worktreeSetup) cleanupWorktrees(worktreeSetup);
+		await cleanupSingleWorktree();
 		throw error;
 	} finally {
 		// An attached runSync rejection still owns its child and structured runtime.
@@ -3967,11 +4025,11 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0, r);
 	}
 
-	let worktreeHandoff: ReturnType<typeof finalizeSingleWorktreeHandoff> | undefined;
+	let worktreeHandoff: Awaited<ReturnType<typeof finalizeSingleWorktreeHandoff>> | undefined;
 	if (worktreeSetup) {
 		worktreeHandoff = r.detached
 			? { suffix: pendingHandoff ? formatParallelHandoffReference(pendingHandoff) : "", reference: pendingHandoff }
-			: finalizeSingleWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: sourceCwd, agent: params.agent!, result: r, workflowKey: params.workflowKey, lane });
+			: await finalizeSingleWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: sourceCwd, agent: params.agent!, result: r, workflowKey: params.workflowKey, lane });
 	}
 
 	if (r.progress) allProgress.push(r.progress);
@@ -5751,10 +5809,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 				if (!confirmed) return { content: [{ type: "text", text: "Worktree discard canceled; preserved worktrees were not changed." }], details: { mode: "management", results: [] } };
 				try {
-					const discarded = discardPreservedWorktrees(
-						path.isAbsolute(paramsWithResolvedCwd.handoffPath) ? paramsWithResolvedCwd.handoffPath : path.resolve(requestCwd, paramsWithResolvedCwd.handoffPath),
+					const manifestPath = path.isAbsolute(paramsWithResolvedCwd.handoffPath) ? paramsWithResolvedCwd.handoffPath : path.resolve(requestCwd, paramsWithResolvedCwd.handoffPath);
+					const discarded = await withWorktreeTransaction(() => discardPreservedWorktrees(
+						manifestPath,
 						{ kind: decision === "confirm" ? "confirmed" : "policy", ...(deps.config.authorityPolicy ? { policy: deps.config.authorityPolicy } : {}) },
-					);
+					));
 					return { content: [{ type: "text", text: discarded.text }], details: { mode: "management", results: [] } };
 				} catch (error) {
 					return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };

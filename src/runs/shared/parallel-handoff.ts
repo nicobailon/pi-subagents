@@ -17,6 +17,7 @@ import type {
 	WorktreeCleanupReport,
 	WorktreeDiff,
 	WorktreeSetup,
+	WorktreeSetupProgress,
 	WorktreeCleanupIntent,
 } from "./worktree.ts";
 import { cleanupWorktrees } from "./worktree.ts";
@@ -612,6 +613,64 @@ export function writeParallelHandoffGroup(input: {
 
 export function parallelHandoffPath(baseDir: string, runId?: string): string {
 	return runId ? path.join(baseDir, "handoffs", `${runId}.json`) : path.join(baseDir, "handoff.json");
+}
+
+/** Synchronous onProgress projection shared by setup owners; snapshots are cumulative. */
+export function writeWorktreeSetupHandoff(input: Omit<Parameters<typeof writePendingParallelHandoff>[0], "setup"> & {
+	progress: WorktreeSetupProgress;
+}): ParallelHandoffReference | undefined {
+	const { progress, ...handoff } = input;
+	const { setup, attempts, cleanup } = progress;
+	// Preflight has no allocation identity yet. Its original error belongs to the caller.
+	if (attempts.length === 0 && setup.worktrees.length === 0) return undefined;
+	if (!setup.cwd || !setup.baseCommit) throw new Error("Cannot publish worktree allocation evidence without repository and base commit.");
+	const diagnostic = (text: string): string => text.slice(0, 512);
+	// Never copy argv, environment, Error objects or captured stdout/stderr into artifacts.
+	const commandEvidence = (command: WorktreeSetupProgress["command"]) => command && ({
+		pid: command.pid,
+		processGroupId: command.processGroupId,
+		...(command.result ? {
+			status: command.result.status,
+			signal: command.result.signal,
+			failed: Boolean(command.result.error),
+			outputIncomplete: command.result.outputIncomplete,
+			processTree: command.result.processTree?.state,
+		} : {}),
+	});
+	const errors = [
+		`Worktree setup ${JSON.stringify({ runId: input.runId, stepIndex: input.stepIndex, phase: progress.phase,
+			unknown: Boolean(progress.unknown), command: commandEvidence(progress.command) })}`,
+		...attempts.map((attempt) => {
+			const task = cleanup?.tasks.find((candidate) => candidate.index === attempt.index);
+			return `Allocation attempt ${JSON.stringify({ index: attempt.index, branch: attempt.branch,
+				path: attempt.path ?? null, validated: attempt.validated,
+				command: commandEvidence(attempt.command), hookCommand: commandEvidence(attempt.hookCommand),
+				...(task ? { worktreeRemoved: task.worktreeRemoved, branchRemoved: task.branchRemoved,
+					preserved: task.preserved, reason: task.reason && diagnostic(task.reason), errors: task.errors?.map(diagnostic) } : {}),
+			})}`;
+		}),
+		...(cleanup?.errors?.map(diagnostic) ?? []),
+		...(progress.unknown ? ["Setup settlement unknown; manual reconciliation required."] : []),
+	];
+	return writeParallelHandoffGroup({
+		...handoff, setup, diffs: [], results: [],
+		laneBindings: input.laneBindings?.filter((binding) => setup.worktrees.some((worktree) => worktree.index === binding.taskIndex)),
+		cleanup: {
+			state: cleanup?.state ?? "partial",
+			pruned: cleanup?.pruned ?? false,
+			errors,
+			// An attempted native path is not a validated recovery task, even during rollback.
+			tasks: setup.worktrees.map((worktree) => {
+				const task = cleanup?.tasks.find((candidate) => candidate.index === worktree.index);
+				return task ? { ...task, reason: task.reason && diagnostic(task.reason), errors: task.errors?.map(diagnostic) } : {
+					index: worktree.index, path: worktree.path, branch: worktree.branch,
+					provider: worktree.provider, naming: worktree.naming,
+					worktreeRemoved: false, branchRemoved: false, preserved: true,
+					reason: "setup pending durable handoff capture",
+				};
+			}),
+		},
+	});
 }
 
 export function writePendingParallelHandoff(input: {

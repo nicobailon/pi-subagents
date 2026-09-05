@@ -381,6 +381,8 @@ Use `baseRef` to branch managed worktrees from a named commit or branch instead 
 
 Configure the worktree provider, native path layout, base directory, and setup hook in [configuration.md](configuration.md).
 
+Setup waits remain nonblocking and cancellable. Normal cleanup, including detached foreground finalization, waits for the same in-process setup turn rather than retaining worktrees merely because another setup is active. This is not a cross-process lock. Hooks must follow the [finite setup contract](configuration.md#worktreesetuphook).
+
 ### Lane metadata lifecycle
 
 Workflow children may declare a bounded `lane` object (`version`, `key`, optional
@@ -402,11 +404,13 @@ Older runs without lane metadata remain readable and retain their existing
 handoff/cleanup behavior. Missing lane, receipt, or handoff metadata is
 unknown—not eligible for destructive cleanup.
 
-For managed worktree launches, the runner writes the pending handoff and the
-display-only status path/branch from the deterministic setup plan before the
-first `git worktree add`. If setup then fails or is interrupted, that pending
-ownership record remains preserved evidence; cleanup still rechecks the actual
-worktree state before any removal.
+Managed setup records actual allocation attempts in the handoff; only validated
+allocations become cleanup tasks and display-only status paths/branches. On
+cancellation or failure with unknown settlement, it retains actual/attempted
+ownership evidence and artifacts for manual reconciliation, blocking further
+unsafe setup and cleanup in that process. An allocator interrupted before
+reporting its path may leave branch-only diagnostics, never an invented path.
+Inspect the handoff before reconciliation; cleanup still requires fresh checks.
 
 ## Supervisor coordination (child asks parent)
 
