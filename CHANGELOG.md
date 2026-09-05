@@ -5,6 +5,10 @@
 ### Added
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
 
+### Changed
+
+- Document steer delivery modes and `scheduledRuns.storeRoot` in the bundled skill reference (`execution-controls.md`) (#1933). Thanks to [@G0-0000](https://github.com/G0-0000).
+
 ### Fixed
 - Fix background launches on stable Pi 0.85.1 without experimental packages, retaining Pi 0.85.0 support (#1944). Thanks to [@geril07](https://github.com/geril07).
 - Preserve retained predecessor lineage in string-ID workflow continuations and receipts (#1920).
