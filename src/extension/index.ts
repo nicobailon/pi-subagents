@@ -426,7 +426,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	cleanupOldChainDirs();
 
 	const config = loadConfig();
-	let advertisedAgentPromptError: string | undefined;
 	// Apply the process-wide exclusion TTL before any child launch can record a model failure.
 	applyModelExclusionsConfig(config);
 	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
@@ -782,22 +781,14 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.on("before_agent_start", (event, ctx) => {
 		if (event.systemPromptOptions.selectedTools && !event.systemPromptOptions.selectedTools.includes("subagent")) return;
-		try {
-			const sessionId = state.currentSessionId ?? resolveCurrentSessionId(ctx.sessionManager);
-			const capabilityCeiling = resolveCurrentSubagentCapabilityCeiling(sessionId);
-			const advertisedPrompt = buildAdvertisedAgentPrompt(
-				discoverAgentsForRuntime(ctx.cwd, "both", ctx.model?.provider).agents,
-				capabilityCeiling,
-			);
-			advertisedAgentPromptError = undefined;
-			if (!advertisedPrompt) return;
-			return { systemPrompt: appendAdvertisedAgentPrompt(event.systemPrompt, advertisedPrompt) };
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			if (message !== advertisedAgentPromptError) console.error(`[pi-subagents] Failed to build advertised agent prompt: ${message}`);
-			advertisedAgentPromptError = message;
-			return;
-		}
+		const sessionId = state.currentSessionId ?? resolveCurrentSessionId(ctx.sessionManager);
+		const capabilityCeiling = resolveCurrentSubagentCapabilityCeiling(sessionId);
+		const advertisedPrompt = buildAdvertisedAgentPrompt(
+			discoverAgentsForRuntime(ctx.cwd, "both", ctx.model?.provider).agents,
+			capabilityCeiling,
+		);
+		if (!advertisedPrompt) return;
+		return { systemPrompt: appendAdvertisedAgentPrompt(event.systemPrompt, advertisedPrompt) };
 	});
 
 	registerWaitTool(pi, state, waitToolConfig.enabled, waitSubscriptionManager, waitToolConfig.defaultTimeoutMs);
