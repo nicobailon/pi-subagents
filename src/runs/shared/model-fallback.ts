@@ -537,6 +537,7 @@ export function buildModelCandidates(
 }
 
 const RETRYABLE_MODEL_FAILURE_PATTERNS = [
+	/^REQUEST_LIMIT_EXCEEDED$/,
 	/rate\s*limit/i,
 	/usage\s*limit/i,
 	/too many requests/i,
@@ -609,7 +610,7 @@ export function isRetryableModelFailureAttempt(input: { error: string | undefine
 }
 
 export function recordRetryableModelFailure(model: string | undefined, error: string | undefined): void {
-	if (!model || !isRetryableModelFailure(error)) return;
+	if (!model || !isRetryableModelFailure(error) || isContextOverflow(error)) return;
 	const { provider, modelId } = parseModelKey(model);
 	recordModelFailure({ modelId, reason: error, ...(provider ? { provider } : {}) });
 }

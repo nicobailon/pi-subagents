@@ -13,7 +13,7 @@ import {
 	resolveModelCandidate,
 	resolveSubagentModelOverride,
 } from "../../src/runs/shared/model-fallback.ts";
-import { clearExclusions, recordModelFailure } from "../../src/runs/shared/model-exclusions.ts";
+import { clearExclusions, findModelExclusion, getExcludedCount, recordModelFailure } from "../../src/runs/shared/model-exclusions.ts";
 import { resolveModelScopesForAgent } from "../../src/runs/shared/model-scope.ts";
 
 beforeEach(() => clearExclusions());
@@ -202,6 +202,27 @@ describe("model fallback helpers", () => {
 			buildModelCandidates("gpt-5-mini", ["anthropic/claude-sonnet-4"], availableModels),
 			["openai/gpt-5-mini", "anthropic/claude-sonnet-4"],
 		);
+	});
+
+	it("does not cache context overflow even when upstream makes it retryable", () => {
+		const error = "upstream: maximum context length exceeded";
+		assert.equal(isRetryableModelFailure(error), true);
+		assert.equal(isContextOverflow(error), true);
+		recordRetryableModelFailure("openai/gpt-5-mini", error);
+		assert.equal(getExcludedCount(), 0);
+	});
+
+	it("still caches raw request limits and per-minute input-token rate quotas", () => {
+		for (const error of [
+			"REQUEST_LIMIT_EXCEEDED",
+			'{"error_code":"REQUEST_LIMIT_EXCEEDED","message":"REQUEST_LIMIT_EXCEEDED: Exceeded workspace input tokens per minute rate limit for <model>."}',
+		]) {
+			clearExclusions();
+			assert.equal(isContextOverflow(error), false);
+			recordRetryableModelFailure("openai/gpt-5-mini", error);
+			assert.equal(findModelExclusion("gpt-5-mini", "openai")?.reason, error);
+			assert.equal(getExcludedCount(), 1);
+		}
 	});
 
 	it("applies the current provider preference to fallback candidates too", () => {
@@ -449,6 +470,25 @@ describe("model fallback helpers", () => {
 		assert.equal(isRetryableModelFailure("bash failed (exit 1): command not found"), false);
 		assert.equal(isRetryableModelFailure("read failed (exit 1): no such file or directory"), false);
 		assert.equal(isRetryableModelFailure(undefined), false);
+	});
+
+	it("recognizes only the exact raw request-limit code without broadening limit families", () => {
+		assert.equal(isRetryableModelFailure("REQUEST_LIMIT_EXCEEDED"), true);
+		for (const error of ["TOKEN_LIMIT_EXCEEDED", "INPUT_LIMIT_EXCEEDED", "OUTPUT_LIMIT_EXCEEDED", "RESOURCE_EXHAUSTED", "NOT_REQUEST_LIMIT_EXCEEDED", "REQUEST_LIMIT_EXCEEDED_OTHER", "400"]) {
+			assert.equal(isRetryableModelFailure(error), false, error);
+		}
+	});
+
+	it("preserves attempt and tool-failure guards for request-limit errors", () => {
+		const error = "REQUEST_LIMIT_EXCEEDED";
+		assert.equal(isRetryableModelFailureAttempt({ error, messages: [], toolCount: 0 }), true);
+		assert.equal(isRetryableModelFailureAttempt({ error, messages: [{ errorMessage: error }], toolCount: 0 }), true);
+		assert.equal(isRetryableModelFailureAttempt({ error, messages: [{ errorMessage: "different error" }], toolCount: 0 }), false);
+		assert.equal(isRetryableModelFailureAttempt({ error, messages: [{ errorMessage: error }], toolCount: 1 }), false);
+		const toolError = `bash failed (exit 1): ${error}`;
+		assert.equal(isRetryableModelFailure(toolError), false);
+		recordRetryableModelFailure("openai/gpt-5-mini", toolError);
+		assert.equal(getExcludedCount(), 0);
 	});
 
 	it("does not treat network-flavored tool failures as retryable model failures", () => {
