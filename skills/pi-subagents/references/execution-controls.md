@@ -331,7 +331,7 @@ Steering supports three delivery modes via the `mode` parameter (`steer` is the 
 
 - `mode: "steer"` — interrupt the child at the next safe point of its current turn and deliver the message.
 - `mode: "follow_up"` — do not interrupt; append to a bounded FIFO queue delivered at the next turn boundary. Completed retained children (single-step runs in state `complete`) receive the message as a revival brief (`queueRevivalBrief`) when they are revived; paused children reject follow-up steering outright.
-- `mode: "auto"` — deliver immediately when the child is between turns; otherwise queue it as `follow_up` would.
+- `mode: "auto"` — same next-safe-point delivery path as `steer`, but without the automatic pause-and-revive recovery after a missed acknowledgment.
 
 ```typescript
 subagent({ action: "steer", id: "abc123", mode: "follow_up", message: "After this step, also validate the config file." })
