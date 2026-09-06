@@ -30,10 +30,15 @@ describe("model fallback helpers", () => {
 	});
 
 	it("fails verification when the child reports an unregistered different model", () => {
-		assert.match(
-			formatSubagentModelVerificationError("openai/gpt-5-mini:high", "unknown-provider/wrong-model", availableModels) ?? "",
-			/model_verification_failed/,
-		);
+		const error = formatSubagentModelVerificationError("openai/gpt-5-mini:high", "unknown-provider/wrong-model", availableModels) ?? "";
+		assert.match(error, /model_verification_failed: native Pi child/);
+		assert.match(error, /Expected 'openai\/gpt-5-mini:high' but observed 'unknown-provider\/wrong-model'/);
+		assert.match(error, /independently verified/);
+		assert.match(error, /modelResponseAliases in ~\/\.pi\/agent\/extensions\/subagent\/config\.json/);
+		assert.match(error, /docs\/configuration\.md#modelresponsealiases/);
+		assert.match(error, /resolved provider\/model ID without its thinking suffix/);
+		assert.match(error, /outgoing request unchanged/);
+		assert.match(error, /new independent native runs, not resumed runs or external CLI adapters/);
 	});
 
 	it("accepts child-reported bare model ids for the expected registry entry", () => {
@@ -87,20 +92,21 @@ describe("model fallback helpers", () => {
 	});
 
 	it("accepts exact response aliases only for the resolved candidate route", () => {
-		const route = "databricks-bedrock/ias-claude-opus-5";
-		const registry = [{ provider: "databricks-bedrock", id: "ias-claude-opus-5", fullId: route }];
-		const aliases = { [route]: ["claude-opus-5"] };
-		const candidate = resolveModelCandidate("ias-claude-opus-5:high", registry)!;
+		const route = "litellm/claude-haiku-4-5";
+		const responseId = "anthropic.claude-haiku-4-5-20251001-v1:0";
+		const registry = [{ provider: "litellm", id: "claude-haiku-4-5", fullId: route }];
+		const aliases = { [route]: [responseId] };
+		const candidate = resolveModelCandidate("claude-haiku-4-5:high", registry)!;
 		assert.equal(candidate, `${route}:high`);
-		assert.equal(formatSubagentModelVerificationError(candidate, "claude-opus-5", registry, aliases), undefined);
-		for (const expected of ["other-provider/ias-claude-opus-5", "databricks-bedrock/other-route", "ias-claude-opus-5"]) {
-			assert.match(formatSubagentModelVerificationError(expected, "claude-opus-5", registry, aliases) ?? "", /model_verification_failed/);
+		assert.equal(formatSubagentModelVerificationError(candidate, responseId, registry, aliases), undefined);
+		for (const expected of ["other-provider/claude-haiku-4-5", "litellm/other-route", "claude-haiku-4-5"]) {
+			assert.match(formatSubagentModelVerificationError(expected, responseId, registry, aliases) ?? "", /model_verification_failed/);
 		}
-		for (const observed of ["wrong-provider/claude-opus-5", "claude-opus-4", "opus-5", "Claude-Opus-5", "claude-opus-5:high"]) {
+		for (const observed of [`wrong-provider/${responseId}`, "anthropic.claude-haiku-4-5-20251002-v1:0", "claude-sonnet-4", responseId.toUpperCase(), `${responseId}:high`]) {
 			assert.match(formatSubagentModelVerificationError(candidate, observed, registry, aliases) ?? "", /model_verification_failed/);
 		}
 		for (const map of [undefined, {}, { [route]: [] }]) {
-			assert.match(formatSubagentModelVerificationError(candidate, "claude-opus-5", registry, map) ?? "", /model_verification_failed/);
+			assert.match(formatSubagentModelVerificationError(candidate, responseId, registry, map) ?? "", /model_verification_failed/);
 		}
 		assert.equal(formatSubagentModelVerificationError(candidate, "response:high", registry, { [route]: ["response:high"] }), undefined);
 		assert.match(formatSubagentModelVerificationError(candidate, "response", registry, { [route]: ["response:high"] }) ?? "", /model_verification_failed/);

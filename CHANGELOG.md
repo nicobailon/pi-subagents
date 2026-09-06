@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Identify native Pi model-verification failures and point to the existing exact `modelResponseAliases` configuration remedy (#1922). Thanks to [@sixtus](https://github.com/sixtus).
 - Document the startup fallback boundary and the narrow native foreground/background read-only HTTP 429 continuation, including host-specific budget and compatibility limits (#1936). Thanks to reporter [@peedrr](https://github.com/peedrr).
 - Document steer delivery modes and `scheduledRuns.storeRoot` in the bundled skill reference (`execution-controls.md`) (#1933). Thanks to [@G0-0000](https://github.com/G0-0000).
 - Remove generation suffixes from developer-facing contract types and helpers; request shapes, format versions, and behavior are unchanged (#1913).

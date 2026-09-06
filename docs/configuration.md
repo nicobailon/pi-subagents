@@ -48,6 +48,18 @@ Optionally accept exact response model IDs for an exact provider-qualified launc
 
 This is your explicit assertion that the declared response IDs identify the requested model, not proof from model output. It does not rewrite the outgoing model or provider route, authorize fallback models, or bypass verification for other routes. Foreground and background runs capture this declaration for launch and retain it on revival, including when no aliases were declared. Changing config affects new independent runs, not the retained declaration. Without a matching declaration, existing strict verification remains unchanged.
 
+For a native Pi `model_verification_failed` where your proxy accepts `claude-haiku-4-5` but reports `anthropic.claude-haiku-4-5-20251001-v1:0`, independently confirm your proxy's mapping, then configure:
+
+```json
+{
+  "modelResponseAliases": {
+    "YOUR_PROVIDER/claude-haiku-4-5": ["anthropic.claude-haiku-4-5-20251001-v1:0"]
+  }
+}
+```
+
+Replace `YOUR_PROVIDER` with the resolved Pi provider ID. Keep the outgoing model alias unchanged. This native remedy already exists in v0.65.1; it does not infer equivalence from provider prefixes or dates. The built-in external `claude-code` adapter does not invoke this verifier or use this setting. If an external run shows this diagnostic, identify the installed version, resolved runner kind/adapter, and error location before applying a native remedy. Thanks to [sixtus](https://github.com/sixtus) for the concrete request-ID/response-ID example in [#1922](https://github.com/nicobailon/pi-subagents/issues/1922).
+
 ## `modelExclusions`
 
 ```json
