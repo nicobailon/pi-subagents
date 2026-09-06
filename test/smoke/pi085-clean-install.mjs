@@ -1,4 +1,4 @@
-// Run with Node >=22.19.0: node --experimental-strip-types test/smoke/pi085-clean-install.mjs [artifact-dir] [0.85.0|0.85.1]
+// Run with Node >=22.19.0: node --experimental-strip-types test/smoke/pi085-clean-install.mjs [artifact-dir] [0.84.3|0.84.4|0.85.0|0.85.1]
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -8,8 +8,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const source = fileURLToPath(new URL("../../", import.meta.url));
 const version = process.argv[3] ?? "0.85.0";
-assert.ok(["0.85.0", "0.85.1"].includes(version), "requires an explicitly supported smoke version");
+assert.ok(["0.84.3", "0.84.4", "0.85.0", "0.85.1"].includes(version), "requires an explicitly supported smoke version");
 const isPi0850 = version === "0.85.0";
+const isPreChord = version.startsWith("0.84.");
 const root = process.argv[2] ? path.resolve(process.argv[2]) : fs.mkdtempSync(path.join(os.tmpdir(), "pi085-smoke-"));
 fs.mkdirSync(root, { recursive: true });
 const host = path.join(root, "host");
@@ -47,11 +48,18 @@ const { createJiti } = await import(pathToFileURL(path.join(extension, "node_mod
 const jitiLoader = createJiti(import.meta.url, { fsCache: false });
 const { resolveHostPeerAliases, findHostPeerPackageDir, resolvePackageSubpath } = await jitiLoader.import(path.join(installed, "src/runs/background/runner-aliases.ts"));
 assert.equal(findHostPeerPackageDir(pi, "@earendil-works/pi-server"), undefined, "host must remain missing server");
-if (!isPi0850) assert.equal(findHostPeerPackageDir(pi, "@earendil-works/pi-client"), undefined, "stable host must remain missing client");
+if (version === "0.85.1") assert.equal(findHostPeerPackageDir(pi, "@earendil-works/pi-client"), undefined, "stable host must remain missing client");
 const pristine = run("pristine-public-sdk", process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(pathToFileURL(resolvePackageSubpath(pi, ".")).href)})`], cwd, {}, !isPi0850);
 if (isPi0850) assert.match(pristine.stderr, /Cannot find package '@earendil-works\/pi-server'/);
 const resolved = resolveHostPeerAliases(pi);
 assert.deepEqual(resolved.missing, []);
+const tui = findHostPeerPackageDir(pi, "@earendil-works/pi-tui");
+assert.ok(tui.startsWith(host + path.sep), "TUI must come from the host install");
+assert.equal(resolved.aliases["@earendil-works/pi-tui"], resolvePackageSubpath(tui, "."));
+if (isPreChord) assert.equal(findHostPeerPackageDir(pi, "@earendil-works/chord"), undefined);
+for (const specifier of ["@earendil-works/chord", "@earendil-works/chord/context"]) {
+	assert.equal(Boolean(resolved.aliases[specifier]), !isPreChord);
+}
 assert.deepEqual(resolved.supplemental, isPi0850 ? ["@earendil-works/pi-server", "@earendil-works/pi-server/unix"] : []);
 if (!isPi0850) {
 	for (const specifier of ["@earendil-works/pi-server", "@earendil-works/pi-server/unix", "@earendil-works/pi-client/unix"]) assert.equal(resolved.aliases[specifier], undefined);
@@ -70,5 +78,5 @@ const preload = resolved.supplemental.length ? ["--import", pathToFileURL(path.j
 const positive = run("child", process.execPath, [...preload, ...args], cwd, childEnv);
 assert.match(positive.stdout, /PASS public SDK\/default child factory/);
 assert.equal(findHostPeerPackageDir(pi, "@earendil-works/pi-server"), undefined);
-if (!isPi0850) assert.equal(findHostPeerPackageDir(pi, "@earendil-works/pi-client"), undefined);
+if (version === "0.85.1") assert.equal(findHostPeerPackageDir(pi, "@earendil-works/pi-client"), undefined);
 console.log(`${positive.stdout.trim()}\nArtifacts: ${root}`);

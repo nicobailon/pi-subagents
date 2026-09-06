@@ -55,12 +55,17 @@ test("executeAsyncSingle preloads supplemental server aliases before jiti, but n
 			throw new Error("spawn boundary captured");
 		});
 		syncBuiltinESMExports();
-		for (const scenario of ["supplemental", "complete", "stable", "missing-stable"]) {
+		for (const scenario of ["supplemental", "complete", "stable", "pre-chord", "missing-stable"]) {
 			if (scenario === "complete") writeHostPackage(server);
 			if (scenario === "stable") {
 				fs.writeFileSync(path.join(host, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "0.85.1", exports: { ".": "./index.mjs" } }));
 				for (const pkg of [server, "@earendil-works/pi-client"]) fs.rmSync(path.join(host, "node_modules", pkg), { recursive: true });
 				for (const specifier of [server, `${server}/unix`, "@earendil-works/pi-client/unix"]) delete expectedAliases[specifier];
+			}
+			if (scenario === "pre-chord") {
+				fs.writeFileSync(path.join(host, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "0.84.3", exports: { ".": "./index.mjs" } }));
+				fs.rmSync(path.join(host, "node_modules", "@earendil-works/chord"), { recursive: true });
+				for (const specifier of ["@earendil-works/chord", "@earendil-works/chord/context"]) delete expectedAliases[specifier];
 			}
 			if (scenario === "missing-stable") fs.unlinkSync(expectedAliases["@earendil-works/pi-agent-core/node"]!);
 			const result = executeAsyncSingle(`spawn-preload-${scenario}`, {
@@ -72,11 +77,11 @@ test("executeAsyncSingle preloads supplemental server aliases before jiti, but n
 			assert.equal(result.isError, true);
 			if (scenario === "missing-stable") {
 				assert.match(result.content[0]!.text, /@earendil-works\/pi-agent-core\/node/);
-				assert.equal(spawn.mock.callCount(), 3);
+				assert.equal(spawn.mock.callCount(), 4);
 				continue;
 			}
 			assert.match(result.content[0]!.text, /spawn boundary captured/);
-			assert.equal(spawn.mock.callCount(), scenario === "supplemental" ? 1 : scenario === "complete" ? 2 : 3);
+			assert.equal(spawn.mock.callCount(), scenario === "supplemental" ? 1 : scenario === "complete" ? 2 : scenario === "stable" ? 3 : 4);
 			const [command, args, options] = spawn.mock.calls.at(-1)!.arguments;
 			assert.ok(path.isAbsolute(command));
 			assert.equal(options.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV], host);
