@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import * as fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
+import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
-import { createTempDir, makeAgent, removeTempDir } from "../support/helpers.ts";
 
 test("executeAsyncSingle preloads supplemental server aliases before jiti, but not for complete hosts", async (t) => {
-	const root = fs.realpathSync(createTempDir("async-spawn-preload-"));
+	const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "async-spawn-preload-")));
 	const host = path.join(root, "host");
 	const server = "@earendil-works/pi-server";
 	const expectedAliases: Record<string, string> = {};
@@ -46,6 +46,9 @@ test("executeAsyncSingle preloads supplemental server aliases before jiti, but n
 		}
 		// Production discovers the host from the Pi entrypoint at module load.
 		process.argv[1] = expectedAliases["@earendil-works/pi-coding-agent"];
+		// helpers -> mock-pi -> child-session -> readonly evidence -> child hooks
+		// also loads async-execution. Set the host before importing that graph.
+		const { makeAgent } = await import("../support/helpers.ts");
 		const { executeAsyncSingle } = await import("../../src/runs/background/async-execution.ts");
 		const spawn = t.mock.method(childProcess, "spawn", () => {
 			// Stop at the only external I/O seam: no fake pid or detached lifecycle.
@@ -95,6 +98,6 @@ test("executeAsyncSingle preloads supplemental server aliases before jiti, but n
 		syncBuiltinESMExports();
 		if (originalArgv1 === undefined) delete process.argv[1];
 		else process.argv[1] = originalArgv1;
-		removeTempDir(root);
+		fs.rmSync(root, { recursive: true, force: true });
 	}
 });
