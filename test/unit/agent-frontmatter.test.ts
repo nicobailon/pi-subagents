@@ -1905,12 +1905,17 @@ Do work
 				reviewer: ["read", "grep", "find", "ls", "contact_supervisor"],
 				scout: ["read", "grep", "find", "ls", "bash", "write", "contact_supervisor"],
 				researcher: ["read", "write", "web_search", "fetch_content", "get_search_content", "source_check"],
+				"evidence-auditor": ["read", "web_search", "fetch_content", "get_search_content", "source_check"],
 			};
 			for (const [name, tools] of Object.entries(expectedTools)) {
 				const agent = agents.find((candidate) => candidate.name === name);
 				assert.ok(agent, `${name} builtin should be discovered`);
 				assert.deepEqual(agent?.tools, tools);
 			}
+
+			const auditor = agents.find((candidate) => candidate.name === "evidence-auditor");
+			assert.equal(auditor?.inheritProjectContext, true);
+			assert.equal(auditor?.inheritSkills, false);
 
 			const researcherPrompt = agents.find((candidate) => candidate.name === "researcher")?.systemPrompt ?? "";
 			assert.match(researcherPrompt, /search-result summaries as discovery aids, not final evidence/);
