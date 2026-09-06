@@ -283,7 +283,7 @@ Keep the parent/orchestrator on the ordinary strong default model because omissi
 
 Examples are illustrative, not requirements. Map these tiers to concrete models in user/project settings or a profile. A non-OpenAI setup should choose comparable available models by capability.
 
-Use `fallbackModels` when a tier has provider quota or availability risk. Prefer fresh context for cross-provider children when inherited provider-specific reasoning blocks would force thinking off.
+Use `fallbackModels` when a tier has provider quota or availability risk. Forked children keep their requested thinking level even when provider-specific reasoning blocks are stripped from the inherited transcript.
 
 If a provider rejects model IDs with thinking suffixes, use
 `subagents.disableThinking: true` in user or project settings to clear bundled

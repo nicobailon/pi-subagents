@@ -478,7 +478,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.match(result.content[0]?.text ?? "", /context: "profile" requires agent 'worker' to declare defaultContext/);
 	});
 
-	it("sanitizes inherited signed thinking and forces child thinking off", async () => {
+	it("sanitizes inherited signed thinking and keeps child thinking", async () => {
 		const parentSessionFile = path.join(tempDir, "parent.jsonl");
 		const childSessionFile = path.join(tempDir, "fork-with-thinking.jsonl");
 		fs.writeFileSync(parentSessionFile, '{"type":"session","version":1,"id":"parent","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n', "utf-8");
@@ -514,14 +514,14 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, undefined);
 		const args = readCallArgs();
-		assert.equal(args[args.indexOf("--model") + 1], "anthropic/claude-sonnet-4-5:off");
+		assert.equal(args[args.indexOf("--model") + 1], "anthropic/claude-sonnet-4-5:high");
 		const entries = fs.readFileSync(childSessionFile, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
 		assert.deepEqual(entries[2].message.content, [{ type: "text", text: "answer" }]);
-		assert.equal(entries[3].type, "thinking_level_change");
-		assert.equal(entries[3].thinkingLevel, "off");
+		assert.equal(entries.length, 3);
+		assert.ok(!entries.some((entry) => entry.type === "thinking_level_change"));
 	});
 
-	it("uses an explicit Anthropic model for fork thinking preparation", async () => {
+	it("keeps thinking for an explicit Anthropic model on a forked child", async () => {
 		const parentSessionFile = path.join(tempDir, "parent.jsonl");
 		const childSessionFile = path.join(tempDir, "fork-explicit-anthropic.jsonl");
 		fs.writeFileSync(parentSessionFile, '{"type":"session","version":1,"id":"parent","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n', "utf-8");
@@ -565,14 +565,14 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, undefined);
 		const args = readCallArgs();
-		assert.equal(args[args.indexOf("--model") + 1], "anthropic/claude-sonnet-4-5:off");
+		assert.equal(args[args.indexOf("--model") + 1], "anthropic/claude-sonnet-4-5:high");
 		const entries = fs.readFileSync(childSessionFile, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
 		assert.deepEqual(entries[1].message.content, [{ type: "text", text: "answer" }]);
-		assert.equal(entries[2].type, "thinking_level_change");
-		assert.equal(entries[2].thinkingLevel, "off");
+		assert.equal(entries.length, 2);
+		assert.ok(!entries.some((entry) => entry.type === "thinking_level_change"));
 	});
 
-	it("forces every foreground fallback attempt off after sanitizing inherited signed thinking", async () => {
+	it("keeps thinking on every foreground fallback attempt after sanitizing inherited signed thinking", async () => {
 		mockPi.reset();
 		mockPi.onCall({
 			jsonl: [{
@@ -631,7 +631,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, undefined);
 		const modelArgs = readAllCallArgs().map((args) => args[args.indexOf("--model") + 1]);
-		assert.deepEqual(modelArgs, ["openai/gpt-5-mini:off", "anthropic/claude-sonnet-4:off"]);
+		assert.deepEqual(modelArgs, ["openai/gpt-5-mini:high", "anthropic/claude-sonnet-4:low"]);
 	});
 
 	it("keeps requested thinking for non-Anthropic forked children without Anthropic fallbacks", async () => {
@@ -764,7 +764,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		}
 	});
 
-	it("notes the forced thinking downgrade in the result for Anthropic forked children", async () => {
+	it("reports no thinking downgrade for Anthropic forked children", async () => {
 		mockPi.reset();
 		mockPi.onCall({ output: "done" });
 		const parentSessionFile = path.join(tempDir, "parent.jsonl");
@@ -807,10 +807,12 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, undefined);
 		const text = result.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
-		assert.equal(text.includes("fork context forced thinking off for worker (child 0)"), true);
+		assert.equal(text.includes("forced thinking off"), false);
+		const noteArgs = readCallArgs();
+		assert.equal(noteArgs[noteArgs.indexOf("--model") + 1], "anthropic/claude-sonnet-4-5:high");
 	});
 
-	it("resolves inherit before classifying a forked child", async () => {
+	it("resolves inherit for a forked child without downgrading thinking", async () => {
 		const childSessionFile = path.join(tempDir, "fork-inherit-thinking.jsonl");
 		const manager = makeSignedThinkingSessionManager(childSessionFile);
 		const executor = makeExecutorWithDiscoverAgents(() => ({
@@ -837,7 +839,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, undefined);
 		const args = readCallArgs();
-		assert.equal(args[args.indexOf("--model") + 1], "anthropic/claude-sonnet-4-5:off");
+		assert.equal(args[args.indexOf("--model") + 1], "anthropic/claude-sonnet-4-5:high");
 	});
 
 	it("keeps inherited parent models outside the registry during foreground fork preparation", async () => {
@@ -883,7 +885,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 
 
-	it("includes the fork-thinking downgrade note on failed results", async () => {
+	it("adds no fork-thinking downgrade note to failed results", async () => {
 		mockPi.reset();
 		mockPi.onCall({ stderr: "task failed", exitCode: 1 });
 		const childSessionFile = path.join(tempDir, "fork-failed-thinking.jsonl");
@@ -911,7 +913,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, true);
 		const text = result.content.filter((block) => block.text).map((block) => block.text).join("\n");
-		assert.equal(text.includes("fork context forced thinking off for worker (child 0)"), true);
+		assert.equal(text.includes("forced thinking off"), false);
 	});
 
 	it("keeps default-fork context on run-path errors", async () => {
