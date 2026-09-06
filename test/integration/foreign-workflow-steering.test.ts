@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { events, makeAgent, makeMinimalCtx, createEventBus } from "../support/helpers.ts";
 import { installAsyncExecutionHooks, available, createSubagentExecutor, waitForMockPiCall, waitForAsyncState, ASYNC_DIR, tempDir, mockPi } from "../support/async-execution-fixture.ts";
 import { steerRequestsDir } from "../../src/runs/background/control-channel.ts";
@@ -12,7 +12,7 @@ const repo = fileURLToPath(new URL("../../", import.meta.url));
 const execFileAsync = promisify(execFile);
 async function hostB(sessionFile: string, params: object, label: string, policy = "auto"): Promise<any> {
 	const output = path.join(tempDir, `${label}.json`);
-	await execFileAsync(process.execPath, ["--experimental-strip-types", "--import", path.join(repo, "test/support/register-loader.mjs"), path.join(repo, "test/support/foreign-workflow-steer-host.mjs"), tempDir, sessionFile, JSON.stringify(params), output, policy], { cwd: repo, env: process.env, timeout: 15000, killSignal: "SIGKILL" });
+	await execFileAsync(process.execPath, ["--experimental-strip-types", "--import", pathToFileURL(path.join(repo, "test/support/register-loader.mjs")).href, path.join(repo, "test/support/foreign-workflow-steer-host.mjs"), tempDir, sessionFile, JSON.stringify(params), output, policy], { cwd: repo, env: process.env, timeout: 15000, killSignal: "SIGKILL" });
 	return JSON.parse(fs.readFileSync(output, "utf8"));
 }
 
