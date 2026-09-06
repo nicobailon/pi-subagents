@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
-import { createMockPi, createTempDir, makeAgent, makeAgentConfigs, removeTempDir } from "../support/helpers.ts";
+import { createMockPi, createTempDir, events, makeAgent, makeAgentConfigs, removeTempDir } from "../support/helpers.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { childSessionFactory, createDefaultChildSessionFactory, disposeChildSessions, type ChildSessionFactory, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
 import { createNestedRoute } from "../../src/runs/shared/nested-events.ts";
@@ -109,6 +109,22 @@ describe("in-process foreground child", () => {
 			{ text: "Then update docs.", mode: "followUp" },
 		]);
 	});
+
+	for (const type of ["turn_start", "agent_start", "auto_retry_start"]) {
+		it(`foreground keeps resumed work alive after ${type}`, async () => {
+			mockPi.onCall({
+				steps: [
+					{ jsonl: [events.assistantMessage("before continuation"), { type }] },
+					// Queued steering/follow-up work is allowed to outlive the old final-stop grace.
+					{ delay: 1400, jsonl: [events.assistantMessage("after continuation")] },
+				],
+			});
+			const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: `resumed-${type}` });
+			assert.equal(result.exitCode, 0, result.error);
+			assert.equal(result.finalOutput, "after continuation");
+			assert.equal(mockPi.sessions[0]?.aborted, false);
+		});
+	}
 
 	it("aborts the child session on interrupt and disposes it", async () => {
 		mockPi.onCall({ hangUntilAbort: true });

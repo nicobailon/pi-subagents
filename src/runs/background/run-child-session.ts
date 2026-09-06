@@ -334,6 +334,8 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 		}
 		const applyChildLifecycle = (action: ChildLifecycleAction): void => {
 			if (action === "cancel-drain") {
+				cleanTerminalAssistantStopReceived = false;
+				agentSettledReceived = false;
 				clearFinalDrainTimers();
 				clearWatchdogTailTimer();
 				return;

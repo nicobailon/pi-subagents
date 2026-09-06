@@ -746,6 +746,8 @@ async function runSingleAttempt(
 		}
 		const applyChildLifecycle = (action: ChildLifecycleAction): void => {
 			if (action === "cancel-drain") {
+				cleanTerminalAssistantStopReceived = false;
+				agentSettledReceived = false;
 				clearFinalDrainTimers();
 				clearWatchdogTailTimer();
 				return;

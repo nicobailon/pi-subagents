@@ -589,6 +589,50 @@ setTimeout(() => process.exit(90), 15000).unref();
 		});
 	});
 
+	for (const type of ["turn_start", "agent_start", "auto_retry_start"]) {
+		it(`background keeps resumed work alive after ${type}`, { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+			const id = `async-resumed-${type}-${Date.now().toString(36)}`;
+			mockPi.onCall({
+				steps: [
+					{ jsonl: [events.assistantMessage("before continuation"), { type }] },
+					// Queued steering/follow-up work is allowed to outlive the old final-stop grace.
+					{ delay: 1400, jsonl: [events.assistantMessage("after continuation")] },
+				],
+			});
+			executeAsyncSingle(id, {
+				agent: "worker", task: "Do work", agentConfig: makeAgent("worker"),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2,
+			});
+			const payload = await readAsyncPayload(id);
+			assert.equal(payload.success, true, payload.results[0]?.error);
+			assert.equal(payload.results[0]?.output, "after continuation");
+		});
+	}
+
+	it("background ignores stale watchdog completion after resumed work", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		await withIsolatedWatchdogSettings(tempDir, async () => {
+			writeWatchdogSettings(tempDir);
+			const id = `async-resumed-watchdog-${Date.now().toString(36)}`;
+			mockPi.onCall({
+				steps: [
+					{ jsonl: [events.assistantMessage("before continuation"), { type: "turn_start" }, childWatchdogStatus(id, "idle", 1)] },
+					{ delay: 1400, jsonl: [events.assistantMessage("after continuation")] },
+				],
+			});
+			executeAsyncSingle(id, {
+				agent: "worker", task: "Do work", agentConfig: makeAgent("worker"),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2,
+			});
+			const payload = await readAsyncPayload(id);
+			assert.equal(payload.success, true, payload.results[0]?.error);
+			assert.equal(payload.results[0]?.output, "after continuation");
+		});
+	});
+
 	it("background forced drain after final assistant output is cleanup success", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			jsonl: [events.assistantMessage("async-done-before-drain")],

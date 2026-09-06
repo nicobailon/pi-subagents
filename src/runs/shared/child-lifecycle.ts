@@ -14,8 +14,9 @@ export function projectChildLifecycle(event: { type?: string; willRetry?: unknow
 		if (state) state.compactionRetryActive = event.willRetry === true;
 		return event.willRetry === true ? "cancel-drain" : "none";
 	}
-	if (event.type === "agent_start" || event.type === "auto_retry_start") {
+	if (event.type === "agent_start" || event.type === "auto_retry_start" || event.type === "turn_start") {
 		if (state) state.compactionRetryActive = false;
+		return "cancel-drain";
 	}
 	if (event.type === "agent_end" && event.willRetry === true) return "cancel-drain";
 	if (event.type === "agent_end" && state) state.compactionRetryActive = false;
