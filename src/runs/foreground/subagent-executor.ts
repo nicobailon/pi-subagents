@@ -82,7 +82,7 @@ import {
 	stripDetailsOutputsForIntercomReceipt,
 } from "../../intercom/result-intercom.ts";
 import { applySteeringRecoveryAgentConfig, asyncReviveRequiresRecoveryDescriptor, buildRevivedAsyncTask, readAsyncRecoveryDescriptor, resolveAsyncResumeTarget, resolveAsyncRunLocation } from "../background/async-resume.ts";
-import { closeSteerInbox, consumeSteerRequests, deliverInterruptRequest, readRevivalBriefs, requestAsyncSteer, watchAsyncSteerInbox, type SteerDeliveryMode, type SteerRequest } from "../background/control-channel.ts";
+import { closeSteerInbox, consumeSteerRequests, deliverInterruptRequest, readRevivalBriefs, requestAsyncSteer, watchAsyncControlInbox, type SteerDeliveryMode, type SteerRequest } from "../background/control-channel.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, updateSteeringTarget, waitForSteeringAction } from "../background/steering.ts";
 import { canQueueRetainedAsyncFollowUp, steerAsyncRun } from "./async-steering-action.ts";
 import {
@@ -5225,13 +5225,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					return { content: [{ type: "text", text: `Failed to create async workflow storage: ${error instanceof Error ? error.message : String(error)}` }], isError: true, details: { mode: "workflow", results: [] } };
 				}
 				appendWorkflowEvent({ type: "subagent.workflow.started" });
-				// Consume the durable steer inbox for async workflow runs. `watchAsyncControlInbox` is
-				// installed only by subagent-runner.ts, and the runner never executes workflow scripts
-				// (`runWorkflowScript` is called only from this file), so no process was watching
-				// `control/steer-requests/` for a workflow run and a queued request file sat on disk until
-				// the run ended. A workflow's children are in-process foreground children of THIS process,
-				// so deliver through their in-memory controls and write the same status.steering and
-				// subagent.steer.* receipts that the requesting side already reads.
+				// The runner does not execute workflow scripts: this active owner must consume its own
+				// durable steer inbox, deliver through in-process child controls, and persist receipts.
 				const emitWorkflowSteerEvent = (type: string, requestId: string, index?: number, extra: Record<string, unknown> = {}): void => {
 					appendWorkflowEvent({ type, requestId, ...(index !== undefined ? { index } : {}), ...extra });
 				};
@@ -5245,72 +5240,127 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						targets,
 					});
 				};
-				const failWorkflowSteer = (request: SteerRequest, index: number, reason: string): void => {
-					recordWorkflowSteerTargets(request, [{ index, state: "failed", reason }]);
-					emitWorkflowSteerEvent("subagent.steer.requested", request.id, undefined, { targets: [{ index, state: "failed", reason }] });
-					emitWorkflowSteerEvent("subagent.steer.failed", request.id, index, { reason });
+				const explicitWorkflowSteerIndexes = (request: SteerRequest): number[] | undefined => request.targetIndex !== undefined ? [request.targetIndex] : request.targetIndexes;
+				const failWorkflowSteer = (request: SteerRequest, indexes: number[], reason: string): void => {
+					const targets = indexes.map((index) => ({ index, state: "failed" as const, reason }));
+					recordWorkflowSteerTargets(request, targets);
+					emitWorkflowSteerEvent("subagent.steer.requested", request.id, undefined, { targets });
+					for (const index of indexes) emitWorkflowSteerEvent("subagent.steer.failed", request.id, index, { reason });
 					persist({ tolerateStatusWriteFailure: true });
 				};
+				const pendingWorkflowSteers = new Set<(state: "delivered" | "queued" | "failed", reason?: string) => void>();
 				const deliverWorkflowSteerRequest = (request: SteerRequest): void => {
-					const index = request.targetIndex ?? request.targetIndexes?.[0] ?? 0;
+					let indexes = explicitWorkflowSteerIndexes(request);
 					if (status.state !== "running") {
-						failWorkflowSteer(request, index, `run became ${status.state} before steering request was consumed`);
-						return;
-					}
-					// Resolve the workflow step the requester addressed, then that step's live in-process control.
-					const step = status.steps?.[index];
-					// An addressed index beyond the projected steps is a caller error, not a race: fail it
-					// explicitly rather than falling back and steering an unrelated child.
-					if (step === undefined && (status.steps?.length ?? 0) > 0) {
-						failWorkflowSteer(request, index, "child index out of range");
+						failWorkflowSteer(request, indexes ?? [0], `run became ${status.state} before steering request was consumed`);
 						return;
 					}
 					const liveControls = [...deps.state.foregroundControls.values()].filter((candidate) => candidate.parentWorkflowRunId === workflowRunId && (candidate.activeChildren?.size ?? 0) > 0);
-					// Prefer the keyed control, then fall back to the sole live child, which covers a step whose
-					// control registered before its workflowKey was projected into status.steps.
-					const control = (step?.workflowKey ? liveControls.find((candidate) => candidate.workflowKey === step.workflowKey) : undefined)
-						?? (liveControls.length === 1 ? liveControls[0] : undefined);
-					if (!control) {
-						failWorkflowSteer(request, index, liveControls.length > 1
-							? `workflow has ${liveControls.length} live children; steer a child run id instead`
-							: "workflow child is not live in this process");
-						return;
-					}
-					recordWorkflowSteerTargets(request, [{ index, state: "routed" }]);
-					emitWorkflowSteerEvent("subagent.steer.requested", request.id, undefined, { targets: [{ index, state: "routed" }] });
-					emitWorkflowSteerEvent("subagent.steer.routed", request.id, index);
-					persist({ tolerateStatusWriteFailure: true });
-					const applyWorkflowSteerDelivery = (state: "delivered" | "queued" | "failed", reason?: string): void => {
-						const now = Date.now();
-						updateSteeringTarget(steeringStatus(status), request.id, index, state === "delivered" ? "delivered" : state === "queued" ? "queued" : "failed", now, reason ? { reason } : {});
-						if (state === "failed") {
-							const failedStep = status.steps?.[index];
-							if (failedStep) failedStep.activityState = "needs_attention";
-							status.activityState = "needs_attention";
+					if (indexes === undefined) {
+						if (liveControls.length !== 1) {
+							failWorkflowSteer(request, [0], liveControls.length > 1
+								? `workflow has ${liveControls.length} live children; steer a child run id instead`
+								: "workflow child is not live in this process");
+							return;
 						}
-						emitWorkflowSteerEvent(`subagent.steer.${state}`, request.id, index, state === "failed" ? { reason } : { deliveryStatus: state, message: request.message });
-						persist({ tolerateStatusWriteFailure: true });
-					};
-					void steerWorkflowForegroundTarget({
-						target: { control, workflowRunId, sourceRunId: workflowRunId },
-						message: request.message,
-						...(request.mode ? { mode: request.mode } : {}),
-					}).then(
-						(result) => {
-							const target = result.details.steering?.targets[0];
-							applyWorkflowSteerDelivery(target?.state === "delivered" ? "delivered" : target?.state === "queued" ? "queued" : "failed", target?.reason ?? (target ? undefined : "steering produced no target receipt"));
-						},
-						(error) => applyWorkflowSteerDelivery("failed", error instanceof Error ? error.message : String(error)),
-					);
+						const index = status.steps?.findIndex((step) => !!step.workflowKey && step.workflowKey === liveControls[0]!.workflowKey) ?? -1;
+						if (index < 0) {
+							failWorkflowSteer(request, [0], "live workflow child has no projected step");
+							return;
+						}
+						indexes = [index];
+					}
+					// Normalize and record the whole set once: recordSteeringRequest is idempotent by id.
+					// Explicit indexes resolve only by their projected key, never by a live sibling.
+					const resolved = indexes.map((index) => {
+						const step = status.steps?.[index];
+						const control = step?.workflowKey ? liveControls.find((candidate) => candidate.workflowKey === step.workflowKey) : undefined;
+						return { index, control, reason: !step ? "child index out of range" : !control ? "workflow child is not live in this process" : undefined };
+					});
+					const targets = resolved.map(({ index, reason }) => ({ index, state: reason ? "failed" as const : "routed" as const, ...(reason ? { reason } : {}) }));
+					recordWorkflowSteerTargets(request, targets);
+					emitWorkflowSteerEvent("subagent.steer.requested", request.id, undefined, { targets });
+					persist({ tolerateStatusWriteFailure: true });
+					for (const { index, control, reason } of resolved) {
+						if (!control) {
+							emitWorkflowSteerEvent("subagent.steer.failed", request.id, index, { reason });
+							continue;
+						}
+						emitWorkflowSteerEvent("subagent.steer.routed", request.id, index);
+						const applyWorkflowSteerDelivery = (state: "delivered" | "queued" | "failed", reason?: string): void => {
+							// Shutdown settles unresolved receipts synchronously; late SDK callbacks cannot rewrite them.
+							if (!pendingWorkflowSteers.delete(applyWorkflowSteerDelivery)) return;
+							const now = Date.now();
+							const steering = steeringStatus(status);
+							// This once-only callback owns a routed target, even after bounded display history
+							// evicts its request. Account independently; queued still represents one pending target.
+							if (state !== "queued") steering.pending = Math.max(0, steering.pending - 1);
+							if (state === "delivered") {
+								steering.delivered++;
+								steering.lastDeliveredAt = now;
+							} else if (state === "failed") steering.failed++;
+							const receipt = steering.recent.find((candidate) => candidate.id === request.id)?.targets.find((target) => target.index === index);
+							if (receipt) {
+								receipt.state = state;
+								if (state === "delivered") receipt.deliveredAt = now;
+								if (state === "failed") receipt.failedAt = now;
+								if (reason) receipt.reason = reason;
+							}
+							if (state === "failed") {
+								const failedStep = status.steps?.[index];
+								if (failedStep) failedStep.activityState = "needs_attention";
+								status.activityState = "needs_attention";
+							}
+							emitWorkflowSteerEvent(`subagent.steer.${state}`, request.id, index, state === "failed" ? { reason } : { deliveryStatus: state, message: request.message });
+							persist({ tolerateStatusWriteFailure: true });
+						};
+						pendingWorkflowSteers.add(applyWorkflowSteerDelivery);
+						void steerWorkflowForegroundTarget({
+							target: { control, workflowRunId, sourceRunId: workflowRunId },
+							message: request.message,
+							...(request.mode ? { mode: request.mode } : {}),
+						}).then(
+							(result) => {
+								const target = result.details.steering?.targets[0];
+								applyWorkflowSteerDelivery(target?.state === "delivered" ? "delivered" : target?.state === "queued" ? "queued" : "failed", target?.reason ?? (target ? undefined : "steering produced no target receipt"));
+							},
+							(error) => applyWorkflowSteerDelivery("failed", error instanceof Error ? error.message : String(error)),
+						);
+					}
 				};
 				let disposeWorkflowSteerInbox: (() => void) | undefined;
 				try {
-					disposeWorkflowSteerInbox = watchAsyncSteerInbox(asyncDir, { onSteer: deliverWorkflowSteerRequest });
+					disposeWorkflowSteerInbox = watchAsyncControlInbox(asyncDir, {
+						onSteer: deliverWorkflowSteerRequest,
+						onError: (error, phase, request) => {
+							const reason = error instanceof Error ? error.message : String(error);
+							appendWorkflowEvent({ type: "subagent.workflow.steer_inbox_unavailable", phase, error: reason });
+							if (request) failWorkflowSteer(request, explicitWorkflowSteerIndexes(request) ?? [0], `steer consumer failed: ${reason}`);
+						},
+					});
 				} catch (error) {
 					// Steering is an optional control surface, so a watcher that cannot install must not fail the run.
 					appendWorkflowEvent({ type: "subagent.workflow.steer_inbox_unavailable", error: error instanceof Error ? error.message : String(error) });
 				}
 				const { workflowScript, async: _workflowAsync, chatProgress: _chatProgress, ...workflowRequest } = requestParams;
+				let workflowSteerInboxClosed = false;
+				const settleWorkflowSteerInbox = (): void => {
+					if (workflowSteerInboxClosed) return;
+					workflowSteerInboxClosed = true;
+					disposeWorkflowSteerInbox?.();
+					// Consumed deliveries are not files anymore. Fail unresolved SDK operations without awaiting them.
+					for (const settle of pendingWorkflowSteers) settle("failed", `run became ${status.state} before steering delivery settled`);
+					try {
+						closeSteerInbox(asyncDir, status.state);
+						// Separately drain requests that never reached the consumer.
+						const undelivered = consumeSteerRequests(asyncDir, undefined, (error) => {
+							appendWorkflowEvent({ type: "subagent.workflow.steer_inbox_unavailable", phase: "drain", error: error instanceof Error ? error.message : String(error) });
+						});
+						for (const request of undelivered) failWorkflowSteer(request, explicitWorkflowSteerIndexes(request) ?? [0], `run became ${status.state} before steering request was consumed`);
+					} catch (error) {
+						appendWorkflowEvent({ type: "subagent.workflow.steer_inbox_unavailable", phase: "close", error: error instanceof Error ? error.message : String(error) });
+					}
+				};
 				void Promise.resolve().then(async () => {
 					const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
 					const workflowResults: SingleResult[] = [];
@@ -5596,6 +5646,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
 						}
 						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, workflowChildren, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), ...(status.steps?.find((step) => step.workflowKey === child.key)?.sessionName ? { sessionName: status.steps?.find((step) => step.workflowKey === child.key)?.sessionName } : {}), ...workflowChildAccountingFields(child), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.outputReference ? { outputReference: child.outputReference } : {}), ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						settleWorkflowSteerInbox();
 						persist();
 						deps.refreshResultDelivery?.();
 						persistClosed = true;
@@ -5644,23 +5695,16 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
 						}
 						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, workflowChildren, ...(terminalOutcome ? { terminalOutcome } : {}), results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), ...(status.steps?.find((step) => step.workflowKey === child.key)?.sessionName ? { sessionName: status.steps?.find((step) => step.workflowKey === child.key)?.sessionName } : {}), ...workflowChildAccountingFields(child), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.outputReference ? { outputReference: child.outputReference } : {}), ...(child.terminalOutcome ? { terminalOutcome: child.terminalOutcome } : {}), ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.detached && status.state !== "complete" ? { detached: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						settleWorkflowSteerInbox();
 						persist();
 						deps.refreshResultDelivery?.();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(terminalOutcome ? { terminalOutcome } : {}), ...(status.error ? { error: status.error } : {}), ...(status.activityState ? { activityState: status.activityState } : {}) });
 					} finally {
-						// Stop watching, close the inbox so the requesting side cannot queue into a dead run, then
-						// drain in-flight requests to a terminal receipt (mirroring the runner teardown) so a late
-						// steer fails visibly instead of vanishing.
+						// Also settle early result-write exits, while persistence is still open.
 						try {
-							disposeWorkflowSteerInbox?.();
-							closeSteerInbox(asyncDir, status.state);
-							const undelivered = consumeSteerRequests(asyncDir);
-							if (undelivered.length > 0) {
-								persistClosed = false;
-								const reason = `run became ${status.state} before steering request was consumed`;
-								for (const request of undelivered) failWorkflowSteer(request, request.targetIndex ?? request.targetIndexes?.[0] ?? 0, reason);
-							}
+							settleWorkflowSteerInbox();
+							if (!persistClosed) persist();
 						} catch (error) {
 							console.error(`Failed to close async workflow steer inbox '${asyncDir}':`, error);
 						}

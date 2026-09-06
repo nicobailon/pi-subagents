@@ -18,12 +18,13 @@ import {
 	requestAsyncInterrupt,
 	requestAsyncSteer,
 	requestAsyncStop,
+	requestAsyncTimeout,
+	timeoutRequestPath,
 	steerInboxClosedPath,
 	stopRequestsDir,
 	stopRequestPath,
 	steerRequestsDir,
 	watchAsyncControlInbox,
-	watchAsyncSteerInbox,
 } from "../../src/runs/background/control-channel.ts";
 
 function tmpAsyncDir(label: string): string {
@@ -476,17 +477,23 @@ describe("control channel: watchAsyncControlInbox", () => {
 		try {
 			requestAsyncStop(asyncDir);
 			requestAsyncInterrupt(asyncDir);
+			requestAsyncTimeout(asyncDir);
+			requestAsyncSteer(asyncDir, { id: "all-handlers", message: "guide" });
 			const events: string[] = [];
 			const h = harness();
 			const dispose = watchAsyncControlInbox(asyncDir, {
 				onInterrupt: () => events.push("interrupt"),
 				onStop: () => events.push("stop"),
+				onTimeout: () => events.push("timeout"),
+				onSteer: () => events.push("steer"),
 				fs: h.fsImpl,
 				timers: h.timers,
 				platform: "linux",
 			});
 
-			assert.deepEqual(events, ["stop", "interrupt"]);
+			assert.deepEqual(events, ["stop", "timeout", "interrupt", "steer"]);
+			h.trigger();
+			assert.deepEqual(events, ["stop", "timeout", "interrupt", "steer"], "all-handler runner consumes each request once");
 			dispose();
 		} finally {
 			cleanup(asyncDir);
@@ -565,70 +572,14 @@ describe("control channel: watchAsyncControlInbox", () => {
 			cleanup(asyncDir);
 		}
 	});
-});
-
-describe("control channel: watchAsyncSteerInbox", () => {
-	type SteerWatchHarness = {
-		fsImpl: import("../../src/runs/background/control-channel.ts").ControlChannelFs;
-		timers: import("../../src/runs/background/control-channel.ts").ControlChannelTimers;
-		trigger: () => void;
-		triggerError: () => void;
-		closed: () => boolean;
-		intervalDelays: () => number[];
-		watchedDir: () => string | undefined;
-	};
-
-	function steerHarness(): SteerWatchHarness {
-		const listeners = new Map<string, () => void>();
-		const errorListeners = new Map<string, () => void>();
-		let closed = false;
-		const intervalDelays: number[] = [];
-		let watchedDir: string | undefined;
-		const realpathSync = ((target: fs.PathLike, options?: unknown) => fs.realpathSync(target, options as BufferEncoding)) as typeof fs.realpathSync;
-		realpathSync.native = ((target: fs.PathLike) => fs.realpathSync.native(target)) as typeof fs.realpathSync.native;
-		const fsImpl = {
-			mkdirSync: fs.mkdirSync,
-			existsSync: fs.existsSync,
-			rmSync: fs.rmSync,
-			readdirSync: fs.readdirSync,
-			readFileSync: fs.readFileSync,
-			realpathSync,
-			watch: ((dir: string, cb: () => void) => {
-				watchedDir = dir;
-				listeners.set(dir, cb);
-				return {
-					close: () => { closed = true; },
-					on: (event: string, handler: () => void) => {
-						if (event === "error") errorListeners.set(dir, handler);
-					},
-				};
-			}),
-		} as unknown as SteerWatchHarness["fsImpl"];
-		const timers = {
-			setInterval: ((_handler: Parameters<typeof setInterval>[0], delay?: number) => {
-				intervalDelays.push(delay ?? 0);
-				return { unref() {} };
-			}) as unknown as typeof setInterval,
-			clearInterval: (() => {}) as unknown as typeof clearInterval,
-		};
-		return {
-			fsImpl,
-			timers,
-			trigger: () => { for (const listener of listeners.values()) listener(); },
-			triggerError: () => { for (const listener of errorListeners.values()) listener(); },
-			closed: () => closed,
-			intervalDelays: () => [...intervalDelays],
-			watchedDir: () => watchedDir,
-		};
-	}
 
 	it("consumes a steer request that arrived before the watcher started", () => {
 		const asyncDir = tmpAsyncDir("pi-steer-watch-early-");
 		try {
 			requestAsyncSteer(asyncDir, { message: "queued before install", id: "s1", ts: 1 });
 			const steers: string[] = [];
-			const h = steerHarness();
-			const dispose = watchAsyncSteerInbox(asyncDir, { onSteer: (request) => steers.push(request.message), fs: h.fsImpl, timers: h.timers, platform: "linux" });
+			const h = harness();
+			const dispose = watchAsyncControlInbox(asyncDir, { onSteer: (request) => steers.push(request.message), fs: h.fsImpl, timers: h.timers, platform: "linux" });
 			assert.deepEqual(steers, ["queued before install"]);
 			assert.deepEqual(fs.readdirSync(steerRequestsDir(asyncDir)), []);
 			dispose();
@@ -641,8 +592,8 @@ describe("control channel: watchAsyncSteerInbox", () => {
 		const asyncDir = tmpAsyncDir("pi-steer-watch-event-");
 		try {
 			const steers: string[] = [];
-			const h = steerHarness();
-			const dispose = watchAsyncSteerInbox(asyncDir, { onSteer: (request) => steers.push(request.message), fs: h.fsImpl, timers: h.timers, platform: "linux" });
+			const h = harness();
+			const dispose = watchAsyncControlInbox(asyncDir, { onSteer: (request) => steers.push(request.message), fs: h.fsImpl, timers: h.timers, platform: "linux" });
 			assert.deepEqual(steers, []);
 
 			requestAsyncSteer(asyncDir, { message: "first", id: "s1", ts: 1 });
@@ -668,41 +619,17 @@ describe("control channel: watchAsyncSteerInbox", () => {
 		const asyncDir = tmpAsyncDir("pi-steer-watch-scope-");
 		try {
 			requestAsyncStop(asyncDir, { source: "test" });
+			requestAsyncInterrupt(asyncDir);
+			requestAsyncTimeout(asyncDir);
 			const steers: string[] = [];
-			const h = steerHarness();
-			const dispose = watchAsyncSteerInbox(asyncDir, { onSteer: (request) => steers.push(request.message), fs: h.fsImpl, timers: h.timers, platform: "linux" });
+			const h = harness();
+			const dispose = watchAsyncControlInbox(asyncDir, { onSteer: (request) => steers.push(request.message), fs: h.fsImpl, timers: h.timers, platform: "linux" });
 			h.trigger();
 			assert.deepEqual(steers, []);
 			assert.equal(h.watchedDir(), fs.realpathSync.native(steerRequestsDir(asyncDir)));
 			assert.equal(fs.readdirSync(stopRequestsDir(asyncDir)).length, 1, "a stop request must not be consumed by the steer watcher");
-			dispose();
-		} finally {
-			cleanup(asyncDir);
-		}
-	});
-
-	it("uses portable polling without native watchers on Darwin", () => {
-		const asyncDir = tmpAsyncDir("pi-steer-watch-darwin-");
-		try {
-			const h = steerHarness();
-			const dispose = watchAsyncSteerInbox(asyncDir, { onSteer() {}, fs: h.fsImpl, timers: h.timers, platform: "darwin" });
-			assert.equal(h.watchedDir(), undefined);
-			assert.deepEqual(h.intervalDelays(), [250]);
-			dispose();
-		} finally {
-			cleanup(asyncDir);
-		}
-	});
-
-	it("starts portable polling once when the native watcher fails", () => {
-		const asyncDir = tmpAsyncDir("pi-steer-watch-fallback-");
-		try {
-			const h = steerHarness();
-			const dispose = watchAsyncSteerInbox(asyncDir, { onSteer() {}, fs: h.fsImpl, timers: h.timers, platform: "linux" });
-			assert.deepEqual(h.intervalDelays(), [5000], "the native path installs only the safety poll");
-			h.triggerError();
-			h.triggerError();
-			assert.deepEqual(h.intervalDelays(), [5000, 250], "polling starts once, not per error");
+			assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), true);
+			assert.equal(fs.existsSync(timeoutRequestPath(asyncDir)), true);
 			dispose();
 		} finally {
 			cleanup(asyncDir);
@@ -713,8 +640,10 @@ describe("control channel: watchAsyncSteerInbox", () => {
 		const asyncDir = tmpAsyncDir("pi-steer-watch-throws-");
 		try {
 			const seen: string[] = [];
-			const h = steerHarness();
-			const dispose = watchAsyncSteerInbox(asyncDir, {
+			const failures: string[] = [];
+			const h = harness();
+			const dispose = watchAsyncControlInbox(asyncDir, {
+				onError: (_error, phase, request) => failures.push(`${phase}:${request?.id}`),
 				onSteer: (request) => {
 					seen.push(request.message);
 					if (request.message === "boom") throw new Error("consumer failed");
@@ -725,14 +654,104 @@ describe("control channel: watchAsyncSteerInbox", () => {
 			});
 
 			requestAsyncSteer(asyncDir, { message: "boom", id: "s1", ts: 1 });
-			h.trigger();
 			requestAsyncSteer(asyncDir, { message: "still delivered", id: "s2", ts: 2 });
 			h.trigger();
 
 			assert.deepEqual(seen, ["boom", "still delivered"], "a throwing consumer must not kill the watcher");
+			assert.deepEqual(failures, ["callback:s1"]);
 			dispose();
 		} finally {
 			cleanup(asyncDir);
 		}
+	});
+});
+
+describe("control inbox diagnostics and active-owner cost", () => {
+	it("reports scan/read/install failures, retains retryable files, and distinguishes healthy watch fallback", () => {
+		const asyncDir = tmpAsyncDir("pi-steer-diagnostics-");
+		const failures: string[] = [];
+		const seen: string[] = [];
+		let tick: () => void = () => {};
+		let fault: "scan" | "read" | "none" = "scan";
+		const denied = Object.assign(new Error("denied"), { code: "EACCES" });
+		const dispose = watchAsyncControlInbox(asyncDir, {
+			onSteer: (request) => seen.push(request.id),
+			onError: (_error, phase) => failures.push(phase),
+			platform: "linux",
+			fs: {
+				...fs,
+				mkdirSync: (() => { throw denied; }) as typeof fs.mkdirSync,
+				readdirSync: ((...args: Parameters<typeof fs.readdirSync>) => { if (fault === "scan") throw denied; return fs.readdirSync(...args); }) as typeof fs.readdirSync,
+				readFileSync: ((...args: Parameters<typeof fs.readFileSync>) => { if (fault === "read") throw denied; return fs.readFileSync(...args); }) as typeof fs.readFileSync,
+				watch: (() => { throw new Error("native watch unavailable"); }) as typeof fs.watch,
+			},
+			timers: {
+				setInterval: ((handler: () => void) => { tick = handler; return { unref() {} }; }) as unknown as typeof setInterval,
+				clearInterval: (() => {}) as typeof clearInterval,
+			},
+		});
+		try {
+			requestAsyncSteer(asyncDir, { id: "retry", message: "retry" });
+			tick();
+			assert.deepEqual(failures, ["install", "scan", "scan"]);
+			assert.equal(fs.readdirSync(steerRequestsDir(asyncDir)).length, 1);
+			fault = "read";
+			tick();
+			assert.equal(failures.at(-1), "scan");
+			assert.equal(fs.readdirSync(steerRequestsDir(asyncDir)).length, 1);
+			fault = "none";
+			tick();
+			assert.deepEqual(seen, ["retry"]);
+			assert.deepEqual(fs.readdirSync(steerRequestsDir(asyncDir)), []);
+			assert.equal(failures.length, 4, "healthy fallback does not report consumption failure");
+		} finally { dispose(); cleanup(asyncDir); }
+	});
+
+	for (const mode of ["native", "fallback", "portable"]) for (const owners of [1, 8]) it(`measures bounded empty-inbox ${mode} and cleanup for ${owners} active owners`, async (t) => {
+		const asyncDir = tmpAsyncDir("pi-steer-cost-");
+		const handles = new Set<ReturnType<typeof setInterval>>();
+		const watchers = new Set<fs.FSWatcher>();
+		const watchedDirs: string[] = [];
+		const disposers: Array<() => void> = [];
+		let scans = 0;
+		let scanMs = 0;
+		const cpuStart = process.cpuUsage();
+		const start = performance.now();
+		try {
+			for (let index = 0; index < owners; index++) disposers.push(watchAsyncControlInbox(path.join(asyncDir, String(index)), {
+				onSteer() {}, platform: mode === "portable" ? "darwin" : "linux",
+				fs: { ...fs, readdirSync: ((...args: Parameters<typeof fs.readdirSync>) => {
+					const before = performance.now();
+					try { return fs.readdirSync(...args); } finally { scans++; scanMs += performance.now() - before; }
+				}) as typeof fs.readdirSync, watch: ((target: string, listener: fs.WatchListener<string>) => {
+					watchedDirs.push(target);
+					const watcher = fs.watch(target, listener);
+					watchers.add(watcher);
+					const close = watcher.close.bind(watcher);
+					watcher.close = () => { watchers.delete(watcher); close(); };
+					if (mode === "fallback") queueMicrotask(() => watcher.emit("error", new Error("watch unavailable")));
+					return watcher;
+				}) as typeof fs.watch },
+				timers: {
+					setInterval: ((handler: () => void, delay: number) => { const handle = setInterval(handler, delay); handles.add(handle); return handle; }) as typeof setInterval,
+					clearInterval: ((handle: ReturnType<typeof setInterval>) => { handles.delete(handle); clearInterval(handle); }) as typeof clearInterval,
+				},
+			}));
+			await new Promise((resolve) => setTimeout(resolve, 1_100));
+			const elapsed = performance.now() - start;
+			const cpu = process.cpuUsage(cpuStart);
+			assert.ok(scans >= owners && scans <= owners * 6, `bounded scans: ${scans}`);
+			assert.equal(handles.size, owners);
+			assert.equal(watchers.size, mode === "portable" ? 0 : owners);
+			assert.equal(watchedDirs.length, mode === "portable" ? 0 : owners, "only one directory watched per steer owner");
+			assert.ok(watchedDirs.every((dir) => dir.endsWith("steer-requests")));
+			for (const dispose of disposers) { dispose(); dispose(); }
+			assert.equal(handles.size, 0, "all real polling intervals cleared");
+			assert.equal(watchers.size, 0, "all native watchers closed");
+			const finalScans = scans;
+			await new Promise((resolve) => setTimeout(resolve, 300));
+			assert.equal(scans, finalScans, "no scans after owner cleanup");
+			t.diagnostic(JSON.stringify({ mode, owners, elapsedMs: +elapsed.toFixed(2), scans, scanMs: +scanMs.toFixed(3), processCpuMs: (cpu.user + cpu.system) / 1000, remainingTimers: handles.size, remainingWatchers: watchers.size }));
+		} finally { for (const dispose of disposers) dispose(); cleanup(asyncDir); }
 	});
 });

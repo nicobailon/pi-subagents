@@ -275,28 +275,36 @@ function parseSteerRequest(raw: unknown): SteerRequest | undefined {
 	};
 }
 
-export function consumeSteerRequestsFromDir(dir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs): SteerRequest[] {
-	if (!fsImpl.existsSync(dir)) return [];
+export function consumeSteerRequestsFromDir(dir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs, onError: (error: unknown) => void = () => {}): SteerRequest[] {
 	let entries: string[];
 	try {
 		entries = fsImpl.readdirSync(dir).filter((name) => name.endsWith(".json")).sort();
-	} catch {
+	} catch (error) {
 		// Leave requests in place so the periodic poll can retry the scan.
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") onError(error);
 		return [];
 	}
 	const requests: SteerRequest[] = [];
 	for (const entry of entries) {
 		const requestPath = path.join(dir, entry);
 		let parsed: SteerRequest | undefined;
+		let text: string;
 		try {
-			parsed = parseSteerRequest(JSON.parse(fsImpl.readFileSync(requestPath, "utf-8")));
+			text = fsImpl.readFileSync(requestPath, "utf-8");
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") onError(error);
+			continue;
+		}
+		try {
+			parsed = parseSteerRequest(JSON.parse(text));
 		} catch {
 			parsed = undefined;
 		}
 		try {
 			fsImpl.rmSync(requestPath, { recursive: true });
-		} catch {
+		} catch (error) {
 			// Already removed by a concurrent check — do not execute it twice.
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") onError(error);
 			continue;
 		}
 		if (parsed) requests.push(parsed);
@@ -304,8 +312,8 @@ export function consumeSteerRequestsFromDir(dir: string, fsImpl: Pick<typeof fs,
 	return requests.sort((left, right) => left.ts - right.ts || left.id.localeCompare(right.id));
 }
 
-export function consumeSteerRequests(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs): SteerRequest[] {
-	return consumeSteerRequestsFromDir(steerRequestsDir(asyncDir), fsImpl);
+export function consumeSteerRequests(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs, onError?: (error: unknown) => void): SteerRequest[] {
+	return consumeSteerRequestsFromDir(steerRequestsDir(asyncDir), fsImpl, onError);
 }
 
 export function queueRevivalBrief(asyncDir: string, request: SteerRequest): string {
@@ -470,99 +478,21 @@ export function deliverStopRequest(input: {
 	requestAsyncStop(input.asyncDir, { ...(input.source ? { source: input.source } : {}), ...(input.targetIndex !== undefined ? { targetIndex: input.targetIndex } : {}), ...(input.childId ? { childId: input.childId } : {}) }, { now: input.now });
 }
 
-/**
- * Workflow side: watch ONLY `steer-requests/` and route each request into
- * `onSteer`. Deliberately narrower than `watchAsyncControlInbox`: workflow-mode
- * runs handle interrupt, stop, and timeout through their in-memory controller,
- * and nothing else consumes those inbox files for a workflow run, so consuming
- * them here would silently discard a stop request. Uses the same watch strategy
- * as the runner inbox (native `fs.watch` plus a safety poll, interval polling as
- * the fallback) and the same up-front `check()` for a request that landed before
- * the watcher was installed. Returns a disposer.
- */
-export function watchAsyncSteerInbox(
-	asyncDir: string,
-	opts: {
-		onSteer: (request: SteerRequest) => void;
-		pollIntervalMs?: number;
-		safetyPollIntervalMs?: number;
-		platform?: NodeJS.Platform;
-		fs?: ControlChannelFs;
-		timers?: ControlChannelTimers;
-	},
-): () => void {
-	const fsImpl = opts.fs ?? fs;
-	const timers = opts.timers ?? { setInterval, clearInterval };
-	const dir = steerRequestsDir(asyncDir);
-	try {
-		fsImpl.mkdirSync(dir, { recursive: true });
-	} catch {
-		// Best effort, because the poll and watch paths below tolerate a missing dir.
-	}
-
-	let disposed = false;
-	const check = (): void => {
-		if (disposed) return;
-		try {
-			for (const request of consumeSteerRequests(asyncDir, fsImpl)) opts.onSteer(request);
-		} catch {
-			// Never let inbox errors crash the workflow.
-		}
-	};
-
-	// Handle a request that may have arrived before the watcher started.
-	check();
-
-	const watchers: fs.FSWatcher[] = [];
-	let interval: ReturnType<typeof setInterval> | undefined;
-	let safetyInterval: ReturnType<typeof setInterval> | undefined;
-	const startPolling = (): void => {
-		if (interval || disposed) return;
-		interval = timers.setInterval(check, opts.pollIntervalMs ?? POLL_INTERVAL_MS);
-		interval.unref?.();
-	};
-	try {
-		if (shouldUseNativeFsWatch("runner-control-inbox", opts.platform)) {
-			const watcher = fsImpl.watch(resolveWatchPath(dir, fsImpl.realpathSync.native), () => check());
-			watcher.on?.("error", startPolling);
-			watchers.push(watcher);
-			safetyInterval = timers.setInterval(check, opts.safetyPollIntervalMs ?? CONTROL_SAFETY_POLL_INTERVAL_MS);
-			safetyInterval.unref?.();
-		} else {
-			startPolling();
-		}
-	} catch {
-		startPolling();
-	}
-
-	return () => {
-		if (disposed) return;
-		disposed = true;
-		for (const watcher of watchers) {
-			try {
-				watcher.close();
-			} catch {
-				// ignore
-			}
-		}
-		if (interval) timers.clearInterval(interval);
-		if (safetyInterval) timers.clearInterval(safetyInterval);
-	};
-}
 
 /**
- * Runner side: watch the control inbox and route interrupt requests into
- * `onInterrupt`. Uses `fs.watch` when available and starts interval polling
+ * Active owner: watch and consume only kinds with installed handlers.
+ * Uses `fs.watch` when available and starts interval polling
  * only when native watching is unavailable or fails. Fires once per distinct
  * request. Returns a disposer.
  */
 export function watchAsyncControlInbox(
 	asyncDir: string,
 	opts: {
-		onInterrupt: () => void;
+		onInterrupt?: () => void;
 		onTimeout?: () => void;
 		onStop?: (request: StopRequest) => void;
 		onSteer?: (request: SteerRequest) => void;
+		onError?: (error: unknown, phase: "install" | "scan" | "callback", request?: SteerRequest) => void;
 		pollIntervalMs?: number;
 		safetyPollIntervalMs?: number;
 		platform?: NodeJS.Platform;
@@ -573,22 +503,44 @@ export function watchAsyncControlInbox(
 	const fsImpl = opts.fs ?? fs;
 	const timers = opts.timers ?? { setInterval, clearInterval };
 	const dir = controlInboxDir(asyncDir);
+	const report = (error: unknown, phase: "install" | "scan" | "callback", request?: SteerRequest): void => {
+		try {
+			if (opts.onError) opts.onError(error, phase, request);
+			else console.error(`Control inbox ${phase} failed:`, error);
+		} catch (reportError) {
+			console.error("Control inbox error reporter failed:", reportError);
+		}
+	};
+	const dirs = [
+		...(opts.onInterrupt || opts.onTimeout || opts.onStop ? [dir] : []),
+		...(opts.onStop ? [stopRequestsDir(asyncDir)] : []),
+		...(opts.onSteer ? [steerRequestsDir(asyncDir)] : []),
+	];
+	if (dirs.length === 0) return () => {};
 	try {
-		fsImpl.mkdirSync(dir, { recursive: true });
-	} catch {
-		// Best effort — the poll/watch below tolerates a missing dir.
+		for (const target of dirs) fsImpl.mkdirSync(target, { recursive: true });
+	} catch (error) {
+		report(error, "install");
 	}
 
 	let disposed = false;
 	const check = (): void => {
 		if (disposed) return;
 		try {
-			for (const stopRequest of consumeStopRequestPayloads(asyncDir, fsImpl)) opts.onStop?.(stopRequest);
-			if (consumeTimeoutRequest(asyncDir, fsImpl)) opts.onTimeout?.();
-			if (consumeInterruptRequest(asyncDir, fsImpl)) opts.onInterrupt();
-			for (const request of consumeSteerRequests(asyncDir, fsImpl)) opts.onSteer?.(request);
-		} catch {
-			// Never let inbox errors crash the runner.
+			if (opts.onStop) for (const request of consumeStopRequestPayloads(asyncDir, fsImpl)) {
+				try { opts.onStop(request); } catch (error) { report(error, "callback"); }
+			}
+			if (opts.onTimeout && consumeTimeoutRequest(asyncDir, fsImpl)) {
+				try { opts.onTimeout(); } catch (error) { report(error, "callback"); }
+			}
+			if (opts.onInterrupt && consumeInterruptRequest(asyncDir, fsImpl)) {
+				try { opts.onInterrupt(); } catch (error) { report(error, "callback"); }
+			}
+			if (opts.onSteer) for (const request of consumeSteerRequestsFromDir(steerRequestsDir(asyncDir), fsImpl, (error) => report(error, "scan"))) {
+				try { opts.onSteer(request); } catch (error) { report(error, "callback", request); }
+			}
+		} catch (error) {
+			report(error, "scan");
 		}
 	};
 
@@ -596,40 +548,31 @@ export function watchAsyncControlInbox(
 	check();
 
 	const watchers: fs.FSWatcher[] = [];
-	const watchedDirs = new Set<string>();
 	let interval: ReturnType<typeof setInterval> | undefined;
 	let safetyInterval: ReturnType<typeof setInterval> | undefined;
 	const startPolling = (): void => {
 		if (interval || disposed) return;
+		if (safetyInterval) { timers.clearInterval(safetyInterval); safetyInterval = undefined; }
 		interval = timers.setInterval(check, opts.pollIntervalMs ?? POLL_INTERVAL_MS);
 		interval.unref?.();
 	};
-	const startSafetyPolling = (): void => {
-		if (safetyInterval || disposed) return;
-		safetyInterval = timers.setInterval(check, opts.safetyPollIntervalMs ?? CONTROL_SAFETY_POLL_INTERVAL_MS);
-		safetyInterval.unref?.();
-	};
-	const watchDir = (target: string, create = false): void => {
-		if (disposed || watchedDirs.has(target)) return;
-		if (create) fsImpl.mkdirSync(target, { recursive: true });
-		const watcher = fsImpl.watch(resolveWatchPath(target, fsImpl.realpathSync.native), () => check());
-		watcher.on?.("error", startPolling);
-		watchers.push(watcher);
-		watchedDirs.add(target);
-	};
 	try {
 		if (shouldUseNativeFsWatch("runner-control-inbox", opts.platform)) {
-			watchDir(dir);
-			watchDir(stopRequestsDir(asyncDir), true);
-			watchDir(steerRequestsDir(asyncDir), true);
-			startSafetyPolling();
+			for (const target of dirs) {
+				const watcher = fsImpl.watch(resolveWatchPath(target, fsImpl.realpathSync.native), check);
+				watcher.on?.("error", startPolling);
+				watchers.push(watcher);
+			}
+			if (!interval) {
+				safetyInterval = timers.setInterval(check, opts.safetyPollIntervalMs ?? CONTROL_SAFETY_POLL_INTERVAL_MS);
+				safetyInterval.unref?.();
+			}
 		} else {
 			startPolling();
 		}
 	} catch {
 		startPolling();
 	}
-
 	return () => {
 		if (disposed) return;
 		disposed = true;

@@ -15,6 +15,7 @@
 ### Fixed
 - Keep unconfigured prompt-runtime loads inert. Thanks to [@lertian](https://github.com/lertian) for #1973.
 - Discover supervisor asks on demand even without a UI context, isolate notification failures, and keep answers explicit (#1975, #1982). Thanks to [@brandonmwest](https://github.com/brandonmwest).
+- Consume async workflow steering with exact child targeting, terminal shutdown receipts, and handler-selective inbox watching (#1976, #1983). Thanks to [@brandonmwest](https://github.com/brandonmwest) for the diagnosis, Herdr reproduction, initial consumer, and tests.
 - Return `invalid_state` instead of queuing unreachable workflow stop requests when live workflow controllers are unavailable (#1965).
 - Forward bounded live tool activity, timing, model/effort, and counters for synchronous workflow children without forwarding transcripts (#1964).
 - Allow `action: "status", view: "transcript"` to inspect bounded live foreground child artifacts on demand (#1963).
