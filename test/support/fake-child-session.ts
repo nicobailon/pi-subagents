@@ -166,8 +166,8 @@ function defaultAcceptanceReport(): string {
 	].join("\n");
 }
 
-function withAcceptanceReport(output: string, task: string): string {
-	if (!task.includes("## Acceptance Contract") || output.includes("```acceptance-report")) return output;
+function withAcceptanceReport(output: string, prompt: string): string {
+	if (!prompt.includes("## Acceptance Contract") || output.includes("```acceptance-report")) return output;
 	return `${output}\n${defaultAcceptanceReport()}`;
 }
 
@@ -244,7 +244,8 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 						const textPart = typed.message?.content?.find?.((part) => part?.type === "text");
 						const providerError = Boolean(typed.message?.errorMessage || typed.message?.stopReason === "error");
 						if (providerError) sawProviderError = true;
-						if (!providerError && textPart && typeof textPart.text === "string" && (!sawProviderError || textPart.text.trim())) textPart.text = withAcceptanceReport(textPart.text, task);
+						// Native acceptance lives in system resources, not the compactable task.
+						if (!providerError && textPart && typeof textPart.text === "string" && (!sawProviderError || textPart.text.trim())) textPart.text = withAcceptanceReport(textPart.text, [launch.systemPrompt, launch.appendSystemPrompt, task].join("\n"));
 					}
 					// A real child's watchdog hook reports through the host's sink, not the session stream.
 					if (isChildWatchdogStatusEvent(entry)) launch.runtime.watchdogStatus?.(entry);
