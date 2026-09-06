@@ -359,7 +359,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.notEqual(revivedIds[1], revivedIds[0], "expected the latest revived run id from pass two");
 			assert.equal(value?.firstOutput, "Completed retained follow-up one");
 			assert.equal(value?.output, "Completed retained follow-up two");
-			assert.equal(revivedIds.every((id) => !fs.existsSync(path.join(ASYNC_DIR, id, "workflow-result.json"))), true);
+			// Awaiting may consume a pending result before the runner promotes its public file.
+			assert.equal(mockPi.callCount(), 2, "each retained follow-up must execute once without replay or extra children");
 		} finally {
 			fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
 			for (const id of revivedIds) fs.rmSync(path.join(ASYNC_DIR, id), { recursive: true, force: true });
