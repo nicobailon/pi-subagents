@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { safeTerminalText } from "../../shared/display-text.ts";
+import { safeTerminalText, truncateDisplayText } from "../../shared/display-text.ts";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
 import {
@@ -23,6 +23,10 @@ import { isTrustedRecordedSessionFile } from "../../shared/session-file-trust.ts
 const DEFAULT_TRANSCRIPT_LINES = 80;
 const MAX_TRANSCRIPT_LINES = 500;
 const TRANSCRIPT_TAIL_BYTES = 256 * 1024;
+const MAX_TRANSCRIPT_LINE_CHARS = 2000;
+const MAX_TRANSCRIPT_BODY_BYTES = 32 * 1024;
+const TRANSCRIPT_LINE_OMISSION = "… [content omitted]";
+const TRANSCRIPT_BODY_OMISSION = "  … [earlier lines omitted]";
 
 type ForegroundControl = SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never;
 type ForegroundRun = NonNullable<SubagentState["foregroundRuns"]> extends Map<string, infer T> ? T : never;
@@ -494,7 +498,31 @@ function appendTranscriptBody(lines: string[], sourceLabel: string, sourceLines:
 		lines.push("  (no transcript lines available yet)");
 		return;
 	}
-	for (const line of sourceLines) lines.push(`  ${line}`);
+	// Bound the rendered body, not the raw input: terminal escaping can expand it.
+	// Keep line prefixes (roles/tool names), then prefer whole recent lines. The
+	// byte budget includes indentation, separators and omission markers, but not
+	// the source label, run metadata, warnings or artifact paths above the body.
+	const body: string[] = [];
+	let bytes = 0;
+	for (let index = sourceLines.length - 1; index >= 0; index--) {
+		// Preserve assembled-line binary detection (including indentation). A
+		// binary placeholder replaces the whole line and must not be reindented.
+		const safe = safeTerminalText(`  ${sourceLines[index]!}`);
+		const lineLimit = MAX_TRANSCRIPT_LINE_CHARS + 2;
+		const line = safe.length <= lineLimit
+			? safe
+			: truncateDisplayText(safe, lineLimit - TRANSCRIPT_LINE_OMISSION.length) + TRANSCRIPT_LINE_OMISSION;
+		const size = Buffer.byteLength(line) + 1;
+		if (bytes + size > MAX_TRANSCRIPT_BODY_BYTES) {
+			const markerBytes = Buffer.byteLength(TRANSCRIPT_BODY_OMISSION) + 1;
+			while (bytes + markerBytes > MAX_TRANSCRIPT_BODY_BYTES) bytes -= Buffer.byteLength(body.pop()!) + 1;
+			body.push(TRANSCRIPT_BODY_OMISSION);
+			break;
+		}
+		body.push(line);
+		bytes += size;
+	}
+	lines.push(...body.reverse());
 }
 
 export function formatAsyncRunTranscript(status: AsyncStatus, asyncDir: string, options: TranscriptOptions = {}): string {
