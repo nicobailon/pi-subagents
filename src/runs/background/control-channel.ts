@@ -479,11 +479,18 @@ export function deliverStopRequest(input: {
  * as the runner inbox (native `fs.watch` plus a safety poll, interval polling as
  * the fallback) and the same up-front `check()` for a request that landed before
  * the watcher was installed. Returns a disposer.
+ *
+ * A scan failure keeps its requests on disk for the next tick, matching
+ * `consumeSteerRequests`. Because a persistent failure would otherwise be
+ * indistinguishable from an idle inbox, `onUnavailable` reports the first error
+ * of an unbroken run of failures so the caller can journal it; the next
+ * successful scan re-arms that report.
  */
 export function watchAsyncSteerInbox(
 	asyncDir: string,
 	opts: {
 		onSteer: (request: SteerRequest) => void;
+		onUnavailable?: (error: unknown) => void;
 		pollIntervalMs?: number;
 		safetyPollIntervalMs?: number;
 		platform?: NodeJS.Platform;
@@ -501,12 +508,30 @@ export function watchAsyncSteerInbox(
 	}
 
 	let disposed = false;
+	let reportedUnavailable = false;
 	const check = (): void => {
 		if (disposed) return;
+		let requests: SteerRequest[];
 		try {
-			for (const request of consumeSteerRequests(asyncDir, fsImpl)) opts.onSteer(request);
-		} catch {
-			// Never let inbox errors crash the workflow.
+			requests = consumeSteerRequests(asyncDir, fsImpl);
+		} catch (error) {
+			// Never let inbox errors crash the workflow, but do not let a persistent failure look like
+			// an idle inbox either: a writer that was told its steer was queued would otherwise wait on
+			// a request nothing can read.
+			if (!reportedUnavailable) {
+				reportedUnavailable = true;
+				opts.onUnavailable?.(error);
+			}
+			return;
+		}
+		reportedUnavailable = false;
+		// A throwing consumer must not strand the requests already read off disk.
+		for (const request of requests) {
+			try {
+				opts.onSteer(request);
+			} catch (error) {
+				opts.onUnavailable?.(error);
+			}
 		}
 	};
 

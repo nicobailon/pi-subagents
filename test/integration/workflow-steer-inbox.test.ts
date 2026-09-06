@@ -74,6 +74,56 @@ describe("async workflow steer inbox", { skip: !available ? "pi packages not ava
 		assert.equal(payload.success, true);
 	});
 
+	it("settles a delivery still in flight when the workflow ends, instead of leaving it at routed", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const childRelease = path.join(tempDir, "inflight-child-release");
+		const steerRelease = path.join(tempDir, "inflight-steer-release");
+		// The child finishes as soon as childRelease appears, but its steer() stays unresolved until
+		// steerRelease appears, so the delivery is guaranteed to still be in flight at teardown.
+		mockPi.onCall({ steerWaitForPath: steerRelease, steps: [{ waitForPath: childRelease, jsonl: [events.assistantMessage("done")] }] });
+		const ctx = makeMinimalCtx(tempDir);
+		ctx.sessionManager.getSessionId = () => "session-workflow-steer-inflight";
+		const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]);
+
+		const launch = await executor.execute(
+			`workflow-steer-inflight-${Date.now().toString(36)}`,
+			{ workflowScript: `return await runs.run("waits", { agent: "worker", task: "Wait for guidance" });`, async: true },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+		assert.equal(launch.isError, undefined, launch.content[0]?.text);
+		const runId = launch.details?.asyncId as string;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+
+		try {
+			await waitForMockPiCall(mockPi, 0, 10_000);
+			requestAsyncSteer(asyncDir, { message: "Held in flight.", id: "workflow-steer-inflight", ts: Date.now() });
+			// Wait for the request to be consumed and routed, so the delivery is genuinely in flight.
+			await waitForAsyncState(runId, (candidate) => recentSteering(candidate, "workflow-steer-inflight")?.state === "routed", 15_000);
+
+			// Let the workflow finish while that delivery is still pending.
+			fs.writeFileSync(childRelease, "go");
+			await waitForAsyncState(runId, (candidate) => candidate.state === "complete", 15_000);
+
+			// Now release the delivery. Teardown must still be holding persistence open for it.
+			fs.writeFileSync(steerRelease, "go");
+			const settled = await waitForAsyncState(
+				runId,
+				(candidate) => {
+					const state = recentSteering(candidate, "workflow-steer-inflight")?.state;
+					return state === "delivered" || state === "queued" || state === "failed";
+				},
+				15_000,
+			);
+			// The receipt must reach a terminal state. Left at "routed" it claims the steer is still being
+			// delivered to a run that has already ended.
+			assert.notEqual(recentSteering(settled, "workflow-steer-inflight")?.state, "routed");
+		} finally {
+			if (!fs.existsSync(childRelease)) fs.writeFileSync(childRelease, "go");
+			if (!fs.existsSync(steerRelease)) fs.writeFileSync(steerRelease, "go");
+		}
+	});
+
 	it("closes the inbox and fails a late steer request when the workflow ends", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		const ctx = makeMinimalCtx(tempDir);
 		ctx.sessionManager.getSessionId = () => "session-workflow-steer-closed";

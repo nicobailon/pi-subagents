@@ -5250,6 +5250,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					emitWorkflowSteerEvent("subagent.steer.failed", request.id, index, { reason });
 					persist({ tolerateStatusWriteFailure: true });
 				};
+				// A consumed request whose delivery is still in flight has a `routed` receipt and no terminal
+				// one. Teardown must settle these before closing persistence, or the terminal update is
+				// dropped by `persist()` and the request stays at `routed` forever.
+				const inFlightWorkflowSteers = new Set<Promise<void>>();
 				const deliverWorkflowSteerRequest = (request: SteerRequest): void => {
 					const index = request.targetIndex ?? request.targetIndexes?.[0] ?? 0;
 					if (status.state !== "running") {
@@ -5290,7 +5294,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						emitWorkflowSteerEvent(`subagent.steer.${state}`, request.id, index, state === "failed" ? { reason } : { deliveryStatus: state, message: request.message });
 						persist({ tolerateStatusWriteFailure: true });
 					};
-					void steerWorkflowForegroundTarget({
+					const delivery = steerWorkflowForegroundTarget({
 						target: { control, workflowRunId, sourceRunId: workflowRunId },
 						message: request.message,
 						...(request.mode ? { mode: request.mode } : {}),
@@ -5301,10 +5305,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						},
 						(error) => applyWorkflowSteerDelivery("failed", error instanceof Error ? error.message : String(error)),
 					);
+					inFlightWorkflowSteers.add(delivery);
+					void delivery.finally(() => inFlightWorkflowSteers.delete(delivery));
 				};
 				let disposeWorkflowSteerInbox: (() => void) | undefined;
 				try {
-					disposeWorkflowSteerInbox = watchAsyncSteerInbox(asyncDir, { onSteer: deliverWorkflowSteerRequest });
+					disposeWorkflowSteerInbox = watchAsyncSteerInbox(asyncDir, {
+						onSteer: deliverWorkflowSteerRequest,
+						onUnavailable: (error) => appendWorkflowEvent({ type: "subagent.workflow.steer_inbox_unavailable", error: error instanceof Error ? error.message : String(error) }),
+					});
 				} catch (error) {
 					// Steering is an optional control surface, so a watcher that cannot install must not fail the run.
 					appendWorkflowEvent({ type: "subagent.workflow.steer_inbox_unavailable", error: error instanceof Error ? error.message : String(error) });
@@ -5654,6 +5663,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						try {
 							disposeWorkflowSteerInbox?.();
 							closeSteerInbox(asyncDir, status.state);
+							// Settle deliveries consumed just before the run finished. Their terminal receipt is written
+							// by a `.then` handler, so persistence has to be reopened for it: the terminal write above
+							// already closed it, and dropping the update would leave the request stuck at `routed`.
+							if (inFlightWorkflowSteers.size > 0) {
+								persistClosed = false;
+								await Promise.allSettled([...inFlightWorkflowSteers]);
+							}
 							const undelivered = consumeSteerRequests(asyncDir);
 							if (undelivered.length > 0) {
 								persistClosed = false;

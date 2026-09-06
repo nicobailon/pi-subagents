@@ -21,6 +21,8 @@ export interface FakeChildResponse {
 	exitCode?: number;
 	delay?: number;
 	waitForPath?: string;
+	/** Holds a `steer()` call unresolved until this path exists, so a test can keep a steer delivery in flight. */
+	steerWaitForPath?: string;
 	keepAliveAfterFinalMessageMs?: number;
 	jsonl?: unknown[];
 	/** Raw JSON lines; parsed into events for the in-process child without acceptance-report injection. */
@@ -329,6 +331,8 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 					throw new Error(response.stderr?.trim() || `mock child exited with code ${response.exitCode}`);
 				}
 			};
+			// Retained so `steer()` can honour `steerWaitForPath` from the response this child claimed.
+			let activeResponse: FakeChildResponse | undefined;
 			const session: ChildSession = {
 				subscribe(listener) {
 					listeners.add(listener);
@@ -339,6 +343,7 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 					const systemPrompt = launch.systemPrompt ?? launch.appendSystemPrompt ?? "";
 					const args = fakeChildArgs(launch, text);
 					const response = claimNextResponse(queueDir(), `${args.join("\n")}\n${systemPrompt}`);
+					activeResponse = response;
 					const dir = queueDir();
 					fs.mkdirSync(dir, { recursive: true });
 					const callPath = path.join(dir, `call-${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}.json`);
@@ -377,6 +382,7 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 				async steer(text) {
 					record.steers.push({ text, mode: "steer" });
 					recordSteer(text, "steer");
+					await waitForReleasePath(activeResponse?.steerWaitForPath);
 				},
 				async followUp(text) {
 					record.steers.push({ text, mode: "followUp" });

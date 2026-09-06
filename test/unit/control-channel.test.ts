@@ -709,27 +709,79 @@ describe("control channel: watchAsyncSteerInbox", () => {
 		}
 	});
 
-	it("keeps watching when a consumer throws", () => {
+	it("reports an inbox error that escapes the shared consumer instead of looking idle", () => {
+		const asyncDir = tmpAsyncDir("pi-steer-watch-unavailable-");
+		try {
+			const h = steerHarness();
+			let failProbe = true;
+			// `consumeSteerRequests` deliberately swallows a readdir failure and retains the requests for
+			// the next tick, which its own test asserts. An error that escapes it, though, previously
+			// vanished: the watcher caught everything and returned as if the inbox were empty.
+			const failingFs = {
+				...h.fsImpl,
+				existsSync: ((target: fs.PathLike) => {
+					if (failProbe) throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+					return fs.existsSync(target);
+				}) as typeof fs.existsSync,
+			} as SteerWatchHarness["fsImpl"];
+			const steers: string[] = [];
+			const unavailable: string[] = [];
+			const dispose = watchAsyncSteerInbox(asyncDir, {
+				onSteer: (request) => steers.push(request.message),
+				onUnavailable: (error) => unavailable.push(error instanceof Error ? error.message : String(error)),
+				fs: failingFs,
+				timers: h.timers,
+				platform: "linux",
+			});
+
+			assert.deepEqual(steers, []);
+			assert.deepEqual(unavailable, ["permission denied"], "the caller must be told, not left to assume idle");
+
+			// An unbroken run of failures reports once, not once per tick.
+			h.trigger();
+			assert.deepEqual(unavailable, ["permission denied"]);
+
+			// Recovery still delivers, and the report re-arms for the next unbroken run of failures.
+			failProbe = false;
+			requestAsyncSteer(asyncDir, { message: "after recovery", id: "s1", ts: 1 });
+			h.trigger();
+			assert.deepEqual(steers, ["after recovery"]);
+			failProbe = true;
+			h.trigger();
+			assert.deepEqual(unavailable, ["permission denied", "permission denied"]);
+			dispose();
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("keeps watching when a consumer throws, and does not strand its batch siblings", () => {
 		const asyncDir = tmpAsyncDir("pi-steer-watch-throws-");
 		try {
 			const seen: string[] = [];
+			const unavailable: string[] = [];
 			const h = steerHarness();
 			const dispose = watchAsyncSteerInbox(asyncDir, {
 				onSteer: (request) => {
 					seen.push(request.message);
 					if (request.message === "boom") throw new Error("consumer failed");
 				},
+				onUnavailable: (error) => unavailable.push(error instanceof Error ? error.message : String(error)),
 				fs: h.fsImpl,
 				timers: h.timers,
 				platform: "linux",
 			});
 
+			// Both are consumed off disk in one scan, so a throw on the first must not swallow the second.
 			requestAsyncSteer(asyncDir, { message: "boom", id: "s1", ts: 1 });
+			requestAsyncSteer(asyncDir, { message: "sibling in same batch", id: "s2", ts: 2 });
 			h.trigger();
-			requestAsyncSteer(asyncDir, { message: "still delivered", id: "s2", ts: 2 });
-			h.trigger();
+			assert.deepEqual(seen, ["boom", "sibling in same batch"]);
+			assert.deepEqual(unavailable, ["consumer failed"], "a failed delivery must be reported, not silent");
 
-			assert.deepEqual(seen, ["boom", "still delivered"], "a throwing consumer must not kill the watcher");
+			requestAsyncSteer(asyncDir, { message: "still delivered", id: "s3", ts: 3 });
+			h.trigger();
+			assert.deepEqual(seen, ["boom", "sibling in same batch", "still delivered"], "a throwing consumer must not kill the watcher");
 			dispose();
 		} finally {
 			cleanup(asyncDir);
