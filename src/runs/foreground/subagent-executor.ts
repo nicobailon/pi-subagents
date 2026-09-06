@@ -5346,22 +5346,25 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 				const { workflowScript, async: _workflowAsync, chatProgress: _chatProgress, ...workflowRequest } = requestParams;
 				let workflowSteerInboxClosed = false;
-				const settleWorkflowSteerInbox = (): void => {
+				const settleWorkflowSteerInbox = (outcome = status.state): void => {
 					if (workflowSteerInboxClosed) return;
 					workflowSteerInboxClosed = true;
 					disposeWorkflowSteerInbox?.();
 					// Consumed deliveries are not files anymore. Fail unresolved SDK operations without awaiting them.
-					for (const settle of pendingWorkflowSteers) settle("failed", `run became ${status.state} before steering delivery settled; delivery unconfirmed`);
+					for (const settle of pendingWorkflowSteers) settle("failed", `run became ${outcome} before steering delivery settled; delivery unconfirmed`);
 					try {
-						closeSteerInbox(asyncDir, status.state);
+						closeSteerInbox(asyncDir, outcome);
 						// Separately drain requests that never reached the consumer.
 						const undelivered = consumeSteerRequests(asyncDir, undefined, (error) => {
 							appendWorkflowEvent({ type: "subagent.workflow.steer_inbox_unavailable", phase: "drain", error: error instanceof Error ? error.message : String(error) });
 						});
-						for (const request of undelivered) failWorkflowSteer(request, explicitWorkflowSteerIndexes(request) ?? [0], `run became ${status.state} before steering request was consumed`);
+						for (const request of undelivered) failWorkflowSteer(request, explicitWorkflowSteerIndexes(request) ?? [0], `run became ${outcome} before steering request was consumed`);
 					} catch (error) {
 						appendWorkflowEvent({ type: "subagent.workflow.steer_inbox_unavailable", phase: "close", error: error instanceof Error ? error.message : String(error) });
 					}
+					// Commit receipts while run status is still nonterminal. Result/index publication
+					// can fail next; teardown must not publish the subsequently computed terminal status.
+					persist();
 				};
 				void Promise.resolve().then(async () => {
 					const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
@@ -5636,6 +5639,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, summary, producedChildOutputPaths);
 						const resultSummary = appendWorkflowOutputWarning(summary, outputWarning);
 						const workflowUsage = sumResultsUsage(workflowResults);
+						settleWorkflowSteerInbox("complete");
 						const workflowChildren = workflowChildSummary({ parentToolCallId: toolCallId, workflowRunId, workflowState: "completed", inventoryComplete: true, trace: workflow.trace, children: workflow.children, steps: status.steps });
 						status = { ...status, state: "complete", endedAt: Date.now(), workflow: { value: workflow.value, trace: finalPreflightTrace, emits: workflow.emits, console: workflow.console, ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}) }, workflowChildren, totalTokens: { input: workflowUsage.input, output: workflowUsage.output, total: workflowUsage.input + workflowUsage.output }, totalCost: sumResultsCost(workflowResults) };
 						const receipt = terminalWorkflowReceipt(workflowRunId, "complete", workflow.children, workflowChildren, undefined, validHostStepNodes(status.workflowGraph), workflowResource?.provenance);
@@ -5648,7 +5652,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
 						}
 						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, workflowChildren, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), ...(status.steps?.find((step) => step.workflowKey === child.key)?.sessionName ? { sessionName: status.steps?.find((step) => step.workflowKey === child.key)?.sessionName } : {}), ...workflowChildAccountingFields(child), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.outputReference ? { outputReference: child.outputReference } : {}), ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
-						settleWorkflowSteerInbox();
 						persist();
 						deps.refreshResultDelivery?.();
 						persistClosed = true;
@@ -5672,10 +5675,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							}
 						}
 						const workflowState = state === "paused" ? "paused" : state === "stopped" ? "stopped" : "failed";
+						settleWorkflowSteerInbox(state);
 						const workflowChildren = workflowChildSummary({ parentToolCallId: toolCallId, workflowRunId, workflowState, inventoryComplete: true, trace: partial.trace, children: partial.children, steps: status.steps });
 						const finalPreflightWarnings = workflowPreflightWarnings(workflowPreflight, partial.trace, { settled: true });
 						const finalPreflightTrace = annotateWorkflowPreflightTrace(partial.trace, workflowPreflight);
-						status = compactOptional<AsyncStatus>({ ...status, state, stopped: stopped || undefined, activityState: pauseForDetached ? "needs_attention" : undefined, error: workflowFailureMessage(error, workflowRunId, partial.children), endedAt: Date.now(), workflow: { trace: finalPreflightTrace, emits: partial.emits, console: partial.console, ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}) }, workflowChildren });
+						status = compactOptional<AsyncStatus>({ ...status, state, stopped: stopped || undefined, activityState: pauseForDetached || status.activityState === "needs_attention" ? "needs_attention" : undefined, error: workflowFailureMessage(error, workflowRunId, partial.children), endedAt: Date.now(), workflow: { trace: finalPreflightTrace, emits: partial.emits, console: partial.console, ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}) }, workflowChildren });
 						if (pauseForDetached) {
 							const promoted = promotePausedWorkflowIfSettled(status);
 							if (promoted) status = promoted;
@@ -5697,16 +5701,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
 						}
 						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, workflowChildren, ...(terminalOutcome ? { terminalOutcome } : {}), results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), ...(status.steps?.find((step) => step.workflowKey === child.key)?.sessionName ? { sessionName: status.steps?.find((step) => step.workflowKey === child.key)?.sessionName } : {}), ...workflowChildAccountingFields(child), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.outputReference ? { outputReference: child.outputReference } : {}), ...(child.terminalOutcome ? { terminalOutcome: child.terminalOutcome } : {}), ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.detached && status.state !== "complete" ? { detached: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
-						settleWorkflowSteerInbox();
 						persist();
 						deps.refreshResultDelivery?.();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(terminalOutcome ? { terminalOutcome } : {}), ...(status.error ? { error: status.error } : {}), ...(status.activityState ? { activityState: status.activityState } : {}) });
 					} finally {
-						// Also settle early result-write exits, while persistence is still open.
+						// Idempotent cleanup only: a failed result/index write must not authorize terminal status.
 						try {
 							settleWorkflowSteerInbox();
-							if (!persistClosed) persist();
 						} catch (error) {
 							console.error(`Failed to close async workflow steer inbox '${asyncDir}':`, error);
 						}
