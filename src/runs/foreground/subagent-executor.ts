@@ -5289,10 +5289,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						emitWorkflowSteerEvent("subagent.steer.routed", request.id, index);
 						const applyWorkflowSteerDelivery = (state: "delivered" | "queued" | "failed", reason?: string): void => {
 							// Shutdown settles unresolved receipts synchronously; late SDK callbacks cannot rewrite them.
-							if (!pendingWorkflowSteers.delete(applyWorkflowSteerDelivery)) return;
+							if (!pendingWorkflowSteers.has(applyWorkflowSteerDelivery)) return;
+							// Queuing is not confirmation of delivery: retain ownership until terminal settlement.
+							if (state !== "queued") pendingWorkflowSteers.delete(applyWorkflowSteerDelivery);
 							const now = Date.now();
 							const steering = steeringStatus(status);
-							// This once-only callback owns a routed target, even after bounded display history
+							// This callback owns a pending target, even after bounded display history
 							// evicts its request. Account independently; queued still represents one pending target.
 							if (state !== "queued") steering.pending = Math.max(0, steering.pending - 1);
 							if (state === "delivered") {
@@ -5349,7 +5351,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					workflowSteerInboxClosed = true;
 					disposeWorkflowSteerInbox?.();
 					// Consumed deliveries are not files anymore. Fail unresolved SDK operations without awaiting them.
-					for (const settle of pendingWorkflowSteers) settle("failed", `run became ${status.state} before steering delivery settled`);
+					for (const settle of pendingWorkflowSteers) settle("failed", `run became ${status.state} before steering delivery settled; delivery unconfirmed`);
 					try {
 						closeSteerInbox(asyncDir, status.state);
 						// Separately drain requests that never reached the consumer.

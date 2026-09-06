@@ -43,9 +43,15 @@ describe("async workflow steer inbox", { skip: !available ? "pi packages not ava
 		await waitForMockPiCall(mockPi, 0, 10_000);
 		const session = mockPi.sessions[0]!.session!;
 		const originalSteer = session.steer.bind(session);
+		const originalFollowUp = session.followUp.bind(session);
 		let releaseSteers!: () => void;
 		const blocked = new Promise<void>((resolve) => { releaseSteers = resolve; });
 		let calls = 0;
+		session.followUp = async (text) => {
+			calls++;
+			assert.deepEqual(fs.readdirSync(steerRequestsDir(asyncDir)), []);
+			await originalFollowUp(text);
+		};
 		session.steer = async (text) => {
 			calls++;
 			assert.deepEqual(fs.readdirSync(steerRequestsDir(asyncDir)), [], "entire batch consumed before first delivery callback");
@@ -54,9 +60,14 @@ describe("async workflow steer inbox", { skip: !available ? "pi packages not ava
 		};
 		const accounting = (candidate: AsyncStatusPayload) => (candidate as { steering?: SteeringStatus }).steering;
 		try {
-			for (let index = 0; index < 21; index++) requestAsyncSteer(asyncDir, { id: `batch-${index}`, message: `batch-${index}`, targetIndex: 0, ts: index + 1 });
-			const active = await waitForAsyncState(runId, (candidate) => calls === 21 && accounting(candidate)?.recent.every((request) => request.targets[0]?.state === (shutdown ? "routed" : "delivered")) === true, 15_000);
+			for (let index = 0; index < 21; index++) requestAsyncSteer(asyncDir, { id: `batch-${index}`, message: `batch-${index}`, targetIndex: 0, ts: index + 1, ...(shutdown && (index === 0 || index === 20) ? { mode: "follow_up" as const } : {}) });
+			const active = await waitForAsyncState(runId, (candidate) => calls === 21 && accounting(candidate)?.recent.every((request) => request.targets[0]?.state === (shutdown ? request.id === "batch-20" ? "queued" : "routed" : "delivered")) === true, 15_000);
 			assert.equal(accounting(active)!.requested, 21);
+			assert.equal(accounting(active)!.pending, shutdown ? 21 : 0, "queued acknowledgments still count once as pending");
+			if (shutdown) {
+				const queuedEvents = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((event) => event.type === "subagent.steer.queued");
+				assert.deepEqual(queuedEvents.map((event) => event.requestId), ["batch-0", "batch-20"], "both evicted and retained queued receipts remain pending");
+			}
 			assert.equal(accounting(active)!.recent.length, 20);
 			assert.equal(accounting(active)!.recent.some((request) => request.id === "batch-0"), false, "first unresolved receipt was evicted");
 			fs.writeFileSync(release, "go");
@@ -66,6 +77,7 @@ describe("async workflow steer inbox", { skip: !available ? "pi packages not ava
 			assert.equal(counters.delivered, shutdown ? 0 : 21);
 			assert.equal(counters.failed, shutdown ? 21 : 0);
 			assert.equal(counters.recent.length, 20, "history cap must not grow");
+			if (shutdown) assert.ok(counters.recent.every((request) => request.targets[0]?.state === "failed" && request.targets[0].reason?.includes("delivery unconfirmed")));
 			const before = fs.readFileSync(path.join(asyncDir, "status.json"), "utf8");
 			const journal = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf8");
 			const terminalEvents = journal.trim().split("\n").map((line) => JSON.parse(line)).filter((event) => event.requestId?.startsWith("batch-") && event.type === `subagent.steer.${shutdown ? "failed" : "delivered"}`);
@@ -77,6 +89,7 @@ describe("async workflow steer inbox", { skip: !available ? "pi packages not ava
 			assert.equal(fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf8"), journal);
 		} finally {
 			session.steer = originalSteer;
+			session.followUp = originalFollowUp;
 			releaseSteers();
 			fs.writeFileSync(release, "go");
 		}
@@ -182,6 +195,13 @@ describe("async workflow steer inbox", { skip: !available ? "pi packages not ava
 
 		const payload = await readAsyncPayload(runId);
 		assert.equal(payload.success, true);
+		const terminal = await waitForAsyncState(runId, (candidate) => candidate.state === "complete", 15_000);
+		const counters = (terminal as { steering: SteeringStatus }).steering;
+		assert.equal(counters.pending, 0);
+		assert.equal(counters.delivered, 1);
+		assert.equal(counters.failed, 1);
+		assert.equal(recentSteering(terminal, "workflow-follow-up")?.state, "failed");
+		assert.match(recentSteering(terminal, "workflow-follow-up")!.reason!, /delivery unconfirmed/);
 	});
 
 	for (const parallel of [false, true]) it(`routes every explicit target without sibling fallback (${parallel ? "parallel" : "sequential"})`, { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
