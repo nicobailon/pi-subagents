@@ -482,7 +482,7 @@ describe("async interrupt action", () => {
 				.execute("steer", { action: "steer", dir: asyncDir, message: "Too late." }, new AbortController().signal, undefined, ctx());
 
 			assert.equal(result.isError, true);
-			assert.match(text(result), /no live foreground child/);
+			assert.match(text(result), /not running or queued/);
 			assert.equal(fs.existsSync(path.join(asyncDir, "control", "steer-requests")), false);
 		} finally {
 			cleanup(workflowRunId, asyncDir);

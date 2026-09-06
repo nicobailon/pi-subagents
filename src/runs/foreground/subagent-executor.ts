@@ -88,6 +88,7 @@ import { canQueueRetainedAsyncFollowUp, steerAsyncRun } from "./async-steering-a
 import {
 	resolveWorkflowForegroundSteeringTarget,
 	steerWorkflowForegroundTarget,
+	steerWorkflowRun,
 } from "./workflow-foreground-steering.ts";
 import { stopAsyncRun } from "./async-stop-action.ts";
 import { dismissRecoveredWorkflow } from "./async-dismiss-action.ts";
@@ -6334,9 +6335,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const runId = location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir);
 						const directoryStatus = location.asyncDir ? readStatus(location.asyncDir) : null;
 						if (directoryStatus?.mode === "workflow") {
-							const route = resolveWorkflowForegroundSteeringTarget({ state: deps.state, workflowRunId: directoryStatus.runId || runId, asyncDirRoot: DIRS.async });
-							if (!route.ok) return { content: [{ type: "text", text: route.message }], isError: true, details: { mode: "management", results: [] } };
-							return steerWorkflowForegroundTarget({ target: route.target, message, mode: resolveSteerDeliveryMode(paramsWithResolvedCwd.mode), index: paramsWithResolvedCwd.index });
+							return steerWorkflowRun({ state: deps.state, runId, asyncDir: location.asyncDir!, message, mode: resolveSteerDeliveryMode(paramsWithResolvedCwd.mode), index: paramsWithResolvedCwd.index, signal });
 						}
 						if (location.asyncDir) {
 							const unsupported = externalRunnerControlError(location.asyncDir, "steer");
@@ -6382,9 +6381,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (resolved?.kind !== "async") return { content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
 				const resolvedStatus = resolved.location.asyncDir ? readStatus(resolved.location.asyncDir) : null;
 				if (resolvedStatus?.mode === "workflow") {
-					const route = resolveWorkflowForegroundSteeringTarget({ state: deps.state, workflowRunId: resolvedStatus.runId || resolved.id, asyncDirRoot: DIRS.async });
-					if (!route.ok) return { content: [{ type: "text", text: route.message }], isError: true, details: { mode: "management", results: [] } };
-					return steerWorkflowForegroundTarget({ target: route.target, message, mode: resolveSteerDeliveryMode(paramsWithResolvedCwd.mode), index: paramsWithResolvedCwd.index });
+					return steerWorkflowRun({ state: deps.state, runId: resolved.id, asyncDir: resolved.location.asyncDir!, message, mode: resolveSteerDeliveryMode(paramsWithResolvedCwd.mode), index: paramsWithResolvedCwd.index, signal });
 				}
 				if (resolved.location.asyncDir) {
 					const unsupported = externalRunnerControlError(resolved.location.asyncDir, "steer");
