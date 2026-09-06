@@ -4,6 +4,8 @@ import { buildInProcessChildLaunch, type BuildInProcessChildLaunchInput, type In
 import { deriveForkPromptCacheKey } from "../shared/child-tool-plan.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import type { RunnerSubagentStep } from "../shared/parallel-utils.ts";
+import { formatAcceptancePrompt } from "../shared/acceptance.ts";
+import { isAgentContract } from "../shared/agent-contract.ts";
 
 export interface RunnerChildLaunchContext {
 	cwd: string;
@@ -27,6 +29,10 @@ export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChil
 	childWatchdog?: BuildInProcessChildLaunchInput["childWatchdog"];
 	watchdogStatus: NonNullable<BuildInProcessChildLaunchInput["watchdogStatus"]>;
 }) {
+	// Resource-backed system instructions survive SDK split-turn compaction verbatim.
+	const acceptancePrompt = step.effectiveAcceptance
+		? formatAcceptancePrompt(step.effectiveAcceptance, { reportOptional: isAgentContract(step.agentContract), structuredOutput: Boolean(step.structuredOutput?.acceptanceReportPath) })
+		: "";
 	return buildInProcessChildLaunch({
 		parentSessionId: step.parentSessionId,
 		forkCacheKey: step.context === "fork" ? deriveForkPromptCacheKey(step.parentSessionId) : undefined,
@@ -45,7 +51,7 @@ export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChil
 		subagentOnlyExtensions: step.subagentOnlyExtensions,
 		fast: step.fast,
 		modelCandidates: step.modelCandidates,
-		systemPrompt: step.systemPrompt ?? "",
+		systemPrompt: acceptancePrompt ? `${step.systemPrompt ?? ""}\n${acceptancePrompt}` : step.systemPrompt ?? "",
 		systemPromptMode: step.systemPromptMode,
 		mcpDirectTools: step.mcpDirectTools,
 		extensionBindings: normalizeExtensionBindings(step.extensionBindings)?.value,

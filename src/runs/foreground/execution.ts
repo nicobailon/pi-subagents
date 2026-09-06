@@ -357,6 +357,7 @@ async function runSingleAttempt(
 	shared: {
 		sessionEnabled: boolean;
 		systemPrompt: string;
+		acceptancePrompt: string;
 		resolvedSkillNames?: string[];
 		modelCandidates?: string[];
 		skillsWarning?: string;
@@ -412,7 +413,8 @@ async function runSingleAttempt(
 		allowNestedSubagents: agent.allowNestedSubagents,
 		extensions: agent.extensions,
 		subagentOnlyExtensions: agent.subagentOnlyExtensions,
-		systemPrompt: shared.systemPrompt,
+		// Exact terminal protocol belongs to session resources, not compactable history.
+		systemPrompt: shared.acceptancePrompt ? `${shared.systemPrompt}\n${shared.acceptancePrompt}` : shared.systemPrompt,
 		mcpDirectTools: agent.mcpDirectTools,
 		cwd: options.cwd ?? runtimeCwd,
 		intercomSessionName: options.intercomSessionName,
@@ -1914,7 +1916,7 @@ async function runSyncCompletionInner(
 		&& (continuationDeadline === undefined || Date.now() < continuationDeadline)
 		&& (!readonlySource || getReadonlySessionEvidence(readonlySource) === readonlyExpected)
 		&& !readonlySource?.detached && !readonlySource?.shutDown;
-	let nextAttemptTask = taskWithAcceptance;
+	let nextAttemptTask = task;
 	modelAttemptsLoop: for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
 		const candidate = modelsToTry[modelIndex];
 		// The inner loop re-runs the same candidate at most once, for abort recovery.
@@ -1927,6 +1929,7 @@ async function runSyncCompletionInner(
 			const result = await runSingleAttempt(runtimeCwd, agent, attemptTask, candidate, attemptOptions, {
 				sessionEnabled,
 				systemPrompt,
+				acceptancePrompt,
 				resolvedSkillNames: resolvedSkills.length > 0 ? resolvedSkills.map((skill) => skill.name) : undefined,
 				skillsWarning: missingSkills.length > 0 ? `Skills not found: ${missingSkills.join(", ")}` : undefined,
 				jsonlPath,
