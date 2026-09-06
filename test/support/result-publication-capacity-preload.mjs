@@ -12,6 +12,7 @@ if (root) {
 	let statusDeferred = false;
 	let asyncDir;
 	let failedRecovery = false;
+	const earlyTerminal = fs.existsSync(path.join(root, "early-terminal"));
 	const barrier = (name, data) => {
 		write(path.join(root, `${name}.tmp`), JSON.stringify(data));
 		rename(path.join(root, `${name}.tmp`), path.join(root, name));
@@ -22,7 +23,7 @@ if (root) {
 		if (path.basename(target).startsWith(".status.json.") && typeof data === "string") {
 			const status = JSON.parse(data);
 			asyncDir = path.dirname(target);
-			if (runningWritten && resultAttempts === 0) {
+			if (!earlyTerminal && runningWritten && resultAttempts === 0) {
 				statusDeferred = true;
 				throw full();
 			}
@@ -49,7 +50,7 @@ if (root) {
 	};
 	fs.renameSync = function (source, target) {
 		const result = rename.call(this, source, target);
-		if (path.basename(String(target)) === "steer-inbox-closed.json") {
+		if (!earlyTerminal && path.basename(String(target)) === "steer-inbox-closed.json") {
 			// A request queued just before inbox closure is consumed during finalization.
 			const dir = path.join(path.dirname(String(target)), "steer-requests");
 			fs.mkdirSync(dir, { recursive: true });
@@ -58,6 +59,10 @@ if (root) {
 		if (path.basename(String(target)) === "status.json") {
 			const status = JSON.parse(fs.readFileSync(target, "utf8"));
 			if (status.state === "complete" || status.state === "failed") barrier("terminal.json", status);
+		}
+		if (earlyTerminal && path.basename(String(target)) === "process-terminal-candidate.json") {
+			const candidate = JSON.parse(fs.readFileSync(target, "utf8"));
+			if (candidate.expectedWriters) barrier("drained.json", candidate);
 		}
 		return result;
 	};

@@ -15,6 +15,7 @@
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
 
 ### Fixed
+- Renew native async result delivery after visible early failure and deferred publication, without idle polling (#1981). Thanks to [@brandonmwest](https://github.com/brandonmwest).
 - Publish indexed async workflow results before terminal persistence after storage-capacity recovery (#1981). Thanks to [@brandonmwest](https://github.com/brandonmwest) for reporting completion-delivery observations.
 - Refuse single async steering and follow-up when an exact live supervisor ask is known; report explicit request IDs without answering, queueing, or recovering the blocked child (#1980). Thanks to [@brandonmwest](https://github.com/brandonmwest).
 - Activate demand-gated supervisor polling when an async workflow registers, including scheduled workflows owned by the current runtime session and rearming after prior work finishes, without restoring idle Darwin timers or native watchers (#1977). Thanks to [@brandonmwest](https://github.com/brandonmwest); preserves [@youlikemodernart](https://github.com/youlikemodernart)'s #1220/#1228 idle-Darwin constraints.
