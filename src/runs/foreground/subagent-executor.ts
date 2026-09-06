@@ -443,6 +443,7 @@ interface ExecutorDeps {
 	onAgentsChanged?: () => void;
 	allowMutatingManagementActions?: boolean;
 	activateSupervisorTransport?: () => void;
+	findPendingAsks?: Parameters<typeof steerAsyncRun>[0]["findPendingAsks"];
 	refreshResultDelivery?: () => void;
 	trackRetainedNestedRoute?: (rootRunId: string) => void;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
@@ -5360,6 +5361,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					// Steering is an optional control surface, so a watcher that cannot install must not fail the run.
 					appendWorkflowEvent({ type: "subagent.workflow.steer_inbox_unavailable", error: error instanceof Error ? error.message : String(error) });
 				}
+				deps.activateSupervisorTransport?.();
 				const { workflowScript, async: _workflowAsync, chatProgress: _chatProgress, ...workflowRequest } = requestParams;
 				let workflowSteerInboxClosed = false;
 				const settleWorkflowSteerInbox = (outcome = status.state): void => {
@@ -6340,6 +6342,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						}
 						return steerAsyncRun(compactOptional<Parameters<typeof steerAsyncRun>[0]>({
 							state: deps.state,
+							findPendingAsks: deps.findPendingAsks,
 							runId,
 							message,
 							mode: resolveSteerDeliveryMode(paramsWithResolvedCwd.mode),
@@ -6387,6 +6390,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 				return steerAsyncRun(compactOptional<Parameters<typeof steerAsyncRun>[0]>({
 					state: deps.state,
+					findPendingAsks: deps.findPendingAsks,
 					runId: resolved.id,
 					message,
 					mode: resolveSteerDeliveryMode(paramsWithResolvedCwd.mode),

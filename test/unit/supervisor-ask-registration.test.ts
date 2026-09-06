@@ -12,7 +12,9 @@ import {
 	resolveSupervisorChannelDir,
 } from "../../src/intercom/native-supervisor-channel.ts";
 import { steerWorkflowForegroundTarget } from "../../src/runs/foreground/workflow-foreground-steering.ts";
+import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import type { ForegroundRunControl, ForegroundSteerInput, SubagentState } from "../../src/shared/types.ts";
+import { DIRS } from "../../src/shared/types.ts";
 
 const createdChannels: string[] = [];
 
@@ -98,6 +100,187 @@ afterEach(() => {
 });
 
 describe("supervisor ask registration", () => {
+	it("public single async steering reports exact pending asks without reply, queue or recovery", async () => {
+		const owner = randomUUID();
+		fs.mkdirSync(DIRS.async, { recursive: true });
+		const root = fs.mkdtempSync(path.join(DIRS.async, "blocked-steer-"));
+		const ctx = { ...makeCtx(owner, path.join(root, "parent.jsonl")), cwd: root };
+		const state = makeState(ctx.sessionManager.getSessionFile(), ctx);
+		state.lastUiContext = null;
+		const runId = randomUUID();
+		const channel = createNativeSupervisorChannel(makePi({ tools: new Map(), onSend: () => { throw new Error("lookup must not notify"); } }) as never, state);
+		let probes = 0;
+		let race = false;
+		let racedAsk: string | undefined;
+		const executor = createSubagentExecutor({
+			pi: {} as never, state, config: { maxSubagentDepth: 2, control: {}, intercomBridge: {} } as never,
+			asyncByDefault: false, tempArtifactsDir: root, getSubagentSessionRoot: () => root,
+			expandTilde: value => value, discoverAgents: () => ({ agents: [] }),
+			findPendingAsks: target => {
+				const asks = channel.findPendingAsks(target);
+				if (race) racedAsk = writeRequest({ sessionId: owner, runId });
+				return asks;
+			},
+			kill: () => { probes++; return true; },
+		});
+		const status = { runId, sessionId: ctx.sessionManager.getSessionFile(), state: "running", mode: "single", pid: process.pid, startedAt: Date.now(), updatedAt: Date.now(), steps: [{ agent: "worker", status: "running" }] };
+		fs.writeFileSync(path.join(root, "status.json"), JSON.stringify(status));
+		const invoke = (mode: "steer" | "follow_up") => executor.executePublic(randomUUID(), { action: "steer", dir: root, message: "After this is resolved, update docs.", mode }, new AbortController().signal, undefined, ctx as never);
+		try {
+			const first = writeRequest({ sessionId: owner, runId });
+			const second = writeRequest({ sessionId: owner, runId });
+			for (const mode of ["steer", "follow_up"] as const) {
+				const result = await invoke(mode);
+				assert.equal(result.isError, true);
+				assert.match(text(result), /not delivered or queued/);
+				assert.match(text(result), /ambiguous/);
+				for (const id of [first, second]) assert.ok(text(result).includes(`"replyTo":"${id}"`));
+				assert.equal(result.details?.steering, undefined);
+			}
+			assert.deepEqual(fs.readdirSync(root), ["status.json"]);
+			assert.equal(fs.readFileSync(path.join(root, "status.json"), "utf8"), JSON.stringify(status));
+			assert.equal(channel.pending.size, 0);
+			const dir = resolveSupervisorChannelDir(runId, "worker", 0);
+			assert.deepEqual(fs.readdirSync(path.join(dir, "replies")), []);
+			fs.rmSync(path.join(dir, "requests", `${second}.json`));
+			assert.doesNotMatch(text(await invoke("follow_up")), /ambiguous/);
+			assert.equal(probes, 0, "blocked branch precedes reconciliation/control");
+			fs.rmSync(path.join(dir, "requests", `${first}.json`));
+			status.steps[0]!.status = "pending";
+			fs.writeFileSync(path.join(root, "status.json"), JSON.stringify(status));
+			race = true;
+			const raced = await invoke("follow_up");
+			assert.equal(raced.isError, undefined);
+			assert.equal(raced.details?.steering?.state, "scheduled");
+			assert.equal(raced.details?.steering?.deliveryStatus, "queued");
+			assert.match(text(raced), /Steering scheduled/);
+			assert.doesNotMatch(text(raced), /unblocked|consumed/);
+			assert.ok(fs.existsSync(path.join(dir, "requests", `${racedAsk}.json`)));
+			assert.deepEqual(fs.readdirSync(path.join(dir, "replies")), []);
+		} finally { channel.dispose(); fs.rmSync(root, { recursive: true, force: true }); }
+	});
+
+	it("receipt lookup is read-only, fresh and exact for runtime owner, run, agent and index", () => {
+		const owner = randomUUID(), runId = randomUUID();
+		const state = makeState("/sessions/parent.jsonl", makeCtx(owner));
+		state.lastUiContext = null;
+		const channel = createNativeSupervisorChannel({} as never, state);
+		const target = { runId, agent: "worker", childIndex: 0 };
+		const live = writeRequest({ sessionId: owner, runId });
+		const excluded = [
+			writeRequest({ sessionId: "foreign", runId }),
+			writeRequest({ sessionId: owner, runId, expiresAt: Date.now() - 1 }),
+			writeRequest({ sessionId: owner, runId, reason: "progress_update" }),
+		];
+		const resolved = writeRequest({ sessionId: owner, runId });
+		const dir = resolveSupervisorChannelDir(runId, "worker", 0);
+		fs.writeFileSync(path.join(dir, "replies", `${resolved}.json`), "{}");
+		// Put mismatched metadata in the exact target directory, not just another directory.
+		for (const mismatch of [{ runId: "other" }, { agent: "other" }, { childIndex: 1 }]) {
+			const id = writeRequest({ sessionId: owner, runId });
+			const file = path.join(dir, "requests", `${id}.json`);
+			fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), ...mismatch }));
+			excluded.push(id);
+		}
+		assert.deepEqual(channel.findPendingAsks(target), [live]);
+		assert.equal(channel.pending.size, 0);
+		for (const id of [...excluded, resolved]) assert.ok(fs.existsSync(path.join(dir, "requests", `${id}.json`)));
+		fs.rmSync(path.join(dir, "requests", `${live}.json`));
+		assert.deepEqual(channel.findPendingAsks(target), []);
+		state.supervisorOwnerSessionId = null;
+		writeRequest({ sessionId: owner, runId });
+		assert.deepEqual(channel.findPendingAsks(target), []);
+		state.supervisorOwnerSessionId = owner;
+		state.asyncJobs.set(runId, { status: "complete" } as never);
+		assert.deepEqual(channel.findPendingAsks(target), [], "terminal child asks are not live");
+		channel.dispose();
+	});
+
+	it("discovers delayed asks through Darwin workflow registration, control release, terminal and rearm", async () => {
+		const sessionId = randomUUID();
+		const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "supervisor-demand-"));
+		const ctx = { ...makeCtx(sessionId), cwd: root };
+		const state = makeState(sessionId, ctx);
+		const intervals = new Map<object, () => void>();
+		let starts = 0;
+		let unrefs = 0;
+		const sent: string[] = [];
+		const pi = {
+			getAllTools: () => [], registerTool() {}, getSessionName: () => "parent",
+			events: { emit() {}, on() { return () => {}; } },
+			sendMessage(message: { details?: { id?: string } }) { if (message.details?.id) sent.push(message.details.id); },
+		};
+		const channel = createNativeSupervisorChannel(pi as never, state, {
+			platform: "darwin",
+			watch: (() => { throw new Error("Darwin must not call fs.watch"); }) as never,
+			timers: {
+				setInterval: ((handler: () => void, delay: number) => {
+					assert.equal(delay, 250);
+					starts += 1;
+					const token = { unref() { unrefs += 1; } };
+					intervals.set(token, handler);
+					return token;
+				}) as typeof setInterval,
+				clearInterval: ((token: object) => { intervals.delete(token); }) as typeof clearInterval,
+				setImmediate, clearImmediate,
+			},
+		});
+		const tick = () => { for (const handler of [...intervals.values()]) handler(); };
+		let terminal: () => void = () => {};
+		const executor = createSubagentExecutor({
+			pi: pi as never, state, config: { maxSubagentDepth: 2, control: {}, intercomBridge: {} } as never,
+			asyncByDefault: false, tempArtifactsDir: root, getSubagentSessionRoot: () => root,
+			expandTilde: (value) => value, discoverAgents: () => ({ agents: [] }),
+			activateSupervisorTransport: () => channel.activateTransport(),
+			refreshResultDelivery: () => { if ([...state.asyncJobs.values()].every(job => job.status !== "running" && job.status !== "queued")) terminal(); },
+		});
+		const dirs: string[] = [];
+		try {
+			channel.start();
+			channel.activateTransport();
+			assert.equal(intervals.size, 0, "idle registration has no timer");
+			for (let cycle = 0; cycle < 2; cycle += 1) {
+				const done = new Promise<void>(resolve => { terminal = resolve; });
+				const result = await executor.executePublic(randomUUID(), { workflowScript: "return [];", async: true }, new AbortController().signal, undefined, ctx as never);
+				assert.equal(result.isError, undefined, JSON.stringify(result));
+				const runId = result.details!.asyncId!;
+				const job = state.asyncJobs.get(runId)!;
+				dirs.push(job.asyncDir);
+				assert.equal(job.status, "running");
+				assert.equal(state.foregroundControls.size, 0);
+				const delayedAsk = writeRequest({ sessionId, runId });
+				tick();
+				assert.ok(sent.includes(delayedAsk), "lone registered workflow must discover a delayed ask without a query or foreground activation");
+				assert.equal(intervals.size, 1);
+				assert.equal(starts, cycle + 1);
+				const controlId = randomUUID();
+				// Model the unchanged foreground insertion/activation and last-control removal.
+				state.foregroundControls.set(controlId, { runId: controlId, activeChildren: new Map(), schedulingOwners: 1 } as never);
+				channel.activateTransport();
+				assert.equal(starts, cycle + 1, "foreground activation reuses the poller");
+				state.foregroundControls.delete(controlId);
+				fs.rmSync(channel.pending.get(delayedAsk)!.requestFile);
+				tick();
+				assert.equal(channel.pending.size, 0);
+				assert.equal(intervals.size, 1, "workflow demand survives last control and ask removal");
+				const laterAsk = writeRequest({ sessionId, runId });
+				tick();
+				assert.ok(sent.includes(laterAsk));
+				fs.rmSync(channel.pending.get(laterAsk)!.requestFile);
+				await done;
+				assert.equal(job.status, "complete");
+				tick();
+				assert.equal(intervals.size, 0, "terminal work and empty channel directories do not keep polling");
+			}
+			assert.equal(unrefs, 2);
+		} finally {
+			channel.dispose();
+			for (const controller of state.workflowControllers?.values() ?? []) controller.abort();
+			for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true });
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("caches runtime ownership at extension session_start and clears it at shutdown despite stale UI", () => {
 		const script = String.raw`
 			import assert from "node:assert/strict";

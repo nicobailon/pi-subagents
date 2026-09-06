@@ -628,6 +628,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			}
 		},
 		activateSupervisorTransport: () => supervisorChannel.activateTransport(),
+		findPendingAsks: (target) => supervisorChannel.findPendingAsks(target),
 		refreshResultDelivery: () => refreshResultDelivery(),
 		trackRetainedNestedRoute: undefined,
 	};

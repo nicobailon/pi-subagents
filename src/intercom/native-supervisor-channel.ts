@@ -614,6 +614,7 @@ function buildParentSupervisorTool(pi: ExtensionAPI, pending: Map<string, Pendin
 export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentState, deps: NativeSupervisorChannelDeps = {}): {
 	start: () => void;
 	activateTransport: () => void;
+	findPendingAsks: (target: { runId: string; agent: string; childIndex: number }) => string[];
 	dispose: () => void;
 	pending: Map<string, PendingSupervisorRequest>;
 	getSupervisorRequestState: (event: ControlEvent) => SupervisorRequestState;
@@ -830,6 +831,23 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 			if (!started) return;
 			poll();
 			if (!useNativeWatcher() && hasTransportDemand()) startPolling();
+		},
+		findPendingAsks: (target) => {
+			// Receipt-only discovery: no registration, notification, cleanup or reply writes.
+			const channelDir = resolveSupervisorChannelDir(target.runId, target.agent, target.childIndex);
+			let files: string[];
+			try { files = fs.readdirSync(path.join(channelDir, REQUESTS_DIR)); }
+			catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+				throw error;
+			}
+			const now = Date.now();
+			return files.filter(file => file.endsWith(".json")).flatMap(file => {
+				const request = parseRequestFile(path.join(channelDir, REQUESTS_DIR, file), channelDir);
+				return request?.expectsReply && request.runId === target.runId
+					&& request.agent === target.agent && request.childIndex === target.childIndex
+					&& requestLifecycle(request, state, now) === "pending" ? [request.id] : [];
+			}).sort();
 		},
 		start: () => {
 			if (started) return;

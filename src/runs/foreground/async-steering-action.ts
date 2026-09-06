@@ -26,6 +26,7 @@ export async function steerAsyncRun(input: {
 	message: string;
 	mode?: SteerDeliveryMode;
 	index?: number;
+	findPendingAsks?: (target: { runId: string; agent: string; childIndex: number }) => string[];
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	location: { asyncDir: string | null };
 	signal?: AbortSignal;
@@ -44,6 +45,24 @@ export async function steerAsyncRun(input: {
 		};
 	}
 	const asyncDir = input.location.asyncDir;
+	const snapshot = input.findPendingAsks ? readStatus(asyncDir) : null;
+	if (snapshot?.mode === "single"
+		&& (!input.state.currentSessionId || snapshot.sessionId === input.state.currentSessionId)
+		&& (snapshot.state === "running" || snapshot.state === "queued")
+		&& snapshot.steps?.length === 1 && (input.index === undefined || input.index === 0)
+		&& (snapshot.steps[0]?.status === "running" || snapshot.steps[0]?.status === "pending")) {
+		const asks = input.findPendingAsks?.({ runId: snapshot.runId, agent: snapshot.steps[0].agent, childIndex: 0 }) ?? [];
+		if (asks.length > 0) {
+			const replies = asks.map(replyTo => `subagent_supervisor(${JSON.stringify({ action: "reply", replyTo, message: "<explicit answer>" })})`).join("\n");
+			return {
+				content: [{ type: "text", text: `Steering not delivered or queued: async run ${snapshot.runId} is blocked on ${asks.length === 1 ? "a pending supervisor ask" : "ambiguous pending supervisor asks"}. No reply or recovery was attempted. Reply explicitly${asks.length > 1 ? " to the intended request ID" : ""}:\n${replies}` }],
+				isError: true,
+				details: { mode: "management", results: [] },
+			};
+		}
+	}
+	// The read-only snapshot precedes even stale-run reconciliation. An ask arriving
+	// later does not make a runner acknowledgement proof of consumption or unblocking.
 	const status = reconcileAsyncRun(asyncDir, { kill: input.kill }).status;
 	if (input.state.currentSessionId && status?.sessionId !== input.state.currentSessionId) {
 		return {
