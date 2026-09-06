@@ -38,7 +38,7 @@ describe("model fallback helpers", () => {
 		assert.match(error, /docs\/configuration\.md#modelresponsealiases/);
 		assert.match(error, /resolved provider\/model ID without its thinking suffix/);
 		assert.match(error, /outgoing request unchanged/);
-		assert.match(error, /new independent native runs, not resumed runs or external CLI adapters/);
+		assert.match(error, /Configuration changes affect new independent native runs; resumed native runs retain their launch-time declaration\. External CLI adapters do not use this setting\./);
 	});
 
 	it("accepts child-reported bare model ids for the expected registry entry", () => {
