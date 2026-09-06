@@ -83,10 +83,10 @@ lanes, or a fanout that the parent will consume together.
 ```js
 subagent({
   workflowScript: `
-    const scan = await runs.run("scan", { agent: "scout", task: "Map the target" });
+    const scan = await runs.run("scan", { label: "Map target behavior", agent: "scout", task: "Map the target" });
     const reviews = await runs.all([
-      { key: "correctness", agent: "reviewer", task: "Review correctness: " + scan.output },
-      { key: "tests", agent: "reviewer", task: "Review tests: " + scan.output }
+      { key: "correctness", label: "Review target correctness", agent: "reviewer", task: "Review correctness: " + scan.output },
+      { key: "tests", label: "Review target test coverage", agent: "reviewer", task: "Review tests: " + scan.output }
     ]);
     return reviews.map(result => result.output);
   `
@@ -109,6 +109,7 @@ Terminal async workflows also persist `workflow-receipt.json` beside `status.jso
 
 ```js
 return runs.run("cross-oracle", {
+  label: "Challenge proposed direction",
   resume: { workflowRunId: "<pass-1-workflow-id>", key: "advisor-oracle", latest: true },
   task: "Review the focused challenge packet."
 });
@@ -120,7 +121,8 @@ Keyed resume reads that one exact receipt and revalidates the retained run at la
 
 For a broad plan with a known set of narrow, visible stages per lane, use
 `runs.lanes(...)` inside a `workflowScript`; it is a nested helper, not a
-top-level `subagent` mode. Give each lane and stage a stable key. The first
+top-level `subagent` mode. Give each lane and stage a stable key; give stage
+items a short verb + behavior `label`, preserving explicit user labels. The first
 stage from every lane is launched together, then later stages sequence per lane.
 `resume: "previous"` requires the retained predecessor, and a failed or blocked
 stage blocks only that lane. The returned board exposes lane/stage results for

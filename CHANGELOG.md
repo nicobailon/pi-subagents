@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Document task-derived behavior labels for workflow launches in the built-in pi-subagents skill, including reviews and retained follow-ups.
+
 ### Fixed
 - Await a bounded, offline model registry refresh before opening `/subagents` model and thinking pickers, and warn on refresh failures. Thanks to [@ianbmacdonald](https://github.com/ianbmacdonald) for #2008.
 

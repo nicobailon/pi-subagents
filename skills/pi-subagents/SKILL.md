@@ -50,6 +50,18 @@ use ordinary `runs.run(...)` / `runs.all(...)`. See the [canonical staged-lane
 example](../../docs/workflows.md#parallel-sequential-lanes). Keep assignments
 bounded, but do not add stages or ceremony just to satisfy this skill.
 
+When composing `runs.run(...)`, `runs.all(...)`, or `runs.lanes(...)`, always
+supply a short verb + behavior display `label` derived from the task, unless
+the user supplied an explicit label; preserve that label. Keep the stable
+machine `key` independent (for example, `issue2011-writer` with
+`label: "Fix workflow steering"`). For `runs.lanes`, put labels on stage
+items, not lane objects. Use stage-appropriate labels for reviews and retained-child
+follow-ups too (for example, `Review workflow steering`). Generate labels in
+the orchestrator while composing the launch—no extra model call, runtime
+generator, or schema change. Native direct `{ agent, task }` calls have no
+top-level `label` parameter; do not invent one or wrap a tiny single task in
+a workflow just to label it.
+
 Use async/background by default. Set `async:false` only when the parent must
 block. Final reviews, validation gates, oracle checks, and publication checks
 stay async.

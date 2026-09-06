@@ -104,10 +104,10 @@ The result is `{ ok, errors }`. Invalid scripts return a tool error and include 
 
 ```js
 subagent({ workflowScript: `
-  const scan = await runs.run("scan", { agent: "scout", task: "Scan the codebase" });
+  const scan = await runs.run("scan", { label: "Map codebase behavior", agent: "scout", task: "Scan the codebase" });
   const reviews = await runs.all([
-    { key: "correctness", agent: "reviewer", task: "Review correctness: " + scan.output },
-    { key: "tests", agent: "reviewer", task: "Review tests: " + scan.output }
+    { key: "correctness", label: "Review codebase correctness", agent: "reviewer", task: "Review correctness: " + scan.output },
+    { key: "tests", label: "Review test coverage", agent: "reviewer", task: "Review tests: " + scan.output }
   ]);
   return reviews.map(result => result.output);
 ` });
@@ -118,7 +118,7 @@ Keep helper functions portable across Node and Bun. Use top-level `await`, plain
 ```js
 subagent({ workflowScript: `
   function scan() {
-    return runs.run("scan", { agent: "scout", task: "Scan the codebase" });
+    return runs.run("scan", { label: "Map codebase behavior", agent: "scout", task: "Scan the codebase" });
   }
   const result = await scan();
   return result.output;
@@ -129,8 +129,8 @@ Chaining is still supported. The supported form is scripted chaining: await one 
 
 ```js
 subagent({ workflowScript: `
-  const plan = await runs.run("plan", { agent: "scout", task: "Plan the migration" });
-  const patch = await runs.run("patch", { agent: "worker", task: "Implement this plan:\n" + plan.output });
+  const plan = await runs.run("plan", { label: "Plan migration behavior", agent: "scout", task: "Plan the migration" });
+  const patch = await runs.run("patch", { label: "Implement migration behavior", agent: "worker", task: "Implement this plan:\n" + plan.output });
   return patch.output;
 ` });
 ```
@@ -145,16 +145,16 @@ subagent({ workflowScript: `
     {
       key: "api",
       stages: [
-        { key: "writer", agent: "worker", task: "Implement the API change" },
-        { key: "challenge", resume: "previous", task: "Challenge the API implementation" },
-        { key: "review", agent: "reviewer", task: "Review the API lane" }
+        { key: "writer", label: "Implement API behavior", agent: "worker", task: "Implement the API change" },
+        { key: "challenge", label: "Challenge API behavior", resume: "previous", task: "Challenge the API implementation" },
+        { key: "review", label: "Review API behavior", agent: "reviewer", task: "Review the API lane" }
       ]
     },
     {
       key: "ui",
       stages: [
-        { key: "writer", agent: "worker", task: "Implement the UI change" },
-        { key: "review", agent: "reviewer", task: "Review the UI lane" }
+        { key: "writer", label: "Implement UI behavior", agent: "worker", task: "Implement the UI change" },
+        { key: "review", label: "Review UI behavior", agent: "reviewer", task: "Review the UI lane" }
       ]
     }
   ]);
