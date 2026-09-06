@@ -12,6 +12,7 @@
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
 
 ### Fixed
+- Keep unconfigured prompt-runtime loads inert. Thanks to [@lertian](https://github.com/lertian) for #1973.
 - Return `invalid_state` instead of queuing unreachable workflow stop requests when live workflow controllers are unavailable (#1965).
 - Forward bounded live tool activity, timing, model/effort, and counters for synchronous workflow children without forwarding transcripts (#1964).
 - Allow `action: "status", view: "transcript"` to inspect bounded live foreground child artifacts on demand (#1963).
