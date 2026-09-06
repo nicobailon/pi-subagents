@@ -727,9 +727,6 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 				pending.set(request.id, request);
 				markForegroundSupervisorAttention(request, state);
 			}
-			else {
-				removeRequestFile(request.requestFile);
-			}
 			// The ask is already queued above. A sendMessage failure (no UI, stale context) must not
 			// lose it, and must not abort the loop before the remaining asks register.
 			try {
@@ -751,7 +748,11 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 						...(request.expectsReply ? { replyHint: supervisorReplyHint(request.id) } : {}),
 					},
 				}, { triggerTurn: true });
+				// sendMessage accepts synchronously; one-way updates stay on disk until it returns.
+				if (!request.expectsReply) removeRequestFile(request.requestFile);
 			} catch (error) {
+				// Allow an existing later scan to retry an unaccepted one-way update.
+				if (!request.expectsReply) seenFiles.delete(file);
 				console.error(`Failed to surface supervisor request ${request.id} as a user turn:`, error);
 			}
 			if (request.expectsReply) {

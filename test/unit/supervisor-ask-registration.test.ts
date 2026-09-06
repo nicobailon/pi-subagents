@@ -352,6 +352,43 @@ describe("supervisor ask registration", () => {
 		}
 	});
 
+	it("retains a failed progress update until a later query accepts it without duplicate notifications", async () => {
+		const sessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		const tools = new Map<string, SupervisorTool>();
+		const state = makeState(`/sessions/${sessionId}.jsonl`, makeCtx(sessionId));
+		state.lastUiContext = null;
+		let attempts = 0;
+		let accepted = 0;
+		let requestFile = "";
+		const pi = makePi({ tools, onSend: () => {
+			attempts++;
+			assert.equal(fs.existsSync(requestFile), true, "retain the update until sendMessage returns");
+			if (attempts === 1) throw new Error("notification not accepted");
+			accepted++;
+		} });
+		const channel = createNativeSupervisorChannel(pi as never, state, { platform: "darwin" });
+		try {
+			channel.start();
+			const requestId = writeRequest({ sessionId, runId, reason: "progress_update" });
+			requestFile = path.join(resolveSupervisorChannelDir(runId, "worker", 0), "requests", `${requestId}.json`);
+			const tool = tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!;
+			await tool.execute("failed", { action: "pending" });
+			assert.equal(attempts, 1);
+			assert.equal(accepted, 0);
+			assert.equal(fs.existsSync(requestFile), true);
+			assert.equal(channel.pending.size, 0, "a progress update must not become a blocking ask");
+			await tool.execute("retry", { action: "pending" });
+			assert.equal(attempts, 2);
+			assert.equal(accepted, 1);
+			assert.equal(fs.existsSync(requestFile), false);
+			await tool.execute("after-acceptance", { action: "pending" });
+			assert.equal(attempts, 2);
+			assert.equal(accepted, 1);
+			assert.equal(channel.pending.size, 0);
+		} finally { channel.dispose(); }
+	});
+
 	it("registers both asks even when every user-turn notification throws", () => {
 		const sessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
