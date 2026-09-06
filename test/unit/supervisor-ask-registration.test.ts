@@ -77,12 +77,13 @@ function writeRequest(input: { sessionId: string; runId: string; agent?: string;
 	return requestId;
 }
 
-function makePi(options: { tools: Map<string, SupervisorTool>; onSend?: () => void }): Record<string, unknown> {
+function makePi(options: { tools: Map<string, SupervisorTool>; onSend?: () => void; onAppendEntry?: () => void }): Record<string, unknown> {
 	return {
 		getAllTools: () => [...options.tools.keys()].map((name) => ({ name })),
 		registerTool: (tool: { name: string } & SupervisorTool) => { options.tools.set(tool.name, tool); },
 		sendMessage: () => { options.onSend?.(); },
 		getSessionName: () => "shared-name",
+		...(options.onAppendEntry ? { appendEntry: () => { options.onAppendEntry!(); } } : {}),
 	};
 }
 
@@ -255,6 +256,57 @@ describe("supervisor ask registration", () => {
 			assert.equal(JSON.parse(fs.readFileSync(reply, "utf-8")).message, "RULING VIA STEER: proceed with option A.");
 			assert.equal(channel.pending.has(requestId), false, "the answered ask must leave the pending queue");
 		} finally {
+			channel.dispose();
+		}
+	});
+
+	// Once the reply file exists the child can read it, so the steer HAS been delivered. A failure in
+	// the bookkeeping that follows must not report "no resolution", because the caller would then also
+	// send the same instruction through child.steer and the child would receive it twice.
+	it("reports the delivery even when post-reply bookkeeping fails, and does not steer twice", async () => {
+		const sessionId = `session-${randomUUID()}`;
+		const workflowRunId = `workflow-${randomUUID()}`;
+		const tools = new Map<string, SupervisorTool>();
+		const state = makeState(sessionId, makeCtx(sessionId));
+		const queued: string[] = [];
+		registerWorkflowChild(state, workflowRunId, workflowRunId, async (input) => {
+			queued.push(input.message);
+			return { state: "queued" as const };
+		});
+		// `clearForegroundSupervisorAttention` reads this map after the reply is already on disk.
+		// (`appendSupervisorReplyEntry` swallows its own errors, so it cannot stand in for this.)
+		// Armed only after registration, because the same map is read while the ask is being queued.
+		let failForegroundLookup = false;
+		state.foregroundRuns = {
+			get: () => {
+				if (failForegroundLookup) throw new Error("foreground state unavailable");
+				return undefined;
+			},
+		} as never;
+		const pi = makePi({ tools });
+		const channel = createNativeSupervisorChannel(pi as never, state, { platform: "darwin" });
+		const originalError = console.error;
+		console.error = () => {};
+
+		try {
+			channel.start();
+			const requestId = writeRequest({ sessionId, runId: workflowRunId });
+			await tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
+			assert.equal(channel.pending.has(requestId), true, "precondition: the child is blocked on a registered ask");
+			failForegroundLookup = true;
+
+			const control = state.foregroundControls.get(workflowRunId)!;
+			const result = await steerWorkflowForegroundTarget({
+				target: { control, workflowRunId, sourceRunId: workflowRunId },
+				message: "RULING VIA STEER: proceed.",
+			});
+
+			const reply = path.join(resolveSupervisorChannelDir(workflowRunId, "worker", 0), "replies", `${requestId}.json`);
+			assert.equal(fs.existsSync(reply), true, "precondition: the reply was published");
+			assert.equal(result.details.steering?.state, "delivered", "a published reply is a real delivery");
+			assert.deepEqual(queued, [], "the child must not also receive the message through child.steer");
+		} finally {
+			console.error = originalError;
 			channel.dispose();
 		}
 	});

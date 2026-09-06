@@ -563,7 +563,14 @@ function appendSupervisorReplyEntry(pi: ExtensionAPI, request: PendingSupervisor
 // would be a far wider change to the run-control surface.
 interface SupervisorAskResolver {
 	pending: Map<string, PendingSupervisorRequest>;
-	resolve: (request: PendingSupervisorRequest, message: string) => void;
+	/**
+	 * Publishes the reply the blocked child is polling for. Once this returns, the message HAS been
+	 * delivered, so it is kept separate from the bookkeeping that follows: a bookkeeping failure must
+	 * not make the caller believe the message still needs sending.
+	 */
+	publish: (request: PendingSupervisorRequest, message: string) => SupervisorReply;
+	/** Journal, dequeue, and attention updates. Safe to fail after the reply is already published. */
+	finalize: (request: PendingSupervisorRequest, reply: SupervisorReply) => void;
 }
 
 const supervisorAskResolvers = new Set<SupervisorAskResolver>();
@@ -588,13 +595,23 @@ export function resolvePendingSupervisorAskWithSteer(input: { runId: string; chi
 			&& candidate.childIndex === input.childIndex,
 		);
 		if (!request) continue;
+		let reply: SupervisorReply;
 		try {
-			resolver.resolve(request, message);
+			reply = resolver.publish(request, message);
 		} catch (error) {
-			// Fail closed and loud: report no resolution so the caller keeps its own delivery receipt
-			// (queued/failed) rather than claiming a delivery that did not happen.
+			// The reply was not published, so nothing was delivered. Fail closed and loud: report no
+			// resolution so the caller keeps its own delivery receipt (queued/failed) rather than
+			// claiming a delivery that did not happen.
 			console.error(`Failed to answer supervisor request ${request.id} from a steer:`, error);
 			return undefined;
+		}
+		// Past this point the child can already read the reply, so the steer HAS been delivered.
+		// A bookkeeping failure must not return undefined: the caller would fall back to child.steer
+		// and deliver the same instruction a second time.
+		try {
+			resolver.finalize(request, reply);
+		} catch (error) {
+			console.error(`Answered supervisor request ${request.id} from a steer, but failed to record it:`, error);
 		}
 		return { requestId: request.id, reason: request.reason };
 	}
@@ -760,8 +777,8 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	// consistent resolution.
 	const askResolver: SupervisorAskResolver = {
 		pending,
-		resolve: (request, message) => {
-			const reply = writeReply(request, message);
+		publish: (request, message) => writeReply(request, message),
+		finalize: (request, reply) => {
 			appendSupervisorReplyEntry(pi, request, reply);
 			observeRequestLifecycle(request, "resolved");
 			pending.delete(request.id);
