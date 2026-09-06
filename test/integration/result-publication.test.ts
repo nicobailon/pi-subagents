@@ -13,7 +13,8 @@ import {
 
 function fileBarrier(file: string): Promise<void> {
 	return new Promise((resolve, reject) => {
-		const watcher = fs.watch(path.dirname(file), check);
+		// libuv on Windows compares long event paths against this watch path; expand TEMP's 8.3 aliases.
+		const watcher = fs.watch(fs.realpathSync.native(path.dirname(file)), check);
 		const deadline = setTimeout(() => { watcher.close(); reject(new Error(`Missing barrier: ${file}`)); }, 15_000);
 		function check() {
 			if (!fs.existsSync(file)) return;
@@ -27,6 +28,21 @@ function fileBarrier(file: string): Promise<void> {
 
 describe("native runner result publication", { skip: !available ? "pi packages unavailable" : undefined }, () => {
 	installAsyncExecutionHooks();
+	it("watches the canonical barrier directory through a path alias", async (t) => {
+		const directory = path.join(tempDir, "barrier-directory");
+		const alias = path.join(tempDir, "barrier-alias");
+		fs.mkdirSync(directory);
+		fs.symlinkSync(directory, alias, "junction");
+		const watch = fs.watch;
+		t.mock.method(fs, "watch", ((watched, ...args) => {
+			assert.equal(watched, fs.realpathSync.native(directory));
+			return Reflect.apply(watch, fs, [watched, ...args]);
+		}) as typeof fs.watch);
+		const file = path.join(alias, "ready");
+		const ready = fileBarrier(file);
+		fs.writeFileSync(file, "");
+		await ready;
+	});
 	for (const outcome of ["recovered", "retry-error"] as const) {
 		it(`keeps Darwin delivery demand until deferred indexed final result publication settles (${outcome})`, { skip: !isAsyncAvailable() ? "jiti unavailable" : undefined }, async () => {
 			const root = path.join(tempDir, "publication-barriers");
