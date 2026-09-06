@@ -83,11 +83,11 @@ function writeRequest(input: { sessionId: string; runId: string; agent?: string;
 	return requestId;
 }
 
-function makePi(options: { tools: Map<string, SupervisorTool>; onSend?: () => void }): Record<string, unknown> {
+function makePi(options: { tools: Map<string, SupervisorTool>; onSend?: (message: { content: string }) => void }): Record<string, unknown> {
 	return {
 		getAllTools: () => [...options.tools.keys()].map((name) => ({ name })),
 		registerTool: (tool: { name: string } & SupervisorTool) => { options.tools.set(tool.name, tool); },
-		sendMessage: () => { options.onSend?.(); },
+		sendMessage: (message: { content: string }) => { options.onSend?.(message); },
 		getSessionName: () => "shared-name",
 	};
 }
@@ -545,7 +545,9 @@ describe("supervisor ask registration", () => {
 		let attempts = 0;
 		let accepted = 0;
 		let requestFile = "";
-		const pi = makePi({ tools, onSend: () => {
+		let visibleText = "";
+		const pi = makePi({ tools, onSend: (message) => {
+			visibleText = message.content;
 			attempts++;
 			assert.equal(fs.existsSync(requestFile), true, "retain the update until sendMessage returns");
 			if (attempts === 1) throw new Error("notification not accepted");
@@ -566,6 +568,8 @@ describe("supervisor ask registration", () => {
 			assert.equal(attempts, 2);
 			assert.equal(accepted, 1);
 			assert.equal(fs.existsSync(requestFile), false);
+			assert.ok(visibleText.includes(`Live guidance: subagent({ action: "steer", id: "${runId}", index: 0, message: "..." })`));
+			assert.doesNotMatch(visibleText, /Reply with:|replyTo:|Child intercom target:/);
 			await tool.execute("after-acceptance", { action: "pending" });
 			assert.equal(attempts, 2);
 			assert.equal(accepted, 1);

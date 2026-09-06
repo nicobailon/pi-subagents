@@ -105,7 +105,7 @@ describe("native supervisor channel", () => {
 			message: { content?: string; details?: { id?: string } };
 			options?: { triggerTurn?: boolean };
 		}> = [];
-		const registeredTools: string[] = [];
+		const registeredTools: Array<{ name: string; parameters: { properties: { action: unknown } } }> = [];
 		const ctx = {
 			cwd: process.cwd(),
 			hasUI: false,
@@ -117,7 +117,7 @@ describe("native supervisor channel", () => {
 		};
 		const pi = {
 			getAllTools: () => [],
-			registerTool: (tool: { name: string }) => { registeredTools.push(tool.name); },
+			registerTool: (tool: typeof registeredTools[number]) => { registeredTools.push(tool); },
 			sendMessage: (
 				message: { content?: string; details?: { id?: string } },
 				options?: { triggerTurn?: boolean },
@@ -130,7 +130,8 @@ describe("native supervisor channel", () => {
 		channel.start();
 		channel.dispose();
 
-		assert.deepEqual(registeredTools, [NATIVE_SUPERVISOR_TOOL_NAME]);
+		assert.deepEqual(registeredTools.map((tool) => tool.name), [NATIVE_SUPERVISOR_TOOL_NAME]);
+		assert.deepEqual(registeredTools[0]?.parameters.properties.action, { type: "string", enum: ["list", "pending", "status", "reply"] });
 		assert.deepEqual(sent.map(({ message }) => message.details?.id), [matchingId]);
 		assert.deepEqual(sent[0]?.options, { triggerTurn: true });
 		assert.equal(channel.pending.has(matchingId), false, "disposed channel clears pending requests");
@@ -698,7 +699,9 @@ describe("native supervisor channel", () => {
 			assert.equal(sent[0]?.customType, SUPERVISOR_REQUEST_MESSAGE_TYPE);
 			assert.match(sent[0]?.content ?? "", /Subagent requests a structured supervisor interview\./);
 			assert.match(sent[0]?.content ?? "", /Should this change be applied\?/);
-			assert.match(sent[0]?.content ?? "", /Reply with: subagent_supervisor/);
+			assert.ok(sent[0]?.content?.includes(`Reply with: subagent_supervisor({ action: "reply", replyTo: "${requestId}", message: "..." })`));
+			assert.ok(sent[0]?.content?.includes(`Live guidance: subagent({ action: "steer", id: "${runId}", index: 2, message: "..." }) (Reply to the pending request first.)`));
+			assert.doesNotMatch(sent[0]?.content ?? "", /Child intercom target:|child-worker/);
 			assert.deepEqual(sent[0]?.details, {
 				id: requestId,
 				requestId,

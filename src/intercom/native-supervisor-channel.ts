@@ -74,7 +74,7 @@ interface ContactSupervisorParams {
 }
 
 interface IntercomParams {
-	action: "list" | "send" | "ask" | "reply" | "pending" | "status";
+	action: "list" | "pending" | "status" | "reply";
 	to?: string;
 	message?: string;
 	replyTo?: string;
@@ -97,7 +97,7 @@ const ContactSupervisorParamsSchema = Type.Object({
 }, { additionalProperties: false });
 
 const IntercomParamsSchema = Type.Object({
-	action: Type.String({ enum: ["list", "send", "ask", "reply", "pending", "status"] }),
+	action: Type.String({ enum: ["list", "pending", "status", "reply"] }),
 	to: Type.Optional(Type.String()),
 	message: Type.Optional(Type.String()),
 	replyTo: Type.Optional(Type.String()),
@@ -490,7 +490,6 @@ function requestVisibleText(request: PendingSupervisorRequest): string {
 		`Agent: ${request.agent}`,
 		`Child index: ${request.childIndex}`,
 	];
-	if (request.childTarget) lines.push(`Child intercom target: ${request.childTarget}`);
 	lines.push("");
 	if (request.message) lines.push(request.message);
 	if (request.reason === "interview_request") {
@@ -501,6 +500,7 @@ function requestVisibleText(request: PendingSupervisorRequest): string {
 		if (request.interview !== undefined) lines.push(JSON.stringify(request.interview, null, "\t"));
 	}
 	if (request.expectsReply) lines.push("", `Reply with: ${supervisorReplyHint(request.id)}`);
+	lines.push("", `Live guidance: subagent({ action: "steer", id: ${JSON.stringify(request.runId)}, index: ${request.childIndex}, message: "..." })${request.expectsReply ? " (Reply to the pending request first.)" : ""}`);
 	return lines.join("\n").trimEnd();
 }
 
@@ -604,9 +604,6 @@ function buildParentSupervisorTool(pi: ExtensionAPI, pending: Map<string, Pendin
 				pending.delete(request.id);
 				clearForegroundSupervisorAttention(request, pending, state);
 				return { content: [{ type: "text", text: `Replied to supervisor request ${request.id}.` }], details: { replyTo: request.id, runId: request.runId, agent: request.agent } };
-			}
-			if (input.action === "send" || input.action === "ask") {
-				throw new Error("The native subagent supervisor handles replies only. Child agents initiate asks with contact_supervisor.");
 			}
 			throw new Error(`Unsupported supervisor action: ${input.action}`);
 		},
