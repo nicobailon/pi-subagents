@@ -8,6 +8,7 @@
 - Remove generation suffixes from developer-facing contract types and helpers; request shapes, format versions, and behavior are unchanged (#1913).
 
 ### Added
+- Add opt-in bounded completion delivery/suppression reason traces via `NODE_DEBUG=pi-subagents-notify` ([#1981](https://github.com/nicobailon/pi-subagents/issues/1981)). Thanks to [@brandonmwest](https://github.com/brandonmwest) for identifying the observability gap and offering instrumented sessions.
 - Let agents opt into parent-prompt discovery with `advertise: true`. Thanks to [@nwalke](https://github.com/nwalke) for #1972.
 - Add selective researcher source checks and explicit evidence, confidence, and uncertainty reporting (#1932). Thanks to [@Muskos](https://github.com/Muskos).
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).

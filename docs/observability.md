@@ -213,6 +213,26 @@ The `subagent:process-terminal` event and RPC `ping.capabilities.processTerminal
 
 Both launch paths subscribe to the child session's event stream directly; there is no stdout protocol. The `events.jsonl` artifact mirrors those events with `message_update` dropped, and the transcript records them with `message_update` projected the same way pi's JSON mode prints it. `agent_end.willRetry` defers completion until the child settles, and `agent_settled` is the terminal watermark; a child whose run does not settle shortly after its terminal event is aborted and finished without it.
 
+### Completion notification diagnostics
+
+For an instrumented parent session, enable Node's opt-in debug sink **before starting Pi**:
+
+```sh
+NODE_DEBUG=pi-subagents-notify pi 2>notification-debug.log
+```
+
+This writes bounded JSON records prefixed `PI-SUBAGENTS-NOTIFY <pid>:` to stderr, not run artifacts or chat. The capture also contains other stderr output; review it before sharing. Records contain only `reason`, sanitized `id`/`runId` (up to 128 characters each), and `source`; task/output text, paths, credentials, and exception bodies are not included.
+
+- `disposed`, `missing_session`, `foreground_session_mismatch`, `not_owned`: delivery rejected by an existing guard.
+- `emit_foreground_session_mismatch`, `emit_not_owned`: ownership/session recheck rejected emission.
+- `intercom_delivered`, `deduped_ttl`: already acknowledged; no new message needed.
+- `deduped_pending`: shares an in-flight delivery promise.
+- `batch_deferred`: held for batching, **not lost**; look for a later emission or disposal record for the same run.
+- `send_accepted`, `send_failed`: `sendMessage` returned or threw, respectively. Acceptance is not proof the model read the message; failures remain retryable.
+- `dispose_pending`: notifier shutdown left held results unacknowledged for later delivery.
+
+Without `NODE_DEBUG`, tracing only checks the debug-enabled flag: no identity sanitization/serialization, diagnostic buffering, or log I/O. Existing delivery guards, TTL, timers and batching are unchanged. Traces cover notifier decisions only, not discovery gaps; absence of a trace does not diagnose the original missing-notification symptom.
+
 ## Workflow and debug artifacts
 
 Each scripted workflow stores runtime artifacts under a workflow artifact directory. The on-disk directory is still named `chain-runs` for compatibility. With the default `artifactDir: "session"` or with `"temp"`, it is user-scoped temp storage. With `artifactDir: "project"`, the root is `<cwd>/.pi/subagents/chain-runs/`:

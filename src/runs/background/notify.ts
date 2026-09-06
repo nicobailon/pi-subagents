@@ -6,6 +6,7 @@
  * observation channel, not a delivery acknowledgement.
  */
 
+import { debuglog } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.ts";
 import {
@@ -401,7 +402,31 @@ export function formatGroupedCompletion(details: SubagentNotifyDetails[]): strin
 	return blocks.join("\n").trimEnd();
 }
 
+const notificationDebug = debuglog("pi-subagents-notify");
+type TraceIdentity = Pick<CompletionNotification, "id" | "runId" | "source">;
+type NotificationReason = "disposed" | "missing_session" | "foreground_session_mismatch" | "not_owned"
+	| "intercom_delivered" | "deduped_ttl" | "deduped_pending" | "batch_deferred"
+	| "emit_foreground_session_mismatch" | "emit_not_owned" | "send_accepted" | "send_failed" | "dispose_pending";
+
+// Slice before sanitizing: diagnostic work and each identity are bounded even for
+// malformed result metadata. Never include task/output, paths, or error bodies.
+function traceIdentity(result: TraceIdentity): TraceIdentity {
+	const identity = (value: unknown) => typeof value === "string"
+		? value.slice(0, 128).replace(/[^a-zA-Z0-9_.:-]/g, "_") : undefined;
+	return { id: identity(result.id), runId: identity(result.runId), source: result.source === "foreground" ? "foreground" : "async" };
+}
+
+function traceNotification(reason: NotificationReason, result?: TraceIdentity): void {
+	if (!notificationDebug.enabled) return;
+	try {
+		notificationDebug("%s", JSON.stringify({ reason, ...(result ? traceIdentity(result) : {}) }));
+	} catch {
+		// Diagnostics must never change delivery acknowledgement.
+	}
+}
+
 interface PendingCompletion {
+	trace?: TraceIdentity;
 	key: string;
 	details: SubagentNotifyDetails;
 	sessionId: string;
@@ -574,8 +599,9 @@ export default function registerSubagentNotify(
 			&& typeof completionOwnerId === "string"
 			&& completionOwnerId === state.completionOwnerId);
 
-	const settle = (items: PendingCompletion[], accepted: boolean) => {
+	const settle = (items: PendingCompletion[], accepted: boolean, reason?: NotificationReason) => {
 		for (const item of items) {
+			if (reason) traceNotification(reason, item.trace);
 			pending.delete(item.key);
 			if (accepted) markSeenWithTtl(seen, item.key, now(), ttlMs);
 			item.resolve(accepted);
@@ -588,10 +614,12 @@ export default function registerSubagentNotify(
 			const owned = item.details.source === "foreground"
 				? item.sessionId === state.currentSessionId
 				: ownsResult(item.sessionId, item.completionOwnerId);
+			if (!owned) traceNotification(item.details.source === "foreground" ? "emit_foreground_session_mismatch" : "emit_not_owned", item.trace);
 			(owned ? accepted : rejected).push(item);
 		}
 		settle(rejected, false);
-		settle(accepted, sendCompletion(pi, accepted));
+		const sent = sendCompletion(pi, accepted);
+		settle(accepted, sent, sent ? "send_accepted" : "send_failed");
 	};
 	const getBatcher = (result: CompletionNotification) => {
 		const key = completionBatchKey(result);
@@ -609,17 +637,35 @@ export default function registerSubagentNotify(
 	};
 
 	const deliver = (result: CompletionNotification): Promise<boolean> => {
-		if (disposed || typeof result.sessionId !== "string") return Promise.resolve(false);
+		if (disposed || typeof result.sessionId !== "string") {
+			traceNotification(disposed ? "disposed" : "missing_session", result);
+			return Promise.resolve(false);
+		}
 		if (result.source === "foreground") {
-			if (result.sessionId !== state.currentSessionId) return Promise.resolve(false);
-		} else if (!ownsResult(result.sessionId, result.completionOwnerId)) return Promise.resolve(false);
-		if (result.intercomDelivered === true) return Promise.resolve(true);
+			if (result.sessionId !== state.currentSessionId) {
+				traceNotification("foreground_session_mismatch", result);
+				return Promise.resolve(false);
+			}
+		} else if (!ownsResult(result.sessionId, result.completionOwnerId)) {
+			traceNotification("not_owned", result);
+			return Promise.resolve(false);
+		}
+		if (result.intercomDelivered === true) {
+			traceNotification("intercom_delivered", result);
+			return Promise.resolve(true);
+		}
 		const key = buildCompletionKey(result, "notify");
 		const seenAt = seen.get(key);
-		if (seenAt !== undefined && now() - seenAt <= ttlMs) return Promise.resolve(true);
+		if (seenAt !== undefined && now() - seenAt <= ttlMs) {
+			traceNotification("deduped_ttl", result);
+			return Promise.resolve(true);
+		}
 		if (seenAt !== undefined) seen.delete(key);
 		const inFlight = pending.get(key);
-		if (inFlight) return inFlight;
+		if (inFlight) {
+			traceNotification("deduped_pending", result);
+			return inFlight;
+		}
 		const details = buildCompletionDetails(result);
 		let resolve!: (accepted: boolean) => void;
 		const completion = new Promise<boolean>((settleCompletion) => { resolve = settleCompletion; });
@@ -632,6 +678,7 @@ export default function registerSubagentNotify(
 			triggerTurn: result.triggerTurn !== false,
 			resolve,
 		};
+		if (notificationDebug.enabled) item.trace = traceIdentity(result);
 		if (details.source === "foreground") {
 			emit([item]);
 			return completion;
@@ -642,6 +689,7 @@ export default function registerSubagentNotify(
 			emit([item]);
 			return completion;
 		}
+		if (batchConfig.enabled) traceNotification("batch_deferred", item.trace);
 		batcher.push(item);
 		return completion;
 	};
@@ -659,7 +707,7 @@ export default function registerSubagentNotify(
 		dispose() {
 			if (disposed) return;
 			disposed = true;
-			for (const batcher of batchers.values()) settle(batcher.dispose(), false);
+			for (const batcher of batchers.values()) settle(batcher.dispose(), false, "dispose_pending");
 			batchers.clear();
 			for (const unsubscribe of [unsubscribeAsync, unsubscribeForeground]) {
 				try {
