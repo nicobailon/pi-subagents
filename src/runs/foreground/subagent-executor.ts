@@ -2738,6 +2738,11 @@ function applySingleAgentLaunchDefaults(params: SubagentParamsLike, agents: Agen
 
 export const DEFAULT_FOREGROUND_TIMEOUT_MS = 30 * 60 * 1000;
 
+// How long workflow teardown waits for a steer delivery that was consumed just before the run
+// settled. Long enough for an in-process child to answer, short enough that a wedged child session
+// cannot hold controller cleanup and active-capacity reconciliation open.
+const WORKFLOW_STEER_DRAIN_GRACE_MS = 2000;
+
 // Async single-agent runs also need a wall-clock backstop: a child whose bash
 // tool blocks forever (e.g. a background process inheriting the terminal with
 // no bash `timeout` arg) would otherwise hang the parent indefinitely with
@@ -5253,7 +5258,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				// A consumed request whose delivery is still in flight has a `routed` receipt and no terminal
 				// one. Teardown must settle these before closing persistence, or the terminal update is
 				// dropped by `persist()` and the request stays at `routed` forever.
-				const inFlightWorkflowSteers = new Set<Promise<void>>();
+				// The teardown wait is bounded: `child.steer` is another session's promise, and a wedged child
+				// must not hold controller cleanup or capacity reconciliation open. A delivery that outlives
+				// the grace period gets an explicit failed receipt instead.
+				const inFlightWorkflowSteers = new Set<{ settled: Promise<void>; expire: () => void }>();
 				const deliverWorkflowSteerRequest = (request: SteerRequest): void => {
 					const index = request.targetIndex ?? request.targetIndexes?.[0] ?? 0;
 					if (status.state !== "running") {
@@ -5283,7 +5291,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					emitWorkflowSteerEvent("subagent.steer.requested", request.id, undefined, { targets: [{ index, state: "routed" }] });
 					emitWorkflowSteerEvent("subagent.steer.routed", request.id, index);
 					persist({ tolerateStatusWriteFailure: true });
+					// The delivery result and the teardown expiry race, so whichever lands first owns the receipt.
+					let deliveryRecorded = false;
 					const applyWorkflowSteerDelivery = (state: "delivered" | "queued" | "failed", reason?: string): void => {
+						if (deliveryRecorded) return;
+						deliveryRecorded = true;
 						const now = Date.now();
 						updateSteeringTarget(steeringStatus(status), request.id, index, state === "delivered" ? "delivered" : state === "queued" ? "queued" : "failed", now, reason ? { reason } : {});
 						if (state === "failed") {
@@ -5305,8 +5317,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						},
 						(error) => applyWorkflowSteerDelivery("failed", error instanceof Error ? error.message : String(error)),
 					);
-					inFlightWorkflowSteers.add(delivery);
-					void delivery.finally(() => inFlightWorkflowSteers.delete(delivery));
+					const inFlight = {
+						settled: delivery,
+						expire: () => applyWorkflowSteerDelivery("failed", "steering delivery did not settle before the run finished"),
+					};
+					inFlightWorkflowSteers.add(inFlight);
+					void delivery.finally(() => inFlightWorkflowSteers.delete(inFlight));
 				};
 				let disposeWorkflowSteerInbox: (() => void) | undefined;
 				try {
@@ -5668,7 +5684,22 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							// already closed it, and dropping the update would leave the request stuck at `routed`.
 							if (inFlightWorkflowSteers.size > 0) {
 								persistClosed = false;
-								await Promise.allSettled([...inFlightWorkflowSteers]);
+								const draining = [...inFlightWorkflowSteers];
+								let graceTimer: ReturnType<typeof setTimeout> | undefined;
+								const grace = new Promise<void>((resolve) => {
+									graceTimer = setTimeout(resolve, WORKFLOW_STEER_DRAIN_GRACE_MS);
+									graceTimer.unref?.();
+								});
+								try {
+									await Promise.race([Promise.allSettled(draining.map((entry) => entry.settled)), grace]);
+								} finally {
+									if (graceTimer) clearTimeout(graceTimer);
+								}
+								// Anything still unsettled is failed explicitly now, so a wedged child cannot strand a
+								// request at `routed` and cannot hold teardown open.
+								for (const entry of draining) {
+									if (inFlightWorkflowSteers.has(entry)) entry.expire();
+								}
 							}
 							const undelivered = consumeSteerRequests(asyncDir);
 							if (undelivered.length > 0) {

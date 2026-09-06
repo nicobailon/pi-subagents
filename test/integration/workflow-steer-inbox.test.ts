@@ -124,6 +124,49 @@ describe("async workflow steer inbox", { skip: !available ? "pi packages not ava
 		}
 	});
 
+	it("does not let a wedged steer delivery hold teardown open", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const childRelease = path.join(tempDir, "wedged-child-release");
+		// steerWaitForPath is never created, so the child's steer() promise never settles.
+		const neverReleased = path.join(tempDir, "wedged-steer-never");
+		mockPi.onCall({ steerWaitForPath: neverReleased, steps: [{ waitForPath: childRelease, jsonl: [events.assistantMessage("done")] }] });
+		const ctx = makeMinimalCtx(tempDir);
+		ctx.sessionManager.getSessionId = () => "session-workflow-steer-wedged";
+		const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]);
+
+		const launch = await executor.execute(
+			`workflow-steer-wedged-${Date.now().toString(36)}`,
+			{ workflowScript: `return await runs.run("waits", { agent: "worker", task: "Wait for guidance" });`, async: true },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+		assert.equal(launch.isError, undefined, launch.content[0]?.text);
+		const runId = launch.details?.asyncId as string;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+
+		try {
+			await waitForMockPiCall(mockPi, 0, 10_000);
+			requestAsyncSteer(asyncDir, { message: "Never settles.", id: "workflow-steer-wedged", ts: Date.now() });
+			await waitForAsyncState(runId, (candidate) => recentSteering(candidate, "workflow-steer-wedged")?.state === "routed", 15_000);
+
+			fs.writeFileSync(childRelease, "go");
+
+			// Teardown must complete on its own within the drain grace period, giving the unsettled
+			// delivery an explicit failed receipt rather than waiting on it forever.
+			const settled = await waitForAsyncState(
+				runId,
+				(candidate) => recentSteering(candidate, "workflow-steer-wedged")?.state === "failed",
+				20_000,
+			);
+			assert.match(recentSteering(settled, "workflow-steer-wedged")?.reason ?? "", /did not settle before the run finished/);
+			// Capacity and controller cleanup happen after the drain, so a terminal state proves teardown ran.
+			assert.equal(settled.state === "complete" || settled.state === "failed", true, `expected a terminal run state, got ${settled.state}`);
+		} finally {
+			if (!fs.existsSync(childRelease)) fs.writeFileSync(childRelease, "go");
+			fs.writeFileSync(neverReleased, "go");
+		}
+	});
+
 	it("closes the inbox and fails a late steer request when the workflow ends", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		const ctx = makeMinimalCtx(tempDir);
 		ctx.sessionManager.getSessionId = () => "session-workflow-steer-closed";
