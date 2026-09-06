@@ -3,13 +3,13 @@
 ## [Unreleased]
 
 ### Changed
-- Document the startup fallback boundary and the narrow foreground read-only HTTP 429 continuation, including supported configuration and compatibility limits (#1936). Thanks to reporter [@peedrr](https://github.com/peedrr).
+- Document the startup fallback boundary and the narrow native foreground/background read-only HTTP 429 continuation, including host-specific budget and compatibility limits (#1936). Thanks to reporter [@peedrr](https://github.com/peedrr).
 - Document steer delivery modes and `scheduledRuns.storeRoot` in the bundled skill reference (`execution-controls.md`) (#1933). Thanks to [@G0-0000](https://github.com/G0-0000).
 - Remove generation suffixes from developer-facing contract types and helpers; request shapes, format versions, and behavior are unchanged (#1913).
 
 ### Added
 - Add opt-in bounded completion delivery/suppression reason traces via `NODE_DEBUG=pi-subagents-notify` ([#1981](https://github.com/nicobailon/pi-subagents/issues/1981)). Thanks to [@brandonmwest](https://github.com/brandonmwest) for identifying the observability gap and offering instrumented sessions.
-- Allow one guarded native foreground read-only continuation after observed HTTP 429 on a compatible same-configured-provider fallback model, retaining the exact session without task replay and sharing the existing recovery allowance. Background continuation is not included (#1936). Thanks to reporter [@peedrr](https://github.com/peedrr).
+- Allow one guarded native foreground or background read-only continuation after observed HTTP 429 on a compatible same-configured-provider fallback model, retaining the exact session without task replay and sharing the existing recovery allowance. Original deadlines and host-specific budget gates remain authoritative (#1936). Thanks to reporter [@peedrr](https://github.com/peedrr).
 - Let agents opt into parent-prompt discovery with `advertise: true`. Thanks to [@nwalke](https://github.com/nwalke) for #1972.
 - Add selective researcher source checks and explicit evidence, confidence, and uncertainty reporting (#1932). Thanks to [@Muskos](https://github.com/Muskos).
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
