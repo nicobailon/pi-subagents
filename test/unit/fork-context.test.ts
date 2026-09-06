@@ -355,7 +355,7 @@ describe("createForkContextResolver", () => {
 		}
 	});
 
-	it("removes signed Anthropic thinking blocks before forwarding a forked session", () => {
+	it("removes signed Anthropic thinking blocks and keeps requested thinking by default", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-thinking-"));
 		try {
 			const parentSessionFile = path.join(tempDir, "parent.jsonl");
@@ -376,12 +376,11 @@ describe("createForkContextResolver", () => {
 			});
 
 			assert.equal(resolver.sessionFileForIndex(0), childSessionFile);
-			assert.equal(resolver.thinkingOverrideForIndex(0), "off");
+			assert.equal(resolver.thinkingOverrideForIndex(0), undefined);
 			const entries = fs.readFileSync(childSessionFile, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
 			assert.deepEqual(entries[2].message.content, [{ type: "text", text: "answer" }]);
-			assert.equal(entries[3].type, "thinking_level_change");
-			assert.equal(entries[3].thinkingLevel, "off");
-			assert.equal(entries[3].parentId, "assistant-1");
+			assert.equal(entries.length, 3);
+			assert.ok(!entries.some((entry: { type: string }) => entry.type === "thinking_level_change"));
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -423,7 +422,7 @@ describe("createForkContextResolver", () => {
 		}
 	});
 
-	it("still forces thinking off when the predicate confirms an Anthropic child", () => {
+	it("forces thinking off only when the caller explicitly requests it", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-confirm-off-"));
 		try {
 			const parentSessionFile = path.join(tempDir, "parent.jsonl");
@@ -528,12 +527,11 @@ describe("createForkContextResolver", () => {
 			});
 
 			assert.equal(resolver.sessionFileForIndex(0), childSessionFile);
-			assert.equal(resolver.thinkingOverrideForIndex(0), "off");
+			assert.equal(resolver.thinkingOverrideForIndex(0), undefined);
 			const written = fs.readFileSync(childSessionFile, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
 			assert.deepEqual(written[2].message.content, [{ type: "text", text: "answer" }]);
-			assert.equal(written[3].type, "thinking_level_change");
-			assert.equal(written[3].thinkingLevel, "off");
-			assert.equal(written[3].parentId, "assistant-1");
+			assert.equal(written.length, 3);
+			assert.ok(!written.some((entry: { type: string }) => entry.type === "thinking_level_change"));
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}

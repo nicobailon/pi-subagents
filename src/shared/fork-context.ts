@@ -1,3 +1,11 @@
+// Forking a parent transcript into a child must drop Anthropic's signed and redacted
+// thinking blocks: a thinking signature is bound to the session that produced it and
+// cannot be replayed into a branch. Stripping them is required; disabling the child's
+// thinking is not. Pi >= 0.85.0 recovers from signed-thinking mismatches on the
+// transport, so a sanitized transcript is safe to resume with thinking enabled and the
+// child keeps the level it asked for, reasoning fresh from its first turn.
+// `forceThinkingOffForIndex` stays as an explicit escape hatch for callers that still
+// want the old pin, but it is opt-in.
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -40,7 +48,7 @@ interface ForkContextResolverOptions {
 	/** Rewrite a created fork before its path can be used to spawn a child. */
 	pruneSession?: (sessionFile: string) => Promise<void>;
 	/** Decide per child index whether a sanitized transcript must also disable the child's
-	 * thinking. Defaults to true (the pre-existing conservative behavior) when omitted. */
+	 * thinking. Defaults to false: sanitizing is not a reason to drop reasoning. */
 	forceThinkingOffForIndex?: (index: number) => boolean;
 }
 
@@ -101,8 +109,10 @@ export function canPreferForkFromSnapshot(input: PreferredForkSnapshot): boolean
 	}
 }
 
-/** Decide whether a resolved child model uses Anthropic's provider or message API, which
- * requires the sanitized fork to disable thinking. Unknown models stay conservative. */
+/** Decide whether a resolved child model uses Anthropic's provider or message API.
+ * Unknown models answer conservatively (true). Retained as a public helper for callers
+ * that opt into `forceThinkingOffForIndex`; fork context no longer consults it by
+ * default. */
 export function forkedChildRequiresThinkingOff(
 	model: string | undefined,
 	availableModels?: ModelInfo[],
@@ -234,7 +244,7 @@ export function createForkContextResolver(
 				throw new Error("Session manager did not return a forked session file.");
 			}
 			const forceThinkingOff = (sanitized: boolean): boolean =>
-				sanitized && (options.forceThinkingOffForIndex?.(index) ?? true);
+				sanitized && (options.forceThinkingOffForIndex?.(index) ?? false);
 			let thinkingOverride: "off" | undefined;
 			if (!fs.existsSync(sessionFile)) {
 				const header = sourceManager.getHeader?.();
