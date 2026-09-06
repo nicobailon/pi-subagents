@@ -117,6 +117,20 @@ function request(config: ResolvedWatchdogConfig, warnings: WatchdogWarning[]): W
 }
 
 describe("main watchdog review adapter", () => {
+	it("yields an ask from a mixed batch without another model call or warning", async () => {
+		const { streamFn, calls } = createStreamFn([fauxAssistantMessage([
+			fauxToolCall("watchdog_ask", { question: "Which constraint applies?", evidence: "Two scope statements differ." }),
+			fauxToolCall("watchdog_warn", { severity: "concern", summary: "Must not emit", evidence: "x", recommendedAction: "x" }),
+			fauxToolCall("ls", { path: "." }),
+		], { stopReason: "toolUse" })]);
+		const warnings: WatchdogWarning[] = [];
+		const review = createMainWatchdogReview(createCtx({ current: model("mock", "review") }), { streamFn });
+		const result = await review({ ...request(enabledConfig(), warnings), allowClarification: true });
+		assert.deepEqual(result, { clarification: { question: "Which constraint applies?", evidence: "Two scope statements differ." } });
+		assert.equal(calls.length, 1);
+		assert.deepEqual(warnings, []);
+	});
+
 	it("ignores clean freeform review text and emits no warnings", async () => {
 		const current = model("openai", "gpt-clean");
 		const ctx = createCtx({ current });
@@ -231,7 +245,7 @@ describe("main watchdog review adapter", () => {
 		const warnings: WatchdogWarning[] = [];
 
 		const review = createMainWatchdogReview(ctx, { streamFn })(
-			{ ...request(enabledConfig(), warnings), signal: controller.signal },
+			{ ...request(enabledConfig(), warnings), allowClarification: true, signal: controller.signal },
 		);
 		await started;
 		controller.abort();

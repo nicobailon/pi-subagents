@@ -7,10 +7,11 @@ The watchdog is an opt-in second model that reviews what the agent just did and 
 | Timing | Trigger | Gate | Delivery |
 |---|---|---|---|
 | Boundary review | `agent_end` of every main or child turn | Repo changed | Steered into the transcript; the agent gets one continuation, then that turn is reviewed again |
+| Main activity review | `agent_end`, with `clarification: true` | New delivered orchestration evidence; at most one additional review per user prompt | Same warning/clarification path, even without local edits |
 | Cadence review | Every `cadence.everyNTools` tool results, minimum 5 | Opt-in | Steered after the current tool, before the next step |
 | LSP pre-pass | Before boundary review | Changed TypeScript/JavaScript files | Diagnostics become watchdog findings without a model call |
 
-Boundary reviews coalesce a turn's edits into one final-state review. Unchanged or reverted diffs are skipped, as are `.pi/subagents/` and `tmp/` artifacts. In orchestrated runs, each writing child reviews its own worktree and the parent reviews the aggregate diff after child changes land. There is no timer or "every turn regardless of edits" mode; the closest is a low cadence such as `everyNTools: 5`. Cadence monitoring is inspired by [Scopey](https://github.com/ArchAstro/scopey).
+Boundary reviews coalesce a turn's edits into one final-state review. Unchanged or reverted diffs are skipped unless the main-only activity opt-in below admits new evidence; `.pi/subagents/` and `tmp/` artifacts remain excluded. In orchestrated runs, each writing child reviews its own worktree and the parent reviews the aggregate diff after child changes land. There are no idle timer reviews. Cadence monitoring is inspired by [Scopey](https://github.com/ArchAstro/scopey).
 
 Children get the same boundary, cadence, and LSP behavior. Child cadence resolves from `children.overrides.<agent>.cadence`, then `children.cadence`, then top-level `cadence`:
 
@@ -67,7 +68,7 @@ Child watchdog findings are lifted into the parent in three ways:
 ## What the reviewer is given
 
 - **Turn delta** with changed repo paths. Over-long input keeps the first 6,000 characters and the tail.
-- **Current scope** (`scope.enabled`, default on): bounded real user prompts, with newer prompts superseding older ones.
+- **Current scope** (`scope.enabled`, default on): bounded real user prompts. Side questions are additive; only explicit changes supersede older requirements.
 - **`watchdog_diff`** when inside git: diff since the session-start commit, including later commits, plus untracked paths to inspect with `read`; accepts `path` and `stat:true`.
 - **`WATCHDOG.md`** standing instructions, read fresh on every review: `<project>/.pi/WATCHDOG.md` first, then `~/.pi/agent/WATCHDOG.md`, capped at 8,000 characters. Set `guidance.watchdogMd: false` to ignore them.
 - **LSP diagnostics** from `typescript-language-server`, auto-detected in `node_modules/.bin` or `PATH`; it is never installed and never run over the whole workspace. Errors become blockers, warnings concerns, and info/hints stay in status.
@@ -106,6 +107,36 @@ The recommendation is Opus 4.8 or GPT 5.5 at thinking high, whichever your main 
 Omit `main.model` to inherit the session model and thinking level. A `main.model` without a thinking suffix or `main.thinking` runs with thinking off, so prefer `:high` for the strong pairing.
 
 Agents can call `subagent({ action: "watchdog.recommend-model" })` and `subagent({ action: "watchdog.configure", model: "recommended", scope: "session" | "user" | "project" })`. They should use `scope: "session"` unless you ask for a lasting default.
+
+## Optional main-session clarification
+
+Use `watchdog_warn` directly for evidence-backed reminders of forgotten authorized work; a question is not a prerequisite. Distinguish forgotten work from dependencies still pending or explicit holds. Use clarification when task status or intent is genuinely unclear. The orchestrator remains owner of its task/lane board.
+
+With this opt-in, completed `turn_end` events retain a recent actual-activity tail: paired calls/results for `subagent` dispatch (no action), `subagent` actions `status`, `resume`, `interrupt`, `steer`, `stop`, `bg_wait`, and `subagent_supervisor` actions `pending`, `list`, `reply`. Pairing requires the same tool name and exact tool-call ID; raw results, unrelated tool names and watchdog management/reply actions do not qualify. Each activity entry is bounded to 3,000 characters, with a 6,000-character recent tail retained across ordinary new prompts and skipped edit boundaries. Session replacement, compaction, shutdown or disabling clears it. This is observed text, not an inferred task board.
+
+New unreviewed activity permits at most one additional boundary review per user prompt even with no local edit. Side questions keep earlier authorized task evidence available; they do not themselves trigger a model call. Activity gathered after that prompt's extra review remains available for the next prompt. Watchdog reply receipts and warning continuations cannot supply fresh triggering activity. No polling, task scheduling, cross-worktree scans or idle calls are added.
+
+**Visibility limit:** external task/gate completions are visible when returned through those parent tool results. Standalone native completion notifications, arbitrary custom messages, direct shell/CI output, and events not delivered to the parent through these contracts are not ingested by this activity tail. Existing scope retains at most eight prompts (2,000 characters each); new streaming user input cancels an exchange but is not added to scope unless `before_agent_start` fires. Reminders depend on retained evidence and model judgment, not an exhaustive view of running work.
+
+Set `subagents.watchdog.clarification: true` in Pi settings alongside `enabled: true`. It defaults to `false` and applies **only to the main watchdog**, not child watchdogs or child permission arbitration.
+
+```json
+{ "subagents": { "watchdog": { "enabled": true, "clarification": true } } }
+```
+
+At an eligible activity or Git-backed repo-edit boundary, the reviewer may use `watchdog_ask` for one focused question when missing orchestrator context prevents a concrete judgment. The non-Git observed-edit fallback cannot verify unchanged edits across Q/A and remains warning-only; no-edit activity exchanges instead check the prompt epoch and activity sequence. The reviewer cannot ask during cadence reviews, after an accepted warning, during stalemate, or during the reply review. There is at most one question per real user prompt, including unanswered questions.
+
+The tool **yields and ends that review**; it does not wait for or return an answer. A visible request steers the main session into Pi's native automatic continuation after the boundary hook returns. The orchestrator answers before changing files:
+
+```js
+subagent({ action: "watchdog.reply", id: "<exact request UUID>", message: "The missing context..." })
+```
+
+The action records a receipt only. At the next boundary, one fresh review receives the original bounded evidence and Q/A, even if answering made no edits. Freeform prose, wrong IDs, duplicate replies and late replies do not count. Changed repo or activity evidence cancels the exchange; new evidence can receive an eligible ordinary review, without another question that prompt. A question or answer is **not approval, permission, or a warning**. Read-only tools, warning thresholds, budgets and stalemate protections still apply.
+
+Requests expire after 60 seconds or close unanswered at the next boundary, without retrying or triggering a nag. A timely recorded answer can start its bounded review after that deadline. Cancel by disabling watchdog (`/subagents-watchdog session off`), turning clarification off, or submitting a new user prompt. Aborts, model changes, session switch/fork/compaction and shutdown also discard pending exchanges and invalidate active reply reviews. Status shows the request ID and pending/answered/terminal state; terminal notices never trigger a turn. Requests are in-memory only and are never restored from transcripts.
+
+Each review phase uses the existing `agentEndTimeoutMs`. Questions, evidence and replies are capped at 1,000, 2,000 and 4,000 characters respectively; scope, activity, delta and Q/A share the existing 24,000-character input limit. Enabled cost adds at most one activity boundary review plus one question/answer continuation and its fresh review per prompt. Disabled execution does not collect activity or add clarification timers, scans, polling, model calls or reviewer prompt/tool content. Child warning messaging and permission decisions remain unchanged.
 
 ## Child watchdogs
 

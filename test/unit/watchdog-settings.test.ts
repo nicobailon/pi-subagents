@@ -49,6 +49,7 @@ describe("watchdog settings", () => {
 
 		assert.equal(result.ok, true);
 		assert.equal(result.config.enabled, false);
+		assert.equal(result.config.clarification, false);
 		assert.equal(result.config.main.enabled, false);
 		assert.equal(result.config.children.enabled, false);
 		assert.equal(result.config.guidance.watchdogMd, true);
@@ -58,6 +59,12 @@ describe("watchdog settings", () => {
 		assert.deepEqual(result.config.scope, { enabled: true });
 		assert.deepEqual(result.config.cadence, { everyNTools: null });
 		assert.deepEqual(result.config.lsp, { enabled: true, timeoutMs: 3000, maxFiles: 20, maxDiagnostics: 50 });
+	});
+
+	it("accepts only a boolean clarification opt-in", () => {
+		assert.equal(resolveWatchdogConfig(tempProject, { session: { clarification: true } }).config.clarification, true);
+		assert.equal(resolveWatchdogConfig(tempProject, { session: { clarification: "true" } }).ok, false);
+		assert.equal(resolveWatchdogConfig(tempProject, { session: { children: { clarification: true } } }).ok, false);
 	});
 
 	it("lets root enabled opt the main watchdog in while children stay default-off", () => {

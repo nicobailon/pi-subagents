@@ -9,6 +9,8 @@ import { writeWatchdogModelSettings, type WatchdogModelSettingsTarget, type Watc
 
 interface WatchdogToolParams {
 	action?: string;
+	id?: string;
+	message?: string;
 	scope?: string;
 	target?: string;
 	agent?: string;
@@ -110,6 +112,11 @@ function buildCheckText(runtime: MainWatchdogRuntime | undefined, ctx: Extension
 
 export function handleWatchdogToolAction(action: string, params: WatchdogToolParams, ctx: ExtensionContext, runtime?: MainWatchdogRuntime): AgentToolResult<Details> {
 	try {
+		if (action === "watchdog.reply") {
+			if (!runtime) return result("Subagent watchdog runtime is unavailable.", true);
+			runtime.replyToClarification(params.id ?? "", params.message ?? "", ctx);
+			return result("Watchdog reply recorded. One fresh review will consider it at the next boundary; this is not approval.");
+		}
 		if (action === "watchdog.status") {
 			if (!runtime) return result("Subagent watchdog runtime is unavailable.", true);
 			return result(buildWatchdogStatus(runtime.getSnapshot(ctx.cwd), ctx));
@@ -151,5 +158,5 @@ export function handleWatchdogToolAction(action: string, params: WatchdogToolPar
 	}
 }
 
-export const WATCHDOG_TOOL_ACTIONS = ["watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model"] as const;
+export const WATCHDOG_TOOL_ACTIONS = ["watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "watchdog.reply"] as const;
 export const WATCHDOG_THINKING_VALUES = ["inherit", ...THINKING_LEVELS] as const;

@@ -159,3 +159,26 @@ export function formatWatchdogTurnDelta(input: WatchdogTurnDeltaInput): string {
 	if (input.finalAssistantStop) sections.push("Final assistant stop: stop without tool call");
 	return sections.join("\n\n---\n\n");
 }
+
+/** Only completed, exactly paired native orchestration calls are activity evidence. */
+export function formatWatchdogOrchestrationActivity(event: unknown): string {
+	const turn = event as { type?: string; message?: { content?: unknown }; toolResults?: unknown[] } | undefined;
+	if (turn?.type !== "turn_end" || !Array.isArray(turn.message?.content) || !Array.isArray(turn.toolResults)) return "";
+	const sections: string[] = [];
+	for (const call of turn.message.content) {
+		if (call?.type !== "toolCall" || typeof call.id !== "string") continue;
+		const args = call.arguments;
+		if (!args || typeof args !== "object") continue;
+		const eligible = call.name === "bg_wait"
+			|| (call.name === "subagent_supervisor" && ["pending", "list", "reply"].includes(args.action))
+			|| (call.name === "subagent" && (["status", "resume", "interrupt", "steer", "stop"].includes(args.action)
+				|| (args.action === undefined && (typeof args.agent === "string" || typeof args.workflowScript === "string" || typeof args.workflowScriptPath === "string"))));
+		if (!eligible) continue;
+		const result = turn.toolResults.find((value) => {
+			const result = value as { role?: string; toolCallId?: string; toolName?: string };
+			return result?.role === "toolResult" && result.toolCallId === call.id && result.toolName === call.name;
+		});
+		if (result) sections.push(formatToolCall(call.name, args), formatWatchdogReviewMessage(result) ?? "");
+	}
+	return sections.join("\n\n");
+}

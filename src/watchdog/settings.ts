@@ -61,6 +61,7 @@ interface ParseMeta {
 
 export const DEFAULT_WATCHDOG_CONFIG: ResolvedWatchdogConfig = {
 	enabled: false,
+	clarification: false,
 	agentEndTimeoutMs: 30_000,
 	severityThreshold: "concern",
 	maxWarnings: null,
@@ -92,6 +93,7 @@ export const DEFAULT_WATCHDOG_CONFIG: ResolvedWatchdogConfig = {
 
 const WATCHDOG_FIELDS = new Set([
 	"enabled",
+	"clarification",
 	"agentEndTimeoutMs",
 	"severityThreshold",
 	"maxWarnings",
@@ -303,6 +305,7 @@ function parseWatchdogPatch(value: unknown, field: string, meta: ParseMeta): Wat
 	assertKnownFields(input, WATCHDOG_FIELDS, field, meta);
 	const patch: WatchdogConfigPatch = {};
 	if ("enabled" in input) patch.enabled = parseBoolean(input.enabled, `${field}.enabled`, meta);
+	if ("clarification" in input) patch.clarification = parseBoolean(input.clarification, `${field}.clarification`, meta);
 	if ("agentEndTimeoutMs" in input) {
 		patch.agentEndTimeoutMs = parseInteger(input.agentEndTimeoutMs, `${field}.agentEndTimeoutMs`, meta, "a positive integer", (candidate) => candidate >= 1);
 	}

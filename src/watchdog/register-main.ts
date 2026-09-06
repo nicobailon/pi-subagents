@@ -111,7 +111,8 @@ export function buildWatchdogStatus(snapshot: ReturnType<MainWatchdogRuntime["ge
 		"Subagent watchdog",
 		`Main: ${boolLabel(snapshot.enabled)}${!snapshot.config.enabled && snapshot.sessionOverride === undefined ? " (default off)" : ""}`,
 		`Runtime: ${statusLabel(snapshot.status)}${snapshot.bufferedDeltas > 0 ? ` · buffered deltas ${snapshot.bufferedDeltas}` : ""}`,
-		`Review trigger: ${snapshot.reviewTrigger === "repo-edits" ? "repo edits only" : "every non-empty turn delta"}`,
+		`Review trigger: ${snapshot.reviewTrigger === "repo-edits" ? snapshot.config.clarification ? "repo edits + bounded main orchestration activity" : "repo edits only" : "every non-empty turn delta"}`,
+		`Main clarification: ${snapshot.config.clarification ? "on" : "off"}${snapshot.clarification ? ` · ${snapshot.clarification.state} · ${snapshot.clarification.id}` : ""}`,
 		`Scope context: ${snapshot.config.scope.enabled ? "on" : "off"}`,
 		`Cadence: ${snapshot.config.cadence.everyNTools === null ? "boundary only" : `every ${snapshot.config.cadence.everyNTools} tools + boundary`}`,
 		lspLine(snapshot),
@@ -387,6 +388,7 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 		reviewDescription: options.review ? "injected seam" : "real model review",
 		reviewChangesOnly: true,
 		displayWarning: (details, options) => pi.sendMessage(createWatchdogWarningMessage(details, { display: true, details }), options),
+		displayClarification: (content, triggerTurn) => pi.sendMessage({ customType: "subagent_watchdog_clarification", content, display: true }, triggerTurn ? { deliverAs: "steer", triggerTurn: true } : { triggerTurn: false }),
 	});
 
 	pi.registerMessageRenderer<WatchdogWarningDetails>(SUBAGENT_WATCHDOG_WARNING_TYPE, (message, renderOptions, theme) => {
@@ -421,6 +423,9 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 		rememberContext(ctx);
 		runtime.handleTurnEnd(event, ctx);
 	});
+	pi.on("agent_start", (_event, ctx) => runtime.handleAgentStart(ctx));
+	pi.on("input", (event) => { if (event.source !== "extension") runtime.handleUserInput(); });
+	pi.on("model_select", () => runtime.handleModelChange());
 	pi.on("tool_result", (_event, ctx) => {
 		rememberContext(ctx);
 		runtime.handleToolResult(ctx);

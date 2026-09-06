@@ -150,6 +150,8 @@ export interface WatchdogRulesConfig {
 
 export interface ResolvedWatchdogConfig {
 	enabled: boolean;
+	/** Main-only, bounded boundary clarification; never enabled for child reviews. */
+	clarification: boolean;
 	agentEndTimeoutMs: number;
 	severityThreshold: WatchdogSeverity;
 	maxWarnings: number | null;

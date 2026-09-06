@@ -8,7 +8,7 @@ import { agentStreamOptions } from "../shared/agent-stream-options.ts";
 import { resolveEffectiveThinking, splitKnownThinkingSuffix, THINKING_LEVELS, toModelInfo } from "../shared/model-info.ts";
 import { createWatchdogDiffTool, WATCHDOG_DIFF_TOOL_NAME, type WatchdogDiffBaseline } from "./diff-tool.ts";
 import { loadWatchdogGuidance } from "./guidance.ts";
-import type { WatchdogReviewFunction, WatchdogReviewRequest } from "./runtime.ts";
+import { boundWatchdogReviewText, type WatchdogReviewFunction, type WatchdogReviewRequest } from "./runtime.ts";
 import {
 	WATCHDOG_WARNING_CATEGORIES,
 	WATCHDOG_WARNING_CONFIDENCES,
@@ -21,6 +21,8 @@ import {
 } from "./types.ts";
 
 const WATCHDOG_ALLOWED_TOOL_NAMES = new Set(["read", "grep", "find", "ls", "watchdog_warn", WATCHDOG_DIFF_TOOL_NAME]);
+
+const WatchdogAskParams = Type.Object({ question: Type.String(), evidence: Type.String() }, { additionalProperties: false });
 
 const WatchdogWarnParams = Type.Object({
 	severity: Type.String({ enum: WATCHDOG_WARNING_SEVERITIES, description: "concern for actionable risk, blocker for a likely wrong or unsafe outcome" }),
@@ -214,7 +216,7 @@ export function buildWatchdogSystemPrompt(ctx: Pick<ExtensionContext, "cwd">, op
 		"You are the main-session subagent watchdog for Pi.",
 		`Working directory: ${ctx.cwd}`,
 		"Review only the supplied parent turn delta. Inspect repository files only when needed to verify a concrete concern.",
-		options.hasScope ? "When the review input includes a Current scope block, treat newer scope prompts as superseding/mutating older prompts and use category='scope-drift' for work that serves no current scope item." : undefined,
+		options.hasScope ? "Use the Current scope record alongside supplied activity evidence; an unrelated user question does not cancel older authorized work." : undefined,
 		`You are read-only. You may use ${options.hasDiff ? "read, grep, find, ls, and watchdog_diff (the full repo diff since the session baseline; pass a path to narrow it)" : "read, grep, find, and ls"}. Do not edit files, run shell commands, spawn agents, or mutate state.`,
 		"Emit warnings only by calling watchdog_warn. Freeform assistant text is ignored and must not be used to report warnings.",
 		"Emit only medium/high confidence actionable concerns or blockers: missed user constraints, correctness risks, test gaps that matter, unsafe changes, stale facts, loop risks, or scope drift.",
@@ -268,18 +270,46 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 		const baseStreamFn = options.streamFn ?? (registeredProvider?.streamSimple && registeredProvider.api === selection.model.api
 			? registeredProvider.streamSimple
 			: streamSimple);
-		const streamFn: StreamFn = (model, context, streamOptions) => baseStreamFn(model, context, {
-			...streamOptions,
-			...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
-			env: auth.env || streamOptions?.env ? { ...(auth.env ?? {}), ...(streamOptions?.env ?? {}) } : undefined,
-			headers: { ...(streamOptions?.headers ?? {}), ...(auth.headers ?? {}) },
-		});
+		const streamFn: StreamFn = (model, context, streamOptions) => {
+			// Agent may enter one final loop iteration after an aborted mixed tool batch.
+			// Never send that iteration to the provider after an intentional yield.
+			if (clarification) throw new Error("Watchdog review yielded for clarification.");
+			return baseStreamFn(model, context, {
+				...streamOptions,
+				...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
+				env: auth.env || streamOptions?.env ? { ...(auth.env ?? {}), ...(streamOptions?.env ?? {}) } : undefined,
+				headers: { ...(streamOptions?.headers ?? {}), ...(auth.headers ?? {}) },
+			});
+		};
 		const diffBaseline = options.diffBaseline?.();
+		let clarification: { question: string; evidence: string } | undefined;
+		let warned = false;
+		const warnRequest = request.allowClarification ? { ...request, emitWarning: (warning: WatchdogWarning) => {
+			if (clarification) return false;
+			const accepted = request.emitWarning(warning);
+			warned ||= accepted;
+			return accepted;
+		} } : request;
 		const tools = [
 			...(options.createReadOnlyTools ?? createReadOnlyTools)(ctx.cwd).filter((tool) => WATCHDOG_ALLOWED_TOOL_NAMES.has(tool.name) && tool.name !== "watchdog_warn"),
-			createWatchdogWarnTool(request),
+			createWatchdogWarnTool(warnRequest),
 			...(diffBaseline ? [createWatchdogDiffTool(diffBaseline)] : []),
 		];
+		if (request.allowClarification) tools.push({
+			name: "watchdog_ask",
+			label: "Watchdog clarification",
+			description: "Ask one focused question only when missing task status, intent or other orchestrator context prevents a concrete review judgment. Ends this review; does not wait for or return the answer. A fresh review receives the bounded Q/A. Never ask for approval or permission, and never ask after recording a warning. Question and evidence are capped at 1000 and 2000 characters.",
+			parameters: WatchdogAskParams,
+			executionMode: "sequential",
+			async execute(_id, rawParams) {
+				const params = rawParams as Static<typeof WatchdogAskParams>;
+				if (warned || clarification || ctx.signal?.aborted || request.signal?.aborted) throw new Error("Clarification unavailable after warning, yield, or cancellation.");
+				if (!params.question.trim() || !params.evidence.trim()) throw new Error("A focused question and concrete evidence are required.");
+				clarification = { question: boundWatchdogReviewText(params.question.trim(), 1_000), evidence: boundWatchdogReviewText(params.evidence.trim(), 2_000) };
+				agent.abort(); // Intentional yield also stops mixed tool batches; terminate alone does not.
+				return { content: [{ type: "text", text: "Review yielded for clarification." }], details: {} };
+			},
+		});
 		const agent = new Agent({
 			initialState: {
 				systemPrompt: buildWatchdogSystemPrompt(ctx, {
@@ -294,7 +324,7 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 			convertToLlm,
 			...agentStreamOptions(streamFn),
 			getApiKey: (providerName) => providerName === selection.model.provider ? auth.apiKey : undefined,
-			beforeToolCall: async ({ toolCall }) => WATCHDOG_ALLOWED_TOOL_NAMES.has(toolCall.name)
+			beforeToolCall: async ({ toolCall }) => !clarification && (WATCHDOG_ALLOWED_TOOL_NAMES.has(toolCall.name) || (request.allowClarification && toolCall.name === "watchdog_ask"))
 				? undefined
 				: { block: true, reason: `Watchdog reviews are read-only; tool '${toolCall.name}' is not allowed.` },
 			toolExecution: "sequential",
@@ -309,6 +339,7 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 			ctx.signal?.removeEventListener("abort", abort);
 			request.signal?.removeEventListener("abort", abort);
 		}
-		return { stopReason: finalStopReason(agent) };
+		if (ctx.signal?.aborted || request.signal?.aborted) return { stopReason: "aborted" };
+		return clarification ? { clarification } : { stopReason: finalStopReason(agent) };
 	};
 }

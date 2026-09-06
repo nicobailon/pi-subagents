@@ -73,6 +73,299 @@ function createRepo(): string {
 }
 
 describe("main watchdog runtime", () => {
+	function activityTurn(name: string, args: Record<string, unknown>, text: string, id = "activity-call") {
+		return { type: "turn_end", message: { role: "assistant", content: [{ type: "toolCall", id, name, arguments: args }] }, toolResults: [{ role: "toolResult", toolCallId: id, toolName: name, content: [{ type: "text", text }], isError: false }] };
+	}
+
+	it("invalidates activity Q/A when a dirty prompt baseline becomes clean, using one observation per boundary", async () => {
+		const ctx = { cwd: "/tmp/project" };
+		let observation = { root: ctx.cwd, key: "dirty-A", changedPaths: ["file.ts"] };
+		let scans = 0;
+		const requests: Parameters<WatchdogReviewFunction>[0][] = [];
+		const runtime = new MainWatchdogRuntime({ cwd: ctx.cwd, resolveConfig: () => configResult(enabledConfig({ clarification: true })), reviewChangesOnly: true,
+			repoChangeSignature: () => { scans++; return observation; }, displayClarification: () => {}, review: (r) => { requests.push(r); return { clarification: { question: "Keep the existing edit?", evidence: "Dirty file at task start" } }; } });
+		try {
+			runtime.handleBeforeAgentStart({ prompt: "Check task status" }, ctx);
+			runtime.handleTurnEnd(activityTurn("subagent", { action: "status", id: "task" }, "Task awaits a decision"), ctx);
+			const before = scans;
+			await runtime.handleAgentEnd({}, ctx);
+			runtime.replyToClarification(runtime.getSnapshot().clarification!.id, "Obsolete answer", ctx);
+			observation = { root: ctx.cwd, key: "clean-B", changedPaths: [] };
+			await runtime.handleAgentEnd({}, ctx);
+			assert.equal(runtime.getSnapshot().clarification?.state, "stale evidence");
+			assert.equal(requests.length, 1, "no fresh review consumes the obsolete answer");
+			assert.equal(scans - before, 2, "raw freshness reuses each existing boundary lookup");
+		} finally { runtime.dispose(); }
+	});
+
+	it("invalidates an admitted LSP pre-pass on user input, model selection or configured model change", async () => {
+		for (const edge of ["input", "model", "config"] as const) {
+			const ctx = { cwd: "/tmp/project" };
+			let config = enabledConfig({ clarification: true, lsp: { ...DEFAULT_WATCHDOG_CONFIG.lsp, enabled: true } });
+			let key = "baseline";
+			let started!: () => void;
+			const ready = new Promise<void>((resolve) => { started = resolve; });
+			let finish!: (result: WatchdogLspResult) => void;
+			let signal: AbortSignal | undefined;
+			let reviews = 0;
+			const notices: string[] = [];
+			const runtime = new MainWatchdogRuntime({ cwd: ctx.cwd, resolveConfig: () => configResult(config), reviewChangesOnly: true,
+				repoChangeSignature: () => ({ root: ctx.cwd, key, changedPaths: ["file.ts"] }),
+				lspDiagnostics: (request) => new Promise((resolve) => { signal = request.signal; finish = resolve; started(); }),
+				displayClarification: (text) => { notices.push(text); }, review: () => { reviews++; return { clarification: { question: "Old scope?", evidence: "Old boundary" } }; } });
+			try {
+				runtime.handleBeforeAgentStart({ prompt: "Original task" }, ctx);
+				key = "edited";
+				const boundary = runtime.handleAgentEnd({}, ctx);
+				await ready;
+				if (edge === "input") runtime.handleUserInput();
+				else if (edge === "model") runtime.handleModelChange();
+				else { config = { ...config, main: { ...config.main, model: "mock/new-model" } }; runtime.refreshConfig(); }
+				assert.equal(signal?.aborted, true, edge);
+				finish({ status: "ok", checkedPaths: ["file.ts"], skippedPaths: [], diagnostics: [] });
+				await boundary;
+				assert.equal(reviews, 0, edge);
+				assert.deepEqual(notices, [], edge);
+			} finally { runtime.dispose(); }
+		}
+	});
+
+	it("reviews delivered orchestration outcomes without edits once per prompt and retains evidence through a side ask", async () => {
+		const ctx = { cwd: "/tmp/project" };
+		const requests: Parameters<WatchdogReviewFunction>[0][] = [];
+		const runtime = new MainWatchdogRuntime({ cwd: ctx.cwd, resolveConfig: () => configResult(enabledConfig({ clarification: true })), reviewChangesOnly: true, repoChangeSignature: () => ({ root: ctx.cwd, key: "unchanged", changedPaths: [] }), displayClarification: () => {}, review: (r) => { requests.push(r); return requests.length === 2 ? { warnings: [warning()] } : {}; } });
+		try {
+			runtime.handleBeforeAgentStart({ prompt: "Finish the original implementation and CI gate" }, ctx);
+			runtime.handleTurnEnd(activityTurn("subagent", { agent: "worker", task: "Implement original objective" }, "Implementation remains active; explicitly held pending CI"), ctx);
+			await runtime.handleAgentEnd({}, ctx);
+			assert.equal(requests.length, 1);
+			assert.match(requests[0]!.delta, /explicitly held pending CI/);
+			assert.match(requests[0]!.delta, /waits\/holds are not evidence of neglect/);
+			assert.equal(runtime.getSnapshot().lastWarning, undefined, "a pending/held outcome is evidence, not an automatic finding");
+			runtime.handleTurnEnd(activityTurn("bg_wait", { id: "ci-gate" }, "CI gate completed successfully"), ctx);
+			await runtime.handleAgentEnd({}, ctx);
+			assert.equal(requests.length, 1, "one additional activity review per prompt");
+			runtime.handleBeforeAgentStart({ prompt: "Side question: explain this acronym" }, ctx);
+			await runtime.handleAgentEnd({}, ctx);
+			assert.equal(requests.length, 2, "unreviewed delivered completion survives skipped boundary and new prompt");
+			for (const text of ["original implementation", "Side question", "CI gate completed successfully", "Implementation remains active", "Side questions are additive"]) assert.ok(requests[1]!.delta.includes(text));
+			runtime.handleTurnEnd(activityTurn("subagent", { action: "status", id: "ci-gate" }, "Warning continuation status"), ctx);
+			await runtime.handleAgentEnd({}, ctx);
+			runtime.handleBeforeAgentStart({ prompt: "Continue" }, ctx);
+			await runtime.handleAgentEnd({}, ctx);
+			assert.equal(requests.length, 2, "warning continuations and side prompts alone cannot create fresh activity");
+			runtime.reset("compact", { clearScope: true });
+			runtime.handleBeforeAgentStart({ prompt: "New scope" }, ctx);
+			runtime.handleTurnEnd(activityTurn("subagent_supervisor", { action: "pending" }, "No pending requests"), ctx);
+			await runtime.handleAgentEnd({}, ctx);
+			assert.doesNotMatch(requests.at(-1)!.delta, /CI gate completed successfully/);
+		} finally { runtime.dispose(); }
+	});
+
+	it("uses activity freshness for no-edit Q/A and excludes unmatched tools and watchdog receipts", async () => {
+		const ctx = { cwd: "/tmp/project" };
+		const config = enabledConfig({ clarification: true });
+		const requests: Parameters<WatchdogReviewFunction>[0][] = [];
+		const runtime = new MainWatchdogRuntime({ cwd: ctx.cwd, resolveConfig: () => configResult(config), reviewChangesOnly: true, repoChangeSignature: () => undefined, displayClarification: () => {}, review: (r) => { requests.push(r); return r.allowClarification ? { clarification: { question: "Is the gate held?", evidence: "Delivered gate status is unclear" } } : {}; } });
+		try {
+			runtime.handleBeforeAgentStart({ prompt: "Finish task" }, ctx);
+			const unmatched = activityTurn("subagent", { action: "status" }, "unmatched");
+			unmatched.toolResults[0]!.toolCallId = "other";
+			runtime.handleTurnEnd(unmatched, ctx);
+			runtime.handleTurnEnd(activityTurn("bash", { command: "echo subagent" }, "not orchestration evidence"), ctx);
+			await runtime.handleAgentEnd({}, ctx);
+			assert.equal(requests.length, 0);
+			runtime.handleTurnEnd(activityTurn("subagent", { action: "status", id: "gate" }, "Gate state unclear"), ctx);
+			await runtime.handleAgentEnd({}, ctx);
+			const id = runtime.getSnapshot().clarification!.id;
+			runtime.replyToClarification(id, "Explicitly held", ctx);
+			runtime.handleTurnEnd(activityTurn("subagent", { action: "watchdog.reply", id, message: "Explicitly held" }, "receipt"), ctx);
+			await runtime.handleAgentEnd({}, ctx);
+			assert.match(requests[1]!.delta, /Explicitly held/);
+			assert.ok(requests[1]!.delta.length <= 24_000);
+			runtime.handleBeforeAgentStart({ prompt: "Next task" }, ctx);
+			await runtime.handleAgentEnd({}, ctx);
+			assert.equal(requests.length, 2, "receipt did not create activity");
+			runtime.handleTurnEnd(activityTurn("bg_wait", {}, `New unclear outcome ${"x".repeat(40_000)}`), ctx);
+			await runtime.handleAgentEnd({}, ctx);
+			assert.ok(requests.at(-1)!.delta.length <= 24_000, "activity and delta share the input cap");
+			runtime.replyToClarification(runtime.getSnapshot().clarification!.id, "Obsolete answer", ctx);
+			runtime.handleTurnEnd(activityTurn("bg_wait", {}, "Gate changed while answering"), ctx);
+			await runtime.handleAgentEnd({}, ctx);
+			assert.equal(runtime.getSnapshot().clarification?.state, "stale evidence");
+			assert.equal(requests.some((r) => r.delta.includes("Obsolete answer")), false);
+		} finally { runtime.dispose(); }
+	});
+
+	function clarificationFixture(clarification = true, main = true) {
+		let key = "baseline";
+		const config = enabledConfig({ clarification, cadence: { everyNTools: 1 } });
+		const requests: Parameters<WatchdogReviewFunction>[0][] = [];
+		const messages: Array<{ content: string; trigger: boolean }> = [];
+		const warnings: WatchdogWarningDetails[] = [];
+		const ctx = { cwd: "/tmp/project" };
+		const runtime = new MainWatchdogRuntime({
+			cwd: ctx.cwd, resolveConfig: () => configResult(config), reviewChangesOnly: true,
+			repoChangeSignature: () => ({ root: ctx.cwd, key, changedPaths: ["file.ts"] }),
+			...(main ? { displayClarification: (content: string, trigger: boolean) => { messages.push({ content, trigger }); } } : {}),
+			displayWarning: (warning) => { warnings.push(warning); },
+			review: (request) => {
+				requests.push(request);
+				return request.allowClarification ? { clarification: { question: "Which scope?", evidence: "Original evidence" } } : { warnings: [warning()] };
+			},
+		});
+		runtime.handleBeforeAgentStart({ prompt: "Original task" }, ctx);
+		key = "edited";
+		runtime.enqueueDelta("Original bounded delta");
+		return { runtime, config, ctx, requests, messages, warnings, change: (value = "changed again") => { key = value; } };
+	}
+
+	it("rejects wrong, cross-runtime and duplicate replies and suppresses cadence/further questions", async () => {
+		const f = clarificationFixture();
+		try {
+			await f.runtime.handleAgentEnd({}, f.ctx);
+			const id = f.runtime.getSnapshot().clarification!.id;
+			assert.throws(() => f.runtime.replyToClarification("wrong", "answer", f.ctx), /matching/);
+			const other = clarificationFixture();
+			assert.throws(() => other.runtime.replyToClarification(id, "answer", other.ctx), /matching/);
+			other.runtime.dispose();
+			f.runtime.handleToolResult(f.ctx);
+			assert.equal(f.requests.length, 1, "cadence suppressed while pending");
+			f.runtime.replyToClarification(id, "Exact answer", f.ctx);
+			assert.throws(() => f.runtime.replyToClarification(id, "duplicate", f.ctx), /matching/);
+			await f.runtime.handleAgentEnd({}, f.ctx);
+			f.change();
+			f.runtime.enqueueDelta("New work, same user prompt");
+			await f.runtime.handleAgentEnd({}, f.ctx);
+			assert.equal(f.requests.at(-1)?.allowClarification, undefined);
+		} finally { f.runtime.dispose(); }
+	});
+
+	it("keeps unverifiable non-Git observed-edit boundaries warning-only", async () => {
+		const f = clarificationFixture();
+		try {
+			f.change("observed-edit:1:0:12");
+			await f.runtime.handleAgentEnd({}, f.ctx);
+			assert.equal(f.requests[0]?.allowClarification, undefined);
+			assert.equal(f.messages.length, 0);
+			assert.equal(f.warnings.length, 1);
+		} finally { f.runtime.dispose(); }
+	});
+
+	it("closes unanswered and expired requests without a nag or repeat review", async (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+		for (const expire of [false, true]) {
+			const f = clarificationFixture();
+			try {
+				await f.runtime.handleAgentEnd({}, f.ctx);
+				const id = f.runtime.getSnapshot().clarification!.id;
+				if (expire) t.mock.timers.tick(60_001);
+				await f.runtime.handleAgentEnd({}, f.ctx);
+				assert.throws(() => f.runtime.replyToClarification(id, "late", f.ctx), /matching/);
+				assert.equal(f.requests.length, 1);
+				assert.equal(f.messages.filter((m) => m.trigger).length, 1);
+				assert.equal(f.runtime.getSnapshot().clarification?.state, expire ? "expired" : "unanswered");
+			} finally { f.runtime.dispose(); }
+		}
+	});
+
+	it("invalidates replies on lifecycle, abort, model/disable and changed evidence", async () => {
+		for (const edge of ["reset", "new prompt", "user steer", "model", "selected model", "disabled", "clarification off", "abort", "repo", "dispose"]) {
+			const f = clarificationFixture();
+			try {
+				await f.runtime.handleAgentEnd({}, f.ctx);
+				const id = f.runtime.getSnapshot().clarification!.id;
+				if (edge === "repo") { f.runtime.replyToClarification(id, "stale answer", f.ctx); f.change(); }
+				else if (edge === "new prompt") f.runtime.handleBeforeAgentStart({ prompt: "New task" }, f.ctx);
+				else if (edge === "user steer") f.runtime.handleUserInput();
+				else if (edge === "model") f.runtime.setSessionModel({ model: "mock/new" });
+				else if (edge === "selected model") f.runtime.handleModelChange();
+				else if (edge === "disabled") { f.config.main.enabled = false; f.runtime.refreshConfig(); }
+				else if (edge === "clarification off") { f.config.clarification = false; f.runtime.refreshConfig(); }
+				else if (edge === "abort") { const c = new AbortController(); f.runtime.handleAgentStart({ ...f.ctx, signal: c.signal }); c.abort(); }
+				else if (edge === "dispose") f.runtime.dispose();
+				else f.runtime.reset("session switch/fork/compact");
+				await f.runtime.handleAgentEnd({}, f.ctx);
+				assert.throws(() => f.runtime.replyToClarification(id, "late", f.ctx), /matching/);
+				assert.equal(f.requests.some((r) => r.delta.includes("stale answer")), false, edge);
+				assert.equal(f.messages.filter((m) => m.trigger).length, 1, edge);
+			} finally { f.runtime.dispose(); }
+		}
+	});
+
+	it("adds no clarification calls, messages or timers when off or without main delivery capability", async (t) => {
+		for (const [enabled, main] of [[false, true], [true, false]]) {
+			const f = clarificationFixture(enabled, main);
+			const timer = t.mock.method(globalThis, "setTimeout");
+			try {
+				const disabled = activityTurn("subagent", { action: "status" }, "disabled");
+				Object.defineProperty(disabled.toolResults[0], "toolCallId", { get() { throw new Error("disabled activity must not correlate results"); } });
+				f.runtime.handleTurnEnd(disabled, f.ctx);
+				assert.equal(f.runtime.getSnapshot().failedReviews, 0);
+				await f.runtime.handleAgentEnd({}, f.ctx);
+				assert.equal(f.requests[0]?.allowClarification, undefined);
+				assert.equal(f.messages.length, 0);
+				assert.equal(timer.mock.calls.length, 1, "only the existing model timeout");
+				assert.equal(f.runtime.getSnapshot().clarification, undefined);
+				const epoch = f.runtime.getSnapshot().epoch;
+				f.runtime.handleModelChange();
+				f.runtime.handleUserInput();
+				assert.equal(f.runtime.getSnapshot().epoch, epoch, "disabled clarification lifecycle handlers are inert");
+			} finally { timer.mock.restore(); f.runtime.dispose(); }
+		}
+	});
+
+	it("bounds retained Q/A, accepts timely replies after deadline, and preserves warning budget", async (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+		const f = clarificationFixture();
+		f.config.maxWarnings = 0;
+		try {
+			f.runtime.enqueueDelta("x".repeat(40_000));
+			await f.runtime.handleAgentEnd({}, f.ctx);
+			const id = f.runtime.getSnapshot().clarification!.id;
+			f.runtime.replyToClarification(id, "ANSWER".repeat(3_000), f.ctx);
+			t.mock.timers.tick(60_001);
+			assert.equal(f.runtime.getSnapshot().clarification?.state, "answered");
+			await f.runtime.handleAgentEnd({}, f.ctx);
+			assert.equal(f.requests.length, 2);
+			assert.ok(f.requests[1]!.delta.length <= 24_000);
+			assert.match(f.requests[1]!.delta, /ANSWER/);
+			assert.equal(f.warnings.length, 0, "Q/A never resets warning budget");
+		} finally { f.runtime.dispose(); }
+	});
+
+	it("aborts an active reply review and ignores its late result without repeated invalidation", async () => {
+		const config = enabledConfig({ clarification: true });
+		const ctx = { cwd: "/tmp/project" };
+		let finish: ((value: { warnings: WatchdogWarning[] }) => void) | undefined;
+		let followSignal: AbortSignal | undefined;
+		let calls = 0;
+		const delivered: WatchdogWarningDetails[] = [];
+		const runtime = new MainWatchdogRuntime({ cwd: ctx.cwd, resolveConfig: () => configResult(config), displayClarification: () => {}, displayWarning: (w) => { delivered.push(w); }, review: (request) => {
+			calls++;
+			if (calls === 1) return { clarification: { question: "Question", evidence: "Evidence" } };
+			followSignal = request.signal;
+			return new Promise((resolve) => { finish = resolve; });
+		} });
+		try {
+			runtime.enqueueDelta("Original delta");
+			await runtime.handleAgentEnd({}, ctx);
+			runtime.replyToClarification(runtime.getSnapshot().clarification!.id, "Answer", ctx);
+			const boundary = runtime.handleAgentEnd({}, ctx);
+			await tick();
+			config.clarification = false;
+			runtime.refreshConfig();
+			assert.equal(followSignal?.aborted, true);
+			const epoch = runtime.getSnapshot().epoch;
+			runtime.refreshConfig();
+			assert.equal(runtime.getSnapshot().epoch, epoch, "terminal invalidation is not repeated on refresh");
+			finish!({ warnings: [warning()] });
+			await boundary;
+			assert.equal(delivered.length, 0);
+			assert.equal(runtime.getSnapshot().activeReviewId, undefined);
+		} finally { runtime.dispose(); }
+	});
+
 	it("does not inspect the repository until the watchdog is enabled", () => {
 		let enabled = false;
 		let signatureCalls = 0;

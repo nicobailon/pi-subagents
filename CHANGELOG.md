@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Add default-off, main-only watchdog clarification and task-continuity reviews from bounded delivered orchestration evidence, with exact-ID replies, cancellation and a fresh review (#2010).
+
 ### Changed
 - Document task-derived behavior labels for workflow launches in the built-in pi-subagents skill, including reviews and retained follow-ups.
 
