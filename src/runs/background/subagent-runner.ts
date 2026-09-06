@@ -2092,20 +2092,29 @@ async function runSubagent(
 		},
 		onError: (error, filePath) => console.error(`Failed to update async run index '${filePath}':`, error),
 	});
-	const queueActiveRunIndex = (): void => {
-		const state = statusPayload.state;
+	const queueActiveRunIndex = (status: AsyncStatus): void => {
+		const state = status.state;
 		if (state === lastIndexedStatusState && indexPersistence.pendingCount() === 0) return;
-		indexPersistence.write(asyncDir, { state, toolCallId: statusPayload.toolCallId }, (_filePath, payload) => {
+		indexPersistence.write(asyncDir, { state, toolCallId: status.toolCallId }, (_filePath, payload) => {
 			const indexPayload = payload as { state: AsyncStatus["state"]; toolCallId?: string };
 			updateActiveRunIndex(asyncDir, indexPayload.state, indexPayload.toolCallId, { retryCapacityErrors: true });
 		});
 	};
+	let finalResultCommitted = false;
+	let finalResultPublication: { resolve(): void; reject(error: unknown): void } | undefined;
 	const runPersistence = createCapacityResilientJsonWriter({
 		keepAlive: true,
-		onSuccess: (filePath) => {
-			if (filePath === statusPath) queueActiveRunIndex();
+		onSuccess: (filePath, payload) => {
+			if (filePath === statusPath) queueActiveRunIndex(payload as AsyncStatus);
+			if (filePath === resultPath && finalResultPublication) {
+				finalResultCommitted = true;
+				finalResultPublication.resolve();
+			}
 		},
-		onError: (error, filePath) => console.error(`Failed to persist async run state '${filePath}':`, error),
+		onError: (error, filePath) => {
+			console.error(`Failed to persist async run state '${filePath}':`, error);
+			if (filePath === resultPath) finalResultPublication?.reject(error);
+		},
 	});
 	try {
 		fs.mkdirSync(asyncDir, { recursive: true });
@@ -2113,7 +2122,7 @@ async function runSubagent(
 		if (!isStorageCapacityError(error)) throw error;
 		console.error(`Failed to prepare async run storage '${asyncDir}' while storage is full:`, error);
 	}
-	runPersistence.write(statusPath, statusPayload);
+	runPersistence.write(statusPath, { ...statusPayload });
 
 	let pendingParallelUsageCost: CostSummary = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
 	const currentUsageTotals = (): CostSummary => {
@@ -2186,7 +2195,6 @@ async function runSubagent(
 		for (const node of graph.nodes) updateNode(node);
 		statusPayload.workflowGraph = graph;
 	};
-	let finalResultCommitted = false;
 	const statusResultState = (): AsyncStatus["state"] | undefined => {
 		if (statusPayload.state === "running" || statusPayload.state === "queued") return undefined;
 		return statusPayload.state;
@@ -2248,9 +2256,10 @@ async function runSubagent(
 		}), (filePath, payload) => writePendingAsyncResultFile(filePath, payload as Record<string, unknown>));
 	};
 	const writeStatusPayloadNow = (): void => {
+		if (finalResultPublication) return;
 		refreshWorkflowGraph();
 		writeRecoverableStatusResult();
-		runPersistence.write(statusPath, statusPayload);
+		runPersistence.write(statusPath, { ...statusPayload });
 		emitNestedSelfEvent(statusPayload.state === "running" || statusPayload.state === "queued" ? "subagent.nested.updated" : "subagent.nested.completed");
 	};
 	const statusWriteCoalescer = createFileCoalescer(writeStatusPayloadNow, 100);
@@ -4756,6 +4765,11 @@ async function runSubagent(
 		stopped: result.stopped,
 	})));
 	const partialWithEvidence = !stopped && !signalTerminated && !timedOut && !usageBudgetExceeded && !interrupted && results.some(partialEvidenceResult) && !results.some(concreteFailureResult);
+	// Flush while still nonterminal; deferred status retries retain that state snapshot.
+	statusWriteCoalescer.flush(statusPath);
+	const publication = new Promise<void>((resolve, reject) => {
+		finalResultPublication = { resolve, reject };
+	});
 	statusPayload.state = stopped || signalTerminated ? "stopped" : timedOut || usageBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : partialWithEvidence ? "partial" : "failed";
 	closeSteerInbox(asyncDir, statusPayload.state, (filePath, payload) => runPersistence.write(filePath, payload));
 	disposeControlInbox();
@@ -4814,6 +4828,9 @@ async function runSubagent(
 			statusPayload.error = `Step failed: ${failedStep.agent}`;
 		}
 	}
+	let childSessionDisposal: Promise<void> | undefined;
+	const disposeChildSessions = (): Promise<void> => childSessionDisposal ??= childSessions.dispose()
+		.catch((error: unknown) => console.error("Failed to dispose runner child sessions:", error));
 	try {
 		runPersistence.write(resultPath, {
 			lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
@@ -4909,13 +4926,16 @@ async function runSubagent(
 			...(taskIndex !== undefined && { taskIndex }),
 			...(totalTasks !== undefined && { totalTasks }),
 		}, (filePath, payload) => { writeAsyncResultFile(filePath, payload as Record<string, unknown>); });
-		finalResultCommitted = true;
+		// Only capacity deferral releases settled sessions before terminal publication.
+		if (!finalResultCommitted) await Promise.all([publication, disposeChildSessions()]);
 	} catch (err) {
 		const message = `Failed to write result file ${resultPath}: ${err instanceof Error ? err.message : String(err)}`;
 		console.error(message, err);
 		statusPayload.state = "failed";
 		statusPayload.error = message;
 		statusPayload.lastUpdate = Date.now();
+	} finally {
+		finalResultPublication = undefined;
 	}
 	writeStatusPayload();
 	await orcaProgressTab?.finish(statusPayload.state === "complete" ? "completed" : statusPayload.state === "stopped" ? "stopped" : "failed", effectiveSessionFile);
@@ -4953,9 +4973,8 @@ async function runSubagent(
 	}), (filePath, content) => runPersistence.write(filePath, { content }, (_path, payload) => {
 		fs.writeFileSync(_path, (payload as { content: string }).content, "utf-8");
 	}));
-	// The run is committed: release the child sessions first, then wait for the
-	// storage-capacity retries that may still hold the final status or result.
-	await childSessions.dispose().catch((error: unknown) => console.error("Failed to dispose runner child sessions:", error));
+	// Preserve normal-success disposal ordering, then drain remaining persistence retries.
+	await disposeChildSessions();
 	while (runPersistence.pendingCount() + indexPersistence.pendingCount() > 0) {
 		await new Promise((resolve) => setTimeout(resolve, 200));
 	}
