@@ -667,6 +667,39 @@ describe("control channel: watchAsyncControlInbox", () => {
 });
 
 describe("control inbox diagnostics and active-owner cost", () => {
+	for (const operation of ["read", "remove"] as const) it(`retries stop request ${operation} failures without losing readable siblings`, () => {
+		const asyncDir = tmpAsyncDir("pi-stop-retry-");
+		const denied = Object.assign(new Error("denied"), { code: "EACCES" });
+		const pending = requestAsyncStop(asyncDir, { childId: "retry" });
+		requestAsyncStop(asyncDir, { childId: "ready" });
+		const seen: string[] = [], failures: unknown[] = [];
+		let failing = true, tick = () => {};
+		const dispose = watchAsyncControlInbox(asyncDir, {
+			onStop: (request) => seen.push(request.childId!),
+			onError: (error, phase) => { assert.equal(phase, "scan"); failures.push(error); },
+			platform: "darwin",
+			fs: { ...fs, readFileSync: ((...args: Parameters<typeof fs.readFileSync>) => {
+				if (failing && operation === "read" && args[0] === pending) throw denied;
+				return fs.readFileSync(...args);
+			}) as typeof fs.readFileSync, rmSync: (target, options) => {
+				if (failing && operation === "remove" && target === pending) throw denied;
+				fs.rmSync(target, options);
+			} },
+			timers: { setInterval: ((handler: () => void) => { tick = handler; return { unref() {} }; }) as unknown as typeof setInterval, clearInterval() {} },
+		});
+		try {
+			assert.deepEqual(seen, ["ready"]);
+			assert.deepEqual(failures, [denied]);
+			assert.equal(fs.existsSync(pending), true);
+			failing = false;
+			tick();
+			assert.deepEqual(seen, ["ready", "retry"]);
+			assert.equal(fs.existsSync(pending), false);
+			tick();
+			assert.deepEqual(seen, ["ready", "retry"]);
+		} finally { dispose(); cleanup(asyncDir); }
+	});
+
 	it("reports scan/read/install failures, retains retryable files, and distinguishes healthy watch fallback", () => {
 		const asyncDir = tmpAsyncDir("pi-steer-diagnostics-");
 		const failures: string[] = [];

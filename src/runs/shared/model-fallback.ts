@@ -1,4 +1,4 @@
-import { splitKnownThinkingSuffix, type ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
+import { splitKnownThinkingSuffix as splitThinkingSuffix, type ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
 import type { Usage } from "../../shared/types.ts";
 import { filterFallbackCandidates, findModelExclusion, parseModelKey, recordModelFailure } from "./model-exclusions.ts";
 import { checkModelScope, type ModelScopeCheckRule, type ModelScopeViolation, type ModelSource } from "./model-scope.ts";
@@ -14,9 +14,7 @@ interface ModelAttemptSummary {
 	usage?: Usage;
 }
 
-export function splitThinkingSuffix(model: string): { baseModel: string; thinkingSuffix: string } {
-	return splitKnownThinkingSuffix(model);
-}
+export { splitThinkingSuffix };
 
 /** Aliases apply only to the resolved launch candidate (without its thinking suffix) and the exact raw response ID. */
 export function formatSubagentModelVerificationError(

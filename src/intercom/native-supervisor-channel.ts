@@ -580,12 +580,7 @@ function buildParentSupervisorTool(pi: ExtensionAPI, pending: Map<string, Pendin
 		description: "Native pi-subagents supervisor channel. Use reply/pending/status to answer child subagent requests without overriding pi-intercom.",
 		parameters: IntercomParamsSchema,
 		async execute(_id, params) {
-			// Scan the channel root before answering. `refreshPendingRequests` only re-evaluates asks
-			// ALREADY in `pending`; it never reads the filesystem. Because no fs watcher is installed on
-			// darwin and the 500ms poller is demand-gated and self-cancelling, an ask written while
-			// nothing was polling stayed invisible and every `action:"pending"` reported "No pending
-			// supervisor requests" while the child blocked in contact_supervisor. An explicit supervisor
-			// query must always be authoritative against disk.
+			// Discover new request files even when demand-gated polling is idle.
 			discover();
 			refreshPendingRequests(pending, state, onLifecycle, runState);
 			const input = params as IntercomParams;
@@ -716,10 +711,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 
 	const poll = (): void => {
 		cleanupStaleChannelsIfDue();
-		// Registration must not require a live UI context. Returning early whenever
-		// `state.lastUiContext` was null (never set yet, or nulled by a stale-context error) meant an
-		// ask written by a child was never read off disk, so `subagent_supervisor({action:"pending"})`
-		// reported nothing. The queue is authoritative; only the display notification needs the context.
+		// Only display notifications require a live UI context, not request registration.
 		refreshPendingRequests(pending, state, observeRequestLifecycle, runState);
 		const now = Date.now();
 		for (const { channelDir, file } of listRequestFiles()) {

@@ -261,13 +261,7 @@ describe("native runner result publication", { skip: !available ? "pi packages u
 			const owner = "publication-owner";
 			const asyncDir = path.join(ASYNC_DIR, id);
 			const resultPath = path.join(RESULTS_DIR, `${id}.json`);
-			const state: SubagentState = {
-				baseCwd: tempDir, currentSessionId: sessionId, completionOwnerId: owner,
-				asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null,
-				cleanupTimers: new Map(), lastUiContext: null, poller: null, completionSeen: new Map(),
-				watcher: null, watcherRestartTimer: null,
-				resultFileCoalescer: { schedule: () => false, clear() {} },
-			};
+			const state = publicationState(sessionId, owner);
 			let poll: ReturnType<typeof setInterval> | undefined;
 			let delivered = 0;
 			let complete!: () => void;

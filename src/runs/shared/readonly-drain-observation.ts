@@ -22,7 +22,7 @@ export class ReadonlyDrainObservation {
 		this.check();
 	}
 	/** Called at the existing initial read, before reconciliation or filtering. */
-	readonly status = (status: { sessionId?: unknown; state?: unknown } | null): void => {
+	readonly status: RawDrainStatusObserver = (status) => {
 		if (!status || typeof status.sessionId !== "string" || !status.sessionId
 			|| !knownStates.has(status.state as string)) this.deny();
 		else if (status.sessionId === this.file && (status.state === "queued" || status.state === "running")) this.deny();

@@ -208,6 +208,15 @@ describe("named workflow resources", () => {
 		}
 	});
 
+	it("rejects argument validation failures even when the error message is empty", () => {
+		const registration = registerWorkflowResource({ sessionId: "invalid-args", definition: {
+			name: "check-args", version: 1, resolve: () => assert.fail("invalid args reached the resolver"),
+		} });
+		try {
+			assert.deepEqual(resolveWorkflowResource("check-args", { get task() { throw new Error(""); } }, "invalid-args"), { ok: false, error: "" });
+		} finally { registration.dispose(); }
+	});
+
 	it("reports unauthorized raw host execution through the workflow primitive when no host is supplied", async () => {
 		await assert.rejects(
 			runWorkflowScript({

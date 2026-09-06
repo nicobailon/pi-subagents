@@ -125,7 +125,7 @@ function validatePlainJson(value: unknown, path: string, depth = 0): void {
 	}
 }
 
-function normalizeArgs(value: unknown): { args?: Record<string, unknown>; error?: string } {
+function normalizeArgs(value: unknown): { args: Record<string, unknown> } | { error: string } {
 	if (value === undefined) return { args: {} };
 	if (!isPlainRecord(value)) return { error: "workflow args must be a plain JSON object." };
 	try {
@@ -192,8 +192,8 @@ function resolveResource(nameValue: unknown, argsValue?: unknown, sessionId?: st
 	const resource = findWorkflowResource(name) ?? (sessionId ? registry().bySession.get(sessionId)?.get(name) : undefined);
 	if (!resource) return { ok: false, error: `Unknown workflow resource '${name}'. Available resources: ${listWorkflowResourceNames().join(", ")}.` };
 	const normalizedArgs = normalizeArgs(argsValue);
-	if (normalizedArgs.error) return { ok: false, error: normalizedArgs.error };
-	const resolved = resource.resolve(normalizedArgs.args!);
+	if ("error" in normalizedArgs) return { ok: false, error: normalizedArgs.error };
+	const resolved = resource.resolve(normalizedArgs.args);
 	if (resolved && typeof (resolved as unknown as { then?: unknown }).then === "function") {
 		void Promise.resolve(resolved).catch(() => {});
 		throw new Error("Workflow resource resolve must be synchronous.");

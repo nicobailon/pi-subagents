@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "node:test";
+import type { AgentSessionEvent, SessionBeforeCompactEvent } from "@earendil-works/pi-coding-agent";
 import { createDefaultChildSessionFactory, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { runSingleStepInner } from "../../src/runs/background/subagent-runner.ts";
@@ -34,8 +35,8 @@ for (const host of ["foreground", "runner"] as const) {
 			const protocol = formatAcceptancePrompt(acceptance, { structuredOutput: structured });
 			const report = { criteriaSatisfied: [{ id: "read-marker", status: "satisfied", evidence: "WORK_EVIDENCE" }], changedFiles: [], testsAddedOrUpdated: [], residualRisks: ["none"], commandsRun: [{ command: "read marker.txt", result: "passed", summary: "WORK_EVIDENCE" }], noStagedFiles: true };
 			const requests: any[] = [];
-			const preparations: any[] = [];
-			const events: any[] = [];
+			const preparations: SessionBeforeCompactEvent["preparation"][] = [];
+			const events: AgentSessionEvent[] = [];
 			let prompts = 0;
 			let creates = 0;
 			let reads = 0;
@@ -86,12 +87,13 @@ for (const host of ["foreground", "runner"] as const) {
 				const result = host === "foreground"
 					? await runSync(cwd, [agent], agent.name, task, { acceptance: explicit, structuredOutput, waitToolEnabled: false, childSessionFactory: observedFactory })
 					: await runSingleStepInner({ ...agent, agent: agent.name, task, context: "fresh", effectiveAcceptance: acceptance, structuredOutput, modelCandidates: [agent.model!], waitToolEnabled: false }, { cwd, id: "compact-runner", flatIndex: 0, flatStepCount: 1, previousOutput: "", placeholder: "{previous}", outputFile: join(cwd, "output.log"), sessionEnabled: false, childSessions: observedFactory });
-				assert.equal(result.exitCode, 0, `${result.error}; ${JSON.stringify(events.filter((e) => e.type.includes("compact") || (e.type === "message_end" && e.message?.stopReason === "error")))}`);
+				assert.equal(result.exitCode, 0, `${result.error}; ${JSON.stringify(events.filter((e) => e.type.includes("compact") || (e.type === "message_end" && e.message.role === "assistant" && e.message.stopReason === "error")))}`);
 				assert.equal(result.acceptance?.status, "checked");
 				if (structured) assert.deepEqual(result.structuredOutput, { ok: true });
 				assert.equal(creates, 1); assert.equal(prompts, 1, "no replay or correction prompt");
 				assert.equal(summaries, 1);
 				assert.equal(preparations.length, 1);
+				assert.ok(preparations[0]);
 				assert.equal(preparations[0].isSplitTurn, true);
 				assert.ok(JSON.stringify(preparations[0].turnPrefixMessages).includes("UNIQUE_TASK"));
 				assert.equal(events.filter((e) => e.type === "tool_execution_end" && e.toolName === "read").length, 1);

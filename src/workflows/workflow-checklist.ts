@@ -1,6 +1,6 @@
 import type { AsyncJobStep, HostStepNode, WorkflowGraphNode, WorkflowGraphSnapshot, WorkflowPreflightLane, WorkflowPreflight } from "../shared/types.ts";
 import { sanitizeDisplayText } from "../shared/display-text.ts";
-import { workflowPreflightLaneForRuntimeKey } from "./workflow-preflight.ts";
+import { workflowPreflightLaneForRuntimeKey as laneFor } from "./workflow-preflight.ts";
 
 export type WorkflowChecklistState = "complete" | "running" | "queued" | "blocked" | "failed" | "paused" | "stopped";
 
@@ -188,10 +188,6 @@ function duration(step: Pick<WorkflowChecklistStep, "durationMs" | "startedAt" |
 	if (startedAt === undefined) return undefined;
 	const end = state === "running" ? now : finite(step.endedAt) ?? now;
 	return end === undefined ? undefined : Math.max(0, end - startedAt);
-}
-
-function laneFor(preflight: WorkflowPreflight | undefined, key: string, preferredKeys: readonly (string | undefined)[] = []): WorkflowPreflightLane | undefined {
-	return workflowPreflightLaneForRuntimeKey(preflight, key, preferredKeys);
 }
 
 function stepKey(step: WorkflowChecklistStep): string | undefined {

@@ -395,17 +395,26 @@ function parseStopRequest(raw: unknown): StopRequest | undefined {
 function consumeStopRequestFile(
 	requestPath: string,
 	fsImpl: Pick<typeof fs, "rmSync" | "readFileSync">,
+	onError?: (error: unknown) => void,
 ): StopRequest | undefined {
+	let text: string;
+	try {
+		text = fsImpl.readFileSync(requestPath, "utf-8");
+	} catch (error) {
+		if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) onError?.(error);
+		return undefined;
+	}
 	let request: StopRequest | undefined;
 	try {
-		request = parseStopRequest(JSON.parse(fsImpl.readFileSync(requestPath, "utf-8")));
+		request = parseStopRequest(JSON.parse(text));
 	} catch {
 		request = undefined;
 	}
 	try {
 		fsImpl.rmSync(requestPath, { force: true, recursive: true });
-	} catch {
-		// Already removed by a concurrent check — do not execute it twice.
+	} catch (error) {
+		// Execute only after successful removal.
+		if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) onError?.(error);
 		return undefined;
 	}
 	return request;
@@ -414,6 +423,7 @@ function consumeStopRequestFile(
 export function consumeStopRequestPayloads(
 	asyncDir: string,
 	fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs,
+	onError?: (error: unknown) => void,
 ): StopRequest[] {
 	const dir = stopRequestsDir(asyncDir);
 	const requests: StopRequest[] = [];
@@ -421,18 +431,19 @@ export function consumeStopRequestPayloads(
 		let entries: string[];
 		try {
 			entries = fsImpl.readdirSync(dir).filter((name) => name.endsWith(".json")).sort();
-		} catch {
+		} catch (error) {
+			if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) onError?.(error);
 			entries = [];
 		}
 		for (const entry of entries) {
-			const request = consumeStopRequestFile(path.join(dir, entry), fsImpl);
+			const request = consumeStopRequestFile(path.join(dir, entry), fsImpl, onError);
 			if (request) requests.push(request);
 		}
 	}
 
 	const legacyPath = stopRequestPath(asyncDir);
 	if (fsImpl.existsSync(legacyPath)) {
-		const request = consumeStopRequestFile(legacyPath, fsImpl);
+		const request = consumeStopRequestFile(legacyPath, fsImpl, onError);
 		if (request) requests.push(request);
 	}
 	return requests.sort((left, right) => (left.ts ?? 0) - (right.ts ?? 0));
@@ -527,7 +538,7 @@ export function watchAsyncControlInbox(
 	const check = (): void => {
 		if (disposed) return;
 		try {
-			if (opts.onStop) for (const request of consumeStopRequestPayloads(asyncDir, fsImpl)) {
+			if (opts.onStop) for (const request of consumeStopRequestPayloads(asyncDir, fsImpl, (error) => report(error, "scan"))) {
 				try { opts.onStop(request); } catch (error) { report(error, "callback"); }
 			}
 			if (opts.onTimeout && consumeTimeoutRequest(asyncDir, fsImpl)) {

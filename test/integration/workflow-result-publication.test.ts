@@ -29,11 +29,11 @@ describe("host workflow result publication", { skip: !available }, () => {
 		let statusWrites = 0, statusDeferred = false, statusRecovered = false;
 		let poll: ReturnType<typeof setInterval> | undefined;
 		const sessionId = "workflow-publication-session", owner = "workflow-publication-owner";
-		const state = { baseCwd: tempDir, currentSessionId: sessionId, completionOwnerId: owner,
+		const state: SubagentState = { baseCwd: tempDir, currentSessionId: sessionId, completionOwnerId: owner,
 			asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null,
 			cleanupTimers: new Map(), lastUiContext: null, poller: null, completionSeen: new Map(),
 			watcher: null, watcherRestartTimer: null, resultFileCoalescer: { schedule: () => false, clear() {} },
-		} as SubagentState;
+		};
 		const pi = { getSessionName: () => undefined, events: { on: () => () => {}, emit(event: string, data: unknown) {
 			if (event === SUBAGENT_ASYNC_COMPLETE_EVENT) { assert.equal((data as { completionOwnerId: string }).completionOwnerId, owner); delivered.resolve(); }
 		} }, sendMessage() { notifications++; } };

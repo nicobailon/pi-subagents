@@ -1,6 +1,6 @@
 import type { AsyncJobState, SubagentState } from "../../shared/types.ts";
 import {
-	projectAsyncStatusSnapshot,
+	projectAsyncStatusSnapshot as buildAsyncStatusSnapshot,
 	type AsyncStatusSnapshotOptions,
 	type AsyncStatusSnapshot,
 } from "../shared/async-status-projection.ts";
@@ -23,9 +23,7 @@ export type {
 
 export const ASYNC_STATUS_SNAPSHOT_WIDGET_PREFIX = "PI_SUBAGENT_ASYNC_JSON:";
 
-export function buildAsyncStatusSnapshot(jobs: Iterable<AsyncJobState>, options: AsyncStatusSnapshotOptions = {}): AsyncStatusSnapshot {
-	return projectAsyncStatusSnapshot(jobs, options);
-}
+export { buildAsyncStatusSnapshot };
 
 export function asyncStatusSnapshotJobsForState(state: SubagentState | undefined, sessionId: string | null | undefined): AsyncJobState[] {
 	if (!state || !sessionId || state.currentSessionId !== sessionId) return [];

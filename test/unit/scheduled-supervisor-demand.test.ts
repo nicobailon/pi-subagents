@@ -17,12 +17,12 @@ function fixture() {
 		cwd: root, hasUI: false,
 		sessionManager: { getSessionId: () => owner, getSessionFile: () => file, getEntries: () => [] },
 	});
-	const state = {
+	const state: SubagentState = {
 		baseCwd: root, currentSessionId: context().sessionManager.getSessionFile(), supervisorOwnerSessionId: initialOwner,
-		asyncJobs: new Map(), foregroundControls: new Map(), cleanupTimers: new Map(), lastUiContext: null,
+		asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null, cleanupTimers: new Map(), lastUiContext: null,
 		poller: null, completionSeen: new Map(), watcher: null, watcherRestartTimer: null,
 		resultFileCoalescer: { schedule: () => false, clear() {} },
-	} as SubagentState;
+	};
 	const intervals = new Map<object, () => void>();
 	const sent: string[] = [], cleanupDirs: string[] = [];
 	let starts = 0, activations = 0, terminal = () => {};

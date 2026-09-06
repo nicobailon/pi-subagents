@@ -54,9 +54,9 @@ For compact chat results with FleetView as the only live editor surface, merge t
 }
 ```
 
-- `inlineToolDisplay: "summary"` keeps one static result row per call, alongside its call heading. It does not erase history or collapse different calls for one run. A completed status query is not proof that the queried child has finished.
+- `inlineToolDisplay: "summary"` keeps one static result row per call, alongside its call heading. A completed status query is not proof that the queried child has finished.
 - `fleetView: true` retains live progress. Open `/subagents-fleet` or press `Ctrl+Alt+F` for details instead of repeatedly requesting status just to watch progress. Pi's expand key does not expand summary results; keep `"rich"` if you want expandable inline output.
-- `asyncWidget: false` hides only the additional under-editor async widget, leaving FleetView available. Both surfaces are enabled by default. This configuration reduces visible surfaces; it does not guarantee ordering relative to other extensions.
+- `asyncWidget: false` hides only the additional under-editor async widget, leaving FleetView available. This configuration reduces visible surfaces; it does not guarantee ordering relative to other extensions.
 
 Thanks to [DraconDev](https://github.com/DraconDev) for reporting the display noise and suggesting summary mode in [#1931](https://github.com/nicobailon/pi-subagents/issues/1931).
 

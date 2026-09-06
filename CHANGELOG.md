@@ -16,6 +16,7 @@
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
 
 ### Fixed
+- Retain unreadable stop requests for retry, reject workflow argument validation failures with empty error messages, and preserve worktree setup timeout causes.
 - Align native supervisor actions and reply/steer routing hints with supported routes. Thanks to [@rtbe](https://github.com/rtbe) for #2002.
 - Renew native async result delivery after visible early failure and deferred publication, without idle polling (#1981). Thanks to [@brandonmwest](https://github.com/brandonmwest).
 - Keep native child acceptance instructions verbatim in session system resources across compaction (#1996). Thanks to reporter [@Zsbyqx20](https://github.com/Zsbyqx20).

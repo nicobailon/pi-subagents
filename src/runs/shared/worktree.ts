@@ -255,7 +255,6 @@ class SetupTransaction {
 	}
 	async gitChecked(cwd: string, args: string[]): Promise<string> {
 		const result = await this.git(cwd, args);
-		if (result.status !== 0) throw new Error(result.stderr.trim() || result.stdout.trim() || `git ${args.join(" ")} failed`);
 		return result.stdout;
 	}
 	attempt(index: number, branch: string, worktreePath?: string): void {
@@ -815,18 +814,9 @@ async function runWorktreeSetupHook(
 			hookTimeoutMs: hook.timeoutMs,
 		});
 	} catch (error) {
-		const code = error instanceof Error && "code" in error ? error.code : undefined;
-		if (code === "ETIMEDOUT") {
-			throw new Error(`worktree setup hook timed out after ${hook.timeoutMs}ms`);
-		}
 		throw new Error(`worktree setup hook failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 	}
 	tx.progress.phase = "hook-validation";
-
-	if (result.status !== 0) {
-		const details = result.stderr.trim() || result.stdout.trim() || "no output";
-		throw new Error(`worktree setup hook failed with exit code ${result.status}: ${details}`);
-	}
 
 	try {
 		const output = parseWorktreeSetupHookOutput(result.stdout);
@@ -900,11 +890,7 @@ async function createNativeWorktree(
 	if (branch.status !== 1 || pathExists) throw new Error(`worktree path or branch already exists: ${worktreePath}, ${naming.requestedBranch}`);
 	tx.attempt(index, naming.requestedBranch, worktreePath);
 	ensureProjectWorktreeDir(dedicatedRoot, toplevel);
-	const add = await tx.git(toplevel, ["worktree", "add", worktreePath, "-b", naming.requestedBranch, baseCommit]);
-	if (add.status !== 0) {
-		const message = add.stderr.trim() || add.stdout.trim() || `failed to create worktree ${worktreePath}`;
-		throw new Error(message);
-	}
+	await tx.git(toplevel, ["worktree", "add", worktreePath, "-b", naming.requestedBranch, baseCommit]);
 	const worktree: WorktreeInfo = {
 		path: worktreePath,
 		agentCwd: worktreePath,
@@ -958,10 +944,6 @@ async function createWorktrunkWorktree(
 	tx.attempt(index, naming.requestedBranch);
 	const result = await tx.command("wt", args, { cwd: toplevel, maxBuffer: WORKTREE_COMMAND_OUTPUT_MAX_BYTES });
 	tx.progress.phase = "validation";
-	if (result.status !== 0) {
-		const message = result.error?.message || result.stderr.trim() || result.stdout.trim() || "Worktrunk provisioning failed";
-		throw new Error(`Worktrunk provisioning failed: ${message}`);
-	}
 	try {
 		const output = parseWorktrunkSwitchOutput(result.stdout);
 		if (output.action !== "created" || output.created_branch !== true || output.branch !== naming.requestedBranch || output.base_branch !== baseCommit) {

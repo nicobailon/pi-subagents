@@ -1219,7 +1219,12 @@ setTimeout(() => {
 				() => createWorktrees(repoDir, runId, 1, {
 					setupHook: { hookPath: path.relative(repoDir, hookPath), timeoutMs: 50 },
 				}),
-				/timed out/i,
+				(error: unknown) => {
+					assert.ok(error instanceof WorktreeSetupError);
+					assert.ok(error.cause instanceof Error && error.cause.cause instanceof Error);
+					assert.match(error.cause.cause.message, /timed out/i);
+					return true;
+				},
 			);
 		} finally {
 			cleanupRepo(repoDir);

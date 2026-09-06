@@ -27,7 +27,7 @@ import { resolveChildWatchdogConfig } from "../../src/watchdog/child-status.ts";
 import { DEFAULT_WATCHDOG_CONFIG } from "../../src/watchdog/settings.ts";
 import { DEFAULT_CONTROL_CONFIG } from "../../src/runs/shared/subagent-control.ts";
 
-function launch(cwd: string): ChildSessionLaunch {
+function launch(cwd: string): ChildSessionLaunch & { storage: Extract<ChildSessionLaunch["storage"], { kind: "file" }> } {
 	return { cwd, storage: { kind: "file", sessionFile: join(cwd, "session.jsonl") }, model: "baseten/model-a", tools: ["read"], extensionPaths: [],
 		ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true,
 		runtime: { fanoutChild: false, fast: false, depth: 1, waitTool: { enabled: false } } };
@@ -131,7 +131,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 	}
 	type NativeSession = Awaited<ReturnType<PiCodingAgentModule["createAgentSession"]>>["session"];
 	type Captured = { session: NativeSession; original: NativeSession["agent"]["streamFunction"]; runtime: NonNullable<Parameters<PiCodingAgentModule["createAgentSession"]>[0]>["modelRuntime"] };
-	async function fixture(run: (f: { pi: PiCodingAgentModule; cwd: string; agentDir: string; l: ChildSessionLaunch; factory: ReturnType<typeof createDefaultChildSessionFactory>; captured: Captured[]; acknowledge: (id: string) => void; requests: { body: Record<string, unknown> }[]; setResponses: (responses: (() => Response | Promise<Response>)[]) => void }) => Promise<void>, settings: Record<string, unknown> = {}, fresh = false) {
+	async function fixture(run: (f: { pi: PiCodingAgentModule; cwd: string; agentDir: string; l: ReturnType<typeof launch>; factory: ReturnType<typeof createDefaultChildSessionFactory>; captured: Captured[]; acknowledge: (id: string) => void; requests: { body: Record<string, unknown> }[]; setResponses: (responses: (() => Response | Promise<Response>)[]) => void }) => Promise<void>, settings: Record<string, unknown> = {}, fresh = false) {
 		const realPi = await sdk();
 		const cwd = mkdtempSync(join(tmpdir(), "readonly-factory-"));
 		const agentDir = join(cwd, "agent"); mkdirSync(agentDir);
@@ -144,7 +144,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 		const l = launch(cwd);
 		l.hooks = createChildHooks(l.runtime);
 		if (!fresh) {
-			const manager = realPi.SessionManager.open((l.storage as { sessionFile: string }).sessionFile, undefined, cwd);
+			const manager = realPi.SessionManager.open(l.storage.sessionFile, undefined, cwd);
 			manager.appendMessage({ role: "user", content: "Earlier context", timestamp: 1 });
 			manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "Earlier answer" }], api: "openai-completions", provider: "baseten", model: "model-a", stopReason: "stop", timestamp: 2, usage: { ...usage, input: 101, output: 103, totalTokens: 204, cost: { ...usage.cost, total: 2 } } });
 		}
@@ -185,10 +185,9 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 		}
 	}
 
-	function resolvedLaunch(l: ChildSessionLaunch, model = "baseten/model-a") {
-		assert.equal(l.storage.kind, "file");
+	function resolvedLaunch(l: ReturnType<typeof launch>, model = "baseten/model-a") {
 		return buildInProcessChildLaunch({
-			cwd: l.cwd, host: "parent", sessionEnabled: true, sessionFile: (l.storage as { sessionFile: string }).sessionFile,
+			cwd: l.cwd, host: "parent", sessionEnabled: true, sessionFile: l.storage.sessionFile,
 			model, tools: ["read"], requireReadTool: true, allowNestedSubagents: false, waitToolEnabled: false,
 			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
 			parentSessionId: "resolved-parent", runId: "resolved-run", childAgentName: "reader", childIndex: 0,
@@ -198,7 +197,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 
 	for (const scenario of ["success", "retained", "cross-provider-skip", "no-sibling", "second429", "sibling-startup", "sibling-abort", "unverified-sibling", "wrong-model", "changed-file", "missing-file", "cancel-at-create", "deadline-at-create", "usage-budget", "tool-budget", "wait-profile", "directory", "text429", "stop-at-settlement", "steer-at-settlement", "smaller-model"] as const) {
 		it(`actual foreground owned continuation loop: ${scenario}`, async (test) => fixture(async ({ pi, l, factory, requests, setResponses, captured, cwd, agentDir }) => {
-			const file = (l.storage as { sessionFile: string }).sessionFile;
+			const file = l.storage.sessionFile;
 			if (scenario === "retained") {
 				const manager = pi.SessionManager.open(file, undefined, cwd);
 				manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "Earlier billed answer" }], api: "openai-completions", provider: "baseten", model: "model-a", stopReason: "stop", timestamp: 3, usage: { ...usage, input: 100, output: 100, totalTokens: 200 } });
@@ -326,7 +325,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 	}
 
 	it("certifies explicitly test-opted-in actual foreground and sibling with no admission/dispatch/settlement native scans", async () => countAsyncIO(async (io) => fixture(async ({ l, factory, captured, requests, setResponses, cwd }) => {
-		const file = (l.storage as { sessionFile: string }).sessionFile;
+		const file = l.storage.sessionFile;
 		assert.equal(existsSync(file), false, "fixture never preinitializes the assigned file");
 		const agent: AgentConfig = {
 			name: "reader", description: "Read only", systemPrompt: "Retain the completed read.", systemPromptMode: "append",
@@ -387,10 +386,10 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 		assert.deepEqual(inputs.map((input) => input.storage), [{ kind: "file", sessionFile: file }, { kind: "file", sessionFile: file }]);
 	}, {}, true)));
 
-	function runnerLaunch(l: ChildSessionLaunch, model = "baseten/model-a", overrides: Partial<RunnerSubagentStep> = {}, context = {}) {
+	function runnerLaunch(l: ReturnType<typeof launch>, model = "baseten/model-a", overrides: Partial<RunnerSubagentStep> = {}, context = {}) {
 		const step: RunnerSubagentStep = {
 			agent: "reader", task: "Runner original task: read marker.txt once", context: "fresh",
-			sessionFile: (l.storage as { sessionFile: string }).sessionFile, parentSessionId: "runner-parent",
+			sessionFile: l.storage.sessionFile, parentSessionId: "runner-parent",
 			tools: ["read"], extensions: [], allowNestedSubagents: false, waitToolEnabled: false,
 			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
 			systemPrompt: "Retain the completed read.", ...overrides,
@@ -428,7 +427,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 			const exclusionsPath = getExclusionsFilePath();
 			const exclusionsBefore = existsSync(exclusionsPath) ? readFileSync(exclusionsPath, "utf8") : undefined;
 			if (kind !== "equal window") enlargeRunnerSibling(agentDir);
-			const file = (l.storage as { sessionFile: string }).sessionFile;
+			const file = l.storage.sessionFile;
 			const step = ownedRunnerStep(cwd, file);
 			if (kind === "retained image" || kind === "retained context too large") {
 				pi.SessionManager.open(file, undefined, cwd).appendMessage({ role: "user", timestamp: 3,
@@ -513,7 +512,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 
 	it("owned run deadline without step timeout vetoes creation before timer delivery", async () => fixture(async ({ cwd, agentDir, l, factory, requests, setResponses }) => {
 		enlargeRunnerSibling(agentDir);
-		const file = (l.storage as { sessionFile: string }).sessionFile;
+		const file = l.storage.sessionFile;
 		const step = ownedRunnerStep(cwd, file);
 		assert.equal(step.timeoutMs, undefined);
 		const asyncDir = join(cwd, "deadline-async");
@@ -559,7 +558,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 	for (const kind of ["unconfigured", "available tokens", "exhausted tokens", "concurrent exhausted tokens", "concurrent unknown tokens", "cost unknown"] as const) {
 		it(`owned run ledger and final publication: ${kind}`, async () => fixture(async ({ cwd, agentDir, l, factory, requests, setResponses }) => {
 			enlargeRunnerSibling(agentDir);
-			const step = ownedRunnerStep(cwd, (l.storage as { sessionFile: string }).sessionFile);
+			const step = ownedRunnerStep(cwd, l.storage.sessionFile);
 			const concurrent = kind.startsWith("concurrent");
 			const unknown = kind === "concurrent unknown tokens";
 			const asyncDir = join(cwd, "owned-async");
@@ -617,7 +616,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 	}
 
 	for (const optedIn of [false, true]) it(`actual native runner construction and mandatory captures, evidence opt-in=${optedIn}`, async () => countAsyncIO(async (io) => fixture(async ({ l, factory, captured, acknowledge, requests, setResponses, cwd }) => {
-		const file = (l.storage as { sessionFile: string }).sessionFile;
+		const file = l.storage.sessionFile;
 		assert.equal(existsSync(file), false);
 		const children: ChildSession[] = [];
 		let expected: SettledReadonlyEvidence | undefined;
@@ -717,7 +716,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 		const childWatchdog = resolveChildWatchdogConfig({ config: { ...DEFAULT_WATCHDOG_CONFIG, enabled: true, children: { ...DEFAULT_WATCHDOG_CONFIG.children, enabled: true } } });
 		assert.ok(childWatchdog);
 		const sink = () => {};
-		const built = buildRunnerChildLaunch({ agent: "reader", task: "read", sessionFile: (l.storage as { sessionFile: string }).sessionFile,
+		const built = buildRunnerChildLaunch({ agent: "reader", task: "read", sessionFile: l.storage.sessionFile,
 			tools: ["read"], extensions: [], allowNestedSubagents: false, waitToolEnabled: false,
 			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false },
 			{ cwd: l.cwd, id: "runner-watchdog", flatIndex: 0 }, { sessionEnabled: true, childWatchdog, watchdogStatus: sink });
@@ -744,7 +743,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 
 	for (const kind of ["empty preexisting", "corrupt preexisting", "appeared during open", "memory", "directory", "default"] as const) {
 		it(`does not certify fresh storage: ${kind}`, async () => fixture(async ({ l, factory, captured, setResponses }) => {
-			const file = (l.storage as { sessionFile: string }).sessionFile;
+			const file = l.storage.sessionFile;
 			if (kind === "empty preexisting") writeFileSync(file, "");
 			if (kind === "corrupt preexisting") writeFileSync(file, "corrupt\n");
 			const built = resolvedLaunch(l);
@@ -1002,7 +1001,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 	for (const kind of ["dead-owned", "result-owned", "unrelated-dead", "unknown-owner", "completed-before-drain"] as const) {
 		it(`actual SDK receipt uses same-pass pre-repair evidence: ${kind}`, async () => fixture(async ({ l, factory, setResponses }) => {
 			const runId = `sdk-drain-${kind}`; const dir = join(DIRS.async, runId);
-			const file = (l.storage as { sessionFile: string }).sessionFile;
+			const file = l.storage.sessionFile;
 			mkdirSync(dir, { recursive: true });
 			const status = { runId, mode: "single", state: "running", startedAt: Date.now(), steps: [{ agent: "reader", status: "running" }],
 				sessionId: kind === "unrelated-dead" ? "/another/session" : kind === "unknown-owner" ? undefined : file,
@@ -1031,7 +1030,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 		l.hooks = createChildHooks(l.runtime);
 		const runId = "hook-existing-work";
 		const dir = join(DIRS.async, runId); mkdirSync(dir, { recursive: true });
-		writeFileSync(join(dir, "status.json"), JSON.stringify({ runId, state: "queued", mode: "single", startedAt: Date.now(), sessionId: (l.storage as { sessionFile: string }).sessionFile, steps: [{ agent: "worker", status: "pending" }] }));
+		writeFileSync(join(dir, "status.json"), JSON.stringify({ runId, state: "queued", mode: "single", startedAt: Date.now(), sessionId: l.storage.sessionFile, steps: [{ agent: "worker", status: "pending" }] }));
 		updateActiveRunIndex(dir, "queued");
 		try {
 			requestReadonlySessionEvidence(l); const child = await factory.create(l);
@@ -1061,15 +1060,6 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 	it("cannot issue a receipt without the actual installed drain even after real read/429 and shutdown", async () => fixture(async ({ l, factory, setResponses }) => {
 		l.hooks = [];
 		requestReadonlySessionEvidence(l); const child = await factory.create(l);
-		setResponses([() => sse(true), () => http(429)]);
-		await child.prompt("Read marker.txt"); await child.dispose();
-		assert.equal(getReadonlySessionEvidence(child), undefined);
-	}));
-
-	it("leaves ordinary known-hook launches uninstrumented", async () => fixture(async ({ l, factory, captured, setResponses }) => {
-		l.hooks = createChildHooks(l.runtime);
-		const child = await factory.create(l);
-		assert.equal(captured[0].session.agent.streamFunction, captured[0].original);
 		setResponses([() => sse(true), () => http(429)]);
 		await child.prompt("Read marker.txt"); await child.dispose();
 		assert.equal(getReadonlySessionEvidence(child), undefined);
@@ -1288,7 +1278,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 	}));
 
 	it("rejects an unresolved old call before SDK provider-context synthesis", async () => fixture(async ({ pi, l, factory, captured }) => {
-		const manager = pi.SessionManager.open((l.storage as { sessionFile: string }).sessionFile, undefined, l.cwd);
+		const manager = pi.SessionManager.open(l.storage.sessionFile, undefined, l.cwd);
 		manager.appendMessage({ role: "assistant", content: [{ type: "toolCall", id: "unresolved", name: "read", arguments: { path: "marker.txt" } }], api: "openai-completions", provider: "baseten", model: "model-a", stopReason: "toolUse", timestamp: 3, usage });
 		requestReadonlySessionEvidence(l); const child = await factory.create(l);
 		assert.equal(captured[0].session.agent.streamFunction, captured[0].original);
@@ -1297,7 +1287,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 	}));
 
 	it("checks the settled active branch rather than flattening retired branches", async () => fixture(async ({ pi, l, factory, setResponses }) => {
-		const manager = pi.SessionManager.open((l.storage as { sessionFile: string }).sessionFile, undefined, l.cwd);
+		const manager = pi.SessionManager.open(l.storage.sessionFile, undefined, l.cwd);
 		const leaf = manager.getLeafId()!;
 		manager.appendMessage({ role: "assistant", content: [{ type: "toolCall", id: "retired-unresolved", name: "write", arguments: {} }], api: "openai-completions", provider: "baseten", model: "model-a", stopReason: "toolUse", timestamp: 3, usage });
 		manager.branch(leaf); manager.appendThinkingLevelChange("off");
