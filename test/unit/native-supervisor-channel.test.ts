@@ -20,6 +20,7 @@ function makeState(sessionId: string | null, ctx: unknown): SubagentState {
 	return {
 		baseCwd: process.cwd(),
 		currentSessionId: sessionId,
+		supervisorOwnerSessionId: (ctx as SubagentState["lastUiContext"])?.sessionManager.getSessionId() ?? null,
 		asyncJobs: new Map(),
 		foregroundControls: new Map(),
 		lastForegroundControlId: null,

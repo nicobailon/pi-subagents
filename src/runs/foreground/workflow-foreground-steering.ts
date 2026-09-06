@@ -4,7 +4,6 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Details, ForegroundRunControl, SubagentState } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { steeringReceipt } from "../background/steering.ts";
-import { resolvePendingSupervisorAskWithSteer } from "../../intercom/native-supervisor-channel.ts";
 import type { SteerDeliveryMode } from "../background/control-channel.ts";
 
 export interface WorkflowForegroundSteeringTarget {
@@ -92,25 +91,6 @@ export async function steerWorkflowForegroundTarget(input: {
 
 	const message = input.message.trim();
 	const requestId = randomUUID();
-
-	// A child blocked inside `contact_supervisor` has no turn boundary, so `child.steer` can only
-	// queue and that queue never drains. The supervisor channel is the only path into an open tool
-	// call, so if this child has a pending ask, answer the ask with the steer text. Checked BEFORE
-	// `child.steer` so the message is delivered exactly once.
-	const askOutcome = resolvePendingSupervisorAskWithSteer({ runId: control.runId, childIndex: index, message });
-	if (askOutcome) {
-		const steering = {
-			requestId,
-			state: "delivered" as const,
-			deliveryStatus: "delivered" as const,
-			sourceRunId,
-			targets: [{ index, state: "delivered" as const, deliveredAt: Date.now() }],
-		};
-		return {
-			content: [{ type: "text", text: steeringReceipt(message, `Steering delivered for foreground run ${control.runId} (request ${requestId}) by answering its open supervisor request ${askOutcome.requestId}; the child is unblocked.`) }],
-			details: { mode: "management", results: [], steering },
-		};
-	}
 
 	const outcome = await child.steer({ message, ...(input.mode && input.mode !== "steer" ? { mode: input.mode } : {}) });
 	const target = outcome.state === "delivered"

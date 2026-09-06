@@ -912,6 +912,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		const previousRuntimeSessionId = state.currentSessionId;
 		resultDeliveryOwnership.claimPredecessor(previousSessionFile, previousRuntimeSessionId);
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+		state.supervisorOwnerSessionId = ctx.sessionManager.getSessionId() || null;
 		transitionResultDelivery();
 		state.parentSessionFile = ctx.sessionManager.getSessionFile();
 		state.trustedSessionFileRoot = state.parentSessionFile ? path.join(getAgentDir(), "sessions") : undefined;
@@ -1029,6 +1030,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			promptTemplateBridge.dispose();
 			state.widgetsSuspended = false;
 			state.currentSessionId = null;
+			state.supervisorOwnerSessionId = null;
 			state.statusProjectionSessionId = null;
 			state.parentSessionFile = null;
 			parentSessionEnvValue = null;

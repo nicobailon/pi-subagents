@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { afterEach, describe, it } from "node:test";
 import {
 	NATIVE_SUPERVISOR_TOOL_NAME,
@@ -11,18 +12,19 @@ import {
 	resolveSupervisorChannelDir,
 } from "../../src/intercom/native-supervisor-channel.ts";
 import { steerWorkflowForegroundTarget } from "../../src/runs/foreground/workflow-foreground-steering.ts";
-import type { ForegroundSteerInput, SubagentState } from "../../src/shared/types.ts";
+import type { ForegroundRunControl, ForegroundSteerInput, SubagentState } from "../../src/shared/types.ts";
 
 const createdChannels: string[] = [];
 
 interface SupervisorTool {
-	execute: (id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }>;
+	execute: (id: string, params: { action: string; replyTo?: string; to?: string; message?: string }) => Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }>;
 }
 
 function makeState(sessionId: string | null, ctx: unknown): SubagentState {
 	return {
 		baseCwd: process.cwd(),
 		currentSessionId: sessionId,
+		supervisorOwnerSessionId: (ctx as SubagentState["lastUiContext"])?.sessionManager.getSessionId() ?? null,
 		asyncJobs: new Map(),
 		foregroundControls: new Map(),
 		lastForegroundControlId: null,
@@ -36,13 +38,13 @@ function makeState(sessionId: string | null, ctx: unknown): SubagentState {
 	};
 }
 
-function makeCtx(sessionId: string): { cwd: string; hasUI: boolean; sessionManager: { getSessionId: () => string; getSessionFile: () => null; getEntries: () => [] } } {
+function makeCtx(sessionId: string, sessionFile: string | null = null): { cwd: string; hasUI: boolean; sessionManager: { getSessionId: () => string; getSessionFile: () => string | null; getEntries: () => [] } } {
 	return {
 		cwd: process.cwd(),
 		hasUI: false,
 		sessionManager: {
 			getSessionId: () => sessionId,
-			getSessionFile: () => null,
+			getSessionFile: () => sessionFile,
 			getEntries: () => [],
 		},
 	};
@@ -53,7 +55,7 @@ function makeCtx(sessionId: string): { cwd: string; hasUI: boolean; sessionManag
  * going through a live poller. This is the state the wave-11 incident was in: the request file was
  * on disk and no scan had happened yet.
  */
-function writeRequest(input: { sessionId: string; runId: string; agent?: string; index?: number; message?: string; reason?: "need_decision" | "progress_update" }): string {
+function writeRequest(input: { sessionId: string; runId: string; agent?: string; index?: number; message?: string; reason?: "need_decision" | "progress_update"; expiresAt?: number }): string {
 	const agent = input.agent ?? "worker";
 	const index = input.index ?? 0;
 	const channelDir = resolveSupervisorChannelDir(input.runId, agent, index);
@@ -65,6 +67,7 @@ function writeRequest(input: { sessionId: string; runId: string; agent?: string;
 		type: "subagent.supervisor.request",
 		id: requestId,
 		createdAt: Date.now(),
+		...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
 		reason,
 		message: input.message ?? "Need a decision",
 		expectsReply: reason !== "progress_update",
@@ -86,32 +89,172 @@ function makePi(options: { tools: Map<string, SupervisorTool>; onSend?: () => vo
 	};
 }
 
-function registerWorkflowChild(state: SubagentState, workflowRunId: string, childRunId: string, steer: (input: ForegroundSteerInput) => Promise<{ state: "delivered" | "queued" | "failed"; reason?: string }>): void {
-	state.workflowControllers ??= new Map();
-	state.workflowControllers.set(workflowRunId, new AbortController());
-	state.foregroundControls.set(childRunId, {
-		runId: childRunId,
-		parentWorkflowRunId: workflowRunId,
-		workflowKey: childRunId,
-		sessionId: "session",
-		mode: "single",
-		startedAt: 100,
-		updatedAt: 100,
-		activeChildren: new Map([[0, { index: 0, agent: "worker", startedAt: 100, updatedAt: 100, steer }]]),
-		schedulingOwners: 1,
-	} as never);
-}
-
 function text(result: { content: Array<{ type: string; text?: string }> }): string {
 	return result.content[0]?.type === "text" ? result.content[0].text ?? "" : "";
 }
 
 afterEach(() => {
-	delete process.env.PI_INTERCOM_ASK_TIMEOUT_MS;
 	for (const channel of createdChannels.splice(0)) fs.rmSync(channel, { recursive: true, force: true });
 });
 
 describe("supervisor ask registration", () => {
+	it("caches runtime ownership at extension session_start and clears it at shutdown despite stale UI", () => {
+		const script = String.raw`
+			import assert from "node:assert/strict";
+			import fs from "node:fs";
+			import os from "node:os";
+			import path from "node:path";
+			import { randomUUID } from "node:crypto";
+			import registerExtension from "./index.ts";
+			import { resolveSupervisorChannelDir, ensureSupervisorChannelDir } from "./src/intercom/native-supervisor-channel.ts";
+			const root = fs.mkdtempSync(path.join(os.tmpdir(), "supervisor-owner-"));
+			const channels = [];
+			function start(owner) {
+				const handlers = new Map();
+				const tools = new Map();
+				const pi = new Proxy({
+					events: { on() { return () => {}; }, emit() {} },
+					on(name, handler) { handlers.set(name, handler); },
+					getAllTools() { return [...tools.keys()].map(name => ({ name })); },
+					registerTool(tool) { tools.set(tool.name, tool); },
+					registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
+				}, { get(target, key) { return key in target ? target[key] : () => undefined; } });
+				const sessionFile = path.join(root, owner + ".jsonl");
+				fs.writeFileSync(sessionFile, JSON.stringify({ type: "session", version: 3, id: owner, timestamp: new Date().toISOString(), cwd: root }) + "\n");
+				let stale = false;
+				const ctx = {
+					cwd: root,
+					get hasUI() { if (stale) throw new Error("This extension ctx is stale after session replacement or reload."); return false; },
+					ui: { setWidget() {}, requestRender() {}, onTerminalInput() { return () => {}; }, notify() {}, theme: { fg(_name, text) { return text; }, bold(text) { return text; } } },
+					sessionManager: {
+						getSessionId() { if (stale) throw new Error("stale session manager"); return owner; },
+						getSessionFile() { return sessionFile; }, getEntries() { return []; },
+					},
+					modelRegistry: { getAvailable() { return []; } },
+				};
+				registerExtension(pi);
+				handlers.get("session_start")({ reason: "startup" }, ctx);
+				stale = true;
+				// Exercise the production stale-context clearing path, not direct state assignment.
+				handlers.get("session_before_compact")({ reason: "threshold", signal: new AbortController().signal });
+				return { tool: tools.get("subagent_supervisor"), shutdown: () => handlers.get("session_shutdown")() };
+			}
+			function ask(owner) {
+				const id = randomUUID();
+				const runId = randomUUID();
+				const dir = resolveSupervisorChannelDir(runId, "worker", 0);
+				channels.push(dir);
+				ensureSupervisorChannelDir(dir);
+				fs.writeFileSync(path.join(dir, "requests", id + ".json"), JSON.stringify({ type: "subagent.supervisor.request", id, createdAt: Date.now(), reason: "need_decision", message: "Decision?", expectsReply: true, orchestratorSessionId: owner, runId, agent: "worker", childIndex: 0 }));
+				return id;
+			}
+			let runtime;
+			try {
+				const owner = randomUUID();
+				runtime = start(owner);
+				const first = ask(owner);
+				assert.match(JSON.stringify(await runtime.tool.execute("pending", { action: "pending" })), new RegExp(first));
+				await runtime.shutdown();
+				const afterShutdown = ask(owner);
+				await assert.rejects(runtime.tool.execute("reply", { action: "reply", replyTo: afterShutdown, message: "No authority" }), /No pending supervisor request found/);
+				runtime = undefined;
+				const replacement = randomUUID();
+				runtime = start(replacement);
+				await assert.rejects(runtime.tool.execute("reply", { action: "reply", replyTo: first, message: "Foreign" }), /No pending supervisor request found/);
+				const next = ask(replacement);
+				assert.match(JSON.stringify(await runtime.tool.execute("reply", { action: "reply", replyTo: next, message: "Approved" })), new RegExp(next));
+			} finally {
+				await runtime?.shutdown();
+				for (const dir of channels) fs.rmSync(dir, { recursive: true, force: true });
+				fs.rmSync(root, { recursive: true, force: true });
+			}
+		`;
+		const env = { ...process.env };
+		delete env.PI_SUBAGENT_CHILD;
+		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: process.cwd(), env, stdio: "pipe", timeout: 30_000 });
+	});
+
+	it("fails closed for explicit mistargets and ambiguity without UI, then answers only the exact ask", async () => {
+		const sessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		const tools = new Map<string, SupervisorTool>();
+		const state = makeState(`/sessions/${sessionId}.jsonl`, makeCtx(sessionId));
+		state.lastUiContext = null;
+		const channel = createNativeSupervisorChannel(makePi({ tools }) as never, state, { platform: "darwin" });
+		try {
+			channel.start();
+			const first = writeRequest({ sessionId, runId });
+			const tool = tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!;
+			await assert.rejects(tool.execute("wrong", { action: "reply", to: "different-agent", message: "Approved" }), /No pending supervisor request matches/);
+			await assert.rejects(tool.execute("unknown", { action: "reply", replyTo: "unknown", message: "Approved" }), /No pending supervisor request found/);
+			assert.equal(channel.pending.has(first), true);
+			const second = writeRequest({ sessionId, runId });
+			await assert.rejects(tool.execute("ambiguous", { action: "reply", message: "Approved" }), /Multiple pending supervisor requests/);
+			await assert.rejects(tool.execute("agent", { action: "reply", to: "worker", message: "Approved" }), /Multiple pending supervisor requests match/);
+			const replies = path.join(resolveSupervisorChannelDir(runId, "worker", 0), "replies");
+			assert.deepEqual(fs.readdirSync(replies), []);
+			await tool.execute("exact", { action: "reply", replyTo: second, message: "Only second" });
+			assert.deepEqual(fs.readdirSync(replies), [`${second}.json`]);
+			assert.equal(JSON.parse(fs.readFileSync(path.join(replies, `${second}.json`), "utf8")).message, "Only second");
+			assert.equal(channel.pending.has(first), true);
+			assert.equal(channel.pending.has(second), false);
+		} finally { channel.dispose(); }
+	});
+
+	it("rejects stale discovered and cached asks with no UI", async () => {
+		const sessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		const tools = new Map<string, SupervisorTool>();
+		const state = makeState(`/sessions/${sessionId}.jsonl`, makeCtx(sessionId));
+		state.lastUiContext = null;
+		const channel = createNativeSupervisorChannel(makePi({ tools }) as never, state, { platform: "darwin" });
+		try {
+			channel.start();
+			const tool = tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!;
+			const expired = writeRequest({ sessionId, runId, expiresAt: Date.now() - 1 });
+			await assert.rejects(tool.execute("expired", { action: "reply", replyTo: expired, message: "Too late" }), /No pending supervisor request found/);
+			const missing = writeRequest({ sessionId, runId });
+			const resolved = writeRequest({ sessionId, runId });
+			await tool.execute("pending", { action: "pending" });
+			assert.equal(channel.pending.size, 2);
+			const dir = resolveSupervisorChannelDir(runId, "worker", 0);
+			fs.rmSync(path.join(dir, "requests", `${missing}.json`));
+			const replyFile = path.join(dir, "replies", `${resolved}.json`);
+			fs.writeFileSync(replyFile, JSON.stringify({ message: "Already answered" }));
+			for (const replyTo of [missing, resolved]) {
+				await assert.rejects(tool.execute("stale", { action: "reply", replyTo, message: "Must not overwrite" }), /No pending supervisor request found/);
+			}
+			assert.equal(channel.pending.size, 0);
+			assert.deepEqual(fs.readdirSync(path.join(dir, "replies")), [`${resolved}.json`]);
+			assert.equal(JSON.parse(fs.readFileSync(replyFile, "utf8")).message, "Already answered");
+		} finally { channel.dispose(); }
+	});
+
+	it("rechecks cached ownership without UI and never uses the persisted identity as authority", async () => {
+		const sessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		const tools = new Map<string, SupervisorTool>();
+		const state = makeState(sessionId, makeCtx(sessionId));
+		const channel = createNativeSupervisorChannel(makePi({ tools }) as never, state, { platform: "darwin" });
+		try {
+			channel.start();
+			const requestId = writeRequest({ sessionId, runId });
+			const tool = tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!;
+			await tool.execute("pending", { action: "pending" });
+			assert.equal(channel.pending.has(requestId), true);
+			state.lastUiContext = null;
+			state.supervisorOwnerSessionId = `replacement-${randomUUID()}`;
+			await assert.rejects(tool.execute("foreign", { action: "reply", replyTo: requestId, message: "Wrong owner" }), /No pending supervisor request found/);
+			assert.equal(channel.pending.size, 0);
+			state.supervisorOwnerSessionId = null;
+			const uncached = writeRequest({ sessionId, runId });
+			await assert.rejects(tool.execute("no-owner", { action: "reply", replyTo: uncached, message: "No authority" }), /No pending supervisor request found/);
+			const dir = resolveSupervisorChannelDir(runId, "worker", 0);
+			assert.equal(fs.existsSync(path.join(dir, "requests", `${requestId}.json`)), true, "foreign requests are not ours to delete");
+			assert.deepEqual(fs.readdirSync(path.join(dir, "replies")), []);
+		} finally { channel.dispose(); }
+	});
+
 	// D1: `refreshPendingRequests` only re-evaluates asks already in `pending`; it never reads the
 	// filesystem. With no watcher installed and the demand-gated poller stopped, an ask written by
 	// a child was unfindable by ANY number of `action:"pending"` calls.
@@ -171,18 +314,21 @@ describe("supervisor ask registration", () => {
 		}
 	});
 
-	// D3: `poll()` returned early whenever `state.lastUiContext` was null, which blinded the QUEUE
-	// and not just the display. Session ownership is carried by `state.currentSessionId`.
-	it("registers an ask with a null UI context", () => {
+	it("discovers a runtime-owned ask with a persisted session path and null UI context", async () => {
 		const sessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
-		const requestId = writeRequest({ sessionId, runId });
 		const tools = new Map<string, SupervisorTool>();
-		const channel = createNativeSupervisorChannel(makePi({ tools }) as never, makeState(sessionId, null), { platform: "darwin" });
+		const sessionFile = path.join(process.cwd(), `${sessionId}.jsonl`);
+		const state = makeState(sessionFile, makeCtx(sessionId, sessionFile));
+		const channel = createNativeSupervisorChannel(makePi({ tools }) as never, state, { platform: "darwin" });
 
 		try {
 			channel.start();
+			state.lastUiContext = null;
+			const requestId = writeRequest({ sessionId, runId });
+			await tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
 			assert.equal(channel.pending.has(requestId), true, "a null lastUiContext must not drop the ask");
+			assert.equal(state.currentSessionId, sessionFile, "global session identity must remain unchanged");
 		} finally {
 			channel.dispose();
 		}
@@ -194,7 +340,9 @@ describe("supervisor ask registration", () => {
 		const runId = `run-${randomUUID()}`;
 		const foreignId = writeRequest({ sessionId: foreignSessionId, runId });
 		const tools = new Map<string, SupervisorTool>();
-		const channel = createNativeSupervisorChannel(makePi({ tools }) as never, makeState(sessionId, null), { platform: "darwin" });
+		const state = makeState(`/sessions/${sessionId}.jsonl`, makeCtx(sessionId));
+		state.lastUiContext = null;
+		const channel = createNativeSupervisorChannel(makePi({ tools }) as never, state, { platform: "darwin" });
 
 		try {
 			channel.start();
@@ -204,127 +352,26 @@ describe("supervisor ask registration", () => {
 		}
 	});
 
-	it("keeps a queued ask when the user-turn notification throws", () => {
+	it("registers both asks even when every user-turn notification throws", () => {
 		const sessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
 		const requestId = writeRequest({ sessionId, runId });
 		const tools = new Map<string, SupervisorTool>();
 		const pi = makePi({ tools, onSend: () => { throw new Error("no UI attached"); } });
+		const secondId = writeRequest({ sessionId, runId });
 		const channel = createNativeSupervisorChannel(pi as never, makeState(sessionId, makeCtx(sessionId)), { platform: "darwin" });
 
 		try {
 			channel.start();
 			assert.equal(channel.pending.has(requestId), true, "a display failure must not lose an already-queued ask");
+			assert.equal(channel.pending.has(secondId), true, "a display failure must not abort discovery of remaining asks");
 		} finally {
 			channel.dispose();
 		}
 	});
 
-	// D4: a child inside `contact_supervisor` has no turn boundary, so `child.steer` can only
-	// return "queued" into a queue that never drains. The steer must instead answer the open ask.
-	it("answers a blocked child's open ask when a steer targets it", async () => {
-		const sessionId = `session-${randomUUID()}`;
-		const workflowRunId = `workflow-${randomUUID()}`;
-		const tools = new Map<string, SupervisorTool>();
-		const state = makeState(sessionId, makeCtx(sessionId));
-		const queued: string[] = [];
-		registerWorkflowChild(state, workflowRunId, workflowRunId, async (input) => {
-			queued.push(input.message);
-			return { state: "queued" as const };
-		});
-		const channel = createNativeSupervisorChannel(makePi({ tools }) as never, state, { platform: "darwin" });
-
-		try {
-			channel.start();
-			const requestId = writeRequest({ sessionId, runId: workflowRunId });
-			await tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
-			assert.equal(channel.pending.has(requestId), true, "precondition: the child is blocked on a registered ask");
-
-			const control = state.foregroundControls.get(workflowRunId)!;
-			const result = await steerWorkflowForegroundTarget({
-				target: { control, workflowRunId, sourceRunId: workflowRunId },
-				message: "RULING VIA STEER: proceed with option A.",
-			});
-
-			assert.equal(result.details.steering?.state, "delivered", "the steer must report a real delivery, not a queue");
-			assert.match(text(result), new RegExp(`open supervisor request ${requestId}`));
-			assert.match(text(result), /the child is unblocked/);
-			assert.deepEqual(queued, [], "the message must be delivered exactly once, not also queued in the dead queue");
-
-			const reply = path.join(resolveSupervisorChannelDir(workflowRunId, "worker", 0), "replies", `${requestId}.json`);
-			assert.equal(JSON.parse(fs.readFileSync(reply, "utf-8")).message, "RULING VIA STEER: proceed with option A.");
-			assert.equal(channel.pending.has(requestId), false, "the answered ask must leave the pending queue");
-		} finally {
-			channel.dispose();
-		}
-	});
-
-	it("falls back to the normal steer route and reports its real state when no ask is pending", async () => {
-		const sessionId = `session-${randomUUID()}`;
-		const workflowRunId = `workflow-${randomUUID()}`;
-		const tools = new Map<string, SupervisorTool>();
-		const state = makeState(sessionId, makeCtx(sessionId));
-		const queued: string[] = [];
-		registerWorkflowChild(state, workflowRunId, workflowRunId, async (input) => {
-			queued.push(input.message);
-			return { state: "queued" as const };
-		});
-		const channel = createNativeSupervisorChannel(makePi({ tools }) as never, state, { platform: "darwin" });
-
-		try {
-			channel.start();
-			const control = state.foregroundControls.get(workflowRunId)!;
-			const result = await steerWorkflowForegroundTarget({
-				target: { control, workflowRunId, sourceRunId: workflowRunId },
-				message: "No ask is open here.",
-			});
-
-			// A queued in-memory steer reports `state: "pending"` with a queued target: the honest
-			// receipt for a message that has not reached the child yet.
-			assert.equal(result.details.steering?.state, "pending", "without a pending ask the receipt must stay honest");
-			assert.equal(result.details.steering?.targets[0]?.state, "queued");
-			assert.deepEqual(queued, ["No ask is open here."]);
-		} finally {
-			channel.dispose();
-		}
-	});
-
-	it("does not answer an ask that belongs to a different child index", async () => {
-		const sessionId = `session-${randomUUID()}`;
-		const workflowRunId = `workflow-${randomUUID()}`;
-		const tools = new Map<string, SupervisorTool>();
-		const state = makeState(sessionId, makeCtx(sessionId));
-		const queued: string[] = [];
-		registerWorkflowChild(state, workflowRunId, workflowRunId, async (input) => {
-			queued.push(input.message);
-			return { state: "queued" as const };
-		});
-		const channel = createNativeSupervisorChannel(makePi({ tools }) as never, state, { platform: "darwin" });
-
-		try {
-			channel.start();
-			const otherIndexAsk = writeRequest({ sessionId, runId: workflowRunId, index: 3 });
-			await tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
-			assert.equal(channel.pending.has(otherIndexAsk), true, "precondition: index 3 has the open ask");
-
-			const control = state.foregroundControls.get(workflowRunId)!;
-			const result = await steerWorkflowForegroundTarget({
-				target: { control, workflowRunId, sourceRunId: workflowRunId },
-				message: "Meant for index 0.",
-			});
-
-			assert.equal(result.details.steering?.state, "pending", "index 0 has no ask, so the normal route must be used");
-			assert.equal(result.details.steering?.targets[0]?.state, "queued");
-			assert.deepEqual(queued, ["Meant for index 0."]);
-			assert.equal(channel.pending.has(otherIndexAsk), true, "index 3's ask must be left untouched");
-		} finally {
-			channel.dispose();
-		}
-	});
-
-	// The end-to-end seam: drive the real child-side `contact_supervisor` tool and prove the
-	// blocked child actually receives the steer text as its tool result.
-	it("unblocks the real contact_supervisor tool call through a steer", async () => {
+	// Drive the real child-side disk protocol: steering cannot resolve asks, explicit reply can.
+	it("only unblocks the real contact_supervisor tool through an explicit reply, not steer or follow_up", async () => {
 		const sessionId = `session-${randomUUID()}`;
 		const workflowRunId = `workflow-${randomUUID()}`;
 		const channelDir = resolveSupervisorChannelDir(workflowRunId, "worker", 0);
@@ -332,7 +379,15 @@ describe("supervisor ask registration", () => {
 		const supervisorTools = new Map<string, SupervisorTool>();
 		const childTools = new Map<string, SupervisorTool>();
 		const state = makeState(sessionId, makeCtx(sessionId));
-		registerWorkflowChild(state, workflowRunId, workflowRunId, async () => ({ state: "queued" as const }));
+		const queued: ForegroundSteerInput[] = [];
+		const control: ForegroundRunControl = {
+			runId: workflowRunId, mode: "single", startedAt: 100, updatedAt: 100,
+			activeChildren: new Map([[0, {
+				index: 0, agent: "worker", startedAt: 100, updatedAt: 100,
+				steer: async (input) => { queued.push(input); return { state: "queued" }; },
+			}]]),
+		};
+		state.foregroundControls.set(workflowRunId, control);
 		const channel = createNativeSupervisorChannel(makePi({ tools: supervisorTools }) as never, state, { platform: "darwin" });
 
 		try {
@@ -344,6 +399,11 @@ describe("supervisor ask registration", () => {
 				childIndex: 0,
 				orchestratorSessionId: sessionId,
 			});
+			const target = { control, workflowRunId, sourceRunId: workflowRunId };
+			const ordinary = await steerWorkflowForegroundTarget({ target, message: "No ask is open here." });
+			assert.equal(ordinary.details.steering?.state, "pending");
+			assert.equal(ordinary.details.steering?.targets[0]?.state, "queued");
+			assert.deepEqual(queued.splice(0), [{ message: "No ask is open here." }]);
 
 			// The child blocks here exactly as it does in production: inside an open tool call,
 			// polling its reply file.
@@ -356,16 +416,32 @@ describe("supervisor ask registration", () => {
 			await waitForCondition(() => fs.readdirSync(path.join(channelDir, "requests")).length > 0, "the child's ask to reach disk");
 			await supervisorTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
 
-			const control = state.foregroundControls.get(workflowRunId)!;
-			const steerResult = await steerWorkflowForegroundTarget({
-				target: { control, workflowRunId, sourceRunId: workflowRunId },
-				message: "RULING VIA STEER: take option A.",
+			const requestId = [...channel.pending.keys()][0]!;
+			assert.ok(requestId);
+			const otherIndexAsk = writeRequest({ sessionId, runId: workflowRunId, index: 3 });
+			await supervisorTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
+			for (const mode of ["steer", "follow_up"] as const) {
+				const result = await steerWorkflowForegroundTarget({ target, message: "After this is resolved, update the docs.", mode });
+				assert.equal(result.details.steering?.state, "pending");
+				assert.equal(result.details.steering?.targets[0]?.state, "queued");
+				assert.doesNotMatch(text(result), /the child is unblocked/);
+				assert.equal(channel.pending.has(requestId), true);
+				assert.equal(channel.pending.has(otherIndexAsk), true);
+				assert.equal(fs.existsSync(path.join(channelDir, "replies", `${requestId}.json`)), false);
+				assert.equal(fs.existsSync(path.join(channelDir, "requests", `${requestId}.json`)), true);
+			}
+			assert.deepEqual(queued, [
+				{ message: "After this is resolved, update the docs." },
+				{ message: "After this is resolved, update the docs.", mode: "follow_up" },
+			]);
+			await supervisorTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", {
+				action: "reply", replyTo: requestId, message: "Take option A.",
 			});
-			assert.equal(steerResult.details.steering?.state, "delivered");
 
 			const childResult = await blocked;
 			assert.notEqual(childResult.isError, true, text(childResult));
-			assert.match(text(childResult), /RULING VIA STEER: take option A\./, "the blocked child must receive the steer as its answer");
+			assert.match(text(childResult), /Take option A\./);
+			assert.doesNotMatch(text(childResult), /update the docs/);
 		} finally {
 			channel.dispose();
 		}

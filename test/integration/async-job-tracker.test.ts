@@ -146,6 +146,7 @@ function writeRunningAsyncStatus(runDir: string, runId: string, sessionId: strin
 function createNativeSupervisorHarness(sessionId: string) {
 	const nativeState = createState();
 	(nativeState as { currentSessionId: string; lastUiContext: unknown }).currentSessionId = sessionId;
+	(nativeState as { supervisorOwnerSessionId: string }).supervisorOwnerSessionId = sessionId;
 	(nativeState as { currentSessionId: string; lastUiContext: unknown }).lastUiContext = {
 		hasUI: false,
 		sessionManager: {

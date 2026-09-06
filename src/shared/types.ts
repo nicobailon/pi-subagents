@@ -2206,6 +2206,8 @@ export interface ActiveAsyncCapacitySnapshot {
 export interface SubagentState {
 	baseCwd: string;
 	currentSessionId: string | null;
+	/** Exact SDK runtime session ID for supervisor ownership; never a session file path. */
+	supervisorOwnerSessionId?: string | null;
 	/** Session for which active status projections were restored successfully. */
 	statusProjectionSessionId?: string | null;
 	/** Reload-stable identity for this parent Pi process/window. */

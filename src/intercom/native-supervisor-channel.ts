@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { ChildSupervisorMetadata } from "../runs/shared/child-runtime-config.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, POLL_INTERVAL_MS, TEMP_ROOT_DIR, type ControlEvent, type IntercomEventBus, type SubagentState } from "../shared/types.ts";
@@ -381,21 +381,8 @@ function cleanupStaleEmptySupervisorChannels(nowMs = Date.now()): number {
 	return removed;
 }
 
-function currentContextSessionId(state: Pick<SubagentState, "currentSessionId">, ctx: ExtensionContext): string | undefined {
-	try {
-		const sessionId = ctx.sessionManager.getSessionId();
-		if (sessionId) return sessionId;
-	} catch {
-		// Fall through to the last known identity.
-	}
-	return state.currentSessionId ?? undefined;
-}
-
-// `ctx` is optional: session ownership is a property of `state.currentSessionId`, not of the UI
-// context. A null or stale `lastUiContext` must never make an ask from this session look like it
-// belongs to another one, because that silently drops the ask instead of queueing it.
-function requestMatchesContext(request: SupervisorRequest, state: Pick<SubagentState, "currentSessionId">, ctx?: ExtensionContext): boolean {
-	const currentSessionId = ctx ? currentContextSessionId(state, ctx) : state.currentSessionId ?? undefined;
+function requestMatchesOwner(request: SupervisorRequest, state: Pick<SubagentState, "supervisorOwnerSessionId">): boolean {
+	const currentSessionId = state.supervisorOwnerSessionId;
 	return Boolean(currentSessionId && request.orchestratorSessionId === currentSessionId);
 }
 
@@ -465,8 +452,8 @@ function requestRunInactive(request: SupervisorRequest, state: SubagentState): b
 	return stepStatus === "complete" || stepStatus === "completed" || stepStatus === "failed" || stepStatus === "paused";
 }
 
-function requestLifecycle(request: PendingSupervisorRequest, state: SubagentState, ctx: ExtensionContext | undefined, now: number): SupervisorRequestLifecycle {
-	if (ctx && !requestMatchesContext(request, state, ctx)) return "wrong-session";
+function requestLifecycle(request: PendingSupervisorRequest, state: SubagentState, now: number): SupervisorRequestLifecycle {
+	if (!requestMatchesOwner(request, state)) return "wrong-session";
 	if (!fs.existsSync(request.requestFile)) return "missing";
 	if (request.expectsReply && fs.existsSync(replyPath(request.channelDir, request.id))) return "resolved";
 	if (request.expectsReply && now > requestExpiresAt(request, now)) return "expired";
@@ -478,10 +465,10 @@ function cleanupRequestLifecycle(request: PendingSupervisorRequest, lifecycle: S
 	if (lifecycle === "resolved" || lifecycle === "expired" || lifecycle === "inactive") removeRequestFile(request.requestFile);
 }
 
-function refreshPendingRequests(pending: Map<string, PendingSupervisorRequest>, state: SubagentState, ctx: ExtensionContext | undefined, onLifecycle: SupervisorRequestLifecycleObserver): void {
+function refreshPendingRequests(pending: Map<string, PendingSupervisorRequest>, state: SubagentState, onLifecycle: SupervisorRequestLifecycleObserver): void {
 	const now = Date.now();
 	for (const request of pending.values()) {
-		const lifecycle = requestLifecycle(request, state, ctx, now);
+		const lifecycle = requestLifecycle(request, state, now);
 		if (lifecycle === "pending") continue;
 		pending.delete(request.id);
 		onLifecycle(request, lifecycle);
@@ -550,57 +537,6 @@ function appendSupervisorReplyEntry(pi: ExtensionAPI, request: PendingSupervisor
 	}
 }
 
-// A child parked in `contact_supervisor` is inside a tool call, so it has no turn boundary. An
-// in-memory steer for such a child can only be QUEUED, and that queue drains at a turn boundary
-// which never comes: the steer receipt claims delivery, the child never sees the message, and
-// `action:"stop"` cannot checkpoint a blocked tool call either. The supervisor channel is the one
-// path that reaches a child inside that tool call, because the child is already polling its reply
-// file. So when a steer targets a child that has a pending ask, deliver the steer AS the reply.
-//
-// This is a registry rather than a parameter because the only convergence point for the
-// workflow-child steer routes (`steerWorkflowForegroundTarget`) has no access to the channel
-// closure, and threading the pending map through every steer call site in subagent-executor.ts
-// would be a far wider change to the run-control surface.
-interface SupervisorAskResolver {
-	pending: Map<string, PendingSupervisorRequest>;
-	resolve: (request: PendingSupervisorRequest, message: string) => void;
-}
-
-const supervisorAskResolvers = new Set<SupervisorAskResolver>();
-
-export interface SupervisorAskSteerOutcome {
-	requestId: string;
-	reason: SupervisorReason;
-}
-
-/**
- * If `runId`/`childIndex` names a child blocked on a supervisor ask, answer that ask with
- * `message` and return the resolved request. Returns undefined when no ask is pending, in which
- * case the caller must fall back to its normal steer delivery, so this never swallows a steer.
- */
-export function resolvePendingSupervisorAskWithSteer(input: { runId: string; childIndex: number; message: string }): SupervisorAskSteerOutcome | undefined {
-	const message = input.message.trim();
-	if (!message) return undefined;
-	for (const resolver of supervisorAskResolvers) {
-		const request = [...resolver.pending.values()].find((candidate) =>
-			candidate.expectsReply
-			&& candidate.runId === input.runId
-			&& candidate.childIndex === input.childIndex,
-		);
-		if (!request) continue;
-		try {
-			resolver.resolve(request, message);
-		} catch (error) {
-			// Fail closed and loud: report no resolution so the caller keeps its own delivery receipt
-			// (queued/failed) rather than claiming a delivery that did not happen.
-			console.error(`Failed to answer supervisor request ${request.id} from a steer:`, error);
-			return undefined;
-		}
-		return { requestId: request.id, reason: request.reason };
-	}
-	return undefined;
-}
-
 function resolvePendingRequest(pending: Map<string, PendingSupervisorRequest>, params: IntercomParams): PendingSupervisorRequest {
 	if (params.replyTo) {
 		const request = pending.get(params.replyTo);
@@ -617,6 +553,7 @@ function resolvePendingRequest(pending: Map<string, PendingSupervisorRequest>, p
 		);
 		if (matches.length === 1) return matches[0]!;
 		if (matches.length > 1) throw new Error(`Multiple pending supervisor requests match '${params.to}'. Use replyTo.`);
+		throw new Error(`No pending supervisor request matches '${params.to}'. Use replyTo.`);
 	}
 	if (requests.length === 1) return requests[0]!;
 	if (requests.length === 0) throw new Error("No pending supervisor requests need a reply.");
@@ -648,7 +585,7 @@ function buildParentSupervisorTool(pi: ExtensionAPI, pending: Map<string, Pendin
 			// supervisor requests" while the child blocked in contact_supervisor. An explicit supervisor
 			// query must always be authoritative against disk.
 			discover();
-			refreshPendingRequests(pending, state, state.lastUiContext ?? undefined, onLifecycle);
+			refreshPendingRequests(pending, state, onLifecycle);
 			const input = params as IntercomParams;
 			if (input.action === "status") {
 				return { content: [{ type: "text", text: `Native supervisor channel active. Pending replies: ${pending.size}.` }], details: { active: true, pending: pending.size, root: SUPERVISOR_CHANNEL_ROOT } };
@@ -754,21 +691,6 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(buildParentSupervisorTool(pi, pending, state, observeRequestLifecycle, () => poll()));
 	};
 
-	// Expose this channel's ask queue to the steer routes so a steer can answer a child blocked
-	// inside contact_supervisor. Uses the same writeReply/journal/attention sequence as
-	// `action:"reply"` so the child, the transcript, and the attention state all see one
-	// consistent resolution.
-	const askResolver: SupervisorAskResolver = {
-		pending,
-		resolve: (request, message) => {
-			const reply = writeReply(request, message);
-			appendSupervisorReplyEntry(pi, request, reply);
-			observeRequestLifecycle(request, "resolved");
-			pending.delete(request.id);
-			clearForegroundSupervisorAttention(request, pending, state);
-		},
-	};
-
 	const cleanupStaleChannelsIfDue = (): void => {
 		const nowMs = Date.now();
 		if (nowMs - lastStaleCleanupAt < STALE_EMPTY_CHANNEL_CLEANUP_INTERVAL_MS) return;
@@ -786,14 +708,13 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		// `state.lastUiContext` was null (never set yet, or nulled by a stale-context error) meant an
 		// ask written by a child was never read off disk, so `subagent_supervisor({action:"pending"})`
 		// reported nothing. The queue is authoritative; only the display notification needs the context.
-		const ctx = state.lastUiContext ?? undefined;
-		refreshPendingRequests(pending, state, ctx, observeRequestLifecycle);
+		refreshPendingRequests(pending, state, observeRequestLifecycle);
 		const now = Date.now();
 		for (const { channelDir, file } of listRequestFiles()) {
 			if (seenFiles.has(file)) continue;
 			const request = parseRequestFile(file, channelDir);
-			if (!request || !requestMatchesContext(request, state, ctx)) continue;
-			const lifecycle = requestLifecycle(request, state, undefined, now);
+			if (!request || !requestMatchesOwner(request, state)) continue;
+			const lifecycle = requestLifecycle(request, state, now);
 			if (lifecycle !== "pending") {
 				seenFiles.add(file);
 				observeRequestLifecycle(request, lifecycle);
@@ -912,7 +833,6 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		start: () => {
 			if (started) return;
 			started = true;
-			supervisorAskResolvers.add(askResolver);
 			registerParentTools();
 			poll();
 			try {
@@ -936,7 +856,6 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		},
 		dispose: () => {
 			started = false;
-			supervisorAskResolvers.delete(askResolver);
 			try {
 				rootWatcher?.close();
 			} catch {
