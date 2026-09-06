@@ -5098,18 +5098,31 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					onSuccess: (_filePath, payload) => { indexedState = (payload as { state: AsyncStatus["state"] }).state; },
 					onError: (error, filePath) => console.error(`Failed to update async workflow index '${filePath}':`, error),
 				});
-				const queueActiveRunIndex = (): void => {
-					const state = status.state;
+				const queueActiveRunIndex = (snapshot: AsyncStatus = status): void => {
+					const state = snapshot.state;
 					if (indexedState === state && indexPersistence.pendingCount() === 0) return;
-					indexPersistence.write(asyncDir, { state, toolCallId: status.toolCallId }, (_filePath, payload) => {
+					indexPersistence.write(asyncDir, { state, toolCallId: snapshot.toolCallId }, (_filePath, payload) => {
 						const indexPayload = payload as { state: AsyncStatus["state"]; toolCallId?: string };
 						updateActiveRunIndex(asyncDir, indexPayload.state, indexPayload.toolCallId, { retryCapacityErrors: true });
 					});
 				};
+				let pendingResultPublication: Promise<boolean> | undefined;
+				let settleResultPublication: ((published: boolean) => void) | undefined;
+				const reportResultWriteFailure = (error: unknown): void => {
+					const message = `Failed to write async workflow result ${resultPath}: ${error instanceof Error ? error.message : String(error)}`;
+					console.error(message, error);
+					appendWorkflowEvent({ type: "subagent.workflow.result_write_failed", error: message });
+				};
 				const runPersistence = createCapacityResilientJsonWriter({
 					keepAlive: true,
-					onSuccess: (filePath) => { if (filePath === statusPath) queueActiveRunIndex(); },
-					onError: (error, filePath) => console.error(`Failed to persist async workflow state '${filePath}':`, error),
+					onSuccess: (filePath, payload) => {
+						if (filePath === statusPath) queueActiveRunIndex(payload as AsyncStatus);
+						if (filePath === resultPath) settleResultPublication?.(true);
+					},
+					onError: (error, filePath) => {
+						if (filePath === resultPath) { reportResultWriteFailure(error); settleResultPublication?.(false); }
+						else console.error(`Failed to persist async workflow state '${filePath}':`, error);
+					},
 					write: (filePath, payload) => filePath === resultPath
 						? writeAsyncResultFile(filePath, payload as Record<string, unknown>)
 						: writeAtomicJson(filePath, payload),
@@ -5137,7 +5150,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						queueActiveRunIndex();
 					} else if (options.tolerateStatusWriteFailure) {
 						try {
-							runPersistence.write(statusPath, status);
+							runPersistence.write(statusPath, { ...status });
 							statusPersistenceDegraded = false;
 						} catch (error) {
 							const message = `Failed to persist async workflow state ${statusPath}: ${error instanceof Error ? error.message : String(error)}`;
@@ -5152,7 +5165,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							}
 						}
 					} else {
-						runPersistence.write(statusPath, status);
+						runPersistence.write(statusPath, { ...status });
 					}
 					if (liveJob) {
 						liveJob.status = status.state;
@@ -5180,12 +5193,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				};
 				const writeWorkflowResult = (payload: Record<string, unknown>): boolean => {
 					try {
+						let resultPublished = false;
+						settleResultPublication = (published) => { resultPublished = published; };
+						pendingResultPublication = undefined;
 						runPersistence.write(resultPath, payload);
+						// Only capacity deferral yields; ordinary publication remains synchronous.
+						if (!resultPublished) pendingResultPublication = new Promise<boolean>((resolve) => { settleResultPublication = resolve; });
 						return true;
 					} catch (error) {
-						const message = `Failed to write async workflow result ${resultPath}: ${error instanceof Error ? error.message : String(error)}`;
-						console.error(message, error);
-						appendWorkflowEvent({ type: "subagent.workflow.result_write_failed", error: message });
+						reportResultWriteFailure(error);
 						return false;
 					}
 				};
@@ -5652,6 +5668,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
 						}
 						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, workflowChildren, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), ...(status.steps?.find((step) => step.workflowKey === child.key)?.sessionName ? { sessionName: status.steps?.find((step) => step.workflowKey === child.key)?.sessionName } : {}), ...workflowChildAccountingFields(child), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.outputReference ? { outputReference: child.outputReference } : {}), ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						if (pendingResultPublication && !await pendingResultPublication) return;
 						persist();
 						deps.refreshResultDelivery?.();
 						persistClosed = true;
@@ -5701,6 +5718,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
 						}
 						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, workflowChildren, ...(terminalOutcome ? { terminalOutcome } : {}), results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), ...(status.steps?.find((step) => step.workflowKey === child.key)?.sessionName ? { sessionName: status.steps?.find((step) => step.workflowKey === child.key)?.sessionName } : {}), ...workflowChildAccountingFields(child), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.outputReference ? { outputReference: child.outputReference } : {}), ...(child.terminalOutcome ? { terminalOutcome: child.terminalOutcome } : {}), ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(child.detached && status.state !== "complete" ? { detached: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						if (pendingResultPublication && !await pendingResultPublication) return;
 						persist();
 						deps.refreshResultDelivery?.();
 						persistClosed = true;

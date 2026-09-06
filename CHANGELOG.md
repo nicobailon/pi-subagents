@@ -13,6 +13,7 @@
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
 
 ### Fixed
+- Publish indexed async workflow results before terminal persistence after storage-capacity recovery (#1981). Thanks to [@brandonmwest](https://github.com/brandonmwest) for reporting completion-delivery observations.
 - Keep unconfigured prompt-runtime loads inert. Thanks to [@lertian](https://github.com/lertian) for #1973.
 - Discover supervisor asks on demand even without a UI context, isolate notification failures, and keep answers explicit (#1975, #1982). Thanks to [@brandonmwest](https://github.com/brandonmwest).
 - Consume async workflow steering with exact child targeting, terminal shutdown receipts, and handler-selective inbox watching (#1976, #1983). Thanks to [@brandonmwest](https://github.com/brandonmwest) for the diagnosis, Herdr reproduction, initial consumer, and tests.
