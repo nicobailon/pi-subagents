@@ -160,7 +160,7 @@ export default function() {
 	});
 
 	for (const mode of ["success", "stop", "pause", "deadline", "failure-before-JSON"] as const) {
-		it(`background setup lifecycle: ${mode}`, { skip: !isAsyncAvailable() || process.platform === "win32" ? "requires real POSIX setup executable" : undefined, timeout: 25_000 }, async () => {
+		it(`background setup lifecycle: ${mode}`, { skip: !isAsyncAvailable() || process.platform === "win32" ? "requires real POSIX setup executable" : undefined, timeout: 25_000 }, async (t) => {
 			const repo = createRepo("pi-background-setup-");
 			const baseDir = createTempDir();
 			const id = `async-setup-${mode}-${Date.now().toString(36)}`;
@@ -217,6 +217,42 @@ setTimeout(() => process.exit(90), 15000).unref();
 				const proof = await terminal;
 				const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"));
 				const expected = mode === "success" ? "complete" : mode === "stop" ? "stopped" : mode === "pause" ? "paused" : "failed";
+				if (payload.state !== expected || status.state !== expected || status.steps?.[0]?.status !== expected) {
+					// Failure-only, bounded projections: never print prompts, output, paths or raw stderr.
+					const record = (value: unknown): Record<string, unknown> => value !== null && typeof value === "object" ? value as Record<string, unknown> : {};
+					const token = (value: unknown) => typeof value === "string" && /^[a-z_-]{1,64}$/i.test(value) ? value : undefined;
+					const errors = (value: unknown) => {
+						const text = typeof value === "string" ? value.slice(0, 8192) : "";
+						return { present: Boolean(text), kinds: [
+							"EPIPE", "ENOENT", "EACCES", "ENOSPC", "ETIMEDOUT", "ABORT_ERR", "ENOBUFS",
+							"setup aborted", "setup deadline", "setup settlement unknown", "process tree settlement",
+							"empty stdout", "invalid JSON", "hook failed", "manual reconciliation required",
+							"not a git repository", "index.lock", "already exists", "Failed to write result",
+							"No model", "model not found", "completion", "acceptance",
+						].filter((kind) => text.toLowerCase().includes(kind.toLowerCase())), exitCode: text.match(/exit (?:code |status )?(-?\d+)/i)?.[1] };
+					};
+					const project = (value: unknown) => {
+						const item = record(value);
+						return { state: token(item.state), status: token(item.status), reason: token(item.reason),
+							exitCode: typeof item.exitCode === "number" ? item.exitCode : undefined,
+							success: typeof item.success === "boolean" ? item.success : undefined,
+							timedOut: item.timedOut === true, stopped: item.stopped === true, error: errors(item.error) };
+					};
+					let cleanup: unknown;
+					try {
+						const handoffPath = held.parallelHandoff?.path;
+						if (handoffPath && fs.statSync(handoffPath).size <= 65_536) {
+							const handoff = JSON.parse(fs.readFileSync(handoffPath, "utf8"));
+							cleanup = (handoff.groups ?? []).slice(0, 2).map((group: { cleanup?: { state?: string; pruned?: boolean; tasks?: unknown[]; errors?: string[] } }) => ({
+								state: token(group.cleanup?.state), pruned: group.cleanup?.pruned,
+								taskCount: group.cleanup?.tasks?.length, errors: group.cleanup?.errors?.slice(0, 4).map(errors),
+							}));
+						}
+					} catch (error) { cleanup = { readError: token(record(error).code) }; }
+					t.diagnostic(JSON.stringify({ mode, expected, mockCalls: mockPi.callCount(), markerPresent: fs.existsSync(marker),
+						result: project(payload), status: project(status), steps: (status.steps ?? []).slice(0, 2).map(project),
+						children: (payload.results ?? []).slice(0, 2).map(project), cleanup, processTerminal: project(proof) }));
+				}
 				assert.equal(payload.state, expected);
 				assert.equal(status.state, expected);
 				assert.equal(status.steps[0].status, expected);
