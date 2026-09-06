@@ -116,7 +116,7 @@ fallbackModels: openai-codex/gpt-5.5:high
 ---
 ```
 
-One interaction worth knowing for tier 4: forked context over an Anthropic parent transcript with signed thinking blocks forces the child's thinking off, so intent-tier agents work best with fresh context.
+One interaction worth knowing for tier 4: forked context over an Anthropic parent transcript strips the parent's signed thinking blocks from the child session, because a thinking signature cannot be replayed into a branch. The child still runs at its requested thinking level and reasons fresh from its first turn.
 
 ### Native read-only continuation after HTTP 429
 
