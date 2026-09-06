@@ -22,7 +22,7 @@ import { projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleSt
 import { formatSubagentModelVerificationError } from "../shared/model-fallback.ts";
 import { isMutatingTool, resolveCurrentPath } from "../shared/long-running-guard.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } from "../shared/tool-timeout.ts";
-import type { InProcessChildLaunch } from "../shared/child-launch.ts";
+import { createReportedChildSessionInput, type InProcessChildLaunch } from "../shared/child-launch.ts";
 import { projectChildSessionEventForJson, type ChildSession, type ChildSessionEvent, type ChildSessionFactory } from "../shared/child-session.ts";
 import { formatSteerMessage } from "../shared/subagent-prompt-runtime.ts";
 import type { SteerDeliveryStatus, SteerRequest } from "./control-channel.ts";
@@ -579,12 +579,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 
 		void (async () => {
 			try {
-				const created = await input.factory.create({
-					...input.launch.session,
-					onExtensionError: (extensionError) => {
-						input.transcriptWriter?.writeStderrLine(`Extension error (${extensionError.extensionPath}, ${extensionError.event}): ${extensionError.error instanceof Error ? extensionError.error.message : String(extensionError.error)}`);
-					},
-				});
+				const created = await input.factory.create(createReportedChildSessionInput(input.launch, input.transcriptWriter));
 				if (settled) {
 					void created.dispose();
 					return;

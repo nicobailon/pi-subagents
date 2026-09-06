@@ -5,7 +5,6 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { arbitrateCompletionGuardRescue, createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
 
 // Detached runners skip Pi's CLI proxy setup. Keep fetch on the same Undici dispatcher.
@@ -92,8 +91,10 @@ import {
 	DEFAULT_GLOBAL_CONCURRENCY_LIMIT,
 	Semaphore,
 } from "../shared/parallel-utils.ts";
-import { applyThinkingSuffix, deriveForkPromptCacheKey, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/child-tool-plan.ts";
-import { buildInProcessChildLaunch, type InheritedChildRuntime } from "../shared/child-launch.ts";
+import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/child-tool-plan.ts";
+import type { InheritedChildRuntime } from "../shared/child-launch.ts";
+import { buildRunnerChildLaunch } from "./runner-child-launch.ts";
+import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import type { ChildSessionFactory } from "../shared/child-session.ts";
 import { runChildSession, type ChildEvent, type RunChildSessionResult, type StepSteerHandler } from "./run-child-session.ts";
 import { loadRunnerChildSessionFactory } from "./runner-child-sessions.ts";
@@ -149,7 +150,6 @@ import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts
 import { acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveAcceptanceReportMode, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
 import { attachContractProjections, isAgentContract } from "../shared/agent-contract.ts";
 import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
-import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests, statusStepDescription } from "./chain-append.ts";
 import { asyncStatusChildIdentity } from "../shared/child-identity.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
@@ -1077,64 +1077,14 @@ async function runSingleStepInner(
 			})
 			: undefined;
 		let watchdogSink: ((event: ChildWatchdogStatusEvent) => void) | undefined;
-		const launch = buildInProcessChildLaunch(omitUndefinedProperties({
-			parentSessionId: step.parentSessionId,
-			forkCacheKey: step.context === "fork" ? deriveForkPromptCacheKey(step.parentSessionId) : undefined,
+		const launch = buildRunnerChildLaunch(step, ctx, {
 			sessionEnabled,
 			sessionDir,
-			sessionFile: step.sessionFile,
 			model: candidate,
-			inheritProjectContext: step.inheritProjectContext,
-			inheritGlobalContext: step.inheritGlobalContext,
-			inheritSkills: step.inheritSkills,
-			requireReadTool: Boolean(step.skills?.length),
-			tools: step.tools,
-			excludeTools: step.excludeTools,
-			allowNestedSubagents: step.allowNestedSubagents,
-			extensions: step.extensions,
-			subagentOnlyExtensions: step.subagentOnlyExtensions,
-			fast: step.fast,
-			modelCandidates: step.modelCandidates,
-			systemPrompt: step.systemPrompt ?? "",
-			systemPromptMode: step.systemPromptMode,
-			mcpDirectTools: step.mcpDirectTools,
-			extensionBindings,
-			capabilityCeiling: step.capabilityCeiling ?? ctx.capabilityCeiling,
-			cwd: step.cwd ?? ctx.cwd,
-			intercomSessionName: ctx.childIntercomTarget,
 			sessionName: childSessionName,
-			orchestratorIntercomTarget: ctx.orchestratorIntercomTarget,
-			runId: ctx.id,
-			childAgentName: step.agent,
-			childIndex: ctx.flatIndex,
-			nestedRoute: ctx.nestedRoute,
-			runFanoutBudget: ctx.runFanoutBudget ? {
-				...ctx.runFanoutBudget,
-				...(step.runFanoutPath ? { parentPath: `${ctx.runFanoutBudget.parentPath ? `${ctx.runFanoutBudget.parentPath}/` : ""}${step.runFanoutPath}` } : {}),
-			} : undefined,
 			structuredOutput: effectiveStructuredOutput,
-			toolBudget: step.toolBudget,
-			permissionRules: step.permissionRules,
-			permissionAuditPath: step.permissionRules && ctx.artifactsDir
-				? path.join(ctx.artifactsDir, "permission-audit", `${ctx.id}-${ctx.flatIndex}.jsonl`)
-				: undefined,
 			childWatchdog,
 			watchdogStatus: (event) => watchdogSink?.(event),
-			waitToolEnabled: step.waitToolEnabled,
-			waitToolDefaultTimeoutMs: step.waitToolDefaultTimeoutMs,
-			thinkingCeiling: step.thinkingCeiling,
-			maxSubagentDepth: step.maxSubagentDepth,
-			inherited: ctx.inheritedChildRuntime,
-			host: "runner",
-		}));
-		let intentModelContext: Pick<ExtensionContext, "model" | "modelRegistry"> | undefined;
-		launch.session.hooks.push({
-			name: "pi-subagents:completion-intent",
-			factory: (pi) => pi.on("session_start", (_event, childCtx) => {
-				// Keep only the attempt's model services. The shared factory runtime
-				// outlives child disposal; no live session or auth work is retained here.
-				intentModelContext = { model: childCtx.model, modelRegistry: childCtx.modelRegistry };
-			}),
 		});
 		if (effectiveStructuredOutput && launch.config.structuredOutput) {
 			// The runner reads the value back from the runtime's files after the run.
@@ -1296,7 +1246,7 @@ async function runSingleStepInner(
 		const mutationAttemptObserved = run.observedMutationAttempt === true || completionMutationEvidence?.attemptedMutation === true;
 		let arbitration = { triggered: completionGuard?.triggered === true && !mutationAttemptObserved, rescued: false };
 		if (arbitration.triggered) {
-			const modelContext = intentModelContext;
+			const modelContext = launch.capture.completionIntentContext?.();
 			arbitration = await arbitrateCompletionGuardRescue({
 				guardTriggered: true,
 				task: taskForCompletionGuard,

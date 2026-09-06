@@ -13,10 +13,16 @@ import { buildInProcessChildLaunch, createReportedChildSessionInput } from "../.
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import { flushPersist, getExcludedCount, getExclusionsFilePath } from "../../src/runs/shared/model-exclusions.ts";
-import type { AgentConfig } from "../../src/agents/agents.ts";
+import { buildRunnerChildLaunch } from "../../src/runs/background/runner-child-launch.ts";
+import { runChildSession } from "../../src/runs/background/run-child-session.ts";
+import { createChildTranscriptWriter } from "../../src/shared/child-transcript.ts";
+import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
+import { discoverAgents, type AgentConfig } from "../../src/agents/agents.ts";
 import { registerBackgroundWorkProvider } from "../../src/api/background-work.ts";
 import { DIRS } from "../../src/shared/types.ts";
 import { releaseActiveRunIndex, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
+import { resolveChildWatchdogConfig } from "../../src/watchdog/child-status.ts";
+import { DEFAULT_WATCHDOG_CONFIG } from "../../src/watchdog/settings.ts";
 
 function launch(cwd: string): ChildSessionLaunch {
 	return { cwd, storage: { kind: "file", sessionFile: join(cwd, "session.jsonl") }, model: "baseten/model-a", tools: ["read"], extensionPaths: [],
@@ -377,6 +383,145 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 		assert.match(readFileSync(file, "utf8"), /"stopReason":"error"/);
 		assert.deepEqual(inputs.map((input) => input.storage), [{ kind: "file", sessionFile: file }, { kind: "file", sessionFile: file }]);
 	}, {}, true)));
+
+	function runnerLaunch(l: ChildSessionLaunch, model = "baseten/model-a", overrides: Partial<RunnerSubagentStep> = {}, context = {}) {
+		const step: RunnerSubagentStep = {
+			agent: "reader", task: "Runner original task: read marker.txt once", context: "fresh",
+			sessionFile: (l.storage as { sessionFile: string }).sessionFile, parentSessionId: "runner-parent",
+			tools: ["read"], extensions: [], allowNestedSubagents: false, waitToolEnabled: false,
+			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+			systemPrompt: "Retain the completed read.", ...overrides,
+		};
+		return buildRunnerChildLaunch(step, { cwd: l.cwd, id: "runner-read", flatIndex: 0, ...context }, {
+			model, sessionEnabled: true, sessionName: "runner reader", watchdogStatus: () => assert.fail("absent watchdog has no consumer"),
+		});
+	}
+
+	for (const optedIn of [false, true]) it(`actual native runner construction and mandatory captures, evidence opt-in=${optedIn}`, async () => countAsyncIO(async (io) => fixture(async ({ l, factory, captured, acknowledge, requests, setResponses, cwd }) => {
+		const file = (l.storage as { sessionFile: string }).sessionFile;
+		assert.equal(existsSync(file), false);
+		const children: ChildSession[] = [];
+		let expected: SettledReadonlyEvidence | undefined;
+		mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
+		writeFileSync(join(cwd, ".pi", "agents", "runner-reader.md"), "---\nname: runner-reader\ndescription: Explicit read-only runner\ntools: read\nextensions:\nallowNestedSubagents: false\ninheritProjectContext: false\ninheritGlobalContext: false\ninheritSkills: false\n---\nRetain the completed read.\n");
+		const agent = discoverAgents(cwd, "project").agents.find((agent) => agent.name === "runner-reader");
+		assert.ok(agent);
+		assert.deepEqual(agent.extensions, [], "ordinary agent discovery preserves the explicit empty extension configuration");
+		// async-execution transfers these agent fields unchanged into RunnerSubagentStep.
+		const configured = { tools: agent.tools, extensions: agent.extensions, allowNestedSubagents: agent.allowNestedSubagents,
+			inheritProjectContext: agent.inheritProjectContext, inheritGlobalContext: agent.inheritGlobalContext, inheritSkills: agent.inheritSkills,
+			systemPrompt: agent.systemPrompt };
+		let currentLaunch = runnerLaunch(l, "baseten/model-a", configured);
+		const transcriptPath = join(cwd, "runner-transcript.jsonl");
+		const transcriptWriter = createChildTranscriptWriter({ transcriptPath, source: "async", runId: "runner-read", agent: "reader", cwd });
+		const hostFactory = { ...factory, async create(input: ChildSessionLaunch) {
+			const before = { ...io };
+			assert.deepEqual(input.hooks.map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:completion-intent"]);
+			assert.equal(input.ambientExtensions, false, "configured extensions:[] disables ambient through ordinary tool-plan resolution");
+			assert.equal(input.processEnv?.MCP_DIRECT_TOOLS, "__none__", "runner environment is retained");
+			assert.equal(input.runtime.watchdogStatus, undefined);
+			assert.deepEqual(input.runtime.requiredTools, ["read"]);
+			assert.equal(typeof input.runtime.toolDiagnostic, "function");
+			assert.equal(typeof input.runtime.runtimeAcknowledgements, "function");
+			assert.equal(typeof input.onExtensionError, "function");
+			assert.equal(currentLaunch.capture.completionIntentContext?.(), undefined);
+			if (optedIn) requestReadonlySessionEvidence(input, expected);
+			const child = await factory.create(input);
+			children.push(child);
+			assert.deepEqual(io, before, "no create-time native scans/reads");
+			if (optedIn) assert.notEqual(captured.at(-1)!.session.agent.streamFunction, captured.at(-1)!.original);
+			else assert.equal(captured.at(-1)!.session.agent.streamFunction, captured.at(-1)!.original);
+			const intent = currentLaunch.capture.completionIntentContext?.();
+			assert.equal(intent?.model, captured.at(-1)!.session.model);
+			assert.ok(intent?.modelRegistry);
+			assert.deepEqual(intent.modelRegistry.find("baseten", intent.model!.id), intent.model);
+			assert.deepEqual(Object.keys(intent!), ["model", "modelRegistry"]);
+			acknowledge("runner-reviewed");
+			const diagnostic = { required: ["read"], available: [], missing: ["read"] };
+			input.runtime.toolDiagnostic!(diagnostic);
+			assert.equal(currentLaunch.capture.toolDiagnostic(), diagnostic);
+			input.onExtensionError!({ extensionPath: "<fixture>", event: "test", error: new Error("runner mandatory report retained") });
+			if (expected) {
+				assert.equal(child.sessionId, expected.sessionId);
+				assert.equal(JSON.stringify(child.messages), expected.contextJson);
+			} else {
+				assert.equal(existsSync(file), false, "SDK owns deferred fresh-file initialization");
+				assert.equal(child.sessionId, captured[0].session.sessionManager.getHeader()!.id);
+			}
+			return child;
+		} };
+		const run = (prompt: string) => runChildSession({ factory: hostFactory, launch: currentLaunch, prompt, transcriptWriter, appendChildEvent: () => {}, writeOutputLine: () => {} });
+		setResponses([() => { assert.deepEqual(io, { scans: 0, reads: 0, stats: 0 }); return sse(true); },
+			() => { assert.deepEqual(io, { scans: 0, reads: 0, stats: 0 }); return http(429); }]);
+		const result = await run("Runner original task: read marker.txt once");
+		assert.equal(children.length, 1, result.error);
+		assert.equal(requests.length, 2, result.error);
+		assert.deepEqual(io, { scans: 1, reads: 0, stats: 0 }, "one ordinary drain only");
+		assert.equal(currentLaunch.capture.toolDiagnostic(), undefined, "actual agent_start clears diagnostic after checking real tools");
+		assert.deepEqual(currentLaunch.capture.runtimeAcknowledgedExtensions()?.ids, ["runner-reviewed"]);
+		assert.match(readFileSync(transcriptPath, "utf8"), /runner mandatory report retained/);
+		expected = getReadonlySessionEvidence(children[0]);
+		if (!optedIn) { assert.equal(expected, undefined); return; }
+		assert.ok(expected);
+		assert.equal(expected.sessionFile, file);
+		assert.equal(expected.sessionId, JSON.parse(readFileSync(file, "utf8").split("\n")[0]).id);
+		currentLaunch = runnerLaunch(l, "baseten/model-b", configured);
+		setResponses([() => { assert.deepEqual(io, { scans: 1, reads: 0, stats: 0 }); return sse(); }]);
+		await run("Continue from retained results");
+		assert.deepEqual(io, { scans: 2, reads: 0, stats: 0 });
+		assert.equal(requests.length, 3);
+		assert.equal(requests[2].body.model, "model-b");
+		const payload = JSON.stringify(requests[2].body.messages);
+		for (const text of ["DISTINCTIVE_REAL_BUILTIN_READ_RESULT", "read-1", "Retain the completed read."]) assert.ok(payload.includes(text), text);
+		assert.equal(payload.match(/Runner original task: read marker.txt once/g)?.length, 1);
+		assert.match(readFileSync(file, "utf8"), /"stopReason":"error"/);
+	}, {}, true)));
+
+	for (const kind of ["completion replacement", "completion removal", "reporter replacement", "routing", "inheritance", "wait timeout", "default ambient"] as const) {
+		it(`keeps runner profile fail-closed: ${kind}`, async () => fixture(async ({ l, factory, captured }) => {
+			const built = runnerLaunch(l, "baseten/model-a", kind === "wait timeout" ? { waitToolDefaultTimeoutMs: 10 } : kind === "default ambient" ? { extensions: undefined } : {},
+				kind === "routing" ? { childIntercomTarget: "configured-child", orchestratorIntercomTarget: "configured-parent" }
+					: kind === "inheritance" ? { inheritedChildRuntime: { depth: 1, thinkingCeiling: "low" } } : {});
+			if (kind === "completion replacement") built.session.hooks[1] = { name: "pi-subagents:completion-intent", factory: (api) => api.on("session_start", () => {}) };
+			if (kind === "completion removal") built.session.hooks.pop();
+			const input = createReportedChildSessionInput(built);
+			if (kind === "reporter replacement") input.onExtensionError = () => {};
+			requestReadonlySessionEvidence(input);
+			const child = await factory.create(input);
+			assert.equal(captured[0].session.agent.streamFunction, captured[0].original);
+			await child.dispose();
+			assert.equal(getReadonlySessionEvidence(child), undefined);
+		}));
+	}
+
+	it("retains the configured runner watchdog and exact sink rather than certifying it", async () => fixture(async ({ l }) => {
+		const childWatchdog = resolveChildWatchdogConfig({ config: { ...DEFAULT_WATCHDOG_CONFIG, enabled: true, children: { ...DEFAULT_WATCHDOG_CONFIG.children, enabled: true } } });
+		assert.ok(childWatchdog);
+		const sink = () => {};
+		const built = buildRunnerChildLaunch({ agent: "reader", task: "read", sessionFile: (l.storage as { sessionFile: string }).sessionFile,
+			tools: ["read"], extensions: [], allowNestedSubagents: false, waitToolEnabled: false,
+			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false },
+			{ cwd: l.cwd, id: "runner-watchdog", flatIndex: 0 }, { sessionEnabled: true, childWatchdog, watchdogStatus: sink });
+		assert.equal(built.config.childWatchdog, childWatchdog);
+		assert.equal(built.config.watchdogStatus, sink);
+		assert.equal(isReadonlyChildHookProfile(built.session.hooks, built.config), false);
+	}));
+
+	it("vetoes replaced mandatory runner completion capture before guarded dispatch", async () => fixture(async ({ l, factory, requests, setResponses }) => {
+		const sourceInput = createReportedChildSessionInput(runnerLaunch(l));
+		requestReadonlySessionEvidence(sourceInput);
+		const child = await factory.create(sourceInput);
+		setResponses([() => sse(true), () => http(429)]);
+		await child.prompt("read marker.txt"); await child.dispose();
+		const receipt = getReadonlySessionEvidence(child); assert.ok(receipt);
+		const siblingInput = createReportedChildSessionInput(runnerLaunch(l, "baseten/model-b"));
+		requestReadonlySessionEvidence(siblingInput, receipt);
+		const sibling = await factory.create(siblingInput);
+		siblingInput.hooks[1] = { name: "pi-subagents:completion-intent", factory: () => {} };
+		await assert.rejects(() => sibling.prompt("Continue"));
+		await sibling.dispose();
+		assert.equal(requests.length, 2);
+	}));
 
 	for (const kind of ["empty preexisting", "corrupt preexisting", "appeared during open", "memory", "directory", "default"] as const) {
 		it(`does not certify fresh storage: ${kind}`, async () => fixture(async ({ l, factory, captured, setResponses }) => {

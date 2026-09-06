@@ -6,6 +6,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ChildWatchdogConfig, ChildWatchdogStatusEvent } from "../../watchdog/child-status.ts";
 import type { ThinkingLevel } from "../../shared/model-info.ts";
 import { intersectThinkingCeilings } from "../../shared/thinking-ceiling.ts";
@@ -114,6 +115,7 @@ export interface BuildInProcessChildLaunchInput {
 }
 
 export interface InProcessChildCapture {
+	completionIntentContext?(): Pick<ExtensionContext, "model" | "modelRegistry"> | undefined;
 	structuredOutput(): { called: boolean; value?: unknown; acceptanceReport?: unknown; acceptanceReportProvided: boolean };
 	toolDiagnostic(): ChildToolDiagnostic | undefined;
 	runtimeAcknowledgedExtensions(): RuntimeAcknowledgedChildExtensions | undefined;
@@ -129,7 +131,7 @@ export interface InProcessChildLaunch {
 	capabilityAudit?: SubagentCapabilityAudit;
 }
 
-/** Actual foreground create-input boundary. Evidence stays dormant pending scan-free lifecycle proof. */
+/** Actual host create-input boundary. Evidence remains explicitly opt-in and dormant in production. */
 export function createReportedChildSessionInput(launch: InProcessChildLaunch, transcriptWriter?: ChildTranscriptWriter): ChildSessionLaunch {
 	return withChildSessionErrorReporting(launch.session, transcriptWriter);
 }
@@ -269,7 +271,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		...(toolPlan.effectiveMcpTools.length > 0 ? { mcpDirectTools: toolPlan.effectiveMcpTools } : {}),
 		fast: input.fast === true,
 	};
-	const capturedHooks = createCapturedChildHooks(config);
+	const capturedHooks = createCapturedChildHooks(config, input.host === "runner");
 
 	const extensionPaths = toolPlan.extensionArgs.filter((extensionPath) => !isSubagentRuntimeExtensionPath(extensionPath));
 	const ambientExtensions = input.host === "runner" && !toolPlan.disableAmbientExtensions;
@@ -305,6 +307,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		config,
 		session,
 		capture: {
+			completionIntentContext: capturedHooks.completionIntentContext,
 			structuredOutput: () => ({ called: structuredCalled, value: structuredValue, acceptanceReport: structuredAcceptanceReport, acceptanceReportProvided: structuredAcceptanceProvided }),
 			toolDiagnostic: capturedHooks.toolDiagnostic,
 			runtimeAcknowledgedExtensions: capturedHooks.runtimeAcknowledgedExtensions,
