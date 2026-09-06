@@ -503,6 +503,8 @@ interface ExecutionContextData {
 	configToolTimeoutMs?: number;
 	toolBudget?: ResolvedToolBudget;
 	usageBudget?: UsageBudgetConfig;
+	/** Parent workflow owns this allowance; presence vetoes unverifiable child continuation. */
+	inheritedUsageBudget?: UsageBudgetConfig;
 	allowZeroToolBudget?: boolean;
 	configToolBudget?: ResolvedToolBudget;
 	contextPolicy: AgentDefaultContextPolicy;
@@ -4003,6 +4005,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			toolTimeoutMs: params.toolTimeoutMs,
 			configToolTimeoutMs: data.configToolTimeoutMs,
 			toolBudget: effectiveToolBudget.toolBudget,
+			usageBudget: data.usageBudget ?? data.inheritedUsageBudget,
 			capabilityCeiling: data.capabilityCeiling,
 			allowZeroToolBudget: data.allowZeroToolBudget && effectiveToolBudget.toolBudget === data.toolBudget,
 		}));
@@ -4141,6 +4144,7 @@ function duplicateSubagentCallResult(params: SubagentParamsLike): AgentToolResul
 }
 
 const workflowLaunchObservers = new WeakMap<object, (launch: { agent: string; sessionName?: string; sessionFile?: string; async: boolean; runId?: string }) => void>();
+const workflowOwnedUsageBudgets = new WeakMap<object, UsageBudgetConfig>();
 
 /**
  * Terminal-mission retention can remove a mission while its children still
@@ -4867,6 +4871,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		parentModelOverride?: ParentModel | null,
 	): Promise<AgentToolResult<Details>> => {
 		const workflowLaunchObserver = workflowLaunchObservers.get(params);
+		const inheritedUsageBudget = workflowOwnedUsageBudgets.get(params);
 		const delegatedThinkingOverride = delegatedThinkingOverrides.get(params);
 		const allowZeroToolBudget = delegatedZeroToolBudgets.has(params);
 		const delegatedExecution = delegatedExecutions.has(params);
@@ -5579,6 +5584,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										deps.asyncByDefault,
 									);
 									preparedChildParams = childRequest;
+									if (workflowUsageBudget.budget) workflowOwnedUsageBudgets.set(childRequest, workflowUsageBudget.budget);
 									workflowLaunchObservers.set(childRequest, (launch) => {
 										const step = status.steps?.find((candidate) => candidate.workflowKey === key);
 										if (step) {
@@ -5843,6 +5849,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								deps.asyncByDefault,
 							);
 							preparedChildParams = childRequest;
+							if (workflowUsageBudget.budget) workflowOwnedUsageBudgets.set(childRequest, workflowUsageBudget.budget);
 							if (delegatedWorkflowPermit) {
 								if (childRequest.async !== false) throw new Error("Workflow child permit supports one foreground child only.");
 								const childCwd = resolveRequestedCwd(workflowCwd, childRequest.cwd);
@@ -6983,6 +6990,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			timeoutMs: foregroundTimeout.timeoutMs,
 			toolBudget: runToolBudget.toolBudget,
 			usageBudget: usageBudget.budget,
+			inheritedUsageBudget,
 			allowZeroToolBudget,
 			configToolBudget: configToolBudget.toolBudget,
 			configToolTimeoutMs: deps.config.toolTimeoutMs,

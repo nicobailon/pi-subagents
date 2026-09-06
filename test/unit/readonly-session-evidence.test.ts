@@ -6,11 +6,13 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, appendFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { createDefaultChildSessionFactory, type ChildSession, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
+import { createDefaultChildSessionFactory, setChildSessionFactory, type ChildSession, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
 import { getReadonlySessionEvidence, requestReadonlySessionEvidence, validateReadonlySessionCheckpoint, type SettledReadonlyEvidence } from "../../src/runs/shared/readonly-session-evidence.ts";
 import { createChildHooks, isReadonlyChildHookProfile } from "../../src/runs/shared/child-hooks.ts";
 import { buildInProcessChildLaunch, createReportedChildSessionInput } from "../../src/runs/shared/child-launch.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
+import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
+import { flushPersist, getExcludedCount, getExclusionsFilePath } from "../../src/runs/shared/model-exclusions.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 import { registerBackgroundWorkProvider } from "../../src/api/background-work.ts";
 import { DIRS } from "../../src/shared/types.ts";
@@ -26,6 +28,34 @@ it("has no duck-typed receipt or caller-issued checkpoint", () => {
 	const fake = { continuationEvidence: { status: 429 } } as unknown as ChildSession;
 	assert.equal(getReadonlySessionEvidence(fake), undefined);
 	assert.equal(validateReadonlySessionCheckpoint({ sessionFile: "not-read" } as SettledReadonlyEvidence), false);
+});
+
+it("ordinary startup fallback retains its fresh per-attempt timeout without a caller deadline", async () => {
+	const realNow = Date.now;
+	const start = realNow();
+	let creates = 0;
+	let listener: ((event: any) => void) | undefined;
+	const agent: AgentConfig = { name: "reader", description: "Read", systemPrompt: "Read", source: "project", filePath: "reader.md", model: "mock/timeout-a", fallbackModels: ["mock/timeout-b"] };
+	try {
+		const result = await runSync(process.cwd(), [agent], "reader", "Summarize", {
+			runId: "ordinary-startup-deadline", timeoutMs: 1000,
+			childSessionFactory: {
+				async create() {
+					if (++creates === 1) { Date.now = () => start + 2000; throw new Error("503 service unavailable"); }
+					return {
+						subscribe(callback) { listener = callback; return () => {}; },
+						async prompt() { listener?.({ type: "message_end", message: { role: "assistant", provider: "mock", model: "timeout-b", stopReason: "stop", content: [{ type: "text", text: "done" }] } }); },
+						async steer() {}, async followUp() {}, async abort() {}, async dispose() {},
+						messages: [], sessionFile: undefined, sessionId: "fake", modelId: "mock/timeout-b",
+					};
+				},
+				async dispose() {},
+			},
+		});
+		assert.equal(creates, 2);
+		assert.equal(result.exitCode, 0, result.error);
+		assert.notEqual(result.timedOut, true);
+	} finally { Date.now = realNow; }
 });
 
 it("rejects runtime and wait accessors without invoking getters during admission or revalidation", () => {
@@ -82,9 +112,9 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 		return pi;
 	}
 	const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
-	function sse(tool = false): Response {
+	function sse(tool = false, tokens = 0): Response {
 		const delta = tool ? { tool_calls: [{ index: 0, id: "read-1", type: "function", function: { name: "read", arguments: JSON.stringify({ path: "marker.txt" }) } }] } : { content: "complete" };
-		const chunk = { id: "synthetic", object: "chat.completion.chunk", created: 1, model: "model-a", choices: [{ index: 0, delta, finish_reason: tool ? "tool_calls" : "stop" }] };
+		const chunk = { id: "synthetic", object: "chat.completion.chunk", created: 1, model: "model-a", choices: [{ index: 0, delta, finish_reason: tool ? "tool_calls" : "stop" }], usage: { prompt_tokens: tokens, completion_tokens: tokens, total_tokens: tokens * 2 } };
 		return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
 	}
 	function http(status: number): Response {
@@ -100,7 +130,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 		const previousFetch = globalThis.fetch;
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ retry: { enabled: false, provider: { maxRetries: 0 } }, compaction: { enabled: false }, ...settings }));
-		writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { baseten: { baseUrl: "https://synthetic.invalid/configured/v1", apiKey: "fixture-key", headers: { "X-Fixture": "preserved" }, models: ["model-a", "model-b"].map((id) => ({ id, name: id, api: "openai-completions", reasoning: false, input: ["text"], contextWindow: 128000, maxTokens: 512, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })) } } }));
+		writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { baseten: { baseUrl: "https://synthetic.invalid/configured/v1", apiKey: "fixture-key", headers: { "X-Fixture": "preserved" }, models: ["model-a", "model-b", "model-c"].map((id) => ({ id, name: id, api: "openai-completions", reasoning: false, input: ["text"], contextWindow: 128000, maxTokens: 512, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })) } } }));
 		writeFileSync(join(cwd, "marker.txt"), "DISTINCTIVE_REAL_BUILTIN_READ_RESULT");
 		const l = launch(cwd);
 		l.hooks = createChildHooks(l.runtime);
@@ -157,42 +187,134 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 		});
 	}
 
-	it("keeps actual foreground evidence dormant without admission/dispatch index scans and preserves ordinary drain", async () => fixture(async ({ l, factory, captured, setResponses, cwd }) => {
-		const file = (l.storage as { sessionFile: string }).sessionFile;
-		const agent: AgentConfig = {
-			name: "reader", description: "Read only", systemPrompt: "Read marker.txt", systemPromptMode: "append",
-			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
-			tools: ["read"], allowNestedSubagents: false, source: "project", filePath: join(cwd, "reader.md"), model: "baseten/model-a",
-		};
-		const originalReaddir = fs.readdirSync;
-		let indexScans = 0;
-		let child: ChildSession | undefined;
-		fs.readdirSync = ((...args: Parameters<typeof fs.readdirSync>) => {
-			if (String(args[0]) === join(DIRS.async, ".active-runs")) indexScans++;
-			return originalReaddir(...args);
-		}) as typeof fs.readdirSync;
-		syncBuiltinESMExports();
-		try {
-			setResponses([() => { assert.equal(indexScans, 0, "no initial dispatch scan"); return sse(true); },
-				() => { assert.equal(indexScans, 0, "no subsequent dispatch scan"); return http(429); }]);
-			await runSync(cwd, [agent], "reader", "Read marker.txt once", {
-				cwd, sessionFile: file, runId: "dormant-reader", waitToolEnabled: false,
+	for (const scenario of ["success", "retained", "cross-provider-skip", "no-sibling", "second429", "sibling-startup", "sibling-abort", "unverified-sibling", "wrong-model", "changed-file", "missing-file", "cancel-at-create", "deadline-at-create", "usage-budget", "tool-budget", "wait-profile", "directory", "text429", "stop-at-settlement", "steer-at-settlement", "smaller-model"] as const) {
+		it(`actual foreground owned continuation loop: ${scenario}`, async (test) => fixture(async ({ pi, l, factory, requests, setResponses, captured, cwd, agentDir }) => {
+			const file = (l.storage as { sessionFile: string }).sessionFile;
+			if (scenario === "retained") {
+				const manager = pi.SessionManager.open(file, undefined, cwd);
+				manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "Earlier billed answer" }], api: "openai-completions", provider: "baseten", model: "model-a", stopReason: "stop", timestamp: 3, usage: { ...usage, input: 100, output: 100, totalTokens: 200 } });
+			}
+			const exclusionCount = getExcludedCount();
+			flushPersist();
+			const exclusionFile = getExclusionsFilePath();
+			const exclusionBefore = existsSync(exclusionFile) ? readFileSync(exclusionFile, "utf8") : undefined;
+			if (scenario === "smaller-model") {
+				const config = JSON.parse(readFileSync(join(agentDir, "models.json"), "utf8"));
+				config.providers.baseten.models[1].contextWindow = 100;
+				writeFileSync(join(agentDir, "models.json"), JSON.stringify(config));
+			}
+			const agent: AgentConfig = {
+				name: "reader", description: "Read only", systemPrompt: "Retain completed reads.", systemPromptMode: "append",
+				inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+				tools: ["read"], allowNestedSubagents: false, source: "project", filePath: join(cwd, "reader.md"),
+				model: "baseten/model-a", fallbackModels: scenario === "no-sibling" ? ["openai/gpt-4o"] : scenario === "cross-provider-skip" ? ["openai/gpt-4o", "baseten/model-b", "baseten/model-c"] : ["baseten/model-b", "baseten/model-c"],
+			};
+			const controller = new AbortController();
+			const children: ChildSession[] = [];
+			let creates = 0;
+			const createMs: number[] = [];
+			const disposeMs: number[] = [];
+			const realNow = Date.now;
+			const start = Date.now();
+			setResponses([() => sse(true, 7), () => {
+				if (scenario === "text429") throw new Error("429 synthetic rate limit");
+				return http(429);
+			}, () => scenario === "second429" ? http(429) : sse(false, 11)]);
+			const result = await runSync(cwd, [agent], "reader", "ORIGINAL_TASK read marker.txt once", {
+				cwd, runId: "owned-foreground", sessionDir: cwd, sessionFile: scenario === "directory" ? undefined : file,
+				waitToolEnabled: scenario === "wait-profile", signal: controller.signal,
+				...(scenario === "deadline-at-create" ? { timeoutMs: 10000 } : {}),
+				...(scenario === "usage-budget" ? { usageBudget: { tokens: { hard: 100000 } } } : {}),
+				...(scenario === "tool-budget" ? { toolBudget: { hard: 10, block: ["read"] } } : {}),
 				childSessionFactory: { ...factory, async create(input) {
-					assert.equal(typeof input.onExtensionError, "function");
-					child = await factory.create(input); // Deliberately no test opt-in.
-					assert.equal(indexScans, 0, "no evidence admission/observation scans");
-					assert.equal(captured[0].session.agent.streamFunction, captured[0].original);
+					const createStart = performance.now();
+					creates++;
+					if (creates === 2) {
+						assert.ok(getReadonlySessionEvidence(children[0]), "proof exists before sibling creation");
+						if (scenario === "sibling-startup") throw new Error("503 service unavailable");
+						if (scenario === "wrong-model") input.model = "baseten/model-c";
+						if (scenario === "changed-file") writeFileSync(file, readFileSync(file, "utf8") + "{}\n");
+						if (scenario === "missing-file") rmSync(file);
+						if (scenario === "cancel-at-create") controller.abort();
+					}
+					const child = await factory.create(input);
+					createMs.push(performance.now() - createStart);
+					const realDispose = child.dispose.bind(child);
+					child.dispose = async () => { const start = performance.now(); await realDispose(); disposeMs.push(performance.now() - start); };
+					children.push(child);
+					if (creates === 2) {
+						assert.equal(child.sessionId, children[0].sessionId);
+						assert.equal(child.sessionFile, children[0].sessionFile);
+						if (scenario === "sibling-abort") child.prompt = async () => { throw new Error("aborted"); };
+						if (scenario === "unverified-sibling") return { ...child };
+						if (scenario === "deadline-at-create") {
+							Date.now = () => start + 20000;
+						}
+					}
+					if (creates === 1 && (scenario === "stop-at-settlement" || scenario === "steer-at-settlement")) {
+						const dispose = child.dispose.bind(child);
+						child.dispose = async () => {
+							await dispose();
+							if (scenario === "stop-at-settlement") controller.abort();
+							else await child.steer("intervening steering").catch(() => {});
+						};
+					}
 					return child;
 				} },
-			});
-			assert.ok(child);
-			assert.equal(getReadonlySessionEvidence(child), undefined, "read/429 must not activate dormant proof");
-			assert.ok(indexScans > 0, "ordinary agent_end drain still queries the index; not a global no-I/O claim");
-		} finally {
-			fs.readdirSync = originalReaddir;
-			syncBuiltinESMExports();
-		}
-	}, {}, true));
+			}).finally(() => { Date.now = realNow; });
+			const denied = ["no-sibling", "usage-budget", "tool-budget", "wait-profile", "directory", "text429", "stop-at-settlement", "steer-at-settlement", "smaller-model"].includes(scenario);
+			assert.equal(creates, denied ? 1 : 2, result.error);
+			assert.equal(result.modelAttempts?.length, denied ? 1 : 2);
+			assert.equal(requests.length, ["success", "retained", "cross-provider-skip", "second429"].includes(scenario) ? 3 : 2, "no dispatch after a handoff veto and no third model dispatch");
+			if (scenario === "success" || scenario === "retained" || scenario === "cross-provider-skip") {
+				assert.equal(result.exitCode, 0, result.error);
+				assert.deepEqual(result.attemptedModels, ["baseten/model-a", "baseten/model-b"]);
+				assert.equal(requests[2].body.model, "model-b");
+				const payload = JSON.stringify(requests[2].body.messages);
+				for (const text of ["DISTINCTIVE_REAL_BUILTIN_READ_RESULT", "read-1", "Do not restart or repeat completed work"]) assert.ok(payload.includes(text), text);
+				if (scenario === "retained") for (const text of ["Earlier context", "Earlier answer"]) assert.ok(payload.includes(text), text);
+				assert.equal(payload.match(/ORIGINAL_TASK/g)?.length, 1);
+				const diskMessages = readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((entry) => entry.type === "message");
+				assert.equal(JSON.stringify(diskMessages).match(/ORIGINAL_TASK/g)?.length, 1, "task only in retained messages; session-name metadata may also retain it");
+				assert.match(readFileSync(file, "utf8"), /"stopReason":"error"/);
+				assert.equal(result.usage.input, 18);
+				assert.equal(result.usage.output, 18);
+				assert.equal(result.progressSummary?.toolCount, 1);
+				assert.equal(captured.length, 2);
+				test.diagnostic(JSON.stringify({ scenario, historyBytes: Buffer.byteLength(readFileSync(file, "utf8")), createMs, shutdownAndValidationMs: disposeMs, logicalMs: Date.now() - start }));
+			} else assert.notEqual(result.exitCode, 0, "negative cannot report success");
+			flushPersist();
+			assert.equal(getExcludedCount(), exclusionCount);
+			assert.equal(existsSync(exclusionFile) ? readFileSync(exclusionFile, "utf8") : undefined, exclusionBefore, "midrun recovery never changes exclusions");
+		}, {}, scenario !== "retained"));
+	}
+
+	for (const budgetOwner of ["none", "single", "workflow"] as const) {
+		it(`actual executor propagates ${budgetOwner} configured usage budget`, async () => fixture(async ({ factory, cwd, setResponses }) => {
+			const agent: AgentConfig = { name: "reader", description: "Read", systemPrompt: "Read marker.txt", systemPromptMode: "append", tools: ["read"], extensions: [], allowNestedSubagents: false, inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false, source: "project", filePath: join(cwd, "reader.md"), model: "baseten/model-a", fallbackModels: ["baseten/model-b"] };
+			const children: ChildSession[] = [];
+			const inputs: ChildSessionLaunch[] = [];
+			setChildSessionFactory({ ...factory, async create(input) { inputs.push(input); const child = await factory.create(input); children.push(child); return child; } });
+			const state = { baseCwd: cwd, currentSessionId: null, asyncJobs: new Map(), foregroundRuns: new Map(), foregroundControls: new Map(), lastForegroundControlId: null, pendingForegroundControlNotices: new Map(), cleanupTimers: new Map(), lastUiContext: null, poller: null, completionSeen: new Map(), watcher: null, watcherRestartTimer: null, resultFileCoalescer: { schedule: () => false, clear() {} } };
+			try {
+				const executor = createSubagentExecutor({
+					pi: { events: { emit() {}, on() { return () => {}; } }, getSessionName() { return "parent"; } } as any,
+					state: state as any, config: { maxSubagentDepth: 2, control: {}, intercomBridge: { mode: "off" } } as any,
+					asyncByDefault: false, waitToolEnabled: false, tempArtifactsDir: join(cwd, "artifacts"), getSubagentSessionRoot: () => join(cwd, "sessions"), expandTilde: (value) => value,
+					discoverAgents: () => ({ agents: [agent] }),
+				});
+				setResponses([() => sse(true), () => http(429), () => sse()]);
+				const single = { agent: "reader", task: "Read marker.txt once", async: false, output: false };
+				const request = budgetOwner === "workflow" ? { workflowScript: `return await runs.run('reader', ${JSON.stringify(single)});`, async: false, mission: false, usageBudget: { tokens: { hard: 100000 } } } : { ...single, ...(budgetOwner === "single" ? { usageBudget: { tokens: { hard: 100000 } } } : {}) };
+				const result = await executor.execute("budget-owner", request, undefined, undefined, { cwd, hasUI: false, sessionManager: { getSessionId() { return "parent"; }, getSessionFile() { return null; } }, modelRegistry: { getAvailable() { return ["model-a", "model-b"].map((id) => ({ provider: "baseten", id })); } }, model: { provider: "baseten", id: "model-a" } } as any);
+				assert.ok(children[0] && getReadonlySessionEvidence(children[0]), JSON.stringify(inputs));
+				assert.equal(children.length, budgetOwner === "none" ? 2 : 1, JSON.stringify(result));
+			} finally {
+				setChildSessionFactory(undefined);
+				for (const timer of state.cleanupTimers.values()) clearTimeout(timer);
+			}
+		}, {}, true));
+	}
 
 	it("certifies explicitly test-opted-in actual foreground and sibling with no admission/dispatch/settlement native scans", async () => countAsyncIO(async (io) => fixture(async ({ l, factory, captured, requests, setResponses, cwd }) => {
 		const file = (l.storage as { sessionFile: string }).sessionFile;
@@ -215,8 +337,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 			assert.deepEqual(input.runtime.requiredTools, ["read"], "actual no-skills requireReadTool=false output is not modified");
 			assert.equal(typeof input.runtime.toolDiagnostic, "function");
 			assert.equal(typeof input.runtime.runtimeAcknowledgements, "function");
-			// Both initial evidence and guarded sibling orchestration are test-only.
-			// Production construction retains reporting but must not opt in automatically.
+			// This older two-call seam fixture additionally tests explicit guarded handoff.
 			requestReadonlySessionEvidence(input, expected);
 			const child = await factory.create(input);
 			assert.deepEqual(io, beforeCreate, "no native index or status read at opted-in create");

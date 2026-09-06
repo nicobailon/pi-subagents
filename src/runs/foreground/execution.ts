@@ -58,6 +58,9 @@ import { effectiveToolTimeoutMs, formatToolTimeoutMessage, resolveToolTimeoutMs,
 import { evaluateCompletionMutationGuard, expectsImplementationMutation, hasMutationToolCapability, validateImplementationToolContract } from "../shared/completion-guard.ts";
 import { planCompletionEvidence } from "../shared/completion-evidence.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
+import { planReadonlyModelContinuation, type LogicalRecoveryState } from "../shared/readonly-model-continuation.ts";
+import { getReadonlySessionEvidence, requestReadonlySessionEvidence, type SettledReadonlyEvidence } from "../shared/readonly-session-evidence.ts";
+import { getReadonlyChildModels } from "../shared/child-session.ts";
 import { arbitrateCompletionGuardRescue } from "../shared/llm-intent-arbiter.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
@@ -340,6 +343,7 @@ function structuredDelegationProgressChanged(
 
 const AFTER_COMPACTION_SETTLEMENT = Symbol("afterCompactionSettlement");
 type AbortRecoverySingleResult = SingleResult & { [AFTER_COMPACTION_SETTLEMENT]?: true };
+const settledReadonlySource = new WeakMap<SingleResult, ChildSession>();
 
 const STOPPED_BEFORE_COMPLETION_ERROR = "Subagent stopped before completion.";
 
@@ -365,6 +369,9 @@ async function runSingleAttempt(
 		orcaProgressTab?: OrcaProgressTab;
 		launchWarnings: { emitted: boolean };
 		verifyModel: boolean;
+		readonlyExpected?: SettledReadonlyEvidence;
+		readonlyModel?: string;
+		readonlyHandoffAllowed?: () => boolean;
 	},
 ): Promise<SingleResult> {
 	const effectiveThinking = options.thinkingOverride ?? agent.thinking;
@@ -781,7 +788,10 @@ async function runSingleAttempt(
 				// JSONL artifact flush is best effort.
 			});
 			// Report the run only after the child's extensions have shut down.
-			void Promise.resolve().then(() => session?.dispose()).catch(() => undefined).then(() => resolve(code));
+			void Promise.resolve().then(() => session?.dispose()).catch(() => undefined).then(() => {
+				if (session && getReadonlySessionEvidence(session)) settledReadonlySource.set(result, session);
+				resolve(code);
+			});
 		};
 
 		const drainPendingControlEvents = (): ControlEvent[] | undefined => {
@@ -1357,7 +1367,10 @@ async function runSingleAttempt(
 
 		void (async () => {
 			try {
-				const created = await childSessions.create(createReportedChildSessionInput(launch, shared.transcriptWriter));
+				const input = createReportedChildSessionInput(launch, shared.transcriptWriter);
+				requestReadonlySessionEvidence(input, shared.readonlyExpected);
+				if (shared.readonlyHandoffAllowed && !shared.readonlyHandoffAllowed()) throw new Error("Read-only continuation handoff vetoed.");
+				const created = await childSessions.create(input);
 				if (lifecycleFinished) {
 					void created.dispose();
 					return;
@@ -1369,6 +1382,10 @@ async function runSingleAttempt(
 					abortChild();
 				}
 				options.onChildSession?.({ steer: (text) => created.steer(text), followUp: (text) => created.followUp(text) });
+				const actualReadonlyModel = shared.readonlyExpected && getReadonlyChildModels(created)?.current;
+				if (shared.readonlyExpected && (!actualReadonlyModel || actualReadonlyModel.fullId !== shared.readonlyModel
+					|| actualReadonlyModel.api !== shared.readonlyExpected.api || created.modelId !== shared.readonlyModel || abortedBySignal || interruptedByControl || result.timedOut
+					|| !shared.readonlyHandoffAllowed?.())) throw new Error("Read-only continuation handoff vetoed.");
 				await created.prompt(`Task: ${task}`);
 				settle(undefined);
 			} catch (error) {
@@ -1884,16 +1901,29 @@ async function runSyncCompletionInner(
 	};
 	let lastResult: SingleResult | undefined;
 	const modelsToTry = candidates.length > 0 ? candidates : [undefined];
-	let abortRecoveryAttempted = false;
+	let recoveryState: LogicalRecoveryState = "unused";
+	let readonlyExpected: SettledReadonlyEvidence | undefined;
+	let readonlyModel: string | undefined;
+	let readonlySource: ChildSession | undefined;
+	// Ordinary startup retries retain their per-attempt timeout. Only retained
+	// continuation uses the original logical deadline, never a renewed allowance.
+	const continuationDeadline = options.deadlineAt ?? (options.timeoutMs === undefined ? undefined : Date.now() + options.timeoutMs);
+	const readonlyHandoffAllowed = () => !options.signal?.aborted && !options.interruptSignal?.aborted
+		&& !intercomDetached && !detachedReason && !options.workflowChildPermitLaunch
+		&& options.usageBudget === undefined && options.toolBudget === undefined
+		&& (continuationDeadline === undefined || Date.now() < continuationDeadline)
+		&& (!readonlySource || getReadonlySessionEvidence(readonlySource) === readonlyExpected)
+		&& !readonlySource?.detached && !readonlySource?.shutDown;
 	let nextAttemptTask = taskWithAcceptance;
 	modelAttemptsLoop: for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
 		const candidate = modelsToTry[modelIndex];
 		// The inner loop re-runs the same candidate at most once, for abort recovery.
 		for (;;) {
-			const recoveringAbort = abortRecoveryAttempted;
+			const recoveringAbort = recoveryState === "abort-recovery";
 			const attemptTask = nextAttemptTask;
 			const verifyModel = Boolean(candidate) && !(options.modelOverrideFromParent && modelIndex === 0);
 			const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
+			if (recoveryState === "readonly-continuation") attemptOptions.deadlineAt = continuationDeadline;
 			const result = await runSingleAttempt(runtimeCwd, agent, attemptTask, candidate, attemptOptions, {
 				sessionEnabled,
 				systemPrompt,
@@ -1911,6 +1941,9 @@ async function runSyncCompletionInner(
 				orcaProgressTab,
 				launchWarnings,
 				verifyModel,
+				readonlyExpected,
+				readonlyModel,
+				readonlyHandoffAllowed: readonlyExpected ? readonlyHandoffAllowed : undefined,
 			});
 			lastResult = result;
 			if (!recoveringAbort) {
@@ -1929,6 +1962,46 @@ async function runSyncCompletionInner(
 				usage: { ...result.usage },
 			};
 			modelAttempts.push(attempt);
+			// A consumed retained continuation is terminal even on a startup error or abort.
+			if (recoveryState === "readonly-continuation") break modelAttemptsLoop;
+			const source = settledReadonlySource.get(result);
+			const evidence = source && getReadonlySessionEvidence(source);
+			const models = source && getReadonlyChildModels(source);
+			// Deny non-text retained inputs, including unknown blocks. Count bytes once,
+			// not restored usage (the latter belongs to earlier attempts/runs).
+			const textOnly = evidence && (JSON.parse(evidence.contextJson) as Array<{ role: string; content: unknown }>).every((message) =>
+				typeof message.content === "string" || Array.isArray(message.content) && message.content.every((block) =>
+					block?.type === "text" || message.role === "assistant" && block?.type === "toolCall"));
+			const retainedBytes = evidence && models ? Buffer.byteLength(evidence.contextJson) + models.requestBytes : Infinity;
+			const resolvedCandidates = modelsToTry.map((reference, index) => index === modelIndex ? models?.current : reference ? models?.resolve(reference) : undefined);
+			const continuation = planReadonlyModelContinuation({
+				source, recoveryState, currentIndex: modelIndex,
+				candidates: resolvedCandidates.map((resolved, index) => {
+					// A conservative byte ceiling includes serialized history, actual system
+					// prompt/tools, framing/continuation headroom and full output allowance.
+					const required = resolved?.maxTokens ? retainedBytes + 4096 + resolved.maxTokens : Infinity;
+					return {
+						resolved: resolved?.api ? { provider: resolved.provider, model: resolved.id, api: resolved.api } : undefined,
+						tried: index <= modelIndex,
+						compatibility: textOnly && resolved?.input?.includes("text") && (resolved.contextWindow ?? 0) >= required ? "compatible" as const : "unknown" as const,
+					};
+				}),
+				lifecycleAllowsContinuation: !attemptSucceeded && readonlyHandoffAllowed() && !result.stopped && !result.detached && !result.interrupted && !result.timedOut,
+				effectsAllowContinuation: !result.structuredOutputFailed && !result.toolBudgetBlocked && !result.progress?.currentTool
+					&& !result.outputSaveError && (!result.effects?.fileMutation || result.effects.fileMutation.status === "not-applicable"),
+				budget: options.toolBudget ? "tool-budget-configured" : options.usageBudget ? "unknown" : "unconfigured",
+				knownContextOverflow: Boolean(result.contextOverflow || isContextOverflow(result.error)),
+			});
+			if (continuation.kind === "continue") {
+				recoveryState = continuation.recoveryState; // consume BEFORE any sibling creation
+				readonlyExpected = continuation.expected;
+				readonlySource = source;
+				readonlyModel = resolvedCandidates[continuation.candidateIndex]?.fullId;
+				nextAttemptTask = continuation.prompt;
+				attemptNotes.push(`[readonly-continuation] ${attempt.model} failed with HTTP 429 after read-only progress; continuing retained session once with ${readonlyModel}.`);
+				modelIndex = continuation.candidateIndex - 1;
+				continue modelAttemptsLoop;
+			}
 			if (!attemptSucceeded) {
 				const afterCompactionSettlement = (result as AbortRecoverySingleResult)[AFTER_COMPACTION_SETTLEMENT];
 				const abortRecovery = planAbortRecovery({
@@ -1936,7 +2009,7 @@ async function runSyncCompletionInner(
 					error: result.error,
 					processSignal: result.processSignal,
 					sessionAvailable: Boolean(options.sessionFile && existsSync(options.sessionFile)),
-					alreadyResumed: abortRecoveryAttempted,
+					alreadyResumed: recoveryState !== "unused",
 					stopped: result.stopped || result.detached || options.signal?.aborted,
 					interrupted: result.interrupted || intercomDetached || options.interruptSignal?.aborted,
 					timedOut: result.timedOut,
@@ -1948,7 +2021,7 @@ async function runSyncCompletionInner(
 					afterCompactionSettlement,
 				});
 				if (abortRecovery.action === "resume") {
-					abortRecoveryAttempted = true;
+					recoveryState = "abort-recovery";
 					nextAttemptTask = abortRecovery.prompt;
 					attemptNotes.push("[abort-recovery] provider/transport abort after useful progress; resuming the retained child session once.");
 					continue;

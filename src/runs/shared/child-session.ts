@@ -13,6 +13,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "../../shared/utils.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import { prepareReadonlySessionEvidence } from "./readonly-session-evidence.ts";
+import { toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
+
+// Private runtime authority for host continuation planning; injected factories have none.
+const readonlyModels = new WeakMap<ChildSession, { current: ModelInfo; resolve(reference: string): ModelInfo | undefined; requestBytes: number }>();
+export function getReadonlyChildModels(child: ChildSession) {
+	return readonlyModels.get(child);
+}
 
 export interface ChildSessionEvent {
 	type: string;
@@ -302,6 +309,16 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				get sessionId() { return session.sessionId; },
 				get modelId() { return session.model ? `${session.model.provider}/${session.model.id}` : undefined; },
 			};
+			if (evidence && session.model) readonlyModels.set(child, {
+				current: toModelInfo(session.model),
+				requestBytes: Buffer.byteLength(session.systemPrompt) + Buffer.byteLength(JSON.stringify(session.agent.state.tools)),
+				resolve(reference) {
+					try {
+						const resolved = pi.resolveCliModel({ cliModel: reference, modelRuntime });
+						return !resolved.error && resolved.model ? toModelInfo(resolved.model) : undefined;
+					} catch { return undefined; }
+				},
+			});
 			live.add(child);
 			return child;
 		},
