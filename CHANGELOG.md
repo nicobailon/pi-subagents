@@ -4,6 +4,7 @@
 
 ### Added
 - Let trusted extensions register session-scoped named workflows with validated arguments and exact host-command grants (#1907).
+- Add code-owned `agy-writer` external CLI adapter for the Antigravity CLI (agy), covering accept-edits mode with stream-json parsing, launch preflight, env allowlisting, and a maintainer writer smoke. Workspace-write describes intended access, not enforced filesystem confinement. No read-only `agy` adapter is shipped because experiments did not establish a reliable read-only boundary, including runs with restrictive permission settings.
 
 ### Fixed
 - Resolve undici from the official npm registry in the lockfile for npm 12 compatibility (#1935). Thanks to [@chem](https://github.com/chem).

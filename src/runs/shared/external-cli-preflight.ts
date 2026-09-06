@@ -80,7 +80,9 @@ function probeWithTimeout(binaryPath: string, args: readonly string[], env: Node
 	});
 	if (result.error) throw new Error(`External CLI ${label} preflight failed: ${result.error.message}`, { cause: result.error });
 	if (result.status !== 0) throw new Error(`External CLI ${label} preflight exited with code ${result.status}: ${(result.stderr || result.stdout).trim()}`);
-	return result.stdout.trim();
+	// Some CLIs (Go `flag`-style, e.g. agy) print --help to stderr while
+	// --version stays on stdout. Fall back to stderr when stdout is empty.
+	return result.stdout.trim() || (result.stderr ?? "").trim();
 }
 
 function narrowPositiveInteger(value: number | undefined, ceiling: number, label: string): number {

@@ -6,6 +6,7 @@ export const BUILTIN_AGENT_NAMES = [
 	"codex-exec-writer",
 	"cursor-agent",
 	"cursor-agent-writer",
+	"agy-writer",
 	"delegate",
 	"oracle",
 	"researcher",

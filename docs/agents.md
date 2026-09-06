@@ -173,6 +173,38 @@ node --experimental-strip-types --import ./test/support/register-loader.mjs \
 
 The read-only smoke must report `writeCanaryExists: false`. The writer smoke must report `writeCanaryMatches: true`. Both reports record `workspaceTrust: "operator-managed-saved"`, confirm that the external prompt root was added, and include startup duration and terminal proof without raw protocol output, prompts, or credentials. A trust-required error remains terminal; the harness does not retry with a trust, force, or yolo flag.
 
+The built-in `agy-writer` profile is the supported agy (Antigravity CLI) workspace-editing one-shot mode. It requires an installed agy CLI that is already authenticated through its normal local login. Workspace trust and tool permissions remain operator-managed in agy settings. The adapter owns `agy --input-format text --output-format stream-json --mode accept-edits` argv; it never passes `--dangerously-skip-permissions`, `--continue`, `--conversation`, or `--mode plan`. User profiles cannot add argv. Its `workspace-write` metadata describes intended access; the adapter does not establish a filesystem sandbox or guarantee that writes are confined to the workspace.
+
+| Profile | Access | agy mode |
+|---|---|---|
+| `agy-writer` | Explicit workspace edits | `accept-edits` |
+
+Run it asynchronously:
+
+```text
+Use agy-writer to make the requested workspace changes.
+```
+
+There is deliberately no read-only `agy` adapter. Local experiments could not establish a reliably enforced read-only contract for `--mode plan`: writes occurred even in runs with restrictive permission settings seeded. Neither plan mode nor those settings are a proven read-only boundary for this integration, so it makes no read-only capability claim.
+
+Launch preflight validates `agy --version` and `agy --help` only when a run starts; a capabilities listing is a passive PATH lookup only. A run succeeds only when bounded valid stream-json contains a `result` event with `status: SUCCESS` and a non-empty `response`. Error results, malformed JSON, output after the terminal event, and EOF before result fail closed.
+
+Maintainers can collect real smoke evidence without making it part of the normal test suite:
+
+```bash
+PI_SUBAGENTS_AGY_SMOKE=1 \
+PI_SUBAGENTS_AGY_SMOKE_HOME="$HOME" \
+PI_SUBAGENTS_AGY_SMOKE_WORKSPACE=/absolute/path/to/disposable-trusted-workspace \
+PI_SUBAGENTS_AGY_COMMAND="$(mise which agy)" \
+PI_SUBAGENTS_AGY_SMOKE_REPORT=/tmp/pi-subagents-agy-smoke.json \
+node --experimental-strip-types --import ./test/support/register-loader.mjs \
+  --test test/integration/agy-smoke.test.ts
+```
+
+Set `PI_SUBAGENTS_AGY_SMOKE_HOME` to an existing CLI home with working agy authentication and settings, and `PI_SUBAGENTS_AGY_SMOKE_WORKSPACE` to an existing disposable workspace already trusted in those settings. The home override applies only to the CLI child; the test process retains its isolated home. The harness does not copy credentials or seed permission settings. It refuses an existing `pi-subagents-agy-write-canary.txt` and removes its canary after the run. On mise hosts, the command override selects the installed binary directly.
+
+The writer smoke must complete successfully and report `writeCanaryMatches: true`. This proves the integration can create the requested file content; it does not prove permission boundaries or workspace confinement. Quota failures, authentication failures, and other unsuccessful runs are not evidence of blocked writes.
+
 Native `oracle` runs inside Pi and can use its configured read tools. The Claude profiles send the assembled prompt to the local Claude Code CLI through stdin. An external-job agent sends the assembled prompt to its registered provider. Provider options and a prompt digest are persisted in Pi run state. The prompt text is delivered through the local host bridge to the provider and is not stored in the public result payload. Do not place secrets in advisory prompts unless the target provider is approved to receive them.
 
 ### External-job state table

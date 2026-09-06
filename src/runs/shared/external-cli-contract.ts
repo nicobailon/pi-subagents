@@ -29,6 +29,7 @@ export const CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS = [
 	"claude-code-writer",
 	"cursor-agent",
 	"cursor-agent-writer",
+	"agy-writer",
 ] as const;
 export type CodeOwnedExternalCliAdapterId = typeof CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS[number];
 
@@ -87,6 +88,7 @@ export function resolveExternalCliRunnerStatus(input: {
 	const claudeCodeWriter = input.adapter === "claude-code-writer";
 	const cursorAgent = input.adapter === "cursor-agent";
 	const cursorAgentWriter = input.adapter === "cursor-agent-writer";
+	const agyWriter = input.adapter === "agy-writer";
 	const cursor = cursorAgent || cursorAgentWriter;
 	const unsupported = cursor ? PROMPT_FILE_UNSUPPORTED : UNSUPPORTED;
 	return {
@@ -101,6 +103,7 @@ export function resolveExternalCliRunnerStatus(input: {
 		...(claudeCodeWriter ? { safety: { access: "workspace-write" as const, authentication: "existing-cli-required" as const, permissionMode: "acceptEdits" as const, tools: "Read,Write,Edit,Glob,Grep" as const, mcp: "empty-strict" as const, settingSources: "user" as const, userSettingsTrust: "required" as const, sessionPersistence: false as const } } : {}),
 		...(cursorAgent ? { safety: { access: "read-only" as const, authentication: "cursor-api-key-or-existing-login" as const, mode: "ask" as const, sandbox: "enabled" as const, workspaceTrust: "existing-required" as const, sessionReuse: false as const } } : {}),
 		...(cursorAgentWriter ? { safety: { access: "workspace-write" as const, authentication: "cursor-api-key-or-existing-login" as const, mode: "print" as const, sandbox: "enabled" as const, workspaceTrust: "existing-required" as const, sessionReuse: false as const } } : {}),
+		...(agyWriter ? { safety: { access: "workspace-write" as const, authentication: "existing-cli-required" as const, permissionMode: "accept-edits" as const } } : {}),
 		capabilities: {
 			stop: true,
 			steer: false,
