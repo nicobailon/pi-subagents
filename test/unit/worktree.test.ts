@@ -67,10 +67,6 @@ function createHookScript(_repoDir: string, fileName: string, source: string): s
 const hookScriptSkip = process.platform === "win32"
 	? "Hook script execution differs on Windows CI environments."
 	: undefined;
-const worktrunkShimSkip = process.platform === "win32"
-	? "Windows Terminal installs a wt.exe app alias that can outrank test command shims."
-	: undefined;
-
 // Unknown settlement intentionally poisons the process. Re-run only that case in
 // an awaited real child so subsequent tests retain normal mutation admission.
 async function runPoisonCaseInChild(name: string): Promise<boolean> {
@@ -207,11 +203,12 @@ describe("worktree", () => {
 		}
 	});
 
-	it("rejects Worktrunk responses that point at the source checkout", { skip: worktrunkShimSkip }, async () => {
+	it("rejects Worktrunk responses that point at the source checkout", async () => {
 		if (await runPoisonCaseInChild("rejects Worktrunk responses that point at the source checkout")) return;
 		const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-fake-source-wt-"));
 		const fakeScript = path.join(fakeBin, "wt.cjs");
-		const fakeWt = path.join(fakeBin, process.platform === "win32" ? "wt.cmd" : "wt");
+		// Git for Windows dispatches extensionless git-* test commands through its bundled shell.
+		const fakeWt = path.join(fakeBin, process.platform === "win32" ? "git-wt" : "wt");
 		fs.writeFileSync(fakeScript, `const { spawnSync } = require("node:child_process");
 const args = process.argv.slice(2);
 if (args[0] === "--version") { console.log("wt v0.75.0"); process.exit(0); }
@@ -223,11 +220,8 @@ const result = spawnSync("git", ["-C", repo, "checkout", "-b", branch], { encodi
 if (result.status !== 0) { process.stderr.write(result.stderr || result.stdout); process.exit(result.status || 1); }
 console.log(JSON.stringify({ action: "created", branch, path: repo, created_branch: true, base_branch: base }));
 `, "utf-8");
-		if (process.platform === "win32") fs.writeFileSync(fakeWt, `@echo off\r\n"${process.execPath}" "%~dp0wt.cjs" %*\r\n`, "utf-8");
-		else {
-			fs.writeFileSync(fakeWt, `#!/bin/sh\nexec "${process.execPath}" "${fakeScript}" "$@"\n`, "utf-8");
-			fs.chmodSync(fakeWt, 0o755);
-		}
+		fs.writeFileSync(fakeWt, `#!/bin/sh\nexec "${process.execPath.replaceAll("\\", "/")}" "${fakeScript.replaceAll("\\", "/")}" "$@"\n`, "utf-8");
+		fs.chmodSync(fakeWt, 0o755);
 		const previousPath = process.env.PATH;
 		const previousWindowsPath = process.env.Path;
 		const previousPathExt = process.env.PATHEXT;
@@ -237,6 +231,7 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 			process.env.PATH = `${fakeBin}${path.delimiter}${previousPath ?? ""}`;
 			process.env.Path = `${fakeBin}${path.delimiter}${previousWindowsPath ?? previousPath ?? ""}`;
 			process.env.PATHEXT = [".CMD", ".EXE", ".BAT", previousPathExt ?? ""].filter(Boolean).join(path.delimiter);
+			assert.equal(resolveWorktreeProvider("worktrunk"), "worktrunk");
 			await assert.rejects(
 				() => createWorktrees(repoDir, "source-path", 1, { provider: "worktrunk" }),
 				(error: unknown) => {
@@ -271,9 +266,9 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 
 	it("falls back to native only when Worktrunk capability probing fails", async () => {
 		const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-fake-wt-"));
-		const fakeWt = path.join(fakeBin, process.platform === "win32" ? "wt.cmd" : "wt");
-		fs.writeFileSync(fakeWt, process.platform === "win32" ? "@echo not-worktrunk\r\n" : "#!/bin/sh\nprintf 'not-worktrunk\\n'\n", "utf-8");
-		if (process.platform !== "win32") fs.chmodSync(fakeWt, 0o755);
+		const fakeWt = path.join(fakeBin, process.platform === "win32" ? "git-wt" : "wt");
+		fs.writeFileSync(fakeWt, "#!/bin/sh\nprintf 'not-worktrunk\\n'\n", "utf-8");
+		fs.chmodSync(fakeWt, 0o755);
 		const previousPath = process.env.PATH;
 		const previousWindowsPath = process.env.Path;
 		const previousPathExt = process.env.PATHEXT;
