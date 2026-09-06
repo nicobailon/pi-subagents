@@ -109,12 +109,12 @@ describe("supervisor ask registration", () => {
 			import { resolveSupervisorChannelDir, ensureSupervisorChannelDir } from "./src/intercom/native-supervisor-channel.ts";
 			const root = fs.mkdtempSync(path.join(os.tmpdir(), "supervisor-owner-"));
 			const channels = [];
-			function start(owner) {
+			async function start(owner) {
 				const handlers = new Map();
 				const tools = new Map();
 				const pi = new Proxy({
 					events: { on() { return () => {}; }, emit() {} },
-					on(name, handler) { handlers.set(name, handler); },
+					on(name, handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
 					getAllTools() { return [...tools.keys()].map(name => ({ name })); },
 					registerTool(tool) { tools.set(tool.name, tool); },
 					registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
@@ -133,11 +133,11 @@ describe("supervisor ask registration", () => {
 					modelRegistry: { getAvailable() { return []; } },
 				};
 				registerExtension(pi);
-				handlers.get("session_start")({ reason: "startup" }, ctx);
+				for (const handler of handlers.get("session_start") ?? []) await handler({ reason: "startup" }, ctx);
 				stale = true;
 				// Exercise the production stale-context clearing path, not direct state assignment.
-				handlers.get("session_before_compact")({ reason: "threshold", signal: new AbortController().signal });
-				return { tool: tools.get("subagent_supervisor"), shutdown: () => handlers.get("session_shutdown")() };
+				for (const handler of handlers.get("session_before_compact") ?? []) await handler({ reason: "threshold", signal: new AbortController().signal });
+				return { tool: tools.get("subagent_supervisor"), shutdown: async () => { for (const handler of handlers.get("session_shutdown") ?? []) await handler(); } };
 			}
 			function ask(owner) {
 				const id = randomUUID();
@@ -151,7 +151,7 @@ describe("supervisor ask registration", () => {
 			let runtime;
 			try {
 				const owner = randomUUID();
-				runtime = start(owner);
+				runtime = await start(owner);
 				const first = ask(owner);
 				assert.match(JSON.stringify(await runtime.tool.execute("pending", { action: "pending" })), new RegExp(first));
 				await runtime.shutdown();
@@ -159,7 +159,7 @@ describe("supervisor ask registration", () => {
 				await assert.rejects(runtime.tool.execute("reply", { action: "reply", replyTo: afterShutdown, message: "No authority" }), /No pending supervisor request found/);
 				runtime = undefined;
 				const replacement = randomUUID();
-				runtime = start(replacement);
+				runtime = await start(replacement);
 				await assert.rejects(runtime.tool.execute("reply", { action: "reply", replyTo: first, message: "Foreign" }), /No pending supervisor request found/);
 				const next = ask(replacement);
 				assert.match(JSON.stringify(await runtime.tool.execute("reply", { action: "reply", replyTo: next, message: "Approved" })), new RegExp(next));
