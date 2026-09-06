@@ -4,6 +4,7 @@
 
 ### Added
 - Add default-off, main-only watchdog questions and task-continuity reviews from bounded delivered orchestration evidence (#2010).
+- Add the built-in `evidence-auditor` for independently reviewing important research claims and source support. Thanks to [@Muskos](https://github.com/Muskos) for #1932.
 
 ### Changed
 - Simplify watchdog clarification to a visible question and native orchestrator continuation; remove the reply action, exchange tracking, deadlines and mandatory follow-up reviews.
