@@ -8,12 +8,13 @@ import {
 } from "../api/delegation.ts";
 import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, Usage } from "../shared/types.ts";
 import { cloneJsonWithinByteLimit } from "./delegation-json.ts";
+import { isForkContextValue, type ForkSeedContextValue } from "../runs/shared/context-mode.ts";
 
 export interface PromptTemplateDelegationRequest {
 	requestId: string;
 	agent: string;
 	task: string;
-	context: "fresh" | "fork";
+	context: "fresh" | "fork" | ForkSeedContextValue;
 	model: string;
 	cwd: string;
 }
@@ -115,7 +116,7 @@ export interface PromptTemplateBridgeResult {
 export interface DelegatedSubagentExecutionParams {
 	agent?: string;
 	task?: string;
-	context: "fresh" | "fork";
+	context: "fresh" | "fork" | ForkSeedContextValue;
 	model?: string;
 	cwd: string;
 	timeoutMs?: number;
@@ -145,7 +146,7 @@ export function parsePromptTemplateRequest(data: unknown): PromptTemplateDelegat
 	if (typeof value.task !== "string" || !value.task) return undefined;
 	if (typeof value.model !== "string" || !value.model) return undefined;
 	if (typeof value.cwd !== "string" || !value.cwd) return undefined;
-	if (value.context !== "fresh" && value.context !== "fork") return undefined;
+	if (!isForkContextValue(value.context)) return undefined;
 	return {
 		requestId: value.requestId,
 		agent: value.agent,

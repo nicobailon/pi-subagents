@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `fork:<seed-session-path>` context values: `context` (tool input), agent frontmatter `defaultContext`, and config `defaultSubagentContext` may now name a seed session file that the child branches from instead of the parent session. Seed forks are strict (a missing seed file fails the launch) and support `~` expansion. Parent-seeded `fork` behavior is unchanged.
+
 ## [0.66.0] - 2026-09-06
 
 ### Highlights

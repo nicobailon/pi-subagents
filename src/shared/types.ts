@@ -3,6 +3,7 @@
  */
 
 import * as os from "node:os";
+import type { ForkSeedContextValue } from "../runs/shared/context-mode.ts";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import type { AgentConfig } from "../agents/agents.ts";
@@ -216,7 +217,7 @@ export type WorkflowReceiptEntry = WorkflowReceiptEntryResumability & {
 	lane?: WorkflowLaneMetadata;
 	terminalOutcome?: WorkflowTerminalOutcome;
 	agent?: string;
-	requestedContext?: "fresh" | "fork";
+	requestedContext?: "fresh" | "fork" | ForkSeedContextValue;
 	resolvedContext?: "fresh" | "fork" | "mixed";
 	outputReference?: string;
 	acceptanceRecovery?: AcceptanceRecoveryMetadata;
@@ -2556,7 +2557,7 @@ export interface ActiveAsyncCapacityConfig {
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
 	/** Set the context for launches that omit an explicit context. */
-	defaultSubagentContext?: "fresh" | "fork";
+	defaultSubagentContext?: "fresh" | "fork" | ForkSeedContextValue;
 	/** Configure how every resolved fork session is prepared before child spawn. */
 	forkContext?: ForkContextConfig;
 	/** Optional shortcut that detaches the active foreground single-subagent run. */

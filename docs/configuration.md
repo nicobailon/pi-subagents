@@ -161,7 +161,7 @@ WorkflowScript calls use background execution when the request omits `async`. Se
 { "defaultSubagentContext": "fresh" }
 ```
 
-Sets `fresh` or `fork` for every subagent launch that omits `context`. This global preference replaces each agent-level `defaultContext`. Explicit `context: "fresh"` or `context: "fork"` still wins.
+Sets `fresh`, `fork`, or `fork:<seed-session-path>` for every subagent launch that omits `context`. This global preference replaces each agent-level `defaultContext`. Explicit `context: "fresh"`, `context: "fork"`, or `context: "fork:<seed-session-path>"` still wins.
 
 With `"fork"`, the setting uses the existing implicit-fork behavior. A launch starts fresh when the parent session file or current leaf is not available. `"fresh"` starts fresh even when the selected agent defaults to fork. Scheduled runs continue to set fresh context explicitly. A runner or provider that does not support fork context keeps its existing rejection behavior.
 

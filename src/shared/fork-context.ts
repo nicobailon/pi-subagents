@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { isForkMode, type ForkSeedContextValue } from "../runs/shared/context-mode.ts";
 import { findModelInfo, type ModelInfo } from "./model-info.ts";
 
 type SubagentExecutionContext = "fresh" | "fork";
-
 interface BranchSessionEntry {
 	type: string;
 	id?: string;
@@ -26,6 +27,8 @@ interface BranchSessionManager {
 	createBranchedSession(leafId: string): string | undefined;
 	getHeader?: () => BranchSessionEntry | null;
 	getEntries?: () => BranchSessionEntry[];
+	/** Present on real SessionManager instances; absent on test doubles that only expose entries. */
+	getLeafId?: () => string | null;
 }
 
 interface ForkableSessionManager {
@@ -42,6 +45,10 @@ interface ForkContextResolverOptions {
 	/** Decide per child index whether a sanitized transcript must also disable the child's
 	 * thinking. Defaults to true (the pre-existing conservative behavior) when omitted. */
 	forceThinkingOffForIndex?: (index: number) => boolean;
+	/** Per child index: seed session file to branch from instead of the parent session.
+	 * Returned paths may use a leading `~`. When undefined for an index, the fork branches
+	 * from the parent session's current leaf. */
+	forkSourceForIndex?: (index: number) => string | undefined;
 }
 
 interface ForkContextResolution {
@@ -56,7 +63,17 @@ interface ForkContextResolver {
 }
 
 export function resolveSubagentContext(value: unknown): SubagentExecutionContext {
-	return value === "fork" ? "fork" : "fresh";
+	return isForkMode(value) ? "fork" : "fresh";
+}
+
+/** Extract the seed session file from a `fork:<path>` context value, expanding a leading `~`. */
+export function forkSourceFromContext(value: unknown): string | undefined {
+	if (typeof value !== "string" || !value.startsWith("fork:")) return undefined;
+	const raw = value.slice("fork:".length).trim();
+	if (raw.length === 0) return undefined;
+	if (raw === "~") return os.homedir();
+	if (raw.startsWith("~/") || raw.startsWith("~\\")) return path.join(os.homedir(), raw.slice(2));
+	return raw;
 }
 
 export interface PreferredForkAvailability {
@@ -70,16 +87,20 @@ export interface PreferredForkSnapshot {
 }
 
 export interface SubagentLaunchContextInput {
-	explicitContext?: SubagentExecutionContext;
-	agentDefaultContext?: SubagentExecutionContext;
-	defaultSubagentContext?: SubagentExecutionContext;
+	explicitContext?: SubagentExecutionContext | ForkSeedContextValue;
+	agentDefaultContext?: SubagentExecutionContext | ForkSeedContextValue;
+	defaultSubagentContext?: SubagentExecutionContext | ForkSeedContextValue;
 	canUseImplicitFork: boolean;
 }
 
-/** Resolve the actual launch context from explicit, global, and agent preferences. */
+/** Resolve the actual launch context from explicit, global, and agent preferences.
+ * `fork:<path>` values resolve to fork mode; seed forks are strict (they do not fall back to
+ * fresh when the parent session is unavailable — only the seed file's existence matters, and
+ * that is validated at execution time with a clear error). */
 export function resolveSubagentLaunchContext(input: SubagentLaunchContextInput): SubagentExecutionContext {
-	if (input.explicitContext !== undefined) return input.explicitContext;
+	if (input.explicitContext !== undefined) return resolveSubagentContext(input.explicitContext);
 	const preferredContext = input.defaultSubagentContext ?? input.agentDefaultContext ?? "fresh";
+	if (typeof preferredContext === "string" && preferredContext.startsWith("fork:")) return "fork";
 	return preferredContext === "fork" && input.canUseImplicitFork ? "fork" : "fresh";
 }
 
@@ -187,48 +208,91 @@ export function createForkContextResolver(
 		};
 	}
 
-	const parentSessionFile = sessionManager.getSessionFile();
-	if (!parentSessionFile) {
-		throw new Error("Forked subagent context requires a persisted parent session.");
-	}
-
-	const leafId = sessionManager.getLeafId();
-	if (!leafId) {
-		throw new Error("Forked subagent context requires a current leaf to fork from.");
+	// Fail fast for parent-seeded forks when no per-index seed sources are configured;
+	// seed-backed forks defer validation to resolution so a missing parent session
+	// does not block a launch that only uses seed files.
+	if (!options.forkSourceForIndex) {
+		const parentSessionFile = sessionManager.getSessionFile();
+		if (!parentSessionFile) {
+			throw new Error("Forked subagent context requires a persisted parent session.");
+		}
+		if (!sessionManager.getLeafId()) {
+			throw new Error("Forked subagent context requires a current leaf to fork from.");
+		}
 	}
 
 	const openSession = options.openSession
 		?? sessionManager.openSession
 		?? ((file: string, dir?: string) => SessionManager.open(file, dir));
-	// Fork files must not land in the parent's top-level session directory.
-	// Pi's recent-session discovery (`pi -c` → findMostRecentSession) is
+	// Fork files must not land in the top-level session directory of the session they
+	// branch from. Pi's recent-session discovery (`pi -c` → findMostRecentSession) is
 	// non-recursive and picks the largest-mtime *.jsonl in that directory, so
 	// a still-running forked subagent — which keeps appending after the parent
 	// went idle — would hijack the next `pi -c` away from the conversation the
-	// user actually left. Nesting fork sessions in a per-parent directory keeps
+	// user actually left. Nesting fork sessions in a per-source directory keeps
 	// them invisible to that discovery; the `parentSession` header still
 	// records the tree relationship. The directory mirrors
 	// getSubagentSessionRoot() plus a "forks" level so fork files never sit
 	// loose next to run-N/ result directories. Derived from the file path
 	// rather than getSessionDir() so it also works when the manager cannot
 	// report its directory.
-	const sessionDir = path.join(
-		path.dirname(parentSessionFile),
-		path.basename(parentSessionFile, ".jsonl"),
-		"forks",
-	);
+	const forkSessionDirFor = (sourceFile: string): string =>
+		path.join(
+			path.dirname(sourceFile),
+			path.basename(sourceFile, ".jsonl"),
+			"forks",
+		);
 	const cachedResolutions = new Map<number, ForkContextResolution>();
 	const preparedIndexes = new Set<number>();
 	const preparationPromises = new Map<number, Promise<void>>();
+
+	const resolveSeed = (sourceFile: string): { manager: BranchSessionManager; leafId: string; sessionDir: string } => {
+		if (!fs.existsSync(sourceFile)) {
+			throw new Error(`Fork source session file does not exist: ${sourceFile}.`);
+		}
+		const sessionDir = forkSessionDirFor(sourceFile);
+		const manager = openSession(sourceFile, sessionDir) as unknown as BranchSessionManager;
+		let leafId = manager.getLeafId?.() ?? null;
+		if (!leafId) {
+			const entries = readSessionEntries(sourceFile);
+			const lastId = [...entries].reverse().find((entry) => typeof entry.id === "string")?.id;
+			if (typeof lastId !== "string") {
+				throw new Error(`Fork source session has no branchable entries: ${sourceFile}.`);
+			}
+			leafId = lastId;
+		}
+		return { manager, leafId, sessionDir };
+	};
 
 	const resolveFork = (index = 0): ForkContextResolution => {
 		const cached = cachedResolutions.get(index);
 		if (cached) return cached;
 		try {
-			if (!fs.existsSync(parentSessionFile)) {
-				throw new Error(`Parent session file does not exist: ${parentSessionFile}. Pi has not persisted enough history to fork yet.`);
+			const seedSource = options.forkSourceForIndex?.(index);
+			let sourceManager: BranchSessionManager;
+			let leafId: string;
+			let sessionDir: string;
+			if (seedSource !== undefined) {
+				const seed = resolveSeed(seedSource);
+				sourceManager = seed.manager;
+				leafId = seed.leafId;
+				sessionDir = seed.sessionDir;
+			} else {
+				const parentSessionFile = sessionManager.getSessionFile();
+				if (!parentSessionFile) {
+					throw new Error("Forked subagent context requires a persisted parent session.");
+				}
+				const parentLeafId = sessionManager.getLeafId();
+				if (!parentLeafId) {
+					throw new Error("Forked subagent context requires a current leaf to fork from.");
+				}
+				if (!fs.existsSync(parentSessionFile)) {
+					throw new Error(`Parent session file does not exist: ${parentSessionFile}. Pi has not persisted enough history to fork yet.`);
+				}
+				sessionDir = forkSessionDirFor(parentSessionFile);
+				sourceManager = openSession(parentSessionFile, sessionDir);
+				leafId = parentLeafId;
 			}
-			const sourceManager = openSession(parentSessionFile, sessionDir);
 			const sessionFile = sourceManager.createBranchedSession(leafId);
 			if (!sessionFile) {
 				throw new Error("Session manager did not return a forked session file.");

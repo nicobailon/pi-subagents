@@ -251,6 +251,7 @@ Use these fields when an agent should see more:
 | `inheritGlobalContext: true` | Also keep the operator's global context file from the Pi config agent directory (such as `~/.pi/agent/AGENTS.md`). Defaults to `false`. |
 | `inheritSkills: true` | Let the child see Pi's discovered skills catalog. |
 | `defaultContext: fork` | Prefer forked session context when a launch omits `context`; if the parent has no persisted session file or current leaf yet, the implicit default falls back to `fresh` without a failed first attempt. Explicit `context: "fork"` remains strict, and explicit `context: "fresh"` still wins. |
+| `defaultContext: fork:<seed-session-path>` | Always fork from the named seed session file instead of the parent session. The path may be absolute or `~`-expanded. Seed forks are strict: a missing seed file fails the launch with a clear error instead of silently falling back to `fresh`. Useful for role expert-context seeds — maintain a curated conversation and have every child of that role start from it. |
 
 Builtin agents opt into repository instruction inheritance by default so they follow repo-specific rules out of the box, but global context remains excluded unless `inheritGlobalContext: true` is set. This changes the behavior of existing agents that previously received global context as part of `inheritProjectContext: true`. `delegate` also uses append mode because its job is orchestration inside the parent workflow.
 
@@ -326,7 +327,7 @@ Field notes:
 | `inheritProjectContext` | Keeps or strips inherited repository instruction blocks. |
 | `inheritGlobalContext` | Keeps or strips the operator's global context file from the Pi config agent directory (e.g. `~/.pi/agent/AGENTS.md`). It has an effect only when `inheritProjectContext` is `true`; otherwise all context files are already disabled. Defaults to `false`. |
 | `inheritSkills` | Keeps or strips Pi's discovered skills catalog. |
-| `defaultContext` | Optional `fresh` or `fork` launch-context preference. An implicit `fork` falls back to `fresh` when the parent has no persisted session file or current leaf; an explicit launch `context: "fork"` remains strict. |
+| `defaultContext` | Optional `fresh`, `fork`, or `fork:<seed-session-path>` launch-context preference. An implicit `fork` falls back to `fresh` when the parent has no persisted session file or current leaf; an explicit launch `context: "fork"` remains strict. `fork:<path>` is strict and branches from the seed session file. |
 | `skills` | Selects specific skills for the child, regardless of `inheritSkills`. |
 | `skillPath` | Invocation-private skill files or discovery directories. Relative paths resolve from the agent definition file. Local matches take precedence, while unresolved or unreadable matches fall back to normal skill discovery. This field discovers candidates only; `skills` still selects what the child receives. |
 | `output` | Default single-agent output file. |

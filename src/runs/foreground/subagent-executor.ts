@@ -53,7 +53,7 @@ import { encodeIndexSegment } from "../background/index-segment.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
 import { normalizeGateAcceptance, resolveAcceptanceReportMode, validateAcceptanceInput, validateExecutionAcceptance } from "../shared/acceptance.ts";
-import { canPreferFork, createForkContextResolver, forkedChildRequiresThinkingOff, resolveSubagentLaunchContext } from "../../shared/fork-context.ts";
+import { canPreferFork, createForkContextResolver, forkSourceFromContext, forkedChildRequiresThinkingOff, resolveSubagentLaunchContext } from "../../shared/fork-context.ts";
 import { createPrunedForkSessionWriter } from "../../shared/pruned-fork.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
@@ -72,7 +72,7 @@ import { assertJsonSchemaObject, cleanupStructuredOutputRuntime, createStructure
 import { compactForegroundDetails, getSingleResultOutput, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage, toAgentToolUsage } from "../../shared/utils.ts";
 import { createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
 import { discardPreservedWorktrees, formatParallelHandoffError, formatParallelHandoffReference, formatStoredParallelHandoffCleanup, parallelHandoffPath, readParallelHandoffManifest, recordParallelHandoffMerge, recordParallelHandoffSupersession, writeParallelHandoffGroup, writeWorktreeSetupHandoff } from "../shared/parallel-handoff.ts";
-import { summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
+import { isForkMode, summarizeContextModes, type ContextMode, type ContextSummary, type ForkSeedContextValue } from "../shared/context-mode.ts";
 import {
 	attachNestedChildrenToResultChildren,
 	buildSubagentResultIntercomPayload,
@@ -360,7 +360,7 @@ export interface SubagentParamsLike {
 	worktree?: boolean;
 	/** Git ref used as the managed worktree base. */
 	baseRef?: string;
-	context?: "fresh" | "fork" | "profile";
+	context?: "fresh" | "fork" | "profile" | ForkSeedContextValue;
 	/** Per-run intercom bridge config. It replaces the global config for this launch only. */
 	intercomBridge?: IntercomBridgeConfig;
 	async?: boolean;
@@ -1850,7 +1850,8 @@ async function resumeAsyncRun(input: {
 	const modelScope = discovered.modelScope;
 	const sessionName = resolveIntercomSessionTarget(input.deps.pi.getSessionName(), input.ctx.sessionManager.getSessionId());
 	const recoveryDescriptor = "recoveryDescriptor" in target ? target.recoveryDescriptor : undefined;
-	const recoveryContext = recoveryDescriptor?.context ?? (input.params.context === "profile" ? undefined : input.params.context);
+	const rawRecoveryContext = recoveryDescriptor?.context ?? (input.params.context === "profile" ? undefined : input.params.context);
+	const recoveryContext = rawRecoveryContext === undefined ? undefined : isForkMode(rawRecoveryContext) ? "fork" : "fresh";
 	const intercomBridge = resolveIntercomBridge({
 		config: input.deps.config.intercomBridge,
 		override: input.params.intercomBridge ?? recoveryDescriptor?.intercomBridge,
@@ -2603,6 +2604,8 @@ function formatStatusTargetLabel(params: Pick<SubagentParamsLike, "dir" | "index
 interface AgentDefaultContextPolicy {
 	params: SubagentParamsLike;
 	contextForAgent(agentName: string): ContextMode;
+	/** Seed session file for `fork:<path>` contexts, when the resolved context for the agent seeds from a file. */
+	forkSourceForAgent?(agentName: string): string | undefined;
 	contextSummary?: ContextSummary;
 	usesFork: boolean;
 }
@@ -2626,17 +2629,21 @@ function resolveAgentDefaultContextPolicy(
 		const contextForAgent = (agentName: string): ContextMode => {
 			const context = byName.get(agentName)?.defaultContext;
 			if (context === undefined) throw new Error(`context: "profile" requires agent '${agentName}' to declare defaultContext.`);
-			return context;
+			return isForkMode(context) ? "fork" : "fresh";
 		};
-		const contextSummary = summarizeContextModes(collectRequestedAgentNames(params).map(contextForAgent));
+		const forkSourceForAgent = (agentName: string): string | undefined =>
+			forkSourceFromContext(byName.get(agentName)?.defaultContext);
+		const contextSummary = summarizeContextModes(collectRequestedAgentNames(params)
+			.map((name) => byName.get(name)?.defaultContext));
 		return {
 			params,
 			contextForAgent,
+			forkSourceForAgent,
 			contextSummary,
 			usesFork: contextSummary === "fork" || contextSummary === "mixed",
 		};
 	}
-	if (params.context === "fresh" || params.context === "fork") return resolveExplicitContextPolicy(params);
+	if (params.context === "fresh" || isForkMode(params.context)) return resolveExplicitContextPolicy(params);
 	const byName = new Map(agents.map((agent) => [agent.name, agent]));
 	const contextForAgent = (agentName: string): ContextMode =>
 		resolveSubagentLaunchContext({
@@ -2645,27 +2652,35 @@ function resolveAgentDefaultContextPolicy(
 			defaultSubagentContext,
 			canUseImplicitFork: canUseDefaultFork,
 		});
+	const forkSourceForAgent = (agentName: string): string | undefined => {
+		const agentDefault = byName.get(agentName)?.defaultContext;
+		if (agentDefault !== undefined) return forkSourceFromContext(agentDefault);
+		return forkSourceFromContext(defaultSubagentContext);
+	};
 	const requestedAgentNames = collectRequestedAgentNames(params);
-	const contextSummary = summarizeContextModes(requestedAgentNames.map((name) => contextForAgent(name)));
+	const contextSummary = summarizeContextModes(requestedAgentNames.map((name) => byName.get(name)?.defaultContext));
 	const usesFork = contextSummary === "fork" || contextSummary === "mixed";
 	return omitUndefinedProperties({
 		params,
 		contextForAgent,
+		forkSourceForAgent,
 		contextSummary,
 		usesFork,
 	});
 }
 
 function resolveExplicitContextPolicy(params: SubagentParamsLike): AgentDefaultContextPolicy {
-	const context = resolveSubagentLaunchContext({
+	const mode = resolveSubagentLaunchContext({
 		explicitContext: params.context === "profile" ? undefined : params.context,
 		canUseImplicitFork: false,
 	});
+	const forkSource = forkSourceFromContext(params.context);
 	return {
 		params,
-		contextForAgent: () => context,
-		contextSummary: context,
-		usesFork: context === "fork",
+		contextForAgent: () => mode,
+		...(forkSource !== undefined ? { forkSourceForAgent: () => forkSource } : {}),
+		contextSummary: mode,
+		usesFork: mode === "fork",
 	};
 }
 
@@ -2717,7 +2732,7 @@ function buildRequestedModeError(params: SubagentParamsLike, message: string): A
 			isError: true,
 			details: { mode: getRequestedModeLabel(params), results: [] },
 		},
-		params.context === "profile" ? undefined : params.context,
+		params.context === "profile" || params.context === undefined ? undefined : isForkMode(params.context) ? "fork" : "fresh",
 	);
 }
 
@@ -4259,7 +4274,7 @@ function workflowChildResult(
 			resumability = { state: "not-resumable", reason: error instanceof Error ? error.message : String(error) };
 		}
 	}
-	const requestedContext = childParams.context === "fresh" || childParams.context === "fork" ? childParams.context : undefined;
+	const requestedContext = childParams.context === "fresh" || isForkMode(childParams.context) ? childParams.context : undefined;
 	const resolvedContext = result.details.context ?? (resolvedContexts.length === 1 ? resolvedContexts[0] : resolvedContexts.length > 1 ? "mixed" : undefined);
 	const outputReference = result.details.results.find((child) => child.savedOutputPath)?.savedOutputPath
 		?? result.details.results.find((child) => child.outputReference?.path)?.outputReference?.path;
@@ -6257,7 +6272,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							cwd: requestCwd,
 							config: deps.config,
 							state: deps.state,
-							context: paramsWithResolvedCwd.context === "profile" ? undefined : paramsWithResolvedCwd.context,
+							context: ((): "fresh" | "fork" | undefined => {
+								const c = paramsWithResolvedCwd.context;
+								return c === undefined || c === "profile" ? undefined : isForkMode(c) ? "fork" : "fresh";
+							})(),
 							requestedSessionDir: paramsWithResolvedCwd.sessionDir,
 							currentSessionFile,
 							currentSessionId,
@@ -6706,6 +6724,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		let prepareForkThinking = (_agentName: string, _index: number, _modelOverride?: string, _modelOverrideFromParent?: boolean, _modelOrigin?: ModelOrigin): void => {};
 		const forkThinkingRequirements = new Map<number, boolean>();
 		const forkThinkingDowngrades = new Map<number, string>();
+		const selectedAgentNames = hasSingle
+			? [effectiveParams.agent!]
+			: hasTasks
+				? (effectiveParams.tasks ?? []).map((task) => task.agent)
+				: (effectiveParams.chain ?? []).flatMap((step) => getStepAgents(step as ChainStep));
+		// Track which seed session file each child index branches from.
+		const forkSourceByIndex = new Map<number, string>();
+		const noteForkSource = (agentName: string, index: number): void => {
+			const source = contextPolicy.forkSourceForAgent?.(agentName);
+			if (source !== undefined) forkSourceByIndex.set(index, source);
+		};
 		try {
 			const forkAvailableModels = contextPolicy.usesFork ? ctx.modelRegistry.getAvailable().map(toModelInfo) : [];
 			const parentModel = requestParentModel;
@@ -6754,8 +6783,18 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const pruneSession = contextPolicy.usesFork && deps.config.forkContext?.mode === "pruned"
 				? await createPrunedForkSessionWriter(ctx, deps.config.forkContext, signal)
 				: undefined;
+			// Seed session files for fork:<path> contexts. Sources are recorded when a
+			// task calls in with its agent name; the selectedAgentNames fallback covers
+			// resolver calls that race ahead of that bookkeeping.
+			const forkSourceForIndex = (index: number): string | undefined => {
+				const mapped = forkSourceByIndex.get(index);
+				if (mapped !== undefined) return mapped;
+				const fallbackName = selectedAgentNames.length > 0 ? selectedAgentNames[Math.min(index, selectedAgentNames.length - 1)] : undefined;
+				return fallbackName !== undefined ? contextPolicy.forkSourceForAgent?.(fallbackName) : undefined;
+			};
 			const forkContextResolver = createForkContextResolver(ctx.sessionManager, contextPolicy.usesFork ? "fork" : undefined, {
 				forceThinkingOffForIndex: (index) => forkThinkingRequirements.get(index) ?? true,
+				forkSourceForIndex,
 				...(pruneSession ? { pruneSession } : {}),
 			});
 			prepareForkSessionForIndex = forkContextResolver.prepareSessionForIndex;
@@ -6764,11 +6803,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		} catch (error) {
 			return toExecutionErrorResult(effectiveParams, error, contextPolicy.contextSummary);
 		}
-		const selectedAgentNames = hasSingle
-			? [effectiveParams.agent!]
-			: hasTasks
-				? (effectiveParams.tasks ?? []).map((task) => task.agent)
-				: (effectiveParams.chain ?? []).flatMap((step) => getStepAgents(step as ChainStep));
 		const externalAgent = selectedAgentNames
 			.map((name) => agents.find((agent) => agent.name === name))
 			.find((agent) => agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job");
@@ -6865,16 +6899,19 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			path.join(sessionRoot, `run-${idx ?? 0}`);
 		const forkSessionFileForTask: ForkSessionFileForTask = (agentName, idx = 0, modelOverride, modelOverrideFromParent, modelOrigin) => {
 			if (!shouldForkAgent(contextPolicy, agentName)) return undefined;
+			noteForkSource(agentName, idx);
 			prepareForkThinking(agentName, idx, modelOverride, modelOverrideFromParent, modelOrigin);
 			return forkSessionFileForIndex(idx);
 		};
 		const prepareForkSessionForTask: PrepareForkSessionForTask = async (agentName, idx = 0, modelOverride, modelOverrideFromParent, modelOrigin) => {
 			if (!shouldForkAgent(contextPolicy, agentName)) return;
+			noteForkSource(agentName, idx);
 			prepareForkThinking(agentName, idx, modelOverride, modelOverrideFromParent, modelOrigin);
 			await prepareForkSessionForIndex(idx);
 		};
 		const forkThinkingOverrideForTask: ForkThinkingOverrideForTask = (agentName, idx = 0, modelOverride, modelOverrideFromParent, modelOrigin) => {
 			if (!shouldForkAgent(contextPolicy, agentName)) return delegatedThinkingOverride;
+			noteForkSource(agentName, idx);
 			prepareForkThinking(agentName, idx, modelOverride, modelOverrideFromParent, modelOrigin);
 			const override = forkThinkingOverrideForIndex(idx);
 			if (override === "off") forkThinkingDowngrades.set(idx, agentName);

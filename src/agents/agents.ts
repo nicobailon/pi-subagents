@@ -24,12 +24,13 @@ import { parseMemoryFrontmatter } from "./agent-memory.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
 import { parseThinkingLevel, type ThinkingLevel } from "../shared/thinking-ceiling.ts";
+import { isForkMode, type ForkSeedContextValue } from "../runs/shared/context-mode.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
 export type AgentSource = "builtin" | "package" | "user" | "project" | "runtime";
 type SystemPromptMode = "append" | "replace";
-export type AgentDefaultContext = "fresh" | "fork";
+export type AgentDefaultContext = "fresh" | "fork" | ForkSeedContextValue;
 
 export type AgentMemoryScope = "project" | "user";
 
@@ -1032,10 +1033,10 @@ function parseBuiltinOverrideEntry(
 	}
 
 	if ("defaultContext" in input) {
-		if (input.defaultContext === "fresh" || input.defaultContext === "fork" || input.defaultContext === false) {
+		if (input.defaultContext === "fresh" || isForkMode(input.defaultContext) || input.defaultContext === false) {
 			override.defaultContext = input.defaultContext;
 		} else {
-			throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'defaultContext'; expected 'fresh', 'fork', or false.`);
+			throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'defaultContext'; expected 'fresh', 'fork', 'fork:<seed-session-path>', or false.`);
 		}
 	}
 

@@ -289,7 +289,10 @@ Package skill content.
 		assert.equal(loadConfig().defaultSubagentContext, "fresh");
 
 		writeFile(configPath, JSON.stringify({ defaultSubagentContext: "other" }));
-		assert.throws(() => updateConfig((config) => config), /config\.defaultSubagentContext must be "fresh" or "fork"/);
+		assert.throws(() => updateConfig((config) => config), /config\.defaultSubagentContext must be "fresh", "fork", or "fork:<seed-session-path>"/);
+
+		writeFile(configPath, JSON.stringify({ defaultSubagentContext: "fork:/tmp/seed-session.jsonl" }));
+		assert.equal(loadConfig().defaultSubagentContext, "fork:/tmp/seed-session.jsonl");
 	});
 
 	it("loads exact model response aliases and preserves them during config updates", () => {

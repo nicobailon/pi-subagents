@@ -4,6 +4,7 @@ import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId,
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
+import { isForkMode } from "../runs/shared/context-mode.ts";
 import { BUILTIN_AGENT_NAMES } from "./builtin-names.ts";
 import type { AgentConfig, AgentDefaultContext, AgentDiscoveryDiagnostic } from "./agents.ts";
 
@@ -210,7 +211,7 @@ function validateDefinition(value: unknown): RuntimeAgentDefinition {
 	const systemPromptMode = definition.systemPromptMode;
 	if (systemPromptMode !== undefined && systemPromptMode !== "append" && systemPromptMode !== "replace") throw new Error("Runtime agent definition systemPromptMode must be 'append' or 'replace'.");
 	const defaultContext = definition.defaultContext;
-	if (defaultContext !== undefined && defaultContext !== "fresh" && defaultContext !== "fork") throw new Error("Runtime agent definition defaultContext must be 'fresh' or 'fork'.");
+	if (defaultContext !== undefined && defaultContext !== "fresh" && !isForkMode(defaultContext)) throw new Error("Runtime agent definition defaultContext must be 'fresh', 'fork', or 'fork:<seed-session-path>'.");
 	const thinking = definition.thinking;
 	if (thinking !== undefined && thinking !== false && typeof thinking !== "string") throw new Error("Runtime agent definition thinking must be a string or false when provided.");
 	const acceptanceRole = definition.acceptanceRole;

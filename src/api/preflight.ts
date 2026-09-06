@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import { isForkContextValue, type ForkSeedContextValue } from "../runs/shared/context-mode.ts";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverAgentSnapshot, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryAllResult, type AgentScope, type AgentSource } from "../agents/agents.ts";
@@ -53,7 +54,7 @@ export interface SubagentLaunchContractInput {
 	cwd: string;
 	task?: string;
 	agentScope?: AgentScope;
-	context?: "fresh" | "fork";
+	context?: "fresh" | "fork" | ForkSeedContextValue;
 	model?: string;
 	fast?: boolean;
 	thinking?: string | false;
@@ -251,8 +252,8 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		const detail = error instanceof Error ? ` ${error.message}` : "";
 		return { ok: false, code: "invalid_cwd", message: `cwd '${effectiveCwd}' is not a directory.${detail}`, diagnostics };
 	}
-	if (input.context !== undefined && input.context !== "fresh" && input.context !== "fork") {
-		return { ok: false, code: "unsupported_mode", message: `Unsupported context '${String(input.context)}'; expected 'fresh' or 'fork'.`, diagnostics };
+	if (input.context !== undefined && !isForkContextValue(input.context)) {
+		return { ok: false, code: "unsupported_mode", message: `Unsupported context '${String(input.context)}'; expected 'fresh', 'fork', or 'fork:<seed-session-path>'.`, diagnostics };
 	}
 	if (input.artifactDir !== undefined && input.artifactDir !== "project" && input.artifactDir !== "session" && input.artifactDir !== "temp") {
 		return { ok: false, code: "invalid_artifact_dir", message: `Unsupported artifactDir '${String(input.artifactDir)}'; expected 'project', 'session', or 'temp'.`, diagnostics };

@@ -586,3 +586,145 @@ describe("createForkContextResolver", () => {
 		}
 	});
 });
+
+describe("fork seed session sources", () => {
+	it("resolveSubagentContext maps fork:<path> values to fork", () => {
+		assert.equal(resolveSubagentContext("fork:/tmp/seed.jsonl"), "fork");
+		assert.equal(resolveSubagentContext("fork:seed.jsonl"), "fork");
+		assert.equal(resolveSubagentContext("fresh"), "fresh");
+		assert.equal(resolveSubagentContext("fork:"), "fresh");
+	});
+
+	it("branches from the seed session file instead of the parent session", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-seed-"));
+		try {
+			const seedSessionFile = path.join(tempDir, "seed.jsonl");
+			writeMinimalSessionFile(seedSessionFile, "seed");
+			const openedPaths: string[] = [];
+			const seenLeafIds: string[] = [];
+			const resolver = createForkContextResolver({
+				getSessionFile: () => undefined,
+				getLeafId: () => null,
+			}, "fork", {
+				forkSourceForIndex: () => seedSessionFile,
+				openSession: (sessionFile: string) => {
+					openedPaths.push(sessionFile);
+					return {
+						createBranchedSession: (leafId: string) => {
+							seenLeafIds.push(leafId);
+							const childSessionFile = path.join(tempDir, `child-${seenLeafIds.length}.jsonl`);
+							writeMinimalSessionFile(childSessionFile, `child-${seenLeafIds.length}`);
+							return childSessionFile;
+						},
+					};
+				},
+			});
+
+			assert.equal(resolver.sessionFileForIndex(0), path.join(tempDir, "child-1.jsonl"));
+			assert.deepEqual(openedPaths, [seedSessionFile]);
+			assert.deepEqual(seenLeafIds, ["seed"]);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("falls back to the seed file's last entry id when the manager exposes no leaf", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-seed-fallback-"));
+		try {
+			const seedSessionFile = path.join(tempDir, "seed.jsonl");
+			writeSessionJsonl(seedSessionFile, [
+				{ type: "session", id: "seed-header", timestamp: "2026-04-16T00:00:00.000Z", cwd: "/tmp" },
+				{ type: "message", id: "entry-1", parentId: "seed-header", message: { role: "user", content: "hello" } },
+				{ type: "message", id: "entry-2", parentId: "entry-1", message: { role: "assistant", content: "hi" } },
+			]);
+			const seenLeafIds: string[] = [];
+			const resolver = createForkContextResolver({
+				getSessionFile: () => undefined,
+				getLeafId: () => null,
+			}, "fork", {
+				forkSourceForIndex: () => seedSessionFile,
+				openSession: () => ({
+					createBranchedSession: (leafId: string) => {
+						seenLeafIds.push(leafId);
+						const childSessionFile = path.join(tempDir, "child.jsonl");
+						writeMinimalSessionFile(childSessionFile, "child");
+						return childSessionFile;
+					},
+				}),
+			});
+
+			resolver.sessionFileForIndex(0);
+			assert.deepEqual(seenLeafIds, ["entry-2"]);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("fails with a clear error when the seed session file does not exist", () => {
+		const resolver = createForkContextResolver({
+			getSessionFile: () => undefined,
+			getLeafId: () => null,
+		}, "fork", {
+			forkSourceForIndex: () => "/tmp/does-not-exist-seed.jsonl",
+			openSession: () => ({ createBranchedSession: () => "/tmp/child.jsonl" }),
+		});
+
+		assert.throws(
+			() => resolver.sessionFileForIndex(0),
+			/Fork source session file does not exist: \/tmp\/does-not-exist-seed\.jsonl\./,
+		);
+	});
+
+	it("does not require a persisted parent session when every index uses a seed", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-seed-no-parent-"));
+		try {
+			const seedSessionFile = path.join(tempDir, "seed.jsonl");
+			writeMinimalSessionFile(seedSessionFile, "seed");
+			const resolver = createForkContextResolver({
+				getSessionFile: () => undefined,
+				getLeafId: () => null,
+			}, "fork", {
+				forkSourceForIndex: () => seedSessionFile,
+				openSession: () => ({
+					createBranchedSession: () => {
+						const childSessionFile = path.join(tempDir, "child.jsonl");
+						writeMinimalSessionFile(childSessionFile, "child");
+						return childSessionFile;
+					},
+				}),
+			});
+
+			assert.doesNotThrow(() => resolver.sessionFileForIndex(0));
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("still fails fast for parent-seeded forks when a seed resolver returns undefined for an index", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-seed-mixed-"));
+		try {
+			const seedSessionFile = path.join(tempDir, "seed.jsonl");
+			writeMinimalSessionFile(seedSessionFile, "seed");
+			const resolver = createForkContextResolver({
+				getSessionFile: () => undefined,
+				getLeafId: () => null,
+			}, "fork", {
+				forkSourceForIndex: (index: number) => index === 0 ? seedSessionFile : undefined,
+				openSession: () => ({
+					createBranchedSession: () => {
+						const childSessionFile = path.join(tempDir, "child.jsonl");
+						writeMinimalSessionFile(childSessionFile, "child");
+						return childSessionFile;
+					},
+				}),
+			});
+
+			assert.throws(
+				() => resolver.sessionFileForIndex(1),
+				/Forked subagent context requires a persisted parent session\./,
+			);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+});

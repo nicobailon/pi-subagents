@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import { isForkMode } from "../runs/shared/context-mode.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Key } from "@earendil-works/pi-tui";
@@ -150,8 +151,8 @@ function validateConfig(config: Record<string, unknown>): void {
 		if (typeof config.worktreeBranchPrefix !== "string") throw new Error("config.worktreeBranchPrefix must be a string");
 		normalizeWorktreeBranchPrefix(config.worktreeBranchPrefix);
 	}
-	if (config.defaultSubagentContext !== undefined && config.defaultSubagentContext !== "fresh" && config.defaultSubagentContext !== "fork") {
-		throw new Error('config.defaultSubagentContext must be "fresh" or "fork"');
+	if (config.defaultSubagentContext !== undefined && config.defaultSubagentContext !== "fresh" && !isForkMode(config.defaultSubagentContext)) {
+		throw new Error('config.defaultSubagentContext must be "fresh", "fork", or "fork:<seed-session-path>"');
 	}
 	validateForkContextConfig(config.forkContext);
 	if (config.foregroundDetachShortcut !== undefined

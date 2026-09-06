@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import type { ForkSeedContextValue } from "../runs/shared/context-mode.ts";
 import { createRequire } from "node:module";
 import { dirname, resolve as resolvePath } from "node:path";
 import { Worker } from "node:worker_threads";
@@ -1008,7 +1009,7 @@ export interface WorkflowScriptChildResult {
 	detached?: boolean;
 	interrupted?: boolean;
 	structuredOutput?: unknown;
-	requestedContext?: "fresh" | "fork";
+	requestedContext?: "fresh" | "fork" | ForkSeedContextValue;
 	resolvedContext?: "fresh" | "fork" | "mixed";
 	outputReference?: string;
 	recovery?: AcceptanceRecoveryMetadata;
