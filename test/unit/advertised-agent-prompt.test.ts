@@ -66,5 +66,22 @@ describe("advertised agent prompt", () => {
 
 	it("returns no catalog when no agent opts in", () => {
 		assert.equal(buildAdvertisedAgentPrompt([agent("hidden")]), undefined);
+		assert.equal(appendAdvertisedAgentPrompt("base prompt\n\n", undefined), "base prompt\n\n");
+	});
+
+	it("admits an exact-budget canonical name and omits it one byte over", () => {
+		const emptyName = buildAdvertisedAgentPrompt([agent("", { advertise: true, description: "small" })])!;
+		const name = "x".repeat(12_288 - Buffer.byteLength(emptyName));
+		const exact = buildAdvertisedAgentPrompt([agent(name, { advertise: true, description: "small" })])!;
+		assert.equal(Buffer.byteLength(exact), 12_288);
+		assert.ok(exact.includes(`<name>${name}</name>`));
+		const over = buildAdvertisedAgentPrompt([agent(`${name}x`, { advertise: true, description: "small" })])!;
+		assert.doesNotMatch(over, /<name>/);
+		assert.match(over, /<omitted count="1"/);
+	});
+
+	it("withdraws a reused catalog when the last advertised agent disappears", () => {
+		const prior = appendAdvertisedAgentPrompt("base prompt", buildAdvertisedAgentPrompt([agent("alpha", { advertise: true })]));
+		assert.equal(appendAdvertisedAgentPrompt(prior, buildAdvertisedAgentPrompt([])), "base prompt");
 	});
 });

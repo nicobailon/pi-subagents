@@ -212,7 +212,7 @@ You can override selected agent fields without copying the whole agent. Override
 }
 ```
 
-Supported override fields: `description`, `advertise`, `output`, `outputMode`, `defaultReads`, `model`, `defaultProvider`, `fallbackModels`, `thinking`, `systemPromptMode`, `inheritProjectContext`, `inheritGlobalContext`, `inheritSkills`, `defaultContext`, `acceptanceRole`, `disabled`, `skills`, `tools`, and `systemPrompt`.
+Supported override fields: `description`, `output`, `outputMode`, `defaultReads`, `model`, `defaultProvider`, `fallbackModels`, `thinking`, `systemPromptMode`, `inheritProjectContext`, `inheritGlobalContext`, `inheritSkills`, `defaultContext`, `acceptanceRole`, `disabled`, `skills`, `tools`, and `systemPrompt`.
 
 - `description` replaces the discovered description for builtin and custom agents, which lets list output show deployment-specific routing or model metadata.
 - Use `output: false`, `defaultReads: false`, `defaultContext: false`, or `acceptanceRole: false` to clear an inherited value.
@@ -232,9 +232,11 @@ Disable and restore:
 
 ## Parent prompt discovery
 
-Set `advertise: true` on a specialist that the parent should know about before it decides to delegate. When the `subagent` tool is active, pi-subagents adds an agent-owned catalog of advertised names and descriptions to the parent system prompt. Disabled agents and agents excluded by the active capability ceiling are omitted.
+Set `advertise: true` in a specialist's agent file frontmatter for parent-prompt discovery. When the `subagent` tool is active, pi-subagents adds an agent-owned catalog of names and descriptions to the parent system prompt. Disabled agents and agents excluded by the current capability ceiling are omitted. Advertisement is not supported through settings overrides or runtime registration.
 
-Advertisement is opt-in. The catalog is sorted by name and limited to 16 agents, with each description capped at 512 UTF-8 bytes. The parent still calls `subagent({ action: "list", capabilities: true })` before execution to confirm that the selected agent is executable.
+Advertisement is opt-in discovery, not automatic routing. The catalog is sorted by name and limited to 16 agents and 12,288 total rendered UTF-8 bytes, including XML escaping, instructions, and omission counts. Descriptions are capped at 512 UTF-8 bytes before escaping. Entries that cannot fit are omitted; canonical agent names are never truncated. The parent still calls `subagent({ action: "list", capabilities: true })` before execution to confirm that the selected agent is executable (including `runner.available === true` for external CLI agents).
+
+The file catalog snapshot refreshes at session start/reload and after extension-owned agent-management mutations. External file or settings edits require `/reload`; ordinary turns do not poll the filesystem. Tool availability and capability-ceiling filtering are checked in memory on every prompt. A failed management-triggered refresh withdraws the catalog until a successful refresh, without changing the persisted mutation's result.
 
 ## Prompt assembly
 

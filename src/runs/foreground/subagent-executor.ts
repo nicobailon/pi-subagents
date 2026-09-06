@@ -439,6 +439,7 @@ interface ExecutorDeps {
 	getSubagentSessionRoot: (parentSessionFile: string | null) => string;
 	expandTilde: (p: string) => string;
 	discoverAgents: (cwd: string, scope: AgentScope, preferredModelProvider?: string) => { agents: AgentConfig[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig; maxThinking?: AgentConfig["maxThinking"]; cwd?: string; scope?: AgentScope; directories?: UnknownAgentDiagnosticContext["directories"] };
+	onAgentsChanged?: () => void;
 	allowMutatingManagementActions?: boolean;
 	activateSupervisorTransport?: () => void;
 	refreshResultDelivery?: () => void;
@@ -6420,6 +6421,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				config: deps.config,
 				currentSessionId: deps.state.currentSessionId ?? ctx.sessionManager.getSessionId() ?? undefined,
 				runtimeAgentOwner: deps.pi,
+				onAgentsChanged: deps.onAgentsChanged,
 			});
 		}
 

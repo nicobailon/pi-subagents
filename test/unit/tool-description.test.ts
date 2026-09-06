@@ -307,56 +307,6 @@ describe("registered subagent tool description", () => {
 		return JSON.parse(output) as { description: string; promptSnippet?: string; promptGuidelines?: string[]; properties: string[] };
 	}
 
-	function readAdvertisedSystemPrompt(agentDir: string, selectedTools: string[]): string | undefined {
-		const script = String.raw`
-			import registerSubagentExtension from "./src/extension/index.ts";
-			const events = { on() { return () => {}; }, emit() {} };
-			const beforeAgentStartHandlers = [];
-			const fakePi = new Proxy({
-				events,
-				on(event, handler) { if (event === "before_agent_start") beforeAgentStartHandlers.push(handler); },
-				registerTool() {},
-				registerCommand() {},
-				registerShortcut() {},
-				registerMessageRenderer() {},
-				sendMessage() {},
-				getSessionName() { return undefined; },
-			}, {
-				get(target, prop) {
-					if (prop in target) return target[prop];
-					return () => undefined;
-				},
-			});
-			registerSubagentExtension(fakePi);
-			const handler = beforeAgentStartHandlers.at(-1);
-			if (!handler) throw new Error("before_agent_start handler not registered");
-			try {
-				const result = handler(
-					{ prompt: "hello", systemPrompt: "base prompt", systemPromptOptions: { cwd: process.cwd(), selectedTools: ${JSON.stringify(selectedTools)} } },
-					{ cwd: process.cwd(), model: { provider: "test", id: "test" }, sessionManager: { getSessionFile() { return undefined; }, getSessionId() { return "test-session"; } } },
-				);
-				process.stdout.write(JSON.stringify({ systemPrompt: result?.systemPrompt ?? null }));
-			} catch (error) {
-				process.stdout.write(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
-			}
-		`;
-		const output = execFileSync(
-			process.execPath,
-			[
-				"--experimental-strip-types",
-				"--import",
-				"./test/support/register-loader.mjs",
-				"--input-type=module",
-				"--eval",
-				script,
-			],
-			{ cwd: projectRoot, env: parentToolEnv(agentDir), encoding: "utf-8" },
-		);
-		const parsed = JSON.parse(output) as { systemPrompt?: string | null; error?: string };
-		if (parsed.error) throw new Error(parsed.error);
-		return parsed.systemPrompt ?? undefined;
-	}
-
 	function writeExtensionConfig(agentDir: string, config: Record<string, unknown>): void {
 		const configDir = path.join(agentDir, "extensions", "subagent");
 		fs.mkdirSync(configDir, { recursive: true });
@@ -399,30 +349,6 @@ describe("registered subagent tool description", () => {
 		const invalidAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-invalid-"));
 		writeExtensionConfig(invalidAgentDir, { toolDescriptionMode: "tiny" });
 		assert.equal(readRegisteredTool(invalidAgentDir).description, FULL_SUBAGENT_TOOL_DESCRIPTION);
-	});
-
-	it("injects opted-in agents only while the subagent tool is active", () => {
-		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-advertised-prompt-"));
-		const agentsDir = path.join(agentDir, "agents");
-		fs.mkdirSync(agentsDir, { recursive: true });
-		fs.writeFileSync(path.join(agentsDir, "youtube.md"), "---\nname: youtube-transcripts\ndescription: Handle YouTube transcript requests\nadvertise: true\n---\nHandle transcripts.\n", "utf-8");
-		fs.writeFileSync(path.join(agentsDir, "hidden.md"), "---\nname: hidden\ndescription: Hidden helper\n---\nRemain hidden.\n", "utf-8");
-
-		const prompt = readAdvertisedSystemPrompt(agentDir, ["read", "subagent"]);
-		assert.match(prompt ?? "", /<advertised_subagents>/);
-		assert.match(prompt ?? "", /youtube-transcripts/);
-		assert.doesNotMatch(prompt ?? "", /Hidden helper/);
-		assert.equal(readAdvertisedSystemPrompt(agentDir, ["read"]), undefined);
-	});
-
-	it("propagates advertised-agent discovery failures to the host", () => {
-		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-advertised-prompt-error-"));
-		fs.writeFileSync(path.join(agentDir, "settings.json"), "{", "utf-8");
-
-		assert.throws(
-			() => readAdvertisedSystemPrompt(agentDir, ["subagent"]),
-			/Failed to parse settings file/,
-		);
 	});
 
 	it("registers the trimmed schema and description by default", () => {

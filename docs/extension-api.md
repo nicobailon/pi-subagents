@@ -164,7 +164,6 @@ const request: {
   definition: {
     description: string;
     systemPrompt: string;
-    advertise?: boolean;
     tools?: readonly string[];
   };
   result?:
@@ -176,7 +175,6 @@ const request: {
   definition: {
     description: "Agent registered by an independent extension",
     systemPrompt: "Return the words runtime probe.",
-    advertise: true,
     tools: [],
   },
 };
@@ -190,7 +188,7 @@ const registration = request.result.registration;
 
 If `pi-subagents` is a resolvable dependency of the consumer package, `pi-subagents/agents` exports `RUNTIME_AGENT_REGISTER_EVENT`, the request/result types, and `registerAgentViaEvents()` for the same contract. A separately installed Pi package is not automatically a Node dependency of another package. In that case, use the event contract directly instead of a runtime import. A type-only development dependency is optional.
 
-Set `advertise: true` only when the runtime agent should appear in the parent's advertised-agent catalog. The installed owner applies the existing runtime-agent validation, collision checks, limits, runtime source metadata, and cleanup. If more than one owner listens, the first handler that writes `request.result` wins. Unsupported versions, malformed requests, and registration failures return `{ ok: false, error }`. No result means no compatible owner handled the event.
+The installed owner applies the existing runtime-agent validation, collision checks, limits, runtime source metadata, and cleanup. If more than one owner listens, the first handler that writes `request.result` wins. Unsupported versions, malformed requests, and registration failures return `{ ok: false, error }`. No result means no compatible owner handled the event.
 
 This contract is process-local. It does not register agents in child sessions or other Pi processes, and it does not change package discovery or package resolution.
 

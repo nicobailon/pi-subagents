@@ -86,7 +86,6 @@ describe("runtime agent registration", () => {
 			definition: {
 				description: "Runtime helper",
 				systemPrompt: "Help at runtime.",
-				advertise: true,
 				aliases: ["helper"],
 				model: "openai/gpt-5-mini",
 			},
@@ -97,7 +96,6 @@ describe("runtime agent registration", () => {
 		assert.equal(agent?.source, "runtime");
 		assert.deepEqual(agent?.aliases, ["helper"]);
 		assert.equal(agent?.systemPrompt, "Help at runtime.");
-		assert.equal(agent?.advertise, true);
 		assert.equal(fs.existsSync(settingsPath), false);
 
 		registration.dispose();

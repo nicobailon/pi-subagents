@@ -19,7 +19,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { keyText, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
-import { discoverAgentSnapshot, discoverAgents, type AgentConfig, type AgentScope } from "../agents/agents.ts";
+import { clearAgentDiscoveryCache, discoverAgentSnapshot, discoverAgents, type AgentConfig, type AgentScope } from "../agents/agents.ts";
 import { appendAdvertisedAgentPrompt, buildAdvertisedAgentPrompt } from "../agents/advertised-agent-prompt.ts";
 import { clearRuntimeAgentsForPi, listRuntimeAgentConfigs, mergeRuntimeAgents } from "../agents/runtime-agent-registry.ts";
 import { registerRuntimeAgentEventListener } from "../agents/runtime-agent-events.ts";
@@ -532,6 +532,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		resolveCapabilityCeiling: (sessionId) => resolveCurrentSubagentCapabilityCeiling(sessionId),
 	});
 	let refreshResultDelivery = () => {};
+	let advertisedAgents: AgentConfig[] = [];
+	let advertisedContext: Pick<ExtensionContext, "cwd" | "model"> | undefined;
+	const refreshAdvertisedAgents = () => {
+		advertisedAgents = [];
+		if (!advertisedContext) return;
+		clearAgentDiscoveryCache();
+		advertisedAgents = discoverAgents(advertisedContext.cwd, "both", advertisedContext.model?.provider).agents
+			.filter((agent) => agent.advertise === true);
+	};
 	const hasResultDeliveryDemand = () => {
 		if ([...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running")) return true;
 		if (state.foregroundControls.size > 0) return true;
@@ -610,6 +619,14 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		getSubagentSessionRoot,
 		expandTilde,
 		discoverAgents: discoverAgentsForRuntime,
+		onAgentsChanged: () => {
+			try {
+				refreshAdvertisedAgents();
+			} catch (error) {
+				// The mutation already persisted. Withdraw stale guidance, not its result.
+				console.error("Failed to refresh advertised agents; catalog withdrawn until refresh:", error);
+			}
+		},
 		activateSupervisorTransport: () => supervisorChannel.activateTransport(),
 		refreshResultDelivery: () => refreshResultDelivery(),
 		trackRetainedNestedRoute: undefined,
@@ -780,15 +797,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	pi.registerTool(tool);
 
 	pi.on("before_agent_start", (event, ctx) => {
-		if (event.systemPromptOptions.selectedTools && !event.systemPromptOptions.selectedTools.includes("subagent")) return;
+		const selectedTools = event.systemPromptOptions.selectedTools ?? pi.getActiveTools();
 		const sessionId = state.currentSessionId ?? resolveCurrentSessionId(ctx.sessionManager);
-		const capabilityCeiling = resolveCurrentSubagentCapabilityCeiling(sessionId);
-		const advertisedPrompt = buildAdvertisedAgentPrompt(
-			discoverAgentsForRuntime(ctx.cwd, "both", ctx.model?.provider).agents,
-			capabilityCeiling,
-		);
-		if (!advertisedPrompt) return;
-		return { systemPrompt: appendAdvertisedAgentPrompt(event.systemPrompt, advertisedPrompt) };
+		const advertisedPrompt = selectedTools.includes("subagent")
+			? buildAdvertisedAgentPrompt(advertisedAgents, resolveCurrentSubagentCapabilityCeiling(sessionId))
+			: undefined;
+		const systemPrompt = appendAdvertisedAgentPrompt(event.systemPrompt, advertisedPrompt);
+		if (systemPrompt !== event.systemPrompt) return { systemPrompt };
 	});
 
 	registerWaitTool(pi, state, waitToolConfig.enabled, waitSubscriptionManager, waitToolConfig.defaultTimeoutMs);
@@ -1153,5 +1168,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			console.error("Failed to dispose in-process child sessions:", error);
 		}
 		await herdrStatusBridge.flush();
+	});
+
+	pi.on("session_start", (_event, ctx) => {
+		advertisedContext = { cwd: ctx.cwd, model: ctx.model };
+		refreshAdvertisedAgents();
 	});
 }

@@ -399,7 +399,6 @@ body`);
 		const worker = discoverAgents(project, "both").agents.find((agent) => agent.name === "worker")!;
 		assert.equal(worker.advertise, true);
 		assert.match(serializeAgent(worker), /^advertise: true$/m);
-		assert.match(handleManagementAction("get", { agent: "worker" }, { cwd: project, modelRegistry: { getAvailable: () => [] } }).content[0]?.text ?? "", /Advertise in parent prompt: true/);
 	}));
 
 	it("rejects non-boolean advertise values", () => withTempHome(() => {

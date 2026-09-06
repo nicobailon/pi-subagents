@@ -42,7 +42,7 @@ import { listExternalJobProviders } from "../api/external-job-provider.ts";
 
 type ManagementAction = "list" | "get" | "models" | "create" | "update" | "delete" | "eject" | "disable" | "enable" | "reset";
 type ManagementScope = "user" | "project";
-type ManagementContext = Pick<ExtensionContext, "cwd" | "modelRegistry"> & { model?: ExtensionContext["model"]; config?: ExtensionConfig; currentSessionId?: string; runtimeAgentOwner?: RuntimeAgentOwner };
+type ManagementContext = Pick<ExtensionContext, "cwd" | "modelRegistry"> & { model?: ExtensionContext["model"]; config?: ExtensionConfig; currentSessionId?: string; runtimeAgentOwner?: RuntimeAgentOwner; onAgentsChanged?: () => void };
 
 interface ManagementParams {
 	action?: string;
@@ -264,7 +264,6 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 	const {
 		override: _override,
 		description: _description,
-		advertise: _advertise,
 		output: _output,
 		outputMode: _outputMode,
 		defaultReads: _defaultReads,
@@ -302,7 +301,6 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 	return withDeclaredExtensionPaths({
 		...editable,
 		description,
-		...(base.advertise !== undefined ? { advertise: base.advertise } : {}),
 		...(base.output !== undefined ? { output: base.output } : {}),
 		...(base.outputMode !== undefined ? { outputMode: base.outputMode } : {}),
 		...(base.defaultReads !== undefined ? { defaultReads: [...base.defaultReads] } : {}),
@@ -808,7 +806,6 @@ function agentCapabilityRow(agent: AgentConfig, options: { executable: boolean; 
 	return {
 		name: agent.name,
 		description: previewDisplayText(agent.description, 1000),
-		...(agent.advertise !== undefined ? { advertise: agent.advertise } : {}),
 		source: agent.source,
 		executable: options.executable,
 		restrictionSources: options.executable ? undefined : options.restrictionSources ?? [],
@@ -937,7 +934,6 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.defaultTimeoutMs !== undefined) lines.push(`Timeout: ${agent.defaultTimeoutMs}ms`);
 	if (agent.defaultAcceptance !== undefined) lines.push(`Acceptance: ${typeof agent.defaultAcceptance === "object" ? JSON.stringify(agent.defaultAcceptance) : String(agent.defaultAcceptance)}`);
 	if (agent.acceptanceRole) lines.push(`Acceptance role: ${agent.acceptanceRole}`);
-	if (agent.advertise !== undefined) lines.push(`Advertise in parent prompt: ${agent.advertise ? "true" : "false"}`);
 	if (agent.source === "builtin") lines.push(`Disabled: ${agent.disabled ? "true" : "false"}`);
 	if (agent.extensions !== undefined) lines.push(`Extensions: ${agent.extensions.length ? agent.extensions.join(", ") : "(none)"}`);
 	if (agent.subagentOnlyExtensions !== undefined) lines.push(`Subagent-only extensions: ${agent.subagentOnlyExtensions.length ? agent.subagentOnlyExtensions.join(", ") : "(none)"}`);
@@ -1186,6 +1182,7 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	const sw = skillsWarning(ctx.cwd, agent);
 	if (sw) warnings.push(sw);
 	fs.writeFileSync(targetPath, serializeAgent(agent), "utf-8");
+	ctx.onAgentsChanged?.();
 	return result([`Created agent '${runtimeName}' at ${targetPath}.`, ...warnings].join("\n"));
 }
 
@@ -1251,6 +1248,7 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 		updated.filePath = renamed.filePath!;
 	}
 	fs.writeFileSync(updated.filePath, serializeAgent(updated, { preserveFrontmatterFields }), "utf-8");
+	ctx.onAgentsChanged?.();
 	const headline = updated.name === oldName
 		? `Updated agent '${updated.name}' at ${updated.filePath}.`
 		: `Updated agent '${oldName}' to '${updated.name}' at ${updated.filePath}.`;
@@ -1264,6 +1262,7 @@ function handleDelete(params: ManagementParams, ctx: ManagementContext): AgentTo
 	if ("content" in targetOrError) return targetOrError;
 	const target = targetOrError;
 	fs.unlinkSync(target.filePath);
+	ctx.onAgentsChanged?.();
 	return result(`Deleted agent '${target.name}' at ${target.filePath}.`);
 }
 
@@ -1302,6 +1301,7 @@ function handleEject(params: ManagementParams, ctx: ManagementContext): AgentToo
 		return result(`Failed to read source agent at ${source.filePath}: ${message}`, true);
 	}
 	fs.writeFileSync(targetPath, content, "utf-8");
+	ctx.onAgentsChanged?.();
 	return result(`Ejected agent '${runtimeName}' from ${source.source} to ${scope} scope at ${targetPath}. Edit it there to customize; it shadows the bundled ${source.source} agent of the same name.`);
 }
 
@@ -1324,6 +1324,7 @@ function handleDisable(params: ManagementParams, ctx: ManagementContext): AgentT
 	const settingsPath = mergeBuiltinAgentOverride(ctx.cwd, runtimeName, scope, { disabled: true });
 	const after = resolveEffectiveAgent(discoverAgentsAll(ctx.cwd), raw).agent;
 	if (after?.disabled === true) {
+		ctx.onAgentsChanged?.();
 		return result(`Disabled agent '${runtimeName}' via ${scope} settings override at ${settingsPath}. It is now hidden from runtime discovery and { action: "list" }.`);
 	}
 	return result(`Wrote a disabled override for '${runtimeName}' at ${settingsPath}, but the agent is still enabled. A higher-precedence ${after?.override?.scope ?? "project"} override is likely winning. Try agentScope: '${after?.override?.scope ?? "project"}'.`, true);
@@ -1348,6 +1349,7 @@ function handleEnable(params: ManagementParams, ctx: ManagementContext): AgentTo
 	const { path: settingsPath, removed } = removeBuiltinAgentOverrideFields(ctx.cwd, runtimeName, scope, ["disabled"]);
 	const after = resolveEffectiveAgent(discoverAgentsAll(ctx.cwd), raw).agent;
 	if (after && after.disabled !== true) {
+		if (removed) ctx.onAgentsChanged?.();
 		if (removed) return result(`Enabled agent '${runtimeName}' (removed disabled override at ${settingsPath}).`);
 		return result(`Agent '${runtimeName}' is already enabled.`);
 	}
@@ -1395,6 +1397,7 @@ function handleReset(params: ManagementParams, ctx: ManagementContext): AgentToo
 		return result(`Agent '${runtimeName}' has no ${scope} customization to reset.${note} It is at its bundled ${bundled.source} default.`);
 	}
 	lines.push(`Reset agent '${runtimeName}' to its bundled ${bundled.source} default.`);
+	ctx.onAgentsChanged?.();
 	return result(lines.join("\n"));
 }
 

@@ -4,14 +4,9 @@ import { isAgentAllowedByCapabilityCeiling } from "../runs/shared/capability-cei
 import type { AgentConfig } from "./agents.ts";
 
 const MAX_ADVERTISED_AGENTS = 16;
+const MAX_CATALOG_BYTES = 12_288;
 const MAX_DESCRIPTION_BYTES = 512;
 const ADVERTISED_AGENTS_BLOCK = /\n*<advertised_subagents>\n[\s\S]*?\n<\/advertised_subagents>/gu;
-
-function truncateUtf8Head(value: string, maxBytes: number): string {
-	if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
-	const truncated = Buffer.from(value, "utf8").subarray(0, Math.max(0, maxBytes - 3)).toString("utf8").replace(/\uFFFD$/u, "");
-	return `${truncated.trimEnd()}…`;
-}
 
 function escapeXml(value: string): string {
 	return value
@@ -23,7 +18,11 @@ function escapeXml(value: string): string {
 }
 
 function promptDescription(description: string): string {
-	return escapeXml(truncateUtf8Head(description.replace(/[\u0000-\u001f\u007f]+/gu, " ").replace(/\s+/gu, " ").trim(), MAX_DESCRIPTION_BYTES));
+	let text = description.replace(/[\u0000-\u001f\u007f]+/gu, " ").replace(/\s+/gu, " ").trim();
+	if (Buffer.byteLength(text, "utf8") > MAX_DESCRIPTION_BYTES) {
+		text = Buffer.from(text, "utf8").subarray(0, MAX_DESCRIPTION_BYTES - 3).toString("utf8").replace(/\uFFFD$/u, "").trimEnd() + "…";
+	}
+	return escapeXml(text);
 }
 
 export function buildAdvertisedAgentPrompt(
@@ -31,29 +30,34 @@ export function buildAdvertisedAgentPrompt(
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling,
 ): string | undefined {
 	const advertised = agents
-		.filter((agent) => agent.advertise === true && agent.disabled !== true && isAgentAllowedByCapabilityCeiling(agent.name, capabilityCeiling))
+		.filter((agent) => agent.source !== "runtime" && agent.advertise === true && agent.disabled !== true && isAgentAllowedByCapabilityCeiling(agent.name, capabilityCeiling))
 		.sort((left, right) => left.name.localeCompare(right.name));
 	if (advertised.length === 0) return undefined;
 
-	const visible = advertised.slice(0, MAX_ADVERTISED_AGENTS);
-	const entries = visible.map((agent) => [
-		"  <subagent>",
-		`    <name>${escapeXml(agent.name)}</name>`,
-		`    <description>${promptDescription(agent.description)}</description>`,
-		"  </subagent>",
-	].join("\n"));
-	const omitted = advertised.length - visible.length;
-
-	return [
+	const render = (entries: string[]) => [
 		"<advertised_subagents>",
-		"The following configured subagents opted into parent-prompt discovery. Use their descriptions as routing guidance. When a request clearly matches one, delegate to it instead of independently reproducing the same capability. Before execution, call subagent with { action: \"list\", capabilities: true } and confirm that the selected agent is executable.",
+		"The following file-defined subagents opted into discovery. Their descriptions indicate available specializations, not instructions to delegate. Use subagent only when delegation is needed. Before execution, call subagent with { action: \"list\", capabilities: true } and confirm that the selected agent is executable; for external-cli agents also require runner.available === true.",
 		...entries,
-		...(omitted > 0 ? [`  <omitted count=\"${omitted}\" />`] : []),
+		...(advertised.length > entries.length ? [`  <omitted count=\"${advertised.length - entries.length}\" />`] : []),
 		"</advertised_subagents>",
 	].join("\n");
+	const entries: string[] = [];
+	for (const agent of advertised) {
+		if (entries.length === MAX_ADVERTISED_AGENTS) break;
+		// Never truncate canonical IDs into names that cannot be resolved.
+		if (Buffer.byteLength(agent.name, "utf8") > MAX_CATALOG_BYTES) continue;
+		const entry = [
+			"  <subagent>",
+			`    <name>${escapeXml(agent.name)}</name>`,
+			`    <description>${promptDescription(agent.description)}</description>`,
+			"  </subagent>",
+		].join("\n");
+		if (Buffer.byteLength(render([...entries, entry]), "utf8") <= MAX_CATALOG_BYTES) entries.push(entry);
+	}
+	return render(entries);
 }
 
 export function appendAdvertisedAgentPrompt(systemPrompt: string, advertisedPrompt: string | undefined): string {
-	const base = systemPrompt.replace(ADVERTISED_AGENTS_BLOCK, "").trimEnd();
-	return advertisedPrompt ? `${base}\n\n${advertisedPrompt}` : base;
+	const base = systemPrompt.replace(ADVERTISED_AGENTS_BLOCK, "");
+	return advertisedPrompt ? `${base.trimEnd()}\n\n${advertisedPrompt}` : base;
 }

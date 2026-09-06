@@ -88,16 +88,6 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer?.modelSource, undefined);
 	});
 
-	it("lets settings advertise a builtin agent", () => {
-		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
-			subagents: { agentOverrides: { researcher: { advertise: true } } },
-		});
-
-		const researcher = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "researcher");
-		assert.equal(researcher?.advertise, true);
-		assert.equal(researcher?.override?.base.advertise, undefined);
-	});
-
 	it("lets a builtin agent inherit Pi's normal tools from an override", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
 			subagents: {
