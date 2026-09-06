@@ -100,7 +100,7 @@ A setup that works well in practice: route agents by task shape instead of runni
 
 The routing rule: use the capability tiers (1–3) when the task is well-scoped, and the intent tier (4) when scoping or judging is the task itself.
 
-Give tier-4 agents `fallbackModels` for retryable provider/model failures such as rate-limit, overload, unavailable-model, and provider-reported timeout errors **before any tool activity**. Once a tool has started, a provider failure (including HTTP 429) fails the run rather than replaying the task on another model. Ordinary task failures and the outer run-level `timeoutMs` / `maxRuntimeMs` deadline do not trigger fallback.
+Give tier-4 agents `fallbackModels` for retryable provider/model failures such as rate-limit, overload, unavailable-model, and provider-reported timeout errors **before any tool activity**. After tool activity, failures remain terminal except for the narrow foreground read-only HTTP 429 continuation below; the task is never automatically replayed after tool work. Ordinary task failures and the outer run-level `timeoutMs` / `maxRuntimeMs` deadline do not trigger fallback.
 
 Fallback uses native Pi sessions, not fresh `pi` CLI processes. Even when an exact session file is reopened, normal fallback resubmits the original task; retained history alone does not make automatic continuation after tool work safe.
 
@@ -117,6 +117,49 @@ fallbackModels: openai-codex/gpt-5.5:high
 ```
 
 One interaction worth knowing for tier 4: forked context over an Anthropic parent transcript with signed thinking blocks forces the child's thinking off, so intent-tier agents work best with fresh context.
+
+### Foreground read-only continuation after HTTP 429
+
+A native foreground child can continue once on an eligible later `fallbackModels` entry after completed read-only tool work and an observed HTTP 429. This is not a background-loop feature or general mid-run fallback. Current coverage is Pi SDK **0.85.1**, the configured **`baseten` / `openai-completions`** provider and its observed request path, not arbitrary providers, APIs, provider extensions, or error text containing “429”.
+
+Admission requires the default child factory's owned profile: an explicit allowlist containing only builtin `read` and/or `ls`, no ambient or custom extensions/tools or registered background-work providers, and verified idle settlement and shutdown. Wait, supervisor coordination, nested/fanout work, permissions/watchdogs, structured output, fast mode, configured tool budgets, and configured usage budgets (including workflow-owned budgets) exclude this continuation: the foreground host does not certify a remaining allowance. A read-only role name or prompt alone is not enough; default coordinated profiles are excluded.
+
+The child must have an **exact assigned session file**: either valid persisted history or an initially absent assigned file that the SDK initializes and persists during this attempt. In-memory or directory-only storage is insufficient. A missing or changed checkpoint at handoff fails closed; recovery never repairs it or promotes storage. Normal foreground executor launches assign the child file; no new storage option is needed.
+
+The next model must resolve through the same configured provider runtime, have the same provider/API and a different, untried model identity, and pass conservative retained-input compatibility checks. Cross-provider candidates are skipped without launch; unknown resolution or unsupported/unknown capacity denies continuation. Only text content and supported tool-call/result history are accepted. Capacity uses a conservative UTF-8 byte ceiling for retained history, system prompt and tool definitions, plus framing/continuation headroom and the full output allowance—not an exact token estimate. Smaller models are not assumed safe just because they share a provider.
+
+The sibling reopens the **same session/file**, preserving the original task, completed tool results and terminal provider error. Its new prompt is a fixed instruction to continue from those results without restarting or repeating completed work; it does not resubmit the original task. One recovery allowance is shared with compaction-abort recovery and consumed before sibling creation. Any sibling outcome ends recovery, including startup failure, abort or another 429; it cannot cascade into startup fallback or change model exclusions. Cancellation, stop/detach and the original run deadline remain authoritative and are rechecked at handoff. Newly billed attempt usage is aggregated, not historical usage restored from the file.
+
+For a deliberately non-coordinated reader, merge these existing keys into `~/.pi/agent/extensions/subagent/config.json` (see [configuration.md](configuration.md)):
+
+```json
+{
+  "waitTool": { "enabled": false },
+  "intercomBridge": { "mode": "off" }
+}
+```
+
+These settings affect other children too; do not disable required coordination just to obtain recovery. Define a custom agent using existing frontmatter (replace `model-a` and `model-b` with actual text-capable models in your configured Baseten catalog):
+
+```yaml
+---
+name: reader
+description: Read-only file analysis without coordination
+tools: read, ls
+extensions:
+model: baseten/model-a
+fallbackModels: baseten/model-b
+systemPromptMode: append
+inheritProjectContext: false
+inheritGlobalContext: false
+inheritSkills: false
+allowNestedSubagents: false
+async: false
+---
+Read the assigned files and return your findings without editing.
+```
+
+Launch with `subagent({ agent: "reader", task: "Read README.md and summarize it", async: false, context: "fresh", output: false })`. Keep `forceTopLevelAsync` disabled and omit tool/usage budgets and the excluded runtime features above. No new recovery flag is required: these settings make the profile eligible, but continuation still requires actual completed read-only work, observed 429 and all checkpoint/provider/lifecycle checks. This is a trusted-host compatibility boundary, not sandboxing or universal provider attestation.
 
 ## Thinking level defaults
 
