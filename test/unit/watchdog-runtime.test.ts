@@ -334,8 +334,8 @@ describe("main watchdog runtime", () => {
 		} finally { f.runtime.dispose(); }
 	});
 
-	it("aborts an active reply review and ignores its late result without repeated invalidation", async () => {
-		const config = enabledConfig({ clarification: true });
+	for (const edge of ["clarification disabled", "watchdog model changed", "new user input"]) it(`aborts an active reply review on ${edge} without repeated invalidation`, async () => {
+		let config = enabledConfig({ clarification: true });
 		const ctx = { cwd: "/tmp/project" };
 		let finish: ((value: { warnings: WatchdogWarning[] }) => void) | undefined;
 		let followSignal: AbortSignal | undefined;
@@ -350,12 +350,19 @@ describe("main watchdog runtime", () => {
 		try {
 			runtime.enqueueDelta("Original delta");
 			await runtime.handleAgentEnd({}, ctx);
-			runtime.replyToClarification(runtime.getSnapshot().clarification!.id, "Answer", ctx);
+			const pending = runtime.getSnapshot().clarification!;
+			assert.equal(pending.state, "pending");
+			runtime.replyToClarification(pending.id, "Answer", ctx);
+			assert.deepEqual(runtime.getSnapshot().clarification, { ...pending, state: "answered" });
 			const boundary = runtime.handleAgentEnd({}, ctx);
 			await tick();
-			config.clarification = false;
+			assert.deepEqual(runtime.getSnapshot().clarification, { ...pending, state: "reviewing reply" });
+			if (edge === "clarification disabled") config.clarification = false;
+			else if (edge === "watchdog model changed") config = { ...config, main: { ...config.main, model: "mock/new" } };
+			else runtime.handleUserInput();
 			runtime.refreshConfig();
 			assert.equal(followSignal?.aborted, true);
+			assert.deepEqual(runtime.getSnapshot().clarification, { ...pending, state: edge });
 			const epoch = runtime.getSnapshot().epoch;
 			runtime.refreshConfig();
 			assert.equal(runtime.getSnapshot().epoch, epoch, "terminal invalidation is not repeated on refresh");
@@ -363,6 +370,7 @@ describe("main watchdog runtime", () => {
 			await boundary;
 			assert.equal(delivered.length, 0);
 			assert.equal(runtime.getSnapshot().activeReviewId, undefined);
+			assert.deepEqual(runtime.getSnapshot().clarification, { ...pending, state: edge }, "late completion cannot replace the terminal reason");
 		} finally { runtime.dispose(); }
 	});
 
