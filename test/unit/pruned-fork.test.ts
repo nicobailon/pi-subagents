@@ -185,7 +185,6 @@ describe("pruned fork sessions", () => {
 			assert.throws(() => resolver.sessionFileForIndex(0), /before pruning completed/);
 			await resolver.prepareSessionForIndex(0);
 			assert.equal(resolver.sessionFileForIndex(0), childSession);
-			assert.equal(resolver.thinkingOverrideForIndex(0), undefined);
 			const text = fs.readFileSync(childSession, "utf-8");
 			assert.ok(!text.includes("thinkingSignature"));
 			assert.ok(!text.includes("thinking_level_change"));
