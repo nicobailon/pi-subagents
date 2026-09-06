@@ -7,12 +7,11 @@ import { it } from "node:test";
 import { Type } from "typebox";
 import { registerMainWatchdog } from "../../src/watchdog/register-main.ts";
 import { createMainWatchdogReview } from "../../src/watchdog/review.ts";
-import { handleWatchdogToolAction } from "../../src/watchdog/tool-actions.ts";
 
 // Same opt-in installed-SDK convention as readonly-session-evidence.test.ts.
 // Real AgentSession + ExtensionRunner + ModelRuntime, with HTTP replaced only at fetch.
 const sdkRoot = process.env.PI_SUBAGENTS_NATIVE_SDK;
-it("native Pi returns the boundary hook before answering and automatically reviews a no-edit reply once", {
+it("native Pi delivers a yielded question and continues without a reply action or forced review", {
 	skip: !sdkRoot && "Set PI_SUBAGENTS_NATIVE_SDK to an installed real Pi SDK root",
 	timeout: 30_000,
 }, async () => {
@@ -35,10 +34,10 @@ it("native Pi returns the boundary hook before answering and automatically revie
 	let reviewerCalls = 0;
 	const reviewInputs: string[] = [];
 	const question = "Which original scope applies?";
-	const reply = "Keep the original bounded scope.";
+	const continuation = "I will keep the original bounded scope and continue.";
 	const evidence = "The original task bounded the edit.";
-	function response(tool?: { name: string; arguments: Record<string, unknown> }): Response {
-		const delta = tool ? { tool_calls: [{ index: 0, id: `call-${hostCalls}-${reviewerCalls}`, type: "function", function: { name: tool.name, arguments: JSON.stringify(tool.arguments) } }] } : { content: "Done." };
+	function response(tool?: { name: string; arguments: Record<string, unknown> }, text = "Done."): Response {
+		const delta = tool ? { tool_calls: [{ index: 0, id: `call-${hostCalls}-${reviewerCalls}`, type: "function", function: { name: tool.name, arguments: JSON.stringify(tool.arguments) } }] } : { content: text };
 		const chunk = { id: "synthetic", object: "chat.completion.chunk", created: 1, model: "watchdog-test", choices: [{ index: 0, delta, finish_reason: tool ? "tool_calls" : "stop" }] };
 		return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
 	}
@@ -55,24 +54,16 @@ it("native Pi returns the boundary hook before answering and automatically revie
 			const body = JSON.parse(String(init?.body));
 			if (body.tools?.some((tool: any) => tool.function.name === "watchdog_warn")) {
 				reviewerCalls++;
-				if (reviewerCalls === 1) return response({ name: "watchdog_ask", arguments: { question, evidence } });
-				if (reviewerCalls === 2) {
-					assert.equal(body.tools.some((tool: any) => tool.function.name === "watchdog_ask"), false);
-					return response({ name: "watchdog_warn", arguments: { severity: "concern", confidence: "high", summary: "Verify the bounded edit", evidence: "Reply confirms the original scope.", recommendedAction: "Check the edit remains bounded." } });
-				}
-				assert.equal(reviewerCalls, 3, "only normal post-warning reviewer completion remains");
-				return response();
+				assert.equal(reviewerCalls, 1, "asking yields without another provider call or forced review");
+				return response({ name: "watchdog_ask", arguments: { question, evidence } });
 			}
 			hostCalls++;
 			if (hostCalls === 1) return response({ name: "fixture_edit", arguments: {} });
 			if (hostCalls === 2) return response();
-			if (hostCalls === 3) {
-				assert.equal(boundaryReturns, 1, "agent_end returned before the orchestrator answer");
-				assert.ok(JSON.stringify(body.messages).includes(question), "native steer carries the question");
-				return response({ name: "subagent", arguments: { action: "watchdog.reply", id: runtime!.getSnapshot().clarification!.id, message: reply } });
-			}
-			assert.ok(hostCalls <= 5, "no question/reply or warning loop");
-			return response();
+			assert.equal(hostCalls, 3, "one automatic continuation, no question loop");
+			assert.equal(boundaryReturns, 1, "agent_end returned before the orchestrator continuation");
+			for (const text of [question, evidence]) assert.ok(JSON.stringify(body.messages).includes(text), "native steer carries question and evidence");
+			return response(undefined, continuation);
 		};
 		const settingsManager = pi.SettingsManager.create(cwd, agentDir);
 		const resourceLoader = new pi.DefaultResourceLoader({
@@ -90,13 +81,6 @@ it("native Pi returns the boundary hook before answering and automatically revie
 					writeFileSync(join(cwd, "marker.txt"), "after");
 					return { content: [{ type: "text", text: "Original bounded edit completed." }], details: {} };
 				} });
-				api.registerTool({ name: "subagent", label: "Watchdog reply", description: "Reply by exact ID", parameters: Type.Object({ action: Type.String(), id: Type.String(), message: Type.String() }), async execute(_id: string, params: any, _signal: any, _update: any, ctx: any) {
-					const result = handleWatchdogToolAction(params.action, params, ctx, runtime);
-					assert.equal(result.isError, undefined);
-					assert.equal(reviewInputs.length, 1, "reply is only a receipt");
-					assert.equal(readFileSync(join(cwd, "marker.txt"), "utf8"), "after");
-					return result;
-				} });
 			}],
 		});
 		await resourceLoader.reload();
@@ -105,12 +89,14 @@ it("native Pi returns the boundary hook before answering and automatically revie
 		await session.bindExtensions({});
 		await session.prompt("Make one original bounded edit.");
 		assert.equal(beforeStarts, 1, "queued native continuation is not a new user prompt epoch");
-		assert.equal(reviewInputs.length, 2, "one initial review and one fresh Q/A review");
-		assert.ok(reviewInputs[1]!.startsWith(reviewInputs[0]!));
-		for (const text of [question, evidence, reply]) assert.ok(reviewInputs[1]!.includes(text));
+		assert.equal(reviewInputs.length, 1, "ordinary unchanged-evidence gate skips the continuation boundary");
+		assert.equal(hostCalls, 3);
+		assert.equal(boundaryReturns, 2);
+		assert.equal(readFileSync(join(cwd, "marker.txt"), "utf8"), "after");
 		assert.equal(runtime!.getSnapshot().failedReviews, 0);
-		assert.ok(session.messages.some((message: any) => message.customType === "subagent_watchdog_warning"));
-		console.log(`Actual Pi ${pi.VERSION}: hook returned before automatic reply; one no-edit Q/A review; warning reached transcript.`);
+		assert.ok(session.messages.some((message: any) => message.customType === "subagent_watchdog_clarification" && message.display));
+		assert.ok(session.messages.some((message: any) => message.role === "assistant" && message.content.some((part: any) => part.text === continuation)));
+		console.log(`Actual Pi ${pi.VERSION}: visible question delivered after yield; orchestrator continued; no reply action or forced review.`);
 	} finally {
 		runtime?.dispose();
 		session?.dispose();

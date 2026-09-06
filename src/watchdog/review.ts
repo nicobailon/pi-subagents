@@ -298,7 +298,7 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 		if (request.allowClarification) tools.push({
 			name: "watchdog_ask",
 			label: "Watchdog clarification",
-			description: "Ask one focused question only when missing task status, intent or other orchestrator context prevents a concrete review judgment. Ends this review; does not wait for or return the answer. A fresh review receives the bounded Q/A. Never ask for approval or permission, and never ask after recording a warning. Question and evidence are capped at 1000 and 2000 characters.",
+			description: "Send one focused question when missing task status, intent or other orchestrator context prevents a concrete review judgment. Yields and ends this review so the orchestrator can handle the message and continue; no answer or follow-up review is required. Never ask for approval or permission, or after recording a warning. Question and evidence are capped at 1000 and 2000 characters.",
 			parameters: WatchdogAskParams,
 			executionMode: "sequential",
 			async execute(_id, rawParams) {

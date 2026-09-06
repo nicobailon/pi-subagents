@@ -3,10 +3,10 @@
 ## [Unreleased]
 
 ### Added
-- Add default-off, main-only watchdog clarification and task-continuity reviews from bounded delivered orchestration evidence, with exact-ID replies, cancellation and a fresh review (#2010).
+- Add default-off, main-only watchdog questions and task-continuity reviews from bounded delivered orchestration evidence (#2010).
 
 ### Changed
-- Simplify main-watchdog clarification lifecycle to one state record, keeping reply deadlines and fresh-review cancellation independent of display text.
+- Simplify watchdog clarification to a visible question and native orchestrator continuation; remove the reply action, exchange tracking, deadlines and mandatory follow-up reviews.
 - Document task-derived behavior labels for workflow launches in the built-in pi-subagents skill, including reviews and retained follow-ups.
 
 ### Fixed
