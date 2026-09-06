@@ -84,10 +84,11 @@ it("requires exact identity, normal completion and a nonthrowing clean guard", a
 	await drainOutstandingWork({ state }, broken); assert.equal(broken.settled(), false);
 });
 
-for (const kind of ["empty", "dead-owned", "result-queued-owned", "result-running-owned", "dismissed-owned", "unrelated-running", "unrelated-dead", "terminal-owned", "unknown-owner", "unknown-state", "corrupt", "missing-status", "missing-directory", "rejected-entry", "unrelated-scale"] as const) {
+for (const kind of ["empty", "dead-owned", "result-queued-owned", "result-running-owned", "dismissed-owned", "unrelated-running", "unrelated-dead", "terminal-owned", "unknown-owner", "unknown-state", "corrupt", "missing-status", "missing-directory", "rejected-entry", "rejected-entry-ENOENT", "rejected-entry-ENOTDIR", "unrelated-scale"] as const) {
 	it(`ordinary scan/read counts unchanged and conservative raw evidence: ${kind}`, async (t) => {
 		async function run(opted: boolean) {
 			const dirs: string[] = [];
+			const rejectedEntry = kind.startsWith("rejected-entry");
 			const count = kind === "unrelated-scale" ? 40 : kind === "empty" ? 0 : 1;
 			for (let i = 0; i < count; i++) {
 				const id = `drain-proof-${kind}-${opted}-${i}`; const dir = join(DIRS.async, id); dirs.push(dir);
@@ -101,33 +102,61 @@ for (const kind of ["empty", "dead-owned", "result-queued-owned", "result-runnin
 				if (kind !== "missing-status") fs.writeFileSync(join(dir, "status.json"), kind === "corrupt" ? "{" : JSON.stringify(status));
 				updateActiveRunIndex(dir, "running");
 				if (kind === "missing-directory") fs.rmSync(dir, { recursive: true });
-				if (kind === "rejected-entry") { fs.rmSync(dir, { recursive: true }); fs.writeFileSync(dir, "not a directory"); }
+				if (rejectedEntry) { fs.rmSync(dir, { recursive: true }); fs.writeFileSync(dir, "not a directory"); }
 				if (kind.startsWith("result-")) { fs.mkdirSync(DIRS.results, { recursive: true }); fs.writeFileSync(join(DIRS.results, `${id}.json`), JSON.stringify({ success: true, results: [] })); }
 			}
 			const originalRead = fs.readFileSync; const originalStat = fs.statSync; const originalReaddir = fs.readdirSync;
+			// lstat rejects the regular-file entry on every OS. Marker cleanup then
+			// stats file/status.json: Windows reports ENOENT, POSIX ENOTDIR.
+			// Exercise the native boundary and deterministically cover both contracts.
+			const injectedCode = kind === "rejected-entry-ENOENT" ? "ENOENT" : kind === "rejected-entry-ENOTDIR" ? "ENOTDIR" : undefined;
+			let boundaryCode = injectedCode;
+			if (rejectedEntry && !boundaryCode) {
+				assert.throws(() => originalStat(join(dirs[0], "status.json")), (error: NodeJS.ErrnoException) => {
+					assert.ok(error.code === "ENOENT" || error.code === "ENOTDIR");
+					boundaryCode = error.code;
+					return true;
+				});
+			}
 			const counts = { index: 0, read: 0, stat: 0 };
 			const isStatus = (p: unknown) => dirs.some((dir) => String(p) === join(dir, "status.json"));
 			fs.readFileSync = ((...args: Parameters<typeof fs.readFileSync>) => { if (isStatus(args[0])) counts.read++; return originalRead(...args); }) as typeof fs.readFileSync;
-			fs.statSync = ((...args: Parameters<typeof fs.statSync>) => { if (isStatus(args[0])) counts.stat++; return originalStat(...args); }) as typeof fs.statSync;
+			fs.statSync = ((...args: Parameters<typeof fs.statSync>) => {
+				if (isStatus(args[0])) {
+					counts.stat++;
+					if (injectedCode) throw Object.assign(new Error(`${injectedCode}: fixture status stat`), { code: injectedCode });
+				}
+				return originalStat(...args);
+			}) as typeof fs.statSync;
 			fs.readdirSync = ((...args: Parameters<typeof fs.readdirSync>) => { if (String(args[0]) === join(DIRS.async, ".active-runs")) counts.index++; return originalReaddir(...args); }) as typeof fs.readdirSync;
 			syncBuiltinESMExports();
 			const proof = opted ? observation() : undefined;
 			try {
-				if (kind === "rejected-entry") await assert.rejects(drainOutstandingWork({ state }, proof), /ENOTDIR/);
-				else await drainOutstandingWork({ state }, proof);
+				const outcome = await drainOutstandingWork({ state }, proof).then(
+					() => "completed",
+					(error: Error) => {
+						assert.ok(rejectedEntry, `unexpected drain rejection: ${error}`);
+						assert.match(error.message, /Failed to list async runs/);
+						const inspection = error.cause as Error;
+						assert.match(inspection.message, /Failed to inspect async status file/);
+						return (inspection.cause as NodeJS.ErrnoException).code;
+					},
+				);
+				assert.equal(outcome, boundaryCode === "ENOTDIR" ? "ENOTDIR" : "completed");
+				if (rejectedEntry) assert.deepEqual(counts, { index: 1, read: 0, stat: 1 }, "rejected entry reaches the cleanup status-stat boundary exactly once");
 				assert.equal(counts.index, 1, "first predicate is false, with no wait/final requery");
 				if (proof) assert.equal(proof.settled(), ["empty", "unrelated-running", "unrelated-dead", "terminal-owned", "unrelated-scale"].includes(kind));
 				const capturedCounts = { ...counts };
 				if (kind.includes("dead")) assert.equal(JSON.parse(originalRead(join(dirs[0], "status.json"), "utf8")).state, "failed", "ordinary dead-PID repair remains");
 				if (kind.startsWith("result-")) assert.equal(JSON.parse(originalRead(join(dirs[0], "status.json"), "utf8")).state, "complete", "ordinary result repair remains");
-				return capturedCounts;
+				return { counts: capturedCounts, outcome };
 			} finally {
 				fs.readFileSync = originalRead; fs.statSync = originalStat; fs.readdirSync = originalReaddir; syncBuiltinESMExports();
 				for (const dir of dirs) { releaseActiveRunIndex(dir); fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(join(DIRS.results, `${dir.split("/").at(-1)}.json`), { force: true }); }
 			}
 		}
 		const observed = await run(true), baseline = await run(false);
-		assert.deepEqual(observed, baseline, "observation adds no index enumeration/status reads or metadata checks");
+		assert.deepEqual(observed, baseline, "observation preserves outcome and adds no index enumeration/status reads or metadata checks");
 		t.diagnostic(`baseline = opted-in ${JSON.stringify(observed)}`);
 	});
 }
