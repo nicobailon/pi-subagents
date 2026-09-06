@@ -109,7 +109,7 @@ import {
 	type ChildWatchdogStateSnapshot,
 	type ChildWatchdogStatusEvent,
 } from "../../watchdog/child-status.ts";
-import { buildInProcessChildLaunch } from "../shared/child-launch.ts";
+import { buildInProcessChildLaunch, createReportedChildSessionInput } from "../shared/child-launch.ts";
 import { childSessionFactory, projectChildSessionEventForJson, type ChildSession, type ChildSessionEvent } from "../shared/child-session.ts";
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
@@ -425,7 +425,8 @@ async function runSingleAttempt(
 		permissionRules,
 		permissionAuditPath,
 		childWatchdog,
-		watchdogStatus: (event) => onWatchdogStatus?.(event),
+		// registerChildWatchdog returns before reading the sink when no watchdog exists.
+		watchdogStatus: childWatchdog ? (event) => onWatchdogStatus?.(event) : undefined,
 		waitToolEnabled: options.waitToolEnabled,
 		waitToolDefaultTimeoutMs: options.waitToolDefaultTimeoutMs,
 		capabilityCeiling: options.capabilityCeiling,
@@ -1356,12 +1357,7 @@ async function runSingleAttempt(
 
 		void (async () => {
 			try {
-				const created = await childSessions.create({
-					...launch.session,
-					onExtensionError: (error) => {
-						shared.transcriptWriter?.writeStderrLine(`Extension error (${error.extensionPath}, ${error.event}): ${error.error instanceof Error ? error.error.message : String(error.error)}`);
-					},
-				});
+				const created = await childSessions.create(createReportedChildSessionInput(launch, shared.transcriptWriter));
 				if (lifecycleFinished) {
 					void created.dispose();
 					return;

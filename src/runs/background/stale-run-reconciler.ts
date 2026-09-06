@@ -9,6 +9,7 @@ import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, type NestedRoute } from "../shared/nested-events.ts";
 import { assertWorkflowGraphHostSteps } from "../shared/host-step-status.ts";
+import type { RawDrainStatusObserver } from "../shared/readonly-drain-observation.ts";
 
 export type PidLiveness = "alive" | "dead" | "unknown";
 
@@ -352,9 +353,10 @@ export function checkPidLiveness(pid: number, kill: KillFn = process.kill): PidL
 	}
 }
 
-export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOptions = {}): ReconcileAsyncRunResult {
+export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOptions = {}, observeStatus?: RawDrainStatusObserver): ReconcileAsyncRunResult {
 	const now = options.now?.() ?? Date.now();
 	const status = readStatus(asyncDir);
+	observeStatus?.(status);
 	const startedStatus = !status && options.startedRun ? buildStartedStatus(asyncDir, options.startedRun, now) : undefined;
 	const effectiveStatus = status ?? startedStatus;
 	if (!effectiveStatus) return { status: null, repaired: false };

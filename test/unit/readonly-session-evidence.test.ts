@@ -1,0 +1,854 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it } from "node:test";
+import { createDefaultChildSessionFactory, type ChildSession, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
+import { getReadonlySessionEvidence, requestReadonlySessionEvidence, validateReadonlySessionCheckpoint, type SettledReadonlyEvidence } from "../../src/runs/shared/readonly-session-evidence.ts";
+import { createChildHooks, isReadonlyChildHookProfile } from "../../src/runs/shared/child-hooks.ts";
+import { buildInProcessChildLaunch, createReportedChildSessionInput } from "../../src/runs/shared/child-launch.ts";
+import { runSync } from "../../src/runs/foreground/execution.ts";
+import type { AgentConfig } from "../../src/agents/agents.ts";
+import { registerBackgroundWorkProvider } from "../../src/api/background-work.ts";
+import { DIRS } from "../../src/shared/types.ts";
+import { releaseActiveRunIndex, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
+
+function launch(cwd: string): ChildSessionLaunch {
+	return { cwd, storage: { kind: "file", sessionFile: join(cwd, "session.jsonl") }, model: "baseten/model-a", tools: ["read"], extensionPaths: [],
+		ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true,
+		runtime: { fanoutChild: false, fast: false, depth: 1, waitTool: { enabled: false } } };
+}
+
+it("has no duck-typed receipt or caller-issued checkpoint", () => {
+	const fake = { continuationEvidence: { status: 429 } } as unknown as ChildSession;
+	assert.equal(getReadonlySessionEvidence(fake), undefined);
+	assert.equal(validateReadonlySessionCheckpoint({ sessionFile: "not-read" } as SettledReadonlyEvidence), false);
+});
+
+it("rejects runtime and wait accessors without invoking getters during admission or revalidation", () => {
+	for (const target of ["runtime", "wait object", "wait enabled"] as const) {
+		for (const afterCapture of [false, true]) {
+			const l = launch("/not-opened");
+			if (afterCapture) l.hooks = createChildHooks(l.runtime);
+			let calls = 0;
+			const object = target === "wait enabled" ? l.runtime.waitTool : l.runtime;
+			const key = target === "runtime" ? "sessionName" : target === "wait object" ? "waitTool" : "enabled";
+			Object.defineProperty(object, key, { enumerable: true, get() { calls++; throw new Error("getter must not run"); } });
+			if (!afterCapture) l.hooks = createChildHooks(l.runtime);
+			assert.equal(isReadonlyChildHookProfile(l.hooks, l.runtime), false);
+			assert.equal(calls, 0);
+		}
+	}
+});
+
+it("rejects hidden and symbol data keys in runtime and wait profiles", () => {
+	for (const nested of [false, true]) {
+		for (const key of ["hiddenOption", nested ? "enabled" : "sessionName", Symbol("unknown")]) {
+			const l = launch("/not-opened");
+			const value = key === "enabled" ? false : key === "sessionName" ? "hidden" : true;
+			Object.defineProperty(nested ? l.runtime.waitTool : l.runtime, key, { value, enumerable: typeof key === "symbol" });
+			l.hooks = createChildHooks(l.runtime);
+			assert.equal(isReadonlyChildHookProfile(l.hooks, l.runtime), false);
+		}
+	}
+});
+
+const sdkRoot = process.env.PI_SUBAGENTS_NATIVE_SDK;
+async function countAsyncIO(run: (counts: { scans: number; reads: number; stats: number }) => Promise<void>) {
+	const counts = { scans: 0, reads: 0, stats: 0 };
+	const readdir = fs.readdirSync, read = fs.readFileSync, stat = fs.statSync;
+	const status = (p: unknown) => String(p).startsWith(`${DIRS.async}/`) && String(p).endsWith("/status.json");
+	fs.readdirSync = ((...args: Parameters<typeof fs.readdirSync>) => { if (String(args[0]) === join(DIRS.async, ".active-runs")) counts.scans++; return readdir(...args); }) as typeof fs.readdirSync;
+	fs.readFileSync = ((...args: Parameters<typeof fs.readFileSync>) => { if (status(args[0])) counts.reads++; return read(...args); }) as typeof fs.readFileSync;
+	fs.statSync = ((...args: Parameters<typeof fs.statSync>) => { if (status(args[0])) counts.stats++; return stat(...args); }) as typeof fs.statSync;
+	syncBuiltinESMExports();
+	try { await run(counts); }
+	finally { fs.readdirSync = readdir; fs.readFileSync = read; fs.statSync = stat; syncBuiltinESMExports(); }
+}
+
+describe("native 0.85.1 factory evidence (synthetic transport, real configured ModelRuntime)", { skip: !sdkRoot && "Set PI_SUBAGENTS_NATIVE_SDK to the isolated SDK install root" }, () => {
+	let pi: PiCodingAgentModule;
+	async function sdk() {
+		if (!pi) {
+			// ESM conditions matter: the SDK has import-only package exports.
+			const entry = execFileSync(process.execPath, ["--input-type=module", "-e", "console.log(import.meta.resolve('@earendil-works/pi-coding-agent'))"], { cwd: sdkRoot, encoding: "utf8" }).trim();
+			assert.match(entry, /\/dist\/index\.js$/);
+			pi = await import(entry);
+			assert.equal(pi.VERSION, "0.85.1");
+		}
+		return pi;
+	}
+	const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+	function sse(tool = false): Response {
+		const delta = tool ? { tool_calls: [{ index: 0, id: "read-1", type: "function", function: { name: "read", arguments: JSON.stringify({ path: "marker.txt" }) } }] } : { content: "complete" };
+		const chunk = { id: "synthetic", object: "chat.completion.chunk", created: 1, model: "model-a", choices: [{ index: 0, delta, finish_reason: tool ? "tool_calls" : "stop" }] };
+		return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
+	}
+	function http(status: number): Response {
+		return new Response(JSON.stringify({ error: { message: "synthetic rate limit", type: "rate_limit_error" } }), { status, headers: { "content-type": "application/json", "retry-after-ms": "1" } });
+	}
+	type NativeSession = Awaited<ReturnType<PiCodingAgentModule["createAgentSession"]>>["session"];
+	type Captured = { session: NativeSession; original: NativeSession["agent"]["streamFunction"]; runtime: NonNullable<Parameters<PiCodingAgentModule["createAgentSession"]>[0]>["modelRuntime"] };
+	async function fixture(run: (f: { pi: PiCodingAgentModule; cwd: string; agentDir: string; l: ChildSessionLaunch; factory: ReturnType<typeof createDefaultChildSessionFactory>; captured: Captured[]; acknowledge: (id: string) => void; requests: { body: Record<string, unknown> }[]; setResponses: (responses: (() => Response | Promise<Response>)[]) => void }) => Promise<void>, settings: Record<string, unknown> = {}, fresh = false) {
+		const realPi = await sdk();
+		const cwd = mkdtempSync(join(tmpdir(), "readonly-factory-"));
+		const agentDir = join(cwd, "agent"); mkdirSync(agentDir);
+		const previousDir = process.env.PI_CODING_AGENT_DIR;
+		const previousFetch = globalThis.fetch;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ retry: { enabled: false, provider: { maxRetries: 0 } }, compaction: { enabled: false }, ...settings }));
+		writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { baseten: { baseUrl: "https://synthetic.invalid/configured/v1", apiKey: "fixture-key", headers: { "X-Fixture": "preserved" }, models: ["model-a", "model-b"].map((id) => ({ id, name: id, api: "openai-completions", reasoning: false, input: ["text"], contextWindow: 128000, maxTokens: 512, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })) } } }));
+		writeFileSync(join(cwd, "marker.txt"), "DISTINCTIVE_REAL_BUILTIN_READ_RESULT");
+		const l = launch(cwd);
+		l.hooks = createChildHooks(l.runtime);
+		if (!fresh) {
+			const manager = realPi.SessionManager.open((l.storage as { sessionFile: string }).sessionFile, undefined, cwd);
+			manager.appendMessage({ role: "user", content: "Earlier context", timestamp: 1 });
+			manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "Earlier answer" }], api: "openai-completions", provider: "baseten", model: "model-a", stopReason: "stop", timestamp: 2, usage });
+		}
+		const requests: { body: Record<string, unknown> }[] = [];
+		let responses: (() => Response | Promise<Response>)[] = [];
+		// Test process only: every HTTP operation is intercepted; never contact a provider.
+		globalThis.fetch = async (input, init) => {
+			const url = input instanceof Request ? input.url : String(input);
+			assert.equal(url, "https://synthetic.invalid/configured/v1/chat/completions");
+			assert.equal(init?.method, "POST");
+			assert.ok(init?.signal);
+			const headers = new Headers(init.headers);
+			assert.equal(headers.get("authorization"), "Bearer fixture-key");
+			assert.equal(headers.get("x-fixture"), "preserved");
+			requests.push({ body: JSON.parse(String(init.body)) });
+			const next = responses.shift(); assert.ok(next, "unexpected request (including auxiliary HTTP)");
+			return next();
+		};
+		const captured: Captured[] = [];
+		let eventBus: ReturnType<PiCodingAgentModule["createEventBus"]>;
+		// Observe public SDK objects without stubbing the runtime, session, adapter, or stream closure.
+		const observedPi: PiCodingAgentModule = { ...realPi, DefaultResourceLoader: class extends realPi.DefaultResourceLoader {
+			constructor(options: ConstructorParameters<PiCodingAgentModule["DefaultResourceLoader"]>[0]) {
+				eventBus = realPi.createEventBus();
+				super({ ...options, eventBus });
+			}
+		}, createAgentSession: async (options) => {
+			const result = await realPi.createAgentSession(options);
+			captured.push({ session: result.session, original: result.session.agent.streamFunction, runtime: options?.modelRuntime });
+			return result;
+		} };
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => observedPi, shutdownTimeoutMs: 20 });
+		try { await run({ pi: realPi, cwd, agentDir, l, factory, captured, acknowledge: (id) => eventBus.emit("subagent:acknowledge-extension", { id }), requests, setResponses: (value) => { responses = value; } }); }
+		finally {
+			await factory.dispose(); globalThis.fetch = previousFetch;
+			if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousDir;
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	}
+
+	function resolvedLaunch(l: ChildSessionLaunch, model = "baseten/model-a") {
+		assert.equal(l.storage.kind, "file");
+		return buildInProcessChildLaunch({
+			cwd: l.cwd, host: "parent", sessionEnabled: true, sessionFile: (l.storage as { sessionFile: string }).sessionFile,
+			model, tools: ["read"], requireReadTool: true, allowNestedSubagents: false, waitToolEnabled: false,
+			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+			parentSessionId: "resolved-parent", runId: "resolved-run", childAgentName: "reader", childIndex: 0,
+			sessionName: "resolved reader", forkCacheKey: "resolved-cache", systemPrompt: "Retain the completed read.",
+		});
+	}
+
+	it("keeps actual foreground evidence dormant without admission/dispatch index scans and preserves ordinary drain", async () => fixture(async ({ l, factory, captured, setResponses, cwd }) => {
+		const file = (l.storage as { sessionFile: string }).sessionFile;
+		const agent: AgentConfig = {
+			name: "reader", description: "Read only", systemPrompt: "Read marker.txt", systemPromptMode: "append",
+			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+			tools: ["read"], allowNestedSubagents: false, source: "project", filePath: join(cwd, "reader.md"), model: "baseten/model-a",
+		};
+		const originalReaddir = fs.readdirSync;
+		let indexScans = 0;
+		let child: ChildSession | undefined;
+		fs.readdirSync = ((...args: Parameters<typeof fs.readdirSync>) => {
+			if (String(args[0]) === join(DIRS.async, ".active-runs")) indexScans++;
+			return originalReaddir(...args);
+		}) as typeof fs.readdirSync;
+		syncBuiltinESMExports();
+		try {
+			setResponses([() => { assert.equal(indexScans, 0, "no initial dispatch scan"); return sse(true); },
+				() => { assert.equal(indexScans, 0, "no subsequent dispatch scan"); return http(429); }]);
+			await runSync(cwd, [agent], "reader", "Read marker.txt once", {
+				cwd, sessionFile: file, runId: "dormant-reader", waitToolEnabled: false,
+				childSessionFactory: { ...factory, async create(input) {
+					assert.equal(typeof input.onExtensionError, "function");
+					child = await factory.create(input); // Deliberately no test opt-in.
+					assert.equal(indexScans, 0, "no evidence admission/observation scans");
+					assert.equal(captured[0].session.agent.streamFunction, captured[0].original);
+					return child;
+				} },
+			});
+			assert.ok(child);
+			assert.equal(getReadonlySessionEvidence(child), undefined, "read/429 must not activate dormant proof");
+			assert.ok(indexScans > 0, "ordinary agent_end drain still queries the index; not a global no-I/O claim");
+		} finally {
+			fs.readdirSync = originalReaddir;
+			syncBuiltinESMExports();
+		}
+	}, {}, true));
+
+	it("certifies explicitly test-opted-in actual foreground and sibling with no admission/dispatch/settlement native scans", async () => countAsyncIO(async (io) => fixture(async ({ l, factory, captured, requests, setResponses, cwd }) => {
+		const file = (l.storage as { sessionFile: string }).sessionFile;
+		assert.equal(existsSync(file), false, "fixture never preinitializes the assigned file");
+		const agent: AgentConfig = {
+			name: "reader", description: "Read only", systemPrompt: "Retain the completed read.", systemPromptMode: "append",
+			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+			tools: ["read"], allowNestedSubagents: false, source: "project", filePath: join(cwd, "reader.md"),
+		};
+		const children: ChildSession[] = [];
+		let expected: SettledReadonlyEvidence | undefined;
+		const inputs: ChildSessionLaunch[] = [];
+		const hostFactory = { ...factory, async create(input: ChildSessionLaunch) {
+			const beforeCreate = { ...io };
+			inputs.push(input);
+			assert.equal(typeof input.onExtensionError, "function", "mandatory real host reporting retained");
+			assert.equal(input.runtime.watchdogStatus, undefined, "only absent-watchdog sink is omitted");
+			assert.equal(input.runtime.childWatchdog, undefined);
+			assert.deepEqual(input.runtime.waitTool, { enabled: false });
+			assert.deepEqual(input.runtime.requiredTools, ["read"], "actual no-skills requireReadTool=false output is not modified");
+			assert.equal(typeof input.runtime.toolDiagnostic, "function");
+			assert.equal(typeof input.runtime.runtimeAcknowledgements, "function");
+			// Both initial evidence and guarded sibling orchestration are test-only.
+			// Production construction retains reporting but must not opt in automatically.
+			requestReadonlySessionEvidence(input, expected);
+			const child = await factory.create(input);
+			assert.deepEqual(io, beforeCreate, "no native index or status read at opted-in create");
+			children.push(child);
+			assert.notEqual(captured.at(-1)!.session.agent.streamFunction, captured.at(-1)!.original);
+			if (!expected) {
+				assert.equal(existsSync(file), false, "SDK defers fresh-file persistence until assistant response");
+				assert.equal(child.messages.length, 0);
+				assert.equal(child.sessionId, captured[0].session.sessionManager.getHeader()!.id);
+			} else {
+				assert.equal(child.sessionId, expected.sessionId);
+				assert.equal(JSON.stringify(child.messages), expected.contextJson);
+			}
+			input.onExtensionError!({ extensionPath: "<fixture>", event: "test", error: new Error("mandatory report retained") });
+			return child;
+		} };
+		const options = { cwd, sessionFile: file, sessionDir: cwd, artifactsDir: join(cwd, "artifacts"), parentSessionId: "foreground-parent", runId: "foreground-read", waitToolEnabled: false, childSessionFactory: hostFactory };
+		assert.deepEqual(io, { scans: 0, reads: 0, stats: 0 });
+		setResponses([() => { assert.deepEqual(io, { scans: 0, reads: 0, stats: 0 }); return sse(true); },
+			() => { assert.deepEqual(io, { scans: 0, reads: 0, stats: 0 }); return http(429); }]);
+		const result = await runSync(cwd, [{ ...agent, model: "baseten/model-a" }], "reader", "Fresh original task: read marker.txt once", options);
+		assert.deepEqual(io, { scans: 1, reads: 0, stats: 0 }, "only the first ordinary source drain query, none at settlement");
+		assert.equal(children.length, 1, result.error);
+		expected = getReadonlySessionEvidence(children[0]); assert.ok(expected, result.error);
+		assert.equal(expected.sessionFile, file);
+		assert.equal(expected.sessionId, JSON.parse(readFileSync(file, "utf8").split("\n")[0]).id);
+		assert.match(readFileSync(result.transcriptPath!, "utf8"), /mandatory report retained/);
+		setResponses([() => { assert.deepEqual(io, { scans: 1, reads: 0, stats: 0 }); return sse(); }]);
+		await runSync(cwd, [{ ...agent, model: "baseten/model-b" }], "reader", "Continue from retained results", options);
+		assert.deepEqual(io, { scans: 2, reads: 0, stats: 0 }, "one unchanged drain per actual attempt, no guarded dispatch or settlement scan");
+		assert.equal(children.length, 2);
+		assert.equal(requests.length, 3);
+		assert.equal(requests[2].body.model, "model-b");
+		const payload = JSON.stringify(requests[2].body.messages);
+		for (const text of ["DISTINCTIVE_REAL_BUILTIN_READ_RESULT", "read-1", "You are a child subagent", "Retain the completed read."]) assert.ok(payload.includes(text), text);
+		assert.equal(payload.match(/Fresh original task: read marker.txt once/g)?.length, 1);
+		assert.match(readFileSync(file, "utf8"), /"stopReason":"error"/);
+		assert.deepEqual(inputs.map((input) => input.storage), [{ kind: "file", sessionFile: file }, { kind: "file", sessionFile: file }]);
+	}, {}, true)));
+
+	for (const kind of ["empty preexisting", "corrupt preexisting", "appeared during open", "memory", "directory", "default"] as const) {
+		it(`does not certify fresh storage: ${kind}`, async () => fixture(async ({ l, factory, captured, setResponses }) => {
+			const file = (l.storage as { sessionFile: string }).sessionFile;
+			if (kind === "empty preexisting") writeFileSync(file, "");
+			if (kind === "corrupt preexisting") writeFileSync(file, "corrupt\n");
+			const built = resolvedLaunch(l);
+			if (kind === "memory") built.session.storage = { kind: "memory" };
+			if (kind === "directory") built.session.storage = { kind: "dir", sessionDir: l.cwd };
+			if (kind === "default") built.session.storage = { kind: "default" };
+			const input = createReportedChildSessionInput(built);
+			requestReadonlySessionEvidence(input);
+			const opening = factory.create(input);
+			if (kind === "appeared during open") writeFileSync(file, "");
+			if (kind === "corrupt preexisting") {
+				await assert.rejects(opening, /not a valid/);
+				assert.equal(readFileSync(file, "utf8"), "corrupt\n");
+				return;
+			}
+			const child = await opening;
+			assert.equal(captured[0].session.agent.streamFunction, captured[0].original);
+			setResponses([() => sse(true), () => http(429)]);
+			await child.prompt("Read marker.txt"); await child.dispose();
+			assert.equal(getReadonlySessionEvidence(child), undefined);
+		}, {}, true));
+	}
+
+	for (const timing of ["before create", "during open", "before prompt"] as const) {
+		it(`never recreates missing guarded fresh-source storage ${timing}`, async () => fixture(async ({ l, factory, captured, requests, setResponses }) => {
+			const input = createReportedChildSessionInput(resolvedLaunch(l));
+			requestReadonlySessionEvidence(input);
+			const child = await factory.create(input);
+			setResponses([() => sse(true), () => http(429)]);
+			await child.prompt("Read marker.txt"); await child.dispose();
+			const receipt = getReadonlySessionEvidence(child); assert.ok(receipt);
+			const next = createReportedChildSessionInput(resolvedLaunch(l, "baseten/model-b"));
+			requestReadonlySessionEvidence(next, receipt);
+			if (timing === "before create") rmSync(receipt.sessionFile);
+			const opening = factory.create(next);
+			if (timing === "during open") rmSync(receipt.sessionFile);
+			if (timing !== "before prompt") {
+				await assert.rejects(opening, /checkpoint changed/);
+				assert.equal(captured.length, 1);
+			} else {
+				const sibling = await opening;
+				rmSync(receipt.sessionFile);
+				await assert.rejects(sibling.prompt("Continue"), /changed before prompt/);
+				await sibling.dispose();
+			}
+			assert.equal(requests.length, 2);
+			assert.equal(existsSync(receipt.sessionFile), false);
+		}, {}, true));
+	}
+
+	for (const kind of ["replaced reporter", "deleted reporter", "copied reporter", "accessor reporter", "unknown watchdog sink"] as const) {
+		it(`leaves uncertified actual caller additions uninstrumented: ${kind}`, async () => fixture(async ({ l, factory, captured }) => {
+			const built = resolvedLaunch(l);
+			let input = createReportedChildSessionInput(built);
+			let reporterReads = 0;
+			const reporter = input.onExtensionError;
+			if (kind === "replaced reporter") input.onExtensionError = () => {};
+			if (kind === "deleted reporter") delete input.onExtensionError;
+			if (kind === "copied reporter") input = { ...input };
+			if (kind === "accessor reporter") Object.defineProperty(input, "onExtensionError", { enumerable: true, get() { reporterReads++; return reporter; } });
+			if (kind === "unknown watchdog sink") input.runtime.watchdogStatus = () => {};
+			requestReadonlySessionEvidence(input);
+			const opening = factory.create(input);
+			assert.equal(reporterReads, 0, "admission must not invoke the getter; ordinary SDK setup may read it later");
+			const child = await opening;
+			assert.equal(captured[0].session.agent.streamFunction, captured[0].original);
+			await child.dispose(); assert.equal(getReadonlySessionEvidence(child), undefined);
+		}));
+	}
+
+	it("vetoes replaced host reporting on a guarded sibling before dispatch", async () => fixture(async ({ l, factory, requests, setResponses }) => {
+		const input = createReportedChildSessionInput(resolvedLaunch(l));
+		requestReadonlySessionEvidence(input);
+		const child = await factory.create(input);
+		setResponses([() => sse(true), () => http(429)]);
+		await child.prompt("Read marker.txt"); await child.dispose();
+		const receipt = getReadonlySessionEvidence(child); assert.ok(receipt);
+		const next = createReportedChildSessionInput(resolvedLaunch(l, "baseten/model-b"));
+		requestReadonlySessionEvidence(next, receipt);
+		const sibling = await factory.create(next);
+		next.onExtensionError = () => {};
+		await assert.rejects(sibling.prompt("Continue"), /changed before prompt/);
+		await sibling.dispose(); assert.equal(requests.length, 2);
+	}));
+
+	it("certifies an actual launch-built read-only profile with owned diagnostics and acknowledgements intact", async () => fixture(async ({ l, factory, captured, acknowledge, requests, setResponses }) => {
+		const built = resolvedLaunch(l);
+		assert.deepEqual(built.config.requiredTools, ["read"]);
+		assert.equal(typeof built.config.toolDiagnostic, "function");
+		assert.equal(typeof built.config.runtimeAcknowledgements, "function");
+		const seed = { required: ["read"], available: [], missing: ["read"] };
+		built.config.toolDiagnostic!(seed);
+		assert.equal(built.capture.toolDiagnostic(), seed);
+		const previous = process.env.PI_CACHE_RETENTION;
+		process.env.PI_CACHE_RETENTION = "long";
+		try {
+			requestReadonlySessionEvidence(built.session);
+			const child = await factory.create(built.session);
+			assert.notEqual(captured[0].session.agent.streamFunction, captured[0].original, "resolved profile must be instrumented");
+			assert.deepEqual(captured[0].session.getAllTools().map((tool) => tool.name), ["read"]);
+			acknowledge("reviewed-fixture"); acknowledge("reviewed-fixture"); acknowledge("../invalid");
+			setResponses([() => sse(true), () => http(429)]);
+			await child.prompt("Resolved original task: read marker.txt once"); await child.dispose();
+			assert.equal(requests.length, 2);
+			assert.equal(isReadonlyChildHookProfile(built.session.hooks, built.config), true);
+			const receipt = getReadonlySessionEvidence(child); assert.ok(receipt);
+			assert.equal(built.capture.toolDiagnostic(), undefined, "actual agent_start clears the seeded diagnostic");
+			assert.deepEqual(built.capture.runtimeAcknowledgedExtensions()?.ids, ["reviewed-fixture"], "actual finalization captures and projects validated event ids");
+			acknowledge("too-late");
+			assert.deepEqual(built.capture.runtimeAcknowledgedExtensions()?.ids, ["reviewed-fixture"]);
+			assert.equal(captured[0].session.sessionManager.getSessionName(), "resolved reader");
+			const next = resolvedLaunch(l, "baseten/model-b");
+			requestReadonlySessionEvidence(next.session, receipt);
+			const sibling = await factory.create(next.session);
+			assert.equal(sibling.sessionFile, receipt.sessionFile);
+			assert.equal(sibling.sessionId, receipt.sessionId);
+			assert.equal(JSON.stringify(sibling.messages), receipt.contextJson);
+			setResponses([() => sse()]); await sibling.prompt("Continue from retained results"); await sibling.dispose();
+			const payload = JSON.stringify(requests[2].body.messages);
+			for (const text of ["Earlier context", "Earlier answer", "DISTINCTIVE_REAL_BUILTIN_READ_RESULT", "read-1", "You are a child subagent", "Retain the completed read."]) assert.ok(payload.includes(text), text);
+			assert.equal(payload.match(/Resolved original task: read marker.txt once/g)?.length, 1);
+			assert.equal(requests[2].body.model, "model-b");
+			assert.equal(requests[2].body.prompt_cache_key, "resolved-cache");
+			assert.match(readFileSync(receipt.sessionFile, "utf8"), /"stopReason":"error"/);
+		} finally { if (previous === undefined) delete process.env.PI_CACHE_RETENTION; else process.env.PI_CACHE_RETENTION = previous; }
+	}));
+
+	it("keeps ordinary launch-built sessions dormant and finalizes acknowledgements on shutdown without a prompt", async () => fixture(async ({ l, factory, captured, acknowledge }) => {
+		const built = resolvedLaunch(l);
+		const child = await factory.create(built.session);
+		assert.equal(captured[0].session.agent.streamFunction, captured[0].original);
+		acknowledge("shutdown-observation");
+		assert.equal(built.capture.runtimeAcknowledgedExtensions(), undefined);
+		await child.dispose();
+		assert.deepEqual(built.capture.runtimeAcknowledgedExtensions()?.ids, ["shutdown-observation"]);
+		assert.equal(getReadonlySessionEvidence(child), undefined);
+	}));
+
+	it("denies resolved-profile evidence when acknowledgement shutdown does not settle before timeout", async () => fixture(async ({ l, factory, captured, setResponses }) => {
+		const built = resolvedLaunch(l);
+		requestReadonlySessionEvidence(built.session); const child = await factory.create(built.session);
+		setResponses([() => sse(true), () => http(429)]); await child.prompt("Read marker.txt");
+		const runner = captured[0].session.extensionRunner;
+		const original = runner.emit.bind(runner);
+		let shutdown: Promise<void> | undefined;
+		runner.emit = (event) => event.type === "session_shutdown"
+			? (shutdown = new Promise<void>((resolve) => setTimeout(resolve, 50)).then(() => original(event))) : original(event);
+		await child.dispose(); assert.equal(getReadonlySessionEvidence(child), undefined);
+		await shutdown; assert.equal(getReadonlySessionEvidence(child), undefined, "late settlement must not restore evidence");
+	}));
+
+	it("vetoes a replaced owned callback on guarded resolved-profile continuation before dispatch", async () => fixture(async ({ l, factory, requests, setResponses }) => {
+		const built = resolvedLaunch(l);
+		requestReadonlySessionEvidence(built.session); const child = await factory.create(built.session);
+		setResponses([() => sse(true), () => http(429)]); await child.prompt("Read marker.txt"); await child.dispose();
+		const receipt = getReadonlySessionEvidence(child); assert.ok(receipt);
+		const next = resolvedLaunch(l, "baseten/model-b");
+		requestReadonlySessionEvidence(next.session, receipt); const sibling = await factory.create(next.session);
+		next.config.runtimeAcknowledgements = () => { throw new Error("unknown callback"); };
+		await assert.rejects(sibling.prompt("Continue"), /changed before prompt/);
+		assert.equal(requests.length, 2); await sibling.dispose();
+	}));
+
+	for (const kind of ["diagnostic replacement", "ack replacement", "copied callbacks", "unknown setting", "required accessor", "required hidden", "required mutation", "writer", "extra hook"] as const) {
+		it(`denies unsupported resolved launch: ${kind}`, async () => fixture(async ({ l, factory, captured }) => {
+			const built = resolvedLaunch(l);
+			if (kind === "diagnostic replacement") built.config.toolDiagnostic = () => {};
+			if (kind === "ack replacement") built.config.runtimeAcknowledgements = () => {};
+			if (kind === "copied callbacks") built.session.hooks = createChildHooks(built.config);
+			if (kind === "unknown setting") Object.assign(built.config, { unknownSetting: true });
+			if (kind === "required accessor") Object.defineProperty(built.config.requiredTools, "0", { enumerable: true, get() { throw new Error("admission invoked requiredTools getter"); } });
+			if (kind === "required hidden") Object.defineProperty(built.config.requiredTools, "hidden", { value: true });
+			if (kind === "required mutation") built.config.requiredTools!.push("ls");
+			if (kind === "writer") built.session.tools!.push("write");
+			if (kind === "extra hook") built.session.hooks.push({ name: "unknown", factory() {} });
+			requestReadonlySessionEvidence(built.session); const child = await factory.create(built.session);
+			assert.equal(captured[0].session.agent.streamFunction, captured[0].original);
+			await child.dispose(); assert.equal(getReadonlySessionEvidence(child), undefined);
+		}));
+	}
+
+	it("certifies the actual prompt-runtime hook without dropping its naming, prompt, cache or drain effects", async () => fixture(async ({ l, factory, captured, requests, setResponses }) => {
+		Object.assign(l.runtime, { sessionName: "certified child", inheritSkills: false, forkCacheKey: "certified-cache-key" });
+		l.hooks = createChildHooks(l.runtime);
+		l.hooks[0].name = "display-name-is-not-identity";
+		const previous = process.env.PI_CACHE_RETENTION;
+		process.env.PI_CACHE_RETENTION = "long";
+		try {
+			requestReadonlySessionEvidence(l); const child = await factory.create(l);
+			assert.deepEqual(captured[0].session.getAllTools().map((tool) => tool.name), ["read"], "registered bg_wait must not be executable");
+			setResponses([() => sse(true), () => http(429)]);
+			await child.prompt("Read marker.txt once for the original task"); await child.dispose();
+			const receipt = getReadonlySessionEvidence(child); assert.ok(receipt);
+			assert.equal(captured[0].session.sessionManager.getSessionName(), "certified child");
+			assert.match(JSON.stringify(requests[1].body.messages), /You are a child subagent/);
+			assert.equal(requests[1].body.prompt_cache_key, "certified-cache-key");
+			const next = { ...l, model: "baseten/model-b" };
+			requestReadonlySessionEvidence(next, receipt); const sibling = await factory.create(next);
+			assert.equal(sibling.sessionId, receipt.sessionId);
+			assert.equal(sibling.sessionFile, receipt.sessionFile);
+			assert.equal(JSON.stringify(sibling.messages), receipt.contextJson);
+			setResponses([() => sse()]); await sibling.prompt("Continue from retained results"); await sibling.dispose();
+			const payload = JSON.stringify(requests[2].body.messages);
+			for (const text of ["Earlier context", "Earlier answer", "DISTINCTIVE_REAL_BUILTIN_READ_RESULT", "read-1"]) assert.ok(payload.includes(text));
+			assert.equal(payload.match(/Read marker.txt once for the original task/g)?.length, 1);
+			assert.equal(requests[2].body.prompt_cache_key, "certified-cache-key");
+		} finally { if (previous === undefined) delete process.env.PI_CACHE_RETENTION; else process.env.PI_CACHE_RETENTION = previous; }
+	}));
+
+	for (const kind of ["name spoof", "copied config", "mutated config", "callback", "inherited callback", "unknown option", "wait", "extra hook"] as const) {
+		it(`denies uncertified hook profile: ${kind}`, async () => fixture(async ({ l, factory, captured }) => {
+			if (kind === "callback") l.runtime.runtimeAcknowledgements = () => {};
+			if (kind === "inherited callback") Object.setPrototypeOf(l.runtime, { runtimeAcknowledgements: () => {} });
+			if (kind === "unknown option") Object.assign(l.runtime, { unknownOption: true });
+			if (kind === "wait") l.runtime.waitTool.enabled = true;
+			l.hooks = createChildHooks(l.runtime);
+			if (kind === "name spoof") l.hooks = [{ name: "pi-subagents:prompt-runtime", factory() {} }];
+			if (kind === "copied config") l.runtime = { ...l.runtime };
+			if (kind === "mutated config") l.runtime.sessionName = "changed after capture";
+			if (kind === "extra hook") l.hooks.push({ name: "extra", factory() {} });
+			requestReadonlySessionEvidence(l); const child = await factory.create(l);
+			assert.equal(captured[0].session.agent.streamFunction, captured[0].original);
+			await child.dispose(); assert.equal(getReadonlySessionEvidence(child), undefined);
+		}));
+	}
+
+	it("denies the non-enumerable diagnostic pair without disabling ordinary diagnostics", async () => fixture(async ({ l, factory, captured, setResponses }) => {
+		let diagnostics = 0;
+		Object.defineProperties(l.runtime, {
+			requiredTools: { value: ["read"] },
+			toolDiagnostic: { value: () => { diagnostics++; } },
+		});
+		l.hooks = createChildHooks(l.runtime);
+		assert.equal(isReadonlyChildHookProfile(l.hooks, l.runtime), false);
+		requestReadonlySessionEvidence(l); const child = await factory.create(l);
+		assert.equal(captured[0].session.agent.streamFunction, captured[0].original);
+		setResponses([() => sse(true), () => http(429)]);
+		await child.prompt("Read marker.txt"); await child.dispose();
+		assert.equal(diagnostics, 1, "ordinary hook behavior must remain intact");
+		assert.equal(getReadonlySessionEvidence(child), undefined);
+	}));
+
+	it("denies registered background callbacks without invoking them for eligibility", async () => fixture(async ({ l, factory, captured }) => {
+		l.hooks = createChildHooks(l.runtime);
+		let calls = 0;
+		const unregister = registerBackgroundWorkProvider({ name: "hook-test", reconcile() { calls++; }, listActiveWork() { calls++; return []; } });
+		try {
+			requestReadonlySessionEvidence(l); const child = await factory.create(l);
+			assert.equal(captured[0].session.agent.streamFunction, captured[0].original);
+			await child.dispose(); assert.equal(getReadonlySessionEvidence(child), undefined);
+			assert.equal(calls, 0);
+		} finally { unregister(); }
+	}));
+
+	for (const kind of ["dead-owned", "result-owned", "unrelated-dead", "unknown-owner", "completed-before-drain"] as const) {
+		it(`actual SDK receipt uses same-pass pre-repair evidence: ${kind}`, async () => fixture(async ({ l, factory, setResponses }) => {
+			const runId = `sdk-drain-${kind}`; const dir = join(DIRS.async, runId);
+			const file = (l.storage as { sessionFile: string }).sessionFile;
+			mkdirSync(dir, { recursive: true });
+			const status = { runId, mode: "single", state: "running", startedAt: Date.now(), steps: [{ agent: "reader", status: "running" }],
+				sessionId: kind === "unrelated-dead" ? "/another/session" : kind === "unknown-owner" ? undefined : file,
+				...(kind.includes("dead") ? { pid: 2147483647 } : {}),
+			};
+			writeFileSync(join(dir, "status.json"), JSON.stringify(status)); updateActiveRunIndex(dir, "running");
+			if (kind === "result-owned") { mkdirSync(DIRS.results, { recursive: true }); writeFileSync(join(DIRS.results, `${runId}.json`), JSON.stringify({ success: true, results: [] })); }
+			try {
+				requestReadonlySessionEvidence(l); const child = await factory.create(l);
+				setResponses([() => sse(true), () => {
+					if (kind === "completed-before-drain") {
+						writeFileSync(join(dir, "status.json"), JSON.stringify({ ...status, state: "complete" })); updateActiveRunIndex(dir, "complete");
+					}
+					return http(429);
+				}]);
+				await child.prompt("Read marker.txt");
+				assert.equal(getReadonlySessionEvidence(child), undefined, "only settled factory can issue receipt");
+				await child.dispose();
+				assert.equal(!!getReadonlySessionEvidence(child), kind === "unrelated-dead" || kind === "completed-before-drain");
+				if (kind.includes("dead") || kind === "result-owned") assert.equal(JSON.parse(readFileSync(join(dir, "status.json"), "utf8")).state, kind === "result-owned" ? "complete" : "failed");
+			} finally { releaseActiveRunIndex(dir); rmSync(dir, { recursive: true, force: true }); rmSync(join(DIRS.results, `${runId}.json`), { force: true }); }
+		}));
+	}
+
+	it("does not scan preexisting native work at admission; missing drain cannot certify it", async () => fixture(async ({ l, factory, captured }) => {
+		l.hooks = createChildHooks(l.runtime);
+		const runId = "hook-existing-work";
+		const dir = join(DIRS.async, runId); mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, "status.json"), JSON.stringify({ runId, state: "queued", mode: "single", startedAt: Date.now(), sessionId: (l.storage as { sessionFile: string }).sessionFile, steps: [{ agent: "worker", status: "pending" }] }));
+		updateActiveRunIndex(dir, "queued");
+		try {
+			requestReadonlySessionEvidence(l); const child = await factory.create(l);
+			assert.notEqual(captured[0].session.agent.streamFunction, captured[0].original);
+			await child.dispose(); assert.equal(getReadonlySessionEvidence(child), undefined);
+		} finally { releaseActiveRunIndex(dir); rmSync(dir, { recursive: true, force: true }); }
+	}));
+
+	it("vetoes guarded continuation when background callbacks appear after creation", async () => fixture(async ({ l, factory, requests, setResponses }) => {
+		l.hooks = createChildHooks(l.runtime);
+		requestReadonlySessionEvidence(l); const child = await factory.create(l);
+		setResponses([() => sse(true), () => http(429)]);
+		await child.prompt("Read marker.txt"); await child.dispose();
+		const receipt = getReadonlySessionEvidence(child); assert.ok(receipt);
+		const next = { ...l, model: "baseten/model-b" };
+		requestReadonlySessionEvidence(next, receipt); const sibling = await factory.create(next);
+		let calls = 0;
+		const unregister = registerBackgroundWorkProvider({ name: "guarded-drain", listActiveWork() { calls++; return []; } });
+		try {
+			setResponses([() => sse()]);
+			await assert.rejects(sibling.prompt("Continue"), /before prompt/);
+			assert.equal(requests.length, 2); assert.equal(calls, 0);
+			await sibling.dispose();
+		} finally { unregister(); }
+	}));
+
+	it("cannot issue a receipt without the actual installed drain even after real read/429 and shutdown", async () => fixture(async ({ l, factory, setResponses }) => {
+		l.hooks = [];
+		requestReadonlySessionEvidence(l); const child = await factory.create(l);
+		setResponses([() => sse(true), () => http(429)]);
+		await child.prompt("Read marker.txt"); await child.dispose();
+		assert.equal(getReadonlySessionEvidence(child), undefined);
+	}));
+
+	it("leaves ordinary known-hook launches uninstrumented", async () => fixture(async ({ l, factory, captured, setResponses }) => {
+		l.hooks = createChildHooks(l.runtime);
+		const child = await factory.create(l);
+		assert.equal(captured[0].session.agent.streamFunction, captured[0].original);
+		setResponses([() => sse(true), () => http(429)]);
+		await child.prompt("Read marker.txt"); await child.dispose();
+		assert.equal(getReadonlySessionEvidence(child), undefined);
+	}));
+
+	it("invalidates the source proof immediately before the unchanged agent-end drain", async () => fixture(async ({ l, factory, setResponses }) => {
+		l.hooks = createChildHooks(l.runtime);
+		requestReadonlySessionEvidence(l); const child = await factory.create(l);
+		let unregister = () => {}; let calls = 0;
+		setResponses([() => sse(true), () => {
+			unregister = registerBackgroundWorkProvider({ name: "late-drain", listActiveWork() {
+				calls++;
+				assert.equal(isReadonlyChildHookProfile(l.hooks, l.runtime), false);
+				return [];
+			} });
+			return http(429);
+		}]);
+		try {
+			await child.prompt("Read marker.txt"); unregister();
+			assert.ok(calls > 0, "the actual drain must not be disabled");
+			await child.dispose(); assert.equal(getReadonlySessionEvidence(child), undefined);
+			assert.equal(isReadonlyChildHookProfile(l.hooks, l.runtime), false, "invalidation survives provider removal");
+		} finally { unregister(); }
+	}));
+
+	it("retains complete same-file context, real builtin result and terminal numeric 429 only after disposal", async () => fixture(async ({ l, factory, requests, setResponses }) => {
+		requestReadonlySessionEvidence(l);
+		const child = await factory.create(l);
+		setResponses([() => sse(true), () => http(429)]);
+		await child.prompt("Read marker.txt once for the original task");
+		assert.equal(getReadonlySessionEvidence(child), undefined);
+		assert.equal(requests.length, 2);
+		assert.match(JSON.stringify(requests[1].body), /DISTINCTIVE_REAL_BUILTIN_READ_RESULT/);
+		await child.dispose();
+		const receipt = getReadonlySessionEvidence(child);
+		assert.ok(receipt, JSON.stringify(child.messages));
+		assert.equal(receipt.status, 429); assert.equal(receipt.provider, "baseten");
+		assert.equal(receipt.completedToolResults, 1);
+		assert.equal(receipt.sessionId, child.sessionId);
+		assert.equal(receipt.sessionFile, child.sessionFile);
+		assert.equal(validateReadonlySessionCheckpoint(receipt), true);
+		const next = { ...l, model: "baseten/model-b" };
+		requestReadonlySessionEvidence(next, receipt);
+		const sibling = await factory.create(next);
+		assert.equal(sibling.sessionId, receipt.sessionId);
+		assert.equal(sibling.sessionFile, receipt.sessionFile);
+		assert.equal(JSON.stringify(sibling.messages), receipt.contextJson);
+		setResponses([() => sse()]);
+		await sibling.prompt("Continue using retained results; do not restart");
+		await sibling.dispose();
+		const payload = JSON.stringify(requests.at(-1)?.body);
+		assert.match(payload, /DISTINCTIVE_REAL_BUILTIN_READ_RESULT/);
+		assert.equal(payload.match(/Read marker.txt once for the original task/g)?.length, 1);
+		assert.equal(requests.at(-1)?.body.model, "model-b");
+		assert.match(readFileSync(receipt.sessionFile, "utf8"), /"stopReason":"error"/);
+		assert.equal(getReadonlySessionEvidence(sibling), undefined);
+		assert.equal(validateReadonlySessionCheckpoint(receipt), false);
+	}));
+
+	for (const [name, tail] of [
+		["successful retry", [() => http(429), () => sse()]],
+		["401 after 429", [() => http(429), () => http(401)]],
+		["transport rejection after 429", [() => http(429), () => { throw new Error("fetch transport rejection"); }]],
+		["HTTP 200 with 429-looking stream error", [() => new Response('data: {"error":{"message":"429 rate limit"}}\n\n', { headers: { "content-type": "text/event-stream" } })]],
+	] as const) {
+		it(`rejects stale/false status: ${name}`, async () => fixture(async ({ l, factory, requests, setResponses }) => {
+			requestReadonlySessionEvidence(l); const child = await factory.create(l);
+			setResponses([() => sse(true), ...tail]);
+			await child.prompt("Read marker.txt"); await child.dispose();
+			assert.equal(requests.length, 1 + tail.length);
+			assert.equal(getReadonlySessionEvidence(child), undefined);
+		}, { retry: { enabled: false, provider: { maxRetries: 1 } } }));
+	}
+
+	it("denies corrupt checkpoints before SDK open and leaves the file untouched", async () => fixture(async ({ l, factory, setResponses }) => {
+		requestReadonlySessionEvidence(l); const child = await factory.create(l);
+		setResponses([() => sse(true), () => http(429)]);
+		await child.prompt("Read marker.txt"); await child.dispose();
+		const receipt = getReadonlySessionEvidence(child); assert.ok(receipt);
+		appendFileSync(receipt.sessionFile, "{corrupt\n");
+		const before = readFileSync(receipt.sessionFile, "utf8");
+		requestReadonlySessionEvidence(l, receipt);
+		await assert.rejects(factory.create(l), /checkpoint changed/);
+		assert.equal(readFileSync(receipt.sessionFile, "utf8"), before);
+	}));
+
+	it("rejects truncation after create begins without SDK newline repair", async () => fixture(async ({ l, factory, captured, setResponses }) => {
+		requestReadonlySessionEvidence(l); const child = await factory.create(l);
+		setResponses([() => sse(true), () => http(429)]);
+		await child.prompt("Read marker.txt"); await child.dispose();
+		const receipt = getReadonlySessionEvidence(child); assert.ok(receipt);
+		const next = { ...l, model: "baseten/model-b" };
+		requestReadonlySessionEvidence(next, receipt);
+		const opening = factory.create(next);
+		const truncated = readFileSync(receipt.sessionFile, "utf8").slice(0, -1);
+		writeFileSync(receipt.sessionFile, truncated);
+		await assert.rejects(opening, /checkpoint changed/);
+		assert.equal(readFileSync(receipt.sessionFile, "utf8"), truncated);
+		assert.equal(captured.length, 1, "must reject before constructing the sibling SDK session");
+	}));
+
+	for (const timing of ["before prompt", "before dispatch"] as const) {
+		it(`vetoes guarded provider refresh ${timing} without HTTP dispatch`, async () => fixture(async ({ l, factory, captured, requests, setResponses }) => {
+			requestReadonlySessionEvidence(l); const child = await factory.create(l);
+			setResponses([() => sse(true), () => http(429)]);
+			await child.prompt("Read marker.txt"); await child.dispose();
+			const receipt = getReadonlySessionEvidence(child); assert.ok(receipt);
+			const next = { ...l, model: "baseten/model-b" };
+			requestReadonlySessionEvidence(next, receipt);
+			const sibling = await factory.create(next);
+			const { session, runtime } = captured[1];
+			const provider = runtime!.getProvider("baseten");
+			const refresh = async () => {
+				await runtime!.refresh({ allowNetwork: false });
+				assert.notEqual(runtime!.getProvider("baseten"), provider);
+			};
+			if (timing === "before prompt") await refresh();
+			else {
+				const original = session.agent.transformContext;
+				session.agent.transformContext = async (messages, signal) => {
+					await refresh();
+					return original ? original(messages, signal) : messages;
+				};
+			}
+			setResponses([() => sse()]); // A dispatched request would succeed, not hide behind a fixture error.
+			if (timing === "before prompt") await assert.rejects(sibling.prompt("Continue from retained results"), /before prompt/);
+			else {
+				await sibling.prompt("Continue from retained results");
+				const terminal = sibling.messages.at(-1);
+				assert.equal(terminal?.role, "assistant");
+				assert.ok(terminal?.role === "assistant" && terminal.stopReason === "error");
+				assert.match(terminal.errorMessage ?? "", /before dispatch/);
+			}
+			assert.equal(requests.length, 2, "guarded sibling must not send a third HTTP request");
+			await sibling.dispose();
+			assert.equal(getReadonlySessionEvidence(sibling), undefined);
+		}));
+	}
+
+	it("preserves request-local fetch, configured auth/endpoint/headers, payload/response callbacks and abort", async () => fixture(async ({ l, factory, captured, requests }) => {
+		requestReadonlySessionEvidence(l); const child = await factory.create(l);
+		const { session, original } = captured[0];
+		let fetchCalls = 0; let payloadCalls = 0; let responseCalls = 0;
+		const controller = new AbortController();
+		const options = { signal: controller.signal, maxRetries: 0,
+			fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+				fetchCalls++;
+				assert.equal(String(input), "https://synthetic.invalid/configured/v1/chat/completions");
+				assert.equal(new Headers(init?.headers).get("authorization"), "Bearer fixture-key");
+				assert.equal(new Headers(init?.headers).get("x-fixture"), "preserved");
+				assert.equal(init?.signal?.aborted, false);
+				assert.equal(JSON.parse(String(init?.body)).model, "model-a");
+				assert.equal(JSON.parse(String(init?.body)).temperature, 0.123);
+				return sse();
+			},
+			onPayload: (payload: unknown) => { payloadCalls++; return { ...(payload as Record<string, unknown>), temperature: 0.123 }; },
+			onResponse: (response: { status: number }) => { responseCalls++; assert.equal(response.status, 200); },
+		};
+		const stream = await session.agent.streamFunction(session.model!, { messages: [] }, options);
+		assert.equal((await stream.result()).stopReason, "stop");
+		assert.equal(fetchCalls, 1); assert.equal(payloadCalls, 1); assert.equal(responseCalls, 1);
+		assert.equal(requests.length, 0, "must use request-local fetch rather than ambient transport");
+		controller.abort();
+		const aborted = await session.agent.streamFunction(session.model!, { messages: [] }, options);
+		const unwrappedAbort = await original.call(session.agent, session.model!, { messages: [] }, options);
+		assert.equal((await aborted.result()).stopReason, (await unwrappedAbort.result()).stopReason);
+		assert.equal((await aborted.result()).errorMessage, (await unwrappedAbort.result()).errorMessage);
+		assert.equal(fetchCalls, 1, "auth-stage cancellation must not reach transport");
+		await child.dispose(); assert.equal(getReadonlySessionEvidence(child), undefined);
+	}));
+
+	it("clears a prior 429 when a session-level retry fails before reaching fetch", async () => fixture(async ({ l, factory, captured, requests, setResponses }) => {
+		requestReadonlySessionEvidence(l); const child = await factory.create(l);
+		let payloads = 0;
+		captured[0].session.agent.onPayload = () => { if (++payloads === 3) throw new Error("429-looking failure without HTTP"); };
+		setResponses([() => sse(true), () => http(429)]);
+		await child.prompt("Read marker.txt"); await child.dispose();
+		assert.equal(payloads, 3); assert.equal(requests.length, 2);
+		assert.equal(getReadonlySessionEvidence(child), undefined);
+	}, { retry: { enabled: true, maxRetries: 1, baseDelayMs: 1, provider: { maxRetries: 0 } } }));
+
+	it("denies a config-selected Radius/pi-messages replacement without changing configured behavior", async () => fixture(async ({ agentDir, l, factory, captured }) => {
+		const config = JSON.parse(readFileSync(join(agentDir, "models.json"), "utf8"));
+		config.providers.baseten.oauth = "radius";
+		for (const model of config.providers.baseten.models) model.api = "pi-messages";
+		writeFileSync(join(agentDir, "models.json"), JSON.stringify(config));
+		requestReadonlySessionEvidence(l); const child = await factory.create(l);
+		assert.equal(captured[0].session.model?.api, "pi-messages");
+		assert.equal(captured[0].session.agent.streamFunction, captured[0].original, "unsupported transport is not instrumented");
+		await child.dispose(); assert.equal(getReadonlySessionEvidence(child), undefined);
+	}));
+
+	it("invalidates an ordinary configured-provider replacement after the failed invocation", async () => fixture(async ({ l, factory, captured, setResponses }) => {
+		requestReadonlySessionEvidence(l); const child = await factory.create(l);
+		setResponses([() => sse(true), () => http(429)]);
+		await child.prompt("Read marker.txt");
+		await captured[0].runtime!.refresh({ allowNetwork: false });
+		await child.dispose(); assert.equal(getReadonlySessionEvidence(child), undefined);
+	}));
+
+	it("rejects a real SDK custom read override even when its name matches the allowlist", async () => fixture(async ({ pi, l }) => {
+		let session: NativeSession | undefined;
+		let original: NativeSession["agent"]["streamFunction"] | undefined;
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({ ...pi, createAgentSession: async (options) => {
+			const builtin = pi.createReadToolDefinition(l.cwd);
+			const result = await pi.createAgentSession({ ...options, customTools: [{ ...builtin, execute: async () => ({ content: [{ type: "text", text: "custom override" }], details: {} }) }] });
+			session = result.session; original = session.agent.streamFunction;
+			return result;
+		} }) });
+		try {
+			requestReadonlySessionEvidence(l); const child = await factory.create(l);
+			assert.notEqual(session!.getAllTools().find((tool) => tool.name === "read")?.sourceInfo?.source, "builtin");
+			assert.equal(session!.agent.streamFunction, original);
+			await child.dispose(); assert.equal(getReadonlySessionEvidence(child), undefined);
+		} finally { await factory.dispose(); }
+	}));
+
+	it("rejects an unresolved old call before SDK provider-context synthesis", async () => fixture(async ({ pi, l, factory, captured }) => {
+		const manager = pi.SessionManager.open((l.storage as { sessionFile: string }).sessionFile, undefined, l.cwd);
+		manager.appendMessage({ role: "assistant", content: [{ type: "toolCall", id: "unresolved", name: "read", arguments: { path: "marker.txt" } }], api: "openai-completions", provider: "baseten", model: "model-a", stopReason: "toolUse", timestamp: 3, usage });
+		requestReadonlySessionEvidence(l); const child = await factory.create(l);
+		assert.equal(captured[0].session.agent.streamFunction, captured[0].original);
+		assert.equal(child.messages.at(-1)?.role, "assistant");
+		await child.dispose(); assert.equal(getReadonlySessionEvidence(child), undefined);
+	}));
+
+	it("checks the settled active branch rather than flattening retired branches", async () => fixture(async ({ pi, l, factory, setResponses }) => {
+		const manager = pi.SessionManager.open((l.storage as { sessionFile: string }).sessionFile, undefined, l.cwd);
+		const leaf = manager.getLeafId()!;
+		manager.appendMessage({ role: "assistant", content: [{ type: "toolCall", id: "retired-unresolved", name: "write", arguments: {} }], api: "openai-completions", provider: "baseten", model: "model-a", stopReason: "toolUse", timestamp: 3, usage });
+		manager.branch(leaf); manager.appendThinkingLevelChange("off");
+		requestReadonlySessionEvidence(l); const child = await factory.create(l);
+		setResponses([() => sse(true), () => http(429)]);
+		await child.prompt("Read marker.txt"); await child.dispose();
+		const receipt = getReadonlySessionEvidence(child); assert.ok(receipt);
+		assert.doesNotMatch(receipt.contextJson, /retired-unresolved/);
+		assert.match(readFileSync(receipt.sessionFile, "utf8"), /retired-unresolved/);
+	}));
+
+	for (const corruption of ["missing result", "corrupt JSONL", "truncated JSONL"] as const) {
+		it(`denies retained history with ${corruption}`, async () => fixture(async ({ l, factory, setResponses }) => {
+			requestReadonlySessionEvidence(l); const child = await factory.create(l);
+			setResponses([() => sse(true), () => http(429)]);
+			await child.prompt("Read marker.txt");
+			const file = child.sessionFile!;
+			const bytes = readFileSync(file, "utf8");
+			const rows = bytes.trimEnd().split("\n").map((line) => JSON.parse(line));
+			if (corruption === "missing result") rows.splice(rows.findIndex((row) => row.message?.role === "toolResult"), 1);
+			const changed = corruption === "corrupt JSONL" ? `${bytes}{corrupt\n` : corruption === "truncated JSONL" ? bytes.slice(0, -8) : rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
+			writeFileSync(file, changed);
+			await child.dispose(); assert.equal(getReadonlySessionEvidence(child), undefined);
+			assert.equal(readFileSync(file, "utf8"), changed);
+		}));
+	}
+
+	it("keeps ordinary sessions dormant and rejects cancellation", async () => fixture(async ({ l, factory, captured, setResponses }) => {
+		const ordinary = await factory.create(l);
+		assert.equal(captured[0].session.agent.streamFunction, captured[0].original);
+		setResponses([() => sse(true), () => http(429)]);
+		await ordinary.prompt("Read marker.txt"); await ordinary.dispose();
+		assert.equal(getReadonlySessionEvidence(ordinary), undefined);
+		requestReadonlySessionEvidence(l); const cancelled = await factory.create(l);
+		setResponses([() => sse(true), () => http(429)]);
+		await cancelled.prompt("Read marker.txt"); await cancelled.abort(); await cancelled.dispose();
+		assert.equal(getReadonlySessionEvidence(cancelled), undefined);
+	}));
+});

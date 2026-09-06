@@ -25,6 +25,7 @@ import { formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSumma
 import { workflowGraphStageNodes } from "../shared/workflow-graph.ts";
 import { formatTimeoutRecoveryLines, projectTimeoutRecovery } from "../shared/mutation-evidence.ts";
 import { formatWorkflowChecklistText, projectWorkflowChecklist } from "../../workflows/workflow-checklist.ts";
+import type { RawDrainStatusObserver } from "../shared/readonly-drain-observation.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -481,7 +482,7 @@ function sortRuns(runs: AsyncRunSummary[]): AsyncRunSummary[] {
 	});
 }
 
-export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions = {}): AsyncRunSummary[] {
+export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions = {}, observeStatus?: RawDrainStatusObserver): AsyncRunSummary[] {
 	let entries: string[];
 	const activeEntries = new Set<string>();
 	const wantsActive = options.states === undefined || options.states.some(isActiveAsyncState);
@@ -508,6 +509,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 						indexed.add(entry);
 						activeEntries.add(entry);
 					} else {
+						observeStatus?.(null);
 						updateActiveRunIndex(path.join(asyncDirRoot, entry), "failed");
 					}
 				}
@@ -519,6 +521,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		}
 	} catch (error) {
 		if (isNotFoundError(error)) return [];
+		observeStatus?.(null);
 		throw new Error(`Failed to list async runs in '${asyncDirRoot}': ${getErrorMessage(error)}`, {
 			cause: error instanceof Error ? error : undefined,
 		});
@@ -544,14 +547,17 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		try {
 			const reconciliation = options.reconcile === false
 				? undefined
-				: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
+				: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now }, observeStatus);
 			status = (reconciliation?.status ?? readStatus(asyncDir)) as (AsyncStatus & { cwd?: string }) | null;
+			if (options.reconcile === false) observeStatus?.(status);
 		} catch (error) {
+			observeStatus?.(null);
 			if (!activeEntries.has(entry) || !isAsyncStatusIsolationError(asyncDir, error)) throw error;
 			isolateCorruptActiveRun(asyncDir, entry, error, options.now);
 			continue;
 		}
 		if (!status) {
+			observeStatus?.(null);
 			if (activeEntries.has(entry)) updateActiveRunIndex(asyncDir, "failed");
 			continue;
 		}
@@ -573,6 +579,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 				nestedRoute = resolveNestedRoute(status.runId || path.basename(asyncDir));
 				if (nestedRoute) reconcileNestedAsyncDescendants(nestedRoute, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
 			} catch (error) {
+				observeStatus?.(null);
 				nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
 			}
 		}
@@ -580,6 +587,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		try {
 			summary = statusToSummary(asyncDir, status, nestedWarnings, nestedRoute);
 		} catch (error) {
+			observeStatus?.(null);
 			if (!activeEntries.has(entry) || !isAsyncStatusIsolationError(asyncDir, error)) throw error;
 			isolateCorruptActiveRun(asyncDir, entry, error, options.now);
 			continue;
