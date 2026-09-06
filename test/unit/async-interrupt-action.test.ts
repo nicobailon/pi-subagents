@@ -447,6 +447,81 @@ describe("async interrupt action", () => {
 		}
 	});
 
+	it("exposes exact async child targets when owned workflow steering has no foreground route", async () => {
+		const state = createState();
+		const workflowRunId = `workflow-async-target-${Date.now().toString(36)}`;
+		const childRunId = `${workflowRunId}-child`;
+		const asyncDir = createRunningAsync(state, workflowRunId, { track: false, mode: "workflow" });
+		const childDir = createRunningAsync(state, childRunId);
+		state.currentSessionId = "session";
+		state.workflowControllers = new Map([[workflowRunId, new AbortController()]]);
+		const statusPath = path.join(asyncDir, "status.json");
+		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+		status.steps = [{ agent: "worker", workflowKey: "writer", status: "running", async: true, runId: childRunId }];
+		writeJson(statusPath, status);
+		try {
+			const executor = executorWithKill(state, () => true);
+			const result = await executor.execute("steer", { action: "steer", id: workflowRunId, mode: "follow_up", message: "Continue carefully." }, new AbortController().signal, undefined, ctx());
+			assert.equal(result.isError, true);
+			assert.match(text(result), /no live foreground child/);
+			assert.ok(text(result).includes(`id: "${childRunId}"`));
+			assert.match(text(result), /recorded as running; direct steering rechecks/);
+			assert.deepEqual(consumeSteerRequests(asyncDir), []);
+			assert.deepEqual(consumeSteerRequests(childDir), []);
+			const view = inspectSubagentStatus({ id: workflowRunId }, { state, kill: () => true });
+			assert.ok(text(view).includes(`Child run: ${childRunId}`));
+			assert.ok(text(view).includes(`action: "steer", id: "${childRunId}"`));
+			assert.doesNotMatch(text(view), new RegExp(`action: "steer", id: "${workflowRunId}"`));
+			const direct = await executor.execute("steer-child", { action: "steer", id: childRunId, mode: "follow_up", message: "Continue carefully." }, new AbortController().signal, undefined, ctx());
+			assert.equal(direct.isError, undefined);
+			assert.equal(direct.details.steering?.deliveryStatus, "queued");
+			assert.notEqual(direct.details.steering?.state, "delivered");
+			assert.equal(consumeSteerRequests(childDir)[0]?.mode, "follow_up");
+		} finally {
+			cleanup(workflowRunId, asyncDir);
+			cleanup(childRunId, childDir);
+		}
+	});
+
+	it("keeps async workflow hints projection-only, selective, and scoped to the active owner", () => {
+		const state = createState();
+		const workflowRunId = `workflow-async-hints-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, workflowRunId, { track: false, mode: "workflow" });
+		state.currentSessionId = "session";
+		state.workflowControllers = new Map([[workflowRunId, new AbortController()]]);
+		const statusPath = path.join(asyncDir, "status.json");
+		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+		const child = (runId: string, overrides = {}) => ({ agent: "worker", workflowKey: runId, status: "running", async: true, runId, ...overrides });
+		status.steps = [child("async-one"), child("async-two"), child("async-one"),
+			child("completed-child", { status: "complete" }), child("paused-child", { status: "paused" }),
+			child("pending-child", { status: "pending" }), child("foreground-child", { async: false }),
+			child("unknown-child", { async: undefined }), child("external-child", { runner: { type: "external-cli" } }),
+			child("job-child", { runner: { type: "external-job", provider: "test" } }), child("../unsafe"), child(workflowRunId)];
+		writeJson(statusPath, status);
+		try {
+			const read = () => text(inspectSubagentStatus({ id: workflowRunId }, { state, kill: () => true }));
+			const view = read();
+			const hints = view.split("\n").filter((line) => line.includes('action: "steer"'));
+			assert.equal(hints.length, 2);
+			assert.ok(hints[0].includes('id: "async-one"'));
+			assert.ok(hints[1].includes('id: "async-two"'));
+			assert.match(view, /queued does not mean consumed/);
+			for (const sessionId of [null, "other-session"]) {
+				state.currentSessionId = sessionId;
+				assert.doesNotMatch(read(), /Async children recorded as running/);
+			}
+			state.currentSessionId = "session";
+			state.workflowControllers.clear();
+			assert.doesNotMatch(read(), /Async children recorded as running/);
+			state.workflowControllers.set(workflowRunId, new AbortController());
+			status.state = "complete";
+			writeJson(statusPath, status);
+			assert.doesNotMatch(read(), /Async children recorded as running/);
+		} finally {
+			cleanup(workflowRunId, asyncDir);
+		}
+	});
+
 	it("rejects ambiguous workflow steering without choosing a foreground child", async () => {
 		const state = createState();
 		const workflowRunId = `workflow-ambiguous-${Date.now().toString(36)}`;

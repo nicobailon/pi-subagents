@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Show exact recorded async child IDs in workflow status and actionable child steering guidance when an owned workflow has no foreground route, without treating queued messages as consumed (#2011).
 - Await a bounded, offline model registry refresh before opening `/subagents` model and thinking pickers, and warn on refresh failures. Thanks to [@ianbmacdonald](https://github.com/ianbmacdonald) for #2008.
 
 ## [0.66.0] - 2026-09-06

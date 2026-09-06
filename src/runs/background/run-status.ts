@@ -32,6 +32,7 @@ import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 import { formatTimeoutRecoveryLines } from "../shared/mutation-evidence.ts";
 import { formatWorkflowChecklistText, projectWorkflowChecklist } from "../../workflows/workflow-checklist.ts";
 import { validHostStepNodes } from "../shared/host-step-status.ts";
+import { workflowAsyncChildSteeringGuidance } from "../shared/workflow-async-child-guidance.ts";
 
 interface RunStatusParams {
 	action?: string;
@@ -624,6 +625,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				const display = runStatusStepDisplayName(step);
 				const phase = step.phase ? `[${step.phase}] ` : "";
 				lines.push(`${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`);
+				if (status.mode === "workflow" && step.runId) lines.push(`  Child run: ${step.runId}`);
 				const structuredOutputPreview = step.structuredOutput === undefined ? undefined : formatWorkflowJsonPreview(step.structuredOutput, 4_000);
 				if (structuredOutputPreview !== undefined) lines.push(`  Structured output: ${structuredOutputPreview}`);
 				if (step.structuredOutputPath) lines.push(`  Structured output path: ${step.structuredOutputPath}`);
@@ -688,6 +690,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 						lines.push(`Steer live foreground child: subagent({ action: "steer", id: "${control.runId}", index: ${index}, message: "..." })`);
 					}
 				}
+				lines.push(...workflowAsyncChildSteeringGuidance(status, deps.state));
 			}
 			if (nestedWarning) lines.push(`Warning: ${nestedWarning}`);
 			if (status.workflowReceiptPath) lines.push(`Workflow receipt: ${status.workflowReceiptPath}`);

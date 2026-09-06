@@ -6,6 +6,7 @@ import { readStatus } from "../../shared/utils.ts";
 import { steeringReceipt, waitForSteeringAction } from "../background/steering.ts";
 import { requestAsyncSteer, type SteerDeliveryMode } from "../background/control-channel.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
+import { workflowAsyncChildSteeringGuidance } from "../shared/workflow-async-child-guidance.ts";
 
 export interface WorkflowForegroundSteeringTarget {
 	control: ForegroundRunControl;
@@ -85,7 +86,7 @@ export async function steerWorkflowRun(input: {
 	}
 	if (state.workflowControllers?.has(runId)) {
 		const route = resolveWorkflowForegroundSteeringTarget({ state, workflowRunId: runId, asyncDirRoot: path.dirname(asyncDir) });
-		if (!route.ok) return managementError(route.message);
+		if (!route.ok) return managementError([route.message, ...workflowAsyncChildSteeringGuidance(status, state)].join("\n"));
 		return steerWorkflowForegroundTarget({ target: route.target, message: input.message, mode: input.mode, index: input.index });
 	}
 	if (!state.currentSessionId) return managementError("Workflow steering requires an active parent session.");
