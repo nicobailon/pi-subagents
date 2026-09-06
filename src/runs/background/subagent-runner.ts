@@ -21,7 +21,8 @@ function ensureProxyAwareHttpDispatcher(): void {
 		console.error(`[pi-subagents] proxy-aware HTTP dispatcher not installed: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
-ensureProxyAwareHttpDispatcher();
+const isRunnerEntrypoint = Boolean(process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href);
+if (isRunnerEntrypoint) ensureProxyAwareHttpDispatcher();
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "./result-files.ts";
 import { createFileCoalescer } from "../../shared/file-coalescer.ts";
@@ -96,7 +97,9 @@ import type { InheritedChildRuntime } from "../shared/child-launch.ts";
 import { buildRunnerChildLaunch } from "./runner-child-launch.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import type { ChildSessionFactory } from "../shared/child-session.ts";
-import { runChildSession, type ChildEvent, type RunChildSessionResult, type StepSteerHandler } from "./run-child-session.ts";
+import { getSettledReadonlyChild, runChildSession, type ChildEvent, type RunChildSessionInput, type RunChildSessionResult, type StepSteerHandler } from "./run-child-session.ts";
+import { planReadonlyModelContinuation, READONLY_CONTINUATION_PROMPT, type LogicalRecoveryState } from "../shared/readonly-model-continuation.ts";
+import { getReadonlySessionEvidence } from "../shared/readonly-session-evidence.ts";
 import { loadRunnerChildSessionFactory } from "./runner-child-sessions.ts";
 import { SUBAGENT_CHILD_ENV } from "../shared/child-runtime-config.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
@@ -142,7 +145,7 @@ import {
 	WORKTREE_AGENT_CWD_PLACEHOLDER,
 	type WorktreeSetup,
 } from "../shared/worktree.ts";
-import { findModelInfo, resolveEffectiveThinking } from "../../shared/model-info.ts";
+import { findModelInfo, resolveEffectiveThinking, splitKnownThinkingSuffix } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling } from "../../shared/thinking-ceiling.ts";
 import { launchBindingDigest } from "../../shared/launch-contract.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
@@ -697,14 +700,17 @@ interface SingleStepContext {
 	onExternalProcess?: (process: ExternalProcessStatus) => void;
 	onExternalJob?: (status: ExternalJobStatus) => void;
 	skipAcceptance?: () => boolean;
-	usageBudgetExhausted?: () => boolean;
+	/** Authoritative owner decision after event delivery; undefined includes incomplete run-wide usage. */
+	usageBudgetExhausted?: () => boolean | undefined;
+	/** Existing run-owned budget configuration; cost allowance is not settled by the live token ledger. */
+	usageBudget?: UsageBudgetConfig;
 	/** False when sibling work in the same Git worktree could have caused the tracked diff. */
 	trackedMutationEvidenceForCompletionGuard?: boolean;
 	orcaProgressTab?: OrcaProgressTab;
 }
 
 /** Run a single pi agent step, returning output and metadata */
-async function runSingleStepInner(
+export async function runSingleStepInner(
 	step: SubagentStep,
 	ctx: SingleStepContext,
 ): Promise<StepResult & { completionGuardTriggered?: boolean }> {
@@ -1040,11 +1046,31 @@ async function runSingleStepInner(
 	let modelIndex = 0;
 	let contextOverflow = false;
 	let launchWarningsEmitted = false;
-	let abortRecoveryAttempted = false;
+	let recoveryState: LogicalRecoveryState = "unused";
+	let readonlyContinuation: RunChildSessionInput["readonlyContinuation"];
+	const continuationBudget = () => {
+		if (step.toolBudget) return "tool-budget-configured" as const;
+		// Refresh the authoritative run ledger, already fed synchronously by onChildEvent.
+		const exhausted = ctx.usageBudgetExhausted?.();
+		if (exhausted === true) return "exhausted" as const;
+		if (!ctx.usageBudget) return "unconfigured" as const;
+		if (ctx.usageBudget.costUsd || !ctx.onChildEvent || exhausted !== false) return "unknown" as const;
+		return "available" as const;
+	};
+	const lifecycleAllowsContinuation = () => !ctx.timeoutSignal?.aborted && !ctx.stopSignal?.aborted
+		&& !ctx.skipAcceptance?.() && (ctx.deadlineAt === undefined || Date.now() < ctx.deadlineAt);
+	const canContinue = () => lifecycleAllowsContinuation() && ["available", "unconfigured"].includes(continuationBudget());
+	const failContinuationLaunch = (candidate: string | undefined, error: unknown) => {
+		const message = error instanceof Error ? error.message : String(error);
+		modelAttempts.push({ model: candidate ?? "default", success: false, exitCode: 1, error: message });
+		if (candidate) attemptedModels.push(candidate);
+		if (finalResult) finalResult = { ...finalResult, exitCode: 1, error: message };
+	};
 	let nextAttemptTask = task;
 	modelAttemptsLoop: while (modelIndex < candidates.length) {
 		if (ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break;
-		const recoveringAbort = abortRecoveryAttempted;
+		if (readonlyContinuation && !canContinue()) break;
+		const recoveringAbort = recoveryState === "abort-recovery";
 		const attemptTask = nextAttemptTask;
 		const candidate = candidates[modelIndex];
 		const expectedModelForVerification = candidate && !(step.skipPrimaryModelVerification && modelIndex === 0) ? candidate : undefined;
@@ -1052,6 +1078,10 @@ async function runSingleStepInner(
 			assertThinkingWithinCeiling({ model: candidate, configThinking: step.thinking, ceiling: step.thinkingCeiling, agent: step.agent, runId: ctx.id });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
+			if (readonlyContinuation) {
+				failContinuationLaunch(candidate, error);
+				break modelAttemptsLoop;
+			}
 			return omitUndefinedProperties({ agent: step.agent, output: message, error: message, exitCode: 1, context: step.context, thinkingCeiling: step.thinkingCeiling });
 		}
 		ctx.onAttemptStart?.(omitUndefinedProperties({
@@ -1077,15 +1107,22 @@ async function runSingleStepInner(
 			})
 			: undefined;
 		let watchdogSink: ((event: ChildWatchdogStatusEvent) => void) | undefined;
-		const launch = buildRunnerChildLaunch(step, ctx, {
-			sessionEnabled,
-			sessionDir,
-			model: candidate,
-			sessionName: childSessionName,
-			structuredOutput: effectiveStructuredOutput,
-			childWatchdog,
-			watchdogStatus: (event) => watchdogSink?.(event),
-		});
+		let launch: ReturnType<typeof buildRunnerChildLaunch>;
+		try {
+			launch = buildRunnerChildLaunch(step, ctx, {
+				sessionEnabled,
+				sessionDir,
+				model: candidate,
+				sessionName: childSessionName,
+				structuredOutput: effectiveStructuredOutput,
+				childWatchdog,
+				watchdogStatus: (event) => watchdogSink?.(event),
+			});
+		} catch (error) {
+			if (!readonlyContinuation) throw error;
+			failContinuationLaunch(candidate, error);
+			break modelAttemptsLoop;
+		}
 		if (effectiveStructuredOutput && launch.config.structuredOutput) {
 			// The runner reads the value back from the runtime's files after the run.
 			launch.config.structuredOutput.capture = createStructuredOutputFileCapture(effectiveStructuredOutput);
@@ -1145,6 +1182,9 @@ async function runSingleStepInner(
 		const run = await runChildSession(omitUndefinedProperties({
 			factory: ctx.childSessions,
 			launch,
+			collectReadonlyEvidence: true,
+			readonlyContinuation,
+			canContinue,
 			prompt: `Task: ${attemptTask}`,
 			childWatchdog,
 			childEventContext: { runId: ctx.id, stepIndex: ctx.flatIndex, agent: step.agent },
@@ -1324,7 +1364,7 @@ async function runSingleStepInner(
 			messages: run.messages,
 			error,
 			sessionAvailable: Boolean(step.sessionFile && fs.existsSync(step.sessionFile)),
-			alreadyResumed: abortRecoveryAttempted,
+			alreadyResumed: recoveryState !== "unused",
 			stopped: run.stopped || ctx.stopSignal?.aborted || ctx.skipAcceptance?.(),
 			interrupted: run.interrupted,
 			timedOut: run.timedOut || ctx.timeoutSignal?.aborted,
@@ -1344,14 +1384,58 @@ async function runSingleStepInner(
 		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break modelAttemptsLoop;
 		if (abortRecovery?.action === "settle" && abortRecovery.diagnostic) break modelAttemptsLoop;
 		if (attempt.success) break modelAttemptsLoop;
+		// The shared token is consumed before sibling creation; no third dispatch of any kind.
+		if (recoveryState === "readonly-continuation") break modelAttemptsLoop;
 		if (recoveringAbort) break modelAttemptsLoop;
 		if (abortRecovery?.action === "resume") {
-			abortRecoveryAttempted = true;
+			recoveryState = "abort-recovery";
 			nextAttemptTask = abortRecovery.prompt;
 			attemptNotes.push("[abort-recovery] provider/transport abort after useful progress; resuming the retained child session once.");
 			continue;
 		}
 		if (completionEvidence.guardTriggered) break modelAttemptsLoop;
+
+		const source = getSettledReadonlyChild(run);
+		if (source) {
+			const captured = launch.capture.completionIntentContext?.();
+			const sourceModel = captured?.model;
+			const retained = getReadonlySessionEvidence(source)!;
+			// Modality/capacity assessment, not another history/provenance validator.
+			// Images and unknown content have no certified token bound in this host slice.
+			const textOnly = (JSON.parse(retained.contextJson) as Message[]).every((message) => typeof message.content === "string"
+				|| (Array.isArray(message.content) && message.content.every((block) => ["text", "thinking", "toolCall"].includes(block.type))));
+			const retainedBytes = Buffer.byteLength(retained.contextJson, "utf8");
+			const resolvedCandidates = candidates.map((reference, index) => {
+				// Only exact registry identities qualify; aliases/default guesses remain ineligible.
+				const base = reference ? splitKnownThinkingSuffix(reference).baseModel : "";
+				const slash = base.indexOf("/");
+				const model = slash > 0 ? captured?.modelRegistry.find(base.slice(0, slash), base.slice(slash + 1)) : undefined;
+				// Reserve the source window for runtime/system/tool overhead, plus a conservative
+				// byte bound for the complete retained text and new prompt; never assume a fit
+				// merely because a 429 request was sent. Equal/smaller windows remain denied.
+				const compatible = textOnly && model && sourceModel && model.input?.includes("text")
+					&& Number.isFinite(sourceModel.contextWindow) && sourceModel.contextWindow > 0
+					&& model.contextWindow >= sourceModel.contextWindow + retainedBytes + Buffer.byteLength(READONLY_CONTINUATION_PROMPT, "utf8")
+					&& model.maxTokens > 0 && model.maxTokens <= sourceModel.maxTokens;
+				return { resolved: model ? { provider: model.provider, model: model.id, api: model.api } : undefined,
+					tried: index <= modelIndex, compatibility: compatible ? "compatible" as const : "unknown" as const };
+			});
+			const plan = planReadonlyModelContinuation({ source, recoveryState, candidates: resolvedCandidates, currentIndex: modelIndex,
+				lifecycleAllowsContinuation: lifecycleAllowsContinuation() && !run.interrupted && !run.stopped && !run.timedOut,
+				effectsAllowContinuation: !run.currentTool && !run.observedMutationAttempt && !mutationEvidence.attemptedMutation
+					&& !structuredError && !effectiveStructuredOutput && !missingRequiredOutputError && !toolAvailabilityError
+					&& !completionEvidence.guardTriggered && !midToolExitError && !hiddenError?.hasError,
+				budget: continuationBudget(), knownContextOverflow: isContextOverflow(error) });
+			if (plan.kind === "continue" && canContinue()) {
+				recoveryState = plan.recoveryState;
+				const selected = resolvedCandidates[plan.candidateIndex]!.resolved!;
+				readonlyContinuation = { source, expected: plan.expected, modelId: `${selected.provider}/${selected.model}` };
+				nextAttemptTask = plan.prompt;
+				modelIndex = plan.candidateIndex;
+				attemptNotes.push(`[readonly-continuation] ${attempt.model} returned HTTP 429 after read-only progress; continuing the retained session once with ${candidates[modelIndex]}.`);
+				continue;
+			}
+		}
 
 		const retryableModelFailure = isRetryableModelFailureAttempt({ error, messages: run.messages, toolCount: run.toolCount });
 		if (retryableModelFailure) recordRetryableModelFailure(candidate ?? run.model ?? step.model, error);
@@ -1799,7 +1883,10 @@ async function runSingleStepWithTimeout(
 	ctx: SingleStepContext,
 	parentDeadlineAt?: number,
 ): Promise<SingleStepResult> {
-	if (step.timeoutMs === undefined) return runSingleStep(step, ctx);
+	if (step.timeoutMs === undefined) return runSingleStep(step, parentDeadlineAt === undefined ? ctx : {
+		...ctx,
+		deadlineAt: ctx.deadlineAt === undefined ? parentDeadlineAt : Math.min(ctx.deadlineAt, parentDeadlineAt),
+	});
 
 	const parentRemainingMs = parentDeadlineAt === undefined ? undefined : Math.max(0, parentDeadlineAt - Date.now());
 	const timeoutMs = parentRemainingMs === undefined ? step.timeoutMs : Math.min(step.timeoutMs, parentRemainingMs);
@@ -1836,7 +1923,7 @@ async function runSingleStepWithTimeout(
 	}
 }
 
-async function runSubagent(
+export async function runSubagent(
 	config: SubagentRunConfig,
 	childSessions: ChildSessionFactory,
 ): Promise<void> {
@@ -2090,6 +2177,13 @@ async function runSubagent(
 	const refreshUsageBudget = () => {
 		setOptionalProperty(statusPayload, "usageBudget", usageBudgetState(config.usageBudget, currentUsageTotals()));
 		return statusPayload.usageBudget;
+	};
+	// Continuation admission only: the existing ledger has no in-flight cost or
+	// external/import usage coverage. Never change ordinary budget enforcement.
+	let continuationUsageUncertain = config.steps.some(isDynamicRunnerGroup) || flatSteps.some((step) => Boolean(step.runner || step.importAsyncRoot));
+	const continuationUsageBudgetExhausted = (): boolean | undefined => {
+		const exhausted = refreshUsageBudget()?.exhausted === true;
+		return exhausted ? true : config.usageBudget && continuationUsageUncertain ? undefined : false;
 	};
 	const emitNestedSelfEvent = (type: "subagent.nested.updated" | "subagent.nested.completed"): void => {
 		if (!config.nestedRoute || !config.nestedSelf) return;
@@ -3005,6 +3099,10 @@ async function runSubagent(
 			appendRecentStepOutput(step, stripAcceptanceReport(extractTextFromContent(event.message.content)).split("\n").slice(-10));
 			step.turnCount = (step.turnCount ?? 0) + 1;
 			const usage = event.message.usage;
+			if (config.usageBudget) {
+				const known = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0;
+				if (!known(usage?.input ?? usage?.inputTokens) || !known(usage?.output ?? usage?.outputTokens)) continuationUsageUncertain = true;
+			}
 			if (usage) {
 				const input = usage.input ?? usage.inputTokens ?? 0;
 				const output = usage.output ?? usage.outputTokens ?? 0;
@@ -3603,7 +3701,8 @@ async function runSubagent(
 					onExternalProcess: (process) => updateExternalProcess(fi, process),
 					onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
 					skipAcceptance: () => timedOut || stopped || childStopRequests.has(fi),
-					usageBudgetExhausted: () => refreshUsageBudget()?.exhausted === true,
+					usageBudgetExhausted: continuationUsageBudgetExhausted,
+					usageBudget: config.usageBudget,
 					orcaProgressTab,
 				}), config.deadlineAt);
 				const taskEndTime = Date.now();
@@ -4012,7 +4111,8 @@ async function runSubagent(
 							onExternalProcess: (process) => updateExternalProcess(fi, process),
 							onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
 							skipAcceptance: () => timedOut || stopped || childStopRequests.has(fi),
-							usageBudgetExhausted: () => refreshUsageBudget()?.exhausted === true,
+							usageBudgetExhausted: continuationUsageBudgetExhausted,
+							usageBudget: config.usageBudget,
 							orcaProgressTab,
 						}), config.deadlineAt);
 						if (task.sessionFile) {
@@ -4410,7 +4510,8 @@ async function runSubagent(
 				onExternalProcess: (process) => updateExternalProcess(flatIndex, process),
 				onExternalJob: (externalJob) => updateExternalJob(flatIndex, externalJob),
 				skipAcceptance: () => timedOut || stopped || childStopRequests.has(flatIndex),
-				usageBudgetExhausted: () => refreshUsageBudget()?.exhausted === true,
+				usageBudgetExhausted: continuationUsageBudgetExhausted,
+				usageBudget: config.usageBudget,
 				orcaProgressTab,
 				}), config.deadlineAt);
 			} catch (error) {
@@ -5068,6 +5169,7 @@ function startConfiguredSubagent(config: SubagentRunConfig): void {
 	);
 }
 
+if (isRunnerEntrypoint) {
 const configArg = process.argv[2];
 if (configArg) {
 	try {
@@ -5098,4 +5200,5 @@ if (configArg) {
 			process.exit(1);
 		}
 	});
+}
 }

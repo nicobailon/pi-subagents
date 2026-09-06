@@ -15,6 +15,8 @@ import { createSubagentExecutor } from "../../src/runs/foreground/subagent-execu
 import { flushPersist, getExcludedCount, getExclusionsFilePath } from "../../src/runs/shared/model-exclusions.ts";
 import { buildRunnerChildLaunch } from "../../src/runs/background/runner-child-launch.ts";
 import { runChildSession } from "../../src/runs/background/run-child-session.ts";
+import { runSingleStepInner, runSubagent } from "../../src/runs/background/subagent-runner.ts";
+import { READONLY_CONTINUATION_PROMPT } from "../../src/runs/shared/readonly-model-continuation.ts";
 import { createChildTranscriptWriter } from "../../src/shared/child-transcript.ts";
 import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
 import { discoverAgents, type AgentConfig } from "../../src/agents/agents.ts";
@@ -23,6 +25,7 @@ import { DIRS } from "../../src/shared/types.ts";
 import { releaseActiveRunIndex, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { resolveChildWatchdogConfig } from "../../src/watchdog/child-status.ts";
 import { DEFAULT_WATCHDOG_CONFIG } from "../../src/watchdog/settings.ts";
+import { DEFAULT_CONTROL_CONFIG } from "../../src/runs/shared/subagent-control.ts";
 
 function launch(cwd: string): ChildSessionLaunch {
 	return { cwd, storage: { kind: "file", sessionFile: join(cwd, "session.jsonl") }, model: "baseten/model-a", tools: ["read"], extensionPaths: [],
@@ -143,7 +146,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 		if (!fresh) {
 			const manager = realPi.SessionManager.open((l.storage as { sessionFile: string }).sessionFile, undefined, cwd);
 			manager.appendMessage({ role: "user", content: "Earlier context", timestamp: 1 });
-			manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "Earlier answer" }], api: "openai-completions", provider: "baseten", model: "model-a", stopReason: "stop", timestamp: 2, usage });
+			manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "Earlier answer" }], api: "openai-completions", provider: "baseten", model: "model-a", stopReason: "stop", timestamp: 2, usage: { ...usage, input: 101, output: 103, totalTokens: 204, cost: { ...usage.cost, total: 2 } } });
 		}
 		const requests: { body: Record<string, unknown> }[] = [];
 		let responses: (() => Response | Promise<Response>)[] = [];
@@ -395,6 +398,222 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 		return buildRunnerChildLaunch(step, { cwd: l.cwd, id: "runner-read", flatIndex: 0, ...context }, {
 			model, sessionEnabled: true, sessionName: "runner reader", watchdogStatus: () => assert.fail("absent watchdog has no consumer"),
 		});
+	}
+
+	function ownedRunnerStep(cwd: string, file: string): RunnerSubagentStep {
+		mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
+		writeFileSync(join(cwd, ".pi", "agents", "loop-reader.md"), "---\nname: loop-reader\ndescription: Read-only loop\ntools: read\nextensions:\nallowNestedSubagents: false\ninheritProjectContext: false\ninheritGlobalContext: false\ninheritSkills: false\n---\nRetain the completed read.\n");
+		const agent = discoverAgents(cwd, "project").agents.find((agent) => agent.name === "loop-reader")!;
+		assert.deepEqual(agent.extensions, []);
+		return { agent: agent.name, task: "Owned original task: read marker.txt once", context: "fresh", sessionFile: file,
+			modelCandidates: ["baseten/model-a", "other-provider/untried", "baseten/model-b", "baseten/model-c"],
+			tools: agent.tools, extensions: agent.extensions, allowNestedSubagents: agent.allowNestedSubagents,
+			inheritProjectContext: agent.inheritProjectContext, inheritGlobalContext: agent.inheritGlobalContext, inheritSkills: agent.inheritSkills,
+			systemPrompt: agent.systemPrompt, waitToolEnabled: false };
+	}
+
+	function enlargeRunnerSibling(agentDir: string) {
+		const file = join(agentDir, "models.json");
+		const config = JSON.parse(readFileSync(file, "utf8"));
+		config.providers.baseten.models[1].contextWindow = 256000;
+		config.providers.baseten.models.push({ ...config.providers.baseten.models[1], id: "model-c", name: "model-c" });
+		config.providers["other-provider"] = { ...config.providers.baseten, models: [{ ...config.providers.baseten.models[0], id: "untried", name: "untried" }] };
+		writeFileSync(file, JSON.stringify(config));
+	}
+
+	for (const kind of ["success", "fresh success", "second429", "sibling startup", "sibling abort", "model mismatch", "stop after settlement", "deadline after settlement", "stop during create", "changed file", "missing file", "steer", "late shutdown", "fake factory", "ambient", "tool budget", "unknown token budget", "equal window", "retained image", "retained context too large", "no sibling", "false429"] as const) {
+		it(`owned native runner loop: ${kind}`, async () => fixture(async ({ pi, cwd, agentDir, l, factory, captured, requests, setResponses }) => {
+			const success = kind === "success" || kind === "fresh success";
+			flushPersist();
+			const exclusionsPath = getExclusionsFilePath();
+			const exclusionsBefore = existsSync(exclusionsPath) ? readFileSync(exclusionsPath, "utf8") : undefined;
+			if (kind !== "equal window") enlargeRunnerSibling(agentDir);
+			const file = (l.storage as { sessionFile: string }).sessionFile;
+			const step = ownedRunnerStep(cwd, file);
+			if (kind === "retained image" || kind === "retained context too large") {
+				pi.SessionManager.open(file, undefined, cwd).appendMessage({ role: "user", timestamp: 3,
+					content: kind === "retained image" ? [{ type: "image", mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=" }] : "retained text ".repeat(12_000) });
+			}
+			if (kind === "ambient") step.extensions = undefined;
+			if (kind === "tool budget") step.toolBudget = { hard: 100, block: "*" };
+			if (kind === "no sibling") step.modelCandidates = ["baseten/model-a"];
+			const stop = new AbortController();
+			const deadline = Date.now() + 60_000;
+			const children: ChildSession[] = [];
+			const inputs: ChildSessionLaunch[] = [];
+			let ledgerTokens = 0;
+			const context = { cwd, id: "owned-loop", flatIndex: 0, flatStepCount: 1, previousOutput: "", placeholder: "{previous}",
+				outputFile: join(cwd, "output.log"), artifactsDir: join(cwd, "artifacts"), sessionEnabled: true, deadlineAt: deadline,
+				stopSignal: stop.signal,
+				usageBudget: kind === "unknown token budget" ? { tokens: { hard: 1000 } } : undefined,
+				usageBudgetExhausted: kind === "unknown token budget" ? undefined : () => ledgerTokens >= 1000,
+				onChildEvent: (event: import("../../src/runs/background/run-child-session.ts").ChildEvent) => {
+					if (event.type === "message_end" && event.message?.role === "assistant") ledgerTokens += (event.message.usage?.input ?? 0) + (event.message.usage?.output ?? 0);
+				},
+				childSessions: { ...factory, async create(input: ChildSessionLaunch) {
+					inputs.push(input);
+					if (inputs.length === 2 && kind === "sibling startup") throw new Error("synthetic startup failure");
+					const child = await factory.create(input); children.push(child);
+					if (kind === "fake factory") return { ...child };
+					if (inputs.length === 2 && kind === "stop during create") stop.abort();
+					if (inputs.length === 2 && kind === "sibling abort") await child.abort();
+					if (inputs.length === 2 && kind === "model mismatch") Object.defineProperty(child, "modelId", { value: "baseten/wrong-model" });
+					if (kind === "late shutdown") {
+						const runner = captured.at(-1)!.session.extensionRunner;
+						const emit = runner.emit.bind(runner);
+						runner.emit = (event) => event.type === "session_shutdown" ? new Promise(() => {}) : emit(event);
+					}
+					if (inputs.length === 1) {
+						const dispose = child.dispose;
+						child.dispose = async () => {
+							await dispose();
+							if (kind === "stop after settlement") stop.abort();
+							if (kind === "deadline after settlement") context.deadlineAt = Date.now() - 1;
+							if (kind === "changed file") appendFileSync(file, "changed\n");
+							if (kind === "missing file") rmSync(file);
+							if (kind === "steer") await child.steer("intervening input");
+						};
+					}
+					return child;
+				} },
+			};
+			setResponses([() => sse(true, 7), () => { if (kind === "false429") throw new Error("429: synthetic rate limit"); return http(429); },
+				() => kind === "second429" ? http(429) : sse(false, 11)]);
+			const result = await runSingleStepInner(step, context);
+			flushPersist();
+			assert.equal(existsSync(exclusionsPath) ? readFileSync(exclusionsPath, "utf8") : undefined, exclusionsBefore, "continuation never changes startup exclusions");
+			assert.equal(result.sessionFile, file);
+			assert.ok(inputs.length <= 2, "shared token forbids third creation");
+			assert.ok(requests.length <= 3, "shared token forbids third model dispatch");
+			assert.equal(requests.filter((request) => request.body.model === "untried" || request.body.model === "model-c").length, 0);
+			assert.equal(result.usage?.input, success ? 18 : 7, JSON.stringify(result));
+			assert.equal(result.usage?.output, success ? 18 : 7);
+			assert.equal(result.usage?.cost, 0, "the retained historical $2 charge is not a new event delta");
+			assert.equal(ledgerTokens, success ? 36 : 14, "only new event deltas reach the ledger");
+			if (success) {
+				assert.equal(result.exitCode, 0, result.error);
+				assert.deepEqual(result.attemptedModels, ["baseten/model-a", "baseten/model-b"]);
+				assert.equal(result.modelAttempts?.length, 2);
+				assert.equal(children[0].sessionId, children[1].sessionId);
+				assert.deepEqual(inputs.map((input) => input.storage), [{ kind: "file", sessionFile: file }, { kind: "file", sessionFile: file }]);
+				const payload = JSON.stringify(requests[2].body.messages);
+				for (const text of ["DISTINCTIVE_REAL_BUILTIN_READ_RESULT", "read-1", READONLY_CONTINUATION_PROMPT]) assert.ok(payload.includes(text), text);
+				if (kind !== "fresh success") for (const text of ["Earlier context", "Earlier answer"]) assert.ok(payload.includes(text), text);
+				assert.equal(payload.match(/Owned original task: read marker.txt once/g)?.length, 1);
+				assert.match(readFileSync(file, "utf8"), /"stopReason":"error"/);
+				assert.match(result.output, /\[readonly-continuation\]/);
+				assert.ok(result.transcriptPath && existsSync(result.transcriptPath));
+				assert.equal(captured[1].session.model?.id, "model-b");
+			} else {
+				assert.notEqual(result.exitCode, 0, kind);
+				if (!["second429", "sibling startup", "sibling abort", "model mismatch", "stop during create", "changed file", "missing file"].includes(kind)) assert.equal(inputs.length, 1, kind);
+			}
+		}, {}, kind === "fresh success"));
+	}
+
+	it("owned run deadline without step timeout vetoes creation before timer delivery", async () => fixture(async ({ cwd, agentDir, l, factory, requests, setResponses }) => {
+		enlargeRunnerSibling(agentDir);
+		const file = (l.storage as { sessionFile: string }).sessionFile;
+		const step = ownedRunnerStep(cwd, file);
+		assert.equal(step.timeoutMs, undefined);
+		const asyncDir = join(cwd, "deadline-async");
+		const deadlineAt = Date.now() + 2000;
+		let creations = 0;
+		let settledBeforeExpiry = false;
+		let settledEvidence: SettledReadonlyEvidence | undefined;
+		const observedFactory = { ...factory, async create(input: ChildSessionLaunch) {
+			creations++;
+			const child = await factory.create(input);
+			if (creations === 1) {
+				const dispose = child.dispose;
+				child.dispose = async () => {
+					await dispose();
+					settledEvidence = getReadonlySessionEvidence(child);
+					settledBeforeExpiry = Date.now() < deadlineAt;
+					// Deliberately keep this turn synchronous: the real parent timer becomes due,
+					// but cannot deliver before the settlement microtask reaches the host guard.
+					while (Date.now() <= deadlineAt) { /* bounded by the original two-second deadline */ }
+				};
+			}
+			return child;
+		} };
+		setResponses([() => sse(true, 7), () => http(429), () => sse(false, 11)]);
+		await runSubagent({ id: "owned-deadline", cwd, asyncDir, resultPath: join(asyncDir, "result.json"),
+			placeholder: "{previous}", sessionId: "parent-session", steps: [step], deadlineAt,
+			controlConfig: { ...DEFAULT_CONTROL_CONFIG, enabled: false },
+		}, observedFactory);
+		assert.ok(settledEvidence, "real settled proof exists; deadline alone must deny continuation");
+		assert.ok(settledBeforeExpiry, "source shutdown settled before the original deadline");
+		assert.ok(Date.now() > deadlineAt);
+		assert.equal(creations, 1, "no sibling creation after original expiry, even before timer delivery");
+		assert.equal(requests.length, 2);
+		const status = JSON.parse(readFileSync(join(asyncDir, "status.json"), "utf8"));
+		assert.equal(status.deadlineAt, deadlineAt);
+		assert.notEqual(status.timedOut, true, "the asynchronous parent timeout did not supply the veto");
+		assert.equal(status.steps[0].modelAttempts.length, 1);
+		assert.equal(status.totalTokens.input, 7);
+		assert.equal(status.totalTokens.output, 7);
+		assert.match(readFileSync(file, "utf8"), /"stopReason":"error"/);
+	}));
+
+	for (const kind of ["unconfigured", "available tokens", "exhausted tokens", "concurrent exhausted tokens", "concurrent unknown tokens", "cost unknown"] as const) {
+		it(`owned run ledger and final publication: ${kind}`, async () => fixture(async ({ cwd, agentDir, l, factory, requests, setResponses }) => {
+			enlargeRunnerSibling(agentDir);
+			const step = ownedRunnerStep(cwd, (l.storage as { sessionFile: string }).sessionFile);
+			const concurrent = kind.startsWith("concurrent");
+			const unknown = kind === "concurrent unknown tokens";
+			const asyncDir = join(cwd, "owned-async");
+			const resultPath = join(asyncDir, "result.json");
+			let release: (() => void) | undefined;
+			const bothStarted = new Promise<void>((resolve) => { release = resolve; });
+			let unknownObserved: (() => void) | undefined;
+			const missingUsage = new Promise<void>((resolve) => { unknownObserved = resolve; });
+			let created = 0;
+			const observedFactory = { ...factory, async create(input: ChildSessionLaunch) {
+				const child = await factory.create(input);
+				if (++created === 2 && unknown) {
+					const subscribe = child.subscribe;
+					child.subscribe = (listener) => subscribe((event) => {
+						const message = event.message as { role?: string; usage?: Record<string, unknown> } | undefined;
+						if (event.type === "message_end" && message?.role === "assistant") {
+							listener({ ...event, message: { ...message, usage: { ...message.usage, input: undefined, inputTokens: undefined, output: 0 } } });
+							unknownObserved!();
+						} else listener(event);
+					});
+				}
+				return child;
+			} };
+			let initialRequests = 0;
+			setResponses(Array.from({ length: 8 }, () => async () => {
+				const request = requests.at(-1)!.body;
+				if (request.model === "model-b") return sse(false, 11);
+				const hasRead = (request.messages as { role: string }[]).some((message) => message.role === "tool");
+				if (hasRead) { if (unknown) await missingUsage; return http(429); }
+				if (concurrent) { if (++initialRequests === 2) release!(); await bothStarted; }
+				return sse(true, 7);
+			}));
+			await runSubagent({ id: "owned-ledger", cwd, asyncDir, resultPath, placeholder: "{previous}", sessionId: "parent-session",
+				steps: concurrent ? [{ parallel: [step, { ...step, sessionFile: join(cwd, "parallel-session.jsonl") }], concurrency: 2 }] : [step],
+				controlConfig: { ...DEFAULT_CONTROL_CONFIG, enabled: false }, artifactsDir: join(cwd, "artifacts"),
+				usageBudget: kind === "unconfigured" ? undefined : kind === "cost unknown" ? { costUsd: { hard: 100 } }
+					: { tokens: { hard: kind === "available tokens" || unknown ? 1000 : concurrent ? 20 : 10 } },
+			}, observedFactory);
+			const status = JSON.parse(readFileSync(join(asyncDir, "status.json"), "utf8"));
+			const result = JSON.parse(readFileSync(resultPath, "utf8"));
+			const success = kind === "unconfigured" || kind === "available tokens";
+			assert.equal(status.state, success ? "complete" : "failed", JSON.stringify(result));
+			assert.equal(requests.length, success ? 3 : concurrent ? 4 : 2);
+			assert.equal(status.totalTokens.input, success ? 18 : concurrent && !unknown ? 14 : 7);
+			assert.equal(status.totalTokens.output, success ? 18 : concurrent && !unknown ? 14 : 7);
+			assert.equal(status.steps[0].modelAttempts.length, success ? 2 : 1);
+			assert.equal(status.steps[0].toolCount, 1, "restored history is not a new tool event");
+			assert.ok(status.steps[0].durationMs >= 0);
+			assert.ok(existsSync(join(asyncDir, "events.jsonl")));
+			if (kind.includes("tokens")) {
+				assert.equal(status.usageBudget.tokens.used, success ? 36 : concurrent && !unknown ? 28 : 14);
+				assert.equal(status.usageBudget.exhausted, !success && !unknown);
+			}
+		}));
 	}
 
 	for (const optedIn of [false, true]) it(`actual native runner construction and mandatory captures, evidence opt-in=${optedIn}`, async () => countAsyncIO(async (io) => fixture(async ({ l, factory, captured, acknowledge, requests, setResponses, cwd }) => {
