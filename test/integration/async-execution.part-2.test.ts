@@ -198,6 +198,81 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(mockPi.callCount(), 3);
 	});
 
+	for (const diagnostic of ["hidden", "empty", "structured", "file", "mutation"] as const) {
+		for (const interrupted of [true, false]) {
+			it(`${interrupted ? "defers" : "enforces"} ${diagnostic} completion diagnostics ${interrupted ? "while paused" : "on completion"}`, { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "cross-process interrupt delivery unreliable on Windows CI" : undefined }, async () => {
+				const id = `async-completion-${diagnostic}-${interrupted}-${Date.now().toString(36)}`;
+				const outputPath = path.join(tempDir, `${id}.md`);
+				const jsonl = diagnostic === "hidden"
+					? [events.assistantMessage("Inspecting the task."), events.toolResult("bash", "Blocked by policy. Command exited with code 1", true), events.toolResult("read", "file contents")]
+					: diagnostic === "empty" || diagnostic === "file"
+						? []
+						: [events.assistantMessage("I will inspect the files before proceeding.")];
+				mockPi.onCall({ steps: [
+					{ jsonl },
+					...(interrupted ? [
+						{ jsonl: [events.toolStart("read", { path: "pause-ready" })] },
+						{ waitForPath: path.join(tempDir, `${id}-release`) },
+					] : []),
+				] });
+				const launch = executeAsyncChain(id, {
+					chain: [{
+						agent: "worker",
+						task: diagnostic === "mutation" ? "Implement the fix in src/example.ts." : "Inspect the task and return a report. Do not edit files.",
+						acceptance: false,
+						...(diagnostic === "structured" ? { outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } } } : {}),
+						...(diagnostic === "file" ? { output: outputPath, outputMode: "file-only" as const } : {}),
+					}],
+					agents: [makeAgent("worker", { tools: ["read", "write"], completionGuard: diagnostic === "mutation" })],
+					ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-completion-diagnostics" },
+					artifactConfig: { enabled: true, includeInput: false, includeOutput: true, includeJsonl: true, includeMetadata: true, cleanupDays: 7 },
+					artifactsDir: path.join(tempDir, "artifacts", id),
+					shareEnabled: false,
+					maxSubagentDepth: 2,
+				});
+				assert.ok(!launch.isError, JSON.stringify(launch));
+				const asyncDir = path.join(ASYNC_DIR, id);
+				if (interrupted) {
+					const running = await waitForAsyncState(id, (status) => status.steps?.[0]?.currentTool === "read");
+					if (diagnostic === "file") assert.equal(fs.existsSync(outputPath), false);
+					deliverInterruptRequest({ asyncDir, pid: running.pid, source: "test" });
+				}
+				const payload = await readAsyncPayload(id);
+				const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+				assert.equal(payload.success, false);
+				if (interrupted) {
+					assert.equal(payload.results[0]?.success, false);
+					assert.equal(payload.state, "paused");
+					assert.equal(payload.error, undefined);
+					assert.equal(payload.results[0]?.error, undefined);
+					assert.equal(status.state, "paused");
+					assert.equal(status.error, undefined);
+					assert.equal(status.steps?.[0]?.status, "paused");
+					assert.equal(status.steps?.[0]?.exitCode, 0);
+					assert.equal(status.steps?.[0]?.error, undefined);
+					assert.equal(payload.workflowGraph?.nodes?.[0]?.status, "paused");
+					assert.equal(payload.workflowGraph?.nodes?.[0]?.error, undefined);
+				} else {
+					const expected = {
+						hidden: /bash failed/,
+						empty: /empty|no.*output/i,
+						structured: /structured_output/,
+						file: /Required file-only output was not produced/,
+						mutation: /without making edits/,
+					};
+					assert.match(payload.results[0]?.error ?? "", expected[diagnostic]);
+					assert.equal(status.steps?.[0]?.status, "failed");
+				}
+				if (diagnostic === "hidden") {
+					const transcript = payload.results[0]?.artifactPaths?.transcriptPath;
+					assert.ok(transcript);
+					assert.match(fs.readFileSync(transcript, "utf-8"), /Blocked by policy/);
+				}
+				assert.equal(mockPi.callCount(), 1);
+			});
+		}
+	}
+
 	it("delivers inbox steer requests to the background child session", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const release = path.join(tempDir, "steer-release");
 		mockPi.onCall({ steps: [{ waitForPath: release, jsonl: [events.assistantMessage("steered result")] }] });
