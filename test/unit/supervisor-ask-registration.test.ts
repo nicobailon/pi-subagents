@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -198,7 +199,7 @@ describe("supervisor ask registration", () => {
 
 	it("discovers delayed asks through Darwin workflow registration, control release, terminal and rearm", async () => {
 		const sessionId = randomUUID();
-		const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "supervisor-demand-"));
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "supervisor-demand-"));
 		const ctx = { ...makeCtx(sessionId), cwd: root };
 		const state = makeState(sessionId, ctx);
 		const intervals = new Map<object, () => void>();
