@@ -1213,6 +1213,8 @@ export async function runSingleStepInner(
 			modelResponseAliases: step.modelResponseAliases,
 			mutationTools: step.mutationTools,
 		}));
+		// A parked run still owes completion evidence when it actually finishes.
+		const completionDiagnosticsEligible = !run.interrupted && !run.stopped && !run.timedOut;
 		const toolDiagnostic = run.exitCode === 0 && !run.error ? launch.capture.toolDiagnostic() : undefined;
 		const toolAvailabilityError = toolDiagnostic ? formatChildToolDiagnostic(toolDiagnostic) : undefined;
 		const runtimeAcknowledgedExtensions = launch.capture.runtimeAcknowledgedExtensions();
@@ -1228,7 +1230,7 @@ export async function runSingleStepInner(
 		let structuredOutput: unknown;
 		let structuredError: string | undefined;
 		let validatedStructuredOutput = false;
-		if (effectiveStructuredOutput && run.exitCode === 0 && !run.error && !toolAvailabilityError && !midToolExitError) {
+		if (completionDiagnosticsEligible && effectiveStructuredOutput && run.exitCode === 0 && !run.error && !toolAvailabilityError && !midToolExitError) {
 			if (!run.structuredOutputToolInvoked) {
 				structuredError = MISSING_STRUCTURED_OUTPUT_CALL_ERROR;
 			} else {
@@ -1250,13 +1252,13 @@ export async function runSingleStepInner(
 		const errorMessages = validatedStructuredOutput
 			? run.messages.slice(run.structuredOutputMessageStartIndex ?? run.messages.length)
 			: run.messages;
-		const hiddenError = run.exitCode === 0 && !run.error && !toolAvailabilityError && !structuredError && !midToolExitError
+		const hiddenError = completionDiagnosticsEligible && run.exitCode === 0 && !run.error && !toolAvailabilityError && !structuredError && !midToolExitError
 			? detectSubagentError(errorMessages)
 			: null;
 		const terminalEmptyAfterUsefulWork = !validatedStructuredOutput
 			&& hasEmptyTerminalAssistantResponse(run.messages)
 			&& (run.toolCount > 0 || Boolean(run.finalOutput.trim()));
-		const emptyOutputError = run.exitCode === 0
+		const emptyOutputError = completionDiagnosticsEligible && run.exitCode === 0
 			&& !run.error
 			&& !toolAvailabilityError
 			&& !structuredError
@@ -1271,7 +1273,7 @@ export async function runSingleStepInner(
 		const mutationEvidence = collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
 		finalMutationEvidence = mutationEvidence;
 		const completionMutationEvidence = ctx.trackedMutationEvidenceForCompletionGuard === false ? undefined : mutationEvidence;
-		const completionGuard = run.exitCode === 0 && !run.error && !structuredError && !hiddenError?.hasError && !midToolExitError && !emptyOutputError && completionGuardEnabled
+		const completionGuard = completionDiagnosticsEligible && run.exitCode === 0 && !run.error && !structuredError && !hiddenError?.hasError && !midToolExitError && !emptyOutputError && completionGuardEnabled
 			? evaluateCompletionMutationGuard(omitUndefinedProperties({
 				agent: step.agent,
 				task: taskForCompletionGuard,
@@ -1313,7 +1315,7 @@ export async function runSingleStepInner(
 				? { kind: "structured" as const, path: effectiveStructuredOutput.outputPath, missing: !fs.existsSync(effectiveStructuredOutput.outputPath) }
 			: undefined;
 		finalRequiredOutputMissing = requiredOutput?.missing;
-		const missingRequiredOutputError = formatRequiredOutputError(requiredOutput);
+		const missingRequiredOutputError = completionDiagnosticsEligible ? formatRequiredOutputError(requiredOutput) : undefined;
 		const missingRequiredOutputAfterMutation = Boolean(missingRequiredOutputError) && (mutationAttemptObserved || Boolean(mutationEvidence.changedFiles.length));
 		const effectiveExitCode = toolAvailabilityError || completionEvidence.legacyFailureError || midToolExitError || structuredError || emptyOutputError || missingRequiredOutputError
 			? 1
