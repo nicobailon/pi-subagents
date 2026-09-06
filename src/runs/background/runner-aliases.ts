@@ -21,8 +21,6 @@ export const HOST_PEER_ALIASES: ReadonlyArray<{ specifier: string; pkg: string; 
 	{ specifier: "@earendil-works/pi-coding-agent", pkg: "@earendil-works/pi-coding-agent", subpath: "." },
 	{ specifier: "@earendil-works/pi-agent-core", pkg: "@earendil-works/pi-agent-core", subpath: "." },
 	{ specifier: "@earendil-works/pi-agent-core/node", pkg: "@earendil-works/pi-agent-core", subpath: "./node" },
-	{ specifier: "@earendil-works/chord", pkg: "@earendil-works/chord", subpath: "." },
-	{ specifier: "@earendil-works/chord/context", pkg: "@earendil-works/chord", subpath: "./context" },
 	{ specifier: "@earendil-works/pi-tui", pkg: "@earendil-works/pi-tui", subpath: "." },
 	{ specifier: "@earendil-works/pi-ai", pkg: "@earendil-works/pi-ai", subpath: "./compat" },
 	{ specifier: "@earendil-works/pi-ai/compat", pkg: "@earendil-works/pi-ai", subpath: "./compat" },
@@ -31,6 +29,12 @@ export const HOST_PEER_ALIASES: ReadonlyArray<{ specifier: string; pkg: string; 
 	{ specifier: "typebox", pkg: "typebox", subpath: "." },
 	{ specifier: "typebox/compile", pkg: "typebox", subpath: "./compile" },
 	{ specifier: "typebox/value", pkg: "typebox", subpath: "./value" },
+];
+
+/** Public Pi manifests introduce chord in 0.85.0 (absent through 0.84.4). */
+const CHORD_PEER_ALIASES = [
+	{ specifier: "@earendil-works/chord", pkg: "@earendil-works/chord", subpath: "." },
+	{ specifier: "@earendil-works/chord/context", pkg: "@earendil-works/chord", subpath: "./context" },
 ];
 
 /** Experimental dependencies accidentally published in exactly Pi 0.85.0. */
@@ -137,7 +141,11 @@ export function resolveHostPeerAliases(
 	const supplemental: string[] = [];
 	const hostManifest = readManifest(piPackageRoot);
 	const isPi0850 = hostManifest?.version === "0.85.0";
-	const required = isPi0850 ? [...HOST_PEER_ALIASES, ...PI0850_PEER_ALIASES] : HOST_PEER_ALIASES;
+	// Only known stable pre-chord versions may omit it. Unknown/prerelease
+	// hosts retain the required aliases, rather than hiding a broken install.
+	const stableVersion = typeof hostManifest?.version === "string" ? /^0\.(\d+)\.\d+$/.exec(hostManifest.version) : null;
+	const isPreChord = stableVersion !== null && Number(stableVersion[1]) < 85;
+	const required = [...HOST_PEER_ALIASES, ...(isPreChord ? [] : CHORD_PEER_ALIASES), ...(isPi0850 ? PI0850_PEER_ALIASES : [])];
 	for (const { specifier, pkg, subpath } of required) {
 		const packageDir = findPeerPackageDir(piPackageRoot, pkg, hostManifest?.name);
 		let target = packageDir ? resolvePackageSubpath(packageDir, subpath) : undefined;
