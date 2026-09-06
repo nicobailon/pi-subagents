@@ -29,7 +29,14 @@ jobs:
         timeout-minutes: 10
         env:
           NODE_DISABLE_COMPILE_CACHE: '1'
+          PI_SUBAGENTS_TERMINAL_EVIDENCE_DIR: ${{ runner.temp }}/1906-terminal-evidence
         run: npm run test:integration
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: shared-cwd-terminal-${{ matrix.os }}
+          path: ${{ runner.temp }}/1906-terminal-evidence/shared-cwd-terminal.json
+          if-no-files-found: ignore
 
   bun-workflow-script:
     runs-on: ubuntu-latest

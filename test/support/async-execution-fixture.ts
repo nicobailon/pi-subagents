@@ -403,6 +403,7 @@ export function observeSharedCwdRunner(id: string) {
 	const notifications: unknown[] = [];
 	const processes: Array<{ proc: ChildProcess; events: unknown[]; dispose: () => void }> = [];
 	let pid: number | undefined;
+	let reported = false;
 	let signalZero: { at: number; state: string } | undefined;
 	const diagnosticChannel = channel("child_process");
 	const onProcess = (message: unknown) => {
@@ -499,6 +500,23 @@ export function observeSharedCwdRunner(id: string) {
 				finally { if (fd !== undefined) fs.closeSync(fd); }
 			});
 			return { snapshotAt, finishedAt: Date.now(), waitElapsedMs: typeof marks.waitStartedAt === "number" ? snapshotAt - marks.waitStartedAt : undefined, processState, signalZero, files };
+		},
+		// Called only at the failing assertion boundary, before fixture cleanup.
+		reportFailure(diagnostic: (message: string) => void) {
+			if (reported) return;
+			reported = true;
+			let text: string;
+			try { text = JSON.stringify({ ...this.summary(), snapshot: this.snapshot() }); }
+			catch { diagnostic("#1906 failure snapshot unavailable (contents withheld)"); return; }
+			diagnostic(`#1906 ${text}`);
+			const directory = process.env.PI_SUBAGENTS_TERMINAL_EVIDENCE_DIR;
+			if (!directory) return;
+			try {
+				// Persist only the existing allowlisted projection, never copy run files.
+				if (Buffer.byteLength(text) > 65536) throw new Error("snapshot exceeds bound");
+				fs.mkdirSync(directory, { recursive: true });
+				fs.writeFileSync(path.join(directory, "shared-cwd-terminal.json"), text, { mode: 0o600 });
+			} catch { diagnostic("#1906 failure artifact unavailable (contents withheld)"); }
 		},
 		dispose() { for (const entry of processes) entry.dispose(); },
 	};

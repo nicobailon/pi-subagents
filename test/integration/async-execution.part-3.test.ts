@@ -898,13 +898,7 @@ export default function() {
 		const observer = observeSharedCwdRunner(id);
 		const originalFactoryModule = childSessionFactoryModule();
 		const failures: unknown[] = [];
-		let reported = false;
-		const reportFailure = () => {
-			if (reported) return;
-			reported = true;
-			try { t.diagnostic(`#1906 ${JSON.stringify({ ...observer.summary(), snapshot: observer.snapshot() })}`); }
-			catch { t.diagnostic("#1906 failure snapshot unavailable (contents withheld)"); }
-		};
+		const reportFailure = () => observer.reportFailure((message) => t.diagnostic(message));
 		try {
 			assert.ok(originalFactoryModule, "expected the installed scripted runner factory");
 			const factoryPath = path.join(tempDir, "shared-cwd-exit-phases.mjs");
