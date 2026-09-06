@@ -1,4 +1,4 @@
-import type { Api, AuthResult, Model, Provider } from "@earendil-works/pi-ai";
+import type { Api, AuthResult, Model, ModelsRefreshOptions, ModelsRefreshResult, Provider } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "./model-runtime.ts";
 import type { AuthStatus, ProviderConfigInput } from "./provider-composer.ts";
 export type { ProviderConfigInput } from "./provider-composer.ts";
@@ -20,7 +20,7 @@ export declare class ModelRegistry {
     private readonly runtime;
     constructor(runtime: ModelRuntime);
     /** Reload models.json asynchronously. Await before making synchronous registry reads. */
-    refresh(): Promise<void>;
+    refresh(options?: ModelsRefreshOptions): Promise<ModelsRefreshResult>;
     getError(): string | undefined;
     getAll(): Model<Api>[];
     getAvailable(): Model<Api>[];

@@ -71,9 +71,16 @@ function modelFullId(model: ModelInfo): string {
 	return `${model.provider}/${model.id}`;
 }
 
-function liveAvailableModels(ctx: ExtensionContext) {
+async function liveAvailableModels(ctx: ExtensionContext) {
 	try {
-		ctx.modelRegistry.refresh?.();
+		// Reload local configuration and cached catalogs without network discovery on picker open.
+		const result = await ctx.modelRegistry.refresh?.({ allowNetwork: false, signal: AbortSignal.timeout(5_000) });
+		const firstError = result?.errors.entries().next().value;
+		if (firstError) {
+			ctx.ui.notify(`Could not refresh ${firstError[0]}; using the currently loaded choices. ${firstError[1].message}`, "warning");
+		} else if (result?.aborted) {
+			ctx.ui.notify("Model registry refresh timed out; using the currently loaded choices.", "warning");
+		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		ctx.ui.notify(`Could not refresh the model registry; using the last loaded choices. ${message}`, "warning");
@@ -217,7 +224,7 @@ async function selectFromList(ctx: ExtensionContext, title: string, subtitle: st
 }
 
 async function chooseModel(ctx: ExtensionContext, agent: AgentConfig): Promise<string | undefined | null> {
-	const models = liveAvailableModels(ctx);
+	const models = await liveAvailableModels(ctx);
 	const current = agent.model ?? INHERIT_MODEL_CHOICE;
 	const items: SelectorItem[] = [{ value: INHERIT_MODEL_CHOICE, label: INHERIT_MODEL_CHOICE, current: !agent.model }];
 	if (agent.model && !models.some((model) => modelFullId(model) === agent.model)) {
@@ -233,7 +240,7 @@ async function chooseModel(ctx: ExtensionContext, agent: AgentConfig): Promise<s
 }
 
 async function chooseThinking(ctx: ExtensionContext, agent: AgentConfig): Promise<string | undefined | null> {
-	const availableModels = liveAvailableModels(ctx).map(toModelInfo);
+	const availableModels = (await liveAvailableModels(ctx)).map(toModelInfo);
 	const effectiveModel = agent.model ?? (ctx.model ? modelFullId(ctx.model) : undefined);
 	const modelInfo = findModelInfo(effectiveModel, availableModels, ctx.model?.provider);
 	const levels = getSupportedThinkingLevels(modelInfo);

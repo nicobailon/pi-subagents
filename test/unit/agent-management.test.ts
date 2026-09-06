@@ -1052,6 +1052,68 @@ Drive the failing test first.
 		assert.doesNotMatch(content, /^thinking:/m);
 	});
 
+	for (const action of ["model", "thinking"]) {
+		it(`awaits an offline registry refresh before opening the ${action} picker`, async () => {
+			const agentPath = path.join(tempDir, ".pi", "agents", "refresh-worker.md");
+			fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+			fs.writeFileSync(agentPath, "---\nname: refresh-worker\ndescription: Refresh test\nmodel: custom/fresh\n---\nPrompt.\n");
+			let refreshed = false;
+			let choices: string[] = [];
+			const warnings: string[] = [];
+			await openSubagentsAdmin({ sendMessage: () => assert.fail("cancel must not save") } as never, {
+				cwd: tempDir, hasUI: true,
+				modelRegistry: {
+					refresh: async (options: { allowNetwork: boolean; signal: AbortSignal }) => {
+						assert.equal(options.allowNetwork, false);
+						assert.ok(options.signal instanceof AbortSignal);
+						await new Promise((resolve) => setImmediate(resolve));
+						refreshed = true;
+						return { aborted: false, errors: new Map() };
+					},
+					getAvailable: () => refreshed
+						? [{ provider: "custom", id: "fresh", reasoning: true, thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", max: "max" } }, { provider: "custom", id: "added" }]
+						: [],
+				},
+				ui: {
+					select: async (_title: string, items: string[]) => { choices = items; return undefined; },
+					notify: (message: string) => warnings.push(message),
+				},
+			} as never, `refresh-worker ${action}`);
+			assert.deepEqual(choices, action === "model"
+				? ["Default / inherit session model", "custom/fresh", "custom/added"]
+				: ["Default / inherit session thinking", "off", "high", "max"]);
+			assert.deepEqual(warnings, []);
+		});
+	}
+
+	for (const outcome of ["returned error", "aborted", "rejected"]) {
+		it(`warns and keeps registry choices when refresh ${outcome}`, async () => {
+			const agentPath = path.join(tempDir, ".pi", "agents", "refresh-worker.md");
+			fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+			fs.writeFileSync(agentPath, "---\nname: refresh-worker\ndescription: Refresh test\n---\nPrompt.\n");
+			const notices: Array<[string, string]> = [];
+			let choices: string[] = [];
+			await openSubagentsAdmin({ sendMessage: () => assert.fail("cancel must not save") } as never, {
+				cwd: tempDir, hasUI: true,
+				modelRegistry: {
+					refresh: async () => {
+						if (outcome === "rejected") throw new Error("refresh failed");
+						return { aborted: outcome === "aborted", errors: new Map(outcome === "returned error" ? [["custom", new Error("catalog failed")]] : []) };
+					},
+					getAvailable: () => [{ provider: "custom", id: "cached" }],
+				},
+				ui: {
+					select: async (_title: string, items: string[]) => { choices = items; return undefined; },
+					notify: (message: string, level: string) => notices.push([message, level]),
+				},
+			} as never, "refresh-worker model");
+			assert.deepEqual(choices, ["Default / inherit session model", "custom/cached"]);
+			assert.equal(notices.length, 1);
+			assert.equal(notices[0]?.[1], "warning");
+			assert.match(notices[0]![0], outcome === "returned error" ? /custom.*catalog failed/ : outcome === "aborted" ? /timed out/ : /refresh failed/);
+		});
+	}
+
 	it("keeps same-value custom override ownership for interactive admin edits", async () => {
 		const settingsPath = path.join(tempDir, ".pi", "settings.json");
 		const agentPath = path.join(tempDir, ".pi", "agents", "implementer.md");
