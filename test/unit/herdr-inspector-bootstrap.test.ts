@@ -5,7 +5,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { handleHerdrInspectorAction } from "../../src/inspectors/herdr/actions.ts";
+import { handleInspectorAction } from "../../src/inspectors/actions.ts";
+import { createHerdrInspectorPlugin } from "../../src/inspectors/herdr/plugin.ts";
 import type { HerdrClient } from "../../src/inspectors/herdr/client.ts";
 import type { AsyncStatus } from "../../src/shared/types.ts";
 
@@ -38,17 +39,19 @@ describe("Herdr inspector bootstrap", () => {
 					return { ok: true, data: {} as T };
 				},
 			};
-			const opened = await handleHerdrInspectorAction("inspector.open", { id: "run-123" }, {
+			const opened = await handleInspectorAction("inspector.open", { id: "run-123" }, {
 				cwd: root,
 				asyncDirRoot: root,
 				resultsDir: path.join(root, "results"),
-				client,
+				plugins: [createHerdrInspectorPlugin({ client })],
+				env: { HERDR_ENV: "1", HERDR_PANE_ID: "test-pane" },
 			});
 			assert.equal(opened.isError, undefined);
 			const command = calls.find((args) => args[0] === "pane" && args[1] === "run")?.[3] ?? "";
+			const expectedRunner = fileURLToPath(new URL("../../inspector-runner.mjs", import.meta.url));
 			assert.equal(command.startsWith("& "), process.platform === "win32");
 			assert.doesNotMatch(command, /--experimental-strip-types/);
-			assert.match(command, /inspector-runner\.mjs/);
+			assert.ok(command.includes(expectedRunner), `expected packaged runner path in command: ${command}`);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -69,11 +72,12 @@ describe("Herdr inspector bootstrap", () => {
 					return { ok: true, data: {} as T };
 				},
 			};
-			const opened = await handleHerdrInspectorAction("inspector.open", { id: "run-123" }, {
+			const opened = await handleInspectorAction("inspector.open", { id: "run-123" }, {
 				cwd: root,
 				asyncDirRoot: root,
 				resultsDir: path.join(root, "results"),
-				client,
+				plugins: [createHerdrInspectorPlugin({ client })],
+				env: { HERDR_ENV: "1", HERDR_PANE_ID: "test-pane" },
 			});
 			assert.equal(opened.isError, undefined);
 			const command = calls.find((args) => args[0] === "pane" && args[1] === "run")?.[3] ?? "";

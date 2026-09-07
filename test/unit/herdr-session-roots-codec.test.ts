@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { describe, it } from "node:test";
-import { decodeSessionRoots, encodeSessionRoots } from "../../src/inspectors/herdr/session-roots-codec.ts";
-import { formatShellCommand } from "../../src/inspectors/herdr/shell-command.ts";
+import { decodeSessionRoots, encodeSessionRoots } from "../../src/inspectors/session-roots-codec.ts";
+import { formatShellCommand } from "../../src/inspectors/shell-command.ts";
 
 describe("session roots codec", () => {
 	it("round-trips an empty array, plain paths, and paths with spaces/quotes", () => {
@@ -11,15 +11,10 @@ describe("session roots codec", () => {
 		}
 	});
 
-	it("still accepts raw JSON for backward compatibility with unpatched callers", () => {
-		assert.deepEqual(decodeSessionRoots(JSON.stringify(["/tmp/a", "/tmp/b"])), ["/tmp/a", "/tmp/b"]);
-		assert.deepEqual(decodeSessionRoots(JSON.stringify([])), []);
-	});
-
-	it("rejects malformed input from either encoding", () => {
-		assert.throws(() => decodeSessionRoots("not base64 and not json"), /base64-encoded or raw JSON array of strings/);
-		assert.throws(() => decodeSessionRoots(Buffer.from(JSON.stringify({ not: "an array" })).toString("base64")), /base64-encoded or raw JSON array of strings/);
-		assert.throws(() => decodeSessionRoots(Buffer.from(JSON.stringify([1, 2])).toString("base64")), /base64-encoded or raw JSON array of strings/);
+	it("rejects malformed input", () => {
+		assert.throws(() => decodeSessionRoots("not base64"), /base64-encoded JSON array of strings/);
+		assert.throws(() => decodeSessionRoots(Buffer.from(JSON.stringify({ not: "an array" })).toString("base64")), /base64-encoded JSON array of strings/);
+		assert.throws(() => decodeSessionRoots(Buffer.from(JSON.stringify([1, 2])).toString("base64")), /base64-encoded JSON array of strings/);
 	});
 
 	it("produces plain-ASCII base64 output with no quote, backslash, or space characters for a shell to mangle", () => {

@@ -19,24 +19,13 @@ function parseStringArray(value: unknown): string[] | undefined {
 	return value;
 }
 
-/**
- * Decodes a `--session-roots` argument produced by {@link encodeSessionRoots}.
- * Falls back to parsing the value as raw JSON so any externally-launched
- * inspector runner (a cached copy, or a manual invocation) that still passes
- * the legacy unencoded form keeps working.
- */
+/** Decodes a `--session-roots` argument produced by {@link encodeSessionRoots}. */
 export function decodeSessionRoots(raw: string): string[] {
 	try {
 		const decoded = parseStringArray(JSON.parse(Buffer.from(raw, "base64").toString("utf-8")));
 		if (decoded) return decoded;
 	} catch {
-		// fall through to legacy raw-JSON parsing below
+		// Report one stable validation error below.
 	}
-	try {
-		const parsed = parseStringArray(JSON.parse(raw));
-		if (parsed) return parsed;
-	} catch {
-		// fall through to the shared error below
-	}
-	throw new Error("--session-roots must be a base64-encoded or raw JSON array of strings.");
+	throw new Error("--session-roots must be a base64-encoded JSON array of strings.");
 }

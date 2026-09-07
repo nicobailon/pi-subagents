@@ -226,7 +226,7 @@ unregisterExternalRun(ctx.sessionManager.getSessionId(), "dependency-review");
 
 The API validates and caches bounded display fields when the caller registers or updates a job. FleetView reads that cache only. It does not poll caller code. `snapshotExternalRuns(sessionId)` and `listExternalRuns(sessionId)` return bounded current-session snapshots. Snapshots filter the session-qualified cache key before inspecting record fields; API-written records avoid repeated normalization through module-private provenance, while records replaced or mutated through the process-local registry are validated on demand. By default, malformed records for the requested session throw with the validation error. Display-only Fleet callers can pass `{ ignoreMalformed: true, onMalformedRecord }` to remove bad records and keep rendering with a programmatic diagnostic.
 
-External jobs are observational. The caller owns execution, persistence, cancellation, and result delivery. FleetView does not expose stop, steer, resume, cancel, or Herdr controls for them. Supplied report and transcript paths are shown as bounded text only; FleetView does not read arbitrary external paths.
+External jobs are observational. The caller owns execution, persistence, cancellation, and result delivery. FleetView does not expose stop, steer, resume, cancel, or inspector controls for them. Supplied report and transcript paths are shown as bounded text only; FleetView does not read arbitrary external paths.
 
 ## Launch contract preflight
 
@@ -427,6 +427,23 @@ The provider returns handles with `providerJobId`, `state`, optional `handleUrl`
 
 The async runner process does not import provider internals. It writes operation requests into its async run directory. The parent Pi process services those requests against the registered provider and writes operation responses. If the provider is not registered, the bridge fails closed with an actionable error. If a run is recovered after provider job metadata exists, the runner calls `reattach` and `result`; it does not call `start` or `follow-up` again.
 
+## Inspect integration
+
+Inspect is the portable command and action surface for an existing async run. The public actions are:
+
+```ts
+subagent({ action: "inspector.command", id: "<run-id>", index: 0 })
+subagent({ action: "inspector.open", id: "<run-id>", index: 0, focus: true })
+subagent({ action: "inspector.status", id: "<run-id>", index: 0 })
+subagent({ action: "inspector.close", id: "<run-id>", index: 0 })
+```
+
+`inspector.command` returns a standalone runner command without contacting a host or writing a binding. `inspector.open` selects an available bundled inspector plugin. `status` and `close` select the plugin that owns the run binding and report clearly when that plugin does not support the requested lifecycle action. Without an available plugin, `open` fails closed with an actionable message; ordinary launches remain headless. Closing an inspector never stops the run.
+
+### Herdr inspector plugin
+
+The currently bundled inspector plugin supports Herdr 0.7.5+. It opens a raw dashboard pane, not the child session and not a literal attach. It reads lifecycle, status, output, and mission artifacts; steer and stop continue through pi-subagents' existing control inbox. Use `focus` only with `inspector.open`; Herdr 0.7.5 cannot focus an arbitrary existing raw pane id.
+
 ## Herdr integration
 
 When Pi runs inside [Herdr](https://herdr.dev), pi-subagents automatically reports active async-run counts through Herdr pane metadata.
@@ -445,20 +462,6 @@ rows = [
   ["agent", "state_text"],
 ]
 ```
-
-### Inspector panes
-
-Herdr 0.7.5+ can open an on-demand inspector for an existing async run:
-
-```ts
-subagent({ action: "inspector.open", id: "<run-id>", index: 0, focus: true })
-subagent({ action: "inspector.status", id: "<run-id>", index: 0 })
-subagent({ action: "inspector.close", id: "<run-id>", index: 0 })
-```
-
-The inspector is a raw dashboard pane, not the child session and not a literal attach. It reads lifecycle/status/output/mission artifacts and sends `steer` or `stop` through pi-subagents' existing control inbox. Closing it never stops the run.
-
-Herdr remains optional. Ordinary launches stay headless, and missing/older Herdr versions affect only Herdr-specific inspector and project-pane actions. FleetView opens the selected active async child with `H`. Use `focus` only with `inspector.open`; Herdr 0.7.5 cannot focus an arbitrary existing raw pane id.
 
 ### Project panes
 

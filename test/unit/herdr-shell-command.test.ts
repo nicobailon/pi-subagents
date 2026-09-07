@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { formatShellCommand } from "../../src/inspectors/herdr/shell-command.ts";
+import { formatShellCommand } from "../../src/inspectors/shell-command.ts";
 
 describe("formatShellCommand on POSIX shells", () => {
 	const platform: NodeJS.Platform = "linux";

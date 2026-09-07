@@ -18,8 +18,8 @@ import { resolveWorkflowForegroundSteeringTarget, steerWorkflowForegroundTarget 
 import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.ts";
 import { FLEET_STATUS_WIDGET_KEY } from "./fleet-status.ts";
 import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from "./fleet-transcript.ts";
-import { handleHerdrInspectorAction } from "../inspectors/herdr/actions.ts";
-import type { HerdrClient } from "../inspectors/herdr/client.ts";
+import { handleInspectorAction } from "../inspectors/actions.ts";
+import type { InspectorPlugin } from "../inspectors/types.ts";
 import { getLivePromptAudit, type LivePromptAudit, type PromptAuditView } from "../runs/foreground/prompt-audit.ts";
 
 const REFRESH_MS = 750;
@@ -110,7 +110,8 @@ export interface FleetViewOptions {
 	fleetKeybindings?: FleetKeybindingsConfig;
 	actions?: FleetActionHandlers;
 	copyText?: (text: string) => Promise<void> | void;
-	herdrClient?: HerdrClient;
+	inspectorPlugins?: readonly InspectorPlugin[];
+	inspectorEnv?: NodeJS.ProcessEnv;
 }
 
 function belongsToCurrentSession(sessionId: string | undefined, currentSessionId: string | null): boolean {
@@ -943,23 +944,23 @@ export class SubagentFleetComponent implements Component {
 		return { runId: target.item.runId, asyncDir: target.item.run.asyncDir, ...(target.item.index !== undefined ? { index: target.item.index } : {}) };
 	}
 
-	private selectedHerdrInspectAction(): { runId: string; asyncDir: string; index?: number } | { reason: string } {
+	private selectedInspectAction(): { runId: string; asyncDir: string; index?: number } | { reason: string } {
 		const item = this.snapshot.items[this.selected];
 		if (!item) return { reason: "No child is selected." };
-		if (item.kind === "external") return { reason: "External jobs are display-only and have no Herdr controls." };
+		if (item.kind === "external") return { reason: "External jobs are display-only and have no inspector controls." };
 		if (item.kind === "async") {
 			if (!isActionableAsyncState(item.run.state) || !isActionableAsyncState(item.state)) return { reason: `Selected child is ${item.state}; controls require a running or queued async child.` };
 			return { runId: item.runId, asyncDir: item.run.asyncDir, ...(item.index !== undefined ? { index: item.index } : {}) };
 		}
 		if (item.kind !== "foreground-active" || !item.control.parentWorkflowRunId) return { reason: "Fleet controls are available for current-session top-level async runs only." };
 		const parent = this.state.asyncJobs.get(item.control.parentWorkflowRunId) ?? this.state.fleetJobs?.get(item.control.parentWorkflowRunId);
-		if (!parent || !isActionableAsyncState(parent.status)) return { reason: "The parent workflow is no longer available for Herdr inspection." };
+		if (!parent || !isActionableAsyncState(parent.status)) return { reason: "The parent workflow is no longer available for inspection." };
 		return { runId: parent.asyncId, asyncDir: parent.asyncDir };
 	}
 
-	private inspectSelectedHerdr(): void {
-		const target = this.selectedHerdrInspectAction();
-		if ("reason" in target || !this.options.actions?.inspect) this.setActionNotice({ text: "reason" in target ? target.reason : "Herdr inspector controls are unavailable in this context.", isError: true });
+	private inspectSelected(): void {
+		const target = this.selectedInspectAction();
+		if ("reason" in target || !this.options.actions?.inspect) this.setActionNotice({ text: "reason" in target ? target.reason : "Inspector controls are unavailable in this context.", isError: true });
 		else this.runAction(() => this.options.actions!.inspect!(target));
 	}
 
@@ -1209,7 +1210,7 @@ export class SubagentFleetComponent implements Component {
 			return;
 		}
 		if (matchesFleetAction(data, this.keybindings, "inspect")) {
-			this.inspectSelectedHerdr();
+			this.inspectSelected();
 			return;
 		}
 	}
@@ -1364,7 +1365,7 @@ export class SubagentFleetComponent implements Component {
 			? ` j/k child · 1/2/3 view · g redo with guidance · c copy · Esc close Prompt Audit · ${position}`
 			: selected?.kind === "external"
 				? ` ${bindingLabel(this.keybindings, "selectUp")}/${bindingLabel(this.keybindings, "selectDown")} job · display-only · ${bindingLabel(this.keybindings, "refresh")} refresh · ${bindingLabel(this.keybindings, "close")} close · ${position}`
-				: ` ${bindingLabel(this.keybindings, "selectUp")}/${bindingLabel(this.keybindings, "selectDown")} agent · p Prompt Audit · ${bindingLabel(this.keybindings, "inspect")} Herdr · ${bindingLabel(this.keybindings, "steer")} steer · ${bindingLabel(this.keybindings, "stop")} stop · ${bindingLabel(this.keybindings, "toggleTools")} tools · ${bindingLabel(this.keybindings, "refresh")} refresh · ${bindingLabel(this.keybindings, "close")} close · ${position}`;
+				: ` ${bindingLabel(this.keybindings, "selectUp")}/${bindingLabel(this.keybindings, "selectDown")} agent · p Prompt Audit · ${bindingLabel(this.keybindings, "inspect")} Inspect · ${bindingLabel(this.keybindings, "steer")} steer · ${bindingLabel(this.keybindings, "stop")} stop · ${bindingLabel(this.keybindings, "toggleTools")} tools · ${bindingLabel(this.keybindings, "refresh")} refresh · ${bindingLabel(this.keybindings, "close")} close · ${position}`;
 		lines.push(this.theme.fg("border", "│") + fit(this.theme.fg("dim", footer), innerWidth) + this.theme.fg("border", "│"));
 		lines.push(this.theme.fg("border", `╰${"─".repeat(innerWidth)}╯`));
 		return lines.map((line) => truncateToWidth(line, width));
@@ -1413,7 +1414,7 @@ export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentSt
 			}), `Failed to steer async run ${input.runId}.`);
 		},
 		stop: (input: { runId: string; asyncDir: string; index?: number }) => firstToolResultText(stopAsyncRun(state, input.runId, undefined, { asyncDir: input.asyncDir, resolvedId: input.runId }), `Failed to stop async run ${input.runId}.`),
-		inspect: async (input: { runId: string; asyncDir: string; index?: number }) => firstToolResultText(await handleHerdrInspectorAction("inspector.open", {
+		inspect: async (input: { runId: string; asyncDir: string; index?: number }) => firstToolResultText(await handleInspectorAction("inspector.open", {
 			id: input.runId,
 			dir: input.asyncDir,
 			focus: true,
@@ -1422,10 +1423,11 @@ export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentSt
 			state,
 			sessionRoots: state.trustedSessionRoots,
 			cwd: state.baseCwd,
-			...(options.herdrClient ? { client: options.herdrClient } : {}),
 			...(state.authorityPolicy ? { authorityPolicy: state.authorityPolicy } : {}),
 			...(state.missionStoreConfig ? { missions: state.missionStoreConfig } : {}),
-		}), `Failed to open Herdr inspector for async run ${input.runId}.`),
+			...(options.inspectorPlugins ? { plugins: options.inspectorPlugins } : {}),
+			...(options.inspectorEnv ? { env: options.inspectorEnv } : {}),
+		}), `Failed to open inspector for async run ${input.runId}.`),
 		redoPrompt: async (input: { runId: string; index: number; guidance: string; control?: ForegroundRunControl }) => {
 			const control = input.control ?? state.foregroundControls.get(input.runId);
 			if (!control?.promptAuditRedo) return { text: "Redo is not available for this live child.", isError: true };

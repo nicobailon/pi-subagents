@@ -2,13 +2,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
-import { parseMissionRecord } from "../../missions/store.ts";
-import type { MissionRecord } from "../../missions/types.ts";
-import { requestAsyncSteer, requestAsyncStop } from "../../runs/background/control-channel.ts";
-import { formatAsyncRunTranscript } from "../../runs/background/fleet-view.ts";
-import { steeringReceipt } from "../../runs/background/steering.ts";
-import type { AsyncStatus } from "../../shared/types.ts";
-import { readStatus } from "../../shared/utils.ts";
+import { parseMissionRecord } from "../missions/store.ts";
+import type { MissionRecord } from "../missions/types.ts";
+import { requestAsyncSteer, requestAsyncStop } from "../runs/background/control-channel.ts";
+import { formatAsyncRunTranscript } from "../runs/background/fleet-view.ts";
+import { steeringReceipt } from "../runs/background/steering.ts";
+import type { AsyncStatus } from "../shared/types.ts";
+import { readStatus } from "../shared/utils.ts";
 import { decodeSessionRoots } from "./session-roots-codec.ts";
 
 export interface RunnerOptions {
@@ -31,7 +31,7 @@ export function formatInspectorDashboard(input: { status: AsyncStatus; asyncDir:
 	const { status, asyncDir, mission } = input;
 	const lines = [
 		`pi-subagents inspector for ${status.runId}`,
-		"This pane mirrors lifecycle artifacts; closing it does not stop the run.",
+		"This inspector mirrors lifecycle artifacts; closing it does not stop the run.",
 		"",
 	];
 	if (mission) {
@@ -43,7 +43,7 @@ export function formatInspectorDashboard(input: { status: AsyncStatus; asyncDir:
 	lines.push(formatAsyncRunTranscript(status, asyncDir, { index: input.index, lines: 60, sessionRoots: input.sessionRoots }));
 	const acceptsPlainGuidance = input.index !== undefined || status.mode === "single";
 	const controls = [input.allowSteer === false || !acceptsPlainGuidance ? undefined : "type guidance", input.allowSteer === false ? undefined : "steer <message>", input.allowStop === false ? undefined : "stop", "status"].filter(Boolean);
-	lines.push("", `Controls: ${controls.join(" | ")}`, "Supervisor replies remain in the parent Pi session (subagent_supervisor/intercom).");
+	lines.push("", `Controls: ${controls.join(" | ")}`, "Supervisor replies remain in the parent Pi session (subagent_supervisor/intercom); this inspector is read-only.");
 	return lines.join("\n");
 }
 
@@ -91,7 +91,7 @@ function queueInspectorSteer(options: RunnerOptions, status: AsyncStatus, messag
 	requestAsyncSteer(options.asyncDir, {
 		message,
 		...(targetIndex !== undefined ? { targetIndex } : { targetIndexes: runningIndexes }),
-		source: "herdr-inspector",
+		source: "inspector-runner",
 	});
 	return steeringReceipt(message, `Steering queued for run ${options.runId}.`);
 }
@@ -104,7 +104,7 @@ export function submitInspectorControl(options: RunnerOptions, line: string): st
 	if (command === "stop") {
 		if (options.allowStop === false) throw new Error("Authority policy does not allow stop from this inspector.");
 		if (isTerminal(status)) throw new Error(`Run '${options.runId}' is ${status.state} and cannot be stopped.`);
-		requestAsyncStop(options.asyncDir, { source: "herdr-inspector" });
+		requestAsyncStop(options.asyncDir, { source: "inspector-runner" });
 		return `Stop requested for run ${options.runId}.`;
 	}
 	if (command.startsWith("steer ")) {
@@ -147,7 +147,7 @@ export function runInspector(argv = process.argv.slice(2)): void {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
 	try { runInspector(); } catch (cause) {
-		process.stderr.write(`Herdr inspector failed: ${cause instanceof Error ? cause.message : String(cause)}\n`);
+		process.stderr.write(`Inspector failed: ${cause instanceof Error ? cause.message : String(cause)}\n`);
 		process.exitCode = 1;
 	}
 }

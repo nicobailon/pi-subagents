@@ -11,6 +11,7 @@ import { FLEET_STATUS_WIDGET_KEY } from "../../src/tui/fleet-status.ts";
 import { registerLivePromptAudit, rewritePromptWithGuidance } from "../../src/runs/foreground/prompt-audit.ts";
 import { getArtifactPaths, getArtifactsDir, getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
 import type { HerdrClient } from "../../src/inspectors/herdr/client.ts";
+import { createHerdrInspectorPlugin } from "../../src/inspectors/herdr/plugin.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
@@ -231,7 +232,7 @@ describe("native subagent fleet", () => {
 			assert.match(initial, /Transcript path: \/outside\/trusted\/roots\/transcript\.jsonl/);
 			assert.doesNotMatch(initial, /Herdr ·|steer ·|stop ·/);
 			component.handleInput("H");
-			assert.match(component.render(120).join("\n"), /display-only and have no Herdr controls/);
+			assert.match(component.render(120).join("\n"), /display-only and have no inspector controls/);
 			component.handleInput("s");
 			assert.match(component.render(120).join("\n"), /display-only and remain controlled/);
 			component.handleInput("D");
@@ -1451,7 +1452,7 @@ describe("native subagent fleet", () => {
 		}
 	});
 
-	it("focuses the Herdr pane the operator opens with the inspect key", async () => {
+	it("focuses the inspector pane the operator opens with the inspect key", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-inspect-focus-"));
 		try {
 			const asyncDir = writeAsyncRun(root, { id: "run-focus", agents: ["worker"] });
@@ -1466,7 +1467,7 @@ describe("native subagent fleet", () => {
 				updatedAt: 200,
 			});
 			const calls: string[][] = [];
-			const herdrClient: HerdrClient = {
+			const client: HerdrClient = {
 				run: async <T>(args: string[]) => {
 					calls.push(args);
 					if (args[0] === "--version") return { ok: true, data: "herdr 0.7.5" as T };
@@ -1493,7 +1494,7 @@ describe("native subagent fleet", () => {
 				},
 			};
 
-			await openSubagentFleet(ctx as never, state, { asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 60_000, herdrClient });
+			await openSubagentFleet(ctx as never, state, { asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 60_000, inspectorPlugins: [createHerdrInspectorPlugin({ client })], inspectorEnv: { HERDR_ENV: "1", HERDR_PANE_ID: "test-pane" } });
 			const split = calls.find((args) => args[0] === "pane" && args[1] === "split");
 			assert.ok(split, `no pane split call: ${JSON.stringify(calls)}`);
 			assert.deepEqual(split.slice(-1), ["--focus"]);
@@ -1630,8 +1631,8 @@ describe("native subagent fleet", () => {
 		}
 	});
 
-	it("opens the selected async child in a Herdr inspector", async () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-herdr-"));
+	it("opens the selected async child in an inspector", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-inspector-"));
 		try {
 			const asyncDir = writeAsyncRun(root, { id: "async-herdr" });
 			const calls: Array<{ runId: string; asyncDir: string; index?: number }> = [];
