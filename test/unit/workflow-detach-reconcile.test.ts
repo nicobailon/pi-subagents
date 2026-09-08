@@ -5,7 +5,7 @@ import { describe, it } from "node:test";
 import { applyDetachedChildToPausedWorkflow, promotePausedWorkflowIfSettled, reconcileDetachedWorkflowChildCompletion } from "../../src/runs/foreground/workflow-detach-reconcile.ts";
 import { DIRS, type AsyncStatus, type IntercomEventBus, type SubagentState } from "../../src/shared/types.ts";
 import { buildWorkflowReceipt, writeWorkflowReceipt } from "../../src/workflows/workflow-receipt.ts";
-import { buildCompletionDetails, formatSingleCompletion, parseSubagentNotifyContent, type CompletionNotification } from "../../src/runs/background/notify.ts";
+import { buildCompletionDetails, formatSingleCompletion, parseSubagentNotifyContent, scheduledCompletionTriggersTurn, type CompletionNotification } from "../../src/runs/background/notify.ts";
 
 function pausedWorkflow(childRunId: string, extra?: Partial<NonNullable<AsyncStatus["steps"]>[number]>): AsyncStatus {
 	return {
@@ -145,7 +145,7 @@ describe("applyDetachedChildToPausedWorkflow", () => {
 });
 
 describe("reconcileDetachedWorkflowChildCompletion", () => {
-	it("publishes a terminal result when the paused result file is already gone", () => {
+	it("preserves quiet schedule attribution when the paused result file is already gone", () => {
 		const workflowRunId = "workflow-missing-result";
 		const asyncDir = path.join(DIRS.async, workflowRunId);
 		const childDir = path.join(DIRS.async, "child-1");
@@ -157,7 +157,8 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		fs.mkdirSync(DIRS.results, { recursive: true });
 		fs.writeFileSync(sessionFile, "", "utf-8");
 		fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify({ runId: "child-1", mode: "single", state: "complete", startedAt: 1, lastUpdate: 2, sessionId: "session-1", steps: [{ agent: "worker", status: "complete", sessionFile }] }), "utf-8");
-		const status = { ...pausedWorkflow("child-1"), runId: workflowRunId, sessionId: "session-1" };
+		const scheduleOrigin = { id: "nightly", name: "Nightly", quiet: true as const };
+		const status = { ...pausedWorkflow("child-1"), runId: workflowRunId, sessionId: "session-1", scheduleOrigin };
 		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
 		writeWorkflowReceipt(asyncDir, buildWorkflowReceipt({
 			workflowRunId,
@@ -185,7 +186,7 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			events: { emit: (_name, payload) => { emitted = payload as CompletionNotification; } } as IntercomEventBus,
 			result: { index: 0, agent: "worker", task: `Write your findings to exactly this path: ${requestedPath}`, exitCode: 0, sessionFile, savedOutputPath: savedPath, usage: { input: 100, output: 50, cacheRead: 25, cacheWrite: 5, cost: 0.001, turns: 1 } },
 		}), true);
-		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; summary?: string; error?: string; sessionId?: string; workflowResolution?: string; recovery?: unknown[]; results?: Array<{ outputReference?: string; outputPathMapping?: unknown }>; workflowReceipt?: { receipt?: { state?: string; workflowResolution?: string; recovery?: unknown[]; entries?: Record<string, { resumability?: { state?: string; reason?: string } }> } } };
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; summary?: string; error?: string; sessionId?: string; scheduleOrigin?: typeof scheduleOrigin; workflowResolution?: string; recovery?: unknown[]; results?: Array<{ outputReference?: string; outputPathMapping?: unknown }>; workflowReceipt?: { receipt?: { state?: string; workflowResolution?: string; recovery?: unknown[]; entries?: Record<string, { resumability?: { state?: string; reason?: string } }> } } };
 		assert.equal(published.state, "failed");
 		assert.equal(published.success, false);
 		assert.match(published.error ?? "", /unsupported-continuation/);
@@ -199,11 +200,15 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		assert.deepEqual(publishedChild?.usage, { input: 100, output: 50, cacheRead: 25, cacheWrite: 5, cost: 0.001, turns: 1 });
 		assert.equal(publishedChild?.sessionFile, sessionFile);
 		assert.equal(published.sessionId, "session-1");
+		assert.deepEqual(published.scheduleOrigin, scheduleOrigin);
 		assert.equal(published.workflowReceipt?.receipt?.state, "failed");
 		assert.equal(published.workflowReceipt?.receipt?.workflowResolution, "settled-awaiting-resume");
 		assert.deepEqual(published.workflowReceipt?.receipt?.recovery, published.recovery);
 		assert.equal(published.workflowReceipt?.receipt?.entries?.detaches?.resumability?.state, "resumable");
 		assert.ok(emitted);
+		assert.deepEqual(emitted.scheduleOrigin, scheduleOrigin);
+		assert.equal(scheduledCompletionTriggersTurn(emitted.scheduleOrigin, buildCompletionDetails(emitted).status), true);
+		assert.equal(scheduledCompletionTriggersTurn(emitted.scheduleOrigin, "completed"), false);
 		const notification = parseSubagentNotifyContent(formatSingleCompletion(buildCompletionDetails(emitted)));
 		const publishedPath = (published.workflowReceipt as { path: string }).path;
 		assert.equal(notification?.workflowReceiptPath, publishedPath);
