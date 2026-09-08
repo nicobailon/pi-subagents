@@ -442,7 +442,11 @@ subagent({ action: "inspector.close", id: "<run-id>", index: 0 })
 
 ### Herdr inspector plugin
 
-The currently bundled inspector plugin supports Herdr 0.7.5+. It opens a raw dashboard pane, not the child session and not a literal attach. It reads lifecycle, status, output, and mission artifacts; steer and stop continue through pi-subagents' existing control inbox. Use `focus` only with `inspector.open`; Herdr 0.7.5 cannot focus an arbitrary existing raw pane id.
+The bundled Herdr inspector plugin supports Herdr 0.7.5+. It opens a raw dashboard pane, not the child session and not a literal attach. It reads lifecycle, status, output, and mission artifacts; steer and stop continue through pi-subagents' existing control inbox. Use `focus` only with `inspector.open`; Herdr 0.7.5 cannot focus an arbitrary existing raw pane id.
+
+### Ghostty inspector plugin
+
+Ghostty 1.3+ on macOS is the second bundled open-only plugin, using Ghostty's preview AppleScript API. It splits the focused terminal and launches the read-only inspector command; status and close are unavailable because it writes no binding. Ghostty Automation permission is required.
 
 ## Herdr integration
 
