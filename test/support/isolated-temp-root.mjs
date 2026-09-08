@@ -16,5 +16,5 @@ if (!nestedTestProcess) delete process.env.PI_CODING_AGENT_DIR;
 process.env.PI_SUBAGENTS_TEST_LOADER = "1";
 
 if (!configuredTempRoot) {
-	process.on("exit", () => fs.rmSync(tempRoot, { recursive: true, force: true }));
+	process.on("exit", () => fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
 }

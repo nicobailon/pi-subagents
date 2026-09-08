@@ -9,7 +9,7 @@ it("traces bounded completion reasons through NODE_DEBUG without changing delive
 			"--experimental-strip-types",
 			"--import", new URL("../support/isolated-temp-root.mjs", import.meta.url).href,
 			fileURLToPath(new URL("../support/notify-diagnostics-fixture.ts", import.meta.url)),
-		], { env: { ...process.env, NODE_DEBUG: debug, NODE_NO_WARNINGS: "1" }, encoding: "utf8" });
+		], { env: { ...process.env, FORCE_COLOR: "0", NODE_DEBUG: debug, NODE_NO_WARNINGS: "1" }, encoding: "utf8" });
 		assert.equal(child.status, 0, child.stderr);
 		return child;
 	};
