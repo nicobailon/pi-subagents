@@ -44,6 +44,10 @@ const theme = {
 	bold: (text: string) => text,
 };
 
+function visibleText(value: string): string {
+	return value.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
 describe("below-editor subagent FleetView", () => {
 	it("formats elapsed time and token counts like the Claude Code fleet", () => {
 		assert.equal(formatFleetElapsed(10_600), "11s");
@@ -92,7 +96,7 @@ describe("below-editor subagent FleetView", () => {
 			assert.match(compact, /1 active job/);
 			assert.doesNotMatch(compact, /Async runs|tokens/);
 			fleet.handleKey("\x1b[B");
-			const expanded = component.render(80).join("\n");
+			const expanded = visibleText(component.render(80).join("\n"));
 			assert.match(expanded, /external · Dependency review · running/);
 			assert.match(expanded, /11s/);
 			assert.doesNotMatch(expanded.split("\n").find((line) => line.includes("Dependency review"))!, /tokens/);
@@ -190,10 +194,16 @@ describe("below-editor subagent FleetView", () => {
 
 			assert.deepEqual(fleet.handleKey("\x1b[B"), { consume: true });
 			const expandedLines = component.render(80);
-			assert.ok(expandedLines.some((line) => line.includes("> main")));
-			assert.ok(expandedLines.some((line) => line.includes("  worker-0")), "unselected agents use blank focus space");
+			const visibleExpandedLines = expandedLines.map(visibleText);
+			assert.ok(visibleExpandedLines.some((line) => line.includes("> main")));
+			const colorCodeFor = (lines: string[], agent: string) => lines
+				.find((line) => visibleText(line).includes(agent))
+				?.match(/\x1b\[38;5;(\d+)m/)?.[1];
+			assert.equal(colorCodeFor(expandedLines, "worker-0"), "213", "agent color is deterministic from the visible agent identity");
+			assert.notEqual(colorCodeFor(expandedLines, "worker-0"), colorCodeFor(expandedLines, "worker-1"), "different agent identities get distinct colors in the roster");
+			assert.ok(visibleExpandedLines.some((line) => line.includes("  worker-0")), "unselected agents use blank focus space");
 			assert.ok(expandedLines.every((line) => !/[⏺◯]/u.test(line)), "selection avoids terminal-ambiguous circle glyphs");
-			assert.ok(expandedLines.some((line) => line.includes("worker-0 (fable-5 · thinking low)")));
+			assert.ok(visibleExpandedLines.some((line) => line.includes("worker-0 (fable-5 · thinking low)")));
 			assert.ok(expandedLines.some((line) => line.includes("11s · ↓ 13.1k tokens")));
 			assert.ok(expandedLines.some((line) => line.includes("↓ 1 more")));
 			for (const line of expandedLines) assert.ok(visibleWidth(line) <= 80, `line exceeded width: ${line}`);
@@ -829,6 +839,8 @@ describe("below-editor subagent FleetView", () => {
 				path: [{ runId: "child-1", stepIndex: 0 }],
 				state: "running",
 				agent: "nested-reviewer",
+				model: "anthropic/fable-5",
+				thinking: "low",
 			}],
 		});
 		state.foregroundControls.set("child-2", {
@@ -876,7 +888,8 @@ describe("below-editor subagent FleetView", () => {
 			assert.match(compact[0]!, /2 active agents/, "workflow wrappers must not be counted as leaf agents");
 			assert.doesNotMatch(compact[0]!, /3 active agents/);
 			assert.deepEqual(fleet.handleKey("\x1b[B"), { consume: true });
-			const lines = component.render(120);
+			const rawLines = component.render(120);
+			const lines = rawLines.map(visibleText);
 			const workflowIndex = lines.findIndex((line) => line.includes("workflow · running"));
 			const childIndex = lines.findIndex((line) => line.includes("reviewer · running"));
 			const nestedIndex = lines.findIndex((line) => line.includes("nested-reviewer"));
@@ -887,6 +900,8 @@ describe("below-editor subagent FleetView", () => {
 			assert.ok(secondChildIndex > nestedIndex && secondNestedIndex > secondChildIndex && ownerNestedIndex > secondNestedIndex);
 			assert.match(lines[childIndex]!, /├─.*reviewer/);
 			assert.match(lines[nestedIndex]!, /├─.*nested-reviewer/);
+			assert.ok(lines[nestedIndex]!.includes("nested-reviewer (fable-5 · thinking low)"));
+			assert.match(rawLines[nestedIndex]!, /\x1b\[38;5;45mnested-reviewer \(fable-5 · thinking low\)\x1b\[0m/);
 			assert.match(lines[secondNestedIndex]!, /├─.*nested-tester/);
 			assert.match(lines[ownerNestedIndex]!, /└─.*owner-nested/);
 		} finally {
@@ -1076,7 +1091,7 @@ describe("below-editor subagent FleetView", () => {
 			fleet.setContext(ctx);
 			const component = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor }, theme);
 			assert.deepEqual(fleet.handleKey("\x1b[B"), { consume: true });
-			const lines = component.render(140).join("\n");
+			const lines = visibleText(component.render(140).join("\n"));
 			assert.match(lines, /workflow · running/);
 			assert.match(lines, /Plan: scan · Find seams \(scout\) \[fresh\] \(gpt-5\.6-luna · thinking max\) · complete/);
 			assert.match(lines, /Review: review \(reviewer\) \[fork\] · running · tool grep/);
@@ -1360,13 +1375,13 @@ describe("below-editor subagent FleetView", () => {
 			assert.deepEqual(inputHandler!("\x1b[B"), { consume: true }, "custom editors should activate FleetView across jiti boundaries");
 			assert.ok(component.render(100).length > 1, "keyboard activation should expand the roster");
 			assert.deepEqual(inputHandler!("j"), { consume: true }, "active FleetView should navigate down with j");
-			assert.ok(component.render(100).some((line) => line.includes("> worker")));
+			assert.ok(component.render(100).map(visibleText).some((line) => line.includes("> worker")));
 			assert.deepEqual(inputHandler!("k"), { consume: true }, "active FleetView should navigate up with k");
-			assert.ok(component.render(100).some((line) => line.includes("> main")));
+			assert.ok(component.render(100).map(visibleText).some((line) => line.includes("> main")));
 
 			tui.focusedComponent = Object.create(Editor.prototype) as Editor;
 			assert.deepEqual(inputHandler!("\x1b[B"), { consume: true });
-			assert.ok(component.render(100).some((line) => line.includes("> worker")));
+			assert.ok(component.render(100).map(visibleText).some((line) => line.includes("> worker")));
 			assert.deepEqual(inputHandler!("\r"), { consume: true });
 			await Promise.resolve();
 			assert.deepEqual(opened, ["foreground-active:run-worker:0"]);
@@ -1377,7 +1392,7 @@ describe("below-editor subagent FleetView", () => {
 			assert.ok(widgetFactory, "closing should restore the FleetView widget");
 			assert.notEqual(widgetFactory, component, "restoration should install a new component factory");
 			const restoredComponent = widgetFactory!(tui, theme);
-			assert.ok(restoredComponent.render(100).some((line) => line.includes("> worker")), "closing should restore the prior selected roster row");
+			assert.ok(restoredComponent.render(100).map(visibleText).some((line) => line.includes("> worker")), "closing should restore the prior selected roster row");
 			assert.deepEqual(inputHandler!("\x1b"), { consume: true });
 			assert.equal(restoredComponent.render(100).length, 1, "Escape should return to the compact summary");
 		} finally {

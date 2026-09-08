@@ -16,6 +16,17 @@ export const FLEET_STATUS_WIDGET_KEY = "subagent-fleet-status";
 const MAX_AGENT_ROWS = 6;
 const REFRESH_MS = 500;
 
+// Distinct 256-color codes for telling agents apart at a glance; avoids theme's semantic
+// success/error/accent hues so agent identity never collides with state color.
+const AGENT_COLORS = [39, 213, 214, 45, 141, 221, 75, 183];
+
+function agentColor(hashKey: string, text: string): string {
+	let hash = 0;
+	for (let i = 0; i < hashKey.length; i++) hash = (hash * 31 + hashKey.charCodeAt(i)) >>> 0;
+	const code = AGENT_COLORS[hash % AGENT_COLORS.length];
+	return `\x1b[38;5;${code}m${text}\x1b[0m`;
+}
+
 type Theme = ExtensionContext["ui"]["theme"];
 type FleetStatusTui = {
 	requestRender(): void;
@@ -727,7 +738,7 @@ export class SubagentFleetStatus {
 		const checklist = entry.workflowWrapper && entry.workflowChecklist
 			? ` · checklist ${formatWorkflowChecklistSummary(entry.workflowChecklist)}${entry.workflowChecklist.bottleneck ? ` · bottleneck ${formatWorkflowChecklistBottleneck(entry.workflowChecklist.bottleneck)}` : ""}`
 			: "";
-		const left = `${prefix} ${this.bullet(rosterIndex, selectedIndex, theme)} ${theme.fg("muted", agent)} · ${entry.state}${checklist}`;
+		const left = `${prefix} ${this.bullet(rosterIndex, selectedIndex, theme)} ${agentColor(entry.agent, agent)} · ${entry.state}${checklist}`;
 		const elapsed = Date.now() - entry.startedAt;
 		const rightText = entry.projectPane
 			? `${entry.projectPane.summary ?? "—"} · ${formatFleetElapsed(Date.now() - entry.projectPane.refreshedAt)} ago`
@@ -742,7 +753,7 @@ export class SubagentFleetStatus {
 		if (row.overflow !== undefined) return truncateToWidth(`${indent}${marker} ${theme.fg("dim", `+${row.overflow} nested leaves`)}`, width);
 		const modelThinking = row.modelThinking ? ` (${row.modelThinking})` : "";
 		const activity = row.activity ? ` · ${row.activity}` : "";
-		const left = `${indent}${marker} ${nestedStatusGlyph(row.state, theme)} ${theme.fg("muted", `${row.name}${modelThinking}`)} · ${row.state}${activity}`;
+		const left = `${indent}${marker} ${nestedStatusGlyph(row.state, theme)} ${agentColor(row.name, `${row.name}${modelThinking}`)} · ${row.state}${activity}`;
 		const elapsed = row.startedAt !== undefined ? ` · ${formatFleetElapsed(Date.now() - row.startedAt)}` : "";
 		return truncateToWidth(`${left}${theme.fg("dim", elapsed)}`, width);
 	}
