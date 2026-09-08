@@ -1374,7 +1374,7 @@ function handleReset(params: ManagementParams, ctx: ManagementContext): AgentToo
 	if (!bundled) {
 		const custom = [...d.user, ...d.project].find((a) => a.name === raw || a.name === sanitized);
 		if (custom) {
-			return result(`Agent '${raw}' has no bundled default to reset to. Use { action: "delete", agent: "${custom.name}" } to remove the custom ${custom.source} agent.`, true);
+			return result(`Agent '${raw}' has no bundled default to reset to. Use { action: "delete", input: { agent: "${custom.name}" } } to remove the custom ${custom.source} agent.`, true);
 		}
 		return result(`Agent '${raw}' not found. Available: ${availableAgentNames(ctx.cwd).join(", ") || "none"}.`, true);
 	}

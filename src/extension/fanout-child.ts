@@ -4,14 +4,15 @@ import * as path from "node:path";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { discoverAgents } from "../agents/agents.ts";
 import { getArtifactsDir } from "../shared/artifacts.ts";
-import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
+import { createSubagentExecutor } from "../runs/foreground/subagent-executor.ts";
 import { resolveWaitToolConfig } from "../runs/background/wait-config.ts";
 import type { ChildRuntimeConfig } from "../runs/shared/child-runtime-config.ts";
 import { readNestedControlRequests, resolveInheritedNestedRoute, type NestedRoute, writeNestedControlResult } from "../runs/shared/nested-events.ts";
 import { deliverSubagentIntercomMessageEvent } from "../intercom/result-intercom.ts";
 import { resolveSubagentIntercomTarget } from "../intercom/intercom-bridge.ts";
-import { createSubagentParamsSchema } from "./schemas.ts";
+import { createSubagentCatalogParamsSchema } from "./schemas.ts";
 import { finalizeToolResult } from "./tool-result.ts";
+import { parseFanoutChildSubagentCatalogCall, renderSubagentCatalogHelp } from "./subagent-command-catalog.ts";
 import { loadConfig, resolveAsyncByDefault } from "./config.ts";
 import { type Details, type SubagentState } from "../shared/types.ts";
 
@@ -172,22 +173,37 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 		childRuntime: childConfig,
 	});
 
-	const params = createSubagentParamsSchema();
+	const params = createSubagentCatalogParamsSchema();
 	const tool: ToolDefinition<typeof params, Details> = {
 		name: "subagent",
 		label: "Subagent",
 		description: [
-			"Delegate to subagents from child-safe fanout mode.",
-			"Allowed management/control actions: list, get, status, lane.status, interrupt, resume, steer, doctor.",
-			"Mutating management actions (create, update, delete, eject, disable, enable, reset, grant-spawn-budget, lane.recordMerge, lane.recordSupersession) are blocked in this mode.",
+			"Delegate from child-safe fanout mode with {action:'execute',input:{agent:'scout',task:'...'}}.",
+			"Read-only management and run-control actions remain available. Mutating management actions are rejected before execution.",
 		].join("\n"),
 		parameters: params,
-		async execute(id, params, signal, onUpdate, ctx) {
-			return finalizeToolResult(await executor.executePublic(id, params as SubagentParamsLike, signal ?? new AbortController().signal, onUpdate, ctx));
+		async execute(id, call, signal, onUpdate, ctx) {
+			const parsed = parseFanoutChildSubagentCatalogCall(call);
+			if (!parsed.ok) {
+				throw new Error(parsed.error);
+			}
+			if (parsed.request.kind === "help") {
+				return renderSubagentCatalogHelp(parsed.request.topic);
+			}
+			return finalizeToolResult(await executor.executePublic(id, parsed.request.params, signal ?? new AbortController().signal, onUpdate, ctx));
 		},
 	};
 
 	pi.registerTool(tool);
+	pi.on("tool_call", (event) => {
+		if (event.toolName !== "subagent") {
+			return;
+		}
+		const parsed = parseFanoutChildSubagentCatalogCall(event.input);
+		if (!parsed.ok) {
+			return { block: true, reason: parsed.error };
+		}
+	});
 	const route = resolveNestedControlRoute(childConfig);
 	if (!route) return;
 	const listenerCleanupKey = "__piSubagentFanoutChildNestedControlInboxCleanups";

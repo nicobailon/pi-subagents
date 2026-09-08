@@ -514,7 +514,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 
 			assert.equal(result.isError, true);
 			assert.match(result.content[0]?.text ?? "", new RegExp(`Async child '${runId}' index 0 is still running`));
-			assert.match(result.content[0]?.text ?? "", new RegExp(`subagent\\(\\{ action: "steer", id: "${runId}", index: 0, message: "\\.\\.\\." \\}\\)`));
+			assert.match(result.content[0]?.text ?? "", new RegExp(`subagent\\(\\{ action: "steer", input: { id: "${runId}", index: 0, message: "\\.\\.\\." \\} \\}\\)`));
 			assert.deepEqual(kills, []);
 			assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), false);
 			assert.equal(events.emitted.some((entry) => entry.channel === "subagent:result-intercom"), false);

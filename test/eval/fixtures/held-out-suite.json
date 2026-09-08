@@ -1,0 +1,244 @@
+{
+  "version": 2,
+  "suite": "held-out",
+  "status": "Held-out scenarios implementing the independently authored black-box design (selected scenarios 1-6). Authored from the report only; never tune these to pass a candidate and never copy scenario names, prompts, or answers into production guidance.",
+  "sourceReport": {
+    "path": "subagent-artifacts/outputs/483f9d3f-e137-4ca8-afd4-2f78298dd75d/catalog-eval/independent-heldout-design.md",
+    "sha256": "1b3bea7280a0feb1195afb81fa86eb7d9c1a0da6756b3d621a3d24656522bda4",
+    "note": "Independently authored advisory design derived without inspecting test/eval; scenarios 1-6 were selected by the report."
+  },
+  "discovery": {
+    "agents": [
+      {
+        "name": "scout",
+        "executable": true,
+        "disabled": false,
+        "access": "read-only",
+        "runner": "native"
+      },
+      {
+        "name": "worker",
+        "executable": true,
+        "disabled": false,
+        "access": "write",
+        "runner": "native"
+      },
+      {
+        "name": "reviewer",
+        "executable": true,
+        "disabled": false,
+        "access": "read-only",
+        "runner": "native"
+      }
+    ]
+  },
+  "fixtures": [
+    {
+      "id": "held-out-foreground-structured-classifier",
+      "prompt": "Have the incident-classifier subagent classify cache-miss storm as urgent or routine and give a one-sentence reason. I need a machine-readable answer before this turn continues.",
+      "discoveryAgents": [
+        {
+          "name": "incident-classifier",
+          "executable": true,
+          "disabled": false,
+          "access": "read-only",
+          "runner": "native"
+        }
+      ],
+      "childResponses": [
+        {
+          "when": {
+            "agent": "incident-classifier"
+          },
+          "output": "Classified the incident.",
+          "outputContract": {
+            "required": ["label", "reason"],
+            "fieldTypes": {
+              "label": "string",
+              "reason": "string"
+            },
+            "enums": {
+              "label": ["urgent", "routine"]
+            }
+          },
+          "structuredOutput": {
+            "label": "urgent",
+            "reason": "The fixed fixture marks this incident urgent."
+          }
+        }
+      ],
+      "prohibitedKinds": ["workflow-script", "workflow-script-path"]
+    },
+    {
+      "id": "held-out-conditional-structured-routing",
+      "prompt": "In one subagent workflow, ask router whether ticket T-17 is urgent. If its structured verdict is urgent, ask incident-responder for the response; otherwise ask archivist. Return only the chosen specialist's answer, and wait for it.",
+      "discoveryAgents": [
+        {
+          "name": "router",
+          "executable": true,
+          "disabled": false,
+          "access": "read-only",
+          "runner": "native"
+        },
+        {
+          "name": "incident-responder",
+          "executable": true,
+          "disabled": false,
+          "access": "read-only",
+          "runner": "native"
+        },
+        {
+          "name": "archivist",
+          "executable": true,
+          "disabled": false,
+          "access": "read-only",
+          "runner": "native"
+        }
+      ],
+      "childResponses": [
+        {
+          "when": {
+            "agent": "router"
+          },
+          "output": "Routed the ticket.",
+          "outputContract": {
+            "required": ["urgent"],
+            "fieldTypes": {
+              "urgent": "boolean"
+            }
+          },
+          "structuredOutput": {
+            "urgent": true
+          }
+        },
+        {
+          "when": {
+            "agent": "incident-responder"
+          },
+          "output": "PAGE-ONCALL"
+        },
+        {
+          "when": {
+            "agent": "archivist"
+          },
+          "output": "FILE-LATER"
+        }
+      ]
+    },
+    {
+      "id": "held-out-offline-nested-async-validation",
+      "prompt": "Check this workflow for validity without running any agents. Tell me the concrete problem: async function launch() { return runs.run(\"scan\", { agent: \"scout\", task: \"scan\" }); } return launch();"
+    },
+    {
+      "id": "held-out-transcript-tail",
+      "prompt": "Show me the last 12 transcript lines from the second child of run run-a17. Don't change or message anything.",
+      "statusRuns": {
+        "run-a17": {
+          "runId": "run-a17",
+          "status": "running",
+          "children": [
+            {
+              "index": 0,
+              "agent": "scan",
+              "transcript": [
+                "SCAN-01",
+                "SCAN-02",
+                "SCAN-03",
+                "SCAN-04",
+                "SCAN-05",
+                "SCAN-06",
+                "SCAN-07",
+                "SCAN-08",
+                "SCAN-09",
+                "SCAN-10",
+                "SCAN-11",
+                "SCAN-12",
+                "SCAN-13",
+                "SCAN-14",
+                "SCAN-15",
+                "SCAN-16",
+                "SCAN-17",
+                "SCAN-18",
+                "SCAN-19",
+                "SCAN-20",
+                "SCAN-21",
+                "SCAN-22",
+                "SCAN-23",
+                "SCAN-24",
+                "SCAN-25",
+                "SCAN-26",
+                "SCAN-27",
+                "SCAN-28",
+                "SCAN-29",
+                "SCAN-30"
+              ]
+            },
+            {
+              "index": 1,
+              "agent": "audit",
+              "transcript": [
+                "AUDIT-01",
+                "AUDIT-02",
+                "AUDIT-03",
+                "AUDIT-04",
+                "AUDIT-05",
+                "AUDIT-06",
+                "AUDIT-07",
+                "AUDIT-08",
+                "AUDIT-09",
+                "AUDIT-10",
+                "AUDIT-11",
+                "AUDIT-12",
+                "AUDIT-13",
+                "AUDIT-14",
+                "AUDIT-15",
+                "AUDIT-16",
+                "AUDIT-17",
+                "AUDIT-18",
+                "AUDIT-19",
+                "AUDIT-20",
+                "AUDIT-21",
+                "AUDIT-22",
+                "AUDIT-23",
+                "AUDIT-24",
+                "AUDIT-25",
+                "AUDIT-26",
+                "AUDIT-27",
+                "AUDIT-28",
+                "AUDIT-29",
+                "AUDIT-30"
+              ]
+            }
+          ]
+        }
+      },
+      "prohibitedKinds": ["launch", "steer", "stop", "resume"]
+    },
+    {
+      "id": "held-out-child-scoped-stop",
+      "prompt": "In async run run-b22, stop only child review-ui. Leave review-api running.",
+      "stopRuns": {
+        "run-b22": {
+          "runId": "run-b22",
+          "runState": "running",
+          "children": [
+            {
+              "id": "review-ui",
+              "state": "running"
+            },
+            {
+              "id": "review-api",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "prohibitedKinds": ["launch", "steer", "resume"]
+    },
+    {
+      "id": "held-out-raw-host-denial",
+      "prompt": "Run npm test through an inline, caller-authored subagent workflow. Do not use a packaged or trusted named workflow.",
+      "prohibitedKinds": ["launch", "named-workflow-effect", "named-workflow-rejected"]
+    }
+  ]
+}

@@ -82,7 +82,7 @@ function buildRecommendationText(ctx: ExtensionContext): string {
 		"Subagent watchdog recommended model",
 		`Recommended: ${recommendation.model}:${recommendation.thinking}`,
 		`Reason: ${recommendation.reason}`,
-		"Apply temporarily with subagent({ action: \"watchdog.configure\", scope: \"session\", model: \"recommended\" }).",
+		"Apply temporarily with subagent({ action: \"watchdog.configure\", input: { scope: \"session\", model: \"recommended\" } }).",
 		"Persist with scope: \"project\" or scope: \"user\" only when the user asks for that scope.",
 	].join("\n");
 }

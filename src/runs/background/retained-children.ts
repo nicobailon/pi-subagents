@@ -126,7 +126,7 @@ export function formatRetainedChildren(children: RetainedChild[]): string {
 				: `  resumability: not resumable (${child.resumability.reason})`,
 			...(child.resumability.state === "resumable" ? [
 				`  session: ${child.resumability.sessionPath}`,
-				`  resume: subagent({ action: "resume", id: "${child.runId}", message: "..." })`,
+				`  resume: subagent({ action: "resume", input: { id: "${child.runId}", message: "..." } })`,
 			] : []),
 			...(child.tokenTotals ? [`  tokens: input ${child.tokenTotals.input}, output ${child.tokenTotals.output}, total ${child.tokenTotals.total}`] : []),
 		]),

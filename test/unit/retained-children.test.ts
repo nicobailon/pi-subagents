@@ -105,7 +105,7 @@ describe("retained child roster", () => {
 			assert.equal(children[0]?.taskSummary.startsWith("Task 52 with spacing"), true);
 			assert.deepEqual(children[0]?.tokenTotals, { input: 52, output: 53, total: 105 });
 			assert.equal(children[0]?.resumability.state, "resumable");
-			assert.match(formatted, /resumability: resumable\n  session: .*child-52\.jsonl\n  resume: subagent\(\{ action: "resume", id: "child-52", message: "\.\.\." \}\)/);
+			assert.match(formatted, /resumability: resumable\n  session: .*child-52\.jsonl\n  resume: subagent\(\{ action: "resume", input: \{ id: "child-52", message: "\.\.\." \} \}\)/);
 			assert.equal(children.some((child) => child.runId === "child-50" || child.runId === "child-51"), false);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -124,7 +124,7 @@ describe("retained child roster", () => {
 			assert.equal(children.length, 11);
 			assert.deepEqual(children.map((child) => child.runId), Array.from({ length: 11 }, (_, offset) => `child-${10 - offset}`));
 			assert.equal(formatted.match(/^- child-/gm)?.length, 10);
-			assert.match(formatted, /resume: subagent\(\{ action: "resume", id: "child-0"/);
+			assert.match(formatted, /resume: subagent\(\{ action: "resume", input: \{ id: "child-0"/);
 			assert.doesNotMatch(formatted, /No resumable retained child is listed/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

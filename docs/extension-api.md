@@ -2,6 +2,14 @@
 
 Public seams for other Pi extensions and host integrations: the in-process RPC, the structured delegation API, launch preflight, capability ceilings, the background-work provider contract, and the Herdr integration.
 
+## Command catalog policy integration
+
+The model-facing `subagent` tool accepts `{ action, input? }`. Extensions that inspect `tool_call` arguments can import `parseSubagentCatalogCall` and `SubagentCatalogCallCandidate` from `pi-subagents/command-catalog` to classify that envelope without translating it into the removed flat form.
+
+The parser validates the selected operation and returns the canonical execution or management request. It does not grant workflow provenance, permits, or other authority. A policy hook must fail closed when parsing fails. The main extension reparses the final mutable input immediately before execution, so a later hook cannot bypass validation by changing an already-classified call.
+
+Legacy hooks that only inspect root-level fields such as `agent`, `workflowScript`, or `action` must migrate before this catalog is installed. There is no compatibility shim that rewrites catalog calls to impersonate the old envelope.
+
 ## Trusted workflow resources
 
 Loaded trusted TypeScript extensions can import `registerWorkflowResource` from `pi-subagents/workflow-resources`. This subpath does not load the main extension and exposes no resolver or permit constructor. Its exported types are `RegisterWorkflowResourceInput`, `WorkflowResourceDefinition`, and `WorkflowResourceRegistration`:
@@ -423,7 +431,7 @@ const dispose = registerExternalJobProvider({
 
 The provider returns handles with `providerJobId`, `state`, optional `handleUrl`/`conversationUrl`, optional `failureCode`/`failureMessage`, and optional `blockingJobId` for capacity conflicts. `result` can also return `output` and/or `artifactPath`.
 
-`followUp(input)` is optional. When it is present, a completed external-job run can be continued with `subagent({ action: "resume", id: "<run>", message: "..." })`. Pi sends the completed parent provider job id plus a stable `requestId` and `requestDigest`. The provider must continue that parent conversation or fail closed. It must not open a fresh thread when the parent conversation is missing.
+`followUp(input)` is optional. When it is present, a completed external-job run can be continued with `subagent({ action: "resume", input: { id: "<run>", message: "..." }})`. Pi sends the completed parent provider job id plus a stable `requestId` and `requestDigest`. The provider must continue that parent conversation or fail closed. It must not open a fresh thread when the parent conversation is missing.
 
 The async runner process does not import provider internals. It writes operation requests into its async run directory. The parent Pi process services those requests against the registered provider and writes operation responses. If the provider is not registered, the bridge fails closed with an actionable error. If a run is recovered after provider job metadata exists, the runner calls `reattach` and `result`; it does not call `start` or `follow-up` again.
 
@@ -451,9 +459,9 @@ rows = [
 Herdr 0.7.5+ can open an on-demand inspector for an existing async run:
 
 ```ts
-subagent({ action: "inspector.open", id: "<run-id>", index: 0, focus: true })
-subagent({ action: "inspector.status", id: "<run-id>", index: 0 })
-subagent({ action: "inspector.close", id: "<run-id>", index: 0 })
+subagent({ action: "inspector.open", input: { id: "<run-id>", index: 0, focus: true }})
+subagent({ action: "inspector.status", input: { id: "<run-id>", index: 0 }})
+subagent({ action: "inspector.close", input: { id: "<run-id>", index: 0 }})
 ```
 
 The inspector is a raw dashboard pane, not the child session and not a literal attach. It reads lifecycle/status/output/mission artifacts and sends `steer` or `stop` through pi-subagents' existing control inbox. Closing it never stops the run.
@@ -465,9 +473,9 @@ Herdr remains optional. Ordinary launches stay headless, and missing/older Herdr
 For substantial work in another codebase, Herdr 0.7.5+ can open a project-owned Pi pane rooted in that repository:
 
 ```ts
-subagent({ action: "project.open", cwd: "/path/to/repo", message: "Own the auth refresh mission for this project." })
-subagent({ action: "project.status", cwd: "/path/to/repo" })
-subagent({ action: "project.close", cwd: "/path/to/repo" })
+subagent({ action: "project.open", input: { cwd: "/path/to/repo", message: "Own the auth refresh mission for this project." }})
+subagent({ action: "project.status", input: { cwd: "/path/to/repo" }})
+subagent({ action: "project.close", input: { cwd: "/path/to/repo" }})
 ```
 
 A project pane runs its own Pi session in the target directory, so subagents launched from that pane use that project's config, agents, skills, files, git state, and missions. The parent session keeps coordination authority, but it does not own or control the subagents inside the peer pane. Existing headless runs are not moved into the pane. Pane bindings live under `<projectRoot>/.pi/subagents/project-panes/herdr.json` and are only a local pointer to the Herdr pane.
@@ -524,6 +532,8 @@ The main runtime files in this repository:
 | File | Purpose |
 |------|---------|
 | `src/extension/index.ts` | Extension registration, tool registration, message/render wiring. |
+| `src/extension/subagent-command-catalog.ts` | Stateless model-facing operation catalog, strict parser, focused help, and restricted-child filtering. |
+| `src/api/command-catalog.ts` | Public parser and catalog request types for updated policy consumers. |
 | `src/integrations/pi-web-session-liveness.ts` | Optional pi-web idle-eviction liveness bridge. |
 | `src/agents/agents.ts` | Agent and chain discovery, frontmatter parsing. |
 | `src/runs/foreground/subagent-executor.ts` | Main execution routing for single, parallel, chain, management, status, interrupt, and doctor actions. |

@@ -1,0 +1,133 @@
+{
+  "version": 2,
+  "suite": "development",
+  "status": "Frozen development suite. Scenario set, prompts, and fake answers match the approved cold-model fixture document; do not tune these to pass a candidate.",
+  "discovery": {
+    "agents": [
+      {
+        "name": "scout",
+        "executable": true,
+        "disabled": false,
+        "access": "read-only",
+        "runner": "native"
+      },
+      {
+        "name": "worker",
+        "executable": true,
+        "disabled": false,
+        "access": "write",
+        "runner": "native"
+      },
+      {
+        "name": "reviewer",
+        "executable": true,
+        "disabled": false,
+        "access": "read-only",
+        "runner": "native"
+      }
+    ]
+  },
+  "fixtures": [
+    {
+      "id": "read-only-child",
+      "prompt": "Delegate a read-only inspection of the payment retry logic to a scout. Ask it whether a failed charge can be retried twice, then give me its answer. Do not modify files.",
+      "childResponses": [
+        {
+          "when": { "agent": "scout" },
+          "output": "A failed charge gets at most two retries. The initial attempt is not counted as a retry."
+        }
+      ]
+    },
+    {
+      "id": "isolated-parallel-writers",
+      "prompt": "Use two workers in parallel: one should implement input validation in billing, the other should add CSV export in reporting. Give each an isolated worktree. Wait for both results before summarizing their changes. Do not merge or publish anything.",
+      "childResponses": [
+        {
+          "when": { "taskMatches": "billing|validation" },
+          "output": "Added billing input validation."
+        },
+        { "when": { "taskMatches": "report|csv|export" }, "output": "Added reporting CSV export." }
+      ]
+    },
+    {
+      "id": "writer-review-fix",
+      "prompt": "Have a worker implement bounded payment retries. Then have an independent reviewer, with fresh context, check that result. If the reviewer finds a defect, have the worker fix it. Report the final outcome and do not publish.",
+      "childResponses": [
+        {
+          "when": { "agent": "reviewer" },
+          "occurrence": 1,
+          "output": "Defect: the retry counter resets after a timeout, allowing more than two retries. Fix the counter reset.",
+          "structuredOutput": {
+            "verdict": "defect",
+            "summary": "Retry counter resets after a timeout.",
+            "defects": [
+              "The retry counter resets after a timeout, allowing more than two retries."
+            ],
+            "checks": ["retry bound"]
+          }
+        },
+        {
+          "when": { "agent": "reviewer" },
+          "occurrence": 2,
+          "output": "CLEAN: bounded retries now remain correct across timeout paths.",
+          "structuredOutput": {
+            "verdict": "pass",
+            "summary": "Bounded retries correct.",
+            "defects": [],
+            "checks": ["retry bound"]
+          }
+        },
+        {
+          "when": { "agent": "worker", "taskMatches": "counter|timeout|reset|fix|review" },
+          "output": "Fixed the timeout counter reset. The original attempt plus two retries is now the maximum."
+        },
+        { "when": { "agent": "worker" }, "output": "Implemented bounded payment retries." }
+      ]
+    },
+    {
+      "id": "infrastructure-failure",
+      "prompt": "Delegate a read-only inspection of payment retry logic to a scout and report what it finds. Do not modify files.",
+      "infrastructureFailure": {
+        "failureKind": "infrastructure",
+        "message": "Child runtime could not load its extension. No child task ran. The run is not resumable."
+      }
+    },
+    {
+      "id": "retained-child-resume",
+      "prompt": "Find the retained payment-retry worker and continue it with this instruction: check the timeout counter-reset fix. Use a resumable retained child rather than starting a replacement. Report the continuation result.",
+      "retainedRows": [
+        {
+          "runId": "fixture-old-worker",
+          "agent": "worker",
+          "task": "payment retry fix",
+          "resumable": false
+        },
+        {
+          "runId": "fixture-current-worker",
+          "agent": "worker",
+          "task": "payment retry fix",
+          "resumable": true
+        }
+      ],
+      "resumeResults": {
+        "fixture-current-worker": {
+          "runId": "fixture-resumed-worker",
+          "status": "complete",
+          "output": "Verified the timeout counter-reset fix; two retries remain the maximum."
+        }
+      }
+    },
+    {
+      "id": "named-workflow-policy",
+      "prompt": "Run the registered run-ci workflow with command npm test and tell me the outcome. Use the named workflow, not a raw script or a direct command.",
+      "namedWorkflow": {
+        "name": "run-ci",
+        "args": { "command": "npm test" },
+        "output": "npm test completed with exit code 0. All fixture tests passed."
+      },
+      "policy": {
+        "allowNamedWorkflow": { "name": "run-ci", "args": { "command": "npm test" } }
+      }
+    }
+  ]
+}

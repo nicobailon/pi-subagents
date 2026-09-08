@@ -318,7 +318,7 @@ function formatForegroundFleetLines(controls: ForegroundControl[]): string[] {
 		const currentDisplayName = control.sessionName?.trim() || control.currentAgent;
 		const current = currentDisplayName ? ` | ${currentDisplayName}${control.currentIndex !== undefined ? ` #${control.currentIndex}` : ""}` : "";
 		lines.push(`- ${control.runId} | running | ${foregroundModeName(control)}${current}${activity ? ` | ${activity}` : ""}`);
-		lines.push(`  status: subagent({ action: "status", id: "${control.runId}" })`);
+		lines.push(`  status: subagent({ action: "status", input: { id: "${control.runId}" } })`);
 		lines.push("  transcript: live in the expanded foreground result; persisted session transcript appears after completion when sessions are enabled.");
 		lines.push(...formatNestedRunStatusLines(control.nestedChildren, { indent: "  ", commandHints: true, maxLines: 12 }));
 	}
@@ -333,7 +333,7 @@ function formatDetachedForegroundFleetLines(runs: ForegroundRun[]): string[] {
 		const detachedChildren = run.children.filter((child) => child.status === "detached");
 		const childSummary = detachedChildren.map((child) => `${fleetChildDisplayName(child)} #${child.index}`).join(", ");
 		lines.push(`- ${run.runId} | detached | ${run.mode}${childSummary ? ` | ${childSummary}` : ""}`);
-		lines.push(`  status: subagent({ action: "status", id: "${run.runId}" })`);
+		lines.push(`  status: subagent({ action: "status", input: { id: "${run.runId}" } })`);
 		lines.push(`  recovery: reply to the supervisor request first, then wait with bg_wait({ id: "${run.runId}" }); do not resume or launch a replacement while any child remains detached.`);
 	}
 	return lines;
@@ -349,8 +349,8 @@ function formatAsyncFleetLines(runs: AsyncRunSummary[]): string[] {
 		const pending = run.pendingAppends ? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}` : "";
 		const runContext = contextModeLabel(run.context);
 		lines.push(`- ${run.id} | ${run.state}${activity ? ` | ${activity}` : ""} | ${run.mode}${runContext ? ` ${runContext}` : ""} | ${progress}${pending} | ${cwd}`);
-		lines.push(`  status: subagent({ action: "status", id: "${run.id}" })`);
-		lines.push(`  transcript: subagent({ action: "status", id: "${run.id}", view: "transcript" })`);
+		lines.push(`  status: subagent({ action: "status", input: { id: "${run.id}" } })`);
+		lines.push(`  transcript: subagent({ action: "status", input: { id: "${run.id}", view: "transcript" } })`);
 		for (const step of run.steps) {
 			const display = fleetStepDisplayName(step);
 			const stepContext = contextModeLabel(step.context);
@@ -363,7 +363,7 @@ function formatAsyncFleetLines(runs: AsyncRunSummary[]): string[] {
 			if (fs.existsSync(output)) lines.push(`    output: ${shortenPath(output)}`);
 			if (step.sessionFile) lines.push(`    session: ${shortenPath(step.sessionFile)}`);
 			if (step.status === "running" || step.recentOutput?.length || fs.existsSync(output)) {
-				lines.push(`    transcript: subagent({ action: "status", id: "${run.id}", index: ${step.index}, view: "transcript" })`);
+				lines.push(`    transcript: subagent({ action: "status", input: { id: "${run.id}", index: ${step.index}, view: "transcript" } })`);
 			}
 			lines.push(...formatNestedRunStatusLines(step.children, { indent: "    ", commandHints: true, maxLines: 12 }));
 		}
@@ -382,7 +382,7 @@ function formatAsyncFleetLines(runs: AsyncRunSummary[]): string[] {
 export function inspectSubagentFleet(_params: FleetViewParams, deps: FleetViewDeps = {}): AgentToolResult<Details> {
 	if (deps.childSafe) {
 		return {
-			content: [{ type: "text", text: "Child-safe subagent fleet view is unavailable without an explicit run id. Use subagent({ action: \"status\", id: \"...\" }) for the delegated run you can see." }],
+			content: [{ type: "text", text: "Child-safe subagent fleet view is unavailable without an explicit run id. Use subagent({ action: \"status\", input: { id: \"...\" } }) for the delegated run you can see." }],
 			isError: true,
 			details: { mode: "management", results: [] },
 		};
@@ -410,7 +410,7 @@ export function inspectSubagentFleet(_params: FleetViewParams, deps: FleetViewDe
 	const total = foregroundControls.length + detachedForegroundRuns.length + asyncRuns.length;
 	if (total === 0) {
 		return {
-			content: [{ type: "text", text: "No active subagent fleet. Background runs that already finished are available through completion notifications or subagent({ action: \"status\", id: \"...\" })." }],
+			content: [{ type: "text", text: "No active subagent fleet. Background runs that already finished are available through completion notifications or subagent({ action: \"status\", input: { id: \"...\" } })." }],
 			details: { mode: "management", results: [] },
 		};
 	}
@@ -423,9 +423,9 @@ export function inspectSubagentFleet(_params: FleetViewParams, deps: FleetViewDe
 	const asyncLines = formatAsyncFleetLines(asyncRuns);
 	if (asyncLines.length) lines.push(...asyncLines, "");
 	lines.push("Commands:");
-	lines.push("  Refresh fleet: subagent({ action: \"status\", view: \"fleet\" })");
-	lines.push("  Tail run transcript: subagent({ action: \"status\", id: \"<run-id>\", view: \"transcript\" })");
-	lines.push("  Tail child transcript: subagent({ action: \"status\", id: \"<run-id>\", index: 0, view: \"transcript\" })");
+	lines.push("  Refresh fleet: subagent({ action: \"status\", input: { view: \"fleet\" } })");
+	lines.push("  Tail run transcript: subagent({ action: \"status\", input: { id: \"<run-id>\", view: \"transcript\" } })");
+	lines.push("  Tail child transcript: subagent({ action: \"status\", input: { id: \"<run-id>\", index: 0, view: \"transcript\" } })");
 
 	return { content: [{ type: "text", text: lines.join("\n").trimEnd() }], details: { mode: "management", results: [] } };
 }

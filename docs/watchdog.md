@@ -106,7 +106,7 @@ The recommendation is Opus 4.8 or GPT 5.5 at thinking high, whichever your main 
 
 Omit `main.model` to inherit the session model and thinking level. A `main.model` without a thinking suffix or `main.thinking` runs with thinking off, so prefer `:high` for the strong pairing.
 
-Agents can call `subagent({ action: "watchdog.recommend-model" })` and `subagent({ action: "watchdog.configure", model: "recommended", scope: "session" | "user" | "project" })`. They should use `scope: "session"` unless you ask for a lasting default.
+Agents can call `subagent({ action: "watchdog.recommend-model" })` and `subagent({ action: "watchdog.configure", input: { model: "recommended", scope: "session" | "user" | "project" }})`. They should use `scope: "session"` unless you ask for a lasting default.
 
 ## Optional main-session clarification
 

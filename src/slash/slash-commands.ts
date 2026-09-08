@@ -180,8 +180,8 @@ type StopSelectorResult = { confirmed: boolean; target?: StopSelectorTarget };
 
 function commandForTarget(target: StopSelectorTarget): string {
 	return target.kind === "scheduled"
-		? `subagent({ action: "schedule.pause", id: ${JSON.stringify(target.id)} })`
-		: `subagent({ action: "stop", id: ${JSON.stringify(target.id)} })`;
+		? `subagent({ action: "schedule.pause", input: { id: ${JSON.stringify(target.id)} } })`
+		: `subagent({ action: "stop", input: { id: ${JSON.stringify(target.id)} } })`;
 }
 
 function formatAsyncStopTarget(run: AsyncRunSummary): StopSelectorTarget {
@@ -929,7 +929,7 @@ export function registerSlashCommands(
 		description: "Host integration bridge: answer an async child inspection request with a correlated widget payload (no model turn)",
 		handler: async (args, ctx) => {
 			if (ctx.mode === "tui") {
-				ctx.ui.notify("Inspection replies are emitted only on RPC surfaces. Use /subagents or subagent({ action: \"status\", view: \"transcript\" }) interactively.", "info");
+				ctx.ui.notify("Inspection replies are emitted only on RPC surfaces. Use /subagents or subagent({ action: \"status\", input: { view: \"transcript\" } }) interactively.", "info");
 				return;
 			}
 			if (!ctx.hasUI) return;
@@ -1001,7 +1001,7 @@ export function registerSlashCommands(
 			ctx.ui.notify(`Foreground run ${control.runId} is not currently detachable.`, "info");
 			return;
 		}
-		sendSlashText(pi, `Detached foreground run ${control.runId} without terminating its child. Use subagent({ action: "status", id: ${JSON.stringify(control.runId)} }) or bg_wait({ id: ${JSON.stringify(control.runId)} }) to recover the eventual result. This does not daemonize the process or guarantee survival across Pi reload/restart.`);
+		sendSlashText(pi, `Detached foreground run ${control.runId} without terminating its child. Use subagent({ action: "status", input: { id: ${JSON.stringify(control.runId)} } }) or bg_wait({ id: ${JSON.stringify(control.runId)} }) to recover the eventual result. This does not daemonize the process or guarantee survival across Pi reload/restart.`);
 	};
 
 	pi.registerCommand("subagents-detach", {

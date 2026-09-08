@@ -167,7 +167,7 @@ async: false
 Read the assigned files and return your findings without editing.
 ```
 
-Launch with `subagent({ agent: "reader", task: "Read README.md and summarize it", async: false, context: "fresh", output: false })`. Keep `forceTopLevelAsync` disabled and omit tool/usage budgets and the excluded runtime features above. No new recovery flag is required: these settings make the profile eligible, but continuation still requires actual completed read-only work, observed 429 and all checkpoint/provider/lifecycle checks. This is a trusted-host compatibility boundary, not sandboxing or universal provider attestation.
+Launch with `subagent({ action: "execute", input: { agent: "reader", task: "Read README.md and summarize it", async: false, context: "fresh", output: false }})`. Keep `forceTopLevelAsync` disabled and omit tool/usage budgets and the excluded runtime features above. No new recovery flag is required: these settings make the profile eligible, but continuation still requires actual completed read-only work, observed 429 and all checkpoint/provider/lifecycle checks. This is a trusted-host compatibility boundary, not sandboxing or universal provider attestation.
 
 For native background execution, use the same call with `async: true`, which overrides the agent's foreground default. Keep the explicit empty `extensions:` field: omitting it allows ambient extensions in background children and does not certify this profile. Select a fallback model satisfying the stricter background capacity bound above; unconfigured budgets are simplest, while token-only budgets still require the authoritative allowance check. Do not disable needed coordination or ambient capabilities merely to obtain continuation.
 

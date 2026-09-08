@@ -28,17 +28,24 @@ An explicit `mission` object must have exactly one non-empty `title` or `summary
 ```ts
 const created = subagent({
   action: "mission.create",
-  mission: { title: "Ship auth refresh", objective: "Implement and validate token refresh" }
-})
+  input: {
+    mission: { title: "Ship auth refresh", objective: "Implement and validate token refresh" }
+  }})
 subagent({
-  workflowScript: `return runs.run("main", { agent: "worker", task: "Implement the approved auth refresh plan" })`,
-  missionId: "<mission-id>"
+  action: "execute",
+  input: {
+    workflowScript: `return runs.run("main", { agent: "worker", task: "Implement the approved auth refresh plan" })`,
+    missionId: "<mission-id>"
+  }
 })
 
 // Or create and attach in one launch
 subagent({
-  workflowScript: `return runs.run("main", { agent: "worker", task: "Implement the approved plan" })`,
-  mission: { title: "Ship auth refresh" }
+  action: "execute",
+  input: {
+    workflowScript: `return runs.run("main", { agent: "worker", task: "Implement the approved plan" })`,
+    mission: { title: "Ship auth refresh" }
+  }
 })
 ```
 
@@ -49,13 +56,14 @@ Set `goal: true` with a token budget to make an open mission an active continuat
 ```ts
 subagent({
   action: "mission.create",
-  mission: {
-    title: "Ship auth refresh",
-    objective: "Implement and validate token refresh",
-    goal: true,
-    budget: { tokens: 400000 }
-  }
-})
+  input: {
+    mission: {
+      title: "Ship auth refresh",
+      objective: "Implement and validate token refresh",
+      goal: true,
+      budget: { tokens: 400000 }
+    }
+  }})
 ```
 
 After each parent turn, an idle goal mission sends one needs-attention notice with its title, remaining token budget, and next ready action. The action comes from `state.nextReadyAction`, `state.nextAction`, a state item with `status: "ready"`, an open decision, or linked-run state. A workflow can write `state.nextReadyAction` to tell the next notice exactly what work is ready. When the latest linked workflow has a resumable retained child, the notice names that child as the `resume` target. Non-resumable retained children stay visible in `children.list` with their reason, but goal notices do not present them as resume targets. The extension never launches or replans goal work by itself.
@@ -92,18 +100,19 @@ Create a one-shot schedule:
 ```ts
 subagent({
   action: "schedule.create",
-  id: "evening-review",
-  name: "Evening review",
-  at: "+30m",
-  baseRef: "refs/heads/release",
-  workflowScript: `return runs.run("main", { agent: "reviewer", task: "Review the current diff." })`
-})
+  input: {
+    id: "evening-review",
+    name: "Evening review",
+    at: "+30m",
+    baseRef: "refs/heads/release",
+    workflowScript: `return runs.run("main", { agent: "reviewer", task: "Review the current diff." })`
+  }})
 ```
 
 Create a fixed recurring workflow:
 
 ```ts
-subagent({ action: "schedule.create", id: "backlog", every: "6h", catchUp: "latest", workflowScript: "..." })
+subagent({ action: "schedule.create", input: { id: "backlog", every: "6h", catchUp: "latest", workflowScript: "..." }})
 ```
 
 Fixed intervals support `m`, `h`, `d`, and `w` units and advance from the planned time without completion drift.

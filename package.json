@@ -18,6 +18,7 @@
     "./control-channel": "./src/api/control-channel.ts",
     "./intercom-bridge": "./src/api/intercom-bridge.ts",
     "./child-tool-plan": "./src/api/child-tool-plan.ts",
+    "./command-catalog": "./src/api/command-catalog.ts",
     "./shared-types": "./src/api/shared-types.ts",
     "./project-panes": "./src/api/project-panes.ts"
   },
@@ -56,6 +57,7 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run test:unit",
     "test:unit": "node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/*.test.ts",
+    "eval:catalog-models": "node --experimental-strip-types test/eval/paired-eval.mjs",
     "test:integration": "node --experimental-strip-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
     "test:all": "npm run test:unit && npm run test:integration"
   },

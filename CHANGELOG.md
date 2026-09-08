@@ -7,6 +7,7 @@
 - Add the built-in `evidence-auditor` for independently reviewing important research claims and source support. Thanks to [@Muskos](https://github.com/Muskos) for #2023.
 
 ### Changed
+- Replace the model-facing `subagent` parameter catalog with the compact `{ action, input }` command envelope while retaining the canonical runtime contracts. The compact description is unconditional; `toolDescriptionMode` and custom description loading were removed.
 - Forked children keep their requested thinking level after signed Anthropic thinking blocks are stripped from the inherited transcript; fork context no longer forces thinking off for Anthropic-backed children. Requires a Pi host on 0.85.0 or newer, which recovers from signed-thinking mismatches on the transport. Thanks to [@hank-warren](https://github.com/hank-warren) for #2021.
 - Simplify watchdog clarification to a visible question and native orchestrator continuation; remove the reply action, exchange tracking, deadlines and mandatory follow-up reviews.
 - Document task-derived behavior labels for workflow launches in the built-in pi-subagents skill, including reviews and retained follow-ups.

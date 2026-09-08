@@ -545,7 +545,9 @@ function resolveOneAgent(cwd: string, agentName: string): { ok: true; agent: Age
 
 export async function handleRefinementAction(action: RefinementAction, params: { agent?: string }, ctx: RefinementActionContext): Promise<AgentToolResult<Details>> {
 	const requestedAgent = params.agent?.trim();
-	if (!requestedAgent) return result(`${action} requires agent. Use /subagents-refine <agent> or subagent({ action: "${action}", agent: "<agent>" }).`, true);
+	if (!requestedAgent) {
+		return result(`${action} requires agent. Use /subagents-refine <agent> or subagent({ action: "${action}", input: { agent: "<agent>" } }).`, true);
+	}
 	let resolved: { ok: true; agent: AgentConfig } | { ok: false; error: string };
 	try { resolved = resolveOneAgent(ctx.cwd, requestedAgent); } catch (error) { return result(error instanceof Error ? error.message : String(error), true); }
 	if (!resolved.ok) return result(resolved.error, true);

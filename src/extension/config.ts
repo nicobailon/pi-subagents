@@ -21,6 +21,7 @@ const BASE_KEY_IDS = new Set([
 ]);
 
 class PrunedForkConfigError extends Error {}
+class RemovedConfigError extends Error {}
 
 function validateForkContextConfig(value: unknown): void {
 	if (value === undefined) return;
@@ -140,6 +141,9 @@ function validateMainWindowRendererConfig(value: unknown): void {
 }
 
 function validateConfig(config: Record<string, unknown>): void {
+	if (Object.hasOwn(config, "toolDescriptionMode")) {
+		throw new RemovedConfigError("config.toolDescriptionMode was removed by the command-catalog hard cutover; remove this key because the compact catalog description is now unconditional");
+	}
 	if (config.worktree !== undefined && typeof config.worktree !== "boolean") {
 		throw new Error("config.worktree must be a boolean");
 	}
@@ -241,7 +245,9 @@ export function loadConfig(): ExtensionConfig {
 	try {
 		return readConfigForUpdate(configPath);
 	} catch (error) {
-		if (error instanceof PrunedForkConfigError) throw error;
+		if (error instanceof PrunedForkConfigError || error instanceof RemovedConfigError) {
+			throw error;
+		}
 		// Explicit route identity and worktree policies must not be silently
 		// discarded and replaced by the built-in defaults after validation fails.
 		try {

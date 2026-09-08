@@ -197,7 +197,7 @@ describe("workflow keyed resume recovery hint", () => {
 
 		const text = await runMissingReceiptResume({ root, parentRunId });
 
-		assert.match(text, new RegExp(`Direct resumable child for workflow key 'advisor': subagent\\(\\{ action: "resume", id: ${JSON.stringify(childRunId)}, message: "\\.\\.\\." \\}\\)`));
+		assert.match(text, new RegExp(`Direct resumable child for workflow key 'advisor': subagent\\(\\{ action: "resume", input: \\{ id: ${JSON.stringify(childRunId)}, message: "\\.\\.\\." \\} \\}\\)`));
 		assert.match(text, /terminal receipt writing failed/);
 		const target = resolveAsyncResumeTarget({ id: childRunId }, {}, { requireSessionFile: true, sessionId: "session-1644" });
 		assert.equal(target.kind, "revive");

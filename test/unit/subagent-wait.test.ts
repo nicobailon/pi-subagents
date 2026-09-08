@@ -236,7 +236,7 @@ describe("bg_wait tool", () => {
 			const text = textOf(result);
 			assert.match(text, /1 failed/);
 			assert.match(text, /Resume-first/);
-			assert.match(text, /subagent\(\{ action: "resume", id: "run-revive", message:/);
+			assert.match(text, /subagent\(\{ action: "resume", input: \{ id: "run-revive", message:/);
 			assert.match(text, /before reporting failure or launching a replacement/);
 			assert.match(text, /only if revive fails or the user explicitly asks/);
 		} finally {

@@ -516,7 +516,7 @@ async function waitForDetachedForegroundRun(
 		if (pending.length === 0) {
 			const outcome = summarizeForegroundChildren(current, initialDetachedIndices);
 			return result(
-				`Waited ${formatDuration(now() - startedAt)} for remembered detached foreground run "${run.runId}"; done. Outcome: ${outcome || "no recovered child status"}. Completion event observed; inspect with subagent({ action: "status", id: "${run.runId}" }) for recovered output.`,
+				`Waited ${formatDuration(now() - startedAt)} for remembered detached foreground run "${run.runId}"; done. Outcome: ${outcome || "no recovered child status"}. Completion event observed; inspect with subagent({ action: "status", input: { id: "${run.runId}" } }) for recovered output.`,
 			);
 		}
 		const updateNow = now();

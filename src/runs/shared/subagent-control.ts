@@ -236,8 +236,8 @@ export function formatControlNoticeMessage(event: ControlEvent, childIntercomTar
 	}
 
 	const nudgeMessage = formatControlNudge(event);
-	const steerCommand = `subagent({ action: "steer", id: "${runTarget}", ${event.index !== undefined ? `index: ${event.index}, ` : ""}message: ${JSON.stringify(nudgeMessage)} })`;
-	const nestedResumeCommand = `subagent({ action: "resume", id: "${runTarget}", message: ${JSON.stringify(nudgeMessage)} })`;
+	const steerCommand = `subagent({ action: "steer", input: { id: "${runTarget}", ${event.index !== undefined ? `index: ${event.index}, ` : ""}message: ${JSON.stringify(nudgeMessage)} } })`;
+	const nestedResumeCommand = `subagent({ action: "resume", input: { id: "${runTarget}", message: ${JSON.stringify(nudgeMessage)} } })`;
 	if (event.type === "active_long_running") {
 		const facts = formatLongRunningFacts(event);
 		return [
@@ -249,8 +249,8 @@ export function formatControlNoticeMessage(event: ControlEvent, childIntercomTar
 			`Top-level live async nudge: ${steerCommand}`,
 			`Routed live nested nudge: ${nestedResumeCommand}`,
 			childIntercomTarget ? `Direct intercom target: ${childIntercomTarget}` : undefined,
-			`Status: subagent({ action: "status", id: "${runTarget}" })`,
-			`Interrupt: subagent({ action: "interrupt", id: "${runTarget}" })`,
+			`Status: subagent({ action: "status", input: { id: "${runTarget}" } })`,
+			`Interrupt: subagent({ action: "interrupt", input: { id: "${runTarget}" } })`,
 		].filter((line): line is string => Boolean(line)).join("\n");
 	}
 
@@ -269,8 +269,8 @@ export function formatControlNoticeMessage(event: ControlEvent, childIntercomTar
 		`Top-level live async nudge: ${steerCommand}`,
 		`Routed live nested nudge: ${nestedResumeCommand}`,
 		childIntercomTarget ? `Direct intercom target: ${childIntercomTarget}` : undefined,
-		`Status: subagent({ action: "status", id: "${runTarget}" })`,
-		`Interrupt: subagent({ action: "interrupt", id: "${runTarget}" })`,
+		`Status: subagent({ action: "status", input: { id: "${runTarget}" } })`,
+		`Interrupt: subagent({ action: "interrupt", input: { id: "${runTarget}" } })`,
 	].filter((line): line is string => Boolean(line)).join("\n");
 }
 

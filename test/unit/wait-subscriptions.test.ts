@@ -248,7 +248,7 @@ describe("non-blocking wait subscriptions", () => {
 
 			const message = sent[0] ?? "";
 			assert.match(message, /Resume-first/);
-			assert.match(message, /subagent\(\{ action: "resume", id: "run-revive", index: 1, message:/);
+			assert.match(message, /subagent\(\{ action: "resume", input: \{ id: "run-revive", index: 1, message:/);
 			assert.match(message, /before reporting failure or launching a replacement/);
 			assert.match(message, /only if revive fails or the user explicitly asks/);
 		} finally {

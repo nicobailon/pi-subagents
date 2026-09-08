@@ -33,7 +33,7 @@ import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderSubagentResult, renderSubagentSummary } from "../tui/render.ts";
 import { openSubagentFleet } from "../tui/fleet.ts";
 import { SubagentFleetStatus, resolveFleetViewPlacement } from "../tui/fleet-status.ts";
-import { createSubagentParamsSchema } from "./schemas.ts";
+import { createSubagentCatalogParamsSchema } from "./schemas.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { getActiveAsyncCapacitySnapshot, resolveAbandonedSlotReleaseAfterMs, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
@@ -71,7 +71,8 @@ import { disposeChildSessions } from "../runs/shared/child-session.ts";
 import { resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { applyModelExclusionsConfig, loadConfig, resolveAsyncByDefault, resolveScheduledStoreRoot } from "./config.ts";
-import { buildSubagentToolDescription, buildSubagentToolPromptMetadata } from "./tool-description.ts";
+import { SUBAGENT_COMMAND_TOOL_DESCRIPTION } from "./tool-description.ts";
+import { parseSubagentCatalogCall, renderSubagentCatalogHelp } from "./subagent-command-catalog.ts";
 import { formatWorkflowPreflightSummary, normalizeWorkflowPreflight } from "../workflows/workflow-preflight.ts";
 import { finalizeToolResult } from "./tool-result.ts";
 import { collectGoalContinuationNotices } from "../missions/goal-driver.ts";
@@ -745,43 +746,52 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 
-	const parameters = createSubagentParamsSchema();
+	const parameters = createSubagentCatalogParamsSchema();
 	const tool: ToolDefinition<typeof parameters, Details> = {
 		name: "subagent",
 		label: "Subagent",
-		description: buildSubagentToolDescription(config),
-		...buildSubagentToolPromptMetadata(config),
+		description: SUBAGENT_COMMAND_TOOL_DESCRIPTION,
 		parameters,
 
 		async execute(id, params, signal, onUpdate, ctx) {
-			return finalizeToolResult(await executeSubagentCollapsed(id, params as SubagentParamsLike, signal ?? new AbortController().signal, onUpdate, ctx));
+			const parsed = parseSubagentCatalogCall(params);
+			if (!parsed.ok) {
+				throw new Error(parsed.error);
+			}
+			if (parsed.request.kind === "help") {
+				return renderSubagentCatalogHelp(parsed.request.topic);
+			}
+			return finalizeToolResult(await executeSubagentCollapsed(id, parsed.request.params, signal ?? new AbortController().signal, onUpdate, ctx));
 		},
 
 		renderCall(args, theme) {
 			const gap = " ".repeat(config.mainWindowRenderer?.horizontalSpacing ?? 1);
 			const title = theme.fg("toolTitle", theme.bold("subagent"));
-			if (args.action) {
-				const target = args.agent || "";
+			const input = args.input ?? {};
+			if (args.action !== "execute") {
+				const target = input.agent ?? "";
 				return new Text(
 					`${title}${gap}${args.action}${target ? `${gap}${theme.fg("accent", target)}` : ""}`,
 					0, 0,
 				);
 			}
-			if (args.workflowScript)
+			if (input.workflowScript) {
 				return new Text(
-					`${title}${gap}${formatWorkflowManifest(args.workflowScript, args.async, false, args.preflight)}`,
+					`${title}${gap}${formatWorkflowManifest(input.workflowScript, input.async, false, input.preflight)}`,
 					0,
 					0,
 				);
-			if (args.workflowScriptPath)
+			}
+			if (input.workflowScriptPath) {
 				return new Text(
-					`${title}${gap}${theme.fg("accent", args.workflowScriptPath)}${args.async === true ? `${gap}${theme.fg("warning", "[async]")}` : ""}${args.preflight !== undefined ? `${gap}${theme.fg("dim", formatWorkflowPreflightCall(args.preflight))}` : ""}`,
+					`${title}${gap}${theme.fg("accent", input.workflowScriptPath)}${input.async === true ? `${gap}${theme.fg("warning", "[async]")}` : ""}${input.preflight !== undefined ? `${gap}${theme.fg("dim", formatWorkflowPreflightCall(input.preflight))}` : ""}`,
 					0,
 					0,
 				);
-			const asyncLabel = args.async === true ? `${gap}${theme.fg("warning", "[async]")}` : "";
+			}
+			const asyncLabel = input.async === true ? `${gap}${theme.fg("warning", "[async]")}` : "";
 			return new Text(
-				`${title}${gap}${theme.fg("accent", args.agent || "?")}${asyncLabel}`,
+				`${title}${gap}${theme.fg("accent", input.agent || "?")}${asyncLabel}`,
 				0,
 				0,
 			);
@@ -798,6 +808,16 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 
 	pi.registerTool(tool);
+
+	pi.on("tool_call", (event) => {
+		if (event.toolName !== "subagent") {
+			return;
+		}
+		const parsed = parseSubagentCatalogCall(event.input);
+		if (!parsed.ok) {
+			return { block: true, reason: parsed.error };
+		}
+	});
 
 	pi.on("before_agent_start", (event, ctx) => {
 		const selectedTools = event.systemPromptOptions.selectedTools ?? pi.getActiveTools();

@@ -51,7 +51,7 @@ Rule of thumb: `scout` before you understand the code, `researcher` before you t
 
 ### Optional Surf integration
 
-When `surf-cli` is installed and loaded, Surf can expose a `gpt-pro` package agent through the `surf-oracle` external-job provider. It starts through the same `subagent({ agent: "gpt-pro" })` mental model as any other agent, but Surf owns the package agent and provider. Surf maps `model: pro` to ChatGPT GPT-5.6 Sol Pro web mode. pi-subagents does not own that model mapping.
+When `surf-cli` is installed and loaded, Surf can expose a `gpt-pro` package agent through the `surf-oracle` external-job provider. It starts through the same `subagent({ action: "execute", input: { agent: "gpt-pro" }})` mental model as any other agent, but Surf owns the package agent and provider. Surf maps `model: pro` to ChatGPT GPT-5.6 Sol Pro web mode. pi-subagents does not own that model mapping.
 
 If you disabled the old bundled `gpt-pro` workaround with `agentOverrides.gpt-pro.disabled`, remove that override before using Surf's package agent.
 
@@ -227,9 +227,9 @@ Disable and restore:
 
 - `disabled: true` hides a builtin from runtime discovery and agent-facing `subagent({ action: "list" })` output.
 - `subagents.disableBuiltins: true` disables all builtins at once.
-- `subagent({ action: "disable", agent: "reviewer" })` writes the override without editing settings by hand; `subagent({ action: "enable", agent: "reviewer" })` removes it.
-- `subagent({ action: "eject", agent: "reviewer" })` copies a bundled builtin or package agent verbatim into the user or project agent dir (default `user`) as an editable custom file that shadows the original.
-- `subagent({ action: "reset", agent: "reviewer" })` deletes the scope's custom agent file and/or settings override entry, restoring the bundled default. It refuses if no bundled default exists (use `delete` for purely custom agents).
+- `subagent({ action: "disable", input: { agent: "reviewer" }})` writes the override without editing settings by hand; `subagent({ action: "enable", input: { agent: "reviewer" }})` removes it.
+- `subagent({ action: "eject", input: { agent: "reviewer" }})` copies a bundled builtin or package agent verbatim into the user or project agent dir (default `user`) as an editable custom file that shadows the original.
+- `subagent({ action: "reset", input: { agent: "reviewer" }})` deletes the scope's custom agent file and/or settings override entry, restoring the bundled default. It refuses if no bundled default exists (use `delete` for purely custom agents).
 
 `eject`, `disable`, `enable`, and `reset` accept `agentScope: "user" | "project"` and operate in one scope at a time. Project overrides still win over user ones, so a project-scope disable survives a user-scope `enable` until you target the project scope.
 
@@ -237,7 +237,7 @@ Disable and restore:
 
 Set `advertise: true` in a specialist's agent file frontmatter for parent-prompt discovery. When the `subagent` tool is active, pi-subagents adds an agent-owned catalog of names and descriptions to the parent system prompt. Disabled agents and agents excluded by the current capability ceiling are omitted. Advertisement is not supported through settings overrides or runtime registration.
 
-Advertisement is opt-in discovery, not automatic routing. The catalog is sorted by name and limited to 16 agents and 12,288 total rendered UTF-8 bytes, including XML escaping, instructions, and omission counts. Descriptions are capped at 512 UTF-8 bytes before escaping. Entries that cannot fit are omitted; canonical agent names are never truncated. The parent still calls `subagent({ action: "list", capabilities: true })` before execution to confirm that the selected agent is executable (including `runner.available === true` for external CLI agents).
+Advertisement is opt-in discovery, not automatic routing. The catalog is sorted by name and limited to 16 agents and 12,288 total rendered UTF-8 bytes, including XML escaping, instructions, and omission counts. Descriptions are capped at 512 UTF-8 bytes before escaping. Entries that cannot fit are omitted; canonical agent names are never truncated. The parent still calls `subagent({ action: "list", input: { capabilities: true }})` before execution to confirm that the selected agent is executable (including `runner.available === true` for external CLI agents).
 
 The file catalog snapshot refreshes at session start/reload and after extension-owned agent-management mutations. External file or settings edits require `/reload`; ordinary turns do not poll the filesystem. Tool availability and capability-ceiling filtering are checked in memory on every prompt. A failed management-triggered refresh withdraws the catalog until a successful refresh, without changing the persisted mutation's result.
 
@@ -382,9 +382,9 @@ A refinement overlay is bounded, project-local guidance layered on top of one ag
 ```
 
 ```ts
-subagent({ action: "refine", agent: "reviewer" })
-subagent({ action: "refine.show", agent: "reviewer" })
-subagent({ action: "refine.rollback", agent: "reviewer" })
+subagent({ action: "refine", input: { agent: "reviewer" }})
+subagent({ action: "refine.show", input: { agent: "reviewer" }})
+subagent({ action: "refine.rollback", input: { agent: "reviewer" }})
 ```
 
 How it works:

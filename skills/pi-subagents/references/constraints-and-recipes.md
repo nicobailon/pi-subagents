@@ -67,4 +67,4 @@ Choose the smallest recipe that fits:
 - **Intercom already waiting for a reply:** resolve the pending ask before starting another.
 - **Parallel output-path conflict:** give each task a distinct output path, or disable output where no artifact is needed.
 - **Worktree launch failure:** ensure the git tree is clean and task cwd overrides match the shared cwd.
-- **Child fails before starting:** inspect `subagent({ action: "status", id: "..." })`, artifact metadata, output logs, and `doctor`; loader errors usually appear in child logs.
+- **Child fails before starting:** inspect `subagent({ action: "status", input: { id: "..." }})`, artifact metadata, output logs, and `doctor`; loader errors usually appear in child logs.

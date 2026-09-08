@@ -700,7 +700,7 @@ describe("native supervisor channel", () => {
 			assert.match(sent[0]?.content ?? "", /Subagent requests a structured supervisor interview\./);
 			assert.match(sent[0]?.content ?? "", /Should this change be applied\?/);
 			assert.ok(sent[0]?.content?.includes(`Reply with: subagent_supervisor({ action: "reply", replyTo: "${requestId}", message: "..." })`));
-			assert.ok(sent[0]?.content?.includes(`Live guidance: subagent({ action: "steer", id: "${runId}", index: 2, message: "..." }) (Reply to the pending request first.)`));
+			assert.ok(sent[0]?.content?.includes(`Live guidance: subagent({ action: "steer", input: { id: "${runId}", index: 2, message: "..." } }) (Reply to the pending request first.)`));
 			assert.doesNotMatch(sent[0]?.content ?? "", /Child intercom target:|child-worker/);
 			assert.deepEqual(sent[0]?.details, {
 				id: requestId,

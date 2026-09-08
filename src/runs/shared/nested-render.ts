@@ -97,7 +97,9 @@ function formatNestedRunLines(children: NestedRunSummary[] | undefined, options:
 			const error = child.error ? ` | error: ${child.error}` : "";
 			const modelThinking = formatModelThinking(child.model, child.thinking);
 			lines.push(`${indent}↳ ${nestedRunLabel(child)} [${child.id}] ${child.state}${modelThinking ? ` | ${modelThinking}` : ""}${activity ? ` | ${activity}` : ""}${error}`);
-			if (options.commandHints && lines.length < options.maxLines) lines.push(`${indent}  Status: subagent({ action: "status", id: "${child.id}" })`);
+			if (options.commandHints && lines.length < options.maxLines) {
+				lines.push(`${indent}  Status: subagent({ action: "status", input: { id: "${child.id}" } })`);
+			}
 			if (depth === options.maxDepth) {
 				const aggregate = formatNestedAggregate([...(child.steps?.flatMap((step) => step.children ?? []) ?? []), ...(child.children ?? [])]);
 				if (aggregate && lines.length < options.maxLines) lines.push(`${indent}  ↳ ${aggregate}`);

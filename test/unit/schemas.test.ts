@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { SUBAGENT_ACTIONS } from "../../src/shared/types.ts";
 
 type JsonSchemaNode = Record<string, unknown>;
 
@@ -168,11 +169,13 @@ function getPropertySchema(schema: JsonSchemaNode | undefined, path: string[]): 
 
 let schemas: Record<string, JsonSchemaNode> = {};
 let SubagentParams: SubagentParamsSchema | undefined;
+let SubagentCatalogParams: JsonSchemaNode | undefined;
 let SubagentWaitParams: JsonSchemaNode | undefined;
 let schemasAvailable = true;
 try {
 	schemas = await import("../../src/extension/schemas.ts") as Record<string, JsonSchemaNode>;
 	SubagentParams = schemas.SubagentParams as SubagentParamsSchema;
+	SubagentCatalogParams = schemas.SubagentCatalogParams;
 	SubagentWaitParams = schemas.SubagentWaitParams as JsonSchemaNode;
 } catch (error) {
 	if (missingPackageName(error) !== "typebox") throw error;
@@ -187,7 +190,23 @@ try {
 	// The structural schema assertions below do not need the optional compiler package.
 }
 
-describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not available" : undefined }, () => {
+describe("SubagentCatalogParams schema", { skip: !schemasAvailable ? "typebox not available" : undefined }, () => {
+	it("publishes only the stateless action and input envelope", () => {
+		assert.ok(SubagentCatalogParams);
+		assert.equal(SubagentCatalogParams.additionalProperties, false);
+		assert.deepEqual(SubagentCatalogParams.required, ["action"]);
+		// SAFETY: the structural test immediately checks this schema's declared object properties.
+		const properties = SubagentCatalogParams.properties as Record<string, JsonSchemaNode>;
+		assert.deepEqual(Object.keys(properties), ["action", "input"]);
+		assert.equal(properties.action?.type, "string");
+		assert.deepEqual(properties.action?.enum, ["execute", "help", ...SUBAGENT_ACTIONS]);
+		assert.equal(properties.input?.type, "object");
+		assert.equal(properties.input?.additionalProperties, true);
+		assert.equal(properties.input?.maxProperties, 80);
+	});
+});
+
+describe("SubagentParams canonical runtime schema", { skip: !schemasAvailable ? "typebox not available" : undefined }, () => {
 	it("includes context field and default precedence for fresh/fork execution mode", () => {
 		const contextSchema = SubagentParams?.properties?.context;
 		assert.ok(contextSchema, "context schema should exist");

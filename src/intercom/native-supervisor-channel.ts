@@ -500,7 +500,7 @@ function requestVisibleText(request: PendingSupervisorRequest): string {
 		if (request.interview !== undefined) lines.push(JSON.stringify(request.interview, null, "\t"));
 	}
 	if (request.expectsReply) lines.push("", `Reply with: ${supervisorReplyHint(request.id)}`);
-	lines.push("", `Live guidance: subagent({ action: "steer", id: ${JSON.stringify(request.runId)}, index: ${request.childIndex}, message: "..." })${request.expectsReply ? " (Reply to the pending request first.)" : ""}`);
+	lines.push("", `Live guidance: subagent({ action: "steer", input: { id: ${JSON.stringify(request.runId)}, index: ${request.childIndex}, message: "..." } })${request.expectsReply ? " (Reply to the pending request first.)" : ""}`);
 	return lines.join("\n").trimEnd();
 }
 

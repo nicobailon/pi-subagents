@@ -568,7 +568,7 @@ describe("supervisor ask registration", () => {
 			assert.equal(attempts, 2);
 			assert.equal(accepted, 1);
 			assert.equal(fs.existsSync(requestFile), false);
-			assert.ok(visibleText.includes(`Live guidance: subagent({ action: "steer", id: "${runId}", index: 0, message: "..." })`));
+			assert.ok(visibleText.includes(`Live guidance: subagent({ action: "steer", input: { id: "${runId}", index: 0, message: "..." } })`));
 			assert.doesNotMatch(visibleText, /Reply with:|replyTo:|Child intercom target:/);
 			await tool.execute("after-acceptance", { action: "pending" });
 			assert.equal(attempts, 2);

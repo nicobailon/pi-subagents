@@ -1,4 +1,29 @@
+import { Type, type Static } from "typebox";
+import { Compile } from "typebox/compile";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "./types.ts";
+
+const CatalogLaunch = Type.Object({
+	action: Type.Literal("execute"),
+	input: Type.Object({
+		agent: Type.Optional(Type.String()),
+		workflowScript: Type.Optional(Type.String()),
+		workflowScriptPath: Type.Optional(Type.String()),
+		workflow: Type.Optional(Type.String()),
+	}, { additionalProperties: true }),
+}, { additionalProperties: true });
+
+type CatalogLaunch = Static<typeof CatalogLaunch>;
+
+interface CatalogLaunchCandidate {
+	readonly action?: unknown;
+	readonly input?: unknown;
+}
+
+const catalogLaunchValidator = Compile(CatalogLaunch);
+
+function decodeCatalogLaunch(value: CatalogLaunchCandidate): CatalogLaunch | undefined {
+	return catalogLaunchValidator.Check(value) ? value : undefined;
+}
 
 type MessageLike = {
 	role?: string;
@@ -169,10 +194,13 @@ export function formatWatchdogOrchestrationActivity(event: unknown): string {
 		if (call?.type !== "toolCall" || typeof call.id !== "string") continue;
 		const args = call.arguments;
 		if (!args || typeof args !== "object") continue;
+		const catalogLaunch = decodeCatalogLaunch(args);
 		const eligible = call.name === "bg_wait"
 			|| (call.name === "subagent_supervisor" && ["pending", "list", "reply"].includes(args.action))
 			|| (call.name === "subagent" && (["status", "resume", "interrupt", "steer", "stop"].includes(args.action)
-				|| (args.action === undefined && (typeof args.agent === "string" || typeof args.workflowScript === "string" || typeof args.workflowScriptPath === "string"))));
+				|| (args.action === undefined && (typeof args.agent === "string" || typeof args.workflowScript === "string" || typeof args.workflowScriptPath === "string"))
+				|| (catalogLaunch !== undefined && [catalogLaunch.input.agent, catalogLaunch.input.workflowScript, catalogLaunch.input.workflowScriptPath, catalogLaunch.input.workflow]
+					.some((selector) => (selector?.trim().length ?? 0) > 0))));
 		if (!eligible) continue;
 		const result = turn.toolResults.find((value) => {
 			const result = value as { role?: string; toolCallId?: string; toolName?: string };

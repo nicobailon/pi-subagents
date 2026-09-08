@@ -470,8 +470,8 @@ describe("async interrupt action", () => {
 			assert.deepEqual(consumeSteerRequests(childDir), []);
 			const view = inspectSubagentStatus({ id: workflowRunId }, { state, kill: () => true });
 			assert.ok(text(view).includes(`Child run: ${childRunId}`));
-			assert.ok(text(view).includes(`action: "steer", id: "${childRunId}"`));
-			assert.doesNotMatch(text(view), new RegExp(`action: "steer", id: "${workflowRunId}"`));
+			assert.ok(text(view).includes(`action: "steer", input: { id: "${childRunId}"`));
+			assert.doesNotMatch(text(view), new RegExp(`action: "steer", input: \\{ id: "${workflowRunId}"`));
 			const direct = await executor.execute("steer-child", { action: "steer", id: childRunId, mode: "follow_up", message: "Continue carefully." }, new AbortController().signal, undefined, ctx());
 			assert.equal(direct.isError, undefined);
 			assert.equal(direct.details.steering?.deliveryStatus, "queued");

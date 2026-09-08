@@ -126,6 +126,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./control-channel": "./src/api/control-channel.ts",
 		"./intercom-bridge": "./src/api/intercom-bridge.ts",
 		"./child-tool-plan": "./src/api/child-tool-plan.ts",
+		"./command-catalog": "./src/api/command-catalog.ts",
 		"./shared-types": "./src/api/shared-types.ts",
 		"./project-panes": "./src/api/project-panes.ts",
 	});

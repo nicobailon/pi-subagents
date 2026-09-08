@@ -405,7 +405,7 @@ function firstRepositoryRoot(manifest: ParallelHandoffManifest): string | undefi
 
 function formatCleanupCommand(manifestPath: string, manifest: ParallelHandoffManifest): string | undefined {
 	const repoRoot = firstRepositoryRoot(manifest);
-	return repoRoot ? `subagent({ action: "worktree.cleanup", repo: ${JSON.stringify(repoRoot)}, handoffPath: ${JSON.stringify(manifestPath)}, mode: "plan" })` : undefined;
+	return repoRoot ? `subagent({ action: "worktree.cleanup", input: { repo: ${JSON.stringify(repoRoot)}, handoffPath: ${JSON.stringify(manifestPath)}, mode: "plan" } })` : undefined;
 }
 
 export function formatStoredParallelHandoffCleanup(manifestPath: string, manifest?: ParallelHandoffManifest): string {
@@ -417,7 +417,9 @@ export function formatStoredParallelHandoffCleanup(manifestPath: string, manifes
 			stored = undefined;
 		}
 	}
-	if (!stored) return ["Cleanup eligibility: unknown", "Reason: lane manifest is missing or invalid; removal is not safe.", `Plan command: subagent({ action: "worktree.cleanup", handoffPath: ${JSON.stringify(manifestPath)}, mode: "plan" })`].join("\n");
+	if (!stored) {
+		return ["Cleanup eligibility: unknown", "Reason: lane manifest is missing or invalid; removal is not safe.", `Plan command: subagent({ action: "worktree.cleanup", input: { handoffPath: ${JSON.stringify(manifestPath)}, mode: "plan" } })`].join("\n");
+	}
 	const eligibility = trustedStoredCleanupEligibility(stored);
 	const lines = [`Cleanup eligibility: ${eligibility.state}`];
 	if (eligibility.state === "terminal-blocked") lines.push(`Reason: ${eligibility.reason}`);

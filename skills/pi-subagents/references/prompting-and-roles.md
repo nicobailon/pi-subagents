@@ -20,7 +20,7 @@ Parent extensions may register a session-scoped, out-of-band ceiling through `pi
 
 ## Tool vs Slash Commands
 
-Agents use the `subagent(...)` tool for execution, management, status, and control. Direct `{ agent, task }` execution is enough for one bounded child task; use `workflowScript` when the parent needs JavaScript control flow or data-dependent branching, keyed, parallel, sequential, retry, retained-resume, aggregate, or explicit staged-lane behavior (`runs.lanes`). Humans often use the slash-command layer instead:
+Agents use the `subagent(...)` tool for execution, management, status, and control. Direct `{ action: "execute", input: { agent, task } }` execution is enough for one bounded child task; use `workflowScript` when the parent needs JavaScript control flow or data-dependent branching, keyed, parallel, sequential, retry, retained-resume, aggregate, or explicit staged-lane behavior (`runs.lanes`). Humans often use the slash-command layer instead:
 
 - `/run` — launch a single agent
 - `workflowScript` — the sole public surface for sequence, parallelism, branching, retries, and aggregation
@@ -80,14 +80,17 @@ Example shape:
 
 ```typescript
 subagent({
-  workflowScript: `
-    const results = await runs.all([
-      { key: "deslop", agent: "reviewer", task: "Apply the available 'deslop' skill to review the current diff for concrete cleanup findings only. Do not modify files.", skill: "deslop" },
-      { key: "accessibility", agent: "reviewer", task: "Apply the available 'accessibility' skill to review the UI changes for concrete issues only. Do not modify files.", skill: "accessibility" }
-    ]);
-    return results.map(result => result.output);
-  `,
-  context: "fresh"
+  action: "execute",
+  input: {
+    workflowScript: `
+      const results = await runs.all([
+        { key: "deslop", agent: "reviewer", task: "Apply the available 'deslop' skill to review the current diff for concrete cleanup findings only. Do not modify files.", skill: "deslop" },
+        { key: "accessibility", agent: "reviewer", task: "Apply the available 'accessibility' skill to review the UI changes for concrete issues only. Do not modify files.", skill: "accessibility" }
+      ]);
+      return results.map(result => result.output);
+    `,
+    context: "fresh"
+  }
 })
 ```
 
@@ -133,36 +136,39 @@ Example shape:
 
 ```typescript
 subagent({
-  async: true,
-  context: "fresh",
-  workflowScript: `
-    // Stage 1: parallel read-only planning fanout (stable keys, one per issue cluster)
-    const plans = await runs.all([
-      { key: "deploy-plan", agent: "reviewer", phase: "Planning", label: "Deploy docs", task: "Plan fixes for deploy docs/workflow. Inspect the current diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/deploy.md", outputMode: "file-only" },
-      { key: "scheduler-plan", agent: "reviewer", phase: "Planning", label: "Scheduler contract", task: "Plan fixes for scheduler contract. Inspect the current diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/scheduler.md", outputMode: "file-only" },
-      { key: "sandbox-plan", agent: "reviewer", phase: "Planning", label: "Sandbox/security", task: "Plan fixes for sandbox/security. Inspect the current diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/sandbox.md", outputMode: "file-only" }
-    ]);
+  action: "execute",
+  input: {
+    async: true,
+    context: "fresh",
+    workflowScript: `
+      // Stage 1: parallel read-only planning fanout (stable keys, one per issue cluster)
+      const plans = await runs.all([
+        { key: "deploy-plan", agent: "reviewer", phase: "Planning", label: "Deploy docs", task: "Plan fixes for deploy docs/workflow. Inspect the current diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/deploy.md", outputMode: "file-only" },
+        { key: "scheduler-plan", agent: "reviewer", phase: "Planning", label: "Scheduler contract", task: "Plan fixes for scheduler contract. Inspect the current diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/scheduler.md", outputMode: "file-only" },
+        { key: "sandbox-plan", agent: "reviewer", phase: "Planning", label: "Sandbox/security", task: "Plan fixes for sandbox/security. Inspect the current diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/sandbox.md", outputMode: "file-only" }
+      ]);
 
-    // Stage 2: single writer — the only child allowed to edit the active worktree.
-    // Under outputMode "file-only" the awaited .output is the saved-output
-    // reference, so pass those managed artifact references to the writer.
-    const worker = await runs.run("apply-fixes", {
-      agent: "worker",
-      phase: "Implementation",
-      label: "Apply accepted fixes",
-      task: "Apply only the accepted fixes from these planning summaries. You are the sole writer for the active worktree. Run focused validation and report changed files, commands, failures, and remaining issues.\\n\\nDeploy plan: " + plans[0].output + "\\n\\nScheduler plan: " + plans[1].output + "\\n\\nSandbox plan: " + plans[2].output,
-      output: "worker/fixes.md",
-      outputMode: "file-only"
-    });
+      // Stage 2: single writer — the only child allowed to edit the active worktree.
+      // Under outputMode "file-only" the awaited .output is the saved-output
+      // reference, so pass those managed artifact references to the writer.
+      const worker = await runs.run("apply-fixes", {
+        agent: "worker",
+        phase: "Implementation",
+        label: "Apply accepted fixes",
+        task: "Apply only the accepted fixes from these planning summaries. You are the sole writer for the active worktree. Run focused validation and report changed files, commands, failures, and remaining issues.\\n\\nDeploy plan: " + plans[0].output + "\\n\\nScheduler plan: " + plans[1].output + "\\n\\nSandbox plan: " + plans[2].output,
+        output: "worker/fixes.md",
+        outputMode: "file-only"
+      });
 
-    // Stage 3: parallel read-only validation fanout
-    const validations = await runs.all([
-      { key: "validate-deploy-scheduler", agent: "reviewer", phase: "Validation", label: "Deploy/scheduler validation", task: "Validate the post-worker diff for deploy and scheduler fixes. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/deploy-scheduler.md", outputMode: "file-only" },
-      { key: "validate-sandbox", agent: "reviewer", phase: "Validation", label: "Sandbox validation", task: "Validate the post-worker diff for sandbox/security fixes. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/sandbox.md", outputMode: "file-only" }
-    ]);
+      // Stage 3: parallel read-only validation fanout
+      const validations = await runs.all([
+        { key: "validate-deploy-scheduler", agent: "reviewer", phase: "Validation", label: "Deploy/scheduler validation", task: "Validate the post-worker diff for deploy and scheduler fixes. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/deploy-scheduler.md", outputMode: "file-only" },
+        { key: "validate-sandbox", agent: "reviewer", phase: "Validation", label: "Sandbox validation", task: "Validate the post-worker diff for sandbox/security fixes. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/sandbox.md", outputMode: "file-only" }
+      ]);
 
-    return { worker: worker.output, validations: validations.map(v => v.output) };
-  `
+      return { worker: worker.output, validations: validations.map(v => v.output) };
+    `
+  }
 })
 ```
 
@@ -292,4 +298,4 @@ override can opt one builtin back in or replace custom-agent frontmatter thinkin
 
 Set `subagents.defaultExtensions` to give agents without an `extensions` field a shared child extension allowlist. Omit it to preserve ambient extension discovery, set it to `[]` to disable ambient extensions by default, or use `agentOverrides.<name>.extensions` for one agent. A matching override replaces custom-agent frontmatter for that field.
 
-Tool description modes live in `~/.pi/agent/extensions/subagent/config.json`, not `subagents` settings. The default uses split prompt metadata: a short tool description plus active `promptSnippet` and `promptGuidelines`. Set `toolDescriptionMode` to `full` or `compact` to force one description string, or `custom` to read `subagent-tool-description.md` from the project config dir or agent dir; invalid custom files fall back to full mode and the safety guidance is still appended.
+The `subagent` tool always uses the compact `{ action, input }` catalog. Use `{ action: "help" }` for core guidance or `{ action: "help", input: { topic: "<action>" } }` for one operation's accepted fields. The removed `toolDescriptionMode` config key now fails at startup and custom description files are no longer loaded.

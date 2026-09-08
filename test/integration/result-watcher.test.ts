@@ -1392,7 +1392,7 @@ describe("result watcher", () => {
 			assert.equal(eventData.status, "failed");
 			assert.equal(eventData.parallelHandoff?.path, "/tmp/async-1/handoff.json");
 			const message = String(eventData.message ?? "");
-			assert.match(message, /Revive child: subagent\(\{ action: "resume", id: "async-1", index: 0, message: "\.\.\." \}\)/);
+			assert.match(message, /Revive child: subagent\(\{ action: "resume", input: \{ id: "async-1", index: 0, message: "\.\.\." \} \}\)/);
 			assert.ok(message.includes(`Session: ${firstSession}`));
 			assert.match(message, /Parallel handoff: \/tmp\/async-1\/handoff\.json/);
 			assert.match(message, /Outputs: 2 present \(semantic adequacy unassessed\)/);

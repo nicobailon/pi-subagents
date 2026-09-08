@@ -189,7 +189,7 @@ describe("nested control routing", () => {
 			assert.match(text(result), /^Status target: run root-control\nSpawn budget:/);
 			assert.match(text(result), /Run: root-control/);
 			assert.match(text(result), /↳ worker \[nested-foreground\] running/);
-			assert.match(text(result), /Status: subagent\(\{ action: "status", id: "nested-foreground" \}\)/);
+			assert.match(text(result), /Status: subagent\(\{ action: "status", input: \{ id: "nested-foreground" \} \}\)/);
 
 			const transcript = await createExecutor(state).execute("transcript", { action: "status", id: "root-control", index: 0, view: "transcript" }, new AbortController().signal, undefined, ctx(root));
 			assert.equal(transcript.isError, undefined);
@@ -500,6 +500,7 @@ describe("nested control routing", () => {
 		const childRuntime = fanoutChildRuntime(route, "root-poll-error");
 		const pi = {
 			events: { emit() {}, on() { return () => {}; } },
+			on() {},
 			registerTool() {},
 			getSessionName() { return "child"; },
 		} as any;
@@ -536,6 +537,7 @@ describe("nested control routing", () => {
 		const childRuntime = fanoutChildRuntime(route, "root-result-write-fails");
 		const pi = {
 			events: { emit() {}, on() { return () => {}; } },
+			on() {},
 			registerTool() {},
 			getSessionName() { return "child"; },
 		} as any;
@@ -586,6 +588,7 @@ describe("nested control routing", () => {
 		try {
 			const makePi = () => ({
 				events: { emit() {}, on() { return () => {}; } },
+				on() {},
 				registerTool() { registrations.push("subagent"); },
 				getSessionName() { return "child"; },
 			}) as any;
@@ -627,6 +630,7 @@ describe("nested control routing", () => {
 		const childRuntime = fanoutChildRuntime(route, "root-ownerless");
 		const pi = {
 			events: { emit() {}, on() { return () => {}; } },
+			on() {},
 			registerTool() {},
 			getSessionName() { return "child"; },
 		} as any;

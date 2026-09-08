@@ -31,7 +31,7 @@ and their resolved `tools` allow `subagent`.
 
 | Need | Use |
 | --- | --- |
-| One bounded task for one child | direct `{ agent, task }` |
+| One bounded task for one child | `subagent({ action: "execute", input: { agent, task } })` |
 | JavaScript control flow or data-dependent branching; sequence, fanout, retry, rolling fanout, or aggregation | `workflowScript` with `runs.run(...)` / `runs.all(...)` |
 | A broad plan split into visible narrow stages per lane | `workflowScript` with `runs.lanes([{ key, stages: [...] }])` |
 | Independent worktree or repository lanes | `references/multi-lane-orchestration.md` |
@@ -58,7 +58,7 @@ machine `key` independent (for example, `issue2011-writer` with
 items, not lane objects. Use stage-appropriate labels for reviews and retained-child
 follow-ups too (for example, `Review workflow steering`). Generate labels in
 the orchestrator while composing the launch—no extra model call, runtime
-generator, or schema change. Native direct `{ agent, task }` calls have no
+generator, or schema change. Native direct `{ action: "execute", input: { agent, task } }` calls have no
 top-level `label` parameter; do not invent one or wrap a tiny single task in
 a workflow just to label it.
 

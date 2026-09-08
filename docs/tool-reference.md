@@ -1,28 +1,28 @@
 # Tool reference
 
-Parameters and actions for the `subagent` tool. These are what the LLM passes when it calls the tool; most users ask naturally or use slash commands instead.
+Parameters and actions for the `subagent` tool. Every callable example uses `{ action, input }`; longer workflow blocks show the contents of `input` for `action: "execute"`. Most users ask naturally or use slash commands instead.
 
 ## Execution examples
 
-Chaining is code-driven through `workflowScript`. Use `await runs.run(...)` for sequential steps and `await runs.all([{ key, agent, task }, ...])` for ordinary parallel fanout. `runs.all` resolves to an ordered array, not a key map, so use indexes, destructuring, or `.map(...)`, not `results.<key>`. Do not read `.output` from an unawaited `runs.run` launch. Stored `runs.run` promises are only for the advanced rolling fanout pattern under [Workflow steering](#workflow-steering), where every promise is later observed with direct `await`, `Promise.race`, or `Promise.all`. Legacy top-level `chain`, `tasks`, and `parallel` inputs are not supported. Helper functions must be plain functions or explicit Promise chains. Nested `async function` helpers, async arrows, and async methods are rejected so child-launch tracking stays portable across Node and Bun. For permission-sensitive host calls, use an extension-owned named resource such as `{ workflow: "run-ci", args: { command: "npm test" } }`; raw public `workflowScript`/`workflowScriptPath` inputs have unknown resource provenance and cannot call `runs.host`. A resolved resource may internally use `runs.host(key, { kind: "command", command, timeoutMs, output?, role?, provider? })` within its authority ceiling; there is no per-step `cwd`, and commands and relative output paths use the workflow `cwd`. Set `cwd` on the outer `subagent({...})` request instead, or put a trusted directory change in the command (for example, `cd /path/to/worktree && npm test`).
+Chaining is code-driven through `workflowScript`. Use `await runs.run(...)` for sequential steps and `await runs.all([{ key, agent, task }, ...])` for ordinary parallel fanout. `runs.all` resolves to an ordered array, not a key map, so use indexes, destructuring, or `.map(...)`, not `results.<key>`. Do not read `.output` from an unawaited `runs.run` launch. Stored `runs.run` promises are only for the advanced rolling fanout pattern under [Workflow steering](#workflow-steering), where every promise is later observed with direct `await`, `Promise.race`, or `Promise.all`. Legacy top-level `chain`, `tasks`, and `parallel` inputs are not supported. Helper functions must be plain functions or explicit Promise chains. Nested `async function` helpers, async arrows, and async methods are rejected so child-launch tracking stays portable across Node and Bun. For permission-sensitive host calls, use an extension-owned named resource such as `{ action: "execute", input: { workflow: "run-ci", args: { command: "npm test" } } }`; raw public `workflowScript`/`workflowScriptPath` inputs have unknown resource provenance and cannot call `runs.host`. A resolved resource may internally use `runs.host(key, { kind: "command", command, timeoutMs, output?, role?, provider? })` within its authority ceiling; there is no per-step `cwd`, and commands and relative output paths use the workflow `cwd`. Set `cwd` on the outer `subagent({ action: "execute", input: { ... }})` request instead, or put a trusted directory change in the command (for example, `cd /path/to/worktree && npm test`).
 
-Use `{ action: "validate", workflowScript }` to check statically decidable syntax and structure without launching children. It returns `{ ok, errors }` and fails the tool call when `ok` is false. Literal child `baseRef` values are checked against the runtime ref policy. Dynamic keys and values remain subject to runtime checks; static validation does not guess them.
+Use `{ action: "validate", input: { workflowScript } }` to check statically decidable syntax and structure without launching children. It returns `{ ok, errors }` and fails the tool call when `ok` is false. Literal child `baseRef` values are checked against the runtime ref policy. Dynamic keys and values remain subject to runtime checks; static validation does not guess them.
 
 Use `workflowScriptPath` instead of `workflowScript` to load the same JavaScript statement body from a file. The two fields are mutually exclusive. Relative paths resolve against the request `cwd`, and absolute paths pass through. The host reads the file before validation, scheduling, or sandbox execution. The workflow sandbox still has no filesystem access. Missing, unreadable, and empty files fail as file input errors.
 
 For permission-extension interoperability, use one of the package-owned named resources with bounded `args` instead of caller-supplied workflow text:
 
 ```js
-{ workflow: "review", args: { task: "Review the auth flow" } }
-{ workflow: "run-ci", args: { command: "npm test" } }
+{ action: "execute", input: { workflow: "review", args: { task: "Review the auth flow" } } }
+{ action: "execute", input: { workflow: "run-ci", args: { command: "npm test" } } }
 ```
 
 The host resolves the script and authority internally and records bounded provenance in workflow details and receipts. Named resources cannot be combined with `agent`, `task`, `workflowScript`, or `workflowScriptPath`; user/project resource registries are not part of this first slice.
 
 ```js
-{ workflowScriptPath: "workflows/review.js", cwd: "/path/to/project" }
-{ action: "validate", workflowScriptPath: "workflows/review.js" }
-{ action: "schedule.create", every: "6h", workflowScriptPath: "workflows/review.js" }
+{ action: "execute", input: { workflowScriptPath: "workflows/review.js", cwd: "/path/to/project" } }
+{ action: "validate", input: { workflowScriptPath: "workflows/review.js" } }
+{ action: "schedule.create", input: { every: "6h", workflowScriptPath: "workflows/review.js" } }
 ```
 
 ```js
@@ -188,7 +188,7 @@ Each workflow key identifies one result lane. Use a new stable workflow key for 
 
 Inside `workflowScript`, `await runs.run(key, { resume, task })` waits for the revived child to finish and returns its completed output and new `runId`. Each resume can return a new retained run id, so loops must continue from the latest returned `runId`. Top-level `{ action: "resume" }` remains detached and returns a background-run receipt.
 
-For a simple implementation challenge outside a workflow script, send the challenge through `subagent({ action: "resume", id: "<retained-writer-run>", message: "Reconsider the implementation and make any better current-scope change." })` only when `children.list` reports that retained writer as `resumable`. If no retained writer is resumable, start a same-role fallback challenge and record why it is a fallback. Use workflow `runs.run({ resume })` only when the script must await the revived writer output before the next step. Do not use `steer` as the sole challenge action for a completed retained child; `steer` with `mode: "follow_up"` only queues text for the next `resume`.
+For a simple implementation challenge outside a workflow script, send the challenge through `subagent({ action: "resume", input: { id: "<retained-writer-run>", message: "Reconsider the implementation and make any better current-scope change." }})` only when `children.list` reports that retained writer as `resumable`. If no retained writer is resumable, start a same-role fallback challenge and record why it is a fallback. Use workflow `runs.run({ resume })` only when the script must await the revived writer output before the next step. Do not use `steer` as the sole challenge action for a completed retained child; `steer` with `mode: "follow_up"` only queues text for the next `resume`.
 
 `resume` and `agent` are mutually exclusive. The revived child keeps its stored agent, model, and tool contract. `gate` is rejected on retained resume items because resume uses the retained child contract.
 
@@ -196,20 +196,20 @@ For a simple implementation challenge outside a workflow script, send the challe
 
 ### Guide
 
-`{ action: "guide" }` reads the packaged `README.md` from the installed version. Pass `topic` to read its packaged `docs/<topic>.md` file instead. Valid topics are `overview`, `workflows`, `agents`, `missions`, `observability`, `tool-reference`, `configuration`, `models`, `watchdog`, and `extension-api`. Unknown topics list the valid values and do not change files. Use `/subagents-guide [topic]` for the slash equivalent.
+`{ action: "guide" }` reads the packaged `README.md` from the installed version. Pass `topic` inside `input` to read its packaged `docs/<topic>.md` file instead. Valid topics are `overview`, `workflows`, `agents`, `missions`, `observability`, `tool-reference`, `configuration`, `models`, `watchdog`, and `extension-api`. Unknown topics list the valid values and do not change files. Use `/subagents-guide [topic]` for the slash equivalent.
 
 Agent definitions are not loaded into context by default. Management actions let the LLM discover, inspect, create, update, and delete agents at runtime. An unknown action returns safe next steps (`status` and `list`) and may suggest a close non-destructive action. Destructive actions are only named for a near-complete one-character typo, and suggestions never execute an action.
 
 ```ts
 { action: "list" }
-{ action: "list", agentScope: "project" }
-{ action: "list", capabilities: true }
-{ action: "get", agent: "scout" }
+{ action: "list", input: { agentScope: "project" } }
+{ action: "list", input: { capabilities: true } }
+{ action: "get", input: { agent: "scout" } }
 { action: "models" }
-{ action: "models", agent: "reviewer" }
-{ action: "get", agent: "code-analysis.scout" }
+{ action: "models", input: { agent: "reviewer" } }
+{ action: "get", input: { agent: "code-analysis.scout" } }
 
-{ action: "create", config: {
+{ action: "create", input: { config: {
   name: "Code Scout",
   package: "code-analysis",
   description: "Scans codebases for patterns and issues",
@@ -230,19 +230,18 @@ Agent definitions are not loaded into context by default. Management actions let
   output: "context.md",
   reads: "shared-context.md",
   progress: true
-}}
+} } }
 
+{ action: "update", input: { agent: "code-analysis.scout", config: { model: "openai/gpt-4o" } } }
+{ action: "update", input: { agent: "code-analysis.scout", config: { acceptance: "" } } } // clear the frontmatter default
+{ action: "update", input: { agent: "code-analysis.scout", config: { acceptanceRole: false } } } // restore inferred name fallback
+{ action: "delete", input: { agent: "scout" } }
 
-{ action: "update", agent: "code-analysis.scout", config: { model: "openai/gpt-4o" } }
-{ action: "update", agent: "code-analysis.scout", config: { acceptance: "" } } // clear the frontmatter default
-{ action: "update", agent: "code-analysis.scout", config: { acceptanceRole: false } } // restore inferred name fallback
-{ action: "delete", agent: "scout" }
-
-{ action: "eject", agent: "reviewer" }
-{ action: "eject", agent: "reviewer", agentScope: "project" }
-{ action: "disable", agent: "reviewer" }
-{ action: "enable", agent: "reviewer", agentScope: "project" }
-{ action: "reset", agent: "reviewer" }
+{ action: "eject", input: { agent: "reviewer" } }
+{ action: "eject", input: { agent: "reviewer", agentScope: "project" } }
+{ action: "disable", input: { agent: "reviewer" } }
+{ action: "enable", input: { agent: "reviewer", agentScope: "project" } }
+{ action: "reset", input: { agent: "reviewer" } }
 ```
 
 Rules:
@@ -267,29 +266,31 @@ Lane evidence actions update an existing parallel handoff manifest at an explici
 ```ts
 subagent({
   action: "lane.recordMerge",
-  laneId: "<manifest-run-id>",
-  handoffPath: "/path/to/handoff.json",
-  merge: {
-    prNumber: 123,
-    reviewedHead: "<40-character-sha>",
-    mergeCommit: "<40-character-sha>",
-    treeEquivalent: true,
-    postMergeChecks: "recorded",
-    attestedBy: "operator",
-    attestedAt: "2026-08-27T16:23:00.000Z"
-  }
-})
+  input: {
+    laneId: "<manifest-run-id>",
+    handoffPath: "/path/to/handoff.json",
+    merge: {
+      prNumber: 123,
+      reviewedHead: "<40-character-sha>",
+      mergeCommit: "<40-character-sha>",
+      treeEquivalent: true,
+      postMergeChecks: "recorded",
+      attestedBy: "operator",
+      attestedAt: "2026-08-27T16:23:00.000Z"
+    }
+  }})
 subagent({
   action: "lane.recordSupersession",
-  laneId: "<manifest-run-id>",
-  handoffPath: "/path/to/handoff.json",
-  supersession: {
-    supersededBy: "<replacement-lane-id>",
-    attestedBy: "operator",
-    attestedAt: "2026-08-27T16:23:00.000Z"
-  }
-})
-subagent({ action: "lane.status", laneId: "<manifest-run-id>", handoffPath: "/path/to/handoff.json" })
+  input: {
+    laneId: "<manifest-run-id>",
+    handoffPath: "/path/to/handoff.json",
+    supersession: {
+      supersededBy: "<replacement-lane-id>",
+      attestedBy: "operator",
+      attestedAt: "2026-08-27T16:23:00.000Z"
+    }
+  }})
+subagent({ action: "lane.status", input: { laneId: "<manifest-run-id>", handoffPath: "/path/to/handoff.json" }})
 ```
 
 The manifest stores one of these fail-closed eligibility states: `active` (an owning child is still running), `terminal-eligible` (complete merge evidence and recorded post-merge checks), `terminal-blocked` with a reason, `superseded-eligible` (an explicit replacement attestation), or `unknown` (missing or malformed evidence/manifest). Each attestation stores a digest of the manifest facts it covered; later group, worktree, or patch changes downgrade that evidence to `terminal-blocked` until it is recorded again. A terminal update recomputes a previously stored `active` state from the current child statuses and evidence. Conflicting reviewed heads and mismatched lane ids are rejected as stale. Existing workflow receipts remain immutable.
@@ -306,19 +307,19 @@ For backlog lanes and other subagent-governed workflows, external/foreground/CLI
 
 ```ts
 subagent({ action: "status" })
-subagent({ action: "status", view: "fleet" })
-subagent({ action: "status", id: "<run-id>" })
-subagent({ action: "status", id: "<run-id>", view: "transcript", index: 0, lines: 80 })
-subagent({ action: "status", id: "<nested-run-id>" })
-subagent({ action: "interrupt", id: "<run-id>" })
-subagent({ action: "interrupt", id: "<nested-run-id>" })
-subagent({ action: "stop", id: "<run-id>" })
-subagent({ action: "resume", id: "<run-id>", message: "follow-up question after it pauses or finishes" })
-subagent({ action: "resume", id: "<run-id>", index: 1, message: "follow-up for child 2" })
-subagent({ action: "resume", id: "<nested-run-id>", message: "follow-up for a nested child" })
-subagent({ action: "steer", id: "<run-id>", message: "guidance for the running child" })
-subagent({ action: "steer", id: "<run-id>", mode: "follow_up", message: "check this after the current turn" })
-subagent({ action: "steer", id: "<run-id>", index: 1, mode: "auto", message: "guidance for child 2" })
+subagent({ action: "status", input: { view: "fleet" }})
+subagent({ action: "status", input: { id: "<run-id>" }})
+subagent({ action: "status", input: { id: "<run-id>", view: "transcript", index: 0, lines: 80 }})
+subagent({ action: "status", input: { id: "<nested-run-id>" }})
+subagent({ action: "interrupt", input: { id: "<run-id>" }})
+subagent({ action: "interrupt", input: { id: "<nested-run-id>" }})
+subagent({ action: "stop", input: { id: "<run-id>" }})
+subagent({ action: "resume", input: { id: "<run-id>", message: "follow-up question after it pauses or finishes" }})
+subagent({ action: "resume", input: { id: "<run-id>", index: 1, message: "follow-up for child 2" }})
+subagent({ action: "resume", input: { id: "<nested-run-id>", message: "follow-up for a nested child" }})
+subagent({ action: "steer", input: { id: "<run-id>", message: "guidance for the running child" }})
+subagent({ action: "steer", input: { id: "<run-id>", mode: "follow_up", message: "check this after the current turn" }})
+subagent({ action: "steer", input: { id: "<run-id>", index: 1, mode: "auto", message: "guidance for child 2" }})
 subagent({ action: "doctor" })
 ```
 
@@ -350,8 +351,8 @@ subagent({ action: "doctor" })
 - Foreground and nested targets are rejected.
 - Direct id calls execute immediately.
 - `/subagents-stop` without an id opens a selector with confirmation when a TUI is available. Use `↑`/`↓` or `j`/`k` to move through the selector.
-- In non-TUI contexts the slash command prints exact `subagent({ action: "stop", id })` and `/subagents-stop <id>` commands.
-- Pass a child id to stop one child of a multi-child async run or workflow while the rest continue: `/subagents-stop <run-id> <child-id>` (equivalent to `subagent({ action: "stop", id, childId })`). Child ids come from status output, the async status snapshot, or `/subagents-inspect-rpc` replies. Only pending or running children are stoppable; the request is rejected for anything else instead of widening to a run-level stop.
+- In non-TUI contexts the slash command prints exact `subagent({ action: "stop", input: { id }})` and `/subagents-stop <id>` commands.
+- Pass a child id to stop one child of a multi-child async run or workflow while the rest continue: `/subagents-stop <run-id> <child-id>` (equivalent to `subagent({ action: "stop", input: { id, childId }})`). Child ids come from status output, the async status snapshot, or `/subagents-inspect-rpc` replies. Only pending or running children are stoppable; the request is rejected for anything else instead of widening to a run-level stop.
 - Inactive schedules can appear in the selector, but they are labeled as schedules and route through `schedule.pause`, not `stop`.
 
 ### steer
@@ -438,9 +439,9 @@ Acceptance fences are removed from normal output artifacts, while the raw child 
 Herdr project panes are peer Pi sessions opened by this Pi session:
 
 ```ts
-subagent({ action: "project.open", cwd: "/path/to/repo", message: "Start in this project." })
-subagent({ action: "project.status", cwd: "/path/to/repo" })
-subagent({ action: "project.close", cwd: "/path/to/repo" })
+subagent({ action: "project.open", input: { cwd: "/path/to/repo", message: "Start in this project." }})
+subagent({ action: "project.status", input: { cwd: "/path/to/repo" }})
+subagent({ action: "project.close", input: { cwd: "/path/to/repo" }})
 ```
 
 The saved pane binding is pane-level only. The parent can refresh status, focus the saved pane when Herdr reports a tab or workspace id, or close it after Herdr verifies ownership and `agent_status: "idle"`. It cannot inspect, steer, or stop subagents inside that peer session. Stale or opaque Herdr metadata stays unknown and fails closed.
@@ -459,7 +460,7 @@ Foreground and background children keep running through their normal native Pi o
 
 The observer supports macOS and Linux and is disabled on Windows. It requires executable `orca` on `PATH` (or `PI_SUBAGENT_ORCA_BINARY`) and a running Orca runtime that recognizes the cwd. Availability and tab creation are best-effort: failures never fail, stop, or delay the subagent. When possible, the observer writes a passive manifest under `<worktree>/.pi/subagents/views/orca/`; the manifest is display metadata only, not a lifecycle or control source. Set `orcaProgressTabs.enabled` to `false` to guarantee that no Orca command or tab is created.
 
-Agent profile `runner.type` supports native Pi (the default), `external-cli`, and `external-job`. Orca is intentionally not a profile runner and does not own subagent execution, completion, cancellation, artifacts, or result delivery. External-job providers can optionally expose `followUp(input)` so a completed provider job can continue its parent conversation through `subagent({ action: "resume", id: "<run>", message: "..." })`.
+Agent profile `runner.type` supports native Pi (the default), `external-cli`, and `external-job`. Orca is intentionally not a profile runner and does not own subagent execution, completion, cancellation, artifacts, or result delivery. External-job providers can optionally expose `followUp(input)` so a completed provider job can continue its parent conversation through `subagent({ action: "resume", input: { id: "<run>", message: "..." }})`.
 
 ## External CLI agent profiles
 

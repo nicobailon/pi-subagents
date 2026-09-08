@@ -1,0 +1,173 @@
+{
+  "version": 2,
+  "suite": "capability",
+  "status": "Self-authored capability suite (previously labeled held-out). These scenarios exercise management, discovery, and execution operations for regression coverage; held-out generalization claims rest only on held-out-suite.json, which implements the independently authored black-box design.",
+  "discovery": {
+    "agents": [
+      {
+        "name": "scout",
+        "executable": true,
+        "disabled": false,
+        "access": "read-only",
+        "runner": "native"
+      },
+      {
+        "name": "worker",
+        "executable": true,
+        "disabled": false,
+        "access": "write",
+        "runner": "native"
+      },
+      {
+        "name": "reviewer",
+        "executable": true,
+        "disabled": false,
+        "access": "read-only",
+        "runner": "native"
+      }
+    ]
+  },
+  "fixtures": [
+    {
+      "id": "capability-agent-access-check",
+      "prompt": "The worker agent might be read-only in this project. Verify its actual access with the agent details lookup before delegating anything. If it can write, delegate the billing input-validation edit to it and report the child's result; otherwise tell me it cannot write.",
+      "childResponses": [
+        {
+          "when": {
+            "agent": "worker",
+            "taskMatches": "billing|validation"
+          },
+          "output": "Billing input validation implemented and covered by tests."
+        }
+      ]
+    },
+    {
+      "id": "capability-model-selection",
+      "prompt": "Delegate a quick read-only summary of the incident report to a scout. Check which models are available for children first and pick the cheapest one for that child, then report the child's summary.",
+      "models": [
+        {
+          "selector": "provider/swift-mini",
+          "label": "swift-mini",
+          "costTier": "low"
+        },
+        {
+          "selector": "provider/deep-max",
+          "label": "deep-max",
+          "costTier": "high"
+        }
+      ],
+      "childResponses": [
+        {
+          "when": {
+            "agent": "scout"
+          },
+          "output": "Incident summary: a cache purge storm caused the outage; the retry backoff change contained it."
+        }
+      ]
+    },
+    {
+      "id": "capability-validate-then-run",
+      "prompt": "Here is a workflow script that should run two read-only scouts in parallel and return both outputs: return await runs.all([{key:'inc',agent:'scout',task:'Summarize the incident report'},{key:'post',agent:'scout',task:'Summarize the postmortem'}]). Validate the script first without launching anything; if it is valid, run exactly that script and report both outputs.",
+      "childResponses": [
+        {
+          "when": {
+            "taskMatches": "incident"
+          },
+          "output": "Incident report: the outage lasted 12 minutes and came from a bad config rollout."
+        },
+        {
+          "when": {
+            "taskMatches": "postmortem"
+          },
+          "output": "Postmortem: add a config canary and a rollback drill; no data was lost."
+        }
+      ]
+    },
+    {
+      "id": "capability-status-recovery",
+      "prompt": "The earlier scout run 'run-abc123' already finished, but its answer scrolled out of view. Recover what that run reported by inspecting its stored status and tell me. Do not launch a new child.",
+      "statusResults": {
+        "run-abc123": {
+          "runId": "run-abc123",
+          "status": "complete",
+          "agent": "scout",
+          "output": "The payment retry cap is two attempts after the initial charge.",
+          "transcript": [
+            "scout: Inspected the retry configuration.",
+            "scout: The payment retry cap is two attempts after the initial charge."
+          ]
+        }
+      },
+      "prohibitedKinds": ["launch"]
+    },
+    {
+      "id": "capability-steer-live-run",
+      "prompt": "A retained worker child 'run-live-77' is still running its task. It must also cover the timeout path. Send it that correction over the live guidance channel and report the delivery outcome. Do not start another child and do not stop it.",
+      "steerResults": {
+        "run-live-77": {
+          "runId": "run-live-77",
+          "state": "delivered",
+          "deliveryStatus": "delivered"
+        }
+      },
+      "prohibitedKinds": ["launch", "stop"]
+    },
+    {
+      "id": "capability-stop-stray-run",
+      "prompt": "Background run 'run-stray-42' is burning budget on the wrong task. Stop that run and confirm what you did. Do not steer it and do not start a replacement.",
+      "stopResults": {
+        "run-stray-42": {
+          "runId": "run-stray-42",
+          "stopped": true
+        }
+      },
+      "prohibitedKinds": ["launch", "steer", "resume"]
+    },
+    {
+      "id": "capability-mission-attach",
+      "prompt": "Attach the finished run 'run-9f2' to mission 'm-17', then show that mission and tell me how many runs it now lists. Do not launch any children.",
+      "missionRows": [
+        {
+          "missionId": "m-17",
+          "status": "active",
+          "runs": ["run-8c1"]
+        }
+      ],
+      "prohibitedKinds": ["launch"]
+    },
+    {
+      "id": "capability-schedule-one-shot",
+      "prompt": "Schedule the following workflow script to run once at 2031-04-07T09:30:00-04:00, and confirm the schedule back to me. Do not run it now. Script: return await runs.run(\"chk\", {agent:\"scout\", task:\"Run the readiness checks\"})",
+      "scheduleCreateResult": {
+        "id": "sched-31",
+        "nextRunAt": "2031-04-07T09:30:00-04:00",
+        "status": "scheduled"
+      },
+      "childResponses": [
+        {
+          "when": {
+            "agent": "scout"
+          },
+          "output": "Readiness checks passed."
+        }
+      ],
+      "prohibitedKinds": ["launch", "schedule-run", "workflow-script"]
+    },
+    {
+      "id": "capability-workflow-script-file",
+      "prompt": "Run the review workflow stored at plans/review.js in the working directory using the script-file form, then report the reviewer's verdict. Do not inline the script yourself.",
+      "workflowScriptFiles": {
+        "plans/review.js": "return await runs.run(\"rev\", {agent: \"reviewer\", task: \"Review the payment retry change\"});"
+      },
+      "childResponses": [
+        {
+          "when": {
+            "agent": "reviewer"
+          },
+          "output": "Verdict: approved. The retry bound of two is enforced on every path."
+        }
+      ],
+      "prohibitedKinds": ["workflow-script"]
+    }
+  ]
+}

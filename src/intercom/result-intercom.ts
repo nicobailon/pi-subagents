@@ -220,11 +220,11 @@ function asyncResumeGuidance(input: {
 	if (input.source !== "async" || !input.asyncId) return undefined;
 	const resumable = input.children.filter((child) => typeof child.sessionPath === "string" && fs.existsSync(child.sessionPath));
 	if (input.children.length === 1 && resumable.length === 1) {
-		return `Revive: subagent({ action: "resume", id: "${input.asyncId}", message: "..." })`;
+		return `Revive: subagent({ action: "resume", input: { id: "${input.asyncId}", message: "..." } })`;
 	}
 	if (resumable.length > 0) {
 		const firstIndex = resumable[0]?.index ?? input.children.indexOf(resumable[0]!);
-		return `Revive child: subagent({ action: "resume", id: "${input.asyncId}", index: ${firstIndex}, message: "..." })`;
+		return `Revive child: subagent({ action: "resume", input: { id: "${input.asyncId}", index: ${firstIndex}, message: "..." } })`;
 	}
 	return "Resume: unavailable; no child session file was persisted.";
 }
