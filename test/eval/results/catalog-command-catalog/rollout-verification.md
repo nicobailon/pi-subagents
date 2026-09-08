@@ -22,11 +22,26 @@ A fresh CodeGraph build of the rollout checkout indexed 599 files, 27,238 symbol
 
 ### Evidence archive
 
-- All four model result files passed `gzip -t`.
+- All archived gzip files passed `gzip -t`.
 - `SHA256SUMS` verifies every stored artifact.
-- Decompressing each result reproduces the original `/tmp` JSON hash in `RAW-SHA256SUMS`.
-- Every decompressed file parsed as evaluator result version 3 and retained all attempts.
-- A recursive JSON scan found no nonempty authorization, API-key, access-token, refresh-token, password, secret, or cookie fields and no recognized key, bearer-token, private-key, GitHub-token, or AWS-key formats.
+- Decompressing each result reproduces the original `/tmp` JSON or JSONL hash in `RAW-SHA256SUMS`.
+- All six evaluator JSON files parsed as result version 3 and retained every attempt.
+- A recursive scan of the evaluator results and provider-smoke events found no nonempty authorization, API-key, access-token, refresh-token, password, secret, or cookie fields and no recognized key, bearer-token, private-key, GitHub-token, or AWS-key formats.
+
+### Branch validation
+
+The rollout checkout passed these local gates after the catalog implementation and evidence archive were present:
+
+- `npm run typecheck`
+- 3,047 of 3,061 unit tests, with 14 expected skips and no failures
+- 1,003 of 1,009 integration tests, with 6 expected skips and no failures
+- Oxfmt on the changed Markdown and JSON files
+- `git diff --check`
+- `npm pack --dry-run`, which reported package version 0.66.0, 317 entries, and no `test/eval/results` files
+- AIslop with zero errors and warnings for the `d080871f...HEAD` change
+- slop-scan with 217 findings on both the clean `d080871f` worktree and the rollout checkout, with no added, resolved, worsened, or improved code findings
+
+AIslop skipped its format and lint engines for this documentation-and-artifact change. slop-scan reported no changed code path because it does not scan the added Markdown and gzip artifacts. The explicit Oxfmt, hash, archive, and credential checks cover those files.
 
 ### Isolated package installation
 

@@ -6,16 +6,27 @@ The evaluator used the production Pi 0.85.1 SDK, each revision's published descr
 
 ## Held-out results
 
-| Requested model                 | Pair repetitions | Comparable pairs | Compact baseline | Catalog candidate | Other recorded outcomes                                                                                 |
-| ------------------------------- | ---------------: | ---------------: | ---------------: | ----------------: | ------------------------------------------------------------------------------------------------------- |
-| `openai-codex/gpt-5.6-luna:max` |               18 |               18 |  12 pass, 6 fail |   15 pass, 3 fail | One catalog wall timeout was preserved and retried.                                                     |
-| `kimi-coding/k3-256k:max`       |               18 |               15 |  11 pass, 4 fail |   13 pass, 2 fail | Provider errors, one baseline turn limit, and baseline wall timeouts remain in the raw attempt history. |
-| `zai/glm-5.3:max`               |               18 |               17 |  11 pass, 6 fail |   12 pass, 5 fail | One baseline turn limit and one baseline wall timeout remain in the raw attempt history.                |
-| `cursor/grok-4.6`               |               18 |               17 |  12 pass, 5 fail |   15 pass, 2 fail | Each variant recorded one turn limit.                                                                   |
+| Requested model                 | Scenario pairs | Comparable pairs | Compact baseline | Catalog candidate | Other recorded outcomes                                                                                 |
+| ------------------------------- | -------------: | ---------------: | ---------------: | ----------------: | ------------------------------------------------------------------------------------------------------- |
+| `openai-codex/gpt-5.6-luna:max` |             18 |               18 |  12 pass, 6 fail |   15 pass, 3 fail | One catalog wall timeout was preserved and retried.                                                     |
+| `kimi-coding/k3-256k:max`       |             18 |               15 |  11 pass, 4 fail |   13 pass, 2 fail | Provider errors, one baseline turn limit, and baseline wall timeouts remain in the raw attempt history. |
+| `zai/glm-5.3:max`               |             18 |               17 |  11 pass, 6 fail |   12 pass, 5 fail | One baseline turn limit and one baseline wall timeout remain in the raw attempt history.                |
+| `cursor/grok-4.6`               |             18 |               17 |  12 pass, 5 fail |   15 pass, 2 fail | Each variant recorded one turn limit.                                                                   |
 
 A turn limit is a reliability miss. Provider errors, setup errors, and wall-clock timeouts are infrastructure outcomes. The evaluator preserves every attempt and retries only infrastructure outcomes up to the configured cap. The table reports comparable semantic pairs separately so infrastructure does not become a model failure or disappear from the record.
 
 The Luna and Kimi results were the primary model-family evidence. GLM and Grok were supplementary. Kimi was retired from further evaluation because its latency made repeated runs impractical.
+
+## Ordinary-work smoke results
+
+The candidate also ran once on the frozen development and capability suites with `zai/glm-5.3-flash:max`:
+
+| Suite       | Scenario pairs | Comparable pairs | Compact baseline | Catalog candidate | Other recorded outcomes                    |
+| ----------- | -------------: | ---------------: | ---------------: | ----------------: | ------------------------------------------ |
+| Development |              6 |                5 |   3 pass, 2 fail |    4 pass, 1 fail | Two baseline wall timeouts were preserved. |
+| Capability  |              9 |                9 |   8 pass, 1 fail |    9 pass, 0 fail | None.                                      |
+
+One repetition is a smoke test, not a reliability estimate. These results support operation coverage only.
 
 ## Token measurement
 
@@ -30,7 +41,8 @@ The candidate cut the provider-visible definition by about 89%. This is definiti
 
 ## Files
 
-- `luna-heldout.json.gz`, `kimi-heldout.json.gz`, `glm-heldout.json.gz`, and `grok-heldout.json.gz` contain the unedited evaluator JSON compressed with `gzip -n -9`.
+- `luna-heldout.json.gz`, `kimi-heldout.json.gz`, `glm-heldout.json.gz`, and `grok-heldout.json.gz` contain the unedited held-out evaluator JSON compressed with `gzip -n -9`.
+- `glm-flash-development.json.gz` and `glm-flash-capability.json.gz` contain the unedited one-repetition ordinary-work smokes.
 - `luna-provider-smoke.jsonl.gz` contains the effect-free installed-package provider smoke.
 - `independent-heldout-design.md` is the independently authored scenario design. Its source hash is recorded in each result and in `SHA256SUMS`.
 - `token-counts.json` records the exact published and provider-serialized tool hashes used for token counting.
