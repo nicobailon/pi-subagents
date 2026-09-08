@@ -98,15 +98,25 @@ export function validateImplementationToolContract(input: {
 	const declaredMutationToolsWereRemoved = requestedMutationTools.length > 0 && !hasBuiltinMutationTool(input.tools);
 	const configuredExtensionCapability = (input.configuredExtensions?.length ?? 0) > 0 && !declaredMutationToolsWereRemoved;
 	if (hasMutationToolCapability(input.tools, input.mcpDirectTools) || configuredExtensionCapability) return undefined;
-	const intent = classifyTaskMutationIntent(input.agent, input.task);
+	// An explicit writer acceptance role replaces the agent-name heuristic used
+	// by the shared classifier, so a reviewer-named writer is still evaluated as
+	// a writer task.
+	const intent = classifyTaskMutationIntent(input.acceptanceRole === "writer" ? "worker" : input.agent, input.task);
+	// Host availability can remove declared mutation tools from a task whose
+	// wording is explicitly read-only. Unknown wording remains conservative when
+	// the requested launch declared mutation-capable tools.
 	if (intent.kind === "read-only") return undefined;
-	const writerTaskMayMutate = isWriterRole(input.agent, input.acceptanceRole)
-		&& (taskMayMutate(input.task) || WRITER_DELIVERY_PATTERN.test(input.task));
+	const writerTaskMayMutate = input.acceptanceRole === "writer"
+		? true
+		: isWriterRole(input.agent, input.acceptanceRole)
+			&& (taskMayMutate(input.task) || WRITER_DELIVERY_PATTERN.test(input.task));
 	if (intent.kind !== "implementation" && !writerTaskMayMutate && !declaredMutationToolsWereRemoved) return undefined;
 	return `Agent '${input.agent}' was given an implementation task, but its tool allowlist has no mutation-capable tools. Add bash, edit, write, or another mutation-capable tool to the agent, or use a read-only task/agent.`;
 }
 
 function hasCheckpointMutationEvidence(message: Message): boolean {
+	// SAFETY: pi-checkpoint custom messages are runtime records outside the
+	// pi-ai Message union; narrow their discriminants before reading payloads.
 	const record = message as unknown as {
 		role?: string;
 		type?: string;

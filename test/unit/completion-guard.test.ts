@@ -10,6 +10,7 @@ import {
 	validateImplementationToolContract,
 } from "../../src/runs/shared/completion-guard.ts";
 import { isMutatingTool } from "../../src/runs/shared/long-running-guard.ts";
+import { resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
 
 function assistantToolCall(name: string, args: Record<string, unknown> = {}): Message {
 	return {
@@ -386,6 +387,73 @@ test("implementation tool contract rejects read-only worker launches", () => {
 	}), undefined);
 });
 
+test("read-only audit tasks survive host-clamped declared mutation tools", () => {
+	const task = "Read-only bug investigation. No source edits, commits, pushes, merges, installs, or state repair. Return concrete findings and a minimal fix proposal.";
+	const requestedTools = ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"];
+	const toolPlan = resolvePiLaunchToolPlan({
+		tools: requestedTools,
+		hostAvailableBuiltins: ["read", "grep", "find", "ls", "contact_supervisor"],
+	});
+
+	assert.deepEqual(toolPlan.effectiveToolAllowlist, ["read", "grep", "find", "ls", "contact_supervisor"]);
+	assert.equal(expectsImplementationMutation("delegate", task), false);
+	assert.equal(validateImplementationToolContract({
+		agent: "delegate",
+		task,
+		tools: toolPlan.effectiveToolAllowlist,
+		requestedTools: toolPlan.requestedBuiltinTools,
+	}), undefined);
+	const implementationTask = "No source edits, commits, pushes; implement the requested source fix.";
+	assert.equal(expectsImplementationMutation("delegate", implementationTask), true);
+	assert.match(validateImplementationToolContract({
+		agent: "delegate",
+		task: implementationTask,
+		tools: toolPlan.effectiveToolAllowlist,
+		requestedTools: toolPlan.requestedBuiltinTools,
+	}) ?? "", /no mutation-capable tools/);
+	for (const task of [
+		"Review only; implement the approved fix.",
+		"No tools needed; implement the approved fix.",
+		"Without edits, update the parser.",
+	]) {
+		assert.match(validateImplementationToolContract({
+			agent: "delegate",
+			task,
+			tools: toolPlan.effectiveToolAllowlist,
+			requestedTools: toolPlan.requestedBuiltinTools,
+		}) ?? "", /no mutation-capable tools/, task);
+	}
+	assert.equal(expectsImplementationMutation("reviewer", "Review only; implement the approved fix."), true);
+	assert.match(validateImplementationToolContract({
+		agent: "reviewer",
+		task: "Review only; implement the approved fix.",
+		tools: toolPlan.effectiveToolAllowlist,
+		requestedTools: toolPlan.requestedBuiltinTools,
+	}) ?? "", /no mutation-capable tools/);
+
+	// Unknown wording remains conservative when the launch explicitly requested
+	// mutation tools that the host removed.
+	const summaryTask = "Create a summary";
+	assert.equal(expectsImplementationMutation("delegate", summaryTask), false);
+	assert.match(validateImplementationToolContract({
+		agent: "delegate",
+		task: summaryTask,
+		tools: toolPlan.effectiveToolAllowlist,
+		requestedTools: toolPlan.requestedBuiltinTools,
+	}) ?? "", /no mutation-capable tools/);
+
+	// A generic worker task remains unknown rather than inheriting writer intent,
+	// but the removed requested mutation tools still keep the launch conservative.
+	const genericWorkerTask = "Inspect the current behavior and report findings.";
+	assert.equal(expectsImplementationMutation("worker", genericWorkerTask), false);
+	assert.match(validateImplementationToolContract({
+		agent: "worker",
+		task: genericWorkerTask,
+		tools: toolPlan.effectiveToolAllowlist,
+		requestedTools: toolPlan.requestedBuiltinTools,
+	}) ?? "", /no mutation-capable tools/);
+});
+
 test("oracle review tasks with bash available do not require mutation", () => {
 	const task = "Review prep findings and determine what to implement with playbooks instead of before.";
 	const result = evaluateCompletionMutationGuard({
@@ -407,6 +475,23 @@ test("review-only, research, and framework output instructions do not expect mut
 	assert.equal(expectsImplementationMutation("worker", "Review only: return findings, do not edit"), false);
 	assert.equal(expectsImplementationMutation("worker", "Do not edit files. Tell me how to fix the bug."), false);
 	assert.equal(expectsImplementationMutation("worker", "Review the diff and suggest fixes only. Do not edit files."), false);
+	for (const task of [
+		"Read-only audit of the current implementation; report findings.",
+		"Review-only pass over the diff; return recommendations.",
+		"No edits; inspect the current behavior and report findings.",
+		"Analyze the current behavior without edits.",
+	]) {
+		assert.equal(expectsImplementationMutation("delegate", task), false, task);
+	}
+	for (const task of [
+		"Review only; implement the approved fix.",
+		"No tools needed; implement the approved fix.",
+		"Read-only review; modify the requested source file.",
+		"Without edits to the report, implement the requested fix.",
+		"Without edits, update the parser.",
+	]) {
+		assert.equal(expectsImplementationMutation("delegate", task), true, task);
+	}
 	assert.equal(expectsImplementationMutation("worker", "Implement this. Do not edit files outside this repo. Do not edit files."), false);
 	assert.equal(expectsImplementationMutation("worker", "Investigate why this failed"), false);
 	assert.equal(expectsImplementationMutation("researcher", "Research the API behavior"), false);
@@ -707,8 +792,26 @@ test("writer-role tasks with unknown implementation wording reject read-only lau
 			task,
 			tools: ["read", "grep", "find", "ls", "contact_supervisor"],
 			requestedTools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
-		}), /no mutation-capable tools/, task);
+		}) ?? "", /no mutation-capable tools/, task);
 	}
+});
+
+test("explicit writer acceptance role overrides reviewer agent heuristics", () => {
+	assert.match(validateImplementationToolContract({
+		agent: "reviewer",
+		task: "Handle the authentication flow",
+		acceptanceRole: "writer",
+		tools: ["read", "grep", "find", "ls", "contact_supervisor"],
+		requestedTools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+	}) ?? "", /no mutation-capable tools/);
+
+	assert.equal(validateImplementationToolContract({
+		agent: "reviewer",
+		task: "Review only and return findings",
+		acceptanceRole: "writer",
+		tools: ["read", "grep", "find", "ls", "contact_supervisor"],
+		requestedTools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+	}), undefined);
 });
 
 test("configured extensions do not rescue clamped-away builtin mutation tools", () => {
@@ -718,7 +821,7 @@ test("configured extensions do not rescue clamped-away builtin mutation tools", 
 		tools: ["read", "grep", "find", "ls", "contact_supervisor"],
 		configuredExtensions: ["/tmp/provider.ts"],
 		requestedTools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
-	}), /no mutation-capable tools/);
+	}) ?? "", /no mutation-capable tools/);
 });
 
 test("read-only agents and pure extension workers keep their launch contracts", () => {

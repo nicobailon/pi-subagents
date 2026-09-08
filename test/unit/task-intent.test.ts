@@ -25,6 +25,16 @@ describe("classifyTaskMutationIntent", () => {
 		assert.equal(classifyTaskMutationIntent("worker", "Do not modify files\nin src; implement the fix").kind, "implementation");
 	});
 
+	it("does not let read-only markers swallow generic implementation imperatives", () => {
+		for (const task of [
+			"Without edits, update the parser",
+			"Review only; add the missing test",
+		]) {
+			assert.equal(classifyTaskMutationIntent("delegate", task).kind, "implementation", task);
+		}
+		assert.equal(classifyTaskMutationIntent("delegate", "Review only; update the report").kind, "read-only");
+	});
+
 	it("stops the prohibition object before a following implementation clause", () => {
 		for (const task of [
 			"Do not modify tests but implement the fix",

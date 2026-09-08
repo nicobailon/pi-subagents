@@ -18,16 +18,24 @@
  */
 
 const REVIEW_ONLY_PATTERNS = [
-	/\breview only\b/i,
+	/\b(?:review|read)[- ]only\b/i,
+	/\bno\s+(?:source\s+)?edits?\b/i,
+	/\bwithout\s+edits?\b/i,
 	/\bsuggest fixes only\b/i,
 	/\bonly return findings\b/i,
 	/\breturn findings only\b/i,
 ];
 
+// Workflow tasks sometimes state a read-only boundary as a comma-separated
+// noun list (for example, "No source edits, commits, or pushes"). Unlike a
+// blanket prohibition, remove this assertion before checking for a later
+// implementation imperative.
+const NO_EDIT_BOUNDARY_ASSERTION_PATTERN = /\bno\s+(?:source\s+)?edits?\s*,\s*(?:commits?|pushes?|merges?|installs?|changes?|writes?)\b/i;
+
 const REVIEWER_REQUIRED_EDIT_PATTERNS = [
 	/\bmust\s+(?:edit|modify|change|fix|patch|apply|implement)\b/i,
 	/\brequired\s+to\s+(?:edit|modify|change|fix|patch|apply|implement)\b/i,
-	/(?:^|[.!?\n]\s*)implement\s+(?:the\s+)?(?:approved|requested|specified|file|code|source|fix(?:es)?|changes?)\b/i,
+	/(?:^|[.!?:;,\n]\s*)implement\s+(?:the\s+)?(?:approved|requested|specified|file|code|source|fix(?:es)?|changes?)\b/i,
 	/\bregardless\s+of\s+findings\b/i,
 	/\balways\s+(?:edit|modify|change|fix|patch|apply|implement)\b/i,
 	/\bapply\s+(?:the\s+)?fix(?:es)?\s+directly\b/i,
@@ -85,7 +93,7 @@ const RESEARCH_AGENT_PATTERNS = [
 // CLI flags like "--fix" and genuine clause-level dashes like "branch—fix it"),
 // strip the known severity compounds (must|should|needs + dash + verb) from the
 // task text before matching. Dash coverage: ASCII hyphen + U+2010..U+2015.
-const SEVERITY_COMPOUND_PATTERN = /\b(?:must|should|needs)[\-\u2010-\u2015](?:fix|edit|update|add|remove|replace|create|apply|make|do|implement|modify|delete|patch)\b/gi;
+const SEVERITY_COMPOUND_PATTERN = /\b(?:must|should|needs)[-\u2010-\u2015](?:fix|edit|update|add|remove|replace|create|apply|make|do|implement|modify|delete|patch)\b/gi;
 
 function stripSeverityCompounds(task: string): string {
 	return task.replace(SEVERITY_COMPOUND_PATTERN, " ");
@@ -102,6 +110,11 @@ const WORKER_IMPLEMENTATION_PATTERNS = [
 	/\bmake\s+(?:the\s+)?changes\b/i,
 	/\bdo those fixes\b/i,
 ];
+
+// Once an explicit read-only marker has been stripped, keep common imperative
+// verbs visible even when their target is a project-specific noun (for example,
+// "Without edits, update the parser"). Output-only nouns remain excluded.
+const FOLLOW_ON_IMPLEMENTATION_PATTERN = /\b(?:fix|patch|update|add|remove|replace|create|delete)\s+(?!(?:(?:the|a|an|this|that|these|those|requested|specified|current|existing|approved|your|our)\s+)?(?:report|summary|findings?|analysis|recommendations?|answer|response|proposal|plan|issue|bug report)\b)(?:(?:the|a|an|this|that|these|those|requested|specified|current|existing|approved|your|our)\s+)?[a-z][\w./-]*/i;
 
 const GENERAL_IMPLEMENTATION_PATTERNS = [
 	/\b(?:implement|edit|modify|refactor)\b/i,
@@ -141,10 +154,16 @@ interface NoEditProhibitionAnalysis {
 }
 
 function analyzeNoEditProhibitions(taskText: string): NoEditProhibitionAnalysis {
-	let present = REVIEW_ONLY_PATTERNS.some((pattern) => pattern.test(taskText))
-		|| NO_TOOL_INTENT_PATTERNS.some((pattern) => pattern.test(taskText));
-	let blanket = present;
+	const reviewOnly = REVIEW_ONLY_PATTERNS.some((pattern) => pattern.test(taskText));
+	const noTools = NO_TOOL_INTENT_PATTERNS.some((pattern) => pattern.test(taskText));
+	const readOnlyBoundary = NO_EDIT_BOUNDARY_ASSERTION_PATTERN.test(taskText);
+	let present = reviewOnly || noTools || readOnlyBoundary;
+	// Review-only/no-tool wording is a read-only signal, not a blanket
+	// prohibition: a later imperative such as "implement the fix" must still
+	// win. Explicit file prohibitions are analyzed below and may be blanket.
+	let blanket = false;
 	let strippedText = stripPatterns(taskText, [...REVIEW_ONLY_PATTERNS, ...NO_TOOL_INTENT_PATTERNS]);
+	if (readOnlyBoundary) strippedText = stripPatterns(strippedText, [NO_EDIT_BOUNDARY_ASSERTION_PATTERN]);
 	const stripNoEditProhibition = (match: string, object: string, offset: number, source: string): string => {
 		present = true;
 		if (GENERIC_PROHIBITION_OBJECT.test(object) && !hasScopedProhibitionContinuation(source.slice(offset + match.length))) blanket = true;
@@ -177,7 +196,9 @@ export function classifyTaskMutationIntent(agent: string, task: string): TaskMut
 	const prohibitions = analyzeNoEditProhibitions(taskTextWithoutScopedConstraints);
 	if (prohibitions.present) {
 		if (prohibitions.blanket) return { kind: "read-only" };
-		return hasImplementationIntent(agent, prohibitions.strippedText) ? { kind: "implementation" } : { kind: "read-only" };
+		return hasImplementationIntent(agent, prohibitions.strippedText) || FOLLOW_ON_IMPLEMENTATION_PATTERN.test(prohibitions.strippedText)
+			? { kind: "implementation" }
+			: { kind: "read-only" };
 	}
 
 	if (RESEARCH_AGENT_PATTERNS.some((pattern) => pattern.test(agent))) return { kind: "read-only" };
