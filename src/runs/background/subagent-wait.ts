@@ -39,6 +39,7 @@
  */
 
 import * as fs from "node:fs";
+import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
 	listBackgroundWorkWakeChannels,
@@ -61,9 +62,10 @@ import {
 	type Usage,
 	type WaitCompletion,
 } from "../../shared/types.ts";
+import { nestedRunScope } from "../shared/nested-events.ts";
 import { formatDuration, shortenPath } from "../../shared/formatters.ts";
 import { toAgentToolUsage } from "../../shared/utils.ts";
-import { collectWaitCompletions } from "./wait-completions.ts";
+import { boundWaitContent, collectWaitCompletions } from "./wait-completions.ts";
 import { formatResumeFirstFailedRunsNote } from "./resume-guidance.ts";
 import { formatTimeoutRecoveryLines } from "../shared/mutation-evidence.ts";
 export { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, type ResolvedWaitToolConfig } from "./wait-config.ts";
@@ -103,6 +105,8 @@ export interface SubagentWaitDeps {
 	onUpdate?: (result: AgentToolResult<Details>) => void;
 	asyncDirRoot?: string;
 	resultsDir?: string;
+	/** Trusted route of a fanout child; ordinary workflows still use the main scope. */
+	nestedRootRunId?: string;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
 	pollIntervalMs?: number;
@@ -116,6 +120,8 @@ export interface SubagentWaitDeps {
 	stopOnAttention?: boolean;
 	/** Internal auto-drain mode surfaces failed terminal subagent runs as errors. */
 	failOnFailedRuns?: boolean;
+	/** Child waits require complete output delivery without treating a known failed outcome as unfinished. */
+	requireResults?: boolean;
 	/** Internal auto-drain mode surfaces actionable attention as an error. */
 	failOnAttention?: boolean;
 	/** Arm a durable exact-target wait subscription in a long-lived interactive runtime. */
@@ -265,11 +271,24 @@ function backgroundWorkForSession(deps: SubagentWaitDeps, nowMs: number): Backgr
 	return deps.backgroundWork?.snapshot(sessionId, nowMs) ?? snapshotBackgroundWork(sessionId, nowMs);
 }
 
+export function waitRunScopes(deps: Pick<SubagentWaitDeps, "asyncDirRoot" | "resultsDir" | "nestedRootRunId">): Array<{ asyncDirRoot: string; resultsDir: string }> {
+	return [
+		{ asyncDirRoot: deps.asyncDirRoot ?? DIRS.async, resultsDir: deps.resultsDir ?? DIRS.results },
+		...(deps.nestedRootRunId ? [nestedRunScope(deps.nestedRootRunId)] : []),
+	];
+}
+
+function collectScopedCompletions(terminal: AsyncRunSummary[], deps: SubagentWaitDeps, content: string[]): WaitCompletion[] | undefined {
+	const completions = waitRunScopes(deps).flatMap((scope) => collectWaitCompletions(
+		terminal.filter((run) => path.dirname(run.asyncDir) === scope.asyncDirRoot), deps.state, scope.resultsDir,
+		(text) => content.push(text), deps.requireResults ?? deps.failOnFailedRuns === true,
+	) ?? []);
+	return completions.length ? completions : undefined;
+}
+
 /** Queued/running runs from this session, including runs that need attention. */
 function activeRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps): AsyncRunSummary[] {
-	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
-	const resultsDir = deps.resultsDir ?? DIRS.results;
-	const runs = listAsyncRuns(asyncDirRoot, {
+	const runs = waitRunScopes(deps).flatMap(({ asyncDirRoot, resultsDir }) => listAsyncRuns(asyncDirRoot, {
 		states: [...ACTIVE_STATES],
 		sessionId: deps.state.currentSessionId ?? undefined,
 		resultsDir,
@@ -277,7 +296,7 @@ function activeRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps
 		now: deps.now,
 		includeNested: false,
 		...(params.id ? { runId: params.id } : {}),
-	});
+	}));
 	return params.id ? runs.filter((run) => matchesId(run, params.id!)) : runs;
 }
 
@@ -288,9 +307,7 @@ function attentionRunsForSession(params: SubagentWaitParams, deps: SubagentWaitD
 
 /** Exact initial runs in any state, for the final summary. */
 function runsForIds(runIds: Iterable<string>, deps: SubagentWaitDeps): AsyncRunSummary[] {
-	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
-	const resultsDir = deps.resultsDir ?? DIRS.results;
-	return [...runIds].flatMap((runId) => listAsyncRuns(asyncDirRoot, {
+	return waitRunScopes(deps).flatMap(({ asyncDirRoot, resultsDir }) => [...runIds].flatMap((runId) => listAsyncRuns(asyncDirRoot, {
 		sessionId: deps.state.currentSessionId ?? undefined,
 		resultsDir,
 		kill: deps.kill,
@@ -298,7 +315,7 @@ function runsForIds(runIds: Iterable<string>, deps: SubagentWaitDeps): AsyncRunS
 		includeNested: false,
 		runId,
 		exactRunId: true,
-	}));
+	})));
 }
 
 function summarizeTerminalRuns(runs: AsyncRunSummary[], providerFinishedCount = 0): string {
@@ -341,7 +358,7 @@ function result(text: string, isError = false, completions?: WaitCompletion[]): 
 		if (completion.workflowReceiptPath) text += `\nWorkflow receipt [${completion.runId}]: ${completion.workflowReceiptPath}`;
 	}
 	return {
-		content: [{ type: "text", text }],
+		content: [{ type: "text", text: boundWaitContent(text, completions) }],
 		...(isError ? { isError: true } : {}),
 		...(usage ? { usage: toAgentToolUsage(usage) } : {}),
 		details: {
@@ -544,6 +561,7 @@ export async function waitForSubagents(
 	signal: AbortSignal | undefined,
 	deps: SubagentWaitDeps,
 ): Promise<AgentToolResult<Details>> {
+	if (signal?.aborted) return result("Wait aborted before result delivery.", true);
 	if (deps.enabled === false) {
 		return result("bg_wait is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED; returning immediately without blocking background work. Active work keeps going, and you can inspect subagents with subagent({ action: \"status\" }) or rely on completion notifications.");
 	}
@@ -557,6 +575,7 @@ export async function waitForSubagents(
 		? params.timeoutMs
 		: deps.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
 	const startedAt = now();
+	const sessionId = deps.state.currentSessionId;
 	const waitForAll = params.id ? true : params.all === true;
 	if (params.nonBlocking && !params.id) {
 		return result("Non-blocking wait subscriptions require id so the registration can bind one exact run identity.", true);
@@ -606,6 +625,17 @@ export async function waitForSubagents(
 
 	let providerActive = providerSnapshot.items;
 	if (active.length === 0 && providerActive.length === 0) {
+		if (params.id) {
+			try {
+				const terminal = runsForIds([params.id], deps).filter((run) => !ACTIVE_STATES.includes(run.state));
+				if (terminal.length > 0) {
+					const content: string[] = [];
+					const completions = collectScopedCompletions(terminal, deps, content);
+					return result(`Run "${params.id}" is terminal. Outcome: ${summarizeTerminalRuns(terminal)}.${formatCompletionRecovery(completions)}\n${content.join("\n")}`,
+						deps.failOnFailedRuns === true && terminal.some((run) => run.state !== "complete"), completions);
+				}
+			} catch (error) { return result(error instanceof Error ? error.message : String(error), true); }
+		}
 		return result(params.id
 			? `No active run matched "${params.id}". Nothing to wait for.`
 			: "No active async runs or registered provider work in this session. Nothing to wait for.");
@@ -650,6 +680,7 @@ export async function waitForSubagents(
 		}
 		try {
 			await waitForWake(pollIntervalMs, signal, deps);
+			if (deps.state.currentSessionId !== sessionId) return result("Wait stopped because the active session changed.", true);
 			active = activeRunsForSession(waitParams, deps);
 			attention = attentionRunsForSession(waitParams, deps, initialAsyncIds);
 			providerSnapshot = params.id ? providerSnapshot : backgroundWorkForSession(deps, now());
@@ -668,6 +699,7 @@ export async function waitForSubagents(
 	let finishedAsyncCount: number;
 	let failedAsyncCount: number;
 	let completions: WaitCompletion[] | undefined;
+	const completionContent: string[] = [];
 	let resumeGuidance = "";
 	const activeProviderIds = new Set(providerActive.map(backgroundWorkIdentity));
 	const providerFinishedCount = [...initialProviderIds].filter((id) => !activeProviderIds.has(id)).length;
@@ -675,10 +707,10 @@ export async function waitForSubagents(
 		const allNow = runsForIds(initialAsyncIds, deps);
 		const terminal = allNow.filter((run) => !ACTIVE_STATES.includes(run.state) && initialAsyncIds.has(run.id));
 		finishedAsyncCount = terminal.length;
-		failedAsyncCount = terminal.filter((run) => run.state === "failed" || run.state === "partial").length;
+		failedAsyncCount = terminal.filter((run) => run.state !== "complete").length;
 		terminalSummary = summarizeTerminalRuns(terminal, providerFinishedCount);
 		resumeGuidance = formatResumeFirstFailedRunsNote(terminal);
-		completions = collectWaitCompletions(terminal, deps.state, deps.resultsDir ?? DIRS.results);
+		completions = collectScopedCompletions(terminal, deps, completionContent);
 	} catch (error) {
 		return result(error instanceof Error ? error.message : String(error), true);
 	}
@@ -694,7 +726,7 @@ export async function waitForSubagents(
 		+ providerActive.filter((item) => initialProviderIds.has(backgroundWorkIdentity(item))).length;
 	const elapsed = formatDuration(now() - startedAt);
 	const outcome = terminalSummary ? ` Outcome: ${terminalSummary}.` : "";
-	const recoveryNote = formatCompletionRecovery(completions);
+	const recoveryNote = formatCompletionRecovery(completions) + (completionContent.length ? `\n${completionContent.join("\n")}\n` : "");
 
 	if (waitForAll) {
 		const scope = params.id

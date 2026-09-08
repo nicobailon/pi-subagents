@@ -628,6 +628,7 @@ async function runSingleAttempt(
 			}
 		};
 		const abortChild = (): void => {
+			capture.backgroundDrain.abort(result.timedOut ? "timeout" : interruptedByControl ? "interrupt" : "stop");
 			if (!session || sessionSettled || lifecycleFinished) return;
 			void session.abort().catch(() => {
 				// The session settles through its prompt promise; abort failures are not separately actionable.
@@ -709,6 +710,7 @@ async function runSingleAttempt(
 			}
 		};
 		const startFinalDrain = () => {
+			if (capture.backgroundDrain.active) return;
 			if (childWatchdogIsActive(childWatchdogState)) {
 				armWatchdogTail();
 				return;
@@ -756,6 +758,10 @@ async function runSingleAttempt(
 			if (action === "start-drain") startFinalDrain();
 		};
 		const childLifecycleState: ChildLifecycleState = { compactionRetryActive: false };
+		capture.backgroundDrain.subscribe((active) => {
+			if (active) applyChildLifecycle("cancel-drain");
+			else startFinalDrain();
+		});
 
 		const unsubscribeIntercomDetach = options.intercomEvents?.on?.(INTERCOM_DETACH_REQUEST_EVENT, (payload) => {
 			if (!options.allowIntercomDetach || sessionSettled) return;
@@ -1298,7 +1304,7 @@ async function runSingleAttempt(
 			const toolDiagnosticError = diagnostic ? formatChildToolDiagnostic(diagnostic, { host: "parent" }) : undefined;
 			toolAvailabilityError = toolDiagnosticError;
 			result.runtimeAcknowledgedExtensions = capture.runtimeAcknowledgedExtensions();
-			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
+			let closeError = result.error ?? capture.backgroundDrain.error ?? toolDiagnosticError ?? assistantError;
 			if (!closeError && promptError !== undefined) {
 				closeError = promptError instanceof Error ? promptError.message : String(promptError);
 			}
@@ -1319,6 +1325,7 @@ async function runSingleAttempt(
 			const kill = () => {
 				if (sessionSettled || lifecycleFinished) return;
 				abortedBySignal = true;
+				result.stopped = true;
 				abortChild();
 				const hardTimer = setTimeout(() => {
 					if (sessionSettled || lifecycleFinished) return;
@@ -2245,7 +2252,7 @@ export async function runSync(
 
 	const completion = runSyncCompletion(runtimeCwd, agents, agentName, task, {
 		...options,
-		signal: originController.signal,
+		signal: options.stopSignal ? AbortSignal.any([originController.signal, options.stopSignal]) : originController.signal,
 		onDetachedExit: undefined,
 		onDetachReceipt: (detachedReceipt) => {
 			if (detachedReason || publishedReceipt) return false;

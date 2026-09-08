@@ -7,7 +7,8 @@ import { updateActiveRunIndex } from "../../src/runs/background/active-run-index
 import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
-import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
+import { boundWaitContent, formatWaitCompletionContent, recordWaitCompletion, toWaitCompletion } from "../../src/runs/background/wait-completions.ts";
+import { nestedRunScope } from "../../src/runs/shared/nested-events.ts";
 import type { AsyncStatus, SubagentState } from "../../src/shared/types.ts";
 
 function writeStatus(asyncRoot: string, runId: string, state: AsyncStatus["state"], extra: object = {}): void {
@@ -123,6 +124,68 @@ describe("bg_wait tool", () => {
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
+	});
+
+	it("returns terminal output when the exact run finished before the wait began", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-already-finished-"));
+		try {
+			writeStatus(path.join(root, "runs"), "run-fast", "complete", { sessionId: "sess-1" });
+			fs.mkdirSync(path.join(root, "results"), { recursive: true });
+			fs.writeFileSync(path.join(root, "results", "run-fast.json"), JSON.stringify({
+				runId: "run-fast", sessionId: "sess-1", success: true,
+				results: [{ agent: "persona", success: true, output: "FAST FINDING" }],
+			}));
+			const result = await waitForSubagents({ id: "run-fast" }, undefined, baseDeps(root, makeState("sess-1")));
+			assert.match(textOf(result), /FAST FINDING/);
+			assert.equal(result.details.completions?.[0]?.runId, "run-fast");
+			const cancelled = await waitForSubagents({ id: "run-fast" }, AbortSignal.abort(), baseDeps(root, makeState("sess-1")));
+			assert.equal(cancelled.isError, true);
+			assert.doesNotMatch(textOf(cancelled), /FAST FINDING/);
+			const other = await waitForSubagents({ id: "run-fast" }, undefined, baseDeps(root, makeState("other-session")));
+			assert.doesNotMatch(textOf(other), /FAST FINDING/);
+		} finally { fs.rmSync(root, { recursive: true, force: true }); }
+	});
+
+	it("bounds per-run and aggregate output while preserving every exact artifact reference", () => {
+		const data = { success: true, results: [0, 1].map((index) => ({ output: "λ".repeat(40000), artifactPaths: { outputPath: path.join(os.tmpdir(), `exact-result-${index}.md`) } })) };
+		const completion = toWaitCompletion(data, "run-bounded");
+		const content = formatWaitCompletionContent(data, completion);
+		assert.ok(Buffer.byteLength(content) <= 32 * 1024);
+		for (const child of data.results) assert.ok(content.includes(child.artifactPaths.outputPath));
+		const combined = boundWaitContent(Array(8).fill(content).join("\n"), [completion]);
+		assert.ok(Buffer.byteLength(combined) <= 50 * 1024);
+		for (const child of data.results) assert.ok(combined.includes(child.artifactPaths.outputPath));
+		assert.match(formatWaitCompletionContent({ success: true, output: "TOP_LEVEL_OUTPUT" }, { runId: "top" }), /TOP_LEVEL_OUTPUT/);
+	});
+
+	it("waits in the child route's nested namespace without crossing session ownership", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-nested-"));
+		const nestedRootRunId = path.basename(root);
+		const scope = nestedRunScope(nestedRootRunId);
+		try {
+			writeStatus(scope.asyncDirRoot, "nested-own", "running", { sessionId: "owner", pid: 999999 });
+			writeStatus(scope.asyncDirRoot, "nested-foreign", "running", { sessionId: "foreign", pid: 999999 });
+			fs.mkdirSync(scope.resultsDir, { recursive: true });
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, makeState("owner"), { nestedRootRunId, sleep: async () => {
+				writeStatus(scope.asyncDirRoot, "nested-own", "complete", { sessionId: "owner" });
+				fs.writeFileSync(path.join(scope.resultsDir, "nested-own.json"), JSON.stringify({ runId: "nested-own", sessionId: "owner", success: true, output: "NESTED_EVIDENCE" }));
+			} }));
+			assert.match(textOf(result), /NESTED_EVIDENCE/);
+			assert.deepEqual(result.details.completions?.map((completion) => completion.runId), ["nested-own"]);
+			assert.equal(JSON.parse(fs.readFileSync(path.join(scope.asyncDirRoot, "nested-foreign", "status.json"), "utf8")).state, "running");
+		} finally { for (const dir of [root, scope.asyncDirRoot, scope.resultsDir]) fs.rmSync(dir, { recursive: true, force: true }); }
+	});
+
+	it("fails internal reconciliation when terminal output and its artifact trail are missing", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-missing-evidence-"));
+		try {
+			writeStatus(path.join(root, "runs"), "empty-result", "complete", { sessionId: "owner" });
+			fs.mkdirSync(path.join(root, "results"), { recursive: true });
+			fs.writeFileSync(path.join(root, "results", "empty-result.json"), JSON.stringify({ success: true, results: [{ agent: "persona", success: true }] }));
+			const result = await waitForSubagents({ id: "empty-result" }, undefined, baseDeps(root, makeState("owner"), { failOnFailedRuns: true }));
+			assert.equal(result.isError, true);
+			assert.match(textOf(result), /no usable output/);
+		} finally { fs.rmSync(root, { recursive: true, force: true }); }
 	});
 
 	it("returns immediately when there is nothing to wait for", async () => {
@@ -363,6 +426,7 @@ describe("bg_wait tool", () => {
 			assert.equal(child?.runId, "a1b2c3d4");
 			assert.equal(child?.artifactPaths?.metadataPath, "/tmp/a1b2c3d4_reviewer_0_meta.json");
 			assert.equal("output" in (child ?? {}), false);
+			assert.match(textOf(result), /full output text stays out of details/);
 			// The result file is the watcher's to consume; the wait must not delete it.
 			assert.equal(fs.existsSync(path.join(resultsDir, "run-a.json")), true);
 		} finally {
@@ -409,7 +473,8 @@ describe("bg_wait tool", () => {
 			assert.match(text, /Recovery needed: review the diff and artifacts before resuming or launching dependent stages\./);
 			assert.match(text, /requested report: missing/);
 			assert.match(text, /changed tracked files: input\.md/);
-			assert.doesNotMatch(text, /raw recovery message|settlementDiagnostic|raw output/);
+			assert.doesNotMatch(text, /raw recovery message|settlementDiagnostic/);
+			assert.match(text, /raw output must not be copied/);
 			const completion = result.details.completions?.[0];
 			assert.equal(completion?.success, false);
 			assert.deepEqual(completion?.results?.[0]?.timeoutRecovery, {

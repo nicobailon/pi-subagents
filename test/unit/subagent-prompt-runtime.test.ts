@@ -6,6 +6,8 @@ import { describe, it } from "node:test";
 import { RUNTIME_EXTENSION_ACK_EVENT } from "../../src/runs/shared/runtime-acknowledged-extensions.ts";
 import { clearStructuredOutputCaptures } from "../../src/runs/shared/structured-output.ts";
 import { getAgentDir } from "../../src/shared/utils.ts";
+import { DIRS } from "../../src/shared/types.ts";
+import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { formatChildToolDiagnostic, type ChildToolDiagnostic } from "../../src/runs/shared/tool-availability.ts";
 import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
 import type { ChildWatchdogConfig } from "../../src/watchdog/child-status.ts";
@@ -25,6 +27,104 @@ import registerSubagentPromptRuntime, {
 function childConfig(overrides: Partial<ChildRuntimeConfig> = {}): ChildRuntimeConfig {
 	return { fanoutChild: false, depth: 1, waitTool: { enabled: true }, fast: false, ...overrides };
 }
+
+it("reconciles fast terminal fanout output once before accepting the child final", async () => {
+	const handlers = new Map<string, Function[]>();
+	const sent: Array<{ message: any; options: any }> = [];
+	const phases: boolean[] = [];
+	const toolDescriptions: string[] = [];
+	const sessionId = path.join(os.tmpdir(), "reviewer-session.jsonl");
+	const runId = `fast-persona-${Date.now()}`;
+	const asyncDir = path.join(DIRS.async, runId);
+	const pi = {
+		on: (name: string, fn: Function) => handlers.set(name, [...(handlers.get(name) ?? []), fn]),
+		registerTool: (tool: { description: string }) => toolDescriptions.push(tool.description), events: { on: () => () => {}, emit: () => {} },
+		sendMessage: (message: any, options: any) => sent.push({ message, options }),
+	};
+	const ctx = { hasUI: false, sessionManager: { getSessionFile: () => sessionId } };
+	const emit = async (name: string, event: unknown) => { for (const fn of handlers.get(name) ?? []) await fn(event, ctx); };
+	registerSubagentPromptRuntime(pi as never, childConfig({ fanoutChild: true,
+		backgroundDrain: { signal: new AbortController().signal, abort: () => {}, report: (active) => phases.push(active) },
+	}));
+	assert.match(toolDescriptions[0], /does not install the root session's native completion notifier/);
+	assert.doesNotMatch(toolDescriptions[0], /Ordinary async subagent runs already notify this session/);
+	try {
+		await emit("session_start", {});
+		await emit("tool_result", { toolName: "subagent", details: { asyncId: runId } });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId, sessionId, state: "complete", mode: "single", steps: [], startedAt: Date.now(), lastUpdate: Date.now() }));
+		updateActiveRunIndex(asyncDir, "complete");
+		fs.writeFileSync(path.join(DIRS.results, `${runId}.json`), JSON.stringify({ runId, sessionId, success: true, results: [{ agent: "persona", success: true, output: "FAST PERSONA FINDING" }] }));
+		await emit("agent_end", { messages: [] });
+		assert.equal(sent.length, 1);
+		assert.match(JSON.stringify(sent[0].message.content), /FAST PERSONA FINDING/);
+		assert.match(JSON.stringify(sent[0].message.content), /reconcile/i);
+		assert.deepEqual(sent[0].options, { deliverAs: "followUp", triggerTurn: true });
+		const message = { role: "custom", ...sent[0].message };
+		assert.deepEqual(stripParentOnlySubagentMessages([message], { preserveFanoutToolHistory: true }), [message]);
+		await emit("agent_end", { messages: [] });
+		assert.equal(sent.length, 1, "completion must not repeatedly wake the child");
+		assert.deepEqual(phases, [true, false]);
+	} finally {
+		fs.rmSync(asyncDir, { recursive: true, force: true });
+		fs.rmSync(path.join(DIRS.results, `${runId}.json`), { force: true });
+	}
+});
+
+for (const terminalState of ["failed", "paused"] as const) it(terminalState === "failed" ? "acknowledges an explicitly consumed failed completion so a degraded report can reconcile it" : "does not acknowledge a paused receipt as finished work", async () => {
+	const handlers = new Map<string, Function[]>();
+	let waitTool: any;
+	let delivered = 0;
+	const sessionId = path.join(os.tmpdir(), "degraded-reviewer-session.jsonl");
+	const runId = `${terminalState}-arm-${Date.now()}`;
+	const asyncDir = path.join(DIRS.async, runId);
+	const ctx = { hasUI: false, sessionManager: { getSessionFile: () => sessionId } };
+	const emit = async (name: string, event: unknown) => { for (const fn of handlers.get(name) ?? []) await fn(event, ctx); };
+	registerSubagentPromptRuntime({
+		on: (name: string, fn: Function) => handlers.set(name, [...(handlers.get(name) ?? []), fn]),
+		registerTool: (tool: any) => { if (tool.name === "bg_wait") waitTool = tool; },
+		events: { on: () => () => {}, emit: () => {} }, sendMessage: () => { delivered++; },
+	} as never, childConfig({ fanoutChild: true }));
+	try {
+		await emit("session_start", {});
+		await emit("tool_result", { toolName: "subagent", details: { asyncId: runId } });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId, sessionId, state: terminalState, mode: "single", steps: [], startedAt: Date.now(), lastUpdate: Date.now() }));
+		updateActiveRunIndex(asyncDir, terminalState);
+		fs.writeFileSync(path.join(DIRS.results, `${runId}.json`), JSON.stringify({ runId, sessionId, state: terminalState, success: false, results: [{ agent: "failed-arm", success: false, error: "MODEL_ARM_FAILED", output: "Partial arm evidence" }] }));
+		const result = await waitTool.execute("wait-failed", { id: runId }, undefined, undefined, ctx);
+		assert.equal(result.details.completions[0].success, false, "failure stays explicit in the delivered result");
+		assert.match(JSON.stringify(result.content), /MODEL_ARM_FAILED/);
+		await emit("tool_result", { toolName: "bg_wait", isError: true, details: result.details });
+		if (terminalState === "paused") await assert.rejects(emit("agent_end", { messages: [] }), /could not be reconciled/);
+		else await emit("agent_end", { messages: [] });
+		assert.equal(delivered, 0, "already consumed terminal failure must not be treated as unfinished work");
+		assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8")).state, terminalState);
+	} finally { fs.rmSync(asyncDir, { recursive: true, force: true }); fs.rmSync(path.join(DIRS.results, `${runId}.json`), { force: true }); }
+});
+
+it("requires descendant reconciliation before structured output, including parallel tool batches", async () => {
+	const handlers = new Map<string, Function[]>();
+	const tools = new Map<string, any>();
+	const captured: unknown[] = [];
+	registerSubagentPromptRuntime({
+		on: (name: string, fn: Function) => handlers.set(name, [...(handlers.get(name) ?? []), fn]),
+		registerTool: (tool: any) => tools.set(tool.name, tool), events: { on: () => () => {}, emit: () => {} },
+	} as never, childConfig({ fanoutChild: true, structuredOutput: { schema: { type: "object" }, capture: (value) => captured.push(value) } }));
+	const emit = async (name: string, event: unknown) => { for (const fn of handlers.get(name) ?? []) await fn(event); };
+	const submit = () => tools.get("structured_output").execute("final", { value: { report: "reconciled" } });
+	await emit("tool_call", { toolName: "subagent" });
+	await assert.rejects(submit(), /delegated work is unreconciled/);
+	await emit("tool_result", { toolName: "subagent", details: { asyncId: "arm" } });
+	await assert.rejects(submit(), /delegated work is unreconciled/);
+	await emit("tool_result", { toolName: "bg_wait", details: { completions: [{ runId: "arm", state: "paused" }] } });
+	await assert.rejects(submit(), /delegated work is unreconciled/);
+	await emit("tool_result", { toolName: "bg_wait", details: { completions: [{ runId: "arm", state: "complete", success: true }] } });
+	await submit();
+	assert.deepEqual(captured, [{ report: "reconciled" }]);
+});
 
 function supervisorConfig(overrides: Partial<ChildRuntimeConfig> = {}): ChildRuntimeConfig {
 	return childConfig({

@@ -293,7 +293,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				},
 				steer: (text) => { evidence?.invalidate(); return session.steer(text); },
 				followUp: (text) => { evidence?.invalidate(); return session.followUp(text); },
-				abort: () => { evidence?.invalidate(); return session.abort(); },
+				abort: () => { evidence?.invalidate(); launch.runtime.backgroundDrain?.abort(); return session.abort(); },
 				dispose: () => {
 					if (!pending) {
 						live.delete(child);

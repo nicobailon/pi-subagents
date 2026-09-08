@@ -159,6 +159,28 @@ describe("in-process foreground child", () => {
 		assert.equal(mockPi.sessions[0]?.disposed, true);
 	});
 
+	it("keeps an explicit owner stop routable after foreground detach", async () => {
+		mockPi.onCall({ hangUntilAbort: true });
+		const stop = new AbortController();
+		let detach: (() => boolean) | undefined;
+		let terminal: SingleResult | undefined;
+		const running = runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			runId: "detached-owner-stop", stopSignal: stop.signal,
+			onDetachReady: (next) => { detach = next; },
+			onDetachedExit: (result) => { terminal = result; },
+		});
+		await waitFor(() => !!detach && mockPi.sessions[0]?.task !== undefined);
+		assert.equal(detach!(), true);
+		assert.equal((await running).detached, true);
+		stop.abort();
+		await waitFor(() => terminal !== undefined);
+		assert.equal(terminal!.exitCode, 1);
+		assert.equal(terminal!.stopped, true);
+		assert.equal(terminal!.interrupted, undefined, "stop is not a pause");
+		assert.equal(mockPi.sessions[0]?.aborted, true);
+		assert.equal(mockPi.sessions[0]?.disposed, true);
+	});
+
 	it("reports the run only after the child session's shutdown work finished", async () => {
 		mockPi.onCall({ output: "done" });
 		let shutdownDone = false;

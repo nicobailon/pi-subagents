@@ -2121,6 +2121,7 @@ export interface ForegroundChildControl {
 	thinking?: string;
 	toolCount?: number;
 	interrupt?: () => boolean;
+	stop?: () => boolean;
 	detach?: () => boolean;
 	/** Steer the live in-process child session; undefined until the session exists. */
 	steer?: (input: ForegroundSteerInput) => Promise<ForegroundSteerOutcome>;
@@ -2182,6 +2183,7 @@ export interface ForegroundRunControl {
 	nestedRoute?: NestedRouteInfo;
 	nestedChildren?: NestedRunSummary[];
 	interrupt?: () => boolean;
+	stop?: () => boolean;
 	detach?: () => boolean;
 	steer?: ForegroundChildControl["steer"];
 }
@@ -2256,7 +2258,7 @@ export interface SubagentState {
 	poller: NodeJS.Timeout | null;
 	completionSeen: Map<string, number>;
 	/** Terminal result payloads observed by the result watcher, keyed by run id and pruned by the completion TTL. */
-	completedResults?: Map<string, { seenAt: number; completion: WaitCompletion }>;
+	completedResults?: Map<string, { seenAt: number; completion: WaitCompletion; content?: string; outputAvailable?: boolean }>;
 	watcher: FSWatcher | null;
 	watcherRestartTimer: ReturnType<typeof setTimeout> | null;
 	resultFileCoalescer: {
@@ -2373,6 +2375,8 @@ export interface RunSyncOptions {
 	/** Original cwd input retained for launch diagnostics. */
 	requestedCwd?: string;
 	signal?: AbortSignal;
+	/** Explicit owner stop remains routable after a foreground detach. */
+	stopSignal?: AbortSignal;
 	interruptSignal?: AbortSignal;
 	timeoutMs?: number;
 	deadlineAt?: number;

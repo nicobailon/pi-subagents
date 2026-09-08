@@ -35,6 +35,9 @@ export interface CompletionReplayRecord {
 	completedAt: number;
 	expiresAt: number;
 	completion: WaitCompletion;
+	/** Bounded model-visible result data, separate from metadata. */
+	content?: string;
+	outputAvailable?: boolean;
 	archivePath: string;
 }
 
@@ -135,7 +138,10 @@ function parseReplay(value: unknown): CompletionReplayRecord | undefined {
 		|| typeof record.expiresAt !== "number"
 		|| typeof record.archivePath !== "string") return undefined;
 	const completion = parseCompletion(record.completion, record.runId);
-	return completion ? { ...record, completion } as CompletionReplayRecord : undefined;
+	return completion ? { ...record, completion,
+		content: typeof record.content === "string" ? record.content : undefined,
+		outputAvailable: typeof record.outputAvailable === "boolean" ? record.outputAvailable : undefined,
+	} as CompletionReplayRecord : undefined;
 }
 
 function validateReplayRecord(resultsDir: string, runId: string, record: CompletionReplayRecord): CompletionReplayRecord | undefined {
@@ -188,6 +194,8 @@ export function writeCompletionReplay(input: {
 	runId: string;
 	sessionId: string;
 	completion: WaitCompletion;
+	content?: string;
+	outputAvailable?: boolean;
 	data: Record<string, unknown>;
 	now: number;
 	ttlMs: number;
@@ -201,6 +209,8 @@ export function writeCompletionReplay(input: {
 		completedAt: input.now,
 		expiresAt: input.now + input.ttlMs,
 		completion,
+		...(input.content ? { content: input.content } : {}),
+		...(input.outputAvailable !== undefined ? { outputAvailable: input.outputAvailable } : {}),
 		archivePath,
 	};
 	writePrivateAtomicJson(completionReplayPath(input.resultsDir, input.runId), record);

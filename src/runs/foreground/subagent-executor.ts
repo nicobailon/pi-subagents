@@ -3831,6 +3831,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		effectiveSkills = skillOverride;
 	}
 	const interruptController = new AbortController();
+	const stopController = new AbortController();
 	let detachForeground: ((reason?: string) => boolean) | undefined;
 	let childSessionControls: ForegroundChildSessionControls | undefined;
 	const foregroundControl = deps.state.foregroundControls.get(runId);
@@ -3850,6 +3851,11 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			interrupt: () => {
 				if (interruptController.signal.aborted) return false;
 				interruptController.abort();
+				return true;
+			},
+			stop: () => {
+				if (stopController.signal.aborted) return false;
+				stopController.abort();
 				return true;
 			},
 			detach: () => detachForeground?.("user request") === true,
@@ -3898,6 +3904,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			cwd: singleCwd,
 			requestedCwd: data.requestedCwd,
 			signal,
+			stopSignal: stopController.signal,
 			interruptSignal: interruptController.signal,
 			allowIntercomDetach: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
 			intercomEvents: deps.pi.events,

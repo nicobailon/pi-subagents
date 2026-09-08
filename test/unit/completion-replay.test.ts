@@ -55,7 +55,9 @@ describe("completion replay", () => {
 			});
 
 			const terminal = [{ id: "run-a", sessionId: "session-a" }] as AsyncRunSummary[];
-			const completions = collectWaitCompletions(terminal, makeState(), resultsDir);
+			const content: string[] = [];
+			const completions = collectWaitCompletions(terminal, makeState(), resultsDir, (text) => content.push(text), true);
+			assert.match(content.join("\n"), /finished output/);
 			assert.equal(completions?.[0]?.runId, "run-a");
 			assert.equal(completions?.[0]?.results?.[0]?.agent, "worker");
 			assert.equal(completions?.[0]?.results?.[0]?.contextOverflow, true);
@@ -63,6 +65,19 @@ describe("completion replay", () => {
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
+	});
+
+	it("recovers output from the durable archive when a replay has no inline delivery cache", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-completion-archive-delivery-"));
+		try {
+			writeCompletionReplay({ resultsDir, runId: "archived", sessionId: "session-a", now: Date.now(), ttlMs: 60000,
+				completion: { runId: "archived", success: true, results: [{ agent: "worker", success: true }] },
+				data: { results: [{ agent: "worker", output: "ARCHIVED_EVIDENCE" }] },
+			});
+			const content: string[] = [];
+			collectWaitCompletions([{ id: "archived", sessionId: "session-a", state: "complete" }] as AsyncRunSummary[], makeState(), resultsDir, (text) => content.push(text), true);
+			assert.match(content.join("\n"), /ARCHIVED_EVIDENCE/);
+		} finally { fs.rmSync(resultsDir, { recursive: true, force: true }); }
 	});
 
 	it("surfaces pending completions when the direct session index is temporarily inaccessible", () => {

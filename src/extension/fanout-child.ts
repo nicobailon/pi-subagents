@@ -6,6 +6,8 @@ import { discoverAgents } from "../agents/agents.ts";
 import { getArtifactsDir } from "../shared/artifacts.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { resolveWaitToolConfig } from "../runs/background/wait-config.ts";
+import { cancelOutstandingWork } from "../runs/background/auto-drain.ts";
+import { waitForSubagents } from "../runs/background/subagent-wait.ts";
 import type { ChildRuntimeConfig } from "../runs/shared/child-runtime-config.ts";
 import { readNestedControlRequests, resolveInheritedNestedRoute, type NestedRoute, writeNestedControlResult } from "../runs/shared/nested-events.ts";
 import { deliverSubagentIntercomMessageEvent } from "../intercom/result-intercom.ts";
@@ -172,6 +174,31 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 		childRuntime: childConfig,
 	});
 
+	const cascade = () => {
+		if (!state.currentSessionId) return; // No tool has launched work in this child yet.
+		try {
+			for (const note of cancelOutstandingWork(state, childConfig.backgroundDrain?.signal.reason === "interrupt" ? "interrupt" : childConfig.backgroundDrain?.signal.reason === "timeout" ? "timeout" : "stop", childConfig.nestedRoute?.rootRunId)) console.error(note);
+		} catch (error) {
+			childConfig.backgroundDrain?.report(false, `Descendant cancellation failed: ${error instanceof Error ? error.message : String(error)}`);
+			throw error;
+		}
+	};
+	const onCancel = () => { try { cascade(); } catch (error) { console.error(error); } };
+	if (childConfig.backgroundDrain) {
+		childConfig.backgroundDrain.signal.addEventListener("abort", onCancel, { once: true });
+		pi.on("session_shutdown", async () => {
+			childConfig.backgroundDrain?.signal.removeEventListener("abort", onCancel);
+			if (!childConfig.backgroundDrain?.signal.aborted || !state.currentSessionId) return;
+			cascade();
+			// Cancellation has its own short teardown budget, never the ordinary
+			// (possibly 30-minute) wait window. Durable requests survive this host.
+			const result = await waitForSubagents({ all: true, timeoutMs: Math.min(1000, childConfig.waitTool.defaultTimeoutMs ?? 1000), stopOnAttention: false }, undefined, {
+				state, events: pi.events, nestedRootRunId: childConfig.nestedRoute?.rootRunId,
+			});
+			if (result.isError || result.details.wait?.timedOut) throw new Error(`Descendant cancellation remains unconfirmed; retain these runs and their recovery artifacts: ${result.content.map((part) => part.type === "text" ? part.text : "").join("\n")}`);
+		});
+	}
+
 	const params = createSubagentParamsSchema();
 	const tool: ToolDefinition<typeof params, Details> = {
 		name: "subagent",
@@ -183,7 +210,12 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 		].join("\n"),
 		parameters: params,
 		async execute(id, params, signal, onUpdate, ctx) {
-			return finalizeToolResult(await executor.executePublic(id, params as SubagentParamsLike, signal ?? new AbortController().signal, onUpdate, ctx));
+			try {
+				return finalizeToolResult(await executor.executePublic(id, params as SubagentParamsLike, signal ?? new AbortController().signal, onUpdate, ctx));
+			} finally {
+				// Include a launch that committed concurrently with its parent's cancellation.
+				if (childConfig.backgroundDrain?.signal.aborted) cascade();
+			}
 		},
 	};
 
