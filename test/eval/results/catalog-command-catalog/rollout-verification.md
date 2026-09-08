@@ -23,7 +23,7 @@ A fresh CodeGraph build of the rollout checkout indexed 599 files, 27,238 symbol
 ### Evidence archive
 
 - All archived gzip files passed `gzip -t`.
-- `SHA256SUMS` verifies every stored artifact.
+- `SHA256SUMS` verifies every other stored artifact.
 - Decompressing each result reproduces the original `/tmp` JSON or JSONL hash in `RAW-SHA256SUMS`.
 - All six evaluator JSON files parsed as result version 3 and retained every attempt.
 - A recursive scan of the evaluator results and provider-smoke events found no nonempty authorization, API-key, access-token, refresh-token, password, secret, or cookie fields and no recognized key, bearer-token, private-key, GitHub-token, or AWS-key formats.
@@ -42,6 +42,8 @@ The rollout checkout passed these local gates after the catalog implementation a
 - slop-scan with 217 findings on both the clean `d080871f` worktree and the rollout checkout, with no added, resolved, worsened, or improved code findings
 
 AIslop skipped its format and lint engines for this documentation-and-artifact change. slop-scan reported no changed code path because it does not scan the added Markdown and gzip artifacts. The explicit Oxfmt, hash, archive, and credential checks cover those files.
+
+The full branch comparison against fixed upstream base `54df154d` also ran after the final source comment. AIslop scored 92 with zero errors, 99 warnings, and 24 fixable findings. slop-scan reported 217 findings and the same repository score on both revisions, with 23 added, 23 resolved, and zero worsened. The command exited nonzero because `--fail-on added,worsened` counts same-rule line-fingerprint shifts as additions. All 23 pairs are line-offset shifts in five pre-existing files: `src/extension/index.ts`, `src/extension/fanout-child.ts`, `src/runs/foreground/subagent-executor.ts`, `src/runs/shared/parallel-handoff.ts`, and `src/shared/types.ts`.
 
 ### Isolated package installation
 

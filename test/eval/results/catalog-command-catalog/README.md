@@ -46,7 +46,7 @@ The candidate cut the provider-visible definition by about 89%. This is definiti
 - `luna-provider-smoke.jsonl.gz` contains the effect-free installed-package provider smoke.
 - `independent-heldout-design.md` is the independently authored scenario design. Its source hash is recorded in each result and in `SHA256SUMS`.
 - `token-counts.json` records the exact published and provider-serialized tool hashes used for token counting.
-- `SHA256SUMS` verifies the stored files.
+- `SHA256SUMS` verifies every other stored file.
 - `RAW-SHA256SUMS` verifies the byte stream produced by decompressing each result.
 - `rollout-verification.md` records the local policy-consumer, package-loader, config-migration, and provider-smoke checks.
 
