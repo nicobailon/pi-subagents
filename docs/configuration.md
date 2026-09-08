@@ -392,7 +392,9 @@ Controls nested delegation when no stricter limit is inherited from the launchin
 export PI_SUBAGENT_PI_BINARY=/path/to/pi-or-wrapper
 ```
 
-Overrides the `pi` command pi-subagents spawns for Herdr project panes (`action: "project.open"`) and for the profile model probe. Package wrappers can set this to their own `pi` binary so those launches inherit wrapper flags, environment setup, and bundled resources without relying on `PATH` ordering. Empty or whitespace-only values are ignored. It does not affect children: foreground children are sessions inside the parent Pi process and background children are sessions inside the detached runner process, and neither spawns a `pi` binary. Background children require pi installed as the npm package (`@earendil-works/pi-coding-agent`), because the runner imports pi's packages from that package directory; a standalone pi binary has no package directory, and background launches fail with an error saying so.
+Overrides the `pi` command pi-subagents spawns for Herdr project panes (`action: "project.open"`) and the profile model probe. On a supported Bun-compiled Pi host it also selects the executable for a detached background host. The override must accept Pi's bootstrap arguments and provide the compatible embedded SDK and adjacent release resources; a bare Bun interpreter or unrelated executable is not a substitute. Empty or whitespace-only values are ignored, and a failed launch is not retried with another executable.
+
+Foreground children remain sessions inside the parent. Npm-hosted background children retain their detached Node runner and host-package peer aliases; this variable does not turn an npm host into a binary-backed runner. Binary-backed background children use Pi's extension loader to supply the embedded SDK, with no separate SDK installation. See [Standalone background execution](standalone-background.md) for the tested official target and regression commands.
 
 ## `intercomBridge`
 

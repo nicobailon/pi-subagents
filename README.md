@@ -14,7 +14,7 @@
 pi install npm:pi-subagents
 ```
 
-That is the only required step. Background children require pi installed as the npm package (`@earendil-works/pi-coding-agent`): the detached runner imports pi's packages from that package directory. A standalone single-file pi binary has no package directory and cannot run background children; foreground children (`async: false`) still work there.
+That is the only required step. Background children use the selected host's SDK: npm Pi keeps its detached Node runner, while supported Bun-compiled Pi hosts load the same configured runner through Pi's embedded SDK. Each independent background run has its own host; native sessions inside that run share it. The standalone regression target is the official Pi v0.85.1 Linux x64 release. See [Standalone background execution](docs/standalone-background.md) for tested limits, isolated validation, and a trial without replacing your installation.
 
 ## Try this first
 

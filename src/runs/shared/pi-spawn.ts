@@ -49,6 +49,7 @@ export interface PiSpawnDeps {
 	platform?: NodeJS.Platform;
 	execPath?: string;
 	argv1?: string;
+	bunVersion?: string;
 	existsSync?: (filePath: string) => boolean;
 	realpathSync?: (filePath: string) => string;
 	readFileSync?: (filePath: string, encoding: "utf-8") => string;
@@ -56,6 +57,24 @@ export interface PiSpawnDeps {
 	resolvePackageEntry?: () => string;
 	piPackageRoot?: string;
 	env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Bun's executable entrypoint is virtual; the actual image may be called anything.
+ * A filename-only check (the earlier standalone fix in #764) misses renamed
+ * images. Require both Bun and its compiled entrypoint before reusing execPath;
+ * ordinary Bun scripts must not be launched as if they were the Pi executable.
+ * https://github.com/nicobailon/pi-subagents/pull/764
+ * Check: node --experimental-strip-types --test test/unit/binary-pi-spawn.test.ts
+ * The real-loader gate is test/smoke/standalone-matrix.mjs; injected process
+ * metadata in these unit tests is not evidence that a packaged SDK executed.
+ */
+export function resolveBunPiExecutable(deps: PiSpawnDeps = {}): string | undefined {
+	const bunVersion = deps.bunVersion ?? process.versions.bun;
+	const entry = deps.argv1 ?? process.argv[1];
+	if (!bunVersion || !entry?.startsWith("/$bunfs/")) return undefined;
+	const env = deps.env ?? process.env;
+	return env[PI_SUBAGENT_PI_BINARY_ENV]?.trim() || (deps.execPath ?? process.execPath);
 }
 
 interface PiSpawnCommand {
@@ -176,6 +195,8 @@ export function getPiSpawnCommand(
 	}
 
 	const execPath = deps.execPath ?? process.execPath;
+	const bunHost = resolveBunPiExecutable(deps);
+	if (bunHost) return { command: bunHost, args };
 	if (isStandalonePiExecutable(execPath)) {
 		return { command: execPath, args };
 	}

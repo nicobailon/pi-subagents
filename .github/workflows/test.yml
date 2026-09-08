@@ -81,3 +81,57 @@ jobs:
             ${{ runner.temp }}/pi0851-smoke/aliases.json
             ${{ runner.temp }}/pi0851-smoke/host/package-lock.json
             ${{ runner.temp }}/pi0851-smoke/extension/package-lock.json
+
+  official-standalone:
+    # Ubuntu 22.04 permits the unprivileged namespaces required by bubblewrap.
+    # This job targets the official release only, not arbitrary standalone forks.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Install controller dependencies and isolation tool
+        run: |
+          npm ci --ignore-scripts
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+      - name: Provision the checksum-pinned official binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="$(node -p 'require("./test/smoke/standalone-release.json").url')"
+          sha="$(node -p 'require("./test/smoke/standalone-release.json").archiveSha256')"
+          mkdir -p "$RUNNER_TEMP/pi-official"
+          curl --fail --location --retry 3 "$url" --output "$RUNNER_TEMP/pi-official/release.tar.gz"
+          printf '%s  %s\n' "$sha" "$RUNNER_TEMP/pi-official/release.tar.gz" | sha256sum --check -
+          tar -xzf "$RUNNER_TEMP/pi-official/release.tar.gz" -C "$RUNNER_TEMP/pi-official"
+      - name: Complete isolated official binary matrix
+        run: node test/smoke/standalone-matrix.mjs "$RUNNER_TEMP/pi-official/pi/pi" "$RUNNER_TEMP/standalone-matrix"
+      - name: Collect bounded lifecycle evidence
+        id: evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/standalone-matrix"
+          find . -type d \( -name package -o -name cache -o -name bun-cache -o -name home -o -name agent -o -name assets -o -name theme -o -name export-html \) -prune -o -type f \( -name '*.log' -o -name '*.jsonl' -o -name status.json -o -name process-terminal.json -o -name identity.json -o -name '*result.json' -o -name '*notification*.json' -o -name '*witness.json' -o -name '*competition.json' -o -name launch.json -o -name '*failure.json' -o -name launch-error.json \) -print0 > "$RUNNER_TEMP/standalone-files"
+          tar --null -czf "$RUNNER_TEMP/standalone-evidence.tar.gz" --files-from "$RUNNER_TEMP/standalone-files"
+          test "$(stat -c %s "$RUNNER_TEMP/standalone-evidence.tar.gz")" -le 33554432
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: official-standalone-receipt
+          path: |
+            ${{ runner.temp }}/standalone-matrix/matrix.json
+            ${{ runner.temp }}/standalone-matrix/inputs.json
+          if-no-files-found: warn
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.evidence.outcome == 'success'
+        with:
+          name: official-standalone-lifecycle
+          path: ${{ runner.temp }}/standalone-evidence.tar.gz
+          if-no-files-found: error
+          retention-days: 7

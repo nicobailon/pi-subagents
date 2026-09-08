@@ -96,7 +96,7 @@ import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLau
 import type { InheritedChildRuntime } from "../shared/child-launch.ts";
 import { buildRunnerChildLaunch } from "./runner-child-launch.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
-import type { ChildSessionFactory } from "../shared/child-session.ts";
+import type { ChildSessionFactory, DefaultChildSessionFactoryOptions } from "../shared/child-session.ts";
 import { getSettledReadonlyChild, runChildSession, type ChildEvent, type RunChildSessionInput, type RunChildSessionResult, type StepSteerHandler } from "./run-child-session.ts";
 import { planReadonlyModelContinuation, READONLY_CONTINUATION_PROMPT, type LogicalRecoveryState } from "../shared/readonly-model-continuation.ts";
 import { getReadonlySessionEvidence } from "../shared/readonly-session-evidence.ts";
@@ -184,7 +184,7 @@ const INTERCOM_DETACH_RECEIPT = "Detached for intercom coordination before task 
 // child host.
 process.env[SUBAGENT_CHILD_ENV] = "1";
 
-interface SubagentRunConfig {
+export interface SubagentRunConfig {
 	id: string;
 	steps: RunnerStep[];
 	resultPath: string;
@@ -5091,7 +5091,17 @@ async function waitForStartupControl(
 	throw new Error(`Timed out after ${timeoutMs}ms waiting for runner startup control '${action}'.`);
 }
 
-async function runConfiguredSubagent(config: SubagentRunConfig): Promise<void> {
+/**
+ * Shared lifecycle entry for Node and Pi-binary hosts. Do not call runSubagent
+ * directly from a new host: authorization, revival ownership and final disposal
+ * live here. #1837/#1844 deliberately replaced per-child CLI processes with SDK
+ * sessions; adding binary support must not resurrect stdout parsing or duplicate
+ * these safeguards. See test/smoke/standalone-background.mjs and the async
+ * startup/revival integration tests.
+ * https://github.com/nicobailon/pi-subagents/issues/1837
+ * https://github.com/nicobailon/pi-subagents/pull/1844
+ */
+export async function runConfiguredSubagent(config: SubagentRunConfig, options?: DefaultChildSessionFactoryOptions): Promise<void> {
 	let lease: ReturnType<typeof acquireSessionLease> | undefined;
 	let startupCommitted = config.revivalLease === undefined && config.launchBarrierToken === undefined;
 	const startupPath = path.join(config.asyncDir, "runner-startup.json");
@@ -5130,7 +5140,7 @@ async function runConfiguredSubagent(config: SubagentRunConfig): Promise<void> {
 				}
 			}
 		}
-		const childSessions = await loadRunnerChildSessionFactory(config);
+		const childSessions = await loadRunnerChildSessionFactory(config, options);
 		try {
 			await runSubagent(config, childSessions);
 		} finally {

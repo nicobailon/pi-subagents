@@ -20,7 +20,7 @@ import { applyWatchdogLaunchRules, sendRuleViolationWarning } from "../../watchd
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveExistingReadInstructionPaths, resolveExistingReadPaths, writeInitialProgressFile, type ChainStep, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
-import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../shared/pi-spawn.ts";
+import { PI_CODING_AGENT_PACKAGE, resolveBunPiExecutable, resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../shared/pi-spawn.ts";
 import { JITI_ALIAS_ENV, resolveHostPeerAliases } from "./runner-aliases.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { resolveNodeExecutable } from "../../shared/node-executable.ts";
@@ -542,15 +542,35 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	const cwdError = preflightLaunchCwd(requestedCwd, cwd);
 	if (cwdError) return { error: cwdError };
 
-	if (!jitiCliPath) {
+	// A compiled Pi exposes its SDK through Pi's extension loader, not a disk package.
+	// Use the running executable (which may be renamed, e.g. pi-native), never the
+	// virtual /$bunfs entrypoint or a bare Bun interpreter. The latter can silently
+	// auto-install a different SDK. Preserve #1844's one shared runner per run:
+	// https://github.com/nicobailon/pi-subagents/pull/1844
+	// Real regression: test/smoke/standalone-background.mjs (no disk SDK/network).
+	const binaryHost = resolveBunPiExecutable();
+	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
+	const bootstrap = path.join(path.dirname(runner), "binary-bootstrap.ts");
+	// A successful spawn is not proof that Pi loaded the explicit bootstrap. Reject
+	// a missing packaged asset at the public launch boundary, rather than accepting
+	// a run that cannot enter the configured runner.
+	// Regression: standalone-background.mjs ... missing-bootstrap.
+	if (binaryHost && !fs.existsSync(bootstrap)) return { error: `Background runner bootstrap not found: ${bootstrap}` };
+	if (!binaryHost && !jitiCliPath) {
 		return { error: "upstream jiti for TypeScript execution could not be found; ensure package dependencies are installed" };
 	}
-	if (!piPackageRoot) {
-		return { error: `Background children require pi installed as the npm package (${PI_CODING_AGENT_PACKAGE}); a standalone pi binary has no package directory, so the async runner cannot create child sessions. Run this child in the foreground (async: false) or install pi from npm.` };
+	if (!binaryHost && !piPackageRoot) {
+		return { error: `Background children require a supported standalone Pi host or the installed npm package (${PI_CODING_AGENT_PACKAGE}); neither is available.` };
 	}
-	const hostPeerAliases = resolveHostPeerAliases(piPackageRoot);
+	// Do not apply npm peer aliases to the binary path or remove them from Node:
+	// #2037 repairs a filesystem package graph, not the embedded SDK's identity.
+	// Both paths must keep the same startup barrier and close observer below.
+	// https://github.com/nicobailon/pi-subagents/pull/2037
+	const hostPeerAliases = !binaryHost && piPackageRoot
+		? resolveHostPeerAliases(piPackageRoot)
+		: { aliases: {}, missing: [] };
 	if (hostPeerAliases.missing.length > 0) {
-		return { error: `Background children require pi installed as the npm package (${PI_CODING_AGENT_PACKAGE}) with its dependencies; ${piPackageRoot} does not provide ${hostPeerAliases.missing.join(", ")}, so the async runner cannot create child sessions. A standalone pi binary cannot run background children.` };
+		return { error: `Background children require the host npm package (${PI_CODING_AGENT_PACKAGE}) with its dependencies; ${piPackageRoot} does not provide ${hostPeerAliases.missing.join(", ")}.` };
 	}
 
 	fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
@@ -560,8 +580,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	const launchBarrierToken = hasRevivalLease ? undefined : runnerProcessInstanceId;
 	const launchConfig = { ...cfg, runnerProcessInstanceId, ...(launchBarrierToken ? { launchBarrierToken } : {}) };
 	writePrivateAtomicJson(cfgPath, launchConfig);
-	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
-	const nodeCommand = resolveNodeExecutable();
+	const command = binaryHost ?? resolveNodeExecutable();
 	const launchForStartup = launchConfig as typeof launchConfig & { asyncDir?: unknown; id?: unknown; sessionId?: unknown; completionOwnerId?: unknown; revivalLease?: unknown };
 	const launchAsyncDir = typeof launchForStartup.asyncDir === "string" ? launchForStartup.asyncDir : undefined;
 	const launchRunId = typeof launchForStartup.id === "string" ? launchForStartup.id : suffix;
@@ -590,14 +609,18 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 		const preload = Object.keys(hostPeerAliases.aliases).length > 0
 			? ["--import", new URL("../../../runner-peer-preload.mjs", import.meta.url).href]
 			: [];
-		const proc = spawn(nodeCommand, [...preload, jitiCliPath, runner, cfgPath], {
+		const args = binaryHost
+			? ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-session", "--mode", "rpc", "--extension", bootstrap]
+			: [...preload, jitiCliPath!, runner, cfgPath];
+		const proc = spawn(command, args, {
 			cwd,
 			...backgroundProcessOptions(),
 			stdio: ["ignore", stdoutFd ?? "ignore", stderrFd ?? "ignore"],
 			env: {
 				...omitExtensionBindingsEnv(process.env),
-				[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: piPackageRoot,
-				[JITI_ALIAS_ENV]: JSON.stringify(hostPeerAliases.aliases),
+				[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: binaryHost ? undefined : piPackageRoot,
+				[JITI_ALIAS_ENV]: binaryHost ? undefined : JSON.stringify(hostPeerAliases.aliases),
+				PI_SUBAGENT_RUNNER_CONFIG: binaryHost ? cfgPath : undefined,
 			},
 		});
 		closeFd(stdoutFd);
