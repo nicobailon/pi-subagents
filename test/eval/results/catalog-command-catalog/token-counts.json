@@ -1,0 +1,19 @@
+{
+  "encoding": "o200k_base",
+  "serialization": "compact JSON of the complete published tool definition",
+  "sourceArtifact": "luna-heldout.json.gz",
+  "candidate": {
+    "commit": "d080871fb7a9fb2b807014064b2f091bf367b11c",
+    "publishedDefinitionTokens": 626,
+    "publishedDefinitionSha256": "eb040c83343fd83c2f6313dc7010b80c9f4c5993af909e3a868d665e2eb99da0",
+    "firstProviderToolTokens": 634,
+    "firstProviderToolSha256": "708cd56ac55e8682947e0eac196bf9cfe016afa04889b34235c1883827fddd1c"
+  },
+  "baselineCompact": {
+    "commit": "54df154d1891db6b1a3e755539683335b9f9dbd3",
+    "publishedDefinitionTokens": 5533,
+    "publishedDefinitionSha256": "579cf190da24b7f4a228ca8aba5c95c3da1684c9c4ed24f5dcc50b1ea9e2eba5",
+    "firstProviderToolTokens": 5541,
+    "firstProviderToolSha256": "0cd21baf66524cd6459392f6e9ec45b9ef0023acebd78acd821155c90b87187e"
+  }
+}

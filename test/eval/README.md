@@ -35,17 +35,17 @@ mutates either repository.
 
 ## Suites
 
-- `fixtures/development-suite.json` — the six frozen development scenarios
-  (single read-only child, isolated parallel writers, writer/review/fix,
-  infrastructure failure, retained-child resume, named-workflow policy). Do
-  not tune these to make a candidate pass.
-- `fixtures/capability-suite.json` — nine self-authored capability scenarios
-  (agent `get`, `models`, `validate`-then-run, `status` recovery, `steer`,
-  `stop`, `mission.attach-run`/`mission.show`, `schedule.create`,
+- `fixtures/development-suite.json` contains the six frozen development
+  scenarios (single read-only child, isolated parallel writers,
+  writer/review/fix, infrastructure failure, retained-child resume, and
+  named-workflow policy). Do not tune these to make a candidate pass.
+- `fixtures/capability-suite.json` contains nine self-authored capability
+  scenarios (agent `get`, `models`, `validate`-then-run, `status` recovery,
+  `steer`, `stop`, `mission.attach-run`/`mission.show`, `schedule.create`, and
   `workflowScriptPath`). These were originally labeled "held-out"; they are
   regression coverage only and are disjoint from the true held-out set.
-- `fixtures/held-out-suite.json` — the true held-out set: the six scenarios
-  selected by the independently authored black-box design — foreground
+- `fixtures/held-out-suite.json` contains the true held-out set. Its six
+  scenarios come from the independently authored black-box design: foreground
   structured classifier, conditional structured raw workflow, offline
   nested-async validation, exact child transcript tail, child-scoped stop,
   and raw-workflow host-authority denial. The suite document records the
@@ -59,7 +59,15 @@ mutates either repository.
 `--suite` selects `development`, `capability`, `held-out`, or `all` (default:
 all three).
 
-## Permission evidence — what is actually covered
+## Preserved evaluation results
+
+`results/catalog-command-catalog/` contains the compressed raw held-out matrices,
+the independent scenario design, exact hashes, token measurements, and rollout
+verification for candidate commit `d080871f`. These artifacts preserve all
+attempts and infrastructure outcomes. They are review evidence, not golden files
+or fixtures; normal tests do not read them.
+
+## Permission evidence and coverage
 
 Three distinct tiers, deliberately not conflated:
 
