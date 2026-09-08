@@ -199,8 +199,8 @@ describe("below-editor subagent FleetView", () => {
 			const colorCodeFor = (lines: string[], agent: string) => lines
 				.find((line) => visibleText(line).includes(agent))
 				?.match(/\x1b\[38;5;(\d+)m/)?.[1];
-			assert.equal(colorCodeFor(expandedLines, "worker-0"), "213", "agent color is deterministic from the visible agent identity");
-			assert.notEqual(colorCodeFor(expandedLines, "worker-0"), colorCodeFor(expandedLines, "worker-1"), "different agent identities get distinct colors in the roster");
+			assert.equal(colorCodeFor(expandedLines, "worker-0"), "213", "agent color is deterministic from the raw agent identity");
+			assert.notEqual(colorCodeFor(expandedLines, "worker-0"), colorCodeFor(expandedLines, "worker-1"), "these identities hash to different fixed-palette colors");
 			assert.ok(visibleExpandedLines.some((line) => line.includes("  worker-0")), "unselected agents use blank focus space");
 			assert.ok(expandedLines.every((line) => !/[⏺◯]/u.test(line)), "selection avoids terminal-ambiguous circle glyphs");
 			assert.ok(visibleExpandedLines.some((line) => line.includes("worker-0 (fable-5 · thinking low)")));
@@ -212,6 +212,49 @@ describe("below-editor subagent FleetView", () => {
 			assert.equal(component.render(80).length, 1);
 			assert.deepEqual(fleet.handleKey("\x1b[D"), { consume: true });
 			assert.ok(component.render(80).length > 1, "Left should also expand the roster");
+		} finally {
+			fleet.dispose();
+		}
+	});
+
+	it("keeps agent color stable when async display labels differ", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("labeled-agents", {
+			asyncId: "labeled-agents",
+			asyncDir: "/tmp/labeled-agents",
+			status: "running",
+			mode: "parallel",
+			startedAt: Date.now() - 1_000,
+			updatedAt: Date.now(),
+			steps: [
+				{ agent: "scout", label: "Find seams", status: "running", index: 0 },
+				{ agent: "scout", label: "Audit API", status: "running", index: 1 },
+			],
+		});
+
+		let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				requestRender() {},
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext(ctx);
+			const component = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor }, theme);
+			assert.deepEqual(fleet.handleKey("\x1b[B"), { consume: true });
+			const lines = component.render(100);
+			const colorFor = (label: string) => lines
+				.find((line) => visibleText(line).includes(label))
+				?.match(/\x1b\[38;5;(\d+)m/)?.[1];
+			assert.equal(colorFor("Find seams (scout)"), colorFor("Audit API (scout)"));
+			assert.ok(colorFor("Find seams (scout)"), "labeled agents render with an identity color");
 		} finally {
 			fleet.dispose();
 		}

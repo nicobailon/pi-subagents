@@ -37,6 +37,7 @@ type FleetStatusEntry = {
 	parentKey?: string;
 	workflowWrapper?: boolean;
 	agent: string;
+	displayLabel?: string;
 	modelThinking?: string;
 	description?: string;
 	startedAt: number;
@@ -52,6 +53,7 @@ type FleetStatusEntry = {
 
 type FleetNestedRow = {
 	name: string;
+	agentIdentity?: string;
 	state: NestedRunSummary["state"] | NestedStepSummary["status"];
 	modelThinking?: string;
 	activity?: string;
@@ -195,6 +197,7 @@ function nestedFleetRows(children: NestedRunSummary[] | undefined, visibleLimit:
 					const activity = nestedActivity(step);
 					rows.push({
 						name: step.agent,
+						agentIdentity: step.agent,
 						state: step.status,
 						depth,
 						...(modelThinking ? { modelThinking } : {}),
@@ -217,6 +220,7 @@ function nestedFleetRows(children: NestedRunSummary[] | undefined, visibleLimit:
 				const activity = nestedActivity(child);
 				rows.push({
 					name: nestedRunLabel(child),
+					agentIdentity: child.agent ?? child.agents?.join("\0") ?? child.id,
 					state: child.state,
 					depth,
 					...(modelThinking ? { modelThinking } : {}),
@@ -450,7 +454,8 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 			entries.push({
 				key: `async:${job.asyncId}:${index}`,
 				...(linkedParentKey ? { parentKey: linkedParentKey } : {}),
-				agent: step.label ? `${step.label} (${step.agent})` : step.agent,
+				agent: step.agent,
+				...(step.label ? { displayLabel: `${step.label} (${step.agent})` } : {}),
 				...(modelThinking ? { modelThinking } : {}),
 				description: step.description ?? job.description,
 				startedAt: step.startedAt ?? startedAt,
@@ -733,7 +738,8 @@ export class SubagentFleetStatus {
 
 
 	private renderEntry(rosterIndex: number, selectedIndex: number, entry: FleetStatusEntry, width: number, theme: Theme, branch?: string): string {
-		const agent = entry.modelThinking ? `${entry.agent} (${entry.modelThinking})` : entry.agent;
+		const label = entry.displayLabel ?? entry.agent;
+		const agent = entry.modelThinking ? `${label} (${entry.modelThinking})` : label;
 		const prefix = branch ? `    ${branch}` : " ";
 		const checklist = entry.workflowWrapper && entry.workflowChecklist
 			? ` · checklist ${formatWorkflowChecklistSummary(entry.workflowChecklist)}${entry.workflowChecklist.bottleneck ? ` · bottleneck ${formatWorkflowChecklistBottleneck(entry.workflowChecklist.bottleneck)}` : ""}`
@@ -753,7 +759,7 @@ export class SubagentFleetStatus {
 		if (row.overflow !== undefined) return truncateToWidth(`${indent}${marker} ${theme.fg("dim", `+${row.overflow} nested leaves`)}`, width);
 		const modelThinking = row.modelThinking ? ` (${row.modelThinking})` : "";
 		const activity = row.activity ? ` · ${row.activity}` : "";
-		const left = `${indent}${marker} ${nestedStatusGlyph(row.state, theme)} ${agentColor(row.name, `${row.name}${modelThinking}`)} · ${row.state}${activity}`;
+		const left = `${indent}${marker} ${nestedStatusGlyph(row.state, theme)} ${agentColor(row.agentIdentity ?? row.name, `${row.name}${modelThinking}`)} · ${row.state}${activity}`;
 		const elapsed = row.startedAt !== undefined ? ` · ${formatFleetElapsed(Date.now() - row.startedAt)}` : "";
 		return truncateToWidth(`${left}${theme.fg("dim", elapsed)}`, width);
 	}
@@ -864,6 +870,7 @@ export class SubagentFleetStatus {
 					entry.surface,
 					entry.parentKey,
 					entry.agent,
+					entry.displayLabel,
 					entry.state,
 					entry.modelThinking,
 					entry.description,
@@ -900,6 +907,7 @@ export class SubagentFleetStatus {
 					]),
 					nestedFleetRows(entry.nestedChildren, entry.parentKey ? 3 : 4).map((row) => [
 						row.name,
+						row.agentIdentity,
 						row.state,
 						row.modelThinking,
 						row.activity,
