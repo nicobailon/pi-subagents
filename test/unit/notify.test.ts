@@ -8,6 +8,7 @@ import registerSubagentNotify, {
 	parseSubagentNotifyContent,
 	type RegisterSubagentNotifyOptions,
 	type SubagentNotifyDetails,
+	scheduledCompletionTriggersTurn,
 } from "../../src/runs/background/notify.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
 import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
@@ -838,6 +839,73 @@ describe("scheduled completions", () => {
 		const grouped = formatGroupedCompletion([buildCompletionDetails({ ...plain, agent: "worker" }), buildCompletionDetails(scheduledResult)]);
 		assert.match(grouped, /2\. workflow — scheduled run from authz-facts-efficacy \(schedule 45daa203\)/);
 		assert.doesNotMatch(grouped, /1\. worker —/);
+	});
+
+	it("wakes the session by default when a scheduled run completes", async () => {
+		const { notifier, sent } = createPi("session-a");
+		assert.equal(await notifier.deliver({ ...scheduledResult, sessionId: "session-a", completionOwnerId: COMPLETION_OWNER_ID }), true);
+		assert.deepEqual(sent[0]!.options, { triggerTurn: true });
+		assert.equal((sent[0]!.message as { display?: boolean }).display, true);
+	});
+
+	it("keeps a quiet scheduled success visible without triggering a turn", async () => {
+		const { notifier, sent } = createPi("session-a");
+		const quiet = { ...scheduledResult, scheduleOrigin: { ...scheduledResult.scheduleOrigin, quiet: true }, sessionId: "session-a", completionOwnerId: COMPLETION_OWNER_ID };
+		assert.equal(await notifier.deliver(quiet), true);
+		assert.deepEqual(sent[0]!.options, { triggerTurn: false });
+		const message = sent[0]!.message as { display?: boolean; content?: string };
+		assert.equal(message.display, true);
+		assert.match(message.content ?? "", /Scheduled run from \*\*authz-facts-efficacy\*\* \(schedule 45daa203\)\./);
+	});
+
+	it("still wakes the session when a quiet scheduled run fails or stops", async () => {
+		const quietOrigin = { ...scheduledResult.scheduleOrigin, quiet: true };
+		const failed = createPi("session-a");
+		assert.equal(await failed.notifier.deliver({ ...scheduledResult, id: "run-failed", success: false, exitCode: 1, summary: "boom", scheduleOrigin: quietOrigin, sessionId: "session-a", completionOwnerId: COMPLETION_OWNER_ID }), true);
+		assert.deepEqual(failed.sent[0]!.options, { triggerTurn: true });
+		assert.match((failed.sent[0]!.message as { content: string }).content, /^Background task failed:/);
+
+		const stopped = createPi("session-a");
+		assert.equal(await stopped.notifier.deliver({ ...scheduledResult, id: "run-stopped", success: false, stopped: true, scheduleOrigin: quietOrigin, sessionId: "session-a", completionOwnerId: COMPLETION_OWNER_ID }), true);
+		assert.deepEqual(stopped.sent[0]!.options, { triggerTurn: true });
+	});
+
+	it("keeps a batch silent when every grouped success is quiet, and wakes it when any is not", () => {
+		const quiet = (id: string, agent: string) => ({ ...scheduledResult, id, agent, scheduleOrigin: { ...scheduledResult.scheduleOrigin, quiet: true }, sessionId: "session-a", completionOwnerId: COMPLETION_OWNER_ID });
+
+		const silentClock = createFakeClock();
+		const silentPi = createBatchingPi(silentClock);
+		silentPi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, quiet("q-1", "alpha"));
+		silentPi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, quiet("q-2", "beta"));
+		silentClock.advance(150);
+		assert.equal(silentPi.sent.length, 1);
+		assert.equal((silentPi.sent[0]!.message as { display?: boolean }).display, true);
+		assert.deepEqual(silentPi.sent[0]!.options, { triggerTurn: false });
+
+		const mixedClock = createFakeClock();
+		const mixed = createBatchingPi(mixedClock);
+		mixed.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, quiet("q-3", "alpha"));
+		mixed.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, completionResult({ id: "loud-1", agent: "gamma", summary: "gamma done" }));
+		mixedClock.advance(150);
+		assert.equal(mixed.sent.length, 1);
+		assert.match((mixed.sent[0]!.message as { content: string }).content, /^Background tasks completed \(2\)/);
+		assert.deepEqual(mixed.sent[0]!.options, { triggerTurn: true });
+	});
+
+	it("applies the same quiet rule to incremental workflow child notices", () => {
+		const quiet = { id: "45daa203", quiet: true };
+		assert.equal(scheduledCompletionTriggersTurn(quiet, "completed"), false);
+		assert.equal(scheduledCompletionTriggersTurn(quiet, "failed"), true);
+		assert.equal(scheduledCompletionTriggersTurn(quiet, "paused"), true);
+		assert.equal(scheduledCompletionTriggersTurn(quiet, "stopped"), true);
+		assert.equal(scheduledCompletionTriggersTurn({ id: "45daa203" }, "completed"), true);
+		assert.equal(scheduledCompletionTriggersTurn(undefined, "completed"), true);
+	});
+
+	it("does not let quiet override an explicit triggerTurn:false", async () => {
+		const { notifier, sent } = createPi("session-a");
+		assert.equal(await notifier.deliver({ ...scheduledResult, success: false, exitCode: 1, triggerTurn: false, scheduleOrigin: { ...scheduledResult.scheduleOrigin, quiet: true }, sessionId: "session-a", completionOwnerId: COMPLETION_OWNER_ID }), true);
+		assert.deepEqual(sent[0]!.options, { triggerTurn: false });
 	});
 
 	it("leaves an ordinary successful completion without an origin", () => {

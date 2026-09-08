@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Add an opt-in `quiet: true` flag to `schedule.create`. A quiet schedule's successful runs and successful workflow children keep their completion notices but no longer trigger a parent turn; failed, stopped, or paused outcomes still wake the session. Default behavior is unchanged.
 - Add default-off, main-only watchdog questions and task-continuity reviews from bounded delivered orchestration evidence (#2010).
 - Add the built-in `evidence-auditor` for independently reviewing important research claims and source support. Thanks to [@Muskos](https://github.com/Muskos) for #2023.
 - Notify the parent as individual async workflow children finish, without waiting for all siblings (#2027). Each child completion delivers a compact notification with the workflow run ID, child key, exact child run ID, outcome, and output reference while the workflow remains running.

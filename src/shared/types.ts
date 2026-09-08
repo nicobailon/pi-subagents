@@ -708,6 +708,8 @@ export type ProcessTerminal =
 export interface ScheduleOrigin {
 	id: string;
 	name?: string;
+	/** True when the schedule opted into quiet completion: the notice stays visible but a successful run does not wake the session. */
+	quiet?: boolean;
 }
 
 export type SteeringActionState = "delivered" | "scheduled" | "pending" | "partial" | "recovered" | "failed";

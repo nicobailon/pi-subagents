@@ -323,6 +323,7 @@ const SubagentParamProperties = {
 	at: Type.Optional(Type.String({ description: "One-shot trigger for action='schedule.create': a relative delay such as '+10m' or an ISO timestamp with timezone." })),
 	every: Type.Optional(Type.String({ description: "Fixed recurring interval for action='schedule.create', such as '30m', '6h', '2d', or '2w'." })),
 	sessionOnly: Type.Optional(Type.Boolean()),
+	quiet: Type.Optional(Type.Boolean()),
 	on: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "integer" }], description: "Calendar selector reserved for a later schedule slice." })),
 	timezone: Type.Optional(Type.String()),
 	overlap: Type.Optional(Type.String({ enum: ["skip"], description: "Overlap policy. This slice supports skip only." })),

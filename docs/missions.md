@@ -108,6 +108,12 @@ subagent({ action: "schedule.create", id: "backlog", every: "6h", catchUp: "late
 
 Fixed intervals support `m`, `h`, `d`, and `w` units and advance from the planned time without completion drift.
 
+Create a quiet recurring workflow whose successful completions stay visible but do not wake the parent session:
+
+```ts
+subagent({ action: "schedule.create", id: "nightly-sweep", every: "24h", quiet: true, workflowScript: "..." })
+```
+
 Manage schedules with `schedule.list`, `schedule.show`, `schedule.history`, `schedule.pause`, `schedule.resume`, `schedule.run`, `schedule.run-due`, and `schedule.delete`.
 
 Behavior:
@@ -116,6 +122,7 @@ Behavior:
 - An optional top-level `baseRef` selects the safe Git ref used by managed worktrees (default `HEAD`); it is persisted with the schedule and forwarded on every fire. The source checkout must still be clean.
 - Definitions, bounded history, append-only events, and per-run receipts are stored with mode `0600`.
 - `overlap` is currently fixed to `skip`; `catchUp` supports `latest` (default) and `none`.
+- `quiet` defaults to `false`. With `quiet: true`, a successful scheduled run still posts its visible completion notice, but neither that notice nor the incremental notices for its successful workflow children trigger a parent turn. Failed, stopped, or paused outcomes wake the session as before, so nothing fails silently. The flag is stored on the schedule record and shown by `schedule.show`.
 - `schedule.run-due` lets an external launcher start due project work without making `pi-subagents` a daemon.
 - Calendar recurrence, cron, queue/replace overlap, and the schedule TUI inspector are intentionally deferred to the next slice.
 - The old `schedule`, `schedule-list`, `schedule-status`, and `schedule-cancel` actions were removed in a hard cutover.

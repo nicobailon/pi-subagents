@@ -54,6 +54,8 @@ export interface ScheduleRecord {
 	timeoutMs?: number;
 	paused: boolean;
 	sessionOnly?: boolean;
+	/** Opt-in: a successful run posts its visible notice without triggering a parent turn. */
+	quiet?: boolean;
 	ownerSessionFile?: string;
 	createdAt: string;
 	updatedAt: string;
@@ -308,6 +310,7 @@ function parseSchedule(value: unknown, file: string): ScheduleRecord {
 		if (typeof record.trigger.every !== "string" || typeof record.trigger.everyMs !== "number" || typeof record.trigger.anchorAt !== "string" || typeof record.trigger.nextRunAt !== "string") throw new Error(`Schedule record '${file}' has an invalid interval trigger.`);
 	} else throw new Error(`Schedule record '${file}' has an unsupported trigger.`);
 	if (record.sessionOnly !== undefined && typeof record.sessionOnly !== "boolean") throw new Error(`Schedule record '${file}' has invalid sessionOnly.`);
+	if (record.quiet !== undefined && typeof record.quiet !== "boolean") throw new Error(`Schedule record '${file}' has invalid quiet.`);
 	if (record.sessionOnly === true && (typeof record.ownerSessionFile !== "string" || !record.ownerSessionFile.trim())) throw new Error(`Schedule record '${file}' is session-only but has no owner session file.`);
 	return { ...record, target: parseScheduleTarget(record.target, file) } as ScheduleRecord;
 }
@@ -456,7 +459,7 @@ function executionParams(schedule: ScheduleRecord): SubagentParamsLike {
 		cwd: schedule.cwd,
 		mission: false,
 		// Scheduled fires have no operator watching, so completions must name the origin.
-		scheduleOrigin: { id: schedule.id, ...(schedule.name ? { name: schedule.name } : {}) },
+		scheduleOrigin: { id: schedule.id, ...(schedule.name ? { name: schedule.name } : {}), ...(schedule.quiet === true ? { quiet: true } : {}) },
 		...(schedule.timeoutMs === undefined ? {} : { timeoutMs: schedule.timeoutMs }),
 	};
 }
@@ -612,6 +615,7 @@ export class ScheduledRunManager {
 		if (params.catchUp !== undefined && params.catchUp !== "none" && params.catchUp !== "latest") return textResult("catchUp must be 'none' or 'latest'.", undefined, undefined, true);
 		if (params.missionId !== undefined || params.mission !== undefined || params.missionUpdate !== undefined || params.missionStatus !== undefined || params.missionScope !== undefined) return textResult("Mission attachment is deferred from this first schedule slice.", undefined, undefined, true);
 		if (params.on !== undefined || params.timezone !== undefined || every === "day" || every === "week" || every === "month" || every === "year") return textResult("Calendar schedules are deferred from this first safe slice. Use a fixed interval such as every:'24h' or every:'7d'.", undefined, undefined, true);
+		if (params.quiet !== undefined && typeof params.quiet !== "boolean") return textResult("quiet must be a boolean.", undefined, undefined, true);
 		const sessionOnly = params.sessionOnly === true;
 		if (sessionOnly && params.cwd !== undefined && !samePath(params.cwd, ctx.cwd)) return textResult("sessionOnly schedules cannot use an explicit cross-project cwd.", undefined, undefined, true);
 		const ownerSessionFile = sessionOnly ? ctx.sessionManager.getSessionFile() : undefined;
@@ -644,13 +648,14 @@ export class ScheduledRunManager {
 			...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
 			paused: false,
 			...(sessionOnly ? { sessionOnly: true, ownerSessionFile: path.resolve(ownerSessionFile!) } : {}),
+			...(params.quiet === true ? { quiet: true } : {}),
 			createdAt: timestamp(now),
 			updatedAt: timestamp(now),
 		};
 		store.write(schedule);
 		store.appendEvent(schedule, "schedule.created");
 		this.arm(schedule, store);
-		return textResult(`Created schedule ${id}.\nName: ${schedule.name}\nTrigger: ${at ? `at ${at}` : `every ${every}`}\nSession only: ${schedule.sessionOnly === true ? "yes" : "no"}\nNext: ${schedule.trigger.nextRunAt}\nTarget: ${targetLabel(schedule.target)}`, [schedule]);
+		return textResult(`Created schedule ${id}.\nName: ${schedule.name}\nTrigger: ${at ? `at ${at}` : `every ${every}`}\nSession only: ${schedule.sessionOnly === true ? "yes" : "no"}\nQuiet: ${schedule.quiet === true ? "yes" : "no"}\nNext: ${schedule.trigger.nextRunAt}\nTarget: ${targetLabel(schedule.target)}`, [schedule]);
 	}
 
 	private list(): AgentToolResult<Details> {
@@ -661,7 +666,7 @@ export class ScheduledRunManager {
 
 	private show(params: SubagentParamsLike): AgentToolResult<Details> {
 		const schedule = this.resolve(params);
-		return textResult([`Schedule: ${schedule.id}`, `Name: ${schedule.name}`, `State: ${schedule.paused ? "paused" : schedule.activeRunId ? "running" : "scheduled"}`, `Session only: ${schedule.sessionOnly === true ? "yes" : "no"}`, `Target: ${targetLabel(schedule.target)}`, `CWD: ${shortenPath(schedule.cwd)}`, `Next: ${schedule.trigger.nextRunAt ?? "none"}`, `Catch up: ${schedule.catchUp}`, schedule.activeRunId ? `Active run: ${schedule.activeRunId}` : undefined].filter(Boolean).join("\n"), [schedule]);
+		return textResult([`Schedule: ${schedule.id}`, `Name: ${schedule.name}`, `State: ${schedule.paused ? "paused" : schedule.activeRunId ? "running" : "scheduled"}`, `Session only: ${schedule.sessionOnly === true ? "yes" : "no"}`, `Quiet: ${schedule.quiet === true ? "yes" : "no"}`, `Target: ${targetLabel(schedule.target)}`, `CWD: ${shortenPath(schedule.cwd)}`, `Next: ${schedule.trigger.nextRunAt ?? "none"}`, `Catch up: ${schedule.catchUp}`, schedule.activeRunId ? `Active run: ${schedule.activeRunId}` : undefined].filter(Boolean).join("\n"), [schedule]);
 	}
 
 	private history(params: SubagentParamsLike): AgentToolResult<Details> {

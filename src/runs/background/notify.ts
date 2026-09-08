@@ -318,6 +318,15 @@ export function formatSingleCompletion(details: SubagentNotifyDetails): string {
 		.join("\n");
 }
 
+/**
+ * A quiet schedule keeps its notices visible but a routine success must not
+ * wake the parent. Failed, paused, and stopped outcomes always trigger a turn
+ * so nothing fails silently.
+ */
+export function scheduledCompletionTriggersTurn(origin: ScheduleOrigin | undefined, outcome: string): boolean {
+	return !(origin?.quiet === true && outcome === "completed");
+}
+
 export function formatIncrementalChildCompletion(child: IncrementalChildCompletion): string {
 	const statusText = child.outcome === "completed" ? "completed"
 		: child.outcome === "failed" ? "failed"
@@ -701,7 +710,7 @@ export default function registerSubagentNotify(
 			details,
 			sessionId: result.sessionId,
 			completionOwnerId: result.completionOwnerId,
-			triggerTurn: result.triggerTurn !== false,
+			triggerTurn: result.triggerTurn !== false && scheduledCompletionTriggersTurn(result.scheduleOrigin, details.status),
 			resolve,
 		};
 		if (notificationDebug.enabled) item.trace = traceIdentity(result);
