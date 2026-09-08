@@ -873,7 +873,7 @@ export const SubagentCatalogParams = Type.Object(
   { additionalProperties: false },
 );
 
-/** Return the compact model-facing subagent command schema. */
+/** Keep model-facing registration on the compact schema while internal adapters retain SubagentParams. */
 export function createSubagentCatalogParamsSchema(): typeof SubagentCatalogParams {
   return SubagentCatalogParams;
 }
