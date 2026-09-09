@@ -62,6 +62,8 @@ const FAST_MODE_ALLOWED_MODELS = new Set([
 ]);
 const OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH = 64;
 const PI_BUILTIN_TOOL_NAMES = new Set(["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"]);
+// These providers come from child hooks, not the host's builtin tool registry.
+const NATIVE_COORDINATION_TOOL_NAMES = new Set(["subagent", "contact_supervisor", "subagent_supervisor"]);
 
 export function deriveForkPromptCacheKey(parentSessionId: string | undefined): string | undefined {
 	const parent = parentSessionId?.trim();
@@ -369,10 +371,10 @@ export function resolvePiLaunchToolPlan(
 					: requestedBuiltinTools
 				).filter((tool) => !allowedToolSet || allowedToolSet.has(tool));
 	const declaredBuiltinTools = hostAvailableSet
-		? ceilingFilteredBuiltinTools.filter((tool) => hostAvailableSet.has(tool))
+		? ceilingFilteredBuiltinTools.filter((tool) => hostAvailableSet.has(tool) || NATIVE_COORDINATION_TOOL_NAMES.has(tool))
 		: ceilingFilteredBuiltinTools;
 	const unavailableHostBuiltins = hostAvailableSet
-		? ceilingFilteredBuiltinTools.filter((tool) => !hostAvailableSet.has(tool))
+		? ceilingFilteredBuiltinTools.filter((tool) => !hostAvailableSet.has(tool) && !NATIVE_COORDINATION_TOOL_NAMES.has(tool))
 		: [];
 	const excludeTools = [...new Set((input.excludeTools ?? []).map((tool) => tool.trim()).filter(Boolean))];
 	const excludedToolSet = new Set(excludeTools);
@@ -382,6 +384,9 @@ export function resolvePiLaunchToolPlan(
 		!excludedToolSet.has("subagent") &&
 		(!allowedToolSet || allowedToolSet.has("subagent"))
 	);
+	if (effectiveDeclaredBuiltinTools.includes("subagent_supervisor") && !fanoutAuthorized) {
+		throw new Error("Tool 'subagent_supervisor' requires fanout authorization: include 'subagent' in the effective tools allowlist or enable allowNestedSubagents.");
+	}
 	const toolExtensionPaths: string[] = capabilityCeiling?.denyExtensions
 		? []
 		: (input.tools ?? []).filter(
@@ -422,8 +427,8 @@ export function resolvePiLaunchToolPlan(
 			...internalTools,
 		]),
 	];
-	// Supervisor-coordination names stay in the --tools allowlist but are never
-	// strict requirements: children register contact_supervisor at runtime through
+	// Upward contact stays in the --tools allowlist but is not a strict
+	// requirement: children register contact_supervisor at runtime through
 	// the native supervisor channel (or pi-intercom). The pre-0.50 bridge always
 	// appended intercom alongside contact_supervisor, so that exact pairing is
 	// legacy plumbing, not a user demand for an external intercom provider;

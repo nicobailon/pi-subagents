@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
+import fsDefault, * as fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -96,6 +97,66 @@ afterEach(() => {
 });
 
 describe("native supervisor channel", () => {
+	for (const platform of ["darwin", "win32", "linux"] as const) {
+		it(`bounds coordinator polling to owned channels and stops when idle (${platform})`, async () => {
+			const owner = randomUUID();
+			const runId = randomUUID();
+			const requestId = writeRequest({ sessionId: owner, runId });
+			const ownDir = resolveSupervisorChannelDir(runId, "worker", 0);
+			// Even a request with the same owner is not scanned unless its run is registered.
+			for (let i = 0; i < 100; i++) writeRequest({ sessionId: owner, runId: randomUUID() });
+			let dirs: string[] = [];
+			let tick: (() => void) | undefined;
+			const tools = new Map<string, { execute(id: string, params: unknown): Promise<unknown> }>();
+			const notices: unknown[] = [];
+			const ctx = { sessionManager: { getSessionId: () => owner } };
+			const channel = createNativeSupervisorChannel({
+				getAllTools: () => [...tools.keys()].map(name => ({ name })),
+				registerTool: (tool: { name: string; execute: (id: string, params: unknown) => Promise<unknown> }) => tools.set(tool.name, tool),
+				sendMessage: (message: unknown) => notices.push(message),
+			} as never, makeState(owner, ctx), {
+				platform, getChannelDirs: () => dirs,
+				watch: (() => { throw new Error("scoped coordinator must not watch the global root"); }) as never,
+				timers: {
+					setInterval: ((handler: () => void) => { tick = handler; return { unref() {} } as NodeJS.Timeout; }) as typeof setInterval,
+					clearInterval: (() => { tick = undefined; }) as typeof clearInterval,
+					setImmediate, clearImmediate,
+				},
+			});
+			const readdir = fsDefault.readdirSync;
+			let scans = 0;
+			fsDefault.readdirSync = ((dir: fs.PathLike, options: unknown) => {
+				assert.equal(String(dir), path.join(ownDir, "requests"), "coordinators must not scan unrelated retained channels");
+				scans++;
+				return (readdir as (dir: fs.PathLike, options: unknown) => unknown)(dir, options);
+			}) as typeof fsDefault.readdirSync;
+			syncBuiltinESMExports();
+			try {
+				channel.registerTools();
+				assert.ok(tools.has(NATIVE_SUPERVISOR_TOOL_NAME));
+				assert.equal(scans, 0, "tool registration does not start transport");
+				channel.start();
+				assert.equal(tick, undefined, "idle coordinator has no polling timer");
+				assert.equal(scans, 0);
+				dirs = [ownDir];
+				channel.activateTransport();
+				assert.equal(scans, 1, "one owned mailbox read regardless of 100 retained foreign channels");
+				assert.equal(notices.length, 1);
+				assert.equal(typeof tick, "function");
+				await tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", { action: "reply", replyTo: requestId, message: "Proceed" });
+				dirs = [];
+				const scansBeforeIdle = scans;
+				tick!();
+				assert.equal(tick, undefined, "finished descendants stop polling on every platform");
+				assert.equal(scans, scansBeforeIdle);
+			} finally {
+				channel.dispose();
+				fsDefault.readdirSync = readdir;
+				syncBuiltinESMExports();
+			}
+		});
+	}
+
 	it("delivers requests only to the exact current session id and wakes the parent", () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const otherSessionId = `session-${randomUUID()}`;

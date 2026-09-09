@@ -499,6 +499,7 @@ describe("nested control routing", () => {
 		routeRoots.push(path.dirname(route.eventSink));
 		const childRuntime = fanoutChildRuntime(route, "root-poll-error");
 		const pi = {
+			on() {},
 			events: { emit() {}, on() { return () => {}; } },
 			registerTool() {},
 			getSessionName() { return "child"; },
@@ -535,6 +536,7 @@ describe("nested control routing", () => {
 		routeRoots.push(path.dirname(route.eventSink));
 		const childRuntime = fanoutChildRuntime(route, "root-result-write-fails");
 		const pi = {
+			on() {},
 			events: { emit() {}, on() { return () => {}; } },
 			registerTool() {},
 			getSessionName() { return "child"; },
@@ -585,6 +587,7 @@ describe("nested control routing", () => {
 		}) as typeof clearInterval;
 		try {
 			const makePi = () => ({
+				on() {},
 				events: { emit() {}, on() { return () => {}; } },
 				registerTool() { registrations.push("subagent"); },
 				getSessionName() { return "child"; },
@@ -626,6 +629,7 @@ describe("nested control routing", () => {
 		routeRoots.push(path.dirname(route.eventSink));
 		const childRuntime = fanoutChildRuntime(route, "root-ownerless");
 		const pi = {
+			on() {},
 			events: { emit() {}, on() { return () => {}; } },
 			registerTool() {},
 			getSessionName() { return "child"; },
