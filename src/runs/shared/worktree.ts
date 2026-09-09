@@ -341,11 +341,9 @@ export function validateWorktreePatchRepresentsCurrentWorktree(worktreePath: str
 	return undefined;
 }
 
-async function resolveRepoState(tx: SetupTransaction, cwd: string, requestedBaseRef: string | undefined): Promise<RepoState> {
+async function probeWorktreeSource(tx: Pick<SetupTransaction, "git" | "gitChecked">, cwd: string): Promise<string> {
 	const repoCheck = await tx.git(cwd, ["rev-parse", "--is-inside-work-tree"], [0, 128]);
 	if (repoCheck.status !== 0 || repoCheck.stdout.trim() !== "true") throw new Error("worktree isolation requires a git repository");
-	const rawPrefix = (await tx.gitChecked(cwd, ["rev-parse", "--show-prefix"])).trim();
-	const cwdRelative = rawPrefix ? path.normalize(rawPrefix.replace(/[\\/]+$/, "")) : "";
 	const toplevel = (await tx.gitChecked(cwd, ["rev-parse", "--show-toplevel"])).trim();
 
 	// pi-subagents writes durable runtime state under .pi/subagents/ by default;
@@ -354,6 +352,26 @@ async function resolveRepoState(tx: SetupTransaction, cwd: string, requestedBase
 	if (status.trim().length > 0) {
 		throw new Error("worktree isolation requires a clean git working tree. Commit or stash changes first.");
 	}
+	return toplevel;
+}
+
+/** Read-only admission check; allocation repeats it because source state can change. */
+export async function preflightWorktreeSource(cwd: string, options: Pick<SetupCommandOptions, "signal" | "deadlineAt"> = {}): Promise<void> {
+	const git = async (cwd: string, args: string[], acceptedExitCodes: readonly number[] = [0]): Promise<SetupCommandResult> => {
+		const result = await runSetupCommand("git", ["-C", cwd, ...args], { ...options, acceptedExitCodes });
+		if (result.error) throw result.error;
+		if (result.outputIncomplete || result.status === null || !acceptedExitCodes.includes(result.status)) {
+			throw new Error(result.stderr.trim().slice(0, 2000) || "Worktree source probe failed");
+		}
+		return result;
+	};
+	await probeWorktreeSource({ git, gitChecked: async (cwd, args) => (await git(cwd, args)).stdout }, cwd);
+}
+
+async function resolveRepoState(tx: SetupTransaction, cwd: string, requestedBaseRef: string | undefined): Promise<RepoState> {
+	const toplevel = await probeWorktreeSource(tx, cwd);
+	const rawPrefix = (await tx.gitChecked(cwd, ["rev-parse", "--show-prefix"])).trim();
+	const cwdRelative = rawPrefix ? path.normalize(rawPrefix.replace(/[\\/]+$/, "")) : "";
 
 	const baseRef = normalizeWorktreeBaseRef(requestedBaseRef) ?? DEFAULT_WORKTREE_BASE_REF;
 	let baseCommit: string;

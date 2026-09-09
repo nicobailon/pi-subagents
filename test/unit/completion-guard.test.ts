@@ -409,6 +409,39 @@ test("read-only audit tasks survive host-clamped declared mutation tools", () =>
 	}
 });
 
+test("review finding classifications are not implementation launch obligations", () => {
+	const task = 'Review the disabled code and weigh remaining items as "must fix before ENABLING" vs "must fix before MERGING disabled code".';
+	const tools = ["read", "grep", "find", "ls"];
+	assert.equal(validateImplementationToolContract({ agent: "reviewer", task, tools }), undefined);
+	assert.equal(evaluateCompletionMutationGuard({
+		agent: "reviewer", task, tools: [...tools, "edit"], messages: [assistantText("Findings classified.")],
+	}).triggered, false);
+});
+
+test("quoted review categories allow version punctuation without hiding trailing fixes", () => {
+	const task = 'Classify findings as "must fix before v1.0" vs "must fix before v2.0".';
+	const tools = ["read", "grep", "find", "ls"];
+	assert.equal(validateImplementationToolContract({ agent: "reviewer", task, tools }), undefined);
+	assert.match(validateImplementationToolContract({
+		agent: "reviewer", task: `${task} You must fix the bug before enabling the feature.`, tools,
+	}) ?? "", /no mutation-capable tools/);
+});
+
+test("review classification wording does not hide actual required fixes", () => {
+	const classification = 'Classify findings as "must fix before ENABLING" vs "must fix before MERGING disabled code"';
+	for (const task of [
+		"You must fix the bug before enabling the feature.",
+		`${classification}; you must fix the bug before enabling the feature.`,
+	]) {
+		assert.match(validateImplementationToolContract({
+			agent: "reviewer", task, tools: ["read", "grep", "find", "ls"],
+		}) ?? "", /no mutation-capable tools/, task);
+		assert.equal(evaluateCompletionMutationGuard({
+			agent: "reviewer", task, tools: ["read", "edit"], messages: [assistantText("Findings classified.")],
+		}).triggered, true, task);
+	}
+});
+
 test("oracle review tasks with bash available do not require mutation", () => {
 	const task = "Review prep findings and determine what to implement with playbooks instead of before.";
 	const result = evaluateCompletionMutationGuard({

@@ -203,6 +203,13 @@ describe("taskMayMutate", () => {
 		assert.equal(taskMayMutate("Summarize the build output"), false);
 	});
 
+	it("distinguishes quoted finding categories from sibling fix instructions", () => {
+		const task = 'Classify findings as "must fix before ENABLING" vs "must fix before MERGING disabled code"';
+		assert.equal(taskMayMutate(task), false);
+		assert.equal(taskMayMutate(`${task}; you must fix the bug.`), true);
+		assert.equal(taskMayMutate('You "must fix before ENABLING" the feature.'), true);
+	});
+
 	it("keeps verbs that survive outside a scoped prohibition", () => {
 		assert.equal(taskMayMutate("Do not modify tests but implement the fix"), true);
 		assert.equal(taskMayMutate("Do not modify tests; update the parser"), true);

@@ -97,6 +97,11 @@ function stripSeverityCompounds(task: string): string {
 }
 export { stripSeverityCompounds };
 
+// Quoted categories in a finding-classification request describe fixes, not
+// instructions to perform them. Strip only that request, leaving sibling
+// imperatives (including another "must fix") subject to the normal guards.
+const FINDING_CLASSIFICATION_PATTERN = /\b(?:classify|categorize|weigh)\s+(?:(?:the|remaining)\s+)*(?:findings?|items?|issues?)\s+as\s+["“]must\s+fix\s+before\s+[^"”\n]+["”]\s+(?:vs\.?|versus)\s+["“]must\s+fix\s+before\s+[^"”\n]+["”]/gi;
+
 const PATH_LIKE_TOKEN_PATTERN = /[^\s]+[/\\][^\s]+|[^\s/\\]+\.[A-Za-z][A-Za-z0-9]{0,9}\b/g;
 const PATH_INTERNAL_IMPLEMENTATION_VERB = /\b(?:implement|edit|modify|refactor|delete|update|add|remove|replace|create)\b/i;
 
@@ -193,7 +198,7 @@ function hasImplementationIntent(agent: string, taskText: string): boolean {
 }
 
 export function classifyTaskMutationIntent(agent: string, task: string): TaskMutationIntent {
-	const taskText = stripSeverityCompounds(stripFrameworkInstructions(task));
+	const taskText = stripPatterns(stripSeverityCompounds(stripFrameworkInstructions(task)), [FINDING_CLASSIFICATION_PATTERN]);
 	const taskTextWithoutScopedConstraints = stripPatterns(taskText, SCOPED_NO_EDIT_CONSTRAINT_PATTERNS);
 	const prohibitions = analyzeNoEditProhibitions(taskTextWithoutScopedConstraints);
 	if (prohibitions.present) {
@@ -232,7 +237,7 @@ const MAY_MUTATE_VERB_PATTERN = /\b(?:fix|implement|update|write|edit|modify|mig
  * does.
  */
 export function taskMayMutate(task: string): boolean {
-	const taskText = stripPatterns(stripSeverityCompounds(stripFrameworkInstructions(task)), SCOPED_NO_EDIT_CONSTRAINT_PATTERNS);
+	const taskText = stripPatterns(stripSeverityCompounds(stripFrameworkInstructions(task)), [FINDING_CLASSIFICATION_PATTERN, ...SCOPED_NO_EDIT_CONSTRAINT_PATTERNS]);
 	const prohibitions = analyzeNoEditProhibitions(taskText);
 	if (prohibitions.blanket) return false;
 	return MAY_MUTATE_VERB_PATTERN.test(stripPatterns(prohibitions.strippedText, READ_ONLY_DELIVERABLE_PATTERNS));

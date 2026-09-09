@@ -380,6 +380,8 @@ Each child uses the existing worktree lifecycle: it branches from clean HEAD, jo
 
 A top-level `{ workflowScript, worktree: true }` makes isolation the default for every workflow child. An individual child can override that default with `worktree: false`. Keep one writer when parallel writes are not intentionally isolated.
 
+Before a materialized `runs.run` or `runs.all` group dispatches fresh children, isolated sources must be Git repositories with clean working trees (excluding `.pi/subagents/` runtime state). A rejected group dispatches no children and spends no fan-out slots or child output claims; key-level failure traces can remain. Checks are shared only within that group, are cancellable, and run again at allocation because sources can change. Retained resumes keep their stored contracts. Select the correct cwd or arrange an operator-approved commit/stash; isolation is never dropped automatically.
+
 Use `baseRef` to branch managed worktrees from `HEAD` or a supported named ref such as `refs/heads/release`, `refs/tags/v1`, or `origin/main`. Full 40/64-character commit IDs and revision expressions such as `HEAD~1` are unsupported. For example, `{ workflowScript, worktree: true, baseRef: "refs/heads/release" }` applies the release ref to children unless a child supplies its own `baseRef`. If omitted, the default `HEAD` is resolved at worktree allocation, not when the script is validated or a schedule is created. The source checkout must still be clean, and the ref must resolve to a commit before any worktree is allocated.
 
 Configure the worktree provider, native path layout, base directory, and setup hook in [configuration.md](configuration.md).
