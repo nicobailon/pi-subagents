@@ -24,11 +24,22 @@ export interface WorkflowScriptValidationError {
 	message: string;
 	line?: number;
 	column?: number;
+	kind?: "spawn-budget";
+}
+
+export interface WorkflowScriptValidationWarning {
+	message: string;
+	kind: "dynamic-spawn-count";
 }
 
 export interface WorkflowScriptValidationResult {
 	ok: boolean;
 	errors: WorkflowScriptValidationError[];
+	warnings?: WorkflowScriptValidationWarning[];
+}
+
+export interface WorkflowScriptValidationOptions {
+	maxSubagentSpawnsPerRun?: number;
 }
 
 const WORKER_SOURCE = String.raw`
@@ -1441,7 +1452,7 @@ function literalString(node: unknown): string | undefined {
 	return undefined;
 }
 
-function directRunsCall(node: unknown, method: "run" | "all" | "host"): node is AstNode {
+function directRunsCall(node: unknown, method: "run" | "all" | "host" | "lanes"): boolean {
 	if (!astNode(node) || node.type !== "CallExpression" || !astNode(node.callee) || node.callee.type !== "MemberExpression") return false;
 	const property = node.callee.computed === true ? literalString(node.callee.property) : astNode(node.callee.property) && node.callee.property.type === "Identifier" ? node.callee.property.name : undefined;
 	return property === method && astNode(node.callee.object) && node.callee.object.type === "Identifier" && node.callee.object.name === "runs";
@@ -1578,8 +1589,77 @@ function directRunsAllKeys(call: AstNode): Array<{ key: string; node: AstNode }>
 	});
 }
 
+function staticWorkflowLaunchPlan(workflowBody: AstNode): { keys: string[]; dynamic: boolean } {
+	const keys = new Set<string>();
+	let dynamic = false;
+	const visit = (value: unknown, conditional = false): void => {
+		if (Array.isArray(value)) {
+			for (const item of value) visit(item, conditional);
+			return;
+		}
+		if (!astNode(value)) return;
+		if (value.type === "FunctionDeclaration" || value.type === "FunctionExpression" || value.type === "ArrowFunctionExpression") {
+			walkAst(value.body, (node) => { if (directRunsCall(node, "run") || directRunsCall(node, "all") || directRunsCall(node, "lanes")) dynamic = true; });
+			return;
+		}
+		if (directRunsCall(value, "run")) {
+			const args = Array.isArray(value.arguments) ? value.arguments : [];
+			const key = literalString(args[0]);
+			if (conditional || key === undefined) dynamic = true;
+			else keys.add(key);
+			for (const argument of args) visit(argument, conditional);
+			return;
+		}
+		if (directRunsCall(value, "all")) {
+			if (conditional) {
+				dynamic = true;
+				return;
+			}
+			const args = Array.isArray(value.arguments) ? value.arguments : [];
+			const array = astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements) ? args[0] : undefined;
+			if (!array) {
+				dynamic = true;
+				return;
+			}
+			for (const item of array.elements as unknown[]) {
+				if (!astNode(item) || item.type === "SpreadElement") {
+					dynamic = true;
+					continue;
+				}
+				const key = literalString(directObjectPropertyValue(item, "key"));
+				if (key === undefined) dynamic = true;
+				else keys.add(key);
+				visit(item, conditional);
+			}
+			return;
+		}
+		if (directRunsCall(value, "lanes")) {
+			dynamic = true;
+			return;
+		}
+		if (value.type === "IfStatement" || value.type === "ConditionalExpression") {
+			visit(value.test, conditional);
+			visit(value.consequent, true);
+			visit(value.alternate, true);
+			return;
+		}
+		if (value.type === "LogicalExpression") {
+			visit(value.left, conditional);
+			visit(value.right, true);
+			return;
+		}
+		if (value.type === "ForStatement" || value.type === "ForInStatement" || value.type === "ForOfStatement" || value.type === "WhileStatement" || value.type === "DoWhileStatement" || value.type === "SwitchStatement") {
+			for (const [key, child] of Object.entries(value)) if (!AST_LOCATION_KEYS.has(key)) visit(child, key === "init" || key === "test" ? conditional : true);
+			return;
+		}
+		for (const [key, child] of Object.entries(value)) if (!AST_LOCATION_KEYS.has(key)) visit(child, conditional);
+	};
+	visit(workflowBody);
+	return { keys: [...keys], dynamic };
+}
+
 /** Parse a workflowScript and apply only rules that are decidable from its local syntax. */
-export function validateWorkflowScript(script: string): WorkflowScriptValidationResult {
+export function validateWorkflowScript(script: string, options: WorkflowScriptValidationOptions = {}): WorkflowScriptValidationResult {
 	const errors: WorkflowScriptValidationError[] = [];
 	if (!script.trim()) return { ok: false, errors: [{ message: "workflowScript must not be empty." }] };
 	let root: AstNode;
@@ -1646,7 +1726,7 @@ export function validateWorkflowScript(script: string): WorkflowScriptValidation
 			const statement = workflowBody.body[statementIndex];
 			if (!astNode(statement) || statement.type !== "VariableDeclaration" || !Array.isArray(statement.declarations)) continue;
 			for (const declaration of statement.declarations) {
-				if (!astNode(declaration) || !astNode(declaration.id) || declaration.id.type !== "Identifier" || !astNode(declaration.init) || declaration.init.type !== "AwaitExpression" || !directRunsCall(declaration.init.argument, "all")) continue;
+				if (!astNode(declaration) || !astNode(declaration.id) || declaration.id.type !== "Identifier" || !astNode(declaration.init) || declaration.init.type !== "AwaitExpression" || !astNode(declaration.init.argument) || !directRunsCall(declaration.init.argument, "all")) continue;
 				const name = declaration.id.name as string;
 				const keys = new Set(directRunsAllKeys(declaration.init.argument).map((entry) => entry.key));
 				if (keys.size === 0) continue;
@@ -1662,8 +1742,24 @@ export function validateWorkflowScript(script: string): WorkflowScriptValidation
 		}
 	}
 
+	const warnings: WorkflowScriptValidationWarning[] = [];
+	if (options.maxSubagentSpawnsPerRun !== undefined) {
+		const plan = staticWorkflowLaunchPlan(workflowBody);
+		if (plan.keys.length > options.maxSubagentSpawnsPerRun) {
+			errors.push({
+				kind: "spawn-budget",
+				message: `workflowScript statically requires child launches ${plan.keys.map((key) => `'${key}'`).join(", ")}; minimum required: ${plan.keys.length}; configured: ${options.maxSubagentSpawnsPerRun}.`,
+			});
+		}
+		if (plan.dynamic) {
+			warnings.push({
+				kind: "dynamic-spawn-count",
+				message: `workflowScript contains dynamic child launches; static validation proved ${plan.keys.length} launch(es), so runtime fan-out enforcement remains authoritative for the configured budget of ${options.maxSubagentSpawnsPerRun}.`,
+			});
+		}
+	}
 	const unique = errors.filter((error, index) => errors.findIndex((candidate) => candidate.message === error.message && candidate.line === error.line && candidate.column === error.column) === index);
-	return { ok: unique.length === 0, errors: unique };
+	return { ok: unique.length === 0, errors: unique, ...(warnings.length > 0 ? { warnings } : {}) };
 }
 function workflowStringMetadata(params: Record<string, unknown>): Pick<WorkflowScriptTraceEntry, "phase" | "label" | "agent"> {
 	return {

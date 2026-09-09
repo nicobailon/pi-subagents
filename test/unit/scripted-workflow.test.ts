@@ -245,7 +245,43 @@ describe("scripted workflow runtime", () => {
 		}), /at most 32 runs\.host calls/);
 	});
 
-	it("keeps dynamic workflow keys silent during offline validation", () => {
+	it("rejects a statically provable workflow that exceeds its spawn budget", () => {
+		const script = [
+			`const [architecture, adjacent, proof] = await runs.all([`,
+			`  { key: "architecture", agent: "scout", task: "Inspect architecture" },`,
+			`  { key: "adjacent", agent: "scout", task: "Inspect adjacent scope" },`,
+			`  { key: "proof", agent: "oracle", task: "Challenge the proof" },`,
+			`]);`,
+			`const owner = await runs.run("owner", { agent: "worker", task: architecture.output });`,
+			`const review = await runs.run("review", { agent: "reviewer", task: owner.output });`,
+			`const fixed = await runs.run("owner-fix", { resume: owner.runId, task: review.output });`,
+			`return { adjacent: adjacent.output, proof: proof.output, fixed: fixed.output };`,
+		].join("\n");
+
+		const rejected = validateWorkflowScript(script, { maxSubagentSpawnsPerRun: 5 });
+		assert.equal(rejected.ok, false);
+		assert.deepEqual(rejected.errors, [{
+			kind: "spawn-budget",
+			message: "workflowScript statically requires child launches 'architecture', 'adjacent', 'proof', 'owner', 'review', 'owner-fix'; minimum required: 6; configured: 5.",
+		}]);
+		assert.deepEqual(validateWorkflowScript(script, { maxSubagentSpawnsPerRun: 6 }), { ok: true, errors: [] });
+	});
+
+	it("warns instead of guessing a dynamic spawn count", () => {
+		const result = validateWorkflowScript([
+			`const prefix = "lane";`,
+			`const child = await runs.run(prefix + "-writer", { agent: selectedAgent, task: taskText });`,
+			`const results = await runs.all(items.map((item) => ({ key: item.key, agent: item.agent, task: item.task })));`,
+			`if (needsReview) await runs.run("conditional-review", { agent: "reviewer", task: child.output });`,
+			`return { child: child.output, outputs: results.map((entry) => entry.output) };`,
+		].join("\n"), { maxSubagentSpawnsPerRun: 1 });
+		assert.equal(result.ok, true);
+		assert.deepEqual(result.errors, []);
+		assert.equal(result.warnings?.[0]?.kind, "dynamic-spawn-count");
+		assert.match(result.warnings?.[0]?.message ?? "", /proved 0 launch\(es\).*configured budget of 1/);
+	});
+
+	it("keeps dynamic workflow keys silent when no spawn budget is requested", () => {
 		const result = validateWorkflowScript([
 			`const prefix = "lane";`,
 			`const child = await runs.run(prefix + "-writer", { agent: selectedAgent, task: taskText });`,
