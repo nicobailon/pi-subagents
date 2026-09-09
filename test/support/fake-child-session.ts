@@ -42,7 +42,7 @@ export interface FakeChildResponse {
 	createError?: string;
 	/** Keeps the run open until the parent aborts it. */
 	hangUntilAbort?: boolean;
-	/** Delay before emitting `turn_start` when draining a steer/follow-up queued after the scripted final message. */
+	/** After draining a post-final steer/follow-up into pending (hasQueuedMessages false), delay before `turn_start`. */
 	queuedMessageTurnStartDelayMs?: number;
 	/** Assistant text emitted for that delayed queued-message turn. */
 	queuedMessageOutput?: string;
@@ -262,11 +262,11 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 			};
 			const drainQueuedBoundary = async (response: FakeChildResponse, task: string): Promise<void> => {
 				while (queued.length > 0 && !record.aborted) {
+					const drained = queued.splice(0);
 					const delay = response.queuedMessageTurnStartDelayMs ?? 0;
 					if (delay > 0) await sleep(delay, abortedPromise);
-					if (record.aborted || queued.length === 0) return;
+					if (record.aborted) return;
 					emit({ type: "turn_start" });
-					const drained = queued.splice(0);
 					const output = response.queuedMessageOutput ?? drained[0]?.text ?? "continued after queued input";
 					await emitEntries([defaultAssistantMessage(output, model)], task);
 					if (record.aborted) return;

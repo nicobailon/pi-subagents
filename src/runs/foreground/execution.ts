@@ -687,6 +687,7 @@ async function runSingleAttempt(
 		let forcedTermination = false;
 		let cleanTerminalAssistantStopReceived = false;
 		let agentSettledReceived = false;
+		let queuedDrainHold = false;
 		let compactionStartedReceived = false;
 		let finalDrainTimer: NodeJS.Timeout | undefined;
 		let finalHardFinishTimer: NodeJS.Timeout | undefined;
@@ -713,20 +714,24 @@ async function runSingleAttempt(
 				finalHardFinishTimer = undefined;
 			}
 		};
+		const observeQueuedDrainHold = (): boolean => {
+			if (childSessionHasQueuedMessages(session)) queuedDrainHold = true;
+			return queuedDrainHold;
+		};
 		const startFinalDrain = () => {
 			if (childWatchdogIsActive(childWatchdogState)) {
 				armWatchdogTail();
 				return;
 			}
 			if (sessionSettled || finalDrainTimer || lifecycleFinished) return;
-			if (childSessionHasQueuedMessages(session)) return;
+			if (observeQueuedDrainHold()) return;
 			armFinalDrainTimer();
 		};
 		const armFinalDrainTimer = () => {
 			if (sessionSettled || finalDrainTimer || lifecycleFinished) return;
 			finalDrainTimer = setTimeout(() => {
 				if (lifecycleFinished || sessionSettled) return;
-				if (capture.finalDrainHeld() || childSessionHasQueuedMessages(session)) {
+				if (capture.finalDrainHeld() || observeQueuedDrainHold()) {
 					finalDrainTimer = undefined;
 					armFinalDrainTimer();
 					return;
@@ -1009,6 +1014,9 @@ async function runSingleAttempt(
 			if (evt.type === "compaction_end" && evt.willRetry === true) {
 				compactionStartedReceived = false;
 				afterCompactionSettlement = false;
+			}
+			if (evt.type === "turn_start" || evt.type === "agent_start" || evt.type === "auto_retry_start") {
+				queuedDrainHold = false;
 			}
 			if (evt.type === "agent_start" || evt.type === "auto_retry_start") {
 				compactionStartedReceived = false;
@@ -1396,6 +1404,16 @@ async function runSingleAttempt(
 					return;
 				}
 				session = created;
+				const steer = created.steer.bind(created);
+				const followUp = created.followUp.bind(created);
+				created.steer = async (text) => {
+					if (cleanTerminalAssistantStopReceived || agentSettledReceived) queuedDrainHold = true;
+					return steer(text);
+				};
+				created.followUp = async (text) => {
+					if (cleanTerminalAssistantStopReceived || agentSettledReceived) queuedDrainHold = true;
+					return followUp(text);
+				};
 				created.detached = detached;
 				unsubscribe = created.subscribe((event) => processEvent(event as Parameters<typeof processEvent>[0]));
 				if (abortedBySignal || interruptedByControl || result.timedOut) {
