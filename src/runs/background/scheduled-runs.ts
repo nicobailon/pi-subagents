@@ -724,8 +724,16 @@ export class ScheduledRunManager {
 
 	private remove(params: SubagentParamsLike): AgentToolResult<Details> {
 		const schedule = this.resolve(params);
-		if (schedule.activeRunId) return textResult(`Schedule ${schedule.id} has active run ${schedule.activeRunId}; stop that run before deleting the schedule.`, [schedule], undefined, true);
 		const store = this.requireStore();
+		if (schedule.activeRunId) {
+			const run = store.history(schedule.id).find((item) => item.id === schedule.activeRunId);
+			let terminal = false;
+			if (run?.scheduleId === schedule.id && run.state === "running" && run.asyncId && run.asyncDir) {
+				const status = readJson(path.join(run.asyncDir, "status.json"), "async status") as Partial<AsyncStatus>;
+				terminal = status.runId === run.asyncId && typeof status.state === "string" && ["complete", "failed", "stopped", "rejected"].includes(status.state);
+			}
+			if (!terminal) return textResult(`Schedule ${schedule.id} has active run ${schedule.activeRunId}; stop that run before deleting the schedule.`, [schedule], undefined, true);
+		}
 		this.clearTimer(store, schedule.id);
 		store.appendEvent(schedule, "schedule.deleted");
 		store.delete(schedule.id);

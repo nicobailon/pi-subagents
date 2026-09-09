@@ -385,6 +385,41 @@ describe("project schedule management", () => {
 		assert.match(text(await h.manager.handleToolCall({ action: "schedule.list" }, h.ctx)), /No project schedules/);
 	});
 
+	it("deletes a foreign session-only schedule only after its exact async run is terminal", async () => {
+		const owner = harness({ sessionId: "owner-session" });
+		await owner.manager.handleToolCall({ action: "schedule.create", id: "owner-only", every: "1h", sessionOnly: true, workflowScript: "return runs.run('main', { agent: 'worker' })" }, owner.ctx);
+		const running = owner.manager.handleToolCall({ action: "schedule.run", id: "owner-only" }, owner.ctx);
+		await flush();
+		const asyncDir = path.join(owner.root, "async-owner-only");
+		fs.mkdirSync(asyncDir);
+		owner.launches[0]!.resolve({ content: [{ type: "text", text: "Async" }], details: { mode: "single", results: [], asyncId: "async-owner-only", asyncDir } });
+		await running;
+		owner.manager.stop();
+
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: "async-owner-only", mode: "single", state: "running", startedAt: owner.clock.now }), "utf-8");
+		const other = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			storeRoot: path.join(owner.root, "stores"),
+			now: () => owner.clock.now,
+			timers: new FakeTimers(),
+			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
+		});
+		const otherCtx = context(owner.ctx.cwd, "other-session");
+		other.bindSession(otherCtx);
+		const refused = await other.handleToolCall({ action: "schedule.delete", id: "owner-only" }, otherCtx);
+		assert.equal(refused.isError, true);
+		assert.match(text(refused), /has active run/);
+
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: "async-owner-only", mode: "single", state: ["failed"], startedAt: owner.clock.now, endedAt: owner.clock.now }), "utf-8");
+		const malformed = await other.handleToolCall({ action: "schedule.delete", id: "owner-only" }, otherCtx);
+		assert.equal(malformed.isError, true);
+		assert.match(text(malformed), /has active run/);
+
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: "async-owner-only", mode: "single", state: "failed", startedAt: owner.clock.now, endedAt: owner.clock.now }), "utf-8");
+		assert.match(text(await other.handleToolCall({ action: "schedule.delete", id: "owner-only" }, otherCtx)), /Deleted/);
+		assert.match(text(await other.handleToolCall({ action: "schedule.list" }, otherCtx)), /No project schedules/);
+	});
+
 	it("ignores schedules deleted by another session while a timer is still armed", async () => {
 		const first = harness();
 		await first.manager.handleToolCall({ action: "schedule.create", id: "stale", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, first.ctx);
