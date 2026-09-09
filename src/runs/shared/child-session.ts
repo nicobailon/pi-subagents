@@ -108,7 +108,11 @@ export interface ChildSession {
 }
 
 export function childSessionHasQueuedMessages(session: ChildSession | undefined): boolean {
-	return session?.hasQueuedMessages?.() === true;
+	try {
+		return session?.hasQueuedMessages?.() === true;
+	} catch {
+		return false;
+	}
 }
 
 export interface ChildSessionFactory {
@@ -348,7 +352,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				steer: (text) => { evidence?.invalidate(); return session.steer(text); },
 				followUp: (text) => { evidence?.invalidate(); return session.followUp(text); },
 				abort: () => { evidence?.invalidate(); return session.abort(); },
-				hasQueuedMessages: () => session.agent.hasQueuedMessages(),
+				hasQueuedMessages: () => session.agent?.hasQueuedMessages?.() === true,
 				dispose: () => {
 					if (!pending) {
 						live.delete(child);
