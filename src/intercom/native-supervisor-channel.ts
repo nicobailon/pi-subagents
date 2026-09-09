@@ -83,8 +83,8 @@ interface IntercomParams {
 type SupervisorWatch = (filename: fs.PathLike, listener: fs.WatchListener<string>) => fs.FSWatcher;
 
 interface NativeSupervisorChannelDeps {
-	/** Child coordinators poll only their live descendants; the root retains global discovery. */
-	getChannelDirs?: () => string[];
+	/** Owned live/final-drain mailboxes. Only a completed poll retires the snapshot, never a demand probe. */
+	getChannelDirs?: () => { dirs: string[]; retire?: () => void };
 	/** Retained scheduled states for the current runtime owner, never foreign owners. */
 	getCurrentOwnerStates?: () => Iterable<SubagentState>;
 	platform?: NodeJS.Platform;
@@ -688,7 +688,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	const hasTransportDemand = () => {
 		if (pending.size > 0) return true;
 		if (state.foregroundControls.size > 0) return true;
-		if (deps.getChannelDirs?.().length) return true;
+		if (deps.getChannelDirs?.().dirs.length) return true;
 		if ([...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running")) return true;
 		for (const ownerState of deps.getCurrentOwnerStates?.() ?? []) {
 			for (const job of ownerState.asyncJobs.values()) {
@@ -719,7 +719,8 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		// Only display notifications require a live UI context, not request registration.
 		refreshPendingRequests(pending, state, observeRequestLifecycle, runState);
 		const now = Date.now();
-		for (const { channelDir, file } of listRequestFiles(deps.getChannelDirs?.())) {
+		const channels = deps.getChannelDirs?.();
+		for (const { channelDir, file } of listRequestFiles(channels?.dirs)) {
 			if (seenFiles.has(file)) continue;
 			const request = parseRequestFile(file, channelDir);
 			if (!request || !requestMatchesOwner(request, state)) continue;
@@ -774,6 +775,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 				if (pending.has(request.id)) markForegroundSupervisorAttention(request, state);
 			}
 		}
+		channels?.retire?.();
 	};
 
 	const startPolling = (): void => {

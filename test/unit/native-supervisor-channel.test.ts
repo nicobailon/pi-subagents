@@ -115,7 +115,7 @@ describe("native supervisor channel", () => {
 				registerTool: (tool: { name: string; execute: (id: string, params: unknown) => Promise<unknown> }) => tools.set(tool.name, tool),
 				sendMessage: (message: unknown) => notices.push(message),
 			} as never, makeState(owner, ctx), {
-				platform, getChannelDirs: () => dirs,
+				platform, getChannelDirs: () => ({ dirs }),
 				watch: (() => { throw new Error("scoped coordinator must not watch the global root"); }) as never,
 				timers: {
 					setInterval: ((handler: () => void) => { tick = handler; return { unref() {} } as NodeJS.Timeout; }) as typeof setInterval,
@@ -156,6 +156,49 @@ describe("native supervisor channel", () => {
 			}
 		});
 	}
+
+	it("retires only polled mailbox snapshots, never demand probes", () => {
+		const owner = randomUUID();
+		const runId = randomUUID();
+		const dir = resolveSupervisorChannelDir(runId, "worker", 0);
+		const state = makeState(owner, { sessionManager: { getSessionId: () => owner } });
+		let live = false;
+		let retiring = false;
+		let drained = 0;
+		let tick: (() => void) | undefined;
+		const notices: unknown[] = [];
+		const channel = createNativeSupervisorChannel({
+			getAllTools: () => [], registerTool() {},
+			sendMessage(message: unknown) { notices.push(message); live = false; retiring = true; },
+		} as never, state, {
+			platform: "darwin",
+			getChannelDirs: () => ({
+				dirs: live || retiring ? [dir] : [],
+				...(retiring ? { retire: () => {
+					assert.equal(notices.length, 1, "delivery precedes retirement");
+					drained++;
+					retiring = false;
+				} } : {}),
+			}),
+			timers: {
+				setInterval: ((handler: () => void) => { tick = handler; return { unref() {} } as NodeJS.Timeout; }) as typeof setInterval,
+				clearInterval: (() => { tick = undefined; }) as typeof clearInterval,
+				setImmediate, clearImmediate,
+			},
+		});
+		try {
+			channel.start();
+			live = true;
+			writeRequest({ sessionId: owner, runId, reason: "progress_update" });
+			channel.activateTransport();
+			assert.equal(drained, 0, "demand observes completion without retiring its unpolled snapshot");
+			assert.equal(notices.length, 1);
+			assert.equal(typeof tick, "function", "demand keeps the final drain scheduled");
+			tick!();
+			assert.equal(tick, undefined);
+			assert.equal(drained, 1);
+		} finally { channel.dispose(); }
+	});
 
 	it("delivers requests only to the exact current session id and wakes the parent", () => {
 		const currentSessionId = `session-${randomUUID()}`;

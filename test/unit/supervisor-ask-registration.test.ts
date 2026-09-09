@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
+import fsDefault, * as fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, describe, it, type TestContext } from "node:test";
 import {
 	NATIVE_SUPERVISOR_TOOL_NAME,
 	createNativeSupervisorChannel,
@@ -117,7 +118,7 @@ function hookRuntime(launch: ChildSessionLaunch, platform: NodeJS.Platform, sign
 	const registered = new Map<string, Tool>();
 	const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>();
 	const subscribers = new Set<(event: ChildSessionEvent) => void>();
-	const notices: unknown[] = [];
+	const notices: Array<{ customType?: string; details?: { requestId?: string } }> = [];
 	const active = () => [...registered.keys()].filter(name => (!launch.tools || launch.tools.includes(name)) && !launch.excludeTools?.includes(name));
 	let closed = false;
 	const pi = {
@@ -127,7 +128,7 @@ function hookRuntime(launch: ChildSessionLaunch, platform: NodeJS.Platform, sign
 		getAllTools: () => active().map(name => ({ name, sourceInfo: { source: name === "read" ? "builtin" : "extension" } })),
 		getSessionName: () => "shared-name",
 		setSessionName() {},
-		sendMessage(message: { customType?: string }) { if (message.customType === "subagent_supervisor_request") notices.push(message); },
+		sendMessage(message: typeof notices[number]) { if (message.customType === "subagent_supervisor_request") notices.push(message); },
 	};
 	registered.set("read", { execute: async () => { throw new Error("fixture has no model-authored read calls"); } });
 	// Capture each native channel's platform without changing unrelated executor filesystem behavior.
@@ -153,7 +154,185 @@ function hookRuntime(launch: ChildSessionLaunch, platform: NodeJS.Platform, sign
 	};
 }
 
+function captureSupervisorPolling(t: TestContext, allowedDirs: Set<string>) {
+	const intervals = new Map<object, () => void>();
+	const scans: string[] = [];
+	const watches: string[] = [];
+	let starts = 0;
+	const set = globalThis.setInterval;
+	const clear = globalThis.clearInterval;
+	t.mock.method(globalThis, "setInterval", ((handler: () => void, delay: number, ...args: unknown[]) => {
+		if (delay !== 250) return set(handler, delay, ...args);
+		starts++;
+		const token = { unref() {} };
+		intervals.set(token, handler);
+		return token;
+	}) as typeof setInterval);
+	t.mock.method(globalThis, "clearInterval", ((token: ReturnType<typeof setInterval>) => {
+		if (!intervals.delete(token)) clear(token);
+	}) as typeof clearInterval);
+	const channelRoot = path.dirname(resolveSupervisorChannelDir("fixture", "worker", 0));
+	const readdir = fsDefault.readdirSync;
+	const watch = fsDefault.watch;
+	t.mock.method(fsDefault, "readdirSync", ((dir: fs.PathLike, options: unknown) => {
+		if (String(dir).startsWith(channelRoot)) scans.push(String(dir));
+		return (readdir as (dir: fs.PathLike, options: unknown) => unknown)(dir, options);
+	}) as typeof fsDefault.readdirSync);
+	t.mock.method(fsDefault, "watch", ((dir: fs.PathLike, ...args: unknown[]) => {
+		if (String(dir).startsWith(channelRoot)) watches.push(String(dir));
+		return (watch as (dir: fs.PathLike, ...args: unknown[]) => fs.FSWatcher)(dir, ...args);
+	}) as typeof fsDefault.watch);
+	syncBuiltinESMExports();
+	return {
+		intervals, scans, get starts() { return starts; },
+		tick() { for (const handler of [...intervals.values()]) handler(); },
+		assertScoped() {
+			assert.deepEqual(watches, [], "coordinator must not watch supervisor channels");
+			for (const dir of scans) assert.ok(allowedDirs.has(dir), `Unexpected supervisor scan: ${dir}`);
+		},
+		restore() { t.mock.restoreAll(); syncBuiltinESMExports(); },
+	};
+}
+
 describe("supervisor ask registration", () => {
+	for (const platform of ["darwin", "win32", "linux"] as const) {
+		it(`drains foreground and workflow progress completed between ticks exactly once (${platform})`, async (t) => {
+			clearExclusions();
+			const root = fs.mkdtempSync(path.join(os.tmpdir(), "nested-final-progress-"));
+			const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+			process.env.PI_CODING_AGENT_DIR = root;
+			fs.mkdirSync(path.join(root, "agents"), { recursive: true });
+			fs.writeFileSync(path.join(root, "agents", "leaf.md"), "---\nname: leaf\ndescription: Read-only leaf\ntools: read, contact_supervisor\nmodel: mock/test-model\n---\nInspect only.\n");
+			const launch = buildInProcessChildLaunch({
+				host: "parent", cwd: root, childAgentName: "coordinator", childIndex: 0,
+				sessionEnabled: false, tools: ["subagent", "subagent_supervisor"],
+				inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+			});
+			const abort = new AbortController();
+			const runtime = hookRuntime(launch.session, platform, abort.signal);
+			const allowed = new Set<string>();
+			const polling = captureSupervisorPolling(t, allowed);
+			const updates: string[] = [];
+			const leaves: ReturnType<typeof hookRuntime>[] = [];
+			setChildSessionFactory({
+				async create(childLaunch) {
+					const leaf = hookRuntime(childLaunch, platform, abort.signal);
+					leaves.push(leaf);
+					const dir = childLaunch.runtime.supervisorChannelDir!;
+					createdChannels.push(dir);
+					allowed.add(path.join(dir, "requests"));
+					assert.equal(childLaunch.runtime.orchestratorSessionId, runtime.owner);
+					await leaf.emit("session_start");
+					return {
+						sessionId: leaf.owner, sessionFile: leaf.sessionFile, modelId: "mock/test-model", messages: [],
+						subscribe: leaf.subscribe, steer: async () => {}, followUp: async () => {},
+						abort: async () => { abort.abort(); }, dispose: () => leaf.emit("session_shutdown"),
+						async prompt() {
+							await leaf.emit("agent_start");
+							const progress = await leaf.call("contact_supervisor", { reason: "progress_update", message: "Inspection complete." });
+							updates.push(progress.details.requestId!);
+							await leaf.emit("message_end", { message: { role: "assistant", content: [{ type: "text", text: "Inspection complete." }], model: "mock/test-model", stopReason: "stop", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } });
+							await leaf.emit("agent_end");
+							await leaf.emit("agent_settled");
+						},
+					};
+				},
+				async dispose() {},
+			});
+			try {
+				for (let i = 0; i < 100; i++) writeRequest({ sessionId: runtime.owner, runId: randomUUID(), reason: "progress_update" });
+				await runtime.emit("session_start");
+				assert.equal(polling.intervals.size, 0);
+				assert.equal(polling.scans.length, 0);
+				for (const mode of ["foreground", "workflow"] as const) {
+					const params = mode === "foreground"
+						? { agent: "leaf", task: "Inspect read-only and report progress.", async: false, output: false }
+						: { workflowScript: "return runs.run('inspect', { agent: 'leaf', task: 'Inspect read-only and report progress.', async: false, output: false });", async: false };
+					const result = await runtime.call("subagent", params);
+					assert.notEqual(result.isError, true, text(result));
+					assert.equal(leaves.at(-1)!.closed, true, "child starts and completes without a timer tick");
+					assert.equal(polling.intervals.size, 1, "final mailbox drain remains scheduled");
+					const scansBeforeDrain = polling.scans.length;
+					polling.tick();
+					assert.equal(polling.scans.length, scansBeforeDrain + 1, "terminal child gets exactly one final mailbox scan");
+					assert.deepEqual(runtime.notices.map(notice => notice.details?.requestId), updates);
+					polling.assertScoped();
+					assert.equal(polling.intervals.size, 0, "last drain retires the poller");
+					const scans = polling.scans.length;
+					polling.tick();
+					await runtime.call(NATIVE_SUPERVISOR_TOOL_NAME, { action: "pending" });
+					assert.equal(polling.scans.length, scans, "retired mailboxes are not scanned by idle queries");
+					assert.equal(runtime.notices.length, updates.length, "no duplicate notifications");
+				}
+				assert.equal(polling.starts, 2, "next launch rearms polling");
+			} finally {
+				abort.abort();
+				setChildSessionFactory(undefined);
+				for (const leaf of leaves) await leaf.emit("session_shutdown");
+				await runtime.emit("session_shutdown");
+				polling.restore();
+				if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+				else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+				fs.rmSync(root, { recursive: true, force: true });
+			}
+		});
+
+		it(`drains direct-async progress completed between ticks and retires only owned mailboxes (${platform})`, async (t) => {
+			const root = fs.mkdtempSync(path.join(os.tmpdir(), "nested-async-final-progress-"));
+			const launch = buildInProcessChildLaunch({
+				host: "parent", cwd: root, childAgentName: "coordinator", childIndex: 0,
+				sessionEnabled: false, tools: ["subagent", "subagent_supervisor"],
+				inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+			});
+			const runtime = hookRuntime(launch.session, platform, new AbortController().signal);
+			const allowed = new Set<string>();
+			const polling = captureSupervisorPolling(t, allowed);
+			try {
+				await runtime.emit("session_start");
+				assert.equal(polling.intervals.size, 0);
+				for (let cycle = 0; cycle < 2; cycle++) {
+					const runId = randomUUID();
+					const dir = resolveSupervisorChannelDir(runId, "leaf", 0);
+					allowed.add(path.join(dir, "requests"));
+					const unrelatedRun = randomUUID();
+					writeRequest({ sessionId: runtime.owner, runId: unrelatedRun, reason: "progress_update" });
+					runtime.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: unrelatedRun, asyncDir: root, agent: "worker", sessionId: "foreign-session" });
+					fs.writeFileSync(path.join(root, "status.json"), JSON.stringify({ runId, state: "running" }));
+					runtime.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: runId, asyncDir: root, agent: "leaf", sessionId: runtime.sessionFile });
+					assert.equal(polling.intervals.size, 1);
+					const progress = writeRequest({ sessionId: runtime.owner, runId, agent: "leaf", reason: "progress_update" });
+					const foreign = writeRequest({ sessionId: "foreign-owner", runId, agent: "leaf", reason: "progress_update" });
+					fs.writeFileSync(path.join(root, "status.json"), JSON.stringify({ runId, state: "complete" }));
+					const scans = polling.scans.length;
+					polling.tick();
+					assert.equal(runtime.notices.at(-1)?.details?.requestId, progress);
+					polling.assertScoped();
+					assert.equal(runtime.notices.length, cycle + 1);
+					assert.equal(polling.scans.length, scans + 1, "terminal mailbox gets exactly one final scan");
+					assert.equal(fs.existsSync(path.join(dir, "requests", `${progress}.json`)), false);
+					assert.equal(fs.existsSync(path.join(dir, "requests", `${foreign}.json`)), true, "foreign requests are never accepted or deleted");
+					assert.equal(polling.intervals.size, 0);
+					await runtime.call(NATIVE_SUPERVISOR_TOOL_NAME, { action: "pending" });
+					polling.tick();
+					assert.equal(polling.scans.length, scans + 1);
+					assert.equal(runtime.notices.length, cycle + 1);
+				}
+				assert.equal(polling.starts, 2);
+				const live = randomUUID();
+				allowed.add(path.join(resolveSupervisorChannelDir(live, "leaf", 0), "requests"));
+				fs.writeFileSync(path.join(root, "status.json"), JSON.stringify({ runId: live, state: "running" }));
+				runtime.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: live, asyncDir: root, agent: "leaf", sessionId: runtime.sessionFile });
+				assert.equal(polling.intervals.size, 1);
+				await runtime.emit("session_shutdown");
+				assert.equal(polling.intervals.size, 0, "shutdown closes live polling too");
+			} finally {
+				await runtime.emit("session_shutdown");
+				polling.restore();
+				fs.rmSync(root, { recursive: true, force: true });
+			}
+		});
+	}
+
 	for (const platform of ["darwin", "win32"] as const) {
 		it(`answers nested A → B → C asks through the child hooks and executor (${platform})`, { timeout: 15_000 }, async () => {
 			clearExclusions();

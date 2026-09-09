@@ -160,6 +160,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
 	const state = childConfig.runtimeState ?? createChildSafeState();
 	const asyncChildren = new Map<string, { dir: string; agents: string[] }>();
+	const foregroundChannels = new Set<string>();
 	const supervisorChannel = createNativeSupervisorChannel(pi, state, {
 		getChannelDirs: () => {
 			const dirs = new Set<string>();
@@ -171,15 +172,22 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 					if (child.status === "detached") dirs.add(resolveSupervisorChannelDir(run.runId, child.agent, child.index));
 				}
 			}
+			const retiringForeground = [...foregroundChannels].filter(dir => !dirs.has(dir));
+			for (const dir of dirs) foregroundChannels.add(dir);
+			for (const dir of retiringForeground) dirs.add(dir);
+			const retiringAsync: string[] = [];
 			for (const [id, child] of asyncChildren) {
 				const status = readStatus(child.dir);
-				if (status && status.state !== "queued" && status.state !== "running") {
-					asyncChildren.delete(id);
-					continue;
-				}
+				if (status && status.state !== "queued" && status.state !== "running") retiringAsync.push(id);
 				for (const [index, agent] of child.agents.entries()) dirs.add(resolveSupervisorChannelDir(id, agent, index));
 			}
-			return [...dirs];
+			return {
+				dirs: [...dirs],
+				retire: () => {
+					for (const dir of retiringForeground) foregroundChannels.delete(dir);
+					for (const id of retiringAsync) asyncChildren.delete(id);
+				},
+			};
 		},
 	});
 	const executor = createSubagentExecutor({
@@ -235,6 +243,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 	pi.on("session_shutdown", () => {
 		unsubscribeAsyncStarted?.();
 		asyncChildren.clear();
+		foregroundChannels.clear();
 		supervisorChannel.dispose();
 		state.supervisorOwnerSessionId = null;
 	});
