@@ -617,6 +617,17 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			ok: false,
 			errors: [{ message: "runs.run key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.", line: 1, column: 17 }],
 		});
+		const budgetValidation = await executor.executePublic(
+			"offline-budget-validation",
+			{ action: "validate", maxSubagentSpawnsPerRun: 1, workflowScript: `await runs.run("first", { agent: "echo" }); return runs.run("second", { agent: "echo" });` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(budgetValidation.isError, true);
+		const budgetPayload = JSON.parse(budgetValidation.content[0]?.text ?? "null") as { errors?: Array<{ kind?: string; message?: string }> };
+		assert.equal(budgetPayload.errors?.[0]?.kind, "spawn-budget");
+		assert.match(budgetPayload.errors?.[0]?.message ?? "", /'first', 'second'.*minimum required: 2; configured: 1/);
 		const invalidPreflight = await executor.executePublic(
 			"invalid-preflight",
 			{ workflowScript: `return runs.run("child", { agent: "echo" });`, preflight: { version: 1, lanes: [{ key: "bad key" }] } },

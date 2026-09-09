@@ -97,8 +97,10 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	if (hasCapacityOverride) {
 		const capacityOverrideError = validateWorkflowCapacityOverrides(params);
 		if (capacityOverrideError) return { ok: false, error: capacityOverrideError, mode: params.action === undefined ? "workflow" : "management" };
-		if (params.action !== undefined || hasNamedWorkflow || (params.workflowScript === undefined && params.workflowScriptPath === undefined)) {
-			return { ok: false, error: "Workflow capacity overrides are only supported on top-level workflowScript or workflowScriptPath calls.", mode: params.action === undefined ? "workflow" : "management" };
+		const validatesSpawnBudget = typeof params.action === "string" && params.action.trim() === "validate"
+			&& params.globalConcurrencyLimit === undefined && params.maxSubagentSpawnsPerRun !== undefined;
+		if ((params.action !== undefined && !validatesSpawnBudget) || hasNamedWorkflow || (params.workflowScript === undefined && params.workflowScriptPath === undefined)) {
+			return { ok: false, error: "Workflow capacity overrides are only supported on top-level workflowScript or workflowScriptPath calls; validate accepts maxSubagentSpawnsPerRun for static budget checks.", mode: params.action === undefined ? "workflow" : "management" };
 		}
 	}
 	if (params.preflight !== undefined && !hasWorkflowInput) {

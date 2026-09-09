@@ -1589,72 +1589,116 @@ function directRunsAllKeys(call: AstNode): Array<{ key: string; node: AstNode }>
 	});
 }
 
+function containsWorkflowLaunch(node: unknown): boolean {
+	let found = false;
+	walkAst(node, (candidate) => {
+		if (directRunsCall(candidate, "run") || directRunsCall(candidate, "all") || directRunsCall(candidate, "lanes")) found = true;
+	});
+	return found;
+}
+
+function containsRunsIdentifier(node: unknown): boolean {
+	let found = false;
+	walkAst(node, (candidate) => {
+		if (candidate.type === "Identifier" && candidate.name === "runs") found = true;
+	});
+	return found;
+}
+
+function invalidatesRunsBinding(workflowBody: AstNode): boolean {
+	let invalidated = false;
+	walkAst(workflowBody, (node) => {
+		if ((node.type === "VariableDeclarator" || node.type === "FunctionDeclaration" || node.type === "FunctionExpression" || node.type === "ClassDeclaration" || node.type === "ClassExpression")
+			&& containsRunsIdentifier(node.id)) invalidated = true;
+		if ((node.type === "FunctionDeclaration" || node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression") && Array.isArray(node.params)
+			&& node.params.some(containsRunsIdentifier)) invalidated = true;
+		if (node.type === "CatchClause" && containsRunsIdentifier(node.param)) invalidated = true;
+		if ((node.type === "AssignmentExpression" || node.type === "UpdateExpression") && containsRunsIdentifier(node.left ?? node.argument)) invalidated = true;
+	});
+	return invalidated;
+}
+
+function containsAbruptControl(node: AstNode): boolean {
+	let found = false;
+	walkAst(node, (candidate) => {
+		if (candidate !== node && (candidate.type === "ReturnStatement" || candidate.type === "ThrowStatement" || candidate.type === "BreakStatement" || candidate.type === "ContinueStatement")) found = true;
+	}, false);
+	return found;
+}
+
+function directLaunchCall(expression: unknown): AstNode | undefined {
+	if (!astNode(expression)) return undefined;
+	const candidate = expression.type === "AwaitExpression" && astNode(expression.argument) ? expression.argument : expression;
+	return directRunsCall(candidate, "run") || directRunsCall(candidate, "all") ? candidate : undefined;
+}
+
 function staticWorkflowLaunchPlan(workflowBody: AstNode): { keys: string[]; dynamic: boolean } {
+	if (workflowBody.type !== "BlockStatement" || !Array.isArray(workflowBody.body) || invalidatesRunsBinding(workflowBody)) {
+		return { keys: [], dynamic: containsWorkflowLaunch(workflowBody) };
+	}
 	const keys = new Set<string>();
 	let dynamic = false;
-	const visit = (value: unknown, conditional = false): void => {
-		if (Array.isArray(value)) {
-			for (const item of value) visit(item, conditional);
-			return;
-		}
-		if (!astNode(value)) return;
-		if (value.type === "FunctionDeclaration" || value.type === "FunctionExpression" || value.type === "ArrowFunctionExpression") {
-			walkAst(value.body, (node) => { if (directRunsCall(node, "run") || directRunsCall(node, "all") || directRunsCall(node, "lanes")) dynamic = true; });
-			return;
-		}
-		if (directRunsCall(value, "run")) {
-			const args = Array.isArray(value.arguments) ? value.arguments : [];
-			const key = literalString(args[0]);
-			if (conditional || key === undefined) dynamic = true;
-			else keys.add(key);
-			for (const argument of args) visit(argument, conditional);
-			return;
-		}
-		if (directRunsCall(value, "all")) {
-			if (conditional) {
-				dynamic = true;
-				return;
-			}
-			const args = Array.isArray(value.arguments) ? value.arguments : [];
-			const array = astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements) ? args[0] : undefined;
-			if (!array) {
-				dynamic = true;
-				return;
-			}
-			for (const item of array.elements as unknown[]) {
-				if (!astNode(item) || item.type === "SpreadElement") {
-					dynamic = true;
-					continue;
-				}
-				const key = literalString(directObjectPropertyValue(item, "key"));
-				if (key === undefined) dynamic = true;
-				else keys.add(key);
-				visit(item, conditional);
-			}
-			return;
-		}
-		if (directRunsCall(value, "lanes")) {
+	let remainderUncertain = false;
+	const addCall = (call: AstNode): void => {
+		const args = Array.isArray(call.arguments) ? call.arguments : [];
+		let nestedLaunch = false;
+		for (const argument of args) walkAst(argument, (node) => {
+			if (node !== call && (directRunsCall(node, "run") || directRunsCall(node, "all") || directRunsCall(node, "lanes"))) nestedLaunch = true;
+		});
+		if (nestedLaunch) {
 			dynamic = true;
 			return;
 		}
-		if (value.type === "IfStatement" || value.type === "ConditionalExpression") {
-			visit(value.test, conditional);
-			visit(value.consequent, true);
-			visit(value.alternate, true);
+		if (directRunsCall(call, "run")) {
+			const key = literalString(args[0]);
+			if (key === undefined) dynamic = true;
+			else keys.add(key);
 			return;
 		}
-		if (value.type === "LogicalExpression") {
-			visit(value.left, conditional);
-			visit(value.right, true);
+		const array = astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements) ? args[0] : undefined;
+		if (!array) {
+			dynamic = true;
 			return;
 		}
-		if (value.type === "ForStatement" || value.type === "ForInStatement" || value.type === "ForOfStatement" || value.type === "WhileStatement" || value.type === "DoWhileStatement" || value.type === "SwitchStatement") {
-			for (const [key, child] of Object.entries(value)) if (!AST_LOCATION_KEYS.has(key)) visit(child, key === "init" || key === "test" ? conditional : true);
-			return;
+		const batchKeys: string[] = [];
+		for (const item of array.elements as unknown[]) {
+			if (!astNode(item) || item.type !== "ObjectExpression" || !Array.isArray(item.properties)
+				|| item.properties.some((property) => !astNode(property) || property.type !== "Property" || staticPropertyKey(property) === undefined)) {
+				dynamic = true;
+				return;
+			}
+			const key = literalString(directObjectPropertyValue(item, "key"));
+			if (key === undefined) {
+				dynamic = true;
+				return;
+			}
+			batchKeys.push(key);
 		}
-		for (const [key, child] of Object.entries(value)) if (!AST_LOCATION_KEYS.has(key)) visit(child, conditional);
+		for (const key of batchKeys) keys.add(key);
 	};
-	visit(workflowBody);
+	for (const statement of workflowBody.body) {
+		if (!astNode(statement)) continue;
+		if (remainderUncertain) {
+			if (containsWorkflowLaunch(statement)) dynamic = true;
+			continue;
+		}
+		const expressions: unknown[] = [];
+		if (statement.type === "VariableDeclaration" && Array.isArray(statement.declarations)) {
+			for (const declaration of statement.declarations) if (astNode(declaration)) expressions.push(declaration.init);
+		} else if (statement.type === "ExpressionStatement") expressions.push(statement.expression);
+		else if (statement.type === "ReturnStatement" || statement.type === "ThrowStatement") expressions.push(statement.argument);
+		let handledLaunch = false;
+		for (const expression of expressions) {
+			const call = directLaunchCall(expression);
+			if (call) {
+				addCall(call);
+				handledLaunch = true;
+			} else if (containsWorkflowLaunch(expression)) dynamic = true;
+		}
+		if (!handledLaunch && expressions.length === 0 && containsWorkflowLaunch(statement)) dynamic = true;
+		if (statement.type === "ReturnStatement" || statement.type === "ThrowStatement") remainderUncertain = true;
+		else if (containsAbruptControl(statement)) remainderUncertain = true;
+	}
 	return { keys: [...keys], dynamic };
 }
 

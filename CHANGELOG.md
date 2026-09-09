@@ -21,7 +21,7 @@
 - Document task-derived behavior labels for workflow launches in the built-in pi-subagents skill, including reviews and retained follow-ups.
 
 ### Fixed
-- Reject workflow scripts whose statically provable child launches exceed `maxSubagentSpawnsPerRun` before discovery, artifact creation, or child launch; dynamic launch counts remain advisory and retain runtime enforcement.
+- Reject workflow scripts whose statically provable child launches exceed `maxSubagentSpawnsPerRun` before discovery, artifact creation, or child launch; dynamic launch counts remain advisory and retain runtime enforcement. Thanks to [@ton77v](https://github.com/ton77v) for #2101.
 - Label workflow usage as belonging to child rows instead of showing a misleading zero or overlapping wrapper totals in FleetView; preserve unrelated standalone usage in mixed summaries and distinguish summed concurrent windows from a single context window. Related to #2085; thanks to [@expoli](https://github.com/expoli).
 - Restore background SDK sessions for the official Pi 0.85.1 Linux x64 standalone release, without a separate SDK install; npm runners keep their package-root and lifecycle behavior. Thanks to [@xz-dev](https://github.com/xz-dev) for #2049.
 - Preserve the parent's active theme when foreground children start, while initializing themes in detached runners and refreshing slash-result rendering. Thanks to [@kubahasek](https://github.com/kubahasek) for #2089.

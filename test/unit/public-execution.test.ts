@@ -61,6 +61,10 @@ describe("public subagent execution normalization", () => {
 			{ ok: true, params: { action: "validate", workflowScriptPath: "workflow.js" } },
 		);
 		assert.deepEqual(
+			normalizePublicSubagentExecution({ action: " validate ", workflowScript: "return 1", maxSubagentSpawnsPerRun: 5 }),
+			{ ok: true, params: { action: "validate", workflowScript: "return 1", maxSubagentSpawnsPerRun: 5 } },
+		);
+		assert.deepEqual(
 			normalizePublicSubagentExecution({ action: " schedule.create ", every: "1h", workflowScript: "return 1" }),
 			{ ok: true, params: { action: "schedule.create", every: "1h", workflowScript: "return 1" } },
 		);

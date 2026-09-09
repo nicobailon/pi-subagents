@@ -281,6 +281,22 @@ describe("scripted workflow runtime", () => {
 		assert.match(result.warnings?.[0]?.message ?? "", /proved 0 launch\(es\).*configured budget of 1/);
 	});
 
+	it("keeps uncertain control flow and shadowed workflow APIs advisory", () => {
+		for (const script of [
+			`if (true) return "done";\nawait runs.run("a", {}); await runs.run("b", {});`,
+			`try { return "done"; } catch (error) { await runs.run("a", {}); await runs.run("b", {}); }`,
+			`class Deferred { child = runs.run("a", {}); }\nreturn "done";`,
+			`maybe?.(runs.run("a", {}));\nreturn "done";`,
+			`{ const runs = { run(key) { return key; } }; runs.run("a", {}); runs.run("b", {}); }`,
+			`return runs.all([{ key: "a", agent: "worker", ...overrides }, { key: "b", agent: "worker" }]);`,
+		]) {
+			const result = validateWorkflowScript(script, { maxSubagentSpawnsPerRun: 1 });
+			assert.equal(result.ok, true, script);
+			assert.deepEqual(result.errors, [], script);
+			assert.equal(result.warnings?.[0]?.kind, "dynamic-spawn-count", script);
+		}
+	});
+
 	it("keeps dynamic workflow keys silent when no spawn budget is requested", () => {
 		const result = validateWorkflowScript([
 			`const prefix = "lane";`,
