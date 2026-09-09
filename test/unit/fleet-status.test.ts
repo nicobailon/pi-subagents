@@ -46,6 +46,30 @@ const theme = {
 };
 
 describe("below-editor subagent FleetView", () => {
+	it("advances quiet workflow bottlenecks while terminal durations stay frozen", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("quiet", {
+			asyncId: "quiet", asyncDir: "/tmp/quiet", mode: "workflow", status: "running", startedAt: 1_000, updatedAt: 1_083,
+			steps: [
+				{ index: 0, workflowKey: "live", agent: "worker", status: "running", startedAt: 2_000, durationMs: 0 },
+				{ index: 1, workflowKey: "done", agent: "worker", status: "complete", startedAt: 1_000, durationMs: 2_000 },
+				{ index: 2, workflowKey: "queued", agent: "worker", status: "pending", startedAt: 1_000 },
+				{ index: 3, workflowKey: "unknown", agent: "worker", status: "running" },
+			],
+		});
+		const originalNow = Date.now;
+		try {
+			for (const now of [415_000, 425_000]) {
+				Date.now = () => now;
+				const entry = collectFleetStatusEntries(state)[0]!;
+				const items = entry.workflowChecklist!.phases.flatMap((phase) => phase.items);
+				assert.equal(items.find((item) => item.key === "live")?.durationMs, now - 2_000);
+				assert.equal(items.find((item) => item.key === "done")?.durationMs, 2_000);
+				assert.equal(items.find((item) => item.key === "queued")?.durationMs, undefined);
+				assert.equal(items.find((item) => item.key === "unknown")?.durationMs, undefined);
+			}
+		} finally { Date.now = originalNow; }
+	});
 	it("formats elapsed time and token counts like the Claude Code fleet", () => {
 		assert.equal(formatFleetElapsed(10_600), "11s");
 		assert.equal(formatFleetTokens(999), "↓ 999 tokens");

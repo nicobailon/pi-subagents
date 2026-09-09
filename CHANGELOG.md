@@ -19,6 +19,7 @@
 - Document task-derived behavior labels for workflow launches in the built-in pi-subagents skill, including reviews and retained follow-ups.
 
 ### Fixed
+- Advance live workflow and lane elapsed times from their starts, and nest loaded workflow children in the async widget instead of repeating lane rows and sibling cards. Partial fix for #2085; thanks to [@expoli](https://github.com/expoli).
 - Let fanout-authorized child coordinators answer their own children's supervisor requests with explicitly selected `subagent_supervisor`, preserving immediate-parent session ownership and tool restrictions. Keep explicitly requested native coordination tools through host-builtin filtering, and poll only live descendant channels. Thanks to [@shaharmor](https://github.com/shaharmor) for #2087.
 - Allow read-only reviewers to classify findings as quoted "must fix before" categories without treating the labels as implementation instructions; actual required fixes still require mutation tools. Thanks to [@freezscholte](https://github.com/freezscholte) for #2079.
 - Reject materialized workflow launch groups with invalid worktree repositories or dirty sources before dispatching children or claiming fan-out/output ownership. Allocation still rechecks; workflow-key failure traces may remain. Thanks to [@yanqianglu](https://github.com/yanqianglu) for #2076.

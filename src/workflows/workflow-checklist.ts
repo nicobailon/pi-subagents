@@ -186,7 +186,7 @@ function duration(step: Pick<WorkflowChecklistStep, "durationMs" | "startedAt" |
 	const startedAt = finite(step.startedAt);
 	if (explicit !== undefined) return Math.max(0, explicit);
 	if (startedAt === undefined) return undefined;
-	const end = state === "running" ? now : finite(step.endedAt) ?? now;
+	const end = state === "running" ? now : finite(step.endedAt);
 	return end === undefined ? undefined : Math.max(0, end - startedAt);
 }
 
@@ -296,7 +296,7 @@ function priority(item: WorkflowChecklistItem): number {
 }
 
 function applyNow(item: WorkflowChecklistItem, now: number | undefined): WorkflowChecklistItem {
-	return item.durationMs === undefined && item.startedAt !== undefined && now !== undefined ? { ...item, durationMs: Math.max(0, now - item.startedAt) } : item;
+	return item.state === "running" && item.startedAt !== undefined && now !== undefined ? { ...item, durationMs: Math.max(0, now - item.startedAt) } : item;
 }
 
 function finalize(phase: WorkflowChecklistPhase): void {

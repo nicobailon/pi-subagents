@@ -353,6 +353,7 @@ function projectPaneEntries(state: SubagentState): FleetStatusEntry[] {
 }
 
 export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntry[] {
+	const now = Date.now();
 	const entries: FleetStatusEntry[] = [];
 	const activeWorkflowKeys = new Set([...state.asyncJobs.values()]
 		.filter((job) => job.mode === "workflow" && isActiveState(job.status))
@@ -413,7 +414,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 
 	for (const job of state.asyncJobs.values()) {
 		if (!isActiveState(job.status)) continue;
-		const startedAt = job.startedAt ?? job.updatedAt ?? Date.now();
+		const startedAt = job.startedAt ?? job.updatedAt ?? now;
 		const linkedParentKey = linkedWorkflowParentKey(job.parentWorkflowRunId, activeWorkflowKeys);
 		if (job.mode === "workflow") {
 			const latestEmit = job.workflow?.emits?.length ? formatWorkflowJsonPreview(job.workflow.emits.at(-1), 120) : undefined;
@@ -425,7 +426,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 				hostSteps: job.hostSteps,
 				preflight: job.preflight,
 				trace: job.workflow?.trace,
-				now: job.updatedAt ?? Date.now(),
+				now,
 			});
 			entries.push({
 				key: `async:${job.asyncId}`,
