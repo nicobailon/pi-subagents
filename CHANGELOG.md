@@ -21,6 +21,7 @@
 - Document task-derived behavior labels for workflow launches in the built-in pi-subagents skill, including reviews and retained follow-ups.
 
 ### Fixed
+- Preserve input and return shapes in `appendAdvertisedAgentPrompt` with overloads for string, array, and undefined system prompt callers in `before_agent_start`. Thanks to [@luqman-v1](https://github.com/luqman-v1) for #2107.
 - Label workflow usage as belonging to child rows instead of showing a misleading zero or overlapping wrapper totals in FleetView; preserve unrelated standalone usage in mixed summaries and distinguish summed concurrent windows from a single context window. Related to #2085; thanks to [@expoli](https://github.com/expoli).
 - Restore background SDK sessions for the official Pi 0.85.1 Linux x64 standalone release, without a separate SDK install; npm runners keep their package-root and lifecycle behavior. Thanks to [@xz-dev](https://github.com/xz-dev) for #2049.
 - Preserve the parent's active theme when foreground children start, while initializing themes in detached runners and refreshing slash-result rendering. Thanks to [@kubahasek](https://github.com/kubahasek) for #2089.

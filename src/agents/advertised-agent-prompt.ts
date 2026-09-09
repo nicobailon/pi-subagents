@@ -57,6 +57,13 @@ export function buildAdvertisedAgentPrompt(
 	return render(entries);
 }
 
+export function appendAdvertisedAgentPrompt(systemPrompt: string, advertisedPrompt: string | undefined): string;
+export function appendAdvertisedAgentPrompt(systemPrompt: string[], advertisedPrompt: string | undefined): string[];
+export function appendAdvertisedAgentPrompt(systemPrompt: undefined, advertisedPrompt: string | undefined): string | undefined;
+export function appendAdvertisedAgentPrompt(
+	systemPrompt: string | string[] | undefined,
+	advertisedPrompt: string | undefined,
+): string | string[] | undefined;
 export function appendAdvertisedAgentPrompt(
 	systemPrompt: string | string[] | undefined,
 	advertisedPrompt: string | undefined,
