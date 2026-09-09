@@ -16,8 +16,6 @@ pi install npm:pi-subagents
 
 That is the only required step. Background children use the host's SDK: npm Pi keeps its detached Node runner; the official Pi 0.85.1 Linux x64 standalone release loads the same runner through Pi's embedded SDK, without a separate SDK install. See [Standalone background execution](docs/standalone-background.md) for the supported boundary and validation gate.
 
-For a local Pi session with a remote POSIX project, see [SSH foreground delegation](docs/ssh-project.md). This deliberately narrower entry supports selected agents and remote text read/bash, not ordinary workflows or background execution.
-
 ## Try this first
 
 You do not need to create agents, write config, or learn slash commands. After installing, ask Pi in plain language:

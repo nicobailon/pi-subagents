@@ -53,8 +53,6 @@ export type ChildSessionStorage =
 	| { kind: "memory" };
 
 export interface ChildSessionLaunch {
-	sshProject?: import("./ssh-project-bootstrap.ts").SshProjectBootstrap;
-	sshSignal?: AbortSignal;
 	cwd: string;
 	storage: ChildSessionStorage;
 	/** Model reference as the agent config names it (`provider/id`, optionally `:thinking`). */
@@ -220,19 +218,11 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 	};
 	return {
 		async create(launch) {
-			// Network prefetch must never occupy the shared local initialization queue.
-			const ssh = launch.sshProject ? await import("./ssh-project-tools.ts") : undefined;
-			const sshContext = ssh && launch.sshProject ? await ssh.prepareSshContext(launch.sshProject, launch.sshSignal) : undefined;
-			const sshTools = ssh && launch.sshProject ? ssh.createSshProjectTools(launch.sshProject, launch.tools) : undefined;
-			const sshPromptContext = launch.sshProject ? [launch.sshProject.globalContext, sshContext, ...(launch.sshProject.selectedDocuments?.skills ?? []).map(doc => `Selected local Markdown snapshot (${doc.path}):\n${doc.content}`)].filter(Boolean).join("\n\n") : undefined;
-			const sshErrors: ChildSessionExtensionError[] = [];
-			const reportExtensionError = (error: ChildSessionExtensionError) => { if (sshTools) sshErrors.push(error); launch.onExtensionError?.(error); };
-			let ownedToolsReady: (() => boolean) | undefined;
 			const observeReadonly = prepareReadonlySessionEvidence(launch);
 			const pi = await loadPiCodingAgent();
 			const modelRuntime = await sharedRuntime(pi);
 			const agentDir = getAgentDir();
-			const settingsManager = pi.SettingsManager.create(launch.cwd, agentDir, ...(launch.sshProject ? [{ projectTrusted: false }] as const : []));
+			const settingsManager = pi.SettingsManager.create(launch.cwd, agentDir);
 			// Foreground children share Pi's global theme with the parent, so reinitializing it
 			// would overwrite the parent's active light/dark appearance. Detached runners have
 			// no initialized theme and must initialize one for headless extension renderers.
@@ -244,33 +234,22 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				agentDir,
 				settingsManager,
 				noExtensions: !launch.ambientExtensions,
-				noSkills: launch.sshProject ? true : launch.noSkills,
+				noSkills: launch.noSkills,
 				noPromptTemplates: true,
 				noThemes: true,
-				noContextFiles: launch.sshProject ? true : launch.noContextFiles,
-				additionalExtensionPaths: launch.sshProject ? [...(launch.sshProject.extensions ?? [])] : launch.extensionPaths,
-				extensionFactories: sshTools ? [...launch.hooks, { name: "pi-subagents:ssh-owned", factory: (api: ExtensionAPI) => {
-					for (const tool of sshTools) api.registerTool(tool);
-					api.on("before_agent_start", event => ({ systemPrompt: `${event.systemPrompt}\n\nProject tools operate in ssh://${launch.sshProject!.target}${launch.sshProject!.projectDir}; ${launch.cwd} is local runtime/state only.\n${event.systemPrompt.includes(sshPromptContext!) ? "" : sshPromptContext}` }));
-					api.on("tool_call", event => { if (sshTools.some(tool => tool.name === event.toolName) && !ownedToolsReady?.()) return { block: true, reason: "SSH owned tools changed; local fallback refused." }; });
-					api.on("session_before_switch", () => ({ cancel: true }));
-					api.on("session_before_fork", () => ({ cancel: true }));
-					api.on("session_before_tree", () => ({ cancel: true }));
-				} }] : launch.hooks,
-				...(launch.sshProject ? { agentsFilesOverride: () => ({ agentsFiles: [{ path: `ssh://${launch.sshProject!.target}${launch.sshProject!.projectDir}`, content: sshPromptContext! }] }) } : {}),
+				noContextFiles: launch.noContextFiles,
+				additionalExtensionPaths: launch.extensionPaths,
+				extensionFactories: launch.hooks,
 				extensionsOverride: prioritizeChildPromptRuntime,
 				...(launch.systemPrompt !== undefined ? { systemPrompt: launch.systemPrompt } : {}),
 				...(launch.appendSystemPrompt !== undefined ? { appendSystemPrompt: [launch.appendSystemPrompt] } : {}),
 			});
 			const open = async () => {
-				launch.sshSignal?.throwIfAborted();
 				applyProcessEnv(launch.processEnv);
 				if (!resetExtensionCacheOnReload(loader) && (launch.ambientExtensions || launch.extensionPaths.length)) launch.onExtensionError?.({ extensionPath: "<loader>", event: "load", error: new Error("pi's extension cache reset is unavailable; extensions loaded into this child share module state with other sessions in this process.") });
 				observeReadonly?.loadingHooks(true);
 				try { await loader.reload(); } finally { observeReadonly?.loadingHooks(false); }
-				if (sshTools && loader.getExtensions().errors.length) throw new Error("SSH child extension initialization failed; no local fallback.");
-				await flushQueuedProviderRegistrations(loader, modelRuntime, reportExtensionError);
-				if (sshErrors.length) throw new Error("SSH child provider initialization failed.");
+				await flushQueuedProviderRegistrations(loader, modelRuntime, launch.onExtensionError);
 				// No await between receipt validation and the SDK's permissive file open.
 				observeReadonly?.beforeOpen();
 				const sessionManager = launch.storage.kind === "file"
@@ -301,13 +280,8 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				try {
 					await session.bindExtensions({
 						mode: "print",
-						onError: (error) => reportExtensionError({ extensionPath: error.extensionPath, event: error.event, error: error.error }),
+						onError: (error) => launch.onExtensionError?.({ extensionPath: error.extensionPath, event: error.event, error: error.error }),
 					});
-					if (sshTools) for (const tool of sshTools) {
-						if (launch.tools?.includes(tool.name) && (session.getToolDefinition(tool.name) !== tool || session.getAllTools().find(info => info.name === tool.name)?.sourceInfo?.path !== "<inline:pi-subagents:ssh-owned>")) throw new Error("SSH owned tool readiness failed.");
-					}
-					if (sshTools) ownedToolsReady = () => !sshErrors.length && sshTools.every(tool => !launch.tools?.includes(tool.name) || session.getToolDefinition(tool.name) === tool);
-					if (sshErrors.length) throw new Error("SSH child startup failed; no prompt is permitted.");
 				} catch (error) {
 					session.dispose();
 					throw error;
@@ -317,7 +291,6 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			const opened = loading.catch(() => {}).then(open);
 			loading = opened;
 			const session = await opened;
-			if (launch.sshSignal?.aborted) { session.dispose(); launch.sshSignal.throwIfAborted(); }
 			let evidence: ReturnType<NonNullable<typeof observeReadonly>["observe"]>;
 			try { evidence = observeReadonly?.observe(pi, modelRuntime, session); }
 			catch (error) { session.dispose(); throw error; }
@@ -344,7 +317,6 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			const child: ChildSession = {
 				subscribe: (listener) => session.subscribe((event) => listener(event as unknown as ChildSessionEvent)),
 				prompt: (text) => {
-					if (sshTools && !ownedToolsReady?.()) return Promise.reject(new Error("SSH owned tool readiness failed before prompt."));
 					if (!evidence) return session.prompt(text);
 					try { evidence.start(); } catch (error) { return Promise.reject(error); }
 					return session.prompt(text).then(() => evidence?.settled(), (error) => { evidence?.invalidate(); throw error; });

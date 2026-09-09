@@ -13,7 +13,6 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { createSshProjectSessionBinding, snapshotSshProjectBootstrap, type SshProjectBootstrap } from "../runs/shared/ssh-project-bootstrap.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -421,16 +420,7 @@ export function projectActiveHerdrRuns(state: SubagentState): HerdrStatusRun[] {
 		});
 }
 
-export default function registerSubagentExtension(pi: ExtensionAPI, bootstrap?: SshProjectBootstrap): void {
-	const sshProfile = bootstrap === undefined ? undefined : snapshotSshProjectBootstrap(bootstrap);
-	if (sshProfile && (process.env[SUBAGENT_CHILD_ENV] === "1" || path.resolve(getAgentDir()) !== sshProfile.localRuntime.agentDir)) {
-		throw new Error("SSH project bootstrap requires the selected local agent directory and a parent host.");
-	}
-	const sshSession = sshProfile ? createSshProjectSessionBinding(sshProfile) : undefined;
-	if (sshSession) {
-		pi.on("session_start", (_event, ctx) => sshSession.bind(ctx));
-		pi.on("session_shutdown", () => sshSession.dispose());
-	}
+export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	if (process.env[SUBAGENT_CHILD_ENV] === "1") {
 		return;
 	}
@@ -509,9 +499,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI, bootstrap?: 
 		getCurrentOwnerStates: () => executor.getCurrentSupervisorOwnerStates(),
 	});
 	const waitSubscriptionManager = createWaitSubscriptionManager(pi, state);
-	// The local watchdog reads settings/Git even at construction. Do not create
-	// it for a remote project; remote safety/admission is not implemented yet.
-	const mainWatchdog = sshProfile ? undefined : registerMainWatchdog(pi);
+	const mainWatchdog = registerMainWatchdog(pi);
 	const resultDeliveryOwnership = createResultDeliveryOwnership(state);
 	const completionNotifier = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch, ownership: resultDeliveryOwnership });
 	let retainedNestedRouteTracker: ReturnType<typeof createRetainedNestedRouteTracker> | undefined;
@@ -555,7 +543,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI, bootstrap?: 
 	let advertisedContext: Pick<ExtensionContext, "cwd" | "model"> | undefined;
 	const refreshAdvertisedAgents = () => {
 		advertisedAgents = [];
-		if (sshProfile) return;
 		if (!advertisedContext) return;
 		clearAgentDiscoveryCache();
 		advertisedAgents = discoverAgents(advertisedContext.cwd, "both", advertisedContext.model?.provider).agents
@@ -568,7 +555,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI, bootstrap?: 
 		return missionObserverResultCandidateFiles(DIRS.results).length > 0;
 	};
 	const discoverAgentsForRuntime = (cwd: string, scope: AgentScope, preferredModelProvider?: string) => {
-		if (sshProfile) throw new Error("SSH project agent discovery is not implemented; local discovery refused.");
 		if (listRuntimeAgentConfigs(pi).length === 0) return discoverAgents(cwd, scope, preferredModelProvider);
 		const snapshot = discoverAgentSnapshot(cwd, scope, preferredModelProvider, { includeChains: false });
 		const discovered = snapshot.effective;
@@ -629,8 +615,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI, bootstrap?: 
 
 	const executorDeps: Parameters<typeof createSubagentExecutor>[0] = {
 		pi,
-		assertLocalExecution: sshSession?.assertLocalExecution,
-		sshProject: sshProfile,
 		state,
 		config,
 		asyncByDefault,
@@ -777,8 +761,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI, bootstrap?: 
 	const tool: ToolDefinition<typeof parameters, Details> = {
 		name: "subagent",
 		label: "Subagent",
-		description: sshProfile ? "Delegate one fresh native foreground child to the explicitly selected SSH agent. Specify agent, task, async:false, context:fresh. Workflows, background, resume, outputs and project management are unsupported." : buildSubagentToolDescription(config),
-		...(sshProfile ? { promptSnippet: "Delegate one fresh foreground child in the bound SSH project; no workflows/background/resume.", promptGuidelines: ["Use subagent with the explicitly selected agent, task, async:false and context:fresh."] } : buildSubagentToolPromptMetadata(config)),
+		description: buildSubagentToolDescription(config),
+		...buildSubagentToolPromptMetadata(config),
 		parameters,
 
 		async execute(id, params, signal, onUpdate, ctx) {
@@ -986,10 +970,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI, bootstrap?: 
 			granted: 0,
 			grantHistory: [],
 		};
-		if (!sshProfile) {
-			const projectPaneOwnerRoot = path.resolve(ctx.cwd);
-			restoreHerdrProjectPaneSnapshots(state, [...new Set([...(state.herdrProjectPanes?.keys() ?? []), ...listHerdrProjectPaneRoots(projectPaneOwnerRoot), projectPaneOwnerRoot])]);
-		}
+		const projectPaneOwnerRoot = path.resolve(ctx.cwd);
+		restoreHerdrProjectPaneSnapshots(state, [...new Set([...(state.herdrProjectPanes?.keys() ?? []), ...listHerdrProjectPaneRoots(projectPaneOwnerRoot), projectPaneOwnerRoot])]);
 		// Set PI_SUBAGENT_PARENT_SESSION for permission-system forwarding.
 		// Only set in the root session (the interactive UI session), not in a
 		// child host: the runner process inherits the parent's value through
@@ -1065,7 +1047,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI, bootstrap?: 
 			stopResultWatcher();
 			resultDeliveryOwnership.clear();
 			completionNotifier.dispose();
-			mainWatchdog?.dispose();
+			mainWatchdog.dispose();
 			scheduledRunManager.stop();
 			supervisorChannel.dispose();
 			waitSubscriptionManager.dispose();

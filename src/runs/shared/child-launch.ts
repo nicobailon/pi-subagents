@@ -60,8 +60,6 @@ export function inheritedChildRuntime(config: ChildRuntimeConfig | undefined): I
 }
 
 export interface BuildInProcessChildLaunchInput {
-	sshProject?: import("./ssh-project-bootstrap.ts").SshProjectBootstrap;
-	sshSignal?: AbortSignal;
 	parentSessionId?: string;
 	forkCacheKey?: string;
 	sessionEnabled: boolean;
@@ -296,8 +294,6 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		? `<active_agent name="${escapeXmlAttr(input.childAgentName)}"/>\n\n${input.systemPrompt}`
 		: undefined;
 	const session: Omit<ChildSessionLaunch, "onExtensionError"> = {
-		...(input.sshProject ? { sshProject: input.sshProject } : {}),
-		...(input.sshSignal ? { sshSignal: input.sshSignal } : {}),
 		cwd: input.cwd,
 		storage: childStorage(input),
 		...(input.model ? { model: input.model } : {}),

@@ -113,16 +113,10 @@ function validateOrcaProgressTabsConfig(value: unknown): void {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.orcaProgressTabs must be a JSON object");
 	const config = value as Record<string, unknown>;
 	for (const key of Object.keys(config)) {
-		if (key !== "enabled" && key !== "autoCloseDelaySec") throw new Error(`config.orcaProgressTabs.${key} is not supported`);
+		if (key !== "enabled") throw new Error(`config.orcaProgressTabs.${key} is not supported`);
 	}
 	if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
 		throw new Error("config.orcaProgressTabs.enabled must be a boolean");
-	}
-	if (config.autoCloseDelaySec !== undefined
-		&& (typeof config.autoCloseDelaySec !== "number"
-			|| !Number.isFinite(config.autoCloseDelaySec)
-			|| config.autoCloseDelaySec < 0)) {
-		throw new Error("config.orcaProgressTabs.autoCloseDelaySec must be a number >= 0");
 	}
 }
 
@@ -193,7 +187,7 @@ export function getConfigPath(): string {
 	return path.join(getAgentDir(), "extensions", "subagent", "config.json");
 }
 
-export function readConfigForUpdate(configPath = getConfigPath()): ExtensionConfig {
+function readConfigForUpdate(configPath = getConfigPath()): ExtensionConfig {
 	if (!fs.existsSync(configPath)) return {};
 	const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
 	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {

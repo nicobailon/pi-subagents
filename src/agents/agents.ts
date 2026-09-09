@@ -2163,19 +2163,6 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 	return { agents, diagnostics };
 }
 
-/** Decode one explicitly selected immutable document without any discovery. */
-export function loadSelectedAgentDocument(document: { path: string; content: string }): AgentConfig {
-	const { frontmatter } = parseFrontmatter(document.content);
-	if (frontmatter.inheritProjectContext === "false" || frontmatter.inheritGlobalContext === "false" || frontmatter.inheritSkills === "true") throw new Error("SSH requires isolated project/global context and explicitly selected skill documents.");
-	const allowed = new Set(["name", "description", "tools", "model", "thinking", "defaultContext", "async", "timeoutMs", "toolTimeoutMs", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "systemPromptMode"]);
-	if (Object.keys(frontmatter).some(key => !allowed.has(key))) throw new Error("Selected SSH agent declares an unsupported requirement.");
-	const result = loadAgentsFromDefinitionFiles([{ filePath: document.path, content: document.content }], "user");
-	if (result.diagnostics.length || result.agents.length !== 1) throw new Error("Invalid selected SSH agent document.");
-	const agent = result.agents[0]!;
-	if (agent.defaultContext === "fork" || agent.defaultAsync === true || agent.systemPromptMode === "replace" || agent.tools?.some(tool => !["read", "bash", "write", "edit"].includes(tool))) throw new Error("Selected SSH agent requires unsupported execution capabilities.");
-	return { ...agent, tools: agent.tools ?? ["read", "bash"], allowNestedSubagents: false, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false };
-}
-
 function loadAgentsFromDir(dir: string, source: AgentSource, discoveryPriority?: number, packageSource?: Omit<PackageSubagentPath, "dir" | "scope">, inspection = inspectAgentDefinitionDirectory(dir)): { agents: AgentConfig[]; diagnostics: AgentDiscoveryDiagnostic[] } {
 	return loadAgentsFromDefinitionFiles(readAgentDefinitionFiles(dir, inspection), source, discoveryPriority, packageSource);
 }

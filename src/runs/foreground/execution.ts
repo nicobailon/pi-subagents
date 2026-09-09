@@ -384,8 +384,8 @@ async function runSingleAttempt(
 	// runtime config and echoed back on the result payload so hosts can label
 	// this run without reading the child's session file.
 	const childSessionName = deriveChildSessionName({ agent: agent.name, task: shared.originalTask ?? task });
-	const watchdogConfig = options.sshProject ? undefined : resolveWatchdogConfig(options.cwd ?? runtimeCwd);
-	const childWatchdog = watchdogConfig?.ok
+	const watchdogConfig = resolveWatchdogConfig(options.cwd ?? runtimeCwd);
+	const childWatchdog = watchdogConfig.ok
 		? resolveChildWatchdogConfig({
 			config: watchdogConfig.config,
 			agent: agent.name,
@@ -399,8 +399,6 @@ async function runSingleAttempt(
 		: undefined;
 	let onWatchdogStatus: ((event: ChildWatchdogStatusEvent) => void) | undefined;
 	const launch = buildInProcessChildLaunch({
-		sshProject: options.sshProject,
-		sshSignal: options.sshProject ? options.signal : undefined,
 		extensionBindings: options.extensionBindings,
 		sessionEnabled: shared.sessionEnabled,
 		sessionDir: options.sessionDir,
@@ -579,9 +577,7 @@ async function runSingleAttempt(
 		};
 		return result;
 	}
-	const mutationSnapshot: ReturnType<typeof snapshotTrackedMutations> = options.sshProject
-		? { source: "tracked-files", trackedOnly: true, cwd: options.cwd ?? runtimeCwd, dirtyFiles: [], fingerprints: {}, unavailable: "Remote mutation evidence is not collected; local Git is not a substitute." }
-		: snapshotTrackedMutations(options.cwd ?? runtimeCwd);
+	const mutationSnapshot = snapshotTrackedMutations(options.cwd ?? runtimeCwd);
 	let observedMutationAttempt = false;
 	let structuredOutputToolInvoked = false;
 	let structuredOutputMessageStartIndex: number | undefined;
@@ -1797,7 +1793,7 @@ async function runSyncCompletionInner(
 	}
 	const skillNames = options.skills ?? agent.skills ?? [];
 	const skillCwd = options.cwd ?? runtimeCwd;
-	const { resolved: resolvedSkills, missing: missingSkills } = options.sshProject ? { resolved: [], missing: [] } : resolveSkillsWithFallback(
+	const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(
 		skillNames,
 		skillCwd,
 		runtimeCwd,
@@ -1820,11 +1816,11 @@ async function runSyncCompletionInner(
 		const skillInjection = buildSkillInjection(resolvedSkills);
 		systemPrompt = systemPrompt ? `${systemPrompt}\n\n${skillInjection}` : skillInjection;
 	}
-	const memoryInjection = options.sshProject ? undefined : buildAgentMemoryInjection(agent, skillCwd);
+	const memoryInjection = buildAgentMemoryInjection(agent, skillCwd);
 	if (memoryInjection) {
 		systemPrompt = systemPrompt ? `${systemPrompt}\n\n${memoryInjection}` : memoryInjection;
 	}
-	if (!options.sshProject) systemPrompt = appendAgentRefinementOverlay(systemPrompt, { cwd: skillCwd, agentName });
+	systemPrompt = appendAgentRefinementOverlay(systemPrompt, { cwd: skillCwd, agentName });
 	systemPrompt = injectOutputPathSystemPrompt(systemPrompt, options.outputPath, agent);
 
 	const candidates = buildModelCandidates(
@@ -1899,7 +1895,7 @@ async function runSyncCompletionInner(
 		}
 	}
 
-	const orcaProgressTab = options.sshProject ? undefined : createOrcaProgressTab({
+	const orcaProgressTab = createOrcaProgressTab({
 		cwd: options.cwd ?? runtimeCwd,
 		runId: options.runId,
 		agent: agentName,
@@ -2001,7 +1997,6 @@ async function runSyncCompletionInner(
 				usage: { ...result.usage },
 			};
 			modelAttempts.push(attempt);
-			if (options.sshProject) break modelAttemptsLoop;
 			// A consumed retained continuation is terminal even on a startup error or abort.
 			if (recoveryState === "readonly-continuation") break modelAttemptsLoop;
 			const source = settledReadonlySource.get(result);

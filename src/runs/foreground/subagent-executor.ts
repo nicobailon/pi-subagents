@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { executeSshForeground } from "./ssh-execution.ts";
-import type { SshProjectBootstrap } from "../shared/ssh-project-bootstrap.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -437,9 +435,6 @@ function rememberParentModel(state: { currentSessionId?: string | null; lastPare
 
 interface ExecutorDeps {
 	pi: ExtensionAPI;
-	/** Internal startup boundary: remote sessions must not enter local preparation. */
-	assertLocalExecution?: (ctx: ExtensionContext) => void;
-	sshProject?: SshProjectBootstrap;
 	state: SubagentState;
 	config: ExtensionConfig;
 	asyncByDefault: boolean;
@@ -4890,10 +4885,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		preserveActiveSession = false,
 		parentModelOverride?: ParentModel | null,
 	): Promise<AgentToolResult<Details>> => {
-		deps.assertLocalExecution?.(ctx);
 		const workflowLaunchObserver = workflowLaunchObservers.get(params);
-		if (!deps.sshProject && Object.hasOwn(params.extensionBindings ?? {}, "pi-subagents.ssh-project/1")) throw new Error("SSH binding requires the owned SSH entry; local launch refused.");
-		if (deps.sshProject) return executeSshForeground(deps.sshProject, deps.config, deps.state, { ...params, ...(delegatedThinkingOverrides.has(params) ? { thinking: delegatedThinkingOverrides.get(params) } : {}) }, ctx, signal, onUpdate);
 		const inheritedUsageBudget = workflowOwnedUsageBudgets.get(params);
 		const delegatedThinkingOverride = delegatedThinkingOverrides.get(params);
 		const allowZeroToolBudget = delegatedZeroToolBudgets.has(params);
@@ -7254,10 +7246,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	): Promise<AgentToolResult<Details>> => {
-		deps.assertLocalExecution?.(ctx);
 		const normalized = normalizePublicSubagentExecution(params);
-		if (!deps.sshProject && Object.hasOwn(params.extensionBindings ?? {}, "pi-subagents.ssh-project/1")) throw new Error("SSH binding requires the owned SSH entry; local launch refused.");
-		if (deps.sshProject) return executeSshForeground(deps.sshProject, deps.config, deps.state, params, ctx, signal, onUpdate);
 		if (!normalized.ok) {
 			return Promise.resolve({ content: [{ type: "text", text: normalized.error }], isError: true, details: { mode: normalized.mode, results: [] } });
 		}
@@ -7309,9 +7298,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		signal: AbortSignal,
 		ctx: ExtensionContext,
 	) => {
-		deps.assertLocalExecution?.(ctx);
 		const ownerSessionId = resolveCurrentSessionId(ctx.sessionManager);
-		if (deps.sshProject) throw new Error("SSH scheduled launches are unsupported.");
 		const runtimeOwnerId = ctx.sessionManager.getSessionId() || null;
 		let ownerExecutors = scheduledOwnerExecutors.get(runtimeOwnerId);
 		if (!ownerExecutors) {

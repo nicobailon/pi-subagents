@@ -3,13 +3,9 @@
 ## [Unreleased]
 
 ### Added
-- Add remote text `edit` for admitted SSH children when the bound agent explicitly selects it. An edit performs one exact unique replacement in the bound remote POSIX project, reuses the protected write path, and never falls back to the local filesystem. Related to #2047; leaves #2047 open. Thanks to [@klay7w](https://github.com/klay7w) for #2047.
-- Add Pi-compatible remote text `write` for admitted SSH children when the bound agent explicitly selects it. Writes target only the bound remote POSIX project, refuse symlink escape, and never fall back to the local filesystem. Related to #2047; leaves #2047 open. Thanks to [@klay7w](https://github.com/klay7w) for #2047.
-- Add an opt-in stock-Pi SSH project entry for fresh single native foreground delegation with remote text `read`/`bash` and local authentication, selected resources and sessions. Background, workflows, resume and project-management operations remain unsupported; see [the bounded contract](docs/ssh-project.md). Related to #2047; thanks to [@klay7w](https://github.com/klay7w).
 - Add opt-in watchdog `fallbackModels` for main, children, and per-agent overrides, retrying provider failures only before tool work within the existing review deadline. Thanks to [@dwizzle204](https://github.com/dwizzle204) for #2075.
 - Add portable Inspect commands and a terminal-neutral plugin seam, including open-only Ghostty 1.3+ right splits on macOS. Thanks to [@tiratatp](https://github.com/tiratatp) for #2046.
 - Add an opt-in `quiet: true` flag for recurring `schedule.create`. A quiet schedule's successful automatic runs and successful workflow children keep their completion notices but no longer trigger a parent turn; failed, stopped, or paused outcomes still wake the session. One-shot `at` schedules and `schedule.run` stay noisy unless that launch passes `quiet: true`. Default behavior is unchanged. Thanks to [@pablontiv](https://github.com/pablontiv) for #2055.
-- Add opt-in `orcaProgressTabs.autoCloseDelaySec` to close Orca observer tabs after a successful run. Thanks to [@G0-0000](https://github.com/G0-0000) for #2063.
 - Add default-off, main-only watchdog questions and task-continuity reviews from bounded delivered orchestration evidence (#2010).
 - Add the built-in `evidence-auditor` for independently reviewing important research claims and source support. Thanks to [@Muskos](https://github.com/Muskos) for #2023.
 - Notify the parent as individual async workflow children finish, without waiting for all siblings (#2027). Each child completion delivers a compact notification with the workflow run ID, child key, exact child run ID, outcome, and output reference while the workflow remains running.

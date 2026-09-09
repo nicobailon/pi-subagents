@@ -11,5 +11,5 @@
     "strict": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["index.ts", "ssh-entry.ts", "src/**/*.ts", "src/**/*.d.ts"]
+  "include": ["index.ts", "src/**/*.ts", "src/**/*.d.ts"]
 }
