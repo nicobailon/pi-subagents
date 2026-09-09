@@ -1735,11 +1735,15 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.rmSync(resultPath, { force: true });
 	});
 
-	it("notifies the parent when an async workflow child needs attention", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("notifies the parent when an async workflow child needs attention", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async (t) => {
+		const releasePath = path.join(mockPi.dir, "attention-observed");
+		// Keep the child idle until the parent has observed both status and delivery.
+		// Also unblock it on assertion failure, rather than leaking a waiting runner.
+		t.after(() => fs.writeFileSync(releasePath, "release"));
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.toolStart("read", { path: "src/example.ts" }), events.toolEnd("read"), events.toolResult("read", "contents"), mockAssistantMessage("Started", "tool_use")] },
-				{ delay: 2_500, jsonl: [events.assistantMessage("Done")] },
+				{ waitForPath: releasePath, jsonl: [events.assistantMessage("Done")] },
 			],
 		});
 		const asyncJobs: SubagentState["asyncJobs"] = new Map();
@@ -1775,10 +1779,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
 		let liveStatus: AsyncStatus | undefined;
 		const activityDeadline = Date.now() + 5_000;
-		while (Date.now() < activityDeadline && !fs.existsSync(resultPath)) {
+		while (Date.now() < activityDeadline) {
 			if (fs.existsSync(statusPath)) {
 				const candidate = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
-				if (candidate.activityState === "needs_attention" && !candidate.steps?.[0]?.currentTool) {
+				if (candidate.activityState === "needs_attention" && !candidate.steps?.[0]?.currentTool
+					&& controlPayloads.some((payload) => payload.event?.type === "needs_attention")) {
 					liveStatus = candidate;
 					break;
 				}
@@ -1818,6 +1823,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(persisted.event?.workflowKey, "stalled-review");
 		assert.equal(controlRecords.filter((record) => record.event?.type === "needs_attention").length, 1);
 
+		assert.equal(fs.existsSync(resultPath), false, "child must remain live until attention is observed");
+		fs.writeFileSync(releasePath, "release");
 		const completionDeadline = Date.now() + 5_000;
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > completionDeadline) assert.fail("Timed out waiting for async workflow completion");

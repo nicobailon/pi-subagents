@@ -101,14 +101,14 @@ export function formatFleetElapsed(ms: number): string {
 	return `${Math.max(0, Math.round(ms / 1000))}s`;
 }
 
-export function formatFleetTokens(count: number, window?: number): string {
+export function formatFleetTokens(count: number, window?: number, windowCount = 1): string {
 	const compact = (value: number): string => value >= 1_000_000
 		? `${(value / 1_000_000).toFixed(1)}M`
 		: value >= 1_000
 			? `${(value / 1_000).toFixed(1)}k`
 			: `${Math.max(0, Math.round(value))}`;
 	return window !== undefined
-		? `↓ ${compact(window)} window · ${compact(count)} spent`
+		? `↓ ${compact(window)} ${windowCount > 1 ? "Σ windows" : "window"} · ${compact(count)} spent`
 		: `↓ ${compact(count)} tokens`;
 }
 
@@ -693,13 +693,16 @@ export class SubagentFleetStatus {
 		if (!this.active) {
 			const workEntries = this.entries.filter((entry) => !entry.surface);
 			const projectEntries = this.entries.filter((entry) => entry.surface === "project-pane");
-			const tokens = workEntries.reduce((total, entry) => total + entry.tokens, 0);
-			const nativeEntries = workEntries.filter((entry) => !entry.external);
+			// Workflow totals can overlap child usage and omit live lanes. Do not
+			// present either wrapper totals or an active-only sum as workflow spend.
+			const hasWorkflow = workEntries.some((entry) => entry.workflowWrapper);
+			const nativeEntries = workEntries.filter((entry) => !entry.external && !entry.workflowWrapper && !entry.parentKey);
+			const tokens = nativeEntries.reduce((total, entry) => total + entry.tokens, 0);
 			const window = nativeEntries.length > 0 && nativeEntries.every((entry) => entry.window !== undefined)
 				? nativeEntries.reduce((total, entry) => total + entry.window!, 0)
 				: undefined;
 			const capacity = this.state.activeAsyncCapacity;
-			const hasNativeRows = workEntries.some((entry) => !entry.external);
+			const hasNativeRows = nativeEntries.length > 0 || hasWorkflow;
 			const showNativeSummary = hasNativeRows || Boolean(capacity?.used);
 			const asyncRuns = capacity && showNativeSummary && (capacity.used > 0 || capacity.limit > 0) ? `Async runs ${capacity.used}/${capacity.limit || "∞"}` : "";
 			const activeEntries = activeLeafAgentCount(workEntries);
@@ -708,7 +711,11 @@ export class SubagentFleetStatus {
 			const paneAttention = projectEntries.filter((entry) => entry.projectPane && projectPaneNeedsAttention(entry.projectPane)).length;
 			const panes = projectEntries.length > 0 ? `${projectEntries.length} pane${projectEntries.length === 1 ? "" : "s"}${paneAttention ? ` (${paneAttention} ⚠)` : ""}` : "";
 			const label = [agents, asyncRuns, panes].filter(Boolean).join(" · ");
-			const detail = [showNativeSummary ? formatFleetTokens(tokens, window) : undefined, "↓/← to inspect"].filter(Boolean).join(" · ");
+			const nativeUsage = formatFleetTokens(tokens, window, nativeEntries.length);
+			const usage = hasWorkflow
+				? nativeEntries.length > 0 ? `standalone: ${nativeUsage} · workflow usage on child rows` : "usage on child rows"
+				: nativeUsage;
+			const detail = [showNativeSummary ? usage : undefined, "↓/← to inspect"].filter(Boolean).join(" · ");
 			return [truncateToWidth(`  ${theme.fg("muted", label)}${label && detail ? " · " : ""}${theme.fg("dim", detail)}`, width)];
 		}
 		const roster = this.rosterKeys();
@@ -767,7 +774,7 @@ export class SubagentFleetStatus {
 		const elapsed = Date.now() - entry.startedAt;
 		const rightText = entry.projectPane
 			? `${entry.projectPane.summary ?? "—"} · ${formatFleetElapsed(Date.now() - entry.projectPane.refreshedAt)} ago`
-				: entry.external ? formatFleetElapsed(elapsed) : `${formatFleetElapsed(elapsed)} · ${formatFleetTokens(entry.tokens, entry.window)}`;
+				: entry.external ? formatFleetElapsed(elapsed) : `${formatFleetElapsed(elapsed)} · ${entry.workflowWrapper ? "usage on child rows" : formatFleetTokens(entry.tokens, entry.window)}`;
 		const right = theme.fg("dim", rightText);
 		return rightAlign(left, right, width);
 	}

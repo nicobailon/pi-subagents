@@ -46,6 +46,86 @@ const theme = {
 };
 
 describe("below-editor subagent FleetView", () => {
+	it("keeps workflow accounting on child rows without zero or overlapping wrapper totals", () => {
+		const state = stateForTest();
+		const usage = { input: 119_000, output: 200, total: 119_200, window: 118_900 };
+		const workflow = {
+			asyncId: "accounting", asyncDir: "/tmp/accounting", mode: "workflow" as const,
+			status: "running" as const, startedAt: Date.now(),
+			steps: [{ agent: "reviewer", workflowKey: "review", status: "running" as const, tokens: usage }],
+		};
+		state.asyncJobs.set(workflow.asyncId, workflow);
+		let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+		const ctx = { hasUI: true, ui: {
+			setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+			onTerminalInput() { return () => {}; }, getEditorText() { return ""; }, theme,
+		} } as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext(ctx);
+			const component = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) }, theme);
+			for (const materialized of [false, true]) {
+				if (materialized) state.asyncJobs.set("child", {
+					asyncId: "child", asyncDir: "/tmp/child", mode: "single", status: "running",
+					parentWorkflowRunId: workflow.asyncId, workflowKey: "review",
+					steps: [{ agent: "reviewer", status: "running", tokens: usage }],
+				});
+				for (const totalTokens of [undefined, usage]) {
+					state.asyncJobs.set(workflow.asyncId, { ...workflow, totalTokens });
+					fleet.refresh();
+					const compact = component.render(240).join("\n");
+					assert.match(compact, /usage on child rows/);
+					assert.doesNotMatch(compact, /0 tokens|238\.4k|window|spent/);
+					fleet.handleKey("\x1b[B");
+					const expanded = component.render(400).join("\n");
+					const wrapper = expanded.split("\n").find((line) => line.includes("workflow · running"))!;
+					assert.match(wrapper, /usage on child rows/);
+					assert.doesNotMatch(wrapper, /tokens|window|spent/);
+					assert.equal(expanded.match(/118\.9k window · 119\.2k spent/g)?.length, 1);
+					fleet.handleKey("\x1b");
+				}
+			}
+		} finally { fleet.dispose(); }
+	});
+
+	it("preserves unrelated native usage beside workflow child usage in the compact roster", () => {
+		const state = stateForTest();
+		const childUsage = { input: 119_000, output: 200, total: 119_200, window: 118_900 };
+		state.asyncJobs.set("workflow", {
+			asyncId: "workflow", asyncDir: "/tmp/workflow", mode: "workflow", status: "running",
+			totalTokens: childUsage,
+			steps: [{ agent: "reviewer", workflowKey: "review", status: "running", tokens: childUsage }],
+		});
+		state.asyncJobs.set("child", {
+			asyncId: "child", asyncDir: "/tmp/child", mode: "single", status: "running",
+			parentWorkflowRunId: "workflow", workflowKey: "review", totalTokens: childUsage,
+		});
+		state.foregroundControls.set("standalone", {
+			runId: "standalone", mode: "single", currentAgent: "worker", startedAt: Date.now(), updatedAt: Date.now(),
+			tokens: 42_000, window: 30_000,
+		});
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext({ hasUI: true, ui: { setWidget() {}, theme } } as unknown as ExtensionContext);
+			const compact = fleet.render(240, theme as unknown as ExtensionContext["ui"]["theme"]).join("\n");
+			assert.match(compact, /standalone: ↓ 30\.0k window · 42\.0k spent · workflow usage on child rows/);
+			assert.doesNotMatch(compact, /119\.2k|161\.2k|280\.4k|Σ windows/);
+		} finally { fleet.dispose(); }
+	});
+
+	it("labels concurrent context windows as a sum in the visible compact roster", () => {
+		const state = stateForTest();
+		for (const id of ["one", "two"]) state.foregroundControls.set(id, {
+			runId: id, mode: "single", currentAgent: "worker", startedAt: Date.now(), updatedAt: Date.now(),
+			tokens: 120_000, window: 90_000,
+		});
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext({ hasUI: true, ui: { setWidget() {}, theme } } as unknown as ExtensionContext);
+			assert.match(fleet.render(240, theme as unknown as ExtensionContext["ui"]["theme"]).join("\n"), /180\.0k Σ windows · 240\.0k spent/);
+		} finally { fleet.dispose(); }
+	});
+
 	it("advances quiet workflow bottlenecks while terminal durations stay frozen", () => {
 		const state = stateForTest();
 		state.asyncJobs.set("quiet", {
