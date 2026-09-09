@@ -499,9 +499,13 @@ function manageParams(params: unknown): SubagentParamsLike {
 	if (requiresId && typeof input.id !== "string") {
 		throw new SubagentRpcError("invalid_params", `RPC manage ${action} requires id.`);
 	}
+	if (action === "schedule.run" && input.quiet !== undefined && typeof input.quiet !== "boolean") {
+		throw new SubagentRpcError("invalid_params", "RPC manage quiet must be a boolean.");
+	}
 	const output: SubagentParamsLike = {
 		action,
 		...(typeof input.id === "string" ? { id: input.id.trim() } : {}),
+		...(action === "schedule.run" && input.quiet === true ? { quiet: true } : {}),
 	};
 	assertSubagentParams(output, "RPC manage params");
 	return output;

@@ -16,6 +16,7 @@ function ctx(current = model()) {
 		cwd: "/tmp/watchdog-permission",
 		model: current,
 		signal: undefined,
+		sessionManager: { getSessionId: () => "watchdog-permission-session" },
 		modelRegistry: {
 			getAvailable: () => [current],
 			find: (provider: string, id: string) => provider === current.provider && id === current.id ? current : undefined,

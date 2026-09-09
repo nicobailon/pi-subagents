@@ -124,6 +124,21 @@ export interface DefaultChildSessionFactoryOptions {
 
 type ModelRuntimeInstance = Awaited<ReturnType<PiCodingAgentModule["ModelRuntime"]["create"]>>;
 
+const CHILD_PROMPT_RUNTIME_EXTENSION_PATH = "<inline:pi-subagents:prompt-runtime>";
+
+/** The prompt runtime filters parent-only context before ambient extensions inspect
+ *  the child prompt. Other inline hooks keep their normal position after ambient
+ *  extensions, and ambient extension order stays unchanged. */
+function prioritizeChildPromptRuntime<T extends { extensions: Array<{ path: string }> }>(result: T): T {
+	const index = result.extensions.findIndex(({ path }) => path === CHILD_PROMPT_RUNTIME_EXTENSION_PATH);
+	if (index <= 0) return result;
+	const extensions = [...result.extensions];
+	const [promptRuntime] = extensions.splice(index, 1);
+	if (!promptRuntime) return result;
+	extensions.unshift(promptRuntime);
+	return { ...result, extensions };
+}
+
 /** One launch at a time from env application through `session_start`, so parallel launches never observe each other's `processEnv` while their extensions load and start. */
 let loading: Promise<unknown> = Promise.resolve();
 
@@ -211,6 +226,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				noContextFiles: launch.noContextFiles,
 				additionalExtensionPaths: launch.extensionPaths,
 				extensionFactories: launch.hooks,
+				extensionsOverride: prioritizeChildPromptRuntime,
 				...(launch.systemPrompt !== undefined ? { systemPrompt: launch.systemPrompt } : {}),
 				...(launch.appendSystemPrompt !== undefined ? { appendSystemPrompt: [launch.appendSystemPrompt] } : {}),
 			});

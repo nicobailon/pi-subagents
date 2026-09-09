@@ -19,6 +19,8 @@ import type { AsyncStatus, SubagentState } from "../../src/shared/types.ts";
 // `pane run` commands quote the whole --session-roots value (base64, so it has
 // no spaces/quotes of its own); pull it back out and decode it the same way
 // the inspector runner does, rather than pattern-matching on the raw text.
+const INSPECT_ALLOW_FLAGS = /--allow-steer['"]\s+['"]true['"]\s+['"]--allow-stop['"]\s+['"]true['"]/;
+
 function sessionRootsFromRunCommand(command: string): string[] {
 	const match = /--session-roots\S*\s+['"]?([A-Za-z0-9+/=]+)/.exec(command);
 	assert.ok(match, `--session-roots argument not found in command: ${command}`);
@@ -139,6 +141,7 @@ describe("Herdr inspector", () => {
 			});
 			assert.equal(commandResult.isError, undefined, text(commandResult));
 			assert.match(text(commandResult), /--allow-steer' 'true.*--allow-stop' 'true/);
+			assert.match(text(commandResult), INSPECT_ALLOW_FLAGS);
 			assert.deepEqual(sessionRootsFromRunCommand(text(commandResult)), [sessionRoot]);
 			assert.deepEqual(calls, []);
 
@@ -167,7 +170,7 @@ describe("Herdr inspector", () => {
 			if (process.platform !== "win32") {
 				assert.ok(!/^[']/.test(runCall[3] ?? ""), `pane run command must not open with a quoted executable; Nushell parses it as a string expression: ${runCall[3]}`);
 			}
-			assert.match(runCall[3] ?? "", /--allow-steer.*true.*--allow-stop.*true/);
+			assert.match(runCall[3] ?? "", INSPECT_ALLOW_FLAGS);
 			assert.deepEqual(sessionRootsFromRunCommand(runCall[3] ?? ""), [sessionRoot]);
 
 			const reopened = await handleInspectorAction("inspector.open", { id: "run-123" }, {

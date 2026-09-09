@@ -16,6 +16,7 @@ export interface ChildWatchdogConfig {
 	agentEndTimeoutMs: number;
 	maxWarnings: number | null;
 	model?: string;
+	fallbackModels?: string[];
 	thinking?: string | false;
 	lsp: WatchdogLspConfig;
 	stalemateRepeats: number;
@@ -47,6 +48,7 @@ export function resolveChildWatchdogConfig(input: {
 	const enabled = input.config.enabled && (override?.enabled ?? input.config.children.enabled);
 	if (!enabled) return undefined;
 	const model = override?.model ?? input.config.children.model;
+	const fallbackModels = override?.fallbackModels ?? input.config.children.fallbackModels;
 	const thinking = override?.thinking ?? input.config.children.thinking;
 	const cadence = override?.cadence ?? input.config.children.cadence ?? input.config.cadence;
 	return {
@@ -57,6 +59,7 @@ export function resolveChildWatchdogConfig(input: {
 		agentEndTimeoutMs: input.config.agentEndTimeoutMs,
 		maxWarnings: input.config.maxWarnings,
 		...(model ? { model } : {}),
+		...(fallbackModels !== undefined ? { fallbackModels: [...fallbackModels] } : {}),
 		...(thinking !== undefined ? { thinking } : {}),
 		lsp: { ...input.config.lsp },
 		stalemateRepeats: input.config.stalemateRepeats,
@@ -137,6 +140,10 @@ export function decodeChildWatchdogConfig(raw: string | undefined): ChildWatchdo
 	const agent = childConfigOptionalString(parsed, "agent");
 	const childIndex = childConfigOptionalIndex(parsed, "childIndex");
 	const model = childConfigOptionalString(parsed, "model");
+	const fallbackModels = parsed.fallbackModels;
+	if (fallbackModels !== undefined && (!Array.isArray(fallbackModels) || fallbackModels.some((value) => typeof value !== "string" || !value.trim()))) {
+		throw new Error("Invalid child watchdog config: fallbackModels must be an array of non-empty strings.");
+	}
 	return {
 		...(runId ? { runId } : {}),
 		...(agent ? { agent } : {}),
@@ -145,6 +152,7 @@ export function decodeChildWatchdogConfig(raw: string | undefined): ChildWatchdo
 		agentEndTimeoutMs: childConfigPositiveInteger(parsed, "agentEndTimeoutMs"),
 		maxWarnings: childConfigNullableNonNegativeInteger(parsed, "maxWarnings"),
 		...(model ? { model } : {}),
+		...(fallbackModels !== undefined ? { fallbackModels: (fallbackModels as string[]).map((value) => value.trim()) } : {}),
 		...(thinking !== undefined ? { thinking: thinking as string | false } : {}),
 		lsp: childConfigLsp(parsed.lsp),
 		stalemateRepeats: childConfigPositiveInteger(parsed, "stalemateRepeats"),

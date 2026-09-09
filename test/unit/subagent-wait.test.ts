@@ -738,6 +738,105 @@ describe("bg_wait tool", () => {
 		}
 	});
 
+	it("waits for session-owned detached foreground runs when all is true", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-foreground-all-"));
+		try {
+			const state = makeState("sess-1");
+			state.foregroundRuns = new Map([["foreground-alpha", {
+				runId: "foreground-alpha", mode: "single", cwd: root, sessionId: "sess-1", updatedAt: 1,
+				children: [{ agent: "reviewer", index: 0, status: "detached", updatedAt: 1 }],
+			}]]);
+			let polls = 0;
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				sleep: async () => {
+					polls += 1;
+					state.foregroundRuns!.get("foreground-alpha")!.children[0]!.status = "completed";
+				},
+			}));
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /remembered detached foreground run "foreground-alpha"/i);
+			assert.equal(polls, 1);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("preserves timeout metadata and every active foreground identity for aggregate waits", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-foreground-timeout-"));
+		try {
+			const state = makeState("sess-1");
+			state.foregroundRuns = new Map(["foreground-a", "foreground-b"].map((runId) => [runId, {
+				runId, mode: "single", cwd: root, sessionId: "sess-1", updatedAt: 1,
+				children: [{ agent: "worker", index: 0, status: "detached", updatedAt: 1 }],
+			}]));
+			let clock = 0;
+			const result = await waitForSubagents({ all: true, timeoutMs: 500 }, undefined, baseDeps(root, state, {
+				now: () => clock,
+				sleep: async (ms) => { clock += ms + 500; },
+			}));
+
+			assert.doesNotMatch(textOf(result), /; done\./);
+			assert.deepEqual(result.details.wait, {
+				reason: "window_elapsed",
+				timedOut: true,
+				activeRunIds: ["foreground-a", "foreground-b"],
+				activeProviderItems: [],
+			});
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("returns async supervisor attention without waiting on foreground descendants", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-attention-before-foreground-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-blocked", "running", {
+				sessionId: "sess-1", pid: 999999, activityState: "needs_attention", currentTool: "contact_supervisor",
+			});
+			state.foregroundRuns = new Map([["foreground-live", {
+				runId: "foreground-live", mode: "single", cwd: root, sessionId: "sess-1", updatedAt: 1,
+				children: [{ agent: "worker", index: 0, status: "detached", updatedAt: 1 }],
+			}]]);
+			let sleeps = 0;
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				sleep: async () => { sleeps += 1; },
+			}));
+
+			assert.match(textOf(result), /Reply to any pending supervisor request/);
+			assert.equal(sleeps, 0);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("all:true ignores foreground work detached after invocation", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-new-foreground-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-initial", "running", { sessionId: "sess-1", pid: 999999 });
+			let sleeps = 0;
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				sleep: async () => {
+					sleeps += 1;
+					writeStatus(asyncRoot, "run-initial", "complete", { sessionId: "sess-1" });
+					state.foregroundRuns = new Map([["foreground-late", {
+						runId: "foreground-late", mode: "single", cwd: root, sessionId: "sess-1", updatedAt: 1,
+						children: [{ agent: "worker", index: 0, status: "detached", updatedAt: 1 }],
+					}]]);
+				},
+			}));
+
+			assert.match(textOf(result), /1 complete/);
+			assert.doesNotMatch(textOf(result), /foreground-late/);
+			assert.equal(sleeps, 1);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("waits for a remembered detached foreground run by id and ignores other sessions", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-foreground-"));
 		try {

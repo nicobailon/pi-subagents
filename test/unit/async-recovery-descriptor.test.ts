@@ -208,6 +208,61 @@ describe("async recovery descriptor", () => {
 		}
 	});
 
+	it("accepts persisted boolean fast settings and leaves omitted fast unset", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-fast-"));
+		try {
+			const base = {
+				version: 1,
+				runFanoutBudget: runFanoutBudget("run-fast"),
+				sourceRunId: "run-fast",
+				agent: "worker",
+				cwd: root,
+				systemPromptMode: "replace",
+				inheritGlobalContext: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 2,
+				share: false,
+			} as const;
+
+			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({ ...base, fast: true }), "utf-8");
+			assert.equal(readAsyncRecoveryDescriptor(root)?.fast, true);
+
+			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({ ...base, fast: false }), "utf-8");
+			assert.equal(readAsyncRecoveryDescriptor(root)?.fast, false);
+
+			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify(base), "utf-8");
+			assert.equal(readAsyncRecoveryDescriptor(root)?.fast, undefined);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects non-boolean fast values in persisted recovery descriptors", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-bad-fast-"));
+		try {
+			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({
+				version: 1,
+				fast: "true",
+				runFanoutBudget: runFanoutBudget("run-bad-fast"),
+				sourceRunId: "run-bad-fast",
+				agent: "worker",
+				cwd: root,
+				systemPromptMode: "replace",
+				inheritGlobalContext: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 2,
+				share: false,
+			}), "utf-8");
+			assert.throws(() => readAsyncRecoveryDescriptor(root), /fast must be a boolean/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects malformed launchContractDigest values", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-bad-digest-"));
 		try {

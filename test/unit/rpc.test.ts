@@ -292,6 +292,65 @@ describe("subagent extension RPC bridge", () => {
 		bridge.dispose();
 	});
 
+	it("forwards RPC schedule.run quiet:true to launch and keeps omitted quiet noisy", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-schedule-quiet-"));
+		const project = path.join(root, "project");
+		fs.mkdirSync(project);
+		const scheduleCtx = {
+			cwd: project,
+			sessionManager: {
+				getSessionId: () => "session-a",
+				getSessionFile: () => path.join(project, "session-a.jsonl"),
+			},
+		} as const;
+		type Launch = {
+			params: Record<string, unknown>;
+			resolve(result: { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }): void;
+		};
+		const launches: Launch[] = [];
+		const { createScheduledRunManager } = await import("../../src/runs/background/scheduled-runs.ts");
+		const manager = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			storeRoot: path.join(root, "stores"),
+			now: () => Date.parse("2030-01-01T00:00:00Z"),
+			launch: (params) => new Promise((resolve) => launches.push({ params: params as Record<string, unknown>, resolve: resolve as Launch["resolve"] })) as never,
+		});
+		manager.bindSession(scheduleCtx as never);
+		const created = await manager.handleToolCall({
+			action: "schedule.create",
+			id: "quiet-hourly",
+			every: "1h",
+			quiet: true,
+			workflowScript: "return runs.run('main', { agent: 'worker', task: 'Maintain backlog' })",
+		}, scheduleCtx as never);
+		assert.equal(created.isError, undefined);
+
+		const events = new FakeEvents();
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => scheduleCtx as never,
+			execute: async (_id, params, _signal, _hook, execCtx) => manager.handleToolCall(params, execCtx),
+		});
+		try {
+			const noisy = request(events, "run-noisy", "manage", { action: "schedule.run", id: "quiet-hourly" });
+			for (let i = 0; i < 8; i++) await Promise.resolve();
+			assert.equal("quiet" in (launches[0]?.params.scheduleOrigin as Record<string, unknown>), false);
+			launches[0]!.resolve({ content: [{ type: "text", text: "Async" }], details: { mode: "single", results: [], asyncId: "rpc-loud" } });
+			assert.equal((await noisy).success, true);
+			manager.handleAsyncCompletion({ runId: "rpc-loud", success: true, summary: "Done" });
+
+			const quiet = request(events, "run-quiet", "manage", { action: "schedule.run", id: "quiet-hourly", quiet: true });
+			for (let i = 0; i < 8; i++) await Promise.resolve();
+			assert.deepEqual(launches[1]?.params.scheduleOrigin, { id: "quiet-hourly", name: "workflowScript -> agent worker", quiet: true });
+			launches[1]!.resolve({ content: [{ type: "text", text: "Async" }], details: { mode: "single", results: [], asyncId: "rpc-quiet" } });
+			assert.equal((await quiet).success, true);
+		} finally {
+			bridge.dispose();
+			manager.stop();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("projects bounded display-safe active fleet records without internal ids", async () => {
 		const events = new FakeEvents();
 		const state = {

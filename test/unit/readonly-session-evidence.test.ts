@@ -26,6 +26,7 @@ import { releaseActiveRunIndex, updateActiveRunIndex } from "../../src/runs/back
 import { resolveChildWatchdogConfig } from "../../src/watchdog/child-status.ts";
 import { DEFAULT_WATCHDOG_CONFIG } from "../../src/watchdog/settings.ts";
 import { DEFAULT_CONTROL_CONFIG } from "../../src/runs/shared/subagent-control.ts";
+import { getHostBuiltinToolNames } from "../../src/runs/shared/child-tool-plan.ts";
 
 function launch(cwd: string): ChildSessionLaunch & { storage: Extract<ChildSessionLaunch["storage"], { kind: "file" }> } {
 	return { cwd, storage: { kind: "file", sessionFile: join(cwd, "session.jsonl") }, model: "baseten/model-a", tools: ["read"], extensionPaths: [],
@@ -194,6 +195,41 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 			sessionName: "resolved reader", forkCacheKey: "resolved-cache", systemPrompt: "Retain the completed read.",
 		});
 	}
+
+	it("executes an auto-discovered builtin override from an explicit reviewer tool allowlist", async () => fixture(async ({ l, factory, captured, requests, setResponses, agentDir }) => {
+		const extensionDir = join(agentDir, "extensions");
+		mkdirSync(extensionDir);
+		writeFileSync(join(extensionDir, "read-override.ts"), `
+import { readFileSync } from "node:fs";
+export default function (pi) {
+	pi.registerTool({
+		name: "read", label: "Read override", description: "Read an isolated fixture file",
+		parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+		async execute(_id, params, _signal, _update, ctx) {
+			return { content: [{ type: "text", text: "AUTO_OVERRIDE:" + readFileSync(ctx.cwd + "/" + params.path, "utf8") }], details: {} };
+		},
+	});
+}`);
+		l.ambientExtensions = true;
+		const host = await factory.create({ ...l, storage: { kind: "memory" }, tools: ["read", "grep", "find", "ls", "bash"] });
+		assert.equal(captured[0]?.session.getAllTools().find((tool) => tool.name === "read")?.sourceInfo.source, "auto");
+		const discovered = getHostBuiltinToolNames(captured[0]!.session);
+		await host.dispose();
+
+		const launch = buildInProcessChildLaunch({
+			cwd: l.cwd, host: "runner", sessionEnabled: false, model: l.model,
+			tools: ["read"], hostAvailableBuiltins: discovered, allowNestedSubagents: false, waitToolEnabled: false,
+			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+			parentSessionId: "tool-proof-parent", runId: "auto-builtin-override", childAgentName: "reviewer", childIndex: 0,
+			systemPrompt: "Read marker.txt exactly once.",
+		});
+		assert.deepEqual(launch.session.tools, ["read"]);
+		setResponses([() => sse(true), () => sse(false)]);
+		const child = await factory.create(launch.session);
+		await child.prompt("Review marker.txt and report its contents.");
+		assert.match(JSON.stringify(requests.at(-1)?.body), /AUTO_OVERRIDE:DISTINCTIVE_REAL_BUILTIN_READ_RESULT/);
+		await child.dispose();
+	}, {}, true));
 
 	for (const scenario of ["success", "retained", "cross-provider-skip", "no-sibling", "second429", "sibling-startup", "sibling-abort", "unverified-sibling", "wrong-model", "changed-file", "missing-file", "cancel-at-create", "deadline-at-create", "usage-budget", "tool-budget", "wait-profile", "directory", "text429", "stop-at-settlement", "steer-at-settlement", "smaller-model"] as const) {
 		it(`actual foreground owned continuation loop: ${scenario}`, async (test) => fixture(async ({ pi, l, factory, requests, setResponses, captured, cwd, agentDir }) => {

@@ -20,16 +20,28 @@ const COUNTER_LOCK_RETRIES = 200;
 const COUNTER_LOCK_RETRY_MS = 10;
 const ORCA_CREATE_WAIT_TIMEOUT_MS = ORCA_CREATE_TIMEOUT_MS + ORCA_KILL_GRACE_MS + 3_000;
 
+const ORCA_CLOSE_WATCHDOG_SCRIPT = [
+	"const {spawn}=require('node:child_process');",
+	"const delayMs=Number(process.argv[1]),command=process.argv[2],handle=process.argv[3],expectTitle=process.argv[4],expectTabId=process.argv[5];",
+	"function run(args){return new Promise(resolve=>{try{const child=spawn(command,args,{stdio:['ignore','pipe','ignore'],windowsHide:true});let stdout='';if(child.stdout)child.stdout.on('data',chunk=>{stdout+=String(chunk);if(stdout.length>65536)stdout=stdout.slice(-65536)});child.once('error',()=>resolve({ok:false,stdout:''}));child.once('close',code=>resolve({ok:code===0,stdout}))}catch{resolve({ok:false,stdout:''})}})}",
+	"function parseJson(raw){try{return JSON.parse(String(raw||'').trim())}catch{return undefined}}",
+	"function pickTerminal(parsed){if(!parsed||typeof parsed!=='object')return undefined;return parsed.terminal||(parsed.result&&(parsed.result.terminal||parsed.result))||parsed}",
+	"setTimeout(()=>{void (async()=>{try{if(!expectTitle||!expectTabId)return;const shown=await run(['terminal','show','--terminal',handle,'--json']);const parsed=parseJson(shown.stdout);const t=pickTerminal(parsed);if(!t||typeof t!=='object')return;if(typeof t.title!=='string'||t.title!==expectTitle)return;if(typeof t.tabId!=='string'||t.tabId!==expectTabId)return;await run(['terminal','close','--terminal',handle,'--tab','--json'])}catch{}finally{process.exit(0)}})()},Number.isFinite(delayMs)&&delayMs>0?delayMs:0);",
+].join("");
+
 const ORCA_CREATE_WATCHDOG_SCRIPT = [
 	"const {spawn}=require('node:child_process');",
 	"const fs=require('node:fs');",
 	"const timeout=Number(process.argv[1]),grace=Number(process.argv[2]),waitTimeout=Number(process.argv[3]);",
 	"const previous=process.argv[4],done=process.argv[5],manifest=process.argv[6],command=process.argv[7],args=process.argv.slice(8);",
+	`const closeScript=${JSON.stringify(ORCA_CLOSE_WATCHDOG_SCRIPT)};`,
 	"function mark(){try{fs.writeFileSync(done.replace(/\\.pending$/,'.ready'),'')}catch{}}",
 	"function exists(file){try{return fs.existsSync(file)}catch{return false}}",
 	"function keepQueued(){try{const now=new Date();fs.utimesSync(done,now,now)}catch{}}",
 	"function predecessorReady(){if(previous==='-')return true;if(exists(previous.replace(/\\.pending$/,'.ready')))return true;try{return Date.now()-fs.statSync(previous).mtimeMs>=waitTimeout}catch{return true}}",
-	"function updateManifest(state,stdout=''){if(manifest==='-')return;try{const payload=JSON.parse(fs.readFileSync(manifest,'utf8'));payload.state=state;payload.updatedAt=new Date().toISOString();const raw=stdout.trim().split(/\\r?\\n/).filter(Boolean).at(-1);if(raw){try{payload.orca=JSON.parse(raw)}catch{payload.orcaRaw=raw.slice(0,4096)}}fs.writeFileSync(manifest,JSON.stringify(payload,null,2)+'\\n')}catch{}}",
+	"function claimAutoClose(){if(manifest==='-')return false;try{fs.writeFileSync(manifest.replace(/\\.json$/,'.autoclose'),'',{flag:'wx',mode:0o600});return true}catch{return false}}",
+	"function catchupAutoClose(payload){if(!payload||payload.state!=='open')return;const handle=typeof payload.orcaHandle==='string'?payload.orcaHandle:'';const title=typeof payload.orcaTitle==='string'?payload.orcaTitle:'';const tabId=typeof payload.orcaTabId==='string'?payload.orcaTabId:'';if(!handle||!title||!tabId)return;const delay=payload.autoCloseDelaySec;if(typeof delay!=='number'||!(delay>0))return;let status='';try{status=String(fs.readFileSync(String(payload.logPath||'').replace(/\\.log$/,'.done'),'utf8')).trim()}catch{return}if(status!=='completed')return;if(!claimAutoClose())return;try{const w=spawn(process.execPath,['-e',closeScript,String(delay*1000),command,handle,title,tabId],{detached:true,stdio:'ignore',windowsHide:true});w.unref()}catch{}}",
+	"function updateManifest(state,stdout=''){if(manifest==='-')return;try{const payload=JSON.parse(fs.readFileSync(manifest,'utf8'));payload.state=state;payload.updatedAt=new Date().toISOString();const raw=stdout.trim();if(raw){try{const parsed=JSON.parse(raw);payload.orca=parsed;const t=parsed&&typeof parsed==='object'?(parsed.terminal||(parsed.result&&(parsed.result.terminal||parsed.result))||parsed):undefined;if(t&&typeof t==='object'){if(typeof t.handle==='string')payload.orcaHandle=t.handle;if(typeof t.tabId==='string')payload.orcaTabId=t.tabId;if(typeof t.title==='string')payload.orcaTitle=t.title}}catch{payload.orcaRaw=raw.slice(0,4096)}}fs.writeFileSync(manifest,JSON.stringify(payload,null,2)+'\\n');catchupAutoClose(payload)}catch{}}",
 	"function start(){",
 	" try{",
 	"  const child=spawn(command,args,{stdio:['ignore','pipe','ignore'],windowsHide:true});",
@@ -164,6 +176,10 @@ interface OrcaObserverManifest {
 	logPath: string;
 	orca?: unknown;
 	orcaRaw?: string;
+	orcaHandle?: string;
+	orcaTabId?: string;
+	orcaTitle?: string;
+	autoCloseDelaySec?: number;
 }
 
 function observerManifestPath(cwd: string, stem: string): string | undefined {
@@ -302,6 +318,27 @@ function scheduleCleanup(nodeExecutable: string, paths: string[]): void {
 	}
 }
 
+function claimAutoClose(manifestPath: string | undefined): boolean {
+	if (!manifestPath) return false;
+	try {
+		fs.writeFileSync(manifestPath.replace(/\.json$/, ".autoclose"), "", { flag: "wx", encoding: "utf-8", mode: 0o600 });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function readObserverManifest(manifestPath: string | undefined): OrcaObserverManifest | undefined {
+	if (!manifestPath) return undefined;
+	try {
+		const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as unknown;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+		return parsed as OrcaObserverManifest;
+	} catch {
+		return undefined;
+	}
+}
+
 function loadOrcaProgressTabsConfig(): OrcaProgressTabsConfig | undefined {
 	try {
 		const configPath = path.join(getAgentDir(), "extensions", "subagent", "config.json");
@@ -310,8 +347,15 @@ function loadOrcaProgressTabsConfig(): OrcaProgressTabsConfig | undefined {
 		const value = (parsed as Record<string, unknown>).orcaProgressTabs;
 		if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
 		const config = value as Record<string, unknown>;
-		if (Object.keys(config).some((key) => key !== "enabled") || typeof config.enabled !== "boolean") return undefined;
-		return { enabled: config.enabled };
+		const extraKeys = Object.keys(config).filter((key) => key !== "enabled" && key !== "autoCloseDelaySec");
+		if (extraKeys.length > 0) return undefined;
+		if (config.enabled !== undefined && typeof config.enabled !== "boolean") return undefined;
+		const autoCloseDelaySec = config.autoCloseDelaySec;
+		if (autoCloseDelaySec !== undefined && (typeof autoCloseDelaySec !== "number" || !Number.isFinite(autoCloseDelaySec) || autoCloseDelaySec < 0)) return undefined;
+		const loaded: OrcaProgressTabsConfig = {};
+		if (typeof config.enabled === "boolean") loaded.enabled = config.enabled;
+		if (typeof autoCloseDelaySec === "number") loaded.autoCloseDelaySec = autoCloseDelaySec;
+		return loaded;
 	} catch {
 		return undefined;
 	}
@@ -367,6 +411,7 @@ export function createOrcaProgressTab(input: {
 		state: "opening",
 		createdAt: new Date().toISOString(),
 		logPath,
+		...(typeof config?.autoCloseDelaySec === "number" ? { autoCloseDelaySec: config.autoCloseDelaySec } : {}),
 	});
 	try {
 		fs.writeFileSync(logPath, `pi-subagents / ${agent}\nrun ${runId} · ${stepCount === 1 ? "1 child" : `${stepCount} children`}\n${"─".repeat(48)}\n`, { encoding: "utf-8", mode: 0o600 });
@@ -501,6 +546,33 @@ export function createOrcaProgressTab(input: {
 						try { fs.writeFileSync(donePath, `${status}\n`, { encoding: "utf-8", mode: 0o600 }); } catch { /* best effort */ }
 						cleanupPaths = [logPath, donePath];
 						scheduleDeferredCleanup();
+						const delaySec = config?.autoCloseDelaySec;
+						if (status === "completed" && typeof delaySec === "number" && delaySec > 0) {
+							const manifest = readObserverManifest(manifestPath);
+							const handle = typeof manifest?.orcaHandle === "string" ? manifest.orcaHandle : "";
+							const title = typeof manifest?.orcaTitle === "string" ? manifest.orcaTitle : "";
+							const tabId = typeof manifest?.orcaTabId === "string" ? manifest.orcaTabId : "";
+							if (handle && title && tabId && claimAutoClose(manifestPath)) {
+								try {
+									const watchdog = spawn(nodeExecutable, [
+										"-e", ORCA_CLOSE_WATCHDOG_SCRIPT,
+										String(delaySec * 1000),
+										command,
+										handle,
+										title,
+										tabId,
+									], {
+										detached: true,
+										stdio: "ignore",
+										windowsHide: true,
+									});
+									watchdog.once("error", () => {});
+									watchdog.unref();
+								} catch {
+									// Tab auto-close remains best effort for this optional observer.
+								}
+							}
+						}
 					}
 					resolve();
 				});

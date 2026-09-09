@@ -386,6 +386,62 @@ test("implementation tool contract rejects read-only worker launches", () => {
 	}), undefined);
 });
 
+test("read-only audit tasks survive host-clamped declared mutation tools", () => {
+	const tools = ["read", "grep", "find", "ls", "contact_supervisor"];
+	const requestedTools = ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"];
+	assert.equal(validateImplementationToolContract({
+		agent: "delegate",
+		task: "Read-only bug investigation. No source edits, commits, pushes, merges, installs, or state repair. Return concrete findings and a minimal fix proposal.",
+		tools,
+		requestedTools,
+	}), undefined);
+	for (const task of [
+		"Review only; implement the approved fix.",
+		"Without edits, update the parser.",
+		"Create a summary",
+	]) {
+		assert.match(validateImplementationToolContract({
+			agent: "delegate",
+			task,
+			tools,
+			requestedTools,
+		}) ?? "", /no mutation-capable tools/, task);
+	}
+});
+
+test("review finding classifications are not implementation launch obligations", () => {
+	const task = 'Review the disabled code and weigh remaining items as "must fix before ENABLING" vs "must fix before MERGING disabled code".';
+	const tools = ["read", "grep", "find", "ls"];
+	assert.equal(validateImplementationToolContract({ agent: "reviewer", task, tools }), undefined);
+	assert.equal(evaluateCompletionMutationGuard({
+		agent: "reviewer", task, tools: [...tools, "edit"], messages: [assistantText("Findings classified.")],
+	}).triggered, false);
+});
+
+test("quoted review categories allow version punctuation without hiding trailing fixes", () => {
+	const task = 'Classify findings as "must fix before v1.0" vs "must fix before v2.0".';
+	const tools = ["read", "grep", "find", "ls"];
+	assert.equal(validateImplementationToolContract({ agent: "reviewer", task, tools }), undefined);
+	assert.match(validateImplementationToolContract({
+		agent: "reviewer", task: `${task} You must fix the bug before enabling the feature.`, tools,
+	}) ?? "", /no mutation-capable tools/);
+});
+
+test("review classification wording does not hide actual required fixes", () => {
+	const classification = 'Classify findings as "must fix before ENABLING" vs "must fix before MERGING disabled code"';
+	for (const task of [
+		"You must fix the bug before enabling the feature.",
+		`${classification}; you must fix the bug before enabling the feature.`,
+	]) {
+		assert.match(validateImplementationToolContract({
+			agent: "reviewer", task, tools: ["read", "grep", "find", "ls"],
+		}) ?? "", /no mutation-capable tools/, task);
+		assert.equal(evaluateCompletionMutationGuard({
+			agent: "reviewer", task, tools: ["read", "edit"], messages: [assistantText("Findings classified.")],
+		}).triggered, true, task);
+	}
+});
+
 test("oracle review tasks with bash available do not require mutation", () => {
 	const task = "Review prep findings and determine what to implement with playbooks instead of before.";
 	const result = evaluateCompletionMutationGuard({
@@ -707,8 +763,26 @@ test("writer-role tasks with unknown implementation wording reject read-only lau
 			task,
 			tools: ["read", "grep", "find", "ls", "contact_supervisor"],
 			requestedTools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
-		}), /no mutation-capable tools/, task);
+		}) ?? "", /no mutation-capable tools/, task);
 	}
+});
+
+test("explicit writer acceptance role overrides reviewer agent heuristics", () => {
+	assert.match(validateImplementationToolContract({
+		agent: "reviewer",
+		task: "Handle the authentication flow",
+		acceptanceRole: "writer",
+		tools: ["read", "grep", "find", "ls", "contact_supervisor"],
+		requestedTools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+	}) ?? "", /no mutation-capable tools/);
+
+	assert.equal(validateImplementationToolContract({
+		agent: "reviewer",
+		task: "Review only and return findings",
+		acceptanceRole: "writer",
+		tools: ["read", "grep", "find", "ls", "contact_supervisor"],
+		requestedTools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+	}), undefined);
 });
 
 test("configured extensions do not rescue clamped-away builtin mutation tools", () => {
@@ -718,7 +792,7 @@ test("configured extensions do not rescue clamped-away builtin mutation tools", 
 		tools: ["read", "grep", "find", "ls", "contact_supervisor"],
 		configuredExtensions: ["/tmp/provider.ts"],
 		requestedTools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
-	}), /no mutation-capable tools/);
+	}) ?? "", /no mutation-capable tools/);
 });
 
 test("read-only agents and pure extension workers keep their launch contracts", () => {

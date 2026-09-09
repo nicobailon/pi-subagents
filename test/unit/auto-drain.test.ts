@@ -80,4 +80,24 @@ describe("headless background-work auto-drain", () => {
 	it("fails without a session identity", async () => {
 		await assert.rejects(() => drainOutstandingWork({ state: state(null) }), /without an active session identity/);
 	});
+
+	it("does not settle while a remembered detached foreground descendant is still in flight", async () => {
+		const current = state("owner");
+		current.foregroundRuns = new Map([["fg", {
+			runId: "fg", mode: "single", cwd: "/tmp", sessionId: "owner", updatedAt: 1,
+			children: [{ agent: "reviewer", index: 0, status: "detached", updatedAt: 1 }],
+		}]]);
+		let waits = 0;
+		await drainOutstandingWork({
+			state: current,
+			timeoutMs: 1000,
+			now: () => waits * 10,
+			wait: async () => {
+				waits++;
+				current.foregroundRuns!.get("fg")!.children[0]!.status = "completed";
+				return waitResult("done");
+			},
+		});
+		assert.equal(waits, 1);
+	});
 });

@@ -11,10 +11,12 @@ test("ordinary prompt audit works without optional Pi peers", async () => {
 	const isolatedRoot = await mkdtemp(join(tmpdir(), "pi-subagents-prompt-audit-"));
 	const promptAuditPath = join(isolatedRoot, "src/runs/foreground/prompt-audit.ts");
 	const streamOptionsPath = join(isolatedRoot, "src/shared/agent-stream-options.ts");
+	const opencodeSessionHeadersPath = join(isolatedRoot, "src/shared/opencode-session-headers.ts");
 
 	try {
 		await mkdir(dirname(promptAuditPath), { recursive: true });
 		await mkdir(dirname(streamOptionsPath), { recursive: true });
+		await mkdir(dirname(opencodeSessionHeadersPath), { recursive: true });
 		await writeFile(
 			promptAuditPath,
 			await readFile(join(repositoryRoot, "src/runs/foreground/prompt-audit.ts"), "utf8"),
@@ -22,6 +24,10 @@ test("ordinary prompt audit works without optional Pi peers", async () => {
 		await writeFile(
 			streamOptionsPath,
 			await readFile(join(repositoryRoot, "src/shared/agent-stream-options.ts"), "utf8"),
+		);
+		await writeFile(
+			opencodeSessionHeadersPath,
+			await readFile(join(repositoryRoot, "src/shared/opencode-session-headers.ts"), "utf8"),
 		);
 
 		const promptAudit = await import(pathToFileURL(promptAuditPath).href);

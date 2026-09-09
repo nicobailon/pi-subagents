@@ -17,6 +17,35 @@ const MAX_AGENT_ROWS = 6;
 const REFRESH_MS = 500;
 
 type Theme = ExtensionContext["ui"]["theme"];
+
+const FLEET_AGENT_IDENTITY_COLORS = [
+	"mdLink",
+	"mdHeading",
+	"syntaxFunction",
+	"syntaxKeyword",
+	"syntaxNumber",
+	"syntaxType",
+	"syntaxVariable",
+	"customMessageLabel",
+	"toolTitle",
+	"thinkingMedium",
+	"thinkingHigh",
+	"mdQuote",
+	"bashMode",
+	"userMessageText",
+	"mdCode",
+	"syntaxOperator",
+] as const satisfies readonly Exclude<Parameters<Theme["fg"]>[0], "accent" | "success" | "error" | "warning" | "muted" | "dim">[];
+
+export function fleetAgentIdentityColor(identity: string): (typeof FLEET_AGENT_IDENTITY_COLORS)[number] {
+	let hash = 2166136261;
+	for (let i = 0; i < identity.length; i++) {
+		hash ^= identity.charCodeAt(i);
+		hash = Math.imul(hash, 16777619);
+	}
+	return FLEET_AGENT_IDENTITY_COLORS[(hash >>> 0) % FLEET_AGENT_IDENTITY_COLORS.length]!;
+}
+
 type FleetStatusTui = {
 	requestRender(): void;
 };
@@ -26,6 +55,7 @@ type FleetStatusEntry = {
 	parentKey?: string;
 	workflowWrapper?: boolean;
 	agent: string;
+	displayLabel?: string;
 	modelThinking?: string;
 	description?: string;
 	startedAt: number;
@@ -41,6 +71,7 @@ type FleetStatusEntry = {
 
 type FleetNestedRow = {
 	name: string;
+	agentIdentity?: string;
 	state: NestedRunSummary["state"] | NestedStepSummary["status"];
 	modelThinking?: string;
 	activity?: string;
@@ -184,6 +215,7 @@ function nestedFleetRows(children: NestedRunSummary[] | undefined, visibleLimit:
 					const activity = nestedActivity(step);
 					rows.push({
 						name: step.agent,
+						agentIdentity: step.agent,
 						state: step.status,
 						depth,
 						...(modelThinking ? { modelThinking } : {}),
@@ -206,6 +238,7 @@ function nestedFleetRows(children: NestedRunSummary[] | undefined, visibleLimit:
 				const activity = nestedActivity(child);
 				rows.push({
 					name: nestedRunLabel(child),
+					agentIdentity: child.agent ?? child.agents?.join("\0") ?? child.id,
 					state: child.state,
 					depth,
 					...(modelThinking ? { modelThinking } : {}),
@@ -320,6 +353,7 @@ function projectPaneEntries(state: SubagentState): FleetStatusEntry[] {
 }
 
 export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntry[] {
+	const now = Date.now();
 	const entries: FleetStatusEntry[] = [];
 	const activeWorkflowKeys = new Set([...state.asyncJobs.values()]
 		.filter((job) => job.mode === "workflow" && isActiveState(job.status))
@@ -380,7 +414,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 
 	for (const job of state.asyncJobs.values()) {
 		if (!isActiveState(job.status)) continue;
-		const startedAt = job.startedAt ?? job.updatedAt ?? Date.now();
+		const startedAt = job.startedAt ?? job.updatedAt ?? now;
 		const linkedParentKey = linkedWorkflowParentKey(job.parentWorkflowRunId, activeWorkflowKeys);
 		if (job.mode === "workflow") {
 			const latestEmit = job.workflow?.emits?.length ? formatWorkflowJsonPreview(job.workflow.emits.at(-1), 120) : undefined;
@@ -392,7 +426,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 				hostSteps: job.hostSteps,
 				preflight: job.preflight,
 				trace: job.workflow?.trace,
-				now: job.updatedAt ?? Date.now(),
+				now,
 			});
 			entries.push({
 				key: `async:${job.asyncId}`,
@@ -439,7 +473,8 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 			entries.push({
 				key: `async:${job.asyncId}:${index}`,
 				...(linkedParentKey ? { parentKey: linkedParentKey } : {}),
-				agent: step.label ? `${step.label} (${step.agent})` : step.agent,
+				agent: step.agent,
+				...(step.label ? { displayLabel: `${step.label} (${step.agent})` } : {}),
 				...(modelThinking ? { modelThinking } : {}),
 				description: step.description ?? job.description,
 				startedAt: step.startedAt ?? startedAt,
@@ -722,12 +757,13 @@ export class SubagentFleetStatus {
 
 
 	private renderEntry(rosterIndex: number, selectedIndex: number, entry: FleetStatusEntry, width: number, theme: Theme, branch?: string): string {
-		const agent = entry.modelThinking ? `${entry.agent} (${entry.modelThinking})` : entry.agent;
+		const label = entry.displayLabel ?? entry.agent;
+		const agent = entry.modelThinking ? `${label} (${entry.modelThinking})` : label;
 		const prefix = branch ? `    ${branch}` : " ";
 		const checklist = entry.workflowWrapper && entry.workflowChecklist
 			? ` · checklist ${formatWorkflowChecklistSummary(entry.workflowChecklist)}${entry.workflowChecklist.bottleneck ? ` · bottleneck ${formatWorkflowChecklistBottleneck(entry.workflowChecklist.bottleneck)}` : ""}`
 			: "";
-		const left = `${prefix} ${this.bullet(rosterIndex, selectedIndex, theme)} ${theme.fg("muted", agent)} · ${entry.state}${checklist}`;
+		const left = `${prefix} ${this.bullet(rosterIndex, selectedIndex, theme)} ${theme.fg(fleetAgentIdentityColor(entry.agent), agent)} · ${entry.state}${checklist}`;
 		const elapsed = Date.now() - entry.startedAt;
 		const rightText = entry.projectPane
 			? `${entry.projectPane.summary ?? "—"} · ${formatFleetElapsed(Date.now() - entry.projectPane.refreshedAt)} ago`
@@ -742,7 +778,7 @@ export class SubagentFleetStatus {
 		if (row.overflow !== undefined) return truncateToWidth(`${indent}${marker} ${theme.fg("dim", `+${row.overflow} nested leaves`)}`, width);
 		const modelThinking = row.modelThinking ? ` (${row.modelThinking})` : "";
 		const activity = row.activity ? ` · ${row.activity}` : "";
-		const left = `${indent}${marker} ${nestedStatusGlyph(row.state, theme)} ${theme.fg("muted", `${row.name}${modelThinking}`)} · ${row.state}${activity}`;
+		const left = `${indent}${marker} ${nestedStatusGlyph(row.state, theme)} ${theme.fg(fleetAgentIdentityColor(row.agentIdentity ?? row.name), `${row.name}${modelThinking}`)} · ${row.state}${activity}`;
 		const elapsed = row.startedAt !== undefined ? ` · ${formatFleetElapsed(Date.now() - row.startedAt)}` : "";
 		return truncateToWidth(`${left}${theme.fg("dim", elapsed)}`, width);
 	}
@@ -853,6 +889,7 @@ export class SubagentFleetStatus {
 					entry.surface,
 					entry.parentKey,
 					entry.agent,
+					entry.displayLabel,
 					entry.state,
 					entry.modelThinking,
 					entry.description,
@@ -889,6 +926,7 @@ export class SubagentFleetStatus {
 					]),
 					nestedFleetRows(entry.nestedChildren, entry.parentKey ? 3 : 4).map((row) => [
 						row.name,
+						row.agentIdentity,
 						row.state,
 						row.modelThinking,
 						row.activity,

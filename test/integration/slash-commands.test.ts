@@ -327,6 +327,40 @@ describe("subagents watchdog slash command", { skip: !available ? "watchdog comm
 		});
 	});
 
+	it("keeps a configured project watchdog in recommendations and explicit user-scope saves", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-watchdog-configured-", async (root) => {
+				const configured = { provider: "github-copilot", id: "gpt-6-astra", reasoning: true };
+				const gpt = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
+				const models = [configured, gpt];
+				const projectPath = path.join(root, ".pi", "settings.json");
+				fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+				const projectSettings = JSON.stringify({ subagents: { watchdog: { main: { model: "github-copilot/gpt-6-astra", thinking: "high" } } } });
+				fs.writeFileSync(projectPath, projectSettings);
+				const ctx = createCommandContext({ cwd: root, model: configured, modelRegistry: {
+					getAvailable: () => models,
+					find: (provider: string, id: string) => models.find((entry) => entry.provider === provider && entry.id === id),
+					hasConfiguredAuth: () => true,
+				} });
+				const { commands, sent } = createWatchdogHarness();
+				for (const command of ["status", "recommend-model", "check"]) {
+					await commands.get("subagents-watchdog")!.handler(command, ctx);
+					const content = String((sent.at(-1) as { content?: unknown }).content ?? "");
+					assert.match(content, /Keep configured watchdog: github-copilot\/gpt-6-astra:high/);
+					assert.doesNotMatch(content, /Recommended strong watchdog|strong independent watchdog/);
+				}
+				const userPath = path.join(process.env.HOME!, ".pi", "agent", "settings.json");
+				assert.equal(fs.existsSync(userPath), false);
+				await commands.get("subagents-watchdog")!.handler("model recommended", ctx);
+				assert.deepEqual(JSON.parse(fs.readFileSync(userPath, "utf-8")).subagents.watchdog.main, {
+					model: "github-copilot/gpt-6-astra", thinking: "high",
+				});
+				assert.match(String((sent.at(-1) as { content?: unknown }).content), /saved to user settings/);
+				assert.equal(fs.readFileSync(projectPath, "utf-8"), projectSettings);
+			});
+		});
+	});
+
 	it("supports session-scoped recommended watchdog models without writing settings", async () => {
 		await withIsolatedHome(async () => {
 			await withTempProject("pi-watchdog-session-model-", async (root) => {

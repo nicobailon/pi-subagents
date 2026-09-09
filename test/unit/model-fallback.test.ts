@@ -505,6 +505,18 @@ describe("model fallback helpers", () => {
 		assert.equal(isRetryableModelFailure("500"), true);
 	});
 
+	it("retries OpenRouter's status-prefixed 401 only before tool activity", () => {
+		const error = '401: {"message":"User not found.","code":401}';
+		const messages = [{ role: "assistant", errorMessage: error }];
+		assert.equal(isRetryableModelFailureAttempt({ error, messages, toolCount: 0 }), true);
+		assert.equal(isRetryableModelFailureAttempt({ error, messages: [], toolCount: 0 }), true);
+		assert.equal(isRetryableModelFailureAttempt({ error, messages, toolCount: 1 }), false);
+		assert.equal(isRetryableModelFailureAttempt({ error, messages: [{ role: "assistant" }], toolCount: 0 }), false);
+		for (const taskError of ["User not found.", "User 401 not found.", `Lookup failed: ${error}`, `bash failed (exit 1): ${error}`]) {
+			assert.equal(isRetryableModelFailure(taskError), false, taskError);
+		}
+	});
+
 	it("does not treat ordinary task/tool failures as retryable model failures", () => {
 		assert.equal(isRetryableModelFailure("bash failed (exit 1): command not found"), false);
 		assert.equal(isRetryableModelFailure("read failed (exit 1): no such file or directory"), false);

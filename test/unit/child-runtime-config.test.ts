@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createChildHooks } from "../../src/runs/shared/child-hooks.ts";
+import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
 import { childSupervisorMetadata, evaluateChildToolDiagnostic, type ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
 
 function baseConfig(overrides: Partial<ChildRuntimeConfig> = {}): ChildRuntimeConfig {
@@ -34,6 +35,29 @@ describe("child runtime config", () => {
 		assert.deepEqual(createChildHooks(baseConfig()).map((hook) => hook.name), ["pi-subagents:prompt-runtime"]);
 		assert.deepEqual(createChildHooks(baseConfig({ fast: true })).map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:fast-mode"]);
 		assert.deepEqual(createChildHooks(baseConfig({ fanoutChild: true })).map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:fanout-child"]);
+	});
+
+	it("provides the coordinator reply tool before agent_start without granting it to leaves", async () => {
+		for (const tools of [["subagent", "contact_supervisor", "subagent_supervisor"], ["subagent", "contact_supervisor"], ["contact_supervisor"]]) {
+			const launch = buildInProcessChildLaunch({
+				host: "parent", cwd: process.cwd(), childAgentName: "coordinator", childIndex: 0,
+				sessionEnabled: false, tools, runId: "registration", parentSessionId: "root-A",
+				inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+			});
+			const pi = fakePi([]);
+			for (const hook of launch.session.hooks) hook.factory(pi.api as never);
+			const ctx = { sessionManager: { getSessionId: () => "coordinator-B", getSessionFile: () => "/sessions/B.jsonl" } };
+			try {
+				for (const handler of pi.handlers.get("session_start") ?? []) await handler({}, ctx);
+				assert.equal(pi.tools.some(tool => tool.name === "subagent_supervisor"), tools.includes("subagent"));
+				for (const handler of pi.handlers.get("agent_start") ?? []) await handler({}, ctx);
+				const selected = pi.tools.map(tool => tool.name).filter(name => launch.session.tools?.includes(name));
+				assert.equal(selected.includes("subagent_supervisor"), tools.includes("subagent_supervisor"));
+				assert.deepEqual(launch.session.tools, tools, "registration must not expand explicit tools");
+			} finally {
+				for (const handler of pi.handlers.get("session_shutdown") ?? []) await handler({}, ctx);
+			}
+		}
 	});
 
 	it("hooks read the config object", async () => {

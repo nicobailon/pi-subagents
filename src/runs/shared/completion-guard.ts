@@ -98,10 +98,12 @@ export function validateImplementationToolContract(input: {
 	const declaredMutationToolsWereRemoved = requestedMutationTools.length > 0 && !hasBuiltinMutationTool(input.tools);
 	const configuredExtensionCapability = (input.configuredExtensions?.length ?? 0) > 0 && !declaredMutationToolsWereRemoved;
 	if (hasMutationToolCapability(input.tools, input.mcpDirectTools) || configuredExtensionCapability) return undefined;
-	const intent = classifyTaskMutationIntent(input.agent, input.task);
+	const intent = classifyTaskMutationIntent(input.acceptanceRole === "writer" ? "worker" : input.agent, input.task);
 	if (intent.kind === "read-only") return undefined;
-	const writerTaskMayMutate = isWriterRole(input.agent, input.acceptanceRole)
-		&& (taskMayMutate(input.task) || WRITER_DELIVERY_PATTERN.test(input.task));
+	const writerTaskMayMutate = input.acceptanceRole === "writer"
+		? true
+		: isWriterRole(input.agent, input.acceptanceRole)
+			&& (taskMayMutate(input.task) || WRITER_DELIVERY_PATTERN.test(input.task));
 	if (intent.kind !== "implementation" && !writerTaskMayMutate && !declaredMutationToolsWereRemoved) return undefined;
 	return `Agent '${input.agent}' was given an implementation task, but its tool allowlist has no mutation-capable tools. Add bash, edit, write, or another mutation-capable tool to the agent, or use a read-only task/agent.`;
 }

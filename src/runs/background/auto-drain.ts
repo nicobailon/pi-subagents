@@ -24,14 +24,17 @@ function resultText(value: AgentToolResult<Details>): string {
 	return value.content.map((part) => part.type === "text" ? part.text : "").join(" ").trim();
 }
 
-function hasOutstandingWork(sessionId: string, nowMs: number, observation?: ReadonlyDrainObservation): boolean {
+function hasOutstandingWork(state: SubagentState, sessionId: string, nowMs: number, observation?: ReadonlyDrainObservation): boolean {
 	const asyncRuns = listAsyncRuns(DIRS.async, {
 		states: ["queued", "running"],
 		sessionId,
 		resultsDir: DIRS.results,
 		now: () => nowMs,
 	}, observation?.status);
-	return asyncRuns.length > 0 || snapshotBackgroundWork(sessionId, nowMs).items.length > 0;
+	const detachedForeground = [...(state.foregroundRuns?.values() ?? [])].some((run) =>
+		run.sessionId === sessionId && run.children.some((child) => child.status === "detached")
+	);
+	return asyncRuns.length > 0 || snapshotBackgroundWork(sessionId, nowMs).items.length > 0 || detachedForeground;
 }
 
 /** Drain all work owned by the current headless session, including work added while draining. */
@@ -44,7 +47,7 @@ export async function drainOutstandingWork(deps: AutoDrainDeps, observation?: Re
 		const timeoutMs = deps.timeoutMs ?? DEFAULT_AUTO_DRAIN_TIMEOUT_MS;
 		if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("Auto-drain timeoutMs must be a positive finite number.");
 		const deadlineAt = now() + timeoutMs;
-		const hasWork = deps.hasWork ?? (observation ? (id: string, time: number) => hasOutstandingWork(id, time, observation) : hasOutstandingWork);
+		const hasWork = deps.hasWork ?? ((id: string, time: number) => hasOutstandingWork(deps.state, id, time, observation));
 		const wait = deps.wait ?? waitForSubagents;
 
 		while (true) {

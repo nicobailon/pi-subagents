@@ -117,7 +117,7 @@ import { handleInspectorAction, INSPECTOR_ACTIONS } from "../../inspectors/actio
 import { createBuiltinInspectorPlugins } from "../../inspectors/plugins.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
 import { previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowChildSettledNotification, type WorkflowLanePlan, type WorkflowReceiptResumeReference, type WorkflowScriptChildResult, type WorkflowScriptTraceEntry, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
-import { formatIncrementalChildCompletion } from "../background/notify.ts";
+import { formatIncrementalChildCompletion, scheduledCompletionTriggersTurn } from "../background/notify.ts";
 import { executeWorkflowHostCommand, resolveWorkflowHostOutputClaimPath, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "../../workflows/host-command.ts";
 import { buildWorkflowReceipt, readWorkflowReceipt, workflowReceiptPath, resolveWorkflowReceiptResumeEntry, writeWorkflowReceipt, type WorkflowReceipt, type WorkflowReceiptState } from "../../workflows/workflow-receipt.ts";
 import { upsertHostStep, validHostStepNodes } from "../shared/host-step-status.ts";
@@ -139,6 +139,7 @@ import { resolveWorkflowResource } from "../../workflows/workflow-resources.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
+	preflightWorktreeSource,
 	withWorktreeTransaction,
 	type WorktreeSetupProgress,
 	diffWorktrees,
@@ -407,6 +408,7 @@ export interface SubagentParamsLike {
 	at?: string;
 	every?: string;
 	sessionOnly?: boolean;
+	quiet?: boolean;
 	on?: string | number;
 	timezone?: string;
 	overlap?: "skip";
@@ -3868,6 +3870,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				}
 			},
 		}));
+		// Capture the owned mailbox before a child can start and finish between polling ticks.
+		if (deps.childRuntime?.fanoutChild) deps.activateSupervisorTransport?.();
 	}
 
 	const modelResponseAliases = deps.config.modelResponseAliases === undefined ? undefined : structuredClone(deps.config.modelResponseAliases);
@@ -3890,7 +3894,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			runtimeSnapshotHost: deps.pi,
 			hostAvailableBuiltins: getHostBuiltinToolNames(deps.pi),
 			parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
-			llmIntentArbiter: createTaskMutationArbiter(ctx),
+			llmIntentArbiter: createTaskMutationArbiter({ model: ctx.model, modelRegistry: ctx.modelRegistry, sessionId: ctx.sessionManager.getSessionId() }),
 			childRuntime: deps.childRuntime,
 			onChildSession: (controls) => { childSessionControls = controls; },
 			context: data.contextPolicy.contextForAgent(params.agent!),
@@ -4534,6 +4538,35 @@ export async function steerWorkflowChildByKey(input: {
 		}
 		await new Promise<void>((resolve) => setTimeout(resolve, Math.min(10, Math.max(1, deadline - Date.now()))));
 	}
+}
+
+export async function preflightWorkflowWorktrees(input: {
+	workflowDefaults: SubagentParamsLike;
+	defaultWorktree?: boolean;
+	calls: Array<{ key: string; params: Record<string, unknown> }>;
+	ctxCwd: string;
+	signal: AbortSignal;
+	deadlineAt?: number;
+}): Promise<void> {
+	const sources = new Map<string, string[]>();
+	for (const { key, params } of input.calls) {
+		// The workflow validates retained IDs/receipt references before admission; resolution follows it.
+		if (params.resume !== undefined) continue;
+		const effective = prepareWorkflowLaunchParams(input.workflowDefaults, params, "preflight", key);
+		if ((effective.worktree ?? input.defaultWorktree) !== true) continue;
+		// Match recursive execute's resolution, including relative default/child cwd.
+		const cwd = resolveRequestedCwd(input.ctxCwd, effective.cwd);
+		const keys = sources.get(cwd) ?? [];
+		keys.push(key);
+		sources.set(cwd, keys);
+	}
+	for (const [cwd, keys] of sources) {
+		try { await preflightWorktreeSource(cwd, { signal: input.signal, deadlineAt: input.deadlineAt }); }
+		catch (error) {
+			throw new Error(`Worktree admission failed for ${keys.map((key) => `'${key}'`).join(", ")} at ${cwd}: ${error instanceof Error ? error.message : String(error)} Select the correct cwd or arrange an operator-approved commit/stash.`, { cause: error });
+		}
+	}
+	input.signal.throwIfAborted();
 }
 
 export function prepareWorkflowLaunchParams(
@@ -5534,7 +5567,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 											content: formatIncrementalChildCompletion(notification),
 											display: notification.outcome !== "completed",
 										},
-										{ triggerTurn: true },
+										{ triggerTurn: scheduledCompletionTriggersTurn(requestParams.scheduleOrigin, notification.outcome) },
 									);
 								} catch (sendError) {
 									console.error(`Failed to send incremental child completion notification for '${notification.childKey}':`, sendError);
@@ -5553,7 +5586,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									persist({ tolerateStatusWriteFailure: true });
 								} });
 							},
-							admit: (calls) => {
+							admit: async (calls, admissionSignal) => {
+								await preflightWorkflowWorktrees({ workflowDefaults: workflowChildDefaults, defaultWorktree: deps.config.worktree, calls, ctxCwd: parentCwd, signal: admissionSignal, deadlineAt: workflowDeadlineAt });
 								const outputClaims = workflowChildOutputClaims({ ctxCwd: parentCwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: discoverWorkflowAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, state: deps.state, claimedOutputPaths, entries: calls });
 								if (outputClaims.error) throw new Error(outputClaims.error);
 								status.runFanoutBudget = claimRunFanoutBatch(workflowFanoutBudget, calls.map(({ key }) => `workflow[${key}]`));
@@ -5819,7 +5853,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						}
 						sendWorkflowProgress();
 					},
-					admit: (calls) => {
+					admit: async (calls, admissionSignal) => {
+						await preflightWorkflowWorktrees({ workflowDefaults: workflowChildDefaults, defaultWorktree: deps.config.worktree, calls, ctxCwd: ctx.cwd, signal: admissionSignal, deadlineAt: workflowDeadlineAt });
 						const outputClaims = workflowChildOutputClaims({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId: foregroundWorkflowRunId, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: discoverWorkflowAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, state: deps.state, claimedOutputPaths, entries: calls });
 						if (outputClaims.error) throw new Error(outputClaims.error);
 						claimRunFanoutBatch(workflowFanoutBudget, calls.map(({ key }) => `workflow[${key}]`));

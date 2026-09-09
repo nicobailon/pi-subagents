@@ -451,10 +451,11 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 	registerPermissionGate(pi, config.permissions, config.childWatchdog);
 	registerToolBudget(pi, config.toolBudget);
 	registerChildWatchdog(pi, config.childWatchdog, config.watchdogStatus);
-	const waitState = {
+	const waitState = config.runtimeState ?? {
 		baseCwd: "",
 		currentSessionId: null,
 		asyncJobs: new Map(),
+		foregroundRuns: new Map(),
 		foregroundControls: new Map(),
 		lastForegroundControlId: null,
 		cleanupTimers: new Map(),
@@ -486,13 +487,18 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 		if (diagnostic) throw new Error(formatChildToolDiagnostic(diagnostic));
 	});
 	onRuntimeEvent("agent_end", async (_event: unknown, ctx: unknown) => {
-		if ((ctx as { hasUI?: boolean } | undefined)?.hasUI === true) { drainObservation?.deny(); return; }
+		if ((ctx as { hasUI?: boolean } | undefined)?.hasUI === true) drainObservation?.deny();
 		if (drainObservation) {
 			try {
 				if ((ctx as ExtensionContext)?.sessionManager?.getSessionFile() !== waitState.currentSessionId) drainObservation.deny();
 			} catch { drainObservation.deny(); }
 		}
-		await drainOutstandingWork({ state: waitState, events: pi.events }, drainObservation);
+		config.holdFinalDrain?.(true);
+		try {
+			await drainOutstandingWork({ state: waitState, events: pi.events }, drainObservation);
+		} finally {
+			config.holdFinalDrain?.(false);
+		}
 	});
 	if (config.structuredOutput) registerStructuredOutputTool(pi, config.structuredOutput);
 

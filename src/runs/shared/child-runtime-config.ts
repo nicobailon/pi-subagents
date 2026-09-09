@@ -1,4 +1,4 @@
-import type { JsonSchemaObject, ResolvedToolBudget, RunFanoutBudgetDescriptor } from "../../shared/types.ts";
+import type { JsonSchemaObject, ResolvedToolBudget, RunFanoutBudgetDescriptor, SubagentState } from "../../shared/types.ts";
 import type { ThinkingLevel } from "../../shared/model-info.ts";
 import type { NestedPathEntry } from "./nested-path.ts";
 import type { PermissionRules } from "./permissions.ts";
@@ -86,6 +86,8 @@ export interface ChildRuntimeConfig {
 	/** Receives child watchdog status events. */
 	watchdogStatus?: (event: ChildWatchdogStatusEvent) => void;
 	waitTool: ResolvedWaitToolConfig;
+	runtimeState?: SubagentState;
+	holdFinalDrain?: (held: boolean) => void;
 	structuredOutput?: ChildStructuredOutput;
 	requiredTools?: string[];
 	mcpDirectTools?: string[];

@@ -6,7 +6,6 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ChildWatchdogConfig, ChildWatchdogStatusEvent } from "../../watchdog/child-status.ts";
 import type { ThinkingLevel } from "../../shared/model-info.ts";
 import { intersectThinkingCeilings } from "../../shared/thinking-ceiling.ts";
@@ -35,6 +34,7 @@ import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import { createCapturedChildHooks, withChildSessionErrorReporting } from "./child-hooks.ts";
 import type { ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import type { ChildSessionLaunch, ChildSessionStorage } from "./child-session.ts";
+import type { ArbiterModelContext } from "./llm-intent-arbiter.ts";
 
 /** Environment variable pi-mcp-adapter reads for the tools a child may expose. */
 export const MCP_DIRECT_TOOLS_ENV = "MCP_DIRECT_TOOLS";
@@ -121,10 +121,11 @@ export interface BuildInProcessChildLaunchInput {
 }
 
 export interface InProcessChildCapture {
-	completionIntentContext?(): Pick<ExtensionContext, "model" | "modelRegistry"> | undefined;
+	completionIntentContext?(): ArbiterModelContext | undefined;
 	structuredOutput(): { called: boolean; value?: unknown; acceptanceReport?: unknown; acceptanceReportProvided: boolean };
 	toolDiagnostic(): ChildToolDiagnostic | undefined;
 	runtimeAcknowledgedExtensions(): RuntimeAcknowledgedChildExtensions | undefined;
+	finalDrainHeld(): boolean;
 }
 
 export interface InProcessChildLaunch {
@@ -318,6 +319,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 			structuredOutput: () => ({ called: structuredCalled, value: structuredValue, acceptanceReport: structuredAcceptanceReport, acceptanceReportProvided: structuredAcceptanceProvided }),
 			toolDiagnostic: capturedHooks.toolDiagnostic,
 			runtimeAcknowledgedExtensions: capturedHooks.runtimeAcknowledgedExtensions,
+			finalDrainHeld: capturedHooks.finalDrainHeld,
 		},
 		launchResolvedExtensions,
 		warnings: toolPlan.warnings,

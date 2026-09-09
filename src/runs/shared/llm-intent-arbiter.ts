@@ -4,6 +4,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ProviderHeaders } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { agentStreamOptions } from "../../shared/agent-stream-options.ts";
+import { opencodeSessionHeaders } from "../../shared/opencode-session-headers.ts";
 
 /**
  * LLM intent arbiter for the completion mutation guard.
@@ -56,6 +57,8 @@ interface ArbiterRuntime {
 	/** Registered provider stream, usable only when its api matches the model. */
 	registeredStreamFn?: StreamFn;
 	registeredApi?: string;
+	/** Session id for OpenCode session-routing headers, when the caller has one. */
+	sessionId?: string;
 	timeoutMs: number;
 }
 
@@ -76,7 +79,11 @@ export interface TaskMutationArbiterOptions {
 const DEFAULT_ARBITER_TIMEOUT_MS = 10_000;
 
 type RegistryModel = ReturnType<NonNullable<ExtensionContext["modelRegistry"]["find"]>>;
-type ArbiterModelContext = Pick<ExtensionContext, "model" | "modelRegistry">;
+/** Model services the arbiter needs, plus the caller's session id for OpenCode session-routing headers. */
+export type ArbiterModelContext = Pick<ExtensionContext, "model" | "modelRegistry"> & {
+	/** Session id the headers attach to (the child's, captured by detached runners; the parent's, passed by foreground callers). */
+	sessionId?: string;
+};
 
 function resolveArbiterModel(
 	ctx: ArbiterModelContext,
@@ -113,6 +120,7 @@ function resolveArbiterRuntime(
 		explicitStreamFn: options?.streamFn,
 		registeredStreamFn: registered?.streamSimple,
 		registeredApi: registered?.api,
+		sessionId: ctx.sessionId,
 		timeoutMs: options?.timeoutMs ?? DEFAULT_ARBITER_TIMEOUT_MS,
 	};
 }
@@ -151,12 +159,13 @@ async function resolveArbiterAuth(
 function authWrappedStreamFn(
 	base: StreamFn,
 	auth: ArbiterAuth,
+	sessionId: string | undefined,
 ): StreamFn {
 	return (model, context, streamOptions) => base(model, context, {
 		...(streamOptions ?? {}),
 		...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
 		...(auth.env || streamOptions?.env ? { env: { ...(auth.env ?? {}), ...(streamOptions?.env ?? {}) } } : {}),
-		headers: { ...(streamOptions?.headers ?? {}), ...(auth.headers ?? {}) },
+		headers: { ...opencodeSessionHeaders(model, sessionId), ...(streamOptions?.headers ?? {}), ...(auth.headers ?? {}) },
 	});
 }
 
@@ -200,7 +209,7 @@ async function runArbitration(
 			tools: [tool],
 		},
 		convertToLlm,
-		...agentStreamOptions(authWrappedStreamFn(streamFn, auth)),
+		...agentStreamOptions(authWrappedStreamFn(streamFn, auth, runtime.sessionId)),
 		getApiKey: (providerName) =>
 			providerName === runtime.model.provider ? auth.apiKey : undefined,
 		beforeToolCall: async ({ toolCall }) =>

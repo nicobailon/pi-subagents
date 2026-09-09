@@ -10,6 +10,7 @@ import { formatChildToolDiagnostic, type ChildToolDiagnostic } from "../../src/r
 import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
 import type { ChildWatchdogConfig } from "../../src/watchdog/child-status.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../src/watchdog/types.ts";
+import { SUBAGENT_FOREGROUND_COMPLETE_EVENT, type SubagentState } from "../../src/shared/types.ts";
 import registerSubagentPromptRuntime, {
 	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
@@ -25,6 +26,37 @@ import registerSubagentPromptRuntime, {
 function childConfig(overrides: Partial<ChildRuntimeConfig> = {}): ChildRuntimeConfig {
 	return { fanoutChild: false, depth: 1, waitTool: { enabled: true }, fast: false, ...overrides };
 }
+
+it("does not skip drain for in-process child sessions when hasUI is true", async () => {
+	const handlers = new Map<string, Function[]>();
+	const listeners = new Map<string, Array<() => void>>();
+	const held: boolean[] = [];
+	const sessionId = "reviewer-ui-session.jsonl";
+	const runtimeState = {
+		foregroundRuns: new Map([["fg", {
+			runId: "fg", mode: "single", cwd: "/tmp", sessionId, updatedAt: 1,
+			children: [{ agent: "reviewer", index: 0, status: "detached", updatedAt: 1 }],
+		}]]),
+	} as SubagentState;
+	const ctx = { hasUI: true, sessionManager: { getSessionFile: () => sessionId } };
+	const emit = async (name: string, event: unknown) => { for (const fn of handlers.get(name) ?? []) await fn(event, ctx); };
+	registerSubagentPromptRuntime({
+		on: (name: string, fn: Function) => handlers.set(name, [...(handlers.get(name) ?? []), fn]),
+		registerTool: () => {},
+		events: { on: (channel: string, handler: () => void) => { listeners.set(channel, [...(listeners.get(channel) ?? []), handler]); return () => {}; } },
+	} as never, childConfig({ runtimeState, holdFinalDrain: (value) => { held.push(value); } }));
+	await emit("session_start", {});
+	let settled = false;
+	const ended = emit("agent_end", { messages: [] }).then(() => { settled = true; });
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.equal(settled, false);
+	assert.deepEqual(held, [true]);
+	runtimeState.foregroundRuns.get("fg")!.children[0]!.status = "completed";
+	for (const handler of listeners.get(SUBAGENT_FOREGROUND_COMPLETE_EVENT) ?? []) handler();
+	await ended;
+	assert.equal(settled, true);
+	assert.deepEqual(held, [true, false]);
+});
 
 function supervisorConfig(overrides: Partial<ChildRuntimeConfig> = {}): ChildRuntimeConfig {
 	return childConfig({

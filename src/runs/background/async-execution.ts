@@ -597,6 +597,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			env: {
 				...omitExtensionBindingsEnv(process.env),
 				[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: piPackageRoot,
+				PI_PACKAGE_DIR: piPackageRoot,
 				[JITI_ALIAS_ENV]: JSON.stringify(hostPeerAliases.aliases),
 			},
 		});

@@ -17,7 +17,7 @@ export function registerWaitTool(
 Ordinary async subagent runs already notify this session natively when they complete or need attention. In an interactive chat, return control instead of calling this merely to wait. Use this tool for provider jobs, remembered detached foreground runs, or other background work without a native notification path. Headless runs auto-drain current-session subagent work at agent_end; use this tool only when the current turn must receive non-notifying background work results.
 
 • { } — return when the first initially active async run or registered provider item finishes, or when a subagent needs attention.
-• { all: true } — wait for every async run and provider item that was active when the call began.
+• { all: true } — wait for every async run, provider item, and remembered detached foreground descendant that was active when the call began.
 • { id: "..." } — wait for one async or remembered detached foreground subagent run (id or prefix).
 • { id: "...", nonBlocking: true } — resolve the prefix once, persist an exact-run wake subscription, and return immediately. Use this for detached work without native completion delivery; the originating interactive session wakes on completion, failure, attention, reconciliation failure, or timeout.
 • { stopOnAttention: false } — for blocking waits only, keep waiting through idle or long-thinking attention; supervisor/contact requests still stop the wait.

@@ -15,6 +15,7 @@ import { runSync } from "../../src/runs/foreground/execution.ts";
 import { childSessionFactory, createDefaultChildSessionFactory, disposeChildSessions, type ChildSessionFactory, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
 import { createNestedRoute } from "../../src/runs/shared/nested-events.ts";
 import { createStructuredOutputRuntime } from "../../src/runs/shared/structured-output.ts";
+import { rewriteSubagentPrompt } from "../../src/runs/shared/subagent-prompt-runtime.ts";
 import type { ForegroundChildSessionControls, SingleResult } from "../../src/shared/types.ts";
 
 async function waitFor(read: () => boolean, timeoutMs = 5_000): Promise<void> {
@@ -272,6 +273,82 @@ describe("default child session factory", () => {
 		await factory.create(stubLaunch);
 		await factory.create(stubLaunch);
 		assert.deepEqual(flags, [true, true]);
+	});
+
+	it("runs the child prompt rewrite before ambient prompt capture without reordering ambient extensions", async () => {
+		const agentPrompt = '<active_agent name="remotion-editor"/>\n\neditor instructions';
+		const globalPath = path.join(process.env.HOME ?? process.env.USERPROFILE ?? process.cwd(), ".pi", "agent", "AGENTS.md");
+		const projectPath = path.join(process.cwd(), "AGENTS.md");
+		const orchestrationSkill = '<skill><name>pi-subagents</name><location>/skills/pi-subagents/SKILL.md</location></skill>';
+		const assemble = (extra: string) => `${agentPrompt}${extra}`;
+		const destructivePrompt = assemble([
+			"", "<project_context>",
+			`<project_instructions path="${globalPath}">global parent-only instructions</project_instructions>`,
+			`<project_instructions path="${projectPath}">project instructions</project_instructions>`,
+			"</project_context>", orchestrationSkill,
+		].join("\n\n"));
+		const boundaryOnlyPrompt = assemble("");
+		const orderedPaths: string[][] = [];
+		const captureResults: boolean[] = [];
+		const forwardedPrompts: string[] = [];
+		const pi = stubPi();
+		pi.DefaultResourceLoader = class {
+			loaded = false;
+			private readonly options: { extensionsOverride?: (base: { extensions: Array<{ path: string }>; errors: unknown[]; runtime: object }) => { extensions: Array<{ path: string }>; errors: unknown[]; runtime: object } };
+			private result = { extensions: [] as Array<{ path: string }>, errors: [] as unknown[], runtime: {} };
+			constructor(options: typeof this.options) { this.options = options; }
+			async reload() {
+				const base = {
+					extensions: [
+						{ path: "/ambient/first.ts" },
+						{ path: "/ambient/claude-bridge.ts" },
+						{ path: "/ambient/last.ts" },
+						{ path: "<inline:pi-subagents:prompt-runtime>" },
+						{ path: "<inline:pi-subagents:completion-intent>" },
+					],
+					errors: [] as unknown[],
+					runtime: {},
+				};
+				this.result = this.options.extensionsOverride?.(base) ?? base;
+				orderedPaths.push(this.result.extensions.map(({ path: extensionPath }) => extensionPath));
+				for (const original of [boundaryOnlyPrompt, destructivePrompt]) {
+					let prompt = original;
+					let captured: string | undefined;
+					for (const { path: extensionPath } of this.result.extensions) {
+						if (extensionPath === "<inline:pi-subagents:prompt-runtime>") {
+							prompt = rewriteSubagentPrompt(prompt, { inheritProjectContext: true, inheritGlobalContext: false, inheritSkills: true });
+						}
+						if (extensionPath === "/ambient/claude-bridge.ts") captured = prompt;
+					}
+					captureResults.push(captured === prompt || (captured !== undefined && prompt.includes(captured)));
+					forwardedPrompts.push(prompt);
+				}
+			}
+			getExtensions() { return this.result; }
+		} as unknown as PiCodingAgentModule["DefaultResourceLoader"];
+
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
+		await factory.create({
+			...stubLaunch,
+			ambientExtensions: true,
+			hooks: [
+				{ name: "pi-subagents:prompt-runtime", factory() {} },
+				{ name: "pi-subagents:completion-intent", factory() {} },
+			],
+		});
+
+		assert.deepEqual(orderedPaths[0], [
+			"<inline:pi-subagents:prompt-runtime>",
+			"/ambient/first.ts",
+			"/ambient/claude-bridge.ts",
+			"/ambient/last.ts",
+			"<inline:pi-subagents:completion-intent>",
+		]);
+		assert.deepEqual(captureResults, [true, true], "bridge-style capture must resolve both wrapping and destructive filtering");
+		assert.match(forwardedPrompts[1]!, /editor instructions/);
+		assert.match(forwardedPrompts[1]!, /project instructions/);
+		assert.doesNotMatch(forwardedPrompts[1]!, /global parent-only instructions/);
+		assert.doesNotMatch(forwardedPrompts[1]!, /<name>pi-subagents<\/name>/);
 	});
 
 	it("resolves models from providers queued during child extension loading", async () => {

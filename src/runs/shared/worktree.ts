@@ -341,11 +341,9 @@ export function validateWorktreePatchRepresentsCurrentWorktree(worktreePath: str
 	return undefined;
 }
 
-async function resolveRepoState(tx: SetupTransaction, cwd: string, requestedBaseRef: string | undefined): Promise<RepoState> {
+async function probeWorktreeSource(tx: Pick<SetupTransaction, "git" | "gitChecked">, cwd: string): Promise<string> {
 	const repoCheck = await tx.git(cwd, ["rev-parse", "--is-inside-work-tree"], [0, 128]);
 	if (repoCheck.status !== 0 || repoCheck.stdout.trim() !== "true") throw new Error("worktree isolation requires a git repository");
-	const rawPrefix = (await tx.gitChecked(cwd, ["rev-parse", "--show-prefix"])).trim();
-	const cwdRelative = rawPrefix ? path.normalize(rawPrefix.replace(/[\\/]+$/, "")) : "";
 	const toplevel = (await tx.gitChecked(cwd, ["rev-parse", "--show-toplevel"])).trim();
 
 	// pi-subagents writes durable runtime state under .pi/subagents/ by default;
@@ -354,6 +352,26 @@ async function resolveRepoState(tx: SetupTransaction, cwd: string, requestedBase
 	if (status.trim().length > 0) {
 		throw new Error("worktree isolation requires a clean git working tree. Commit or stash changes first.");
 	}
+	return toplevel;
+}
+
+/** Read-only admission check; allocation repeats it because source state can change. */
+export async function preflightWorktreeSource(cwd: string, options: Pick<SetupCommandOptions, "signal" | "deadlineAt"> = {}): Promise<void> {
+	const git = async (cwd: string, args: string[], acceptedExitCodes: readonly number[] = [0]): Promise<SetupCommandResult> => {
+		const result = await runSetupCommand("git", ["-C", cwd, ...args], { ...options, acceptedExitCodes });
+		if (result.error) throw result.error;
+		if (result.outputIncomplete || result.status === null || !acceptedExitCodes.includes(result.status)) {
+			throw new Error(result.stderr.trim().slice(0, 2000) || "Worktree source probe failed");
+		}
+		return result;
+	};
+	await probeWorktreeSource({ git, gitChecked: async (cwd, args) => (await git(cwd, args)).stdout }, cwd);
+}
+
+async function resolveRepoState(tx: SetupTransaction, cwd: string, requestedBaseRef: string | undefined): Promise<RepoState> {
+	const toplevel = await probeWorktreeSource(tx, cwd);
+	const rawPrefix = (await tx.gitChecked(cwd, ["rev-parse", "--show-prefix"])).trim();
+	const cwdRelative = rawPrefix ? path.normalize(rawPrefix.replace(/[\\/]+$/, "")) : "";
 
 	const baseRef = normalizeWorktreeBaseRef(requestedBaseRef) ?? DEFAULT_WORKTREE_BASE_REF;
 	let baseCommit: string;
@@ -528,6 +546,11 @@ function hasConfiguredWorktreeBaseDir(baseDir: string | undefined): boolean {
 		: (process.env.PI_SUBAGENTS_WORKTREE_DIR?.trim().length ?? 0) > 0;
 }
 
+function isInsidePiExtensionsDirectory(targetPath: string): boolean {
+	const extensionsDir = normalizeComparableCwd(path.join(getAgentDir(), "extensions"));
+	return isPathInside(extensionsDir, normalizeComparableCwd(targetPath));
+}
+
 interface WorktrunkCapability {
 	available: boolean;
 	reason?: string;
@@ -580,7 +603,7 @@ export function resolveWorktreeProvider(requested: WorktreeProvider | undefined,
 	return "native";
 }
 
-async function resolveSetupProvider(tx: SetupTransaction, requested: WorktreeProvider | undefined, baseDir?: string): Promise<ManagedWorktreeProvider> {
+async function resolveSetupProvider(tx: SetupTransaction, requested: WorktreeProvider | undefined, baseDir: string | undefined, repoRoot: string): Promise<ManagedWorktreeProvider> {
 	const selection = requested ?? DEFAULT_WORKTREE_PROVIDER;
 	if (selection !== "auto" && selection !== "native" && selection !== "worktrunk") throw new Error('worktree provider must be "auto", "native", or "worktrunk"');
 	if (selection === "native") return "native";
@@ -588,6 +611,7 @@ async function resolveSetupProvider(tx: SetupTransaction, requested: WorktreePro
 		if (selection === "worktrunk") throw new Error("worktreeProvider='worktrunk' cannot be combined with worktreeBaseDir or PI_SUBAGENTS_WORKTREE_DIR");
 		return "native";
 	}
+	if (selection === "auto" && isInsidePiExtensionsDirectory(repoRoot)) return "native";
 	let reason: string | undefined;
 	try {
 		const probeExitCodes = Array.from({ length: 256 }, (_, code) => code);
@@ -618,11 +642,13 @@ export function shouldDeferWorktreeCwd(requested: WorktreeProvider | undefined, 
  * to the repository. Managed leaves always nest one level deeper under the
  * project folder (`basename(repoRoot)`).
  */
-function resolveWorktreeDedicatedRoot(configuredBaseDir: string | undefined, repoRoot: string): string {
+function resolveWorktreeDedicatedRoot(configuredBaseDir: string | undefined, repoRoot: string, relocateExtensionRepo = true): string {
 	const rawBaseDir = configuredBaseDir ?? process.env.PI_SUBAGENTS_WORKTREE_DIR;
 	let expanded: string;
 	if (rawBaseDir === undefined || (configuredBaseDir === undefined && !rawBaseDir.trim())) {
-		expanded = path.join(path.dirname(repoRoot), "worktrees");
+		expanded = relocateExtensionRepo && isInsidePiExtensionsDirectory(repoRoot)
+			? path.join(getAgentDir(), "worktrees")
+			: path.join(path.dirname(repoRoot), "worktrees");
 	} else {
 		const trimmed = rawBaseDir.trim();
 		if (!trimmed) throw new Error("worktree base directory cannot be empty");
@@ -1333,9 +1359,11 @@ async function allocateWorktrees(tx: SetupTransaction, cwd: string, runId: strin
 	tx.progress.setup.cwd = repo.toplevel;
 	tx.progress.setup.baseCommit = repo.baseCommit;
 	const setupHook = resolveWorktreeSetupHook(repo.toplevel, options?.setupHook);
-	const provider = await resolveSetupProvider(tx, options?.provider, options?.baseDir);
+	const provider = await resolveSetupProvider(tx, options?.provider, options?.baseDir, repo.toplevel);
 	const branchPrefix = normalizeWorktreeBranchPrefix(options?.branchPrefix);
-	const dedicatedRoot = provider === "native" ? resolveWorktreeDedicatedRoot(options?.baseDir, repo.toplevel) : undefined;
+	const dedicatedRoot = provider === "native"
+		? resolveWorktreeDedicatedRoot(options?.baseDir, repo.toplevel, (options?.provider ?? DEFAULT_WORKTREE_PROVIDER) === "auto")
+		: undefined;
 	const worktrees = tx.progress.setup.worktrees;
 
 	try {

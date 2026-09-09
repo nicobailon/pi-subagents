@@ -411,11 +411,23 @@ Package skill content.
 		writeFile(configPath, JSON.stringify({ orcaProgressTabs: { enabled: true } }));
 		assert.deepEqual(loadConfig().orcaProgressTabs, { enabled: true });
 
+		writeFile(configPath, JSON.stringify({ orcaProgressTabs: { enabled: true, autoCloseDelaySec: 30 } }));
+		assert.deepEqual(loadConfig().orcaProgressTabs, { enabled: true, autoCloseDelaySec: 30 });
+
+		writeFile(configPath, JSON.stringify({ orcaProgressTabs: { enabled: true, autoCloseDelaySec: 0 } }));
+		assert.deepEqual(loadConfig().orcaProgressTabs, { enabled: true, autoCloseDelaySec: 0 });
+
 		writeFile(configPath, JSON.stringify({ orcaProgressTabs: { enabled: "yes" } }));
 		assert.throws(() => updateConfig((config) => config), /config\.orcaProgressTabs\.enabled must be a boolean/);
 
 		writeFile(configPath, JSON.stringify({ orcaProgressTabs: { enabled: true, focus: true } }));
 		assert.throws(() => updateConfig((config) => config), /config\.orcaProgressTabs\.focus is not supported/);
+
+		writeFile(configPath, JSON.stringify({ orcaProgressTabs: { autoCloseDelaySec: -1 } }));
+		assert.throws(() => updateConfig((config) => config), /config\.orcaProgressTabs\.autoCloseDelaySec must be a number >= 0/);
+
+		writeFile(configPath, JSON.stringify({ orcaProgressTabs: { autoCloseDelaySec: "30" } }));
+		assert.throws(() => updateConfig((config) => config), /config\.orcaProgressTabs\.autoCloseDelaySec must be a number >= 0/);
 	});
 
 	it("hardens and redacts existing run history while recording", () => {

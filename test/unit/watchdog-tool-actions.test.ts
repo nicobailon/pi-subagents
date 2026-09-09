@@ -67,6 +67,36 @@ describe("watchdog tool actions", () => {
 		assert.equal(runtime.getSnapshot(tempProject).config.main.thinking, "high");
 	});
 
+	it("keeps session model overrides and their thinking in recommendations", () => {
+		const runtime = new MainWatchdogRuntime({ cwd: tempProject });
+		const ctx = createCtx({ provider: "openai-codex", id: "gpt-5.5" });
+		runtime.setSessionModel({ model: "openai-codex/gpt-5.5", thinking: false }, tempProject);
+		const recommendation = handleWatchdogToolAction("watchdog.recommend-model", {}, ctx, runtime);
+		assert.equal(recommendation.isError, undefined);
+		assert.match(text(recommendation), /Keep configured watchdog: openai-codex\/gpt-5.5:off/);
+		assert.doesNotMatch(text(recommendation), /strong independent watchdog/);
+		const applied = handleWatchdogToolAction("watchdog.configure", { model: "recommended" }, ctx, runtime);
+		assert.equal(applied.isError, undefined);
+		assert.equal(runtime.getSnapshot(tempProject).config.main.model, "openai-codex/gpt-5.5");
+		assert.equal(runtime.getSnapshot(tempProject).config.main.thinking, "off");
+		runtime.setSessionModel({ model: "openai-codex/gpt-5.5:low", thinking: false }, tempProject);
+		const suffixed = handleWatchdogToolAction("watchdog.configure", { model: "recommended" }, ctx, runtime);
+		assert.equal(suffixed.isError, undefined);
+		assert.equal(runtime.getSnapshot(tempProject).config.main.thinking, "low");
+		assert.equal(fs.existsSync(path.join(tempHome, ".pi", "agent", "settings.json")), false);
+	});
+
+	it("does not replace an unavailable configured model with a strong recommendation", () => {
+		const runtime = new MainWatchdogRuntime({ cwd: tempProject });
+		const ctx = createCtx({ provider: "openai-codex", id: "gpt-5.5" });
+		runtime.setSessionModel({ model: "custom/unavailable", thinking: "low" }, tempProject);
+		const result = handleWatchdogToolAction("watchdog.configure", { model: "recommended", scope: "user" }, ctx, runtime);
+		assert.equal(result.isError, true);
+		assert.match(text(result), /was not found/);
+		assert.equal(runtime.getSnapshot(tempProject).config.main.model, "custom/unavailable");
+		assert.equal(fs.existsSync(path.join(tempHome, ".pi", "agent", "settings.json")), false);
+	});
+
 	it("preserves omitted session model fields when configuring thinking", () => {
 		const runtime = new MainWatchdogRuntime({ cwd: tempProject });
 		const ctx = createCtx({ provider: "openai-codex", id: "gpt-5.5" });

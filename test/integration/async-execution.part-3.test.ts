@@ -764,7 +764,7 @@ export default function() {
     },
     resolveCliModel: ({ cliModel }) => { assert.equal(cliModel, "intent-test/child-attempt"); return { model }; },
     createAgentSession: async ({ resourceLoader, model }) => {
-      const ctx = Proxy.revocable({ model, modelRegistry: registry }, {});
+      const ctx = Proxy.revocable({ model, modelRegistry: registry, sessionManager: { getSessionId: () => "intent-child", getSessionFile: () => undefined } }, {});
       let listener;
       const messages = [];
       return { session: {
@@ -1734,6 +1734,43 @@ export default function() {
 		const payload = await readAsyncPayload(launch.details.asyncId);
 		assert.equal(payload.success, true);
 		assert.equal((await waitForMockPiRuntime(mockPi, 0)).forkCacheKey, deriveForkPromptCacheKey("session-cache-parent"));
+	});
+
+	it("follows up an async run whose recovery descriptor includes fast", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const luna = { provider: "openai-codex", id: "gpt-5.6-luna", fullId: "openai-codex/gpt-5.6-luna" };
+		mockPi.onCall({ output: "Initial async work" });
+		const sourceId = `async-revive-fast-${Date.now().toString(36)}`;
+		const sessionFile = path.join(tempDir, "sessions", "fast.jsonl");
+		fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		executeAsyncSingle(sourceId, {
+			agent: "worker",
+			task: "Initial work",
+			agentConfig: makeAgent("worker", { model: luna.fullId, completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			sessionFile,
+			modelOverride: luna.fullId,
+			availableModels: [luna],
+			fast: true,
+			maxSubagentDepth: 2,
+		});
+		await readAsyncPayload(sourceId);
+		assert.equal(JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, sourceId, "recovery-descriptor.json"), "utf-8")).fast, true);
+
+		mockPi.onCall({ output: "Revived async work" });
+		const result = await makeAsyncExecutor([makeAgent("worker")]).execute(
+			"revive-fast",
+			{ action: "resume", id: sourceId, message: "Continue" },
+			new AbortController().signal,
+			undefined,
+			{ ...makeMinimalCtx(tempDir), modelRegistry: { getAvailable: () => [luna] } },
+		) as AsyncExecutionResult;
+		assert.ok(!result.isError, result.content[0]?.text);
+		assert.ok(result.details.asyncId);
+		assert.equal((await readAsyncPayload(result.details.asyncId)).success, true);
 	});
 
 	it("revives an inherited parent model outside the current registry", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {

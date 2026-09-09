@@ -18,8 +18,10 @@ export function projectChildLifecycle(event: { type?: string; willRetry?: unknow
 		if (state) state.compactionRetryActive = false;
 		return "cancel-drain";
 	}
-	if (event.type === "agent_end" && event.willRetry === true) return "cancel-drain";
-	if (event.type === "agent_end" && state) state.compactionRetryActive = false;
+	if (event.type === "agent_end") {
+		if (event.willRetry !== true && state) state.compactionRetryActive = false;
+		return "cancel-drain";
+	}
 	if (event.type === "agent_settled") return state?.compactionRetryActive ? "none" : "start-drain";
 	if (terminalAssistantStop) return "start-drain";
 	return "none";

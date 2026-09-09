@@ -214,14 +214,13 @@ function matchesId(run: AsyncRunSummary, id: string): boolean {
 }
 
 function activeDetachedForegroundRuns(params: SubagentWaitParams, deps: SubagentWaitDeps): ForegroundResumeRun[] {
-	if (!params.id || !deps.state.foregroundRuns) return [];
 	const sessionId = deps.state.currentSessionId;
-	if (!sessionId) return [];
-	return [...deps.state.foregroundRuns.values()].filter((run) =>
-		(run.runId === params.id || run.runId.startsWith(params.id!))
-		&& run.sessionId === sessionId
-		&& run.children.some((child) => child.status === "detached")
+	if (!sessionId || !deps.state.foregroundRuns) return [];
+	const runs = [...deps.state.foregroundRuns.values()].filter((run) =>
+		run.sessionId === sessionId && run.children.some((child) => child.status === "detached")
 	);
+	if (params.id) return runs.filter((run) => run.runId === params.id || run.runId.startsWith(params.id!));
+	return params.all === true ? runs : [];
 }
 
 function summarizeForegroundChildren(run: ForegroundResumeRun, indices: Set<number>): string {
@@ -534,6 +533,36 @@ async function waitForDetachedForegroundRun(
 	}
 }
 
+async function waitForSessionDetachedForegroundRuns(
+	runs: ForegroundResumeRun[],
+	signal: AbortSignal | undefined,
+	deps: SubagentWaitDeps,
+	startedAt: number,
+	now: () => number,
+	pollIntervalMs: number,
+	timeoutMs: number,
+): Promise<AgentToolResult<Details>> {
+	const texts: string[] = [];
+	for (const run of runs) {
+		const one = await waitForDetachedForegroundRun(run, signal, deps, startedAt, now, pollIntervalMs, timeoutMs);
+		if (one.isError) return one;
+		if (one.details.wait?.reason === "window_elapsed") {
+			const activeRunIds = runs.filter((initial) => {
+				const current = deps.state.foregroundRuns?.get(initial.runId);
+				if (!current || current.sessionId !== initial.sessionId) return false;
+				return initial.children.some((child) => child.status === "detached"
+						&& current.children.some((candidate) => candidate.index === child.index && candidate.status === "detached"));
+			}).map((activeRun) => activeRun.runId);
+			return windowElapsedResult(
+				one.content.map((part) => part.type === "text" ? part.text : "").join("\n"),
+				activeRunIds,
+			);
+		}
+		texts.push(one.content.map((part) => part.type === "text" ? part.text : "").join("\n").trim());
+	}
+	return result(texts.filter(Boolean).join("\n") || `Waited ${formatDuration(now() - startedAt)} for remembered detached foreground run(s); done.`);
+}
+
 /**
  * Block until the targeted async or remembered detached foreground run finishes,
  * the timeout elapses, or the turn is aborted. Resolves with a short
@@ -570,7 +599,10 @@ export async function waitForSubagents(
 	let providerSnapshot: BackgroundWorkSnapshot;
 	try {
 		active = activeRunsForSession(params, deps);
-		foreground = activeDetachedForegroundRuns(params, deps);
+		foreground = activeDetachedForegroundRuns(params, deps).map((run) => ({
+			...run,
+			children: run.children.map((child) => ({ ...child })),
+		}));
 		providerSnapshot = params.id ? { providers: [], items: [] } : backgroundWorkForSession(deps, startedAt);
 	} catch (error) {
 		return result(error instanceof Error ? error.message : String(error), true);
@@ -606,6 +638,9 @@ export async function waitForSubagents(
 
 	let providerActive = providerSnapshot.items;
 	if (active.length === 0 && providerActive.length === 0) {
+		if (waitForAll && !params.id && foreground.length > 0) {
+			return waitForSessionDetachedForegroundRuns(foreground, signal, deps, startedAt, now, pollIntervalMs, timeoutMs);
+		}
 		return result(params.id
 			? `No active run matched "${params.id}". Nothing to wait for.`
 			: "No active async runs or registered provider work in this session. Nothing to wait for.");
@@ -697,6 +732,14 @@ export async function waitForSubagents(
 	const recoveryNote = formatCompletionRecovery(completions);
 
 	if (waitForAll) {
+		const foregroundResult = !params.id && foreground.length > 0 && relevantAttention.length === 0
+			? await waitForSessionDetachedForegroundRuns(foreground, signal, deps, startedAt, now, pollIntervalMs, timeoutMs)
+			: undefined;
+		if (foregroundResult?.isError) return foregroundResult;
+		if (foregroundResult?.details.wait?.reason === "window_elapsed") return foregroundResult;
+		const foregroundNote = foregroundResult
+			? `\n${foregroundResult.content.map((part) => part.type === "text" ? part.text : "").join("\n")}`
+			: "";
 		const scope = params.id
 			? `run "${params.id}"`
 			: initialProviderIds.size === 0
@@ -704,7 +747,7 @@ export async function waitForSubagents(
 				: `${initialAsyncIds.size} async run(s) and ${initialProviderIds.size} provider item(s)`;
 		const status = relevantAttention.length > 0 ? "attention required" : "done";
 		return result(
-			`Waited ${elapsed} for ${scope}; ${status}.${outcome}${recoveryNote}${resumeGuidance}${attentionNote} Completion/control events have been observed; inspect status if a notification is not visible yet.`,
+			`Waited ${elapsed} for ${scope}; ${status}.${outcome}${recoveryNote}${resumeGuidance}${attentionNote}${foregroundNote} Completion/control events have been observed; inspect status if a notification is not visible yet.`,
 			(deps.failOnFailedRuns === true && failedAsyncCount > 0) || (deps.failOnAttention === true && relevantAttention.length > 0),
 			completions,
 		);

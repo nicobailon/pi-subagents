@@ -67,6 +67,21 @@ describe("watchdog settings", () => {
 		assert.equal(resolveWatchdogConfig(tempProject, { session: { children: { clarification: true } } }).ok, false);
 	});
 
+	it("validates fallback arrays and replaces or clears layered chains", () => {
+		writeJson(userSettingsPath(), { subagents: { watchdog: { main: { fallbackModels: ["user/a"] }, children: { fallbackModels: ["user/b"], overrides: { worker: { fallbackModels: ["user/c"] } } } } } });
+		writeJson(projectSettingsPath(), { subagents: { watchdog: { main: { fallbackModels: [" project/a "] }, children: { overrides: { worker: { fallbackModels: [] } } } } } });
+		const config = resolveWatchdogConfig(tempProject).config;
+		assert.deepEqual(config.main.fallbackModels, ["project/a"]);
+		assert.deepEqual(config.children.fallbackModels, ["user/b"]);
+		assert.deepEqual(config.children.overrides.worker.fallbackModels, []);
+		assert.deepEqual(resolveWatchdogConfig(tempProject, { session: { main: { fallbackModels: [] } } }).config.main.fallbackModels, []);
+		for (const fallbackModels of ["model/a", null, [""], [12]]) {
+			for (const session of [{ main: { fallbackModels } }, { children: { fallbackModels } }, { children: { overrides: { worker: { fallbackModels } } } }]) {
+				assert.equal(resolveWatchdogConfig(tempProject, { session }).ok, false);
+			}
+		}
+	});
+
 	it("lets root enabled opt the main watchdog in while children stay default-off", () => {
 		writeJson(userSettingsPath(), {
 			subagents: {

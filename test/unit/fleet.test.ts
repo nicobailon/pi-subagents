@@ -118,6 +118,7 @@ describe("native subagent fleet", () => {
 		const ctx = {
 			model,
 			signal: undefined,
+			sessionManager: { getSessionId: () => "fleet-rewrite-session" },
 			modelRegistry: {
 				async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test" }; },
 				getRegisteredProviderConfig() { return { api: "faux", streamSimple: streamFn }; },

@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { normalizeModelSegment, resolveModelCandidate } from "../runs/shared/model-fallback.ts";
+import type { WatchdogEndpointConfig } from "./types.ts";
 import {
 	getSupportedThinkingLevels,
 	splitKnownThinkingSuffix,
@@ -43,6 +44,7 @@ export interface ResolvedWatchdogModelInput {
 }
 
 export interface WatchdogModelRecommendation {
+	source: "configured" | "suggested";
 	model: string;
 	thinking: ThinkingLevel;
 	label: string;
@@ -147,6 +149,7 @@ function resolveStrongCandidate(ctx: ExtensionContext, family: StrongWatchdogFam
 		if (!getSupportedThinkingLevels(modelInfo).includes(STRONG_WATCHDOG_THINKING)) continue;
 		const current = ctx.model ? fullModelId(toModelInfo(ctx.model)) : "no current session model";
 		return {
+			source: "suggested",
 			model: resolved.model,
 			thinking: STRONG_WATCHDOG_THINKING,
 			label: preference.label,
@@ -164,4 +167,21 @@ export function recommendStrongWatchdogModel(ctx: ExtensionContext): WatchdogMod
 	}
 	const current = ctx.model ? fullModelId(toModelInfo(ctx.model)) : "the current session";
 	throw new Error(`No authenticated strong complementary watchdog model was found for ${current}. Configure access to Opus 4.8 or GPT 5.5, then run the recommendation again.`);
+}
+
+export function recommendWatchdogModel(ctx: ExtensionContext, configured: WatchdogEndpointConfig): WatchdogModelRecommendation {
+	if (!configured.model) return recommendStrongWatchdogModel(ctx);
+	const resolved = resolveWatchdogModelInput(ctx, configured.model);
+	const thinking = resolved.thinking ?? parseWatchdogThinkingInput(configured.thinking) ?? "off";
+	return {
+		...resolved,
+		source: "configured",
+		thinking: thinking === false ? "off" : thinking,
+		label: "configured watchdog",
+		reason: "Keep the configured watchdog model and thinking; no replacement recommendation is needed. This is not a strength or independence assessment.",
+	};
+}
+
+export function formatWatchdogRecommendation(recommendation: WatchdogModelRecommendation): string {
+	return `${recommendation.source === "configured" ? "Keep configured watchdog" : "Recommended strong watchdog"}: ${recommendation.model}:${recommendation.thinking}`;
 }

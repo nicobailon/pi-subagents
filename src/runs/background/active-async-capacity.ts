@@ -280,6 +280,10 @@ function workflowReleaseVerdict(owner: ActiveAsyncCapacityOwner, status: AsyncSt
 		if (!childStatus) return { state: "retained", reason: `async workflow child ${label} status is missing or unreadable` };
 		if (!terminalState(childStatus.state)) return { state: "retained", reason: `async workflow child ${label} is still ${childStatus.state}` };
 		if (!childStatus.processTerminal?.runnerProcessInstanceId) return { state: "retained", reason: `async workflow child ${label} has no runner process identity` };
+		if (childStatus.processTerminal.state === "not-started"
+			&& childStatus.processTerminal.runId === step.runId
+			&& typeof childStatus.error === "string"
+			&& childStatus.error) continue;
 		const proof = readProcessTerminal(childDir, {
 			runId: step.runId,
 			runnerProcessInstanceId: childStatus.processTerminal.runnerProcessInstanceId,

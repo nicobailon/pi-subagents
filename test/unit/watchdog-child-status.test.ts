@@ -12,6 +12,7 @@ import {
 	unresolvedChildWatchdogBlockers,
 } from "../../src/watchdog/child-status.ts";
 import { DEFAULT_WATCHDOG_CONFIG } from "../../src/watchdog/settings.ts";
+import { childResolvedConfig } from "../../src/watchdog/register-child.ts";
 import { events } from "../support/helpers.ts";
 
 function warningMessage(overrides: Record<string, unknown> = {}) {
@@ -66,6 +67,17 @@ describe("child watchdog warning envelope", () => {
 });
 
 describe("child watchdog status helpers", () => {
+	it("passes child fallback precedence through the launch decoder and reviewer config", () => {
+		const base = { ...DEFAULT_WATCHDOG_CONFIG, enabled: true, main: { enabled: true, fallbackModels: ["main/a"] }, children: { ...DEFAULT_WATCHDOG_CONFIG.children, enabled: true, overrides: {} } };
+		assert.equal(resolveChildWatchdogConfig({ config: base })?.fallbackModels, undefined);
+		const config = { ...base, children: { ...base.children, fallbackModels: ["child/a"], overrides: { worker: { fallbackModels: [] }, reviewer: { fallbackModels: ["override/a"] } } } };
+		for (const [agent, expected] of [["other", ["child/a"]], ["worker", []], ["reviewer", ["override/a"]]] as const) {
+			const payload = resolveChildWatchdogConfig({ config, agent })!;
+			const decoded = decodeChildWatchdogConfig(JSON.stringify(payload))!;
+			assert.deepEqual(childResolvedConfig(decoded).main.fallbackModels, expected);
+			assert.throws(() => decodeChildWatchdogConfig(JSON.stringify({ ...payload, fallbackModels: [null] })), /fallbackModels/);
+		}
+	});
 	it("resolves child cadence from override, then children, then the top-level cadence", () => {
 		const base = { ...DEFAULT_WATCHDOG_CONFIG, enabled: true, children: { ...DEFAULT_WATCHDOG_CONFIG.children, enabled: true, overrides: {} } };
 		assert.deepEqual(resolveChildWatchdogConfig({ config: base, agent: "worker" })?.cadence, { everyNTools: null });

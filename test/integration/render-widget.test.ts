@@ -91,6 +91,95 @@ function resetWidgetLayout(): void {
 }
 
 describe("subagent async widget rendering", () => {
+	it("advances quiet workflow clocks without advancing a terminal sibling", () => {
+		const originalNow = Date.now;
+		const job = {
+			asyncId: "quiet-workflow", asyncDir: "/tmp/quiet", mode: "workflow", status: "running", startedAt: 1_000, updatedAt: 1_083,
+			steps: [
+				{ index: 0, workflowKey: "live", agent: "worker", status: "running", startedAt: 1_000, durationMs: 0 },
+				{ index: 1, workflowKey: "done", agent: "reviewer", status: "complete", startedAt: 1_000, endedAt: 3_000, durationMs: 2_000 },
+			],
+		};
+		try {
+			Date.now = () => 415_000;
+			assert.match(buildWidgetLines([job], theme, 180).join("\n"), /6m54s/);
+			const first = buildWidgetLines([job], theme, 180, true).join("\n");
+			assert.match(first, /worker.*6m54s/);
+			assert.match(first, /reviewer.*2\.0s/);
+			Date.now = () => 425_000;
+			const second = buildWidgetLines([job], theme, 180, true).join("\n");
+			assert.match(second, /worker.*7m4s/);
+			assert.match(second, /reviewer.*2\.0s/);
+			assert.match(buildWidgetLines([{ ...job, status: "complete", updatedAt: 3_000 }], theme, 180).join("\n"), /2\.0s/);
+			assert.equal(job.steps[0]!.durationMs, 0, "rendering must not persist clocks");
+		} finally { Date.now = originalNow; }
+	});
+
+	it("nests two same-agent workflow children once and collapses the group adaptively", () => {
+		const children = ["t7", "t9"].map((key) => ({
+			asyncId: `child-${key}`, asyncDir: `/tmp/${key}`, parentWorkflowRunId: "parent", workflowKey: key,
+			mode: "single", agents: ["chorus-worker"], status: "running", startedAt: 1_000, updatedAt: 1_083,
+		}));
+		const parent = { asyncId: "parent", asyncDir: "/tmp/parent", mode: "workflow", status: "running", startedAt: 1_000, updatedAt: 1_083,
+			steps: children.map((child, index) => ({ index, workflowKey: child.workflowKey, runId: child.asyncId, agent: "chorus-worker", status: "running" })) };
+		for (const expanded of [false, true]) {
+			const lines = buildWidgetLines([children[0]!, parent, children[1]!], theme, 180, expanded);
+			const text = lines.join("\n");
+			for (const key of ["t7", "t9"]) {
+				assert.equal(text.match(new RegExp(`[├└]─ ${key} `, "g"))?.length, 1, text);
+				assert.match(text, new RegExp(`  [├└]─ ${key} .*chorus-worker`));
+				assert.doesNotMatch(text, new RegExp(`${runningGlyphPattern} ${key} · chorus-worker`), "no mirrored lane row");
+			}
+			assert.doesNotMatch(text, new RegExp(`[├└]─ ${runningGlyphPattern} chorus-worker`), "children must not also be sibling cards");
+			assert.ok(lines.every((line) => visibleWidth(line) <= 180));
+		}
+		assert.equal(buildWidgetLines(children, theme, 180).join("\n").match(new RegExp(`[├└]─ ${runningGlyphPattern} chorus-worker`, "g"))?.length, 2, "orphans stay visible");
+		for (const rows of [12, 30, 80]) withStdoutSize(rows, 100, () => {
+			resetWidgetLayout();
+			const { ctx, widgets } = createUiContext();
+			renderWidget(ctx, [parent, ...children]);
+			const lines = renderWidgetLines(widgets[0], 100);
+			const text = lines.join("\n");
+			for (const key of ["t7", "t9"]) {
+				const count = text.match(new RegExp(`[├└]─ ${key} `, "g"))?.length ?? 0;
+				assert.ok(count <= 1, text);
+				if (rows === 80) assert.equal(count, 1, "roomy adaptive layout keeps both child rows");
+			}
+			assert.ok(lines.every((line) => visibleWidth(line) <= 100));
+			assert.ok(lines.length <= 14);
+			resetWidgetLayout();
+		});
+	});
+	it("keeps live children visible when their workflow parent is not running", () => {
+		for (const status of ["complete", "queued"]) {
+			const parent = { asyncId: "parent", asyncDir: "/tmp/parent", mode: "workflow", status, startedAt: 1_000, updatedAt: 2_000 };
+			const child = { asyncId: "live-child", asyncDir: "/tmp/live-child", mode: "single", status: "running", agents: ["live-worker"], parentWorkflowRunId: "parent", workflowKey: "live" };
+			const jobs = status === "queued"
+				? [parent, child, { asyncId: "other", asyncDir: "/tmp/other", status: "running", agents: ["other-worker"] }]
+				: [parent, child];
+			const full = buildWidgetLines(jobs, theme, 180).join("\n");
+			assert.equal(full.match(new RegExp(`[├└]─ (?:live )?${runningGlyphPattern} live-worker`, "g"))?.length, 1, full);
+			assert.match(full, status === "queued" ? /1 queued/ : /id: parent · 1\.0s/);
+			for (const rows of [12, 23]) withStdoutSize(rows, 100, () => {
+				resetWidgetLayout();
+				const { ctx, widgets } = createUiContext();
+				try {
+					renderWidget(ctx, jobs);
+					const lines = renderWidgetLines(widgets[0], 100);
+					const text = lines.join("\n");
+					if (rows === 12) {
+						assert.match(text, status === "queued" ? /2\/3 running, 1 queued/ : /1\/2 running/);
+						assert.equal(lines.length, 1);
+					} else {
+						assert.equal(text.match(new RegExp(`${runningGlyphPattern} live-worker`, "g"))?.length, 1, text);
+						assert.ok(lines.length <= 4);
+					}
+					assert.ok(lines.every((line) => visibleWidth(line) <= 100));
+				} finally { resetWidgetLayout(); }
+			});
+		}
+	});
+
 	it("updates the mounted async widget without changing host insertion order", () => {
 		type Widget = { render(width: number): string[]; dispose?(): void };
 		const widgets = new Map<string, Widget>();
@@ -172,7 +261,7 @@ describe("subagent async widget rendering", () => {
 		};
 		const compact = buildWidgetLines([job], theme, 180).join("\n");
 		assert.match(compact, /async workflow: Review workflow ─ background/);
-		assert.match(compact, /id: a6b9aa6b · 1\/2 done · 1 active · 5 tool uses · 2\.5s/);
+		assert.match(compact, /id: a6b9aa6b · 1\/2 done · 1 active · 5 tool uses/);
 		assert.match(compact, /write · worker\/mutation · apply the smallest fix · src\/tui · fix\.md/);
 		assert.match(compact, /review · reviewer\/review · active · check the compact surface · src\/tui · review\.md/);
 		assert.doesNotMatch(compact, /Plan:|Plan note:|preflight mismatch|Preflight advisory/);

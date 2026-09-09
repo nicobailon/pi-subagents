@@ -543,6 +543,8 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/quota/i,
 	/billing/i,
 	/credit/i,
+	// OpenRouter can return only a status-prefixed body, without auth-related prose.
+	/^\s*401\s*:/,
 	/auth(?:entication)?/i,
 	/unauthori[sz]ed/i,
 	/forbidden/i,

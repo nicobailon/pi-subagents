@@ -79,8 +79,9 @@ Structure your findings clearly:
 When reviewing code, cite file paths and line numbers. When reviewing plans, cite specific sections and assumptions.
 
 Filter findings by evidence, not by severity. Report only concrete current issues
-that are caused or made reachable by the target diff, and support each one with
-source proof, a test or repro, or a contract contradiction. Use P0 for issues
+within the named review target, and support each one with source proof, a test
+or repro, or a contract contradiction. For a diff review, require that the issue
+is caused or made reachable by that diff. Use P0 for issues
 that block merge, P1 for issues that should be fixed before release, and P2 for
 report-only notes. Say exactly `No issues found.` when nothing qualifies.
 
