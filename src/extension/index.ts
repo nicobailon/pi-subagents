@@ -812,9 +812,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	pi.registerTool(tool);
 
 	pi.on("before_agent_start", (event, ctx) => {
-		const selectedTools = event.systemPromptOptions.selectedTools ?? pi.getActiveTools();
+		const selectedTools = event.systemPromptOptions?.selectedTools ?? (typeof pi.getActiveTools === "function" ? pi.getActiveTools() : []);
 		const sessionId = state.currentSessionId ?? resolveCurrentSessionId(ctx.sessionManager);
-		const advertisedPrompt = selectedTools.includes("subagent")
+		const advertisedPrompt = Array.isArray(selectedTools) && selectedTools.includes("subagent")
 			? buildAdvertisedAgentPrompt(advertisedAgents, resolveCurrentSubagentCapabilityCeiling(sessionId))
 			: undefined;
 		const systemPrompt = appendAdvertisedAgentPrompt(event.systemPrompt, advertisedPrompt);

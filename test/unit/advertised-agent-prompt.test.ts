@@ -84,4 +84,27 @@ describe("advertised agent prompt", () => {
 		const prior = appendAdvertisedAgentPrompt("base prompt", buildAdvertisedAgentPrompt([agent("alpha", { advertise: true })]));
 		assert.equal(appendAdvertisedAgentPrompt(prior, buildAdvertisedAgentPrompt([])), "base prompt");
 	});
+
+	it("handles string array systemPrompt gracefully", () => {
+		const initial = ["section 1", "section 2"];
+		const catalog = buildAdvertisedAgentPrompt([agent("alpha", { advertise: true })]);
+		const withCatalog = appendAdvertisedAgentPrompt(initial, catalog);
+		assert.ok(Array.isArray(withCatalog));
+		assert.equal(withCatalog.length, 3);
+		assert.equal(withCatalog[0], "section 1");
+		assert.equal(withCatalog[1], "section 2");
+		assert.match(withCatalog[2]!, /<name>alpha<\/name>/);
+
+		const withoutCatalog = appendAdvertisedAgentPrompt(withCatalog, undefined);
+		assert.ok(Array.isArray(withoutCatalog));
+		assert.equal(withoutCatalog.length, 2);
+		assert.equal(withoutCatalog[0], "section 1");
+		assert.equal(withoutCatalog[1], "section 2");
+	});
+
+	it("handles undefined systemPrompt gracefully", () => {
+		const catalog = buildAdvertisedAgentPrompt([agent("alpha", { advertise: true })]);
+		assert.equal(appendAdvertisedAgentPrompt(undefined, catalog), catalog);
+		assert.equal(appendAdvertisedAgentPrompt(undefined, undefined), undefined);
+	});
 });
