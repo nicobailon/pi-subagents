@@ -42,6 +42,10 @@ export interface FakeChildResponse {
 	createError?: string;
 	/** Keeps the run open until the parent aborts it. */
 	hangUntilAbort?: boolean;
+	/** Delay before emitting `turn_start` when draining a steer/follow-up queued after the scripted final message. */
+	queuedMessageTurnStartDelayMs?: number;
+	/** Assistant text emitted for that delayed queued-message turn. */
+	queuedMessageOutput?: string;
 }
 
 export interface FakeChildSessionRecord {
@@ -51,6 +55,7 @@ export interface FakeChildSessionRecord {
 	aborted: boolean;
 	disposed: boolean;
 	settled: boolean;
+	scriptedFinalEmitted: boolean;
 	session?: ChildSession;
 }
 
@@ -205,10 +210,13 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 	let disposeCalls = 0;
 	const factory: ChildSessionFactory = {
 		async create(launch) {
-			const record: FakeChildSessionRecord = { launch, task: undefined, steers: [], aborted: false, disposed: false, settled: false };
+			const record: FakeChildSessionRecord = { launch, task: undefined, steers: [], aborted: false, disposed: false, settled: false, scriptedFinalEmitted: false };
 			sessions.push(record);
 			const listeners = new Set<(event: ChildSessionEvent) => void>();
 			const messages: AgentMessage[] = [];
+			const queued: Array<{ text: string; mode: "steer" | "followUp" }> = [];
+			const queuedWaiters: Array<() => void> = [];
+			let boundaryOpen = false;
 			const model = reportedModel(launch.model);
 			let abortResolve: (() => void) | undefined;
 			const abortedPromise = new Promise<void>((resolve) => { abortResolve = resolve; });
@@ -228,6 +236,42 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 					fs.appendFileSync(path.join(queueDir(), "steers.jsonl"), `${JSON.stringify({ sessionId, text, mode })}\n`, "utf-8");
 				} catch {
 					// Observability for tests only.
+				}
+			};
+			const wakeQueuedWaiters = (): void => {
+				for (const resolve of queuedWaiters.splice(0)) resolve();
+			};
+			const enqueue = (text: string, mode: "steer" | "followUp"): void => {
+				record.steers.push({ text, mode });
+				recordSteer(text, mode);
+				if (!boundaryOpen) return;
+				queued.push({ text, mode });
+				wakeQueuedWaiters();
+			};
+			const waitForQueuedMessage = (): Promise<void> => {
+				if (queued.length > 0 || record.aborted) return Promise.resolve();
+				return new Promise((resolve) => { queuedWaiters.push(resolve); });
+			};
+			const markScriptedFinal = (): void => {
+				record.scriptedFinalEmitted = true;
+				try {
+					fs.appendFileSync(path.join(queueDir(), "scripted-final.jsonl"), `${JSON.stringify({ sessionId })}\n`, "utf-8");
+				} catch {
+					// Observability for tests only.
+				}
+			};
+			const drainQueuedBoundary = async (response: FakeChildResponse, task: string): Promise<void> => {
+				while (queued.length > 0 && !record.aborted) {
+					const delay = response.queuedMessageTurnStartDelayMs ?? 0;
+					if (delay > 0) await sleep(delay, abortedPromise);
+					if (record.aborted || queued.length === 0) return;
+					emit({ type: "turn_start" });
+					const drained = queued.splice(0);
+					const output = response.queuedMessageOutput ?? drained[0]?.text ?? "continued after queued input";
+					await emitEntries([defaultAssistantMessage(output, model)], task);
+					if (record.aborted) return;
+					emit({ type: "agent_end", messages: [...messages], willRetry: false });
+					emit({ type: "agent_settled" });
 				}
 			};
 			const emit = (event: unknown): void => {
@@ -322,9 +366,20 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 				if (record.aborted) return;
 				emit({ type: "agent_end", messages: [...messages], willRetry: false });
 				emit({ type: "agent_settled" });
-				if (typeof response.keepAliveAfterFinalMessageMs === "number" && response.keepAliveAfterFinalMessageMs > 0) {
-					await Promise.race([sleep(response.keepAliveAfterFinalMessageMs), abortedPromise]);
+				boundaryOpen = true;
+				markScriptedFinal();
+				const keepAliveMs = typeof response.keepAliveAfterFinalMessageMs === "number" && response.keepAliveAfterFinalMessageMs > 0
+					? response.keepAliveAfterFinalMessageMs
+					: 0;
+				if (!record.aborted && queued.length === 0 && (keepAliveMs > 0 || response.hangUntilAbort)) {
+					await Promise.race([
+						...(keepAliveMs > 0 ? [sleep(keepAliveMs, abortedPromise)] : []),
+						...(response.hangUntilAbort ? [abortedPromise] : []),
+						waitForQueuedMessage(),
+					]);
 				}
+				await drainQueuedBoundary(response, task);
+				if (record.aborted) return;
 				if (response.hangUntilAbort) await abortedPromise;
 				if (typeof response.exitCode === "number" && response.exitCode !== 0) {
 					throw new Error(response.stderr?.trim() || `mock child exited with code ${response.exitCode}`);
@@ -376,16 +431,18 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 					}
 				},
 				async steer(text) {
-					record.steers.push({ text, mode: "steer" });
-					recordSteer(text, "steer");
+					enqueue(text, "steer");
 				},
 				async followUp(text) {
-					record.steers.push({ text, mode: "followUp" });
-					recordSteer(text, "followUp");
+					enqueue(text, "followUp");
+				},
+				hasQueuedMessages() {
+					return queued.length > 0;
 				},
 				async abort() {
 					record.aborted = true;
 					abortResolve?.();
+					wakeQueuedWaiters();
 				},
 				async dispose() {
 					record.disposed = true;

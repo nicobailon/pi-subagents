@@ -23,7 +23,7 @@ import { formatSubagentModelVerificationError } from "../shared/model-fallback.t
 import { isMutatingTool, resolveCurrentPath } from "../shared/long-running-guard.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } from "../shared/tool-timeout.ts";
 import { createReportedChildSessionInput, type InProcessChildLaunch } from "../shared/child-launch.ts";
-import { projectChildSessionEventForJson, type ChildSession, type ChildSessionEvent, type ChildSessionFactory } from "../shared/child-session.ts";
+import { childSessionHasQueuedMessages, projectChildSessionEventForJson, type ChildSession, type ChildSessionEvent, type ChildSessionFactory } from "../shared/child-session.ts";
 import { formatSteerMessage } from "../shared/subagent-prompt-runtime.ts";
 import { getReadonlySessionEvidence, requestReadonlySessionEvidence, type SettledReadonlyEvidence } from "../shared/readonly-session-evidence.ts";
 import type { SteerDeliveryStatus, SteerRequest } from "./control-channel.ts";
@@ -317,11 +317,16 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				return;
 			}
 			if (promptSettled || finalDrainTimer || settled) return;
+			if (childSessionHasQueuedMessages(session)) return;
+			armFinalDrainTimer();
+		}
+		function armFinalDrainTimer(): void {
+			if (promptSettled || finalDrainTimer || settled) return;
 			finalDrainTimer = setTimeout(() => {
 				if (settled || promptSettled) return;
-				if (input.launch.capture.finalDrainHeld()) {
+				if (input.launch.capture.finalDrainHeld() || childSessionHasQueuedMessages(session)) {
 					finalDrainTimer = undefined;
-					startFinalDrain();
+					armFinalDrainTimer();
 					return;
 				}
 				forcedTermination = true;

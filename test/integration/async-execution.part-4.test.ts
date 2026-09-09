@@ -17,7 +17,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setChildSessionFactoryModule } from "../../src/runs/shared/child-session.ts";
 import { createEventBus, createTempDir, events, makeAgent, removeTempDir } from "../support/helpers.ts";
-import { deliverInterruptRequest, deliverStopRequest } from "../../src/runs/background/control-channel.ts";
+import { deliverInterruptRequest, deliverStopRequest, requestAsyncSteer } from "../../src/runs/background/control-channel.ts";
 import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../src/shared/types.ts";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
 import type { AsyncResultPayload, AsyncStatusPayload } from "../support/async-execution-fixture.ts";
@@ -599,6 +599,35 @@ setTimeout(() => process.exit(90), 15000).unref();
 			assert.equal(check?.status, "failed");
 			assert.match(check?.message ?? "", /Unresolved watchdog blocker/);
 		});
+	});
+
+	it("background does not abort when a steer arrives after the final stop and turn_start is delayed", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			jsonl: [events.assistantMessage("before steer")],
+			keepAliveAfterFinalMessageMs: 15_000,
+			queuedMessageTurnStartDelayMs: 1400,
+			queuedMessageOutput: "after steer",
+		});
+		const id = `async-queued-steer-after-final-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker", task: "Do work", agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2,
+		});
+		await waitForMockPiCall(mockPi, 0, 10_000);
+		const scriptedFinal = path.join(mockPi.dir, "scripted-final.jsonl");
+		const deadline = Date.now() + 10_000;
+		while (!fs.existsSync(scriptedFinal)) {
+			if (Date.now() > deadline) assert.fail("Timed out waiting for scripted final message");
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		requestAsyncSteer(path.join(ASYNC_DIR, id), { message: "Continue after the final stop.", id: "after-final", ts: Date.now() });
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true, payload.results[0]?.error);
+		assert.equal(payload.results[0]?.error, undefined);
+		assert.equal(payload.results[0]?.output, "after steer");
+		assert.doesNotMatch(JSON.stringify(payload), /did not settle within \d+ms after its terminal event/);
 	});
 
 	for (const type of ["turn_start", "agent_start", "auto_retry_start"]) {

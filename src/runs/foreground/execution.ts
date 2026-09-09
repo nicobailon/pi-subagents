@@ -113,7 +113,7 @@ import {
 	type ChildWatchdogStatusEvent,
 } from "../../watchdog/child-status.ts";
 import { buildInProcessChildLaunch, createReportedChildSessionInput } from "../shared/child-launch.ts";
-import { childSessionFactory, projectChildSessionEventForJson, type ChildSession, type ChildSessionEvent } from "../shared/child-session.ts";
+import { childSessionFactory, childSessionHasQueuedMessages, projectChildSessionEventForJson, type ChildSession, type ChildSessionEvent } from "../shared/child-session.ts";
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
 const acceptanceOutputByResult = new WeakMap<SingleResult, string>();
@@ -719,11 +719,16 @@ async function runSingleAttempt(
 				return;
 			}
 			if (sessionSettled || finalDrainTimer || lifecycleFinished) return;
+			if (childSessionHasQueuedMessages(session)) return;
+			armFinalDrainTimer();
+		};
+		const armFinalDrainTimer = () => {
+			if (sessionSettled || finalDrainTimer || lifecycleFinished) return;
 			finalDrainTimer = setTimeout(() => {
 				if (lifecycleFinished || sessionSettled) return;
-				if (capture.finalDrainHeld()) {
+				if (capture.finalDrainHeld() || childSessionHasQueuedMessages(session)) {
 					finalDrainTimer = undefined;
-					startFinalDrain();
+					armFinalDrainTimer();
 					return;
 				}
 				forcedTermination = true;

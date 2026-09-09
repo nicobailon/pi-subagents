@@ -95,6 +95,8 @@ export interface ChildSession {
 	abort(): Promise<void>;
 	/** Emits `session_shutdown` to the child's extensions and disposes the session; resolves once that shutdown work is done. */
 	dispose(): Promise<void>;
+	/** True while Pi still has steering or follow-up input that has not started a turn. */
+	hasQueuedMessages?(): boolean;
 	readonly messages: readonly AgentMessage[];
 	readonly sessionFile: string | undefined;
 	readonly sessionId: string;
@@ -103,6 +105,10 @@ export interface ChildSession {
 	detached?: boolean;
 	/** Set by `factory.dispose()` before it aborts the child, so the host can report the stop truthfully. */
 	shutDown?: boolean;
+}
+
+export function childSessionHasQueuedMessages(session: ChildSession | undefined): boolean {
+	return session?.hasQueuedMessages?.() === true;
 }
 
 export interface ChildSessionFactory {
@@ -342,6 +348,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				steer: (text) => { evidence?.invalidate(); return session.steer(text); },
 				followUp: (text) => { evidence?.invalidate(); return session.followUp(text); },
 				abort: () => { evidence?.invalidate(); return session.abort(); },
+				hasQueuedMessages: () => session.agent.hasQueuedMessages(),
 				dispose: () => {
 					if (!pending) {
 						live.delete(child);

@@ -111,6 +111,28 @@ describe("in-process foreground child", () => {
 		]);
 	});
 
+	it("does not abort when a steer arrives after the final stop and turn_start is delayed", async () => {
+		mockPi.onCall({
+			jsonl: [events.assistantMessage("before steer")],
+			keepAliveAfterFinalMessageMs: 15_000,
+			queuedMessageTurnStartDelayMs: 1400,
+			queuedMessageOutput: "after steer",
+		});
+		let controls: ForegroundChildSessionControls | undefined;
+		const run = runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			runId: "queued-steer-after-final",
+			onChildSession: (next) => { controls = next; },
+		});
+		await waitFor(() => controls !== undefined && mockPi.sessions[0]?.scriptedFinalEmitted === true);
+		await controls!.steer("Continue after the final stop.");
+		const result = await run;
+		assert.equal(result.exitCode, 0, result.error);
+		assert.equal(result.error, undefined);
+		assert.equal(result.finalOutput, "after steer");
+		assert.equal(mockPi.sessions[0]?.aborted, false);
+		assert.deepEqual(mockPi.sessions[0]?.steers, [{ text: "Continue after the final stop.", mode: "steer" }]);
+	});
+
 	for (const type of ["turn_start", "agent_start", "auto_retry_start"]) {
 		it(`foreground keeps resumed work alive after ${type}`, async () => {
 			mockPi.onCall({
