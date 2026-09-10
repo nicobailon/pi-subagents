@@ -1,0 +1,39 @@
+name: Herdr machine self patch
+
+on:
+  push:
+    branches: [herdr-saved-machine-remote-subagents]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: herdr-saved-machine-remote-subagents
+          persist-credentials: true
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Apply implementation patch
+        run: node .tmp-herdr-machine-patch.mjs
+      - name: Install devDependencies
+        run: npm ci --ignore-scripts
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Commit implementation
+        run: |
+          rm -f .tmp-herdr-machine-patch.mjs .github/workflows/herdr-machine-self-patch.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Implement Herdr saved-machine remote subagents"
+          git push origin HEAD:herdr-saved-machine-remote-subagents
