@@ -6,7 +6,7 @@ import {
 	type SubagentDelegationUpdate,
 	type SubagentDelegationValue,
 } from "../api/delegation.ts";
-import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, Usage } from "../shared/types.ts";
+import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, IntercomBridgeConfig, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, Usage } from "../shared/types.ts";
 import { cloneJsonWithinByteLimit } from "./delegation-json.ts";
 
 export interface PromptTemplateDelegationRequest {
@@ -127,6 +127,7 @@ export interface DelegatedSubagentExecutionParams {
 	agentContract?: AgentContract;
 	acceptance?: AcceptanceInput;
 	artifacts?: boolean;
+	intercomBridge?: IntercomBridgeConfig;
 	/** Internal-only thinking override accepted by executeDelegated. */
 	delegatedThinkingOverride?: SubagentDelegationThinking;
 	/** Internal-only capability accepted and stripped by executeDelegated. */
@@ -295,6 +296,7 @@ export function toSubagentDelegationExecutionParams(request: SubagentDelegationR
 		...(request.result.kind === "structured" ? { outputSchema: request.result.schema } : {}),
 		acceptance: false,
 		artifacts: request.artifacts,
+		...(request.intercomBridge !== undefined ? { intercomBridge: request.intercomBridge } : {}),
 		delegatedThinkingOverride: request.thinking,
 		delegatedAllowZeroToolBudget: true,
 		async: false,

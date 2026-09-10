@@ -1,3 +1,5 @@
+import type { IntercomBridgeConfig } from "../shared/types.ts";
+
 // This is the established extension-to-extension transport. The structured
 // delegation API intentionally reuses it instead of adding a second event
 // protocol. Unstructured legacy direct payloads are rejected.
@@ -35,6 +37,8 @@ export interface SubagentDelegationRequest {
 	toolBudget?: SubagentDelegationToolBudget;
 	skill?: string | string[] | boolean;
 	artifacts?: boolean;
+	/** Per-launch bridge config; replaces the global `intercomBridge` config. Pass the same value to preflight to compare digests. */
+	intercomBridge?: IntercomBridgeConfig;
 	result: SubagentDelegationResultRequest;
 }
 

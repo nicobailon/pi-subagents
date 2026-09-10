@@ -15,6 +15,7 @@ import { parallelHandoffPath, resolveRetainedWorktreeCwd } from "../shared/paral
 import { normalizeWorktreeBaseRef } from "../shared/worktree.ts";
 import { intersectThinkingCeilings, parseThinkingLevel, type ThinkingLevel } from "../../shared/thinking-ceiling.ts";
 import { assertWorkflowGraphHostSteps } from "../shared/host-step-status.ts";
+import { validateIntercomBridgeConfig } from "../../intercom/intercom-bridge.ts";
 import { validateModelResponseAliases } from "../../shared/model-response-aliases.ts";
 
 export interface AsyncResumeParams {
@@ -412,14 +413,8 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		if (!Number.isInteger(artifact.cleanupDays) || (artifact.cleanupDays as number) < 0) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': artifactConfig.cleanupDays must be a non-negative integer.`);
 	}
 	if (parsed.intercomBridge !== undefined) {
-		if (!parsed.intercomBridge || typeof parsed.intercomBridge !== "object" || Array.isArray(parsed.intercomBridge)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': intercomBridge must be an object.`);
-		const bridge = parsed.intercomBridge as Record<string, unknown>;
-		for (const field of Object.keys(bridge)) {
-			if (field !== "mode" && field !== "instructionFile" && field !== "resultDelivery") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': intercomBridge.${field} is not supported.`);
-		}
-		if (bridge.mode !== undefined && bridge.mode !== "off" && bridge.mode !== "fork-only" && bridge.mode !== "always") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': intercomBridge.mode is invalid.`);
-		if (bridge.instructionFile !== undefined && typeof bridge.instructionFile !== "string") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': intercomBridge.instructionFile must be a string.`);
-		if (bridge.resultDelivery !== undefined && typeof bridge.resultDelivery !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': intercomBridge.resultDelivery must be a boolean.`);
+		const bridge = validateIntercomBridgeConfig(parsed.intercomBridge, "intercomBridge");
+		if (!bridge.ok) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${bridge.error}`);
 	}
 	if (parsed.controlConfig !== undefined) {
 		if (!parsed.controlConfig || typeof parsed.controlConfig !== "object" || Array.isArray(parsed.controlConfig)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': controlConfig must be an object.`);

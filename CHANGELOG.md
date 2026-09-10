@@ -9,8 +9,10 @@
 - Add default-off, main-only watchdog questions and task-continuity reviews from bounded delivered orchestration evidence (#2010).
 - Add the built-in `evidence-auditor` for independently reviewing important research claims and source support. Thanks to [@Muskos](https://github.com/Muskos) for #2023.
 - Notify the parent as individual async workflow children finish, without waiting for all siblings (#2027). Each child completion delivers a compact notification with the workflow run ID, child key, exact child run ID, outcome, and output reference while the workflow remains running.
+- Accept a per-launch `intercomBridge` override on structured delegation requests and launch-contract preflight, plus an optional preflight `orchestratorTarget` for custom bridge templates that name the parent session. Preflight contracts now report the resolved bridge state as `intercomBridge` and fail closed with `invalid_intercom_bridge` for malformed overrides (#2127).
 
 ### Changed
+- The default Intercom bridge instruction no longer names the parent session; `contact_supervisor` already resolves it from the child runtime config. Custom `instructionFile` templates keep interpolating `{orchestratorTarget}`. The launch-contract version is now 3 and the launch-binding projection version is now 2, so `launchContractDigest` values change for bridged runs (#2127).
 - Report host-pruned child tools in existing launch warnings, including the agent, requested/effective tool names, and active ceiling sources when known, without changing launch outcomes. Diagnostic follow-up for #2058; thanks to [@nicobailon](https://github.com/nicobailon).
 - Consolidate model-facing subagent prose while retaining the flat typed execution/control API; keep extended recipes in the existing on-demand guides. Thanks to [@Whamp](https://github.com/Whamp) for the prompt-footprint measurements and proposal in #2048.
 - Color FleetView agent labels by stable agent identity so multi-agent runs are easier to scan. Thanks to [@savinofiore](https://github.com/savinofiore) for #2056.
@@ -20,6 +22,7 @@
 - Document task-derived behavior labels for workflow launches in the built-in pi-subagents skill, including reviews and retained follow-ups.
 
 ### Fixed
+- Bind the Intercom bridge prompt and `contact_supervisor` tool into `launchContractDigest` during launch-contract preflight, so public preflight matches foreground and async execution when the bridge is active. Keep the parsed-definition digest independent of the bridge overlay on every execution path, and assemble launch identity through one shared binding instead of four copies (#2127; remaining #2112 residual). Thanks to [@Yivas](https://github.com/Yivas) for the instrumented reproduction.
 - Report async steer and follow-up requests as delivered only after the child consumes the correlated input, and fail unconsumed requests when the child settles (#2116, #2121). Thanks to [@yanqianglu](https://github.com/yanqianglu) for #2057.
 - Do not abort a native child during final-stop drain after queued steering or follow-up is observed, even if Pi drains that input before a delayed `turn_start`. Related to #2117; thanks to [@yanqianglu](https://github.com/yanqianglu) for #2057.
 - Allow explicit deletion of a session-only schedule from another session when the recorded exact async run has terminal status, while continuing to refuse deletion without matching terminal evidence (#2125).

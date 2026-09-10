@@ -6,8 +6,8 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig } from "../../agents/agents.ts";
-import { appendAgentRefinementOverlay } from "../../agents/agent-refinements.ts";
 import { alignForkedSessionCwd } from "../../shared/fork-session-cwd.ts";
+import { buildEffectiveSystemPrompt } from "../shared/effective-system-prompt.ts";
 import {
 	ensureArtifactsDir,
 	formatOutputArtifactContent,
@@ -52,8 +52,7 @@ import {
 	boundStreamedRecentOutput,
 	boundStreamedToolCalls,
 } from "../../shared/utils.ts";
-import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.ts";
-import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
+import { resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, resolveToolTimeoutMs, toolTimeoutCallKey, toolTimeoutFromEnv } from "../shared/tool-timeout.ts";
 import { evaluateCompletionMutationGuard, expectsImplementationMutation, hasMutationToolCapability, validateImplementationToolContract } from "../shared/completion-guard.ts";
 import { planCompletionEvidence } from "../shared/completion-evidence.ts";
@@ -75,7 +74,7 @@ import { MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, MISSING_STRUCTURED_OUTPUT_C
 import { formatMidToolExitError, isOrdinaryToolForMidToolExit } from "../shared/process-signal.ts";
 import { formatChildToolDiagnostic } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
-import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, hasSingleOutputChangedSinceSnapshot, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
+import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, hasSingleOutputChangedSinceSnapshot, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	buildModelCandidates,
 	formatSubagentModelVerificationError,
@@ -100,7 +99,7 @@ import { PROMPT_REDACTED } from "../../shared/utils.ts";
 import { attachContractProjections, isAgentContract } from "../shared/agent-contract.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
-import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
+import { resolveLaunchBinding } from "../../shared/launch-contract.ts";
 import { consumeWorkflowChildPermit } from "../../shared/workflow-child-permit.ts";
 import { projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleState } from "../shared/child-lifecycle.ts";
 import {
@@ -484,24 +483,16 @@ async function runSingleAttempt(
 			...(toolPlan.capabilityAudit ? { capabilityAudit: toolPlan.capabilityAudit } : {}),
 		};
 	}
-	const launchContractDigest = launchBindingDigest({
-		definitionDigest: agentDefinitionDigest(agent),
+	const fast = options.fast ?? agent.fast;
+	const { launchContractDigest } = resolveLaunchBinding({
+		agent,
 		task: shared.originalTask ?? task,
-		...(modelArg ? { model: modelArg } : {}),
-		modelCandidates: shared.modelCandidates,
-		...((options.fast ?? agent.fast) !== undefined ? { fast: options.fast ?? agent.fast } : {}),
+		modelCandidates: shared.modelCandidates ?? [],
+		...(fast !== undefined ? { fast } : {}),
 		...(resolvedThinking ? { thinking: resolvedThinking } : {}),
-		...(options.thinkingCeiling ? { thinkingCeiling: options.thinkingCeiling } : {}),
 		systemPrompt: effectiveSystemPrompt,
-		systemPromptMode: agent.systemPromptMode,
-		inheritProjectContext: agent.inheritProjectContext,
-		inheritGlobalContext: agent.inheritGlobalContext,
-		inheritSkills: agent.inheritSkills,
 		skills: shared.resolvedSkillNames ?? [],
-		tools: toolPlan.effectiveToolAllowlist,
-		...(toolPlan.excludeTools.length > 0 ? { excludeTools: toolPlan.excludeTools } : {}),
-		extensions: toolPlan.extensionArgs,
-		mcpDirectTools: toolPlan.effectiveMcpTools,
+		toolPlan,
 		...(options.outputPath ? { outputPath: options.outputPath } : {}),
 		outputMode: options.outputMode ?? "inline",
 		...(options.structuredOutput ? { structuredOutputSchema: options.structuredOutput.schema } : {}),
@@ -1811,17 +1802,7 @@ async function runSyncCompletionInner(
 			error: "Skills not found: pi-subagents",
 		}, options.context));
 	}
-	let systemPrompt = agent.systemPrompt?.trim() || "";
-	if (resolvedSkills.length > 0) {
-		const skillInjection = buildSkillInjection(resolvedSkills);
-		systemPrompt = systemPrompt ? `${systemPrompt}\n\n${skillInjection}` : skillInjection;
-	}
-	const memoryInjection = buildAgentMemoryInjection(agent, skillCwd);
-	if (memoryInjection) {
-		systemPrompt = systemPrompt ? `${systemPrompt}\n\n${memoryInjection}` : memoryInjection;
-	}
-	systemPrompt = appendAgentRefinementOverlay(systemPrompt, { cwd: skillCwd, agentName });
-	systemPrompt = injectOutputPathSystemPrompt(systemPrompt, options.outputPath, agent);
+	const systemPrompt = buildEffectiveSystemPrompt({ agent, resolvedSkills, cwd: skillCwd, ...(options.outputPath ? { outputPath: options.outputPath } : {}) });
 
 	const candidates = buildModelCandidates(
 		options.modelOverride ?? agent.model,

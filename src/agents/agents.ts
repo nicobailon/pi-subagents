@@ -181,6 +181,12 @@ export interface AgentConfig {
 	override?: BuiltinAgentOverrideInfo;
 	modelSource?: AgentModelSourceInfo;
 	maxThinking?: ThinkingLevel;
+	/**
+	 * Digest of the parsed definition, set when a runtime overlay such as the
+	 * Intercom bridge rewrites launch-affecting fields. Launch identity reads
+	 * this instead of re-hashing the overlaid copy.
+	 */
+	definitionDigest?: string;
 }
 
 type ProjectRootResolution = "nearest" | "git-root";

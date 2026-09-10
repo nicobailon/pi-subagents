@@ -307,7 +307,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		try {
 			const discovered = discoverAgents(tempDir).agents.find((agent) => agent.name === agentName);
 			assert.ok(discovered, "expected temporary agent definition to be discovered");
-			const preflight = await resolveSubagentLaunchContract({ agent: agentName, cwd: tempDir, task, runId: "contract-preflight" });
+			// runSync and executeAsyncSingle sit below the executor step that applies the bridge.
+			const preflight = await resolveSubagentLaunchContract({ agent: agentName, cwd: tempDir, task, runId: "contract-preflight", intercomBridge: { mode: "off" } });
 			assert.equal(preflight.ok, true);
 			assert.ok(preflight.contract.tools.extensionArgs.some((entry) => entry.endsWith(path.join("pi-permission-system", "src", "index.ts"))));
 
@@ -337,6 +338,40 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		}
+	});
+
+	it("matches preflight launch and definition digests for executor-launched async runs with the Intercom bridge active", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const agentName = `bridge-async-${Date.now().toString(36)}`;
+		const task = "Compare bridged async launch identity.";
+		const agentPath = path.join(tempDir, ".pi", "agents", `${agentName}.md`);
+		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+		fs.writeFileSync(agentPath, `---\nname: ${agentName}\ndescription: Bridged async worker\ntools:\n  - read\ncompletionGuard: false\n---\nAnswer from the task only.\n`, "utf-8");
+		const discovered = discoverAgents(tempDir).agents.find((agent) => agent.name === agentName);
+		assert.ok(discovered, "expected temporary agent definition to be discovered");
+
+		const preflight = await resolveSubagentLaunchContract({ agent: agentName, cwd: tempDir, task, runId: "bridged-async" });
+		assert.equal(preflight.ok, true);
+		if (!preflight.ok) return;
+		assert.deepEqual(preflight.contract.intercomBridge, { mode: "always", active: true });
+		assert.ok(preflight.contract.tools.effectiveAllowlist.includes("contact_supervisor"));
+
+		mockPi.onCall({ output: "bridged async done" });
+		const launch = await makeAsyncExecutor([discovered]).execute(
+			"bridged-async-launch",
+			{ agent: agentName, task, async: true, runId: "bridged-async", acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		) as AsyncExecutionResult;
+		assert.equal(launch.isError, undefined, launch.content?.[0]?.text);
+		assert.ok(launch.details.asyncId);
+		assert.equal(launch.details.launchContractDigest, preflight.contract.launchContractDigest);
+
+		// launchContractDigest embeds the definition digest, so equality here also
+		// proves the async path hashed the parsed definition, not the bridged copy.
+		const payload = await readAsyncPayload(launch.details.asyncId);
+		assert.equal(payload.launchContractDigest, preflight.contract.launchContractDigest);
+		assert.equal(payload.results[0]?.launchContractDigest, preflight.contract.launchContractDigest);
 	});
 
 	it("persists the actual launch digest in async status and result metadata", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentConfig } from "../agents/agents.ts";
+import { agentDefinitionDigest } from "../shared/launch-contract.ts";
 import type { ExtensionConfig, IntercomBridgeConfig, IntercomBridgeMode } from "../shared/types.ts";
 import { getAgentDir } from "../shared/utils.ts";
 
@@ -18,9 +19,13 @@ function defaultSubagentConfigDir(agentDir = defaultAgentDir()): string {
 const DEFAULT_INTERCOM_TARGET_PREFIX = "subagent-chat";
 export const PI_INTERCOM_SESSION_ID_ENV = "PI_INTERCOM_SESSION_ID";
 export const INTERCOM_BRIDGE_MARKER = "Intercom orchestration channel:";
+const ORCHESTRATOR_TARGET_PLACEHOLDER = "{orchestratorTarget}";
+// The default template must stay session-independent: the child reads the
+// supervisor target from its runtime config, and a prompt that names the
+// parent session would make the launch digest vary per session (#2127).
 const DEFAULT_INTERCOM_BRIDGE_TEMPLATE = `The inherited thread is reference-only. Do not continue that conversation or send questions, status updates, or completion handoffs to the supervisor in normal assistant text.
 
-Use contact_supervisor first. It resolves the supervisor session "{orchestratorTarget}" and run metadata automatically.
+Use contact_supervisor first. It resolves the supervisor session and run metadata automatically.
 - Need a decision, blocked, approval, or product/API/scope ambiguity: contact_supervisor({ reason: "need_decision", message: "<question>" })
 - Need structured supervisor input rather than a freeform reply: contact_supervisor({ reason: "interview_request", message: "<what input is needed>", interview: { title: "...", questions: [] } })
 - After contact_supervisor with reason "need_decision" or "interview_request", stay alive and continue only after the reply arrives. Do not finish your final response with a choose-one question.
@@ -36,6 +41,32 @@ export interface IntercomBridgeState {
 	orchestratorTarget?: string;
 	extensionDir: string;
 	instruction: string;
+	/** True when the instruction template names the supervisor session, which ties the child prompt to the parent session. */
+	interpolatesOrchestratorTarget: boolean;
+}
+
+export type IntercomBridgeConfigValidation =
+	| { ok: true; value: IntercomBridgeConfig }
+	| { ok: false; error: string };
+
+/** Validates untrusted bridge config from descriptors or delegation requests; `label` prefixes each error. */
+export function validateIntercomBridgeConfig(value: unknown, label: string): IntercomBridgeConfigValidation {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return { ok: false, error: `${label} must be an object.` };
+	const bridge = value as Record<string, unknown>;
+	for (const field of Object.keys(bridge)) {
+		if (field !== "mode" && field !== "instructionFile" && field !== "resultDelivery") return { ok: false, error: `${label}.${field} is not supported.` };
+	}
+	if (bridge.mode !== undefined && bridge.mode !== "off" && bridge.mode !== "fork-only" && bridge.mode !== "always") return { ok: false, error: `${label}.mode is invalid.` };
+	if (bridge.instructionFile !== undefined && typeof bridge.instructionFile !== "string") return { ok: false, error: `${label}.instructionFile must be a string.` };
+	if (bridge.resultDelivery !== undefined && typeof bridge.resultDelivery !== "boolean") return { ok: false, error: `${label}.resultDelivery must be a boolean.` };
+	return {
+		ok: true,
+		value: {
+			...(bridge.mode !== undefined ? { mode: bridge.mode as IntercomBridgeMode } : {}),
+			...(bridge.instructionFile !== undefined ? { instructionFile: bridge.instructionFile as string } : {}),
+			...(bridge.resultDelivery !== undefined ? { resultDelivery: bridge.resultDelivery as boolean } : {}),
+		},
+	};
 }
 
 export interface IntercomBridgeDiagnostic {
@@ -114,7 +145,7 @@ function resolveInstructionTemplate(instructionFile: string, settingsDir: string
 }
 
 function buildIntercomBridgeInstruction(orchestratorTarget: string, template: string): string {
-	const instruction = template.replaceAll("{orchestratorTarget}", orchestratorTarget).trim();
+	const instruction = template.replaceAll(ORCHESTRATOR_TARGET_PLACEHOLDER, orchestratorTarget).trim();
 	if (instruction.startsWith(INTERCOM_BRIDGE_MARKER)) return instruction;
 	return `${INTERCOM_BRIDGE_MARKER}\n${instruction}`;
 }
@@ -149,24 +180,34 @@ export function resolveIntercomBridge(input: ResolveIntercomBridgeInput): Interc
 	const orchestratorTarget = input.orchestratorTarget?.trim();
 	const agentDir = path.resolve(input.agentDir ?? defaultAgentDir());
 	const settingsDir = path.resolve(input.settingsDir ?? defaultSubagentConfigDir(agentDir));
-	const defaultInstruction = buildIntercomBridgeInstruction(
-		orchestratorTarget || "{orchestratorTarget}",
-		DEFAULT_INTERCOM_BRIDGE_TEMPLATE,
-	);
 	const reason = inactiveReason(mode, input.context, orchestratorTarget);
 	if (reason || !orchestratorTarget) {
-		return { active: false, mode, resultDelivery: config.resultDelivery, extensionDir: NATIVE_INTERCOM_EXTENSION_DIR, instruction: defaultInstruction };
+		return {
+			active: false,
+			mode,
+			resultDelivery: config.resultDelivery,
+			extensionDir: NATIVE_INTERCOM_EXTENSION_DIR,
+			instruction: buildIntercomBridgeInstruction(ORCHESTRATOR_TARGET_PLACEHOLDER, DEFAULT_INTERCOM_BRIDGE_TEMPLATE),
+			interpolatesOrchestratorTarget: false,
+		};
 	}
+	const template = resolveInstructionTemplate(config.instructionFile, settingsDir);
 	return {
 		active: true,
 		mode,
 		resultDelivery: config.resultDelivery,
 		orchestratorTarget,
 		extensionDir: NATIVE_INTERCOM_EXTENSION_DIR,
-		instruction: buildIntercomBridgeInstruction(orchestratorTarget, resolveInstructionTemplate(config.instructionFile, settingsDir)),
+		instruction: buildIntercomBridgeInstruction(orchestratorTarget, template),
+		interpolatesOrchestratorTarget: template.includes(ORCHESTRATOR_TARGET_PLACEHOLDER),
 	};
 }
 
+/**
+ * Rewrites the launch prompt and tools for an active bridge. The parsed
+ * definition digest is captured first so launch identity keeps describing the
+ * agent file rather than this runtime overlay.
+ */
 export function applyIntercomBridgeToAgent(agent: AgentConfig, bridge: IntercomBridgeState): AgentConfig {
 	if (!bridge.active || !bridge.orchestratorTarget) return agent;
 
@@ -185,6 +226,7 @@ export function applyIntercomBridgeToAgent(agent: AgentConfig, bridge: IntercomB
 	if (tools === agent.tools && systemPrompt === agent.systemPrompt) return agent;
 	return {
 		...agent,
+		definitionDigest: agentDefinitionDigest(agent),
 		tools,
 		systemPrompt,
 	};

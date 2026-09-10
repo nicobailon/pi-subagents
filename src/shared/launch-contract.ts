@@ -1,10 +1,14 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import type { AgentConfig } from "../agents/agents.ts";
+import type { PiLaunchToolPlan } from "../runs/shared/child-tool-plan.ts";
 import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
+import type { OutputMode } from "./types.ts";
 
 export const AGENT_DEFINITION_PROJECTION_VERSION = 1 as const;
-export const LAUNCH_BINDING_PROJECTION_VERSION = 1 as const;
+// v2: the Intercom bridge prompt and tools are part of the binding on every
+// path, and the bridge text no longer names the parent session.
+export const LAUNCH_BINDING_PROJECTION_VERSION = 2 as const;
 
 function stableJson(value: unknown): string {
 	if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
@@ -75,8 +79,9 @@ export function projectAgentDefinition(agent: AgentConfig): Record<string, unkno
 	};
 }
 
+/** Digest of the parsed definition; a runtime overlay that already captured it wins over re-hashing the overlaid copy. */
 export function agentDefinitionDigest(agent: AgentConfig): string {
-	return stableJsonDigest(projectAgentDefinition(agent));
+	return agent.definitionDigest ?? stableJsonDigest(projectAgentDefinition(agent));
 }
 
 export interface LaunchBindingInput {
@@ -135,4 +140,59 @@ export function projectLaunchBinding(input: LaunchBindingInput): Record<string, 
 
 export function launchBindingDigest(input: LaunchBindingInput): string {
 	return stableJsonDigest(projectLaunchBinding(input));
+}
+
+export interface LaunchBindingSource {
+	/** Agent as handed to the child, including runtime-declared overlays such as the Intercom bridge. */
+	agent: AgentConfig;
+	task: string;
+	modelCandidates: string[];
+	fast?: boolean;
+	thinking?: string;
+	/** Effective child system prompt before runtime acceptance prose. */
+	systemPrompt: string;
+	skills: string[];
+	toolPlan: Pick<PiLaunchToolPlan, "effectiveToolAllowlist" | "excludeTools" | "extensionArgs" | "effectiveMcpTools">;
+	outputPath?: string;
+	outputMode: OutputMode;
+	structuredOutputSchema?: unknown;
+	extensionBindings?: ExtensionBindings;
+}
+
+export interface LaunchBinding {
+	definitionDigest: string;
+	launchContractDigest: string;
+}
+
+/**
+ * Single assembly point for launch identity. Preflight and every execution
+ * path feed the same resolved inputs here, so what is hashed cannot drift
+ * between them.
+ */
+export function resolveLaunchBinding(source: LaunchBindingSource): LaunchBinding {
+	const definitionDigest = agentDefinitionDigest(source.agent);
+	return {
+		definitionDigest,
+		launchContractDigest: launchBindingDigest({
+			definitionDigest,
+			task: source.task,
+			modelCandidates: source.modelCandidates,
+			...(source.fast !== undefined ? { fast: source.fast } : {}),
+			...(source.thinking ? { thinking: source.thinking } : {}),
+			systemPrompt: source.systemPrompt,
+			systemPromptMode: source.agent.systemPromptMode,
+			inheritProjectContext: source.agent.inheritProjectContext,
+			inheritGlobalContext: source.agent.inheritGlobalContext,
+			inheritSkills: source.agent.inheritSkills,
+			skills: source.skills,
+			tools: source.toolPlan.effectiveToolAllowlist,
+			...(source.toolPlan.excludeTools.length > 0 ? { excludeTools: source.toolPlan.excludeTools } : {}),
+			extensions: source.toolPlan.extensionArgs,
+			mcpDirectTools: source.toolPlan.effectiveMcpTools,
+			...(source.outputPath ? { outputPath: source.outputPath } : {}),
+			outputMode: source.outputMode,
+			...(source.structuredOutputSchema ? { structuredOutputSchema: source.structuredOutputSchema } : {}),
+			...(source.extensionBindings ? { extensionBindings: source.extensionBindings } : {}),
+		}),
+	};
 }

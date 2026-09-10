@@ -126,8 +126,10 @@ Project prompt.
 			assert.deepEqual(result.contract.skills.requested, ["project-skill"]);
 			assert.equal(result.contract.skills.resolved[0]?.name, "project-skill");
 			assert.deepEqual(result.contract.tools.effectiveAllowlist, ["read"]);
-			assert.deepEqual(result.contract.tools.capabilityAudit?.removedTools, ["write"]);
+			// The bridge adds contact_supervisor before the ceiling applies, exactly as execution does.
+			assert.deepEqual(result.contract.tools.capabilityAudit?.removedTools, ["write", "contact_supervisor"]);
 			assert.equal(result.contract.tools.capabilityAudit?.removedExtensionCount, 1);
+			assert.deepEqual(result.contract.intercomBridge, { mode: "always", active: true });
 			assert.equal(result.contract.tools.disableAmbientExtensions, true);
 			assert.equal(result.contract.roots.sessionFile, path.join(sessionRoot, "run-123", "run-0", "session.jsonl"));
 			assert.equal(result.contract.roots.outputPath, path.join(TEMP_ARTIFACTS_DIR, "outputs", "run-123", "report.md"));
@@ -827,7 +829,7 @@ Project prompt.
 		assert.equal(result.ok, true);
 		assert.equal(result.contract.context, "fork");
 		assert.ok(result.contract.diagnostics.some((diagnostic) => diagnostic.code === "host_required"));
-		assert.deepEqual(result.contract.tools.declaredBuiltin, ["read", "subagent"]);
+		assert.deepEqual(result.contract.tools.declaredBuiltin, ["read", "subagent", "contact_supervisor"]);
 		assert.equal(result.contract.tools.explicitAllowlist, true);
 		assert.equal(result.contract.tools.fanoutAuthorized, true);
 		assert.deepEqual(result.contract.tools.internalTools, ["structured_output"]);
@@ -857,8 +859,91 @@ Project prompt.
 		assert.equal(result.ok, true);
 		if (!result.ok) return;
 		assert.deepEqual(result.contract.tools.excludeTools, ["write", "unknown_tool"]);
-		assert.deepEqual(result.contract.tools.effectiveAllowlist, ["read"]);
+		assert.deepEqual(result.contract.tools.effectiveAllowlist, ["read", "contact_supervisor"]);
 		assert.match(result.contract.launchContractDigest, /^[a-f0-9]{64}$/);
+	});
+
+	it("binds Intercom bridge activation into launch identity without touching definition identity", async () => {
+		const cwd = path.join(tempDir, "bridge-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+tools: read
+---
+Project prompt.
+`);
+		const input = { agent: "worker", cwd, task: "Inspect" };
+
+		const base = await resolveSubagentLaunchContract(input);
+		assert.equal(base.ok, true);
+		if (!base.ok) return;
+		assert.deepEqual(base.contract.intercomBridge, { mode: "always", active: true });
+		assert.ok(base.contract.tools.effectiveAllowlist.includes("contact_supervisor"));
+		assert.equal(base.contract.diagnostics.some((diagnostic) => /orchestratorTarget/.test(diagnostic.message)), false);
+
+		// The default template never names the parent session, so a host that
+		// supplies its real target gets the same digest as one that does not.
+		const withTarget = await resolveSubagentLaunchContract({ ...input, orchestratorTarget: "subagent-chat-1234" });
+		assert.equal(withTarget.ok, true);
+		if (!withTarget.ok) return;
+		assert.equal(withTarget.contract.launchContractDigest, base.contract.launchContractDigest);
+
+		const off = await resolveSubagentLaunchContract({ ...input, intercomBridge: { mode: "off" } });
+		assert.equal(off.ok, true);
+		if (!off.ok) return;
+		assert.deepEqual(off.contract.intercomBridge, { mode: "off", active: false });
+		assert.equal(off.contract.tools.effectiveAllowlist.includes("contact_supervisor"), false);
+		assert.notEqual(off.contract.launchContractDigest, base.contract.launchContractDigest);
+		assert.equal(off.contract.agent.definitionDigest, base.contract.agent.definitionDigest);
+
+		// Inactive fork-only for a fresh launch hashes exactly like off: activation, not the mode label, is bound.
+		const forkOnly = await resolveSubagentLaunchContract({ ...input, context: "fresh", intercomBridge: { mode: "fork-only" } });
+		assert.equal(forkOnly.ok, true);
+		if (!forkOnly.ok) return;
+		assert.deepEqual(forkOnly.contract.intercomBridge, { mode: "fork-only", active: false });
+		assert.equal(forkOnly.contract.launchContractDigest, off.contract.launchContractDigest);
+	});
+
+	it("requires a host target only when the bridge instruction file names the session", async () => {
+		const cwd = path.join(tempDir, "bridge-template-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+---
+Project prompt.
+`);
+		const instructionFile = path.join(tempDir, "bridge.md");
+		fs.writeFileSync(instructionFile, "Custom bridge for {orchestratorTarget}\nUse ask then send.\n", "utf-8");
+		const input = { agent: "worker", cwd, task: "Inspect", intercomBridge: { mode: "always" as const, instructionFile } };
+
+		const withoutTarget = await resolveSubagentLaunchContract(input);
+		assert.equal(withoutTarget.ok, true);
+		if (!withoutTarget.ok) return;
+		assert.ok(withoutTarget.contract.diagnostics.some((diagnostic) => diagnostic.code === "host_required" && /orchestratorTarget/.test(diagnostic.message)));
+
+		const withTarget = await resolveSubagentLaunchContract({ ...input, orchestratorTarget: "main" });
+		assert.equal(withTarget.ok, true);
+		if (!withTarget.ok) return;
+		assert.equal(withTarget.contract.diagnostics.some((diagnostic) => /orchestratorTarget/.test(diagnostic.message)), false);
+		assert.notEqual(withTarget.contract.launchContractDigest, withoutTarget.contract.launchContractDigest);
+	});
+
+	it("fails closed for an invalid intercomBridge override", async () => {
+		const cwd = path.join(tempDir, "bridge-invalid-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+---
+Project prompt.
+`);
+		for (const intercomBridge of [{ mode: "loud" }, { extra: true }, "always"]) {
+			const result = await resolveSubagentLaunchContract({ agent: "worker", cwd, intercomBridge: intercomBridge as never });
+			assert.equal(result.ok, false);
+			if (!result.ok) assert.equal(result.code, "invalid_intercom_bridge");
+		}
 	});
 
 	it("falls back implicit default fork to fresh when the parent session is not forkable", async () => {

@@ -246,7 +246,8 @@ const result = await resolveSubagentLaunchContract({
 
 if (!result.ok) {
   // missing_agent, ambiguous_agent, missing_skill, denied_required_tool,
-  // invalid_artifact_dir, invalid_cwd, or unsupported_mode
+  // invalid_artifact_dir, invalid_cwd, unsupported_mode, restricted_agent,
+  // thinking_ceiling, invalid_extension_bindings, or invalid_intercom_bridge
   throw new Error(result.message);
 }
 
@@ -256,11 +257,17 @@ console.log(result.contract.digest, result.contract.tools.effectiveAllowlist);
 Preflight covers ordinary single-agent launch resolution:
 
 - Selected agent identity and shadowed candidates.
-- A parsed-definition digest, including system prompt and launch-affecting model, tool, skill, extension, output, and memory fields.
+- A parsed-definition digest, including system prompt and launch-affecting model, tool, skill, extension, output, and memory fields. Runtime overlays such as the Intercom bridge never change it.
 - Fresh/fork context, effective model and thinking, skill and tool resolution, direct MCP selections, runtime/configured extensions.
+- The resolved Intercom bridge state (`intercomBridge.mode` and `intercomBridge.active`). An active bridge appends the bridge instruction to the child prompt and adds `contact_supervisor` to a declared tool list, exactly as execution does.
 - Artifact/session paths, async lifecycle/status/result/event/process-terminal paths, package/lifecycle versions, capability-ceiling audit data, and stable digests.
 
-`launchContractDigest` is the canonical digest of the caller task, effective system prompt, model candidates, effective tools/extensions/MCP (including inherited capability ceilings), output binding, and structured-output schema that ordinary foreground and async execution report in results/status/events and metadata.
+`launchContractDigest` is the canonical digest of the caller task, effective system prompt (including an active bridge instruction), model candidates, effective tools/extensions/MCP (including inherited capability ceilings and the bridge tool), output binding, and structured-output schema that ordinary foreground and async execution report in results/status/events and metadata. Preflight and every execution path assemble it through one shared binding, so equal inputs produce equal digests.
+
+Bridge inputs:
+
+- `intercomBridge` replaces the global `intercomBridge` config for this launch, with the same semantics as the `subagent` tool and delegation overrides. Pass the same value to the launch you compare against.
+- The default bridge instruction never names the parent session, so most hosts need no further input. When the configured `instructionFile` interpolates `{orchestratorTarget}`, preflight reports a `host_required` diagnostic unless the host supplies `orchestratorTarget`; the executor derives that target from the parent session name or id.
 
 Boundaries:
 
@@ -330,6 +337,7 @@ Bounds:
 
 - Schemas are capped at 64 KiB; tasks and returned text/structured values are capped at 1 MiB, with smaller bounds on identity/configuration strings and a maximum `timeoutMs` of 2,147,483,647.
 - Structured delegation accepts `toolBudget: { hard: 0, block: "*" }` to block the first tool call and run a zero-tool leaf; ordinary model-facing/configured budgets keep their existing minimum of one.
+- `intercomBridge` optionally replaces the global bridge config for one delegation, for example `{ mode: "off" }` when no supervisor session will answer the child. Pass the same value to `resolveSubagentLaunchContract` to compare `launchContractDigest` against the terminal response.
 - The foreground bridge retains up to 8,192 exact pending-cancellation and settled-attempt identities per extension context. If either history fills, it fails closed with `unavailable_context` for later starts rather than evicting identity facts; lifecycle reset clears the bounded history.
 
 Constraints:

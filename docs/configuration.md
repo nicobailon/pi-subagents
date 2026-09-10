@@ -413,7 +413,7 @@ Controls whether subagents receive runtime coordination instructions and whether
 Fields:
 
 - `mode`: default `always`; use `fork-only` to inject only for forked runs, or `off` to disable the bridge.
-- `instructionFile`: optional Markdown template replacing the default bridge instructions. `{orchestratorTarget}` is interpolated. Relative paths resolve from `~/.pi/agent/extensions/subagent/`.
+- `instructionFile`: optional Markdown template replacing the default bridge instructions. `{orchestratorTarget}` is interpolated with the parent session target. Relative paths resolve from `~/.pi/agent/extensions/subagent/`. The default template does not name the session, because `contact_supervisor` resolves it from the child runtime config; a template that does name it ties `launchContractDigest` to the parent session, and launch-contract preflight then needs `orchestratorTarget` to match.
 - `resultDelivery`: default `false`; set `true` only when an external listener consumes `subagent:result-intercom` and acknowledges the grouped completion payload. This is optional external result delivery, not native supervisor messaging. Enabled delivery waits for acknowledgement and reports acknowledgement failures. It does not change supervisor asks or progress updates.
 
 Bridge activation requires a targetable current parent session id, which `pi-subagents` passes to children automatically. Native supervisor messaging does not require an external `pi-intercom` installation or per-agent extension allowlists: children use `contact_supervisor`, and parents use `subagent_supervisor` to inspect or reply. Agents can still use an external `intercom` tool when they explicitly request a provider that supplies it.

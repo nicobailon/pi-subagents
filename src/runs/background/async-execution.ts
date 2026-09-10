@@ -10,12 +10,12 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
-import { appendAgentRefinementOverlay } from "../../agents/agent-refinements.ts";
 import { createAtomicJsonWriter, writePrivateAtomicJson } from "../../shared/atomic-json.ts";
+import { buildEffectiveSystemPrompt } from "../shared/effective-system-prompt.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { planChildLaunch, resolveStepBehavior, suppressProgressForReadOnlyTask, type ResolvedStepBehavior } from "../shared/child-launch-plan.ts";
 import { applyThinkingSuffix, getHostBuiltinToolNames, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/child-tool-plan.ts";
-import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { applyWatchdogLaunchRules, sendRuleViolationWarning } from "../../watchdog/rules.ts";
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveExistingReadInstructionPaths, resolveExistingReadPaths, writeInitialProgressFile, type ChainStep, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
 import type { RunnerStep } from "../shared/parallel-utils.ts";
@@ -25,8 +25,7 @@ import { JITI_ALIAS_ENV, resolveHostPeerAliases } from "./runner-aliases.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { resolveNodeExecutable } from "../../shared/node-executable.ts";
 import { backgroundProcessOptions } from "../shared/background-process-options.ts";
-import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
-import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
+import { normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, PROMPT_REDACTED, resolveChildCwd } from "../../shared/utils.ts";
 import { buildModelCandidates, resolveEffectiveSubagentModel, resolveModelOrigin, resolveSubagentModelOverride, type AvailableModelInfo, type ModelOrigin, type ParentModel } from "../shared/model-fallback.ts";
 import { resolveToolTimeoutMs, toolTimeoutFromEnv } from "../shared/tool-timeout.ts";
@@ -80,7 +79,7 @@ import type { ActiveAsyncCapacityHandle } from "./active-async-capacity.ts";
 import { statusStepDescription } from "./chain-append.ts";
 import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../shared/types.ts";
 import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
-import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
+import { resolveLaunchBinding } from "../../shared/launch-contract.ts";
 import { resolvePermissionRules, type PermissionConfig } from "../shared/permissions.ts";
 import { normalizeExtensionBindings, omitExtensionBindingsEnv, type ExtensionBindings } from "../shared/extension-bindings.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
@@ -901,22 +900,13 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		);
 		if (missingSkills.includes("pi-subagents")) throw new UnavailableSubagentSkillError(UNAVAILABLE_SUBAGENT_SKILL_ERROR);
 
-		let systemPrompt = a.systemPrompt?.trim() ?? "";
-		if (resolvedSkills.length > 0) {
-			const injection = buildSkillInjection(resolvedSkills);
-			systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;
-		}
-		const memoryInjection = buildAgentMemoryInjection(a, stepCwd);
-		if (memoryInjection) {
-			systemPrompt = systemPrompt ? `${systemPrompt}\n\n${memoryInjection}` : memoryInjection;
-		}
-		systemPrompt = appendAgentRefinementOverlay(systemPrompt, { cwd: stepCwd, agentName: a.name });
+		// A namespaced parallel output is injected by the runner, not the prompt.
+		const systemPrompt = buildEffectiveSystemPrompt({ agent: a, resolvedSkills, cwd: stepCwd, ...(!namespaceOutputPath && outputPath ? { outputPath } : {}) });
 
 		const readInstructions = buildChainInstructions({ ...behavior, output: false, progress: false }, instructionCwd, false, undefined, readExistenceCwd);
 		const isFirstProgressAgent = behavior.progress && !progressPrecreated && !progressInstructionCreated;
 		if (behavior.progress) progressInstructionCreated = true;
 		const progressInstructions = buildChainInstructions({ ...behavior, output: false, reads: false }, progressDir, isFirstProgressAgent);
-		if (!namespaceOutputPath) systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath, a);
 		const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Async step (${s.agent})`);
 		if (validationError) throw new AsyncStartValidationError(validationError);
 		let taskTemplate = s.task ?? "{previous}";
@@ -1649,16 +1639,6 @@ export function executeAsyncSingle(
 		agentConfig.filePath ? path.dirname(agentConfig.filePath) : runnerCwd,
 	);
 	if (missingSkills.includes("pi-subagents")) return formatAsyncStartError("single", UNAVAILABLE_SUBAGENT_SKILL_ERROR);
-	let systemPrompt = agentConfig.systemPrompt?.trim() ?? "";
-	if (resolvedSkills.length > 0) {
-		const injection = buildSkillInjection(resolvedSkills);
-		systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;
-	}
-	const memoryInjection = buildAgentMemoryInjection(agentConfig, runnerCwd);
-	if (memoryInjection) {
-		systemPrompt = systemPrompt ? `${systemPrompt}\n\n${memoryInjection}` : memoryInjection;
-	}
-	systemPrompt = appendAgentRefinementOverlay(systemPrompt, { cwd: runnerCwd, agentName: agentConfig.name });
 
 	const inheritedNestedRoute = inheritedNestedRouteOf(ctx.childRuntime);
 	const nestedAddress = inheritedNestedRoute ? inheritedNestedParentAddressOf(ctx.childRuntime) : undefined;
@@ -1681,7 +1661,7 @@ export function executeAsyncSingle(
 
 	const effectiveOutput = normalizeSingleOutputOverride(params.output, agentConfig.output);
 	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, instructionCwd, params.outputBaseDir ?? (artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined));
-	systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath, agentConfig);
+	const systemPrompt = buildEffectiveSystemPrompt({ agent: agentConfig, resolvedSkills, cwd: runnerCwd, ...(outputPath ? { outputPath } : {}) });
 	const outputMode = params.outputMode ?? agentConfig.outputMode ?? "inline";
 	const validationError = validateFileOnlyOutputMode(outputMode, outputPath, `Async single run (${agent})`);
 	if (validationError) return formatAsyncStartError("single", validationError);
@@ -1808,24 +1788,17 @@ export function executeAsyncSingle(
 		});
 		if (contractError) return formatAsyncStartError("single", contractError);
 	}
-	const launchContractDigest = launchBindingDigest({
-		definitionDigest: agentDefinitionDigest(agentConfig),
+	const fast = params.fast ?? agentConfig.fast;
+	const launchThinking = resolveEffectiveThinking(model, effectiveThinking);
+	const { definitionDigest, launchContractDigest } = resolveLaunchBinding({
+		agent: agentConfig,
 		task,
-		...(model ? { model } : {}),
 		modelCandidates,
-		...((params.fast ?? agentConfig.fast) !== undefined ? { fast: params.fast ?? agentConfig.fast } : {}),
-		...(resolveEffectiveThinking(model, effectiveThinking) ? { thinking: resolveEffectiveThinking(model, effectiveThinking) } : {}),
-		...(thinkingCeiling ? { thinkingCeiling } : {}),
+		...(fast !== undefined ? { fast } : {}),
+		...(launchThinking ? { thinking: launchThinking } : {}),
 		systemPrompt,
-		systemPromptMode: agentConfig.systemPromptMode,
-		inheritProjectContext: agentConfig.inheritProjectContext,
-		inheritGlobalContext: agentConfig.inheritGlobalContext,
-		inheritSkills: agentConfig.inheritSkills,
 		skills: resolvedSkills.map((skill) => skill.name),
-		tools: toolPlan.effectiveToolAllowlist,
-		...(toolPlan.excludeTools.length > 0 ? { excludeTools: toolPlan.excludeTools } : {}),
-		extensions: toolPlan.extensionArgs,
-		mcpDirectTools: toolPlan.effectiveMcpTools,
+		toolPlan,
 		...(outputPath ? { outputPath } : {}),
 		outputMode,
 		...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
@@ -1954,7 +1927,7 @@ export function executeAsyncSingle(
 						waitToolEnabled: params.waitToolEnabled,
 						waitToolDefaultTimeoutMs: params.waitToolDefaultTimeoutMs,
 						...(params.agentContract ? { agentContract: params.agentContract } : {}),
-						definitionDigest: agentDefinitionDigest(agentConfig),
+						definitionDigest,
 						launchBindingTask: task,
 						launchContractDigest,
 						...(extensionBindings ? { extensionBindings } : {}),

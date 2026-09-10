@@ -11,6 +11,7 @@ import {
 	type SubagentDelegationResponse,
 	type SubagentDelegationUpdate,
 } from "../../src/api/delegation.ts";
+import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-adapters.ts";
 import { parseSubagentDelegationRequest } from "../../src/slash/delegation-request.ts";
 import {
 	registerPromptTemplateDelegationBridge,
@@ -108,6 +109,28 @@ describe("public subagent delegation contract", () => {
 		if (parsed.ok) assert.deepEqual(parsed.request.toolBudget, zeroBudget);
 		for (const soft of [0, 1]) {
 			assert.equal(parseSubagentDelegationRequest({ ...request, toolBudget: { ...zeroBudget, soft } }).ok, false);
+		}
+	});
+
+	it("accepts a per-launch intercomBridge override and forwards it to execution", () => {
+		const intercomBridge = { mode: "off" as const };
+		const parsed = parseSubagentDelegationRequest({ ...request, intercomBridge });
+		assert.equal(parsed.ok, true);
+		if (parsed.ok) {
+			assert.deepEqual(parsed.request.intercomBridge, intercomBridge);
+			assert.deepEqual(toSubagentDelegationExecutionParams(parsed.request).intercomBridge, intercomBridge);
+		}
+		assert.equal("intercomBridge" in toSubagentDelegationExecutionParams(request), false);
+		const malformed = [
+			[{ ...request, intercomBridge: { mode: "loud" } }, /intercomBridge\.mode is invalid/],
+			[{ ...request, intercomBridge: { extra: true } }, /intercomBridge\.extra is not supported/],
+			[{ ...request, intercomBridge: "off" }, /intercomBridge must be an object/],
+			[{ ...request, intercomBridge: { instructionFile: "x".repeat(1025) } }, /intercomBridge\.instructionFile exceeds 1 KiB/],
+		] as const;
+		for (const [input, expected] of malformed) {
+			const rejected = parseSubagentDelegationRequest(input);
+			assert.equal(rejected.ok, false);
+			if (!rejected.ok) assert.match(rejected.error, expected);
 		}
 	});
 
