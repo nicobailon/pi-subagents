@@ -195,7 +195,7 @@ export interface ResolvePiLaunchToolPlanInput {
 	 * repository inspection tool is among those host omissions. Intentionally
 	 * empty or ceiling-restricted allowlists are not a minimum-tool contract.
 	 */
-	hostAvailableBuiltins?: readonly string[];
+	hostToolNames?: readonly string[];
 }
 
 export interface PiLaunchToolPlan {
@@ -337,25 +337,26 @@ export function resolvePermissionSystemExtension(): string | undefined {
 }
 
 /**
- * Extract the names of builtin tools the host provides. Use this to pass
- * `hostAvailableBuiltins` to `resolvePiLaunchToolPlan` so child tool plans
- * intersect declared agent tools with what the host actually supports.
+ * Extract every tool name the host runtime has registered, whatever its source.
+ * Use this to pass `hostToolNames` to `resolvePiLaunchToolPlan` so child tool
+ * plans intersect declared agent tools with what the host actually provides.
  *
- * Returns `undefined` when builtin tool discovery fails or yields nothing,
- * so callers skip the intersection (fail-safe to allowing all declared tools).
- * This handles test mocks without proper tool registration and hosts whose
+ * Core tool names may be shadowed by extensions that re-register the same
+ * name (pi-tool-display wraps bash/grep/find/ls/edit/write, pi-hashline-edit-pro
+ * wraps read): their sourceInfo.source is the extension, not "builtin", but the
+ * child launch resolves tools by name, so the name is what matters. Extension
+ * tool names (mcp__slack, web_search, ...) are reported too; the tool plan
+ * decides whether the child will actually load them.
+ *
+ * Returns `undefined` when tool discovery fails or yields nothing, so callers
+ * skip the intersection (fail-safe to allowing all declared tools). This
+ * handles test mocks without proper tool registration and hosts whose
  * getAllTools() throws before extensions load.
  */
-export function getHostBuiltinToolNames(pi: Pick<ExtensionAPI, "getAllTools">): string[] | undefined {
+export function getHostToolNames(pi: Pick<ExtensionAPI, "getAllTools">): string[] | undefined {
 	try {
-		const builtins = pi
-			.getAllTools()
-			.filter((tool) => {
-				const source = (tool.sourceInfo as { source?: string } | undefined)?.source;
-				return source === "builtin" || (source === "auto" && PI_BUILTIN_TOOL_NAMES.has(tool.name));
-			})
-			.map((tool) => tool.name);
-		return builtins.length > 0 ? builtins : undefined;
+		const names = pi.getAllTools().map((tool) => tool.name);
+		return names.length > 0 ? names : undefined;
 	} catch {
 		return undefined;
 	}
@@ -373,9 +374,9 @@ export function resolvePiLaunchToolPlan(
 			? undefined
 			: new Set(capabilityCeiling.allowedTools);
 	const hostAvailableSet =
-		input.hostAvailableBuiltins === undefined
+		input.hostToolNames === undefined
 			? undefined
-			: new Set(input.hostAvailableBuiltins);
+			: new Set(input.hostToolNames);
 	const requestedBuiltinTools =
 		input.tools?.filter(
 			(tool) =>
@@ -404,12 +405,25 @@ export function resolvePiLaunchToolPlan(
 					? ["read", ...requestedBuiltinTools]
 					: requestedBuiltinTools
 				).filter((tool) => !allowedToolSet || allowedToolSet.has(tool));
-	const declaredBuiltinTools = hostAvailableSet
-		? ceilingFilteredBuiltinTools.filter((tool) => hostAvailableSet.has(tool) || NATIVE_COORDINATION_TOOL_NAMES.has(tool))
-		: ceilingFilteredBuiltinTools;
-	const unavailableHostBuiltins = hostAvailableSet
-		? ceilingFilteredBuiltinTools.filter((tool) => !hostAvailableSet.has(tool) && !NATIVE_COORDINATION_TOOL_NAMES.has(tool))
-		: [];
+	// Core tool slots (read, bash, ...) resolve by name no matter which provider
+	// wins the registration: pi core ships them, and extensions that re-register
+	// a core name shadow it with sourceInfo.source set to the extension. When a
+	// launch denies extensions the wrapper is gone, but pi core still provides
+	// the slot, so the name stays resolvable either way. Extension tool names
+	// (mcp__slack, web_search, ...) only reach the child when it loads the same
+	// ambient extension set, so they stay pruned for launches that deny extensions.
+	const childInheritsAmbientExtensions = capabilityCeiling?.denyExtensions !== true && input.extensions === undefined;
+	const resolvesInChild = (tool: string): boolean =>
+		NATIVE_COORDINATION_TOOL_NAMES.has(tool)
+		|| hostAvailableSet !== undefined
+			&& hostAvailableSet.has(tool)
+			&& (PI_BUILTIN_TOOL_NAMES.has(tool) || childInheritsAmbientExtensions);
+	const declaredBuiltinTools = hostAvailableSet === undefined
+		? ceilingFilteredBuiltinTools
+		: ceilingFilteredBuiltinTools.filter((tool) => resolvesInChild(tool));
+	const unavailableHostBuiltins = hostAvailableSet === undefined
+		? []
+		: ceilingFilteredBuiltinTools.filter((tool) => !resolvesInChild(tool));
 	const excludeTools = [...new Set((input.excludeTools ?? []).map((tool) => tool.trim()).filter(Boolean))];
 	const excludedToolSet = new Set(excludeTools);
 	const effectiveDeclaredBuiltinTools = declaredBuiltinTools.filter((tool) => !excludedToolSet.has(tool));

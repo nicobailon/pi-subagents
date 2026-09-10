@@ -88,7 +88,7 @@ export interface SubagentLaunchContractInput {
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	inheritedCapabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	/** Builtin tool names the host runtime provides; used to intersect agent-declared tools. */
-	hostAvailableBuiltins?: readonly string[];
+	hostToolNames?: readonly string[];
 	/** Per-launch bridge config; replaces the global `intercomBridge` config exactly as the tool and delegation overrides do. */
 	intercomBridge?: IntercomBridgeConfig;
 	/**
@@ -415,7 +415,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			capabilityCeiling: effectiveCapabilityCeiling,
 			agentName: agent.name,
 			permissionRules,
-			hostAvailableBuiltins: input.hostAvailableBuiltins,
+			hostToolNames: input.hostToolNames,
 		});
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);

@@ -118,7 +118,7 @@ export interface BuildInProcessChildLaunchInput {
 	 * cannot provide. Review/scout lanes fail closed when a requested,
 	 * still-permitted repository inspection tool is missing from that set.
 	 */
-	hostAvailableBuiltins?: readonly string[];
+	hostToolNames?: readonly string[];
 }
 
 export interface InProcessChildCapture {
@@ -200,7 +200,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		agentName: input.childAgentName,
 		permissionRules: input.permissionRules,
 		runtimeSnapshotHost: input.runtimeSnapshotHost,
-		hostAvailableBuiltins: input.hostAvailableBuiltins,
+		hostToolNames: input.hostToolNames,
 	});
 
 	const inherited = input.inherited;

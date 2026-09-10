@@ -38,7 +38,7 @@ try {
 	]) {
 		const launch = buildInProcessChildLaunch({
 			host: "runner", cwd: process.cwd(), childAgentName: "coordinator-smoke", childIndex: 0,
-			sessionEnabled: false, model: "pi085-smoke/local", tools, hostAvailableBuiltins: ["read"],
+			sessionEnabled: false, model: "pi085-smoke/local", tools, hostToolNames: ["read"],
 			runId: `coordination-${tools.length}`, parentSessionId: "root-A", orchestratorIntercomTarget: "root-A",
 			extensions: [`${process.cwd()}/pi085-extension.ts`],
 			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,

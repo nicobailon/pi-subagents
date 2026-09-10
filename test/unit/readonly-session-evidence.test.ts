@@ -26,7 +26,7 @@ import { releaseActiveRunIndex, updateActiveRunIndex } from "../../src/runs/back
 import { resolveChildWatchdogConfig } from "../../src/watchdog/child-status.ts";
 import { DEFAULT_WATCHDOG_CONFIG } from "../../src/watchdog/settings.ts";
 import { DEFAULT_CONTROL_CONFIG } from "../../src/runs/shared/subagent-control.ts";
-import { getHostBuiltinToolNames } from "../../src/runs/shared/child-tool-plan.ts";
+import { getHostToolNames } from "../../src/runs/shared/child-tool-plan.ts";
 
 function launch(cwd: string): ChildSessionLaunch & { storage: Extract<ChildSessionLaunch["storage"], { kind: "file" }> } {
 	return { cwd, storage: { kind: "file", sessionFile: join(cwd, "session.jsonl") }, model: "baseten/model-a", tools: ["read"], extensionPaths: [],
@@ -213,12 +213,12 @@ export default function (pi) {
 		l.ambientExtensions = true;
 		const host = await factory.create({ ...l, storage: { kind: "memory" }, tools: ["read", "grep", "find", "ls", "bash"] });
 		assert.equal(captured[0]?.session.getAllTools().find((tool) => tool.name === "read")?.sourceInfo.source, "auto");
-		const discovered = getHostBuiltinToolNames(captured[0]!.session);
+		const discovered = getHostToolNames(captured[0]!.session);
 		await host.dispose();
 
 		const launch = buildInProcessChildLaunch({
 			cwd: l.cwd, host: "runner", sessionEnabled: false, model: l.model,
-			tools: ["read"], hostAvailableBuiltins: discovered, allowNestedSubagents: false, waitToolEnabled: false,
+			tools: ["read"], hostToolNames: discovered, allowNestedSubagents: false, waitToolEnabled: false,
 			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
 			parentSessionId: "tool-proof-parent", runId: "auto-builtin-override", childAgentName: "reviewer", childIndex: 0,
 			systemPrompt: "Read marker.txt exactly once.",

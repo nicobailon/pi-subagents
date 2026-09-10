@@ -864,7 +864,7 @@ describe("scripted workflow runtime", () => {
 					resolvePiLaunchToolPlan({
 						agentName: "reviewer",
 						tools: ["read", "grep", "find", "ls"],
-						hostAvailableBuiltins: [],
+						hostToolNames: [],
 					});
 					return { key, ok: true, output: "Unable to inspect the repository.", artifactPaths: [] };
 				},

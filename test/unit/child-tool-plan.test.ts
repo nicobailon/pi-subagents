@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { getHostBuiltinToolNames, resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
+import { getHostToolNames, resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
 import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
 import { MCP_RUNTIME_SNAPSHOT_EVENT, MCP_RUNTIME_SNAPSHOT_VERSION, type McpRuntimeSnapshotHost } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
 
@@ -37,7 +37,7 @@ describe("child tool plan host builtin intersection", () => {
 	it("intersects declared tools with host-available builtins", () => {
 		const plan = resolvePiLaunchToolPlan({
 			tools: ["read", "grep", "find", "ls", "bash"],
-			hostAvailableBuiltins: ["ipython", "bash"],
+			hostToolNames: ["ipython", "bash"],
 		});
 		assert.deepEqual(plan.declaredBuiltinTools, ["bash"]);
 		assert.deepEqual(plan.unavailableHostBuiltins, ["read", "grep", "find", "ls"]);
@@ -46,7 +46,7 @@ describe("child tool plan host builtin intersection", () => {
 
 	it("keeps requested native coordination tools through host builtin filtering, but not ceilings or exclusions", () => {
 		const tools = ["read", "subagent", "contact_supervisor", "subagent_supervisor"];
-		const input = { tools, hostAvailableBuiltins: ["read"] };
+		const input = { tools, hostToolNames: ["read"] };
 		const plan = resolvePiLaunchToolPlan(input);
 		assert.deepEqual(plan.effectiveToolAllowlist, tools);
 		assert.deepEqual(plan.requiredChildTools, ["read", "subagent", "subagent_supervisor"]);
@@ -71,20 +71,20 @@ describe("child tool plan host builtin intersection", () => {
 			{ tools: ["read", "subagent", "subagent_supervisor"], excludeTools: ["subagent"] },
 			{ tools: ["read", "subagent", "subagent_supervisor"], capabilityCeiling: { version: 1 as const, allowedTools: ["read", "subagent_supervisor"], sources: ["test"] } },
 		]) {
-			assert.throws(() => resolvePiLaunchToolPlan({ ...input, hostAvailableBuiltins: ["read"] }), /subagent_supervisor.*requires fanout authorization/);
+			assert.throws(() => resolvePiLaunchToolPlan({ ...input, hostToolNames: ["read"] }), /subagent_supervisor.*requires fanout authorization/);
 		}
 	});
 
 	it("keeps all tools when host provides them", () => {
 		const plan = resolvePiLaunchToolPlan({
 			tools: ["read", "grep", "bash"],
-			hostAvailableBuiltins: ["read", "grep", "bash", "write", "find"],
+			hostToolNames: ["read", "grep", "bash", "write", "find"],
 		});
 		assert.deepEqual(plan.declaredBuiltinTools, ["read", "grep", "bash"]);
 		assert.deepEqual(plan.unavailableHostBuiltins, []);
 	});
 
-	it("works without hostAvailableBuiltins (standard Pi hosts)", () => {
+	it("works without hostToolNames (standard Pi hosts)", () => {
 		const plan = resolvePiLaunchToolPlan({
 			tools: ["read", "grep", "find", "ls"],
 		});
@@ -92,12 +92,52 @@ describe("child tool plan host builtin intersection", () => {
 		assert.deepEqual(plan.unavailableHostBuiltins, []);
 	});
 
+	describe("shadowed core tools and extension tool names", () => {
+		const tools = ["read", "web_search", "fetch_content"];
+		const hostToolNames = ["read", "web_search", "fetch_content", "source_check"];
+
+		it("keeps core tool names a package wrapper shadows", () => {
+			// pi-tool-display and pi-hashline-edit-pro re-register core names, so the
+			// host reports them with the extension as source; the slot still resolves
+			const plan = resolvePiLaunchToolPlan({ tools: ["read", "bash"], hostToolNames: ["read", "bash"] });
+			assert.deepEqual(plan.effectiveToolAllowlist, ["read", "bash"]);
+			assert.deepEqual(plan.unavailableHostBuiltins, []);
+		});
+
+		it("keeps extension tool names when the child inherits ambient extensions", () => {
+			const plan = resolvePiLaunchToolPlan({ tools, hostToolNames });
+			assert.deepEqual(plan.declaredBuiltinTools, tools);
+			assert.deepEqual(plan.unavailableHostBuiltins, []);
+		});
+
+		it("prunes extension tool names when a capability ceiling denies extensions", () => {
+			const plan = resolvePiLaunchToolPlan({
+				tools,
+				hostToolNames,
+				capabilityCeiling: { version: 1 as const, denyExtensions: true, sources: ["test"] },
+			});
+			assert.deepEqual(plan.declaredBuiltinTools, ["read"]);
+			assert.deepEqual(plan.unavailableHostBuiltins, ["web_search", "fetch_content"]);
+		});
+
+		it("prunes extension tool names when the launch sets an explicit extension list", () => {
+			const plan = resolvePiLaunchToolPlan({ tools, hostToolNames, extensions: [] });
+			assert.deepEqual(plan.declaredBuiltinTools, ["read"]);
+			assert.deepEqual(plan.unavailableHostBuiltins, ["web_search", "fetch_content"]);
+		});
+
+		it("still prunes names the host does not have at all", () => {
+			const plan = resolvePiLaunchToolPlan({ tools: ["read", "bash"], hostToolNames: ["read"] });
+			assert.deepEqual(plan.declaredBuiltinTools, ["read"]);
+			assert.deepEqual(plan.unavailableHostBuiltins, ["bash"]);
+		});
+	});
 	it("fails when requireReadTool is true but host does not provide read", () => {
 		assert.throws(
 			() => resolvePiLaunchToolPlan({
 				tools: ["bash"],
 				requireReadTool: true,
-				hostAvailableBuiltins: ["ipython", "bash"],
+				hostToolNames: ["ipython", "bash"],
 				agentName: "oracle",
 			}),
 			/Host runtime does not provide required tool 'read' for agent 'oracle'/,
@@ -106,7 +146,7 @@ describe("child tool plan host builtin intersection", () => {
 			() => resolvePiLaunchToolPlan({
 				tools: ["bash"],
 				requireReadTool: true,
-				hostAvailableBuiltins: ["bash"],
+				hostToolNames: ["bash"],
 			}),
 			/Host runtime does not provide required tool 'read'/,
 		);
@@ -115,7 +155,7 @@ describe("child tool plan host builtin intersection", () => {
 	it("includes unavailableHostBuiltins in capability audit", () => {
 		const plan = resolvePiLaunchToolPlan({
 			tools: ["read", "bash"],
-			hostAvailableBuiltins: ["bash"],
+			hostToolNames: ["bash"],
 			capabilityCeiling: {
 				version: 1,
 				allowedTools: ["read", "bash"],
@@ -129,7 +169,7 @@ describe("child tool plan host builtin intersection", () => {
 	it("respects both capability ceiling and host availability", () => {
 		const plan = resolvePiLaunchToolPlan({
 			tools: ["read", "grep", "bash", "write"],
-			hostAvailableBuiltins: ["read", "grep", "bash"],
+			hostToolNames: ["read", "grep", "bash"],
 			capabilityCeiling: {
 				version: 1,
 				allowedTools: ["read", "bash"],
@@ -144,7 +184,7 @@ describe("child tool plan host builtin intersection", () => {
 	it("tracks tools removed by host even when ceiling allows them", () => {
 		const plan = resolvePiLaunchToolPlan({
 			tools: ["read", "grep", "bash"],
-			hostAvailableBuiltins: ["bash"],
+			hostToolNames: ["bash"],
 			capabilityCeiling: {
 				version: 1,
 				allowedTools: ["read", "grep", "bash"],
@@ -157,8 +197,8 @@ describe("child tool plan host builtin intersection", () => {
 	});
 });
 
-describe("production launch path supplies hostAvailableBuiltins", () => {
-	it("buildInProcessChildLaunch passes hostAvailableBuiltins to tool plan resolution", () => {
+describe("production launch path supplies hostToolNames", () => {
+	it("buildInProcessChildLaunch passes hostToolNames to tool plan resolution", () => {
 		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-launch-builtins-"));
 		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 		process.env.PI_CODING_AGENT_DIR = cwd;
@@ -173,7 +213,7 @@ describe("production launch path supplies hostAvailableBuiltins", () => {
 				inheritGlobalContext: false,
 				inheritSkills: false,
 				tools: ["read", "grep", "bash"],
-				hostAvailableBuiltins: ["ipython", "bash"],
+				hostToolNames: ["ipython", "bash"],
 			});
 			assert.deepEqual(launch.toolPlan.declaredBuiltinTools, ["bash"]);
 			assert.deepEqual(launch.toolPlan.unavailableHostBuiltins, ["read", "grep"]);
@@ -192,7 +232,7 @@ describe("production launch path supplies hostAvailableBuiltins", () => {
 					inheritGlobalContext: false,
 					inheritSkills: false,
 					tools: ["read", "grep", "bash"],
-					hostAvailableBuiltins: ["ipython", "bash"],
+					hostToolNames: ["ipython", "bash"],
 				}),
 				/Agent 'scout': tool contract could not be satisfied.*permitted required repository tools \[read, grep\].*lane infrastructure failure/,
 			);
@@ -203,7 +243,7 @@ describe("production launch path supplies hostAvailableBuiltins", () => {
 		}
 	});
 
-	it("getHostBuiltinToolNames extracts builtin tools from ExtensionAPI", () => {
+	it("getHostToolNames extracts every registered tool name from ExtensionAPI", () => {
 		const mockPi = {
 			getAllTools: () => [
 				{ name: "read", sourceInfo: { source: "builtin" } },
@@ -213,26 +253,26 @@ describe("production launch path supplies hostAvailableBuiltins", () => {
 				{ name: "mcp-tool", sourceInfo: { source: "mcp" } },
 			],
 		};
-		const builtins = getHostBuiltinToolNames(mockPi);
-		assert.deepEqual(builtins, ["read", "bash"]);
+		const names = getHostToolNames(mockPi);
+		assert.deepEqual(names, ["read", "bash", "custom-auto-tool", "custom-tool", "mcp-tool"]);
 	});
 
-	it("getHostBuiltinToolNames returns undefined on failure or empty results", () => {
+	it("getHostToolNames returns undefined on failure or empty results", () => {
 		const throwingPi = {
 			getAllTools: () => { throw new Error("Not available"); },
 		};
-		assert.equal(getHostBuiltinToolNames(throwingPi), undefined);
+		assert.equal(getHostToolNames(throwingPi), undefined);
 
 		const emptyPi = {
 			getAllTools: () => [],
 		};
-		assert.equal(getHostBuiltinToolNames(emptyPi), undefined);
+		assert.equal(getHostToolNames(emptyPi), undefined);
 
-		const noBuiltinsPi = {
+		const extensionOnlyPi = {
 			getAllTools: () => [
 				{ name: "custom-tool", sourceInfo: { source: "extension" } },
 			],
 		};
-		assert.equal(getHostBuiltinToolNames(noBuiltinsPi), undefined);
+		assert.deepEqual(getHostToolNames(extensionOnlyPi), ["custom-tool"]);
 	});
 });

@@ -1082,7 +1082,7 @@ Project prompt.
 		const result = await resolveSubagentLaunchContract({
 			agent: "scout",
 			cwd,
-			hostAvailableBuiltins: [],
+			hostToolNames: [],
 		});
 		assert.equal(result.ok, false);
 		assert.equal(result.code, "denied_required_tool");

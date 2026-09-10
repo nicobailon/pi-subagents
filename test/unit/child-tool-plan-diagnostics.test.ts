@@ -9,7 +9,7 @@ describe("public child tool plan diagnostics", () => {
 			() => resolvePiLaunchToolPlan({
 				agentName: "scout",
 				tools: ["read", "grep", "find", "ls", "bash"],
-				hostAvailableBuiltins: [],
+				hostToolNames: [],
 			}),
 			(error: unknown) => {
 				assert.ok(error instanceof Error);
@@ -30,7 +30,7 @@ describe("public child tool plan diagnostics", () => {
 			() => resolvePiLaunchToolPlan({
 				agentName: "reviewer",
 				tools: ["read", "grep", "bash", "write"],
-				hostAvailableBuiltins: ["bash", "write"],
+				hostToolNames: ["bash", "write"],
 				excludeTools: ["write"],
 				capabilityCeiling: { version: 1, allowedTools: ["read", "bash", "write"], denyExtensions: false, sources: ["plan-mode"] },
 				inheritedCapabilityCeiling: { version: 1, allowedTools: ["read", "grep", "write"], denyExtensions: false, sources: ["parent-policy"] },
@@ -51,7 +51,7 @@ describe("public child tool plan diagnostics", () => {
 		const plan = resolvePiLaunchToolPlan({
 			agentName: "worker",
 			tools: ["read", "grep", "find", "ls", "bash"],
-			hostAvailableBuiltins: [],
+			hostToolNames: [],
 		});
 		assert.deepEqual(plan.warnings, [
 			"Agent 'worker': host runtime tool availability omitted [read, grep, find, ls, bash]. Requested tool names: [read, grep, find, ls, bash]; effective tool allowlist: []. This is a non-fatal tool-plan diagnostic, not verification of the child's runtime tool menu.",
@@ -63,7 +63,7 @@ describe("public child tool plan diagnostics", () => {
 
 	it("does not invent an explicit request, agent name, or ceiling source when absent", () => {
 		const plan = resolvePiLaunchToolPlan({
-			hostAvailableBuiltins: [],
+			hostToolNames: [],
 			capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: false, sources: [] },
 		});
 		assert.deepEqual(plan.warnings, [
@@ -74,8 +74,8 @@ describe("public child tool plan diagnostics", () => {
 	it("does not invent host omissions when availability is unknown or a ceiling alone prunes tools", () => {
 		for (const input of [
 			{},
-			{ hostAvailableBuiltins: ["read"] },
-			{ hostAvailableBuiltins: [], capabilityCeiling: { version: 1 as const, allowedTools: [], denyExtensions: false, sources: ["plan-mode"] } },
+			{ hostToolNames: ["read"] },
+			{ hostToolNames: [], capabilityCeiling: { version: 1 as const, allowedTools: [], denyExtensions: false, sources: ["plan-mode"] } },
 		]) {
 			const plan = resolvePiLaunchToolPlan({ tools: ["read"], ...input });
 			assert.deepEqual(plan.warnings, []);
@@ -86,7 +86,7 @@ describe("public child tool plan diagnostics", () => {
 		const emptyAllowlist = resolvePiLaunchToolPlan({
 			agentName: "scout",
 			tools: [],
-			hostAvailableBuiltins: [],
+			hostToolNames: [],
 		});
 		assert.deepEqual(emptyAllowlist.effectiveToolAllowlist, []);
 		assert.deepEqual(emptyAllowlist.requiredChildTools, []);
@@ -96,7 +96,7 @@ describe("public child tool plan diagnostics", () => {
 		const emptyCeiling = resolvePiLaunchToolPlan({
 			agentName: "reviewer",
 			tools: ["read", "grep"],
-			hostAvailableBuiltins: [],
+			hostToolNames: [],
 			capabilityCeiling: { version: 1, allowedTools: [], denyExtensions: false, sources: ["plan-mode"] },
 		});
 		assert.deepEqual(emptyCeiling.effectiveToolAllowlist, []);
@@ -110,7 +110,7 @@ describe("public child tool plan diagnostics", () => {
 			agentName: "scout",
 			tools: ["read", "grep", "bash"],
 			excludeTools: ["read", "grep"],
-			hostAvailableBuiltins: ["read", "grep", "bash"],
+			hostToolNames: ["read", "grep", "bash"],
 		});
 		assert.deepEqual(restricted.effectiveToolAllowlist, ["bash"]);
 		assert.deepEqual(restricted.requiredChildTools, ["bash"]);
@@ -121,7 +121,7 @@ describe("public child tool plan diagnostics", () => {
 			agentName: "reviewer",
 			tools: ["read", "grep"],
 			excludeTools: ["read", "grep"],
-			hostAvailableBuiltins: [],
+			hostToolNames: [],
 		});
 		assert.deepEqual(hostMissingExcluded.effectiveToolAllowlist, []);
 		assert.deepEqual(hostMissingExcluded.requiredChildTools, []);
@@ -133,7 +133,7 @@ describe("public child tool plan diagnostics", () => {
 		const plan = resolvePiLaunchToolPlan({
 			agentName: "scout",
 			tools: ["read", "grep", "find", "ls", "bash", "write"],
-			hostAvailableBuiltins: ["read", "grep", "find", "ls", "bash"],
+			hostToolNames: ["read", "grep", "find", "ls", "bash"],
 		});
 		assert.deepEqual(plan.effectiveToolAllowlist, ["read", "grep", "find", "ls", "bash"]);
 		assert.deepEqual(plan.unavailableHostBuiltins, ["write"]);
