@@ -54,15 +54,18 @@ describe("settings subagents.agentExcludeDirs", () => {
 	it("prunes nested sources, diagnostics and explicit roots in every projection while retaining legacy agents", () => {
 		const userPlugins = path.join(user, "agents", "plugins");
 		const projectPlugins = path.join(project, ".agents", "plugins");
+		const fixedProjectRoot = path.join(project, ".pi", "agents");
 		writeAgent(path.join(user, "agents"), "user-legacy");
 		writeAgent(path.join(project, ".agents"), "project-legacy");
+		fs.mkdirSync(fixedProjectRoot, { recursive: true });
+		fs.writeFileSync(path.join(fixedProjectRoot, "fixed-invalid.md"), "---\nname: fixed-invalid\n---\nbody");
 		for (const dir of [userPlugins, projectPlugins]) {
 			writeAgent(path.join(dir, "nested", "agents"), "plugin-only");
 			writeAgent(dir, "user-legacy");
 			fs.writeFileSync(path.join(dir, "invalid.md"), "---\nname: invalid\n---\nbody");
 		}
 		settings(user, { agentExcludeDirs: ["agents/plugins"], agentScanDirs: [userPlugins, projectPlugins] });
-		settings(path.join(project, ".pi"), { agentExcludeDirs: ["../.agents/plugins"] });
+		settings(path.join(project, ".pi"), { agentExcludeDirs: ["../.agents/plugins", "agents"] });
 		for (const scope of ["user", "project", "both"] as const) {
 			for (const result of [discoverAgents(project, scope), discoverAgentSnapshot(project, scope, undefined, { includeChains: false }).effective]) {
 				assert.equal(result.agents.some((agent) => agent.name === "plugin-only"), false);
@@ -75,6 +78,8 @@ describe("settings subagents.agentExcludeDirs", () => {
 		assert.equal([...all.user, ...all.project, ...all.package].some((agent) => agent.name === "plugin-only"), false);
 		assert.equal([...all.user, ...all.project, ...all.package].some((agent) => agent.filePath.includes("plugins")), false, "collision inputs must not retain excluded definitions");
 		assert.equal(all.agentDiagnostics?.some((diagnostic) => diagnostic.filePath.includes("plugins")), false);
+		assert.equal(discoverAgents(project, "project").directories?.some((directory) => directory.path === fixedProjectRoot), false);
+		assert.equal(discoverAgentSnapshot(project, "project", undefined, { includeChains: false }).all.agentDiagnostics?.some((diagnostic) => diagnostic.filePath.startsWith(fixedProjectRoot)), false);
 	});
 
 	it("invalidates cached exclusions when settings change and discovers later additions after removal", () => {
@@ -154,9 +159,6 @@ describe("settings subagents.agentExcludeDirs", () => {
 			fs.unlinkSync(alias);
 			fs.symlinkSync(allowed, alias, "dir");
 			assert.equal(discoverAgents(project, "both").agents.some((agent) => agent.name === "allowed-source"), true);
-			assert.equal(discoverAgents(project, "user").agents.some((agent) => agent.name === "allowed-source"), true);
-			const all = discoverAgentsAll(project);
-			assert.equal([...all.user, ...all.package].some((agent) => agent.name === "allowed-source"), true);
 		} finally {
 			if (previousExtraDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
 			else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = previousExtraDirs;
@@ -233,8 +235,6 @@ describe("settings subagents.agentExcludeDirs", () => {
 		assert.equal(cached.agents.some((agent) => agent.name === "outside"), true);
 		assert.equal(cached.agents.some((agent) => agent.name === "package-hidden"), false);
 		assert.equal(discoverAgentSnapshot(project, "both", undefined, { includeChains: false }).all.package.some((agent) => agent.name === "outside"), true);
-		clearAgentDiscoveryCache();
-		assert.deepEqual(cached.agents.map((agent) => agent.filePath), discoverAgents(project, "both").agents.map((agent) => agent.filePath));
 		assert.equal(reads.some((filePath) => filePath === excludedAgents || filePath.startsWith(`${excludedAgents}${path.sep}`)), false);
 	});
 

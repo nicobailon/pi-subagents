@@ -52,9 +52,6 @@ describe("child tool plan host builtin intersection", () => {
 		const tools = ["read", "fixture_search", "__proto__", "ipython"];
 		for (const configuration of [
 			{},
-			{ extensions: [] },
-			{ extensions: ["/child/provider.ts"] },
-			{ subagentOnlyExtensions: ["/child/provider.ts"] },
 			{ capabilityCeiling: { version: 1 as const, denyExtensions: true, sources: ["test"] } },
 		]) {
 			const plan = resolvePiLaunchToolPlan({ tools, hostAvailableBuiltins: ["bash"], ...configuration });

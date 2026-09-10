@@ -277,11 +277,15 @@ export function isExcluded(modelId: string, provider: string): boolean {
  * The caller uses this for hard-fail diagnostics; fallback filtering should
  * continue to use {@link filterFallbackCandidates}.
  */
-export function findModelExclusion(fullId: string, now = Date.now()): Readonly<ModelExclusion> | undefined {
+export function findModelExclusion(fullId: string, opts?: {
+	now?: number;
+	ignoreExclusion?: (candidate: string, exclusion: Readonly<ModelExclusion>) => boolean;
+}): Readonly<ModelExclusion> | undefined {
 	ensureLoaded();
 	invalidateAuthExclusions();
 	const { provider, modelId } = parseModelKey(fullId);
-	return exclusions.find((entry) => entryMatches(entry, modelId, provider, now));
+	const now = opts?.now ?? Date.now();
+	return exclusions.find((entry) => entryMatches(entry, modelId, provider, now) && opts?.ignoreExclusion?.(fullId, entry) !== true);
 }
 
 /**

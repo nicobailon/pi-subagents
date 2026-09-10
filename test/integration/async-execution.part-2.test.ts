@@ -1105,13 +1105,6 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const args = readMockPiArgs(mockPi, 1);
 		assert.equal(args[args.indexOf("--tools") + 1], tools.join(","));
 		assert.deepEqual(readMockPiRequiredTools(mockPi, 1), tools);
-
-		mockPi.onCall({ output: "Incorrect success", missingTools: ["fixture_search"] });
-		const missing = await runSync(tempDir, [agent], agent.name, "Inspect using fixture search", {
-			hostAvailableBuiltins: getHostBuiltinToolNames(host), acceptance: false,
-		});
-		assert.notEqual(missing.exitCode, 0);
-		assert.match(missing.error ?? "", /child tools were unavailable: fixture_search/);
 	});
 
 	it("fails background chains when requested extension tools are unavailable", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

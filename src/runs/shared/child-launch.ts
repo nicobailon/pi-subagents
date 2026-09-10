@@ -113,9 +113,9 @@ export interface BuildInProcessChildLaunchInput {
 	 */
 	host: "parent" | "runner";
 	/**
-	 * Builtin tool names the host runtime provides. When set, child tool plans
-	 * intersect declared agent tools with this set, omitting tools the host
-	 * cannot provide. Review/scout lanes fail closed when a requested,
+	 * Pi core tool names the host runtime provides. When set, child tool plans
+	 * intersect known core slots with this set; declared non-core names remain
+	 * for child startup validation. Review/scout lanes fail closed when a requested,
 	 * still-permitted repository inspection tool is missing from that set.
 	 */
 	hostAvailableBuiltins?: readonly string[];

@@ -31,7 +31,7 @@ import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
 import { updateActiveRunIndex } from "./active-run-index.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, watchAsyncControlInbox, type SteerRequest, type StopRequest } from "./control-channel.ts";
-import { buildDeadlineCheckpointRequest, deadlineCheckpointDelayMs } from "./deadline-checkpoint.ts";
+import { deadlineCheckpointDelayMs } from "./deadline-checkpoint.ts";
 import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
@@ -3370,8 +3370,7 @@ export async function runSubagent(
 		const remainingMs = Math.max(0, config.deadlineAt - Date.now());
 		timeoutTimer = setTimeout(timeoutRunner, remainingMs);
 		timeoutTimer.unref?.();
-		// Deadline checkpoint: a runner-issued "checkpoint and stop" steer ahead of the brutal timeout,
-		// routed to the running steps like any external steer so the steering lifecycle records the receipt.
+		// Route the pre-deadline checkpoint like any external steer so its lifecycle records the receipt.
 		const checkpointDelayMs = deadlineCheckpointDelayMs(remainingMs, config.checkpointBeforeDeadlineMs);
 		if (checkpointDelayMs !== undefined) {
 			const deadlineAt = config.deadlineAt;
@@ -3379,7 +3378,16 @@ export async function runSubagent(
 				checkpointTimer = undefined;
 				if (timedOut || stopped || interrupted) return;
 				if (!statusPayload.steps.some((step) => step.status === "running")) return;
-				deliverSteerRequest(buildDeadlineCheckpointRequest({ deadlineAt }));
+				const now = Date.now();
+				const seconds = Math.round(Math.max(0, deadlineAt - now) / 1000);
+				deliverSteerRequest({
+					type: "steer",
+					id: `deadline-checkpoint-${now}`,
+					ts: now,
+					mode: "steer",
+					source: "deadline-checkpoint",
+					message: `Deadline checkpoint from the runner: this run is killed in about ${seconds} seconds. Finish the current tool call only, then stop and reply with a handoff: changed files, build/test state, remaining work, and commit/PR state. Do not start new work.`,
+				});
 			}, checkpointDelayMs);
 			checkpointTimer.unref?.();
 		}

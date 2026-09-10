@@ -315,31 +315,18 @@ function formatExcludedCandidateEvidence(candidate: string, exclusion: NonNullab
 	return `${displayCandidate} — model: ${displayModel}; provider: ${displayProvider}; reason: ${reason}; expires: ${formatModelExclusionExpiry(exclusion.expiresAt)}`;
 }
 
-const MODEL_UNAVAILABLE_EXCLUSION_PATTERNS = [
-	/model.*not found/i,
-	/unknown model/i,
-	/model.*unavailable/i,
-	/model.*disabled/i,
-];
-
-function isCurrentRegistryModel(candidate: string, availableModels: AvailableModelInfo[] | undefined): boolean {
-	if (!availableModels || availableModels.length === 0) return false;
-	const { baseModel } = splitThinkingSuffix(candidate);
-	return availableModels.some((entry) => entry.fullId === baseModel);
-}
+const MODEL_UNAVAILABLE_PATTERN = /(?:model.*(?:not found|unavailable|disabled)|unknown model)/i;
 
 function ignoreStaleModelUnavailableExclusion(candidate: string, exclusion: NonNullable<ReturnType<typeof findModelExclusion>>, availableModels: AvailableModelInfo[] | undefined): boolean {
 	const reason = exclusion.reason ?? "";
-	return MODEL_UNAVAILABLE_EXCLUSION_PATTERNS.some((pattern) => pattern.test(reason)) && isCurrentRegistryModel(candidate, availableModels);
+	const { baseModel } = splitThinkingSuffix(candidate);
+	return MODEL_UNAVAILABLE_PATTERN.test(reason) && availableModels?.some((entry) => entry.fullId === baseModel) === true;
 }
 
 function throwForExplicitModelExclusion(model: string, availableModels: AvailableModelInfo[] | undefined): void {
-	const blocked: { exclusion?: NonNullable<ReturnType<typeof findModelExclusion>> } = {};
-	filterFallbackCandidates([model], {
-		onExcluded: (_candidate, exclusion) => { blocked.exclusion = exclusion; },
+	const exclusion = findModelExclusion(model, {
 		ignoreExclusion: (candidate, exclusion) => ignoreStaleModelUnavailableExclusion(candidate, exclusion, availableModels),
 	});
-	const exclusion = blocked.exclusion;
 	if (!exclusion) return;
 	const reason = redactSecretValues((exclusion.reason ?? "runtime-failure").replace(/[\u0000-\u001f\u007f]+/g, " ")).slice(0, 240);
 	const expiry = Number.isFinite(exclusion.expiresAt) ? `; expires: ${new Date(exclusion.expiresAt).toISOString()}` : "";
@@ -557,10 +544,7 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/token expired/i,
 	/invalid key/i,
 	/provider.*unavailable/i,
-	/model.*unavailable/i,
-	/model.*disabled/i,
-	/model.*not found/i,
-	/unknown model/i,
+	MODEL_UNAVAILABLE_PATTERN,
 	/overloaded/i,
 	/service unavailable/i,
 	/temporar(?:ily)? unavailable/i,

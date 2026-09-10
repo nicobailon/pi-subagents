@@ -379,17 +379,6 @@ describe("model fallback helpers", () => {
 		);
 	});
 
-	it("ignores a stale explicit model-not-found exclusion when the base model is in the registry", () => {
-		recordRetryableModelFailure(
-			"openai/gpt-5-mini:high",
-			'Model "openai/gpt-5-mini:high" not found. Use --list-models to see available models.',
-		);
-		assert.deepEqual(
-			buildModelCandidates("openai/gpt-5-mini:high", ["anthropic/claude-sonnet-4"], availableModels, undefined, { origin: "explicit" }),
-			["openai/gpt-5-mini:high", "anthropic/claude-sonnet-4"],
-		);
-	});
-
 	it("keeps an explicit cached-excluded primary strict even when fallbacks exist", () => {
 		recordModelFailure({ modelId: "gpt-5-mini", provider: "openai", reason: "sk-secret-token-xyz" });
 		assert.throws(

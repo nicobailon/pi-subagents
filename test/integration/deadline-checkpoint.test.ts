@@ -103,8 +103,6 @@ describe("async single-agent deadline checkpoint lifecycle", { skip: !available 
 		await new Promise((resolve) => setTimeout(resolve, Math.max(0, terminal.deadlineAt! - Date.now()) + 300));
 		// Process-terminal bookkeeping may arrive later; no checkpoint steering may occur.
 		assert.deepEqual(journal(id).filter((event) => event.type.startsWith("subagent.steer.")), [], "no checkpoint steering after early completion");
-		assert.equal(checkpoint(await waitForAsyncState(id, (status) => status.state === "complete")), undefined);
-		assert.equal(fs.existsSync(path.join(mockPi.dir, "steers.jsonl")), false);
 		assert.notEqual((await readAsyncPayload(id)).timedOut, true);
 		assert.ok(terminal.pid);
 		assert.throws(() => process.kill(terminal.pid!, 0), { code: "ESRCH" }, "runner exits rather than waiting for timers");

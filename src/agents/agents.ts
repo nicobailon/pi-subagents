@@ -592,8 +592,8 @@ function collectSettingsPackageRoots(settingsFile: string, baseDir: string): str
 	for (const entry of packages) {
 		const packageSource = typeof entry === "string"
 			? entry
-			: typeof entry === "object" && entry !== null && typeof (entry as { source?: unknown }).source === "string"
-				? (entry as { source: string }).source
+			: typeof entry === "object" && entry !== null && "source" in entry && typeof entry.source === "string"
+				? entry.source
 				: undefined;
 		if (!packageSource) continue;
 		const packageRoot = resolveSettingsPackageRoot(packageSource, baseDir);
