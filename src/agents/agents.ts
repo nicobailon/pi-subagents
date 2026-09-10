@@ -52,6 +52,7 @@ export function defaultInheritSkills(): boolean {
 
 export interface BuiltinAgentOverrideBase {
 	description?: string;
+	machine?: string;
 	output?: string;
 	outputMode?: OutputMode;
 	defaultReads?: string[];
@@ -83,6 +84,7 @@ export interface BuiltinAgentOverrideBase {
 
 interface BuiltinAgentOverrideConfig {
 	description?: string;
+	machine?: string | false;
 	output?: string | false;
 	outputMode?: OutputMode;
 	defaultReads?: string[] | false;
@@ -176,6 +178,7 @@ export interface AgentConfig {
 	toolBudget?: ToolBudgetConfig;
 	permissions?: PermissionRules;
 	memory?: AgentMemoryConfig;
+	machine?: string;
 	disabled?: boolean;
 	extraFields?: Record<string, string>;
 	override?: BuiltinAgentOverrideInfo;
@@ -216,6 +219,7 @@ export interface ChainStepConfig {
 	label?: string;
 	as?: string;
 	outputSchema?: string | Record<string, unknown>;
+	machine?: string;
 	output?: string | false;
 	outputMode?: OutputMode;
 	reads?: string[] | false;
@@ -756,6 +760,7 @@ function arraysEqual(a: string[] | undefined, b: string[] | undefined): boolean 
 function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 	return {
 		description: agent.description,
+		...(agent.machine !== undefined ? { machine: agent.machine } : {}),
 		...(agent.output !== undefined ? { output: agent.output } : {}),
 		...(agent.outputMode !== undefined ? { outputMode: agent.outputMode } : {}),
 		...(agent.defaultReads !== undefined ? { defaultReads: [...agent.defaultReads] } : {}),
@@ -789,6 +794,7 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentOverrideConfig {
 	return {
 		...(override.description !== undefined ? { description: override.description } : {}),
+		...(override.machine !== undefined ? { machine: override.machine } : {}),
 		...(override.output !== undefined ? { output: override.output } : {}),
 		...(override.outputMode !== undefined ? { outputMode: override.outputMode } : {}),
 		...(override.defaultReads !== undefined ? { defaultReads: override.defaultReads === false ? false : [...override.defaultReads] } : {}),
@@ -958,6 +964,15 @@ function parseToolsOverride(
 	throw new Error(`Builtin override '${meta.name}' in '${meta.filePath}' has invalid 'tools'; expected an array of strings, "inherit", or false.`);
 }
 
+function validateOptionalMachine(value: unknown, label: string): string | undefined {
+	if (value === undefined || value === false) return undefined;
+	if (typeof value !== "string" || !value.trim()) throw new Error(label + " must be a non-empty string or false.");
+	const machine = value.trim();
+	if (machine.length > 128) throw new Error(label + " must be 128 characters or fewer.");
+	if (/[\u0000-\u001f\u007f]/u.test(machine)) throw new Error(label + " contains control characters.");
+	return machine;
+}
+
 function parseBuiltinOverrideEntry(
 	name: string,
 	value: unknown,
@@ -1083,6 +1098,12 @@ function parseBuiltinOverrideEntry(
 	if ("systemPrompt" in input) {
 		if (typeof input.systemPrompt === "string") override.systemPrompt = input.systemPrompt;
 		else throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'systemPrompt'; expected a string.`);
+	}
+
+	if (input.machine === false) override.machine = false;
+	else {
+		const machine = validateOptionalMachine(input.machine, `Builtin override '${name}' in '${filePath}' field 'machine'`);
+		if (machine !== undefined) override.machine = machine;
 	}
 
 	const defaultReads = parseOverrideStringArrayOrFalse(input.defaultReads, { filePath, name, field: "defaultReads" });
@@ -1394,6 +1415,7 @@ function applyBuiltinOverride(
 	};
 
 	if (override.description !== undefined) next.description = override.description;
+	if (override.machine !== undefined) { if (override.machine === false) delete next.machine; else next.machine = override.machine; }
 	if (override.output !== undefined) { if (override.output === false) delete next.output; else next.output = override.output; }
 	if (override.outputMode !== undefined) next.outputMode = override.outputMode;
 	if (override.defaultReads !== undefined) { if (override.defaultReads === false) delete next.defaultReads; else next.defaultReads = [...override.defaultReads]; }
@@ -1526,9 +1548,10 @@ function applyCustomAgentOverrides(
 
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
-	draft: Pick<AgentConfig, "model" | "modelProvider" | "fallbackModels" | "fast" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritGlobalContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "allowNestedSubagents" | "mcpDirectTools" | "extensions" | "subagentOnlyExtensions" | "mutationTools" | "completionGuard" | "toolBudget"> & Partial<Pick<AgentConfig, "description" | "output" | "outputMode" | "defaultReads" | "excludeTools">>,
+	draft: Pick<AgentConfig, "model" | "modelProvider" | "fallbackModels" | "fast" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritGlobalContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "allowNestedSubagents" | "mcpDirectTools" | "extensions" | "subagentOnlyExtensions" | "mutationTools" | "completionGuard" | "toolBudget"> & Partial<Pick<AgentConfig, "description" | "machine" | "output" | "outputMode" | "defaultReads" | "excludeTools">>,
 ): BuiltinAgentOverrideConfig | undefined {
 	const override: BuiltinAgentOverrideConfig = {};
+	if (draft.machine !== base.machine) override.machine = draft.machine ?? false;
 
 	if (draft.description !== undefined) {
 		const description = draft.description.trim();
@@ -2121,6 +2144,7 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			? parsedMaxSubagentDepth
 			: undefined;
 		const memory = parseMemoryFrontmatter(frontmatter.memory);
+		const machine = validateOptionalMachine(frontmatter.machine, `Agent '${runtimeName}' frontmatter 'machine'`);
 		const agent: AgentConfig = {
 			name: runtimeName,
 			...(runner !== undefined ? { runner } : {}),
@@ -2159,6 +2183,7 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			...(extensions !== undefined ? { extensions } : {}),
 			...(subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions } : {}),
 			...(mutationTools?.length ? { mutationTools } : {}),
+			...(machine !== undefined ? { machine } : {}),
 			...(frontmatter.output !== undefined ? { output: frontmatter.output } : {}),
 			...(outputMode !== undefined ? { outputMode } : {}),
 			...(defaultReads?.length ? { defaultReads } : {}),

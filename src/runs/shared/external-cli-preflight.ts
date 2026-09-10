@@ -4,6 +4,7 @@ import * as path from "node:path";
 
 const MAX_PROBE_OUTPUT_BYTES = 256 * 1024;
 const MAX_PROBE_TIMEOUT_MS = 5_000;
+const MAX_REMOTE_PROBE_TIMEOUT_MS = 15_000;
 const MAX_CACHE_ENTRIES = 64;
 const MAX_AVAILABILITY_REASON_LENGTH = 256;
 
@@ -16,6 +17,8 @@ export interface ExternalCliPreflightSpec {
 	evidenceArgs?: readonly string[];
 	evidenceLabel?: string;
 	probeTimeoutMs?: number;
+	/** Remote probes include SSH handshakes; values may only narrow the code-owned remote ceiling. */
+	remote?: boolean;
 	validate?: (result: ExternalCliPreflightResult) => void;
 }
 
@@ -90,7 +93,7 @@ function narrowPositiveInteger(value: number | undefined, ceiling: number, label
 }
 
 function specKey(spec: ExternalCliPreflightSpec): string {
-	return JSON.stringify([spec.id, spec.versionArgs, spec.helpArgs, spec.evidenceArgs, spec.evidenceLabel, spec.probeTimeoutMs]);
+	return JSON.stringify([spec.id, spec.versionArgs, spec.helpArgs, spec.evidenceArgs, spec.evidenceLabel, spec.probeTimeoutMs, spec.remote === true]);
 }
 
 export function preflightExternalCli(command: string, spec: ExternalCliPreflightSpec, env: NodeJS.ProcessEnv, cwd?: string): ExternalCliPreflightResult {
@@ -99,7 +102,8 @@ export function preflightExternalCli(command: string, spec: ExternalCliPreflight
 	const lookupKey = JSON.stringify([binaryPath, binaryMtimeMs, specKey(spec)]);
 	const cachedKey = lookup.get(lookupKey);
 	const cached = cachedKey ? cache.get(cachedKey) : undefined;
-	const probeTimeoutMs = narrowPositiveInteger(spec.probeTimeoutMs, MAX_PROBE_TIMEOUT_MS, "probeTimeoutMs");
+	const ceiling = spec.remote === true ? MAX_REMOTE_PROBE_TIMEOUT_MS : MAX_PROBE_TIMEOUT_MS;
+	const probeTimeoutMs = narrowPositiveInteger(spec.probeTimeoutMs, ceiling, "probeTimeoutMs");
 	const base = cached ?? {
 		binaryPath,
 		binaryMtimeMs,

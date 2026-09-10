@@ -67,6 +67,7 @@ import {
 	type SteeringTargetStatus,
 	type SubagentChildStatusEvent,
 	type WorkflowLaneMetadata,
+	type HerdrMachineReference,
 	DEFAULT_MAX_OUTPUT,
 	type MaxOutputConfig,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
@@ -167,6 +168,7 @@ import { resolveClaudeCodeLaunch } from "../shared/claude-code-adapter.ts";
 import { resolveCodexExecLaunch } from "../shared/codex-exec-adapter.ts";
 import { resolveCursorAgentLaunch } from "../shared/cursor-agent-adapter.ts";
 import { resolveExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
+import { formatHerdrMachineHint, formatHerdrMachineWriterNote, isHerdrMachineWriterAdapter, prepareHerdrMachineExternalCliRun } from "../shared/herdr-machine.ts";
 import { runExternalJob } from "../shared/external-job-runner.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
@@ -718,6 +720,20 @@ interface SingleStepContext {
 }
 
 /** Run a single pi agent step, returning output and metadata */
+/** Machine runs: a one-line hint for predictable remote failures, and a note that writer changes live on the machine. */
+function decorateHerdrMachineResult<T extends { output: string; exitCode: number | null; error?: string; externalProcess: { stderrPath: string } }>(result: T, machine: HerdrMachineReference, adapter: string | undefined): T {
+	let stderrTail = "";
+	try {
+		const stderr = fs.readFileSync(result.externalProcess.stderrPath, "utf-8");
+		stderrTail = stderr.slice(-4096);
+	} catch { /* stderr log is best-effort evidence. */ }
+	const hint = result.exitCode === 0 ? undefined : formatHerdrMachineHint(machine, `${result.error ?? ""}\n${stderrTail}\nexit code ${result.exitCode}`);
+	const error = hint ? `${result.error ?? `Remote command exited with code ${result.exitCode}.`}\n${hint}` : result.error;
+	const note = result.exitCode === 0 && isHerdrMachineWriterAdapter(adapter) ? formatHerdrMachineWriterNote(machine) : undefined;
+	const output = note ? (result.output.trim() ? `${result.output.trimEnd()}\n\n${note}` : note) : result.output;
+	return { ...result, output, ...(error !== undefined ? { error } : {}) };
+}
+
 export async function runSingleStepInner(
 	step: SubagentStep,
 	ctx: SingleStepContext,
@@ -878,7 +894,7 @@ export async function runSingleStepInner(
 	transcriptWriter?.writeInitialUserMessage(`${PROMPT_REDACTED}; live Prompt Audit only.`);
 
 	if (step.runner?.type === "external-cli") {
-		const externalCwd = step.cwd ?? ctx.cwd;
+		const externalCwd = step.machine?.cwd ?? step.cwd ?? ctx.cwd;
 		const adapterLaunch = step.runner.adapter === "codex-exec" || step.runner.adapter === "codex-exec-writer"
 			? resolveCodexExecLaunch({ adapter: step.runner.adapter, command: step.runner.command, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
 			: step.runner.adapter === "claude-code" || step.runner.adapter === "claude-code-writer"
@@ -886,9 +902,9 @@ export async function runSingleStepInner(
 				: step.runner.adapter === "cursor-agent" || step.runner.adapter === "cursor-agent-writer"
 					? resolveCursorAgentLaunch({ adapter: step.runner.adapter, command: step.runner.command, cwd: externalCwd, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
 				: undefined;
-		const runner = resolveExternalCliRunnerStatus({ ...step.runner, ...(adapterLaunch ? { args: adapterLaunch.args } : {}) });
+		const runner = resolveExternalCliRunnerStatus({ ...step.runner, ...(adapterLaunch ? { args: adapterLaunch.args } : {}), ...(step.machine ? { machine: step.machine } : {}) });
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
-		const external = await runExternalCli(omitUndefinedProperties({
+		const externalInput = omitUndefinedProperties({
 			command: adapterLaunch?.command ?? runner.command,
 			args: adapterLaunch?.args ?? runner.args,
 			cwd: externalCwd,
@@ -906,9 +922,13 @@ export async function runSingleStepInner(
 			timeoutMessage: ctx.timeoutMessage,
 			stopMessage: ctx.stopMessage,
 			onProcess: ctx.onExternalProcess,
-			onStdout: (chunk) => ctx.orcaProgressTab?.append(chunk.toString("utf-8")),
-			onStderr: (chunk) => ctx.orcaProgressTab?.append(chunk.toString("utf-8")),
-		}));
+			onStdout: (chunk: Buffer) => ctx.orcaProgressTab?.append(chunk.toString("utf-8")),
+			onStderr: (chunk: Buffer) => ctx.orcaProgressTab?.append(chunk.toString("utf-8")),
+		});
+		const preparedExternal = prepareHerdrMachineExternalCliRun(externalInput, step.machine ? { machine: step.machine, ...(step.machineEnv ? { env: step.machineEnv } : {}) } : undefined, { localCwd: ctx.cwd });
+		const ran = await runExternalCli(preparedExternal.input);
+		const externalProcess = preparedExternal.decorateProcess(ran.externalProcess);
+		const external = step.machine ? decorateHerdrMachineResult(ran, step.machine, step.runner.adapter) : ran;
 		try { fs.writeFileSync(ctx.outputFile, external.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
 		const resolvedOutput = step.outputPath && external.exitCode === 0
 			? resolveSingleOutput(step.outputPath, external.output, outputSnapshot, step.outputClaimPath)
@@ -932,7 +952,7 @@ export async function runSingleStepInner(
 				artifactPaths,
 				artifactConfig: ctx.artifactConfig,
 				output: formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, error: external.error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })),
-				metadata: { runId: ctx.id, agent: step.agent, task: PROMPT_REDACTED, runner, externalProcess: external.externalProcess, exitCode: external.exitCode, error: external.error, timestamp: Date.now() },
+				metadata: { runId: ctx.id, agent: step.agent, task: PROMPT_REDACTED, runner, externalProcess: externalProcess, exitCode: external.exitCode, error: external.error, timestamp: Date.now() },
 			})
 			: {};
 		return omitUndefinedProperties({
@@ -950,7 +970,7 @@ export async function runSingleStepInner(
 			outputSaveError: [resolvedOutput.saveError, artifactErrors.outputSaveError].filter(Boolean).join("\n") || undefined,
 			metadataSaveError: artifactErrors.metadataSaveError,
 			runner,
-			externalProcess: external.externalProcess,
+			externalProcess: externalProcess,
 		});
 	}
 

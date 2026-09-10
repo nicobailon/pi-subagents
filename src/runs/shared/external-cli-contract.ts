@@ -3,6 +3,7 @@ import type {
 	ExternalCliCapabilityNarrowing,
 	ExternalCliRunnerStatus,
 	ExternalProcessStatus,
+	HerdrMachineReference,
 } from "../../shared/types.ts";
 
 const UNSUPPORTED = {
@@ -80,6 +81,7 @@ export function resolveExternalCliRunnerStatus(input: {
 	args?: string[];
 	promptDelivery?: "stdin";
 	capabilities?: ExternalCliCapabilityNarrowing;
+	machine?: HerdrMachineReference;
 }): ExternalCliRunnerStatus {
 	const codexExec = input.adapter === "codex-exec";
 	const codexExecWriter = input.adapter === "codex-exec-writer";
@@ -101,6 +103,7 @@ export function resolveExternalCliRunnerStatus(input: {
 		...(claudeCodeWriter ? { safety: { access: "workspace-write" as const, authentication: "existing-cli-required" as const, permissionMode: "acceptEdits" as const, tools: "Read,Write,Edit,Glob,Grep" as const, mcp: "empty-strict" as const, settingSources: "user" as const, userSettingsTrust: "required" as const, sessionPersistence: false as const } } : {}),
 		...(cursorAgent ? { safety: { access: "read-only" as const, authentication: "cursor-api-key-or-existing-login" as const, mode: "ask" as const, sandbox: "enabled" as const, workspaceTrust: "existing-required" as const, sessionReuse: false as const } } : {}),
 		...(cursorAgentWriter ? { safety: { access: "workspace-write" as const, authentication: "cursor-api-key-or-existing-login" as const, mode: "print" as const, sandbox: "enabled" as const, workspaceTrust: "existing-required" as const, sessionReuse: false as const } } : {}),
+		...(input.machine ? { machine: input.machine } : {}),
 		capabilities: {
 			stop: true,
 			steer: false,
@@ -124,6 +127,9 @@ export function normalizeExternalCliRunnerStatus(value: unknown): ExternalCliRun
 		? input.args
 		: undefined;
 	const promptDelivery = input.promptDelivery === "stdin" ? "stdin" : undefined;
+	const machine = input.machine && typeof input.machine === "object" && !Array.isArray(input.machine)
+		? input.machine as HerdrMachineReference
+		: undefined;
 	const adapterId = input.adapter && typeof input.adapter === "object" && !Array.isArray(input.adapter)
 		? (input.adapter as Record<string, unknown>).id
 		: undefined;
@@ -131,6 +137,7 @@ export function normalizeExternalCliRunnerStatus(value: unknown): ExternalCliRun
 		return {
 			type: "external-cli",
 			command: input.command,
+			...(machine ? { machine } : {}),
 			args: args ?? [],
 			promptDelivery: "prompt-file",
 			adapter: { id: "grok-build", version: 1, executionMode: "one-shot-prompt-file" },
@@ -140,7 +147,7 @@ export function normalizeExternalCliRunnerStatus(value: unknown): ExternalCliRun
 		};
 	}
 	const adapter = isCodeOwnedExternalCliAdapterId(adapterId) ? adapterId : undefined;
-	return resolveExternalCliRunnerStatus({ ...(adapter ? { adapter } : {}), command: input.command, ...(args ? { args } : {}), ...(promptDelivery ? { promptDelivery } : {}) });
+	return resolveExternalCliRunnerStatus({ ...(adapter ? { adapter } : {}), command: input.command, ...(args ? { args } : {}), ...(promptDelivery ? { promptDelivery } : {}), ...(machine ? { machine } : {}) });
 }
 
 export function externalCliReceiptMetadata(input: {
@@ -152,6 +159,7 @@ export function externalCliReceiptMetadata(input: {
 	return {
 		adapter: { ...runner.adapter },
 		capabilities: { ...runner.capabilities },
+		...(runner.machine ? { machine: { ...runner.machine } } : {}),
 		...(runner.safety ? { safety: { ...runner.safety } } : {}),
 		...(input.externalProcess ? {
 			outputArtifacts: {

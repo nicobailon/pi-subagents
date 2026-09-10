@@ -46,12 +46,12 @@ const DYNAMIC_STEP_KEYS = new Set(["expand", "parallel", "collect", "concurrency
 const RUNNER_DYNAMIC_STEP_KEYS = new Set([...DYNAMIC_STEP_KEYS, "effectiveAcceptance", "acceptanceInput", "acceptanceRole", "sessionFiles", "thinkingOverrides"]);
 const DYNAMIC_EXPAND_KEYS = new Set(["from", "item", "key", "maxItems", "onEmpty"]);
 const DYNAMIC_EXPAND_FROM_KEYS = new Set(["output", "path"]);
-const DYNAMIC_PARALLEL_KEYS = new Set(["agent", "task", "phase", "label", "outputSchema", "cwd", "output", "outputMode", "reads", "progress", "skill", "model", "fast", "toolBudget", "acceptance", "agentContract", "gateOn"]);
+const DYNAMIC_PARALLEL_KEYS = new Set(["agent", "task", "phase", "label", "outputSchema", "cwd", "machine", "output", "outputMode", "reads", "progress", "skill", "model", "fast", "toolBudget", "acceptance", "agentContract", "gateOn"]);
 const RUNNER_DYNAMIC_PARALLEL_KEYS = new Set([
 	...DYNAMIC_PARALLEL_KEYS,
 	"outputName", "structured", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "skills", "outputPath", "namespaceOutputPath", "maxSubagentDepth", "timeoutMs", "waitToolEnabled", "waitToolDefaultTimeoutMs",
 	"structuredOutput", "structuredOutputSchema", "tools", "excludeTools", "allowNestedSubagents", "extensions", "subagentOnlyExtensions", "mcpDirectTools", "mutationTools", "capabilityCeiling", "completionGuard", "systemPrompt",
-	"systemPromptMode", "thinking", "modelCandidates", "sessionFile", "effectiveAcceptance", "acceptanceInput", "acceptanceRole", "parentSessionId", "requiredExtensions", "launchResolvedExtensions", "requestedCwd",
+	"systemPromptMode", "thinking", "modelCandidates", "sessionFile", "effectiveAcceptance", "acceptanceInput", "acceptanceRole", "parentSessionId", "requiredExtensions", "launchResolvedExtensions", "requestedCwd", "machineEnv",
 ]);
 const DYNAMIC_COLLECT_KEYS = new Set(["as", "outputSchema"]);
 

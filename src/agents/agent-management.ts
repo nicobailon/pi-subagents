@@ -33,6 +33,7 @@ import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, resolveExternalCliRunnerStatus, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import { resolveExternalCliBinaryAvailability, type ExternalCliBinaryAvailability } from "../runs/shared/external-cli-preflight.ts";
+import { resolveHerdrMachineAvailability } from "../runs/shared/herdr-machine.ts";
 import type { AcceptanceInput, AgentCapabilitiesSnapshot, AgentCapabilityRow, Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
 import { getProjectConfigDir } from "../shared/utils.ts";
 import { previewDisplayText } from "../shared/display-text.ts";
@@ -713,13 +714,19 @@ function externalJobProviderSuffix(provider: string, names: Set<string> | undefi
 
 type ExternalCliAvailabilityByCommand = ReadonlyMap<string, ExternalCliBinaryAvailability>;
 
+/** A placed agent is available when ssh resolves locally and the machine is saved and enabled; its CLI lives on the machine. */
+function externalCliAvailabilityKey(runner: { command: string }, machine: string | undefined): string {
+	return machine ? `${runner.command}@${machine}` : runner.command;
+}
+
 function externalCliAvailabilityForAgents(agents: readonly AgentConfig[]): ExternalCliAvailabilityByCommand {
 	const availability = new Map<string, ExternalCliBinaryAvailability>();
 	for (const agent of agents) {
 		const runner = agent.runner;
-		if (runner?.type === "external-cli" && !availability.has(runner.command)) {
-			availability.set(runner.command, resolveExternalCliBinaryAvailability(runner.command, process.env));
-		}
+		if (runner?.type !== "external-cli") continue;
+		const key = externalCliAvailabilityKey(runner, agent.machine);
+		if (availability.has(key)) continue;
+		availability.set(key, agent.machine ? resolveHerdrMachineAvailability(agent.machine, process.env) : resolveExternalCliBinaryAvailability(runner.command, process.env));
 	}
 	return availability;
 }
@@ -727,10 +734,12 @@ function externalCliAvailabilityForAgents(agents: readonly AgentConfig[]): Exter
 function runnerListBadge(agent: AgentConfig, providerNames: Set<string> | undefined, externalCliAvailability?: ExternalCliAvailabilityByCommand): string | undefined {
 	if (agent.runner?.type === "external-job") return `external-job:${agent.runner.provider} ${externalJobProviderSuffix(agent.runner.provider, providerNames)}`;
 	if (agent.runner?.type === "external-cli") {
-		const availability = externalCliAvailability?.get(agent.runner.command);
-		if (!availability) return "external-cli";
-		return `external-cli:${agent.runner.command} ${availability.available ? "✓" : "missing"}`;
+		const placed = agent.machine ? `${agent.runner.command} @ ${agent.machine}` : agent.runner.command;
+		const availability = externalCliAvailability?.get(externalCliAvailabilityKey(agent.runner, agent.machine));
+		if (!availability) return `external-cli:${placed}`;
+		return `external-cli:${placed} ${availability.available ? "✓" : "missing"}`;
 	}
+	if (agent.machine) return `machine: ${agent.machine} (native agents cannot be placed)`;
 	return undefined;
 }
 
@@ -766,7 +775,8 @@ function formatAgentCapabilitiesLine(agent: AgentConfig, providerNames: Set<stri
 		if (agent.modelProvider && !agent.model.includes("/")) model = `${agent.modelProvider}/${agent.model}`;
 	}
 	const thinking = agent.thinking === false ? "off" : agent.thinking ?? "default";
-	return `- ${agent.name} (${agentListMetadata(agent, providerNames, externalCliAvailability)}): Description: ${previewDisplayText(agent.description, 240)}; Tools: ${tools}; Model: ${model}; Thinking: ${thinking}`;
+	const machine = agent.machine ? `; Machine: ${agent.machine}${agent.runner?.type === "external-cli" ? "" : " (unsupported for native agents)"}` : "";
+	return `- ${agent.name} (${agentListMetadata(agent, providerNames, externalCliAvailability)}): Description: ${previewDisplayText(agent.description, 240)}; Tools: ${tools}; Model: ${model}; Thinking: ${thinking}${machine}`;
 }
 
 const EXTERNAL_JOB_CAPABILITIES = { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false } as const;
@@ -785,6 +795,7 @@ function agentCapabilityRunner(agent: AgentConfig, providerNames: Set<string> | 
 			type: "external-cli",
 			adapter: runner.adapter,
 			command: runner.command,
+			...(agent.machine ? { machine: agent.machine } : {}),
 			...availability,
 			capabilities: resolveExternalCliRunnerStatus(runner).capabilities,
 		};

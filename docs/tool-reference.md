@@ -118,7 +118,8 @@ The complete plain-JSON inventory is validated before the first launch (maximum 
 | `checkpointBeforeDeadlineMs` | number | none | Async single-agent runs only. The runner requests that the child "checkpoint and stop" this many milliseconds before the run deadline (finish the current tool call, report changed files, build/test state, remaining work, commit/PR state; start no new work). This best-effort steer uses the normal steering lifecycle at the next tool boundary, so the receipt is visible in status and events; the ordinary deadline kill still applies. Precedence: call value → config `checkpointBeforeDeadlineMs`. Disarmed when the deadline leaves under one second before the checkpoint. |
 | `toolBudget` | object | none | Optional child tool-call budget `{ soft?, hard, block? }`. At `soft` the child is nudged to finalize. After `hard`, configured tools are blocked; `block` defaults to `read`, `grep`, `find`, and `ls`, while `"*"` blocks every tool call. Final assistant text is never blocked. |
 | `usageBudget` | object | none | Optional root-only reported-usage budget `{ tokens?: { soft?, hard }, costUsd?: { soft?, hard } }`. Soft limits are status-only. Hard limits prevent later child launches after reported usage is reconciled; already-running children are not stopped and no reservations are made. |
-| `cwd` | string | runtime cwd | Override working directory. |
+| `cwd` | string | runtime cwd | Override working directory. With `machine`, the directory on that machine. |
+| `machine` | string | - | Herdr saved machine (label or profile id) for external-cli agents; see [agents.md](agents.md#running-external-cli-agents-on-a-herdr-saved-machine). |
 | `maxOutput` | object | 200KB, 5000 lines | Final output truncation limits. |
 | `artifacts` | boolean | true | Write debug artifacts. |
 | `includeProgress` | boolean | false | Include full progress in result. |

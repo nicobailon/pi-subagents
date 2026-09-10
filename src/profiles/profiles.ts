@@ -21,6 +21,7 @@ interface ProfileAgentOverride {
 	model?: string;
 	thinking?: string | false;
 	fallbackModels?: string[] | false;
+	machine?: string;
 }
 
 export interface SubagentProfileFile {
@@ -489,10 +490,19 @@ export function applySubagentProfile(name: string): { filePath: string; settings
 		: {};
 	// A profile owns the complete agent mapping, but unrelated subagent settings
 	// (notably disableBuiltins, modelScope, watchdog, etc.) survive profile switches.
+	// Machine placement is not a model choice, so an existing pin survives a profile switch too.
+	const agentOverrides: Record<string, ProfileAgentOverride> = { ...profile.subagents.agentOverrides };
+	const existingOverrides = existing.agentOverrides && typeof existing.agentOverrides === "object" && !Array.isArray(existing.agentOverrides)
+		? existing.agentOverrides as Record<string, unknown>
+		: {};
+	for (const [name, value] of Object.entries(existingOverrides)) {
+		const machine = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>).machine : undefined;
+		if (typeof machine === "string" && agentOverrides[name]?.machine === undefined) agentOverrides[name] = { ...agentOverrides[name], machine };
+	}
 	settings.subagents = {
 		...existing,
 		...profile.subagents,
-		agentOverrides: profile.subagents.agentOverrides,
+		agentOverrides,
 	};
 	writeJsonFile(settingsPath, settings);
 	return { filePath, settingsPath };

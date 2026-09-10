@@ -1386,7 +1386,7 @@ export interface AgentCapabilityRow {
 	executable: boolean;
 	restrictionSources?: string[];
 	aliases?: string[];
-	runner: { type: "pi" } | { type: "external-cli"; adapter?: string; command: string; available: boolean; unavailableReason?: string; capabilities: ExternalCliCapabilities } | { type: "external-job"; provider: string; available?: boolean; capabilities: ExternalJobRunnerStatus["capabilities"] };
+	runner: { type: "pi" } | { type: "external-cli"; adapter?: string; command: string; machine?: string; available: boolean; unavailableReason?: string; capabilities: ExternalCliCapabilities } | { type: "external-job"; provider: string; available?: boolean; capabilities: ExternalJobRunnerStatus["capabilities"] };
 	tools: { ambient: boolean; names: string[]; excludeTools?: string[]; mcpDirectTools: string[]; mutationTools?: string[] };
 	model?: { value?: string; fallbackModels?: string[]; thinking?: string | false };
 	execution?: { defaultAsync?: boolean; timeoutMs?: number };
@@ -1712,6 +1712,26 @@ export type AgentRunnerConfig =
 
 export type ExternalCliCapabilityNarrowing = Partial<Record<"steer" | "resume" | "structuredOutput" | "toolEvents" | "supervisor" | "forkContext" | "extensionBindings", false>>;
 
+export interface HerdrRemoteGitStatus {
+	head?: string;
+	branch?: string;
+	dirty?: boolean;
+}
+
+/** A Herdr saved SSH machine resolved for one launch. `cwd` is the directory on that machine. */
+export interface HerdrMachineReference {
+	provider: "herdr";
+	id: string;
+	label?: string;
+	target: string;
+	session?: string;
+	cwd: string;
+}
+
+export interface ExternalCliMachineStatus extends HerdrMachineReference {
+	remoteGit?: HerdrRemoteGitStatus;
+}
+
 export interface ExternalCliCapabilities {
 	stop: true;
 	steer: false;
@@ -1726,6 +1746,7 @@ export interface ExternalCliCapabilities {
 export interface ExternalCliReceiptMetadata {
 	adapter: { id: "external-cli" | "codex-exec" | "codex-exec-writer" | "claude-code" | "claude-code-writer" | "cursor-agent" | "cursor-agent-writer" | "grok-build"; version: 1; executionMode: "one-shot-stdin" | "one-shot-prompt-file" };
 	capabilities: ExternalCliCapabilities;
+	machine?: HerdrMachineReference;
 	safety?:
 		| { sandbox: "read-only"; approvalPolicy: "never"; ephemeral: true }
 		| { access: "workspace-write"; sandbox: "workspace-write"; approvalPolicy: "never"; ephemeral: true }
@@ -1750,6 +1771,7 @@ export interface ExternalCliRunnerStatus {
 	capabilities: ExternalCliCapabilities;
 	unsupportedReasons: Record<Exclude<keyof ExternalCliCapabilities, "stop">, string>;
 	nonResumableReason: string;
+	machine?: HerdrMachineReference;
 }
 
 export interface ExternalJobRunnerStatus {
@@ -1801,6 +1823,7 @@ export interface ExternalProcessStatus {
 	stderrBytes?: number;
 	stdoutTruncated?: boolean;
 	stderrTruncated?: boolean;
+	machine?: ExternalCliMachineStatus;
 }
 
 export interface AsyncStatus {
