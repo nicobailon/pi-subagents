@@ -285,7 +285,7 @@ The tool timer tracks each active `toolCallId` separately and never extends the 
 { "checkpointBeforeDeadlineMs": 300000 }
 ```
 
-Global default for the async `checkpointBeforeDeadlineMs` launch option. When an async single-agent run has a run-level deadline, the runner issues a "checkpoint and stop" steer to the child this many milliseconds before that deadline: finish the current tool call, report changed files, build/test state, remaining work, and commit/PR state, and start no new work. The steer is delivered at the child's next tool boundary through the normal steering lifecycle, so its receipt (requested, routed, delivered) is visible in run status and events, and the ordinary `timeoutMs` kill still applies if the child does not stop.
+Global default for the async single-agent `checkpointBeforeDeadlineMs` launch option. When an async single-agent run has a run-level deadline, the runner issues a best-effort "checkpoint and stop" steer to the child this many milliseconds before that deadline: finish the current tool call, report changed files, build/test state, remaining work, and commit/PR state, and start no new work. The steer uses the normal steering lifecycle at the child's next tool boundary, so its receipt (requested, routed, delivered) is visible in run status and events, and the ordinary `timeoutMs` kill still applies if the child does not stop.
 
 An explicit `subagent` call value wins over this default. Choose a value at least as long as the child's longest expected tool call; a steer cannot land inside one. When the deadline leaves less than one second of run time before the checkpoint, the checkpoint is disarmed and the run behaves as if the option were absent. Must be a positive integer.
 

@@ -46,6 +46,8 @@ export interface FakeChildResponse {
 	queuedMessageTurnStartDelayMs?: number;
 	/** Assistant text emitted for that delayed queued-message turn. */
 	queuedMessageOutput?: string;
+	/** Accept input before any assistant/terminal event; consume it only after this path exists. */
+	queuedInputReleasePath?: string;
 	/** Keep post-final queued input pending until abort; do not emit user `message_end` or continue. */
 	holdQueuedMessagesUntilAbort?: boolean;
 }
@@ -360,6 +362,18 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 					}
 				}
 				emit({ type: "agent_start" });
+				if (response.queuedInputReleasePath) {
+					boundaryOpen = true;
+					const keepAlive = setInterval(() => {}, 1_000);
+					try {
+						await waitForQueuedMessage();
+						await waitForReleasePath(response.queuedInputReleasePath);
+						await drainQueuedBoundary(response, task);
+					} finally {
+						clearInterval(keepAlive);
+					}
+					return;
+				}
 				if (Array.isArray(response.steps) && response.steps.length > 0) {
 					for (const step of response.steps) {
 						if (typeof step?.delay === "number" && step.delay > 0) await sleep(step.delay, abortedPromise);
