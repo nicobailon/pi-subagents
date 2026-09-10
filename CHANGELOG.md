@@ -11,6 +11,8 @@
 
 - Add `checkpointBeforeDeadlineMs` for async single-agent runs (call param, with a global config default): the runner requests that the child "checkpoint and stop" that many milliseconds before its run deadline. This best-effort handoff request uses the normal steering lifecycle at the child's next tool boundary, so its receipt appears in status and events; the ordinary `timeoutMs` kill still applies. Absent option keeps the current behavior. Thanks to [@freezscholte](https://github.com/freezscholte) for #2141.
 
+- Add `subagents.agentExcludeDirs` to prune directory subtrees from agent discovery, including nested plugin sources, without disabling ordinary legacy agents. Exclusions respect symlink aliases and apply to explicit/package roots, diagnostics, and agent cache fingerprints. Thanks to [@xarillian](https://github.com/xarillian) for #2131.
+
 ## [0.67.0] - 2026-09-10
 
 ### Highlights

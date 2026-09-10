@@ -195,6 +195,7 @@ interface SubagentSettings {
 	overrides: Record<string, BuiltinAgentOverrideConfig>;
 	providerOverrides: Record<string, Record<string, BuiltinAgentOverrideConfig>>;
 	agentScanDirs?: string[];
+	agentExcludeDirs?: string[];
 	defaultModel?: string;
 	defaultProvider?: string;
 	defaultThinking?: string;
@@ -1191,6 +1192,14 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		}
 		agentScanDirs = subagentsObject.agentScanDirs.map((item) => item.trim());
 	}
+	let agentExcludeDirs: string[] | undefined;
+	if ("agentExcludeDirs" in subagentsObject) {
+		if (!Array.isArray(subagentsObject.agentExcludeDirs)
+			|| subagentsObject.agentExcludeDirs.some((item) => typeof item !== "string" || !item.trim())) {
+			throw new Error(`Subagent settings in '${filePath}' have invalid 'agentExcludeDirs'; expected an array of non-empty strings.`);
+		}
+		agentExcludeDirs = subagentsObject.agentExcludeDirs.map((item) => item.trim());
+	}
 	const modelScope = parseModelScopeConfig(subagentsObject.modelScope, { filePath });
 
 	const parsed: Record<string, BuiltinAgentOverrideConfig> = {};
@@ -1206,6 +1215,7 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		...(maxThinking !== undefined ? { maxThinking } : {}),
 		...(defaultExtensions !== undefined ? { defaultExtensions } : {}),
 		...(agentScanDirs !== undefined ? { agentScanDirs } : {}),
+		...(agentExcludeDirs !== undefined ? { agentExcludeDirs } : {}),
 		...(disableBuiltins !== undefined ? { disableBuiltins } : {}),
 		...(disableThinking !== undefined ? { disableThinking } : {}),
 		...(modelScope !== undefined ? { modelScope } : {}),
@@ -1778,8 +1788,9 @@ const DEFAULT_AGENT_DEFINITION_INSPECTION_FS: AgentDefinitionInspectionFs = {
  * state. A nested unreadable directory makes the whole inspection unavailable,
  * preventing a partial traversal from being reported as empty or complete.
  */
-export function inspectAgentDefinitionDirectory(dir: string, operations: AgentDefinitionInspectionFs = DEFAULT_AGENT_DEFINITION_INSPECTION_FS): AgentDefinitionInspection {
+export function inspectAgentDefinitionDirectory(dir: string, operations: AgentDefinitionInspectionFs = DEFAULT_AGENT_DEFINITION_INSPECTION_FS, isExcluded: (filePath: string) => boolean = () => false): AgentDefinitionInspection {
 	const root = path.resolve(dir);
+	if (isExcluded(root)) return rememberAgentDefinitionInspection({ files: [], state: "empty" }, []);
 	try {
 		if (!operations.existsSync(root)) return rememberAgentDefinitionInspection({ files: [], state: "absent" }, [root]);
 		if (!operations.statSync(root).isDirectory()) return rememberAgentDefinitionInspection({ files: [], state: "not-directory" }, [root]);
@@ -1811,6 +1822,7 @@ export function inspectAgentDefinitionDirectory(dir: string, operations: AgentDe
 		}
 		for (const entry of entries) {
 			const filePath = path.join(current, entry.name);
+			if (isExcluded(filePath)) continue;
 			let isDirectory = entry.isDirectory();
 			if (entry.isSymbolicLink()) {
 				try {
@@ -2268,31 +2280,60 @@ interface AgentScanDirs {
 	watchPaths: string[];
 }
 
-function readConfiguredAgentScanDirs(filePath: string | null): string[] {
+function readConfiguredAgentScanDirs(filePath: string | null, key: "agentScanDirs" | "agentExcludeDirs" = "agentScanDirs"): string[] {
 	if (!filePath) return [];
 	try {
 		const settings = readSettingsFileStrict(filePath);
 		const subagents = settings.subagents;
 		if (!subagents || typeof subagents !== "object" || Array.isArray(subagents)) return [];
-		const dirs = (subagents as { agentScanDirs?: unknown }).agentScanDirs;
+		const dirs = (subagents as Record<string, unknown>)[key];
 		return Array.isArray(dirs) ? dirs.filter((dir): dir is string => typeof dir === "string" && dir.trim().length > 0) : [];
 	} catch {
 		return [];
 	}
 }
 
-function expandAgentScanDirPattern(pattern: string): AgentScanDirs {
+// Resolve existing ancestors to canonicalize missing descendants of symlinks.
+function canonicalAgentPath(filePath: string): string {
+	const resolved = path.resolve(filePath);
+	try {
+		return fs.realpathSync(resolved);
+	} catch {
+		const parent = path.dirname(resolved);
+		return parent === resolved ? resolved : path.join(canonicalAgentPath(parent), path.basename(resolved));
+	}
+}
+
+function agentExclusionRoots(userSettingsPath: string, projectSettingsPath: string | null): Array<{ resolved: string; real: string }> {
+	return [userSettingsPath, projectSettingsPath].flatMap((settingsPath) => settingsPath
+		? readConfiguredAgentScanDirs(settingsPath, "agentExcludeDirs").map((entry) => {
+			const resolved = path.resolve(path.dirname(settingsPath), expandHomePath(entry.trim()).replace(/[\\/]+/g, path.sep));
+			return { resolved, real: canonicalAgentPath(resolved) };
+		}) : []);
+}
+
+function agentExclusions(roots: Array<{ resolved: string; real: string }>): (filePath: string) => boolean {
+	return (filePath) => {
+		if (!roots.length) return false;
+		if (roots.some((root) => isPathWithin(root.resolved, filePath))) return true;
+		const real = canonicalAgentPath(filePath);
+		return roots.some((root) => isPathWithin(root.real, real));
+	};
+}
+
+function expandAgentScanDirPattern(pattern: string, isExcluded: (filePath: string) => boolean): AgentScanDirs {
 	const expanded = expandHomePath(pattern.trim()).replace(/[\\/]+/g, path.sep);
 	if (!expanded) return { dirs: [], watchPaths: [] };
 	const wildcardMatches = [...expanded.matchAll(/\*/g)];
 	if (wildcardMatches.length === 0) {
 		const dir = path.resolve(expanded);
-		return { dirs: fs.existsSync(dir) ? [dir] : [], watchPaths: [dir] };
+		return { dirs: !isExcluded(dir) && fs.existsSync(dir) ? [dir] : [], watchPaths: [dir] };
 	}
 	const parts = expanded.split(path.sep);
 	const wildcardIndex = parts.findIndex((part) => part.includes("*"));
 	if (wildcardMatches.length !== 1 || wildcardIndex === -1 || parts[wildcardIndex] !== "*") return { dirs: [], watchPaths: [] };
 	const base = path.resolve(parts.slice(0, wildcardIndex).join(path.sep) || path.sep);
+	if (isExcluded(base)) return { dirs: [], watchPaths: [base] };
 	const rest = parts.slice(wildcardIndex + 1);
 	let entries: fs.Dirent[];
 	try {
@@ -2302,16 +2343,16 @@ function expandAgentScanDirPattern(pattern: string): AgentScanDirs {
 	}
 	const candidateDirs = entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(base, entry.name, ...rest));
 	return {
-		dirs: candidateDirs.filter((dir) => fs.existsSync(dir)),
+		dirs: candidateDirs.filter((dir) => !isExcluded(dir) && fs.existsSync(dir)),
 		watchPaths: [base, ...candidateDirs],
 	};
 }
 
-function settingsAgentScanDirs(entries: string[]): AgentScanDirs {
+function settingsAgentScanDirs(entries: string[], isExcluded: (filePath: string) => boolean): AgentScanDirs {
 	const dirs = new Set<string>();
 	const watchPaths = new Set<string>();
 	for (const entry of entries) {
-		const expanded = expandAgentScanDirPattern(entry);
+		const expanded = expandAgentScanDirPattern(entry, isExcluded);
 		for (const dir of expanded.dirs) dirs.add(dir);
 		for (const watchPath of expanded.watchPaths) watchPaths.add(watchPath);
 	}
@@ -2378,6 +2419,10 @@ interface AgentDiscoverySources {
 	userChains?: ReturnType<typeof loadChainsFromDir>;
 	projectChainLoaded?: Array<{ dir: string; loaded: ReturnType<typeof loadChainsFromDir> }>;
 	packageChainLoaded?: Array<{ entry: PackageChainPath; loaded: ReturnType<typeof loadChainsFromDir> }>;
+	isExcluded: (filePath: string) => boolean;
+	exclusionRoots: Array<{ resolved: string; real: string }>;
+	identityWatchPaths: string[];
+	chainWatchPaths?: Set<string>;
 	watchPaths: string[];
 }
 
@@ -2390,7 +2435,7 @@ const agentDiscoveryCache = new Map<string, AgentDiscoveryCacheEntry>();
 
 function isPathWithin(root: string, candidate: string): boolean {
 	const relative = path.relative(path.resolve(root), path.resolve(candidate));
-	return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+	return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 function addDirectoryWatchPaths(paths: Set<string>, root: string, files: readonly string[], directories: readonly string[] = []): void {
@@ -2413,13 +2458,14 @@ function addDirectoryWatchPaths(paths: Set<string>, root: string, files: readonl
 	}
 }
 
-function watchPathSignature(filePath: string): string {
+function watchPathSignature(filePath: string, isExcluded?: (filePath: string) => boolean): string {
 	try {
 		const stat = fs.statSync(filePath);
 		if (stat.isDirectory()) {
 			const entries = fs.readdirSync(filePath, { withFileTypes: true })
+				.filter((entry) => !isExcluded || !isExcluded(path.join(filePath, entry.name)))
 				.sort((left, right) => left.name.localeCompare(right.name))
-				.map((entry) => `${entry.name}:${entry.isDirectory() ? "d" : entry.isSymbolicLink() ? "l" : "f"}`)
+				.map((entry) => `${entry.name}:${entry.isDirectory() ? "d" : entry.isSymbolicLink() ? (isExcluded ? `l:${canonicalAgentPath(path.join(filePath, entry.name))}` : "l") : "f"}`)
 				.join("|");
 			return `directory:${entries}`;
 		}
@@ -2429,10 +2475,17 @@ function watchPathSignature(filePath: string): string {
 	}
 }
 
-function discoveryFingerprint(paths: readonly string[]): string {
-	return [...new Set(paths)]
+function discoveryFingerprint(sources: AgentDiscoverySources): string {
+	const exclusionIdentity = JSON.stringify(sources.exclusionRoots.map((root) => ({ resolved: root.resolved, real: canonicalAgentPath(root.resolved) })));
+	// A retargeted exclusion needs a fresh scan before fingerprinting old roots.
+	if (exclusionIdentity !== JSON.stringify(sources.exclusionRoots)) return exclusionIdentity;
+	const rootIdentities = JSON.stringify(sources.identityWatchPaths.map((root) => [root, canonicalAgentPath(root)]));
+	// Package metadata can redirect agents outside an excluded tree without chains.
+	const unfilteredPaths = new Set([...sources.packageSubagentPaths.watchPaths, ...(sources.chainWatchPaths ?? [])]);
+	return exclusionIdentity + "\n" + rootIdentities + "\n" + [...new Set([...sources.watchPaths, ...unfilteredPaths])]
+		.filter((filePath) => unfilteredPaths.has(filePath) || filePath === sources.userSettingsPath || filePath === sources.projectSettingsPath || !sources.isExcluded(filePath))
 		.sort((left, right) => left.localeCompare(right))
-		.map((filePath) => `${filePath}:${watchPathSignature(filePath)}`)
+		.map((filePath) => `${filePath}:${watchPathSignature(filePath, sources.exclusionRoots.length && !unfilteredPaths.has(filePath) ? sources.isExcluded : undefined)}`)
 		.join("\n");
 }
 
@@ -2478,21 +2531,23 @@ function buildAgentDiscoverySources(cwd: string, preferredModelProvider?: string
 	const userSettingsPath = getUserAgentSettingsPath();
 	const projectSettingsPath = getProjectAgentSettingsPath(effectiveCwd);
 	const packageSubagentPaths = collectPackageSubagentPaths(effectiveCwd);
-	const userScanDirs = settingsAgentScanDirs(readConfiguredAgentScanDirs(userSettingsPath));
-	const projectScanDirs = settingsAgentScanDirs(readConfiguredAgentScanDirs(projectSettingsPath));
+	const exclusionRoots = agentExclusionRoots(userSettingsPath, projectSettingsPath);
+	const isExcluded = agentExclusions(exclusionRoots);
+	const userScanDirs = settingsAgentScanDirs(readConfiguredAgentScanDirs(userSettingsPath), isExcluded);
+	const projectScanDirs = settingsAgentScanDirs(readConfiguredAgentScanDirs(projectSettingsPath), isExcluded);
 
 	const builtinLoaded = loadAgentsFromDefinitionFiles(BUILTIN_AGENT_DEFINITION_FILES, "builtin");
-	const userLoaded = [...extraUserAgentDirs(), ...userScanDirs.dirs, userDirOld, userDirNew].map((dir, discoveryPriority): LoadedAgentDirectory => {
-		const inspection = inspectAgentDefinitionDirectory(dir);
+	const userLoaded = [...extraUserAgentDirs(), ...userScanDirs.dirs, userDirOld, userDirNew].filter((dir) => !isExcluded(dir)).map((dir, discoveryPriority): LoadedAgentDirectory => {
+		const inspection = inspectAgentDefinitionDirectory(dir, undefined, isExcluded);
 		return { dir, inspection, loaded: loadAgentsFromDir(dir, "user", discoveryPriority, undefined, inspection) };
 	});
-	const projectInspections = new Map(projectCandidateDirs.map((dir) => [dir, inspectAgentDefinitionDirectory(dir)]));
-	const projectLoaded = [...projectScanDirs.dirs, ...projectAgentDirs].map((dir, discoveryPriority): LoadedAgentDirectory => {
-		const inspection = projectInspections.get(dir) ?? inspectAgentDefinitionDirectory(dir);
+	const projectInspections = new Map(projectCandidateDirs.filter((dir) => !isExcluded(dir)).map((dir) => [dir, inspectAgentDefinitionDirectory(dir, undefined, isExcluded)]));
+	const projectLoaded = [...projectScanDirs.dirs, ...projectAgentDirs].filter((dir) => !isExcluded(dir)).map((dir, discoveryPriority): LoadedAgentDirectory => {
+		const inspection = projectInspections.get(dir) ?? inspectAgentDefinitionDirectory(dir, undefined, isExcluded);
 		return { dir, inspection, loaded: loadAgentsFromDir(dir, "project", dir === projectAgentsDir ? 1 : discoveryPriority, undefined, inspection) };
 	});
-	const packageLoaded = packageSubagentPaths.agents.map((entry, index): LoadedAgentDirectory => {
-		const inspection = inspectAgentDefinitionDirectory(entry.dir);
+	const packageLoaded = packageSubagentPaths.agents.filter((entry) => !isExcluded(entry.dir)).map((entry, index): LoadedAgentDirectory => {
+		const inspection = inspectAgentDefinitionDirectory(entry.dir, undefined, isExcluded);
 		return { dir: entry.dir, inspection, packageEntry: entry, loaded: loadAgentsFromDir(entry.dir, "package", packageSubagentPaths.agents.length - index, entry, inspection) };
 	});
 
@@ -2522,7 +2577,7 @@ function buildAgentDiscoverySources(cwd: string, preferredModelProvider?: string
 		userDirNew,
 		userChainDir,
 		projectAgentDirs,
-		projectCandidateDirs,
+		projectCandidateDirs: projectCandidateDirs.filter((dir) => !isExcluded(dir)),
 		projectAgentsDir,
 		projectChainDirs,
 		projectChainDir,
@@ -2534,7 +2589,17 @@ function buildAgentDiscoverySources(cwd: string, preferredModelProvider?: string
 		projectLoaded,
 		projectInspections,
 		packageLoaded,
-		watchPaths: [...watchPaths],
+		isExcluded,
+		exclusionRoots,
+		// Aliases outside excluded lexical subtrees can be retargeted into allowed
+		// storage. Watch only their identity, never the excluded target's contents.
+		identityWatchPaths: [...new Set([
+			...userScanDirs.watchPaths, ...projectScanDirs.watchPaths,
+			...extraUserAgentDirs(), userDirOld, userDirNew, ...projectCandidateDirs,
+			...packageSubagentPaths.agents.map((entry) => entry.dir),
+		])]
+			.filter((dir) => !exclusionRoots.some((root) => isPathWithin(root.resolved, dir)) && isExcluded(dir)),
+		watchPaths: [...watchPaths].filter((filePath) => !isExcluded(filePath) || filePath === userSettingsPath || filePath === projectSettingsPath),
 	};
 }
 
@@ -2543,29 +2608,30 @@ function ensureDiscoveryChains(sources: AgentDiscoverySources): void {
 	sources.packageChainLoaded = sources.packageSubagentPaths.chains.map((entry) => ({ entry, loaded: loadChainsFromDir(entry.dir, "package") }));
 	sources.userChains = loadChainsFromDir(sources.userChainDir, "user");
 	sources.projectChainLoaded = sources.projectChainDirs.map((dir) => ({ dir, loaded: loadChainsFromDir(dir, "project") }));
-	const watchPaths = new Set(sources.watchPaths);
+	const watchPaths = new Set(sources.packageSubagentPaths.watchPaths);
 	addDirectoryWatchPaths(watchPaths, sources.userChainDir, sources.userChains.files, sources.userChains.directories);
 	for (const chain of sources.projectChainLoaded) addDirectoryWatchPaths(watchPaths, chain.dir, chain.loaded.files, chain.loaded.directories);
 	for (const chain of sources.packageChainLoaded) addDirectoryWatchPaths(watchPaths, chain.entry.dir, chain.loaded.files, chain.loaded.directories);
-	sources.watchPaths = [...watchPaths];
+	sources.chainWatchPaths = watchPaths;
+	sources.watchPaths = [...new Set([...sources.watchPaths, ...watchPaths])];
 }
 
 function getAgentDiscoverySources(cwd: string, preferredModelProvider?: string, includeChains = false): AgentDiscoverySources {
 	const key = discoveryCacheKey(cwd, preferredModelProvider);
 	const cached = agentDiscoveryCache.get(key);
-	if (cached && cached.fingerprint === discoveryFingerprint(cached.sources.watchPaths)) {
+	if (cached && cached.fingerprint === discoveryFingerprint(cached.sources)) {
 		if (includeChains) {
 			ensureDiscoveryChains(cached.sources);
-			cached.fingerprint = discoveryFingerprint(cached.sources.watchPaths);
+			cached.fingerprint = discoveryFingerprint(cached.sources);
 		}
 		return cached.sources;
 	}
 	const sources = buildAgentDiscoverySources(cwd, preferredModelProvider);
-	const entry = { sources, fingerprint: discoveryFingerprint(sources.watchPaths) };
+	const entry = { sources, fingerprint: discoveryFingerprint(sources) };
 	agentDiscoveryCache.set(key, entry);
 	if (includeChains) {
 		ensureDiscoveryChains(sources);
-		entry.fingerprint = discoveryFingerprint(sources.watchPaths);
+		entry.fingerprint = discoveryFingerprint(sources);
 	}
 	return sources;
 }
@@ -2761,27 +2827,28 @@ function discoverAgentsUncached(cwd: string, scope: AgentScope, preferredModelPr
 	const defaultExtensions = resolveSubagentDefaultExtensions(userSettings, projectSettings, projectSettingsPath);
 	const modelScope = projectSettings.modelScope ?? userSettings.modelScope;
 	const packageSubagentPaths = collectPackageSubagentPaths(effectiveCwd, { includeUser: scope !== "project", includeProject: scope !== "user" });
+	const isExcluded = agentExclusions(agentExclusionRoots(userSettingsPath, projectSettingsPath));
 	const directories: AgentDefinitionDirectoryReport[] = [reportAgentDefinitionDirectory("builtin", BUILTIN_AGENTS_DIR, BUILTIN_AGENT_DEFINITION_INSPECTION)];
 	const builtinLoaded = loadAgentsFromDefinitionFiles(BUILTIN_AGENT_DEFINITION_FILES, "builtin");
 	const builtinAgents = applyBuiltinOverrides(applySubagentDefaults(builtinLoaded.agents, defaultModel, defaultProvider, defaultThinking, defaultExtensions), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
-	const userScanDirs = settingsAgentScanDirs(userSettings.agentScanDirs ?? []);
-	const projectScanDirs = settingsAgentScanDirs(projectSettings.agentScanDirs ?? []);
-	const userLoaded = scope === "project" ? [] : [...extraUserAgentDirs(), ...userScanDirs.dirs, userDirOld, userDirNew].map((dir, discoveryPriority) => {
-		const inspection = inspectAgentDefinitionDirectory(dir);
+	const userScanDirs = settingsAgentScanDirs(userSettings.agentScanDirs ?? [], isExcluded);
+	const projectScanDirs = settingsAgentScanDirs(projectSettings.agentScanDirs ?? [], isExcluded);
+	const userLoaded = scope === "project" ? [] : [...extraUserAgentDirs(), ...userScanDirs.dirs, userDirOld, userDirNew].filter((dir) => !isExcluded(dir)).map((dir, discoveryPriority) => {
+		const inspection = inspectAgentDefinitionDirectory(dir, undefined, isExcluded);
 		directories.push(reportAgentDefinitionDirectory("user", dir, inspection));
 		return loadAgentsFromDir(dir, "user", discoveryPriority, undefined, inspection);
 	});
 	const userAgents = applyCustomAgentOverrides(applySubagentDefaults(userLoaded.flatMap((loaded) => loaded.agents), defaultModel, defaultProvider, defaultThinking, defaultExtensions), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
-	const projectInspections = scope === "user" ? new Map<string, AgentDefinitionInspection>() : new Map(projectCandidateDirs.map((dir) => [dir, inspectAgentDefinitionDirectory(dir)]));
-	if (scope !== "user") for (const dir of projectCandidateDirs) directories.push(reportAgentDefinitionDirectory("project", dir, projectInspections.get(dir)!));
-	const projectLoaded = scope === "user" ? [] : [...projectScanDirs.dirs, ...projectAgentDirs].map((dir, discoveryPriority) => {
-		const inspection = projectInspections.get(dir) ?? inspectAgentDefinitionDirectory(dir);
+	const projectInspections = scope === "user" ? new Map<string, AgentDefinitionInspection>() : new Map(projectCandidateDirs.filter((dir) => !isExcluded(dir)).map((dir) => [dir, inspectAgentDefinitionDirectory(dir, undefined, isExcluded)]));
+	if (scope !== "user") for (const [dir, inspection] of projectInspections) directories.push(reportAgentDefinitionDirectory("project", dir, inspection));
+	const projectLoaded = scope === "user" ? [] : [...projectScanDirs.dirs, ...projectAgentDirs].filter((dir) => !isExcluded(dir)).map((dir, discoveryPriority) => {
+		const inspection = projectInspections.get(dir) ?? inspectAgentDefinitionDirectory(dir, undefined, isExcluded);
 		if (!projectInspections.has(dir)) directories.push(reportAgentDefinitionDirectory("project", dir, inspection));
 		return loadAgentsFromDir(dir, "project", dir === projectAgentsDir ? 1 : discoveryPriority, undefined, inspection);
 	});
 	const projectAgents = applyCustomAgentOverrides(applySubagentDefaults(projectLoaded.flatMap((loaded) => loaded.agents), defaultModel, defaultProvider, defaultThinking, defaultExtensions), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
-	const packageLoaded = packageSubagentPaths.agents.map((entry, index) => {
-		const inspection = inspectAgentDefinitionDirectory(entry.dir);
+	const packageLoaded = packageSubagentPaths.agents.filter((entry) => !isExcluded(entry.dir)).map((entry, index) => {
+		const inspection = inspectAgentDefinitionDirectory(entry.dir, undefined, isExcluded);
 		directories.push(reportAgentDefinitionDirectory("package", entry.dir, inspection));
 		return loadAgentsFromDir(entry.dir, "package", packageSubagentPaths.agents.length - index, entry, inspection);
 	});

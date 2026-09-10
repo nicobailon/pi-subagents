@@ -2,7 +2,7 @@
 
 `pi-subagents` reads optional JSON config from `~/.pi/agent/extensions/subagent/config.json`. This page lists every key, plus the environment variables and the settings-file keys that affect config resolution.
 
-Settings-level keys (`subagents.defaultModel`, `defaultProvider`, `defaultThinking`, `defaultExtensions`, `agentOverrides`, `agentScanDirs`, `modelScope`, `disableThinking`, `disableBuiltins`, watchdog settings) live in Pi settings files, not this config file. `modelScope.agents.<name>` adds per-agent restrictions, and `allow: ["inherit"]` permits the current parent model. See [models.md](models.md), [agents.md](agents.md), and [watchdog.md](watchdog.md).
+Settings-level keys (`subagents.defaultModel`, `defaultProvider`, `defaultThinking`, `defaultExtensions`, `agentOverrides`, `agentScanDirs`, `agentExcludeDirs`, `modelScope`, `disableThinking`, `disableBuiltins`, watchdog settings) live in Pi settings files, not this config file. `modelScope.agents.<name>` adds per-agent restrictions, and `allow: ["inherit"]` permits the current parent model. See [models.md](models.md), [agents.md](agents.md), and [watchdog.md](watchdog.md).
 
 ## Project root resolution (settings)
 
@@ -31,6 +31,22 @@ Add recursive user or project agent roots with `subagents.agentScanDirs` in Pi s
 ```
 
 Entries support `~` expansion. A single `*` path segment expands one directory level, so package-like folders can each expose an `agents/` directory. Missing directories are ignored. Fixed user/project agent directories still win over same-name agents from scan roots.
+
+## Excluded agent directories (settings)
+
+Prune directory subtrees from recursive agent-definition discovery with `subagents.agentExcludeDirs`:
+
+```json
+{
+  "subagents": {
+    "agentExcludeDirs": ["~/.agents/plugins", "../.agents/plugins"]
+  }
+}
+```
+
+Entries are literal directory paths (no globs), supporting `~` and absolute paths. Relative paths resolve from the directory containing their settings file: the user agent config directory for user settings, or the project config directory (normally `.pi/`) for project settings. Thus `../.agents/plugins` in project `.pi/settings.json` excludes the project's legacy plugin subtree without excluding ordinary `.agents/*.md` agents.
+
+User and nearest-project exclusions are combined for every discovery scope, including all-source diagnostics. They apply before traversal and definition reads; explicit scan roots, environment roots, and installed packages cannot re-include an excluded tree. Normalized and real-path containment also excludes symlink aliases without matching sibling directory prefixes. Settings changes invalidate cached discovery. Excluded agent trees are not fingerprinted; chain discovery keeps its own unchanged watches when it shares a directory. Skills, chains, and the extension's bundled builtin snapshot are outside this setting's scope.
 
 ## `modelResponseAliases`
 
