@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep host-discovered tool names that extensions provide: core tool slots resolve by name whatever their source (extensions that re-register a core tool shadowed it with an extension source, so child tool plans pruned every requested tool and foreground scout/reviewer launches failed), and extension tool names survive on launches that load ambient extensions in the parent's project (runner launches). Foreground launches, cross-project launches, capability ceilings, and explicit extension lists still fail closed. (#2132, #2133, #2135)
+
 ## [0.67.0] - 2026-09-10
 
 ### Highlights

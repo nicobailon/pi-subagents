@@ -196,6 +196,14 @@ export interface ResolvePiLaunchToolPlanInput {
 	 * empty or ceiling-restricted allowlists are not a minimum-tool contract.
 	 */
 	hostToolNames?: readonly string[];
+	/**
+	 * Whether the child launch loads ambient extensions. Foreground launches
+	 * hosted by the parent process never do (buildInProcessChildLaunch derives
+	 * this from its host); detached runner launches do when the extension policy
+	 * allows them and the child stays in the parent's project. Defaults to true
+	 * for callers that do not specify it.
+	 */
+	ambientExtensions?: boolean;
 }
 
 export interface PiLaunchToolPlan {
@@ -412,7 +420,9 @@ export function resolvePiLaunchToolPlan(
 	// the slot, so the name stays resolvable either way. Extension tool names
 	// (mcp__slack, web_search, ...) only reach the child when it loads the same
 	// ambient extension set, so they stay pruned for launches that deny extensions.
-	const childInheritsAmbientExtensions = capabilityCeiling?.denyExtensions !== true && input.extensions === undefined;
+	const childInheritsAmbientExtensions = input.ambientExtensions !== false
+		&& capabilityCeiling?.denyExtensions !== true
+		&& input.extensions === undefined;
 	const resolvesInChild = (tool: string): boolean =>
 		NATIVE_COORDINATION_TOOL_NAMES.has(tool)
 		|| hostAvailableSet !== undefined
@@ -504,9 +514,12 @@ export function resolvePiLaunchToolPlan(
 		...(fanoutAuthorized ? [FANOUT_CHILD_EXTENSION_PATH] : []),
 		...(permSystemExt ? [permSystemExt] : []),
 	];
+	// Mirror the childInheritsAmbientExtensions decision so launch previews and
+	// contract digests report the ambient policy the launch will actually use.
 	const disableAmbientExtensions =
 		capabilityCeiling?.denyExtensions === true ||
-		input.extensions !== undefined;
+		input.extensions !== undefined ||
+		input.ambientExtensions === false;
 	const warnings: string[] = [];
 	// An explicit empty list disables ambient extensions, including model providers.
 	if (capabilityCeiling?.denyExtensions !== true && Array.isArray(input.extensions) && input.extensions.length === 0) {

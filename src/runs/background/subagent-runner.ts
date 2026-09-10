@@ -234,6 +234,7 @@ export interface SubagentRunConfig {
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	/** Builtin tool names the host runtime provides; used to intersect agent-declared tools. */
 	hostToolNames?: readonly string[];
+	ambientExtensions?: boolean;
 	launchContractDigest?: string;
 	launchResolvedExtensions?: LaunchResolvedChildExtensions;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
@@ -700,6 +701,7 @@ interface SingleStepContext {
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	hostToolNames?: readonly string[];
+	ambientExtensions?: boolean;
 	onAttemptStart?: (attempt: { model?: string; thinking?: string; contextLimit?: number }) => void;
 	onChildEvent?: (event: ChildEvent) => void;
 	onExternalProcess?: (process: ExternalProcessStatus) => void;
@@ -817,6 +819,7 @@ export async function runSingleStepInner(
 			inheritedCapabilityCeiling: ctx.inheritedChildRuntime?.capabilityCeiling,
 			permissionRules: step.permissionRules,
 			hostToolNames: ctx.hostToolNames,
+			ambientExtensions: ctx.ambientExtensions,
 		}));
 		const contractTools = resolvedTaskToolPlan.explicitToolAllowlist ? resolvedTaskToolPlan.effectiveToolAllowlist : undefined;
 		const contractError = validateImplementationToolContract({
@@ -1156,6 +1159,7 @@ export async function runSingleStepInner(
 				inheritedCapabilityCeiling: ctx.inheritedChildRuntime?.capabilityCeiling,
 				permissionRules: step.permissionRules,
 				hostToolNames: ctx.hostToolNames,
+				ambientExtensions: ctx.ambientExtensions,
 			}));
 			launchResolvedExtensions = projectLaunchResolvedChildExtensions(toolPlan);
 			actualLaunchContractDigest = resolveLaunchBinding({
@@ -3696,6 +3700,7 @@ export async function runSubagent(
 					capabilityCeiling: config.capabilityCeiling,
 					runFanoutBudget: config.runFanoutBudget,
 					hostToolNames: config.hostToolNames,
+					ambientExtensions: config.ambientExtensions,
 					registerInterrupt: (interrupt) => registerStepInterrupt(fi, interrupt),
 					registerTimeout: (interrupt) => registerStepTimeout(fi, interrupt),
 					registerStop: (stop) => registerStepStop(fi, stop),
@@ -4108,6 +4113,7 @@ export async function runSubagent(
 							capabilityCeiling: config.capabilityCeiling,
 							runFanoutBudget: config.runFanoutBudget,
 							hostToolNames: config.hostToolNames,
+							ambientExtensions: config.ambientExtensions,
 							registerInterrupt: (interrupt) => registerStepInterrupt(fi, interrupt),
 							registerTimeout: (interrupt) => registerStepTimeout(fi, interrupt),
 							registerStop: (stop) => registerStepStop(fi, stop),
@@ -4510,6 +4516,7 @@ export async function runSubagent(
 				capabilityCeiling: config.capabilityCeiling,
 				runFanoutBudget: config.runFanoutBudget,
 				hostToolNames: config.hostToolNames,
+				ambientExtensions: config.ambientExtensions,
 				registerInterrupt: (interrupt) => registerStepInterrupt(flatIndex, interrupt),
 				registerTimeout: (interrupt) => registerStepTimeout(flatIndex, interrupt),
 				registerStop: (stop) => registerStepStop(flatIndex, stop),

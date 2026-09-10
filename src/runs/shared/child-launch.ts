@@ -119,6 +119,8 @@ export interface BuildInProcessChildLaunchInput {
 	 * still-permitted repository inspection tool is missing from that set.
 	 */
 	hostToolNames?: readonly string[];
+	/** Whether the child loads ambient extensions (foreground parent-hosted children never do). */
+	ambientExtensions?: boolean;
 }
 
 export interface InProcessChildCapture {

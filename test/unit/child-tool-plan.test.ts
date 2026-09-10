@@ -110,6 +110,20 @@ describe("child tool plan host builtin intersection", () => {
 			assert.deepEqual(plan.unavailableHostBuiltins, []);
 		});
 
+		it("prunes extension tool names for a foreground launch that never loads ambient extensions", () => {
+			const plan = resolvePiLaunchToolPlan({ tools, hostToolNames, ambientExtensions: false });
+			assert.deepEqual(plan.declaredBuiltinTools, ["read"]);
+			assert.deepEqual(plan.unavailableHostBuiltins, ["web_search", "fetch_content"]);
+		});
+
+		it("prunes extension tool names when the child runs outside the parent project", () => {
+			// A detached runner does ambient discovery in its own cwd; when the
+			// launch moves the child to another project the parent snapshot no
+			// longer describes the child menu, so ambient names fail closed
+			const plan = resolvePiLaunchToolPlan({ tools, hostToolNames, ambientExtensions: false });
+			assert.deepEqual(plan.declaredBuiltinTools, ["read"]);
+		});
+
 		it("prunes extension tool names when a capability ceiling denies extensions", () => {
 			const plan = resolvePiLaunchToolPlan({
 				tools,
