@@ -1466,6 +1466,64 @@ describe("scripted workflow runtime", () => {
 		}
 	});
 
+	it("accepts runs.run(...) launch promises passed via runs.all(items.map(...)) and warns once about lost batch semantics", async () => {
+		const launches: string[] = [];
+		const result = await runWorkflowScript({
+			script: `
+				const items = ["alpha", "beta"];
+				const results = await runs.all(items.map((name) => runs.run(name, { agent: "worker", task: "work-" + name })));
+				return results.map((entry) => ({ key: entry.key, ok: entry.ok, output: entry.output }));
+			`,
+			timeoutMs: 2_000,
+			async launch(key) { launches.push(key); return { key, ok: true, output: "done-" + key, artifactPaths: [], results: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.deepEqual(launches, ["alpha", "beta"]);
+		assert.deepEqual(result.value, [
+			{ key: "alpha", ok: true, output: "done-alpha" },
+			{ key: "beta", ok: true, output: "done-beta" },
+		]);
+		const warnEntries = result.console.filter((entry) => entry.level === "warn");
+		assert.equal(warnEntries.length, 1, "expected exactly one permissive warning");
+		assert.match(warnEntries[0].text, /runs\.run\(\.\.\.\) launch promise/);
+		assert.match(warnEntries[0].text, /pass config objects/);
+	});
+
+	it("accepts a mixed runs.all shape combining a config object and a runs.run(...) promise", async () => {
+		const launches: string[] = [];
+		const result = await runWorkflowScript({
+			script: `
+				const results = await runs.all([
+					{ key: "config-child", agent: "worker", task: "config" },
+					runs.run("promise-child", { agent: "worker", task: "promise" }),
+				]);
+				return results.map((entry) => ({ key: entry.key, ok: entry.ok }));
+			`,
+			timeoutMs: 2_000,
+			async launch(key) { launches.push(key); return { key, ok: true, output: "done", artifactPaths: [], results: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.deepEqual(launches.sort(), ["config-child", "promise-child"]);
+		assert.deepEqual(result.value, [
+			{ key: "config-child", ok: true },
+			{ key: "promise-child", ok: true },
+		]);
+	});
+
+	it("still rejects non-object non-thenable items in a permissive runs.all call", async () => {
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return await runs.all([runs.run("valid", { agent: "worker", task: "run" }), null]);`,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: true, output: "unexpected", artifactPaths: [], results: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && /must be an object or a runs\.run\(\.\.\.\) launch promise/.test(error.message),
+		);
+	});
+
 	it("rejects a runs.all batch incompatible with an earlier key before dispatching the batch", async () => {
 		const launches: string[] = [];
 		await assert.rejects(
@@ -2034,6 +2092,47 @@ describe("scripted workflow runtime", () => {
 			}),
 			(error: unknown) => error instanceof WorkflowScriptError && error.message.includes("unawaited runs.run launch(es): 'a'"),
 		);
+	});
+
+	for (const [kind, items, keys] of [
+		["direct", `p`, "'a'"],
+		["wrapped", `Promise.resolve(p)`, "'a'"],
+		["mixed", `p, { key: "b", agent: "worker", task: "two" }`, "'a', 'b'"],
+	]) {
+		it(`rejects an unawaited ${kind} permissive runs.all aggregate`, async () => {
+			await assert.rejects(runWorkflowScript({
+				script: `const p = runs.run("a", { agent: "worker", task: "one" }); runs.all([${items}]); await runs.status("a"); return "done";`,
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async status(key) {
+					await new Promise((resolve) => setTimeout(resolve, 40));
+					return { key, ok: true, output: "ok", artifactPaths: [] };
+				},
+			}), (error: unknown) => error instanceof WorkflowScriptError
+				&& error.message.includes(`unawaited runs.run launch(es): ${keys}`));
+		});
+	}
+
+	it("can catch permissive runs.all validation and the original launch rejection", async () => {
+		const result = await runWorkflowScript({
+			script: `
+				const p = runs.run("bad", { agent: "worker", task: "fail" });
+				const errors = [];
+				try { runs.all([p, { key: "unused", agent: "worker", task: "unused" }, null]); } catch (e) { errors.push(e.message); }
+				try { await p; } catch (e) { errors.push(e.message); }
+				await runs.status("bad");
+				return errors;
+			`,
+			async launch(key) { return { key, ok: false, output: "child failed", artifactPaths: [] }; },
+			async status(key) {
+				await new Promise((resolve) => setTimeout(resolve, 40));
+				return { key, ok: true, output: "ok", artifactPaths: [] };
+			},
+		});
+		assert.deepEqual(result.value, [
+			"runs.all item 2 must be an object or a runs.run(...) launch promise.",
+			"Run 'bad' failed: child failed",
+		]);
+		assert.deepEqual(result.children.map((child) => child.key), ["bad"]);
 	});
 
 	it("rejects an unawaited runs.lanes launch", async () => {

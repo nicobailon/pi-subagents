@@ -707,8 +707,26 @@ function validateHostCommand(key, params) {
   hostKeys.add(key);
 }
 
+const RUNS_ALL_PERMISSIVE_WARNING = "runs.all received runs.run(...) launch promise(s) or thenable(s). Those children were already launched individually, so runs.all cannot apply batch fingerprint validation, batch grouping in the fleet view, or collectFailure semantics; a failed child will throw at the runs.all boundary instead of returning as { ok: false }. To get full runs.all semantics, pass config objects: runs.all(items.map((item) => ({ key: item.key, agent: item.agent, task: item.task }))).";
+
+function runsAllItemThenableInfo(item, index) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  if (typeof item.then !== "function") return null;
+  const tracker = promiseObservationTracker(item);
+  const observation = tracker && Array.isArray(tracker.observations) ? tracker.observations.find((entry) => entry && entry.operation === "run") : undefined;
+  return {
+    key: observation && typeof observation.key === "string" ? observation.key : ("runs.all[" + index + "]"),
+    callId: observation && typeof observation.callId === "number" ? observation.callId : null,
+    promise: item,
+  };
+}
+
+let warnedPermissiveRunsAll = false;
+
 function launchRunsAll(items, generatedLaneKeys) {
   if (!Array.isArray(items)) throw new Error("runs.all(items) requires an array.");
+  const anyThenable = items.some((item, index) => runsAllItemThenableInfo(item, index) !== null);
+  if (anyThenable) return launchRunsAllPermissive(items);
   const fingerprints = new Map(runFingerprints);
   const calls = [];
   for (let index = 0; index < items.length; index++) {
@@ -725,6 +743,33 @@ function launchRunsAll(items, generatedLaneKeys) {
   return { calls, launched };
 }
 
+function launchRunsAllPermissive(items) {
+  if (!warnedPermissiveRunsAll) {
+    warnedPermissiveRunsAll = true;
+    try { capturedConsole.warn(RUNS_ALL_PERMISSIVE_WARNING); } catch { /* console emission is best-effort */ }
+  }
+  const fingerprints = new Map(runFingerprints);
+  const calls = [];
+  const launched = [];
+  for (let index = 0; index < items.length; index++) {
+    if (!Object.prototype.hasOwnProperty.call(items, index)) throw new Error("runs.all items must not contain sparse entries.");
+    const item = items[index];
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("runs.all item " + index + " must be an object or a runs.run(...) launch promise.");
+    const thenable = runsAllItemThenableInfo(item, index);
+    if (thenable) {
+      calls.push({ key: thenable.key, params: {} });
+      launched.push(thenable);
+      continue;
+    }
+    const { key, ...params } = item;
+    validateRunCall(key, params, "runs.all item " + index, fingerprints);
+    calls.push({ key, params });
+    launched.push(null);
+  }
+  runFingerprints = fingerprints;
+  return { calls, launched: launched.map((entry, index) => entry ?? runHostCall(calls[index].key, calls[index].params, false, undefined)) };
+}
+
 const runs = Object.freeze({
   run(key, params) {
     validateRunCall(key, params, "runs.run", runFingerprints);
@@ -733,7 +778,7 @@ const runs = Object.freeze({
   },
   all(items) {
     const { calls, launched } = launchRunsAll(items);
-    return trackRunObservation(launched.map(({ key, callId }) => ({ key, operation: "run", callId })), Promise.all(launched.map(({ promise }) => promise)).then((results) => wrapRunsAllResults(results.map(decorateWorkflowChildResult), calls.map(({ key }) => key))));
+    return trackRunObservation(launched.map(({ key, callId }) => ({ key, operation: "run", callId })), trackPromiseCombinator(launched.map(({ promise }) => promise), (values) => Promise.all(values).then((results) => wrapRunsAllResults(results.map(decorateWorkflowChildResult), calls.map(({ key }) => key)))));
   },
   lanes(laneSpecs) {
     return runLanes(laneSpecs);
