@@ -154,6 +154,13 @@ function validateConfig(config: Record<string, unknown>): void {
 		throw new Error('config.defaultSubagentContext must be "fresh" or "fork"');
 	}
 	validateForkContextConfig(config.forkContext);
+	if (config.checkpointBeforeDeadlineMs !== undefined
+		&& (typeof config.checkpointBeforeDeadlineMs !== "number"
+			|| !Number.isInteger(config.checkpointBeforeDeadlineMs)
+			|| config.checkpointBeforeDeadlineMs <= 0
+			|| config.checkpointBeforeDeadlineMs > 2_147_483_647)) {
+		throw new Error("config.checkpointBeforeDeadlineMs must be a positive integer no larger than 2147483647");
+	}
 	if (config.foregroundDetachShortcut !== undefined
 		&& (typeof config.foregroundDetachShortcut !== "string" || !isValidKeyId(config.foregroundDetachShortcut))) {
 		throw new Error("config.foregroundDetachShortcut must be a valid keybinding string such as \"ctrl+b\"");
@@ -242,12 +249,12 @@ export function loadConfig(): ExtensionConfig {
 		return readConfigForUpdate(configPath);
 	} catch (error) {
 		if (error instanceof PrunedForkConfigError) throw error;
-		// Explicit route identity and worktree policies must not be silently
+		// Explicit route identity, worktree, and checkpoint policies must not be silently
 		// discarded and replaced by the built-in defaults after validation fails.
 		try {
 			const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
 			if (raw && typeof raw === "object" && !Array.isArray(raw)
-				&& (Object.hasOwn(raw, "worktreeProvider") || Object.hasOwn(raw, "worktreeBranchPrefix") || Object.hasOwn(raw, "modelResponseAliases"))) throw error;
+				&& (Object.hasOwn(raw, "worktreeProvider") || Object.hasOwn(raw, "worktreeBranchPrefix") || Object.hasOwn(raw, "modelResponseAliases") || Object.hasOwn(raw, "checkpointBeforeDeadlineMs"))) throw error;
 		} catch (readError) {
 			if (readError === error) throw error;
 		}

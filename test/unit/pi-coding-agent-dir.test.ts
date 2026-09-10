@@ -292,6 +292,21 @@ Package skill content.
 		assert.throws(() => updateConfig((config) => config), /config\.defaultSubagentContext must be "fresh" or "fork"/);
 	});
 
+	it("accepts valid global checkpoint offsets and rejects invalid config before execution", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		for (const checkpointBeforeDeadlineMs of [undefined, 1, 300_000, 2_147_483_647]) {
+			writeFile(configPath, JSON.stringify({ checkpointBeforeDeadlineMs }));
+			assert.equal(loadConfig().checkpointBeforeDeadlineMs, checkpointBeforeDeadlineMs);
+		}
+		for (const checkpointBeforeDeadlineMs of [0, -1, 1.5, 2_147_483_648, null, false, "300000", [], {}]) {
+			writeFile(configPath, JSON.stringify({ checkpointBeforeDeadlineMs }));
+			assert.throws(() => loadConfig(), /config\.checkpointBeforeDeadlineMs must be a positive integer no larger than 2147483647/);
+		}
+		writeFile(configPath, "{}");
+		assert.throws(() => updateConfig(() => ({ checkpointBeforeDeadlineMs: Infinity })), /config\.checkpointBeforeDeadlineMs must be a positive integer no larger than 2147483647/);
+		assert.deepEqual(loadConfig(), {});
+	});
+
 	it("loads exact model response aliases and preserves them during config updates", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
 		const modelResponseAliases = {
