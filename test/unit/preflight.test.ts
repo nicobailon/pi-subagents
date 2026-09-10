@@ -944,6 +944,16 @@ Project prompt.
 			assert.equal(result.ok, false);
 			if (!result.ok) assert.equal(result.code, "invalid_intercom_bridge");
 		}
+		// Execution never has an empty target, so accepting one would silently
+		// deactivate the bridge in preflight only.
+		for (const orchestratorTarget of ["", "   ", 7]) {
+			const result = await resolveSubagentLaunchContract({ agent: "worker", cwd, orchestratorTarget: orchestratorTarget as never });
+			assert.equal(result.ok, false);
+			if (!result.ok) {
+				assert.equal(result.code, "invalid_intercom_bridge");
+				assert.match(result.message, /orchestratorTarget/);
+			}
+		}
 	});
 
 	it("falls back implicit default fork to fresh when the parent session is not forkable", async () => {

@@ -50,7 +50,7 @@ export type IntercomBridgeConfigValidation =
 	| { ok: false; error: string };
 
 /** Validates untrusted bridge config from descriptors or delegation requests; `label` prefixes each error. */
-export function validateIntercomBridgeConfig(value: unknown, label: string): IntercomBridgeConfigValidation {
+export function validateIntercomBridgeConfig({ value, label }: { value: unknown; label: string }): IntercomBridgeConfigValidation {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return { ok: false, error: `${label} must be an object.` };
 	const bridge = value as Record<string, unknown>;
 	for (const field of Object.keys(bridge)) {

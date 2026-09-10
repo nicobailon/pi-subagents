@@ -118,6 +118,7 @@ describe("public subagent delegation contract", () => {
 		assert.equal(parsed.ok, true);
 		if (parsed.ok) {
 			assert.deepEqual(parsed.request.intercomBridge, intercomBridge);
+			assert.notEqual(parsed.request.intercomBridge, intercomBridge, "parsed request must not alias the caller's object");
 			assert.deepEqual(toSubagentDelegationExecutionParams(parsed.request).intercomBridge, intercomBridge);
 		}
 		assert.equal("intercomBridge" in toSubagentDelegationExecutionParams(request), false);

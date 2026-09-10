@@ -245,9 +245,9 @@ describe("applyIntercomBridgeToAgent", () => {
 
 describe("validateIntercomBridgeConfig", () => {
 	it("accepts the documented fields and drops nothing", () => {
-		const result = validateIntercomBridgeConfig({ mode: "fork-only", instructionFile: "./bridge.md", resultDelivery: true }, "intercomBridge");
+		const result = validateIntercomBridgeConfig({ value: { mode: "fork-only", instructionFile: "./bridge.md", resultDelivery: true }, label: "intercomBridge" });
 		assert.deepEqual(result, { ok: true, value: { mode: "fork-only", instructionFile: "./bridge.md", resultDelivery: true } });
-		assert.deepEqual(validateIntercomBridgeConfig({}, "intercomBridge"), { ok: true, value: {} });
+		assert.deepEqual(validateIntercomBridgeConfig({ value: {}, label: "intercomBridge" }), { ok: true, value: {} });
 	});
 
 	it("rejects unknown fields and wrong types with the caller's label", () => {
@@ -260,7 +260,7 @@ describe("validateIntercomBridgeConfig", () => {
 			[{ resultDelivery: "yes" }, /^bridge\.resultDelivery must be a boolean\.$/],
 		];
 		for (const [value, expected] of cases) {
-			const result = validateIntercomBridgeConfig(value, "bridge");
+			const result = validateIntercomBridgeConfig({ value, label: "bridge" });
 			assert.equal(result.ok, false);
 			if (!result.ok) assert.match(result.error, expected);
 		}

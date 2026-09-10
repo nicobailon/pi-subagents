@@ -413,7 +413,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		if (!Number.isInteger(artifact.cleanupDays) || (artifact.cleanupDays as number) < 0) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': artifactConfig.cleanupDays must be a non-negative integer.`);
 	}
 	if (parsed.intercomBridge !== undefined) {
-		const bridge = validateIntercomBridgeConfig(parsed.intercomBridge, "intercomBridge");
+		const bridge = validateIntercomBridgeConfig({ value: parsed.intercomBridge, label: "intercomBridge" });
 		if (!bridge.ok) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${bridge.error}`);
 	}
 	if (parsed.controlConfig !== undefined) {

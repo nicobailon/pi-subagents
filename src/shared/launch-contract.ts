@@ -3,7 +3,6 @@ import * as fs from "node:fs";
 import type { AgentConfig } from "../agents/agents.ts";
 import type { PiLaunchToolPlan } from "../runs/shared/child-tool-plan.ts";
 import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
-import type { OutputMode } from "./types.ts";
 
 export const AGENT_DEFINITION_PROJECTION_VERSION = 1 as const;
 // v2: the Intercom bridge prompt and tools are part of the binding on every
@@ -142,22 +141,25 @@ export function launchBindingDigest(input: LaunchBindingInput): string {
 	return stableJsonDigest(projectLaunchBinding(input));
 }
 
-export interface LaunchBindingSource {
-	/** Agent as handed to the child, including runtime-declared overlays such as the Intercom bridge. */
-	agent: AgentConfig;
-	task: string;
-	modelCandidates: string[];
-	fast?: boolean;
-	thinking?: string;
-	/** Effective child system prompt before runtime acceptance prose. */
-	systemPrompt: string;
-	skills: string[];
-	toolPlan: Pick<PiLaunchToolPlan, "effectiveToolAllowlist" | "excludeTools" | "extensionArgs" | "effectiveMcpTools">;
-	outputPath?: string;
-	outputMode: OutputMode;
-	structuredOutputSchema?: unknown;
-	extensionBindings?: ExtensionBindings;
-}
+type LaunchBindingPromptMode = Pick<LaunchBindingInput, "systemPromptMode" | "inheritProjectContext" | "inheritGlobalContext" | "inheritSkills">;
+
+/**
+ * Who the child is: the launched agent, or the identity a persisted step
+ * already captured when a runner recomputes the binding per model attempt.
+ */
+export type LaunchBindingIdentity =
+	| { agent: AgentConfig }
+	| ({ definitionDigest: string } & LaunchBindingPromptMode);
+
+export type LaunchBindingSource = LaunchBindingIdentity
+	& Pick<LaunchBindingInput, "fast" | "thinking" | "skills" | "outputPath" | "outputMode" | "structuredOutputSchema" | "extensionBindings">
+	& {
+		task: string;
+		modelCandidates: string[];
+		/** Effective child system prompt before runtime acceptance prose. */
+		systemPrompt: string;
+		toolPlan: Pick<PiLaunchToolPlan, "effectiveToolAllowlist" | "excludeTools" | "extensionArgs" | "effectiveMcpTools">;
+	};
 
 export interface LaunchBinding {
 	definitionDigest: string;
@@ -165,34 +167,35 @@ export interface LaunchBinding {
 }
 
 /**
- * Single assembly point for launch identity. Preflight and every execution
- * path feed the same resolved inputs here, so what is hashed cannot drift
- * between them.
+ * Assemble launch identity from resolved preflight or execution inputs.
+ * The stable projection omits undefined optional fields.
  */
 export function resolveLaunchBinding(source: LaunchBindingSource): LaunchBinding {
-	const definitionDigest = agentDefinitionDigest(source.agent);
+	const identity = "agent" in source ? {
+		definitionDigest: agentDefinitionDigest(source.agent),
+		systemPromptMode: source.agent.systemPromptMode,
+		inheritProjectContext: source.agent.inheritProjectContext,
+		inheritGlobalContext: source.agent.inheritGlobalContext,
+		inheritSkills: source.agent.inheritSkills,
+	} : source;
 	return {
-		definitionDigest,
+		definitionDigest: identity.definitionDigest,
 		launchContractDigest: launchBindingDigest({
-			definitionDigest,
+			...identity,
 			task: source.task,
 			modelCandidates: source.modelCandidates,
-			...(source.fast !== undefined ? { fast: source.fast } : {}),
-			...(source.thinking ? { thinking: source.thinking } : {}),
+			fast: source.fast,
+			thinking: source.thinking || undefined,
 			systemPrompt: source.systemPrompt,
-			systemPromptMode: source.agent.systemPromptMode,
-			inheritProjectContext: source.agent.inheritProjectContext,
-			inheritGlobalContext: source.agent.inheritGlobalContext,
-			inheritSkills: source.agent.inheritSkills,
 			skills: source.skills,
 			tools: source.toolPlan.effectiveToolAllowlist,
-			...(source.toolPlan.excludeTools.length > 0 ? { excludeTools: source.toolPlan.excludeTools } : {}),
+			excludeTools: source.toolPlan.excludeTools.length > 0 ? source.toolPlan.excludeTools : undefined,
 			extensions: source.toolPlan.extensionArgs,
 			mcpDirectTools: source.toolPlan.effectiveMcpTools,
-			...(source.outputPath ? { outputPath: source.outputPath } : {}),
+			outputPath: source.outputPath || undefined,
 			outputMode: source.outputMode,
-			...(source.structuredOutputSchema ? { structuredOutputSchema: source.structuredOutputSchema } : {}),
-			...(source.extensionBindings ? { extensionBindings: source.extensionBindings } : {}),
+			structuredOutputSchema: source.structuredOutputSchema || undefined,
+			extensionBindings: source.extensionBindings || undefined,
 		}),
 	};
 }

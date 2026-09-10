@@ -99,11 +99,10 @@ export interface SubagentLaunchContractInput {
 	orchestratorTarget?: string;
 }
 
-export interface SubagentLaunchContractIntercomBridge {
-	mode: IntercomBridgeMode;
-	/** True when the bridge prompt and `contact_supervisor` tool are part of this launch. */
-	active: boolean;
-}
+/** Bridge activation before tool capability ceilings are applied. */
+export type SubagentLaunchContractIntercomBridge =
+	| { active: true; mode: Exclude<IntercomBridgeMode, "off"> }
+	| { active: false; mode: IntercomBridgeMode };
 
 export interface SubagentLaunchContractAgentCandidate {
 	name: string;
@@ -281,9 +280,14 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	if (input.artifactDir !== undefined && input.artifactDir !== "project" && input.artifactDir !== "session" && input.artifactDir !== "temp") {
 		return { ok: false, code: "invalid_artifact_dir", message: `Unsupported artifactDir '${String(input.artifactDir)}'; expected 'project', 'session', or 'temp'.`, diagnostics };
 	}
-	const bridgeOverride = input.intercomBridge === undefined ? undefined : validateIntercomBridgeConfig(input.intercomBridge, "intercomBridge");
+	const bridgeOverride = input.intercomBridge === undefined ? undefined : validateIntercomBridgeConfig({ value: input.intercomBridge, label: "intercomBridge" });
 	if (bridgeOverride && !bridgeOverride.ok) {
 		return { ok: false, code: "invalid_intercom_bridge", message: bridgeOverride.error, diagnostics };
+	}
+	// Execution always derives a non-empty target, so an empty one here would
+	// silently deactivate the bridge and break parity instead of proving it.
+	if (input.orchestratorTarget !== undefined && (typeof input.orchestratorTarget !== "string" || !input.orchestratorTarget.trim())) {
+		return { ok: false, code: "invalid_intercom_bridge", message: "orchestratorTarget must be a non-empty string when provided.", diagnostics };
 	}
 	const scope = resolveExecutionAgentScope(input.agentScope);
 	const parentProvider = input.preferredProvider ?? input.parentModel?.provider;
@@ -503,7 +507,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			...(toolPlan.capabilityCeiling ? { capabilityCeiling: toolPlan.capabilityCeiling } : {}),
 			...(toolPlan.capabilityAudit ? { capabilityAudit: toolPlan.capabilityAudit } : {}),
 		},
-		intercomBridge: { mode: bridge.mode, active: bridge.active },
+		intercomBridge: bridge.active && bridge.mode !== "off" ? { active: true, mode: bridge.mode } : { active: false, mode: bridge.mode },
 		roots: {
 			cwd: effectiveCwd,
 			...(sessionRoot ? { sessionRoot } : {}),

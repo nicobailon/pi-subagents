@@ -147,7 +147,7 @@ import {
 } from "../shared/worktree.ts";
 import { findModelInfo, resolveEffectiveThinking, splitKnownThinkingSuffix } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling } from "../../shared/thinking-ceiling.ts";
-import { launchBindingDigest } from "../../shared/launch-contract.ts";
+import { resolveLaunchBinding } from "../../shared/launch-contract.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveAcceptanceReportMode, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
@@ -1158,29 +1158,24 @@ export async function runSingleStepInner(
 				hostAvailableBuiltins: ctx.hostAvailableBuiltins,
 			}));
 			launchResolvedExtensions = projectLaunchResolvedChildExtensions(toolPlan);
-			actualLaunchContractDigest = launchBindingDigest(omitUndefinedProperties({
+			actualLaunchContractDigest = resolveLaunchBinding({
 				definitionDigest: step.definitionDigest,
-				task: step.launchBindingTask ?? task,
-				...(candidate ? { model: candidate } : {}),
-				modelCandidates: candidates as string[],
-				...(step.fast !== undefined ? { fast: step.fast } : {}),
-				...(resolveEffectiveThinking(candidate, step.thinking) ? { thinking: resolveEffectiveThinking(candidate, step.thinking) } : {}),
-				...(step.thinkingCeiling ? { thinkingCeiling: step.thinkingCeiling } : {}),
-				systemPrompt: step.systemPrompt ?? "",
 				systemPromptMode: step.systemPromptMode,
 				inheritProjectContext: step.inheritProjectContext,
 				inheritGlobalContext: step.inheritGlobalContext,
 				inheritSkills: step.inheritSkills,
+				task: step.launchBindingTask ?? task,
+				modelCandidates: candidates as string[],
+				fast: step.fast,
+				thinking: resolveEffectiveThinking(candidate, step.thinking),
+				systemPrompt: step.systemPrompt ?? "",
 				skills: step.skills,
-				tools: toolPlan.effectiveToolAllowlist,
-				...(toolPlan.excludeTools.length > 0 ? { excludeTools: toolPlan.excludeTools } : {}),
-				extensions: toolPlan.extensionArgs,
-				mcpDirectTools: toolPlan.effectiveMcpTools,
-				...(step.outputPath ? { outputPath: step.outputPath } : {}),
-				...(step.outputMode ? { outputMode: step.outputMode } : {}),
-				...(step.structuredOutputSchema ? { structuredOutputSchema: step.structuredOutputSchema } : {}),
-				...(extensionBindings ? { extensionBindings } : {}),
-			}));
+				toolPlan,
+				outputPath: step.outputPath,
+				outputMode: step.outputMode,
+				structuredOutputSchema: step.structuredOutputSchema,
+				extensionBindings,
+			}).launchContractDigest;
 		}
 		capabilityAudit = attemptCapabilityAudit;
 		// Each attempt rewrites the step output log; synchronous appends keep a
