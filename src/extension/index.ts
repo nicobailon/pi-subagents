@@ -1136,7 +1136,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (event.reason !== "manual") suspendWidgetsForCompaction();
 	});
 
-	pi.on("session_compact", () => {
+	pi.on("session_compact", (event) => {
+		if (event.reason !== "manual") return;
 		const hasActiveAsyncWork = [...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running");
 		if (!hasActiveAsyncWork || !withLastUiContext(() => true)) return;
 		pi.sendMessage(
