@@ -14,6 +14,8 @@ import * as path from "node:path";
 import { createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir, resolveMockPiCallArgs } from "../support/helpers.ts";
 import { deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, requestAsyncSteer } from "../../src/runs/background/control-channel.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
+import { runSync } from "../../src/runs/foreground/execution.ts";
+import { getHostBuiltinToolNames } from "../../src/runs/shared/child-tool-plan.ts";
 import { SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION } from "../../src/shared/types.ts";
 import type { AsyncResultPayload, AsyncStatusPayload, MockPiCallRecord } from "../support/async-execution-fixture.ts";
 import {
@@ -22,7 +24,7 @@ import {
 	pruneStatusCacheForAsyncRoot, ASYNC_DIR, RESULTS_DIR, createSubagentExecutor,
 	createRepo, waitForAsyncResultFile, waitForAsyncEvent, waitForAsyncState,
 	waitForMockPiCall, readMockPiArgs, readMockPiArgsMatching, tempDir, mockPi,
-	makeAsyncExecutor, readAsyncPayload,
+	makeAsyncExecutor, readAsyncPayload, readMockPiRequiredTools,
 } from "../support/async-execution-fixture.ts";
 
 describe("async execution utilities", { skip: !available ? "pi packages not available" : undefined }, () => {
@@ -1074,6 +1076,44 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		await waitForAsyncResultFile(chainId, 10_000);
 	});
 
+	it("preserves the same tool menu and runtime requirements in foreground and background children", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const host = { events: { emit() {} }, getAllTools: () => [
+			{ name: "read", sourceInfo: { source: "extension" } },
+			{ name: "bash", sourceInfo: { source: "builtin" } },
+		] };
+		const tools = ["read", "fixture_search", "__proto__"];
+		const agent = makeAgent("extension-worker", { tools, subagentOnlyExtensions: [path.join(tempDir, "child-provider.ts")] });
+		fs.writeFileSync(agent.subagentOnlyExtensions![0]!, "export default function () {}\n");
+		mockPi.onCall({ output: "foreground done" });
+		const foreground = await runSync(tempDir, [agent], agent.name, "Inspect using fixture search", {
+			hostAvailableBuiltins: getHostBuiltinToolNames(host), acceptance: false,
+		});
+		assert.equal(foreground.exitCode, 0, foreground.error);
+		assert.deepEqual(mockPi.sessions[0]?.launch.tools, tools);
+		assert.deepEqual(mockPi.sessions[0]?.launch.runtime.requiredTools, tools);
+
+		mockPi.onCall({ output: "background done" });
+		const id = `async-tool-menu-parity-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: agent.name, task: "Inspect using fixture search", agentConfig: agent,
+			ctx: { pi: host, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2, acceptance: false,
+		});
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		const args = readMockPiArgs(mockPi, 1);
+		assert.equal(args[args.indexOf("--tools") + 1], tools.join(","));
+		assert.deepEqual(readMockPiRequiredTools(mockPi, 1), tools);
+
+		mockPi.onCall({ output: "Incorrect success", missingTools: ["fixture_search"] });
+		const missing = await runSync(tempDir, [agent], agent.name, "Inspect using fixture search", {
+			hostAvailableBuiltins: getHostBuiltinToolNames(host), acceptance: false,
+		});
+		assert.notEqual(missing.exitCode, 0);
+		assert.match(missing.error ?? "", /child tools were unavailable: fixture_search/);
+	});
+
 	it("fails background chains when requested extension tools are unavailable", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Model incorrectly claimed success", missingTools: ["fixture_search"] });
 		const id = `async-missing-extension-tool-${Date.now().toString(36)}`;
@@ -1081,7 +1121,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		executeAsyncChain(id, {
 			chain: [{ agent: "extension-worker", task: "Use fixture search" }],
 			agents: [makeAgent("extension-worker", { tools: ["read", "fixture_search"] })],
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			ctx: { pi: { events: { emit() {} }, getAllTools: () => [{ name: "read", sourceInfo: { source: "extension" } }, { name: "bash", sourceInfo: { source: "builtin" } }] }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
 			maxSubagentDepth: 2,
@@ -1103,7 +1143,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			agent: "worker",
 			task: "Implement the requested source fix",
 			agentConfig: makeAgent("worker", { tools: ["read", "fixture_search"] }),
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			ctx: { pi: { events: { emit() {} }, getAllTools: () => [{ name: "read", sourceInfo: { source: "builtin" } }] }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
 			sessionRoot: path.join(tempDir, "sessions"),

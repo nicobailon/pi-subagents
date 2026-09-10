@@ -34,6 +34,55 @@ describe("child tool plan", () => {
 });
 
 describe("child tool plan host builtin intersection", () => {
+	it("keeps wrapped core slots regardless of source, including read for lazy skills", () => {
+		for (const source of ["builtin", "auto", "extension", "custom", undefined]) {
+			const hostAvailableBuiltins = getHostBuiltinToolNames({ getAllTools: () => [
+				...["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"].map((name) => ({ name, sourceInfo: source ? { source } : undefined })),
+				{ name: "ipython", sourceInfo: { source: "builtin" } },
+				{ name: "parent_only", sourceInfo: { source: "extension" } },
+			] });
+			assert.deepEqual(hostAvailableBuiltins, ["read", "bash", "powershell", "edit", "write", "grep", "find", "ls", "ipython"]);
+			const plan = resolvePiLaunchToolPlan({ tools: ["bash"], requireReadTool: true, hostAvailableBuiltins });
+			assert.deepEqual(plan.requiredChildTools, ["read", "bash"]);
+			assert.deepEqual(plan.unavailableHostBuiltins, []);
+		}
+	});
+
+	it("preserves arbitrary non-core requirements without inferring their child providers", () => {
+		const tools = ["read", "fixture_search", "__proto__", "ipython"];
+		for (const configuration of [
+			{},
+			{ extensions: [] },
+			{ extensions: ["/child/provider.ts"] },
+			{ subagentOnlyExtensions: ["/child/provider.ts"] },
+			{ capabilityCeiling: { version: 1 as const, denyExtensions: true, sources: ["test"] } },
+		]) {
+			const plan = resolvePiLaunchToolPlan({ tools, hostAvailableBuiltins: ["bash"], ...configuration });
+			assert.deepEqual(plan.effectiveToolAllowlist, tools.slice(1));
+			assert.deepEqual(plan.requiredChildTools, tools.slice(1));
+			assert.deepEqual(plan.unavailableHostBuiltins, ["read"]);
+		}
+		const restricted = resolvePiLaunchToolPlan({
+			tools, hostAvailableBuiltins: ["read"], excludeTools: ["__proto__"],
+			capabilityCeiling: { version: 1, allowedTools: ["fixture_search", "__proto__"], sources: ["test"] },
+		});
+		assert.deepEqual(restricted.effectiveToolAllowlist, ["fixture_search"]);
+		assert.deepEqual(restricted.requiredChildTools, ["fixture_search"]);
+		for (const restriction of [{ tools: [] }, { capabilityCeiling: { version: 1 as const, allowedTools: [], sources: ["test"] } }]) {
+			const empty = resolvePiLaunchToolPlan({ tools, hostAvailableBuiltins: ["read"], ...restriction });
+			assert.deepEqual(empty.effectiveToolAllowlist, []);
+			assert.deepEqual(empty.requiredChildTools, []);
+		}
+	});
+
+	it("retains the supervisor pairing exception but requires a lone intercom", () => {
+		for (const tools of [["intercom"], ["intercom", "contact_supervisor"]]) {
+			const plan = resolvePiLaunchToolPlan({ tools, hostAvailableBuiltins: ["read"] });
+			assert.deepEqual(plan.effectiveToolAllowlist, tools);
+			assert.deepEqual(plan.requiredChildTools, tools.length === 1 ? tools : []);
+		}
+	});
+
 	it("intersects declared tools with host-available builtins", () => {
 		const plan = resolvePiLaunchToolPlan({
 			tools: ["read", "grep", "find", "ls", "bash"],

@@ -64,8 +64,6 @@ const OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH = 64;
 const PI_BUILTIN_TOOL_NAMES = new Set(["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"]);
 const REPOSITORY_INSPECTION_TOOLS = new Set(["read", "grep", "find", "ls", "bash", "powershell"]);
 const REVIEW_OR_SCOUT_AGENT_PATTERN = /\b(?:reviewer|scout)\b/i;
-// These providers come from child hooks, not the host's builtin tool registry.
-const NATIVE_COORDINATION_TOOL_NAMES = new Set(["subagent", "contact_supervisor", "subagent_supervisor"]);
 
 export function isReviewOrScoutLaneAgent(agentName: string | undefined): boolean {
 	return typeof agentName === "string" && REVIEW_OR_SCOUT_AGENT_PATTERN.test(agentName);
@@ -188,12 +186,13 @@ export interface ResolvePiLaunchToolPlanInput {
 	permissionRules?: PermissionRules;
 	runtimeSnapshotHost?: McpRuntimeSnapshotHost;
 	/**
-	 * When provided, child tool plans intersect declared builtin tools with
-	 * this set. Tools the agent declares but the host does not provide are
+	 * When provided, child tool plans intersect known Pi core tool slots with
+	 * this set. Core tools the agent declares but the host does not provide are
 	 * omitted with a non-fatal warning (tracked in `unavailableHostBuiltins`).
 	 * Review/scout lanes fail closed when a requested, still-permitted
 	 * repository inspection tool is among those host omissions. Intentionally
 	 * empty or ceiling-restricted allowlists are not a minimum-tool contract.
+	 * Non-core names remain allowed and are validated in the child's registry.
 	 */
 	hostAvailableBuiltins?: readonly string[];
 }
@@ -339,7 +338,8 @@ export function resolvePermissionSystemExtension(): string | undefined {
 /**
  * Extract the names of builtin tools the host provides. Use this to pass
  * `hostAvailableBuiltins` to `resolvePiLaunchToolPlan` so child tool plans
- * intersect declared agent tools with what the host actually supports.
+ * intersect known core slots with what the host actually supports. Wrapped
+ * core slots count regardless of source; host-specific builtins count too.
  *
  * Returns `undefined` when builtin tool discovery fails or yields nothing,
  * so callers skip the intersection (fail-safe to allowing all declared tools).
@@ -352,7 +352,7 @@ export function getHostBuiltinToolNames(pi: Pick<ExtensionAPI, "getAllTools">): 
 			.getAllTools()
 			.filter((tool) => {
 				const source = (tool.sourceInfo as { source?: string } | undefined)?.source;
-				return source === "builtin" || (source === "auto" && PI_BUILTIN_TOOL_NAMES.has(tool.name));
+				return source === "builtin" || PI_BUILTIN_TOOL_NAMES.has(tool.name);
 			})
 			.map((tool) => tool.name);
 		return builtins.length > 0 ? builtins : undefined;
@@ -405,10 +405,10 @@ export function resolvePiLaunchToolPlan(
 					: requestedBuiltinTools
 				).filter((tool) => !allowedToolSet || allowedToolSet.has(tool));
 	const declaredBuiltinTools = hostAvailableSet
-		? ceilingFilteredBuiltinTools.filter((tool) => hostAvailableSet.has(tool) || NATIVE_COORDINATION_TOOL_NAMES.has(tool))
+		? ceilingFilteredBuiltinTools.filter((tool) => !PI_BUILTIN_TOOL_NAMES.has(tool) || hostAvailableSet.has(tool))
 		: ceilingFilteredBuiltinTools;
 	const unavailableHostBuiltins = hostAvailableSet
-		? ceilingFilteredBuiltinTools.filter((tool) => !hostAvailableSet.has(tool) && !NATIVE_COORDINATION_TOOL_NAMES.has(tool))
+		? ceilingFilteredBuiltinTools.filter((tool) => PI_BUILTIN_TOOL_NAMES.has(tool) && !hostAvailableSet.has(tool))
 		: [];
 	const excludeTools = [...new Set((input.excludeTools ?? []).map((tool) => tool.trim()).filter(Boolean))];
 	const excludedToolSet = new Set(excludeTools);

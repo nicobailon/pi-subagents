@@ -5,6 +5,7 @@
 ### Fixed
 
 - Reject invalid global `checkpointBeforeDeadlineMs` values during config loading instead of silently disabling the requested checkpoint.
+- Preserve wrapped Pi core tools and explicitly requested non-core tools in child launches. Core slots still respect host availability; non-core tools are validated in the child's runtime after ceilings and exclusions (#2132, #2133, #2134, #2135, #2140). Thanks to [@carlesba](https://github.com/carlesba) for #2137 and [@clementprevot](https://github.com/clementprevot) for #2138.
 
 ### Added
 
