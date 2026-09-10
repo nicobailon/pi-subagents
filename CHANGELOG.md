@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Reject unsupported bare acceptance strings at the provider schema boundary while preserving shorthand levels and JSON-encoded acceptance objects. Thanks to [@vrolok](https://github.com/vrolok) for #2152.
 - Keep canonical empty child responses eligible for same-launch model fallback without persisting them as 24-hour model exclusions. Thanks to [@rochecompaan](https://github.com/rochecompaan) for #2154.
 - Let Pi continue threshold and overflow compactions without an extra extension resume, while preserving manual re-drive for active async work. Thanks to [@mxp7064](https://github.com/mxp7064) for #2144.
 - Allow an explicit model request when a cached unavailable-model exclusion is contradicted by the current model registry, while preserving live health, auth, quota, and rate-limit exclusions. Thanks to [@xz-dev](https://github.com/xz-dev) for identifying the stale explicit-request cache symptom in #2145.

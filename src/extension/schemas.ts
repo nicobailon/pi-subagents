@@ -78,6 +78,7 @@ const AcceptanceOverride = Type.Unsafe({
 		},
 		{
 			type: "string",
+			pattern: "^\\s*\\{",
 		},
 		{ type: "boolean" },
 		{ type: "object", additionalProperties: true },
