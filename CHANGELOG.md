@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Highlights
+- Make child launches more trustworthy by aligning preflight with execution across Intercom, refinement, prompt, and tool overlays, while rejecting invalid launch inputs before children start.
+- Improve workflow orchestration with natural `runs.run(...)` promise composition in `runs.all(...)`, per-child completion updates, and supervisor routing for delegated coordinators.
+- Strengthen steering and background lifecycle behavior across follow-ups, final drain, resumed work, detached descendants, paused runs, and process cleanup.
+- Clarify active work through more accurate FleetView usage, timing, grouping, colors, and workflow rendering, plus portable Inspect commands and better theme and Orca handling.
+- Improve schedules and runtime compatibility with quiet runs, manual-run deduplication, watchdog and model fallback fixes, Pi 0.85 standalone support, provider routing, package-root handling, and Windows fixes.
+
 ### Added
 - Add opt-in watchdog `fallbackModels` for main, children, and per-agent overrides, retrying provider failures only before tool work within the existing review deadline. Thanks to [@dwizzle204](https://github.com/dwizzle204) for #2075.
 - Add portable Inspect commands and a terminal-neutral plugin seam, including open-only Ghostty 1.3+ right splits on macOS. Thanks to [@tiratatp](https://github.com/tiratatp) for #2046.
@@ -13,7 +20,7 @@
 
 ### Changed
 - The default Intercom bridge instruction no longer names the parent session; `contact_supervisor` already resolves it from the child runtime config. Custom `instructionFile` templates keep interpolating `{orchestratorTarget}`. The launch-contract version is now 3 and the launch-binding projection version is now 2, so every `launchContractDigest` value changes; stored digests are only recorded, never compared, so existing runs still resume (#2127). Thanks to [@Yivas](https://github.com/Yivas) for the instrumented reproduction.
-- Report host-pruned child tools in existing launch warnings, including the agent, requested/effective tool names, and active ceiling sources when known, without changing launch outcomes. Diagnostic follow-up for #2058; thanks to [@nicobailon](https://github.com/nicobailon).
+- Report host-pruned child tools in existing launch warnings, including the agent, requested/effective tool names, and active ceiling sources when known, without changing launch outcomes. Diagnostic follow-up for #2058.
 - Consolidate model-facing subagent prose while retaining the flat typed execution/control API; keep extended recipes in the existing on-demand guides. Thanks to [@Whamp](https://github.com/Whamp) for the prompt-footprint measurements and proposal in #2048.
 - Color FleetView agent labels by stable agent identity so multi-agent runs are easier to scan. Thanks to [@savinofiore](https://github.com/savinofiore) for #2056.
 - Forked children keep their requested thinking level after signed Anthropic thinking blocks are stripped from the inherited transcript; fork context no longer forces thinking off for Anthropic-backed children. Requires a Pi host on 0.85.0 or newer, which recovers from signed-thinking mismatches on the transport. Thanks to [@hank-warren](https://github.com/hank-warren) for #2021.
@@ -27,7 +34,7 @@
 - Report async steer and follow-up requests as delivered only after the child consumes the correlated input, and fail unconsumed requests when the child settles (#2116, #2121). Thanks to [@yanqianglu](https://github.com/yanqianglu) for #2057.
 - Do not abort a native child during final-stop drain after queued steering or follow-up is observed, even if Pi drains that input before a delayed `turn_start`. Related to #2117; thanks to [@yanqianglu](https://github.com/yanqianglu) for #2057.
 - Allow explicit deletion of a session-only schedule from another session when the recorded exact async run has terminal status, while continuing to refuse deletion without matching terminal evidence (#2125).
-- Fail review and scout launches closed when a requested, still-permitted repository tool is missing from the host runtime, and classify that gap as a lane infrastructure failure instead of a completed review. Intentionally empty or ceiling-restricted allowlists stay valid. Remaining #2058 residual; thanks to [@nicobailon](https://github.com/nicobailon).
+- Fail review and scout launches closed when a requested, still-permitted repository tool is missing from the host runtime, and classify that gap as a lane infrastructure failure instead of a completed review. Intentionally empty or ceiling-restricted allowlists stay valid. Remaining #2058 residual.
 - Apply the same project-local refinement overlay during launch-contract preflight that foreground execution already injects, so `launchContractDigest` matches the completed terminal. Thanks to [@Yivas](https://github.com/Yivas) for #2112.
 - Reject workflow scripts whose statically provable child launches exceed `maxSubagentSpawnsPerRun` before discovery, artifact creation, or child launch; dynamic launch counts remain advisory and retain runtime enforcement. Thanks to [@ton77v](https://github.com/ton77v) for #2101.
 - Label workflow usage as belonging to child rows instead of showing a misleading zero or overlapping wrapper totals in FleetView; preserve unrelated standalone usage in mixed summaries and distinguish summed concurrent windows from a single context window. Related to #2085; thanks to [@expoli](https://github.com/expoli).
