@@ -218,6 +218,26 @@ describe("model fallback helpers", () => {
 		assert.equal(getExcludedCount(), 0);
 	});
 
+	it("retries canonical no-output failures without caching a model exclusion", () => {
+		const model = "openai/gpt-5-mini:high";
+		for (const error of [
+			"Subagent produced no output (possible model cold-start or empty response).",
+			'Subagent produced no output after terminal assistant stopReason "stop".',
+		]) {
+			assert.equal(isRetryableModelFailureAttempt({ error, messages: [{ role: "assistant" }], toolCount: 0 }), true, error);
+			recordRetryableModelFailure(model, error);
+			assert.equal(findModelExclusion(model), undefined, error);
+			assert.equal(getExcludedCount(), 0, error);
+			assert.deepEqual(buildModelCandidates(model, undefined, availableModels), [model], error);
+		}
+	});
+
+	it("does not suppress arbitrary no-output model failures from the exclusion cache", () => {
+		const error = "provider returned no output";
+		recordRetryableModelFailure("openai/gpt-5-mini", error);
+		assert.equal(findModelExclusion("openai/gpt-5-mini")?.reason, error);
+	});
+
 	it("does not cache the reported Databricks tool-message request error (issue #1955)", () => {
 		const model = "databricks/databricks-kimi-k3";
 		const error = 'Databricks error: {"error_code":"BAD_REQUEST","message":"{\\"error\\":\\"Upstream error: INVALID_ARGUMENT: Kimi K3 tool messages need a resolvable tool name: carry `tool`/`name`, or match a preceding assistant tool_call by order.\\"}"}';

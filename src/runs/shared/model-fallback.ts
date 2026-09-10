@@ -589,10 +589,15 @@ function messageError(message: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined;
 }
 
+function isTransientNoOutputFailure(error: string | undefined): boolean {
+	return error === "Subagent produced no output (possible model cold-start or empty response)."
+		|| /^Subagent produced no output after terminal assistant stopReason "[^"]+"\.$/.test(error ?? "");
+}
+
 export function isRetryableModelFailureAttempt(input: { error: string | undefined; messages?: readonly unknown[]; toolCount?: number }): boolean {
 	if (!isRetryableModelFailure(input.error)) return false;
 	if ((input.toolCount ?? 0) > 0) return false;
-	if (input.error === "Subagent produced no output (possible model cold-start or empty response)." || /^Subagent produced no output after terminal assistant stopReason "[^"]+"\.$/.test(input.error ?? "")) return true;
+	if (isTransientNoOutputFailure(input.error)) return true;
 	if ((input.toolCount ?? 0) === 0 && (input.messages?.length ?? 0) === 0) return true;
 	const error = input.error?.trim();
 	return Boolean(error && input.messages?.some((message) => messageError(message)?.trim() === error));
@@ -604,7 +609,7 @@ const REQUEST_SHAPE_FAILURE_PATTERN = /\b(?:bad[ _]request|invalid[ _]argument|i
 
 export function recordRetryableModelFailure(model: string | undefined, error: string | undefined): void {
 	if (!model || !error || !isRetryableModelFailure(error) || isContextOverflow(error)) return;
-	if (REQUEST_SHAPE_FAILURE_PATTERN.test(error)) return;
+	if (REQUEST_SHAPE_FAILURE_PATTERN.test(error) || isTransientNoOutputFailure(error)) return;
 	const { provider, modelId } = parseModelKey(model);
 	recordModelFailure({ modelId, reason: error, ...(provider ? { provider } : {}) });
 }
