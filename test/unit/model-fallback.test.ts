@@ -379,15 +379,14 @@ describe("model fallback helpers", () => {
 		);
 	});
 
-	it("keeps explicit stale model-not-found exclusions strict", () => {
-		recordModelFailure({
-			modelId: "gpt-5-mini",
-			provider: "openai",
-			reason: 'Model "openai/gpt-5-mini" not found. Use --list-models to see available models.',
-		});
-		assert.throws(
-			() => buildModelCandidates("openai/gpt-5-mini", ["anthropic/claude-sonnet-4"], availableModels, undefined, { origin: "explicit" }),
-			/Requested subagent model 'openai\/gpt-5-mini' is excluded and cannot be replaced by a fallback/,
+	it("ignores a stale explicit model-not-found exclusion when the base model is in the registry", () => {
+		recordRetryableModelFailure(
+			"openai/gpt-5-mini:high",
+			'Model "openai/gpt-5-mini:high" not found. Use --list-models to see available models.',
+		);
+		assert.deepEqual(
+			buildModelCandidates("openai/gpt-5-mini:high", ["anthropic/claude-sonnet-4"], availableModels, undefined, { origin: "explicit" }),
+			["openai/gpt-5-mini:high", "anthropic/claude-sonnet-4"],
 		);
 	});
 
@@ -610,6 +609,31 @@ describe("resolveSubagentModelOverride (cross-session inherit, issue #266)", () 
 				const message = String(error);
 				return message.includes("openai/gpt-5-mini") && message.includes("rate limit") && message.includes("expires:");
 			},
+		);
+	});
+
+	it("resolves an explicit model despite a stale unavailable exclusion contradicted by the registry", () => {
+		recordModelFailure({
+			modelId: "gpt-5-mini",
+			provider: "openai",
+			reason: "Model openai/gpt-5-mini is unavailable",
+		});
+		assert.equal(
+			resolveSubagentModelOverride("openai/gpt-5-mini:high", parentModel, availableModels, undefined, { source: "explicit" }),
+			"openai/gpt-5-mini:high",
+		);
+	});
+
+	it("keeps a provider-wide quota exclusion when ignoring a stale model-specific exclusion", () => {
+		recordModelFailure({ provider: "openai", reason: "quota exceeded" });
+		recordModelFailure({
+			modelId: "gpt-5-mini",
+			provider: "openai",
+			reason: "Model openai/gpt-5-mini not found",
+		});
+		assert.throws(
+			() => resolveSubagentModelOverride("openai/gpt-5-mini", parentModel, availableModels, undefined, { source: "explicit" }),
+			(error: unknown) => String(error).includes("quota exceeded") && !String(error).includes("not found"),
 		);
 	});
 

@@ -333,8 +333,13 @@ function ignoreStaleModelUnavailableExclusion(candidate: string, exclusion: NonN
 	return MODEL_UNAVAILABLE_EXCLUSION_PATTERNS.some((pattern) => pattern.test(reason)) && isCurrentRegistryModel(candidate, availableModels);
 }
 
-function throwForExplicitModelExclusion(model: string): void {
-	const exclusion = findModelExclusion(model);
+function throwForExplicitModelExclusion(model: string, availableModels: AvailableModelInfo[] | undefined): void {
+	const blocked: { exclusion?: NonNullable<ReturnType<typeof findModelExclusion>> } = {};
+	filterFallbackCandidates([model], {
+		onExcluded: (_candidate, exclusion) => { blocked.exclusion = exclusion; },
+		ignoreExclusion: (candidate, exclusion) => ignoreStaleModelUnavailableExclusion(candidate, exclusion, availableModels),
+	});
+	const exclusion = blocked.exclusion;
 	if (!exclusion) return;
 	const reason = redactSecretValues((exclusion.reason ?? "runtime-failure").replace(/[\u0000-\u001f\u007f]+/g, " ")).slice(0, 240);
 	const expiry = Number.isFinite(exclusion.expiresAt) ? `; expires: ${new Date(exclusion.expiresAt).toISOString()}` : "";
@@ -377,7 +382,7 @@ export function resolveSubagentModelOverride(
 		const candidate = resolveSubagentModelCandidate(explicit, availableModels, preferredProvider);
 		if (options?.source === "explicit") {
 			resolved = candidate ?? resolveRequiredSubagentModelCandidate(explicit, availableModels, preferredProvider);
-			throwForExplicitModelExclusion(resolved);
+			throwForExplicitModelExclusion(resolved, availableModels);
 			resolvedFromRegistry = true;
 		} else if (candidate) {
 			resolved = candidate;
@@ -480,7 +485,7 @@ export function buildModelCandidates(
 	};
 	if (origin === "explicit" && primaryModel) {
 		const normalized = resolveRequiredSubagentModelCandidate(primaryModel.trim(), availableModels, preferredProvider);
-		throwForExplicitModelExclusion(normalized);
+		throwForExplicitModelExclusion(normalized, availableModels);
 		enforceModelScopes(normalized, scopes, "explicit", options?.onWarn);
 		primaryModel = normalized;
 	}
