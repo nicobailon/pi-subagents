@@ -2618,6 +2618,12 @@ export interface ExtensionConfig {
 	 * are rejected with an error.
 	 */
 	toolTimeoutMs?: number;
+	/**
+	 * Global default for the async `checkpointBeforeDeadlineMs` launch option: the runner steers a child to
+	 * checkpoint and stop this many milliseconds before its run deadline. The call param wins; values that
+	 * leave no run time before the checkpoint disarm it.
+	 */
+	checkpointBeforeDeadlineMs?: number;
 	control?: ControlConfig;
 	completionBatch?: CompletionBatchConfig;
 	toolBudget?: ToolBudgetConfig;

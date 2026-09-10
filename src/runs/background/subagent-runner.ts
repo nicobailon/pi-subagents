@@ -31,6 +31,7 @@ import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
 import { updateActiveRunIndex } from "./active-run-index.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, watchAsyncControlInbox, type SteerRequest, type StopRequest } from "./control-channel.ts";
+import { buildDeadlineCheckpointRequest, deadlineCheckpointDelayMs } from "./deadline-checkpoint.ts";
 import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
@@ -224,6 +225,8 @@ export interface SubagentRunConfig {
 	deadlineAt?: number;
 	/** Resolved configured hard per-tool-call timeout (ms); fast tools still have a default when undefined. */
 	toolTimeoutMs?: number;
+	/** Steer the running steps to checkpoint and stop this many ms before `deadlineAt`; absent = no checkpoint steer. */
+	checkpointBeforeDeadlineMs?: number;
 	toolBudget?: ResolvedToolBudget;
 	usageBudget?: UsageBudgetConfig;
 	revivalLease?: SessionLeaseRequest;
@@ -1960,6 +1963,7 @@ export async function runSubagent(
 	let currentActivityState: ActivityState | undefined;
 	let activityTimer: NodeJS.Timeout | undefined;
 	let timeoutTimer: NodeJS.Timeout | undefined;
+	let checkpointTimer: NodeJS.Timeout | undefined;
 	let timedOut = false;
 	let stopped = false;
 	let usageBudgetExceeded = false;
@@ -3366,6 +3370,19 @@ export async function runSubagent(
 		const remainingMs = Math.max(0, config.deadlineAt - Date.now());
 		timeoutTimer = setTimeout(timeoutRunner, remainingMs);
 		timeoutTimer.unref?.();
+		// Deadline checkpoint: a runner-issued "checkpoint and stop" steer ahead of the brutal timeout,
+		// routed to the running steps like any external steer so the steering lifecycle records the receipt.
+		const checkpointDelayMs = deadlineCheckpointDelayMs(remainingMs, config.checkpointBeforeDeadlineMs);
+		if (checkpointDelayMs !== undefined) {
+			const deadlineAt = config.deadlineAt;
+			checkpointTimer = setTimeout(() => {
+				checkpointTimer = undefined;
+				if (timedOut || stopped || interrupted) return;
+				if (!statusPayload.steps.some((step) => step.status === "running")) return;
+				deliverSteerRequest(buildDeadlineCheckpointRequest({ deadlineAt }));
+			}, checkpointDelayMs);
+			checkpointTimer.unref?.();
+		}
 	}
 	appendJsonl(
 		eventsPath,
@@ -4820,6 +4837,10 @@ export async function runSubagent(
 	if (timeoutTimer) {
 		clearTimeout(timeoutTimer);
 		timeoutTimer = undefined;
+	}
+	if (checkpointTimer) {
+		clearTimeout(checkpointTimer);
+		checkpointTimer = undefined;
 	}
 	if (!timedOut && !stopped && !interrupted && config.timeoutMs !== undefined && timeoutMessage !== undefined && results.some((result) => result.timedOut === true && result.error?.startsWith(timeoutMessage))) {
 		timedOut = true;

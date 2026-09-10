@@ -371,6 +371,8 @@ export interface SubagentParamsLike {
 	foregroundOnly?: boolean;
 	timeoutMs?: number;
 	maxRuntimeMs?: number;
+	/** Async runs only: steer the child to checkpoint and stop this many ms before the run deadline. */
+	checkpointBeforeDeadlineMs?: number;
 	/** Optional hard per-tool-call timeout (ms). Known-fast tools also have a default. */
 	toolTimeoutMs?: number;
 	toolBudget?: ToolBudgetConfig;
@@ -3329,6 +3331,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			usageBudget: data.usageBudget,
 			configToolBudget: data.configToolBudget,
 			toolTimeoutMs: data.params?.toolTimeoutMs,
+			checkpointBeforeDeadlineMs: data.params?.checkpointBeforeDeadlineMs ?? deps.config.checkpointBeforeDeadlineMs,
 			configToolTimeoutMs: data.configToolTimeoutMs,
 			capabilityCeiling: data.capabilityCeiling,
 			runFanoutBudget: data.runFanoutBudget,

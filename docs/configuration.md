@@ -279,6 +279,16 @@ Without a configured value, Pi still applies a five-minute hard timeout to known
 
 The tool timer tracks each active `toolCallId` separately and never extends the run-level deadline: when the remaining run budget is shorter, the ordinary run-level timeout wins. `contact_supervisor`, `intercom`, and `bg_wait` are exempt because their legitimate purpose can be to wait for a human, supervisor, or background run. Use hard tool timeouts only for wedge protection; an elapsed timeout is not a mutation-safe boundary. Configured values must be positive integers no greater than `2147483647`; invalid or out-of-range values are rejected with a visible error rather than silently ignored.
 
+## `checkpointBeforeDeadlineMs`
+
+```json
+{ "checkpointBeforeDeadlineMs": 300000 }
+```
+
+Global default for the async `checkpointBeforeDeadlineMs` launch option. When an async single-agent run has a run-level deadline, the runner issues a "checkpoint and stop" steer to the child this many milliseconds before that deadline: finish the current tool call, report changed files, build/test state, remaining work, and commit/PR state, and start no new work. The steer is delivered at the child's next tool boundary through the normal steering lifecycle, so its receipt (requested, routed, delivered) is visible in run status and events, and the ordinary `timeoutMs` kill still applies if the child does not stop.
+
+An explicit `subagent` call value wins over this default. Choose a value at least as long as the child's longest expected tool call; a steer cannot land inside one. When the deadline leaves less than one second of run time before the checkpoint, the checkpoint is disarmed and the run behaves as if the option were absent. Must be a positive integer.
+
 ## `globalConcurrencyLimit`
 
 ```json

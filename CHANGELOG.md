@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Add `checkpointBeforeDeadlineMs` for async single-agent runs (call param, with a global config default): the runner steers the child to "checkpoint and stop" that many milliseconds before its run deadline, so a `timeoutMs` kill is preceded by a handoff request delivered at the child's next tool boundary. The steer goes through the normal steering lifecycle, so its receipt appears in status and events. Absent option keeps the current behavior.
+
 ## [0.67.0] - 2026-09-10
 
 ### Highlights

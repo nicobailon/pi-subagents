@@ -269,6 +269,8 @@ interface AsyncSingleParams {
 	absoluteDeadlineAt?: number;
 	/** Optional per-call hard toolTimeoutMs override (highest precedence). */
 	toolTimeoutMs?: number;
+	/** Steer the child to checkpoint and stop this many ms before the run deadline (resolved call param ?? config). */
+	checkpointBeforeDeadlineMs?: number;
 	toolBudget?: ResolvedToolBudget | ToolBudgetConfig;
 	usageBudget?: UsageBudgetConfig;
 	configToolBudget?: ResolvedToolBudget;
@@ -1968,6 +1970,7 @@ export function executeAsyncSingle(
 				timeoutMs,
 				deadlineAt,
 				toolTimeoutMs,
+				checkpointBeforeDeadlineMs: params.checkpointBeforeDeadlineMs,
 				toolBudget: params.toolBudget,
 				usageBudget: params.usageBudget,
 				controlIntercomTarget,
