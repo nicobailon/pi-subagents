@@ -7,6 +7,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ChildWatchdogConfig, ChildWatchdogStatusEvent } from "../../watchdog/child-status.ts";
+import { resolveWatchdogDiffBaseline, type WatchdogDiffBaseline } from "../../watchdog/diff-tool.ts";
 import type { ThinkingLevel } from "../../shared/model-info.ts";
 import { intersectThinkingCeilings } from "../../shared/thinking-ceiling.ts";
 import {
@@ -44,7 +45,7 @@ export const MCP_DIRECT_TOOLS_ENV = "MCP_DIRECT_TOOLS";
  * launches inherits. Serialized into the background runner config; the
  * foreground path passes the executor's full `ChildRuntimeConfig`.
  */
-export type InheritedChildRuntime = Pick<ChildRuntimeConfig, "depth" | "maxDepth" | "nestedRoute" | "nestedParent" | "capabilityCeiling" | "thinkingCeiling" | "runFanoutBudget">;
+export type InheritedChildRuntime = Pick<ChildRuntimeConfig, "depth" | "maxDepth" | "nestedRoute" | "nestedParent" | "capabilityCeiling" | "thinkingCeiling" | "runFanoutBudget" | "watchdogDiffBaseline">;
 
 export function inheritedChildRuntime(config: ChildRuntimeConfig | undefined): InheritedChildRuntime | undefined {
 	if (!config) return undefined;
@@ -56,6 +57,7 @@ export function inheritedChildRuntime(config: ChildRuntimeConfig | undefined): I
 		...(config.capabilityCeiling ? { capabilityCeiling: config.capabilityCeiling } : {}),
 		...(config.thinkingCeiling ? { thinkingCeiling: config.thinkingCeiling } : {}),
 		...(config.runFanoutBudget ? { runFanoutBudget: config.runFanoutBudget } : {}),
+		...(config.watchdogDiffBaseline ? { watchdogDiffBaseline: config.watchdogDiffBaseline } : {}),
 	};
 }
 
@@ -95,6 +97,8 @@ export interface BuildInProcessChildLaunchInput {
 	permissionRules?: PermissionRules;
 	permissionAuditPath?: string;
 	childWatchdog?: ChildWatchdogConfig;
+	/** Session-start repository baseline exposed to reviewer lanes through watchdog_diff. */
+	watchdogDiffBaseline?: WatchdogDiffBaseline;
 	watchdogStatus?: (event: ChildWatchdogStatusEvent) => void;
 	waitToolEnabled?: boolean;
 	waitToolDefaultTimeoutMs?: number;
@@ -182,8 +186,15 @@ function childStorage(input: BuildInProcessChildLaunchInput): ChildSessionStorag
 }
 
 export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput): InProcessChildLaunch {
+	const inherited = input.inherited;
+	const watchdogDiffBaseline = resolveWatchdogDiffBaseline(
+		input.cwd,
+		input.watchdogDiffBaseline ?? inherited?.watchdogDiffBaseline,
+		true,
+	);
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: input.tools,
+		watchdogDiffBaseline,
 		excludeTools: input.excludeTools,
 		allowNestedSubagents: input.allowNestedSubagents,
 		extensions: input.extensions,
@@ -203,7 +214,6 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		hostAvailableBuiltins: input.hostAvailableBuiltins,
 	});
 
-	const inherited = input.inherited;
 	const fanout = toolPlan.fanoutAuthorized;
 	const inheritedRoute = inherited?.nestedRoute;
 	const parentRunId = input.runId ?? inherited?.nestedParent?.parentRunId ?? "";
@@ -232,6 +242,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 	let structuredAcceptanceProvided = false;
 
 	const config: ChildRuntimeConfig = {
+		cwd: input.cwd,
 		...(input.runId ? { runId: input.runId } : {}),
 		agent: input.childAgentName,
 		childIndex: input.childIndex,
@@ -255,6 +266,9 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		...(permissions ? { permissions } : {}),
 		...(input.toolBudget ? { toolBudget: input.toolBudget } : {}),
 		...(input.childWatchdog ? { childWatchdog: input.childWatchdog } : {}),
+		...(toolPlan.effectiveToolAllowlist.includes("watchdog_diff") && watchdogDiffBaseline
+			? { watchdogDiffBaseline }
+			: {}),
 		...(input.watchdogStatus ? { watchdogStatus: input.watchdogStatus } : {}),
 		waitTool: {
 			enabled: input.waitToolEnabled ?? true,

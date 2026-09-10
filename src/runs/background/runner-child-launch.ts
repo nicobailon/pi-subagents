@@ -2,6 +2,7 @@
 import * as path from "node:path";
 import { buildInProcessChildLaunch, type BuildInProcessChildLaunchInput, type InheritedChildRuntime } from "../shared/child-launch.ts";
 import { deriveForkPromptCacheKey } from "../shared/child-tool-plan.ts";
+import { resolveWatchdogDiffBaseline } from "../../watchdog/diff-tool.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import type { RunnerSubagentStep } from "../shared/parallel-utils.ts";
 import { formatAcceptancePrompt } from "../shared/acceptance.ts";
@@ -19,6 +20,7 @@ export interface RunnerChildLaunchContext {
 	capabilityCeiling?: BuildInProcessChildLaunchInput["capabilityCeiling"];
 	inheritedChildRuntime?: InheritedChildRuntime;
 	hostAvailableBuiltins?: readonly string[];
+	watchdogDiffBaseline?: BuildInProcessChildLaunchInput["watchdogDiffBaseline"];
 }
 
 export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChildLaunchContext, attempt: {
@@ -83,6 +85,7 @@ export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChil
 		maxSubagentDepth: step.maxSubagentDepth,
 		inherited: ctx.inheritedChildRuntime,
 		hostAvailableBuiltins: ctx.hostAvailableBuiltins,
+		watchdogDiffBaseline: resolveWatchdogDiffBaseline(step.cwd ?? ctx.cwd, ctx.watchdogDiffBaseline, true),
 		host: "runner",
 	});
 }

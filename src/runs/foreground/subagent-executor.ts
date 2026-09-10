@@ -28,6 +28,7 @@ import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
 import { applyWatchdogLaunchRules } from "../../watchdog/rules.ts";
+import { resolveWatchdogDiffBaseline, type WatchdogDiffBaseline } from "../../watchdog/diff-tool.ts";
 import { buildModelCandidates, normalizeParentModel, resolveEffectiveSubagentModel, resolveModelOrigin, type ModelOrigin, type ParentModel } from "../shared/model-fallback.ts";
 import { getHostBuiltinToolNames } from "../shared/child-tool-plan.ts";
 import { formatRetainedChildren, listRetainedChildren } from "../background/retained-children.ts";
@@ -522,6 +523,7 @@ interface ExecutionContextData {
 	topLevelAsyncCapacityEligible: boolean;
 	activeAsyncCapacity?: ActiveAsyncCapacityHandle;
 	workflowChildPermitLaunch?: WorkflowChildPermitContext;
+	watchdogDiffBaseline?: WatchdogDiffBaseline;
 }
 
 function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefined): string {
@@ -746,7 +748,7 @@ function foregroundChildActivityFromProgress(progress: SingleResult["progress"] 
 	};
 }
 
-function rememberForegroundRun(state: SubagentState, input: { modelResponseAliases?: Record<string, string[]>; runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; results: SingleResult[]; params: SubagentParamsLike; effectiveOutput?: string | boolean; effectiveOutputMode: OutputMode; extensionBindings?: ExtensionBindings }): void {
+function rememberForegroundRun(state: SubagentState, input: { modelResponseAliases?: Record<string, string[]>; runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; results: SingleResult[]; params: SubagentParamsLike; effectiveOutput?: string | boolean; effectiveOutputMode: OutputMode; extensionBindings?: ExtensionBindings; watchdogDiffBaseline?: WatchdogDiffBaseline }): void {
 	state.foregroundRuns ??= new Map();
 	const previous = state.foregroundRuns.get(input.runId);
 	const updatedAt = Date.now();
@@ -755,6 +757,7 @@ function rememberForegroundRun(state: SubagentState, input: { modelResponseAlias
 		mode: input.mode,
 		cwd: input.cwd,
 		...(input.sessionId ? { sessionId: input.sessionId } : {}),
+		...(input.watchdogDiffBaseline ? { watchdogDiffBaseline: input.watchdogDiffBaseline } : {}),
 		updatedAt,
 		children: input.results.map((result, index) => {
 			const resumeContract = omitUndefinedProperties({
@@ -917,7 +920,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 	});
 }
 
-function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { exactOnly?: boolean } = {}): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; resumeContract?: ForegroundResumeChild["resumeContract"]; extensionBindings?: ExtensionBindings; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
+function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { exactOnly?: boolean } = {}): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; resumeContract?: ForegroundResumeChild["resumeContract"]; extensionBindings?: ExtensionBindings; capabilityCeiling?: ResolvedSubagentCapabilityCeiling; watchdogDiffBaseline?: WatchdogDiffBaseline } | undefined {
 	const requested = (params.id ?? params.runId)?.trim();
 	if (!requested || !state.foregroundRuns?.size || !state.currentSessionId) return undefined;
 	const direct = state.foregroundRuns.get(requested);
@@ -951,6 +954,7 @@ function resolveForegroundResumeTarget(params: SubagentParamsLike, state: Subage
 		...(child.resumeContract ? { resumeContract: child.resumeContract } : {}),
 		...(child.extensionBindings ? { extensionBindings: normalizeExtensionBindings(child.extensionBindings)!.value } : {}),
 		...(child.capabilityCeiling ? { capabilityCeiling: child.capabilityCeiling } : {}),
+		...(run.watchdogDiffBaseline ? { watchdogDiffBaseline: run.watchdogDiffBaseline } : {}),
 	};
 }
 
@@ -969,6 +973,7 @@ type NestedResumeSourceTarget = {
 	thinking?: AgentConfig["thinking"];
 	launchContractDigest?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	watchdogDiffBaseline?: WatchdogDiffBaseline;
 	recoveryDescriptor?: SteeringRecoveryDescriptor;
 };
 type ResumeSourceTarget = AsyncResumeSourceTarget | ForegroundResumeSourceTarget | NestedResumeSourceTarget;
@@ -1322,6 +1327,7 @@ function appendStepToAsyncChain(input: {
 		};
 	}
 
+	const watchdogDiffBaseline = status.watchdogDiffBaseline;
 	const scope: AgentScope = resolveExecutionAgentScope(input.params.agentScope);
 	const discoveredForAppend = input.deps.discoverAgents(input.requestCwd, scope, input.parentModel?.provider);
 	const agents = discoveredForAppend.agents;
@@ -1341,6 +1347,7 @@ function appendStepToAsyncChain(input: {
 		interactive: input.ctx.hasUI,
 		permissions: input.deps.config.permissions,
 		childRuntime: input.deps.childRuntime,
+		watchdogDiffBaseline,
 	});
 	const built = buildAsyncRunnerSteps(resolved.id, compactOptional<Parameters<typeof buildAsyncRunnerSteps>[1]>({
 		chain: wrapChainTasksForFork(chain, contextPolicy),
@@ -1440,6 +1447,17 @@ function pathWithin(base: string, candidate: string): boolean {
 	return resolvedCandidate === resolvedBase || resolvedCandidate.startsWith(`${resolvedBase}${path.sep}`);
 }
 
+function validateNestedResumeCwd(runId: string, cwd: string | undefined): string | undefined {
+	if (!cwd) return undefined;
+	const resolved = path.resolve(cwd);
+	try {
+		if (!fs.statSync(resolved).isDirectory()) throw new Error("path is not a directory");
+	} catch (error) {
+		throw new Error(`Nested run '${runId}' required cwd does not exist: ${cwd}`, { cause: error instanceof Error ? error : undefined });
+	}
+	return resolved;
+}
+
 function validateNestedSessionFile(run: NestedRunSummary, trustedSessionRoots: string[]): string {
 	const sessionFile = nestedRunSessionFile(run);
 	if (!sessionFile) throw new Error(`Nested run '${run.id}' does not have a persisted session file to resume from.`);
@@ -1470,7 +1488,7 @@ export function readNestedRecoveryDescriptor(asyncDir: string | undefined, runId
 	return recoveryDescriptor;
 }
 
-function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "nested" }, trustedSessionRoots: string[]): NestedResumeSourceTarget {
+export function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "nested" }, trustedSessionRoots: string[]): NestedResumeSourceTarget {
 	const run = match.match.run;
 	if (run.state === "running" || run.state === "queued") throw new Error(`Nested run '${run.id}' is live; route the follow-up to the owner process instead.`);
 	if (run.state === "stopped") throw new Error(`Nested run '${run.id}' was stopped and cannot be resumed. Start a new run instead.`);
@@ -1479,6 +1497,7 @@ function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "neste
 	const state = run.state === "complete" || run.state === "failed" || run.state === "paused" ? run.state : "failed";
 	const asyncDir = resolveNestedAsyncDir(match.match.rootRunId, run);
 	const recoveryDescriptor = readNestedRecoveryDescriptor(asyncDir, run.id, agent);
+	const status = asyncDir ? readStatus(asyncDir) : undefined;
 	return compactOptional<NestedResumeSourceTarget>({
 		kind: "revive",
 		source: "nested",
@@ -1486,9 +1505,12 @@ function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "neste
 		state,
 		agent,
 		index: 0,
-		cwd: asyncDir ? path.dirname(asyncDir) : undefined,
+		cwd: validateNestedResumeCwd(run.id, status?.cwd ?? recoveryDescriptor?.cwd ?? (asyncDir ? path.dirname(asyncDir) : undefined)),
 		sessionFile: validateNestedSessionFile(run, trustedSessionRoots),
 		...(run.capabilityCeiling ? { capabilityCeiling: run.capabilityCeiling } : {}),
+		...((status?.watchdogDiffBaseline ?? recoveryDescriptor?.watchdogDiffBaseline)
+			? { watchdogDiffBaseline: status?.watchdogDiffBaseline ?? recoveryDescriptor?.watchdogDiffBaseline }
+			: {}),
 		...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 	});
 }
@@ -1653,6 +1675,7 @@ async function resumeExternalJobFollowUp(input: {
 	intercomBridge: IntercomBridgeState;
 	parentSessionFile: string | null;
 	absoluteDeadlineAt?: number;
+	watchdogDiffBaseline?: WatchdogDiffBaseline;
 }): Promise<AgentToolResult<Details>> {
 	if (input.target.kind === "live" || input.target.state === "running" || input.target.state === "queued") {
 		return { content: [{ type: "text", text: `External-job run '${input.target.runId}' is still running. Wait for completion, then use subagent({ action: "resume", id: "${input.target.runId}", message: "..." }).` }], isError: true, details: { mode: "management", results: [] } };
@@ -1723,6 +1746,7 @@ async function resumeExternalJobFollowUp(input: {
 			interactive: input.ctx.hasUI,
 			permissions: input.deps.config.permissions,
 			childRuntime: input.deps.childRuntime,
+			watchdogDiffBaseline: input.watchdogDiffBaseline,
 		}),
 		cwd: input.effectiveCwd,
 		artifactsDir,
@@ -1848,6 +1872,11 @@ async function resumeAsyncRun(input: {
 
 	input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
 	const effectiveCwd = target.cwd ?? input.requestCwd;
+	const targetWatchdogDiffBaseline = resolveWatchdogDiffBaseline(
+		effectiveCwd,
+		target.watchdogDiffBaseline ?? ("recoveryDescriptor" in target ? target.recoveryDescriptor?.watchdogDiffBaseline : undefined),
+		true,
+	);
 	const scope: AgentScope = resolveExecutionAgentScope(input.params.agentScope);
 	const discovered = input.deps.discoverAgents(effectiveCwd, scope, input.parentModel?.provider);
 	const discoveredAgents = discovered.agents;
@@ -1907,6 +1936,7 @@ async function resumeAsyncRun(input: {
 			intercomBridge,
 			parentSessionFile,
 			absoluteDeadlineAt: input.absoluteDeadlineAt,
+			watchdogDiffBaseline: targetWatchdogDiffBaseline,
 		});
 	}
 
@@ -1974,6 +2004,7 @@ async function resumeAsyncRun(input: {
 				interactive: input.ctx.hasUI,
 		permissions: input.deps.config.permissions,
 		childRuntime: input.deps.childRuntime,
+		watchdogDiffBaseline: targetWatchdogDiffBaseline,
 			}),
 			availableModels,
 			cwd: effectiveCwd,
@@ -2084,6 +2115,7 @@ async function resumeAsyncRun(input: {
 			interactive: input.ctx.hasUI,
 		permissions: input.deps.config.permissions,
 		childRuntime: input.deps.childRuntime,
+		watchdogDiffBaseline: targetWatchdogDiffBaseline,
 		}),
 		cwd: effectiveCwd,
 		maxOutput: input.params.maxOutput ?? recoveryDescriptor?.maxOutput,
@@ -3230,6 +3262,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		interactive: ctx.hasUI,
 		permissions: deps.config.permissions,
 		childRuntime: deps.childRuntime,
+		watchdogDiffBaseline: data.watchdogDiffBaseline,
 	});
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth, deps.childRuntime);
@@ -3893,6 +3926,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			permissions: deps.config.permissions,
 			runtimeSnapshotHost: deps.pi,
 			hostAvailableBuiltins: getHostBuiltinToolNames(deps.pi),
+			watchdogDiffBaseline: data.watchdogDiffBaseline,
 			parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 			llmIntentArbiter: createTaskMutationArbiter({ model: ctx.model, modelRegistry: ctx.modelRegistry, sessionId: ctx.sessionManager.getSessionId() }),
 			childRuntime: deps.childRuntime,
@@ -4054,7 +4088,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		usageBudget: usageBudgetState(data.usageBudget, totalCost),
 		...(worktreeHandoff?.reference ? { parallelHandoff: worktreeHandoff.reference } : {}),
 	}));
-	rememberForegroundRun(deps.state, { modelResponseAliases, runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, results: details.results, params, effectiveOutput, effectiveOutputMode, extensionBindings: params.extensionBindings });
+	rememberForegroundRun(deps.state, { modelResponseAliases, runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, results: details.results, params, effectiveOutput, effectiveOutputMode, extensionBindings: params.extensionBindings, watchdogDiffBaseline: data.watchdogDiffBaseline });
 
 	const suppressRoutineResultIntercom = shouldSuppressRoutineResultIntercom({ suppressRoutineResultIntercom: params.suppressRoutineResultIntercom, results: [r] });
 	if (!r.detached && !r.interrupted && !suppressRoutineResultIntercom) {
@@ -4884,6 +4918,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		ctx: ExtensionContext,
 		preserveActiveSession = false,
 		parentModelOverride?: ParentModel | null,
+		runWatchdogDiffBaseline?: WatchdogDiffBaseline,
 	): Promise<AgentToolResult<Details>> => {
 		const workflowLaunchObserver = workflowLaunchObservers.get(params);
 		const inheritedUsageBudget = workflowOwnedUsageBudgets.get(params);
@@ -4895,6 +4930,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const workflowPermitContext = workflowPermitContexts.get(params);
 		const delegatedWorkflowPermit = workflowPermitContext && "root" in workflowPermitContext ? workflowPermitContext.root : undefined;
 		const workflowChildPermitLaunch = workflowPermitContext && "child" in workflowPermitContext ? workflowPermitContext.child : undefined;
+		const requestedRunCwd = resolveRequestedCwd(ctx.cwd, params.cwd);
+		const inheritedWatchdogDiffBaseline = runWatchdogDiffBaseline ?? deps.childRuntime?.watchdogDiffBaseline;
+		const watchdogDiffBaseline = resolveWatchdogDiffBaseline(requestedRunCwd, inheritedWatchdogDiffBaseline, preserveActiveSession);
 		if (!preserveActiveSession) deps.state.baseCwd = ctx.cwd;
 		deps.state.foregroundRuns ??= new Map();
 		deps.state.foregroundControls ??= new Map();
@@ -5109,6 +5147,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					lastUpdate: startedAt,
 					...(timeout !== undefined ? { deadlineAt: startedAt + timeout, timeoutMs: timeout } : {}),
 					cwd: workflowCwd,
+					...(watchdogDiffBaseline ? { watchdogDiffBaseline } : {}),
 					...(workflowSessionRoot ? { sessionRoot: workflowSessionRoot } : {}),
 					...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}),
 					pid: process.pid,
@@ -5674,7 +5713,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 											status: step.status,
 											heartbeat: { status: step.status, ...(childPhase ? { phase: childPhase } : {}) },
 										});
-									}, ctx, preserveActiveSession, workflowParentModel);
+									}, ctx, preserveActiveSession, workflowParentModel, watchdogDiffBaseline);
 								});
 								workflowResults.push(...result.details.results);
 								for (const childResult of result.details.results) {
@@ -5705,7 +5744,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								}
 								return child;
 							},
-							status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx, preserveActiveSession, workflowParentModel)),
+							status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx, preserveActiveSession, workflowParentModel, watchdogDiffBaseline)),
 							resolveResume: (reference, _signal, index) => resolveWorkflowResume(reference, deps, ctx.sessionManager.getSessionFile() ?? null, index),
 							steer: (key, message, options, workflowSignal) => steerWorkflowChildByKey({ state: deps.state, workflowRunId, key, message, options, signal: workflowSignal, resolveRunId: () => workflowChildRunIds.get(key) }),
 						});
@@ -5934,7 +5973,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									status: progressStatus,
 									heartbeat: { status: progressStatus, ...(childPhase ? { phase: childPhase } : {}) },
 								});
-							}, ctx, preserveActiveSession, workflowParentModel);
+							}, ctx, preserveActiveSession, workflowParentModel, watchdogDiffBaseline);
 						});
 						workflowResults.push(...result.details.results);
 						for (const childResult of result.details.results) {
@@ -5955,7 +5994,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						});
 						return child;
 					},
-					status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx, preserveActiveSession, workflowParentModel)),
+					status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx, preserveActiveSession, workflowParentModel, watchdogDiffBaseline)),
 					resolveResume: (reference, _signal, index) => resolveWorkflowResume(reference, deps, ctx.sessionManager.getSessionFile() ?? null, index),
 					steer: (key, message, options, workflowSignal) => steerWorkflowChildByKey({ state: deps.state, workflowRunId: foregroundWorkflowRunId, key, message, options, signal: workflowSignal, resolveRunId: () => workflowChildRunIds.get(key) }),
 				});
@@ -7005,6 +7044,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			topLevelAsyncCapacityEligible,
 			activeAsyncCapacity,
 			workflowChildPermitLaunch,
+			watchdogDiffBaseline,
 		});
 
 		const foregroundDescription = selectedAgentNames.length === 1
@@ -7045,7 +7085,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				});
 				const redoParams = promptAuditRedoParams(audit.rerun.params, rewrittenTask);
 				const previousForegroundId = deps.state.lastForegroundControlId;
-				const launch = execute(randomUUID(), redoParams, signal, undefined, ctx, true);
+				const launch = execute(randomUUID(), redoParams, signal, undefined, ctx, true, undefined, watchdogDiffBaseline);
 				const newRunId = deps.state.lastForegroundControlId && deps.state.lastForegroundControlId !== previousForegroundId
 					? deps.state.lastForegroundControlId
 					: undefined;

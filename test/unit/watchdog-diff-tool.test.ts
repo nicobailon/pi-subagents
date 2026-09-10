@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { captureWatchdogDiffBaseline, createWatchdogDiffTool, WATCHDOG_DIFF_MAX_CHARS } from "../../src/watchdog/diff-tool.ts";
+import { captureWatchdogDiffBaseline, createWatchdogDiffTool, resolveWatchdogDiffBaseline, WATCHDOG_DIFF_MAX_CHARS } from "../../src/watchdog/diff-tool.ts";
 
 let repo = "";
 
@@ -41,6 +41,25 @@ describe("watchdog diff tool", () => {
 		assert.equal(baseline.ref, git("rev-parse", "HEAD").trim());
 		assert.match(await run(createWatchdogDiffTool(baseline)), /^No changes since baseline/);
 		assert.equal(captureWatchdogDiffBaseline(os.tmpdir()), undefined);
+	});
+
+	it("resolves explicit cross-repository cwd without leaking parent baseline", () => {
+		const otherRepo = fs.mkdtempSync(path.join(os.tmpdir(), "watchdog-diff-other-"));
+		try {
+			execFileSync("git", ["init", "-q"], { cwd: otherRepo });
+			execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: otherRepo });
+			execFileSync("git", ["config", "user.name", "Test User"], { cwd: otherRepo });
+			fs.writeFileSync(path.join(otherRepo, "other.txt"), "other\n", "utf-8");
+			execFileSync("git", ["add", "."], { cwd: otherRepo });
+			execFileSync("git", ["commit", "-q", "-m", "other base"], { cwd: otherRepo });
+			const parentBaseline = captureWatchdogDiffBaseline(repo)!;
+			const childBaseline = resolveWatchdogDiffBaseline(otherRepo, undefined, false);
+			assert.ok(childBaseline);
+			assert.notEqual(childBaseline.root, parentBaseline.root);
+			assert.equal(resolveWatchdogDiffBaseline(otherRepo, parentBaseline, true), undefined);
+		} finally {
+			fs.rmSync(otherRepo, { recursive: true, force: true });
+		}
 	});
 
 	it("shows tracked changes since the baseline, including later commits, and lists untracked paths", async () => {

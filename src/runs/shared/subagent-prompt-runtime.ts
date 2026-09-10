@@ -14,6 +14,7 @@ import type { ResolvedToolBudget, SubagentState } from "../../shared/types.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { getAgentDir } from "../../shared/utils.ts";
 import { registerChildWatchdog } from "../../watchdog/register-child.ts";
+import { createWatchdogDiffTool } from "../../watchdog/diff-tool.ts";
 import type { ChildWatchdogConfig } from "../../watchdog/child-status.ts";
 import { requestWatchdogPermission, type WatchdogPermissionRequest, type WatchdogPermissionResult } from "../../watchdog/permission-arbiter.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../watchdog/types.ts";
@@ -63,6 +64,7 @@ const PROJECT_CONTEXT_XML_HEADER = "\n\n<project_context>\n\n";
 const PROJECT_CONTEXT_LEGACY_HEADER = "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n";
 const SKILLS_HEADER = "\n\nThe following skills provide specialized instructions for specific tasks.";
 const DATE_HEADER = "\nCurrent date:";
+const REVIEWER_DIFF_NO_BASELINE_GUIDANCE = "Reviewer current-change evidence is unavailable: request the exact diff or changed-file list from the parent; never probe Git internals or read .git paths.";
 
 function registerRuntimeExtensionAcknowledgements(pi: ExtensionAPI, sink: ((ids: string[]) => void) | undefined): void {
 	if (!sink) return;
@@ -401,6 +403,76 @@ function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undef
 	});
 }
 
+function canonicalPathWithExistingAncestor(candidate: string, cwd: string): string {
+	const absolute = path.resolve(cwd, candidate);
+	const unresolved: string[] = [];
+	let current = absolute;
+	while (true) {
+		try {
+			return path.join(fs.realpathSync(current), ...unresolved.reverse());
+		} catch {
+			const parent = path.dirname(current);
+			if (parent === current) return absolute;
+			unresolved.push(path.basename(current));
+			current = parent;
+		}
+	}
+}
+
+function repositoryGitMetadataPath(cwd: string, baseline: ChildRuntimeConfig["watchdogDiffBaseline"]): string | undefined {
+	let root = canonicalPathWithExistingAncestor(baseline?.root ?? cwd, cwd);
+	if (!baseline) {
+		while (!fs.existsSync(path.join(root, ".git"))) {
+			const parent = path.dirname(root);
+			if (parent === root) return undefined;
+			root = parent;
+		}
+	}
+	const gitPath = path.join(root, ".git");
+	try {
+		if (fs.statSync(gitPath).isFile()) {
+			const gitFile = fs.readFileSync(gitPath, "utf8").match(/^gitdir:\\s*(.+?)\\s*$/im)?.[1];
+			if (gitFile) return canonicalPathWithExistingAncestor(gitFile, root);
+		}
+		return canonicalPathWithExistingAncestor(gitPath, root);
+	} catch {
+		return undefined;
+	}
+}
+
+function isWithinPath(candidate: string, parent: string): boolean {
+	const relative = path.relative(parent, candidate);
+	return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+function registerReviewerRepositoryGuard(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
+	const cwd = config.cwd ?? process.cwd();
+	const metadataPath = repositoryGitMetadataPath(cwd, config.watchdogDiffBaseline);
+	// SAFETY: this narrows Pi's generic event API to the documented tool_call payload used by this handler.
+	const onToolCall = pi.on as unknown as (event: "tool_call", handler: (event: { toolName: string; input: Record<string, unknown> }) => unknown) => void;
+	onToolCall("tool_call", (event) => {
+		if (!["read", "grep", "find", "ls"].includes(event.toolName)) return undefined;
+		const candidate = event.input.path;
+		if (typeof candidate !== "string") return undefined;
+		const canonicalCandidate = canonicalPathWithExistingAncestor(candidate, cwd);
+		const lexicalGitPath = candidate.replaceAll("\\", "/").split("/").includes(".git");
+		if (!lexicalGitPath && (!metadataPath || !isWithinPath(canonicalCandidate, metadataPath))) return undefined;
+		const guidance = config.watchdogDiffBaseline
+			? "call watchdog_diff for changed-file evidence"
+			: "request the exact diff or changed-file list from the parent; do not probe Git internals";
+		return { block: true, reason: `Reviewer repository inspection cannot read .git internals; ${guidance}.` };
+	});
+}
+
+function registerReviewerDiffTool(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
+	if (!/\breviewer\b/i.test(config.agent ?? "")) return;
+	registerReviewerRepositoryGuard(pi, config);
+	if (!config.watchdogDiffBaseline) return;
+	// SAFETY: watchdog_diff implements Pi's runtime tool contract; the package's AgentTool type omits extension-only metadata.
+	const registerTool = pi.registerTool as unknown as (tool: ReturnType<typeof createWatchdogDiffTool>) => void;
+	registerTool(createWatchdogDiffTool(config.watchdogDiffBaseline));
+}
+
 function registerStructuredOutputTool(pi: ExtensionAPI, structured: NonNullable<ChildRuntimeConfig["structuredOutput"]>): void {
 	const required = structured.acceptanceReport === "required";
 	const parameters = createStructuredOutputToolParameters(structured.schema, { acceptanceReport: structured.acceptanceReport });
@@ -451,6 +523,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 	registerPermissionGate(pi, config.permissions, config.childWatchdog);
 	registerToolBudget(pi, config.toolBudget);
 	registerChildWatchdog(pi, config.childWatchdog, config.watchdogStatus);
+	registerReviewerDiffTool(pi, config);
 	const waitState = config.runtimeState ?? {
 		baseCwd: "",
 		currentSessionId: null,
@@ -536,6 +609,9 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 				fanoutChild,
 				structuredOutput: Boolean(config.structuredOutput),
 			});
+		}
+		if (/\breviewer\b/i.test(config.agent ?? "") && !config.watchdogDiffBaseline) {
+			rewritten = `${rewritten}\n\n${REVIEWER_DIFF_NO_BASELINE_GUIDANCE}`;
 		}
 		if (rewritten === event.systemPrompt) return;
 		return { systemPrompt: rewritten };

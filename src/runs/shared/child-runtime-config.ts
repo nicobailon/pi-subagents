@@ -3,6 +3,7 @@ import type { ThinkingLevel } from "../../shared/model-info.ts";
 import type { NestedPathEntry } from "./nested-path.ts";
 import type { PermissionRules } from "./permissions.ts";
 import type { ChildWatchdogConfig, ChildWatchdogStatusEvent } from "../../watchdog/child-status.ts";
+import type { WatchdogDiffBaseline } from "../../watchdog/diff-tool.ts";
 import type { ResolvedWaitToolConfig } from "../background/wait-config.ts";
 import type { ChildToolDiagnostic } from "./tool-availability.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "./capability-ceiling.ts";
@@ -57,6 +58,8 @@ export interface ChildSupervisorMetadata {
  * that hosts the child session builds it and passes it to the hooks directly.
  */
 export interface ChildRuntimeConfig {
+	/** Actual session working directory used to resolve tool paths. */
+	cwd?: string;
 	runId?: string;
 	agent?: string;
 	childIndex?: number;
@@ -83,6 +86,8 @@ export interface ChildRuntimeConfig {
 	permissions?: ChildPermissions;
 	toolBudget?: ResolvedToolBudget;
 	childWatchdog?: ChildWatchdogConfig;
+	/** Session-start repository baseline exposed to reviewer lanes through watchdog_diff. */
+	watchdogDiffBaseline?: WatchdogDiffBaseline;
 	/** Receives child watchdog status events. */
 	watchdogStatus?: (event: ChildWatchdogStatusEvent) => void;
 	waitTool: ResolvedWaitToolConfig;

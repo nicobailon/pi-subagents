@@ -17,6 +17,7 @@ import { intersectThinkingCeilings, parseThinkingLevel, type ThinkingLevel } fro
 import { assertWorkflowGraphHostSteps } from "../shared/host-step-status.ts";
 import { validateIntercomBridgeConfig } from "../../intercom/intercom-bridge.ts";
 import { validateModelResponseAliases } from "../../shared/model-response-aliases.ts";
+import type { WatchdogDiffBaseline } from "../../watchdog/diff-tool.ts";
 
 export interface AsyncResumeParams {
 	id?: string;
@@ -59,6 +60,7 @@ export type AsyncResumeTarget = {
 	launchContractDigest?: string;
 	runner?: NonNullable<AsyncStatus["steps"]>[number]["runner"];
 	externalJob?: NonNullable<AsyncStatus["steps"]>[number]["externalJob"];
+	watchdogDiffBaseline?: WatchdogDiffBaseline;
 };
 
 interface AsyncResultFile {
@@ -323,7 +325,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		"subagentOnlyExtensions", "mcpDirectTools", "excludeTools", "mutationTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "skills",
 		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "context", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
-		"launchResolvedExtensions", "runFanoutBudget", "lane", "baseRef",
+		"launchResolvedExtensions", "runFanoutBudget", "lane", "baseRef", "watchdogDiffBaseline",
 		"extensionBindings",
 	]);
 	for (const field of Object.keys(parsed)) {
@@ -509,6 +511,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 					...(capabilityCeiling ? { capabilityCeiling } : {}),
 					...(selectedStep.thinkingCeiling ? { thinkingCeiling: selectedStep.thinkingCeiling } : {}),
 					...(recoveryDescriptor ? { recoveryDescriptor } : {}),
+					...(status?.watchdogDiffBaseline ?? recoveryDescriptor?.watchdogDiffBaseline ? { watchdogDiffBaseline: status?.watchdogDiffBaseline ?? recoveryDescriptor?.watchdogDiffBaseline } : {}),
 				};
 			}
 			if (selectedStep?.status === "pending") throw new Error(`Async run '${runId}' child ${requestedIndex} is pending and has not started yet. Wait for it to run or complete before resuming.`);
@@ -541,6 +544,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 				...(capabilityCeiling ? { capabilityCeiling } : {}),
 				...(selected.step.thinkingCeiling ? { thinkingCeiling: selected.step.thinkingCeiling } : {}),
 				...(recoveryDescriptor ? { recoveryDescriptor } : {}),
+				...(status?.watchdogDiffBaseline ?? recoveryDescriptor?.watchdogDiffBaseline ? { watchdogDiffBaseline: status?.watchdogDiffBaseline ?? recoveryDescriptor?.watchdogDiffBaseline } : {}),
 			};
 		}
 	}
@@ -588,6 +592,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		...(capabilityCeiling ? { capabilityCeiling } : {}),
 		...(thinkingCeiling ? { thinkingCeiling } : {}),
 		...(recoveryDescriptor ? { recoveryDescriptor } : {}),
+		...(status?.watchdogDiffBaseline ?? recoveryDescriptor?.watchdogDiffBaseline ? { watchdogDiffBaseline: status?.watchdogDiffBaseline ?? recoveryDescriptor?.watchdogDiffBaseline } : {}),
 	};
 }
 

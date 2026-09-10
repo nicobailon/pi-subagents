@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import { RUNTIME_EXTENSION_ACK_EVENT } from "../../src/runs/shared/runtime-acknowledged-extensions.ts";
 import { clearStructuredOutputCaptures } from "../../src/runs/shared/structured-output.ts";
 import { getAgentDir } from "../../src/shared/utils.ts";
+import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
 import { formatChildToolDiagnostic, type ChildToolDiagnostic } from "../../src/runs/shared/tool-availability.ts";
 import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
 import type { ChildWatchdogConfig } from "../../src/watchdog/child-status.ts";
@@ -105,6 +106,99 @@ const CONFIGURED_SKILLS_SECTION = "\n\nThe following configured skills are avail
 describe("subagent prompt runtime", () => {
 	it("ignores an unconfigured path-based load", () => {
 		assert.doesNotThrow(() => registerSubagentPromptRuntime({} as never));
+	});
+
+	it("registers bounded reviewer diff evidence and blocks .git access", () => {
+		const handlers: Array<(event: { toolName: string; input: Record<string, unknown> }) => unknown> = [];
+		const tools: Array<{ name: string }> = [];
+		registerSubagentPromptRuntime({
+			on(event: string, handler: (event: { toolName: string; input: Record<string, unknown> }) => unknown) { if (event === "tool_call") handlers.push(handler); },
+			registerTool(tool: { name: string }) { tools.push(tool); },
+		} as never, childConfig({ agent: "custom-reviewer", watchdogDiffBaseline: { root: process.cwd(), ref: "HEAD" } }));
+		assert.ok(tools.some((tool) => tool.name === "watchdog_diff"));
+		assert.deepEqual(handlers[0]?.({ toolName: "read", input: { path: ".git/HEAD" } }), {
+			block: true,
+			reason: "Reviewer repository inspection cannot read .git internals; call watchdog_diff for changed-file evidence.",
+		});
+		assert.equal(handlers[0]?.({ toolName: "read", input: { path: "src/index.ts" } }), undefined);
+	});
+
+	it("blocks symlinked Git metadata paths relative to child cwd", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-reviewer-git-"));
+		const childCwd = path.join(root, "child");
+		fs.mkdirSync(path.join(root, ".git"));
+		fs.mkdirSync(childCwd);
+		fs.symlinkSync(path.join(root, ".git"), path.join(childCwd, "metadata"), "dir");
+		const handlers: Array<(event: { toolName: string; input: Record<string, unknown> }) => unknown> = [];
+		try {
+			registerSubagentPromptRuntime({
+				on(event: string, handler: (event: { toolName: string; input: Record<string, unknown> }) => unknown) { if (event === "tool_call") handlers.push(handler); },
+				registerTool() {},
+			} as never, childConfig({ agent: "reviewer", cwd: childCwd, watchdogDiffBaseline: { root, ref: "HEAD" } }));
+			assert.deepEqual(handlers[0]?.({ toolName: "read", input: { path: "metadata/HEAD" } }), {
+				block: true,
+				reason: "Reviewer repository inspection cannot read .git internals; call watchdog_diff for changed-file evidence.",
+			});
+			const noBaselineHandlers: Array<(event: { toolName: string; input: Record<string, unknown> }) => unknown> = [];
+			registerSubagentPromptRuntime({
+				on(event: string, handler: (event: { toolName: string; input: Record<string, unknown> }) => unknown) { if (event === "tool_call") noBaselineHandlers.push(handler); },
+				registerTool() {},
+			} as never, childConfig({ agent: "reviewer", cwd: childCwd }));
+			assert.deepEqual(noBaselineHandlers[0]?.({ toolName: "read", input: { path: "metadata/HEAD" } }), {
+				block: true,
+				reason: "Reviewer repository inspection cannot read .git internals; request the exact diff or changed-file list from the parent; do not probe Git internals.",
+			});
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("omits watchdog_diff registration and gives no-baseline guidance after plan restrictions", async () => {
+		const baseline = { root: process.cwd(), ref: "HEAD" };
+		for (const restriction of [
+			{ excludeTools: ["watchdog_diff"] },
+			{ capabilityCeiling: { version: 1 as const, allowedTools: ["read", "grep", "find", "ls"], denyExtensions: false, sources: ["test"] } },
+		]) {
+			const launch = buildInProcessChildLaunch({
+				host: "parent", cwd: process.cwd(), childAgentName: "reviewer", childIndex: 0,
+				sessionEnabled: false, tools: ["read", "grep", "find", "ls"], watchdogDiffBaseline: baseline,
+				...restriction, inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+			});
+			const registered: string[] = [];
+			const beforeStart: Array<(event: { systemPrompt: string }) => unknown> = [];
+			registerSubagentPromptRuntime({
+				on(event: string, handler: (event: { systemPrompt: string }) => unknown) { if (event === "before_agent_start") beforeStart.push(handler); },
+				registerTool(tool: { name: string }) { registered.push(tool.name); },
+			} as never, launch.config);
+			assert.equal(launch.config.watchdogDiffBaseline, undefined);
+			assert.equal(registered.includes("watchdog_diff"), false);
+			assert.match(JSON.stringify(await beforeStart[0]?.({ systemPrompt: "base" }) ?? {}), /request the exact diff or changed-file list/);
+		}
+	});
+
+	it("fails closed for reviewer without a baseline and leaves scouts unchanged", async () => {
+		type RuntimeEvent = { toolName?: string; input?: Record<string, unknown>; systemPrompt?: string };
+		const handlers: Array<(event: RuntimeEvent) => unknown> = [];
+		const beforeStart: Array<(event: RuntimeEvent) => unknown> = [];
+		const tools: Array<{ name: string }> = [];
+		const register = (agent: string) => registerSubagentPromptRuntime({
+			on(event: string, handler: (event: RuntimeEvent) => unknown) {
+				if (event === "tool_call") handlers.push(handler);
+				if (event === "before_agent_start") beforeStart.push(handler);
+			},
+			registerTool(tool: { name: string }) { tools.push(tool); },
+		} as never, childConfig({ agent }));
+		register("reviewer");
+		assert.equal(tools.some((tool) => tool.name === "watchdog_diff"), false);
+		assert.deepEqual(handlers[0]?.({ toolName: "grep", input: { path: ".git/index" } }), {
+			block: true,
+			reason: "Reviewer repository inspection cannot read .git internals; request the exact diff or changed-file list from the parent; do not probe Git internals.",
+		});
+		assert.match(JSON.stringify(await beforeStart[0]?.({ systemPrompt: "base" }) ?? {}), /request the exact diff or changed-file list/);
+
+		const scoutHandlers = handlers.length;
+		register("scout");
+		assert.equal(handlers.length, scoutHandlers, "scouts must not receive reviewer .git guards");
 	});
 
 	it("registers no permission hook by default and routes ask only to the watchdog arbiter", async () => {

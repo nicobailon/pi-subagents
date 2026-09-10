@@ -160,6 +160,7 @@ import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } 
 import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
 import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writeWorktreeSetupHandoff } from "../shared/parallel-handoff.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
+import { resolveWatchdogDiffBaseline } from "../../watchdog/diff-tool.ts";
 import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
 import { buildExternalCliPrompt, runExternalCli } from "../shared/external-cli-runner.ts";
 import { resolveClaudeCodeLaunch } from "../shared/claude-code-adapter.ts";
@@ -234,6 +235,8 @@ export interface SubagentRunConfig {
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	/** Builtin tool names the host runtime provides; used to intersect agent-declared tools. */
 	hostAvailableBuiltins?: readonly string[];
+	/** Session-start repository baseline exposed to reviewer lanes through watchdog_diff. */
+	watchdogDiffBaseline?: import("../../watchdog/diff-tool.ts").WatchdogDiffBaseline;
 	launchContractDigest?: string;
 	launchResolvedExtensions?: LaunchResolvedChildExtensions;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
@@ -679,6 +682,8 @@ interface SingleStepContext {
 	childSessions: ChildSessionFactory;
 	/** The launching executor's own child runtime; nested route, depth, and ceilings come from here. */
 	inheritedChildRuntime?: InheritedChildRuntime;
+	/** Session-start repository baseline exposed to reviewer lanes through watchdog_diff. */
+	watchdogDiffBaseline?: import("../../watchdog/diff-tool.ts").WatchdogDiffBaseline;
 	registerInterrupt?: (interrupt: (() => void) | undefined) => void;
 	registerTimeout?: (interrupt: (() => void) | undefined) => void;
 	registerStop?: (stop: (() => void) | undefined) => void;
@@ -816,6 +821,7 @@ export async function runSingleStepInner(
 			capabilityCeiling: step.capabilityCeiling ?? ctx.capabilityCeiling,
 			inheritedCapabilityCeiling: ctx.inheritedChildRuntime?.capabilityCeiling,
 			permissionRules: step.permissionRules,
+			watchdogDiffBaseline: resolveWatchdogDiffBaseline(step.cwd ?? ctx.cwd, ctx.watchdogDiffBaseline, true),
 			hostAvailableBuiltins: ctx.hostAvailableBuiltins,
 		}));
 		const contractTools = resolvedTaskToolPlan.explicitToolAllowlist ? resolvedTaskToolPlan.effectiveToolAllowlist : undefined;
@@ -1155,6 +1161,7 @@ export async function runSingleStepInner(
 				capabilityCeiling: step.capabilityCeiling ?? ctx.capabilityCeiling,
 				inheritedCapabilityCeiling: ctx.inheritedChildRuntime?.capabilityCeiling,
 				permissionRules: step.permissionRules,
+				watchdogDiffBaseline: resolveWatchdogDiffBaseline(step.cwd ?? ctx.cwd, ctx.watchdogDiffBaseline, true),
 				hostAvailableBuiltins: ctx.hostAvailableBuiltins,
 			}));
 			launchResolvedExtensions = projectLaunchResolvedChildExtensions(toolPlan);
@@ -2109,6 +2116,7 @@ export async function runSubagent(
 		...(config.usageBudget ? { usageBudget: usageBudgetState(config.usageBudget, undefined) } : {}),
 		pid: process.pid,
 		cwd,
+		...(config.watchdogDiffBaseline ? { watchdogDiffBaseline: config.watchdogDiffBaseline } : {}),
 		currentStep: 0,
 		chainStepCount: steps.length,
 		parallelGroups,
@@ -3696,6 +3704,7 @@ export async function runSubagent(
 					capabilityCeiling: config.capabilityCeiling,
 					runFanoutBudget: config.runFanoutBudget,
 					hostAvailableBuiltins: config.hostAvailableBuiltins,
+					watchdogDiffBaseline: config.watchdogDiffBaseline,
 					registerInterrupt: (interrupt) => registerStepInterrupt(fi, interrupt),
 					registerTimeout: (interrupt) => registerStepTimeout(fi, interrupt),
 					registerStop: (stop) => registerStepStop(fi, stop),
@@ -4108,6 +4117,7 @@ export async function runSubagent(
 							capabilityCeiling: config.capabilityCeiling,
 							runFanoutBudget: config.runFanoutBudget,
 							hostAvailableBuiltins: config.hostAvailableBuiltins,
+							watchdogDiffBaseline: config.watchdogDiffBaseline,
 							registerInterrupt: (interrupt) => registerStepInterrupt(fi, interrupt),
 							registerTimeout: (interrupt) => registerStepTimeout(fi, interrupt),
 							registerStop: (stop) => registerStepStop(fi, stop),
@@ -4510,6 +4520,7 @@ export async function runSubagent(
 				capabilityCeiling: config.capabilityCeiling,
 				runFanoutBudget: config.runFanoutBudget,
 				hostAvailableBuiltins: config.hostAvailableBuiltins,
+				watchdogDiffBaseline: config.watchdogDiffBaseline,
 				registerInterrupt: (interrupt) => registerStepInterrupt(flatIndex, interrupt),
 				registerTimeout: (interrupt) => registerStepTimeout(flatIndex, interrupt),
 				registerStop: (stop) => registerStepStop(flatIndex, stop),

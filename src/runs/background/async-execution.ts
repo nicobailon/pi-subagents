@@ -17,6 +17,7 @@ import { planChildLaunch, resolveStepBehavior, suppressProgressForReadOnlyTask, 
 import { applyThinkingSuffix, getHostBuiltinToolNames, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/child-tool-plan.ts";
 import { injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { applyWatchdogLaunchRules, sendRuleViolationWarning } from "../../watchdog/rules.ts";
+import { resolveWatchdogDiffBaseline } from "../../watchdog/diff-tool.ts";
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveExistingReadInstructionPaths, resolveExistingReadPaths, writeInitialProgressFile, type ChainStep, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
@@ -150,6 +151,8 @@ interface AsyncExecutionContext {
 	interactive?: boolean;
 	/** The executor's own child runtime when the launch comes from an in-process child. */
 	childRuntime?: ChildRuntimeConfig;
+	/** Session-start repository baseline exposed to reviewer lanes through watchdog_diff. */
+	watchdogDiffBaseline?: import("../../watchdog/diff-tool.ts").WatchdogDiffBaseline;
 }
 
 export const DEFAULT_ASYNC_TIMEOUT_MS = 30 * 60 * 1000;
@@ -891,6 +894,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			resolvedBehavior,
 		});
 		const { stepCwd, instructionCwd, readExistenceCwd, behavior, namespaceOutputPath, outputPath, skillNames } = launchPlan;
+		const stepWatchdogDiffBaseline = resolveWatchdogDiffBaseline(stepCwd, ctx.watchdogDiffBaseline, true);
 		const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(
 			skillNames,
 			stepCwd,
@@ -983,6 +987,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			permissionRules,
 			runtimeSnapshotHost: ctx.pi,
 			hostAvailableBuiltins,
+			watchdogDiffBaseline: stepWatchdogDiffBaseline,
 		});
 		const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
 		if (externalRunner && permissionRules) {
@@ -1362,6 +1367,7 @@ export function executeAsyncChain(
 				piPackageRoot,
 				childSessionFactoryModule: childSessionFactoryModule(),
 				inheritedChildRuntime: inheritedChildRuntime(ctx.childRuntime),
+				watchdogDiffBaseline: ctx.watchdogDiffBaseline,
 				worktreeSetupHook,
 				worktreeSetupHookTimeoutMs,
 				worktreeBaseDir,
@@ -1858,6 +1864,7 @@ export function executeAsyncSingle(
 		...(params.acceptance !== undefined ? { acceptance: params.acceptance } : {}),
 		...(controlConfig ? { controlConfig } : {}),
 		...(params.context ? { context: params.context } : {}),
+		...(ctx.watchdogDiffBaseline ? { watchdogDiffBaseline: ctx.watchdogDiffBaseline } : {}),
 		...(params.intercomBridge !== undefined ? { intercomBridge: params.intercomBridge } : {}),
 		...(params.baseRef !== undefined ? { baseRef: params.baseRef } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
@@ -1958,6 +1965,7 @@ export function executeAsyncSingle(
 				piPackageRoot,
 				childSessionFactoryModule: childSessionFactoryModule(),
 				inheritedChildRuntime: inheritedChildRuntime(ctx.childRuntime),
+				watchdogDiffBaseline: ctx.watchdogDiffBaseline,
 				worktreeSetupHook,
 				worktreeSetupHookTimeoutMs,
 				worktreeBaseDir,

@@ -443,6 +443,7 @@ async function runSingleAttempt(
 		maxSubagentDepth: options.maxSubagentDepth,
 		runtimeSnapshotHost: options.runtimeSnapshotHost,
 		hostAvailableBuiltins: options.hostAvailableBuiltins,
+		watchdogDiffBaseline: options.watchdogDiffBaseline,
 		inherited: options.childRuntime,
 		host: "parent",
 	});

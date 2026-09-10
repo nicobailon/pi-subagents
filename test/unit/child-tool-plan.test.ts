@@ -34,6 +34,65 @@ describe("child tool plan", () => {
 });
 
 describe("child tool plan host builtin intersection", () => {
+	it("injects bounded diff evidence only for reviewers and keeps reviewer shells closed", () => {
+		const baseline = { root: process.cwd(), ref: "HEAD" };
+		const reviewer = resolvePiLaunchToolPlan({
+			agentName: "reviewer",
+			tools: ["read", "grep", "find", "ls", "bash", "powershell"],
+			watchdogDiffBaseline: baseline,
+			hostAvailableBuiltins: ["read", "grep", "find", "ls", "bash", "powershell"],
+		});
+		assert.deepEqual(reviewer.effectiveToolAllowlist, ["read", "grep", "find", "ls", "watchdog_diff"]);
+		const launch = buildInProcessChildLaunch({
+			host: "parent", cwd: process.cwd(), childAgentName: "reviewer", childIndex: 0,
+			sessionEnabled: false, tools: ["read", "grep", "find", "ls", "bash", "powershell"],
+			watchdogDiffBaseline: baseline, inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+		});
+		assert.deepEqual(launch.session.tools, reviewer.effectiveToolAllowlist);
+
+		const scout = resolvePiLaunchToolPlan({
+			agentName: "scout",
+			tools: ["read", "bash"],
+			watchdogDiffBaseline: baseline,
+			hostAvailableBuiltins: ["read", "bash"],
+		});
+		assert.deepEqual(scout.effectiveToolAllowlist, ["read", "bash"]);
+		assert.deepEqual(scout.excludeTools, []);
+
+		const noBaseline = resolvePiLaunchToolPlan({
+			agentName: "reviewer",
+			tools: ["read", "bash"],
+			hostAvailableBuiltins: ["read", "bash"],
+		});
+		assert.deepEqual(noBaseline.effectiveToolAllowlist, ["read"]);
+		assert.deepEqual(noBaseline.excludeTools, []);
+	});
+
+	it("does not propagate reviewer diff baseline when watchdog_diff is excluded by plan", () => {
+		const baseline = { root: process.cwd(), ref: "HEAD" };
+		for (const restriction of [
+			{ excludeTools: ["watchdog_diff"] },
+			{ capabilityCeiling: { version: 1 as const, allowedTools: ["read", "grep", "find", "ls"], denyExtensions: false, sources: ["test"] } },
+		]) {
+			const launch = buildInProcessChildLaunch({
+				host: "parent", cwd: process.cwd(), childAgentName: "reviewer", childIndex: 0,
+				sessionEnabled: false, tools: ["read", "grep", "find", "ls"], watchdogDiffBaseline: baseline,
+				...restriction, inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+			});
+			assert.equal(launch.toolPlan.effectiveToolAllowlist.includes("watchdog_diff"), false);
+			assert.equal(launch.config.watchdogDiffBaseline, undefined);
+			assert.equal(launch.session.tools?.includes("watchdog_diff"), false);
+		}
+		const inherited = buildInProcessChildLaunch({
+			host: "parent", cwd: process.cwd(), childAgentName: "reviewer", childIndex: 0,
+			sessionEnabled: false, tools: ["read", "grep", "find", "ls"],
+			inherited: { depth: 1, watchdogDiffBaseline: baseline },
+			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+		});
+		assert.equal(inherited.toolPlan.effectiveToolAllowlist.includes("watchdog_diff"), true);
+		assert.deepEqual(inherited.config.watchdogDiffBaseline, baseline);
+	});
+
 	it("intersects declared tools with host-available builtins", () => {
 		const plan = resolvePiLaunchToolPlan({
 			tools: ["read", "grep", "find", "ls", "bash"],

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
@@ -33,6 +34,22 @@ export function captureWatchdogDiffBaseline(cwd: string): WatchdogDiffBaseline |
 	const root = toplevel.stdout.trim();
 	const ref = head.stdout.trim();
 	return root && ref ? { root, ref } : undefined;
+}
+
+function baselineMatchesCwd(baseline: WatchdogDiffBaseline, cwd: string): boolean {
+	const toplevel = runGit(cwd, ["rev-parse", "--show-toplevel"]);
+	if (!toplevel.ok) return false;
+	let root = path.resolve(baseline.root);
+	let candidate = path.resolve(toplevel.stdout.trim());
+	try { root = fs.realpathSync(root); } catch { /* retain resolved path */ }
+	try { candidate = fs.realpathSync(candidate); } catch { /* retain resolved path */ }
+	return root === candidate;
+}
+
+/** Resolve one run's stable baseline; inherited baselines never cross repositories. */
+export function resolveWatchdogDiffBaseline(cwd: string, inherited: WatchdogDiffBaseline | undefined, preserveActiveSession: boolean): WatchdogDiffBaseline | undefined {
+	if (inherited) return baselineMatchesCwd(inherited, cwd) ? inherited : undefined;
+	return preserveActiveSession ? undefined : captureWatchdogDiffBaseline(cwd);
 }
 
 function validatePath(value: string | undefined): string | undefined {

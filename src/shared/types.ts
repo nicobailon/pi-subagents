@@ -840,6 +840,8 @@ export interface SteeringRecoveryDescriptor {
 	controlConfig?: ResolvedControlConfig;
 	/** Resolved launch context for this async child. */
 	context?: "fresh" | "fork";
+	/** Stable repository baseline captured before this child run's writer stages. */
+	watchdogDiffBaseline?: import("../watchdog/diff-tool.ts").WatchdogDiffBaseline;
 	/** Raw per-run bridge override. Omitted descriptors continue to use global config. */
 	intercomBridge?: IntercomBridgeConfig;
 	lane?: WorkflowLaneMetadata;
@@ -1840,6 +1842,8 @@ export interface AsyncStatus {
 	cwd?: string;
 	/** Parent-resolved child session root retained for trusted restored transcript lookup. */
 	sessionRoot?: string;
+	/** Stable repository baseline captured before this run's writer stages. */
+	watchdogDiffBaseline?: import("../watchdog/diff-tool.ts").WatchdogDiffBaseline;
 	currentStep?: number;
 	chainStepCount?: number;
 	pendingAppends?: number;
@@ -2095,6 +2099,8 @@ export interface ForegroundResumeRun {
 	cwd: string;
 	/** Originating parent session. Detached exits can outlive the active session. */
 	sessionId?: string;
+	/** Stable repository baseline captured before this run's writer stages. */
+	watchdogDiffBaseline?: import("../watchdog/diff-tool.ts").WatchdogDiffBaseline;
 	updatedAt: number;
 	children: ForegroundResumeChild[];
 }
@@ -2443,6 +2449,8 @@ export interface RunSyncOptions {
 	runtimeSnapshotHost?: import("../runs/shared/mcp-direct-tool-allowlist.ts").McpRuntimeSnapshotHost;
 	/** Builtin tool names the host runtime provides; used to intersect agent-declared tools. */
 	hostAvailableBuiltins?: readonly string[];
+	/** Session-start repository baseline exposed to reviewer lanes through watchdog_diff. */
+	watchdogDiffBaseline?: import("../watchdog/diff-tool.ts").WatchdogDiffBaseline;
 	/** Optional subagent model-scope enforcement for fallback candidates */
 	modelScope?: ModelScopeRule | ModelScopeRule[];
 	/** Skills to make available (overrides agent default if provided) */

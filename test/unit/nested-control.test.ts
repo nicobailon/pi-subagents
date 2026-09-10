@@ -4,12 +4,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import registerFanoutChildSubagentExtension from "../../src/extension/fanout-child.ts";
-import { createSubagentExecutor, readNestedRecoveryDescriptor } from "../../src/runs/foreground/subagent-executor.ts";
+import { createSubagentExecutor, readNestedRecoveryDescriptor, resolveNestedResumeTarget } from "../../src/runs/foreground/subagent-executor.ts";
 import { createNestedRoute, findNestedControlResult, projectNestedEvents, readNestedControlRequests, readNestedControlResults, snapshotNestedEventFiles, writeNestedControlRequest, writeNestedControlResult, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
-import { ASYNC_DIR, type SubagentState } from "../../src/shared/types.ts";
+import { ASYNC_DIR, TEMP_ROOT_DIR, type SubagentState } from "../../src/shared/types.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
+import { resolveSubagentRunId } from "../../src/runs/background/run-id-resolver.ts";
+import { resolveWatchdogDiffBaseline } from "../../src/watchdog/diff-tool.ts";
 
 const routeRoots: string[] = [];
 const fanoutListenerCleanupKey = "__piSubagentFanoutChildNestedControlInboxCleanups";
@@ -381,6 +383,49 @@ describe("nested control routing", () => {
 			assert.equal(result.isError, true);
 			assert.match(text(result), /session file does not exist/);
 		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses persisted nested cwd so its watchdog baseline survives revival", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-resume-cwd-"));
+		const runId = "nested-persisted-cwd";
+		const repoCwd = process.cwd();
+		const asyncDir = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", "root-persisted-cwd", runId);
+		const sessionRoot = path.join(root, "parent");
+		const sessionFile = path.join(sessionRoot, runId, "run-0", "session.jsonl");
+		const baseline = { root: repoCwd, ref: "persisted-baseline" };
+		try {
+			const route = createNestedRoute("root-persisted-cwd");
+			routeRoots.push(path.dirname(route.eventSink));
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId,
+				mode: "single",
+				state: "complete",
+				startedAt: 1,
+				cwd: repoCwd,
+				watchdogDiffBaseline: baseline,
+			}), "utf-8");
+			writeNestedEvent(route, {
+				type: "subagent.nested.completed",
+				ts: 100,
+				parentRunId: route.rootRunId,
+				child: { id: runId, parentRunId: route.rootRunId, parentStepIndex: 0, depth: 1, path: [{ runId: route.rootRunId, stepIndex: 0 }], state: "complete", agent: "worker", ownerState: "gone", asyncDir, sessionFile },
+			});
+
+			const resolved = resolveSubagentRunId(runId, { nested: { routes: [route] } });
+			assert.equal(resolved?.kind, "nested");
+			if (!resolved || resolved.kind !== "nested") throw new Error("expected nested run resolution");
+			const target = resolveNestedResumeTarget(resolved, [sessionRoot]);
+			assert.equal(target.cwd, repoCwd);
+			assert.notEqual(target.cwd, path.dirname(asyncDir));
+			assert.deepEqual(target.watchdogDiffBaseline, baseline);
+			assert.deepEqual(resolveWatchdogDiffBaseline(target.cwd!, target.watchdogDiffBaseline, true), baseline);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

@@ -22,6 +22,7 @@ import {
 import { THINKING_LEVELS } from "../../shared/model-info.ts";
 import { getAgentDir } from "../../shared/utils.ts";
 import type { PermissionRules } from "./permissions.ts";
+import type { WatchdogDiffBaseline } from "../../watchdog/diff-tool.ts";
 import {
 	capabilityCeilingAgentRestrictionSources,
 	intersectSubagentCapabilityCeilings,
@@ -64,11 +65,17 @@ const OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH = 64;
 const PI_BUILTIN_TOOL_NAMES = new Set(["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"]);
 const REPOSITORY_INSPECTION_TOOLS = new Set(["read", "grep", "find", "ls", "bash", "powershell"]);
 const REVIEW_OR_SCOUT_AGENT_PATTERN = /\b(?:reviewer|scout)\b/i;
+const REVIEWER_AGENT_PATTERN = /\breviewer\b/i;
 // These providers come from child hooks, not the host's builtin tool registry.
 const NATIVE_COORDINATION_TOOL_NAMES = new Set(["subagent", "contact_supervisor", "subagent_supervisor"]);
+const RUNTIME_REGISTERED_TOOL_NAMES = new Set(["watchdog_diff"]);
 
 export function isReviewOrScoutLaneAgent(agentName: string | undefined): boolean {
 	return typeof agentName === "string" && REVIEW_OR_SCOUT_AGENT_PATTERN.test(agentName);
+}
+
+export function isReviewerLaneAgent(agentName: string | undefined): boolean {
+	return typeof agentName === "string" && REVIEWER_AGENT_PATTERN.test(agentName);
 }
 
 export function missingPermittedRepositoryInspectionTools(
@@ -165,6 +172,8 @@ function resolveFastModeExtension(input: Pick<ResolvePiLaunchToolPlanInput, "fas
 
 export interface ResolvePiLaunchToolPlanInput {
 	tools?: string[];
+	/** Session-start baseline enabling bounded reviewer diff evidence. */
+	watchdogDiffBaseline?: WatchdogDiffBaseline;
 	excludeTools?: string[];
 	allowNestedSubagents?: boolean;
 	extensions?: string[];
@@ -376,11 +385,17 @@ export function resolvePiLaunchToolPlan(
 		input.hostAvailableBuiltins === undefined
 			? undefined
 			: new Set(input.hostAvailableBuiltins);
-	const requestedBuiltinTools =
-		input.tools?.filter(
+	const reviewerLane = isReviewerLaneAgent(input.agentName);
+	const runtimeTools = input.watchdogDiffBaseline && reviewerLane ? ["watchdog_diff"] : [];
+	const requestedBuiltinTools = input.tools === undefined
+		? []
+		: [...new Set([
+			...input.tools,
+			...runtimeTools,
+		])].filter(
 			(tool) =>
 				!(tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js")),
-		) ?? [];
+		);
 	if (input.requireReadTool && hostAvailableSet && !hostAvailableSet.has("read")) {
 		const agentLabel = input.agentName ? ` for agent '${input.agentName}'` : "";
 		throw new Error(
@@ -405,13 +420,16 @@ export function resolvePiLaunchToolPlan(
 					: requestedBuiltinTools
 				).filter((tool) => !allowedToolSet || allowedToolSet.has(tool));
 	const declaredBuiltinTools = hostAvailableSet
-		? ceilingFilteredBuiltinTools.filter((tool) => hostAvailableSet.has(tool) || NATIVE_COORDINATION_TOOL_NAMES.has(tool))
+		? ceilingFilteredBuiltinTools.filter((tool) => hostAvailableSet.has(tool) || NATIVE_COORDINATION_TOOL_NAMES.has(tool) || RUNTIME_REGISTERED_TOOL_NAMES.has(tool))
 		: ceilingFilteredBuiltinTools;
 	const unavailableHostBuiltins = hostAvailableSet
-		? ceilingFilteredBuiltinTools.filter((tool) => !hostAvailableSet.has(tool) && !NATIVE_COORDINATION_TOOL_NAMES.has(tool))
+		? ceilingFilteredBuiltinTools.filter((tool) => !hostAvailableSet.has(tool) && !NATIVE_COORDINATION_TOOL_NAMES.has(tool) && !RUNTIME_REGISTERED_TOOL_NAMES.has(tool))
 		: [];
 	const excludeTools = [...new Set((input.excludeTools ?? []).map((tool) => tool.trim()).filter(Boolean))];
-	const excludedToolSet = new Set(excludeTools);
+	const excludedToolSet = new Set([
+		...excludeTools,
+		...(reviewerLane ? ["bash", "powershell"] : []),
+	]);
 	const effectiveDeclaredBuiltinTools = declaredBuiltinTools.filter((tool) => !excludedToolSet.has(tool));
 	const fanoutAuthorized = effectiveDeclaredBuiltinTools.includes("subagent") || (
 		input.allowNestedSubagents === true &&
