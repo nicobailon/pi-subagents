@@ -341,6 +341,11 @@ export function resolvePermissionSystemExtension(): string | undefined {
  * `hostAvailableBuiltins` to `resolvePiLaunchToolPlan` so child tool plans
  * intersect declared agent tools with what the host actually supports.
  *
+ * Extensions may override a builtin by registering a tool under the same name
+ * (pi's docs/extensions.md), which replaces the registry entry and its
+ * `builtin` provenance, so a builtin name counts as host-provided whatever
+ * source reports it.
+ *
  * Returns `undefined` when builtin tool discovery fails or yields nothing,
  * so callers skip the intersection (fail-safe to allowing all declared tools).
  * This handles test mocks without proper tool registration and hosts whose
@@ -352,7 +357,7 @@ export function getHostBuiltinToolNames(pi: Pick<ExtensionAPI, "getAllTools">): 
 			.getAllTools()
 			.filter((tool) => {
 				const source = (tool.sourceInfo as { source?: string } | undefined)?.source;
-				return source === "builtin" || (source === "auto" && PI_BUILTIN_TOOL_NAMES.has(tool.name));
+				return source === "builtin" || PI_BUILTIN_TOOL_NAMES.has(tool.name);
 			})
 			.map((tool) => tool.name);
 		return builtins.length > 0 ? builtins : undefined;

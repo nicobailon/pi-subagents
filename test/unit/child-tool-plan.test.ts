@@ -217,6 +217,45 @@ describe("production launch path supplies hostAvailableBuiltins", () => {
 		assert.deepEqual(builtins, ["read", "bash"]);
 	});
 
+	it("getHostBuiltinToolNames keeps builtin names an extension override re-registered", () => {
+		const wrappedPi = {
+			getAllTools: () => [
+				...["read", "bash", "edit", "write", "grep", "find", "ls"].map((name) => ({ name, sourceInfo: { source: "npm:pi-tool-display" } })),
+				{ name: "powershell", sourceInfo: { source: "builtin" } },
+				{ name: "custom-tool", sourceInfo: { source: "npm:pi-tool-display" } },
+			],
+		};
+		const builtins = getHostBuiltinToolNames(wrappedPi);
+		assert.deepEqual(builtins, ["read", "bash", "edit", "write", "grep", "find", "ls", "powershell"]);
+		const plan = resolvePiLaunchToolPlan({
+			agentName: "explore",
+			tools: ["read", "grep", "find", "ls", "bash"],
+			hostAvailableBuiltins: builtins,
+		});
+		assert.deepEqual(plan.effectiveToolAllowlist, ["read", "grep", "find", "ls", "bash"]);
+		assert.deepEqual(plan.unavailableHostBuiltins, []);
+		assert.deepEqual(plan.warnings, []);
+	});
+
+	it("getHostBuiltinToolNames still prunes declared tools a restricted host omits", () => {
+		const restrictedPi = {
+			getAllTools: () => [
+				{ name: "read", sourceInfo: { source: "builtin" } },
+				{ name: "ls", sourceInfo: { source: "builtin" } },
+				{ name: "mcp-tool", sourceInfo: { source: "mcp" } },
+			],
+		};
+		const builtins = getHostBuiltinToolNames(restrictedPi);
+		assert.deepEqual(builtins, ["read", "ls"]);
+		const plan = resolvePiLaunchToolPlan({
+			agentName: "worker",
+			tools: ["read", "grep", "find", "ls", "bash"],
+			hostAvailableBuiltins: builtins,
+		});
+		assert.deepEqual(plan.effectiveToolAllowlist, ["read", "ls"]);
+		assert.deepEqual(plan.unavailableHostBuiltins, ["grep", "find", "bash"]);
+	});
+
 	it("getHostBuiltinToolNames returns undefined on failure or empty results", () => {
 		const throwingPi = {
 			getAllTools: () => { throw new Error("Not available"); },
