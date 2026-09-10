@@ -42,7 +42,31 @@ describe("async compaction resume", () => {
 			for (const handler of handlers.get("agent_start")) await handler();
 			const restored = widgets.filter(([_, value]) => value !== undefined).map(([key]) => key).sort();
 			if (JSON.stringify(restored) !== JSON.stringify(["subagent-async", "subagent-fleet-status"])) throw new Error(JSON.stringify(widgets));
-			if (sent.length !== 1 || sent[0].options?.triggerTurn !== true || sent[0].message?.customType !== "subagent-compaction-resume") throw new Error(JSON.stringify(sent));
+			// threshold compaction runs inline inside the same run (pi >= 0.84.4): the parent continues by itself
+			if (sent.some((entry) => entry.message?.customType === "subagent-compaction-resume")) throw new Error("re-drove an inline threshold compaction: " + JSON.stringify(sent));
+
+			// manual compaction that CUT a run (agent_end saw an aborted assistant turn) is the one case that needs the re-drive
+			sent.length = 0;
+			for (const handler of handlers.get("agent_end")) await handler({ messages: [{ role: "user", content: "go" }, { role: "assistant", content: [], stopReason: "aborted" }] }, ctx);
+			for (const handler of handlers.get("session_before_compact")) await handler({ reason: "manual", signal: new AbortController().signal });
+			for (const handler of handlers.get("session_compact")) await handler({ reason: "manual" });
+			if (sent.length !== 1 || sent[0].options?.triggerTurn !== true || sent[0].message?.customType !== "subagent-compaction-resume") throw new Error("manual compaction after an aborted run must resume: " + JSON.stringify(sent));
+
+			// manual compaction at idle (last run ended with stop) must not start an unasked turn
+			sent.length = 0;
+			for (const handler of handlers.get("agent_start")) await handler();
+			for (const handler of handlers.get("agent_end")) await handler({ messages: [{ role: "assistant", content: [], stopReason: "stop" }] }, ctx);
+			for (const handler of handlers.get("session_before_compact")) await handler({ reason: "manual", signal: new AbortController().signal });
+			for (const handler of handlers.get("session_compact")) await handler({ reason: "manual" });
+			if (sent.some((entry) => entry.message?.customType === "subagent-compaction-resume")) throw new Error("re-drove a manual compaction of a finished run: " + JSON.stringify(sent));
+
+			// overflow compaction retries the aborted turn itself (willRetry)
+			sent.length = 0;
+			for (const handler of handlers.get("agent_end")) await handler({ messages: [{ role: "assistant", content: [], stopReason: "aborted" }] }, ctx);
+			for (const handler of handlers.get("session_before_compact")) await handler({ reason: "overflow", willRetry: true, signal: new AbortController().signal });
+			for (const handler of handlers.get("session_compact")) await handler({ reason: "overflow", willRetry: true });
+			for (const handler of handlers.get("agent_start")) await handler();
+			if (sent.some((entry) => entry.message?.customType === "subagent-compaction-resume")) throw new Error("re-drove an overflow compaction pi retries itself: " + JSON.stringify(sent));
 
 			sent.length = 0;
 			events.emit("subagent:async-complete", { id: "running-2", sessionId: "compact-session", agent: "worker", success: true, summary: "done" });

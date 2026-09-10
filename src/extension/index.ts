@@ -823,7 +823,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	registerWaitTool(pi, state, waitToolConfig.enabled, waitSubscriptionManager, waitToolConfig.defaultTimeoutMs);
 
-	pi.on("agent_end", async (_event, ctx) => {
+	pi.on("agent_end", async (event, ctx) => {
+		parentRunAborted = lastAssistantStopReason(event?.messages) === "aborted";
 		if (!ctx.hasUI) await drainOutstandingWork({ state, events: pi.events });
 		const ownerSessionId = state.currentSessionId;
 		if (!ownerSessionId) return;
@@ -1094,6 +1095,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		},
 	};
 
+	const lastAssistantStopReason = (messages: unknown): string | undefined => {
+		if (!Array.isArray(messages)) return undefined;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const m = messages[i] as { role?: string; stopReason?: string } | undefined;
+			if (m?.role === "assistant") return m.stopReason;
+		}
+		return undefined;
+	};
+
 	const installRuntime = (ctx: ExtensionContext) => {
 		if (runtimeCleaned) {
 			throw new Error("Cannot restart a cleaned pi-subagents extension runtime; register a new extension instance.");
@@ -1123,7 +1133,17 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}
 	};
 
+	// A compaction only needs a re-drive when it CUT a parent run. Since pi 0.84.4 threshold compaction
+	// runs inline between a tool batch and the next assistant response (the run continues by itself), and
+	// overflow compaction retries the aborted turn (`willRetry`). Only manual compaction (`/compact` or
+	// `ctx.compact()`) aborts first and "never continues the interrupted agent turn" — and only when a
+	// run was actually in flight. Re-driving in the other cases queued a spurious "resume the parent task"
+	// turn after runs that had already finished.
+	let parentRunAborted = false;
+	let compactionInterruptedRun = false;
+
 	pi.on("agent_start", () => {
+		parentRunAborted = false;
 		resumeWidgetsAfterCompaction();
 		herdrStatusBridge.agentStarted();
 	});
@@ -1133,10 +1153,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_before_compact", (event) => {
+		compactionInterruptedRun = event.reason === "manual" && parentRunAborted;
 		if (event.reason !== "manual") suspendWidgetsForCompaction();
 	});
 
 	pi.on("session_compact", () => {
+		const interrupted = compactionInterruptedRun;
+		compactionInterruptedRun = false;
+		parentRunAborted = false;
+		if (!interrupted) return;
 		const hasActiveAsyncWork = [...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running");
 		if (!hasActiveAsyncWork || !withLastUiContext(() => true)) return;
 		pi.sendMessage(

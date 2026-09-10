@@ -5,6 +5,7 @@
 ### Fixed
 
 - Reject invalid global `checkpointBeforeDeadlineMs` values during config loading instead of silently disabling the requested checkpoint.
+- Send the `subagent-compaction-resume` re-drive only when a manual compaction actually cut a parent run. Threshold compaction runs inline inside the same run since pi 0.84.4 and overflow compaction retries the turn itself, so re-driving them started a spurious "resume the parent task" turn after runs that had already finished.
 
 ### Added
 
