@@ -431,6 +431,20 @@ describe("main watchdog runtime", () => {
 		assert.equal(snapshot.failedReviews, 1);
 	});
 
+	it("surfaces the provider error text of a failed review in lastError", async () => {
+		const runtime = new MainWatchdogRuntime({
+			resolveConfig: () => configResult(enabledConfig()),
+			review: () => ({ stopReason: "error", errorMessage: '429: {"message":"rate limit exceeded"}' }),
+		});
+
+		runtime.enqueueDelta("Assistant:\nWorking");
+		await runtime.handleAgentEnd({ type: "agent_end", messages: [] }, { cwd: "/tmp/project" });
+
+		const snapshot = runtime.getSnapshot();
+		assert.equal(snapshot.status, "failed");
+		assert.match(snapshot.lastError ?? "", /stop reason 'error'\. 429: .*rate limit exceeded/);
+	});
+
 	it("marks unresolved agent-end review work stale on timeout", async () => {
 		let started!: () => void;
 		const reviewStarted = new Promise<void>((resolve) => { started = resolve; });

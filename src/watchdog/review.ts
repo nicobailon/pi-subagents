@@ -373,7 +373,7 @@ async function runWatchdogAttempt(ctx: ExtensionContext, request: WatchdogReview
 	const stopReason = reason === "error" || reason === "aborted" || reason === "length" ? reason : "stop";
 	const error = terminal && "errorMessage" in terminal && typeof terminal.errorMessage === "string" ? terminal.errorMessage : undefined;
 	return {
-		result: clarification ? { clarification } : { stopReason },
+		result: clarification ? { clarification } : { stopReason, ...(error ? { errorMessage: error } : {}) },
 		retryable: !clarification && stopReason === "error" && !isContextOverflow(error) && isRetryableModelFailureAttempt({ error, messages: agent.state.messages, toolCount }),
 	};
 }

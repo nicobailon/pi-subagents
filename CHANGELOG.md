@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Surface the provider error text of a failed watchdog review in `/subagents-watchdog status` `Last error` (bounded to 600 chars). Previously only `stop reason 'error'` was recorded, so a watchdog failing every review (rate limit, rejected model, auth) was indistinguishable from a clean one.
 - Reject invalid global `checkpointBeforeDeadlineMs` values during config loading instead of silently disabling the requested checkpoint.
 
 ### Added
