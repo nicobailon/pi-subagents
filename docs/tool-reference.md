@@ -119,7 +119,7 @@ The complete plain-JSON inventory is validated before the first launch (maximum 
 | `toolBudget` | object | none | Optional child tool-call budget `{ soft?, hard, block? }`. At `soft` the child is nudged to finalize. After `hard`, configured tools are blocked; `block` defaults to `read`, `grep`, `find`, and `ls`, while `"*"` blocks every tool call. Final assistant text is never blocked. |
 | `usageBudget` | object | none | Optional root-only reported-usage budget `{ tokens?: { soft?, hard }, costUsd?: { soft?, hard } }`. Soft limits are status-only. Hard limits prevent later child launches after reported usage is reconciled; already-running children are not stopped and no reservations are made. |
 | `cwd` | string | runtime cwd | Override working directory. With `machine`, the directory on that machine. |
-| `machine` | string | - | Herdr saved machine (label or profile id) for external-cli agents; see [agents.md](agents.md#running-external-cli-agents-on-a-herdr-saved-machine). |
+| `machine` | string | - | Herdr saved machine (label or profile id) for native Pi agents or the six code-owned external CLI profiles; see [agents.md](agents.md#running-agents-on-a-herdr-saved-machine). |
 | `maxOutput` | object | 200KB, 5000 lines | Final output truncation limits. |
 | `artifacts` | boolean | true | Write debug artifacts. |
 | `includeProgress` | boolean | false | Include full progress in result. |

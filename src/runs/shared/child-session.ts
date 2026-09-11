@@ -9,12 +9,17 @@
  * across every child it creates.
  */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { ThinkingLevel } from "../../shared/model-info.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "../../shared/utils.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import { prepareReadonlySessionEvidence } from "./readonly-session-evidence.ts";
 import { toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import type { RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
+import type { HerdrMachineReference } from "../../shared/types.ts";
+import type { HerdrRemoteGitStatus } from "../../shared/types.ts";
+import type { ChildToolDiagnostic } from "./tool-availability.ts";
+import type { RuntimeAcknowledgedChildExtensions } from "../../shared/types.ts";
 
 // Private runtime authority for host continuation planning; injected factories have none.
 const readonlyModels = new WeakMap<ChildSession, { current: ModelInfo; resolve(reference: string): ModelInfo | undefined; requestBytes: number }>();
@@ -55,9 +60,14 @@ export type ChildSessionStorage =
 
 export interface ChildSessionLaunch {
 	cwd: string;
+	/** Native remote placement; absent means the owning process hosts the SDK session. */
+	machine?: HerdrMachineReference;
+	machineEnv?: Record<string, string>;
 	storage: ChildSessionStorage;
 	/** Model reference as the agent config names it (`provider/id`, optionally `:thinking`). */
 	model?: string;
+	/** Explicit thinking for a remotely resolved default model. */
+	thinking?: ThinkingLevel;
 	/** Explicit tool allowlist; undefined keeps pi's defaults. */
 	tools?: string[];
 	excludeTools?: string[];
@@ -75,6 +85,16 @@ export interface ChildSessionLaunch {
 	noContextFiles: boolean;
 	systemPrompt?: string;
 	appendSystemPrompt?: string;
+	/** Logical skill names resolved only by the process that owns the Pi installation. */
+	skillNames?: string[];
+	/** Data-only recipe for constructing path-bearing prompt resources on the remote host. */
+	remotePromptSpec?: {
+		agentName: string;
+		baseSystemPrompt: string;
+		mode: "append" | "replace";
+		skillNames?: string[];
+		memory?: { scope: "user" | "project"; path: string; writable: boolean };
+	};
 	/**
 	 * Environment values that extensions loaded into the child read from
 	 * `process.env`. Applied to the hosting process while the session is created
@@ -102,6 +122,9 @@ export interface ChildSession {
 	readonly sessionFile: string | undefined;
 	readonly sessionId: string;
 	readonly modelId: string | undefined;
+	readonly machineEvidence?: { initial?: HerdrRemoteGitStatus; final?: HerdrRemoteGitStatus };
+	readonly toolDiagnostic?: ChildToolDiagnostic;
+	readonly runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
 	/** Set by the foreground host once the run detached; `factory.dispose()` leaves such children running. */
 	detached?: boolean;
 	/** Set by `factory.dispose()` before it aborts the child, so the host can report the stop truthfully. */
@@ -278,7 +301,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					agentDir,
 					modelRuntime,
 					...(resolvedModel?.model ? { model: resolvedModel.model } : {}),
-					...(resolvedModel?.thinkingLevel ? { thinkingLevel: resolvedModel.thinkingLevel } : {}),
+					...(resolvedModel?.thinkingLevel ?? launch.thinking ? { thinkingLevel: resolvedModel?.thinkingLevel ?? launch.thinking } : {}),
 					...(launch.tools ? { tools: launch.tools } : {}),
 					...(launch.excludeTools?.length ? { excludeTools: launch.excludeTools } : {}),
 					resourceLoader: loader,

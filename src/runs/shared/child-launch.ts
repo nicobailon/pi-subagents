@@ -81,6 +81,7 @@ export interface BuildInProcessChildLaunchInput {
 	/** Serialized launch snapshot; omitted only for a top-level parent-process lookup. */
 	requiredExtensions?: RequiredChildExtensionSnapshot;
 	systemPrompt?: string | null;
+	skillNames?: string[];
 	mcpDirectTools?: string[];
 	extensionBindings?: ExtensionBindings;
 	cwd: string;
@@ -225,7 +226,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		? { rules: input.permissionRules, ...(input.permissionAuditPath ? { auditPath: input.permissionAuditPath } : {}) }
 		: undefined;
 	let supervisorDir: string | undefined;
-	if (input.orchestratorIntercomTarget && input.parentSessionId && input.runId) {
+	if (input.parentSessionId && input.runId && (input.orchestratorIntercomTarget || toolPlan.effectiveToolAllowlist.includes("contact_supervisor"))) {
 		supervisorDir = supervisorChannelDir(input.runId, input.childAgentName, input.childIndex);
 		fs.mkdirSync(path.join(supervisorDir, "requests"), { recursive: true });
 		fs.mkdirSync(path.join(supervisorDir, "replies"), { recursive: true });
@@ -318,6 +319,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		...(taggedPrompt !== undefined
 			? input.systemPromptMode === "replace" ? { systemPrompt: taggedPrompt } : { appendSystemPrompt: taggedPrompt }
 			: {}),
+		...(input.skillNames?.length ? { skillNames: [...input.skillNames] } : {}),
 	};
 
 	return {

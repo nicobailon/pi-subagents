@@ -40,12 +40,14 @@
     "cli"
   ],
   "bin": {
-    "pi-subagents": "install.mjs"
+    "pi-subagents": "install.mjs",
+    "pi-subagents-remote-host": "remote-native-host.sh"
   },
   "files": [
     "index.ts",
     "src/**/*.ts",
     "*.mjs",
+    "*.sh",
     "agents/",
     "skills/**/*",
     "prompts/**/*",

@@ -14,7 +14,7 @@
 ### Added
 
 - Add a session-scoped public host API for required native-child extension module paths. Required extensions survive agent overrides and detached/nested launches, appear by safe host ID in launch evidence, and fail closed when denied or unable to load before model resolution. Thanks to [@gkoreli](https://github.com/gkoreli) for #2153.
-- Run the six code-owned external-cli profiles on Herdr saved machines via `machine` placement. The local parent uses `ssh -T`, records remote machine/git evidence, and rejects unsupported agents, commands, and worktrees.
+- Run Pi, Claude Code, Codex, and Cursor subagents on another computer by setting `machine` to a saved Herdr machine.
 - Add `checkpointBeforeDeadlineMs` for async single-agent runs (call param, with a global config default): the runner requests that the child "checkpoint and stop" that many milliseconds before its run deadline. This best-effort handoff request uses the normal steering lifecycle at the child's next tool boundary, so its receipt appears in status and events; the ordinary `timeoutMs` kill still applies. Absent option keeps the current behavior. Thanks to [@freezscholte](https://github.com/freezscholte) for #2141.
 - Add `subagents.agentExcludeDirs` to prune directory subtrees from agent discovery, including nested plugin sources, without disabling ordinary legacy agents. Exclusions respect symlink aliases and apply to explicit/package roots, diagnostics, and agent cache fingerprints. Thanks to [@xarillian](https://github.com/xarillian) for #2131.
 

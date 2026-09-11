@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
 	formatHerdrMachineHint,
 	formatHerdrMachineRunnerUnsupported,
+	herdrNativeRemoteCommand,
 	HERDR_SSH_ENV_ALLOWLIST,
 	prepareHerdrMachineExternalCliRun,
+	nativeRemoteHostDiscoveryBody,
 	resolveHerdrMachinePlacement,
 	shellQuote,
 } from "../../src/runs/shared/herdr-machine.ts";
@@ -28,6 +31,15 @@ let tempProject = "";
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+
+function writeHostExecutable(file: string, marker: string): void {
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	fs.writeFileSync(file, `#!/bin/sh\nprintf '%s\\n' ${shellQuote(marker)}\n`, { mode: 0o755 });
+}
+
+function runHostDiscovery(cwd: string, env: NodeJS.ProcessEnv) {
+	return spawnSync("/bin/sh", ["-c", nativeRemoteHostDiscoveryBody()], { cwd, env: { HOME: tempHome, PATH: "/usr/bin:/bin", ...env }, encoding: "utf8" });
+}
 
 function writeJson(filePath: string, value: unknown): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -101,6 +113,11 @@ describe("Herdr machine placement", () => {
 			);
 		});
 
+		it("contains relative cwd beneath the configured root while preserving explicit absolute cwd", () => {
+			assert.throws(() => resolveHerdrMachinePlacement({ machine: "workmac", cwd: tempProject, stepCwd: "../../etc", catalogJson: catalog, settings: { cwd: "/srv/repo" } }), /relative cwd escapes configured root/u);
+			assert.equal(resolveHerdrMachinePlacement({ machine: "workmac", cwd: tempProject, stepCwd: "/etc", catalogJson: catalog, settings: { cwd: "/srv/repo" } }).machine.cwd, "/etc");
+		});
+
 		it("reads machine roots from project settings over user settings, keyed by label or id, with opt-in env", () => {
 			writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), { subagents: { machines: { workmac: { cwd: "/user/root", env: { FOO: "user" } } } } });
 			writeJson(path.join(tempProject, ".pi", "settings.json"), { subagents: { machines: { [machine.id]: { cwd: "/project/root" } } } });
@@ -119,17 +136,55 @@ describe("Herdr machine placement", () => {
 		});
 	});
 
+	describe("native host discovery", () => {
+		it("embeds discovery after quoted machine environment and remote cwd setup", () => {
+			const command = herdrNativeRemoteCommand(machine, { PATH: "/custom remote/bin", PI_CODING_AGENT_DIR: "/remote agent" }, nativeRemoteHostDiscoveryBody()); const script = remoteScript([command]);
+			assert.match(script, /export PATH='\/custom remote\/bin'/u); assert.match(script, /cd '\/home\/nico\/proj' \|\| exit 125/u); assert.match(script, /project_host=\$PWD\/\.pi\/npm\/node_modules\/\.bin/u);
+			assert.equal(script.includes("100.82.67.118"), false);
+		});
+
+		it("prefers a PATH override over managed Pi package installs", { skip: process.platform === "win32" ? "POSIX remote shell discovery" : false }, () => {
+			const bin = path.join(tempProject, "path-bin"); writeHostExecutable(path.join(bin, "pi-subagents-remote-host"), "path");
+			writeHostExecutable(path.join(tempProject, ".pi", "npm", "node_modules", ".bin", "pi-subagents-remote-host"), "project");
+			const result = runHostDiscovery(tempProject, { PATH: `${bin}:/usr/bin:/bin` }); assert.equal(result.status, 0); assert.equal(result.stdout.trim(), "path");
+		});
+
+		it("finds the documented project-local Pi npm bin", { skip: process.platform === "win32" ? "POSIX remote shell discovery" : false }, () => {
+			writeHostExecutable(path.join(tempProject, ".pi", "npm", "node_modules", ".bin", "pi-subagents-remote-host"), "project");
+			const result = runHostDiscovery(tempProject, {}); assert.equal(result.status, 0); assert.equal(result.stdout.trim(), "project");
+		});
+
+		it("finds user-scope installs in the default and configured Pi agent directories", { skip: process.platform === "win32" ? "POSIX remote shell discovery" : false }, () => {
+			writeHostExecutable(path.join(tempHome, ".pi", "agent", "npm", "node_modules", ".bin", "pi-subagents-remote-host"), "default-user");
+			let result = runHostDiscovery(tempProject, {}); assert.equal(result.status, 0); assert.equal(result.stdout.trim(), "default-user");
+			fs.rmSync(path.join(tempHome, ".pi"), { recursive: true, force: true }); const configured = path.join(tempHome, "configured agent");
+			writeHostExecutable(path.join(configured, "npm", "node_modules", ".bin", "pi-subagents-remote-host"), "configured-user");
+			result = runHostDiscovery(tempProject, { PI_CODING_AGENT_DIR: configured }); assert.equal(result.status, 0); assert.equal(result.stdout.trim(), "configured-user");
+			result = runHostDiscovery(tempProject, { PI_CODING_AGENT_DIR: `~/${path.basename(configured)}` }); assert.equal(result.status, 0); assert.equal(result.stdout.trim(), "configured-user");
+		});
+
+		it("does not execute unsafe agent-dir shell text and fails clearly when missing", { skip: process.platform === "win32" ? "POSIX remote shell discovery" : false }, () => {
+			const marker = path.join(tempProject, "injected");
+			let result = runHostDiscovery(tempProject, { PI_CODING_AGENT_DIR: `relative; touch ${marker}` }); assert.equal(result.status, 126); assert.match(result.stderr, /must be an absolute remote path/u); assert.equal(fs.existsSync(marker), false);
+			result = runHostDiscovery(tempProject, { PI_CODING_AGENT_DIR: path.join(tempHome, `missing; touch ${marker}`) }); assert.equal(result.status, 127); assert.match(result.stderr, /Run: pi install npm:pi-subagents/u); assert.equal(fs.existsSync(marker), false);
+		});
+	});
+
 	describe("launch gating", () => {
-		it("rejects native agents, generic adapters, and worktrees with a pointer", () => {
-			assert.match(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "reviewer", runnerType: "pi" }) ?? "", /only external-cli agents can run on a Herdr saved machine/u);
-			assert.match(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "generic", runnerType: "external-cli" }) ?? "", /generic external-cli commands cannot be remote-wrapped/u);
-			assert.match(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "worker", runnerType: "external-cli", adapter: "claude-code", worktree: true }) ?? "", /managed worktrees are local git operations/u);
+		it("admits native agents on supported hosts and rejects saved machines from Windows", () => {
+			if (process.platform === "win32") assert.match(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "reviewer", runnerType: "pi" }) ?? "", /Windows host/u);
+			else assert.equal(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "reviewer", runnerType: "pi" }), undefined);
 			assert.equal(formatHerdrMachineRunnerUnsupported({ agentName: "reviewer", runnerType: "pi" }), undefined);
 			if (process.platform === "win32") {
 				assert.match(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "worker", runnerType: "external-cli", adapter: "claude-code" }) ?? "", /Windows host/u);
 			} else {
 				assert.equal(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "worker", runnerType: "external-cli", adapter: "claude-code-writer" }), undefined);
 			}
+		});
+
+		it("preserves generic adapter and worktree restrictions", { skip: process.platform === "win32" ? "POSIX saved-machine restrictions" : false }, () => {
+			assert.match(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "generic", runnerType: "external-cli" }) ?? "", /generic external-cli commands cannot be remote-wrapped/u);
+			assert.match(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "worker", runnerType: "external-cli", adapter: "claude-code", worktree: true }) ?? "", /managed worktrees are local git operations/u);
 		});
 	});
 

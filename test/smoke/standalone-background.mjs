@@ -16,7 +16,7 @@ if (process.platform !== "linux" || process.arch !== "x64") {
 const source = fileURLToPath(new URL("../../", import.meta.url));
 const binary = process.argv[2];
 const mode = process.argv[4] ?? "single";
-assert.ok(["single", "workflow", "targeted-controls", "steer", "interrupt", "stop", "child-stop", "child-timeout", "run-timeout", "tool-timeout", "sdk-init-failure", "persistence-failure", "authorization-failure", "missing-bootstrap", "revival", "shared-run", "parallel-stop", "bootstrap-errors"].includes(mode), "unknown standalone smoke mode");
+assert.ok(["single", "workflow", "targeted-controls", "steer", "interrupt", "stop", "child-stop", "child-timeout", "run-timeout", "tool-timeout", "sdk-init-failure", "persistence-failure", "authorization-failure", "missing-bootstrap", "revival", "shared-run", "parallel-stop", "bootstrap-errors", "remote-host"].includes(mode), "unknown standalone smoke mode");
 assert.ok(binary && path.isAbsolute(binary) && fs.existsSync(binary), "an existing absolute Pi binary path is required on Linux x64");
 const release = JSON.parse(fs.readFileSync(new URL("standalone-release.json", import.meta.url), "utf8"));
 assert.equal(process.platform, release.platform, "requires Linux/bubblewrap");
@@ -26,8 +26,8 @@ const root = process.argv[3] ? path.resolve(process.argv[3]) : fs.mkdtempSync(pa
 fs.mkdirSync(root, { recursive: true });
 assert.deepEqual(fs.readdirSync(root), [], "requires an empty artifact directory");
 const coreSdk = /(?:^|\/)@earendil-works\/(?:pi-coding-agent|pi-agent-core|pi-ai|pi-tui)(?:\/|$)/;
-function run(name, command, args) {
-	const result = spawnSync(command, args, { cwd: source, encoding: "utf8", timeout: 90_000, maxBuffer: 10 * 1024 * 1024 });
+function run(name, command, args, options = {}) {
+	const result = spawnSync(command, args, { cwd: source, encoding: "utf8", timeout: 90_000, maxBuffer: 10 * 1024 * 1024, ...options });
 	fs.writeFileSync(path.join(root, `${name}.log`), `${result.stdout ?? ""}${result.stderr ?? ""}`);
 	assert.ifError(result.error);
 	return result;
@@ -71,7 +71,21 @@ const bootstrap = "/stage/package/src/runs/background/binary-bootstrap.ts";
 if (mode === "missing-bootstrap") fs.renameSync(path.join(root, "package/src/runs/background/binary-bootstrap.ts"), path.join(root, "withheld-binary-bootstrap.ts"));
 const hostArgs = ["/stage/pi-native", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-session", "--mode", "rpc"];
 console.log(`Artifacts: ${root}`);
-if (mode === "bootstrap-errors") {
+if (mode === "remote-host") {
+	const launch = { type: "launch", protocol: 1, packageVersion: JSON.parse(fs.readFileSync(path.join(root, "package/package.json"), "utf8")).version, launch: {
+		cwd: "/stage/work", storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: false, noSkills: true, noContextFiles: true,
+		runtime: { agent: "worker", childIndex: 0, fanoutChild: false, inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false, fast: false, depth: 1, maxDepth: 2, waitTool: { enabled: false } },
+	} };
+	const input = `${JSON.stringify(launch)}\n${JSON.stringify({ type: "dispose", id: "dispose-1" })}\n`;
+	const invocation = run("remote-host", "bwrap", [...sandbox, "--setenv", "PI_SUBAGENT_PI_BINARY", "/stage/pi-native", "--", "/stage/package/remote-native-host.sh"], { input });
+	assert.equal(invocation.status, 0, invocation.stdout + invocation.stderr);
+	assert.doesNotMatch(invocation.stderr, /MODULE_NOT_FOUND|pi-tui|"type":"(?:pi-subagents-ready|event|supervisor-request|response)"/);
+	const records = invocation.stdout.trim().split("\n").map((line) => JSON.parse(line));
+	assert.deepEqual(records.map((record) => record.type), ["pi-subagents-ready", "response"], "outer Pi RPC must never start");
+	assert.equal(records[0].piVersion, version.stdout.trim());
+	assert.deepEqual({ command: records[1].command, id: records[1].id, success: records[1].success }, { command: "dispose", id: "dispose-1", success: true });
+	console.log("PASS standalone native remote host: raw launch/ready/dispose protocol");
+} else if (mode === "bootstrap-errors") {
 	const nativeStep = {
 		agent: "binary-smoke", task: "Return the scripted response.", context: "fresh", model: "standalone-smoke/local", modelCandidates: ["standalone-smoke/local"],
 		tools: [], extensions: ["/stage/package/test/smoke/standalone-provider.ts"], completionGuard: false,

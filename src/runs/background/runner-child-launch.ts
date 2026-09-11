@@ -6,6 +6,7 @@ import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import type { RunnerSubagentStep } from "../shared/parallel-utils.ts";
 import { formatAcceptancePrompt } from "../shared/acceptance.ts";
 import { isAgentContract } from "../shared/agent-contract.ts";
+import { agentHasWriteTools } from "../../agents/agent-memory.ts";
 
 export interface RunnerChildLaunchContext {
 	cwd: string;
@@ -34,7 +35,7 @@ export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChil
 	const acceptancePrompt = step.effectiveAcceptance
 		? formatAcceptancePrompt(step.effectiveAcceptance, { reportOptional: isAgentContract(step.agentContract), structuredOutput: Boolean(step.structuredOutput?.acceptanceReportPath) })
 		: "";
-	return buildInProcessChildLaunch({
+	const launch = buildInProcessChildLaunch({
 		parentSessionId: step.parentSessionId,
 		forkCacheKey: step.context === "fork" ? deriveForkPromptCacheKey(step.parentSessionId) : undefined,
 		sessionEnabled: attempt.sessionEnabled,
@@ -54,6 +55,7 @@ export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChil
 		fast: step.fast,
 		modelCandidates: step.modelCandidates,
 		systemPrompt: acceptancePrompt ? `${step.systemPrompt ?? ""}\n${acceptancePrompt}` : step.systemPrompt ?? "",
+		skillNames: step.machine ? step.skills : undefined,
 		systemPromptMode: step.systemPromptMode,
 		mcpDirectTools: step.mcpDirectTools,
 		extensionBindings: normalizeExtensionBindings(step.extensionBindings)?.value,
@@ -86,4 +88,17 @@ export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChil
 		hostAvailableBuiltins: ctx.hostAvailableBuiltins,
 		host: "runner",
 	});
+	if (step.machine) {
+		const mode = launch.session.systemPrompt !== undefined ? "replace" : "append";
+		launch.session.remotePromptSpec = {
+			agentName: step.agent, baseSystemPrompt: launch.session.systemPrompt ?? launch.session.appendSystemPrompt ?? "", mode,
+			...(step.skills?.length ? { skillNames: step.skills } : {}),
+			...(step.memory ? { memory: { ...step.memory, writable: agentHasWriteTools({ tools: step.tools }) } } : {}),
+		};
+		delete launch.session.systemPrompt; delete launch.session.appendSystemPrompt; delete launch.session.skillNames;
+		launch.session.machine = step.machine;
+		launch.session.machineEnv = step.machineEnv;
+		if (step.thinking) launch.session.thinking = step.thinking as NonNullable<typeof launch.session.thinking>;
+	}
+	return launch;
 }

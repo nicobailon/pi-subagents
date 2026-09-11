@@ -8,6 +8,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig } from "../../agents/agents.ts";
 import { alignForkedSessionCwd } from "../../shared/fork-session-cwd.ts";
 import { buildEffectiveSystemPrompt } from "../shared/effective-system-prompt.ts";
+import { agentHasWriteTools } from "../../agents/agent-memory.ts";
 import {
 	ensureArtifactsDir,
 	formatOutputArtifactContent,
@@ -113,6 +114,7 @@ import {
 } from "../../watchdog/child-status.ts";
 import { buildInProcessChildLaunch, createReportedChildSessionInput } from "../shared/child-launch.ts";
 import { childSessionFactory, childSessionHasQueuedMessages, projectChildSessionEventForJson, type ChildSession, type ChildSessionEvent } from "../shared/child-session.ts";
+import { createPlacementAwareChildSessionFactory, projectNativeMachineEvidence } from "../shared/remote-native-session.ts";
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
 const acceptanceOutputByResult = new WeakMap<SingleResult, string>();
@@ -358,6 +360,7 @@ async function runSingleAttempt(
 		systemPrompt: string;
 		acceptancePrompt: string;
 		resolvedSkillNames?: string[];
+		remoteSkillNames?: string[];
 		modelCandidates?: string[];
 		skillsWarning?: string;
 		jsonlPath?: string;
@@ -383,7 +386,7 @@ async function runSingleAttempt(
 	// runtime config and echoed back on the result payload so hosts can label
 	// this run without reading the child's session file.
 	const childSessionName = deriveChildSessionName({ agent: agent.name, task: shared.originalTask ?? task });
-	const watchdogConfig = resolveWatchdogConfig(options.cwd ?? runtimeCwd);
+	const watchdogConfig = resolveWatchdogConfig(options.machine ? runtimeCwd : options.cwd ?? runtimeCwd);
 	const childWatchdog = watchdogConfig.ok
 		? resolveChildWatchdogConfig({
 			config: watchdogConfig.config,
@@ -409,6 +412,7 @@ async function runSingleAttempt(
 		inheritGlobalContext: agent.inheritGlobalContext,
 		inheritSkills: agent.inheritSkills,
 		requireReadTool: Boolean(shared.resolvedSkillNames?.length),
+		skillNames: shared.remoteSkillNames,
 		tools: agent.tools,
 		excludeTools: agent.excludeTools,
 		allowNestedSubagents: agent.allowNestedSubagents,
@@ -447,6 +451,22 @@ async function runSingleAttempt(
 		inherited: options.childRuntime,
 		host: "parent",
 	});
+	if (options.machine) {
+		const mode = launch.session.systemPrompt !== undefined ? "replace" : "append";
+		launch.session.remotePromptSpec = {
+			agentName: agent.name,
+			baseSystemPrompt: launch.session.systemPrompt ?? launch.session.appendSystemPrompt ?? "",
+			mode,
+			...(shared.remoteSkillNames?.length ? { skillNames: shared.remoteSkillNames } : {}),
+			...(agent.memory ? { memory: { ...agent.memory, writable: agentHasWriteTools(agent) } } : {}),
+		};
+		delete launch.session.systemPrompt; delete launch.session.appendSystemPrompt; delete launch.session.skillNames;
+	}
+	if (options.machine) {
+		launch.session.machine = options.machine;
+		launch.session.machineEnv = options.machineEnv;
+		if (effectiveThinking) launch.session.thinking = effectiveThinking as NonNullable<typeof launch.session.thinking>;
+	}
 	const { toolPlan, capabilityAudit, warnings, launchResolvedExtensions, capture } = launch;
 	if (!shared.launchWarnings.emitted && warnings.length > 0) {
 		for (const warning of warnings) console.warn(`[pi-subagents] ${warning}`);
@@ -504,6 +524,7 @@ async function runSingleAttempt(
 		agent: agent.name,
 		task: shared.originalTask ?? task,
 		...(childSessionName ? { sessionName: childSessionName } : {}),
+		...(options.machine ? { machine: options.machine } : {}),
 		...(options.agentContract ? { agentContract: options.agentContract } : {}),
 		launchContractDigest,
 		launchResolvedExtensions,
@@ -569,7 +590,7 @@ async function runSingleAttempt(
 		};
 		return result;
 	}
-	const mutationSnapshot = snapshotTrackedMutations(options.cwd ?? runtimeCwd);
+	const mutationSnapshot = snapshotTrackedMutations(options.machine ? runtimeCwd : options.cwd ?? runtimeCwd);
 	let observedMutationAttempt = false;
 	let structuredOutputToolInvoked = false;
 	let structuredOutputMessageStartIndex: number | undefined;
@@ -594,7 +615,8 @@ async function runSingleAttempt(
 			return result;
 		}
 	}
-	const childSessions = options.childSessionFactory ?? childSessionFactory();
+	const baseChildSessions = options.childSessionFactory ?? childSessionFactory();
+	const childSessions = options.machine ? createPlacementAwareChildSessionFactory(baseChildSessions) : baseChildSessions;
 	let afterCompactionSettlement = false;
 	const exitCode = await new Promise<number>((resolve) => {
 		const jsonlWriter = createJsonlWriter(shared.jsonlPath, { pause() {}, resume() {} });
@@ -1011,7 +1033,7 @@ async function runSingleAttempt(
 				afterCompactionSettlement = false;
 			}
 			if (evt.type === "agent_start") {
-				const diagnostic = capture.toolDiagnostic();
+				const diagnostic = session?.toolDiagnostic ?? capture.toolDiagnostic();
 				if (diagnostic) {
 					const message = formatChildToolDiagnostic(diagnostic, { host: "parent" });
 					toolAvailabilityError = message;
@@ -1305,10 +1327,10 @@ async function runSingleAttempt(
 			if (lifecycleFinished || sessionSettled) return;
 			sessionSettled = true;
 			clearFinalDrainTimers();
-			const diagnostic = capture.toolDiagnostic();
+			const diagnostic = session?.toolDiagnostic ?? capture.toolDiagnostic();
 			const toolDiagnosticError = diagnostic ? formatChildToolDiagnostic(diagnostic, { host: "parent" }) : undefined;
 			toolAvailabilityError = toolDiagnosticError;
-			result.runtimeAcknowledgedExtensions = capture.runtimeAcknowledgedExtensions();
+			result.runtimeAcknowledgedExtensions = session?.runtimeAcknowledgedExtensions ?? capture.runtimeAcknowledgedExtensions();
 			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
 			if (!closeError && promptError !== undefined) {
 				closeError = promptError instanceof Error ? promptError.message : String(promptError);
@@ -1392,6 +1414,7 @@ async function runSingleAttempt(
 					return;
 				}
 				session = created;
+				if (options.machine) result.machine = projectNativeMachineEvidence(options.machine, created.machineEvidence);
 				const steer = created.steer.bind(created);
 				const followUp = created.followUp.bind(created);
 				created.steer = async (text) => {
@@ -1413,8 +1436,10 @@ async function runSingleAttempt(
 					|| actualReadonlyModel.api !== shared.readonlyExpected.api || created.modelId !== shared.readonlyModel || abortedBySignal || interruptedByControl || result.timedOut
 					|| !shared.readonlyHandoffAllowed?.())) throw new Error("Read-only continuation handoff vetoed.");
 				await created.prompt(`Task: ${task}`);
+				if (options.machine) result.machine = projectNativeMachineEvidence(options.machine, created.machineEvidence);
 				settle(undefined);
 			} catch (error) {
+				if (options.machine) result.machine = projectNativeMachineEvidence(options.machine, session?.machineEvidence);
 				settle(error ?? new Error("Child session failed."));
 			}
 		})();
@@ -1510,7 +1535,7 @@ async function runSingleAttempt(
 		tokens: progress.tokens,
 		durationMs: progress.durationMs,
 	};
-	const mutationEvidence = collectTrackedMutationEvidence(mutationSnapshot, options.cwd ?? runtimeCwd);
+	const mutationEvidence = collectTrackedMutationEvidence(mutationSnapshot, options.machine ? runtimeCwd : options.cwd ?? runtimeCwd);
 
 	const acceptanceOutput = getFinalOutput(result.messages ?? []);
 	let fullOutput = stripAcceptanceReport(acceptanceOutput);
@@ -1667,7 +1692,7 @@ async function runSyncCompletionInner(
 	options: RunSyncOptions,
 ): Promise<SingleResult> {
 	const effectiveCwd = options.cwd ?? runtimeCwd;
-	const cwdError = preflightLaunchCwd(options.requestedCwd ?? effectiveCwd, effectiveCwd);
+	const cwdError = options.machine ? undefined : preflightLaunchCwd(options.requestedCwd ?? effectiveCwd, effectiveCwd);
 	if (cwdError) {
 		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
@@ -1785,7 +1810,7 @@ async function runSyncCompletionInner(
 	}
 	const skillNames = options.skills ?? agent.skills ?? [];
 	const skillCwd = options.cwd ?? runtimeCwd;
-	const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(
+	const { resolved: resolvedSkills, missing: missingSkills } = options.machine ? { resolved: [], missing: [] } : resolveSkillsWithFallback(
 		skillNames,
 		skillCwd,
 		runtimeCwd,
@@ -1803,9 +1828,9 @@ async function runSyncCompletionInner(
 			error: "Skills not found: pi-subagents",
 		}, options.context));
 	}
-	const systemPrompt = buildEffectiveSystemPrompt({ agent, resolvedSkills, cwd: skillCwd, ...(options.outputPath ? { outputPath: options.outputPath } : {}) });
+	const systemPrompt = options.machine ? agent.systemPrompt?.trim() ?? "" : buildEffectiveSystemPrompt({ agent, resolvedSkills, cwd: skillCwd, ...(options.outputPath ? { outputPath: options.outputPath } : {}) });
 
-	const candidates = buildModelCandidates(
+	const candidates = options.machine ? [options.modelOverride] : buildModelCandidates(
 		options.modelOverride ?? agent.model,
 		agent.fallbackModels,
 		options.availableModels,
@@ -1944,7 +1969,8 @@ async function runSyncCompletionInner(
 				sessionEnabled,
 				systemPrompt,
 				acceptancePrompt,
-				resolvedSkillNames: resolvedSkills.length > 0 ? resolvedSkills.map((skill) => skill.name) : undefined,
+				resolvedSkillNames: options.machine ? skillNames : resolvedSkills.length > 0 ? resolvedSkills.map((skill) => skill.name) : undefined,
+				remoteSkillNames: options.machine && skillNames.length > 0 ? skillNames : undefined,
 				skillsWarning: missingSkills.length > 0 ? `Skills not found: ${missingSkills.join(", ")}` : undefined,
 				jsonlPath,
 				artifactPaths: artifactPathsResult,

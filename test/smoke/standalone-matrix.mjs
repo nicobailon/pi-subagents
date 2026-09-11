@@ -30,7 +30,7 @@ const inputs = ["index.ts", "package.json", "package-lock.json",
 ].filter((file) => fs.statSync(path.join(source, file)).isFile()).sort();
 const frozen = Object.fromEntries(inputs.map((file) => [file, sha(path.join(source, file))]));
 fs.writeFileSync(path.join(root, "inputs.json"), JSON.stringify(frozen, null, 2));
-const modes = ["single", "workflow", "shared-run", "parallel-stop", "targeted-controls", "steer", "interrupt", "stop", "child-stop", "child-timeout", "run-timeout", "tool-timeout", "missing-bootstrap", "persistence-failure", "authorization-failure", "sdk-init-failure", "bootstrap-errors", "revival"];
+const modes = ["single", "workflow", "shared-run", "parallel-stop", "targeted-controls", "steer", "interrupt", "stop", "child-stop", "child-timeout", "run-timeout", "tool-timeout", "missing-bootstrap", "persistence-failure", "authorization-failure", "sdk-init-failure", "bootstrap-errors", "revival", "remote-host"];
 const receipt = { release, complete: false, cases: [] };
 let packageSha;
 for (const mode of modes) {

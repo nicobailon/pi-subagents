@@ -26,9 +26,49 @@ import {
 	readLastMockPiArgs, readMockPiArgs, readMockPiArgsMatching, tempDir, mockPi,
 	makeAsyncExecutor, readAsyncPayload, observeSharedCwdRunner,
 } from "../support/async-execution-fixture.ts";
+import { resolveAgentDefaultContextPolicy } from "../../src/runs/foreground/subagent-executor.ts";
 
 describe("async execution utilities", { skip: !available ? "pi packages not available" : undefined }, () => {
 	installAsyncExecutionHooks();
+
+	it("plans an async native machine model against the remote registry instead of local authentication", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "remote done" });
+		const bin = fs.mkdtempSync(path.join(tempDir, "remote-bin-"));
+		const herdr = path.join(bin, "herdr");
+		fs.writeFileSync(herdr, `#!/usr/bin/env node\nconsole.log(JSON.stringify([{id:'saved',label:'workmac',target:'remote.example',enabled:true}]));`, { mode: 0o755 });
+		const oldHerdr = process.env.HERDR_BIN; process.env.HERDR_BIN = herdr;
+		try {
+			const ctx = { ...makeMinimalCtx(tempDir), modelRegistry: { getAvailable: () => [] }, sessionManager: { ...makeMinimalCtx(tempDir).sessionManager, getSessionId: () => "remote-parent" } };
+			const launch = await makeAsyncExecutor([makeAgent("worker", { runner: { type: "pi" } as never, thinking: "high" })]).execute(`remote-model-${Date.now().toString(36)}`, { agent: "worker", machine: "workmac", cwd: tempDir, model: "remote-only/model-x", task: "remote", async: true, acceptance: false }, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
+			assert.ok(!launch.isError, launch.content[0]?.text); const payload = await readAsyncPayload(launch.details.asyncId!); assert.equal(payload.results[0]?.model, "remote-only/model-x:high");
+			assert.equal(payload.results[0]?.thinking, "high");
+		} finally { if (oldHerdr === undefined) delete process.env.HERDR_BIN; else process.env.HERDR_BIN = oldHerdr; fs.rmSync(bin, { recursive: true, force: true }); }
+	});
+
+	it("records fresh aggregate context for step-only native placement in parallel, chain, and dynamic fanout", () => {
+		const agent = makeAgent("worker", { runner: { type: "pi" } as never, defaultContext: "fork" });
+		const warnings: string[] = []; const originalWarn = console.warn; console.warn = (value?: unknown) => { warnings.push(String(value)); };
+		const cases = [
+			{ tasks: [{ agent: "worker", task: "parallel", machine: "workmac" }] },
+			{ chain: [{ agent: "worker", task: "chain", machine: "workmac" }] },
+			{ chain: [{ expand: { from: { output: "seed", path: "/items" }, item: "item" }, parallel: { agent: "worker", machine: "workmac", task: "dynamic" }, collect: { as: "items" } }] },
+		];
+		try { for (const params of cases) {
+			const policy = resolveAgentDefaultContextPolicy(params as never, [agent], undefined, true); assert.equal("error" in policy, false); if ("error" in policy) continue;
+			assert.equal(policy.contextForAgent("worker"), "fork"); assert.equal(policy.contextSummary, "fresh"); assert.equal(policy.usesFork, false);
+		} } finally { console.warn = originalWarn; }
+		assert.equal(warnings.length, 3); assert.ok(warnings.every((warning) => warning.includes("native machine placement starts fresh")));
+	});
+
+	it("keeps local same-agent occurrences forked while mixed remote occurrences report mixed", () => {
+		const agent = makeAgent("worker", { runner: { type: "pi" } as never, defaultContext: "fork" });
+		const cases = [
+			{ chain: [{ agent: "worker", task: "local" }, { agent: "worker", task: "remote", machine: "workmac" }] },
+			{ chain: [{ parallel: [{ agent: "worker", task: "local" }, { agent: "worker", task: "remote", machine: "workmac" }] }] },
+			{ chain: [{ agent: "worker", task: "local" }, { expand: { from: { output: "seed", path: "/items" } }, parallel: { agent: "worker", task: "remote", machine: "workmac" }, collect: { as: "items" } }] },
+		];
+		for (const params of cases) { const policy = resolveAgentDefaultContextPolicy(params as never, [agent], undefined, true); assert.equal("error" in policy, false); if ("error" in policy) continue; assert.equal(policy.contextForAgent("worker"), "fork"); assert.equal(policy.contextSummary, "mixed"); assert.equal(policy.usesFork, true); }
+	});
 
 	it("background does not use compaction recovery after compaction_end willRetry false and a continued agent turn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const sessionFile = path.join(tempDir, "async-generic-empty-after-successful-compaction-session.jsonl");

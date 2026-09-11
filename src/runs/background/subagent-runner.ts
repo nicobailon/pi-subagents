@@ -68,6 +68,7 @@ import {
 	type SubagentChildStatusEvent,
 	type WorkflowLaneMetadata,
 	type HerdrMachineReference,
+	type ExternalCliMachineStatus,
 	DEFAULT_MAX_OUTPUT,
 	type MaxOutputConfig,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
@@ -254,6 +255,7 @@ interface StepResult {
 	/** Human-readable display name for the child session, when derived at launch. */
 	sessionName?: string;
 	context?: "fresh" | "fork";
+	machine?: ExternalCliMachineStatus;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: import("../shared/capability-ceiling.ts").SubagentCapabilityAudit;
 	launchResolvedExtensions?: LaunchResolvedChildExtensions;
@@ -1043,7 +1045,7 @@ export async function runSingleStepInner(
 	}
 
 	const effectiveCwd = step.cwd ?? ctx.cwd;
-	const cwdError = preflightLaunchCwd(step.requestedCwd ?? effectiveCwd, effectiveCwd);
+	const cwdError = step.machine ? undefined : preflightLaunchCwd(step.requestedCwd ?? effectiveCwd, effectiveCwd);
 	if (cwdError) return { agent: step.agent, output: cwdError, error: cwdError, exitCode: 1, context: step.context };
 	if (step.context === "fork" && step.sessionFile && fs.existsSync(step.sessionFile)) {
 		alignForkedSessionCwd(step.sessionFile, effectiveCwd);
@@ -1069,8 +1071,8 @@ export async function runSingleStepInner(
 	let toolBudget = step.toolBudget ? initialToolBudgetState(step.toolBudget) : undefined;
 	let toolBudgetBlocked = false;
 	let actualLaunchContractDigest = step.launchContractDigest;
-	const mutationSnapshot = snapshotTrackedMutations(step.cwd ?? ctx.cwd);
-	let finalMutationEvidence = collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
+	const mutationSnapshot = snapshotTrackedMutations(step.machine ? ctx.cwd : step.cwd ?? ctx.cwd);
+	let finalMutationEvidence = collectTrackedMutationEvidence(mutationSnapshot, step.machine ? ctx.cwd : step.cwd ?? ctx.cwd);
 
 	let modelIndex = 0;
 	let contextOverflow = false;
@@ -1243,9 +1245,9 @@ export async function runSingleStepInner(
 		// A parked run still owes completion evidence when it actually finishes.
 		// Stopped/timedOut runs already have terminal failures; checking completion evidence there is meaningless.
 		const completionDiagnosticsEligible = !run.interrupted && !run.stopped && !run.timedOut;
-		const toolDiagnostic = run.exitCode === 0 && !run.error ? launch.capture.toolDiagnostic() : undefined;
+		const toolDiagnostic = run.exitCode === 0 && !run.error ? run.toolDiagnostic ?? launch.capture.toolDiagnostic() : undefined;
 		const toolAvailabilityError = toolDiagnostic ? formatChildToolDiagnostic(toolDiagnostic) : undefined;
-		const runtimeAcknowledgedExtensions = launch.capture.runtimeAcknowledgedExtensions();
+		const runtimeAcknowledgedExtensions = run.runtimeAcknowledgedExtensions ?? launch.capture.runtimeAcknowledgedExtensions();
 		const midToolExitError = run.currentTool
 			&& isOrdinaryToolForMidToolExit(run.currentTool)
 			&& !run.interrupted
@@ -1298,7 +1300,7 @@ export async function runSingleStepInner(
 		const completionGuardEnabled = isAgentContract(step.agentContract) ? step.completionGuard === true : step.completionGuard !== false;
 		const completionToolPlan = resolvedTaskToolPlan;
 		const completionTools = completionToolPlan ? (completionToolPlan.explicitToolAllowlist ? completionToolPlan.effectiveToolAllowlist : undefined) : step.tools;
-		const mutationEvidence = collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
+		const mutationEvidence = collectTrackedMutationEvidence(mutationSnapshot, step.machine ? ctx.cwd : step.cwd ?? ctx.cwd);
 		finalMutationEvidence = mutationEvidence;
 		const completionMutationEvidence = ctx.trackedMutationEvidenceForCompletionGuard === false ? undefined : mutationEvidence;
 		const completionGuard = completionDiagnosticsEligible && run.exitCode === 0 && !run.error && !structuredError && !hiddenError?.hasError && !midToolExitError && !emptyOutputError && completionGuardEnabled
@@ -1389,7 +1391,7 @@ export async function runSingleStepInner(
 			afterCompactionSettlement: run.afterCompactionSettlement === true,
 		});
 		const fileMutationEffect = completionEvidence.fileMutation ?? (missingRequiredOutputAfterMutation ? { status: "observed" as const, expected: completionEvidence.mutationExpected, attempted: true, evidence: mutationEvidence } : undefined);
-		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, runtimeAcknowledgedExtensions, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(fileMutationEffect || settlementDiagnostic ? { effects: { ...(fileMutationEffect ? { fileMutation: fileMutationEffect } : {}), ...(settlementDiagnostic ? { settlementDiagnostic } : {}) } } : {}) } as RunChildSessionResult;
+		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, runtimeAcknowledgedExtensions, ...(run.machine ?? step.machine ? { machine: run.machine ?? step.machine } : {}), ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(fileMutationEffect || settlementDiagnostic ? { effects: { ...(fileMutationEffect ? { fileMutation: fileMutationEffect } : {}), ...(settlementDiagnostic ? { settlementDiagnostic } : {}) } } : {}) } as RunChildSessionResult;
 		const abortRecovery = !attempt.success ? planAbortRecovery({
 			messages: run.messages,
 			error,
@@ -1598,6 +1600,7 @@ export async function runSingleStepInner(
 				task: PROMPT_REDACTED,
 				exitCode: effectiveFinalExitCode,
 				model: finalResult?.model,
+				machine: finalResult?.machine,
 				attemptedModels: attemptedModels.length > 0 ? attemptedModels : undefined,
 				modelAttempts,
 				usage,
@@ -1619,6 +1622,7 @@ export async function runSingleStepInner(
 		agent: step.agent,
 		...(childSessionName ? { sessionName: childSessionName } : {}),
 		context: step.context,
+		machine: finalResult?.machine,
 		...(step.agentContract ? { agentContract: step.agentContract } : {}),
 		launchContractDigest: actualLaunchContractDigest,
 		output: outputForSummary,
@@ -4966,6 +4970,7 @@ export async function runSubagent(
 				agent: r.agent,
 				...(r.sessionName ? { sessionName: r.sessionName } : {}),
 				context: r.context,
+				machine: r.machine,
 				output: r.output,
 				outputState: r.outputState,
 				error: r.error,

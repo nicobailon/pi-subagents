@@ -24,6 +24,9 @@ import { isMutatingTool, resolveCurrentPath } from "../shared/long-running-guard
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } from "../shared/tool-timeout.ts";
 import { createReportedChildSessionInput, type InProcessChildLaunch } from "../shared/child-launch.ts";
 import { childSessionHasQueuedMessages, projectChildSessionEventForJson, type ChildSession, type ChildSessionEvent, type ChildSessionFactory } from "../shared/child-session.ts";
+import type { ExternalCliMachineStatus } from "../../shared/types.ts";
+import type { ChildToolDiagnostic } from "../shared/tool-availability.ts";
+import { projectNativeMachineEvidence } from "../shared/remote-native-session.ts";
 import { formatSteerMessage } from "../shared/subagent-prompt-runtime.ts";
 import { getReadonlySessionEvidence, requestReadonlySessionEvidence, type SettledReadonlyEvidence } from "../shared/readonly-session-evidence.ts";
 import type { SteerDeliveryStatus, SteerRequest } from "./control-channel.ts";
@@ -138,8 +141,10 @@ export interface RunChildSessionResult {
 	toolBudgetBlocked?: boolean;
 	structuredOutput?: unknown;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
+	toolDiagnostic?: ChildToolDiagnostic;
 	abortRecoveryDiagnostic?: string;
 	effects?: EffectsProjection;
+	machine?: ExternalCliMachineStatus;
 }
 
 /** Events the child emits while the model streams; not persisted into the diagnostic log. */
@@ -607,6 +612,9 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 					structuredOutputMessageStartIndex,
 					watchdog: childWatchdogState,
 					sessionFile: session?.sessionFile,
+					toolDiagnostic: session?.toolDiagnostic,
+					runtimeAcknowledgedExtensions: session?.runtimeAcknowledgedExtensions,
+					...(input.launch.session.machine ? { machine: projectNativeMachineEvidence(input.launch.session.machine, session?.machineEvidence) } : {}),
 					currentTool,
 					currentToolArgs,
 					currentPath,

@@ -1250,6 +1250,8 @@ export interface SingleResult {
 	sessionName?: string;
 	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
+	/** Native saved-machine execution evidence. */
+	machine?: ExternalCliMachineStatus;
 	exitCode: number;
 	processSignal?: string | null;
 	timeoutRecovery?: TimeoutRecoverySummary;
@@ -1718,6 +1720,11 @@ export interface HerdrRemoteGitStatus {
 	dirty?: boolean;
 }
 
+export interface RemoteNativeGitEvidence {
+	initial: HerdrRemoteGitStatus;
+	final?: HerdrRemoteGitStatus;
+}
+
 /** A Herdr saved SSH machine resolved for one launch. `cwd` is the directory on that machine. */
 export interface HerdrMachineReference {
 	provider: "herdr";
@@ -1730,6 +1737,8 @@ export interface HerdrMachineReference {
 
 export interface ExternalCliMachineStatus extends HerdrMachineReference {
 	remoteGit?: HerdrRemoteGitStatus;
+	/** Explicit before/after evidence for native Pi saved-machine runs. */
+	nativeGit?: RemoteNativeGitEvidence;
 }
 
 export interface ExternalCliCapabilities {
@@ -2402,6 +2411,9 @@ export interface RunSyncOptions {
 	cwd?: string;
 	/** Original cwd input retained for launch diagnostics. */
 	requestedCwd?: string;
+	/** Resolved native saved-machine placement. */
+	machine?: HerdrMachineReference;
+	machineEnv?: Record<string, string>;
 	signal?: AbortSignal;
 	interruptSignal?: AbortSignal;
 	timeoutMs?: number;

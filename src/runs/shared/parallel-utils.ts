@@ -61,6 +61,7 @@ export interface RunnerSubagentStep {
 	inheritGlobalContext: boolean;
 	inheritSkills: boolean;
 	skills?: string[];
+	memory?: import("../../agents/agents.ts").AgentMemoryConfig;
 	outputPath?: string;
 	outputClaimPath?: string;
 	/** Defer the authoritative output instruction until a dynamic fanout item is materialized. */

@@ -14,7 +14,7 @@ import { createAtomicJsonWriter, writePrivateAtomicJson } from "../../shared/ato
 import { buildEffectiveSystemPrompt } from "../shared/effective-system-prompt.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { planChildLaunch, resolveStepBehavior, suppressProgressForReadOnlyTask, type ResolvedStepBehavior } from "../shared/child-launch-plan.ts";
-import { formatHerdrMachineRunnerUnsupported, resolveHerdrMachinePlacement } from "../shared/herdr-machine.ts";
+import { formatHerdrMachineRunnerUnsupported, isNativePiRunner, resolveHerdrMachinePlacement } from "../shared/herdr-machine.ts";
 import { applyThinkingSuffix, getHostBuiltinToolNames, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/child-tool-plan.ts";
 import { injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { applyWatchdogLaunchRules, sendRuleViolationWarning } from "../../watchdog/rules.ts";
@@ -880,6 +880,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
 			}
 		}
+		const nativeMachine = Boolean(machine && isNativePiRunner(a.runner));
 		if (externalRunner) {
 			const unsupported: string[] = [];
 			if (s.model !== undefined) unsupported.push("model override");
@@ -921,7 +922,8 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			resolvedBehavior,
 		});
 		const { stepCwd, instructionCwd, readExistenceCwd, behavior, namespaceOutputPath, outputPath, skillNames } = launchPlan;
-		const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(
+		if (nativeMachine && outputPath) throw new AsyncStartValidationError("Remote native Pi does not support child-written output paths; use inline output so the local runner captures the result.");
+		const { resolved: resolvedSkills, missing: missingSkills } = nativeMachine ? { resolved: [], missing: [] } : resolveSkillsWithFallback(
 			skillNames,
 			stepCwd,
 			ctx.cwd,
@@ -931,12 +933,12 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		if (missingSkills.includes("pi-subagents")) throw new UnavailableSubagentSkillError(UNAVAILABLE_SUBAGENT_SKILL_ERROR);
 
 		// A namespaced parallel output is injected by the runner, not the prompt.
-		const systemPrompt = buildEffectiveSystemPrompt({ agent: a, resolvedSkills, cwd: stepCwd, ...(!namespaceOutputPath && outputPath ? { outputPath } : {}) });
+		const systemPrompt = nativeMachine ? a.systemPrompt?.trim() ?? "" : buildEffectiveSystemPrompt({ agent: a, resolvedSkills, cwd: stepCwd, ...(!namespaceOutputPath && outputPath ? { outputPath } : {}) });
 
 		const readInstructions = buildChainInstructions({ ...behavior, output: false, progress: false }, instructionCwd, false, undefined, readExistenceCwd);
 		const isFirstProgressAgent = behavior.progress && !progressPrecreated && !progressInstructionCreated;
 		if (behavior.progress) progressInstructionCreated = true;
-		const progressInstructions = buildChainInstructions({ ...behavior, output: false, reads: false }, progressDir, isFirstProgressAgent);
+		const progressInstructions = nativeMachine ? { prefix: "", suffix: "" } : buildChainInstructions({ ...behavior, output: false, reads: false }, progressDir, isFirstProgressAgent);
 		const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Async step (${s.agent})`);
 		if (validationError) throw new AsyncStartValidationError(validationError);
 		let taskTemplate = s.task ?? "{previous}";
@@ -947,8 +949,10 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 
 		const modelScopes = resolveModelScopesForAgent(ctx.modelScope, a.name, ctx.currentModel);
 		const modelOrigin = resolveModelOrigin({ explicitModel: s.model, agentModel: a.model, parentModel: ctx.currentModel });
-		const primaryModelFromParent = modelOrigin === "inherited";
-		const primaryModel = externalRunner ? undefined : resolveEffectiveSubagentModel(
+		const remoteRequestedModel = s.model ?? a.model;
+		if (nativeMachine && remoteRequestedModel && !remoteRequestedModel.includes("/")) throw new AsyncStartValidationError("Remote native Pi model overrides must be provider-qualified (provider/model).");
+		const primaryModelFromParent = !nativeMachine && modelOrigin === "inherited";
+		const primaryModel = externalRunner ? undefined : nativeMachine ? remoteRequestedModel : resolveEffectiveSubagentModel(
 			s.model,
 			a.model,
 			ctx.currentModel,
@@ -977,11 +981,11 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		let modelCandidates: string[] = [];
 		if (!externalRunner) {
 			try {
-				modelCandidates = buildModelCandidates(primaryModel, a.fallbackModels, availableModels, a.modelProvider ?? ctx.currentModelProvider, {
+				modelCandidates = (nativeMachine ? [primaryModel] : buildModelCandidates(primaryModel, a.fallbackModels, availableModels, a.modelProvider ?? ctx.currentModelProvider, {
 					scope: modelScopes,
 					primaryModelFromParent,
 					origin: modelOrigin,
-				}).flatMap((candidate) => {
+				})).flatMap((candidate) => {
 					const resolved = applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined);
 					return resolved ? [resolved] : [];
 				});
@@ -1004,7 +1008,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			requiredExtensions,
 			mcpDirectTools: a.mcpDirectTools,
 			cwd: stepCwd,
-			requireReadTool: Boolean(resolvedSkills.length),
+			requireReadTool: nativeMachine ? skillNames.length > 0 : Boolean(resolvedSkills.length),
 			structuredOutput: Boolean(s.outputSchema),
 			fast,
 			model,
@@ -1044,7 +1048,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			...(a.runner ? { runner: a.runner } : {}),
 			...(machine ? { machine } : {}),
 			...(machineEnv ? { machineEnv } : {}),
-			...(params.contextForAgent ? { context: params.contextForAgent(s.agent) } : {}),
+			...(params.contextForAgent ? { context: machine && isNativePiRunner(a.runner) ? "fresh" : params.contextForAgent(s.agent) } : {}),
 			...(agentContract ? { agentContract } : {}),
 			phase: s.phase,
 			label: s.label,
@@ -1076,11 +1080,12 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			inheritProjectContext: a.inheritProjectContext,
 			inheritGlobalContext: a.inheritGlobalContext,
 			inheritSkills: a.inheritSkills,
-			skills: resolvedSkills.map((r) => r.name),
+			skills: nativeMachine ? skillNames : resolvedSkills.map((r) => r.name),
+			...(a.memory ? { memory: { ...a.memory } } : {}),
 			outputPath,
 			...(namespaceOutputPath ? { namespaceOutputPath: true } : {}),
 			outputMode: behavior.outputMode,
-			sessionFile,
+			...(nativeMachine ? {} : { sessionFile }),
 			maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, a.maxSubagentDepth),
 			timeoutMs: a.defaultTimeoutMs ?? DEFAULT_ASYNC_TIMEOUT_MS,
 			toolTimeoutMs: resolvedToolTimeout.toolTimeoutMs,
@@ -1654,6 +1659,7 @@ export function executeAsyncSingle(
 	const requestedMachine = params.machine ?? agentConfig.machine;
 	const machineUnsupported = formatHerdrMachineRunnerUnsupported({ machine: requestedMachine, agentName: agentConfig.name, runnerType: agentConfig.runner?.type, adapter: agentConfig.runner?.type === "external-cli" ? agentConfig.runner.adapter : undefined, worktree: params.worktree });
 	if (machineUnsupported) return formatAsyncStartError("single", machineUnsupported);
+	if (requestedMachine && isNativePiRunner(agentConfig.runner) && params.context === "fork") return formatAsyncStartError("single", `Agent '${agentConfig.name}' requested explicit context='fork' on machine '${requestedMachine}', but remote native Pi supports fresh context only.`);
 	let machine: HerdrMachineReference | undefined;
 	let machineEnv: Record<string, string> | undefined;
 	if (requestedMachine) {
@@ -1665,6 +1671,7 @@ export function executeAsyncSingle(
 			return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
 		}
 	}
+	const nativeMachine = Boolean(machine && isNativePiRunner(agentConfig.runner));
 	let managedWorktreeProvider: "native" | "worktrunk" | undefined;
 	if (params.worktree === true) {
 		try {
@@ -1682,7 +1689,7 @@ export function executeAsyncSingle(
 	const readExistenceCwd = params.worktree === true ? runnerCwd : instructionCwd;
 	const skillNames = params.skills ?? agentConfig.skills ?? [];
 	const availableModels = params.availableModels;
-	const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(
+	const { resolved: resolvedSkills, missing: missingSkills } = nativeMachine ? { resolved: [], missing: [] } : resolveSkillsWithFallback(
 		skillNames,
 		runnerCwd,
 		ctx.cwd,
@@ -1711,8 +1718,9 @@ export function executeAsyncSingle(
 	}
 
 	const effectiveOutput = normalizeSingleOutputOverride(params.output, agentConfig.output);
-	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, instructionCwd, params.outputBaseDir ?? (artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined));
-	const systemPrompt = buildEffectiveSystemPrompt({ agent: agentConfig, resolvedSkills, cwd: runnerCwd, ...(outputPath ? { outputPath } : {}) });
+	if (machine && isNativePiRunner(agentConfig.runner) && effectiveOutput) return formatAsyncStartError("single", "Remote native Pi does not support child-written output paths; use inline output so the local runner captures the result.");
+	const outputPath = machine && isNativePiRunner(agentConfig.runner) ? undefined : resolveSingleOutputPath(effectiveOutput, ctx.cwd, instructionCwd, params.outputBaseDir ?? (artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined));
+	const systemPrompt = nativeMachine ? agentConfig.systemPrompt?.trim() ?? "" : buildEffectiveSystemPrompt({ agent: agentConfig, resolvedSkills, cwd: runnerCwd, ...(outputPath ? { outputPath } : {}) });
 	const outputMode = params.outputMode ?? agentConfig.outputMode ?? "inline";
 	const validationError = validateFileOnlyOutputMode(outputMode, outputPath, `Async single run (${agent})`);
 	if (validationError) return formatAsyncStartError("single", validationError);
@@ -1721,7 +1729,9 @@ export function executeAsyncSingle(
 	// absolute paths pass through; relative paths resolve against the child cwd.
 	const reads = params.reads !== undefined ? params.reads : agentConfig.defaultReads ?? false;
 	const readPaths = Array.isArray(reads)
-		? managedWorktreeProvider === "worktrunk"
+		? nativeMachine
+			? reads.map((value) => value.startsWith("/") || value === "~" || value.startsWith("~/") ? value : path.posix.join(instructionCwd, value))
+			: managedWorktreeProvider === "worktrunk"
 			? resolveExistingReadInstructionPaths(reads, instructionCwd, readExistenceCwd)
 			: resolveExistingReadPaths(reads, readExistenceCwd)
 		: [];
@@ -1737,9 +1747,11 @@ export function executeAsyncSingle(
 		agentModel: agentConfig.model,
 		parentModel: ctx.currentModel,
 	});
+	const remoteRequestedModel = params.modelOverrideFromParent ? agentConfig.model : params.modelOverride ?? agentConfig.model;
+	if (nativeMachine && remoteRequestedModel && !remoteRequestedModel.includes("/")) return formatAsyncStartError("single", "Remote native Pi model overrides must be provider-qualified (provider/model).");
 	let primaryModel: string | undefined;
 	try {
-		primaryModel = externalRunner ? undefined : modelOrigin === "inherited"
+		primaryModel = externalRunner ? undefined : nativeMachine ? remoteRequestedModel : modelOrigin === "inherited"
 			? params.modelOverride ?? (ctx.currentModel ? `${ctx.currentModel.provider}/${ctx.currentModel.id}` : undefined)
 			: resolveSubagentModelOverride(
 				params.modelOverride ?? agentConfig.model,
@@ -1790,11 +1802,11 @@ export function executeAsyncSingle(
 	let modelCandidates: string[] = [];
 	if (!externalRunner) {
 		try {
-			modelCandidates = buildModelCandidates(primaryModel, agentConfig.fallbackModels, availableModels, agentConfig.modelProvider ?? ctx.currentModelProvider, {
+			modelCandidates = (nativeMachine ? [primaryModel] : buildModelCandidates(primaryModel, agentConfig.fallbackModels, availableModels, agentConfig.modelProvider ?? ctx.currentModelProvider, {
 				scope: modelScopes,
 				primaryModelFromParent: modelOrigin === "inherited",
 				origin: modelOrigin,
-			}).flatMap((candidate) => {
+			})).flatMap((candidate) => {
 				const resolved = applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined);
 				return resolved ? [resolved] : [];
 			});
@@ -1814,7 +1826,7 @@ export function executeAsyncSingle(
 		requiredExtensions,
 		mcpDirectTools: agentConfig.mcpDirectTools,
 		cwd: runnerCwd,
-		requireReadTool: Boolean(resolvedSkills.length),
+		requireReadTool: nativeMachine ? skillNames.length > 0 : Boolean(resolvedSkills.length),
 		structuredOutput: Boolean(params.structuredOutputSchema),
 		fast: params.fast ?? agentConfig.fast,
 		model,
@@ -1850,7 +1862,7 @@ export function executeAsyncSingle(
 		...(fast !== undefined ? { fast } : {}),
 		...(launchThinking ? { thinking: launchThinking } : {}),
 		systemPrompt,
-		skills: resolvedSkills.map((skill) => skill.name),
+		skills: nativeMachine ? skillNames : resolvedSkills.map((skill) => skill.name),
 		toolPlan,
 		...(outputPath ? { outputPath } : {}),
 		outputMode,
@@ -1901,7 +1913,7 @@ export function executeAsyncSingle(
 		inheritProjectContext: recoveryAgentConfig.inheritProjectContext,
 		inheritGlobalContext: recoveryAgentConfig.inheritGlobalContext,
 		inheritSkills: recoveryAgentConfig.inheritSkills,
-		...(resolvedSkills.length ? { skills: resolvedSkills.map((skill) => skill.name) } : {}),
+		...((nativeMachine ? skillNames.length : resolvedSkills.length) ? { skills: nativeMachine ? skillNames : resolvedSkills.map((skill) => skill.name) } : {}),
 		...(recoveryAgentConfig.skillPath ? { skillPath: [...recoveryAgentConfig.skillPath] } : {}),
 		...(recoveryAgentConfig.filePath ? { agentFilePath: recoveryAgentConfig.filePath } : {}),
 		...(recoveryAgentConfig.completionGuard !== undefined ? { completionGuard: recoveryAgentConfig.completionGuard } : {}),
@@ -1924,7 +1936,7 @@ export function executeAsyncSingle(
 		artifactConfig,
 		...(capabilityCeiling ? { capabilityCeiling } : {}),
 	};
-	if (!externalRunner) {
+	if (!externalRunner && !nativeMachine) {
 		try {
 			writePrivateAtomicJson(path.join(asyncDir, "recovery-descriptor.json"), recoveryDescriptor);
 		} catch (error) {
@@ -1975,11 +1987,12 @@ export function executeAsyncSingle(
 						inheritProjectContext: agentConfig.inheritProjectContext,
 						inheritGlobalContext: agentConfig.inheritGlobalContext,
 						inheritSkills: agentConfig.inheritSkills,
-						skills: resolvedSkills.map((r) => r.name),
+						skills: nativeMachine ? skillNames : resolvedSkills.map((r) => r.name),
+						...(agentConfig.memory ? { memory: { ...agentConfig.memory } } : {}),
 						outputPath,
 						...(params.outputClaimPath ? { outputClaimPath: params.outputClaimPath } : {}),
 						outputMode,
-						...(!externalRunner && sessionFile ? { sessionFile } : {}),
+						...(!externalRunner && !nativeMachine && sessionFile ? { sessionFile } : {}),
 						maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
 						waitToolEnabled: params.waitToolEnabled,
 						waitToolDefaultTimeoutMs: params.waitToolDefaultTimeoutMs,

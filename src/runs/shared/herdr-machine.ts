@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExternalProcessStatus, HerdrMachineReference, HerdrRemoteGitStatus } from "../../shared/types.ts";
+import type { AgentRunnerConfig, ExternalProcessStatus, HerdrMachineReference, HerdrRemoteGitStatus } from "../../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../../shared/utils.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS, type CodeOwnedExternalCliAdapterId } from "./external-cli-contract.ts";
 import { type ExternalCliPreflightResult, type ExternalCliPreflightSpec } from "./external-cli-preflight.ts";
@@ -32,6 +32,10 @@ const READY_MARKER = `__pi_subagents_ready_${RUN_TOKEN}__`;
 const FINAL_BEGIN_MARKER = `__pi_subagents_final_begin_${RUN_TOKEN}__`;
 const FINAL_END_MARKER = `__pi_subagents_final_end_${RUN_TOKEN}__`;
 const GIT_MARKER = `__pi_subagents_git_${RUN_TOKEN}__`;
+
+export function isNativePiRunner(runner: AgentRunnerConfig | undefined): boolean {
+	return runner === undefined || runner.type === "pi";
+}
 
 type RunExternalCliInput = Parameters<typeof runExternalCli>[0];
 
@@ -234,7 +238,11 @@ export function resolveHerdrMachinePlacement(input: ResolveHerdrMachinePlacement
 	const stepCwd = input.stepCwd?.trim();
 	let cwd: string;
 	if (stepCwd && isRemoteAbsolute(stepCwd)) cwd = stepCwd;
-	else if (settings?.cwd) cwd = stepCwd ? path.posix.join(settings.cwd, stepCwd) : settings.cwd;
+	else if (settings?.cwd) {
+		const root = validateRemoteCwd(settings.cwd, requested);
+		cwd = stepCwd ? path.posix.normalize(path.posix.join(root, stepCwd)) : root;
+		if (cwd !== root && !(root === "/" ? cwd.startsWith("/") : cwd.startsWith(`${root}/`))) throw new Error(`Herdr machine '${requested}' relative cwd escapes configured root ${root}: ${JSON.stringify(stepCwd)}.`);
+	}
 	else throw new Error(`No root for ${name} in this repo. Set subagents.machines.${name}.cwd in .pi/settings.json or pass an absolute cwd on that machine.`);
 	return {
 		machine: {
@@ -257,14 +265,18 @@ export function formatHerdrMachineRunnerUnsupported(input: {
 	worktree?: boolean;
 }): string | undefined {
 	if (input.machine === undefined) return undefined;
+	if (input.runnerType !== "external-cli" && input.runnerType !== undefined && input.runnerType !== "pi") {
+		return `Agent '${input.agentName}' requested machine '${input.machine}', but runner.type='${input.runnerType}' does not support Herdr saved-machine placement.`;
+	}
+	if (input.worktree === true) return `Agent '${input.agentName}' requested machine '${input.machine}', but managed worktrees are local git operations and cannot be combined with a Herdr saved machine.`;
+	if (process.platform === "win32") return "Herdr saved-machine launches use OpenSSH and a POSIX remote shell, which is not supported from a Windows host yet.";
+	if (input.runnerType === undefined || input.runnerType === "pi") return undefined;
 	if (input.runnerType !== "external-cli") {
 		return `Agent '${input.agentName}' requested machine '${input.machine}', but only external-cli agents can run on a Herdr saved machine. Use claude-code, codex-exec, or cursor-agent profiles, or open a Herdr pane on that machine and run Pi there.`;
 	}
 	if (input.adapter === undefined || !SUPPORTED_MACHINE_ADAPTERS.has(input.adapter)) {
 		return `Agent '${input.agentName}' requested machine '${input.machine}', but generic external-cli commands cannot be remote-wrapped safely. Use claude-code, claude-code-writer, codex-exec, codex-exec-writer, cursor-agent, or cursor-agent-writer.`;
 	}
-	if (input.worktree === true) return `Agent '${input.agentName}' requested machine '${input.machine}', but managed worktrees are local git operations and cannot be combined with a Herdr saved machine.`;
-	if (process.platform === "win32") return "Herdr saved-machine launches wrap the child with OpenSSH ControlMaster and a POSIX shell script, which is not supported from a Windows host yet.";
 	return undefined;
 }
 
@@ -276,7 +288,7 @@ function sshControlPath(): string {
 }
 
 /** Herdr's saved-machine ssh option block (src/remote/attach.rs), plus pi-subagents' own ControlMaster entries. */
-function sshArgs(machine: HerdrMachineReference, controlPath: string): string[] {
+export function herdrSshArgs(machine: HerdrMachineReference, controlPath = sshControlPath()): string[] {
 	return [
 		"-T",
 		"-o", "BatchMode=yes",
@@ -297,7 +309,7 @@ function sshArgs(machine: HerdrMachineReference, controlPath: string): string[] 
  * The remote login shell receives one argument, `sh -c '<script>'`, so fish or a noisy rc file cannot change
  * how the script is parsed. The script prints the ready marker only after `cd` succeeded.
  */
-function remoteCommand(machine: HerdrMachineReference, env: Record<string, string> | undefined, body: string): string {
+export function herdrRemoteCommand(machine: HerdrMachineReference, env: Record<string, string> | undefined, body: string): string {
 	const exports = Object.entries(env ?? {}).map(([key, value]) => `export ${key}=${shellQuote(value)}`);
 	const script = [
 		`export PATH=${REMOTE_PATH_PREFIX}`,
@@ -309,6 +321,36 @@ function remoteCommand(machine: HerdrMachineReference, env: Record<string, strin
 	return `sh -c ${shellQuote(script)}`;
 }
 
+/** Native RPC owns stdout framing, so unlike adapter commands it emits no shell readiness marker. */
+export function herdrNativeRemoteCommand(machine: HerdrMachineReference, env: Record<string, string> | undefined, body: string): string {
+	const exports = Object.entries(env ?? {}).map(([key, value]) => `export ${key}=${shellQuote(value)}`);
+	const script = [
+		`export PATH=${REMOTE_PATH_PREFIX}`,
+		...exports,
+		`cd ${remotePathExpr(machine.cwd)} || exit 125`,
+		body,
+	].join("; ");
+	return `sh -c ${shellQuote(script)}`;
+}
+
+/** Resolve the packaged native host using Pi's documented managed npm roots without interpolating remote values into shell syntax. */
+export function nativeRemoteHostDiscoveryBody(): string {
+	const executable = "pi-subagents-remote-host";
+	return [
+		`host=$(command -v ${executable} 2>/dev/null || :)`,
+		`if [ -n "$host" ] && [ -x "$host" ]; then exec "$host"; fi`,
+		`project_host=$PWD/.pi/npm/node_modules/.bin/${executable}`,
+		`if [ -x "$project_host" ]; then exec "$project_host"; fi`,
+		`agent_dir=\${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}`,
+		`case "$agent_dir" in '~') agent_dir=$HOME;; '~/'*) agent_dir=$HOME/\${agent_dir#??};; esac`,
+		`case "$agent_dir" in /*) ;; *) printf '%s\\n' 'Remote native Pi host configuration error: PI_CODING_AGENT_DIR must be an absolute remote path.' >&2; exit 126;; esac`,
+		`user_host=$agent_dir/npm/node_modules/.bin/${executable}`,
+		`if [ -x "$user_host" ]; then exec "$user_host"; fi`,
+		`printf '%s\\n' 'Remote native Pi host executable not found. Run: pi install npm:pi-subagents (user scope), or pi install -l npm:pi-subagents (project scope), or add pi-subagents-remote-host to PATH.' >&2`,
+		`exit 127`,
+	].join("; ");
+}
+
 function stripThroughMarker(text: string): string {
 	const index = text.indexOf(READY_MARKER);
 	return index < 0 ? text : text.slice(index + READY_MARKER.length).trim();
@@ -317,7 +359,7 @@ function stripThroughMarker(text: string): string {
 function remotePreflight(input: RunExternalCliInput, machine: HerdrMachineReference, env: Record<string, string> | undefined, controlPath: string): ExternalCliPreflightSpec | undefined {
 	const spec = input.preflight;
 	if (!spec) return undefined;
-	const probe = (args: readonly string[]) => [...sshArgs(machine, controlPath), remoteCommand(machine, env, `exec ${shellQuote(input.command)} ${args.map(shellQuote).join(" ")}`)];
+	const probe = (args: readonly string[]) => [...herdrSshArgs(machine, controlPath), herdrRemoteCommand(machine, env, `exec ${shellQuote(input.command)} ${args.map(shellQuote).join(" ")}`)];
 	const { probeTimeoutMs: _probeTimeoutMs, ...rest } = spec;
 	return {
 		...rest,
@@ -443,7 +485,7 @@ export function prepareHerdrMachineExternalCliRun(input: RunExternalCliInput, pl
 	const prepared: RunExternalCliInput = {
 		...rest,
 		command: "ssh",
-		args: [...sshArgs(machine, controlPath), remoteCommand(machine, env, body)],
+		args: [...herdrSshArgs(machine, controlPath), herdrRemoteCommand(machine, env, body)],
 		cwd: options.localCwd,
 		environment: { allowlist: HERDR_SSH_ENV_ALLOWLIST },
 		parser: wrapped.parser,

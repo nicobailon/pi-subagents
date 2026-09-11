@@ -117,7 +117,7 @@ jobs:
         run: node test/smoke/npm-background.mjs "$RUNNER_TEMP/npm-background-sdk" "$RUNNER_TEMP/npm-background"
       - name: Require completed Linux smoke receipts
         run: |
-          node -e 'const a = require("node:assert/strict"); const r = require(process.env.RUNNER_TEMP + "/standalone-matrix/matrix.json"); a.equal(r.complete, true); a.equal(r.cases.length, 18); a.ok(r.cases.every(c => c.exitCode === 0 && !c.error));'
+          node -e 'const a = require("node:assert/strict"); const r = require(process.env.RUNNER_TEMP + "/standalone-matrix/matrix.json"); a.equal(r.complete, true); a.equal(r.cases.length, 19); a.ok(r.cases.every(c => c.exitCode === 0 && !c.error));'
           node -e 'const a = require("node:assert/strict"); const r = require(process.env.RUNNER_TEMP + "/npm-background/npm-launch.json"); a.equal(r.publicLaunch, true); a.equal(r.runtime, "Node"); a.equal(r.version, "0.85.1"); a.equal(r.network, "unshared");'
       - name: Collect bounded lifecycle evidence
         id: evidence

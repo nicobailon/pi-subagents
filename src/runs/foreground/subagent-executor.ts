@@ -107,7 +107,7 @@ import { inspectSubagentStatus } from "../background/run-status.ts";
 import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 import { externalJobFollowUpRequestDigest, externalJobFollowUpRequestId, externalJobFollowUpRunId, externalJobPromptDigest, externalJobStableJson } from "../shared/external-job-runner.ts";
 import { externalCliReceiptMetadata, normalizeExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
-import { formatHerdrMachineRunnerUnsupported } from "../shared/herdr-machine.ts";
+import { formatHerdrMachineRunnerUnsupported, isNativePiRunner, resolveHerdrMachinePlacement } from "../shared/herdr-machine.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import { handleMissionAction, MISSION_ACTIONS } from "../../missions/actions.ts";
 import { attachMissionToLaunchResult, prepareMissionLaunch, writeMissionAsyncBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
@@ -2421,6 +2421,7 @@ function canonicalizeExecutionParams(params: SubagentParamsLike, agents: AgentCo
 		if (params.extensionBindings !== undefined && (agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job")) return { error: `extensionBindings is not supported for runner.type='${agent.runner.type}'.` };
 		const machineError = agent ? formatHerdrMachineRunnerUnsupported({ machine: params.machine ?? agent.machine, agentName: agent.name, runnerType: agent.runner?.type, adapter: agent.runner?.type === "external-cli" ? agent.runner.adapter : undefined, worktree: params.worktree }) : undefined;
 		if (machineError) return { error: machineError };
+		if ((params.machine ?? agent?.machine) && isNativePiRunner(agent?.runner) && params.context === "fork") return { error: `Agent '${agent?.name ?? params.agent}' requested explicit context='fork' on machine '${params.machine ?? agent?.machine}', but remote native Pi supports fresh context only.` };
 	}
 	if (params.extensionBindings !== undefined) {
 		try {
@@ -2628,14 +2629,46 @@ interface AgentDefaultContextPolicy {
 
 type AgentDefaultContextPolicyResult = AgentDefaultContextPolicy | { error: string };
 
-function resolveAgentDefaultContextPolicy(
+export function resolveAgentDefaultContextPolicy(
 	params: SubagentParamsLike,
 	agents: AgentConfig[],
 	defaultSubagentContext: ExtensionConfig["defaultSubagentContext"],
 	canUseDefaultFork = false,
 ): AgentDefaultContextPolicyResult {
+	const byName = new Map(agents.map((agent) => [agent.name, agent]));
+	const hasStepRemoteNative = (agentName: string, machine: string | undefined) => Boolean(machine ?? byName.get(agentName)?.machine) && isNativePiRunner(byName.get(agentName)?.runner);
+	const remoteNative = (agentName: string) => hasStepRemoteNative(agentName, params.machine);
+	const explicitRemoteFork = params.tasks?.some((task) => hasStepRemoteNative(task.agent, task.machine))
+		|| params.chain?.some((step) => isParallelStep(step)
+			? step.parallel.some((task) => hasStepRemoteNative(task.agent, task.machine ?? step.machine))
+			: isDynamicParallelStep(step)
+				? hasStepRemoteNative(step.parallel.agent, step.parallel.machine)
+				: hasStepRemoteNative(step.agent, step.machine));
+	const warnedRemoteFork = new Set<string>();
+	const forceRemoteFresh = (agentName: string, preferred: ContextMode): ContextMode => {
+		if (preferred !== "fork") return preferred;
+		if (!warnedRemoteFork.has(agentName)) {
+			warnedRemoteFork.add(agentName);
+			console.warn(`[pi-subagents] Agent '${agentName}' prefers fork context, but native machine placement starts fresh because parent history is not transferred.`);
+		}
+		return "fresh";
+	};
+	const remoteFresh = (agentName: string, preferred: ContextMode): ContextMode => remoteNative(agentName) ? forceRemoteFresh(agentName, preferred) : preferred;
+	const summarizeEffectiveOccurrences = (contextForAgent: (agentName: string) => ContextMode): ContextSummary | undefined => {
+		const effective = (agentName: string, machine?: string) => {
+			const preferred = contextForAgent(agentName);
+			return hasStepRemoteNative(agentName, machine) ? forceRemoteFresh(agentName, preferred) : preferred;
+		};
+		const modes: ContextMode[] = [];
+		if (params.tasks) for (const task of params.tasks) modes.push(effective(task.agent, task.machine));
+		else if (params.chain) for (const step of params.chain) {
+			if (isParallelStep(step)) for (const task of step.parallel) modes.push(effective(task.agent, task.machine ?? step.machine));
+			else if (isDynamicParallelStep(step)) modes.push(effective(step.parallel.agent, step.parallel.machine));
+			else modes.push(effective(step.agent, step.machine));
+		} else for (const agentName of collectRequestedAgentNames(params)) modes.push(effective(agentName, params.machine));
+		return summarizeContextModes(modes);
+	};
 	if (params.context === "profile") {
-		const byName = new Map(agents.map((agent) => [agent.name, agent]));
 		for (const agentName of collectRequestedAgentNames(params)) {
 			const agent = byName.get(agentName);
 			if (agent && agent.defaultContext === undefined) {
@@ -2645,9 +2678,9 @@ function resolveAgentDefaultContextPolicy(
 		const contextForAgent = (agentName: string): ContextMode => {
 			const context = byName.get(agentName)?.defaultContext;
 			if (context === undefined) throw new Error(`context: "profile" requires agent '${agentName}' to declare defaultContext.`);
-			return context;
+			return remoteFresh(agentName, context);
 		};
-		const contextSummary = summarizeContextModes(collectRequestedAgentNames(params).map(contextForAgent));
+		const contextSummary = summarizeEffectiveOccurrences(contextForAgent);
 		return {
 			params,
 			contextForAgent,
@@ -2655,17 +2688,19 @@ function resolveAgentDefaultContextPolicy(
 			usesFork: contextSummary === "fork" || contextSummary === "mixed",
 		};
 	}
+	if (params.context === "fork" && (collectRequestedAgentNames(params).some(remoteNative) || explicitRemoteFork)) {
+		return { error: "Explicit context='fork' cannot be used with native saved-machine placement; remote Pi children start with fresh context." };
+	}
 	if (params.context === "fresh" || params.context === "fork") return resolveExplicitContextPolicy(params);
-	const byName = new Map(agents.map((agent) => [agent.name, agent]));
 	const contextForAgent = (agentName: string): ContextMode =>
-		resolveSubagentLaunchContext({
+		remoteFresh(agentName, resolveSubagentLaunchContext({
 			explicitContext: undefined,
 			agentDefaultContext: byName.get(agentName)?.defaultContext,
 			defaultSubagentContext,
 			canUseImplicitFork: canUseDefaultFork,
-		});
+		}));
 	const requestedAgentNames = collectRequestedAgentNames(params);
-	const contextSummary = summarizeContextModes(requestedAgentNames.map((name) => contextForAgent(name)));
+	const contextSummary = summarizeEffectiveOccurrences(contextForAgent);
 	const usesFork = contextSummary === "fork" || contextSummary === "mixed";
 	return omitUndefinedProperties({
 		params,
@@ -3280,13 +3315,16 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			agentModel: a.model,
 			parentModel,
 		});
+		const nativeMachineRequested = Boolean(params.machine ?? a.machine) && isNativePiRunner(a.runner);
+		const remoteRequestedModel = (params.model as string | undefined) ?? a.model;
 		const modelOverride = a.runner?.type === "external-cli" || a.runner?.type === "external-job"
 			? params.model ?? (externalRunnerWithoutExplicitModel ? undefined : a.model)
+			: nativeMachineRequested ? remoteRequestedModel
 			: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, a.modelProvider ?? currentProvider, {
 				...(modelScopes.length === 0 ? {} : { scope: modelScopes }),
 				source: modelOrigin === "explicit" ? "explicit" : "inherited",
 			});
-		const modelOverrideFromParent = modelOrigin === "inherited";
+		const modelOverrideFromParent = nativeMachineRequested ? false : modelOrigin === "inherited";
 		const launchRuleError = applyWatchdogLaunchRules({ cwd: effectiveCwd, agent: a.name, model: modelOverride ?? (parentModel && `${parentModel.provider}/${parentModel.id}`), warn: (violation) => deps.watchdog?.displayRuleWarning(violation) });
 		if (launchRuleError) return toExecutionErrorResult(params, new Error(launchRuleError), data.contextPolicy.contextSummary);
 		const asyncResult = executeAsyncSingle(id, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
@@ -3740,6 +3778,12 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			details: { mode: "single", results: [] },
 		};
 	}
+	let nativePlacement: ReturnType<typeof resolveHerdrMachinePlacement> | undefined;
+	const requestedMachine = params.machine ?? agentConfig.machine;
+	if (requestedMachine && isNativePiRunner(agentConfig.runner)) {
+		try { nativePlacement = resolveHerdrMachinePlacement({ machine: requestedMachine, cwd: ctx.cwd, stepCwd: params.machineCwd }); }
+		catch (error) { return toExecutionErrorResult(params, error instanceof Error ? error : new Error(String(error)), data.contextPolicy.contextSummary); }
+	}
 	const effectiveToolBudget = resolveEffectiveToolBudget(omitUndefinedProperties({ runBudget: data.toolBudget, agentBudget: agentConfig.toolBudget, configBudget: data.configToolBudget }));
 	if (effectiveToolBudget.error) return toExecutionErrorResult(params, new Error(effectiveToolBudget.error), data.contextPolicy.contextSummary);
 
@@ -3754,30 +3798,26 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		agentModel: agentConfig.model,
 		parentModel,
 	});
-	let modelOverride: string | undefined = resolveEffectiveSubagentModel(
-		params.model as string | undefined,
-		agentConfig.model,
-		parentModel,
-		availableModels,
-		agentConfig.modelProvider ?? currentProvider,
-		{
-			...(modelScopes.length === 0 ? {} : { scope: modelScopes }),
-			source: modelOrigin === "explicit" ? "explicit" : "inherited",
-		},
+	const remoteRequestedModel = (params.model as string | undefined) ?? agentConfig.model;
+	if (nativePlacement && remoteRequestedModel && !remoteRequestedModel.includes("/")) return toExecutionErrorResult(params, new Error("Remote native Pi model overrides must be provider-qualified (provider/model)."), data.contextPolicy.contextSummary);
+	let modelOverride: string | undefined = nativePlacement ? remoteRequestedModel : resolveEffectiveSubagentModel(
+		params.model as string | undefined, agentConfig.model, parentModel, availableModels, agentConfig.modelProvider ?? currentProvider,
+		{ ...(modelScopes.length === 0 ? {} : { scope: modelScopes }), source: modelOrigin === "explicit" ? "explicit" : "inherited" },
 	);
-	const modelOverrideFromParent = modelOrigin === "inherited";
+	const modelOverrideFromParent = nativePlacement ? false : modelOrigin === "inherited";
 	const launchRuleError = applyWatchdogLaunchRules({ cwd: effectiveCwd, agent: agentConfig.name, model: modelOverride ?? (parentModel && `${parentModel.provider}/${parentModel.id}`), warn: (violation) => deps.watchdog?.displayRuleWarning(violation) });
 	if (launchRuleError) return toExecutionErrorResult(params, new Error(launchRuleError), data.contextPolicy.contextSummary);
 	let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
 	let readsOverride: string[] | false | undefined = params.reads;
 	const rawOutput = params.output !== undefined ? params.output : agentConfig.output;
 	let effectiveOutput = normalizeSingleOutputOverride(rawOutput, agentConfig.output);
+	if (nativePlacement && effectiveOutput) return toExecutionErrorResult(params, new Error("Remote native Pi does not support child-written output paths; use inline output so the local host captures the result."), data.contextPolicy.contextSummary);
 	const effectiveOutputMode = params.outputMode ?? agentConfig.outputMode ?? "inline";
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth, deps.childRuntime);
 	const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, agentConfig.maxSubagentDepth);
 
 
-	const sourceCwd = effectiveCwd;
+	const sourceCwd = nativePlacement?.machine.cwd ?? effectiveCwd;
 	let pendingHandoff: Details["parallelHandoff"];
 	const { setup: worktreeSetup, errorResult: worktreeSetupError } = params.worktree ? await createSingleWorktreeSetup(
 		sourceCwd,
@@ -3854,7 +3894,11 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	// Reads: caller override > agent defaultReads > none. `~`/`~/` expand to home;
 	// absolute paths pass through; relative paths resolve against the child cwd.
 	const reads = readsOverride !== undefined ? readsOverride : agentConfig.defaultReads ?? false;
-	const readPaths = Array.isArray(reads) ? resolveExistingReadPaths(reads, singleCwd) : [];
+	const readPaths = Array.isArray(reads)
+		? nativePlacement
+			? reads.map((value) => value.startsWith("/") || value === "~" || value.startsWith("~/") ? value : path.posix.join(singleCwd, value))
+			: resolveExistingReadPaths(reads, singleCwd)
+		: [];
 	const readsInstruction = readPaths.length > 0
 		? `[Read from: ${readPaths.join(", ")}]\n\n`
 		: "";
@@ -3938,6 +3982,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			runFanoutBudget: params.runFanoutAdmitted ? data.runFanoutBudget : { ...data.runFanoutBudget, parentPath: `${data.runFanoutBudget.parentPath ? `${data.runFanoutBudget.parentPath}/` : ""}single` },
 			cwd: singleCwd,
 			requestedCwd: data.requestedCwd,
+			machine: nativePlacement?.machine,
+			machineEnv: nativePlacement?.env,
 			signal,
 			interruptSignal: interruptController.signal,
 			allowIntercomDetach: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
