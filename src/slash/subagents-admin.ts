@@ -11,6 +11,7 @@ import {
 	type BuiltinAgentOverrideBase,
 } from "../agents/agents.ts";
 import { serializeAgent } from "../agents/agent-serializer.ts";
+import { mergeRuntimeAgents, type RuntimeAgentOwner } from "../agents/runtime-agent-registry.ts";
 import { editableAgentConfig, preservedAgentFrontmatterFields } from "../agents/agent-management.ts";
 import { findModelInfo, getSupportedThinkingLevels, toModelInfo } from "../shared/model-info.ts";
 import { SelectorComponent, type SelectorItem, type SelectorResult } from "./selector.ts";
@@ -28,11 +29,14 @@ function sourceRank(source: AgentConfig["source"]): number {
 	return 3;
 }
 
-function allVisibleAgents(cwd: string): AgentConfig[] {
+function allVisibleAgents(pi: RuntimeAgentOwner | null, cwd: string): AgentConfig[] {
 	const d = discoverAgentsAll(cwd);
-	return [...d.project, ...d.user, ...d.package, ...d.builtin]
-		.filter((agent) => !agent.disabled)
-		.sort((a, b) => a.name.localeCompare(b.name) || sourceRank(a.source) - sourceRank(b.source));
+	const configured = [...d.project, ...d.user, ...d.package, ...d.builtin]
+		.filter((agent) => !agent.disabled);
+	// Runtime-registered agents (pi-subagents:runtime-agent-register:v1) participate in every
+	// delegation and listing path through mergeRuntimeAgents; the admin panel must list them too.
+	const agents = pi ? mergeRuntimeAgents(pi, { agents: configured }, configured).agents : configured;
+	return agents.sort((a, b) => a.name.localeCompare(b.name) || sourceRank(a.source) - sourceRank(b.source));
 }
 
 function agentLabel(agent: AgentConfig): string {
@@ -146,6 +150,9 @@ function isReadOnlyExtraAgent(agent: AgentConfig): boolean {
 }
 
 function readOnlyAgentMessage(agent: AgentConfig, field: EditableOverrideField): string | undefined {
+	if (agent.source === "runtime") {
+		return `Cannot update '${agent.name}' ${field} because that agent is runtime-registered by an extension; edit its source definition instead.`;
+	}
 	if (agent.source === "package") {
 		return `Cannot update '${agent.name}' ${field} because that field is owned by its read-only package definition.`;
 	}
@@ -154,8 +161,8 @@ function readOnlyAgentMessage(agent: AgentConfig, field: EditableOverrideField):
 		: undefined;
 }
 
-async function selectAgent(ctx: ExtensionContext, args: string): Promise<AgentSelection> {
-	const agents = allVisibleAgents(ctx.cwd);
+async function selectAgent(pi: RuntimeAgentOwner, ctx: ExtensionContext, args: string): Promise<AgentSelection> {
+	const agents = allVisibleAgents(pi, ctx.cwd);
 	const requestedName = args.trim().split(/\s+/)[0] ?? "";
 	if (agents.length === 0) return { kind: "not-found", agents, requestedName: requestedName || undefined };
 
@@ -390,7 +397,7 @@ async function editSystemPrompt(ctx: ExtensionContext, agent: AgentConfig): Prom
 }
 
 export async function openSubagentsAdmin(pi: ExtensionAPI, ctx: ExtensionContext, args = ""): Promise<void> {
-	const selection = await selectAgent(ctx, args);
+	const selection = await selectAgent(pi, ctx, args);
 	if (selection.kind === "cancelled") return;
 	if (selection.kind === "ambiguous") {
 		sendAdminMessage(pi, `Subagent '${selection.requestedName}' is ambiguous. Choose a scope in interactive mode:\n${selection.matches.map((agent) => `- ${agent.source}: ${agent.filePath}`).join("\n")}`);
