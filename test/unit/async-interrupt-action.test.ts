@@ -795,8 +795,10 @@ describe("async interrupt action", () => {
 		};
 		writeJson(path.join(asyncDir, "process-terminal.json"), proof);
 		const statusPath = path.join(asyncDir, "status.json");
+		const pausedStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+		delete pausedStatus.sessionId;
 		writeJson(statusPath, {
-			...JSON.parse(fs.readFileSync(statusPath, "utf-8")),
+			...pausedStatus,
 			mode: "parallel",
 			state: "paused",
 			endedAt: 200,
@@ -824,6 +826,7 @@ describe("async interrupt action", () => {
 			assert.equal(text(result), `Stopped paused async run ${runId}.`);
 			const stoppedStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
 			assert.equal(stoppedStatus.state, "stopped");
+			assert.equal(stoppedStatus.sessionId, "session");
 			assert.deepEqual(stoppedStatus.steps.map((step: { status: string }) => step.status), ["stopped", "failed"]);
 			assert.equal(stoppedStatus.processTerminal.resumeDisposition, "non-resumable");
 			const stoppedResult = JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, `${runId}.json`), "utf-8"));

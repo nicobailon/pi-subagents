@@ -27,7 +27,18 @@ function getAsyncStopTarget(
 	return direct ? { asyncId: direct.asyncId, asyncDir: direct.asyncDir } : undefined;
 }
 
-function sealPausedRunStopped(state: SubagentState, status: AsyncStatus, asyncDir: string, existingResultPath?: string): boolean {
+function readExistingResult(existingResultPath?: string): Record<string, unknown> {
+	if (!existingResultPath) return {};
+	try {
+		const parsed: unknown = JSON.parse(fs.readFileSync(existingResultPath, "utf-8"));
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+		throw error;
+	}
+}
+
+function sealPausedRunStopped(state: SubagentState, status: AsyncStatus, asyncDir: string, existing: Record<string, unknown>, sessionId: string): boolean {
 	const proof = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId });
 	if (proof?.state !== "observed") return false;
 	const now = Date.now();
@@ -50,6 +61,7 @@ function sealPausedRunStopped(state: SubagentState, status: AsyncStatus, asyncDi
 	});
 	const stoppedStatus: AsyncStatus = {
 		...status,
+		sessionId,
 		state: "stopped",
 		stopped: true,
 		error: stopMessage,
@@ -59,15 +71,6 @@ function sealPausedRunStopped(state: SubagentState, status: AsyncStatus, asyncDi
 		processTerminal: stoppedProof,
 		steps: stoppedSteps,
 	};
-	let existing: Record<string, unknown> = {};
-	if (existingResultPath) {
-		try {
-			const parsed: unknown = JSON.parse(fs.readFileSync(existingResultPath, "utf-8"));
-			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) existing = parsed as Record<string, unknown>;
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-		}
-	}
 	const priorResults = Array.isArray(existing.results) ? existing.results : [];
 	const results = stoppedSteps.map((step, index) => {
 		const prior = priorResults[index];
@@ -98,7 +101,7 @@ function sealPausedRunStopped(state: SubagentState, status: AsyncStatus, asyncDi
 		durationMs: Math.max(0, now - status.startedAt),
 		asyncDir,
 		cwd: status.cwd,
-		sessionId: status.sessionId,
+		sessionId,
 		completionOwnerId: status.completionOwnerId,
 		sessionFile: status.sessionFile,
 	});
@@ -107,9 +110,7 @@ function sealPausedRunStopped(state: SubagentState, status: AsyncStatus, asyncDi
 	updateActiveRunIndex(asyncDir, "stopped", status.toolCallId);
 	const tracked = state.asyncJobs.get(status.runId);
 	if (tracked) Object.assign(tracked, { status: "stopped", stopped: true, activityState: undefined, updatedAt: now, steps: stoppedSteps.map((step, index) => ({ ...step, index })) });
-	if (status.sessionId) {
-		state.activeAsyncCapacity = getActiveAsyncCapacitySnapshot(status.sessionId, state.activeAsyncCapacity?.limit || undefined, { liveWorkflowRunIds: new Set(state.workflowControllers?.keys() ?? []) });
-	}
+	state.activeAsyncCapacity = getActiveAsyncCapacitySnapshot(sessionId, state.activeAsyncCapacity?.limit || undefined, { liveWorkflowRunIds: new Set(state.workflowControllers?.keys() ?? []) });
 	return true;
 }
 
@@ -122,8 +123,11 @@ export function stopAsyncRun(
 ): AgentToolResult<Details> | null {
 	const target = getAsyncStopTarget(state, runId, location);
 	if (!target) return null;
-	const status = reconcileAsyncRun(target.asyncDir, { kill }).status;
-	if (state.currentSessionId && status?.sessionId !== state.currentSessionId) {
+	const reconciliation = reconcileAsyncRun(target.asyncDir, { kill });
+	const status = reconciliation.status;
+	const existingResult = readExistingResult(reconciliation.resultPath);
+	const sessionId = status?.sessionId ?? (typeof existingResult.sessionId === "string" && existingResult.sessionId ? existingResult.sessionId : undefined);
+	if (state.currentSessionId && sessionId !== state.currentSessionId) {
 		return {
 			content: [{ type: "text", text: `Async run '${target.asyncId}' was not found in the active session.` }],
 			isError: true,
@@ -158,8 +162,8 @@ export function stopAsyncRun(
 	}
 	try {
 		deliverStopRequest({ asyncDir: target.asyncDir, pid: typeof status.pid === "number" ? status.pid : undefined, kill, source: "stop-action", targetIndex: child?.index, childId: child?.id ?? childId });
-		const sealedPaused = status.state === "paused" && childId === undefined
-			? sealPausedRunStopped(state, status, target.asyncDir, reconcileAsyncRun(target.asyncDir, { kill }).resultPath)
+		const sealedPaused = status.state === "paused" && childId === undefined && sessionId !== undefined
+			? sealPausedRunStopped(state, status, target.asyncDir, existingResult, sessionId)
 			: false;
 		if (status.state === "paused" && childId === undefined && !sealedPaused) {
 			return {
