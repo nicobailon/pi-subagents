@@ -51,6 +51,61 @@ function stagedLaneGraph(statuses: WorkflowNodeStatus[] = stagedLaneKeys.map((_,
 	};
 }
 
+/** A workflow of three lanes: one finished, one running, one still planned. */
+const materializedWorkflow = job({
+	asyncId: "wf-1",
+	status: "running",
+	mode: "workflow",
+	agents: ["reviewer"],
+	startedAt: 1_000,
+	updatedAt: 5_000,
+	steps: [
+		// A finished step records how long it ran, never when it ended.
+		{ workflowKey: "rev-core", label: "rev-core", agent: "reviewer", status: "completed", runId: "child-core", startedAt: 1_500, durationMs: 2_500 },
+		{ workflowKey: "rev-r", label: "rev-r", agent: "reviewer", status: "running", runId: "child-r", startedAt: 1_500 },
+		{ workflowKey: "rev-parity", label: "rev-parity", agent: "reviewer", status: "pending" },
+	],
+});
+
+/** The tracked job executing the running lane, carrying the live facts of that work. */
+const materializedRunningChild = job({
+	asyncId: "child-r",
+	status: "running",
+	mode: "single",
+	parentWorkflowRunId: "wf-1",
+	workflowKey: "rev-r",
+	agents: ["reviewer"],
+	startedAt: 1_700,
+	updatedAt: 4_900,
+	currentTool: "read",
+	toolCount: 3,
+	turnCount: 1,
+	steps: [{ agent: "reviewer", status: "running" }],
+});
+
+/** A child of the workflow matching no lane: real extra work, kept under its parent. */
+const unmatchedChild = job({
+	asyncId: "child-extra",
+	status: "running",
+	mode: "single",
+	parentWorkflowRunId: "wf-1",
+	agents: ["helper"],
+	startedAt: 2_000,
+	steps: [{ agent: "helper", status: "running" }],
+});
+
+/** A child whose parent is absent from the snapshot: stays a root run, unchanged. */
+const orphanedChild = job({
+	asyncId: "child-orphan",
+	status: "running",
+	mode: "single",
+	parentWorkflowRunId: "wf-gone",
+	workflowKey: "lane",
+	agents: ["scout"],
+	startedAt: 3_000,
+	steps: [{ agent: "scout", status: "running" }],
+});
+
 describe("async status projection", () => {
 	it("projects already-loaded jobs in deterministic newest-first order", () => {
 		const snapshot = projectAsyncStatusSnapshot([
@@ -256,5 +311,59 @@ describe("async status projection", () => {
 			{ name: "writer · First (worker)", state: "complete" },
 			{ name: "writer · Second (worker)", state: "running" },
 		]);
+	});
+
+	it("projects a materialized workflow child once, as its lane, with the child's live facts", () => {
+		const snapshot = projectAsyncStatusSnapshot([materializedWorkflow, materializedRunningChild], { generatedAt: 5_000 });
+
+		assert.deepEqual(snapshot.runs.map((run) => run.id), ["wf-1"]);
+		assert.deepEqual(snapshot.runs[0]?.children?.map(({ id, kind, label, state }) => ({ id, kind, label, state })), [
+			{ id: "rev-core", kind: "step", label: "rev-core", state: "complete" },
+			{ id: "rev-r", kind: "step", label: "rev-r", state: "running" },
+			{ id: "rev-parity", kind: "step", label: "rev-parity", state: "queued" },
+		]);
+		const running = snapshot.runs[0]?.children?.[1];
+		assert.equal(running?.startedAt, 1_700);
+		assert.deepEqual(running?.activity, { currentTool: "read", toolCount: 3, turnCount: 1 });
+		// The child's lone self-describing step is this very node, not a row under it.
+		assert.equal(running?.children, undefined);
+		assert.deepEqual(snapshot.omitted, { runs: 0, children: 0, byteLimitExceeded: false });
+	});
+
+	it("keeps children matching no lane under their parent and orphaned children at the root", () => {
+		const snapshot = projectAsyncStatusSnapshot([materializedWorkflow, materializedRunningChild, unmatchedChild, orphanedChild], { generatedAt: 5_000 });
+
+		assert.deepEqual(snapshot.runs.map((run) => run.id), ["wf-1", "child-orphan"]);
+		assert.deepEqual(snapshot.runs[0]?.children?.map(({ id, kind, label }) => ({ id, kind, label })), [
+			{ id: "rev-core", kind: "step", label: "rev-core" },
+			{ id: "rev-r", kind: "step", label: "rev-r" },
+			{ id: "rev-parity", kind: "step", label: "rev-parity" },
+			{ id: "child-extra", kind: "subagent", label: "helper" },
+		]);
+		// The orphan keeps the shape of a root run: its lone step underneath.
+		assert.deepEqual(snapshot.runs[1]?.children?.map(({ kind, label }) => ({ kind, label })), [{ kind: "step", label: "scout" }]);
+	});
+
+	it("counts a lane and its materialized child once when the depth cap hides them", () => {
+		const snapshot = projectAsyncStatusSnapshot([materializedWorkflow, materializedRunningChild, unmatchedChild], { generatedAt: 5_000, maxDepth: 0 });
+
+		assert.equal(snapshot.runs[0]?.children, undefined);
+		// Three lanes plus the unmatched child: the running lane's child is not counted twice.
+		assert.equal(snapshot.omitted.children, 4);
+	});
+
+	it("derives a finished step's end from its duration when the tracker recorded none", () => {
+		const snapshot = projectAsyncStatusSnapshot([job({
+			asyncId: "ended-run",
+			status: "complete",
+			agents: ["reviewer"],
+			startedAt: 1_000,
+			updatedAt: 4_000,
+			steps: [{ agent: "reviewer", status: "completed", startedAt: 1_500, durationMs: 2_500 }],
+		})], { generatedAt: 9_000 });
+
+		const step = snapshot.runs[0]?.children?.[0];
+		assert.equal(step?.endedAt, 4_000);
+		assert.equal(step?.updatedAt, 4_000);
 	});
 });
