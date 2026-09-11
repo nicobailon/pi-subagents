@@ -51,7 +51,6 @@ function stagedLaneGraph(statuses: WorkflowNodeStatus[] = stagedLaneKeys.map((_,
 	};
 }
 
-/** A workflow of three lanes: one finished, one running, one still planned. */
 const materializedWorkflow = job({
 	asyncId: "wf-1",
 	status: "running",
@@ -60,14 +59,12 @@ const materializedWorkflow = job({
 	startedAt: 1_000,
 	updatedAt: 5_000,
 	steps: [
-		// A finished step records how long it ran, never when it ended.
 		{ workflowKey: "rev-core", label: "rev-core", agent: "reviewer", status: "completed", runId: "child-core", startedAt: 1_500, durationMs: 2_500 },
 		{ workflowKey: "rev-r", label: "rev-r", agent: "reviewer", status: "running", runId: "child-r", startedAt: 1_500 },
 		{ workflowKey: "rev-parity", label: "rev-parity", agent: "reviewer", status: "pending" },
 	],
 });
 
-/** The tracked job executing the running lane, carrying the live facts of that work. */
 const materializedRunningChild = job({
 	asyncId: "child-r",
 	status: "running",
@@ -83,7 +80,6 @@ const materializedRunningChild = job({
 	steps: [{ agent: "reviewer", status: "running" }],
 });
 
-/** A child of the workflow matching no lane: real extra work, kept under its parent. */
 const unmatchedChild = job({
 	asyncId: "child-extra",
 	status: "running",
@@ -94,7 +90,6 @@ const unmatchedChild = job({
 	steps: [{ agent: "helper", status: "running" }],
 });
 
-/** A child whose parent is absent from the snapshot: stays a root run, unchanged. */
 const orphanedChild = job({
 	asyncId: "child-orphan",
 	status: "running",
@@ -325,7 +320,6 @@ describe("async status projection", () => {
 		const running = snapshot.runs[0]?.children?.[1];
 		assert.equal(running?.startedAt, 1_700);
 		assert.deepEqual(running?.activity, { currentTool: "read", toolCount: 3, turnCount: 1 });
-		// The child's lone self-describing step is this very node, not a row under it.
 		assert.equal(running?.children, undefined);
 		assert.deepEqual(snapshot.omitted, { runs: 0, children: 0, byteLimitExceeded: false });
 	});
@@ -340,7 +334,6 @@ describe("async status projection", () => {
 			{ id: "rev-parity", kind: "step", label: "rev-parity" },
 			{ id: "child-extra", kind: "subagent", label: "helper" },
 		]);
-		// The orphan keeps the shape of a root run: its lone step underneath.
 		assert.deepEqual(snapshot.runs[1]?.children?.map(({ kind, label }) => ({ kind, label })), [{ kind: "step", label: "scout" }]);
 	});
 
@@ -348,22 +341,105 @@ describe("async status projection", () => {
 		const snapshot = projectAsyncStatusSnapshot([materializedWorkflow, materializedRunningChild, unmatchedChild], { generatedAt: 5_000, maxDepth: 0 });
 
 		assert.equal(snapshot.runs[0]?.children, undefined);
-		// Three lanes plus the unmatched child: the running lane's child is not counted twice.
 		assert.equal(snapshot.omitted.children, 4);
 	});
 
-	it("derives a finished step's end from its duration when the tracker recorded none", () => {
+	it("assigns a materialized child once and gives its exact run id precedence over a reused lane key", () => {
+		const parent = job({
+			asyncId: "duplicate-keys",
+			status: "running",
+			mode: "workflow",
+			steps: [
+				{ agent: "worker", workflowKey: "same", runId: "old", label: "first", status: "completed" },
+				{ agent: "worker", workflowKey: "same", runId: "live", label: "second", status: "running" },
+			],
+		});
+		const child = job({ asyncId: "live", parentWorkflowRunId: parent.asyncId, workflowKey: "same", status: "running", updatedAt: 30 });
+
+		const snapshot = projectAsyncStatusSnapshot([parent, child]);
+		assert.deepEqual(snapshot.runs[0]?.children?.map(({ label, state, updatedAt }) => ({ label, state, updatedAt })), [
+			{ label: "first", state: "complete", updatedAt: undefined },
+			{ label: "second", state: "running", updatedAt: 30 },
+		]);
+		assert.equal(projectAsyncStatusSnapshot([parent, child], { maxDepth: 0 }).omitted.children, 2);
+	});
+
+	it("keeps live children visible as roots when their workflow parent is not running", () => {
+		const parent = job({
+			asyncId: "paused-parent",
+			status: "paused",
+			mode: "workflow",
+			updatedAt: 200,
+			steps: [{ agent: "worker", workflowKey: "lane", runId: "live-child", status: "paused" }],
+			nestedChildren: [{ id: "live-child", state: "running", agent: "worker" }],
+		});
+		const child = job({
+			asyncId: "live-child",
+			parentWorkflowRunId: parent.asyncId,
+			workflowKey: "lane",
+			status: "running",
+			updatedAt: 100,
+			steps: [{ agent: "worker", status: "running" }],
+		});
+
+		const snapshot = projectAsyncStatusSnapshot([parent, child]);
+		assert.deepEqual(snapshot.runs.map(({ id, state }) => ({ id, state })), [
+			{ id: "live-child", state: "running" },
+			{ id: "paused-parent", state: "paused" },
+		]);
+		assert.deepEqual(snapshot.runs[0]?.children?.map((step) => step.id), ["step:0"]);
+		assert.equal(snapshot.runs[1]?.children, undefined);
+		assert.deepEqual(snapshot.omitted, { runs: 0, children: 0, byteLimitExceeded: false });
+
+		const depthCapped = projectAsyncStatusSnapshot([parent, child], { maxDepth: 0 });
+		assert.deepEqual(depthCapped.omitted, { runs: 0, children: 1, byteLimitExceeded: false });
+
+		const capped = projectAsyncStatusSnapshot([parent, child], { maxRuns: 1 });
+		assert.deepEqual(capped.runs.map((run) => run.id), ["live-child"]);
+		assert.deepEqual(capped.omitted, { runs: 1, children: 0, byteLimitExceeded: false });
+
+		const queued = projectAsyncStatusSnapshot([job({ ...parent, status: "complete" }), job({ ...child, status: "queued" })]);
+		assert.deepEqual(queued.runs.map((run) => run.id), ["live-child", "paused-parent"]);
+		assert.equal(queued.runs[1]?.children, undefined);
+		assert.deepEqual(queued.omitted, { runs: 0, children: 0, byteLimitExceeded: false });
+	});
+
+	it("keeps cyclic workflow parent links visible as roots", () => {
+		const first = job({ asyncId: "cycle-a", status: "complete", mode: "workflow", parentWorkflowRunId: "cycle-b" });
+		const second = job({ asyncId: "cycle-b", status: "complete", mode: "workflow", parentWorkflowRunId: "cycle-a" });
+
+		const snapshot = projectAsyncStatusSnapshot([first, second]);
+		assert.deepEqual(snapshot.runs.map((run) => run.id), ["cycle-a", "cycle-b"]);
+		assert.deepEqual(snapshot.omitted, { runs: 0, children: 0, byteLimitExceeded: false });
+	});
+
+	it("orders unmatched materialized children deterministically before applying child caps", () => {
+		const parent = job({ asyncId: "ordered-parent", status: "running", mode: "workflow" });
+		const first = job({ asyncId: "child-a", parentWorkflowRunId: parent.asyncId, status: "complete", updatedAt: 10 });
+		const second = job({ asyncId: "child-b", parentWorkflowRunId: parent.asyncId, status: "complete", updatedAt: 20 });
+		const options = { maxChildrenPerNode: 1 };
+
+		const forward = projectAsyncStatusSnapshot([parent, first, second], options);
+		const reversed = projectAsyncStatusSnapshot([parent, second, first], options);
+		assert.deepEqual(forward.runs[0]?.children?.map((child) => child.id), ["child-b"]);
+		assert.deepEqual(reversed.runs[0]?.children?.map((child) => child.id), ["child-b"]);
+		assert.equal(forward.omitted.children, 1);
+	});
+
+	it("derives safe end times only for terminal steps", () => {
 		const snapshot = projectAsyncStatusSnapshot([job({
-			asyncId: "ended-run",
-			status: "complete",
-			agents: ["reviewer"],
-			startedAt: 1_000,
-			updatedAt: 4_000,
-			steps: [{ agent: "reviewer", status: "completed", startedAt: 1_500, durationMs: 2_500 }],
+			asyncId: "step-times",
+			status: "running",
+			steps: [
+				{ agent: "finished", status: "completed", startedAt: 1_500, durationMs: 2_500 },
+				{ agent: "active", status: "running", startedAt: 1_500, durationMs: 2_500 },
+				{ agent: "overflow", status: "completed", startedAt: Number.MAX_SAFE_INTEGER, durationMs: Number.MAX_SAFE_INTEGER },
+			],
 		})], { generatedAt: 9_000 });
 
-		const step = snapshot.runs[0]?.children?.[0];
-		assert.equal(step?.endedAt, 4_000);
-		assert.equal(step?.updatedAt, 4_000);
+		const [finished, active, overflow] = snapshot.runs[0]?.children ?? [];
+		assert.deepEqual({ endedAt: finished?.endedAt, updatedAt: finished?.updatedAt }, { endedAt: 4_000, updatedAt: 4_000 });
+		assert.deepEqual({ endedAt: active?.endedAt, updatedAt: active?.updatedAt }, { endedAt: undefined, updatedAt: 1_500 });
+		assert.deepEqual({ endedAt: overflow?.endedAt, updatedAt: overflow?.updatedAt }, { endedAt: undefined, updatedAt: Number.MAX_SAFE_INTEGER });
 	});
 });
