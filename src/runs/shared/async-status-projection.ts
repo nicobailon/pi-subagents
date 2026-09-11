@@ -362,11 +362,51 @@ function groupMaterializedChildren(jobs: readonly AsyncJobState[]) {
 	return { roots, childrenByParent };
 }
 
-/** The child job executing a workflow step, matched by workflow key or by run id. */
-function materializedChildForStep(step: AsyncJobStep, children: readonly AsyncJobState[]): AsyncJobState | undefined {
-	return children.find((child) =>
-		(step.workflowKey !== undefined && child.workflowKey === step.workflowKey)
-		|| (step.runId !== undefined && child.asyncId === step.runId));
+/**
+ * Assigns the child job executing each workflow lane, one child per lane at most.
+ * Run ids are matched across every lane before any workflow key, because a declared
+ * key may legitimately be reused: a lane naming its exact child must keep that child
+ * rather than lose it to whichever sibling lane the scan reaches first.
+ */
+function assignMaterializedChildren(lanes: readonly AsyncJobStep[], children: readonly AsyncJobState[]) {
+	const childByLane = new Map<AsyncJobStep, AsyncJobState>();
+	const claimed = new Set<AsyncJobState>();
+	const claim = (lane: AsyncJobStep, child: AsyncJobState | undefined): void => {
+		if (!child || claimed.has(child)) return;
+		childByLane.set(lane, child);
+		claimed.add(child);
+	};
+	for (const lane of lanes) {
+		if (lane.runId !== undefined) claim(lane, children.find((child) => child.asyncId === lane.runId));
+	}
+	for (const lane of lanes) {
+		if (childByLane.has(lane) || lane.workflowKey === undefined) continue;
+		claim(lane, children.find((child) => child.workflowKey === lane.workflowKey && !claimed.has(child)));
+	}
+	return childByLane;
+}
+
+/**
+ * The freshest activity of a grouped tree. A workflow must not rank behind its own
+ * live children: a finished or paused parent keeps a frozen `updatedAt` while a
+ * detached child still works — cleanup is held back for exactly that case — and the
+ * root cap would otherwise drop the parent and hide the child with it.
+ */
+function treeUpdatedAt(job: AsyncJobState, childrenByParent: MaterializedChildren, seen = new Set<string>()): number {
+	let freshest = job.updatedAt ?? job.startedAt ?? 0;
+	if (seen.has(job.asyncId)) return freshest;
+	seen.add(job.asyncId);
+	for (const child of childrenByParent.get(job.asyncId) ?? []) freshest = Math.max(freshest, treeUpdatedAt(child, childrenByParent, seen));
+	return freshest;
+}
+
+/** Runs grouped under a run: dropped with it, so counted with it. */
+function groupedRunCount(job: AsyncJobState, childrenByParent: MaterializedChildren, seen = new Set<string>()): number {
+	if (seen.has(job.asyncId)) return 0;
+	seen.add(job.asyncId);
+	let total = 0;
+	for (const child of childrenByParent.get(job.asyncId) ?? []) total += 1 + groupedRunCount(child, childrenByParent, seen);
+	return total;
 }
 
 /**
@@ -413,19 +453,22 @@ function projectRun(job: AsyncJobState, ctx: ProjectionContext, depth = 0, child
 	const nestedSummaries = (job.nestedChildren ?? []).filter((child) => !materialized.some((live) => live.asyncId === child.id));
 	const loadedKeys = new Set(steps.flatMap((step) => step.workflowKey ? [step.workflowKey] : []));
 	const graphStages = job.mode === "workflow" ? workflowGraphStageNodes(job.workflowGraph).filter((graphNode) => !loadedKeys.has(graphNode.id)) : [];
+	// One lane object per planned stage, built once: the assignment below is keyed by identity.
+	const graphLanes = graphStages.map((graphNode, index) => ({ step: workflowGraphStep(graphNode), index: graphNode.flatIndex ?? index }));
+	const childByLane = assignMaterializedChildren([...steps, ...graphLanes.map((lane) => lane.step)], materialized);
 	if (depth < ctx.caps.maxDepth) {
 		const childDepth = depth + 1;
-		const claimed = new Set<AsyncJobState>();
 		const projectLane = (step: AsyncJobStep, index: number): AsyncStatusSnapshotNode => {
-			const child = materializedChildForStep(step, materialized);
-			if (!child) return projectStep(step, index, childDepth, ctx);
-			claimed.add(child);
-			return projectMaterializedStep(step, index, child, childDepth, ctx, childrenByParent);
+			const child = childByLane.get(step);
+			return child
+				? projectMaterializedStep(step, index, child, childDepth, ctx, childrenByParent)
+				: projectStep(step, index, childDepth, ctx);
 		};
 		const stepChildren = steps.map((step, index) => projectLane(step, step.index ?? index));
-		const graphChildren = graphStages.map((graphNode, index) => projectLane(workflowGraphStep(graphNode), graphNode.flatIndex ?? index));
+		const graphChildren = graphLanes.map((lane) => projectLane(lane.step, lane.index));
 		const nestedChildren = nestedSummaries.map((child, index) => projectNestedRun(child, index, childDepth, ctx));
-		const unclaimedChildren = materialized.filter((child) => !claimed.has(child)).map((child) => projectRun(child, ctx, childDepth, childrenByParent));
+		const claimedChildren = new Set(childByLane.values());
+		const unclaimedChildren = materialized.filter((child) => !claimedChildren.has(child)).map((child) => projectRun(child, ctx, childDepth, childrenByParent));
 		const hostStepChildren = validHostStepList(job.hostSteps).map((hostStep) => projectHostStep(hostStep, ctx));
 		const ordinaryChildren = [...stepChildren, ...graphChildren, ...nestedChildren, ...unclaimedChildren];
 		const retainedHostSteps = hostStepChildren.slice(0, ctx.caps.maxChildrenPerNode);
@@ -435,8 +478,7 @@ function projectRun(job: AsyncJobState, ctx: ProjectionContext, depth = 0, child
 		ctx.omitted.children += ordinaryChildren.length - retainedOrdinaryChildren.length + hostStepChildren.length - retainedHostSteps.length;
 		if (bounded.length) node.children = bounded;
 	} else {
-		const claimedCount = [...steps, ...graphStages.map(workflowGraphStep)].filter((step) => materializedChildForStep(step, materialized) !== undefined).length;
-		ctx.omitted.children += steps.length + graphStages.length + nestedSummaries.length + (materialized.length - claimedCount) + validHostStepList(job.hostSteps).length;
+		ctx.omitted.children += steps.length + graphStages.length + nestedSummaries.length + (materialized.length - childByLane.size) + validHostStepList(job.hostSteps).length;
 	}
 	return node;
 }
@@ -445,7 +487,14 @@ function snapshotBytes(snapshot: AsyncStatusSnapshot): number {
 	return Buffer.byteLength(JSON.stringify(snapshot), "utf8");
 }
 
-function enforceByteLimit(snapshot: AsyncStatusSnapshot): void {
+/** Runs hidden from `index` onward: each trimmed root, plus the runs grouped under it. */
+function trimmedRunCount(groupedRuns: readonly number[], index: number): number {
+	let total = 0;
+	for (const grouped of groupedRuns.slice(index)) total += 1 + grouped;
+	return total;
+}
+
+function enforceByteLimit(snapshot: AsyncStatusSnapshot, groupedRuns: readonly number[]): void {
 	if (snapshotBytes(snapshot) <= snapshot.caps.maxSerializedBytes) return;
 	snapshot.omitted.byteLimitExceeded = true;
 	const runs = snapshot.runs;
@@ -455,12 +504,12 @@ function enforceByteLimit(snapshot: AsyncStatusSnapshot): void {
 	while (lower < upper) {
 		const retained = Math.ceil((lower + upper) / 2);
 		snapshot.runs = runs.slice(0, retained);
-		snapshot.omitted.runs = initialOmittedRuns + runs.length - retained;
+		snapshot.omitted.runs = initialOmittedRuns + trimmedRunCount(groupedRuns, retained);
 		if (snapshotBytes(snapshot) <= snapshot.caps.maxSerializedBytes) lower = retained;
 		else upper = retained - 1;
 	}
 	snapshot.runs = runs.slice(0, lower);
-	snapshot.omitted.runs = initialOmittedRuns + runs.length - lower;
+	snapshot.omitted.runs = initialOmittedRuns + trimmedRunCount(groupedRuns, lower);
 }
 
 function workflowStepActivity(step: AsyncJobStep): string | undefined {
@@ -628,20 +677,18 @@ export function projectAsyncStatusSnapshot(jobs: Iterable<AsyncJobState>, option
 	const caps = resolveCaps(options);
 	const ctx: ProjectionContext = { caps, omitted: { runs: 0, children: 0, byteLimitExceeded: false } };
 	const { roots, childrenByParent } = groupMaterializedChildren([...jobs]);
-	const sorted = roots.sort((left, right) => {
-		const leftUpdated = left.updatedAt ?? left.startedAt ?? 0;
-		const rightUpdated = right.updatedAt ?? right.startedAt ?? 0;
-		return rightUpdated - leftUpdated || left.asyncId.localeCompare(right.asyncId);
-	});
-	ctx.omitted.runs += Math.max(0, sorted.length - caps.maxRuns);
+	const ranked = roots.map((job) => ({ job, updatedAt: treeUpdatedAt(job, childrenByParent), groupedRuns: groupedRunCount(job, childrenByParent) }));
+	ranked.sort((left, right) => right.updatedAt - left.updatedAt || left.job.asyncId.localeCompare(right.job.asyncId));
+	const retained = ranked.slice(0, caps.maxRuns);
+	for (const entry of ranked.slice(caps.maxRuns)) ctx.omitted.runs += 1 + entry.groupedRuns;
 	const snapshot: AsyncStatusSnapshot = {
 		kind: ASYNC_STATUS_SNAPSHOT_KIND,
 		version: ASYNC_STATUS_SNAPSHOT_VERSION,
 		generatedAt: options.generatedAt ?? Date.now(),
 		caps,
 		omitted: ctx.omitted,
-		runs: sorted.slice(0, caps.maxRuns).map((job) => projectRun(job, ctx, 0, childrenByParent)),
+		runs: retained.map((entry) => projectRun(entry.job, ctx, 0, childrenByParent)),
 	};
-	enforceByteLimit(snapshot);
+	enforceByteLimit(snapshot, retained.map((entry) => entry.groupedRuns));
 	return snapshot;
 }

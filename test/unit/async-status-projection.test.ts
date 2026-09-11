@@ -366,4 +366,61 @@ describe("async status projection", () => {
 		assert.equal(step?.endedAt, 4_000);
 		assert.equal(step?.updatedAt, 4_000);
 	});
+
+	it("matches each lane to the child its run id names when a declared lane key is reused", () => {
+		const workflow = job({
+			asyncId: "wf-dup",
+			status: "running",
+			mode: "workflow",
+			agents: ["worker"],
+			updatedAt: 9_000,
+			steps: [
+				{ workflowKey: "writer", label: "First", agent: "worker", status: "running", runId: "child-1", startedAt: 1_000 },
+				{ workflowKey: "writer", label: "Second", agent: "worker", status: "running", runId: "child-2", startedAt: 2_000 },
+			],
+		});
+		const firstChild = job({ asyncId: "child-1", status: "running", mode: "single", parentWorkflowRunId: "wf-dup", workflowKey: "writer", agents: ["worker"], startedAt: 1_100, updatedAt: 8_000, currentTool: "read", steps: [{ agent: "worker", status: "running" }] });
+		const secondChild = job({ asyncId: "child-2", status: "running", mode: "single", parentWorkflowRunId: "wf-dup", workflowKey: "writer", agents: ["worker"], startedAt: 2_100, updatedAt: 8_500, currentTool: "bash", steps: [{ agent: "worker", status: "running" }] });
+
+		const snapshot = projectAsyncStatusSnapshot([workflow, firstChild, secondChild], { generatedAt: 9_999 });
+
+		// Each lane takes its own child: neither child is projected twice, nor left over as a row of its own.
+		assert.deepEqual(snapshot.runs[0]?.children?.map(({ id, label, startedAt, activity }) => ({ id, label, startedAt, tool: activity?.currentTool })), [
+			{ id: "writer", label: "First", startedAt: 1_100, tool: "read" },
+			{ id: "writer", label: "Second", startedAt: 2_100, tool: "bash" },
+		]);
+	});
+
+	it("ranks a workflow by its live children so the root cap cannot hide them", () => {
+		const finished = job({
+			asyncId: "wf-frozen",
+			status: "complete",
+			mode: "workflow",
+			agents: ["worker"],
+			startedAt: 1,
+			updatedAt: 1,
+			steps: [{ workflowKey: "lane", label: "lane", agent: "worker", status: "running", runId: "live-child", startedAt: 1 }],
+		});
+		const liveChild = job({ asyncId: "live-child", status: "running", mode: "single", parentWorkflowRunId: "wf-frozen", workflowKey: "lane", agents: ["worker"], startedAt: 2, updatedAt: 9_999, currentTool: "bash", steps: [{ agent: "worker", status: "running" }] });
+		const fresherRuns = Array.from({ length: 20 }, (_, index) => job({ asyncId: `other-${index}`, status: "running", agents: ["worker"], updatedAt: 5_000 + index }));
+
+		const snapshot = projectAsyncStatusSnapshot([finished, liveChild, ...fresherRuns], { generatedAt: 10_000, maxRuns: 20 });
+
+		// The parent's own updatedAt froze when it ended; its running child keeps the tree at the front.
+		assert.equal(snapshot.runs[0]?.id, "wf-frozen");
+		assert.equal(snapshot.runs[0]?.children?.[0]?.activity?.currentTool, "bash");
+		assert.equal(snapshot.omitted.runs, 1);
+	});
+
+	it("counts a dropped run together with the runs grouped under it", () => {
+		const snapshot = projectAsyncStatusSnapshot([
+			materializedWorkflow,
+			materializedRunningChild,
+			job({ asyncId: "fresher", status: "running", agents: ["worker"], updatedAt: 99_000 }),
+		], { generatedAt: 99_999, maxRuns: 1 });
+
+		assert.deepEqual(snapshot.runs.map((run) => run.id), ["fresher"]);
+		// The workflow and the child grouped under it are both runs the host cannot see.
+		assert.equal(snapshot.omitted.runs, 2);
+	});
 });
