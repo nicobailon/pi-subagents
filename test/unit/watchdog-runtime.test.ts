@@ -431,6 +431,25 @@ describe("main watchdog runtime", () => {
 		assert.equal(snapshot.failedReviews, 1);
 	});
 
+	it("surfaces the provider error text of a failed review in lastError", async () => {
+		const diagnostic = `provider-head-${"H".repeat(400)}-middle-${"M".repeat(400)}-provider-tail`;
+		const runtime = new MainWatchdogRuntime({
+			resolveConfig: () => configResult(enabledConfig()),
+			review: () => ({ stopReason: "error", errorMessage: diagnostic }),
+		});
+
+		runtime.enqueueDelta("Assistant:\nWorking");
+		await runtime.handleAgentEnd({ type: "agent_end", messages: [] }, { cwd: "/tmp/project" });
+
+		const snapshot = runtime.getSnapshot();
+		assert.equal(snapshot.status, "failed");
+		const lastError = snapshot.lastError ?? "";
+		assert.ok(lastError.includes(diagnostic.slice(0, 150)));
+		assert.ok(lastError.includes(`[... about ${diagnostic.length - 600} characters omitted ...]`));
+		assert.ok(lastError.endsWith(diagnostic.slice(-100)));
+		assert.ok(!lastError.includes(diagnostic));
+	});
+
 	it("marks unresolved agent-end review work stale on timeout", async () => {
 		let started!: () => void;
 		const reviewStarted = new Promise<void>((resolve) => { started = resolve; });

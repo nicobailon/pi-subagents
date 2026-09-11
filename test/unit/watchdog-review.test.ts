@@ -217,6 +217,7 @@ describe("main watchdog review adapter", () => {
 		const result = await createMainWatchdogReview(createCtx({ current: a, models: [a, b] }), { streamFn })(request(enabledConfig({ fallbackModels: ["mock/b"] }), []));
 		assert.deepEqual(calls.map((call) => call.model.id), ["a"]);
 		assert.equal(result?.stopReason, "error");
+		assert.equal(result?.errorMessage, "upstream: maximum context length exceeded");
 	});
 
 	it("does not retry normal, length, aborted, or unclassified error outcomes", async () => {

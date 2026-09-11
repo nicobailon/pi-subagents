@@ -31,6 +31,8 @@ type ReviewStopReason = "stop" | "error" | "aborted" | "length";
 export interface WatchdogReviewResult {
 	warnings?: WatchdogWarning[];
 	stopReason?: ReviewStopReason;
+	/** Provider error text for a failed review, surfaced in status `Last error`. */
+	errorMessage?: string;
 	clarification?: { question: string; evidence: string };
 }
 
@@ -658,7 +660,8 @@ export class MainWatchdogRuntime {
 			}
 			for (const warning of result.warnings ?? []) this.acceptWarning(reviewEpoch, reviewId, warning);
 			if (result.stopReason && result.stopReason !== "stop") {
-				this.fail(`Watchdog review ended with stop reason '${result.stopReason}'.`);
+				const detail = result.errorMessage?.trim() ? ` ${boundWatchdogReviewText(result.errorMessage.trim(), 600)}` : "";
+				this.fail(`Watchdog review ended with stop reason '${result.stopReason}'.${detail}`);
 				return "completed";
 			}
 			this.displayAcceptedReviewWarning(options.correction);
