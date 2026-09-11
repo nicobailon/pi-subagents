@@ -1074,8 +1074,10 @@ export default function() {
 	});
 
 	it("background single runs support outputSchema", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		mockPi.onCall({ output: "structured", structuredOutput: { ok: true, note: "async" } });
+		const expectedStructuredOutput = { ok: true, note: "async" };
+		mockPi.onCall({ output: "", structuredOutput: expectedStructuredOutput });
 		const id = `async-single-schema-${Date.now().toString(36)}`;
+		const outputPath = path.join(tempDir, `${id}.json`);
 
 		executeAsyncSingle(id, {
 			agent: "worker",
@@ -1094,12 +1096,17 @@ export default function() {
 			sessionRoot: path.join(tempDir, "sessions"),
 			maxSubagentDepth: 2,
 			acceptance: false,
+			output: outputPath,
 			structuredOutputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" }, note: { type: "string" } } },
 		});
 
 		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id, 10_000), "utf-8")) as AsyncResultPayload;
 		assert.equal(payload.success, true);
-		assert.deepEqual(payload.results[0]?.structuredOutput, { ok: true, note: "async" });
+		assert.deepEqual(payload.results[0]?.structuredOutput, expectedStructuredOutput);
+		assert.equal(payload.results[0]?.savedOutputPath, outputPath);
+		const savedOutput = fs.readFileSync(outputPath, "utf-8");
+		assert.equal(savedOutput, JSON.stringify(expectedStructuredOutput, null, 2));
+		assert.deepEqual(JSON.parse(savedOutput), expectedStructuredOutput);
 	});
 
 	it("background outputSchema runs fail closed when required acceptanceReport is missing", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

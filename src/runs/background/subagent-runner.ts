@@ -1480,7 +1480,9 @@ export async function runSingleStepInner(
 	}
 
 	const rawOutput = finalResult?.finalOutput ?? "";
-	const outputForPersistence = stripAcceptanceReport(rawOutput);
+	let outputForPersistence = stripAcceptanceReport(rawOutput);
+	if (!outputForPersistence.trim() && finalResult?.structuredOutput !== undefined)
+		outputForPersistence = JSON.stringify(finalResult.structuredOutput, null, 2);
 	const resolvedOutput = step.outputPath && finalResult?.exitCode === 0
 		? resolveSingleOutput(step.outputPath, outputForPersistence, finalOutputSnapshot, step.outputClaimPath)
 		: { fullOutput: outputForPersistence };
