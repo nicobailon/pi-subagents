@@ -52,11 +52,14 @@ const DEFAULT_LIVENESS_INTERVAL_MS = 5000;
 const EVENT_REFRESH_DEBOUNCE_MS = 25;
 const WATCH_ATTACHMENT_RETRY_MS = 100;
 
+const isTerminalJobStatus = (status: AsyncJobState["status"]): boolean =>
+	status === "complete" || status === "failed" || status === "partial" || status === "paused" || status === "rejected" || status === "stopped";
+
 function rememberFleetJob(state: SubagentState, job: AsyncJobState): void {
 	state.fleetJobs ??= new Map();
 	state.fleetJobs.set(job.asyncId, job);
 	const terminal = [...state.fleetJobs.values()]
-		.filter((candidate) => candidate.status === "complete" || candidate.status === "failed" || candidate.status === "paused" || candidate.status === "stopped")
+		.filter((candidate) => isTerminalJobStatus(candidate.status))
 		.sort((left, right) => (right.updatedAt ?? right.startedAt ?? 0) - (left.updatedAt ?? left.startedAt ?? 0));
 	for (const stale of terminal.slice(MAX_RECENT_FLEET_JOBS)) state.fleetJobs.delete(stale.asyncId);
 }
@@ -100,7 +103,6 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	let nextWidgetAnimationAt = Date.now() + WIDGET_ANIMATION_INTERVAL_MS;
 	const watch = options.watch ?? fs.watch;
 	const useNativeWatcher = () => shouldUseNativeFsWatch("async-job-tracker", options.platform);
-	const terminalStatus = (status: string) => status === "complete" || status === "failed" || status === "paused" || status === "stopped";
 	const withLastUiContext = <T>(run: (ctx: ExtensionContext) => T): T | undefined => {
 		const cached = state.lastUiContext;
 		return withCachedUiContext(cached, () => {
@@ -445,10 +447,10 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			if (status) {
 				const previousStatus = job.status;
 				job.status = status.state;
-				if (!terminalStatus(job.status)) terminalPublications.delete(job.asyncId);
+				if (!isTerminalJobStatus(job.status)) terminalPublications.delete(job.asyncId);
 				if (job.status === "running") runningJobIds.add(job.asyncId);
 				else runningJobIds.delete(job.asyncId);
-				if (job.status !== "complete" && job.status !== "failed" && job.status !== "paused" && job.status !== "stopped") cancelCleanup(job.asyncId);
+				if (!isTerminalJobStatus(job.status)) cancelCleanup(job.asyncId);
 				job.sessionId = status.sessionId ?? job.sessionId;
 				job.activityState = status.activityState;
 				job.lastActivityAt = status.lastActivityAt ?? job.lastActivityAt;
@@ -502,7 +504,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				job.turnBudgetExceeded = status.turnBudgetExceeded ?? job.turnBudgetExceeded;
 				job.wrapUpRequested = status.wrapUpRequested ?? job.wrapUpRequested;
 				job.sessionFile = status.sessionFile ?? job.sessionFile;
-				if (terminalStatus(job.status)) {
+				if (isTerminalJobStatus(job.status)) {
 					let publication = terminalPublications.get(job.asyncId);
 					if (!publication && status.mode !== "workflow" && status.processTerminal?.state === "pending"
 						&& status.runId === job.asyncId && status.sessionId === state.currentSessionId
@@ -524,7 +526,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						} else cancelCleanup(job.asyncId);
 					}
 					// Scan on close too: publication may have raced the payload check.
-					if (!terminalStatus(previousStatus) || (wasPending && !publication?.pending)) options.onJobTerminal?.();
+					if (!isTerminalJobStatus(previousStatus) || (wasPending && !publication?.pending)) options.onJobTerminal?.();
 					rememberFleetJob(state, job);
 					if (!publication?.pending && !nestedRefreshFailed && !hasLiveNestedDescendants(job.nestedChildren) && (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
 						scheduleCleanup(job.asyncId);

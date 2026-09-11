@@ -1252,35 +1252,40 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("schedules cleanup when polling observes a completed status without a completion event", async () => {
+	it("schedules cleanup when polling observes terminal statuses without completion events", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		try {
-			const runDir = path.join(asyncRoot, "run-2");
-			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-2",
-				mode: "single",
-				state: "complete",
-				startedAt: Date.now() - 1000,
-				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "complete" }],
-			}), "utf-8");
-
 			const state = createState();
 			const ui = createUiContext();
-			const recorder = createEventRecorder();
-			const tracker = createTracker(recorder.pi, state as never, asyncRoot, {
+			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, {
 				completionRetentionMs: 5,
 				pollIntervalMs: 10,
 			});
 			tracker.resetJobs(ui.ctx as never);
-			tracker.handleStarted({ id: "run-2", asyncDir: runDir, agent: "worker" });
+			for (const terminalState of ["complete", "partial", "rejected"] as const) {
+				const runId = `run-${terminalState}`;
+				const runDir = path.join(asyncRoot, runId);
+				fs.mkdirSync(runDir, { recursive: true });
+				fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+					runId,
+					mode: "single",
+					state: terminalState,
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: terminalState }],
+				}), "utf-8");
+				tracker.handleStarted({ id: runId, asyncDir: runDir, agent: "worker" });
+			}
 
 			await new Promise((resolve) => setTimeout(resolve, 80));
 
 			assert.equal(state.asyncJobs.size, 0);
 			assert.ok(ui.renderRequests > 0, "expected polling cleanup to request a rerender");
 			assert.equal(ui.widgets.at(-1), undefined);
+			assert.equal(state.fleetJobs.get("run-complete")?.status, "complete");
+			assert.equal(state.fleetJobs.get("run-partial")?.status, "partial");
+			assert.equal(state.fleetJobs.get("run-rejected")?.status, "rejected");
+			tracker.resetJobs();
 		} finally {
 			removeTempDir(asyncRoot);
 		}
