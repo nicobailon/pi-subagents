@@ -29,13 +29,12 @@ function sourceRank(source: AgentConfig["source"]): number {
 	return 3;
 }
 
-function allVisibleAgents(pi: RuntimeAgentOwner | null, cwd: string): AgentConfig[] {
+function allVisibleAgents(pi: RuntimeAgentOwner, cwd: string): AgentConfig[] {
 	const d = discoverAgentsAll(cwd);
 	const allConfigured = [...d.project, ...d.user, ...d.package, ...d.builtin];
 	const visibleConfigured = allConfigured.filter((agent) => !agent.disabled);
-	// Runtime-registered agents (pi-subagents:runtime-agent-register:v1) participate in every
-	// delegation and listing path through mergeRuntimeAgents; the admin panel must list them too.
-	const agents = pi ? mergeRuntimeAgents(pi, { agents: visibleConfigured }, allConfigured).agents : visibleConfigured;
+	// Disabled definitions remain in collision checks even though the panel hides them.
+	const agents = mergeRuntimeAgents(pi, { agents: visibleConfigured }, allConfigured).agents;
 	return agents.sort((a, b) => a.name.localeCompare(b.name) || sourceRank(a.source) - sourceRank(b.source));
 }
 

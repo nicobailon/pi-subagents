@@ -1106,7 +1106,6 @@ export default function() {
 		assert.equal(payload.results[0]?.savedOutputPath, outputPath);
 		const savedOutput = fs.readFileSync(outputPath, "utf-8");
 		assert.equal(savedOutput, JSON.stringify(expectedStructuredOutput, null, 2));
-		assert.deepEqual(JSON.parse(savedOutput), expectedStructuredOutput);
 	});
 
 	it("background outputSchema runs fail closed when required acceptanceReport is missing", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
