@@ -9,6 +9,7 @@ import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, registerExternalJobProvider } from 
 import { clearSkillCache } from "../../src/agents/skills.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import { openSubagentsAdmin } from "../../src/slash/subagents-admin.ts";
+import { writeNodeCommand } from "../support/node-command.ts";
 
 let tempDir = "";
 let oldAgentDir: string | undefined;
@@ -198,9 +199,7 @@ Remote.
 `);
 		const binDir = path.join(tempDir, "bin");
 		fs.mkdirSync(binDir);
-		const ssh = path.join(binDir, "ssh");
-		fs.writeFileSync(ssh, "#!/bin/sh\nexit 0\n", "utf-8");
-		fs.chmodSync(ssh, 0o755);
+		writeNodeCommand(binDir, "ssh", "process.exit(0)");
 		const previousPath = process.env.PATH;
 		const previousHerdrBin = process.env.HERDR_BIN;
 		try {

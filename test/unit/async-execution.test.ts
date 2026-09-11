@@ -30,7 +30,7 @@ const ctx = {
 };
 
 describe("async runner execution", () => {
-	it("propagates static parallel machine placement before agent pins and rejects group worktrees", (t) => {
+	it("propagates static parallel machine placement before agent pins and rejects group worktrees", { skip: process.platform === "win32" ? "Herdr saved-machine launches are unsupported on Windows" : undefined }, (t) => {
 		const bin = fs.mkdtempSync(path.join(os.tmpdir(), "herdr-bin-"));
 		const herdr = path.join(bin, "herdr");
 		fs.writeFileSync(herdr, "#!/bin/sh\necho '[{\"id\":\"machine-1\",\"label\":\"workmac\",\"target\":\"host.example\",\"enabled\":true}]'\n", "utf-8");
