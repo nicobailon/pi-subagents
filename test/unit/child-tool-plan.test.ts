@@ -25,7 +25,7 @@ describe("child tool plan", () => {
 		try {
 			assert.throws(
 				() => resolvePiLaunchToolPlan({ tools: ["read"], mcpDirectTools: ["runtime-only/search"], cwd, agentName: "browser", runtimeSnapshotHost: runtimeSnapshotHost("runtime-only") }),
-				/cannot be provided to in-process children; MCP tools must come from an ambient adapter extension in a background child/,
+				/cannot be provided to child sessions; MCP tools must come from an adapter extension loaded in the child/,
 			);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });

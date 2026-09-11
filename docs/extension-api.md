@@ -408,9 +408,9 @@ Semantics:
 - Providers share a registry through `Symbol.for("pi-subagents.background-work.v1")`, allowing independently loaded extension modules to meet in one Pi process.
 - Registration is reload-safe: a new provider with the same name replaces the old callback, and the old disposer cannot remove the replacement. Call the disposer during extension shutdown when possible.
 
-Children do not gain provider tools or extensions automatically. Add `bg_wait` to the child agent's `tools` allowlist and load each provider through `extensions` or `subagentOnlyExtensions`. The parent's effective `waitTool` setting reaches every child through its typed runtime config; `PI_SUBAGENT_WAIT_TOOL_ENABLED` keeps precedence in the parent.
+An external job provider is available to a child only when its extension is loaded there, either through ambient discovery, `extensions`, or `subagentOnlyExtensions`. Add `bg_wait` to the child agent's `tools` allowlist as well. The parent's effective `waitTool` setting reaches every child through its typed runtime config; `PI_SUBAGENT_WAIT_TOOL_ENABLED` keeps precedence in the parent.
 
-Foreground children never load the parent's ambient extensions: they share the parent's process, and loading them would start a second copy of every ambient extension, including this one, inside it. Agents that need MCP tools (`mcpDirectTools`, or MCP tools from an ambient adapter such as pi-mcp-adapter) or models from a provider extension must run as background children (`async: true`), which load the ambient extensions inside the detached runner process unless the agent sets `extensions` or the capability ceiling denies extensions.
+Foreground and background native children load the parent's ambient extensions unless the agent sets `extensions` or the capability ceiling denies extensions. Foreground children share the parent process and initialize each discovered extension again against the child session's registry; set `extensions: []` when an extension has process-global side effects or a foreground child must otherwise avoid initializing ambient providers.
 
 ## External job provider bridge
 

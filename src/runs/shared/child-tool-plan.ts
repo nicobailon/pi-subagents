@@ -252,7 +252,7 @@ function hasPermissionRules(rules: PermissionRules | undefined): boolean {
  */
 export function formatRuntimeSnapshotMcpServersError(agentName: string | undefined, serverNames: readonly string[]): string {
 	const subject = agentName ? `Agent '${agentName}'` : "Subagent";
-	return `${subject} selects MCP tools from servers that exist only in pi-mcp-adapter's runtime snapshot (${serverNames.join(", ")}). MCP servers from the runtime snapshot cannot be provided to in-process children; MCP tools must come from an ambient adapter extension in a background child (\`async: true\`), so add the server to the adapter's configuration file instead.`;
+	return `${subject} selects MCP tools from servers that exist only in pi-mcp-adapter's runtime snapshot (${serverNames.join(", ")}). MCP servers from the runtime snapshot cannot be provided to child sessions; MCP tools must come from an adapter extension loaded in the child, so add the server to the adapter's configuration file instead.`;
 }
 
 export function projectLaunchResolvedChildExtensions(

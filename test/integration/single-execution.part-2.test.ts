@@ -4363,8 +4363,9 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		const result = await runSync(tempDir, agents, "extension-worker", "Use fixture search", { runId: "missing-extension-tool" });
 
 		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /ran as a foreground child, which never loads the parent's ambient extensions, and these child tools were unavailable: fixture_search/);
-		assert.match(result.error ?? "", /must run as background children \(`async: true`\)/);
+		assert.equal(readCall().launch?.ambientExtensions, true);
+		assert.match(result.error ?? "", /requested unavailable tools in its foreground child runtime: fixture_search/);
+		assert.match(result.error ?? "", /ambient extension is configured for Pi/);
 		assert.match(result.error ?? "", /subagentOnlyExtensions/);
 		assert.match(result.error ?? "", /strict allowlist/);
 		assert.doesNotMatch(result.finalOutput ?? "", /Model incorrectly claimed success/);
@@ -4380,12 +4381,12 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		const result = await runSync(tempDir, agents, "worker", "Implement the requested source fix", { runId: "missing-implementation-tool" });
 
 		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /these child tools were unavailable: fixture_search/);
+		assert.match(result.error ?? "", /requested unavailable tools in its foreground child runtime: fixture_search/);
 		assert.doesNotMatch(result.error ?? "", /completed without making edits/);
 		assert.equal(result.effects?.fileMutation?.status, "blocked");
 		assert.equal(result.effects?.fileMutation?.expected, true);
 		assert.equal(result.effects?.fileMutation?.attempted, false);
-		assert.match(result.effects?.fileMutation?.message ?? "", /these child tools were unavailable: fixture_search/);
+		assert.match(result.effects?.fileMutation?.message ?? "", /requested unavailable tools in its foreground child runtime: fixture_search/);
 	});
 
 	it("passes custom tool extensions through even when explicit extensions are allowlisted", { skip: process.platform === "win32" ? "extension path resolution intermittent on Windows CI" : undefined }, async () => {

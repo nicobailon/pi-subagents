@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Let native foreground children inherit ambient extensions when an agent omits `extensions`, matching background children while preserving explicit empty/list overrides and capability ceilings.
 - Restore direct parent ownership as the default and require operator authorization before invoking the bundled delegation skill's child/workflow guidance; complexity and recipe fit no longer trigger delegation or writer/challenge/review ceremony by themselves. Technical async, safety, isolation, review, and workflow guidance remains available when requested. Thanks to [@AlexDochioiu](https://github.com/AlexDochioiu) for #2216.
 - Drain the full Git fingerprint process tree before a stopped external run settles, preventing a blocked fsmonitor descendant from retaining a Windows fixture or worktree after cancellation (#2207 recurrence).
 - Report each agent's declared acceptance policy and acceptance role in `capabilities: true` list rows and `details.agentCapabilities`, so callers see the policy `action: "get"` already reported instead of having to inspect every candidate agent individually. Thanks to [@Alice39s](https://github.com/Alice39s) for #2210.

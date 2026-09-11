@@ -114,10 +114,10 @@ export interface BuildInProcessChildLaunchInput {
 	/** The launching executor's own child runtime when it is itself an in-process child. */
 	inherited?: InheritedChildRuntime;
 	/**
-	 * Which process hosts the session. The parent never loads ambient extensions
-	 * or writes child environment values (it shares its process with the parent
-	 * session); the runner loads ambient extensions when the tool plan allows
-	 * them and exposes the child environment external extensions read.
+	 * Which process hosts the session. Both hosts load ambient extensions when
+	 * the tool plan allows them. The parent does not write child environment
+	 * values because it shares its process with the parent session; the runner
+	 * exposes the child environment external extensions read.
 	 */
 	host: "parent" | "runner";
 	/**
@@ -294,7 +294,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 	const capturedHooks = createCapturedChildHooks(config, input.host === "runner");
 
 	const extensionPaths = toolPlan.extensionArgs.filter((extensionPath) => !isSubagentRuntimeExtensionPath(extensionPath));
-	const ambientExtensions = input.host === "runner" && !toolPlan.disableAmbientExtensions;
+	const ambientExtensions = !toolPlan.disableAmbientExtensions;
 	const launchResolvedExtensions = projectLaunchResolvedChildExtensions({
 		runtimeExtensions: toolPlan.runtimeExtensions,
 		configuredExtensions: toolPlan.configuredExtensions,
