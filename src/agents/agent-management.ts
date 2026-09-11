@@ -33,7 +33,6 @@ import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, resolveExternalCliRunnerStatus, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import { resolveExternalCliBinaryAvailability, type ExternalCliBinaryAvailability } from "../runs/shared/external-cli-preflight.ts";
-import { resolveHerdrMachineAvailability } from "../runs/shared/herdr-machine.ts";
 import type { AcceptanceInput, AgentCapabilitiesSnapshot, AgentCapabilityRow, Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
 import { getProjectConfigDir } from "../shared/utils.ts";
 import { previewDisplayText } from "../shared/display-text.ts";
@@ -714,9 +713,9 @@ function externalJobProviderSuffix(provider: string, names: Set<string> | undefi
 
 type ExternalCliAvailabilityByCommand = ReadonlyMap<string, ExternalCliBinaryAvailability>;
 
-/** A placed agent is available when ssh resolves locally and the machine is saved and enabled; its CLI lives on the machine. */
-function externalCliAvailabilityKey(runner: { command: string }, machine: string | undefined): string {
-	return machine ? `${runner.command}@${machine}` : runner.command;
+/** A placed agent checks only local ssh; machine catalog and remote CLI validation happen at launch. */
+function externalCliAvailabilityKey(command: string, machine: string | undefined): string {
+	return machine ? `ssh@${machine}` : command;
 }
 
 function externalCliAvailabilityForAgents(agents: readonly AgentConfig[]): ExternalCliAvailabilityByCommand {
@@ -724,9 +723,9 @@ function externalCliAvailabilityForAgents(agents: readonly AgentConfig[]): Exter
 	for (const agent of agents) {
 		const runner = agent.runner;
 		if (runner?.type !== "external-cli") continue;
-		const key = externalCliAvailabilityKey(runner, agent.machine);
+		const key = externalCliAvailabilityKey(runner.command, agent.machine);
 		if (availability.has(key)) continue;
-		availability.set(key, agent.machine ? resolveHerdrMachineAvailability(agent.machine, process.env) : resolveExternalCliBinaryAvailability(runner.command, process.env));
+		availability.set(key, resolveExternalCliBinaryAvailability(agent.machine ? "ssh" : runner.command, process.env));
 	}
 	return availability;
 }
@@ -735,8 +734,9 @@ function runnerListBadge(agent: AgentConfig, providerNames: Set<string> | undefi
 	if (agent.runner?.type === "external-job") return `external-job:${agent.runner.provider} ${externalJobProviderSuffix(agent.runner.provider, providerNames)}`;
 	if (agent.runner?.type === "external-cli") {
 		const placed = agent.machine ? `${agent.runner.command} @ ${agent.machine}` : agent.runner.command;
-		const availability = externalCliAvailability?.get(externalCliAvailabilityKey(agent.runner, agent.machine));
+		const availability = externalCliAvailability?.get(externalCliAvailabilityKey(agent.runner.command, agent.machine));
 		if (!availability) return `external-cli:${placed}`;
+		if (agent.machine) return `external-cli:${placed} ssh ${availability.available ? "✓" : "missing"}; machine not preflighted`;
 		return `external-cli:${placed} ${availability.available ? "✓" : "missing"}`;
 	}
 	if (agent.machine) return `machine: ${agent.machine} (native agents cannot be placed)`;
@@ -790,7 +790,7 @@ function agentCapabilityRunner(agent: AgentConfig, providerNames: Set<string> | 
 	const runner = agent.runner;
 	if (!runner || runner.type === "pi") return PI_AGENT_RUNNER;
 	if (runner.type === "external-cli") {
-		const availability = externalCliAvailability.get(runner.command)!;
+		const availability = externalCliAvailability.get(externalCliAvailabilityKey(runner.command, agent.machine))!;
 		return {
 			type: "external-cli",
 			adapter: runner.adapter,
@@ -1396,8 +1396,8 @@ function handleReset(params: ManagementParams, ctx: ManagementContext): AgentToo
 		fs.unlinkSync(custom.filePath);
 		lines.push(`Deleted custom ${scope} agent file at ${custom.filePath}.`);
 	}
-	const overrideRemoval = removeBuiltinAgentOverride(ctx.cwd, runtimeName, scope);
-	if (overrideRemoval.removed) lines.push(`Removed ${scope} settings override at ${overrideRemoval.path}.`);
+	const overrideRemoval = removeBuiltinAgentOverride(ctx.cwd, runtimeName, scope, { preserveMachine: true });
+	if (overrideRemoval.removed) lines.push(`${overrideRemoval.machinePreserved ? "Cleared customization in" : "Removed"} ${scope} settings override at ${overrideRemoval.path}.${overrideRemoval.machinePreserved ? " Retained machine placement." : ""}`);
 	if (lines.length === 0) {
 		const otherScope = scope === "user" ? "project" : "user";
 		const otherCustom = (otherScope === "user" ? d.user : d.project).find((a) => a.name === raw || a.name === sanitized);

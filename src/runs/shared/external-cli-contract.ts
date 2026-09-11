@@ -2,6 +2,7 @@ import type {
 	ExternalCliReceiptMetadata,
 	ExternalCliCapabilityNarrowing,
 	ExternalCliRunnerStatus,
+	ExternalCliMachineStatus,
 	ExternalProcessStatus,
 	HerdrMachineReference,
 } from "../../shared/types.ts";
@@ -156,10 +157,11 @@ export function externalCliReceiptMetadata(input: {
 	outputReference?: string;
 }): ExternalCliReceiptMetadata {
 	const { runner } = input;
+	const machine: ExternalCliMachineStatus | undefined = input.externalProcess?.machine ?? runner.machine;
 	return {
 		adapter: { ...runner.adapter },
 		capabilities: { ...runner.capabilities },
-		...(runner.machine ? { machine: { ...runner.machine } } : {}),
+		...(machine ? { machine: { ...machine, ...(machine.remoteGit ? { remoteGit: { ...machine.remoteGit } } : {}) } } : {}),
 		...(runner.safety ? { safety: { ...runner.safety } } : {}),
 		...(input.externalProcess ? {
 			outputArtifacts: {

@@ -115,12 +115,26 @@ const EXTERNAL_CLI_CAPABILITIES = {
 	extensionBindings: false,
 } as const;
 
+function parseExternalCliMachine(value: unknown, label: string): void {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label}.machine must be an object.`);
+	const machine = value as Record<string, unknown>;
+	const unknownMachine = Object.keys(machine).filter((field) => !["provider", "id", "label", "target", "session", "cwd", "remoteGit"].includes(field));
+	if (unknownMachine.length > 0) throw new Error(`${label}.machine has unsupported fields: ${unknownMachine.join(", ")}.`);
+	if (machine.provider !== "herdr" || typeof machine.id !== "string" || !machine.id.trim() || typeof machine.target !== "string" || !machine.target.trim() || typeof machine.cwd !== "string" || !machine.cwd.trim()) throw new Error(`${label}.machine is invalid.`);
+	for (const field of ["label", "session"] as const) if (machine[field] !== undefined && (typeof machine[field] !== "string" || !machine[field].trim())) throw new Error(`${label}.machine.${field} is invalid.`);
+	if (machine.remoteGit === undefined) return;
+	if (!machine.remoteGit || typeof machine.remoteGit !== "object" || Array.isArray(machine.remoteGit)) throw new Error(`${label}.machine.remoteGit must be an object.`);
+	const remoteGit = machine.remoteGit as Record<string, unknown>;
+	const unknownRemoteGit = Object.keys(remoteGit).filter((field) => !["head", "branch", "dirty"].includes(field));
+	if (unknownRemoteGit.length > 0 || (remoteGit.head !== undefined && (typeof remoteGit.head !== "string" || !remoteGit.head.trim())) || (remoteGit.branch !== undefined && (typeof remoteGit.branch !== "string" || !remoteGit.branch.trim())) || (remoteGit.dirty !== undefined && typeof remoteGit.dirty !== "boolean")) throw new Error(`${label}.machine.remoteGit is invalid.`);
+}
+
 function parseExternalCliReceiptMetadata(value: unknown, key: string, source: string): ExternalCliReceiptMetadata | undefined {
 	if (value === undefined) return undefined;
 	const label = `Invalid workflow receipt '${source}': entry '${key}' externalAdapter`;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object.`);
 	const metadata = value as Record<string, unknown>;
-	const unknownMetadata = Object.keys(metadata).filter((field) => !["adapter", "capabilities", "safety", "outputArtifacts", "handoff", "supervisor", "nonResumableReason"].includes(field));
+	const unknownMetadata = Object.keys(metadata).filter((field) => !["adapter", "capabilities", "machine", "safety", "outputArtifacts", "handoff", "supervisor", "nonResumableReason"].includes(field));
 	if (unknownMetadata.length > 0) throw new Error(`${label} has unsupported fields: ${unknownMetadata.join(", ")}.`);
 	const adapter = metadata.adapter;
 	if (!adapter || typeof adapter !== "object" || Array.isArray(adapter)) throw new Error(`${label}.adapter must be an object.`);
@@ -136,6 +150,7 @@ function parseExternalCliReceiptMetadata(value: unknown, key: string, source: st
 	for (const [capability, expected] of Object.entries(EXTERNAL_CLI_CAPABILITIES)) {
 		if (capabilityRecord[capability] !== expected) throw new Error(`${label}.capabilities.${capability} is invalid.`);
 	}
+	if (metadata.machine !== undefined) parseExternalCliMachine(metadata.machine, label);
 	const safety = metadata.safety;
 	if (adapterRecord.id === "codex-exec") {
 		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);

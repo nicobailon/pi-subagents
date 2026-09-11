@@ -1617,21 +1617,25 @@ export function saveBuiltinAgentOverride(
 	return filePath;
 }
 
-export function removeBuiltinAgentOverride(cwd: string, name: string, scope: "user" | "project"): { path: string; removed: boolean } {
+export function removeBuiltinAgentOverride(cwd: string, name: string, scope: "user" | "project", options?: { preserveMachine?: boolean }): { path: string; removed: boolean; machinePreserved: boolean } {
 	const filePath = scope === "project" ? getProjectAgentSettingsPath(cwd) : getUserAgentSettingsPath();
 	if (!filePath) throw new Error("Project override is not available here. No project config root was found.");
-	if (!fs.existsSync(filePath)) return { path: filePath, removed: false };
+	if (!fs.existsSync(filePath)) return { path: filePath, removed: false, machinePreserved: false };
 
 	const settings = readSettingsFileStrict(filePath);
 	const subagents = settings.subagents;
-	if (!subagents || typeof subagents !== "object" || Array.isArray(subagents)) return { path: filePath, removed: false };
+	if (!subagents || typeof subagents !== "object" || Array.isArray(subagents)) return { path: filePath, removed: false, machinePreserved: false };
 	const nextSubagents = { ...(subagents as Record<string, unknown>) };
 	const agentOverrides = nextSubagents.agentOverrides;
-	if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) return { path: filePath, removed: false };
+	if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) return { path: filePath, removed: false, machinePreserved: false };
 
 	const nextOverrides = { ...(agentOverrides as Record<string, unknown>) };
-	if (!Object.prototype.hasOwnProperty.call(nextOverrides, name)) return { path: filePath, removed: false };
-	delete nextOverrides[name];
+	const current = nextOverrides[name];
+	if (!Object.prototype.hasOwnProperty.call(nextOverrides, name)) return { path: filePath, removed: false, machinePreserved: false };
+	const configuredMachine = current && typeof current === "object" && !Array.isArray(current) ? (current as Record<string, unknown>).machine : undefined;
+	const machine = configuredMachine === false || (typeof configuredMachine === "string" && configuredMachine.trim()) ? configuredMachine : undefined;
+	if (options?.preserveMachine && machine !== undefined) nextOverrides[name] = { machine };
+	else delete nextOverrides[name];
 	if (Object.keys(nextOverrides).length > 0) nextSubagents.agentOverrides = nextOverrides;
 	else delete nextSubagents.agentOverrides;
 
@@ -1639,7 +1643,7 @@ export function removeBuiltinAgentOverride(cwd: string, name: string, scope: "us
 	else delete settings.subagents;
 
 	writeSettingsFile(filePath, settings);
-	return { path: filePath, removed: true };
+	return { path: filePath, removed: true, machinePreserved: options?.preserveMachine === true && machine !== undefined };
 }
 
 export function mergeBuiltinAgentOverride(

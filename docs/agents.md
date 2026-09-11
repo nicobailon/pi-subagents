@@ -236,9 +236,9 @@ Disable and restore:
 
 ## Running external CLI agents on a Herdr saved machine
 
-The six code-owned external-cli profiles (`claude-code`, `claude-code-writer`, `codex-exec`, `codex-exec-writer`, `cursor-agent`, `cursor-agent-writer`) can run on a machine saved in Herdr (`herdr machine add <target> --label <name>`, listed by `herdr machine list --json`). The parent session stays local. The runner spawns a local `ssh -T <target>` child with Herdr's saved-machine ssh options, so prompt delivery over stdin, stream parsing, stop, and exit proof are unchanged; only where the CLI runs moves. Herdr's catalog is the allowlist of hosts: a raw ssh target is never accepted.
+The six code-owned external-cli profiles can run on a Herdr machine (`herdr machine add <target> --label <name>`). The local parent spawns `ssh -T <target>`, retaining prompt delivery, stream parsing, stop, and exit proof. Herdr's catalog is the host allowlist; raw ssh targets are rejected.
 
-One field, three writers. `machine` is a top-level frontmatter key, a settings override (`subagents.agentOverrides.<agent>.machine`, project beats user, `false` clears a pin), and a launch option on the `subagent` tool, workflow `runs.run` options, and chain or parallel steps. The launch option wins. Placement survives `subagent({ action: "disable" })`, `reset`, and model profile switches.
+`machine` is a top-level frontmatter key, a settings override (`subagents.agentOverrides.<agent>.machine`, project beats user, `false` clears a pin), and a launch option on the `subagent` tool, workflow `runs.run`, chain, parallel, and dynamic-fanout steps. The launch option wins. Placement survives `subagent({ action: "disable" })`, `reset`, and model profile switches.
 
 `cwd` means the directory on that machine when a machine is set. An absolute path or `~/...` is used as given; a relative path joins the repo's configured machine root; with no cwd the root is used; with no root the launch fails closed naming the setting:
 
@@ -253,9 +253,9 @@ One field, three writers. `machine` is a top-level frontmatter key, a settings o
 
 `machines.<label-or-id>.env` is optional and is exported in front of the remote command. Nothing else crosses: the local ssh process receives only `PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, and `SSH_AUTH_SOCK`, and no local API key is copied. Remote runs use the machine's own credentials, so log in to the CLI on that machine once. Non-interactive ssh shells skip rc files, so `~/.local/bin`, `/opt/homebrew/bin`, and `/usr/local/bin` are prepended to the remote `PATH`; for anything else set the agent's `command` to the absolute path on the machine.
 
-What is verified and recorded. `--version` and `--help` probes run on the machine with a longer probe ceiling, and a ready marker discards rc-file noise before the version check and before the JSONL parser. Every run on this host shares one OpenSSH ControlMaster socket per machine (`~/.pi/agent/ssh-control/`, `ControlPersist=60`), so parallel children do not collide with sshd's connection limit. Status, receipts, and FleetView carry the machine id, label, target, session, remote cwd, and the remote `HEAD`, branch, and dirty state after the run. Writer results say that the changes live on the machine and the local checkout is unchanged.
+Remote `--version` and `--help` probes use a ready marker to discard rc-file noise. Runs share one OpenSSH ControlMaster socket per machine (`~/.pi/agent/ssh-control/`, `ControlPersist=60`). Status, receipts, and FleetView carry the machine identity, remote cwd, and remote git state; writer results state that changes are remote.
 
-The checkout on the machine is yours to keep. pi-subagents never clones, pulls, or checks out there; a missing directory fails the remote `cd` and the run fails closed with a hint. Native Pi agents, generic `external-cli` commands, managed worktrees, and Windows hosts are rejected before launch with a pointer. Codex's final message and Cursor's handoff file are carried through the ssh stream and a remote temp file, so neither adapter needs a local path on the machine.
+pi-subagents never clones, pulls, or checks out on the machine; a missing directory fails the remote `cd` with a hint. Native Pi agents, generic `external-cli` commands, managed worktrees, and Windows hosts are rejected before launch. Codex's final message and Cursor's handoff file use the ssh stream and remote temp files, not local paths.
 
 ## Parent prompt discovery
 
@@ -318,8 +318,6 @@ completionGuard: false
 interactive: true
 maxSubagentDepth: 1
 allowNestedSubagents: true
-# External-cli agents only: run on this Herdr saved machine (label or profile id)
-machine: workmac
 ---
 
 Your system prompt goes here.

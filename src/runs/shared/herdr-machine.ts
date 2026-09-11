@@ -5,7 +5,7 @@ import * as path from "node:path";
 import type { ExternalProcessStatus, HerdrMachineReference, HerdrRemoteGitStatus } from "../../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../../shared/utils.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS, type CodeOwnedExternalCliAdapterId } from "./external-cli-contract.ts";
-import { type ExternalCliBinaryAvailability, type ExternalCliPreflightResult, type ExternalCliPreflightSpec, resolveExternalCliBinaryAvailability } from "./external-cli-preflight.ts";
+import { type ExternalCliPreflightResult, type ExternalCliPreflightSpec } from "./external-cli-preflight.ts";
 import type { ExternalCliParser, ExternalCliParserProgress, runExternalCli } from "./external-cli-runner.ts";
 
 /**
@@ -249,19 +249,6 @@ export function resolveHerdrMachinePlacement(input: ResolveHerdrMachinePlacement
 	};
 }
 
-/** Availability for a placed agent: ssh resolves locally and the machine is saved and enabled. The agent CLI lives on the machine. */
-export function resolveHerdrMachineAvailability(machine: string, env: NodeJS.ProcessEnv): ExternalCliBinaryAvailability {
-	const ssh = resolveExternalCliBinaryAvailability("ssh", env);
-	if (!ssh.available) return ssh;
-	try {
-		const catalog = readHerdrMachineCatalog(env, env.HERDR_BIN ?? "herdr");
-		selectMachine(catalog, validateMachineName(machine));
-		return { available: true };
-	} catch (error) {
-		return { available: false, unavailableReason: (error instanceof Error ? error.message : String(error)).slice(0, 256) };
-	}
-}
-
 export function formatHerdrMachineRunnerUnsupported(input: {
 	machine?: string;
 	agentName: string;
@@ -279,10 +266,6 @@ export function formatHerdrMachineRunnerUnsupported(input: {
 	if (input.worktree === true) return `Agent '${input.agentName}' requested machine '${input.machine}', but managed worktrees are local git operations and cannot be combined with a Herdr saved machine.`;
 	if (process.platform === "win32") return "Herdr saved-machine launches wrap the child with OpenSSH ControlMaster and a POSIX shell script, which is not supported from a Windows host yet.";
 	return undefined;
-}
-
-export function isHerdrMachineWriterAdapter(adapter: string | undefined): boolean {
-	return adapter !== undefined && adapter.endsWith("-writer");
 }
 
 /** One ControlMaster socket per machine, shared by every run on this host. ControlPersist expires it; nothing closes it. */
@@ -324,10 +307,6 @@ function remoteCommand(machine: HerdrMachineReference, env: Record<string, strin
 		body,
 	].join("; ");
 	return `sh -c ${shellQuote(script)}`;
-}
-
-function adapterIdFromPreflight(spec: ExternalCliPreflightSpec | undefined): string | undefined {
-	return spec?.id.split("@")[0];
 }
 
 function stripThroughMarker(text: string): string {
@@ -426,7 +405,7 @@ function remoteArg(arg: string, substitutions: ReadonlyArray<readonly [local: st
 export function prepareHerdrMachineExternalCliRun(input: RunExternalCliInput, placement: HerdrMachinePlacement | undefined, options: { localCwd: string }): PreparedHerdrMachineExternalCliRun {
 	if (!placement) return { input, decorateProcess: (process) => process };
 	const { machine, env } = placement;
-	const adapter = adapterIdFromPreflight(input.preflight);
+	const adapter = input.preflight?.id.split("@")[0];
 	const codex = adapter === "codex-exec" || adapter === "codex-exec-writer";
 	const cursor = adapter === "cursor-agent" || adapter === "cursor-agent-writer";
 	const captureFinalOutput = codex && input.finalOutputPath !== undefined;
@@ -493,8 +472,4 @@ const HINTS: ReadonlyArray<readonly [RegExp, (machine: HerdrMachineReference) =>
 export function formatHerdrMachineHint(machine: HerdrMachineReference, text: string): string | undefined {
 	for (const [pattern, hint] of HINTS) if (pattern.test(text)) return hint(machine);
 	return undefined;
-}
-
-export function formatHerdrMachineWriterNote(machine: HerdrMachineReference): string {
-	return `Changes made by this run live on ${machine.label ?? machine.id} at ${machine.cwd}; the local checkout is unchanged.`;
 }

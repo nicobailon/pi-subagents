@@ -182,6 +182,47 @@ Missing.
 		}
 	});
 
+	it("does not preflight Herdr machines while listing capabilities", () => {
+		const agentsDir = path.join(tempDir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "remote-external.md"), `---
+name: remote-external
+description: Remote external CLI
+machine: workmac
+runner:
+  type: external-cli
+  adapter: codex-exec
+  command: codex
+---
+Remote.
+`);
+		const binDir = path.join(tempDir, "bin");
+		fs.mkdirSync(binDir);
+		const ssh = path.join(binDir, "ssh");
+		fs.writeFileSync(ssh, "#!/bin/sh\nexit 0\n", "utf-8");
+		fs.chmodSync(ssh, 0o755);
+		const previousPath = process.env.PATH;
+		const previousHerdrBin = process.env.HERDR_BIN;
+		try {
+			process.env.PATH = binDir;
+			process.env.HERDR_BIN = path.join(binDir, "missing-herdr");
+			const listed = handleManagementAction("list", { agentScope: "project", capabilities: true }, {
+				cwd: tempDir,
+				modelRegistry: { getAvailable: () => [] },
+			});
+			assert.equal(listed.isError, false);
+			assert.match(readText(listed), /external-cli:codex @ workmac ssh ✓; machine not preflighted/);
+			const runner = listed.details?.agentCapabilities?.agents.find((agent) => agent.name === "remote-external")?.runner;
+			assert.equal(runner?.type, "external-cli");
+			if (runner?.type === "external-cli") assert.equal(runner.available, true);
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+			if (previousHerdrBin === undefined) delete process.env.HERDR_BIN;
+			else process.env.HERDR_BIN = previousHerdrBin;
+		}
+	});
+
 	it("rejects management attempts to widen the reserved read-only Claude profile", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 		const writerRunner = { type: "external-cli", adapter: "claude-code-writer", command: "claude" };

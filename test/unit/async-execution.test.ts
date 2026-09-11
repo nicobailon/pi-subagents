@@ -30,6 +30,42 @@ const ctx = {
 };
 
 describe("async runner execution", () => {
+	it("propagates static parallel machine placement before agent pins and rejects group worktrees", (t) => {
+		const bin = fs.mkdtempSync(path.join(os.tmpdir(), "herdr-bin-"));
+		const herdr = path.join(bin, "herdr");
+		fs.writeFileSync(herdr, "#!/bin/sh\necho '[{\"id\":\"machine-1\",\"label\":\"workmac\",\"target\":\"host.example\",\"enabled\":true}]'\n", "utf-8");
+		fs.chmodSync(herdr, 0o755);
+		const previousHerdrBin = process.env.HERDR_BIN;
+		process.env.HERDR_BIN = herdr;
+		t.after(() => {
+			if (previousHerdrBin === undefined) delete process.env.HERDR_BIN;
+			else process.env.HERDR_BIN = previousHerdrBin;
+			fs.rmSync(bin, { recursive: true, force: true });
+		});
+		const external = { ...agent("external"), machine: "agent-pin", runner: { type: "external-cli" as const, adapter: "codex-exec" as const, command: "codex" } };
+		const built = buildAsyncRunnerSteps("parallel-machine", {
+			chain: [{ machine: "workmac", parallel: [{ agent: "external", task: "Review", cwd: "/remote/repo" }] }],
+			agents: [external],
+			ctx,
+			asyncDir: path.join(process.cwd(), ".tmp-parallel-machine"),
+			maxSubagentDepth: 1,
+		});
+		assert.ok("steps" in built);
+		const parallel = built.steps[0];
+		assert.ok(parallel && "parallel" in parallel && Array.isArray(parallel.parallel));
+		assert.equal(parallel.parallel[0]?.machine?.label, "workmac");
+
+		const rejected = buildAsyncRunnerSteps("parallel-machine-worktree", {
+			chain: [{ machine: "workmac", worktree: true, parallel: [{ agent: "external", task: "Review" }] }],
+			agents: [external],
+			ctx,
+			asyncDir: path.join(process.cwd(), ".tmp-parallel-machine-worktree"),
+			maxSubagentDepth: 1,
+		});
+		assert.ok("error" in rejected);
+		assert.match(rejected.error, /managed worktrees are local git operations/u);
+	});
+
 	it("uses supplied discovery context for missing async agents", () => {
 		const result = buildAsyncRunnerSteps("missing-agent", {
 			chain: [{ agent: "missing", task: "Do not launch" }],

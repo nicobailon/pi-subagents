@@ -168,7 +168,7 @@ import { resolveClaudeCodeLaunch } from "../shared/claude-code-adapter.ts";
 import { resolveCodexExecLaunch } from "../shared/codex-exec-adapter.ts";
 import { resolveCursorAgentLaunch } from "../shared/cursor-agent-adapter.ts";
 import { resolveExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
-import { formatHerdrMachineHint, formatHerdrMachineWriterNote, isHerdrMachineWriterAdapter, prepareHerdrMachineExternalCliRun } from "../shared/herdr-machine.ts";
+import { formatHerdrMachineHint, prepareHerdrMachineExternalCliRun } from "../shared/herdr-machine.ts";
 import { runExternalJob } from "../shared/external-job-runner.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
@@ -719,7 +719,6 @@ interface SingleStepContext {
 	orcaProgressTab?: OrcaProgressTab;
 }
 
-/** Run a single pi agent step, returning output and metadata */
 /** Machine runs: a one-line hint for predictable remote failures, and a note that writer changes live on the machine. */
 function decorateHerdrMachineResult<T extends { output: string; exitCode: number | null; error?: string; externalProcess: { stderrPath: string } }>(result: T, machine: HerdrMachineReference, adapter: string | undefined): T {
 	let stderrTail = "";
@@ -729,7 +728,7 @@ function decorateHerdrMachineResult<T extends { output: string; exitCode: number
 	} catch { /* stderr log is best-effort evidence. */ }
 	const hint = result.exitCode === 0 ? undefined : formatHerdrMachineHint(machine, `${result.error ?? ""}\n${stderrTail}\nexit code ${result.exitCode}`);
 	const error = hint ? `${result.error ?? `Remote command exited with code ${result.exitCode}.`}\n${hint}` : result.error;
-	const note = result.exitCode === 0 && isHerdrMachineWriterAdapter(adapter) ? formatHerdrMachineWriterNote(machine) : undefined;
+	const note = result.exitCode === 0 && adapter?.endsWith("-writer") ? `Changes made by this run live on ${machine.label ?? machine.id} at ${machine.cwd}; the local checkout is unchanged.` : undefined;
 	const output = note ? (result.output.trim() ? `${result.output.trimEnd()}\n\n${note}` : note) : result.output;
 	return { ...result, output, ...(error !== undefined ? { error } : {}) };
 }

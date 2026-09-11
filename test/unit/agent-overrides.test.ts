@@ -947,6 +947,15 @@ describe("builtin agent overrides", () => {
 		assert.equal(fs.existsSync(settingsPath), false);
 	});
 
+	it("does not preserve empty or whitespace machine values when clearing other override fields", () => {
+		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+		for (const machine of ["", " \t "]) {
+			writeJson(settingsPath, { subagents: { agentOverrides: { reviewer: { machine, model: "openai/gpt-5.4" } } } });
+			removeBuiltinAgentOverride(tempProject, "reviewer", "user", { preserveMachine: true });
+			assert.equal((JSON.parse(fs.readFileSync(settingsPath, "utf-8")) as { subagents?: unknown }).subagents, undefined);
+		}
+	});
+
 	it("surfaces malformed settings files instead of silently ignoring them", () => {
 		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
 		fs.mkdirSync(path.dirname(settingsPath), { recursive: true });

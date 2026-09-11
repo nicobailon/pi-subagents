@@ -288,7 +288,7 @@ describe("agent eject/disable/enable/reset management actions", () => {
 			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "reviewer")?.source, "builtin");
 		});
 
-		it("removes a settings override and restores the pristine builtin", () => {
+	it("removes a settings override and restores the pristine builtin", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 			handleManagementAction("disable", { agent: "reviewer" }, ctx);
 			assert.equal(discoverAgents(tempDir, "both").agents.find((a) => a.name === "reviewer"), undefined);
@@ -298,9 +298,39 @@ describe("agent eject/disable/enable/reset management actions", () => {
 			assert.match(readText(reset), /Removed user settings override/);
 			assert.ok(discoverAgents(tempDir, "both").agents.find((a) => a.name === "reviewer"));
 			assert.equal((readJson(userSettingsPath()) as { subagents?: unknown }).subagents, undefined);
+	});
+
+		it("retains machine placement while clearing other settings customization", () => {
+			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+			writeJson(userSettingsPath(), {
+				subagents: { agentOverrides: { reviewer: { machine: "workmac", model: "openai/gpt-5.4", thinking: "high" } } },
+			});
+
+			const reset = handleManagementAction("reset", { agent: "reviewer" }, ctx);
+			assert.equal(reset.isError, false);
+			assert.match(readText(reset), /Retained machine placement/);
+			const settings = readJson(userSettingsPath()) as { subagents: { agentOverrides: { reviewer: unknown } } };
+			assert.deepEqual(settings.subagents.agentOverrides.reviewer, { machine: "workmac" });
+			assert.equal(discoverAgentsAll(tempDir).builtin.find((agent) => agent.name === "reviewer")?.machine, "workmac");
 		});
 
-		it("removes both a custom file and a settings override in one reset", () => {
+		it("retains a false machine clear so an inherited placement does not reactivate", () => {
+			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+			writeJson(userSettingsPath(), {
+				subagents: { agentOverrides: { "claude-code": { machine: "workmac" } } },
+			});
+			writeJson(projectSettingsPath(), {
+				subagents: { agentOverrides: { "claude-code": { machine: false, model: "openai/gpt-5.4" } } },
+			});
+
+			const reset = handleManagementAction("reset", { agent: "claude-code", agentScope: "project" }, ctx);
+			assert.equal(reset.isError, false);
+			const settings = readJson(projectSettingsPath()) as { subagents: { agentOverrides: { "claude-code": unknown } } };
+			assert.deepEqual(settings.subagents.agentOverrides["claude-code"], { machine: false });
+			assert.equal(discoverAgentsAll(tempDir).builtin.find((agent) => agent.name === "claude-code")?.machine, undefined);
+		});
+
+	it("removes both a custom file and a settings override in one reset", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 			handleManagementAction("eject", { agent: "reviewer" }, ctx);
 			handleManagementAction("disable", { agent: "reviewer" }, ctx);
