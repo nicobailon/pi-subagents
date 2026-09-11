@@ -12,7 +12,7 @@ import { writeNodeCommand } from "../support/node-command.ts";
 
 const tempDirs: string[] = [];
 afterEach(() => {
-	for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+	for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	const progressDir = path.join(TEMP_ROOT_DIR, "orca-progress");
 	if (fs.existsSync(progressDir)) {
 		for (const name of fs.readdirSync(progressDir)) {
