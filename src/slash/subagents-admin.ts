@@ -31,11 +31,11 @@ function sourceRank(source: AgentConfig["source"]): number {
 
 function allVisibleAgents(pi: RuntimeAgentOwner | null, cwd: string): AgentConfig[] {
 	const d = discoverAgentsAll(cwd);
-	const configured = [...d.project, ...d.user, ...d.package, ...d.builtin]
-		.filter((agent) => !agent.disabled);
+	const allConfigured = [...d.project, ...d.user, ...d.package, ...d.builtin];
+	const visibleConfigured = allConfigured.filter((agent) => !agent.disabled);
 	// Runtime-registered agents (pi-subagents:runtime-agent-register:v1) participate in every
 	// delegation and listing path through mergeRuntimeAgents; the admin panel must list them too.
-	const agents = pi ? mergeRuntimeAgents(pi, { agents: configured }, configured).agents : configured;
+	const agents = pi ? mergeRuntimeAgents(pi, { agents: visibleConfigured }, allConfigured).agents : visibleConfigured;
 	return agents.sort((a, b) => a.name.localeCompare(b.name) || sourceRank(a.source) - sourceRank(b.source));
 }
 

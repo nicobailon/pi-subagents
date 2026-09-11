@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { editableAgentConfig, handleCreate, handleList, handleManagementAction, handleUpdate } from "../../src/agents/agent-management.ts";
 import { EXTRA_AGENT_DIRS_ENV } from "../../src/agents/agents.ts";
+import { registerAgent } from "../../src/api/agents.ts";
 import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
 import { clearSkillCache } from "../../src/agents/skills.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
@@ -1125,6 +1126,70 @@ Drive the failing test first.
 			assert.deepEqual(warnings, []);
 		});
 	}
+
+	it("shows runtime agents but refuses edits without writing configuration", async () => {
+		const sent: Array<{ content?: string }> = [];
+		const notified: string[] = [];
+		const pi = {
+			on() {}, registerTool() {},
+			sendMessage: (message: { content?: string }) => sent.push(message),
+		} as never;
+		const registration = registerAgent({
+			pi,
+			name: "runtime-admin-helper",
+			definition: { description: "Runtime admin helper", systemPrompt: "Help at runtime." },
+		});
+		try {
+			await openSubagentsAdmin(pi, {
+				cwd: tempDir, hasUI: false,
+				modelRegistry: { getAvailable: () => [] },
+			} as never, "runtime-admin-helper");
+			assert.match(sent.at(-1)?.content ?? "", /Agent: runtime-admin-helper \(runtime\)/);
+
+			await openSubagentsAdmin(pi, {
+				cwd: tempDir, hasUI: true,
+				modelRegistry: { getAvailable: () => [{ provider: "custom", id: "new-model" }] },
+				ui: {
+					select: async () => "custom/new-model",
+					notify: (message: string) => notified.push(message),
+				},
+			} as never, "runtime-admin-helper model");
+
+			const refusal = "runtime-registered by an extension; edit its source definition instead";
+			assert.match(notified.at(-1) ?? "", new RegExp(refusal));
+			assert.match(sent.at(-1)?.content ?? "", new RegExp(refusal));
+			assert.equal(fs.existsSync(path.join(tempDir, ".pi", "settings.json")), false);
+			assert.equal(fs.existsSync(path.join(tempDir, "agent-home", "settings.json")), false);
+		} finally {
+			registration.dispose();
+		}
+	});
+
+	it("fails closed when a runtime agent collides with a disabled configured definition", async () => {
+		const agentPath = path.join(tempDir, ".pi", "agents", "disabled-runtime-name.md");
+		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+		fs.writeFileSync(agentPath, "---\nname: disabled-runtime-name\ndescription: Hidden configured agent\ndisabled: true\n---\nHidden.\n");
+		const pi = {
+			on() {}, registerTool() {},
+			sendMessage: () => assert.fail("a colliding runtime agent must not be listed"),
+		} as never;
+		const registration = registerAgent({
+			pi,
+			name: "disabled-runtime-name",
+			definition: { description: "Colliding runtime agent", systemPrompt: "Runtime." },
+		});
+		try {
+			await assert.rejects(
+				openSubagentsAdmin(pi, {
+					cwd: tempDir, hasUI: false,
+					modelRegistry: { getAvailable: () => [] },
+				} as never, "disabled-runtime-name"),
+				/collides with configured agent 'disabled-runtime-name'/,
+			);
+		} finally {
+			registration.dispose();
+		}
+	});
 
 	for (const outcome of ["returned error", "aborted", "rejected"]) {
 		it(`warns and keeps registry choices when refresh ${outcome}`, async () => {
