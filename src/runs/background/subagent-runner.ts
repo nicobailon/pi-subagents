@@ -1,8 +1,10 @@
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
+import { performance } from "node:perf_hooks";
+import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { arbitrateCompletionGuardRescue, createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
@@ -664,6 +666,29 @@ function writeRunLog(
 	write(logPath, lines.join("\n"));
 }
 
+const execFileAsync = promisify(execFile);
+
+function expectedMissingGitEvidence(error: unknown): boolean {
+	if (typeof (error as { code?: unknown })?.code !== "number") return false;
+	const stderr = (error as { stderr?: unknown }).stderr;
+	const detail = Buffer.isBuffer(stderr) ? stderr.toString("utf-8") : String(stderr ?? "");
+	return /not a git repository|Needed a single revision/i.test(detail);
+}
+
+async function readGitFingerprint(cwd: string, signal: AbortSignal, onError: (error: unknown) => void): Promise<string | undefined> {
+	try {
+		const options = { cwd, signal, encoding: "buffer" as const, maxBuffer: 16 * 1024 * 1024, timeout: 30_000, windowsHide: true };
+		const { stdout: headOutput } = await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], options);
+		const head = headOutput.toString("utf-8").trim();
+		if (!head) return undefined;
+		const { stdout: status } = await execFileAsync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=normal"], options);
+		return `${head}\0${status.toString("base64")}`;
+	} catch (error) {
+		if (!signal.aborted && !expectedMissingGitEvidence(error)) onError(error);
+		return undefined;
+	}
+}
+
 /** Context for running a single step */
 interface SingleStepContext {
 	previousOutput: string;
@@ -708,6 +733,8 @@ interface SingleStepContext {
 	onAttemptStart?: (attempt: { model?: string; thinking?: string; contextLimit?: number }) => void;
 	onChildEvent?: (event: ChildEvent) => void;
 	onExternalProcess?: (process: ExternalProcessStatus) => void;
+	prepareExternalActivity?: (cwd: string, signal: AbortSignal) => Promise<void>;
+	onExternalStreamActivity?: () => void;
 	onExternalJob?: (status: ExternalJobStatus) => void;
 	skipAcceptance?: () => boolean;
 	/** Authoritative owner decision after event delivery; undefined includes incomplete run-wide usage. */
@@ -894,6 +921,13 @@ export async function runSingleStepInner(
 
 	if (step.runner?.type === "external-cli") {
 		const externalCwd = step.machine?.cwd ?? step.cwd ?? ctx.cwd;
+		const externalAbortSignal = combinedAbortSignal([ctx.timeoutSignal, ctx.stopSignal]);
+		if (!step.machine && externalAbortSignal) await ctx.prepareExternalActivity?.(externalCwd, externalAbortSignal);
+		if (externalAbortSignal?.aborted) {
+			const stopped = ctx.stopSignal?.aborted === true;
+			const message = stopped ? ctx.stopMessage ?? "Subagent stopped by user." : ctx.timeoutMessage ?? "Subagent timed out.";
+			return omitUndefinedProperties({ agent: step.agent, context: step.context, output: message, error: message, exitCode: 1, stopped: stopped || undefined, timedOut: stopped ? undefined : true });
+		}
 		const adapterLaunch = step.runner.adapter === "codex-exec" || step.runner.adapter === "codex-exec-writer"
 			? resolveCodexExecLaunch({ adapter: step.runner.adapter, command: step.runner.command, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
 			: step.runner.adapter === "claude-code" || step.runner.adapter === "claude-code-writer"
@@ -903,6 +937,10 @@ export async function runSingleStepInner(
 				: undefined;
 		const runner = resolveExternalCliRunnerStatus({ ...step.runner, ...(adapterLaunch ? { args: adapterLaunch.args } : {}), ...(step.machine ? { machine: step.machine } : {}) });
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
+		const onExternalOutput = (chunk: Buffer): void => {
+			if (chunk.length > 0) ctx.onExternalStreamActivity?.();
+			ctx.orcaProgressTab?.append(chunk.toString("utf-8"));
+		};
 		const externalInput = omitUndefinedProperties({
 			command: adapterLaunch?.command ?? runner.command,
 			args: adapterLaunch?.args ?? runner.args,
@@ -921,8 +959,8 @@ export async function runSingleStepInner(
 			timeoutMessage: ctx.timeoutMessage,
 			stopMessage: ctx.stopMessage,
 			onProcess: ctx.onExternalProcess,
-			onStdout: (chunk: Buffer) => ctx.orcaProgressTab?.append(chunk.toString("utf-8")),
-			onStderr: (chunk: Buffer) => ctx.orcaProgressTab?.append(chunk.toString("utf-8")),
+			onStdout: onExternalOutput,
+			onStderr: onExternalOutput,
 		});
 		const preparedExternal = prepareHerdrMachineExternalCliRun(externalInput, step.machine ? { machine: step.machine, ...(step.machineEnv ? { env: step.machineEnv } : {}) } : undefined, { localCwd: ctx.cwd });
 		const ran = await runExternalCli(preparedExternal.input);
@@ -1995,6 +2033,7 @@ export async function runSubagent(
 	const timeoutAbortController = new AbortController();
 	const stopAbortController = new AbortController();
 	const setupInterruptController = new AbortController();
+	const runStopSignal = AbortSignal.any([timeoutAbortController.signal, stopAbortController.signal]);
 	const setupSignal = AbortSignal.any([timeoutAbortController.signal, stopAbortController.signal, setupInterruptController.signal]);
 	let previousCumulativeTokens: TokenUsage = { input: 0, output: 0, total: 0 };
 	let latestSessionFile: string | undefined;
@@ -2617,6 +2656,7 @@ export async function runSubagent(
 		}
 		const appendedSteps = requests.flatMap((request) => request.steps);
 		steps.push(...appendedSteps);
+		flatSteps.push(...flattenSteps(appendedSteps));
 		const now = Date.now();
 		const pendingAppends = countPendingChainAppendRequests(asyncDir);
 		const added = appendRunnerStepsToStatus({
@@ -2650,9 +2690,46 @@ export async function runSubagent(
 		setOptionalProperty(groupNode, "acceptanceStatus", acceptance?.status ?? groupNode.acceptanceStatus);
 	};
 
+	const EXTERNAL_GIT_PROBE_MIN_INTERVAL_MS = 2_000;
+	type ExternalActivityEvidence = {
+		cwd?: string;
+		lastStreamActivityAt?: number;
+		fingerprint?: string;
+		probeInFlight?: Promise<void>;
+		lastProbeStartedAt?: number;
+	};
+	const externalActivityEvidence = new Map<number, ExternalActivityEvidence>();
+	const gitProbesByCwd = new Map<string, Promise<string | undefined>>();
+	const reportedGitProbeErrors = new Set<string>();
+	const reportGitProbeError = (externalCwd: string, error: unknown): void => {
+		if (reportedGitProbeErrors.has(externalCwd)) return;
+		reportedGitProbeErrors.add(externalCwd);
+		const detail = error instanceof Error ? error.message : String(error);
+		console.error(`[pi-subagents] Git activity evidence unavailable for '${externalCwd.slice(-300)}'; check the cwd and Git installation: ${detail.slice(0, 500)}`);
+	};
+	const readSharedGitFingerprint = (externalCwd: string): Promise<string | undefined> => {
+		const inFlight = gitProbesByCwd.get(externalCwd);
+		if (inFlight) return inFlight;
+		const probe = readGitFingerprint(externalCwd, runStopSignal, (error) => reportGitProbeError(externalCwd, error)).finally(() => gitProbesByCwd.delete(externalCwd));
+		gitProbesByCwd.set(externalCwd, probe);
+		return probe;
+	};
+	const prepareExternalActivity = async (index: number, externalCwd: string, signal: AbortSignal): Promise<void> => {
+		if (!controlConfig.enabled) return;
+		const resolvedCwd = path.resolve(externalCwd);
+		const evidence: ExternalActivityEvidence = { cwd: resolvedCwd, lastProbeStartedAt: performance.now() };
+		externalActivityEvidence.set(index, evidence);
+		evidence.fingerprint = await readGitFingerprint(resolvedCwd, signal, (error) => reportGitProbeError(resolvedCwd, error));
+	};
+	const recordExternalStreamActivity = (index: number): void => {
+		const evidence = externalActivityEvidence.get(index) ?? {};
+		externalActivityEvidence.set(index, evidence);
+		evidence.lastStreamActivityAt = Date.now();
+	};
 	const stepOutputActivityAt = (index: number): number => {
 		const step = statusPayload.steps[index];
 		let lastActivityAt = step?.lastActivityAt ?? step?.startedAt ?? overallStartTime;
+		lastActivityAt = Math.max(lastActivityAt, externalActivityEvidence.get(index)?.lastStreamActivityAt ?? 0);
 		const outputPath = path.join(asyncDir, `output-${index}.log`);
 		try {
 			lastActivityAt = Math.max(lastActivityAt, fs.statSync(outputPath).mtimeMs);
@@ -3161,7 +3238,7 @@ export async function runSubagent(
 		// A sibling may keep aggregate attention unchanged; publish this step's transition.
 		writeStatusPayload(step.activityState !== previousActivityState);
 	};
-	const updateRunnerActivityState = (now: number): boolean => {
+	const updateRunnerActivityState = (now: number, skipExternalProbeIndex?: number): boolean => {
 		if (!controlConfig.enabled) return false;
 		let changed = false;
 		let runLastActivityAt = statusPayload.lastActivityAt ?? overallStartTime;
@@ -3178,12 +3255,33 @@ export async function runSubagent(
 				config: controlConfig,
 				startedAt: step.startedAt ?? overallStartTime,
 				lastActivityAt,
-				turnCount: step.turnCount,
+				turnCount: flatSteps[index]?.runner?.type === "external-cli" ? 1 : step.turnCount,
 				currentTool: step.currentTool,
 				thinking: step.thinking,
 				now,
 			}));
 			if (idleState === "needs_attention") {
+				const evidence = externalActivityEvidence.get(index);
+				if (index !== skipExternalProbeIndex && evidence?.cwd && evidence.fingerprint) {
+					if (evidence.probeInFlight) continue;
+					if (performance.now() - (evidence.lastProbeStartedAt ?? 0) >= EXTERNAL_GIT_PROBE_MIN_INTERVAL_MS) {
+						evidence.lastProbeStartedAt = performance.now();
+						const baseline = evidence.fingerprint;
+						evidence.probeInFlight = readSharedGitFingerprint(evidence.cwd).then((fingerprint) => {
+							if (requiredStatusStep(statusPayload, index).status !== "running") return;
+							if (fingerprint && fingerprint !== baseline) {
+								evidence.fingerprint = fingerprint;
+								evidence.lastStreamActivityAt = Date.now();
+								updateRunnerActivityState(Date.now());
+							} else {
+								updateRunnerActivityState(Date.now(), index);
+							}
+						}).finally(() => {
+							delete evidence.probeInFlight;
+						});
+						continue;
+					}
+				}
 				const previous = step.activityState;
 				step.activityState = "needs_attention";
 				if (previous !== "needs_attention") {
@@ -3761,6 +3859,8 @@ export async function runSubagent(
 					onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking, attempt.contextLimit),
 					onChildEvent: (event) => updateStepFromChildEvent(fi, event),
 					onExternalProcess: (process) => updateExternalProcess(fi, process),
+					prepareExternalActivity: (externalCwd, signal) => prepareExternalActivity(fi, externalCwd, signal),
+					onExternalStreamActivity: () => recordExternalStreamActivity(fi),
 					onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
 					skipAcceptance: () => timedOut || stopped || childStopRequests.has(fi),
 					usageBudgetExhausted: continuationUsageBudgetExhausted,
@@ -4173,6 +4273,8 @@ export async function runSubagent(
 							onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking, attempt.contextLimit),
 							onChildEvent: (event) => updateStepFromChildEvent(fi, event),
 							onExternalProcess: (process) => updateExternalProcess(fi, process),
+							prepareExternalActivity: (externalCwd, signal) => prepareExternalActivity(fi, externalCwd, signal),
+							onExternalStreamActivity: () => recordExternalStreamActivity(fi),
 							onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
 							skipAcceptance: () => timedOut || stopped || childStopRequests.has(fi),
 							usageBudgetExhausted: continuationUsageBudgetExhausted,
@@ -4574,6 +4676,8 @@ export async function runSubagent(
 				onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt.model, attempt.thinking, attempt.contextLimit),
 				onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
 				onExternalProcess: (process) => updateExternalProcess(flatIndex, process),
+				prepareExternalActivity: (externalCwd, signal) => prepareExternalActivity(flatIndex, externalCwd, signal),
+				onExternalStreamActivity: () => recordExternalStreamActivity(flatIndex),
 				onExternalJob: (externalJob) => updateExternalJob(flatIndex, externalJob),
 				skipAcceptance: () => timedOut || stopped || childStopRequests.has(flatIndex),
 				usageBudgetExhausted: continuationUsageBudgetExhausted,
