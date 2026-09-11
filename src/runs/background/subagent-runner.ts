@@ -3302,8 +3302,9 @@ export async function runSubagent(
 		interruptActiveChildren();
 	};
 	const stopRunner = () => {
-		if (stopped || timedOut || interrupted || statusPayload.state !== "running") return;
+		if (stopped || timedOut || (statusPayload.state !== "running" && statusPayload.state !== "paused")) return;
 		stopped = true;
+		interrupted = false;
 		const now = Date.now();
 		statusPayload.stopped = true;
 		statusPayload.error = stopMessage;
@@ -3311,7 +3312,7 @@ export async function runSubagent(
 		delete statusPayload.activityState;
 		statusPayload.lastUpdate = now;
 		for (const step of statusPayload.steps) {
-			if (step.status !== "running" && step.status !== "pending") continue;
+			if (step.status !== "running" && step.status !== "pending" && step.status !== "paused") continue;
 			step.status = "stopped";
 			step.error = stopMessage;
 			step.exitCode = 1;

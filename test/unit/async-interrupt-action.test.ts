@@ -776,6 +776,96 @@ describe("async interrupt action", () => {
 		}
 	});
 
+	it("seals a paused run and releases capacity after observed process-terminal proof", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		state.activeAsyncCapacity = { used: 1, limit: 1 };
+		const runId = `stop-paused-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { sessionId: "session" });
+		const capacity = acquireActiveAsyncCapacity({ sessionId: "session", limit: 1, runId, kind: "runner", asyncDir });
+		assert.ok(capacity);
+		capacity.markStarted("runner-paused");
+		const proof = {
+			version: 1,
+			state: "observed",
+			runId,
+			runnerProcessInstanceId: "runner-paused",
+			observedAt: 200,
+			instances: [{ kind: "runner", processInstanceId: "runner-paused", closeObservedAt: 200, exitCode: 0, signal: null }],
+		};
+		writeJson(path.join(asyncDir, "process-terminal.json"), proof);
+		const statusPath = path.join(asyncDir, "status.json");
+		writeJson(statusPath, {
+			...JSON.parse(fs.readFileSync(statusPath, "utf-8")),
+			mode: "parallel",
+			state: "paused",
+			endedAt: 200,
+			processTerminal: proof,
+			steps: [
+				{ agent: "worker", status: "paused", startedAt: 100, endedAt: 200, sessionFile: path.join(asyncDir, "session.jsonl") },
+				{ agent: "reviewer", status: "failed", startedAt: 100, endedAt: 190, exitCode: 1, error: "review failed" },
+			],
+		});
+		writeJson(path.join(RESULTS_DIR, `${runId}.json`), {
+			id: runId,
+			runId,
+			sessionId: "session",
+			state: "paused",
+			results: [
+				{ agent: "worker", success: false, interrupted: true, output: "paused" },
+				{ agent: "reviewer", success: false, exitCode: 1, error: "review failed", output: "review output" },
+			],
+		});
+		try {
+			const result = await executorWithKill(state, () => { throw new Error("paused terminal runner must not be signalled"); })
+				.execute("stop-paused", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, undefined);
+			assert.equal(text(result), `Stopped paused async run ${runId}.`);
+			const stoppedStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+			assert.equal(stoppedStatus.state, "stopped");
+			assert.deepEqual(stoppedStatus.steps.map((step: { status: string }) => step.status), ["stopped", "failed"]);
+			assert.equal(stoppedStatus.processTerminal.resumeDisposition, "non-resumable");
+			const stoppedResult = JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, `${runId}.json`), "utf-8"));
+			assert.equal(stoppedResult.state, "stopped");
+			assert.equal(stoppedResult.results[0].stopped, true);
+			assert.equal(stoppedResult.results[1].error, "review failed");
+			assert.equal(stoppedResult.results[1].stopped, undefined);
+			assert.deepEqual(state.activeAsyncCapacity, { used: 0, limit: 1 });
+			const next = acquireActiveAsyncCapacity({ sessionId: "session", limit: 1, runId: `${runId}-next`, kind: "runner", asyncDir: `${asyncDir}-next` });
+			assert.ok(next);
+			assert.equal(next.rollback(), true);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("stores a paused-run stop request while process-terminal proof is pending", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `stop-paused-pending-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "session" });
+		const statusPath = path.join(asyncDir, "status.json");
+		writeJson(statusPath, {
+			...JSON.parse(fs.readFileSync(statusPath, "utf-8")),
+			state: "paused",
+			processTerminal: { version: 1, state: "pending", runId, runnerProcessInstanceId: "runner-pending" },
+			steps: [{ agent: "worker", status: "paused", startedAt: 100 }],
+		});
+		writeJson(path.join(asyncDir, "process-terminal.json"), { version: 1, state: "pending", runId, runnerProcessInstanceId: "runner-pending" });
+		try {
+			const result = await executorWithKill(state, () => true)
+				.execute("stop-paused-pending", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /Stop request stored.*proof is not observed yet/);
+			assert.equal(consumeStopRequestPayload(asyncDir)?.type, "stop");
+			assert.equal(JSON.parse(fs.readFileSync(statusPath, "utf-8")).state, "paused");
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
 	it("stops a reload-recovered workflow through the durable control channel", async () => {
 		const state = createState();
 		state.currentSessionId = "session";
