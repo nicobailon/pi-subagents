@@ -30,7 +30,7 @@ import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilie
 import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
 import { updateActiveRunIndex } from "./active-run-index.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
-import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, watchAsyncControlInbox, type SteerRequest, type StopRequest } from "./control-channel.ts";
+import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, consumeStopRequestPayloads, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, watchAsyncControlInbox, type SteerRequest, type StopRequest } from "./control-channel.ts";
 import { deadlineCheckpointDelayMs } from "./deadline-checkpoint.ts";
 import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
@@ -3304,16 +3304,17 @@ export async function runSubagent(
 		interruptActiveChildren();
 	};
 	const stopRunner = () => {
-		if (stopped || timedOut || interrupted || statusPayload.state !== "running") return;
+		if (stopped || timedOut || (statusPayload.state !== "running" && statusPayload.state !== "paused")) return;
 		stopped = true;
+		interrupted = false;
 		const now = Date.now();
 		statusPayload.stopped = true;
 		statusPayload.error = stopMessage;
 		currentActivityState = undefined;
 		delete statusPayload.activityState;
 		statusPayload.lastUpdate = now;
-		for (const step of statusPayload.steps) {
-			if (step.status !== "running" && step.status !== "pending") continue;
+		for (const [index, step] of statusPayload.steps.entries()) {
+			if (step.status !== "running" && step.status !== "pending" && step.status !== "paused") continue;
 			step.status = "stopped";
 			step.error = stopMessage;
 			step.exitCode = 1;
@@ -3322,6 +3323,8 @@ export async function runSubagent(
 			step.endedAt = now;
 			step.durationMs = step.startedAt ? now - step.startedAt : 0;
 			step.lastActivityAt = now;
+			const result = results[index];
+			if (result?.interrupted) results[index] = { ...result, output: stopMessage, error: stopMessage, exitCode: 1, success: false, interrupted: false, stopped: true };
 		}
 		writeStatusPayload();
 		appendJsonl(eventsPath, JSON.stringify({
@@ -4876,6 +4879,8 @@ export async function runSubagent(
 	if (!timedOut && !stopped && !interrupted && config.timeoutMs !== undefined && timeoutMessage !== undefined && results.some((result) => result.timedOut === true && result.error?.startsWith(timeoutMessage))) {
 		timedOut = true;
 	}
+	disposeControlInbox();
+	for (const request of consumeStopRequestPayloads(asyncDir)) stopChildStep(request);
 	const signalTerminated = !stopped && !timedOut && !interrupted && results.some((result) => result.exitCode !== 0 && isUnexplainedProcessSignal(omitUndefinedProperties({
 		processSignal: result.processSignal,
 		interrupted: result.interrupted,
@@ -4890,7 +4895,6 @@ export async function runSubagent(
 	});
 	statusPayload.state = stopped || signalTerminated ? "stopped" : timedOut || usageBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : partialWithEvidence ? "partial" : "failed";
 	closeSteerInbox(asyncDir, statusPayload.state, (filePath, payload) => runPersistence.write(filePath, payload));
-	disposeControlInbox();
 	for (const request of consumeSteerRequests(asyncDir)) deliverSteerRequest(request);
 	const effectiveSessionFile = sessionFile ?? latestSessionFile;
 	const steeringLifecycle = steeringStatus(statusPayload);

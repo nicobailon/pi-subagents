@@ -563,7 +563,9 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		}
 		if (activeEntries.has(entry) && !isActiveAsyncState(status.state)) {
 			const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId });
-			if (processTerminal?.state === "observed" || (activeRunMarkerAgeMs(asyncDir, options.now?.()) ?? 0) > DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS) releaseActiveRunIndex(asyncDir);
+			if (processTerminal?.state === "observed" || (activeRunMarkerAgeMs(asyncDir, options.now?.()) ?? 0) > DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS) {
+				updateActiveRunIndex(asyncDir, status.state, status.toolCallId, { terminalIndexBeforeRelease: true });
+			}
 		}
 		if (status.displayDismissedAt !== undefined) continue;
 		// Filter before the nested-route lookup: the lookup builds an index over

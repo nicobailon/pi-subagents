@@ -200,6 +200,43 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(mockPi.callCount(), 3);
 	});
 
+	it("consumes a whole-run stop delivered during paused runner teardown", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "cross-process interrupt delivery unreliable on Windows CI" : undefined }, async () => {
+		mockPi.onCall({ output: "first done" });
+		mockPi.onCall({ delay: 10_000, output: "second done" });
+		const id = `async-paused-stop-race-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [{ parallel: [{ agent: "first", task: "Finish", acceptance: false }, { agent: "second", task: "Wait", acceptance: false }], concurrency: 2 }],
+			resultMode: "parallel",
+			agents: [makeAgent("first"), makeAgent("second")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const asyncDir = path.join(ASYNC_DIR, id);
+		const running = await waitForAsyncState(id, (status) => status.steps?.[1]?.status === "running" && typeof status.pid === "number");
+		const pausedStop = new Promise<void>((resolve) => {
+			const timer = setInterval(() => {
+				const status = readStatus(asyncDir);
+				if (status?.state !== "paused") return;
+				deliverStopRequest({ asyncDir, pid: status.pid, source: "test" });
+				clearInterval(timer);
+				resolve();
+			}, 1);
+		});
+		deliverInterruptRequest({ asyncDir, pid: running.pid, source: "test" });
+		await pausedStop;
+
+		const resultPath = await waitForAsyncResultFile(id, 30_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "stopped");
+		assert.equal(payload.state, "stopped");
+		assert.equal(payload.results[0]?.output, "first done");
+		assert.equal(payload.results[1]?.stopped, true);
+		assert.deepEqual(status.steps?.map((step) => step.status), ["complete", "stopped"]);
+	});
+
 	for (const diagnostic of ["hidden", "empty", "structured", "file", "mutation"] as const) {
 		for (const interrupted of [true, false]) {
 			it(`${interrupted ? "defers" : "enforces"} ${diagnostic} completion diagnostics ${interrupted ? "while paused" : "on completion"}`, { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "cross-process interrupt delivery unreliable on Windows CI" : undefined }, async () => {

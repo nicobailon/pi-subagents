@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { acquireActiveAsyncCapacity } from "../../src/runs/background/active-async-capacity.ts";
+import { acquireActiveAsyncCapacity, ActiveAsyncCapacityError } from "../../src/runs/background/active-async-capacity.ts";
+import { ACTIVE_RUN_INDEX_DIR, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
+import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { consumeSteerRequests, consumeStopRequestPayload } from "../../src/runs/background/control-channel.ts";
+import { resultFilePath, writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
+import { TERMINAL_RUN_INDEX_DIR } from "../../src/runs/background/terminal-run-index.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { createSubagentExecutor, steerWorkflowChildByKey } from "../../src/runs/foreground/subagent-executor.ts";
@@ -60,6 +65,44 @@ function createRunningAsync(state: SubagentState, runId: string, options: { trac
 			updatedAt: 100,
 		});
 	}
+	return asyncDir;
+}
+
+function observedProof(runId: string, runnerProcessInstanceId: string) {
+	return {
+		version: 1,
+		state: "observed",
+		runId,
+		runnerProcessInstanceId,
+		observedAt: 300,
+		instances: [{ kind: "runner", processInstanceId: runnerProcessInstanceId, closeObservedAt: 300, exitCode: 0, signal: null }],
+	};
+}
+
+function createPausedAsync(state: SubagentState, runId: string): string {
+	const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "session" });
+	const statusPath = path.join(asyncDir, "status.json");
+	writeJson(statusPath, {
+		...JSON.parse(fs.readFileSync(statusPath, "utf-8")),
+		state: "paused",
+		processTerminal: { version: 1, state: "pending", runId, runnerProcessInstanceId: "runner-a", resumeDisposition: "resumable" },
+		steps: [
+			{ agent: "done", status: "completed", startedAt: 50, endedAt: 90, exitCode: 0 },
+			{ agent: "paused", status: "paused", startedAt: 100, endedAt: 200, exitCode: 0, processTerminal: { version: 1, state: "not-started", runId, childIndex: 1, runnerProcessInstanceId: "runner-a", resumeDisposition: "resumable" } },
+		],
+	});
+	writeAsyncResultFile(resultFilePath(RESULTS_DIR, runId), {
+		id: runId,
+		sessionId: "session",
+		state: "paused",
+		success: false,
+		summary: "Paused after interrupt.",
+		exitCode: 0,
+		results: [
+			{ agent: "done", output: "done", success: true, exitCode: 0 },
+			{ agent: "paused", output: "paused", success: false, exitCode: 0, interrupted: true },
+		],
+	});
 	return asyncDir;
 }
 
@@ -775,6 +818,145 @@ describe("async interrupt action", () => {
 			cleanup(runId, asyncDir);
 		}
 	});
+
+	it("seals a paused whole run only with exact observed runner proof", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `stop-paused-${Date.now().toString(36)}`;
+		const asyncDir = createPausedAsync(state, runId);
+		try {
+			writeJson(path.join(asyncDir, "process-terminal.json"), observedProof(runId, "runner-a"));
+			const proofBefore = fs.readFileSync(path.join(asyncDir, "process-terminal.json"), "utf-8");
+			const capacity = acquireActiveAsyncCapacity({ sessionId: "session", limit: 1, runId, kind: "runner", asyncDir });
+			capacity.markStarted("runner-a");
+			assert.throws(() => acquireActiveAsyncCapacity({ sessionId: "session", limit: 1, runId: `${runId}-blocked`, kind: "runner", asyncDir: `${asyncDir}-blocked` }), ActiveAsyncCapacityError);
+			const childStop = await executorWithKill(state, () => true)
+				.execute("stop-paused-child", { action: "stop", id: runId, childId: "paused" }, new AbortController().signal, undefined, ctx());
+			assert.equal(childStop.isError, true);
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "stop-requests")), false);
+
+			const result = await executorWithKill(state, () => true)
+				.execute("stop-paused", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, undefined);
+			assert.match(text(result), /Stopped paused async run/);
+			assert.ok(fs.readdirSync(path.join(asyncDir, "control", "stop-requests")).length > 0);
+			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+			const payload = JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, `${runId}.json`), "utf-8"));
+			assert.equal(status.state, "stopped");
+			assert.equal(status.steps[0].status, "completed");
+			assert.equal(status.steps[1].status, "stopped");
+			assert.equal(payload.state, "stopped");
+			assert.equal(payload.results[0].output, "done");
+			assert.equal(payload.results[1].stopped, true);
+			assert.equal(fs.readFileSync(path.join(asyncDir, "process-terminal.json"), "utf-8"), proofBefore);
+			const repeated = await executorWithKill(state, () => true)
+				.execute("stop-paused-again", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+			assert.equal(repeated.isError, true);
+			assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).steps[0].status, "completed");
+			assert.equal(listAsyncRuns(ASYNC_DIR, { states: ["stopped"], sessionId: "session" }).some((run) => run.id === runId), true);
+			assert.throws(() => resolveAsyncResumeTarget({ id: runId }, { asyncDirRoot: ASYNC_DIR, resultsDir: RESULTS_DIR }), /stopped and cannot be resumed/);
+			const next = acquireActiveAsyncCapacity({ sessionId: "session", limit: 1, runId: `${runId}-next`, kind: "runner", asyncDir: `${asyncDir}-next` });
+			assert.equal(next.owner.runId, `${runId}-next`);
+			assert.equal(next.rollback(), true);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("keeps stopped publication discoverable when terminal indexing runs out of space", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `stop-paused-index-failure-${Date.now().toString(36)}`;
+		const asyncDir = createPausedAsync(state, runId);
+		const proofPath = path.join(asyncDir, "process-terminal.json");
+		const markerPath = path.join(ASYNC_DIR, ACTIVE_RUN_INDEX_DIR, runId);
+		const terminalIndexDir = path.join(ASYNC_DIR, TERMINAL_RUN_INDEX_DIR, "session");
+		const originalRename = fs.renameSync;
+		let storageFull = true;
+		try {
+			const pausedStatus = { ...JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")), endedAt: 200, lastUpdate: 200 };
+			writeJson(path.join(asyncDir, "status.json"), { ...pausedStatus, state: "running", endedAt: undefined, lastUpdate: 100 });
+			updateActiveRunIndex(asyncDir, "running");
+			writeJson(path.join(asyncDir, "status.json"), pausedStatus);
+			updateActiveRunIndex(asyncDir, "paused");
+			const pausedMarkers = fs.readdirSync(terminalIndexDir).filter((name) => name.endsWith(`-${runId}.json`));
+			assert.equal(fs.existsSync(markerPath), false);
+			assert.equal(pausedMarkers.length, 1);
+			assert.match(pausedMarkers[0]!, /^0+200-/);
+			writeJson(proofPath, observedProof(runId, "runner-a"));
+			const proofBefore = fs.readFileSync(proofPath, "utf-8");
+			const capacity = acquireActiveAsyncCapacity({ sessionId: "session", limit: 1, runId, kind: "runner", asyncDir });
+			capacity.markStarted("runner-a");
+			fs.renameSync = ((from, to) => {
+				if (storageFull && String(to).includes(`${path.sep}.terminal-runs${path.sep}`)) throw Object.assign(new Error("injected terminal index capacity failure"), { code: "ENOSPC" });
+				return originalRename(from, to);
+			}) as typeof fs.renameSync;
+			syncBuiltinESMExports();
+
+			const failed = await executorWithKill(state, () => true)
+				.execute("stop-paused-index-failure", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+			assert.equal(failed.isError, true);
+			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+			const payload = JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, `${runId}.json`), "utf-8"));
+			assert.equal(status.state, "stopped");
+			assert.equal(status.runId, runId);
+			assert.equal(payload.state, "stopped");
+			assert.equal(payload.id, runId);
+			assert.equal(fs.readFileSync(proofPath, "utf-8"), proofBefore);
+			assert.equal(fs.existsSync(markerPath), true);
+			const next = acquireActiveAsyncCapacity({ sessionId: "session", limit: 1, runId: `${runId}-next`, kind: "runner", asyncDir: `${asyncDir}-next` });
+			assert.equal(next.rollback(), true);
+
+			const originalError = console.error;
+			console.error = () => {};
+			try {
+				assert.equal(listAsyncRuns(ASYNC_DIR, { sessionId: "session" }).some((run) => run.id === runId), true);
+			} finally {
+				console.error = originalError;
+			}
+			assert.equal(fs.existsSync(markerPath), true);
+			storageFull = false;
+			assert.equal(listAsyncRuns(ASYNC_DIR, { sessionId: "session" }).some((run) => run.id === runId), true);
+			assert.equal(fs.existsSync(markerPath), false);
+			const recoveredMarkers = fs.readdirSync(terminalIndexDir).filter((name) => name.endsWith(`-${runId}.json`));
+			assert.equal(recoveredMarkers.includes(pausedMarkers[0]!), true);
+			assert.equal(recoveredMarkers.length, 2);
+			assert.equal(listAsyncRuns(ASYNC_DIR, { states: ["stopped"], sessionId: "session", entryLimit: 1 }).some((run) => run.id === runId), true);
+		} finally {
+			fs.renameSync = originalRename;
+			syncBuiltinESMExports();
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	for (const proofCase of ["missing", "pending", "unknown", "not-started", "malformed", "wrong-run", "wrong-runner"] as const) {
+		it(`keeps a paused run resumable when proof is ${proofCase}`, async () => {
+			const state = createState();
+			state.currentSessionId = "session";
+			const runId = `stop-paused-${proofCase}-${Date.now().toString(36)}`;
+			const asyncDir = createPausedAsync(state, runId);
+			try {
+				if (proofCase === "pending") writeJson(path.join(asyncDir, "process-terminal.json"), { version: 1, state: "pending", runId, runnerProcessInstanceId: "runner-a" });
+				if (proofCase === "unknown") writeJson(path.join(asyncDir, "process-terminal.json"), { version: 1, state: "unknown", runId, runnerProcessInstanceId: "runner-a", reason: "process-tree-unverified" });
+				if (proofCase === "not-started") writeJson(path.join(asyncDir, "process-terminal.json"), { version: 1, state: "not-started", runId, runnerProcessInstanceId: "runner-a" });
+				if (proofCase === "malformed") fs.writeFileSync(path.join(asyncDir, "process-terminal.json"), "not json", "utf-8");
+				if (proofCase === "wrong-run") writeJson(path.join(asyncDir, "process-terminal.json"), observedProof("other-run", "runner-a"));
+				if (proofCase === "wrong-runner") writeJson(path.join(asyncDir, "process-terminal.json"), observedProof(runId, "runner-b"));
+
+				const result = await executorWithKill(state, () => true)
+					.execute(`stop-paused-${proofCase}`, { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+
+				assert.equal(result.isError, true);
+				assert.match(text(result), /Stop request persisted.*Retry stop/);
+				assert.ok(fs.readdirSync(path.join(asyncDir, "control", "stop-requests")).length > 0);
+				assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).state, "paused");
+				assert.equal(JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, `${runId}.json`), "utf-8")).state, "paused");
+			} finally {
+				cleanup(runId, asyncDir);
+			}
+		});
+	}
 
 	it("stops a reload-recovered workflow through the durable control channel", async () => {
 		const state = createState();

@@ -76,7 +76,7 @@ export function releaseActiveRunIndex(asyncDir: string): void {
 	releaseToolCallAliases(asyncDir);
 }
 
-export function updateActiveRunIndex(asyncDir: string, state: AsyncStatus["state"], toolCallId?: string, options: { retryCapacityErrors?: boolean } = {}): void {
+export function updateActiveRunIndex(asyncDir: string, state: AsyncStatus["state"], toolCallId?: string, options: { retryCapacityErrors?: boolean; terminalIndexBeforeRelease?: boolean } = {}): void {
 	const marker = markerPath(asyncDir);
 	if (isActiveAsyncState(state)) {
 		fs.mkdirSync(path.dirname(marker), { recursive: true });
@@ -92,6 +92,22 @@ export function updateActiveRunIndex(asyncDir: string, state: AsyncStatus["state
 				console.error(`Failed to write async active-run tool-call index for '${asyncDir}':`, error);
 			}
 		}
+		return;
+	}
+	if (options.terminalIndexBeforeRelease) {
+		fs.mkdirSync(path.dirname(marker), { recursive: true });
+		fs.writeFileSync(marker, "", { flag: "a" });
+		const status = readStatus(asyncDir);
+		if (status?.state === state) {
+			try {
+				updateTerminalRunIndex(asyncDir, status);
+			} catch (error) {
+				if (options.retryCapacityErrors) throw error;
+				console.error(`Failed to write async terminal-run index for '${asyncDir}':`, error);
+				return;
+			}
+		}
+		releaseActiveRunIndex(asyncDir);
 		return;
 	}
 	releaseActiveRunIndex(asyncDir);
