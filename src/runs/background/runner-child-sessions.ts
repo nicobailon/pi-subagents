@@ -10,7 +10,7 @@
  */
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
-import { createDefaultChildSessionFactory, type ChildSessionFactory, type DefaultChildSessionFactoryOptions } from "../shared/child-session.ts";
+import { createPlacementChildSessionFactory, type ChildSessionFactory, type DefaultChildSessionFactoryOptions } from "../shared/child-session.ts";
 
 export interface RunnerChildSessionConfig {
 	/** Test seam: module whose default export is a `ChildSessionFactory`, or a function returning one. */
@@ -22,7 +22,7 @@ function isChildSessionFactory(value: unknown): value is ChildSessionFactory {
 }
 
 export async function loadRunnerChildSessionFactory(config: RunnerChildSessionConfig, options?: DefaultChildSessionFactoryOptions): Promise<ChildSessionFactory> {
-	if (!config.childSessionFactoryModule) return createDefaultChildSessionFactory(options);
+	if (!config.childSessionFactoryModule) return createPlacementChildSessionFactory(options);
 	const loaded = await import(pathToFileURL(path.resolve(config.childSessionFactoryModule)).href) as { default?: unknown };
 	const candidate = typeof loaded.default === "function" ? (loaded.default as () => unknown)() : loaded.default;
 	if (!isChildSessionFactory(candidate)) {

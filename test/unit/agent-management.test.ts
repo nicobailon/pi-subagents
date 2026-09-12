@@ -83,6 +83,7 @@ describe("agent management config parsing", () => {
 			"mutationTools: edit, write",
 			"output: report.md",
 			"outputMode: file-only",
+			"machine: workmac",
 			"---",
 			"SYSTEM_PROMPT_SENTINEL",
 			"---",
@@ -96,7 +97,8 @@ describe("agent management config parsing", () => {
 		assert.equal(listed.isError, false);
 		const text = readText(listed);
 		assert.match(text, /^Executable agents \(capabilities\):/);
-		assert.match(text, /- capability-worker \(project, aliases: capability\): Description: Capability worker; Tools: read, grep, mcp:github\/search; Model: openai\/gpt-5-mini; Thinking: high/);
+		assert.match(text, /- capability-worker \(project, machine: workmac \(saved Herdr placement\), aliases: capability\): Description: Capability worker; Tools: read, grep, mcp:github\/search; Model: openai\/gpt-5-mini; Thinking: high; Machine: workmac \(saved Herdr placement\)/);
+		assert.doesNotMatch(text, /unsupported for native agents/u);
 		assert.doesNotMatch(text, /System Prompt:|SYSTEM_PROMPT_SENTINEL/);
 		const capabilities = listed.details?.agentCapabilities;
 		assert.ok(capabilities);
@@ -211,7 +213,7 @@ Remote.
 				modelRegistry: { getAvailable: () => [] },
 			});
 			assert.equal(listed.isError, false);
-			assert.match(readText(listed), /external-cli:codex @ workmac ssh ✓; machine not preflighted/);
+			assert.match(readText(listed), /external-cli:codex @ workmac saved Herdr placement; transport ✓; machine not preflighted/);
 			const runner = listed.details?.agentCapabilities?.agents.find((agent) => agent.name === "remote-external")?.runner;
 			assert.equal(runner?.type, "external-cli");
 			if (runner?.type === "external-cli") assert.equal(runner.available, true);

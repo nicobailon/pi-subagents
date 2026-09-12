@@ -12,6 +12,7 @@ export interface RunnerSubagentStep {
 	runner?: ResolvedRunnerConfig;
 	/** Herdr saved machine this external-cli step runs on; `cwd` is then the directory on that machine. */
 	machine?: import("../../shared/types.ts").HerdrMachineReference;
+	remoteReads?: string[] | false;
 	machineEnv?: Record<string, string>;
 	externalJobFollowUp?: {
 		sourceRunId: string;

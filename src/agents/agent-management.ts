@@ -736,10 +736,10 @@ function runnerListBadge(agent: AgentConfig, providerNames: Set<string> | undefi
 		const placed = agent.machine ? `${agent.runner.command} @ ${agent.machine}` : agent.runner.command;
 		const availability = externalCliAvailability?.get(externalCliAvailabilityKey(agent.runner.command, agent.machine));
 		if (!availability) return `external-cli:${placed}`;
-		if (agent.machine) return `external-cli:${placed} ssh ${availability.available ? "✓" : "missing"}; machine not preflighted`;
+		if (agent.machine) return `external-cli:${placed} saved Herdr placement; transport ${availability.available ? "✓" : "missing"}; machine not preflighted`;
 		return `external-cli:${placed} ${availability.available ? "✓" : "missing"}`;
 	}
-	if (agent.machine) return `machine: ${agent.machine} (native agents cannot be placed)`;
+	if (agent.machine) return `machine: ${agent.machine} (saved Herdr placement)`;
 	return undefined;
 }
 
@@ -775,7 +775,7 @@ function formatAgentCapabilitiesLine(agent: AgentConfig, providerNames: Set<stri
 		if (agent.modelProvider && !agent.model.includes("/")) model = `${agent.modelProvider}/${agent.model}`;
 	}
 	const thinking = agent.thinking === false ? "off" : agent.thinking ?? "default";
-	const machine = agent.machine ? `; Machine: ${agent.machine}${agent.runner?.type === "external-cli" ? "" : " (unsupported for native agents)"}` : "";
+	const machine = agent.machine ? `; Machine: ${agent.machine} (saved Herdr placement)` : "";
 	return `- ${agent.name} (${agentListMetadata(agent, providerNames, externalCliAvailability)}): Description: ${previewDisplayText(agent.description, 240)}; Tools: ${tools}; Model: ${model}; Thinking: ${thinking}${machine}`;
 }
 

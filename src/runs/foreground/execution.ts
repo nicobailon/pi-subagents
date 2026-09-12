@@ -398,6 +398,9 @@ async function runSingleAttempt(
 		: undefined;
 	let onWatchdogStatus: ((event: ChildWatchdogStatusEvent) => void) | undefined;
 	const launch = buildInProcessChildLaunch({
+		machine: options.machine,
+		remoteSkillNames: options.skills ?? agent.skills,
+		remoteReads: options.remoteReads,
 		extensionBindings: options.extensionBindings,
 		requiredExtensions: options.requiredExtensions,
 		sessionEnabled: shared.sessionEnabled,
@@ -569,7 +572,7 @@ async function runSingleAttempt(
 		};
 		return result;
 	}
-	const mutationSnapshot = snapshotTrackedMutations(options.cwd ?? runtimeCwd);
+	const mutationSnapshot = options.machine ? { source: "tracked-files" as const, trackedOnly: true as const, cwd: options.cwd ?? runtimeCwd, dirtyFiles: [], fingerprints: {}, unavailable: "Local Git evidence is not authoritative for a pane-native remote run." } : snapshotTrackedMutations(options.cwd ?? runtimeCwd);
 	let observedMutationAttempt = false;
 	let structuredOutputToolInvoked = false;
 	let structuredOutputMessageStartIndex: number | undefined;
@@ -1309,6 +1312,7 @@ async function runSingleAttempt(
 			const toolDiagnosticError = diagnostic ? formatChildToolDiagnostic(diagnostic, { host: "parent" }) : undefined;
 			toolAvailabilityError = toolDiagnosticError;
 			result.runtimeAcknowledgedExtensions = capture.runtimeAcknowledgedExtensions();
+			if (session?.machineEvidence) result.nativeMachine = { provider: "herdr", machineId: session.machineEvidence.machineId, ...(session.machineEvidence.initial ? { initialGit: session.machineEvidence.initial } : {}), ...(session.machineEvidence.final ? { finalGit: session.machineEvidence.final } : {}) };
 			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
 			if (!closeError && promptError !== undefined) {
 				closeError = promptError instanceof Error ? promptError.message : String(promptError);
@@ -1510,7 +1514,8 @@ async function runSingleAttempt(
 		tokens: progress.tokens,
 		durationMs: progress.durationMs,
 	};
-	const mutationEvidence = collectTrackedMutationEvidence(mutationSnapshot, options.cwd ?? runtimeCwd);
+	const remoteGitChanged = result.nativeMachine?.initialGit && result.nativeMachine.finalGit ? result.nativeMachine.initialGit.head !== result.nativeMachine.finalGit.head || result.nativeMachine.initialGit.dirty !== result.nativeMachine.finalGit.dirty : undefined;
+	const mutationEvidence = result.nativeMachine ? { source: "tracked-files" as const, trackedOnly: true as const, changedFiles: [], attemptedMutation: remoteGitChanged === true, ...(remoteGitChanged === undefined ? { unavailable: "Remote Git before/after evidence was incomplete." } : {}) } : collectTrackedMutationEvidence(mutationSnapshot, options.cwd ?? runtimeCwd);
 
 	const acceptanceOutput = getFinalOutput(result.messages ?? []);
 	let fullOutput = stripAcceptanceReport(acceptanceOutput);

@@ -236,7 +236,7 @@ Disable and restore:
 
 ## Running external CLI agents on a Herdr saved machine
 
-The six code-owned external-cli profiles can run on a Herdr machine (`herdr machine add <target> --label <name>`). The local parent spawns `ssh -T <target>`, retaining prompt delivery, stream parsing, stop, and exit proof. Herdr's catalog is the host allowlist; raw ssh targets are rejected.
+Native Pi and the six code-owned Claude Code, Codex, and Cursor profiles can run on a Herdr machine (`herdr machine add <target> --label <name>`). Herdr owns each visible agent process in a fresh no-focus pane; SSH is used only as bounded transport for Herdr RPC and ownership checks. Herdr's catalog is the host allowlist; raw ssh targets are rejected.
 
 `machine` is a top-level frontmatter key, a settings override (`subagents.agentOverrides.<agent>.machine`, project beats user, `false` clears a pin), and a launch option on the `subagent` tool, workflow `runs.run`, chain, parallel, and dynamic-fanout steps. The launch option wins. Placement survives `subagent({ action: "disable" })`, `reset`, and model profile switches.
 
@@ -246,16 +246,16 @@ The six code-owned external-cli profiles can run on a Herdr machine (`herdr mach
 {
   "subagents": {
     "agentOverrides": { "claude-code": { "machine": "workmac" } },
-    "machines": { "workmac": { "cwd": "/home/nico/proj", "env": { "CLAUDE_CONFIG_DIR": "/home/nico/.claude-work" } } }
+    "machines": { "workmac": { "cwd": "/home/nico/proj" } }
   }
 }
 ```
 
-`machines.<label-or-id>.env` is optional and is exported in front of the remote command. Nothing else crosses: the local ssh process receives only `PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, and `SSH_AUTH_SOCK`, and no local API key is copied. Remote runs use the machine's own credentials, so log in to the CLI on that machine once. Non-interactive ssh shells skip rc files, so `~/.local/bin`, `/opt/homebrew/bin`, and `/usr/local/bin` are prepended to the remote `PATH`; for anything else set the agent's `command` to the absolute path on the machine.
+`machines.<label-or-id>.env` is rejected. No local API key, vendor environment, expanded prompt resource, extension path, or callback is copied. Remote runs use the machine's own credentials and managed model registry. Bounded probes and ownership checks use a fixed machine-owned PATH without sourcing shell profiles.
 
-Remote `--version` and `--help` probes use a ready marker to discard rc-file noise. Runs share one OpenSSH ControlMaster socket per machine (`~/.pi/agent/ssh-control/`, `ControlPersist=60`). Status, receipts, and FleetView carry the machine identity, remote cwd, and remote git state; writer results state that changes are remote.
+Placed external profiles are one-shot and stop-only: they cannot steer, resume, or claim a Pi supervisor. Their result is always `partial` and begins `[best-effort/unverified]`, because only bounded sanitized terminal snapshots are exposed; no vendor-private transcript, database, JSONL, or blob is used as authoritative settlement evidence. Reconnect observes the same pane and process without redispatching the prompt.
 
-pi-subagents never clones, pulls, or checks out on the machine; a missing directory fails the remote `cd` with a hint. Native Pi agents, generic `external-cli` commands, managed worktrees, and Windows hosts are rejected before launch. Codex's final message and Cursor's handoff file use the ssh stream and remote temp files, not local paths.
+pi-subagents never clones, pulls, or checks out on the machine. Generic `external-cli` commands and managed worktrees are rejected before launch; saved-machine placement accepts native Pi and only the six code-owned external profiles.
 
 ## Parent prompt discovery
 

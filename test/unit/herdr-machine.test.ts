@@ -6,13 +6,14 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import {
 	formatHerdrMachineHint,
 	formatHerdrMachineRunnerUnsupported,
-	HERDR_SSH_ENV_ALLOWLIST,
 	prepareHerdrMachineExternalCliRun,
 	resolveHerdrMachinePlacement,
 	shellQuote,
 } from "../../src/runs/shared/herdr-machine.ts";
-import type { ExternalCliPreflightResult } from "../../src/runs/shared/external-cli-preflight.ts";
-import type { ExternalProcessStatus, HerdrMachineReference } from "../../src/shared/types.ts";
+import type { HerdrMachineReference } from "../../src/shared/types.ts";
+import { herdrPaneAllocationKey } from "../../src/runs/shared/herdr-placed-run.ts";
+import { connectHerdrMachine, decodeHerdrJsonLine, discoverHerdrEndpoint, hardenedSshEnv, herdrSshArgs, HERDR_REMOTE_PATH, HERDR_SSH_BASE } from "../../src/runs/shared/herdr-connection.ts";
+import { createRemoteRuntimeDir, discoverBridgeManifest, removeRemoteRuntimeDir } from "../../src/runs/shared/herdr-placed-run.ts";
 
 const catalog = JSON.stringify([
 	{ id: "7b9b56b47aab5ff46f338f1cd3ed1d15", label: "workmac", target: "100.82.67.118", session: "default", enabled: true, selected: false },
@@ -34,14 +35,11 @@ function writeJson(filePath: string, value: unknown): void {
 	fs.writeFileSync(filePath, JSON.stringify(value, null, 2), "utf-8");
 }
 
-/** The remote command is the last ssh argument: `sh -c '<script>'`. Returns the script with the outer quoting removed. */
-function remoteScript(args: readonly string[] | undefined): string {
-	const remote = args?.at(-1) ?? "";
-	assert.match(remote, /^sh -c '/u);
-	return remote.slice("sh -c '".length, -1).replaceAll("'\\''", "'");
-}
-
 describe("Herdr machine placement", () => {
+	it("hardens native SSH against configured SendEnv and SetEnv without removing forwarding or agent auth", { skip: process.platform === "win32" }, () => { const source = { HOME: "/home/me", PATH: "/private/bin", SSH_AUTH_SOCK: "/tmp/auth", LOCAL_SECRET: "nope" }; const env = hardenedSshEnv(source); assert.equal(env.LOCAL_SECRET, undefined); assert.equal(env.SSH_AUTH_SOCK, undefined); assert.equal(env.HOME, undefined); assert.equal(env.PATH, "/usr/bin:/bin:/usr/sbin:/sbin"); assert.deepEqual(herdrSshArgs(source).slice(-2), ["-o", "IdentityAgent=/tmp/auth"]); assert.ok(HERDR_SSH_BASE.includes("SendEnv=-*")); assert.ok(HERDR_SSH_BASE.includes("SetEnv=PI_SUBAGENTS_SSH_GUARD=")); assert.equal(HERDR_SSH_BASE.includes("-L" as never), false); });
+	it("rejects invalid UTF-8 in a complete Herdr JSON frame", () => assert.throws(() => decodeHerdrJsonLine(Buffer.concat([Buffer.from('{"x":"'), Buffer.from([0xc3, 0x28]), Buffer.from('"}')])) , /UTF-8/u));
+	it("terminates a forwarding child that never creates its socket", { skip: process.platform === "win32" }, async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), "herdr-fake-ssh-")); const bin = path.join(dir, "ssh"); const pidFile = path.join(dir, "pid"); fs.writeFileSync(bin, `#!/bin/sh\ncase "$*" in *"command -v herdr"*) echo '{"socket":"/tmp/herdr.sock","session":"default","version":"0.9.0","protocol":1,"compatible":true,"running":true}'; exit 0;; esac\necho $$ > ${JSON.stringify(pidFile)}\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n`); fs.chmodSync(bin, 0o700); try { await assert.rejects(connectHerdrMachine(machine, { sshBin: bin }), /did not create/u); const pid = Number(fs.readFileSync(pidFile, "utf8")); assert.throws(() => process.kill(pid, 0)); } finally { fs.rmSync(dir, { recursive: true, force: true }); } });
+	it("uses one deterministic remote PATH and invokes only the exactly resolved Herdr", { skip: process.platform === "win32" }, () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), "herdr-ssh-shape-")), ssh = path.join(dir, "ssh"), remoteHome = path.join(dir, "home"), remoteBin = path.join(remoteHome, ".local", "bin"), commandFile = path.join(dir, "command"); fs.mkdirSync(remoteBin, { recursive: true }); const herdr = path.join(remoteBin, "herdr"); fs.writeFileSync(path.join(remoteHome, ".profile"), "export RC_SOURCED=yes\n"); fs.writeFileSync(herdr, `#!/bin/sh\n[ "$0" = ${shellQuote(herdr)} ] || exit 91\n[ "$PATH" = "$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" ] || exit 92\n[ -z "$LOCAL_SECRET" ] && [ -z "$RC_SOURCED" ] || exit 93\nprintf '%s\\n' '{"socket":"/tmp/herdr.sock","session":"default","version":"0.9.0","protocol":22,"compatible":true,"running":true}'\n`); fs.chmodSync(herdr, 0o700); fs.writeFileSync(ssh, `#!/bin/sh\nwhile [ "$#" -gt 0 ]; do [ "$1" = ${shellQuote(machine.target)} ] && { shift; break; }; shift; done\n[ "$#" -eq 1 ] || exit 94\nprintf '%s' "$1" > ${shellQuote(commandFile)}\nHOME=${shellQuote(remoteHome)} exec sh -c "$1"\n`); fs.chmodSync(ssh, 0o700); const options = { sshBin: ssh, env: { PATH: "/caller/bin", LOCAL_SECRET: "nope" } }; try { assert.equal(discoverHerdrEndpoint(machine, options).protocol, 22); const command = fs.readFileSync(commandFile, "utf8"); assert.ok(command.includes(`PATH=\"${HERDR_REMOTE_PATH}\"; export PATH;`)); assert.ok(command.includes("herdr_path=$(command -v herdr)")); assert.ok(command.includes('exec "$herdr_path" status server --json')); assert.equal(/(?:source|\.profile|\.zprofile|LOCAL_SECRET)/u.test(command), false); const runtime = createRemoteRuntimeDir(machine, "run_quote'1", options); assert.match(path.basename(runtime), /^pi-subagents-herdr-run_quote'1-/u); fs.writeFileSync(path.join(runtime, "manifest.json"), JSON.stringify({ protocol: 1, packageVersion: "0.67.0", runId: "run_quote'1", socketPath: path.join(runtime, "bridge.sock"), nativeSessionId: "native" })); assert.equal(discoverBridgeManifest(machine, "run_quote'1", runtime, options).nativeSessionId, "native"); removeRemoteRuntimeDir(machine, runtime, options); assert.equal(fs.existsSync(runtime), false); } finally { fs.rmSync(dir, { recursive: true, force: true }); } });
 	beforeEach(() => {
 		tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-home-"));
 		tempProject = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-project-"));
@@ -62,11 +60,12 @@ describe("Herdr machine placement", () => {
 	});
 
 	describe("resolution", () => {
-		it("resolves by profile id first, then by unique label, and carries the saved session", () => {
+		it("resolves by profile id first, then by unique label, and normalizes the saved default session", () => {
 			const byLabel = resolveHerdrMachinePlacement({ machine: "workmac", cwd: tempProject, catalogJson: catalog, settings: { cwd: "/home/nico/proj" } });
-			assert.deepEqual(byLabel, { machine });
+			assert.deepEqual(byLabel, { machine: { provider: "herdr", id: machine.id, label: "workmac", target: machine.target, cwd: machine.cwd } });
 			const byId = resolveHerdrMachinePlacement({ machine: machine.id, cwd: tempProject, catalogJson: catalog, settings: { cwd: "/home/nico/proj" } });
-			assert.deepEqual(byId.machine, machine);
+			assert.deepEqual(byId.machine, byLabel.machine);
+			assert.equal(herdrPaneAllocationKey(byLabel.machine.target, byLabel.machine.session, byLabel.machine.cwd), herdrPaneAllocationKey(byId.machine.target, byId.machine.session, byId.machine.cwd));
 		});
 
 		for (const [selector, pattern] of [
@@ -101,14 +100,14 @@ describe("Herdr machine placement", () => {
 			);
 		});
 
-		it("reads machine roots from project settings over user settings, keyed by label or id, with opt-in env", () => {
+		it("reads project machine roots by label or id and rejects locally supplied remote env", () => {
 			writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), { subagents: { machines: { workmac: { cwd: "/user/root", env: { FOO: "user" } } } } });
 			writeJson(path.join(tempProject, ".pi", "settings.json"), { subagents: { machines: { [machine.id]: { cwd: "/project/root" } } } });
 			const nested = path.join(tempProject, "nested", "dir");
 			fs.mkdirSync(nested, { recursive: true });
-			const placement = resolveHerdrMachinePlacement({ machine: "workmac", cwd: nested, catalogJson: catalog });
-			assert.equal(placement.machine.cwd, "/project/root");
-			assert.deepEqual(placement.env, { FOO: "user" });
+			assert.throws(() => resolveHerdrMachinePlacement({ machine: "workmac", cwd: nested, catalogJson: catalog }), /configure credentials and environment.*remov/iu);
+			writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), { subagents: { machines: { workmac: { cwd: "/user/root" } } } });
+			assert.equal(resolveHerdrMachinePlacement({ machine: "workmac", cwd: nested, catalogJson: catalog }).machine.cwd, "/project/root");
 		});
 
 		it("rejects malformed machine settings instead of ignoring them", () => {
@@ -120,8 +119,8 @@ describe("Herdr machine placement", () => {
 	});
 
 	describe("launch gating", () => {
-		it("rejects native agents, generic adapters, and worktrees with a pointer", () => {
-			assert.match(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "reviewer", runnerType: "pi" }) ?? "", /only external-cli agents can run on a Herdr saved machine/u);
+		it("allows native Pi but rejects generic adapters and worktrees with a pointer", () => {
+			if (process.platform !== "win32") assert.equal(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "reviewer", runnerType: "pi" }), undefined);
 			assert.match(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "generic", runnerType: "external-cli" }) ?? "", /generic external-cli commands cannot be remote-wrapped/u);
 			assert.match(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "worker", runnerType: "external-cli", adapter: "claude-code", worktree: true }) ?? "", /managed worktrees are local git operations/u);
 			assert.equal(formatHerdrMachineRunnerUnsupported({ agentName: "reviewer", runnerType: "pi" }), undefined);
@@ -133,156 +132,11 @@ describe("Herdr machine placement", () => {
 		});
 	});
 
-	describe("ssh wrapping", { skip: process.platform === "win32" ? "POSIX control sockets" : false }, () => {
-		it("wraps a Claude launch as one quoted sh -c script with Herdr's ssh options and a shared control socket", () => {
-			const validated: ExternalCliPreflightResult[] = [];
-			const prepared = prepareHerdrMachineExternalCliRun({
-				command: "claude",
-				args: ["-p", "--output-format", "stream-json", "--tools", "", "--mcp-config", '{"mcpServers":{}}'],
-				cwd: "/local/parent",
-				prompt: "hello",
-				asyncDir: tempProject,
-				stepIndex: 0,
-				environment: { allowlist: ["PATH", "ANTHROPIC_API_KEY"] },
-				preflight: { id: "claude-code", versionArgs: ["--version"], helpArgs: ["--help"], probeTimeoutMs: 2_000, validate: (result) => { validated.push(result); } },
-				parser: { parseLine: () => undefined, finish: () => ({ kind: "success", text: "done" }) },
-			}, { machine, env: { CLAUDE_CONFIG_DIR: "/home/nico/.claude-work" } }, { localCwd: "/local/parent" });
-
-			assert.equal(prepared.input.command, "ssh");
-			assert.equal(prepared.input.cwd, "/local/parent");
-			assert.deepEqual(prepared.input.environment, { allowlist: HERDR_SSH_ENV_ALLOWLIST });
-			assert.ok(HERDR_SSH_ENV_ALLOWLIST.includes("SSH_AUTH_SOCK"));
-			const args = prepared.input.args ?? [];
-			const target = args.at(-2);
-			assert.equal(target, "100.82.67.118");
-			const options = args.slice(0, -2).join(" ");
-			for (const expected of ["-T", "BatchMode=yes", "StrictHostKeyChecking=yes", "ConnectTimeout=10", "ServerAliveInterval=15", "ServerAliveCountMax=4", "ControlMaster=auto", "ControlPersist=60"]) {
-				assert.ok(options.includes(expected), `missing ${expected}`);
-			}
-			const controlPath = args[args.indexOf("ControlPath=" + args.find((arg) => arg.startsWith("ControlPath="))!.slice("ControlPath=".length))]!;
-			assert.equal(controlPath, `ControlPath=${path.join(tempHome, ".pi", "agent", "ssh-control", "%C")}`);
-			assert.ok(fs.statSync(path.join(tempHome, ".pi", "agent", "ssh-control")).isDirectory());
-
-			const script = remoteScript(args);
-			assert.match(script, /^export PATH="\$HOME\/\.local\/bin:\/opt\/homebrew\/bin:\/usr\/local\/bin:\$PATH"; export CLAUDE_CONFIG_DIR='\/home\/nico\/\.claude-work'; cd '\/home\/nico\/proj' \|\| exit 125; printf '%s\\n' '__pi_subagents_ready_[0-9a-f]{16}__'; 'claude' '-p' /u);
-			assert.ok(script.includes(`'claude' '-p' '--output-format' 'stream-json' '--tools' '' '--mcp-config' '{"mcpServers":{}}'; pi_status=$?;`));
-			assert.ok(script.endsWith("exit $pi_status"));
-			assert.ok(script.includes("git rev-parse --is-inside-work-tree"));
-			assert.ok(!script.includes("ANTHROPIC_API_KEY"));
-
-			const preflight = prepared.input.preflight!;
-			assert.equal(preflight.remote, true);
-			assert.equal(preflight.probeTimeoutMs, undefined);
-			assert.equal(preflight.id, `claude-code@${machine.id}`);
-			assert.equal(preflight.versionArgs.at(-2), "100.82.67.118");
-			const probe = remoteScript(preflight.versionArgs);
-			assert.match(probe, /cd '\/home\/nico\/proj' \|\| exit 125; printf '%s\\n' '__pi_subagents_ready_[0-9a-f]{16}__'; exec 'claude' '--version'$/u);
-			const marker = /__pi_subagents_ready_[0-9a-f]{16}__/u.exec(probe)![0];
-
-			preflight.validate!({ binaryPath: "/usr/bin/ssh", binaryMtimeMs: 1, version: `motd noise\n${marker}\n1.2.3 (Claude Code)`, help: `${marker}\nUsage: claude`, cacheHit: false });
-			assert.equal(validated[0]?.version, "1.2.3 (Claude Code)");
-			assert.equal(validated[0]?.help, "Usage: claude");
-			assert.throws(() => preflight.validate!({ binaryPath: "/usr/bin/ssh", binaryMtimeMs: 1, version: "'sh' is not recognized as an internal or external command", help: "", cacheHit: false }), /not a POSIX host/u);
-		});
-
-		it("quotes a tilde cwd through $HOME and single quotes inside arguments", () => {
-			const prepared = prepareHerdrMachineExternalCliRun({
-				command: "claude",
-				args: ["-p", "it's"],
-				cwd: "/local",
-				prompt: "x",
-				asyncDir: tempProject,
-				stepIndex: 0,
-				preflight: { id: "claude-code", versionArgs: ["--version"], helpArgs: ["--help"] },
-			}, { machine: { ...machine, cwd: "~/proj" } }, { localCwd: "/local" });
-			const remote = prepared.input.args?.at(-1) ?? "";
-			assert.ok(remote.includes(`cd "$HOME"'\\''/proj'\\'' || exit 125`), remote);
-			assert.ok(remote.includes(`'\\''it'\\''\\'\\'''\\''s'\\''`), remote);
-			assert.equal(shellQuote("it's"), `'it'\\''s'`);
-		});
-
-		it("discards stream lines until the ready marker and fails closed when it never arrives", () => {
-			const seen: string[] = [];
-			const prepared = prepareHerdrMachineExternalCliRun({
-				command: "claude",
-				args: [],
-				cwd: "/local",
-				prompt: "x",
-				asyncDir: tempProject,
-				stepIndex: 0,
-				preflight: { id: "claude-code", versionArgs: ["--version"], helpArgs: ["--help"] },
-				parser: { parseLine: (line) => { seen.push(line); return undefined; }, finish: () => ({ kind: "success", text: "ok" }) },
-			}, { machine }, { localCwd: "/local" });
-			const marker = /__pi_subagents_ready_[0-9a-f]{16}__/u.exec(prepared.input.args?.at(-1) ?? "")![0];
-			const parser = prepared.input.parser!;
-			parser.parseLine("Welcome to workmac");
-			assert.throws(() => parser.finish(), /never reached the project directory/u);
-			parser.parseLine(marker);
-			parser.parseLine('{"type":"result"}');
-			assert.deepEqual(seen, ['{"type":"result"}']);
-			assert.deepEqual(parser.finish(), { kind: "success", text: "ok" });
-		});
-
-		it("carries the Codex final message back through the stream into the local artifact", () => {
-			const finalOutputPath = path.join(tempProject, "external-0.final-message.txt");
-			let finished = false;
-			const prepared = prepareHerdrMachineExternalCliRun({
-				command: "codex",
-				args: ["exec", "--json", "--output-last-message", finalOutputPath, "-"],
-				cwd: "/local",
-				prompt: "x",
-				asyncDir: tempProject,
-				stepIndex: 0,
-				finalOutputPath,
-				preflight: { id: "codex-exec", versionArgs: ["--version"], helpArgs: ["exec", "--help"] },
-				parser: { parseLine: () => undefined, finish: () => { finished = true; return { kind: "success", text: fs.readFileSync(finalOutputPath, "utf-8") }; } },
-			}, { machine }, { localCwd: "/local" });
-			assert.equal(prepared.input.finalOutputPath, finalOutputPath);
-			const script = remoteScript(prepared.input.args);
-			assert.ok(script.includes('pi_final=$(mktemp "${TMPDIR:-/tmp}/pi-subagents-final.XXXXXX") || exit 126; '), script);
-			assert.ok(script.includes(`'codex' 'exec' '--json' '--output-last-message' ''"$pi_final"'' '-'; pi_status=$?; printf '%s\\n' '__pi_subagents_final_begin_`), script);
-			assert.ok(script.includes(`cat "$pi_final"; printf '\\n%s\\n' '__pi_subagents_final_end_`), script);
-			assert.ok(script.includes('rm -f "$pi_final"'), script);
-			assert.ok(!script.includes(finalOutputPath));
-			const markers = [...script.matchAll(/__pi_subagents_(?:ready|final_begin|final_end|git)_[0-9a-f]{16}__/gu)].map((match) => match[0]);
-			const [ready, begin, end, git] = markers;
-			const parser = prepared.input.parser!;
-			parser.parseLine(ready!);
-			parser.parseLine('{"type":"turn.completed"}');
-			parser.parseLine(begin!);
-			parser.parseLine("final answer");
-			parser.parseLine("second line");
-			parser.parseLine(end!);
-			parser.parseLine(`${git}{"head":"abc123","branch":"main","dirty":true}`);
-			assert.deepEqual(parser.finish(), { kind: "success", text: "final answer\nsecond line" });
-			assert.equal(finished, true);
-			const status = prepared.decorateProcess({ startedAt: 1, stdoutPath: "out", stderrPath: "err" } satisfies ExternalProcessStatus);
-			assert.deepEqual(status.machine, { ...machine, remoteGit: { head: "abc123", branch: "main", dirty: true } });
-		});
-
-		it("delivers the Cursor handoff over stdin into a remote temp directory and never names the local prompt file", () => {
-			const promptDirectory = path.join(tempProject, "external-0.cursor-prompt");
-			const promptFilePath = path.join(promptDirectory, "handoff.txt");
-			const prepared = prepareHerdrMachineExternalCliRun({
-				command: "cursor-agent",
-				args: ["-p", "--sandbox", "enabled", "--workspace", "/home/nico/proj", "--add-dir", promptDirectory, `Read the complete handoff from the private file at ${promptFilePath}. Follow it and return only the final answer.`],
-				cwd: "/local",
-				prompt: "x",
-				asyncDir: tempProject,
-				stepIndex: 0,
-				promptFilePath,
-				temporaryDirectories: [promptDirectory],
-				preflight: { id: "cursor-agent", versionArgs: ["--version"], helpArgs: ["--help"] },
-			}, { machine }, { localCwd: "/local" });
-			assert.equal(prepared.input.promptFilePath, undefined);
-			assert.equal(prepared.input.temporaryDirectories, undefined);
-			const script = remoteScript(prepared.input.args);
-			assert.ok(!script.includes(tempProject));
-			assert.ok(script.includes('pi_prompt_dir=$(mktemp -d "${TMPDIR:-/tmp}/pi-subagents-prompt.XXXXXX") || exit 126; pi_prompt="$pi_prompt_dir/handoff.txt"; cat >"$pi_prompt"; '), script);
-			assert.ok(script.includes(`'cursor-agent' '-p' '--sandbox' 'enabled' '--workspace' '/home/nico/proj' '--add-dir' "$pi_prompt_dir" 'Read the complete handoff from the private file at '"$pi_prompt"'. Follow it and return only the final answer.'; pi_status=$?; rm -rf "$pi_prompt_dir"`), script);
+	describe("pane-native cut-over", () => {
+		it("rejects the removed local-child SSH wrapper for saved-machine runs", () => {
+			assert.throws(() => prepareHerdrMachineExternalCliRun({ command: "claude", cwd: "/local", prompt: "x", asyncDir: tempProject, stepIndex: 0 }, { machine }, { localCwd: "/local" }), /must run in a Herdr-owned pane/u);
 		});
 	});
-
 	describe("hints", () => {
 		for (const [text, pattern] of [
 			["ssh: connect to host 100.82.67.118 port 22: Connection timed out", /Connect once interactively with ssh 100\.82\.67\.118/u],

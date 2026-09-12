@@ -1,19 +1,17 @@
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExternalProcessStatus, HerdrMachineReference, HerdrRemoteGitStatus } from "../../shared/types.ts";
+import type { ExternalProcessStatus, HerdrMachineReference } from "../../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../../shared/utils.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS, type CodeOwnedExternalCliAdapterId } from "./external-cli-contract.ts";
-import { type ExternalCliPreflightResult, type ExternalCliPreflightSpec } from "./external-cli-preflight.ts";
-import type { ExternalCliParser, ExternalCliParserProgress, runExternalCli } from "./external-cli-runner.ts";
+import type { runExternalCli } from "./external-cli-runner.ts";
 
 /**
  * Herdr saved-machine placement for external CLI children.
  *
  * Herdr owns which machines exist and how ssh reaches them (`herdr machine list --json`).
- * pi-subagents owns what runs there: the adapter launch is wrapped as a local `ssh -T <target>`
- * child so prompt delivery, stream parsing, stop, and exit proof stay exactly as they are locally.
+ * pi-subagents owns what runs there: native Pi and the six code-owned external profiles are
+ * launched in fresh Herdr-owned visible panes. SSH is bounded transport and never owns the agent.
  * `cwd` means the directory on that machine; the remote `cd` is the directory check.
  */
 
@@ -24,14 +22,6 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f]/u;
 const SUPPORTED_MACHINE_ADAPTERS = new Set<string>(CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS);
 /** The local ssh process gets only what ssh itself needs; remote runs use the machine's own credentials. */
 export const HERDR_SSH_ENV_ALLOWLIST = ["PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "SSH_AUTH_SOCK"] as const;
-/** Non-interactive ssh shells skip rc files, so common install locations are prepended explicitly. */
-const REMOTE_PATH_PREFIX = '"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"';
-/** One random token per runner process; every marker line derives from it so rc-file noise cannot forge one. */
-const RUN_TOKEN = randomBytes(8).toString("hex");
-const READY_MARKER = `__pi_subagents_ready_${RUN_TOKEN}__`;
-const FINAL_BEGIN_MARKER = `__pi_subagents_final_begin_${RUN_TOKEN}__`;
-const FINAL_END_MARKER = `__pi_subagents_final_end_${RUN_TOKEN}__`;
-const GIT_MARKER = `__pi_subagents_git_${RUN_TOKEN}__`;
 
 type RunExternalCliInput = Parameters<typeof runExternalCli>[0];
 
@@ -103,13 +93,6 @@ function validateRemoteCwd(value: string, requested: string): string {
 	if (!isRemoteAbsolute(cwd)) throw new Error(`Herdr machine '${requested}' cwd must be an absolute POSIX path or start with '~': ${JSON.stringify(cwd)}.`);
 	if (CONTROL_CHARS.test(cwd)) throw new Error(`Herdr machine '${requested}' cwd contains control characters.`);
 	return cwd.length > 1 ? cwd.replace(/\/+$/u, "") : cwd;
-}
-
-/** Shell expression for a remote path; `~` is expanded through `$HOME` since single quotes suppress tilde expansion. */
-function remotePathExpr(cwd: string): string {
-	if (cwd === "~") return '"$HOME"';
-	if (cwd.startsWith("~/")) return `"$HOME"${shellQuote(cwd.slice(1))}`;
-	return shellQuote(cwd);
 }
 
 function parseMachineCatalog(json: string): HerdrMachineCatalogEntry[] {
@@ -198,6 +181,9 @@ function machineSettingsFrom(settings: Record<string, unknown>, keys: readonly s
 			throw new Error(`Subagent settings in '${filePath}' have invalid 'machines.${key}.env'; expected an object of string values keyed by variable name.`);
 		}
 		entry.env = { ...(record.env as Record<string, string>) };
+		if (Object.keys(entry.env).length > 0) {
+			throw new Error(`Subagent settings in '${filePath}' set 'machines.${key}.env'. Saved-machine runs use the remote Herdr/Pi environment; configure credentials and environment on '${key}' and remove the local env map.`);
+		}
 	}
 	return entry;
 }
@@ -231,6 +217,9 @@ export function resolveHerdrMachinePlacement(input: ResolveHerdrMachinePlacement
 	const name = selected.label ?? selected.id;
 	const keys = [...new Set([requested, ...(selected.label ? [selected.label] : []), selected.id])];
 	const settings = input.settings ?? readMachineSettings(input.cwd, keys);
+	if (settings?.env && Object.keys(settings.env).length > 0) {
+		throw new Error(`Saved-machine environment for '${name}' must be configured remotely. Remove machines.${name}.env and configure the remote Herdr/Pi session instead.`);
+	}
 	const stepCwd = input.stepCwd?.trim();
 	let cwd: string;
 	if (stepCwd && isRemoteAbsolute(stepCwd)) cwd = stepCwd;
@@ -242,7 +231,7 @@ export function resolveHerdrMachinePlacement(input: ResolveHerdrMachinePlacement
 			id: selected.id,
 			...(selected.label ? { label: selected.label } : {}),
 			target: validateTarget(selected.target, requested),
-			...(selected.session ? { session: selected.session } : {}),
+			...(selected.session && selected.session !== "default" ? { session: selected.session } : {}),
 			cwd: validateRemoteCwd(cwd, requested),
 		},
 		...(settings?.env ? { env: settings.env } : {}),
@@ -257,204 +246,22 @@ export function formatHerdrMachineRunnerUnsupported(input: {
 	worktree?: boolean;
 }): string | undefined {
 	if (input.machine === undefined) return undefined;
-	if (input.runnerType !== "external-cli") {
-		return `Agent '${input.agentName}' requested machine '${input.machine}', but only external-cli agents can run on a Herdr saved machine. Use claude-code, codex-exec, or cursor-agent profiles, or open a Herdr pane on that machine and run Pi there.`;
+	if (input.runnerType !== undefined && input.runnerType !== "pi" && input.runnerType !== "external-cli") {
+		return `Agent '${input.agentName}' requested machine '${input.machine}', but this runner cannot use pane-native Herdr placement. Use native Pi or a built-in Claude, Codex, or Cursor profile.`;
 	}
-	if (input.adapter === undefined || !SUPPORTED_MACHINE_ADAPTERS.has(input.adapter)) {
+	if (input.runnerType === "external-cli" && (input.adapter === undefined || !SUPPORTED_MACHINE_ADAPTERS.has(input.adapter))) {
 		return `Agent '${input.agentName}' requested machine '${input.machine}', but generic external-cli commands cannot be remote-wrapped safely. Use claude-code, claude-code-writer, codex-exec, codex-exec-writer, cursor-agent, or cursor-agent-writer.`;
 	}
 	if (input.worktree === true) return `Agent '${input.agentName}' requested machine '${input.machine}', but managed worktrees are local git operations and cannot be combined with a Herdr saved machine.`;
-	if (process.platform === "win32") return "Herdr saved-machine launches wrap the child with OpenSSH ControlMaster and a POSIX shell script, which is not supported from a Windows host yet.";
+	if (process.platform === "win32") return "Herdr saved-machine pane transport requires hardened OpenSSH StreamLocal forwarding, which is not supported from a Windows host yet.";
 	return undefined;
 }
 
-/** One ControlMaster socket per machine, shared by every run on this host. ControlPersist expires it; nothing closes it. */
-function sshControlPath(): string {
-	const dir = path.join(getAgentDir(), "ssh-control");
-	fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-	return path.join(dir, "%C");
+/** Legacy local-child SSH wrapping is intentionally unavailable after the pane-native cut-over. */
+export function prepareHerdrMachineExternalCliRun(input: RunExternalCliInput, placement: HerdrMachinePlacement | undefined, _options: { localCwd: string }): PreparedHerdrMachineExternalCliRun {
+	if (placement) throw new Error("Saved-machine external profiles must run in a Herdr-owned pane.");
+	return { input, decorateProcess: (process) => process };
 }
-
-/** Herdr's saved-machine ssh option block (src/remote/attach.rs), plus pi-subagents' own ControlMaster entries. */
-function sshArgs(machine: HerdrMachineReference, controlPath: string): string[] {
-	return [
-		"-T",
-		"-o", "BatchMode=yes",
-		"-o", "NumberOfPasswordPrompts=0",
-		"-o", "StrictHostKeyChecking=yes",
-		"-o", "ConnectTimeout=10",
-		"-o", "ConnectionAttempts=1",
-		"-o", "ServerAliveInterval=15",
-		"-o", "ServerAliveCountMax=4",
-		"-o", "ControlMaster=auto",
-		"-o", "ControlPersist=60",
-		"-o", `ControlPath=${controlPath}`,
-		machine.target,
-	];
-}
-
-/**
- * The remote login shell receives one argument, `sh -c '<script>'`, so fish or a noisy rc file cannot change
- * how the script is parsed. The script prints the ready marker only after `cd` succeeded.
- */
-function remoteCommand(machine: HerdrMachineReference, env: Record<string, string> | undefined, body: string): string {
-	const exports = Object.entries(env ?? {}).map(([key, value]) => `export ${key}=${shellQuote(value)}`);
-	const script = [
-		`export PATH=${REMOTE_PATH_PREFIX}`,
-		...exports,
-		`cd ${remotePathExpr(machine.cwd)} || exit 125`,
-		`printf '%s\\n' ${shellQuote(READY_MARKER)}`,
-		body,
-	].join("; ");
-	return `sh -c ${shellQuote(script)}`;
-}
-
-function stripThroughMarker(text: string): string {
-	const index = text.indexOf(READY_MARKER);
-	return index < 0 ? text : text.slice(index + READY_MARKER.length).trim();
-}
-
-function remotePreflight(input: RunExternalCliInput, machine: HerdrMachineReference, env: Record<string, string> | undefined, controlPath: string): ExternalCliPreflightSpec | undefined {
-	const spec = input.preflight;
-	if (!spec) return undefined;
-	const probe = (args: readonly string[]) => [...sshArgs(machine, controlPath), remoteCommand(machine, env, `exec ${shellQuote(input.command)} ${args.map(shellQuote).join(" ")}`)];
-	const { probeTimeoutMs: _probeTimeoutMs, ...rest } = spec;
-	return {
-		...rest,
-		id: `${spec.id}@${machine.id}`,
-		versionArgs: probe(spec.versionArgs),
-		helpArgs: probe(spec.helpArgs),
-		...(spec.evidenceArgs ? { evidenceArgs: probe(spec.evidenceArgs) } : {}),
-		remote: true,
-		validate(result: ExternalCliPreflightResult) {
-			if (!result.version.includes(READY_MARKER)) {
-				throw new Error(`Remote probe on ${machine.label ?? machine.id} did not reach a POSIX shell in ${machine.cwd}. ${formatHerdrMachineHint(machine, result.version) ?? "External-cli runs support POSIX ssh targets only."}`);
-			}
-			spec.validate?.({ ...result, version: stripThroughMarker(result.version), help: stripThroughMarker(result.help), ...(result.evidence !== undefined ? { evidence: stripThroughMarker(result.evidence) } : {}) });
-		},
-	};
-}
-
-function parseRemoteGit(line: string): HerdrRemoteGitStatus | undefined {
-	if (!line.startsWith(GIT_MARKER)) return undefined;
-	try {
-		const parsed = JSON.parse(line.slice(GIT_MARKER.length)) as Record<string, unknown>;
-		return {
-			...(typeof parsed.head === "string" && parsed.head ? { head: parsed.head } : {}),
-			...(typeof parsed.branch === "string" && parsed.branch ? { branch: parsed.branch } : {}),
-			...(typeof parsed.dirty === "boolean" ? { dirty: parsed.dirty } : {}),
-		};
-	} catch {
-		return undefined;
-	}
-}
-
-/** Discards stream lines until the ready marker, lifts the Codex final message out of the stream, and records remote git state. */
-function wrapParser(parser: ExternalCliParser | undefined, finalOutputPath: string | undefined): { parser: ExternalCliParser; remoteGit: () => HerdrRemoteGitStatus | undefined } {
-	let ready = false;
-	let capturingFinal = false;
-	let finalOutput = "";
-	let remoteGit: HerdrRemoteGitStatus | undefined;
-	const parseLine = (value: string): ExternalCliParserProgress | undefined => {
-		if (!ready) {
-			if (value === READY_MARKER) ready = true;
-			return undefined;
-		}
-		if (value === FINAL_BEGIN_MARKER) {
-			capturingFinal = true;
-			return undefined;
-		}
-		if (value === FINAL_END_MARKER) {
-			capturingFinal = false;
-			// An absent remote artifact stays absent locally so the adapter's own "did not write" failure applies.
-			if (finalOutputPath && finalOutput.trim()) {
-				fs.mkdirSync(path.dirname(finalOutputPath), { recursive: true });
-				fs.writeFileSync(finalOutputPath, finalOutput.replace(/\n$/u, ""));
-			}
-			return undefined;
-		}
-		if (capturingFinal) {
-			finalOutput += `${value}\n`;
-			return undefined;
-		}
-		const git = parseRemoteGit(value);
-		if (git) {
-			remoteGit = git;
-			return undefined;
-		}
-		return parser?.parseLine(value);
-	};
-	const finish = () => {
-		if (!ready) throw new Error("Remote command never reached the project directory; see stderr for the ssh or shell error.");
-		return parser?.finish();
-	};
-	return {
-		parser: { parseLine, finish, ...(parser?.skipOversizedLine ? { skipOversizedLine: (prefix, byteLength) => ready && !capturingFinal ? parser.skipOversizedLine!(prefix, byteLength) : undefined } : {}) },
-		remoteGit: () => remoteGit,
-	};
-}
-
-/** Quote one adapter argument for the remote shell, substituting local artifact paths with remote shell variables. */
-function remoteArg(arg: string, substitutions: ReadonlyArray<readonly [local: string, expr: string]>): string {
-	for (const [local, expr] of substitutions) {
-		if (arg.includes(local)) return arg.split(local).map(shellQuote).join(expr);
-	}
-	return shellQuote(arg);
-}
-
-export function prepareHerdrMachineExternalCliRun(input: RunExternalCliInput, placement: HerdrMachinePlacement | undefined, options: { localCwd: string }): PreparedHerdrMachineExternalCliRun {
-	if (!placement) return { input, decorateProcess: (process) => process };
-	const { machine, env } = placement;
-	const adapter = input.preflight?.id.split("@")[0];
-	const codex = adapter === "codex-exec" || adapter === "codex-exec-writer";
-	const cursor = adapter === "cursor-agent" || adapter === "cursor-agent-writer";
-	const captureFinalOutput = codex && input.finalOutputPath !== undefined;
-	const promptFilePath = cursor ? input.promptFilePath : undefined;
-	const promptDirectory = promptFilePath ? path.dirname(promptFilePath) : undefined;
-	const substitutions: Array<readonly [string, string]> = [];
-	if (captureFinalOutput) substitutions.push([input.finalOutputPath!, '"$pi_final"']);
-	if (promptFilePath) substitutions.push([promptFilePath, '"$pi_prompt"']);
-	let args = [...(input.args ?? [])];
-	if (promptDirectory) {
-		// The local `--add-dir <prompt dir>` pair names a laptop path; the remote prompt directory is added instead.
-		args = args.filter((arg, index, all) => !((arg === "--add-dir" && all[index + 1] === promptDirectory) || (arg === promptDirectory && all[index - 1] === "--add-dir")));
-		args.splice(Math.max(args.length - 1, 0), 0, "--add-dir", "$pi_prompt_dir");
-	}
-	const words = args.map((arg) => arg === "$pi_prompt_dir" ? '"$pi_prompt_dir"' : remoteArg(arg, substitutions));
-	const body = [
-		...(captureFinalOutput ? ['pi_final=$(mktemp "${TMPDIR:-/tmp}/pi-subagents-final.XXXXXX") || exit 126'] : []),
-		...(promptFilePath ? ['pi_prompt_dir=$(mktemp -d "${TMPDIR:-/tmp}/pi-subagents-prompt.XXXXXX") || exit 126', 'pi_prompt="$pi_prompt_dir/handoff.txt"', 'cat >"$pi_prompt"'] : []),
-		`${shellQuote(input.command)} ${words.join(" ")}`,
-		"pi_status=$?",
-		...(captureFinalOutput ? [`printf '%s\\n' ${shellQuote(FINAL_BEGIN_MARKER)}`, 'cat "$pi_final"', `printf '\\n%s\\n' ${shellQuote(FINAL_END_MARKER)}`, 'rm -f "$pi_final"'] : []),
-		...(promptFilePath ? ['rm -rf "$pi_prompt_dir"'] : []),
-		`if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then printf '%s{"head":"%s","branch":"%s","dirty":%s}\\n' ${shellQuote(GIT_MARKER)} "$(git rev-parse --short HEAD 2>/dev/null)" "$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" "$([ -n "$(git status --porcelain 2>/dev/null)" ] && echo true || echo false)"; fi`,
-		"exit $pi_status",
-	].join("; ");
-	const controlPath = sshControlPath();
-	const wrapped = wrapParser(input.parser, captureFinalOutput ? input.finalOutputPath : undefined);
-	const decorateProcess = (process: ExternalProcessStatus): ExternalProcessStatus => ({
-		...process,
-		machine: { ...machine, ...(wrapped.remoteGit() ? { remoteGit: wrapped.remoteGit() } : {}) },
-	});
-	const onProcess = input.onProcess;
-	const preflight = remotePreflight(input, machine, env, controlPath);
-	const { promptFilePath: _promptFilePath, temporaryDirectories: _temporaryDirectories, ...rest } = input;
-	const prepared: RunExternalCliInput = {
-		...rest,
-		command: "ssh",
-		args: [...sshArgs(machine, controlPath), remoteCommand(machine, env, body)],
-		cwd: options.localCwd,
-		environment: { allowlist: HERDR_SSH_ENV_ALLOWLIST },
-		parser: wrapped.parser,
-		...(preflight ? { preflight } : {}),
-		...(onProcess ? { onProcess: (process: ExternalProcessStatus) => onProcess(decorateProcess(process)) } : {}),
-		// Cursor keeps its prompt-file contract locally; remotely the prompt travels over stdin into a remote mktemp file.
-		...(cursor ? {} : input.promptFilePath ? { promptFilePath: input.promptFilePath, temporaryDirectories: input.temporaryDirectories } : {}),
-	};
-	return { input: prepared, decorateProcess };
-}
-
 const HINTS: ReadonlyArray<readonly [RegExp, (machine: HerdrMachineReference) => string]> = [
 	[/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|Permission denied \(publickey|Permission denied, please try again|No such identity|Could not resolve hostname|Connection (timed out|refused)/iu,
 		(machine) => `ssh could not reach or authenticate with ${machine.target}. Connect once interactively with ssh ${machine.target} to accept the host key or fix the identity; BatchMode never prompts.`],

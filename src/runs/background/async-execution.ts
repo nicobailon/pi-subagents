@@ -1734,7 +1734,11 @@ export function executeAsyncSingle(
 	// absolute paths pass through; relative paths resolve against the child cwd.
 	const reads = params.reads !== undefined ? params.reads : agentConfig.defaultReads ?? false;
 	const readPaths = Array.isArray(reads)
-		? managedWorktreeProvider === "worktrunk"
+		? machine
+			? externalRunner
+				? reads.map((read) => read === "~" || read.startsWith("~/") || path.posix.isAbsolute(read) ? read : path.posix.resolve(instructionCwd, read))
+				: []
+			: managedWorktreeProvider === "worktrunk"
 			? resolveExistingReadInstructionPaths(reads, instructionCwd, readExistenceCwd)
 			: resolveExistingReadPaths(reads, readExistenceCwd)
 		: [];
@@ -1960,6 +1964,7 @@ export function executeAsyncSingle(
 						task: taskText,
 						...(agentConfig.runner ? { runner: agentConfig.runner } : {}),
 						...(machine ? { machine } : {}),
+						...(!externalRunner && machine && params.reads !== undefined ? { remoteReads: params.reads } : {}),
 						...(machineEnv ? { machineEnv } : {}),
 						...(params.externalJobFollowUp ? { externalJobFollowUp: params.externalJobFollowUp } : {}),
 						...(params.context ? { context: params.context } : {}),

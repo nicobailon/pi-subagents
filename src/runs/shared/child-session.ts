@@ -15,6 +15,7 @@ import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import { prepareReadonlySessionEvidence } from "./readonly-session-evidence.ts";
 import { toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import type { RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
+import type { HerdrMachineReference, HerdrRemoteGitStatus } from "../../shared/types.ts";
 
 // Private runtime authority for host continuation planning; injected factories have none.
 const readonlyModels = new WeakMap<ChildSession, { current: ModelInfo; resolve(reference: string): ModelInfo | undefined; requestBytes: number }>();
@@ -55,6 +56,10 @@ export type ChildSessionStorage =
 
 export interface ChildSessionLaunch {
 	cwd: string;
+	/** Resolved pane-native placement. Local launches omit this field. */
+	machine?: HerdrMachineReference;
+	/** Logical names resolved only by the remote ambient package. */
+	remoteResources?: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false };
 	storage: ChildSessionStorage;
 	/** Model reference as the agent config names it (`provider/id`, optionally `:thinking`). */
 	model?: string;
@@ -102,6 +107,9 @@ export interface ChildSession {
 	readonly sessionFile: string | undefined;
 	readonly sessionId: string;
 	readonly modelId: string | undefined;
+	readonly machineEvidence?: { machineId: string; initial?: HerdrRemoteGitStatus; final?: HerdrRemoteGitStatus };
+	/** Event-updated pane-native status; reading it performs no network work. */
+	readonly placementSnapshot?: unknown;
 	/** Set by the foreground host once the run detached; `factory.dispose()` leaves such children running. */
 	detached?: boolean;
 	/** Set by `factory.dispose()` before it aborts the child, so the host can report the stop truthfully. */
@@ -380,8 +388,22 @@ let activeFactoryModule: string | undefined;
 
 /** The process-wide factory foreground runs use unless a run passes its own. */
 export function childSessionFactory(): ChildSessionFactory {
-	activeFactory ??= createDefaultChildSessionFactory();
+	activeFactory ??= createLazyPlacementFactory(createDefaultChildSessionFactory());
 	return activeFactory;
+}
+
+function createLazyPlacementFactory(local: ChildSessionFactory): ChildSessionFactory {
+	let placed: ChildSessionFactory | undefined;
+	const factory = async () => placed ??= (await import("./herdr-placed-run.ts")).createPlacementAwareChildSessionFactory(local);
+	return {
+		async create(launch) { return launch.machine ? (await factory()).create(launch) : local.create(launch); },
+		async dispose() { if (placed) await placed.dispose(); else await local.dispose(); },
+	};
+}
+
+/** Default factory including pane-native placement; detached runners use the same boundary. */
+export function createPlacementChildSessionFactory(options: DefaultChildSessionFactoryOptions = {}): ChildSessionFactory {
+	return createLazyPlacementFactory(createDefaultChildSessionFactory(options));
 }
 
 /**

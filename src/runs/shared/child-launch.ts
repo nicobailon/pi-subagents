@@ -14,6 +14,7 @@ import {
 	type LaunchResolvedChildExtensions,
 	type ResolvedToolBudget,
 	type RunFanoutBudgetDescriptor,
+	type HerdrMachineReference,
 } from "../../shared/types.ts";
 import type { NestedPathEntry } from "./nested-path.ts";
 import type { McpRuntimeSnapshotHost } from "./mcp-direct-tool-allowlist.ts";
@@ -62,6 +63,9 @@ export function inheritedChildRuntime(config: ChildRuntimeConfig | undefined): I
 }
 
 export interface BuildInProcessChildLaunchInput {
+	machine?: HerdrMachineReference;
+	remoteSkillNames?: string[];
+	remoteReads?: string[] | false;
 	parentSessionId?: string;
 	forkCacheKey?: string;
 	sessionEnabled: boolean;
@@ -303,6 +307,8 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		: undefined;
 	const session: Omit<ChildSessionLaunch, "onExtensionError"> = {
 		cwd: input.cwd,
+		...(input.machine ? { machine: input.machine } : {}),
+		...(input.machine ? { remoteResources: { agent: input.childAgentName, ...(input.remoteSkillNames ? { skills: input.remoteSkillNames } : {}), ...(input.remoteReads !== undefined ? { reads: input.remoteReads } : {}), ...(toolPlan.explicitToolAllowlist ? { toolCeiling: [...toolPlan.effectiveToolAllowlist] } : toolPlan.capabilityCeiling?.allowedTools ? { toolCeiling: [...toolPlan.capabilityCeiling.allowedTools] } : {}) } } : {}),
 		storage: childStorage(input),
 		...(input.model ? { model: input.model } : {}),
 		...(toolPlan.explicitToolAllowlist ? { tools: toolPlan.effectiveToolAllowlist } : {}),

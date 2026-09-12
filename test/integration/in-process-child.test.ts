@@ -72,6 +72,12 @@ describe("in-process foreground child", () => {
 		}
 	});
 
+	it("projects authoritative native-machine Git evidence into the public foreground result", async () => {
+		mockPi.onCall({ output: "done" }); const base = childSessionFactory(); const wrapped: ChildSessionFactory = { async create(input) { const child = await base.create(input); Object.defineProperty(child, "machineEvidence", { value: { machineId: "remote-machine", initial: { head: "aaa", dirty: false }, final: { head: "bbb", dirty: true } } }); return child; }, dispose: () => base.dispose() };
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "native-git-evidence", waitToolEnabled: false, childSessionFactory: wrapped });
+		assert.deepEqual(result.nativeMachine, { provider: "herdr", machineId: "remote-machine", initialGit: { head: "aaa", dirty: false }, finalGit: { head: "bbb", dirty: true } });
+	});
+
 	it("adds the fanout hook and nested route only for fanout-authorized children", async () => {
 		const route = createNestedRoute("hooks-fanout");
 		try {

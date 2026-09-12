@@ -1266,6 +1266,8 @@ export interface SingleResult {
 	messages?: Message[];
 	usage: Usage;
 	model?: string;
+	/** Authoritative before/after Git evidence captured by a pane-native remote machine. */
+	nativeMachine?: { provider: "herdr"; machineId: string; initialGit?: HerdrRemoteGitStatus; finalGit?: HerdrRemoteGitStatus };
 	/** Effective thinking level used by this foreground child, when known. */
 	thinking?: string;
 	attemptedModels?: string[];
@@ -2400,6 +2402,10 @@ export interface RunSyncOptions {
 	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	cwd?: string;
+	/** Resolved pane-native saved-machine placement. */
+	machine?: HerdrMachineReference;
+	/** Explicit read override resolved by the remote ambient agent profile. */
+	remoteReads?: string[] | false;
 	/** Original cwd input retained for launch diagnostics. */
 	requestedCwd?: string;
 	signal?: AbortSignal;
