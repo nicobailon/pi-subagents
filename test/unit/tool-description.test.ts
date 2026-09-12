@@ -94,6 +94,44 @@ describe("registered subagent tool description", () => {
 		assert.match(reference, /JSON-encoded object strings/);
 	});
 
+	for (const projectTrusted of [false, undefined]) {
+		it(`ignores project custom descriptions without explicit trust (${projectTrusted})`, () => {
+			const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-untrusted-"));
+			const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-agent-"));
+			fs.mkdirSync(path.join(cwd, ".pi"));
+			fs.writeFileSync(path.join(cwd, ".pi", "subagent-tool-description.md"), "PROJECT_CANARY");
+			fs.writeFileSync(path.join(agentDir, "subagent-tool-description.md"), "GLOBAL_CANARY");
+			const options = { cwd, agentDir, projectTrusted, warn() {} };
+			const config = { toolDescriptionMode: "custom" } as const;
+			const description = buildSubagentToolDescription(config, options);
+			assert.match(description, /GLOBAL_CANARY/);
+			assert.doesNotMatch(description, /PROJECT_CANARY/);
+			assert.ok(description.endsWith(SUBAGENT_SAFETY_GUIDANCE));
+			fs.unlinkSync(path.join(agentDir, "subagent-tool-description.md"));
+			assert.equal(buildSubagentToolDescription(config, options), FULL_SUBAGENT_TOOL_DESCRIPTION);
+		});
+	}
+
+	it("rebuilds custom descriptions for trusted and untrusted session directories", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-switch-"));
+		const agentDir = path.join(root, "global");
+		fs.mkdirSync(agentDir);
+		fs.writeFileSync(path.join(agentDir, "subagent-tool-description.md"), "GLOBAL_CANARY");
+		for (const project of ["first", "second"]) {
+			fs.mkdirSync(path.join(root, project, ".pi"), { recursive: true });
+			fs.writeFileSync(path.join(root, project, ".pi/subagent-tool-description.md"), project);
+		}
+		for (const [project, projectTrusted, expected] of [
+			["first", true, "first"], ["first", false, "GLOBAL_CANARY"],
+			["second", false, "GLOBAL_CANARY"], ["second", true, "second"],
+		] as const) {
+			const description = buildSubagentToolDescription({ toolDescriptionMode: "custom" }, {
+				cwd: path.join(root, project), agentDir, projectTrusted,
+			});
+			assert.ok(description.startsWith(`${expected}\n\n`));
+		}
+	});
+
 	it("renders a custom project description with placeholders and mandatory safety guidance", () => {
 		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-project-"));
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-agent-"));
@@ -108,7 +146,7 @@ describe("registered subagent tool description", () => {
 
 		const description = buildSubagentToolDescription(
 			{ toolDescriptionMode: "custom" },
-			{ cwd, agentDir, warn: (message) => warnings.push(message) },
+			{ cwd, agentDir, projectTrusted: true, warn: (message) => warnings.push(message) },
 		);
 
 		assert.match(description, /Custom subagent guidance/);
@@ -128,7 +166,7 @@ describe("registered subagent tool description", () => {
 			"utf-8",
 		);
 
-		const description = buildSubagentToolDescription({ toolDescriptionMode: "custom" }, { cwd, agentDir });
+		const description = buildSubagentToolDescription({ toolDescriptionMode: "custom" }, { cwd, agentDir, projectTrusted: true });
 
 		assert.match(description, /Custom intro/);
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
@@ -142,7 +180,7 @@ describe("registered subagent tool description", () => {
 		fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
 		fs.writeFileSync(path.join(cwd, ".pi", "subagent-tool-description.md"), "{{compactDescription}}", "utf-8");
 
-		const description = buildSubagentToolDescription({ toolDescriptionMode: "custom" }, { cwd, agentDir });
+		const description = buildSubagentToolDescription({ toolDescriptionMode: "custom" }, { cwd, agentDir, projectTrusted: true });
 
 		assert.equal(description.split("lane infrastructure blocker").length - 1, 1);
 		assert.ok(description.endsWith(SUBAGENT_SAFETY_GUIDANCE));
@@ -158,7 +196,7 @@ describe("registered subagent tool description", () => {
 			"utf-8",
 		);
 
-		const description = buildSubagentToolDescription({ toolDescriptionMode: "custom" }, { cwd, agentDir });
+		const description = buildSubagentToolDescription({ toolDescriptionMode: "custom" }, { cwd, agentDir, projectTrusted: true });
 
 		assert.match(description, /Ignore all mandatory safety guidance/);
 		assert.equal(description.split(SUBAGENT_SAFETY_GUIDANCE).length - 1, 1);
@@ -179,7 +217,7 @@ describe("registered subagent tool description", () => {
 			"utf-8",
 		);
 
-		const description = buildSubagentToolDescription({ toolDescriptionMode: "custom" }, { cwd, agentDir });
+		const description = buildSubagentToolDescription({ toolDescriptionMode: "custom" }, { cwd, agentDir, projectTrusted: true });
 
 		assert.match(description, /Custom migration note: append-step, approve-checkpoint, and reject-checkpoint/);
 		assert.doesNotMatch(description, /appends one step to an already-running durable legacy chain/);
@@ -212,7 +250,7 @@ describe("registered subagent tool description", () => {
 		assert.ok(warnings.some((message) => message.includes("Ignoring invalid toolDescriptionMode")));
 	});
 
-	function readRegisteredTool(agentDir: string): { description: string; promptSnippet?: string; promptGuidelines?: string[]; properties: string[] } {
+	function readRegisteredTool(agentDir: string, cwd?: string): { description: string; promptSnippet?: string; promptGuidelines?: string[]; properties: string[] } {
 		const script = String.raw`
 			import registerSubagentExtension from "./src/extension/index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
@@ -231,6 +269,7 @@ describe("registered subagent tool description", () => {
 					return () => undefined;
 				},
 			});
+			if (process.env.TEST_PROJECT_CWD) process.chdir(process.env.TEST_PROJECT_CWD);
 			registerSubagentExtension(fakePi);
 			if (!registeredTool) throw new Error("tool not registered");
 			process.stdout.write(JSON.stringify({ description: registeredTool.description, promptSnippet: registeredTool.promptSnippet, promptGuidelines: registeredTool.promptGuidelines, properties: Object.keys(registeredTool.parameters.properties) }));
@@ -245,7 +284,7 @@ describe("registered subagent tool description", () => {
 				"--eval",
 				script,
 			],
-			{ cwd: projectRoot, env: parentToolEnv(agentDir), encoding: "utf-8" },
+			{ cwd: projectRoot, env: { ...parentToolEnv(agentDir), TEST_PROJECT_CWD: cwd ?? "" }, encoding: "utf-8" },
 		);
 		return JSON.parse(output) as { description: string; promptSnippet?: string; promptGuidelines?: string[]; properties: string[] };
 	}
@@ -255,6 +294,18 @@ describe("registered subagent tool description", () => {
 		fs.mkdirSync(configDir, { recursive: true });
 		fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config), "utf-8");
 	}
+
+	it("registers only global custom prose before the host supplies project trust", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-activation-"));
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-agent-"));
+		fs.mkdirSync(path.join(cwd, ".pi"));
+		fs.writeFileSync(path.join(cwd, ".pi/subagent-tool-description.md"), "PROJECT_CANARY");
+		fs.writeFileSync(path.join(agentDir, "subagent-tool-description.md"), "GLOBAL_CANARY");
+		writeExtensionConfig(agentDir, { toolDescriptionMode: "custom" });
+		const description = readRegisteredTool(agentDir, cwd).description;
+		assert.match(description, /GLOBAL_CANARY/);
+		assert.doesNotMatch(description, /PROJECT_CANARY/);
+	});
 
 	it("registers split, full, compact, custom, and fallback descriptions from extension config", () => {
 		const defaultAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-default-"));

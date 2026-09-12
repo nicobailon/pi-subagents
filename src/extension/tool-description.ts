@@ -53,6 +53,8 @@ function warn(options: ToolDescriptionOptions | undefined, message: string): voi
 export interface ToolDescriptionOptions {
 	cwd?: string;
 	agentDir?: string;
+	/** Host approval for project-local templates; absent means global-only. */
+	projectTrusted?: boolean;
 	warn?: (message: string) => void;
 }
 
@@ -81,7 +83,7 @@ function customDescriptionPaths(options?: ToolDescriptionOptions): string[] {
 	const cwd = options?.cwd ?? process.cwd();
 	const agentDir = options?.agentDir ?? getAgentDir();
 	return [
-		path.join(getProjectConfigDir(cwd), CUSTOM_TOOL_DESCRIPTION_FILE),
+		...(options?.projectTrusted === true ? [path.join(getProjectConfigDir(cwd), CUSTOM_TOOL_DESCRIPTION_FILE)] : []),
 		path.join(agentDir, CUSTOM_TOOL_DESCRIPTION_FILE),
 	];
 }
@@ -89,7 +91,7 @@ function customDescriptionPaths(options?: ToolDescriptionOptions): string[] {
 function renderCustomTemplate(template: string, options?: ToolDescriptionOptions): string {
 	const cwd = options?.cwd ?? process.cwd();
 	const agentDir = options?.agentDir ?? getAgentDir();
-	const projectConfigDir = getProjectConfigDir(cwd);
+	const projectConfigDir = options?.projectTrusted === true ? getProjectConfigDir(cwd) : path.join(cwd, ".pi");
 	const variables: Record<string, () => string> = {
 		fullDescription: () => FULL_SUBAGENT_TOOL_DESCRIPTION,
 		full: () => FULL_SUBAGENT_TOOL_DESCRIPTION,

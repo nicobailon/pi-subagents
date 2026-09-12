@@ -811,6 +811,20 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.registerTool(tool);
 
+	// Factory-time registration is global-only: project trust is not available yet.
+	// Rebuild on every session binding so a prior trusted project's prose cannot linger.
+	if (config.toolDescriptionMode === "custom") {
+		pi.on("session_start", (_event, ctx) => {
+			pi.registerTool({
+				...tool,
+				description: buildSubagentToolDescription(config, {
+					cwd: ctx.cwd,
+					projectTrusted: ctx.isProjectTrusted?.() === true,
+				}),
+			});
+		});
+	}
+
 	pi.on("before_agent_start", (event, ctx) => {
 		const selectedTools = event.systemPromptOptions?.selectedTools ?? (typeof pi.getActiveTools === "function" ? pi.getActiveTools() : []);
 		const sessionId = state.currentSessionId ?? resolveCurrentSessionId(ctx.sessionManager);
