@@ -16,6 +16,7 @@ import { childSessionFactoryModule, setChildSessionFactoryModule } from "../../s
 import { createEventBus, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir } from "../support/helpers.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey } from "../../src/runs/background/active-async-capacity.ts";
+import { readProcessTerminal } from "../../src/runs/background/process-terminal.ts";
 import { readPendingChainAppendRequests } from "../../src/runs/background/chain-append.ts";
 import { createRunFanoutBudget, getRunFanoutBudgetSnapshot, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 import { deriveForkPromptCacheKey } from "../../src/runs/shared/child-tool-plan.ts";
@@ -1710,7 +1711,7 @@ import { syncBuiltinESMExports } from "node:module";
 const rename = fs.renameSync;
 fs.renameSync = function (source, target) {
 	if (String(target).endsWith("runner-startup.json") && JSON.parse(fs.readFileSync(source, "utf8")).state === "acknowledged") {
-		fs.writeFileSync(${JSON.stringify(witnessFile)}, "true");
+		fs.writeFileSync(${JSON.stringify(witnessFile)}, String(target));
 		return;
 	}
 	return rename.call(this, source, target);
@@ -1732,8 +1733,17 @@ syncBuiltinESMExports();
 		}
 		assert.equal(failed.isError, true);
 		assert.match(failed.content[0]?.text ?? "", /Timed out after 10000ms.*'acknowledged'/);
-		assert.equal(fs.readFileSync(witnessFile, "utf-8"), "true");
+		const startupPath = fs.readFileSync(witnessFile, "utf-8");
+		assert.equal(path.basename(startupPath), "runner-startup.json");
 		assert.equal(mockPi.callCount(), 1, "the unacknowledged runner must not start a child session");
+
+		// On POSIX, the terminated runner can remain a zombie until its real close is reaped.
+		const failedDir = path.dirname(startupPath);
+		const closeDeadline = Date.now() + 10_000;
+		while (readProcessTerminal(failedDir)?.state !== "observed" && Date.now() < closeDeadline) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(readProcessTerminal(failedDir, { runId: path.basename(failedDir) })?.state, "observed");
 
 		mockPi.onCall({ output: "Inspection after failed handshake" });
 		const resumed = await executor.execute(
