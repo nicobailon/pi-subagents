@@ -1555,13 +1555,18 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 	});
 
 	it("does not inject inferred acceptance into reviewer prompts", async () => {
-		mockPi.onCall({ output: "VERDICT: PASS" });
-		const result = await runSync(tempDir, [makeAgent("reviewer", { tools: ["read"], completionGuard: false })], "reviewer", "Review the diff and return findings only.", {
-			runId: "reviewer-inferred-acceptance",
-		});
+		for (const [index, task] of [
+			"Review the diff and return findings only.",
+			"Read-only review. Verify release recovery and security; do not edit files.",
+		].entries()) {
+			mockPi.onCall({ output: "VERDICT: PASS" });
+			const result = await runSync(tempDir, [makeAgent("reviewer", { tools: ["read"], completionGuard: false })], "reviewer", task, {
+				runId: `reviewer-inferred-acceptance-${index}`,
+			});
 
-		assert.equal(result.exitCode, 0);
-		assert.doesNotMatch(readCall().args.join("\n"), /## Acceptance Contract/);
+			assert.equal(result.exitCode, 0);
+			assert.doesNotMatch(readCall().args.join("\n"), /## Acceptance Contract/);
+		}
 	});
 
 	it("agent contract keeps acceptance rejection out of execution status", async () => {

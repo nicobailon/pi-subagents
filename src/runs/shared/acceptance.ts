@@ -106,8 +106,9 @@ function inferLevel(input: {
 	const roleResolvesReadOnly = input.acceptanceRole !== undefined && inferredReadOnly;
 	const dynamicResolvesReadOnly = inferredReadOnly && !writeTask;
 	const riskyKeywordPattern = /\b(?:release|migration|migrate|security|data[- ]loss|destructive|post-review|fix pass)\b/;
+	// Topic keywords cannot override classified read-only intent; unknown tasks keep their risk gate.
 	const keywordRiskReadOnly = input.acceptanceRole === undefined
-		? intent.kind === "read-only" && !riskyKeywordPattern.test(task)
+		? intent.kind === "read-only"
 		: inferredReadOnly;
 	const risky = Boolean(input.async && writeTask)
 		|| (Boolean(input.dynamic) && !roleResolvesReadOnly && !dynamicResolvesReadOnly)
