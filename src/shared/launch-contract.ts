@@ -4,7 +4,7 @@ import type { AgentConfig } from "../agents/agents.ts";
 import type { PiLaunchToolPlan } from "../runs/shared/child-tool-plan.ts";
 import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
 
-export const AGENT_DEFINITION_PROJECTION_VERSION = 1 as const;
+export const AGENT_DEFINITION_PROJECTION_VERSION = 2 as const;
 // v2: the Intercom bridge prompt and tools are part of the binding on every
 // path, and the bridge text no longer names the parent session.
 export const LAUNCH_BINDING_PROJECTION_VERSION = 2 as const;
@@ -63,6 +63,7 @@ export function projectAgentDefinition(agent: AgentConfig): Record<string, unkno
 		skills: agent.skills,
 		skillPath: agent.skillPath,
 		output: agent.output,
+		outputSchema: agent.outputSchema,
 		defaultReads: agent.defaultReads,
 		defaultProgress: agent.defaultProgress,
 		defaultContext: agent.defaultContext,
@@ -194,7 +195,7 @@ export function resolveLaunchBinding(source: LaunchBindingSource): LaunchBinding
 			mcpDirectTools: source.toolPlan.effectiveMcpTools,
 			outputPath: source.outputPath || undefined,
 			outputMode: source.outputMode,
-			structuredOutputSchema: source.structuredOutputSchema || undefined,
+			structuredOutputSchema: source.structuredOutputSchema,
 			extensionBindings: source.extensionBindings || undefined,
 		}),
 	};

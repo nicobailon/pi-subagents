@@ -102,6 +102,32 @@ afterEach(() => {
 	}
 });
 
+describe("agent outputSchema frontmatter", () => {
+	it("parses and serializes an inline object schema", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-schema-"));
+		tempDirs.push(project);
+		writeAgent(path.join(project, ".pi", "agents", "typed.md"), `---\nname: typed\ndescription: Typed agent\noutputSchema: {"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"}}}\n---\n\nReturn data.\n`);
+		const discovered = discoverAgents(project, "project");
+		const typed = discovered.agents.find((agent) => agent.name === "typed");
+		assert.deepEqual(typed?.outputSchema, { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } });
+		writeAgent(path.join(project, ".pi", "agents", "typed.md"), serializeAgent(typed!));
+		assert.deepEqual(discoverAgents(project, "project").agents.find((agent) => agent.name === "typed")?.outputSchema, typed?.outputSchema);
+	}));
+
+	it("rejects malformed, null, and array output schemas", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-schema-invalid-"));
+		tempDirs.push(project);
+		for (const [name, value] of [["malformed", "{"], ["null", "null"], ["array", "[]"]]) {
+			writeAgent(path.join(project, ".pi", "agents", `${name}.md`), `---\nname: ${name}\ndescription: Invalid schema\noutputSchema: ${value}\n---\nBody\n`);
+		}
+		const discovered = discoverAgents(project, "project");
+		assert.deepEqual(discovered.agents.filter((agent) => ["malformed", "null", "array"].includes(agent.name)), []);
+		assert.equal(discovered.agentDiagnostics?.length, 3);
+		assert.match(discovered.agentDiagnostics?.find(({ name }) => name === "malformed")?.error ?? "", /JSON|position|property/i);
+		assert.equal(discovered.agentDiagnostics?.filter(({ error }) => /outputSchema.*object/i.test(error)).length, 2);
+	}));
+});
+
 describe("agent definition directory inspection", () => {
 	it("distinguishes absent, empty, candidates, unreadable, and non-directory paths", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-inspection-"));

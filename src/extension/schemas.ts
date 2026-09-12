@@ -65,6 +65,11 @@ const JsonSchemaObject = Type.Unsafe({
 	description: "Strict structured output; object-root JSON Schema only.",
 });
 
+const OutputSchemaOverride = Type.Unsafe({
+	anyOf: [JsonSchemaObject, { type: "boolean" }],
+	description: "Structured output schema override; false disables an agent default.",
+});
+
 // Provider boolean branches intentionally overapproximate false-only runtime inputs.
 // Restricted function-declaration converters only support string enum members.
 const AcceptanceOverride = Type.Unsafe({
@@ -149,7 +154,7 @@ export const ParallelTaskSchema = Type.Object({
 	phase: Type.Optional(Type.String({ description: "Optional phase/group label for status and graph rendering." })),
 	label: Type.Optional(Type.String({ description: "Optional user-facing label for this parallel task." })),
 	as: Type.Optional(Type.String({ description: "Optional safe identifier used as {outputs.name} in later chain steps." })),
-	outputSchema: Type.Optional(JsonSchemaObject),
+	outputSchema: Type.Optional(OutputSchemaOverride),
 	cwd: Type.Optional(Type.String()),
 	machine: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Herdr saved machine id or label." })),
 	count: Type.Optional(Type.Integer({ minimum: 1, description: "Repeat this parallel task N times with the same settings." })),
@@ -182,7 +187,7 @@ export const DynamicParallelTemplateSchema = Type.Object({
 	task: Type.Optional(Type.String({ description: "Task template with {item}, {item.path}, {task}, {previous}, {chain_dir}, and {outputs.name} variables." })),
 	phase: Type.Optional(Type.String({ description: "Optional phase/group label for status and graph rendering." })),
 	label: Type.Optional(Type.String({ description: "Optional user-facing label; item templates are supported." })),
-	outputSchema: Type.Optional(JsonSchemaObject),
+	outputSchema: Type.Optional(OutputSchemaOverride),
 	cwd: Type.Optional(Type.String()),
 	machine: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Herdr saved machine id or label." })),
 	output: Type.Optional(OutputOverride),
@@ -212,7 +217,7 @@ export const ChainItem = Type.Object({
 	phase: Type.Optional(Type.String({ description: "Optional phase/group label for status and graph rendering." })),
 	label: Type.Optional(Type.String({ description: "Optional user-facing label for this chain step." })),
 	as: Type.Optional(Type.String({ description: "Optional safe identifier used as {outputs.name} in later chain steps." })),
-	outputSchema: Type.Optional(JsonSchemaObject),
+	outputSchema: Type.Optional(OutputSchemaOverride),
 	cwd: Type.Optional(Type.String()),
 	machine: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Herdr saved machine id or label." })),
 	output: Type.Optional(OutputOverride),
@@ -381,7 +386,7 @@ const SubagentParamProperties = {
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Child model provider/id; bare id only if unique. Suffix :off/minimal/low/medium/high/xhigh/max overrides agent thinking default." })),
 	fast: Type.Optional(Type.Boolean({ description: "Native OpenAI-Codex priority tier; default false, may cost more/quota." })),
-	outputSchema: Type.Optional(JsonSchemaObject),
+	outputSchema: Type.Optional(OutputSchemaOverride),
 	agentContract: Type.Optional(AgentContractOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
 	gate: Type.Optional(Type.String({ minLength: 1, description: "Host gate command. Cannot be combined with acceptance; an explicit acceptance of false is treated as omitted." })),

@@ -13,7 +13,7 @@ import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext,
 import { createAtomicJsonWriter, writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { buildEffectiveSystemPrompt } from "../shared/effective-system-prompt.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
-import { planChildLaunch, resolveStepBehavior, suppressProgressForReadOnlyTask, type ResolvedStepBehavior } from "../shared/child-launch-plan.ts";
+import { planChildLaunch, resolveEffectiveOutputSchema, resolveStepBehavior, suppressProgressForReadOnlyTask, type ResolvedStepBehavior } from "../shared/child-launch-plan.ts";
 import { formatHerdrMachineRunnerUnsupported, resolveHerdrMachinePlacement } from "../shared/herdr-machine.ts";
 import { applyThinkingSuffix, getHostBuiltinToolNames, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/child-tool-plan.ts";
 import { injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
@@ -834,8 +834,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		if (error instanceof ChainOutputValidationError) return { error: error.message };
 		throw error;
 	}
-	const workflowGraph = buildWorkflowGraphSnapshot({ runId: id, mode: resultMode, steps: graphChain });
-
 	const diagnosticContext = params.unknownAgentDiagnosticContext
 		?? unknownAgentDiagnosticContext(discoverAgents(path.resolve(runnerCwd), "both"));
 	for (const s of chain) {
@@ -848,6 +846,14 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			if (!agents.find((x) => x.name === agentName)) return { error: formatUnknownAgentError(agentName, diagnosticContext) };
 		}
 	}
+	const effectiveOutputSchema = (step: SequentialStep): JsonSchemaObject | undefined => resolveEffectiveOutputSchema(agents.find((agent) => agent.name === step.agent)!, step.outputSchema);
+	const withEffectiveOutputSchema = (step: SequentialStep): SequentialStep => ({ ...step, outputSchema: effectiveOutputSchema(step) });
+	const graphSteps = graphChain.map((step): ChainStep => {
+		if (isParallelStep(step)) return { ...step, parallel: step.parallel.map(withEffectiveOutputSchema) };
+		if (isDynamicParallelStep(step)) return { ...step, parallel: withEffectiveOutputSchema(step.parallel) };
+		return withEffectiveOutputSchema(step);
+	});
+	const workflowGraph = buildWorkflowGraphSnapshot({ runId: id, mode: resultMode, steps: graphSteps });
 
 	let progressInstructionCreated = false;
 	const buildStepOverrides = (s: SequentialStep): StepOverrides => {
@@ -860,10 +866,12 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			...(stepSkillInput !== undefined ? { skills: stepSkillInput } : {}),
 			...(s.model !== undefined ? { model: s.model } : {}),
 			...(s.fast !== undefined ? { fast: s.fast } : {}),
+			...(s.outputSchema !== undefined ? { outputSchema: s.outputSchema } : {}),
 		};
 	};
 	const buildSeqStep = (s: SequentialStep, sessionFile?: string, behaviorCwd?: string, progressPrecreated = false, resolvedBehavior?: ResolvedStepBehavior, flatIndex?: number, parallelOutputNamespace?: { stepIndex: number; taskIndex?: number }, runFanoutPath?: string) => {
 		const a = agents.find((x) => x.name === s.agent)!;
+		const effectiveBehavior = resolvedBehavior ?? suppressProgressForReadOnlyTask(resolveStepBehavior(a, buildStepOverrides(s), chainSkills), s.task, originalTask);
 		const requestedMachine = s.machine ?? launchMachine ?? a.machine;
 		const externalRunner = a.runner?.type === "external-cli" || a.runner?.type === "external-job";
 		const externalRunnerType = a.runner?.type;
@@ -883,7 +891,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		if (externalRunner) {
 			const unsupported: string[] = [];
 			if (s.model !== undefined) unsupported.push("model override");
-			if (s.outputSchema !== undefined) unsupported.push("structured output");
+			if (effectiveBehavior.outputSchema !== undefined) unsupported.push("structured output");
 			if (s.acceptance !== undefined || params.agentContract !== undefined || s.agentContract !== undefined) unsupported.push("acceptance/agent contract");
 			if (s.toolBudget !== undefined || params.toolBudget !== undefined || a.toolBudget !== undefined || params.configToolBudget !== undefined) unsupported.push("tool budget");
 			if ((s.fast ?? params.fast ?? a.fast) === true) unsupported.push("fast mode");
@@ -918,7 +926,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			chainSkills,
 			outputBaseDir,
 			parallelOutputNamespace,
-			resolvedBehavior,
+			resolvedBehavior: effectiveBehavior,
 		});
 		const { stepCwd, instructionCwd, readExistenceCwd, behavior, namespaceOutputPath, outputPath, skillNames } = launchPlan;
 		const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(
@@ -1005,7 +1013,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			mcpDirectTools: a.mcpDirectTools,
 			cwd: stepCwd,
 			requireReadTool: Boolean(resolvedSkills.length),
-			structuredOutput: Boolean(s.outputSchema),
+			structuredOutput: Boolean(behavior.outputSchema),
 			fast,
 			model,
 			modelCandidates,
@@ -1049,7 +1057,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			phase: s.phase,
 			label: s.label,
 			outputName: s.as,
-			structured: Boolean(s.outputSchema),
+			structured: Boolean(behavior.outputSchema),
 			cwd: stepCwd,
 			requestedCwd: machine ? machine.cwd : s.cwd ?? stepCwd,
 			model,
@@ -1099,8 +1107,8 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			acceptanceInput: s.acceptance,
 			acceptanceRole: a.acceptanceRole,
 			...(s.gateOn ? { gateOn: s.gateOn } : {}),
-			...(s.outputSchema ? { structuredOutputSchema: s.outputSchema } : {}),
-			...(s.outputSchema ? { structuredOutput: createStructuredOutputRuntime(s.outputSchema, path.join(asyncDir, "structured-output"), { acceptanceReport: resolveAcceptanceReportMode(s.acceptance) }) } : {}),
+			...(behavior.outputSchema ? { structuredOutputSchema: behavior.outputSchema } : {}),
+			...(behavior.outputSchema ? { structuredOutput: createStructuredOutputRuntime(behavior.outputSchema, path.join(asyncDir, "structured-output"), { acceptanceReport: resolveAcceptanceReportMode(s.acceptance) }) } : {}),
 			...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
 			...(s.worktree ? { worktree: true } : {}),
 		};
@@ -1272,11 +1280,16 @@ export function executeAsyncChain(
 		nestedRoute,
 	} = params;
 	const resultMode = params.resultMode ?? "chain";
+	const effectiveOutputSchema = (step: SequentialStep): JsonSchemaObject | undefined => {
+		const agent = agents.find((candidate) => candidate.name === step.agent);
+		return agent && resolveEffectiveOutputSchema(agent, step.outputSchema);
+	};
+	const withEffectiveOutputSchema = (step: SequentialStep): SequentialStep => ({ ...step, outputSchema: effectiveOutputSchema(step) });
 	const acceptanceErrors = validateExecutionAcceptance({
 		chain: chain.map((step) => {
-			if (isParallelStep(step)) return { parallel: step.parallel };
-			if (isDynamicParallelStep(step)) return { acceptance: step.acceptance, parallel: step.parallel };
-			return { acceptance: step.acceptance, outputSchema: step.outputSchema };
+			if (isParallelStep(step)) return { parallel: step.parallel.map(withEffectiveOutputSchema) };
+			if (isDynamicParallelStep(step)) return { acceptance: step.acceptance, parallel: withEffectiveOutputSchema(step.parallel) };
+			return { acceptance: step.acceptance, outputSchema: effectiveOutputSchema(step) };
 		}),
 	});
 	if (acceptanceErrors.length > 0) return formatAsyncStartError(resultMode, acceptanceErrors.join(" "));

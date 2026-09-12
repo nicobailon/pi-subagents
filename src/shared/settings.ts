@@ -32,7 +32,7 @@ export interface SequentialStep {
 	phase?: string;
 	label?: string;
 	as?: string;
-	outputSchema?: JsonSchemaObject;
+	outputSchema?: JsonSchemaObject | false;
 	cwd?: string;
 	machine?: string;
 	output?: OutputOverrideInput;
@@ -57,7 +57,7 @@ export interface ParallelTaskItem {
 	phase?: string;
 	label?: string;
 	as?: string;
-	outputSchema?: JsonSchemaObject;
+	outputSchema?: JsonSchemaObject | false;
 	cwd?: string;
 	machine?: string;
 	count?: number;

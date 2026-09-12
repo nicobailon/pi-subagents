@@ -16,6 +16,8 @@ import { childSessionFactoryModule, setChildSessionFactoryModule } from "../../s
 import { createEventBus, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir } from "../support/helpers.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey } from "../../src/runs/background/active-async-capacity.ts";
+import { readPendingChainAppendRequests } from "../../src/runs/background/chain-append.ts";
+import { createRunFanoutBudget, getRunFanoutBudgetSnapshot, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 import { deriveForkPromptCacheKey } from "../../src/runs/shared/child-tool-plan.ts";
 import type { AsyncExecutionResult, AsyncResultPayload, AsyncStatusPayload } from "../support/async-execution-fixture.ts";
 import {
@@ -1108,6 +1110,58 @@ export default function() {
 		assert.equal(savedOutput, JSON.stringify(expectedStructuredOutput, null, 2));
 	});
 
+	it("background execution inherits a discovered agent outputSchema", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const agentDir = path.join(tempDir, ".pi", "agents");
+		fs.mkdirSync(agentDir, { recursive: true });
+		fs.writeFileSync(path.join(agentDir, "typed.md"), `---\nname: typed\ndescription: Typed output\noutputSchema: {"type":"object","required":["ok"]}\n---\nReturn data.\n`);
+		const agents = discoverAgents(tempDir, "project").agents;
+		const executor = makeAsyncExecutor(agents);
+		const id = `async-schema-default-${Date.now().toString(36)}`;
+		mockPi.onCall({ output: "ordinary prose" });
+		const launch = await executor.execute(id, { agent: "typed", task: "Return data", async: true, runId: id, acceptance: false, artifacts: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir)) as AsyncExecutionResult;
+		assert.equal(launch.isError, undefined);
+		const payload = await readAsyncPayload(launch.details.asyncId!);
+		assert.equal(payload.success, false);
+		assert.match(payload.results[0]?.error ?? "", /Missing structured_output call/);
+	});
+
+	it("workflow acceptance uses inherited schemas and rejects a false opt-out", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const agentDir = path.join(tempDir, ".pi", "agents");
+		fs.mkdirSync(agentDir, { recursive: true });
+		fs.writeFileSync(path.join(agentDir, "typed.md"), `---\nname: typed\ndescription: Typed output\noutputSchema: {"type":"object","required":["ok"]}\n---\nReturn data.\n`);
+		const executor = makeAsyncExecutor(discoverAgents(tempDir, "project").agents);
+		mockPi.onCall({ output: "ordinary prose" });
+		const inherited = await executor.execute("workflow-schema-default", {
+			async: false,
+			workflowScript: `return runs.run("typed", { agent: "typed", task: "Return data", acceptance: { level: "checked", report: "on" } });`,
+		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(inherited.isError, true);
+		assert.match(inherited.content[0]?.type === "text" ? inherited.content[0].text : "", /Missing structured_output call/);
+
+		const disabled = await executor.execute("workflow-schema-disabled", {
+			async: false,
+			workflowScript: `return runs.run("typed", { agent: "typed", task: "Return prose", outputSchema: false, acceptance: { level: "checked", report: "on" } });`,
+		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(disabled.isError, true);
+		assert.match(disabled.content[0]?.type === "text" ? disabled.content[0].text : "", /acceptance\.report requires outputSchema/);
+
+		mockPi.onCall({ output: "missing structured call" });
+		mockPi.onCall({ output: "false opted out" });
+		const parallel = await executor.execute("workflow-schema-parallel", {
+			async: false,
+			workflowScript: `const children = await runs.all([
+				{ key: "inherited", agent: "typed", task: "Return data", acceptance: false },
+				{ key: "disabled", agent: "typed", task: "Return prose", outputSchema: false, acceptance: false }
+			]); return children.map(({ key, ok, error, output }) => ({ key, ok, error, output }));`,
+		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(parallel.isError, undefined, parallel.content[0]?.type === "text" ? parallel.content[0].text : undefined);
+		const children = parallel.details.workflow?.value as Array<{ key: string; ok: boolean; error?: string; output: string }>;
+		assert.equal(children.find(({ key }) => key === "inherited")?.ok, false);
+		assert.match(children.find(({ key }) => key === "inherited")?.error ?? "", /Missing structured_output call/);
+		assert.deepEqual(children.find(({ key }) => key === "disabled"), { key: "disabled", ok: true, output: "false opted out" });
+		assert.equal(mockPi.callCount(), 3);
+	});
+
 	it("background outputSchema runs fail closed when required acceptanceReport is missing", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "structured", structuredOutput: { ok: true } });
 		const id = `async-schema-missing-acceptance-${Date.now().toString(36)}`;
@@ -1899,6 +1953,58 @@ export default function() {
 			assert.doesNotMatch(result.content[0]?.text ?? "", new RegExp(storedCwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 		} finally {
 			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
+	});
+
+	it("append-step admits inherited schemas and rejects false report modes before enqueue", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+		const runId = `append-effective-schema-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const agentDir = path.join(tempDir, ".pi", "agents");
+		const schema = { type: "object", required: ["ok"] };
+		const budget = createRunFanoutBudget(runId, 8);
+		try {
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.mkdirSync(agentDir, { recursive: true });
+			fs.writeFileSync(path.join(agentDir, "typed.md"), `---\nname: typed\ndescription: Typed output\noutputSchema: ${JSON.stringify(schema)}\n---\nReturn data.\n`);
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId, sessionId: "session-123", mode: "chain", state: "running", startedAt: 100, lastUpdate: 200, cwd: tempDir, chainStepCount: 1,
+				steps: [{ agent: "typed", status: "running" }],
+			}, null, 2));
+			writeRunFanoutBudgetDescriptor(asyncDir, budget);
+			const executor = makeAsyncExecutor(discoverAgents(tempDir, "project").agents);
+			const ctx = makeMinimalCtx(tempDir);
+
+			const admitted = await executor.execute(
+				"append-inherited-schema",
+				{ action: "append-step", id: runId, step: { agent: "typed", task: "Review", acceptance: { level: "checked", report: "on" } } },
+				new AbortController().signal,
+				undefined,
+				ctx,
+			) as AsyncExecutionResult;
+			assert.equal(admitted.isError, undefined, admitted.content[0]?.text ?? "append failed");
+			assert.match(admitted.content[0]?.text ?? "", /Append queued/);
+			const requests = readPendingChainAppendRequests(asyncDir);
+			assert.equal(requests.length, 1);
+			assert.deepEqual(requests[0]?.steps[0]?.structuredOutputSchema, schema);
+			assert.deepEqual(getRunFanoutBudgetSnapshot(budget), { used: 1, limit: 8, remaining: 7 });
+
+			for (const report of ["on", "off"] as const) {
+				const rejected = await executor.execute(
+					`append-false-schema-${report}`,
+					{ action: "append-step", id: runId, step: { agent: "typed", task: "Review", outputSchema: false, acceptance: { level: "checked", report } } },
+					new AbortController().signal,
+					undefined,
+					ctx,
+				) as AsyncExecutionResult;
+				assert.equal(rejected.isError, true);
+				assert.match(rejected.content[0]?.text ?? "", /Cannot append step: chain\[0\]\.acceptance\.report requires outputSchema/);
+				assert.equal(readPendingChainAppendRequests(asyncDir).length, 1);
+				assert.deepEqual(getRunFanoutBudgetSnapshot(budget), { used: 1, limit: 8, remaining: 7 });
+				assert.equal(mockPi.callCount(), 0);
+			}
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(budget.directory, { recursive: true, force: true });
 		}
 	});
 

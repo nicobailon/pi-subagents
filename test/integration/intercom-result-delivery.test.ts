@@ -774,6 +774,82 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	});
 
+	it("resume action rejects malformed explicit output schemas before lookup", async () => {
+		for (const [index, params] of [
+			{ message: "Continue", outputSchema: true },
+			{ message: "Continue", outputSchema: null },
+			{ chain: [{ agent: "worker", task: "Continue", outputSchema: [] }] },
+		].entries()) {
+			const { executor, events } = makeExecutor();
+			const result = await executor.execute(
+				`resume-invalid-schema-${index}`,
+				{ action: "resume", id: "missing-source-run", ...params },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /Cannot resume: outputSchema must be a JSON Schema object/);
+			assert.equal(events.emitted.some((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT), false);
+		}
+	});
+
+	it("rejects either false-schema report polarity before acquiring resume capacity", async () => {
+		const schema = { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } };
+		for (const report of ["on", "off"] as const) {
+			for (const polarity of ["retained-false", "explicit-false"] as const) {
+				const parentSessionId = `session-resume-${polarity}-${report}-${Date.now()}`;
+				try {
+					const { executor, events } = makeExecutor({ maxActiveAsyncRunsPerSession: 1 });
+					const ctx = makeMinimalCtx(tempDir);
+					ctx.sessionManager.getSessionId = () => parentSessionId;
+					if (polarity === "retained-false") {
+						mockPi.onCall({ output: "unstructured result" });
+					} else {
+						const structuredEvents = [
+							{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
+							{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+							{ type: "tool_execution_end", toolName: "structured_output" },
+						];
+						mockPi.onCall({
+							stdoutRaw: structuredEvents.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+							structuredOutputCapture: { ok: true },
+						});
+					}
+					const first = await executor.execute(
+						`resume-${polarity}-${report}-source`,
+						polarity === "retained-false"
+							? { agent: "worker", task: "Return prose", async: false, outputSchema: false, acceptance: false }
+							: { agent: "worker", task: "Return data", async: false, outputSchema: schema, acceptance: { level: "checked", report } },
+						new AbortController().signal,
+						undefined,
+						ctx,
+					);
+					if (polarity === "retained-false") assert.equal(first.isError, undefined, first.content[0]?.text ?? "source run failed");
+					assert.ok(first.details.runId);
+					assert.deepEqual(getActiveAsyncCapacitySnapshot(parentSessionId, 1), { used: 0, limit: 1 });
+					const result = await executor.execute(
+						`resume-${polarity}-${report}`,
+						polarity === "retained-false"
+							? { action: "resume", id: first.details.runId, message: "Continue", acceptance: { level: "checked", report } }
+							: { action: "resume", id: first.details.runId, message: "Continue", outputSchema: false },
+						new AbortController().signal,
+						undefined,
+						ctx,
+					);
+					assert.equal(result.isError, true);
+					assert.match(result.content[0]?.text ?? "", /Cannot resume: acceptance\.report requires outputSchema/);
+					assert.deepEqual(getActiveAsyncCapacitySnapshot(parentSessionId, 1), { used: 0, limit: 1 });
+					assert.equal(mockPi.callCount(), 1);
+					assert.equal(events.emitted.some((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT), false);
+				} finally {
+					fs.rmSync(path.join(ACTIVE_ASYNC_CAPACITY_DIR, activeAsyncCapacitySessionKey(parentSessionId)), { recursive: true, force: true });
+					mockPi.reset();
+				}
+			}
+		}
+	});
+
 	it("resume action can attach a live async child as the first step of a new chain", async () => {
 		const sourceRunId = `resume-chain-root-${Date.now()}`;
 		const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
@@ -848,6 +924,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		const sourceRunId = `resume-chain-complete-root-${Date.now()}`;
 		const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
 		const sourceResultPath = path.join(RESULTS_DIR, `${sourceRunId}.json`);
+		const parentSessionId = "session-123";
 		try {
 			fs.mkdirSync(sourceAsyncDir, { recursive: true });
 			fs.mkdirSync(RESULTS_DIR, { recursive: true });
@@ -871,28 +948,49 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				summary: "completed root output",
 				results: [{ agent: "worker", output: "completed root output", success: true }],
 			}, null, 2), "utf-8");
-			const { executor } = makeExecutor({ agents: [makeAgent("worker"), makeAgent("reviewer")] });
+			const reviewer = { ...makeAgent("reviewer"), outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } } };
+			const { executor, events } = makeExecutor({ agents: [makeAgent("worker"), reviewer], maxActiveAsyncRunsPerSession: 1 });
+			const ctx = makeMinimalCtx(tempDir);
+			ctx.sessionManager.getSessionId = () => parentSessionId;
 
 			const reviveOnly = await executor.execute(
 				"resume-chain-complete-root-revive-only",
 				{ action: "resume", id: sourceRunId, message: "Follow up" },
 				new AbortController().signal,
 				undefined,
-				makeMinimalCtx(tempDir),
+				ctx,
 			);
 			assert.equal(reviveOnly.isError, true);
 			assert.match(reviveOnly.content[0]?.text ?? "", /does not have a persisted session file/);
+
+			for (const [name, params] of [
+				["top-level", { outputSchema: false, acceptance: { level: "checked", report: "on" }, chain: [{ agent: "reviewer", task: "Review" }] }],
+				["child", { chain: [{ agent: "reviewer", task: "Review", outputSchema: false, acceptance: { level: "checked", report: "off" } }] }],
+			] as const) {
+				const rejected = await executor.execute(
+					`resume-chain-invalid-${name}`,
+					{ action: "resume", id: sourceRunId, ...params },
+					new AbortController().signal,
+					undefined,
+					ctx,
+				);
+				assert.equal(rejected.isError, true);
+				assert.match(rejected.content[0]?.text ?? "", /Cannot resume: .*acceptance\.report requires outputSchema/);
+				assert.deepEqual(getActiveAsyncCapacitySnapshot(parentSessionId, 1), { used: 0, limit: 1 });
+				assert.equal(mockPi.callCount(), 0);
+				assert.equal(events.emitted.some((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT), false);
+			}
 
 			const attached = await executor.execute(
 				"resume-chain-complete-root",
 				{
 					action: "resume",
 					id: sourceRunId,
-					chain: [{ agent: "reviewer", task: "Review this completed root result: {previous}" }],
+					chain: [{ agent: "reviewer", task: "Review this completed root result: {previous}", acceptance: { level: "checked", report: "on" } }],
 				},
 				new AbortController().signal,
 				undefined,
-				makeMinimalCtx(tempDir),
+				ctx,
 			);
 
 			assert.equal(attached.isError, undefined);
@@ -903,6 +1001,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		} finally {
 			fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
 			fs.rmSync(sourceResultPath, { force: true });
+			fs.rmSync(path.join(ACTIVE_ASYNC_CAPACITY_DIR, activeAsyncCapacitySessionKey(parentSessionId)), { recursive: true, force: true });
 		}
 	});
 

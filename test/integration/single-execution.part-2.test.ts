@@ -1792,22 +1792,31 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(resumed.savedOutputPath, undefined);
 	});
 
-	it("preserves the structured-output contract when resume fields are omitted", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		const schema = { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } };
+	it("retains inherited and disabled discovered schemas across definition changes", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const agentPath = path.join(tempDir, ".pi", "agents", "typed.md");
+		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+		const definition = (required: string) => `---\nname: typed\ndescription: Typed output\noutputSchema: {"type":"object","required":["${required}"]}\n---\nReturn data.\n`;
+		fs.writeFileSync(agentPath, definition("ok"));
 		const structuredEvents = [
 			{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
 			{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
 			{ type: "tool_execution_end", toolName: "structured_output" },
 		];
+		mockPi.onCall({ stdoutRaw: structuredEvents.map((entry) => JSON.stringify(entry)).join("\n") + "\n", structuredOutputCapture: { ok: true }, writeFiles: [{ path: agentPath, content: definition("changed") }] });
 		mockPi.onCall({ stdoutRaw: structuredEvents.map((entry) => JSON.stringify(entry)).join("\n") + "\n", structuredOutputCapture: { ok: true } });
-		mockPi.onCall({ stdoutRaw: structuredEvents.map((entry) => JSON.stringify(entry)).join("\n") + "\n", structuredOutputCapture: { ok: true } });
-		const result = await makeExecutor([makeAgent("echo")]).execute(
+		mockPi.onCall({ output: "disabled first", writeFiles: [{ path: agentPath, content: definition("later") }] });
+		mockPi.onCall({ output: "disabled resumed" });
+		const executor = makeExecutor([], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), (cwd) => discoverAgents(cwd, "project").agents);
+		const result = await executor.execute(
 			"workflow-inherited-resume-schema",
 			{
 				async: false,
 				workflowScript: `
-					const first = await runs.run("first", { agent: "echo", task: "First", outputSchema: ${JSON.stringify(schema)}, agentContract: { version: 1 }, acceptance: false, output: false });
-					return runs.run("resumed", { resume: first.runId, task: "Resume" });
+					const first = await runs.run("first", { agent: "typed", task: "First", acceptance: false, output: false });
+					const resumed = await runs.run("resumed", { resume: first.runId, task: "Resume" });
+					const disabled = await runs.run("disabled", { agent: "typed", task: "Disabled", outputSchema: false, acceptance: false, output: false });
+					const disabledResumed = await runs.run("disabled-resumed", { resume: disabled.runId, task: "Resume disabled" });
+					return { resumed, disabledResumed };
 				`,
 			},
 			new AbortController().signal,
@@ -1816,9 +1825,12 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		);
 
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
-		const resumed = result.details.workflow?.value as { ok?: boolean; structuredOutput?: unknown };
-		assert.equal(resumed.ok, true);
-		assert.deepEqual(resumed.structuredOutput, { ok: true });
+		const value = result.details.workflow?.value as { resumed: { ok?: boolean; structuredOutput?: unknown }; disabledResumed: { ok?: boolean; output?: string; structuredOutput?: unknown } };
+		assert.equal(value.resumed.ok, true);
+		assert.deepEqual(value.resumed.structuredOutput, { ok: true });
+		assert.equal(value.disabledResumed.ok, true);
+		assert.equal(value.disabledResumed.output, "disabled resumed");
+		assert.equal(value.disabledResumed.structuredOutput, undefined);
 	});
 
 	it("auto-resumes a workflow child after a setup abort", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -2131,6 +2143,22 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.match(child?.error ?? "", /Missing structured_output call/);
 		assert.ok(child?.structuredOutputPath);
 		assert.equal(fs.existsSync(path.dirname(child.structuredOutputPath)), false);
+	});
+
+	it("enforces a discovered agent outputSchema and lets false opt out", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const agentDir = path.join(tempDir, ".pi", "agents");
+		fs.mkdirSync(agentDir, { recursive: true });
+		fs.writeFileSync(path.join(agentDir, "typed.md"), `---\nname: typed\ndescription: Typed output\noutputSchema: {"type":"object","required":["ok"]}\n---\nReturn data.\n`);
+		const executor = makeExecutor(discoverAgents(tempDir, "project").agents);
+		mockPi.onCall({ output: "ordinary prose" });
+		const inherited = await executor.execute("schema-default", { agent: "typed", task: "Return data", acceptance: false, artifacts: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(inherited.isError, true);
+		assert.match(inherited.details.results[0]?.error ?? "", /Missing structured_output call/);
+
+		mockPi.onCall({ output: "ordinary prose" });
+		const optedOut = await executor.execute("schema-disabled", { agent: "typed", task: "Return prose", outputSchema: false, acceptance: false, artifacts: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(optedOut.isError, undefined);
+		assert.equal(optedOut.details.results[0]?.finalOutput, "ordinary prose");
 	});
 
 	it("does not create a temporary structured output directory before file-only validation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

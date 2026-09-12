@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { resolveChildCwd } from "../../shared/utils.ts";
-import type { OutputMode } from "../../shared/types.ts";
+import type { JsonSchemaObject, OutputMode } from "../../shared/types.ts";
 import { resolveSingleOutputPath } from "./single-output.ts";
 
 export interface ResolvedStepBehavior {
@@ -12,6 +12,7 @@ export interface ResolvedStepBehavior {
 	skills: string[] | false;
 	model?: string;
 	fast?: boolean;
+	outputSchema?: JsonSchemaObject;
 }
 
 export type OutputOverrideInput = string | boolean;
@@ -24,6 +25,7 @@ export interface StepOverrides {
 	skills?: string[] | false;
 	model?: string;
 	fast?: boolean;
+	outputSchema?: JsonSchemaObject | false;
 }
 
 export interface ChildLaunchPlanInput {
@@ -58,6 +60,8 @@ export function normalizeOutputOverride(output: unknown): string | false | undef
 	if (output === true || output === "true") return undefined;
 	return typeof output === "string" && output.length > 0 ? output : undefined;
 }
+
+export const resolveEffectiveOutputSchema = (agentConfig: AgentConfig, override?: JsonSchemaObject | false): JsonSchemaObject | undefined => override === false ? undefined : override !== undefined ? override : agentConfig.outputSchema;
 
 export function resolveStepBehavior(
 	agentConfig: AgentConfig,
@@ -95,7 +99,8 @@ export function resolveStepBehavior(
 	const outputMode = stepOverrides.outputMode ?? agentConfig.outputMode ?? "inline";
 	const model = stepOverrides.model ?? agentConfig.model;
 	const fast = stepOverrides.fast ?? agentConfig.fast;
-	return { output, outputMode, reads, progress, skills, model, fast };
+	const outputSchema = resolveEffectiveOutputSchema(agentConfig, stepOverrides.outputSchema);
+	return { output, outputMode, reads, progress, skills, model, fast, ...(outputSchema !== undefined ? { outputSchema } : {}) };
 }
 
 export function resolveTaskTextForFileUpdatePolicy(task: string | undefined, originalTask?: string): string | undefined {

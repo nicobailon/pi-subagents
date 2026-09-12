@@ -550,7 +550,7 @@ function runLanes(laneSpecs) {
       generatedKey: stage.generatedKey,
       ...workflowPlanStringMetadata(stage.params),
       ...(typeof stage.params.as === "string" && stage.params.as.trim() ? { outputName: stage.params.as.trim() } : {}),
-      ...(stage.params.outputSchema !== undefined ? { structured: true } : {}),
+      ...(stage.params.outputSchema ? { structured: true } : {}),
     })),
   })) });
   const firstItems = lanes.map((lane) => {

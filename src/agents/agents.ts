@@ -8,7 +8,7 @@ import { parse as parseYaml } from "yaml";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
+import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, JsonSchemaObject, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { expandHomePath } from "../shared/settings.ts";
@@ -24,6 +24,7 @@ import { parseMemoryFrontmatter } from "./agent-memory.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
 import { parseThinkingLevel, type ThinkingLevel } from "../shared/thinking-ceiling.ts";
+import { assertJsonSchemaObject } from "../runs/shared/structured-output.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -170,6 +171,7 @@ export interface AgentConfig {
 	mutationTools?: string[];
 	output?: string;
 	outputMode?: OutputMode;
+	outputSchema?: JsonSchemaObject;
 	defaultReads?: string[];
 	defaultProgress?: boolean;
 	interactive?: boolean;
@@ -2138,6 +2140,12 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			}
 			toolBudget = parsed as ToolBudgetConfig;
 		}
+		let outputSchema: JsonSchemaObject | undefined;
+		if (frontmatter.outputSchema !== undefined && frontmatter.outputSchema.trim()) {
+			const parsed: unknown = JSON.parse(frontmatter.outputSchema);
+			assertJsonSchemaObject(parsed, `Agent '${localName}' outputSchema`);
+			outputSchema = parsed;
+		}
 		const completionGuard = frontmatter.completionGuard === "false"
 			? false
 			: frontmatter.completionGuard === "true"
@@ -2190,6 +2198,7 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			...(machine !== undefined ? { machine } : {}),
 			...(frontmatter.output !== undefined ? { output: frontmatter.output } : {}),
 			...(outputMode !== undefined ? { outputMode } : {}),
+			...(outputSchema !== undefined ? { outputSchema } : {}),
 			...(defaultReads?.length ? { defaultReads } : {}),
 			defaultProgress: frontmatter.defaultProgress === "true",
 			interactive: frontmatter.interactive === "true",

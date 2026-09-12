@@ -370,7 +370,7 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	return errors;
 }
 
-export function validateExecutionAcceptance(input: {
+type ExecutionAcceptanceInput = {
 	acceptance?: unknown;
 	outputSchema?: unknown;
 	tasks?: Array<{ acceptance?: unknown; outputSchema?: unknown }>;
@@ -379,23 +379,39 @@ export function validateExecutionAcceptance(input: {
 		outputSchema?: unknown;
 		parallel?: Array<{ acceptance?: unknown; outputSchema?: unknown }> | { acceptance?: unknown; outputSchema?: unknown };
 	}>;
-}): string[] {
+};
+
+export function validateExecutionAcceptancePolicy(input: ExecutionAcceptanceInput): string[] {
 	const errors = validateAcceptanceInput(input.acceptance, "acceptance");
-	errors.push(...validateAcceptanceReportMode(input.acceptance, input.outputSchema, "acceptance"));
 	for (const [index, task] of (input.tasks ?? []).entries()) {
 		errors.push(...validateAcceptanceInput(task.acceptance, `tasks[${index}].acceptance`));
-		errors.push(...validateAcceptanceReportMode(task.acceptance, task.outputSchema, `tasks[${index}].acceptance`));
 	}
 	for (const [stepIndex, step] of (input.chain ?? []).entries()) {
 		errors.push(...validateAcceptanceInput(step.acceptance, `chain[${stepIndex}].acceptance`));
-		errors.push(...validateAcceptanceReportMode(step.acceptance, step.outputSchema, `chain[${stepIndex}].acceptance`));
 		if (Array.isArray(step.parallel)) {
 			for (const [taskIndex, task] of step.parallel.entries()) {
 				errors.push(...validateAcceptanceInput(task.acceptance, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
-				errors.push(...validateAcceptanceReportMode(task.acceptance, task.outputSchema, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
 			}
 		} else if (step.parallel) {
 			errors.push(...validateAcceptanceInput(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`));
+		}
+	}
+	return errors;
+}
+
+export function validateExecutionAcceptance(input: ExecutionAcceptanceInput): string[] {
+	const errors = validateExecutionAcceptancePolicy(input);
+	errors.push(...validateAcceptanceReportMode(input.acceptance, input.outputSchema, "acceptance"));
+	for (const [index, task] of (input.tasks ?? []).entries()) {
+		errors.push(...validateAcceptanceReportMode(task.acceptance, task.outputSchema, `tasks[${index}].acceptance`));
+	}
+	for (const [stepIndex, step] of (input.chain ?? []).entries()) {
+		errors.push(...validateAcceptanceReportMode(step.acceptance, step.outputSchema, `chain[${stepIndex}].acceptance`));
+		if (Array.isArray(step.parallel)) {
+			for (const [taskIndex, task] of step.parallel.entries()) {
+				errors.push(...validateAcceptanceReportMode(task.acceptance, task.outputSchema, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
+			}
+		} else if (step.parallel) {
 			errors.push(...validateAcceptanceReportMode(step.parallel.acceptance, step.parallel.outputSchema, `chain[${stepIndex}].parallel.acceptance`));
 		}
 	}
@@ -408,7 +424,7 @@ function validateAcceptanceReportMode(acceptance: unknown, outputSchema: unknown
 	acceptance = normalized.value;
 	if (!acceptance || typeof acceptance !== "object" || Array.isArray(acceptance)) return [];
 	if (!("report" in acceptance)) return [];
-	return outputSchema === undefined ? [`${pathLabel}.report requires outputSchema.`] : [];
+	return outputSchema === undefined || outputSchema === false ? [`${pathLabel}.report requires outputSchema.`] : [];
 }
 
 function normalizeCriteria(criteria: Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }> | undefined, evidence: AcceptanceEvidenceKind[]): ResolvedAcceptanceGate[] {

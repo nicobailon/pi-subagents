@@ -133,7 +133,7 @@ Project prompt.
 			assert.equal(result.ok, true);
 			assert.equal(result.contract.version, SUBAGENT_LAUNCH_CONTRACT_VERSION);
 			assert.equal(result.contract.agent.source, "project");
-			assert.equal(result.contract.agent.definitionProjectionVersion, 1);
+			assert.equal(result.contract.agent.definitionProjectionVersion, 2);
 			assert.match(result.contract.agent.definitionDigest, /^[a-f0-9]{64}$/);
 			assert.match(result.contract.launchContractDigest, /^[a-f0-9]{64}$/);
 			assert.ok(result.contract.agent.shadowedCandidates.some((candidate) => candidate.name === "worker" && candidate.source === "builtin"));
@@ -858,6 +858,27 @@ Project prompt.
 		assert.ok(result.contract.tools.runtimeExtensions.some((extensionPath) => extensionPath.endsWith("fanout-child.ts")));
 		assert.ok(result.contract.tools.extensionArgs.includes("/tmp/config-ext.ts"));
 		assert.ok(result.contract.tools.extensionArgs.includes("/tmp/subagent-only.ts"));
+	});
+
+	it("inherits agent structured output and honors false for native and external runners", async () => {
+		const cwd = path.join(tempDir, "schema-default-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "typed.md"), `---\nname: typed\ndescription: Typed\noutputSchema: {"type":"object","required":["ok"]}\n---\nPrompt.\n`);
+		const inherited = await resolveSubagentLaunchContract({ agent: "typed", cwd, task: "Inspect" });
+		assert.equal(inherited.ok, true);
+		if (!inherited.ok) return;
+		assert.deepEqual(inherited.contract.tools.internalTools, ["structured_output"]);
+		const disabled = await resolveSubagentLaunchContract({ agent: "typed", cwd, task: "Inspect", outputSchema: false });
+		assert.equal(disabled.ok, true);
+		if (!disabled.ok) return;
+		assert.deepEqual(disabled.contract.tools.internalTools, []);
+		assert.notEqual(inherited.contract.launchContractDigest, disabled.contract.launchContractDigest);
+
+		writeAgent(path.join(cwd, ".pi", "agents", "external.md"), `---\nname: external\ndescription: External\noutputSchema: {"type":"object"}\nrunner:\n  type: external-cli\n  command: ${JSON.stringify(process.execPath)}\n---\nPrompt.\n`);
+		const rejected = await resolveSubagentLaunchContract({ agent: "external", cwd });
+		assert.equal(rejected.ok, false);
+		assert.equal(rejected.code, "unsupported_mode");
+		assert.equal((await resolveSubagentLaunchContract({ agent: "external", cwd, outputSchema: false })).ok, true);
 	});
 
 	it("projects per-agent tool exclusions and binds them into launch identity", async () => {

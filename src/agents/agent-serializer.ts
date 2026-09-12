@@ -35,6 +35,7 @@ export const KNOWN_FIELDS = new Set([
 	"machine",
 	"output",
 	"outputMode",
+	"outputSchema",
 	"defaultReads",
 	"defaultProgress",
 	"interactive",
@@ -131,6 +132,7 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	if (config.machine || preserve("machine")) lines.push(`machine: ${config.machine ?? ""}`);
 	if (config.output || preserve("output")) lines.push(`output: ${config.output ?? ""}`);
 	if (config.outputMode || preserve("outputMode")) lines.push(`outputMode: ${config.outputMode ?? ""}`);
+	if (config.outputSchema || preserve("outputSchema")) lines.push(`outputSchema: ${config.outputSchema ? JSON.stringify(config.outputSchema) : ""}`);
 
 	const readsValue = joinComma(config.defaultReads);
 	if (readsValue || preserve("defaultReads")) lines.push(`defaultReads: ${readsValue ?? ""}`);

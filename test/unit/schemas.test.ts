@@ -188,6 +188,20 @@ try {
 }
 
 describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not available" : undefined }, () => {
+	it("accepts object or false output schema overrides and rejects null", () => {
+		assert.ok(SubagentParams);
+		assert.ok(CompileSchema);
+		const validator = CompileSchema!(SubagentParams);
+		const base = { agent: "worker", task: "work" };
+		assert.equal(validator.Check({ ...base, outputSchema: { type: "object" } }), true);
+		assert.equal(validator.Check({ ...base, outputSchema: false }), true);
+		assert.equal(validator.Check({ ...base, outputSchema: null }), false);
+		assert.equal(validator.Check({ task: "work", chain: [{ agent: "worker", outputSchema: false }] }), true);
+		const collectSchema = schemas.DynamicCollectSchema;
+		assert.ok(collectSchema);
+		assert.equal(CompileSchema!(collectSchema).Check({ as: "all", outputSchema: false }), false);
+	});
+
 	it("includes context field and default precedence for fresh/fork execution mode", () => {
 		const contextSchema = SubagentParams?.properties?.context;
 		assert.ok(contextSchema, "context schema should exist");

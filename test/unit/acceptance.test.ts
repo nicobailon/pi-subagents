@@ -1238,6 +1238,7 @@ describe("acceptance gates", () => {
 			tasks: [
 				{ acceptance: { level: "checked", report: "off" } },
 				{ outputSchema: schema, acceptance: { level: "checked", report: "on" } },
+				{ outputSchema: false, acceptance: { level: "checked", report: "on" } },
 			],
 			chain: [
 				{ acceptance: { level: "checked", report: "on" } },
@@ -1250,6 +1251,7 @@ describe("acceptance gates", () => {
 		assert.deepEqual(errors, [
 			"acceptance.report requires outputSchema.",
 			"tasks[0].acceptance.report requires outputSchema.",
+			"tasks[2].acceptance.report requires outputSchema.",
 			"chain[0].acceptance.report requires outputSchema.",
 			"chain[2].parallel[0].acceptance.report requires outputSchema.",
 			"chain[3].parallel.acceptance.report requires outputSchema.",

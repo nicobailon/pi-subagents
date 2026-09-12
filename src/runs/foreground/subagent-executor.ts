@@ -30,6 +30,7 @@ import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
 import { applyWatchdogLaunchRules } from "../../watchdog/rules.ts";
 import { buildModelCandidates, normalizeParentModel, resolveEffectiveSubagentModel, resolveModelOrigin, type ModelOrigin, type ParentModel } from "../shared/model-fallback.ts";
 import { getHostBuiltinToolNames } from "../shared/child-tool-plan.ts";
+import { resolveEffectiveOutputSchema } from "../shared/child-launch-plan.ts";
 import { formatRetainedChildren, listRetainedChildren } from "../background/retained-children.ts";
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
 import { recordRun } from "../shared/run-history.ts";
@@ -53,7 +54,7 @@ import { isScheduledRunAction } from "../background/scheduled-runs.ts";
 import { encodeIndexSegment } from "../background/index-segment.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
-import { normalizeGateAcceptance, resolveAcceptanceReportMode, validateAcceptanceInput, validateExecutionAcceptance } from "../shared/acceptance.ts";
+import { normalizeGateAcceptance, resolveAcceptanceReportMode, validateAcceptanceInput, validateExecutionAcceptance, validateExecutionAcceptancePolicy } from "../shared/acceptance.ts";
 import { canPreferFork, createForkContextResolver, resolveSubagentLaunchContext } from "../../shared/fork-context.ts";
 import { createPrunedForkSessionWriter } from "../../shared/pruned-fork.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
@@ -298,7 +299,7 @@ interface TaskParam {
 	model?: string;
 	fast?: boolean;
 	skill?: string | string[] | boolean;
-	outputSchema?: JsonSchemaObject;
+	outputSchema?: JsonSchemaObject | false;
 	acceptance?: AcceptanceInput;
 	agentContract?: AgentContract;
 	toolBudget?: ToolBudgetConfig;
@@ -407,7 +408,7 @@ export interface SubagentParamsLike {
 	/** Internal-only; not part of the public tool schema. Wired for single-run reads (chain steps use their own field). */
 	reads?: string[] | false;
 	outputMode?: "inline" | "file-only";
-	outputSchema?: JsonSchemaObject;
+	outputSchema?: JsonSchemaObject | false;
 	agentScope?: unknown;
 	chainDir?: string;
 	acceptance?: AcceptanceInput;
@@ -1250,10 +1251,14 @@ function appendStepToAsyncChain(input: {
 		};
 	}
 	const chain = [input.params.step];
-	const acceptanceErrors = validateExecutionAcceptance({ ...input.params, chain } as Parameters<typeof validateExecutionAcceptance>[0]);
-	if (acceptanceErrors.length > 0) {
+	const validationParams = { ...input.params, chain } as SubagentParamsLike;
+	const acceptancePolicyErrors = validateExecutionAcceptancePolicy(validationParams);
+	const outputSchemaError = validateLaunchOutputSchemaOverrides(validationParams);
+	const earlyErrors = [...acceptancePolicyErrors];
+	if (outputSchemaError) earlyErrors.push(outputSchemaError);
+	if (earlyErrors.length > 0) {
 		return {
-			content: [{ type: "text", text: `Cannot append step: ${acceptanceErrors.join(" ")}` }],
+			content: [{ type: "text", text: `Cannot append step: ${earlyErrors.join(" ")}` }],
 			isError: true,
 			details: { mode: "management", results: [] },
 		};
@@ -1335,6 +1340,14 @@ function appendStepToAsyncChain(input: {
 	const scope: AgentScope = resolveExecutionAgentScope(input.params.agentScope);
 	const discoveredForAppend = input.deps.discoverAgents(input.requestCwd, scope, input.parentModel?.provider);
 	const agents = discoveredForAppend.agents;
+	const acceptanceErrors = validateExecutionAcceptance(projectEffectiveAcceptanceSchemas(validationParams, agents));
+	if (acceptanceErrors.length > 0) {
+		return {
+			content: [{ type: "text", text: `Cannot append step: ${acceptanceErrors.join(" ")}` }],
+			isError: true,
+			details: { mode: "management", results: [] },
+		};
+	}
 	const contextPolicy = resolveExplicitContextPolicy(input.params);
 	const chainSkillInput = normalizeSkillInput(input.params.skill);
 	const chainSkills = chainSkillInput === false ? [] : (chainSkillInput ?? []);
@@ -1812,13 +1825,13 @@ async function resumeAsyncRun(input: {
 			details: { mode: "management", results: [] },
 		};
 	}
-	const acceptanceErrors = validateExecutionAcceptance(input.params as Parameters<typeof validateExecutionAcceptance>[0]);
-	if (acceptanceErrors.length > 0) {
-		return {
-			content: [{ type: "text", text: `Cannot resume: ${acceptanceErrors.join(" ")}` }],
-			isError: true,
-			details: { mode: "management", results: [] },
-		};
+	const acceptancePolicyErrors = validateExecutionAcceptancePolicy(input.params);
+	if (acceptancePolicyErrors.length > 0) {
+		return { content: [{ type: "text", text: `Cannot resume: ${acceptancePolicyErrors.join(" ")}` }], isError: true, details: { mode: "management", results: [] } };
+	}
+	const outputSchemaError = validateLaunchOutputSchemaOverrides(input.params);
+	if (outputSchemaError) {
+		return { content: [{ type: "text", text: `Cannot resume: ${outputSchemaError}` }], isError: true, details: { mode: "management", results: [] } };
 	}
 	input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
 
@@ -1935,6 +1948,10 @@ async function resumeAsyncRun(input: {
 				details: { mode: "chain", results: [] },
 			};
 		}
+		const acceptanceErrors = validateExecutionAcceptance(projectEffectiveAcceptanceSchemas(input.params, agents));
+		if (acceptanceErrors.length > 0) {
+			return { content: [{ type: "text", text: `Cannot resume: ${acceptanceErrors.join(" ")}` }], isError: true, details: { mode: "chain", results: [] } };
+		}
 		const runId = randomUUID();
 		const topLevelResume = depth === 0 && !inheritedNestedRoute(input.deps) && !input.params.workflowParentRunId;
 		let activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined;
@@ -2043,6 +2060,23 @@ async function resumeAsyncRun(input: {
 	if (input.params.baseRef !== undefined && "managedWorktree" in target && target.managedWorktree === true) {
 		return { content: [{ type: "text", text: "Cannot resume with baseRef: retained managed-worktree children continue in their existing worktree. Start a new worktree run from that base ref instead." }], isError: true, details: { mode: "management", results: [] } };
 	}
+	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(baseAgentConfig, recoveryDescriptor) : baseAgentConfig;
+	const agentConfig = intercomBridge.active ? applyIntercomBridgeToAgent(recoveryAgentConfig, intercomBridge) : recoveryAgentConfig;
+	const foregroundContract = target.source === "foreground" ? target.resumeContract : undefined;
+	const outputSchema = Object.hasOwn(input.params, "outputSchema")
+		? input.params.outputSchema
+		: Object.hasOwn(foregroundContract ?? {}, "outputSchema")
+			? foregroundContract?.outputSchema
+			: recoveryDescriptor?.structuredOutputSchema;
+	const acceptance = input.params.acceptance !== undefined
+		? input.params.acceptance
+		: foregroundContract?.acceptance !== undefined
+			? foregroundContract.acceptance
+			: recoveryDescriptor?.acceptance;
+	const acceptanceErrors = validateExecutionAcceptance({ ...input.params, acceptance, outputSchema });
+	if (acceptanceErrors.length > 0) {
+		return { content: [{ type: "text", text: `Cannot resume: ${acceptanceErrors.join(" ")}` }], isError: true, details: { mode: "management", results: [] } };
+	}
 	const runId = randomUUID();
 	const topLevelResume = depth === 0 && !inheritedNestedRoute(input.deps) && !input.params.workflowParentRunId;
 	let activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined;
@@ -2066,10 +2100,6 @@ async function resumeAsyncRun(input: {
 		if (error instanceof ActiveAsyncCapacityError) return { content: [{ type: "text", text: error.message }], isError: true, details: { mode: "single", results: [], activeAsyncCapacity: error.snapshot } };
 		return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "single", results: [] } };
 	}
-	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(baseAgentConfig, recoveryDescriptor) : baseAgentConfig;
-	const agentConfig = intercomBridge.active ? applyIntercomBridgeToAgent(recoveryAgentConfig, intercomBridge) : recoveryAgentConfig;
-	const foregroundContract = target.source === "foreground" ? target.resumeContract : undefined;
-	const outputSchema = input.params.outputSchema ?? foregroundContract?.outputSchema ?? recoveryDescriptor?.structuredOutputSchema;
 	const agentContract = input.params.agentContract ?? foregroundContract?.agentContract ?? recoveryDescriptor?.agentContract;
 	const artifactConfig: ArtifactConfig = recoveryDescriptor?.artifactConfig ?? omitUndefinedProperties({ ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false, dir: input.deps.config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir });
 	const artifactsDir = recoveryDescriptor?.artifactsDir ?? getArtifactsDir(parentSessionFile, effectiveCwd, artifactConfig.dir);
@@ -2144,7 +2174,7 @@ async function resumeAsyncRun(input: {
 		...(agentContract ? { agentContract } : {}),
 		...(outputSchema ? { structuredOutputSchema: outputSchema } : {}),
 		...(recoveryDescriptor?.skills ? { skills: [...recoveryDescriptor.skills] } : {}),
-		...(input.params.acceptance !== undefined ? { acceptance: input.params.acceptance } : foregroundContract?.acceptance !== undefined ? { acceptance: foregroundContract.acceptance } : recoveryDescriptor?.acceptance !== undefined ? { acceptance: recoveryDescriptor.acceptance } : {}),
+		...(acceptance !== undefined ? { acceptance } : {}),
 		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
 		...(input.params.toolBudget !== undefined ? { toolBudget: input.params.toolBudget } : {}),
@@ -2473,6 +2503,22 @@ function canonicalizeExecutionParams(params: SubagentParamsLike, agents: AgentCo
 	return { params };
 }
 
+function projectEffectiveAcceptanceSchemas(params: SubagentParamsLike, agents: AgentConfig[]): SubagentParamsLike {
+	const withEffectiveSchema = <T extends { agent: string; outputSchema?: JsonSchemaObject | false }>(step: T): T => {
+		const agent = agents.find((candidate) => candidate.name === step.agent);
+		return agent ? { ...step, outputSchema: resolveEffectiveOutputSchema(agent, step.outputSchema) } : step;
+	};
+	return {
+		...params,
+		...(params.tasks ? { tasks: params.tasks.map(withEffectiveSchema) } : {}),
+		...(params.chain ? { chain: params.chain.map((step) => {
+			if (isParallelStep(step)) return { ...step, parallel: step.parallel.map(withEffectiveSchema) };
+			if (isDynamicParallelStep(step)) return { ...step, parallel: withEffectiveSchema(step.parallel) };
+			return withEffectiveSchema(step);
+		}) } : {}),
+	};
+}
+
 function validateExecutionInput(
 	params: SubagentParamsLike,
 	agents: AgentConfig[],
@@ -2495,7 +2541,7 @@ function validateExecutionInput(
 		};
 	}
 
-	const acceptanceErrors = validateExecutionAcceptance(params as Parameters<typeof validateExecutionAcceptance>[0]);
+	const acceptanceErrors = validateExecutionAcceptance(projectEffectiveAcceptanceSchemas(params, agents));
 	if (acceptanceErrors.length > 0) {
 		return {
 			content: [{ type: "text", text: acceptanceErrors.join(" ") }],
@@ -2747,6 +2793,7 @@ function applySingleAgentLaunchDefaults(params: SubagentParamsLike, agents: Agen
 	const parentTimeoutMs = params.timeoutMs === undefined && params.maxRuntimeMs === undefined && agent.defaultTimeoutMs === undefined && params.workflowParentDeadlineAt !== undefined
 		? Math.max(1, params.workflowParentDeadlineAt - Date.now())
 		: undefined;
+	const outputSchema = params.outputSchema === false ? false : resolveEffectiveOutputSchema(agent, params.outputSchema);
 	return {
 		...params,
 		...(params.async === undefined && agent.defaultAsync !== undefined ? { async: agent.defaultAsync } : {}),
@@ -2757,7 +2804,26 @@ function applySingleAgentLaunchDefaults(params: SubagentParamsLike, agents: Agen
 		...(params.acceptance === undefined && agent.defaultAcceptance !== undefined
 			? { acceptance: agent.defaultAcceptance }
 			: {}),
+		...(outputSchema !== undefined ? { outputSchema } : {}),
 	};
+}
+
+function validateLaunchOutputSchemaOverrides(params: SubagentParamsLike): string | undefined {
+	const values: unknown[] = [params.outputSchema, ...(params.tasks ?? []).map((task) => task.outputSchema)];
+	for (const step of params.chain ?? []) {
+		if (isParallelStep(step)) values.push(...step.parallel.map((task) => task.outputSchema));
+		else if (isDynamicParallelStep(step)) values.push(step.parallel.outputSchema);
+		else values.push(step.outputSchema);
+	}
+	for (const value of values) {
+		if (value === undefined || value === false) continue;
+		try {
+			assertJsonSchemaObject(value, "outputSchema");
+		} catch (error) {
+			return error instanceof Error ? error.message : String(error);
+		}
+	}
+	return undefined;
 }
 
 export const DEFAULT_FOREGROUND_TIMEOUT_MS = 30 * 60 * 1000;
@@ -3346,7 +3412,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			childIntercomTarget: childIntercomTarget ? (agent, index) => childIntercomTarget(agent, index) : undefined,
 			nestedRoute,
 			agentContract: params.agentContract,
-			structuredOutputSchema: params.outputSchema,
+			structuredOutputSchema: params.outputSchema || undefined,
 			extensionBindings: params.extensionBindings,
 			acceptance: params.acceptance,
 			timeoutMs: data.timeoutMs,
@@ -4648,7 +4714,7 @@ export function prepareWorkflowLaunchParams(
 		const worktree = childParams.worktree ?? workflowDefaults.worktree;
 		const baseRef = Object.hasOwn(childParams, "baseRef") ? childParams.baseRef : undefined;
 		const outputSchema = Object.hasOwn(childParams, "outputSchema") ? childParams.outputSchema : workflowDefaults.outputSchema;
-		if (outputSchema !== undefined) assertJsonSchemaObject(outputSchema, "outputSchema");
+		if (outputSchema !== undefined && outputSchema !== false) assertJsonSchemaObject(outputSchema, "outputSchema");
 		const agentContract = Object.hasOwn(childParams, "agentContract") ? childParams.agentContract : workflowDefaults.agentContract;
 		if (agentContract !== undefined && !isAgentContract(agentContract as AgentContract)) throw new Error("agentContract must be { version: 1 }.");
 		const acceptance = Object.hasOwn(childParams, "acceptance") ? childParams.acceptance : workflowDefaults.acceptance;
@@ -4668,7 +4734,7 @@ export function prepareWorkflowLaunchParams(
 			...(lane ? { lane } : {}),
 			...(worktree !== undefined ? { worktree: worktree as boolean } : {}),
 			...(baseRef !== undefined ? { baseRef: baseRef as string } : {}),
-			...(outputSchema !== undefined ? { outputSchema: outputSchema as JsonSchemaObject } : {}),
+			...(outputSchema !== undefined ? { outputSchema } : {}),
 			...(agentContract !== undefined ? { agentContract: agentContract as AgentContract } : {}),
 			...(acceptance !== undefined ? { acceptance: acceptance as AcceptanceInput } : {}),
 			...(output !== undefined ? { output: output as string | boolean } : {}),
@@ -6736,6 +6802,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const normalized = normalizeRepeatedParallelCounts(paramsWithResolvedCwd);
 		if (normalized.error) return normalized.error;
 		const normalizedParams = normalized.params!;
+		const outputSchemaError = validateLaunchOutputSchemaOverrides(normalizedParams);
+		if (outputSchemaError) return buildRequestedModeError(normalizedParams, outputSchemaError);
 
 		let effectiveParams = applyForceTopLevelAsyncOverride(
 			normalizedParams,

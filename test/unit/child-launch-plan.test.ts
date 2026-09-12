@@ -16,6 +16,17 @@ const agent = {
 } as AgentConfig;
 
 describe("child launch planning", () => {
+	it("inherits, overrides, and explicitly disables an agent output schema", () => {
+		const inherited = { type: "object", required: ["ok"] };
+		const override = { type: "object", required: ["value"] };
+		const schemaAgent = { ...agent, outputSchema: inherited };
+
+		assert.equal(resolveStepBehavior(schemaAgent, {}).outputSchema, inherited);
+		assert.equal(resolveStepBehavior(schemaAgent, { outputSchema: override }).outputSchema, override);
+		assert.equal(resolveStepBehavior(schemaAgent, { outputSchema: false }).outputSchema, undefined);
+		assert.deepEqual(resolveStepBehavior({ ...agent, outputSchema: {} }, {}).outputSchema, {});
+	});
+
 	it("resolves cwd, behavior, skills, model, and output path without side effects", () => {
 		const runnerCwd = path.join("/tmp", "repo");
 		const resolvedRunnerCwd = path.resolve(runnerCwd);

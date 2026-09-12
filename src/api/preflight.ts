@@ -73,7 +73,7 @@ export interface SubagentLaunchContractInput {
 	skill?: string | string[] | boolean;
 	output?: string | boolean;
 	outputMode?: OutputMode;
-	outputSchema?: JsonSchemaObject;
+	outputSchema?: JsonSchemaObject | false;
 	extensionBindings?: ExtensionBindings;
 	artifacts?: boolean;
 	artifactDir?: ArtifactDirPreference;
@@ -349,6 +349,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		...(input.outputMode !== undefined ? { outputMode: input.outputMode } : {}),
 		...(skillInput !== undefined ? { skills: skillInput } : {}),
 		...(input.model !== undefined ? { model: input.model } : {}),
+		...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
 	});
 	const requestedSkills = behavior.skills === false ? [] : behavior.skills;
 	const resolvedSkills = resolveSkillsWithFallback(
@@ -364,6 +365,9 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	if (resolvedSkills.missing.length > 0) diagnostics.push({ code: "missing_skill", severity: "error", message: `Missing skills: ${resolvedSkills.missing.join(", ")}` });
 
 	const externalRunner = agent.runner?.type === "external-cli" || agent.runner?.type === "external-job";
+	if (externalRunner && behavior.outputSchema) {
+		return { ok: false, code: "unsupported_mode", message: `Agent '${agent.name}' uses runner.type='${agent.runner?.type}' and does not support: structured output.`, diagnostics };
+	}
 	const availableModels = normalizeAvailableModels(input.availableModels);
 	const preferredProvider = agent.modelProvider ?? input.preferredProvider ?? input.parentModel?.provider;
 	const modelScopes = resolveModelScopesForAgent(discovered.modelScope, agent.name, input.parentModel);
@@ -414,7 +418,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			mcpDirectTools: agent.mcpDirectTools,
 			cwd: effectiveCwd,
 			requireReadTool: resolvedSkills.resolved.length > 0,
-			structuredOutput: Boolean(input.outputSchema),
+			structuredOutput: Boolean(behavior.outputSchema),
 			fast,
 			model,
 			modelCandidates,
@@ -462,7 +466,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		toolPlan,
 		...(outputPath ? { outputPath } : {}),
 		outputMode: behavior.outputMode,
-		...(input.outputSchema ? { structuredOutputSchema: input.outputSchema } : {}),
+		...(behavior.outputSchema ? { structuredOutputSchema: behavior.outputSchema } : {}),
 		...(extensionBindings ? { extensionBindings } : {}),
 	});
 	const candidates = candidateList(input.agent, agent, discovery.all);
