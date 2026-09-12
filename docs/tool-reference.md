@@ -412,7 +412,7 @@ Acceptance evidence levels are `auto`, `none`, `attested`, `checked`, and `verif
 Review is a separate gate configured with `acceptance.review`:
 
 - Async, risky, and dynamic writer contexts infer checked evidence plus `review: { agent: "reviewer", required: true }`.
-- Reviewer/read-only calls infer no acceptance by default, including reviews of release, migration, or security work; those topics do not turn a read-only task into implementation. Explicit acceptance requests still apply.
+- Tasks classified as read-only infer no acceptance by default, including reviews of release, migration, or security work; those topics do not turn a read-only task into implementation. With role metadata omitted, unknown risk-topic tasks retain their gate even when the agent name suggests a reviewer. Explicit acceptance requests still apply.
 - Normal writer tasks infer checked evidence without review.
 
 Agent frontmatter or `subagents.agentOverrides` may set `acceptanceRole: "read-only" | "writer"` for ambiguous tasks. Explicit task mutation or no-edit intent wins over that role, while omitted metadata preserves the existing reviewer/scout/worker name heuristics. The role affects acceptance inference only and does not change tool access.
