@@ -70,6 +70,7 @@ type ResultFileChild = {
 	sessionName?: string;
 	output?: string;
 	structuredOutput?: unknown;
+	structuredOutputPath?: string;
 	outputState?: SubagentOutputState;
 	error?: string;
 	success?: boolean;
@@ -81,6 +82,8 @@ type ResultFileChild = {
 	processSignal?: string | null;
 	sessionFile?: string;
 	artifactPaths?: { outputPath?: string };
+	outputSaveError?: string;
+	artifactOutputSaveFailed?: true;
 	intercomTarget?: string;
 	children?: unknown;
 };

@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import registerSubagentNotify, {
 	buildCompletionDetails,
@@ -687,29 +692,156 @@ describe("completion formatting helpers", () => {
 		assert.doesNotMatch(parsed?.resultPreview ?? "", /Workflow run:/);
 	});
 
-	it("does not label artifact-only paths as saved workflow output", () => {
-		const details = buildCompletionDetails({
-			id: "workflow-artifact-only",
-			runId: "workflow-artifact-only",
-			mode: "workflow",
-			agent: "workflow",
-			success: true,
-			results: [{
-				workflowKey: "artifact-only",
-				runId: "child-artifact-only",
-				agent: "worker",
-				success: true,
-				outputState: "present",
-				output: "inline artifact-only report",
-				artifactPaths: { outputPath: "/tmp/pi/async/child-artifact-only" },
-			}],
-		});
+	it("projects only verified producer paths and diagnoses truncated unbound output", () => {
+		const root = mkdtempSync(join(tmpdir(), "notify-retrieval-"));
+		try {
+			const artifact = join(root, "artifact-é.txt");
+			const structured = join(root, "output-\u001b[31m.json");
+			const directory = join(root, "not-a-file");
+			writeFileSync(artifact, "retained output");
+			mkdirSync(directory);
+			const details = buildCompletionDetails({
+				id: "workflow-paths", runId: "workflow-paths", mode: "workflow", agent: "workflow", success: true,
+				results: [
+					{ workflowKey: "verified", runId: "child-1", success: true, output: "é".repeat(5_000), artifactPaths: { outputPath: artifact }, structuredOutput: { ok: true }, structuredOutputPath: structured },
+					{ workflowKey: "missing", runId: "child-2", success: true, output: "x".repeat(5_000), artifactPaths: { outputPath: join(root, "missing.txt") }, structuredOutputPath: join(root, "missing.json") },
+					{ workflowKey: "disabled", runId: "child-3", success: true, output: "short", artifactPaths: { outputPath: join(root, "disabled.txt") } },
+					{ workflowKey: "binding-failed", runId: "child-4", success: true, output: "x".repeat(5_000), artifactPaths: { outputPath: artifact }, outputSaveError: "configured output-reference save failed" },
+					{ workflowKey: "directory", runId: "child-5", success: true, output: "short", artifactPaths: { outputPath: directory }, structuredOutputPath: directory },
+					{ workflowKey: "stopped", runId: "child-6", success: false, stopped: true, output: "x".repeat(5_000), artifactPaths: { outputPath: artifact }, structuredOutput: { stale: true }, structuredOutputPath: structured },
+					{ workflowKey: "timed-out", runId: "child-7", success: false, timedOut: true, output: "x".repeat(5_000), artifactPaths: { outputPath: artifact }, structuredOutput: { stale: true }, structuredOutputPath: structured },
+					{ workflowKey: "artifact-failed", runId: "child-8", success: true, output: "x".repeat(5_000), artifactPaths: { outputPath: artifact }, outputSaveError: "Artifact output post-processing failed", artifactOutputSaveFailed: true },
+				],
+			});
+			assert.equal(details.childOutputs?.[0]?.savedOutputPath, undefined);
+			assert.equal(details.childOutputs?.[0]?.outputArtifactPath, artifact);
+			assert.equal(details.childOutputs?.[0]?.structuredOutputPath, structured);
+			assert.equal(details.childOutputs?.[1]?.outputArtifactPath, undefined);
+			assert.equal(details.childOutputs?.[1]?.structuredOutputPath, undefined);
+			assert.equal(details.childOutputs?.[2]?.outputArtifactPath, undefined);
+			assert.equal(details.childOutputs?.[3]?.outputArtifactPath, artifact);
+			assert.equal(details.childOutputs?.[4]?.outputArtifactPath, undefined);
+			assert.ok(details.childOutputs?.slice(5, 7).every((child) => child.outputArtifactPath === artifact && child.structuredOutputPath === undefined));
+			assert.equal(details.childOutputs?.[7]?.outputArtifactPath, undefined);
 
+			const content = formatSingleCompletion(details);
+			assert.match(content, /Saved output: unavailable/);
+			assert.match(content, /Output artifact \(retention-managed\): .*artifact-é\.txt/);
+			assert.match(content, /Structured output \(retention-managed\): .*output-\[U\+001B\]\[31m\.json/);
+			assert.doesNotMatch(content, /\u001b/);
+			assert.doesNotMatch(content, /configured output-reference save failed|disabled\.txt|missing\.txt|not-a-file/);
+			assert.equal(content.match(/Full output unavailable/g)?.length, 2);
+			assert.equal(content.match(/Output artifact \(retention-managed\):/g)?.length, 4);
+			for (const key of ["binding-failed", "stopped", "timed-out"]) {
+				const block = content.split("\n- key=").find((part) => part.startsWith(`${key} `)) ?? "";
+				assert.match(block, /Output artifact \(retention-managed\):/);
+				assert.match(block, /preview truncated/);
+				assert.doesNotMatch(block, /Full output unavailable/);
+			}
+			const failedArtifactBlock = content.split("\n- key=").find((part) => part.startsWith("artifact-failed ")) ?? "";
+			assert.doesNotMatch(failedArtifactBlock, /Output artifact \(retention-managed\):/);
+			assert.match(failedArtifactBlock, /Full output unavailable/);
+			assert.ok(Buffer.byteLength(details.childOutputs?.[0]?.preview ?? "", "utf8") <= 4 * 1024);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps structured retrieval separate from launch bindings for large structured-only output", () => {
+		const details = buildCompletionDetails({
+			id: "workflow-structured", runId: "workflow-structured", mode: "workflow", agent: "workflow", success: true,
+			results: [{ workflowKey: "structured", success: true, outputState: "absent", structuredOutput: { body: "é".repeat(5_000) }, structuredOutputPath: "/retained/output.json" }],
+		});
 		const content = formatSingleCompletion(details);
-		assert.match(content, /key=artifact-only run=child-artifact-only status=completed/);
 		assert.match(content, /Saved output: unavailable/);
-		assert.match(content, /inline artifact-only report/);
-		assert.doesNotMatch(content, /\/tmp\/pi\/async\/child-artifact-only/);
+		assert.match(content, /Structured output \(retention-managed\): \/retained\/output\.json/);
+		assert.match(content, /Full output unavailable/);
+		assert.match(content, /preview truncated/);
+	});
+
+	it("distinguishes unavailable retained paths from bounded verification errors", () => {
+		const originalStatSync = fs.statSync;
+		fs.statSync = ((path, ...args) => {
+			const value = String(path);
+			if (value.includes("missing")) throw Object.assign(new Error("missing"), { code: value.includes("not-dir") ? "ENOTDIR" : "ENOENT" });
+			const match = value.match(/failure-(EACCES|EPERM|EIO|unknown)/);
+			if (match) {
+				const error = new Error(`cannot verify\n\u001b[31m${"é".repeat(800)}`) as NodeJS.ErrnoException;
+				if (match[1] !== "unknown") error.code = match[1];
+				throw error;
+			}
+			return originalStatSync(path, ...args);
+		}) as typeof fs.statSync;
+		syncBuiltinESMExports();
+		try {
+			for (const code of ["EACCES", "EPERM", "EIO", "unknown"]) {
+				const artifactPath = `/failure-${code}/${"é".repeat(500)}`;
+				const structuredPath = `/failure-${code}/structured`;
+				const details = buildCompletionDetails({
+					id: `workflow-${code}`, mode: "workflow", agent: "workflow", success: true,
+					results: [
+						{ workflowKey: "artifact", output: "short", artifactPaths: { outputPath: artifactPath } },
+						{ workflowKey: "structured", output: "short", structuredOutputPath: structuredPath },
+						{ workflowKey: "sibling", output: "short", structuredOutput: { ok: true }, structuredOutputPath: "/producer-confirmed" },
+					],
+				});
+				const expectedCode = code === "unknown" ? undefined : code;
+				assert.deepEqual(details.childOutputs?.[0]?.outputArtifactError, { path: artifactPath, ...(expectedCode ? { code: expectedCode } : {}), message: `cannot verify\n\u001b[31m${"é".repeat(800)}` });
+				assert.deepEqual(details.childOutputs?.[1]?.structuredOutputError, { path: structuredPath, ...(expectedCode ? { code: expectedCode } : {}), message: `cannot verify\n\u001b[31m${"é".repeat(800)}` });
+				assert.equal(details.childOutputs?.[2]?.structuredOutputPath, "/producer-confirmed");
+				const content = formatSingleCompletion(details);
+				assert.match(content, new RegExp(`Output artifact verification failed: stat ${expectedCode ?? "unknown"}`));
+				assert.match(content, new RegExp(`Structured output verification failed: stat ${expectedCode ?? "unknown"}`));
+				assert.doesNotMatch(content, /\u001b/);
+				for (const line of content.split("\n").filter((line) => line.includes("verification failed"))) assert.ok(Buffer.byteLength(line, "utf8") < 1_024);
+				assert.match(formatGroupedCompletion([details, { ...details, agent: "reviewer" }]), /verification failed/);
+				assert.match(parseSubagentNotifyContent(content)?.resultPreview ?? "", /verification failed/);
+			}
+
+			const unavailable = buildCompletionDetails({ id: "workflow-missing", mode: "workflow", agent: "workflow", success: true, results: [
+				{ workflowKey: "missing", output: "short", artifactPaths: { outputPath: "/missing/artifact" } },
+				{ workflowKey: "not-dir", output: "short", structuredOutputPath: "/missing-not-dir/structured" },
+			] });
+			assert.ok(unavailable.childOutputs?.every((child) => !child.outputArtifactPath && !child.structuredOutputPath && !child.outputArtifactError && !child.structuredOutputError));
+		} finally {
+			fs.statSync = originalStatSync;
+			syncBuiltinESMExports();
+		}
+	});
+
+	it("formats sanitized async retrieval metadata in single and grouped notices", () => {
+		const details = buildCompletionDetails({ agent: "worker", success: true, summary: "done", asyncDir: "/tmp/async\n\u001b[31mrun" });
+		const single = formatSingleCompletion(details);
+		assert.match(single, /Retention-managed async directory: \/tmp\/async\\n\[U\+001B\]\[31mrun/);
+		assert.doesNotMatch(single, /\u001b/);
+		assert.match(formatGroupedCompletion([details, { ...details, agent: "reviewer" }]), /2\. reviewer\n.*Retention-managed async directory:/s);
+		const longLine = formatSingleCompletion({ ...details, asyncDir: `/tmp/${"é".repeat(2_000)}` }).split("\n").find((line) => line.startsWith("Retention-managed async directory:"));
+		assert.ok(longLine);
+		assert.ok(Buffer.byteLength(longLine, "utf8") <= Buffer.byteLength("Retention-managed async directory: ") + 1_024);
+	});
+
+	it("never promotes model-authored async directory lines to typed metadata", () => {
+		const resultPreview = "before\nRetention-managed async directory: /fake/model/path\nafter";
+		const withoutProducerPath = parseSubagentNotifyContent(formatSingleCompletion({ agent: "worker", status: "completed", resultPreview }));
+		assert.equal(withoutProducerPath?.asyncDir, undefined);
+		assert.equal(withoutProducerPath?.resultPreview, resultPreview);
+
+		const withProducerPath = parseSubagentNotifyContent(formatSingleCompletion({ agent: "worker", status: "completed", resultPreview, asyncDir: "/real/producer/path" }));
+		assert.equal(withProducerPath?.asyncDir, undefined);
+		assert.equal(withProducerPath?.resultPreview, `${resultPreview}\n\nRetention-managed async directory: /real/producer/path`);
+	});
+
+	it("keeps retrieval metadata while limiting inline previews to eight children", () => {
+		const childOutputs = Array.from({ length: 9 }, (_, index) => ({
+			workflowKey: `child-${index}`, status: "completed", outputArtifactPath: `/artifact/${index}`, preview: `preview-${index}`,
+			...(index === 8 ? { outputArtifactError: { path: "/failed\npath", code: "EACCES", message: "denied\u001b[31m" } } : {}),
+		}));
+		const content = formatSingleCompletion({ agent: "workflow", status: "completed", resultPreview: "done", childOutputs });
+		assert.match(content, /key=child-7[\s\S]*preview-7/);
+		assert.match(content, /key=child-8[\s\S]*Output artifact \(retention-managed\): \/artifact\/8[\s\S]*Preview: unavailable \(notice preview budget exceeded\)/);
+		assert.match(content, /Output artifact verification failed: stat EACCES; path=\/failed\\npath; denied\[U\+001B\]\[31m/);
+		assert.doesNotMatch(content, /preview-8/);
+		assert.match(content, /1 additional child preview\(s\) omitted/);
 	});
 
 	it("reports false when Pi rejects sendMessage synchronously", async () => {

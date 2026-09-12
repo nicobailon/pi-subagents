@@ -25,7 +25,7 @@ describe("host workflow result publication", { skip: !available }, () => {
 	for (const outcome of ["complete", "failed", "stopped", "retry-error"] as const) {
 	it(`retains real Darwin demand until deferred indexed workflow publication settles (${outcome})`, async () => {
 		const polled = barrier(), published = barrier(), delivered = barrier(), retired = barrier(), failed = barrier(), emitted = barrier();
-		let held = true, attempted = false, notifications = 0, refreshes = 0;
+		let held = true, attempted = false, notifications = 0, refreshes = 0, notificationContent = "";
 		let statusWrites = 0, statusDeferred = false, statusRecovered = false;
 		let poll: ReturnType<typeof setInterval> | undefined;
 		const sessionId = "workflow-publication-session", owner = "workflow-publication-owner";
@@ -36,7 +36,7 @@ describe("host workflow result publication", { skip: !available }, () => {
 		};
 		const pi = { getSessionName: () => undefined, events: { on: () => () => {}, emit(event: string, data: unknown) {
 			if (event === SUBAGENT_ASYNC_COMPLETE_EVENT) { assert.equal((data as { completionOwnerId: string }).completionOwnerId, owner); delivered.resolve(); }
-		} }, sendMessage() { notifications++; } };
+		} }, sendMessage(message: { content?: string }) { notifications++; notificationContent = message.content ?? ""; } };
 		const notifier = registerSubagentNotify(pi, state, { batchConfig: { enabled: false } });
 		const watcher = createResultWatcher(pi, state, RESULTS_DIR, 60000, { platform: "darwin", coalesceDelayMs: 0, notifier,
 			hasDeliveryDemand: () => [...state.asyncJobs.values()].some((job) => job.status === "running" || job.status === "queued"),
@@ -110,6 +110,7 @@ describe("host workflow result publication", { skip: !available }, () => {
 			assert.equal(terminalStatus.state, outcome);
 			if (outcome === "stopped") assert.equal(terminalStatus.stopped, true);
 			assert.equal(notifications, 1); assert.equal(refreshes, 1);
+			assert.ok(notificationContent.includes(`Retention-managed async directory: ${path.join(ASYNC_DIR, id)}`));
 			assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${id}.json`)), false);
 			// The existing demand timer retires itself after terminal publication.
 			await bounded(retired.promise);

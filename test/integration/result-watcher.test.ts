@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildCompletionKey } from "../../src/runs/background/completion-dedupe.ts";
 import { createResultWatcher as createRawResultWatcher } from "../../src/runs/background/result-watcher.ts";
+import registerSubagentNotify from "../../src/runs/background/notify.ts";
 import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
@@ -14,7 +15,7 @@ import { createScheduledRunManager, scheduledRunStorePath } from "../../src/runs
 import { prepareMissionLaunch, writeMissionAsyncBinding } from "../../src/missions/lifecycle.ts";
 import { readMission, updateMission } from "../../src/missions/store.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
-import type { SubagentState } from "../../src/shared/types.ts";
+import { SUBAGENT_ASYNC_COMPLETE_EVENT, type SubagentState } from "../../src/shared/types.ts";
 
 const COMPLETION_OWNER_ID = "completion-owner-default";
 
@@ -501,6 +502,55 @@ describe("result watcher", () => {
 			assert.equal(deliveries, 1);
 		} finally {
 			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("delivers and cleans up completion when artifact verification reports I/O failure", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-artifact-verify-"));
+		const artifactPath = path.join(resultsDir, "retained-output.md");
+		const resultPath = path.join(resultsDir, "artifact-verify.json");
+		const originalStatSync = fsDefault.statSync;
+		const sent: string[] = [];
+		let observations = 0;
+		try {
+			fs.writeFileSync(artifactPath, "retained");
+			writeIndexedResult(resultPath, {
+				id: "artifact-verify", runId: "artifact-verify", mode: "workflow", agent: "workflow",
+				sessionId: "session-current", success: true, summary: "done",
+				results: [{ workflowKey: "worker", runId: "child-1", success: true, output: "x".repeat(5_000), artifactPaths: { outputPath: artifactPath } }],
+			});
+			fsDefault.statSync = ((candidate, ...args) => {
+				if (String(candidate) === artifactPath) throw Object.assign(new Error("storage temporarily unavailable"), { code: "EIO" });
+				return originalStatSync(candidate, ...args);
+			}) as typeof fsDefault.statSync;
+			syncBuiltinESMExports();
+
+			const state = createState();
+			state.currentSessionId = "session-current";
+			const pi = {
+				events: { on: () => () => {}, emit(event: string) { if (event === SUBAGENT_ASYNC_COMPLETE_EVENT) observations += 1; } },
+				sendMessage(message: { content?: string }) { sent.push(message.content ?? ""); },
+			};
+			const notifier = registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000, { notifier });
+			try {
+				watcher.primeExistingResults();
+				assert.equal(await waitForPredicate(() => !fs.existsSync(resultPath)), true);
+				watcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			} finally {
+				watcher.stopResultWatcher();
+				notifier.dispose();
+			}
+
+			assert.equal(observations, 1);
+			assert.equal(sent.length, 1);
+			assert.match(sent[0]!, /Output artifact verification failed: stat EIO/);
+			assert.match(sent[0]!, /Full output unavailable/);
+		} finally {
+			fsDefault.statSync = originalStatSync;
+			syncBuiltinESMExports();
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
 	});

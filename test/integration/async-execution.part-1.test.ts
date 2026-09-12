@@ -1139,6 +1139,33 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal((JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as { exitCode?: number }).exitCode, 0);
 	});
 
+	it("publishes machine-readable output artifact persistence failure", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ delay: 800, output: "artifact write should fail" });
+		const id = `async-artifact-output-failure-${Date.now().toString(36)}`;
+		const artifactsDir = path.join(tempDir, ".pi/subagents", id);
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Report artifact persistence failure",
+			agentConfig: makeAgent("worker", { completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: true, includeInput: true, includeOutput: true, includeJsonl: false, includeMetadata: true, cleanupDays: 7 },
+			artifactsDir,
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+
+		await waitForMockPiCall(mockPi, 0);
+		const inputArtifact = fs.readdirSync(artifactsDir).find((file) => file.endsWith("_input.md"));
+		assert.ok(inputArtifact);
+		const sabotagedOutput = path.join(artifactsDir, inputArtifact.replace(/_input\.md$/, "_output.md"));
+		fs.mkdirSync(sabotagedOutput);
+		const child = (await readAsyncPayload(id)).results[0];
+		assert.equal(child?.artifactPaths?.outputPath, sabotagedOutput);
+		assert.match(child?.outputSaveError ?? "", /Artifact output post-processing failed/);
+		assert.equal(child?.artifactOutputSaveFailed, true);
+	});
+
 	it("background preserves retry lifecycle from an oversized agent_end aggregate", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ steps: [
 			{ jsonl: [

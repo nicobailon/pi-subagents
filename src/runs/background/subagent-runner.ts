@@ -287,6 +287,7 @@ interface StepResult {
 	totalCost?: CostSummary;
 	artifactPaths?: ArtifactPaths;
 	outputSaveError?: string;
+	artifactOutputSaveFailed?: true;
 	metadataSaveError?: string;
 	truncated?: boolean;
 	transcriptPath?: string;
@@ -1005,6 +1006,7 @@ export async function runSingleStepInner(
 			processSignal: external.processSignal,
 			artifactPaths,
 			outputSaveError: [resolvedOutput.saveError, artifactErrors.outputSaveError].filter(Boolean).join("\n") || undefined,
+			artifactOutputSaveFailed: artifactErrors.outputSaveError ? true : undefined,
 			metadataSaveError: artifactErrors.metadataSaveError,
 			runner,
 			externalProcess: externalProcess,
@@ -1074,6 +1076,7 @@ export async function runSingleStepInner(
 			stopped: external.stopped,
 			artifactPaths,
 			outputSaveError: [resolvedOutput.saveError, artifactErrors.outputSaveError].filter(Boolean).join("\n") || undefined,
+			artifactOutputSaveFailed: artifactErrors.outputSaveError ? true : undefined,
 			metadataSaveError: artifactErrors.metadataSaveError,
 			runner,
 			externalJob: external.externalJob,
@@ -1677,6 +1680,7 @@ export async function runSingleStepInner(
 		artifactPaths,
 		savedOutputPath: finalizedOutput.savedPath,
 		outputSaveError: [resolvedOutput.saveError, artifactErrors.outputSaveError].filter(Boolean).join("\n") || undefined,
+		artifactOutputSaveFailed: artifactErrors.outputSaveError ? true : undefined,
 		metadataSaveError: artifactErrors.metadataSaveError,
 		transcriptPath: transcriptWriter ? artifactPaths?.transcriptPath : undefined,
 		transcriptError: transcriptWriter?.getError(),
@@ -3959,6 +3963,8 @@ export async function runSubagent(
 					totalCost: pr.totalCost,
 					usage: pr.usage,
 					artifactPaths: pr.artifactPaths,
+					outputSaveError: pr.outputSaveError,
+					artifactOutputSaveFailed: pr.artifactOutputSaveFailed,
 					transcriptPath: pr.transcriptPath,
 					transcriptError: pr.transcriptError,
 					effects: pr.effects,
@@ -4420,6 +4426,8 @@ export async function runSubagent(
 						totalCost: pr.totalCost,
 						usage: pr.usage,
 						artifactPaths: pr.artifactPaths,
+						outputSaveError: pr.outputSaveError,
+						artifactOutputSaveFailed: pr.artifactOutputSaveFailed,
 						transcriptPath: pr.transcriptPath,
 						transcriptError: pr.transcriptError,
 							effects: pr.effects,
@@ -4718,6 +4726,8 @@ export async function runSubagent(
 				usage: singleResult.usage,
 				artifactPaths: singleResult.artifactPaths,
 				savedOutputPath: singleResult.savedOutputPath,
+				outputSaveError: singleResult.outputSaveError,
+				artifactOutputSaveFailed: singleResult.artifactOutputSaveFailed,
 				transcriptPath: singleResult.transcriptPath,
 				transcriptError: singleResult.transcriptError,
 				effects: singleResult.effects,
@@ -5099,6 +5109,7 @@ export async function runSubagent(
 				artifactPaths: r.artifactPaths,
 				savedOutputPath: r.savedOutputPath,
 				outputSaveError: r.outputSaveError,
+				artifactOutputSaveFailed: r.artifactOutputSaveFailed,
 				metadataSaveError: r.metadataSaveError,
 				truncated: r.truncated,
 				transcriptPath: r.transcriptPath,

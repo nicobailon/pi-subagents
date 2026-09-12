@@ -6,6 +6,7 @@
  * observation channel, not a delivery acknowledgement.
  */
 
+import { statSync } from "node:fs";
 import { debuglog } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.ts";
@@ -27,6 +28,10 @@ export interface SubagentNotifyChildOutput {
 	agent?: string;
 	status: string;
 	savedOutputPath?: string;
+	outputArtifactPath?: string;
+	structuredOutputPath?: string;
+	outputArtifactError?: RetainedPathError;
+	structuredOutputError?: RetainedPathError;
 	preview: string;
 	previewTruncated?: boolean;
 	previewUnavailableReason?: string;
@@ -36,6 +41,7 @@ export type SubagentNotifyWatchdogBlocker = Pick<ChildWatchdogWarningSummary, "s
 
 export interface SubagentNotifyDetails {
 	workflowReceiptPath?: string;
+	asyncDir?: string;
 	agent: string;
 	status: "completed" | "failed" | "paused" | "stopped";
 	source?: "async" | "foreground";
@@ -90,9 +96,12 @@ export interface CompletionNotification {
 		success?: boolean;
 		output?: string;
 		structuredOutput?: unknown;
+		structuredOutputPath?: string;
 		outputState?: "present" | "absent" | "unknown";
 		outputReference?: string | { path?: string };
 		artifactPaths?: { outputPath?: string };
+		outputSaveError?: string;
+		artifactOutputSaveFailed?: true;
 		detached?: boolean;
 		exitCode?: number | null;
 		processSignal?: string | null;
@@ -119,6 +128,7 @@ export interface CompletionNotification {
 	intercomDelivered?: boolean;
 	parallelHandoff?: ParallelHandoffReference;
 	scheduleOrigin?: ScheduleOrigin;
+	asyncDir?: string;
 }
 
 interface NotifyTimerApi {
@@ -143,6 +153,11 @@ const CHILD_OUTPUT_PREVIEW_MAX_BYTES = 4 * 1024;
 const CHILD_OUTPUT_PREVIEW_COUNT = 8;
 const PREVIEW_TRUNCATION_MARKER = "...[preview truncated]";
 type CompletionChild = NonNullable<CompletionNotification["results"]>[number];
+interface RetainedPathError { path: string; code?: string; message: string }
+type RetainedPathProjection =
+	| { status: "verified"; path: string }
+	| { status: "unavailable" }
+	| { status: "error"; error: RetainedPathError };
 
 function truncateUtf8Head(value: string, maxBytes: number): { text: string; truncated: boolean } {
 	const bytes = Buffer.from(value, "utf8");
@@ -169,6 +184,27 @@ function outputPathFromReference(value: CompletionChild["outputReference"]): str
 
 function childSavedOutputPath(child: CompletionChild): string | undefined {
 	return outputPathFromReference(child.outputReference);
+}
+
+function nonemptyPath(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function retainedChildPath(value: unknown, producerConfirmed = false): RetainedPathProjection {
+	const path = nonemptyPath(value);
+	if (!path) return { status: "unavailable" };
+	if (producerConfirmed) return { status: "verified", path };
+	try {
+		return statSync(path).isFile() ? { status: "verified", path } : { status: "unavailable" };
+	} catch (error) {
+		const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : undefined;
+		if (code === "ENOENT" || code === "ENOTDIR") return { status: "unavailable" };
+		return { status: "error", error: { path, ...(code ? { code } : {}), message: error instanceof Error ? error.message : String(error) } };
+	}
+}
+
+function formatRetainedPathError(label: string, error: RetainedPathError): string {
+	return `  ${label} verification failed: stat ${error.code ? boundedSafeText(error.code, 32) : "unknown"}; path=${boundedSafeText(error.path, 384)}; ${boundedSafeText(error.message, 512)}`;
 }
 
 function childStatus(child: CompletionChild, workflowState?: string): string {
@@ -231,6 +267,11 @@ function formatChildOutputBlock(children: SubagentNotifyChildOutput[] | undefine
 		const status = boundedSafeText(child.status) || "unavailable";
 		lines.push(`- key=${key} run=${runId} status=${status}`);
 		lines.push(`  Saved output: ${child.savedOutputPath ? boundedSafeText(child.savedOutputPath) : "unavailable"}`);
+		if (child.outputArtifactPath) lines.push(`  Output artifact (retention-managed): ${boundedSafeText(child.outputArtifactPath)}`);
+		if (child.structuredOutputPath) lines.push(`  Structured output (retention-managed): ${boundedSafeText(child.structuredOutputPath)}`);
+		if (child.outputArtifactError) lines.push(formatRetainedPathError("Output artifact", child.outputArtifactError));
+		if (child.structuredOutputError) lines.push(formatRetainedPathError("Structured output", child.structuredOutputError));
+		if (child.previewTruncated && !child.savedOutputPath && !child.outputArtifactPath) lines.push("  Full output unavailable");
 		if (index >= CHILD_OUTPUT_PREVIEW_COUNT) {
 			lines.push("  Preview: unavailable (notice preview budget exceeded)");
 			continue;
@@ -267,6 +308,7 @@ function formatChildRun(child: { runId: string; workflowKey?: string; agent?: st
 
 function formatCorrelationLines(details: SubagentNotifyDetails): string[] {
 	return [
+		details.asyncDir ? `Retention-managed async directory: ${boundedSafeText(details.asyncDir)}` : undefined,
 		details.workflowRunId ? `Workflow run: ${details.workflowRunId}` : undefined,
 		details.childRuns?.length ? `Child runs: ${details.childRuns.map(formatChildRun).join(", ")}` : undefined,
 		details.reconciledFromDetachedChild ? `Reconciled detached child: ${details.reconciledFromDetachedChild}` : undefined,
@@ -559,12 +601,20 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 			const workflowKey = typeof child.workflowKey === "string" && child.workflowKey.trim() ? child.workflowKey.trim() : undefined;
 			const runId = typeof child.runId === "string" && child.runId.trim() ? child.runId.trim() : undefined;
 			const savedOutputPath = childSavedOutputPath(child);
+			const outputArtifact = child.artifactOutputSaveFailed === true ? { status: "unavailable" as const } : retainedChildPath(child.artifactPaths?.outputPath);
+			const structuredOutput = child.stopped === true || child.timedOut === true
+				? { status: "unavailable" as const }
+				: retainedChildPath(child.structuredOutputPath, child.structuredOutput !== undefined);
 			return {
 				...(workflowKey ? { workflowKey } : {}),
 				...(runId ? { runId } : {}),
 				...(typeof child.agent === "string" ? { agent: child.agent } : {}),
 				status: childStatus(child, result.state),
 				...(savedOutputPath ? { savedOutputPath } : {}),
+				...(outputArtifact.status === "verified" ? { outputArtifactPath: outputArtifact.path } : {}),
+				...(structuredOutput.status === "verified" ? { structuredOutputPath: structuredOutput.path } : {}),
+				...(outputArtifact.status === "error" ? { outputArtifactError: outputArtifact.error } : {}),
+				...(structuredOutput.status === "error" ? { structuredOutputError: structuredOutput.error } : {}),
 				...(inline.preview ? { preview: inline.preview } : { preview: "" }),
 				...(inline.truncated ? { previewTruncated: true } : {}),
 				...(inline.unavailableReason ? { previewUnavailableReason: inline.unavailableReason } : {}),
@@ -572,6 +622,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		})
 		: undefined;
 	const reconciledFromDetachedChild = typeof result.reconciledFromDetachedChild === "string" ? result.reconciledFromDetachedChild : undefined;
+	const asyncDir = nonemptyPath(result.asyncDir);
 	const watchdogBlockers: SubagentNotifyWatchdogBlocker[] = [];
 	const collectWatchdogBlockers = (owner: string, progress: ChildWatchdogProgress | undefined) => {
 		for (const warning of progress?.warnings ?? []) {
@@ -598,6 +649,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		status,
 		...(scheduleOrigin ? { scheduleOrigin } : {}),
 		...(workflowReceiptPath ? { workflowReceiptPath } : {}),
+		...(asyncDir ? { asyncDir } : {}),
 		...(result.source ? { source: result.source } : {}),
 		...(taskInfo ? { taskInfo } : {}),
 		resultPreview,
