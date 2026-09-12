@@ -412,6 +412,8 @@ function closeFd(fd: number | undefined): void {
 /**
  * Spawn the async runner process
  */
+// Cold Node/Pi dependency loading precedes ready; subsequent control exchanges stay short.
+const RUNNER_READY_TIMEOUT_MS = 60_000;
 const RUNNER_STARTUP_TIMEOUT_MS = 10_000;
 const RUNNER_STARTUP_WAIT_BUFFER = typeof SharedArrayBuffer !== "undefined" ? new SharedArrayBuffer(4) : undefined;
 const RUNNER_STARTUP_WAIT_VIEW = RUNNER_STARTUP_WAIT_BUFFER ? new Int32Array(RUNNER_STARTUP_WAIT_BUFFER) : undefined;
@@ -725,7 +727,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			const persistStartupFailure = (message: string) => {
 				if (launchAsyncDir) persistPreProceedStartupFailure(launchAsyncDir, launchRunId, runnerProcessInstanceId, launchSessionId, launchCompletionOwnerId, message);
 			};
-			const ready = waitForRunnerStartup(startupPath, "ready", RUNNER_STARTUP_TIMEOUT_MS);
+			const ready = waitForRunnerStartup(startupPath, "ready", RUNNER_READY_TIMEOUT_MS);
 			if (ready.ok === false) {
 				persistStartupFailure(ready.error);
 				const terminationObserved = terminateRunnerBeforeProceed(proc.pid);

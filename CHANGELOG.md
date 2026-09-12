@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Allow cold resumed runners up to 60 seconds to load and publish `ready`, while retaining the 10-second acknowledgement limit and the existing lease/token startup authorization. Thanks to [@qsgy-edge](https://github.com/qsgy-edge) for #2192.
+
 - Include retention-managed async, output-artifact, and structured-output retrieval paths in native completion notices. Thanks to [@peedrr](https://github.com/peedrr) for #2181.
 - Remove workflow-owned one-shot result payloads together with their child-local result indexes after successful consumption. Thanks to [@peedrr](https://github.com/peedrr) for #2182.
 - Show runtime-registered agents in `/subagents` while keeping their extension-owned definitions read-only and rejecting collisions with disabled configured agents. Thanks to [@mystery4f](https://github.com/mystery4f) for #2169.
