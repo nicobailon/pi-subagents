@@ -11,6 +11,7 @@ import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
 import { createAtomicJsonWriter, writePrivateAtomicJson } from "../../shared/atomic-json.ts";
+import { childCacheRetention } from "../../shared/child-cache-retention.ts";
 import { buildEffectiveSystemPrompt } from "../shared/effective-system-prompt.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { planChildLaunch, resolveEffectiveOutputSchema, resolveStepBehavior, suppressProgressForReadOnlyTask, type ResolvedStepBehavior } from "../shared/child-launch-plan.ts";
@@ -616,6 +617,8 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			stdio: ["ignore", stdoutFd ?? "ignore", stderrFd ?? "ignore"],
 			env: {
 				...omitExtensionBindingsEnv(process.env),
+				// Unset leaves the inherited parent value in place. See childCacheRetention.
+				...(childCacheRetention() ? { PI_CACHE_RETENTION: childCacheRetention() } : {}),
 				[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: binaryHost ? undefined : piPackageRoot,
 				// npm must override inherited bundled layouts (#2071); binaries retain release assets.
 				PI_PACKAGE_DIR: binaryHost ? process.env.PI_PACKAGE_DIR : piPackageRoot,

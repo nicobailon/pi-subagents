@@ -10,6 +10,7 @@
  */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { pinChildCacheRetention } from "../../shared/child-cache-retention.ts";
 import { getAgentDir } from "../../shared/utils.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import { prepareReadonlySessionEvidence } from "./readonly-session-evidence.ts";
@@ -286,6 +287,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					settingsManager,
 					sessionStartEvent: { type: "session_start", reason: "startup" },
 				});
+				pinChildCacheRetention(session.agent);
 				try {
 					await session.bindExtensions({
 						mode: "print",

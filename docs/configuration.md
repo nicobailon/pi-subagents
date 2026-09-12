@@ -571,6 +571,20 @@ Controls smart batching of async-completion notifications. When several backgrou
 
 Native child tool permission rules. See [watchdog.md](watchdog.md#native-child-tool-permissions).
 
+## `PI_SUBAGENT_CACHE_RETENTION`
+
+Sets the prompt-cache retention tier for child sessions, overriding `PI_CACHE_RETENTION` for children only. Environment-only; there is no config key. Accepts the same values Pi accepts, normally `short` or `long`.
+
+Anthropic prices a cache write by the retention it is asked for: the 1h tier costs more per write than the 5m one. A parent that keeps a long-lived conversation earns that back by surviving idle gaps, but children are short-lived and rarely idle long enough to claim the longer window, so on a wide fanout the higher write price is paid without the benefit:
+
+```text
+PI_CACHE_RETENTION=long PI_SUBAGENT_CACHE_RETENTION=short
+```
+
+Unset by default, so children inherit the parent's retention and behaviour is unchanged unless you opt in. Both spawned children (through the launch environment) and in-process children (through the session's own stream function) honour it; the in-process path scopes the value per session rather than mutating `process.env`, so a child cannot change retention for a parent turn streaming at the same time.
+
+Provider-reported `cacheWrite1h` usage confirms which tier a request used: it matches `cacheWrite` on the 1h tier and is `0` on the short one.
+
 ## `PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS`
 
 Caps the total time a single retried filesystem operation may sleep, in milliseconds. Environment-only; there is no config key.
