@@ -232,6 +232,7 @@ describe("native supervisor channel", () => {
 
 		assert.deepEqual(registeredTools, []);
 		channel.start();
+		assert.equal(channel.hasPendingRequests(), true, "fresh owned reply-bearing request is a drain barrier");
 		channel.dispose();
 
 		assert.deepEqual(registeredTools.map((tool) => tool.name), [NATIVE_SUPERVISOR_TOOL_NAME]);
@@ -239,6 +240,7 @@ describe("native supervisor channel", () => {
 		assert.deepEqual(sent.map(({ message }) => message.details?.id), [matchingId]);
 		assert.deepEqual(sent[0]?.options, { triggerTurn: true });
 		assert.equal(channel.pending.has(matchingId), false, "disposed channel clears pending requests");
+		assert.equal(channel.hasPendingRequests(), false, "disposed and foreign requests are not barriers");
 		assert.equal(sent.some(({ message }) => message.details?.id === otherId), false);
 	});
 
@@ -885,9 +887,13 @@ describe("native supervisor channel", () => {
 		const resolvedRunId = `run-${randomUUID()}`;
 		const expiredRunId = `run-${randomUUID()}`;
 		const inactiveRunId = `run-${randomUUID()}`;
+		const progressRunId = `run-${randomUUID()}`;
+		const foreignRunId = `run-${randomUUID()}`;
 		const resolvedId = writeRequest({ sessionId: currentSessionId, runId: resolvedRunId });
 		const expiredId = writeRequest({ sessionId: currentSessionId, runId: expiredRunId, expiresAt: Date.now() - 1 });
 		const inactiveId = writeRequest({ sessionId: currentSessionId, runId: inactiveRunId });
+		const progressId = writeRequest({ sessionId: currentSessionId, runId: progressRunId, reason: "progress_update" });
+		const foreignId = writeRequest({ sessionId: `foreign-${randomUUID()}`, runId: foreignRunId });
 		fs.writeFileSync(replyFile(resolvedRunId, resolvedId), JSON.stringify({
 			type: "subagent.supervisor.reply",
 			requestId: resolvedId,
@@ -921,12 +927,15 @@ describe("native supervisor channel", () => {
 		const channel = createNativeSupervisorChannel(pi as never, state);
 
 		channel.start();
+		assert.equal(channel.hasPendingRequests(), false, "resolved, expired, and inactive requests are not barriers");
 		channel.dispose();
 
-		assert.deepEqual(sent, []);
+		assert.deepEqual(sent.map((message) => message.details?.id), [progressId]);
 		assert.equal(fs.existsSync(requestFile(resolvedRunId, resolvedId)), false);
 		assert.equal(fs.existsSync(requestFile(expiredRunId, expiredId)), false);
 		assert.equal(fs.existsSync(requestFile(inactiveRunId, inactiveId)), false);
+		assert.equal(fs.existsSync(requestFile(progressRunId, progressId)), false);
+		assert.equal(fs.existsSync(requestFile(foreignRunId, foreignId)), true);
 	});
 
 	it("refreshes pending requests before listing or replying", async () => {

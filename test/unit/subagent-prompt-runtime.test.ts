@@ -58,6 +58,43 @@ it("does not skip drain for in-process child sessions when hasUI is true", async
 	assert.deepEqual(held, [true, false]);
 });
 
+it("reads a late-installed owner barrier for each final drain and balances the hold", async () => {
+	const handlers = new Map<string, Function[]>();
+	const listeners = new Map<string, Array<() => void>>();
+	const held: boolean[] = [];
+	const sessionId = "fanout-owner-session.jsonl";
+	const runtimeState = {
+		foregroundRuns: new Map([["fg", {
+			runId: "fg", mode: "single", cwd: "/tmp", sessionId, updatedAt: 1,
+			children: [{ agent: "worker", index: 0, status: "detached", updatedAt: 1 }],
+		}]]),
+	} as SubagentState;
+	const config = childConfig({ runtimeState, holdFinalDrain: (value) => { held.push(value); } });
+	const ctx = { hasUI: true, sessionManager: { getSessionFile: () => sessionId } };
+	const emit = async (name: string) => { for (const fn of handlers.get(name) ?? []) await fn({}, ctx); };
+	registerSubagentPromptRuntime({
+		on: (name: string, fn: Function) => handlers.set(name, [...(handlers.get(name) ?? []), fn]),
+		registerTool: () => {},
+		events: { on: (channel: string, handler: () => void) => { listeners.set(channel, [...(listeners.get(channel) ?? []), handler]); return () => {}; } },
+	} as never, config);
+	await emit("session_start");
+	let pending = true;
+	config.hasPendingSupervisorRequest = () => pending;
+	await emit("agent_end");
+	assert.deepEqual(held, [true, false]);
+	assert.equal(runtimeState.foregroundRuns.get("fg")!.children[0]!.status, "detached");
+
+	pending = false;
+	let settled = false;
+	const ended = emit("agent_end").then(() => { settled = true; });
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.equal(settled, false);
+	runtimeState.foregroundRuns.get("fg")!.children[0]!.status = "completed";
+	for (const handler of listeners.get(SUBAGENT_FOREGROUND_COMPLETE_EVENT) ?? []) handler();
+	await ended;
+	assert.deepEqual(held, [true, false, true, false]);
+});
+
 function supervisorConfig(overrides: Partial<ChildRuntimeConfig> = {}): ChildRuntimeConfig {
 	return childConfig({
 		orchestratorTarget: "subagent-chat-parent",

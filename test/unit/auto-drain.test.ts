@@ -100,4 +100,53 @@ describe("headless background-work auto-drain", () => {
 		});
 		assert.equal(waits, 1);
 	});
+
+	it("yields to Pi for a pending supervisor turn and resumes draining the same work after resolution", async () => {
+		let pending = true;
+		let active = true;
+		let waits = 0;
+		const deps = {
+			state: state(),
+			hasPendingSupervisorRequest: () => pending,
+			hasWork: () => active,
+			wait: async () => {
+				waits++;
+				active = false;
+				return waitResult("done");
+			},
+		};
+
+		await drainOutstandingWork(deps);
+		assert.equal(waits, 0, "the queued supervisor triggerTurn must get control before drain blocks again");
+		assert.equal(active, true, "yielding must leave the owned workflow active");
+
+		pending = false;
+		await drainOutstandingWork(deps);
+		assert.equal(waits, 1, "the same workflow can continue and drain after the reply resolves the barrier");
+		assert.equal(active, false);
+	});
+
+	it("latches an inner supervisor yield even when the live request clears before continuation", async () => {
+		let pending = false;
+		let clock = 0;
+		let waits = 0;
+		await drainOutstandingWork({
+			state: state(),
+			timeoutMs: 50,
+			now: () => clock,
+			hasWork: () => true,
+			hasPendingSupervisorRequest: () => pending,
+			wait: async (_params, _signal, deps) => {
+				waits++;
+				assert.equal(typeof deps.hasPendingSupervisorRequest, "function");
+				clock = 100;
+				pending = false;
+				return {
+					content: [{ type: "text", text: "Wait yielded for a pending supervisor request." }],
+					details: { mode: "management", results: [], wait: { reason: "supervisor_request", timedOut: false, activeRunIds: ["run-a"], activeProviderItems: [] } },
+				};
+			},
+		});
+		assert.equal(waits, 1);
+	});
 });

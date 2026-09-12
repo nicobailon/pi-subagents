@@ -68,7 +68,7 @@ it("observes true before wait, preserves waits/errors/deadlines and never certif
 		assert.equal(waits, mode === "false" || mode === "predicate throw" ? 0 : 1);
 		assert.equal(proof.settled(), false);
 	}
-	for (const injection of [{ hasWork: () => false }, { wait: async () => done }, { now: Date.now }]) {
+	for (const injection of [{ hasWork: () => false }, { wait: async () => done }, { now: Date.now }, { hasPendingSupervisorRequest: () => false }]) {
 		const proof = observation(); await drainOutstandingWork({ state, ...injection }, proof); assert.equal(proof.settled(), false);
 	}
 });

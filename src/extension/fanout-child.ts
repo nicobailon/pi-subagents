@@ -190,6 +190,8 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 			};
 		},
 	});
+	const hasPendingSupervisorRequest = supervisorChannel.hasPendingRequests;
+	childConfig.hasPendingSupervisorRequest = hasPendingSupervisorRequest;
 	const executor = createSubagentExecutor({
 		pi,
 		state,
@@ -245,6 +247,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 		asyncChildren.clear();
 		foregroundChannels.clear();
 		supervisorChannel.dispose();
+		if (childConfig.hasPendingSupervisorRequest === hasPendingSupervisorRequest) childConfig.hasPendingSupervisorRequest = undefined;
 		state.supervisorOwnerSessionId = null;
 	});
 	const route = resolveNestedControlRoute(childConfig);

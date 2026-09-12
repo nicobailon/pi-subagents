@@ -350,6 +350,7 @@ describe("supervisor ask registration", () => {
 			let cRequest: string | undefined;
 			let cReturned = false;
 			let bReturned = false;
+			let bDrainReturnedBeforeReply = false;
 			const abort = new AbortController();
 			const factory: ChildSessionFactory = {
 				async create(launch) {
@@ -375,6 +376,10 @@ describe("supervisor ask registration", () => {
 								});
 								assert.notEqual(receipt.isError, true, text(receipt));
 								workflows.push(receipt.details.asyncDir);
+								// Enter B's real prompt-runtime final drain before C writes its delayed ask.
+								await runtime.emit("agent_end");
+								bDrainReturnedBeforeReply = true;
+								assert.equal(cReturned, false, "the owner drain must yield before C is replied to");
 								// No explicit pending scan: executor activation must discover C's delayed ask.
 								await waitForCondition(() => runtime.notices.length > 0, "B to discover C's ask without a manual scan");
 								const pending = await runtime.call(NATIVE_SUPERVISOR_TOOL_NAME, { action: "pending" });
@@ -433,6 +438,7 @@ describe("supervisor ask registration", () => {
 				]);
 				assert.equal(result.exitCode, 0, result.error);
 				assert.equal(bReturned, true);
+				assert.equal(bDrainReturnedBeforeReply, true);
 				assert.equal(cReturned, true, "B's final drain must await C's real blocked contact call and workflow completion");
 				for (const dir of workflows) {
 					const status = JSON.parse(fs.readFileSync(path.join(dir, "status.json"), "utf8"));

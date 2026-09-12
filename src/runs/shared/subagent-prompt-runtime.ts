@@ -495,7 +495,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 		}
 		config.holdFinalDrain?.(true);
 		try {
-			await drainOutstandingWork({ state: waitState, events: pi.events }, drainObservation);
+			await drainOutstandingWork({ state: waitState, events: pi.events, hasPendingSupervisorRequest: config.hasPendingSupervisorRequest }, drainObservation);
 		} finally {
 			config.holdFinalDrain?.(false);
 		}

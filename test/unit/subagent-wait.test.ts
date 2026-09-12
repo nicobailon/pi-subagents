@@ -71,6 +71,18 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
 	return result.content.map((c) => c.text ?? "").join("");
 }
 
+function assertSupervisorYield(
+	result: Awaited<ReturnType<typeof waitForSubagents>>,
+	activeRunIds: string[],
+	activeProviderItems: Array<{ provider: string; id: string }> = [],
+): void {
+	assert.equal(result.isError, undefined);
+	assert.deepEqual(result.details.wait, { reason: "supervisor_request", timedOut: false, activeRunIds, activeProviderItems });
+	assert.match(textOf(result), /yielded for a pending supervisor request/i);
+	assert.doesNotMatch(textOf(result), /(?:done|complete|window elapsed)/i);
+	assert.equal(result.details.completions, undefined);
+}
+
 function baseDeps(root: string, state: SubagentState, overrides: Partial<SubagentWaitDeps> = {}): SubagentWaitDeps {
 	return {
 		state,
@@ -599,26 +611,154 @@ describe("bg_wait tool", () => {
 		}
 	});
 
-	it("returns an error for internal auto-drain on supervisor attention", async () => {
+	it("yields without an error for internal auto-drain on a durable supervisor barrier", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-drain-supervisor-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const state = makeState("sess-1");
 			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
 
+			let pending = false;
 			const result = await waitForSubagents({ all: true, stopOnAttention: false }, undefined, baseDeps(root, state, {
 				failOnAttention: true,
-				sleep: async () => writeStatus(asyncRoot, "run-a", "running", {
+				hasPendingSupervisorRequest: () => pending,
+				sleep: async () => {
+					pending = true;
+					writeStatus(asyncRoot, "run-a", "running", {
+						sessionId: "sess-1",
+						pid: 999999,
+						activityState: "needs_attention",
+						currentTool: "contact_supervisor",
+					});
+				},
+			}));
+
+			assertSupervisorYield(result, ["run-a"]);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("yields when a durable descendant request appears during the wait before status projection", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-drain-nested-supervisor-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "workflow-a", "running", {
+				sessionId: "sess-1",
+				pid: 999999,
+				mode: "workflow",
+				steps: [{ agent: "workflow", status: "running" }],
+			});
+			let pending = false;
+			let polls = 0;
+			let clock = 0;
+			const result = await waitForSubagents({ all: true, stopOnAttention: false, timeoutMs: 50 }, undefined, baseDeps(root, state, {
+				failOnAttention: true,
+				hasPendingSupervisorRequest: () => pending,
+				now: () => clock,
+				sleep: async () => {
+					polls++;
+					pending = true;
+					clock = 100;
+				},
+			}));
+
+			assertSupervisorYield(result, ["workflow-a"]);
+			assert.equal(polls, 1, "the durable mailbox must stop an already-running wait without status projection");
+			const persisted = JSON.parse(fs.readFileSync(path.join(asyncRoot, "workflow-a", "status.json"), "utf-8")) as { state: string };
+			assert.equal(persisted.state, "running", "yielding must not mark the workflow terminal");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reports every still-active initial identity for a mixed supervisor yield", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-supervisor-mixed-scope-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "async-a", "running", { sessionId: "sess-1", pid: 999999 });
+			state.foregroundRuns = new Map(["fg-a", "fg-b"].map((runId, index) => [runId, {
+				runId, mode: "single" as const, cwd: root, sessionId: "sess-1", updatedAt: 1,
+				children: [{ agent: "worker", index, status: "detached" as const, updatedAt: 1 }],
+			}]));
+			const provider = { provider: "herdr", id: "pane-a", sessionId: "sess-1" };
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				hasPendingSupervisorRequest: () => true,
+				backgroundWork: { snapshot: () => ({ providers: ["herdr"], items: [provider] }), wakeChannels: () => [] },
+			}));
+			assertSupervisorYield(result, ["async-a", "fg-a", "fg-b"], [{ provider: "herdr", id: "pane-a" }]);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("foreground aggregate yield filters terminal, new, newly detached, and foreign work from its initial scope", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-supervisor-foreground-scope-"));
+		try {
+			const state = makeState("sess-1");
+			state.foregroundRuns = new Map([
+				["fg-first", { runId: "fg-first", mode: "single", cwd: root, sessionId: "sess-1", updatedAt: 1, children: [
+					{ agent: "worker", index: 0, status: "detached", updatedAt: 1 },
+					{ agent: "worker", index: 1, status: "completed", updatedAt: 1 },
+				] }],
+				["fg-later", { runId: "fg-later", mode: "single", cwd: root, sessionId: "sess-1", updatedAt: 1, children: [{ agent: "worker", index: 0, status: "detached", updatedAt: 1 }] }],
+				["fg-foreign", { runId: "fg-foreign", mode: "single", cwd: root, sessionId: "sess-2", updatedAt: 1, children: [{ agent: "worker", index: 0, status: "detached", updatedAt: 1 }] }],
+			] as never);
+			let pending = false;
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				hasPendingSupervisorRequest: () => pending,
+				sleep: async () => {
+					state.foregroundRuns!.get("fg-first")!.children[0]!.status = "completed";
+					state.foregroundRuns!.get("fg-first")!.children[1]!.status = "detached";
+					state.foregroundRuns!.set("fg-new", { runId: "fg-new", mode: "single", cwd: root, sessionId: "sess-1", updatedAt: 2, children: [{ agent: "worker", index: 0, status: "detached", updatedAt: 2 }] });
+					pending = true;
+				},
+			}));
+			assertSupervisorYield(result, ["fg-later"]);
+			assert.equal(state.foregroundRuns.get("fg-later")!.children[0]!.status, "detached");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	for (const currentTool of ["contact_supervisor", "intercom"]) {
+		it(`still errors for ${currentTool} attention without a durable owned request`, async () => {
+			const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-drain-unowned-supervisor-"));
+			try {
+				const asyncRoot = path.join(root, "runs");
+				const state = makeState("sess-1");
+				writeStatus(asyncRoot, "run-a", "running", {
 					sessionId: "sess-1",
 					pid: 999999,
 					activityState: "needs_attention",
-					currentTool: "contact_supervisor",
-				}),
-			}));
+					currentTool,
+				});
+				const result = await waitForSubagents({ all: true, stopOnAttention: false }, undefined, baseDeps(root, state, {
+					failOnAttention: true,
+					hasPendingSupervisorRequest: () => false,
+				}));
+				assert.equal(result.isError, true);
+			} finally {
+				fs.rmSync(root, { recursive: true, force: true });
+			}
+		});
+	}
 
+	it("still errors for non-supervisor attention during internal auto-drain", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-drain-nonsupervisor-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-a", "running", {
+				sessionId: "sess-1",
+				pid: 999999,
+				activityState: "needs_attention",
+				currentTool: "read",
+			});
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, { failOnAttention: true }));
 			assert.equal(result.isError, true);
-			assert.match(textOf(result), /Reply to any pending supervisor request/);
-			assert.match(textOf(result), /run-a/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -880,6 +1020,39 @@ describe("bg_wait tool", () => {
 
 			const otherSession = await waitForSubagents({ id: "foreground-other" }, undefined, baseDeps(root, state));
 			assert.match(textOf(otherSession), /No active run matched/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("yields a foreground-only wait when a durable request appears before timeout", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-foreground-supervisor-yield-"));
+		try {
+			const state = makeState("sess-1");
+			state.foregroundRuns = new Map([["foreground-live", {
+				runId: "foreground-live",
+				mode: "single",
+				cwd: root,
+				sessionId: "sess-1",
+				updatedAt: 1,
+				children: [{ agent: "worker", index: 0, status: "detached", updatedAt: 1 }],
+			}]]);
+			let pending = false;
+			let clock = 0;
+			let polls = 0;
+			const result = await waitForSubagents({ all: true, timeoutMs: 50 }, undefined, baseDeps(root, state, {
+				hasPendingSupervisorRequest: () => pending,
+				now: () => clock,
+				sleep: async () => {
+					polls++;
+					pending = true;
+					clock = 100;
+				},
+			}));
+
+			assert.equal(polls, 1);
+			assertSupervisorYield(result, ["foreground-live"]);
+			assert.equal(state.foregroundRuns.get("foreground-live")!.children[0]!.status, "detached");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

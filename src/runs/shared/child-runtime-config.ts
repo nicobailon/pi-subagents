@@ -91,6 +91,8 @@ export interface ChildRuntimeConfig {
 	waitTool: ResolvedWaitToolConfig;
 	runtimeState?: SubagentState;
 	holdFinalDrain?: (held: boolean) => void;
+	/** Installation-local downward owner-channel barrier; never inherited or serialized into descendants. */
+	hasPendingSupervisorRequest?: () => boolean;
 	structuredOutput?: ChildStructuredOutput;
 	requiredTools?: string[];
 	mcpDirectTools?: string[];

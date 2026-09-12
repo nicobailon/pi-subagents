@@ -1418,6 +1418,12 @@ export interface Details {
 		timedOut: true;
 		activeRunIds: string[];
 		activeProviderItems: Array<{ provider: string; id: string }>;
+	} | {
+		/** Non-terminal internal auto-drain yield; tracked work remains active. */
+		reason: "supervisor_request";
+		timedOut: false;
+		activeRunIds: string[];
+		activeProviderItems: Array<{ provider: string; id: string }>;
 	};
 	controlEvents?: ControlEvent[];
 	steering?: SteerActionResult;
