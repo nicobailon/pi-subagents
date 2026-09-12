@@ -43,21 +43,26 @@ describe("async chain root attachment", () => {
 			steps: [{ agent: "worker", status: "complete", sessionFile }],
 		});
 		writeJson(importedRoot.resultPath, {
+			sessionId: "publication-session",
+			toolCallId: "publication-tool-call",
 			state: "complete",
 			success: true,
 		results: [{ agent: "worker", output: "root output", success: true, sessionFile, usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 } }],
 		});
 
 		const result = await waitForImportedAsyncRoot(importedRoot, { pollIntervalMs: 1 });
+		fs.writeFileSync(path.join(importedRoot.asyncDir, "status.json"), "{malformed", "utf-8");
 
 		assert.deepEqual({
 			agent: result.agent,
+			importedPublication: result.importedPublication,
 			output: result.output,
 			exitCode: result.exitCode,
 			sessionFile: result.sessionFile,
 			usage: result.usage,
 		}, {
 			agent: "worker",
+			importedPublication: { sessionId: "publication-session", toolCallId: "publication-tool-call" },
 			output: "root output",
 			exitCode: 0,
 			sessionFile,
@@ -171,6 +176,7 @@ describe("async chain root attachment", () => {
 		assert.equal(result.exitCode, 1);
 		assert.equal(result.error, "root failed");
 		assert.equal(result.output, "root failed");
+		assert.deepEqual(result.importedPublication, {});
 	});
 
 	it("imports a partial root without collapsing it to failed", async () => {
@@ -247,6 +253,7 @@ describe("async chain root attachment", () => {
 		assert.equal(result.agent, "worker");
 		assert.equal(result.exitCode, 1);
 		assert.match(result.error ?? "", /ended without a result file/);
+		assert.equal(result.importedPublication, undefined);
 	});
 
 	it("stops waiting when the parent timeout aborts an attached root", async () => {
@@ -274,5 +281,6 @@ describe("async chain root attachment", () => {
 		assert.equal(result.timedOut, true);
 		assert.equal(result.error, "parent timed out");
 		assert.equal(result.output, "parent timed out");
+		assert.equal(result.importedPublication, undefined);
 	});
 });

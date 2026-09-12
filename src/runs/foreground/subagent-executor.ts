@@ -97,7 +97,7 @@ import { dismissRecoveredWorkflow } from "./async-dismiss-action.ts";
 import { promotePausedWorkflowIfSettled, reconcileDetachedWorkflowChildCompletion } from "./workflow-detach-reconcile.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveAsyncRootResultPath, waitForImportedAsyncRoot } from "../background/chain-root-attachment.ts";
-import { resultFilePath, writeAsyncResultFile } from "../background/result-files.ts";
+import { removeResultIndex, resultFilePath, writeAsyncResultFile } from "../background/result-files.ts";
 import { attachRootChildrenToSteps, createNestedRoute, findNestedControlResult, inheritedNestedParentAddressOf, inheritedNestedRouteOf, resolveNestedAsyncDir, snapshotNestedEventFiles, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedParentAddress, type NestedRoute, type NestedRunResolutionScope } from "../shared/nested-events.ts";
 import type { ChildRuntimeConfig } from "../shared/child-runtime-config.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
@@ -2193,7 +2193,7 @@ async function resumeAsyncRun(input: {
 		} finally {
 			input.signal?.removeEventListener("abort", stopOnAbort);
 		}
-		fs.rmSync(resultPath, { force: true });
+		if (completed.importedPublication) removeWorkflowAwaitedResult(asyncDir, resultPath, revivedId, completed.importedPublication);
 		const usage = importedAsyncRootUsage(completed);
 		const childResult: SingleResult = {
 			index: 0,
@@ -3138,6 +3138,15 @@ function importedAsyncRootUsage(completed: Awaited<ReturnType<typeof waitForImpo
 	};
 }
 
+function removeWorkflowAwaitedResult(asyncDir: string, resultPath: string, runId: string, publication: NonNullable<Awaited<ReturnType<typeof waitForImportedAsyncRoot>>["importedPublication"]>): void {
+	try {
+		fs.rmSync(resultPath, { force: true });
+	} catch {
+		// Payload cleanup must not replace an already imported delivery.
+	}
+	removeResultIndex(asyncDir, publication.sessionId, runId, publication.toolCallId);
+}
+
 async function waitForWorkflowAsyncSingleResult(
 	params: SubagentParamsLike,
 	launchResult: AgentToolResult<Details>,
@@ -3158,7 +3167,7 @@ async function waitForWorkflowAsyncSingleResult(
 	} finally {
 		options.signal?.removeEventListener("abort", stopOnAbort);
 	}
-	fs.rmSync(resultPath, { force: true });
+	if (completed.importedPublication) removeWorkflowAwaitedResult(asyncDir, resultPath, options.runId, completed.importedPublication);
 	const usage = importedAsyncRootUsage(completed);
 	const childResult: SingleResult = omitUndefinedProperties({
 		index: 0,

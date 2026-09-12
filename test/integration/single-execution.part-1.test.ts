@@ -17,7 +17,8 @@ import {
 	installSingleExecutionHooks,
 } from "../support/single-execution-fixture.ts";
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
+import fsDefault, * as fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import {
@@ -41,9 +42,10 @@ import {
 	type SubagentDelegationResponse,
 	type SubagentDelegationStarted,
 } from "../../src/api/delegation.ts";
-import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, SUBAGENT_CONTROL_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type ChildWatchdogProgress, type ControlEvent, type SubagentState } from "../../src/shared/types.ts";
+import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, SUBAGENT_CONTROL_EVENT, SUBAGENT_PROCESS_TERMINAL_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type ChildWatchdogProgress, type ControlEvent, type SubagentState } from "../../src/shared/types.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index.ts";
 import { encodeIndexSegment } from "../../src/runs/background/index-segment.ts";
+import { removeResultIndex, writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
@@ -2183,9 +2185,130 @@ Answer only from the supplied synthetic text.
 		assert.equal(child?.output, "default async child done");
 		assert.ok(child?.runId);
 		assert.equal(result.details.results[0]?.finalOutput, "default async child done");
-		assert.equal(fs.existsSync(path.join(DIRS.async, child.runId)), true);
-		fs.rmSync(path.join(DIRS.async, child.runId), { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+		const childDir = path.join(DIRS.async, child.runId);
+		assert.equal(fs.existsSync(childDir), true);
+		assert.equal(fs.existsSync(path.join(childDir, "workflow-result.json")), false);
+		for (const localResultDir of ["result-pending", "result-index"]) {
+			const localPath = path.join(childDir, localResultDir);
+			const jsonFiles = fs.existsSync(localPath)
+				? fs.readdirSync(localPath, { recursive: true }).filter((entry) => String(entry).endsWith(".json"))
+				: [];
+			assert.deepEqual(jsonFiles, [], `${localResultDir} retained result metadata: ${jsonFiles.join(", ")}`);
+		}
+		fs.rmSync(childDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		fs.rmSync(path.join(DIRS.results, `${child.runId}.json`), { force: true });
+	});
+
+	it("retains workflow publication recovery files when the executor await is already aborted", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const runId = `abort-await-${Date.now()}`;
+		const sessionId = "abort-session";
+		const toolCallId = "abort-call";
+		const childDir = path.join(DIRS.async, runId);
+		const resultPath = path.join(childDir, "workflow-result.json");
+		fs.mkdirSync(childDir, { recursive: true });
+		fs.writeFileSync(path.join(childDir, "mission.json"), "{}", "utf-8");
+		const payload = { id: runId, runId, sessionId, toolCallId, asyncDir: childDir, state: "complete", success: true, results: [{ agent: "echo", output: "recoverable publication—not imported", success: true }] };
+		assert.deepEqual(writeAsyncResultFile(resultPath, payload), { state: "public" });
+		writePendingAsyncResultFile(resultPath, payload);
+		const encodedRun = encodeIndexSegment(runId);
+		const seededPaths = [
+			resultPath,
+			path.join(childDir, "result-pending", encodeIndexSegment(sessionId), `${encodedRun}.json`),
+			path.join(childDir, "result-index", "sessions", encodeIndexSegment(sessionId), `${encodedRun}.json`),
+			path.join(childDir, "result-index", "runs", `${encodedRun}.json`),
+			path.join(childDir, "result-index", "tool-calls", encodeIndexSegment(toolCallId), `${encodedRun}.json`),
+			path.join(childDir, "result-index", "observers", "mission", `${encodedRun}.json`),
+		];
+		for (const file of seededPaths) assert.equal(fs.statSync(file).isFile(), true, file);
+		const before = seededPaths.map((file) => fs.readFileSync(file));
+		const piEvents = createEventBus();
+		let unsubscribe = () => {};
+		const terminal = new Promise<void>((resolve, reject) => {
+			const timer = setTimeout(() => reject(new Error(`runner ${runId} did not terminate`)), 5_000);
+			unsubscribe = piEvents.on(SUBAGENT_PROCESS_TERMINAL_EVENT, (value) => {
+				if ((value as { runId?: string }).runId !== runId) return;
+				clearTimeout(timer);
+				resolve();
+			});
+		});
+		mockPi.onCall({ output: "runner output" });
+		const controller = new AbortController();
+		controller.abort();
+		try {
+			const result = await makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, piEvents).execute(
+				"abort-workflow-await",
+				{ agent: "echo", task: "Do not import the seeded result", async: true, workflowAwaitAsync: true, workflowChildAsyncId: runId },
+				controller.signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(result.isError, true);
+			assert.equal(result.details.runId, runId);
+			assert.equal(result.details.asyncDir, childDir);
+			assert.equal(result.details.results.length, 1);
+			assert.equal(result.details.results[0]?.exitCode, 1);
+			assert.equal(result.details.results[0]?.timedOut, true);
+			assert.equal(result.details.results[0]?.error, "Workflow stopped before async child completed.");
+			assert.equal(result.details.results[0]?.finalOutput, "Workflow stopped before async child completed.");
+			assert.doesNotMatch(result.content[0]?.text ?? "", /recoverable publication—not imported/);
+			seededPaths.forEach((file, index) => assert.deepEqual(fs.readFileSync(file), before[index], file));
+			await terminal;
+		} finally {
+			unsubscribe();
+			fs.rmSync(childDir, { recursive: true, force: true });
+			fs.rmSync(path.join(DIRS.results, `${runId}.json`), { force: true });
+			removeResultIndex(DIRS.results, sessionId, runId, toolCallId);
+		}
+	});
+
+	it("preserves imported workflow delivery when payload cleanup fails", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async (t) => {
+		const runId = `cleanup-failure-${Date.now()}`;
+		const sessionId = "cleanup-session";
+		const toolCallId = "cleanup-call";
+		const childDir = path.join(DIRS.async, runId);
+		const resultPath = path.join(childDir, "workflow-result.json");
+		fs.mkdirSync(childDir, { recursive: true });
+		fs.writeFileSync(path.join(childDir, "mission.json"), "{}", "utf-8");
+		const payload = { id: runId, runId, sessionId, toolCallId, asyncDir: childDir, state: "complete", success: true, results: [{ agent: "echo", output: "imported despite cleanup failure", success: true, usage: { input: 3, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 } }] };
+		writeAsyncResultFile(resultPath, payload);
+		writePendingAsyncResultFile(resultPath, payload);
+		const originalRmSync = fsDefault.rmSync;
+		let attempted = false;
+		t.mock.method(fsDefault, "rmSync", ((target: fs.PathLike, options?: fs.RmDirOptions) => {
+			if (path.resolve(String(target)) === path.resolve(resultPath)) {
+				attempted = true;
+				const error = new Error("denied") as NodeJS.ErrnoException;
+				error.code = "EACCES";
+				throw error;
+			}
+			return originalRmSync(target, options);
+		}) as typeof fsDefault.rmSync);
+		syncBuiltinESMExports();
+		mockPi.onCall({ output: "runner output" });
+		try {
+			const result = await makeExecutor([makeAgent("echo")]).execute(
+				"cleanup-failure-await",
+				{ agent: "echo", task: "Import seeded result", async: true, workflowAwaitAsync: true, workflowChildAsyncId: runId },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(attempted, true);
+			assert.equal(result.isError, undefined, result.content[0]?.text);
+			assert.equal(result.details.results[0]?.finalOutput, "imported despite cleanup failure");
+			assert.equal(result.details.results[0]?.exitCode, 0);
+			assert.deepEqual(result.details.results[0]?.usage, payload.results[0].usage);
+			assert.equal(fs.existsSync(resultPath), true);
+			for (const localResultDir of ["result-pending", "result-index"]) {
+				const localPath = path.join(childDir, localResultDir);
+				assert.deepEqual(fs.existsSync(localPath) ? fs.readdirSync(localPath, { recursive: true }).filter((entry) => String(entry).endsWith(".json")) : [], []);
+			}
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			fs.rmSync(childDir, { recursive: true, force: true });
+			fs.rmSync(path.join(DIRS.results, `${runId}.json`), { force: true });
+		}
 	});
 
 	it("keeps ordinary async workflow child results in the watcher-owned path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

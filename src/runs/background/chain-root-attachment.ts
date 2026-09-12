@@ -13,6 +13,7 @@ export interface ImportedAsyncRoot {
 
 export interface ImportedAsyncRootResult {
 	agent: string;
+	importedPublication?: { sessionId?: string; toolCallId?: string };
 	/** Human-readable display name for the child session, when derived at launch. */
 	sessionName?: string;
 	output: string;
@@ -43,6 +44,8 @@ export interface ImportedAsyncRootResult {
 }
 
 interface AsyncResultFile {
+	sessionId?: string;
+	toolCallId?: string;
 	state?: string;
 	success?: boolean;
 	summary?: string;
@@ -216,6 +219,10 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 	const usage = child?.usage ?? usageFromAttempts(step?.modelAttempts);
 	return {
 		agent,
+		importedPublication: {
+			...(typeof result.sessionId === "string" ? { sessionId: result.sessionId } : {}),
+			...(typeof result.toolCallId === "string" ? { toolCallId: result.toolCallId } : {}),
+		},
 		output: success ? output : (output || error || ""),
 		success,
 		exitCode: success ? 0 : 1,

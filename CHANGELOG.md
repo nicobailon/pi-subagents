@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Remove workflow-owned one-shot result payloads together with their child-local result indexes after successful consumption. Thanks to [@peedrr](https://github.com/peedrr) for #2182.
 - Show runtime-registered agents in `/subagents` while keeping their extension-owned definitions read-only and rejecting collisions with disabled configured agents. Thanks to [@mystery4f](https://github.com/mystery4f) for #2169.
 - Persist pretty JSON to explicitly bound background output artifacts when a successful child returns structured output without final prose. Thanks to [@rtbe](https://github.com/rtbe) for #2163.
 - Surface the provider error text of a failed watchdog review in `/subagents-watchdog status` `Last error` (bounded to 600 chars). Previously only `stop reason 'error'` was recorded, so a watchdog failing every review (rate limit, rejected model, auth) was indistinguishable from a clean one. Thanks to [@freezscholte](https://github.com/freezscholte) for #2166.
