@@ -16,6 +16,8 @@ import { prepareReadonlySessionEvidence } from "./readonly-session-evidence.ts";
 import { toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import type { RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
 import type { HerdrMachineReference, HerdrRemoteGitStatus } from "../../shared/types.ts";
+import { readLocalInferencePolicy, LOCAL_INFERENCE_POLICY_NOTICE } from "./local-inference-policy.ts";
+import { createLocalInferenceTransport } from "./local-inference-transport.ts";
 
 // Private runtime authority for host continuation planning; injected factories have none.
 const readonlyModels = new WeakMap<ChildSession, { current: ModelInfo; resolve(reference: string): ModelInfo | undefined; requestBytes: number }>();
@@ -231,6 +233,8 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 	};
 	return {
 		async create(launch) {
+			const localInference = readLocalInferencePolicy();
+			let localTransport: ReturnType<typeof createLocalInferenceTransport> | undefined;
 			const observeReadonly = prepareReadonlySessionEvidence(launch);
 			const pi = await loadPiCodingAgent();
 			const modelRuntime = await sharedRuntime(pi);
@@ -303,6 +307,19 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					session.dispose();
 					throw error;
 				}
+				if (localInference) {
+					const original = session.agent.streamFunction;
+					if (typeof original !== "function") {
+						session.dispose();
+						throw new Error("Cannot enforce local inference policy: Pi streamFunction is unavailable. Check runtime compatibility before launching work.");
+					}
+					localTransport = createLocalInferenceTransport();
+					session.agent.streamFunction = localTransport.wrap(original.bind(session.agent));
+					sessionManager.appendCustomEntry("pi-subagents:local-inference-policy", {
+						version: 1, executionDeadline: "disabled", headersTimeout: 0, bodyTimeout: 0,
+						requestDeadline: "disabled", cancellation: "operator", notice: LOCAL_INFERENCE_POLICY_NOTICE,
+					});
+				}
 				return session;
 			};
 			const opened = loading.catch(() => {}).then(open);
@@ -310,7 +327,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			const session = await opened;
 			let evidence: ReturnType<NonNullable<typeof observeReadonly>["observe"]>;
 			try { evidence = observeReadonly?.observe(pi, modelRuntime, session); }
-			catch (error) { session.dispose(); throw error; }
+			catch (error) { session.dispose(); await localTransport?.close(); throw error; }
 			let pending: Promise<void> | undefined;
 			// pi's own hosts emit `session_shutdown` before disposing a session so the
 			// extensions loaded into it (ambient extensions included) release their
@@ -328,6 +345,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
 				} finally {
 					session.dispose();
+					await localTransport?.close();
 					evidence?.finish(child);
 				}
 			};

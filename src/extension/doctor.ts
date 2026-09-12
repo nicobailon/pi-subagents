@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { localInferenceEnabled, LOCAL_INFERENCE_POLICY_NOTICE } from "../runs/shared/local-inference-policy.ts";
 import { discoverAgentsAll, type AgentSource } from "../agents/agents.ts";
 import { isAsyncAvailable } from "../runs/background/async-execution.ts";
 import { formatSpawnBudgetSummary, getSpawnBudgetSnapshot } from "../runs/shared/spawn-budget.ts";
@@ -253,6 +254,7 @@ export function buildDoctorReport(input: DoctorReportInput): string {
 		...formatActiveAsyncCapacitySection(input),
 		"",
 		"Workflow script",
+		localInferenceEnabled(input.config) ? LOCAL_INFERENCE_POLICY_NOTICE : "Local-AI timeout policy: disabled (upstream timeout behavior).",
 		...formatWorkflowScriptSection(),
 		"",
 		"Permission system",

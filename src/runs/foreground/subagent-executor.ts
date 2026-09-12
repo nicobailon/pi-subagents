@@ -9,6 +9,7 @@ import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
 import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
 import { resolveEffectiveThinking, toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
+import { localInferenceEnabled, withoutExecutionDeadline } from "../shared/local-inference-policy.ts";
 import {
 	beginForegroundChild,
 	finishForegroundChild,
@@ -2889,7 +2890,8 @@ export function resolveForegroundTimeout(params: SubagentParamsLike, defaultTime
  * set — even with a config default — while their runner children resolve separate
  * deadlines. Exported so the executor wiring is directly testable.
  */
-export function resolveSingleAgentLaunchTimeout(params: SubagentParamsLike, async: boolean, configDefaultTimeoutMs?: number): { timeoutMs?: number; error?: string } {
+export function resolveSingleAgentLaunchTimeout(params: SubagentParamsLike, async: boolean, configDefaultTimeoutMs?: number, localInference = false): { timeoutMs?: number; error?: string } {
+	if (localInference) return {};
 	const isComposite = (params.chain?.length ?? 0) > 0 || (params.tasks?.length ?? 0) > 0 || params.workflowScript !== undefined;
 	const foregroundDefault = configDefaultTimeoutMs ?? DEFAULT_FOREGROUND_TIMEOUT_MS;
 	const asyncSingleDefault = configDefaultTimeoutMs ?? DEFAULT_ASYNC_TIMEOUT_MS;
@@ -5021,6 +5023,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const normalizedGate = normalizeGateParams(params);
 		if (!normalizedGate.ok) return buildRequestedModeError(params, normalizedGate.error);
 		let requestParams = normalizedGate.params;
+		const localInference = localInferenceEnabled(deps.config);
+		if (localInference) requestParams = withoutExecutionDeadline(requestParams);
 		const capacityOverrideError = validateWorkflowCapacityOverrides(requestParams);
 		if (capacityOverrideError) return buildRequestedModeError(requestParams, capacityOverrideError);
 		let workflowPreflight: import("../../shared/types.ts").WorkflowPreflight | undefined;
@@ -5098,7 +5102,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 			}
 			const parentCwd = ctx.cwd;
-			const timeout = requestParams.timeoutMs ?? requestParams.maxRuntimeMs ?? (requestParams.async === false ? resolveConfigDefaultTimeoutMs(deps.config.timeoutMs) ?? DEFAULT_FOREGROUND_TIMEOUT_MS : undefined);
+			const timeout = localInference ? undefined : requestParams.timeoutMs ?? requestParams.maxRuntimeMs ?? (requestParams.async === false ? resolveConfigDefaultTimeoutMs(deps.config.timeoutMs) ?? DEFAULT_FOREGROUND_TIMEOUT_MS : undefined);
 			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
 			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);
 			const workflowCwd = resolveRequestedCwd(parentCwd, requestParams.cwd);
@@ -6937,6 +6941,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			effectiveParams,
 			effectiveAsync,
 			resolveConfigDefaultTimeoutMs(deps.config.timeoutMs),
+			localInference,
 		);
 		if (foregroundTimeout.error) return buildRequestedModeError(effectiveParams, foregroundTimeout.error);
 		const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);

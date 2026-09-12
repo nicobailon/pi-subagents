@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { arbitrateCompletionGuardRescue, createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
+import { readLocalInferencePolicy, withoutExecutionDeadline, LOCAL_INFERENCE_POLICY_NOTICE } from "../shared/local-inference-policy.ts";
 
 // Detached runners skip Pi's CLI proxy setup. Keep fetch on the same Undici dispatcher.
 function ensureProxyAwareHttpDispatcher(): void {
@@ -2011,6 +2012,7 @@ async function runSingleStepWithTimeout(
 	ctx: SingleStepContext,
 	parentDeadlineAt?: number,
 ): Promise<SingleStepResult> {
+	if (readLocalInferencePolicy()) return runSingleStep(withoutExecutionDeadline(step), withoutExecutionDeadline(ctx));
 	if (step.timeoutMs === undefined) return runSingleStep(step, parentDeadlineAt === undefined ? ctx : {
 		...ctx,
 		deadlineAt: ctx.deadlineAt === undefined ? parentDeadlineAt : Math.min(ctx.deadlineAt, parentDeadlineAt),
@@ -2055,6 +2057,11 @@ export async function runSubagent(
 	config: SubagentRunConfig,
 	childSessions: ChildSessionFactory,
 ): Promise<void> {
+	if (readLocalInferencePolicy()) {
+		config = withoutExecutionDeadline(config);
+		config.steps = config.steps.map((step) => withoutExecutionDeadline(step));
+		console.error(LOCAL_INFERENCE_POLICY_NOTICE);
+	}
 	const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } =
 		config;
 	const globalSemaphore = new Semaphore(config.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);

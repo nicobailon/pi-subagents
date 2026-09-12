@@ -2635,6 +2635,8 @@ export interface ExtensionConfig {
 	capacity?: ActiveAsyncCapacityConfig;
 	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
 	globalConcurrencyLimit?: number;
+	/** Local-AI fork owner policy. Tool calls cannot override this setting. */
+	localInference?: { enabled: boolean };
 	/**
 	 * Global default runtime deadline in milliseconds. It replaces the built-in
 	 * 30-minute backstop for single, parallel, and chain launches (foreground, plus
