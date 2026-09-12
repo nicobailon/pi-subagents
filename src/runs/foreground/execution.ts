@@ -69,6 +69,7 @@ import { applyThinkingSuffix, deriveForkPromptCacheKey } from "../shared/child-t
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
+import { readLocalInferencePolicy, withoutExecutionDeadline } from "../shared/local-inference-policy.ts";
 import { assertThinkingWithinCeiling, intersectThinkingCeilings } from "../../shared/thinking-ceiling.ts";
 import { MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, MISSING_STRUCTURED_OUTPUT_CALL_ERROR } from "../shared/structured-output.ts";
 import { formatMidToolExitError, isOrdinaryToolForMidToolExit } from "../shared/process-signal.ts";
@@ -2242,6 +2243,7 @@ export async function runSync(
 	task: string,
 	options: RunSyncOptions,
 ): Promise<SingleResult> {
+	if (readLocalInferencePolicy()) options = withoutExecutionDeadline(options);
 	// Capture the strict contract before consumer-owned objects can be mutated
 	// after a detached receipt is published.
 	const strictContract = isAgentContract(options.agentContract);

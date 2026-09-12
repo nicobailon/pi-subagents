@@ -1,0 +1,25 @@
+name: Local inference regression
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  local-inference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.22.2
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm run test:local-inference
+      - name: Install isolated real Pi runtime
+        run: npm install --prefix "$RUNNER_TEMP/pi-host" --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
+      - name: Exercise real detached HTTP waits beyond five minutes and manual cancellation
+        run: node tools/check-local-inference.mjs "$RUNNER_TEMP/pi-host/node_modules/@earendil-works/pi-coding-agent" --long

@@ -58,7 +58,8 @@
     "test": "npm run test:unit",
     "test:unit": "node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/*.test.ts",
     "test:integration": "node --experimental-strip-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
-    "test:all": "npm run test:unit && npm run test:integration"
+    "test:all": "npm run test:unit && npm run test:integration",
+    "test:local-inference": "node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test --test-concurrency=2 test/unit/local-inference-*.test.ts test/unit/timeout-defaults.test.ts test/unit/active-async-capacity.test.ts test/unit/child-session-queued.test.ts test/unit/child-launch-plan.test.ts"
   },
   "pi": {
     "extensions": [
