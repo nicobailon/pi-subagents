@@ -1630,6 +1630,122 @@ export default function() {
 		assert.equal(args[args.indexOf("--model") + 1], "mock/fallback");
 	});
 
+	it("resumes a retained session after runner preloading exceeds ten seconds", { timeout: 120_000, skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const sourceId = `async-revive-cold-${Date.now().toString(36)}`;
+		const sessionFile = path.join(tempDir, "cold-session.jsonl");
+		fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 1, id: "cold-session", cwd: fs.realpathSync(tempDir) })}\n`);
+		mockPi.onCall({ output: "Initial inspection" });
+		executeAsyncSingle(sourceId, {
+			agent: "worker",
+			task: "Inspect the fixture",
+			agentConfig: makeAgent("worker", { completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionFile,
+			maxSubagentDepth: 2,
+		});
+		// Initial creation is fixture setup; the timeout regression is on the subsequent resume.
+		const initial = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(sourceId, 60_000), "utf-8")) as AsyncResultPayload;
+		assert.equal(initial.success, true);
+
+		// Delay the real Node runner before its imports and ready handshake, not the model response.
+		const preloadFile = path.join(tempDir, "slow-runner-preload.mjs");
+		const witnessFile = path.join(tempDir, "preload-witness.json");
+		fs.writeFileSync(preloadFile, `
+import * as fs from "node:fs";
+if (process.argv.some((arg) => arg.endsWith("subagent-runner.ts"))) {
+	const startedAt = Date.now();
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 12_000);
+	fs.writeFileSync(${JSON.stringify(witnessFile)}, JSON.stringify({ elapsedMs: Date.now() - startedAt }));
+}
+`);
+		mockPi.onCall({ output: "Resumed inspection" });
+		const previousNodeOptions = process.env.NODE_OPTIONS;
+		let resumed: AsyncExecutionResult;
+		try {
+			process.env.NODE_OPTIONS = [previousNodeOptions, `--import=${pathToFileURL(preloadFile).href}`].filter(Boolean).join(" ");
+			resumed = await makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]).execute(
+				"resume-cold",
+				{ action: "resume", id: sourceId, message: "Continue inspecting" },
+				new AbortController().signal, undefined, makeMinimalCtx(tempDir),
+			) as AsyncExecutionResult;
+		} finally {
+			if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+			else process.env.NODE_OPTIONS = previousNodeOptions;
+		}
+		assert.ok(!resumed.isError, resumed.content[0]?.text);
+		assert.ok(resumed.details.asyncId);
+		assert.ok(JSON.parse(fs.readFileSync(witnessFile, "utf-8")).elapsedMs >= 12_000);
+		assert.equal((await readAsyncPayload(resumed.details.asyncId)).success, true);
+		const args = readMockPiArgs(mockPi, 1);
+		assert.equal(args[args.indexOf("--session") + 1], sessionFile);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("keeps acknowledgement failures bounded and the retained session resumable", { timeout: 120_000, skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const sourceId = `async-revive-no-ack-${Date.now().toString(36)}`;
+		const sessionFile = path.join(tempDir, "no-ack-session.jsonl");
+		fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 1, id: "no-ack-session", cwd: fs.realpathSync(tempDir) })}\n`);
+		mockPi.onCall({ output: "Initial inspection" });
+		executeAsyncSingle(sourceId, {
+			agent: "worker",
+			task: "Inspect the fixture",
+			agentConfig: makeAgent("worker", { completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionFile,
+			maxSubagentDepth: 2,
+		});
+		const initial = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(sourceId, 60_000), "utf-8")) as AsyncResultPayload;
+		assert.equal(initial.success, true);
+
+		// Suppress only the acknowledged marker at the filesystem boundary of the real runner.
+		const preloadFile = path.join(tempDir, "missing-ack-preload.mjs");
+		const witnessFile = path.join(tempDir, "missing-ack-witness.json");
+		fs.writeFileSync(preloadFile, `
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+const rename = fs.renameSync;
+fs.renameSync = function (source, target) {
+	if (String(target).endsWith("runner-startup.json") && JSON.parse(fs.readFileSync(source, "utf8")).state === "acknowledged") {
+		fs.writeFileSync(${JSON.stringify(witnessFile)}, "true");
+		return;
+	}
+	return rename.call(this, source, target);
+};
+syncBuiltinESMExports();
+`);
+		const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]);
+		const previousNodeOptions = process.env.NODE_OPTIONS;
+		let failed: AsyncExecutionResult;
+		try {
+			process.env.NODE_OPTIONS = [previousNodeOptions, `--import=${pathToFileURL(preloadFile).href}`].filter(Boolean).join(" ");
+			failed = await executor.execute(
+				"resume-no-ack", { action: "resume", id: sourceId, message: "Continue inspecting" },
+				new AbortController().signal, undefined, makeMinimalCtx(tempDir),
+			) as AsyncExecutionResult;
+		} finally {
+			if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+			else process.env.NODE_OPTIONS = previousNodeOptions;
+		}
+		assert.equal(failed.isError, true);
+		assert.match(failed.content[0]?.text ?? "", /Timed out after 10000ms.*'acknowledged'/);
+		assert.equal(fs.readFileSync(witnessFile, "utf-8"), "true");
+		assert.equal(mockPi.callCount(), 1, "the unacknowledged runner must not start a child session");
+
+		mockPi.onCall({ output: "Inspection after failed handshake" });
+		const resumed = await executor.execute(
+			"resume-after-no-ack", { action: "resume", id: sourceId, message: "Continue inspecting" },
+			new AbortController().signal, undefined, makeMinimalCtx(tempDir),
+		) as AsyncExecutionResult;
+		assert.ok(!resumed.isError, resumed.content[0]?.text);
+		assert.ok(resumed.details.asyncId);
+		assert.equal((await readAsyncPayload(resumed.details.asyncId)).success, true);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
 	it("revival preserves captured response aliases and their absence after config changes", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		const route = "databricks-bedrock/ias-claude-opus-5";
 		const agents = [makeAgent("worker", { model: route, completionGuard: false })];
