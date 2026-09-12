@@ -171,11 +171,14 @@ describe("acceptance gates", () => {
 		assert.equal(formatAcceptancePrompt(dynamicReviewer), "");
 	});
 
-	it("preserves risky keyword review inference when acceptance role metadata is omitted", () => {
-		for (const task of ["Inspect the security posture", "Read-only security audit"]) {
-			const resolved = resolveEffectiveAcceptance({ agentName: "worker", task });
-			assert.equal(resolved.level, "checked", task);
-			assert.equal(resolved.review && resolved.review !== false ? resolved.review.required : undefined, true, task);
+	it("keeps read-only tasks out of writer acceptance despite risk keywords", () => {
+		for (const agentName of ["worker", "read-only-reviewer"]) {
+			for (const task of ["Inspect the security posture", "Read-only security audit", "Read-only review. Verify release recovery; do not edit files."]) {
+				const resolved = resolveEffectiveAcceptance({ agentName, task, mode: "single", async: true });
+				assert.equal(resolved.level, "none", `${agentName}: ${task}`);
+				assert.deepEqual(resolved.criteria, []);
+				assert.equal(formatAcceptancePrompt(resolved), "");
+			}
 		}
 	});
 

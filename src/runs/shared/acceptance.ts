@@ -106,13 +106,11 @@ function inferLevel(input: {
 	const roleResolvesReadOnly = input.acceptanceRole !== undefined && inferredReadOnly;
 	const dynamicResolvesReadOnly = inferredReadOnly && !writeTask;
 	const riskyKeywordPattern = /\b(?:release|migration|migrate|security|data[- ]loss|destructive|post-review|fix pass)\b/;
-	const keywordRiskReadOnly = input.acceptanceRole === undefined
-		? intent.kind === "read-only" && !riskyKeywordPattern.test(task)
-		: inferredReadOnly;
+	// A review topic does not turn resolved read-only work into an implementation task.
 	const risky = Boolean(input.async && writeTask)
 		|| (Boolean(input.dynamic) && !roleResolvesReadOnly && !dynamicResolvesReadOnly)
 		|| (Boolean(input.dynamicGroup) && !roleResolvesReadOnly && !dynamicResolvesReadOnly)
-		|| (!keywordRiskReadOnly && riskyKeywordPattern.test(task));
+		|| (!inferredReadOnly && riskyKeywordPattern.test(task));
 
 	if (risky) {
 		reasons.push(input.async ? "async write-capable or risky run" : "risky write-capable run");
