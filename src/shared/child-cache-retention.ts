@@ -16,6 +16,15 @@ export function childCacheRetention(env: NodeJS.ProcessEnv = process.env): strin
 }
 
 /**
+ * Launch-environment form for spawned children. Empty when unset, so the child
+ * inherits the parent's `PI_CACHE_RETENTION` rather than having it cleared.
+ */
+export function childCacheRetentionEnv(env?: NodeJS.ProcessEnv): { PI_CACHE_RETENTION?: string } {
+	const retention = childCacheRetention(env);
+	return retention ? { PI_CACHE_RETENTION: retention } : {};
+}
+
+/**
  * Pi resolves retention per request as `options.env?.[name] || process.env[name]`,
  * so a per-call env beats the process-wide one. Wrapping the session's own
  * stream function keeps this scoped to one child, with no shared-state race
