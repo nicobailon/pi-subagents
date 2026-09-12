@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Cache child-launch provisioning failures (npm install into a child prefix, preflight, helper bootstrap) with a 15 minute exclusion instead of the default 24h, so a transient bootstrap failure cannot keep excluding a healthy model for a full day. Thanks to [@rnavarro](https://github.com/rnavarro) for #2204.
 - Let headless parent and nested coordinator sessions answer blocking child supervisor requests without deadlocking their final background-work drain. Thanks to [@ProDrifterDK](https://github.com/ProDrifterDK) for #2185.
 - Include retention-managed async, output-artifact, and structured-output retrieval paths in native completion notices. Thanks to [@peedrr](https://github.com/peedrr) for #2181.
 - Remove workflow-owned one-shot result payloads together with their child-local result indexes after successful consumption. Thanks to [@peedrr](https://github.com/peedrr) for #2182.
