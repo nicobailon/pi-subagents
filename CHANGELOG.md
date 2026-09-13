@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Report each agent's declared acceptance policy and acceptance role in `capabilities: true` list rows and `details.agentCapabilities`, so callers see the policy `action: "get"` already reported instead of having to inspect every candidate agent individually. Thanks to [@Alice39s](https://github.com/Alice39s) for #2210.
 - Cache child-launch provisioning failures (npm install into a child prefix, preflight, helper bootstrap) with a 15 minute exclusion instead of the default 24h, so a transient bootstrap failure cannot keep excluding a healthy model for a full day. Thanks to [@rnavarro](https://github.com/rnavarro) for #2204.
 - Prefer exact canonical agent names over packaged local-name fallbacks, and never reinterpret home-level user agent directories as project configuration. This prevents a plain `scout` launch from becoming ambiguous with `code-analysis.scout` and keeps Windows tests from leaking project fixtures into `~/.pi/agents`. Thanks to [@ton77v](https://github.com/ton77v) for #2214.
 - Stop registering and advertising a default global `Ctrl+Alt+F` Fleet shortcut; `/subagents-fleet` and FleetView remain available. Thanks to [@miaomiaozii](https://github.com/miaomiaozii) for #2196.

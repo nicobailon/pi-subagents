@@ -276,6 +276,16 @@ describe("acceptance gates", () => {
 		assert.match(prompt, /"reviewFindings": \[\n    "blocker:/);
 	});
 
+	it("labels declared review gates as optional when required is false", () => {
+		const optional = resolveEffectiveAcceptance({
+			agentName: "worker",
+			task: "Implement a fix",
+			explicit: { level: "checked", review: { agent: "reviewer", required: false } },
+		});
+
+		assert.match(formatAcceptancePrompt(optional), /Review gate: optional by reviewer\./);
+	});
+
 	it("omits inferred read-only prompts while preserving explicit acceptance", () => {
 		const inferred = resolveEffectiveAcceptance({
 			agentName: "reviewer",
