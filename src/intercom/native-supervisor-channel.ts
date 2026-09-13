@@ -733,11 +733,15 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 				continue;
 			}
 			seenFiles.add(file);
-			if (request.expectsReply) {
-				rememberPendingRequest(request);
-				pending.set(request.id, request);
-				markForegroundSupervisorAttention(request, state);
+			if (!request.expectsReply) {
+				// Progress is already visible through child activity; do not inject a
+				// parent message or trigger a parent model turn.
+				removeRequestFile(request.requestFile);
+				continue;
 			}
+			rememberPendingRequest(request);
+			pending.set(request.id, request);
+			markForegroundSupervisorAttention(request, state);
 			// The ask is already queued above. A sendMessage failure (no UI, stale context) must not
 			// lose it, and must not abort the loop before the remaining asks register.
 			try {

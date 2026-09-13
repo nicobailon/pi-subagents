@@ -212,7 +212,6 @@ describe("supervisor ask registration", () => {
 			const runtime = hookRuntime(launch.session, platform, abort.signal);
 			const allowed = new Set<string>();
 			const polling = captureSupervisorPolling(t, allowed);
-			const updates: string[] = [];
 			const leaves: ReturnType<typeof hookRuntime>[] = [];
 			setChildSessionFactory({
 				async create(childLaunch) {
@@ -229,8 +228,7 @@ describe("supervisor ask registration", () => {
 						abort: async () => { abort.abort(); }, dispose: () => leaf.emit("session_shutdown"),
 						async prompt() {
 							await leaf.emit("agent_start");
-							const progress = await leaf.call("contact_supervisor", { reason: "progress_update", message: "Inspection complete." });
-							updates.push(progress.details.requestId!);
+							await leaf.call("contact_supervisor", { reason: "progress_update", message: "Inspection complete." });
 							await leaf.emit("message_end", { message: { role: "assistant", content: [{ type: "text", text: "Inspection complete." }], model: "mock/test-model", stopReason: "stop", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } });
 							await leaf.emit("agent_end");
 							await leaf.emit("agent_settled");
@@ -255,14 +253,14 @@ describe("supervisor ask registration", () => {
 					const scansBeforeDrain = polling.scans.length;
 					polling.tick();
 					assert.equal(polling.scans.length, scansBeforeDrain + 1, "terminal child gets exactly one final mailbox scan");
-					assert.deepEqual(runtime.notices.map(notice => notice.details?.requestId), updates);
+					assert.deepEqual(runtime.notices.map(notice => notice.details?.requestId), []);
 					polling.assertScoped();
 					assert.equal(polling.intervals.size, 0, "last drain retires the poller");
 					const scans = polling.scans.length;
 					polling.tick();
 					await runtime.call(NATIVE_SUPERVISOR_TOOL_NAME, { action: "pending" });
 					assert.equal(polling.scans.length, scans, "retired mailboxes are not scanned by idle queries");
-					assert.equal(runtime.notices.length, updates.length, "no duplicate notifications");
+					assert.equal(runtime.notices.length, 0, "progress updates do not notify the parent");
 				}
 				assert.equal(polling.starts, 2, "next launch rearms polling");
 			} finally {
@@ -305,9 +303,9 @@ describe("supervisor ask registration", () => {
 					fs.writeFileSync(path.join(root, "status.json"), JSON.stringify({ runId, state: "complete" }));
 					const scans = polling.scans.length;
 					polling.tick();
-					assert.equal(runtime.notices.at(-1)?.details?.requestId, progress);
+					assert.equal(runtime.notices.at(-1)?.details?.requestId, undefined);
 					polling.assertScoped();
-					assert.equal(runtime.notices.length, cycle + 1);
+					assert.equal(runtime.notices.length, 0);
 					assert.equal(polling.scans.length, scans + 1, "terminal mailbox gets exactly one final scan");
 					assert.equal(fs.existsSync(path.join(dir, "requests", `${progress}.json`)), false);
 					assert.equal(fs.existsSync(path.join(dir, "requests", `${foreign}.json`)), true, "foreign requests are never accepted or deleted");
@@ -315,7 +313,7 @@ describe("supervisor ask registration", () => {
 					await runtime.call(NATIVE_SUPERVISOR_TOOL_NAME, { action: "pending" });
 					polling.tick();
 					assert.equal(polling.scans.length, scans + 1);
-					assert.equal(runtime.notices.length, cycle + 1);
+					assert.equal(runtime.notices.length, 0);
 				}
 				assert.equal(polling.starts, 2);
 				const live = randomUUID();
@@ -984,22 +982,17 @@ describe("supervisor ask registration", () => {
 		}
 	});
 
-	it("retains a failed progress update until a later query accepts it without duplicate notifications", async () => {
+	it("consumes progress updates without parent notifications", async () => {
 		const sessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
 		const tools = new Map<string, SupervisorTool>();
 		const state = makeState(`/sessions/${sessionId}.jsonl`, makeCtx(sessionId));
 		state.lastUiContext = null;
 		let attempts = 0;
-		let accepted = 0;
 		let requestFile = "";
-		let visibleText = "";
 		const pi = makePi({ tools, onSend: (message) => {
-			visibleText = message.content;
 			attempts++;
-			assert.equal(fs.existsSync(requestFile), true, "retain the update until sendMessage returns");
-			if (attempts === 1) throw new Error("notification not accepted");
-			accepted++;
+			assert.fail(`progress update should not be sent: ${message.content}`);
 		} });
 		const channel = createNativeSupervisorChannel(pi as never, state, { platform: "darwin" });
 		try {
@@ -1008,19 +1001,14 @@ describe("supervisor ask registration", () => {
 			requestFile = path.join(resolveSupervisorChannelDir(runId, "worker", 0), "requests", `${requestId}.json`);
 			const tool = tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!;
 			await tool.execute("failed", { action: "pending" });
-			assert.equal(attempts, 1);
-			assert.equal(accepted, 0);
-			assert.equal(fs.existsSync(requestFile), true);
+			assert.equal(attempts, 0);
+			assert.equal(fs.existsSync(requestFile), false);
 			assert.equal(channel.pending.size, 0, "a progress update must not become a blocking ask");
 			await tool.execute("retry", { action: "pending" });
-			assert.equal(attempts, 2);
-			assert.equal(accepted, 1);
+			assert.equal(attempts, 0);
 			assert.equal(fs.existsSync(requestFile), false);
-			assert.ok(visibleText.includes(`Live guidance: subagent({ action: "steer", id: "${runId}", index: 0, message: "..." })`));
-			assert.doesNotMatch(visibleText, /Reply with:|replyTo:|Child intercom target:/);
 			await tool.execute("after-acceptance", { action: "pending" });
-			assert.equal(attempts, 2);
-			assert.equal(accepted, 1);
+			assert.equal(attempts, 0);
 			assert.equal(channel.pending.size, 0);
 		} finally { channel.dispose(); }
 	});
