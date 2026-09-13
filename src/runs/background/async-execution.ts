@@ -414,7 +414,7 @@ function closeFd(fd: number | undefined): void {
  * Spawn the async runner process
  */
 const RUNNER_STARTUP_TIMEOUT_MS = 10_000;
-type RunnerStartupState = "ready" | "acknowledged";
+type RunnerStartupState = "ready" | "acknowledged" | "confirmed";
 
 type RunnerStartupWaitResult =
 	| { ok: true; token: string }
@@ -473,7 +473,7 @@ async function waitForRunnerStartup(startupPath: string, expectedState: RunnerSt
 
 const writePrivateStartupControlJson = createAtomicJsonWriter({ mode: 0o600, ignoreCleanupErrorAfterSuccess: true });
 
-function writeRunnerStartupControl(filePath: string, payload: { action: "ack" | "proceed"; token: string }): void {
+function writeRunnerStartupControl(filePath: string, payload: { action: "ack" | "confirm" | "proceed"; token: string }): void {
 	// Delegate to the shared atomic JSON writer (temp file + rename, retrying
 	// transient Windows EPERM/EBUSY/EACCES locks and cleaning up the temp file
 	// on failure), so the startup handshake gets the same locking resilience as
@@ -530,6 +530,7 @@ async function completeRunnerStartupHandshake(
 	startupProceedPath: string,
 	proc: ChildProcess,
 	processClosed: Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>,
+	getObservedProcessExit: () => { exitCode: number | null; signal: NodeJS.Signals | null } | undefined,
 	runnerProcessInstanceId: string,
 	persistStartupFailure: (message: string) => void,
 ): Promise<SpawnRunnerResult> {
@@ -551,6 +552,29 @@ async function completeRunnerStartupHandshake(
 		persistStartupFailure(acknowledged.error);
 		const terminationObserved = await terminateRunnerBeforeProceedAsync(proc, processClosed);
 		return { pid: proc.pid, runnerProcessInstanceId, error: acknowledged.error, terminationObserved, startupDidNotProceed: true };
+	}
+	try { writeRunnerStartupControl(startupAckPath, { action: "confirm", token: ready.token }); } catch (error) {
+		const message = `Failed to confirm async runner startup: ${error instanceof Error ? error.message : String(error)}`;
+		persistStartupFailure(message);
+		const terminationObserved = await terminateRunnerBeforeProceedAsync(proc, processClosed);
+		return { pid: proc.pid, runnerProcessInstanceId, error: message, terminationObserved, startupDidNotProceed: true };
+	}
+	const confirmed = await waitForRunnerStartup(startupPath, "confirmed", RUNNER_STARTUP_TIMEOUT_MS, ready.token, processClosed);
+	if (confirmed.ok === false) {
+		persistStartupFailure(confirmed.error);
+		const terminationObserved = await terminateRunnerBeforeProceedAsync(proc, processClosed);
+		return { pid: proc.pid, runnerProcessInstanceId, error: confirmed.error, terminationObserved, startupDidNotProceed: true };
+	}
+	const closedAtCommit = await Promise.race([
+		processClosed.then((exit) => exit),
+		new Promise<undefined>((resolve) => setImmediate(() => resolve(undefined))),
+	]);
+	const observedExit = closedAtCommit ?? getObservedProcessExit();
+	if (observedExit) {
+		const message = `Async runner exited after startup state 'acknowledged' before proceed (exit code ${observedExit.exitCode ?? "unknown"}, signal ${observedExit.signal ?? "none"}).`;
+		persistStartupFailure(message);
+		const terminationObserved = await terminateRunnerBeforeProceedAsync(proc, processClosed);
+		return { pid: proc.pid, runnerProcessInstanceId, error: message, terminationObserved, startupDidNotProceed: true };
 	}
 	try { writeRunnerStartupControl(startupProceedPath, { action: "proceed", token: ready.token }); } catch (error) {
 		const message = `Failed to authorize async runner startup: ${error instanceof Error ? error.message : String(error)}`;
@@ -697,8 +721,13 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 				PI_SUBAGENT_RUNNER_CONFIG: binaryHost ? cfgPath : undefined,
 			},
 		});
+		let observedProcessExit: { exitCode: number | null; signal: NodeJS.Signals | null } | undefined;
+		proc.once("exit", (exitCode, signal) => { observedProcessExit = { exitCode, signal }; });
 		const processClosed = new Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>((resolve) => {
-			proc.once("close", (exitCode, signal) => setImmediate(() => resolve({ exitCode, signal })));
+			proc.once("close", (exitCode, signal) => {
+				observedProcessExit ??= { exitCode, signal };
+				resolve({ exitCode, signal });
+			});
 		});
 		closeFd(stdoutFd);
 		closeFd(stderrFd);
@@ -806,7 +835,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			const persistStartupFailure = (message: string) => {
 				if (launchAsyncDir) persistPreProceedStartupFailure(launchAsyncDir, launchRunId, runnerProcessInstanceId, launchSessionId, launchCompletionOwnerId, message);
 			};
-			return completeRunnerStartupHandshake(startupPath, startupAckPath, startupProceedPath, proc, processClosed, runnerProcessInstanceId, persistStartupFailure);
+			return completeRunnerStartupHandshake(startupPath, startupAckPath, startupProceedPath, proc, processClosed, () => observedProcessExit ?? (proc.exitCode !== null || proc.signalCode !== null ? { exitCode: proc.exitCode, signal: proc.signalCode } : undefined), runnerProcessInstanceId, persistStartupFailure);
 		}
 		return { pid: proc.pid, runnerProcessInstanceId };
 	} catch (error) {

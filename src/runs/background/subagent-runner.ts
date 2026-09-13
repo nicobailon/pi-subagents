@@ -5362,7 +5362,7 @@ export async function runSubagent(
 async function waitForStartupControl(
 	controlPath: string,
 	token: string,
-	action: "ack" | "proceed",
+	action: "ack" | "confirm" | "proceed",
 	timeoutMs = 30_000,
 ): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
@@ -5376,7 +5376,7 @@ async function waitForStartupControl(
 			}
 			if (payload.token !== token) throw new Error("Runner startup control token does not match.");
 			if (payload.action === action) return;
-			if (payload.action !== "ack" && payload.action !== "proceed") throw new Error("Runner startup control action is invalid.");
+			if (payload.action !== "ack" && payload.action !== "confirm" && payload.action !== "proceed") throw new Error("Runner startup control action is invalid.");
 		}
 		await new Promise((resolve) => setTimeout(resolve, 20));
 	}
@@ -5413,6 +5413,8 @@ export async function runConfiguredSubagent(config: SubagentRunConfig, options?:
 			writeAtomicJson(startupPath, { state: "ready", token: lease.owner.token, pid: process.pid, owner: lease.owner });
 			await waitForStartupControl(startupAckPath, lease.owner.token, "ack");
 			writeAtomicJson(startupPath, { state: "acknowledged", token: lease.owner.token, pid: process.pid });
+			await waitForStartupControl(startupAckPath, lease.owner.token, "confirm");
+			writeAtomicJson(startupPath, { state: "confirmed", token: lease.owner.token, pid: process.pid });
 			await waitForStartupControl(startupProceedPath, lease.owner.token, "proceed");
 			startupCommitted = true;
 			for (const controlPath of [startupAckPath, startupProceedPath]) {

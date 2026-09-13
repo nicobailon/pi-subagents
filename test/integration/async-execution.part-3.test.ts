@@ -11,11 +11,13 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { ChildProcess } from "node:child_process";
+import { channel } from "node:diagnostics_channel";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { childSessionFactoryModule, setChildSessionFactoryModule } from "../../src/runs/shared/child-session.ts";
 import { createEventBus, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir } from "../support/helpers.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
-import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey } from "../../src/runs/background/active-async-capacity.ts";
+import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey, getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
 import { readPendingChainAppendRequests } from "../../src/runs/background/chain-append.ts";
 import { createRunFanoutBudget, getRunFanoutBudgetSnapshot, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 import { deriveForkPromptCacheKey } from "../../src/runs/shared/child-tool-plan.ts";
@@ -2462,6 +2464,108 @@ if (process.argv.some((arg) => arg.endsWith("subagent-runner.ts"))) process.exit
 		const failedStatus = JSON.parse(fs.readFileSync(path.join(failedRun, "status.json"), "utf8")) as { processTerminal?: unknown };
 		const failedTerminal = JSON.parse(fs.readFileSync(path.join(failedRun, "process-terminal.json"), "utf8"));
 		assert.deepEqual(failedStatus.processTerminal, failedTerminal, "status and terminal proof must agree after an early runner exit");
+	});
+
+	it("does not proceed when a real revival runner exits after acknowledgement", async () => {
+		const id = `acknowledged-runner-closure-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, id);
+		const sessionId = `session-${id}`;
+		const sessionFile = path.join(tempDir, `${id}.jsonl`);
+		fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 1, id: `child-${id}`, cwd: fs.realpathSync(tempDir) })}\n`);
+		const capacity = acquireActiveAsyncCapacity({ sessionId, limit: 1, runId: id, kind: "runner", asyncDir });
+		assert.ok(capacity);
+		const eventsSeen: string[] = [];
+		const processEvents: Array<{ type: "exit" | "close"; exitCode: number | null; signal: NodeJS.Signals | null }> = [];
+		let runnerProcess: ChildProcess | undefined;
+		let terminalEmission: { proof: unknown; status: unknown; candidate: unknown } | undefined;
+		const childProcessChannel = channel("child_process");
+		const observeProcess = (message: unknown) => {
+			const proc = (message as { process?: unknown }).process;
+			if (!(proc instanceof ChildProcess) || runnerProcess !== undefined) return;
+			runnerProcess = proc;
+			proc.once("exit", (exitCode, signal) => { processEvents.push({ type: "exit", exitCode, signal }); });
+			proc.once("close", (exitCode, signal) => { processEvents.push({ type: "close", exitCode, signal }); });
+		};
+		const preloadFile = path.join(tempDir, `${id}-exit-after-ack.mjs`);
+		fs.writeFileSync(preloadFile, `
+import { createRequire, syncBuiltinESMExports } from "node:module";
+const require = createRequire(import.meta.url);
+const fs = require("node:fs");
+const originalRenameSync = fs.renameSync;
+fs.renameSync = function(source, destination) {
+	const result = originalRenameSync.apply(this, arguments);
+	if (String(destination).endsWith("runner-startup.json")) {
+		try {
+			if (JSON.parse(fs.readFileSync(destination, "utf8")).state === "acknowledged") process.exit(42);
+		} catch {}
+	}
+	return result;
+};
+syncBuiltinESMExports();
+`);
+		const callsBefore = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length;
+		const previousNodeOptions = process.env.NODE_OPTIONS;
+		childProcessChannel.subscribe(observeProcess);
+		let result: AsyncExecutionResult;
+		try {
+			process.env.NODE_OPTIONS = [previousNodeOptions, `--import=${pathToFileURL(preloadFile).href}`].filter(Boolean).join(" ");
+			result = await Promise.resolve(executeAsyncSingle(id, {
+				agent: "worker",
+				task: "Must never start",
+				agentConfig: makeAgent("worker", { completionGuard: false }),
+				ctx: { pi: { events: { emit(type: string, proof: unknown) {
+					eventsSeen.push(type);
+					if (type === "subagent:process-terminal" && (proof as { runId?: unknown }).runId === id) {
+						terminalEmission = {
+							proof,
+							status: JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8")),
+							candidate: JSON.parse(fs.readFileSync(path.join(asyncDir, "process-terminal-candidate.json"), "utf8")),
+						};
+					}
+				} } }, cwd: tempDir, currentSessionId: sessionId },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				sessionFile,
+				revivalLease: { sessionFile, runId: id, sourceRunId: `source-${id}`, parentSessionId: sessionId },
+				activeAsyncCapacity: capacity,
+				maxSubagentDepth: 2,
+			}));
+		} finally {
+			childProcessChannel.unsubscribe(observeProcess);
+			if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+			else process.env.NODE_OPTIONS = previousNodeOptions;
+		}
+		assert.equal(result.isError, true);
+		assert.deepEqual(result.details.results, []);
+		const runnerPid = runnerProcess?.pid;
+		assert.equal(typeof runnerPid, "number");
+		assert.deepEqual(processEvents, [
+			{ type: "exit", exitCode: 42, signal: null },
+			{ type: "close", exitCode: 42, signal: null },
+		]);
+		assert.equal(eventsSeen.includes("subagent:async-started"), false);
+		assert.equal(fs.existsSync(path.join(asyncDir, "runner-startup-proceed.json")), false);
+		assert.equal(fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length, callsBefore, "child session must not start");
+		assert.equal(getActiveAsyncCapacitySnapshot(sessionId, 1).used, 0, "launch failure must roll capacity back automatically");
+		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"));
+		const terminal = JSON.parse(fs.readFileSync(path.join(asyncDir, "process-terminal.json"), "utf8"));
+		assert.equal(status.state, "failed");
+		assert.equal(typeof status.error, "string");
+		assert.match(status.error, /exited before startup state '(?:acknowledged|confirmed)' \(exit code 42, signal none\)/);
+		assert.equal(result.content[0]?.text, `Failed to start async run '${id}': ${status.error}`);
+		assert.equal(status.pid, runnerPid);
+		assert.equal(terminal.state, "observed");
+		assert.equal(terminal.runId, id);
+		assert.equal(terminal.runnerProcessInstanceId, terminalEmission && (terminalEmission.candidate as { runnerProcessInstanceId?: unknown }).runnerProcessInstanceId);
+		assert.deepEqual(terminal.instances, [{ kind: "runner", processInstanceId: terminal.runnerProcessInstanceId, closeObservedAt: terminal.instances[0].closeObservedAt, exitCode: 42, signal: null }]);
+		assert.deepEqual(status.processTerminal, terminal);
+		assert.deepEqual(terminalEmission && terminalEmission.proof, terminal);
+		assert.equal(terminalEmission && (terminalEmission.status as { state?: unknown }).state, "failed");
+		assert.equal(terminalEmission && (terminalEmission.status as { error?: unknown }).error, status.error);
+		assert.deepEqual(terminalEmission && (terminalEmission.status as { processTerminal?: unknown }).processTerminal, terminal);
+		assert.ok(terminalEmission);
+		assert.equal(Object.values((terminalEmission.candidate as { expectedWriters: Record<string, number> }).expectedWriters).every((count) => count === 0), true);
+		assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${id}.json`)), false, "a pre-proceed exit must not publish a result");
 	});
 
 });

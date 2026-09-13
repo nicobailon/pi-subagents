@@ -11,6 +11,8 @@ import { consumeSteerRequests, consumeStopRequestPayload } from "../../src/runs/
 import { resultFilePath, writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { TERMINAL_RUN_INDEX_DIR } from "../../src/runs/background/terminal-run-index.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
+import { readProcessTerminal } from "../../src/runs/background/process-terminal.ts";
+import { reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { createSubagentExecutor, steerWorkflowChildByKey } from "../../src/runs/foreground/subagent-executor.ts";
 import { resolveExternalCliRunnerStatus } from "../../src/runs/shared/external-cli-contract.ts";
@@ -858,6 +860,83 @@ describe("async interrupt action", () => {
 			assert.throws(() => resolveAsyncResumeTarget({ id: runId }, { asyncDirRoot: ASYNC_DIR, resultsDir: RESULTS_DIR }), /stopped and cannot be resumed/);
 			const next = acquireActiveAsyncCapacity({ sessionId: "session", limit: 1, runId: `${runId}-next`, kind: "runner", asyncDir: `${asyncDir}-next` });
 			assert.equal(next.owner.runId, `${runId}-next`);
+			assert.equal(next.rollback(), true);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("seals stale-repaired paused status without losing current terminal authority", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `stop-stale-repaired-paused-${Date.now().toString(36)}`;
+		const asyncDir = createPausedAsync(state, runId);
+		const statusPath = path.join(asyncDir, "status.json");
+		const sidecarPath = path.join(asyncDir, "process-terminal.json");
+		const currentRoot = observedProof(runId, "runner-current");
+		const currentCompleteStep = { ...observedProof(runId, "runner-current"), childIndex: 0, resumeDisposition: "non-resumable" };
+		const currentPausedStep = { version: 1, state: "unknown", runId, childIndex: 1, runnerProcessInstanceId: "runner-current", reason: "process-tree-unverified", resumeDisposition: "resumable" } as const;
+		try {
+			const pausedStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+			const currentStatus = {
+				...pausedStatus,
+				processTerminal: currentRoot,
+				steps: [
+					{ ...pausedStatus.steps[0], processTerminal: currentCompleteStep },
+					{ ...pausedStatus.steps[1], processTerminal: currentPausedStep },
+				],
+			};
+			writeJson(statusPath, {
+				...pausedStatus,
+				state: "running",
+				pid: 12345,
+				lastUpdate: 100,
+				processTerminal: { version: 1, state: "pending", runId, runnerProcessInstanceId: "runner-stale" },
+				steps: [
+					{ ...pausedStatus.steps[0], processTerminal: { version: 1, state: "pending", runId, childIndex: 0, runnerProcessInstanceId: "runner-stale" } },
+					{ ...pausedStatus.steps[1], processTerminal: { version: 1, state: "not-started", runId, childIndex: 1, runnerProcessInstanceId: "runner-stale" } },
+				],
+			});
+			const repaired = reconcileAsyncRun(asyncDir, { resultsDir: RESULTS_DIR, now: () => 400 }, () => {
+				writeJson(sidecarPath, currentRoot);
+				writeJson(statusPath, currentStatus);
+			});
+			assert.equal(repaired.repaired, true);
+			assert.equal(repaired.status?.state, "paused");
+			assert.deepEqual(repaired.status?.processTerminal, currentRoot);
+			assert.deepEqual(repaired.status?.steps?.[0]?.processTerminal, currentCompleteStep);
+			assert.deepEqual(repaired.status?.steps?.[1]?.processTerminal, currentPausedStep);
+			assert.deepEqual(readProcessTerminal(asyncDir, { runId, runnerProcessInstanceId: "runner-current" }), currentRoot);
+			const pausedPublic = listAsyncRuns(ASYNC_DIR, { states: ["paused"], sessionId: "session" }).find((run) => run.id === runId);
+			assert.deepEqual(pausedPublic?.processTerminal, currentRoot);
+			assert.deepEqual(pausedPublic?.steps[0]?.processTerminal, currentCompleteStep);
+			assert.deepEqual(pausedPublic?.steps[1]?.processTerminal, currentPausedStep);
+
+			const sidecarBefore = fs.readFileSync(sidecarPath, "utf-8");
+			const capacity = acquireActiveAsyncCapacity({ sessionId: "session", limit: 1, runId, kind: "runner", asyncDir });
+			capacity.markStarted("runner-current");
+			const result = await executorWithKill(state, () => true)
+				.execute("stop-stale-repaired-paused", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+			assert.equal(result.isError, undefined);
+			assert.match(text(result), /Stopped paused async run/);
+			const stoppedStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+			const stoppedResult = JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, `${runId}.json`), "utf-8"));
+			assert.equal(stoppedStatus.state, "stopped");
+			assert.equal(stoppedStatus.steps[0].status, "completed");
+			assert.equal(stoppedStatus.steps[1].status, "stopped");
+			assert.equal(stoppedResult.state, "stopped");
+			assert.equal(stoppedResult.results[0].output, "done");
+			assert.equal(stoppedResult.results[1].stopped, true);
+			assert.equal(fs.readFileSync(sidecarPath, "utf-8"), sidecarBefore);
+			assert.deepEqual(stoppedStatus.processTerminal, currentRoot);
+			assert.deepEqual(stoppedStatus.steps[0].processTerminal, currentCompleteStep);
+			assert.deepEqual(stoppedStatus.steps[1].processTerminal, currentPausedStep);
+			assert.deepEqual(readProcessTerminal(asyncDir, { runId, runnerProcessInstanceId: "runner-current" }), currentRoot);
+			const stoppedPublic = listAsyncRuns(ASYNC_DIR, { states: ["stopped"], sessionId: "session" }).find((run) => run.id === runId);
+			assert.deepEqual(stoppedPublic?.processTerminal, currentRoot);
+			assert.deepEqual(stoppedPublic?.steps[0]?.processTerminal, currentCompleteStep);
+			assert.deepEqual(stoppedPublic?.steps[1]?.processTerminal, currentPausedStep);
+			const next = acquireActiveAsyncCapacity({ sessionId: "session", limit: 1, runId: `${runId}-next`, kind: "runner", asyncDir: `${asyncDir}-next` });
 			assert.equal(next.rollback(), true);
 		} finally {
 			cleanup(runId, asyncDir);

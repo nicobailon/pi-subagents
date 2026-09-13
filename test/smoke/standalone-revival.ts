@@ -84,7 +84,7 @@ export async function verifyRevival(
 		assert.equal(inspectSessionLease(sessionFile).state, "free");
 		assert.throws(() => process.kill(status.pid, 0), { code: "ESRCH" });
 		const handshake = fs.readFileSync("/stage/handshake.jsonl", "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((event) => event.runId === run.asyncId);
-		assert.deepEqual(handshake.map((event) => [event.action, event.stateBefore]), [["ack", "ready"], ["proceed", "acknowledged"]]);
+		assert.deepEqual(handshake.map((event) => [event.action, event.stateBefore]), [["ack", "ready"], ["confirm", "acknowledged"], ["proceed", "confirmed"]]);
 		assert.ok(handshake.every((event) => event.tokenMatches && !event.childStartedBeforeCommit));
 		const lifecycle = fs.readFileSync("/stage/lifecycle.jsonl", "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((event) => event.pid === status.pid);
 		assert.deepEqual(lifecycle.map((event) => event.event), ["start", "request", "shutdown"]);
