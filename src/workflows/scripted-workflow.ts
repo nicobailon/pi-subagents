@@ -1960,8 +1960,15 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		if (previousCwd !== undefined) {
 			try {
 				process.chdir(previousCwd);
-			} catch {
-				// Previous directory is gone; keep the repaired cwd.
+			} catch (error) {
+				// A removed previous directory is the expected case, so keeping the repaired
+				// cwd is the desired outcome. Any other restore failure leaves the process
+				// anchored to options.processCwd and would silently change which project
+				// later work uses, so surface it instead of hiding it.
+				const code = typeof error === "object" && error !== null && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
+				if (code !== "ENOENT") {
+					console.error("Workflow cwd restore failed:", error);
+				}
 			}
 		}
 	}
