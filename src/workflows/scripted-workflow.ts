@@ -1924,7 +1924,14 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	}
 	const launchSemaphore = new Semaphore(options.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
 
+	let previousCwd: string | undefined;
 	if (options.processCwd !== undefined) {
+		try {
+			previousCwd = process.cwd();
+		} catch {
+			// The runner's cwd was already removed; there is nothing restorable.
+			previousCwd = undefined;
+		}
 		try {
 			process.chdir(options.processCwd);
 		} catch (error) {
@@ -1937,12 +1944,27 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	}
 
 	let acornPath: string;
+	let worker: Worker;
 	try {
-		acornPath = resolveWorkflowParserEntry();
-	} catch (error) {
-		throw new Error("Workflow parser dependency 'acorn' is unavailable from pi-subagents. Reinstall pi-subagents dependencies before launching workflowScript.", { cause: error });
+		try {
+			acornPath = resolveWorkflowParserEntry();
+		} catch (error) {
+			throw new Error("Workflow parser dependency 'acorn' is unavailable from pi-subagents. Reinstall pi-subagents dependencies before launching workflowScript.", { cause: error });
+		}
+		worker = new Worker(WORKER_SOURCE, { eval: true, workerData: { acornPath } });
+	} finally {
+		// The worker captured the repaired cwd during construction. Re-anchoring the
+		// runner is only a temporary repair so it must not leak to the caller: restore
+		// the previous cwd unless it was removed, in which case keeping the repaired
+		// cwd is the desired outcome and restore failure is not an error.
+		if (previousCwd !== undefined) {
+			try {
+				process.chdir(previousCwd);
+			} catch {
+				// Previous directory is gone; keep the repaired cwd.
+			}
+		}
 	}
-	const worker = new Worker(WORKER_SOURCE, { eval: true, workerData: { acornPath } });
 	const emits: unknown[] = [];
 	const consoleEntries: WorkflowScriptResult["console"] = [];
 	const trace: WorkflowScriptTraceEntry[] = [];
