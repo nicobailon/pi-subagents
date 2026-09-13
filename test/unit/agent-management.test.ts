@@ -77,6 +77,23 @@ describe("agent management config parsing", () => {
 			"async: true",
 			"timeoutMs: 123",
 			"thinking: high",
+			"acceptance:",
+			"  level: checked",
+			"  report: on",
+			"  evidence:",
+			"    - changed-files",
+			"    - commands-run",
+			"  verify:",
+			"    - id: unit",
+			"      command: npm test",
+			"  criteria:",
+			"    - Patch the bug",
+			"    - Keep the diff narrow",
+			"  stopRules:",
+			"    - Do not stop after analysis",
+			"  review:",
+			"    agent: reviewer",
+			"acceptanceRole: writer",
 			"skills: typescript-code",
 			"extensions: github",
 			"subagentOnlyExtensions: surf",
@@ -97,7 +114,7 @@ describe("agent management config parsing", () => {
 		assert.equal(listed.isError, false);
 		const text = readText(listed);
 		assert.match(text, /^Executable agents \(capabilities\):/);
-		assert.match(text, /- capability-worker \(project, machine: workmac \(saved Herdr placement\), aliases: capability\): Description: Capability worker; Tools: read, grep, mcp:github\/search; Model: openai\/gpt-5-mini; Thinking: high; Machine: workmac \(saved Herdr placement\)/);
+		assert.match(text, /- capability-worker \(project, machine: workmac \(saved Herdr placement\), aliases: capability\): Description: Capability worker; Tools: read, grep, mcp:github\/search; Model: openai\/gpt-5-mini; Thinking: high; Machine: workmac \(saved Herdr placement\); Acceptance: checked \(changed-files, commands-run, verify: unit, criteria: 2, stopRules: 1, review: required by reviewer, report: on\); Acceptance role: writer/);
 		assert.doesNotMatch(text, /unsupported for native agents/u);
 		assert.doesNotMatch(text, /System Prompt:|SYSTEM_PROMPT_SENTINEL/);
 		const capabilities = listed.details?.agentCapabilities;
@@ -108,6 +125,18 @@ describe("agent management config parsing", () => {
 		assert.deepEqual(row.tools, { ambient: false, names: ["read", "grep"], mcpDirectTools: ["github/search"], mutationTools: ["edit", "write"] });
 		assert.deepEqual(row.model, { value: "openai/gpt-5-mini", fallbackModels: ["openai/gpt-5-mini-fallback"], thinking: "high" });
 		assert.deepEqual(row.execution, { defaultAsync: true, timeoutMs: 123 });
+		assert.deepEqual(row.acceptance, {
+			policy: {
+				level: "checked",
+				report: "on",
+				evidence: ["changed-files", "commands-run"],
+				verify: [{ id: "unit", command: "npm test" }],
+				criteria: ["Patch the bug", "Keep the diff narrow"],
+				stopRules: ["Do not stop after analysis"],
+				review: { agent: "reviewer" },
+			},
+			role: "writer",
+		});
 		assert.deepEqual(row.output, { path: "report.md", mode: "file-only" });
 		assert.deepEqual(row.extensions, { names: ["github"], subagentOnly: ["surf"], skills: ["typescript-code"] });
 		assert.equal(JSON.stringify(capabilities).includes("SYSTEM_PROMPT_SENTINEL"), false);
@@ -126,6 +155,49 @@ describe("agent management config parsing", () => {
 		assert.ok(reviewer, "reviewer builtin should be present in capability output");
 		assert.deepEqual(reviewer.tools.names, ["read", "grep", "find", "ls", "contact_supervisor"]);
 		assert.match(readText(listed), /Tools: read, grep, find, ls, contact_supervisor/);
+		assert.equal("acceptance" in reviewer, false);
+	});
+
+	it("reports bare and disabled acceptance declarations in capabilities", () => {
+		const agentsDir = path.join(tempDir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "accepted-worker.md"), "---\nname: accepted-worker\ndescription: Accepted worker\nacceptance: checked\n---\n\nAccepted.\n");
+		fs.writeFileSync(path.join(agentsDir, "open-worker.md"), "---\nname: open-worker\ndescription: Open worker\nacceptance: false\n---\n\nOpen.\n");
+
+		const listed = handleManagementAction("list", { agentScope: "project", capabilities: true }, {
+			cwd: tempDir,
+			modelRegistry: { getAvailable: () => [] },
+		});
+
+		assert.equal(listed.isError, false);
+		const text = readText(listed);
+		assert.match(text, /- accepted-worker \(project\): Description: Accepted worker; .*; Acceptance: checked$/m);
+		assert.match(text, /- open-worker \(project\): Description: Open worker; .*; Acceptance: disabled$/m);
+		const rows = listed.details?.agentCapabilities?.agents;
+		assert.ok(rows);
+		assert.deepEqual(rows.find((agent) => agent.name === "accepted-worker")?.acceptance, { policy: "checked" });
+		assert.deepEqual(rows.find((agent) => agent.name === "open-worker")?.acceptance, { policy: false });
+	});
+
+	it("reports optional review gates as optional in capabilities", () => {
+		const agentsDir = path.join(tempDir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "optional-review.md"), "---\nname: optional-review\ndescription: Optional review\nacceptance:\n  level: checked\n  review:\n    required: false\n---\n\nOptional.\n");
+		fs.writeFileSync(path.join(agentsDir, "named-optional-review.md"), "---\nname: named-optional-review\ndescription: Named optional review\nacceptance:\n  level: checked\n  review:\n    agent: reviewer\n    required: false\n---\n\nOptional.\n");
+
+		const listed = handleManagementAction("list", { agentScope: "project", capabilities: true }, {
+			cwd: tempDir,
+			modelRegistry: { getAvailable: () => [] },
+		});
+
+		assert.equal(listed.isError, false);
+		const text = readText(listed);
+		assert.match(text, /- optional-review \(project\): .*; Acceptance: checked \(review: optional\)$/m);
+		assert.match(text, /- named-optional-review \(project\): .*; Acceptance: checked \(review: optional by reviewer\)$/m);
+		const rows = listed.details?.agentCapabilities?.agents;
+		assert.ok(rows);
+		assert.deepEqual(rows.find((agent) => agent.name === "optional-review")?.acceptance, { policy: { level: "checked", review: { required: false } } });
+		assert.deepEqual(rows.find((agent) => agent.name === "named-optional-review")?.acceptance, { policy: { level: "checked", review: { agent: "reviewer", required: false } } });
 	});
 
 	it("reports passive external CLI availability for present and absent commands", () => {

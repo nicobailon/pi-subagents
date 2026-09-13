@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Report each agent's declared acceptance policy and acceptance role in `capabilities: true` list rows and `details.agentCapabilities`, so callers see the policy `action: "get"` already reported instead of having to inspect every candidate agent individually. Thanks to [@Alice39s](https://github.com/Alice39s) for #2210.
 - Stop registering and advertising a default global `Ctrl+Alt+F` Fleet shortcut; `/subagents-fleet` and FleetView remain available. Thanks to [@miaomiaozii](https://github.com/miaomiaozii) for #2196.
 - Let headless parent and nested coordinator sessions answer blocking child supervisor requests without deadlocking their final background-work drain. Thanks to [@ProDrifterDK](https://github.com/ProDrifterDK) for #2185.
 - Keep inferred read-only reviews free of implementation acceptance requirements when their topic includes release, migration, or security; explicit acceptance and actual write tasks retain their gates. Thanks to [@qsgy-edge](https://github.com/qsgy-edge) for #2191.

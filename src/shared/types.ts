@@ -1392,6 +1392,7 @@ export interface AgentCapabilityRow {
 	tools: { ambient: boolean; names: string[]; excludeTools?: string[]; mcpDirectTools: string[]; mutationTools?: string[] };
 	model?: { value?: string; fallbackModels?: string[]; thinking?: string | false };
 	execution?: { defaultAsync?: boolean; timeoutMs?: number };
+	acceptance?: { policy?: AcceptanceInput; role?: AcceptanceRole };
 	output?: { path?: string; mode?: OutputMode };
 	extensions?: { names?: string[]; subagentOnly?: string[]; skills?: string[] };
 }
