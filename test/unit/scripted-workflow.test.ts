@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { once } from "node:events";
 import { Worker } from "node:worker_threads";
 import { resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
 import { formatWorkflowJsonPreview, previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
@@ -12,6 +11,34 @@ import { workflowChildSummary } from "../../src/workflows/workflow-child-summary
 import { preflightWorkflowWorktrees } from "../../src/runs/foreground/subagent-executor.ts";
 import { runSetupCommand } from "../../src/runs/shared/worktree-setup-command.ts";
 import { claimRunFanoutBatch, createRunFanoutBudget, getRunFanoutBudgetSnapshot } from "../../src/runs/shared/run-fanout-budget.ts";
+
+// Waits for the next IPC message from a child process, but fails fast if the child
+// errors, exits, or stays silent past the timeout. node:test has no default per-test
+// timeout, so a plain `once(child, "message")` can hang the whole suite when a fixture
+// dies before sending its message.
+function nextChildMessage(child: ChildProcess, timeoutMs = 15_000): Promise<Record<string, unknown>> {
+	return new Promise((resolve, reject) => {
+		const cleanup = () => {
+			clearTimeout(timer);
+			child.off("message", onMessage);
+			child.off("error", onError);
+			child.off("exit", onExit);
+		};
+		const onMessage = (message: unknown) => { cleanup(); resolve(message as Record<string, unknown>); };
+		const onError = (error: Error) => { cleanup(); reject(error); };
+		const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+			cleanup();
+			reject(new Error(`workflow child exited before sending a message (code=${code ?? "null"}, signal=${signal ?? "null"})`));
+		};
+		const timer = setTimeout(() => {
+			cleanup();
+			reject(new Error(`timed out after ${timeoutMs}ms waiting for a workflow child message`));
+		}, timeoutMs);
+		child.once("message", onMessage);
+		child.once("error", onError);
+		child.once("exit", onExit);
+	});
+}
 
 describe("scripted workflow runtime", () => {
 	it("uses ordinary statement-body return semantics", async () => {
@@ -3096,11 +3123,11 @@ describe("scripted workflow runtime", () => {
 		let stderr = "";
 		child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
 		try {
-			const [ready] = await once(child, "message") as [{ type?: string }];
+			const ready = await nextChildMessage(child) as { type?: string };
 			assert.equal(ready.type, "ready");
 			fs.rmSync(stale, { recursive: true });
 			child.send({ processCwd: valid });
-			const [result] = await once(child, "message") as [{ ok?: boolean; value?: unknown; error?: string }];
+			const result = await nextChildMessage(child) as { ok?: boolean; value?: unknown; error?: string };
 			assert.equal(result.ok, true, result.error ?? stderr);
 			assert.equal(result.value, "recovered");
 		} finally {
