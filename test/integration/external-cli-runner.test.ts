@@ -19,7 +19,9 @@ async function cleanupTestOwnership(primaryFailure?: unknown): Promise<void> {
 	const failures = drains.filter((result): result is PromiseRejectedResult => result.status === "rejected").map((result) => result.reason);
 	if (activeProcesses.size > 0) failures.push(new Error(`Test-owned processes did not close: ${[...activeProcesses.keys()].map((child) => child.pid ?? "unknown").join(", ")}`));
 	if (failures.length > 0) throw new AggregateError(primaryFailure === undefined ? failures : [primaryFailure, ...failures], "Test-owned process cleanup did not drain");
-	for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+	for (const dir of tempDirs.splice(0)) {
+		fs.rmSync(dir, { recursive: true, force: true, maxRetries: process.platform === "win32" ? 5 : 0, retryDelay: 100 });
+	}
 	const progressDir = path.join(TEMP_ROOT_DIR, "orca-progress");
 	if (fs.existsSync(progressDir)) {
 		for (const name of fs.readdirSync(progressDir)) {
