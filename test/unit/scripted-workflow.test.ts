@@ -36,6 +36,15 @@ function nextChildMessage(child: ChildProcess, timeoutMs = 15_000): Promise<Reco
 	});
 }
 
+async function stopChild(child: ChildProcess): Promise<void> {
+	if (child.exitCode !== null || child.signalCode !== null) return;
+	await new Promise<void>((resolve, reject) => {
+		child.once("exit", () => resolve());
+		child.once("error", reject);
+		child.kill();
+	});
+}
+
 describe("scripted workflow runtime", () => {
 	it("uses ordinary statement-body return semantics", async () => {
 		const implicit = await runWorkflowScript({
@@ -3129,7 +3138,7 @@ describe("scripted workflow runtime", () => {
 			assert.equal(result.ok, true, result.error ?? stderr);
 			assert.equal(result.value, "recovered");
 		} finally {
-			child.kill();
+			await stopChild(child);
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
@@ -3159,7 +3168,7 @@ describe("scripted workflow runtime", () => {
 			assert.match(String(result.error), /ENOENT/);
 			assert.match(String(result.cause), /ENOENT/);
 		} finally {
-			child.kill();
+			await stopChild(child);
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
@@ -3187,7 +3196,7 @@ describe("scripted workflow runtime", () => {
 			assert.equal(result.chdirCalls, 0, "healthy launch must never invoke process.chdir");
 			assert.deepEqual(result.workerInitCwds, [expectedCallerCwd], "Worker init hooks must only observe the caller cwd");
 		} finally {
-			child.kill();
+			await stopChild(child);
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
