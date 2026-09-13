@@ -1,4 +1,6 @@
+import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as path from "node:path";
 import { getConfigDirName } from "../../shared/utils.ts";
 
@@ -66,8 +68,10 @@ export function resolveHttpIdleTimeoutMs(options: { agentDir: string; cwd: strin
 		if (!read.present) continue;
 		const timeoutMs = parseHttpIdleTimeoutMs(read.value);
 		if (timeoutMs === undefined) {
+			// Pi rejects the merged value outright; a malformed override must not
+			// silently fall through to a different scope's setting.
 			warnings.push(`invalid httpIdleTimeoutMs in ${candidate.file}: ${String(read.value)}`);
-			continue;
+			return { timeoutMs: DEFAULT_HTTP_IDLE_TIMEOUT_MS, source: "default", warning: warnings.join("; ") };
 		}
 		return { timeoutMs, source: candidate.source, ...(warnings.length ? { warning: warnings.join("; ") } : {}) };
 	}
@@ -88,4 +92,28 @@ export function runnerHttpDispatcherOptions(timeoutMs: number): {
 		headersTimeout: timeoutMs,
 		bodyTimeout: timeoutMs,
 	};
+}
+
+/**
+ * Installs the runner's proxy-aware undici dispatcher as the process global and
+ * routes global fetch through it, with header/body idle clocks taken from Pi's
+ * `httpIdleTimeoutMs`. Detached runners skip Pi's CLI dispatcher setup: the Node
+ * entrypoint never runs it, and the binary bootstrap runs inside the extension
+ * factory, before Pi applies the setting to its own dispatcher. Best effort: a
+ * failure logs and leaves the existing dispatcher in place.
+ */
+export function installRunnerHttpDispatcher(options: { agentDir: string; cwd: string }): void {
+	try {
+		// SAFETY: require loads the pinned direct dependency described by these types.
+		const undici = createRequire(import.meta.url)("undici") as typeof import("undici");
+		const idle = resolveHttpIdleTimeoutMs(options);
+		if (idle.warning) console.error(`[pi-subagents] httpIdleTimeoutMs: ${idle.warning}; using ${idle.timeoutMs}ms`);
+		const dispatcher = new undici.EnvHttpProxyAgent(runnerHttpDispatcherOptions(idle.timeoutMs));
+		// Fetch rejects stream errors; the listener prevents an unhandled EventEmitter error.
+		EventEmitter.prototype.on.call(dispatcher, "error", () => {});
+		undici.setGlobalDispatcher(dispatcher);
+		undici.install();
+	} catch (error) {
+		console.error(`[pi-subagents] proxy-aware HTTP dispatcher not installed: ${error instanceof Error ? error.message : String(error)}`);
+	}
 }

@@ -1,7 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as sdk from "@earendil-works/pi-coding-agent";
+import { installRunnerHttpDispatcher } from "./runner-http-dispatcher.ts";
 import { runConfiguredSubagent, type SubagentRunConfig } from "./subagent-runner.ts";
+import { getAgentDir } from "../../shared/utils.ts";
 
 /**
  * Pi's extension loader supplies the embedded SDK. Bare Bun/Node cannot replace
@@ -24,6 +26,9 @@ export default async function runBinaryBootstrap(): Promise<never> {
 		} catch {
 			// Temp-config cleanup is best effort, as in the Node entrypoint.
 		}
+		// Pi applies httpIdleTimeoutMs to its dispatcher only after extension
+		// factories return; this factory never does, so install the runner's own.
+		installRunnerHttpDispatcher({ agentDir: getAgentDir(), cwd: process.cwd() });
 		await runConfiguredSubagent(config, { loadPiCodingAgent: async () => sdk });
 		process.exit(0);
 	} catch (error) {

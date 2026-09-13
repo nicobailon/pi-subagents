@@ -4,13 +4,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, describe, it } from "node:test";
-import { EnvHttpProxyAgent, fetch as undiciFetch } from "undici";
+import { EnvHttpProxyAgent, fetch as undiciFetch, getGlobalDispatcher } from "undici";
 import {
 	DEFAULT_HTTP_IDLE_TIMEOUT_MS,
 	parseHttpIdleTimeoutMs,
 	resolveHttpIdleTimeoutMs,
 	runnerHttpDispatcherOptions,
-} from "../../src/runs/background/http-idle-timeout.ts";
+	installRunnerHttpDispatcher,
+} from "../../src/runs/background/runner-http-dispatcher.ts";
 import { getConfigDirName } from "../../src/shared/utils.ts";
 
 const roots: string[] = [];
@@ -60,6 +61,10 @@ describe("resolveHttpIdleTimeoutMs", () => {
 		assert.equal(invalid.timeoutMs, DEFAULT_HTTP_IDLE_TIMEOUT_MS);
 		assert.equal(invalid.source, "default");
 		assert.match(invalid.warning ?? "", /invalid httpIdleTimeoutMs/);
+		const projectInvalid = resolveHttpIdleTimeoutMs(fixture({ global: { httpIdleTimeoutMs: 0 }, project: { httpIdleTimeoutMs: -5 } }));
+		assert.equal(projectInvalid.timeoutMs, DEFAULT_HTTP_IDLE_TIMEOUT_MS, "an invalid project override must not fall through to the global value");
+		assert.equal(projectInvalid.source, "default");
+		assert.match(projectInvalid.warning ?? "", /invalid httpIdleTimeoutMs/);
 		const broken = resolveHttpIdleTimeoutMs(fixture({ globalRaw: "{ not json", project: { httpIdleTimeoutMs: 5_000 } }));
 		assert.equal(broken.timeoutMs, 5_000);
 		assert.equal(broken.source, "project");
@@ -105,6 +110,23 @@ describe("runner dispatcher honours the resolved idle timeout", () => {
 			} finally {
 				await unbounded.close();
 			}
+		});
+	});
+
+	it("installRunnerHttpDispatcher applies the resolved setting to the process-global dispatcher", async () => {
+		// Runs last in this file: it replaces the global dispatcher and fetch for this test process.
+		await withDelayedServer(2_500, async (url) => {
+			installRunnerHttpDispatcher(fixture({ project: { httpIdleTimeoutMs: 200 } }));
+			const installed = getGlobalDispatcher();
+			assert.ok(installed instanceof EnvHttpProxyAgent, "runner dispatcher is the global dispatcher");
+			await assert.rejects(globalThis.fetch(url), (error: unknown) => {
+				const cause = (error as { cause?: { code?: string } }).cause;
+				return cause?.code === "UND_ERR_HEADERS_TIMEOUT";
+			});
+			installRunnerHttpDispatcher(fixture({ project: { httpIdleTimeoutMs: 0 } }));
+			assert.notEqual(getGlobalDispatcher(), installed, "a fresh dispatcher replaces the bounded one");
+			const response = await globalThis.fetch(url);
+			assert.equal(await response.text(), "ok");
 		});
 	});
 

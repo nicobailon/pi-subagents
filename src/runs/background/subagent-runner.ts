@@ -1,36 +1,15 @@
 import { spawnSync } from "node:child_process";
-import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
-import { createRequire } from "node:module";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { arbitrateCompletionGuardRescue, createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
-import { resolveHttpIdleTimeoutMs, runnerHttpDispatcherOptions } from "./http-idle-timeout.ts";
-import { getAgentDir } from "../../shared/utils.ts";
+import { installRunnerHttpDispatcher } from "./runner-http-dispatcher.ts";
 
-// Detached runners skip Pi's CLI proxy setup. Keep fetch on the same Undici dispatcher,
-// and give it the same header/body idle clocks Pi derives from `httpIdleTimeoutMs`;
-// undici's 300s defaults otherwise cut long local-inference waits that Pi's own
-// SDK request clock would have allowed.
-function ensureProxyAwareHttpDispatcher(): void {
-	try {
-		// SAFETY: require loads the pinned direct dependency described by these types.
-		const undici = createRequire(import.meta.url)("undici") as typeof import("undici");
-		const idle = resolveHttpIdleTimeoutMs({ agentDir: getAgentDir(), cwd: process.cwd() });
-		if (idle.warning) console.error(`[pi-subagents] httpIdleTimeoutMs: ${idle.warning}; using ${idle.timeoutMs}ms`);
-		const dispatcher = new undici.EnvHttpProxyAgent(runnerHttpDispatcherOptions(idle.timeoutMs));
-		// Fetch rejects stream errors; the listener prevents an unhandled EventEmitter error.
-		EventEmitter.prototype.on.call(dispatcher, "error", () => {});
-		undici.setGlobalDispatcher(dispatcher);
-		undici.install();
-	} catch (error) {
-		console.error(`[pi-subagents] proxy-aware HTTP dispatcher not installed: ${error instanceof Error ? error.message : String(error)}`);
-	}
-}
 const isRunnerEntrypoint = Boolean(process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href);
-if (isRunnerEntrypoint) ensureProxyAwareHttpDispatcher();
+// Detached Node runners skip Pi's CLI dispatcher setup; install the runner's own.
+if (isRunnerEntrypoint) installRunnerHttpDispatcher({ agentDir: getAgentDir(), cwd: process.cwd() });
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "./result-files.ts";
 import { createFileCoalescer } from "../../shared/file-coalescer.ts";
@@ -126,7 +105,7 @@ import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDi
 import { formatModelAttemptNote, formatSubagentModelVerificationError, isContextOverflow, isRetryableModelFailureAttempt, recordRetryableModelFailure } from "../shared/model-fallback.ts";
 import { markProcessTerminalCandidateLeaseRelease, processTerminalPath, writeProcessTerminalCandidate, type ProcessTerminalCandidate } from "./process-terminal.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, unconsumedSteerReason, updateSteeringTarget } from "./steering.ts";
-import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
+import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getAgentDir, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
 import { evaluateCompletionMutationGuard, expectsImplementationMutation, hasMutationToolCapability, validateImplementationToolContract } from "../shared/completion-guard.ts";
 import { planCompletionEvidence, projectSettlementDiagnostic } from "../shared/completion-evidence.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
