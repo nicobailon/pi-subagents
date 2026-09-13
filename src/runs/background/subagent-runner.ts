@@ -7,13 +7,20 @@ import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { arbitrateCompletionGuardRescue, createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
+import { resolveHttpIdleTimeoutMs, runnerHttpDispatcherOptions } from "./http-idle-timeout.ts";
+import { getAgentDir } from "../../shared/utils.ts";
 
-// Detached runners skip Pi's CLI proxy setup. Keep fetch on the same Undici dispatcher.
+// Detached runners skip Pi's CLI proxy setup. Keep fetch on the same Undici dispatcher,
+// and give it the same header/body idle clocks Pi derives from `httpIdleTimeoutMs`;
+// undici's 300s defaults otherwise cut long local-inference waits that Pi's own
+// SDK request clock would have allowed.
 function ensureProxyAwareHttpDispatcher(): void {
 	try {
 		// SAFETY: require loads the pinned direct dependency described by these types.
 		const undici = createRequire(import.meta.url)("undici") as typeof import("undici");
-		const dispatcher = new undici.EnvHttpProxyAgent({ allowH2: false });
+		const idle = resolveHttpIdleTimeoutMs({ agentDir: getAgentDir(), cwd: process.cwd() });
+		if (idle.warning) console.error(`[pi-subagents] httpIdleTimeoutMs: ${idle.warning}; using ${idle.timeoutMs}ms`);
+		const dispatcher = new undici.EnvHttpProxyAgent(runnerHttpDispatcherOptions(idle.timeoutMs));
 		// Fetch rejects stream errors; the listener prevents an unhandled EventEmitter error.
 		EventEmitter.prototype.on.call(dispatcher, "error", () => {});
 		undici.setGlobalDispatcher(dispatcher);
