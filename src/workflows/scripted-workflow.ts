@@ -1169,6 +1169,8 @@ export interface WorkflowChildSettledNotification {
 
 export interface RunWorkflowScriptOptions {
 	script: string;
+	/** Parent Pi process cwd to refresh before workflow worker construction. */
+	processCwd?: string;
 	/** Workflow run ID for notifications. Required when onChildSettled is provided. */
 	workflowRunId?: string;
 	/** Host-only first-slice admission context. It is never sent to the workflow worker. */
@@ -1921,6 +1923,18 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		throw new Error("workflow script global concurrency limit must be a positive integer.");
 	}
 	const launchSemaphore = new Semaphore(options.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
+
+	if (options.processCwd !== undefined) {
+		try {
+			process.chdir(options.processCwd);
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error);
+			throw new Error(
+				`Workflow process cwd is unavailable: ${options.processCwd}: ${detail}`,
+				{ cause: error },
+			);
+		}
+	}
 
 	let acornPath: string;
 	try {
