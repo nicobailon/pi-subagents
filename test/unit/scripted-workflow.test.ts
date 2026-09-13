@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -3225,9 +3225,9 @@ describe("scripted workflow runtime", () => {
 	it("rejects healthy cwd targets that cannot be entered", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-invalid-cwd-"));
 		const file = path.join(root, "file");
-		const restricted = path.join(root, "restricted");
+		const inaccessible = path.join(root, "inaccessible");
 		fs.writeFileSync(file, "not a directory");
-		fs.mkdirSync(restricted);
+		fs.mkdirSync(inaccessible);
 		const run = (processCwd: string) => runWorkflowScript({
 			processCwd,
 			script: `return "unexpected";`,
@@ -3239,15 +3239,10 @@ describe("scripted workflow runtime", () => {
 				&& error.message.includes(file)
 				&& error.cause instanceof Error
 				&& (error.cause as NodeJS.ErrnoException).code === "ENOTDIR");
-			if (process.platform !== "win32" && process.getuid?.() !== 0) {
-				fs.chmodSync(restricted, 0o000);
-				await assert.rejects(run(restricted), (error: unknown) => error instanceof Error
-					&& error.message.includes(restricted)
-					&& error.cause instanceof Error
-					&& (error.cause as NodeJS.ErrnoException).code === "EACCES");
-			}
+			const fixture = path.resolve("test/fixtures/workflow-cwd-access-failure.ts");
+			const result = spawnSync(process.execPath, ["--experimental-test-module-mocks", "--experimental-strip-types", fixture, inaccessible], { encoding: "utf-8" });
+			assert.equal(result.status, 0, result.stderr);
 		} finally {
-			fs.chmodSync(restricted, 0o700);
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
