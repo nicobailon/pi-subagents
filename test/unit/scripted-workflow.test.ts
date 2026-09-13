@@ -3240,7 +3240,7 @@ describe("scripted workflow runtime", () => {
 				&& error.cause instanceof Error
 				&& (error.cause as NodeJS.ErrnoException).code === "ENOTDIR");
 			const fixture = path.resolve("test/fixtures/workflow-cwd-access-failure.ts");
-			const result = spawnSync(process.execPath, ["--experimental-test-module-mocks", "--experimental-strip-types", fixture, inaccessible], { encoding: "utf-8" });
+			const result = spawnSync(process.execPath, ["--experimental-strip-types", fixture, inaccessible], { encoding: "utf-8" });
 			assert.equal(result.status, 0, result.stderr);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
