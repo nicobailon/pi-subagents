@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { once } from "node:events";
 import { Worker } from "node:worker_threads";
 import { resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
 import { formatWorkflowJsonPreview, previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
@@ -3078,5 +3080,49 @@ describe("scripted workflow runtime", () => {
 		assert.equal(settledNotifications.length, 1, "should receive exactly 1 notification per child");
 		assert.equal(settledNotifications[0]!.childKey, "single-child");
 		assert.equal(settledNotifications[0]!.childRunId, "unique-run-id");
+	});
+
+	it("re-anchors a stale process cwd before creating the workflow worker", { skip: process.platform === "win32" }, async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-stale-cwd-"));
+		const stale = path.join(root, "stale");
+		const valid = path.join(root, "valid");
+		fs.mkdirSync(stale);
+		fs.mkdirSync(valid);
+		const fixture = path.resolve("test/fixtures/stale-cwd-workflow-child.ts");
+		const child = spawn(process.execPath, ["--experimental-strip-types", fixture], {
+			cwd: stale,
+			stdio: ["ignore", "ignore", "pipe", "ipc"],
+		});
+		let stderr = "";
+		child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
+		try {
+			const [ready] = await once(child, "message") as [{ type?: string }];
+			assert.equal(ready.type, "ready");
+			fs.rmSync(stale, { recursive: true });
+			child.send({ processCwd: valid });
+			const [result] = await once(child, "message") as [{ ok?: boolean; value?: unknown; error?: string }];
+			assert.equal(result.ok, true, result.error ?? stderr);
+			assert.equal(result.value, "recovered");
+		} finally {
+			child.kill();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects an unavailable workflow process cwd before worker creation", async () => {
+		const missing = path.join(os.tmpdir(), `missing-workflow-cwd-${process.pid}`);
+		fs.rmSync(missing, { recursive: true, force: true });
+		await assert.rejects(
+			runWorkflowScript({
+				processCwd: missing,
+				script: `return "unexpected";`,
+				async launch(key) { return { key, ok: true, output: "unexpected", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "unexpected", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof Error
+				&& error.message.includes("Workflow process cwd is unavailable")
+				&& error.message.includes(missing)
+				&& error.message.includes("ENOENT"),
+		);
 	});
 });
