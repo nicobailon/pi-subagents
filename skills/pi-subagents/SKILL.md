@@ -1,28 +1,25 @@
 ---
 name: pi-subagents
 description: |
-  Delegate to builtin or custom subagents for single-agent handoffs, parallel
-  review, scripted chaining, async work, forked context, and coordinated
-  workflows. Use when one parent agent should stay in control while children
-  supply focused context, planning, review, or execution.
+  Technical guidance for operator-requested delegation to builtin or custom
+  subagents: bounded handoffs, parallel review, scripted workflows, async work,
+  forked context, isolation, and coordinated execution.
 ---
 
 # Pi Subagents
 
-Choose a mode:
+The parent works directly by default. Invoke subagents only when the operator
+requested delegation in the current request or through applicable user/project
+instructions. Task size, complexity, risk, tool-call count, recipe fit, or an
+available specialist does not independently authorize delegation.
 
-- **Direct mode:** For tiny or focused work, the parent handles the task
-  directly; a single bounded child handoff is fine. Skip workflow ceremony.
-- **Orchestrator mode:** For substantial or delegated work, the parent is the
-  supervisor, arbiter, and authority holder—not the routine primary doer.
-  Subagents may own planning/design, scouting, implementation,
-  simplification/challenge, validation, and review as useful. The parent keeps
-  user intent, constraints, authority, routing, arbitration, final acceptance,
-  and publication.
-- A useful loop for substantial work is **writer → challenge/simplify → review**;
-  the parent arbitrates between steps, and tiny tasks can skip it.
-- Direct parent edits during orchestrator mode should be intentional, small
-  interventions with a brief reason.
+Once authorized, choose the smallest bounded shape that earns its token and
+elapsed-time overhead through concrete evidence, independent review,
+specialization, useful parallelism, or needed isolation. A single child is
+valid; writer, challenge, and review stages must each earn their overhead rather
+than becoming default ceremony. The parent keeps user intent, constraints,
+routing, arbitration, decisions, final acceptance, and publication authority,
+and may perform the work directly where it is the most efficient owner.
 
 Children do not spawn subagents unless the parent explicitly delegated fanout
 and their resolved `tools` allow `subagent`.
@@ -94,9 +91,9 @@ For exact API fields and worked examples, call `subagent({action:"guide",topic:"
 | List, create, edit, disable, eject, or expose agents/RPC | `references/management-authoring-rpc.md` |
 | Check safety constraints, recipes, or error handling | `references/constraints-and-recipes.md` |
 
-For complex work, read `prompting-and-roles.md` and `execution-controls.md`, then
-load `review-and-validation.md` and `constraints-and-recipes.md` before launch or
-review.
+For an authorized complex delegated workflow, read `prompting-and-roles.md` and
+`execution-controls.md`, then load `review-and-validation.md` and
+`constraints-and-recipes.md` before launch or review.
 
 ## Operating rules
 

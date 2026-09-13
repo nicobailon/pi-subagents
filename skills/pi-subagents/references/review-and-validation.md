@@ -1,6 +1,6 @@
 # Pi Subagents: Review And Validation
 
-Generic review and delivery guidance for delegated work. This file does not encode private backlog, merge, or release policy.
+Generic review and delivery guidance for operator-authorized delegated work. This file does not encode private backlog, merge, or release policy.
 
 ## Delivery loop
 
@@ -9,7 +9,7 @@ Use the smallest loop that proves the change:
 1. Inspect the source, diff, issue, or plan directly.
 2. Keep one writer for each cwd or worktree.
 3. Run focused validation that can fail for the changed behavior.
-4. Use fresh-context read-only review for substantial, risky, public, or hard-to-see changes.
+4. When the operator/project delegation contract calls for independent review, use a fresh-context read-only reviewer; otherwise parent inspection is valid.
 5. Apply only accepted findings inside the same writer boundary.
 6. Re-run affected validation and review only the changed blast radius.
 7. Inspect the final diff and evidence before parent acceptance.
@@ -61,7 +61,7 @@ Before reporting delegated work as done, verify the relevant subset:
 
 - final diff contains only intended files
 - focused validation covers changed behavior
-- substantial or risky changes have fresh-review evidence
+- required independent review has fresh-review evidence
 - accepted findings are fixed and revalidated
 - publication authority exists before push, comment, close, merge, deploy, or release
 - external checks are exact-head when used as evidence

@@ -2,7 +2,7 @@
 
 Use this reference when several independent tasks need coordinated workers, worktrees, or repositories. It defines lane ownership; use the other pi-subagents references for run controls, prompts, and mission details. The parent remains the final decision-maker.
 
-Create lanes only when delegation materially improves evidence, independent review, or isolated execution. Do not manufacture parallelism: keep dependent work serial, and only split work when each lane has a distinct decision and useful output.
+Create lanes only after delegation is operator-authorized and each lane materially improves evidence, independent review, specialization, useful parallelism, or isolated execution. Do not manufacture parallelism: keep dependent work serial, and only split work when each lane has a distinct decision and useful output.
 
 ## Lane board and authority
 

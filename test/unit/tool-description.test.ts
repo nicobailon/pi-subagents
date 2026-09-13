@@ -31,9 +31,34 @@ function parentToolEnv(agentDir?: string): NodeJS.ProcessEnv {
 }
 
 describe("registered subagent tool description", () => {
+	it("keeps the operator authority gate visible in every description mode", () => {
+		const authorityGate = "Direct parent execution is the default. Invoke subagents only when delegation is authorized by the operator's current request or applicable user/project instructions; task size, complexity, risk, tool-call count, or recipe fit do not independently authorize delegation.";
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-authority-"));
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-agent-"));
+		fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+		fs.writeFileSync(path.join(cwd, ".pi", "subagent-tool-description.md"), "Operator-owned custom guidance.", "utf-8");
+
+		for (const description of [
+			buildSubagentToolDescription(),
+			buildSubagentToolDescription({ toolDescriptionMode: "full" }),
+			buildSubagentToolDescription({ toolDescriptionMode: "compact" }),
+			buildSubagentToolDescription({ toolDescriptionMode: "custom" }, { cwd, agentDir }),
+		]) {
+			assert.ok(description.includes(authorityGate));
+		}
+
+		const fallbackCwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-authority-fallback-"));
+		assert.ok(buildSubagentToolDescription({ toolDescriptionMode: "custom" }, { cwd: fallbackCwd, agentDir, warn() {} }).includes(authorityGate));
+		assert.match(buildSubagentToolDescription({ toolDescriptionMode: "custom" }, { cwd, agentDir }), /Operator-owned custom guidance/);
+	});
+
 	it("uses concise split metadata only by default", () => {
 		assert.equal(buildSubagentToolDescription(), DEFAULT_SUBAGENT_TOOL_DESCRIPTION);
 		const metadata = buildSubagentToolPromptMetadata();
+		assert.equal(SUBAGENT_TOOL_PROMPT_SNIPPET, "For operator-requested delegation, use subagents; compose multi-child work in one workflow call.");
+		assert.deepEqual(SUBAGENT_TOOL_PROMPT_GUIDELINES, [
+			"Do not invoke subagents unless the operator requested delegation directly or through applicable instructions.",
+		]);
 		assert.equal(metadata.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
 		assert.deepEqual(metadata.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
 		assert.ok(Buffer.byteLength(metadata.promptGuidelines!.join("\n")) < 400);

@@ -52,10 +52,11 @@ This reference keeps cross-cutting policy and failure handling. Load the matchin
 | Independent lanes, repositories, worktrees, and handoffs | [`references/multi-lane-orchestration.md`](multi-lane-orchestration.md) |
 | Agent management, file authoring, prompt integration, or RPC | [`references/management-authoring-rpc.md`](management-authoring-rpc.md) |
 
-Choose the smallest recipe that fits:
+After delegation is operator-authorized, choose the smallest recipe that earns
+its overhead. Recipes select a shape; they do not authorize delegation:
 
 - **Recon → plan → implement:** run one focused `scout`, then one `worker` that consumes its findings.
-- **Non-trivial implementation:** clarify scope and acceptance, record user-owned decisions and seam/validation contracts, scout load-bearing code, plan when useful, use one writer, run fresh review/validation, apply only accepted fixes with one writer, then inspect direct evidence and the final diff before parent acceptance. Split large work into serial milestones instead of a writer swarm; do not stop at review without disposition.
+- **Implementation:** clarify scope and acceptance, record user-owned decisions and seam/validation contracts, and use a bounded scout, writer, or fresh reviewer only where the requested delegation benefits from that stage. Keep one writer, inspect direct evidence, and require every added stage to earn its overhead. Split large work into serial milestones instead of a writer swarm; do not stop at review without disposition.
 - **Parallel analysis:** fan out only independent read/review/validation work, or isolate each writer in its own worktree. Never run concurrent writers in one checkout.
 
 ## Error Handling
