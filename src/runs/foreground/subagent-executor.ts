@@ -3828,7 +3828,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	let foregroundMachine: import("../../shared/types.ts").HerdrMachineReference | undefined;
 	const requestedMachine = params.machine ?? agentConfig.machine;
 	if (requestedMachine) {
-		try { foregroundMachine = resolveHerdrMachinePlacement({ machine: requestedMachine, cwd: ctx.cwd, stepCwd: params.machineCwd }).machine; }
+		try { foregroundMachine = resolveHerdrMachinePlacement({ machine: requestedMachine, cwd: ctx.cwd, stepCwd: params.machineCwd, worktree: params.worktree, baseRef: params.baseRef, branchPrefix: deps.config.worktreeBranchPrefix }).machine; }
 		catch (error) { return toExecutionErrorResult(params, error instanceof Error ? error : new Error(String(error)), data.contextPolicy.contextSummary); }
 	}
 	const effectiveToolBudget = resolveEffectiveToolBudget(omitUndefinedProperties({ runBudget: data.toolBudget, agentBudget: agentConfig.toolBudget, configBudget: data.configToolBudget }));
@@ -3870,7 +3870,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 
 	const sourceCwd = foregroundMachine?.cwd ?? effectiveCwd;
 	let pendingHandoff: Details["parallelHandoff"];
-	const { setup: worktreeSetup, errorResult: worktreeSetupError } = params.worktree ? await createSingleWorktreeSetup(
+	const { setup: worktreeSetup, errorResult: worktreeSetupError } = params.worktree && !foregroundMachine?.managedWorktree ? await createSingleWorktreeSetup(
 		sourceCwd,
 		runId,
 		params.agent!,

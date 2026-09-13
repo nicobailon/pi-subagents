@@ -1274,6 +1274,8 @@ export interface SingleResult {
 	model?: string;
 	/** Authoritative before/after Git evidence captured by a pane-native remote machine. */
 	nativeMachine?: { provider: "herdr"; machineId: string; initialGit?: HerdrRemoteGitStatus; finalGit?: HerdrRemoteGitStatus };
+	/** Bounded ownership evidence for a retained managed remote workspace. */
+	remoteWorktree?: RemoteWorktreeEvidence;
 	/** Effective thinking level used by this foreground child, when known. */
 	thinking?: string;
 	attemptedModels?: string[];
@@ -1733,6 +1735,22 @@ export interface HerdrRemoteGitStatus {
 	dirty?: boolean;
 }
 
+export interface RemoteWorktreeEvidence {
+	id: string;
+	machineId: string;
+	repositoryKey: string;
+	sourceRemote: string;
+	baseCommit: string;
+	branch: string;
+	path: string;
+	cwd: string;
+	state: "ready" | "active" | "retained";
+	head?: string;
+	dirty?: boolean;
+	changedFiles?: string[];
+	evidenceUnavailable?: string;
+}
+
 /** A Herdr saved SSH machine resolved for one launch. `cwd` is the directory on that machine. */
 export interface HerdrMachineReference {
 	provider: "herdr";
@@ -1741,6 +1759,8 @@ export interface HerdrMachineReference {
 	target: string;
 	session?: string;
 	cwd: string;
+	/** Private launch-only request; omitted for ordinary saved-machine placement. */
+	managedWorktree?: { repositoryKey: string; sourceRemote: string; relativeCwd: string; baseRef: string; branchPrefix?: string };
 }
 
 export interface ExternalCliMachineStatus extends HerdrMachineReference {

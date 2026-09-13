@@ -119,10 +119,10 @@ describe("Herdr machine placement", () => {
 	});
 
 	describe("launch gating", () => {
-		it("allows native Pi but rejects generic adapters and worktrees with a pointer", () => {
+		it("allows managed worktrees only for native Pi and the six code-owned profiles", () => {
 			if (process.platform !== "win32") assert.equal(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "reviewer", runnerType: "pi" }), undefined);
 			assert.match(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "generic", runnerType: "external-cli" }) ?? "", /generic external-cli commands cannot be remote-wrapped/u);
-			assert.match(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "worker", runnerType: "external-cli", adapter: "claude-code", worktree: true }) ?? "", /managed worktrees are local git operations/u);
+			for (const adapter of ["claude-code", "claude-code-writer", "codex-exec", "codex-exec-writer", "cursor-agent", "cursor-agent-writer"]) assert.equal(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "worker", runnerType: "external-cli", adapter, worktree: true }), process.platform === "win32" ? "Herdr saved-machine pane transport requires hardened OpenSSH StreamLocal forwarding, which is not supported from a Windows host yet." : undefined);
 			assert.equal(formatHerdrMachineRunnerUnsupported({ agentName: "reviewer", runnerType: "pi" }), undefined);
 			if (process.platform === "win32") {
 				assert.match(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "worker", runnerType: "external-cli", adapter: "claude-code" }) ?? "", /Windows host/u);

@@ -255,7 +255,9 @@ Native Pi and the six code-owned Claude Code, Codex, and Cursor profiles can run
 
 Placed external profiles are one-shot and stop-only: they cannot steer, resume, or claim a Pi supervisor. Their result is always `partial` and begins `[best-effort/unverified]`, because only bounded sanitized terminal snapshots are exposed; no vendor-private transcript, database, JSONL, or blob is used as authoritative settlement evidence. Reconnect observes the same pane and process without redispatching the prompt.
 
-pi-subagents never clones, pulls, or checks out on the machine. Generic `external-cli` commands and managed worktrees are rejected before launch; saved-machine placement accepts native Pi and only the six code-owned external profiles.
+Set `worktree: true` with `machine` to allocate an isolated native Git worktree from the current clean repository on that saved machine. The source remote must be an explicit credential-free HTTPS or SSH URL, and an optional cwd must stay within the current repository; absolute, `~`, and sibling-repository escapes are rejected. Every attempt creates a fresh private bare repository and worktree, resolves the requested base to an exact fetched commit, maps the caller's nested repository cwd, and launches through the same Herdr pane owner. Results and artifacts include only bounded allowlisted `remoteWorktree` ownership and read-only Git evidence.
+
+Every allocation, including incomplete setup attempts, is retained and never reused. Fresh cloning therefore costs additional launch time, bandwidth, and disk. This release has no automatic rollback, recovery, apply, discard, or cleanup command; operators unwilling to retain this residue should not combine `machine` with `worktree`. Generic `external-cli` commands remain rejected, and saved-machine placement accepts native Pi plus only the six code-owned external profiles.
 
 ## Parent prompt discovery
 

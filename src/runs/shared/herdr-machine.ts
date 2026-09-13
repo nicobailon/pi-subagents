@@ -5,6 +5,7 @@ import type { ExternalProcessStatus, HerdrMachineReference } from "../../shared/
 import { getAgentDir, getProjectConfigDir } from "../../shared/utils.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS, type CodeOwnedExternalCliAdapterId } from "./external-cli-contract.ts";
 import type { runExternalCli } from "./external-cli-runner.ts";
+import { probeManagedRemoteWorktreeSource } from "./herdr-remote-worktree.ts";
 
 /**
  * Herdr saved-machine placement for external CLI children.
@@ -45,6 +46,10 @@ export interface ResolveHerdrMachinePlacementInput {
 	cwd: string;
 	/** Launch cwd: absolute or `~` paths are remote paths as given; relative paths join the configured machine root. */
 	stepCwd?: string;
+	/** Opt in to a retained managed remote Git worktree instead of configured-cwd placement. */
+	worktree?: boolean;
+	baseRef?: string;
+	branchPrefix?: string;
 	env?: NodeJS.ProcessEnv;
 	/** Test seam: catalog JSON instead of spawning `herdr machine list --json`. */
 	catalogJson?: string;
@@ -221,6 +226,13 @@ export function resolveHerdrMachinePlacement(input: ResolveHerdrMachinePlacement
 		throw new Error(`Saved-machine environment for '${name}' must be configured remotely. Remove machines.${name}.env and configure the remote Herdr/Pi session instead.`);
 	}
 	const stepCwd = input.stepCwd?.trim();
+	if (input.worktree) {
+		if (stepCwd && isRemoteAbsolute(stepCwd)) throw new Error("Managed remote worktree cwd must be repository-relative; absolute and '~' paths are rejected.");
+		const parent = probeManagedRemoteWorktreeSource(input.cwd, input.baseRef);
+		const source = stepCwd ? probeManagedRemoteWorktreeSource(path.resolve(input.cwd, stepCwd), input.baseRef) : parent;
+		if (source.repositoryRoot !== parent.repositoryRoot) throw new Error("Managed remote worktree cwd must stay within the current parent repository.");
+		return { machine: { provider: "herdr", id: selected.id, ...(selected.label ? { label: selected.label } : {}), target: validateTarget(selected.target, requested), ...(selected.session && selected.session !== "default" ? { session: selected.session } : {}), cwd: "/__pi_subagents_remote_worktree_pending__", managedWorktree: { repositoryKey: source.repositoryKey, sourceRemote: source.sourceRemote, relativeCwd: source.relativeCwd, baseRef: source.baseRef, ...(input.branchPrefix !== undefined ? { branchPrefix: input.branchPrefix } : {}) } } };
+	}
 	let cwd: string;
 	if (stepCwd && isRemoteAbsolute(stepCwd)) cwd = stepCwd;
 	else if (settings?.cwd) cwd = stepCwd ? path.posix.join(settings.cwd, stepCwd) : settings.cwd;
@@ -252,7 +264,6 @@ export function formatHerdrMachineRunnerUnsupported(input: {
 	if (input.runnerType === "external-cli" && (input.adapter === undefined || !SUPPORTED_MACHINE_ADAPTERS.has(input.adapter))) {
 		return `Agent '${input.agentName}' requested machine '${input.machine}', but generic external-cli commands cannot be remote-wrapped safely. Use claude-code, claude-code-writer, codex-exec, codex-exec-writer, cursor-agent, or cursor-agent-writer.`;
 	}
-	if (input.worktree === true) return `Agent '${input.agentName}' requested machine '${input.machine}', but managed worktrees are local git operations and cannot be combined with a Herdr saved machine.`;
 	if (process.platform === "win32") return "Herdr saved-machine pane transport requires hardened OpenSSH StreamLocal forwarding, which is not supported from a Windows host yet.";
 	return undefined;
 }

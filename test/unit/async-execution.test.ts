@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -30,7 +31,7 @@ const ctx = {
 };
 
 describe("async runner execution", () => {
-	it("propagates static parallel machine placement before agent pins and rejects group worktrees", { skip: process.platform === "win32" ? "Herdr saved-machine launches are unsupported on Windows" : undefined }, (t) => {
+	it("propagates static parallel machine placement before agent pins", { skip: process.platform === "win32" ? "Herdr saved-machine launches are unsupported on Windows" : undefined }, (t) => {
 		const bin = fs.mkdtempSync(path.join(os.tmpdir(), "herdr-bin-"));
 		const herdr = path.join(bin, "herdr");
 		fs.writeFileSync(herdr, "#!/bin/sh\necho '[{\"id\":\"machine-1\",\"label\":\"workmac\",\"target\":\"host.example\",\"enabled\":true}]'\n", "utf-8");
@@ -54,16 +55,15 @@ describe("async runner execution", () => {
 		const parallel = built.steps[0];
 		assert.ok(parallel && "parallel" in parallel && Array.isArray(parallel.parallel));
 		assert.equal(parallel.parallel[0]?.machine?.label, "workmac");
+	});
 
-		const rejected = buildAsyncRunnerSteps("parallel-machine-worktree", {
-			chain: [{ machine: "workmac", worktree: true, parallel: [{ agent: "external", task: "Review" }] }],
-			agents: [external],
-			ctx,
-			asyncDir: path.join(process.cwd(), ".tmp-parallel-machine-worktree"),
-			maxSubagentDepth: 1,
-		});
-		assert.ok("error" in rejected);
-		assert.match(rejected.error, /managed worktrees are local git operations/u);
+	it("forwards a managed workflow baseRef", { skip: process.platform === "win32" ? "Herdr saved-machine launches are unsupported on Windows" : undefined }, (t) => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "managed-workflow-")), bin = fs.mkdtempSync(path.join(os.tmpdir(), "herdr-bin-")), herdr = path.join(bin, "herdr"), previous = process.env.HERDR_BIN;
+		execFileSync("git", ["init", "-b", "main", root]); execFileSync("git", ["-C", root, "config", "user.email", "test@example.com"]); execFileSync("git", ["-C", root, "config", "user.name", "Test"]); fs.writeFileSync(path.join(root, "tracked"), "ok\n"); execFileSync("git", ["-C", root, "add", "tracked"]); execFileSync("git", ["-C", root, "commit", "-m", "base"]); execFileSync("git", ["-C", root, "remote", "add", "origin", "https://example.test/repo.git"]);
+		fs.writeFileSync(herdr, "#!/bin/sh\necho '[{\"id\":\"machine-1\",\"label\":\"workmac\",\"target\":\"host.example\",\"enabled\":true}]'\n"); fs.chmodSync(herdr, 0o755); process.env.HERDR_BIN = herdr;
+		t.after(() => { if (previous === undefined) delete process.env.HERDR_BIN; else process.env.HERDR_BIN = previous; fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(bin, { recursive: true, force: true }); });
+		const built = buildAsyncRunnerSteps("managed-ref", { chain: [{ machine: "workmac", worktree: true, agent: "worker", task: "Review" }], agents: [agent("worker")], ctx: { ...ctx, cwd: root }, cwd: root, asyncDir: path.join(root, ".pi", "run"), maxSubagentDepth: 1, baseRef: "refs/heads/release" });
+		assert.ok("steps" in built); assert.equal(built.steps[0]?.machine?.managedWorktree?.baseRef, "refs/heads/release");
 	});
 
 	it("uses supplied discovery context for missing async agents", () => {

@@ -119,6 +119,7 @@ export interface RunChildSessionResult {
 	durationMs: number;
 	model?: string;
 	nativeMachine?: { provider: "herdr"; machineId: string; initialGit?: import("../../shared/types.ts").HerdrRemoteGitStatus; finalGit?: import("../../shared/types.ts").HerdrRemoteGitStatus };
+	remoteWorktree?: import("../../shared/types.ts").RemoteWorktreeEvidence;
 	error?: string;
 	finalOutput: string;
 	outputState: SubagentOutputState;
@@ -598,6 +599,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 					durationMs: Date.now() - startedAt,
 					model,
 					nativeMachine: session?.machineEvidence ? { provider: "herdr", machineId: session.machineEvidence.machineId, ...(session.machineEvidence.initial ? { initialGit: session.machineEvidence.initial } : {}), ...(session.machineEvidence.final ? { finalGit: session.machineEvidence.final } : {}) } : undefined,
+					remoteWorktree: session?.machineEvidence?.remoteWorktree,
 					error: stopped ? stopMessage() : timedOut ? (error ?? timeoutMessage()) : interrupted || (forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal) ? undefined : finalError,
 					finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage() : error ?? timeoutMessage()) : finalOutput,
 					outputState: finalOutput.trim() ? "present" : "absent",

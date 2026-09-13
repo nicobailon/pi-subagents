@@ -348,6 +348,7 @@ export interface AsyncRunnerStepBuildParams {
 	worktreeBaseDir?: string;
 	worktreeProvider?: import("../../shared/types.ts").WorktreeProvider;
 	worktreeBranchPrefix?: string;
+	baseRef?: string;
 	asyncDir: string;
 	outputBaseDir?: string;
 	validateOutputBindings?: boolean;
@@ -977,13 +978,14 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		let machineEnv: Record<string, string> | undefined;
 		if (requestedMachine) {
 			try {
-				const placement = resolveHerdrMachinePlacement({ machine: requestedMachine, cwd: runnerCwd, stepCwd: s.cwd ?? params.machineCwd });
+				const placement = resolveHerdrMachinePlacement({ machine: requestedMachine, cwd: runnerCwd, stepCwd: s.cwd ?? params.machineCwd, worktree: s.worktree, baseRef: params.baseRef, branchPrefix: worktreeBranchPrefix });
 				machine = placement.machine;
 				machineEnv = placement.env;
 			} catch (error) {
 				throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
 			}
 		}
+		if (machine?.managedWorktree) behaviorCwd = runnerCwd;
 		if (externalRunner) {
 			const unsupported: string[] = [];
 			if (s.model !== undefined) unsupported.push("model override");
@@ -1206,7 +1208,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			...(behavior.outputSchema ? { structuredOutputSchema: behavior.outputSchema } : {}),
 			...(behavior.outputSchema ? { structuredOutput: createStructuredOutputRuntime(behavior.outputSchema, path.join(asyncDir, "structured-output"), { acceptanceReport: resolveAcceptanceReportMode(s.acceptance) }) } : {}),
 			...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
-			...(s.worktree ? { worktree: true } : {}),
+			...(s.worktree && !machine?.managedWorktree ? { worktree: true } : {}),
 		};
 	};
 
@@ -1435,6 +1437,7 @@ export function executeAsyncChain(
 		worktreeBaseDir,
 		worktreeProvider,
 		worktreeBranchPrefix,
+		baseRef,
 		asyncDir,
 		fast: params.fast,
 		toolBudget: params.toolBudget,
@@ -1767,7 +1770,7 @@ export function executeAsyncSingle(
 	let machineEnv: Record<string, string> | undefined;
 	if (requestedMachine) {
 		try {
-			const placement = resolveHerdrMachinePlacement({ machine: requestedMachine, cwd: runnerCwd, stepCwd: params.machineCwd });
+			const placement = resolveHerdrMachinePlacement({ machine: requestedMachine, cwd: runnerCwd, stepCwd: params.machineCwd, worktree: params.worktree, baseRef: params.baseRef, branchPrefix: params.worktreeBranchPrefix });
 			machine = placement.machine;
 			machineEnv = placement.env;
 		} catch (error) {
@@ -1775,7 +1778,7 @@ export function executeAsyncSingle(
 		}
 	}
 	let managedWorktreeProvider: "native" | "worktrunk" | undefined;
-	if (params.worktree === true) {
+	if (params.worktree === true && !machine?.managedWorktree) {
 		try {
 			const resolved = resolveWorktreeProvider(params.worktreeProvider, worktreeBaseDir);
 			managedWorktreeProvider = shouldDeferWorktreeCwd(params.worktreeProvider, worktreeBaseDir) ? "worktrunk" : resolved;
@@ -1783,7 +1786,7 @@ export function executeAsyncSingle(
 			return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
 		}
 	}
-	const instructionCwd = params.worktree === true && managedWorktreeProvider === "worktrunk"
+	const instructionCwd = machine?.managedWorktree ? runnerCwd : params.worktree === true && managedWorktreeProvider === "worktrunk"
 		? WORKTREE_AGENT_CWD_PLACEHOLDER
 		: params.worktree === true && managedWorktreeProvider === "native"
 		? resolveExpectedWorktreeAgentCwd(runnerCwd, `${id}-s0`, 0, worktreeBaseDir)
@@ -2108,7 +2111,7 @@ export function executeAsyncSingle(
 						...(structuredOutput ? { structuredOutput } : {}),
 						...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
 						...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
-						...(params.worktree === true ? { worktree: true } : {}),
+						...(params.worktree === true && !machine?.managedWorktree ? { worktree: true } : {}),
 						...(lane ? { lane } : {}),
 					},
 				],

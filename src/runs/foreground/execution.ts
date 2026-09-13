@@ -175,6 +175,7 @@ function persistSingleResultMetadata(input: {
 		capabilityAudit: target.capabilityAudit,
 		review: target.review,
 		effects: target.effects,
+		remoteWorktree: target.remoteWorktree,
 		transcriptPath: target.transcriptPath,
 		transcriptError: target.transcriptError,
 		skills: target.skills,
@@ -805,6 +806,7 @@ async function runSingleAttempt(
 			});
 			// Report the run only after the child's extensions have shut down.
 			void Promise.resolve().then(() => session?.dispose()).catch(() => undefined).then(() => {
+				if (session?.machineEvidence?.remoteWorktree) result.remoteWorktree = session.machineEvidence.remoteWorktree;
 				if (session && getReadonlySessionEvidence(session)) settledReadonlySource.set(result, session);
 				resolve(code);
 			});
@@ -1313,6 +1315,7 @@ async function runSingleAttempt(
 			toolAvailabilityError = toolDiagnosticError;
 			result.runtimeAcknowledgedExtensions = capture.runtimeAcknowledgedExtensions();
 			if (session?.machineEvidence) result.nativeMachine = { provider: "herdr", machineId: session.machineEvidence.machineId, ...(session.machineEvidence.initial ? { initialGit: session.machineEvidence.initial } : {}), ...(session.machineEvidence.final ? { finalGit: session.machineEvidence.final } : {}) };
+			if (session?.machineEvidence?.remoteWorktree) result.remoteWorktree = session.machineEvidence.remoteWorktree;
 			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
 			if (!closeError && promptError !== undefined) {
 				closeError = promptError instanceof Error ? promptError.message : String(promptError);
