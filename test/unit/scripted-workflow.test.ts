@@ -3109,7 +3109,10 @@ describe("scripted workflow runtime", () => {
 		assert.equal(settledNotifications[0]!.childRunId, "unique-run-id");
 	});
 
-	it("re-anchors a stale process cwd before creating the workflow worker", { skip: process.platform === "win32" }, async () => {
+	it("re-anchors a stale process cwd before creating the workflow worker", {
+		// The precondition deletes the cwd of a live child; Windows forbids removing any process cwd, so this case only exists on POSIX. The same recovery contract is covered portably by the other cwd tests in this file.
+		skip: process.platform === "win32" ? "requires deleting a live process cwd, which Windows forbids; recovery is covered by the portable cwd tests" : undefined,
+	}, async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-stale-cwd-"));
 		const stale = path.join(root, "stale");
 		const valid = path.join(root, "valid");
@@ -3163,6 +3166,7 @@ describe("scripted workflow runtime", () => {
 	it("rejects an unavailable workflow process cwd before worker creation", async () => {
 		const missing = path.join(os.tmpdir(), `missing-workflow-cwd-${process.pid}`);
 		fs.rmSync(missing, { recursive: true, force: true });
+		const callerCwd = process.cwd();
 		await assert.rejects(
 			runWorkflowScript({
 				processCwd: missing,
@@ -3175,5 +3179,6 @@ describe("scripted workflow runtime", () => {
 				&& error.message.includes(missing)
 				&& error.message.includes("ENOENT"),
 		);
+		assert.equal(process.cwd(), callerCwd, "a rejected workflow cwd must leave the caller cwd unchanged");
 	});
 });
