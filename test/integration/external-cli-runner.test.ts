@@ -38,9 +38,9 @@ function trackProcess<T>(child: ChildProcess, closed: Promise<T>): Promise<T> {
 	return closed;
 }
 
-function registerHelperDrain(releaseFile: string, pidFile: string, exitedFile: string, closed: Promise<unknown>): void {
+function registerHelperDrain(release: () => void | Promise<void>, pidFile: string, exitedFile: string, closed: Promise<unknown>): void {
 	processDrains.push(async () => {
-		if (!fs.existsSync(releaseFile)) fs.writeFileSync(releaseFile, "");
+		await release();
 		let closeTimer: NodeJS.Timeout | undefined;
 		try {
 			await Promise.race([
@@ -161,18 +161,23 @@ describe("external CLI async lifecycle", () => {
 	it("drains test-owned process ownership after an early failure", async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-external-early-failure-"));
 		tempDirs.push(dir);
-		const ready = path.join(dir, "helper-ready");
-		const release = path.join(dir, "release-helper");
 		const helperPid = path.join(dir, "helper-pid");
 		const helperExited = path.join(dir, "helper-exited");
-		const script = `const fs=require('fs'),path=require('path'),release=${JSON.stringify(release)};fs.writeFileSync(${JSON.stringify(helperPid)},String(process.pid));process.on('exit',code=>fs.writeFileSync(${JSON.stringify(helperExited)},String(code)));let watcher,timer;const finish=()=>{watcher.close();clearTimeout(timer);process.exit(0)};watcher=fs.watch(path.dirname(release),()=>{if(fs.existsSync(release))finish()});timer=setTimeout(()=>process.exit(2),5000);fs.writeFileSync(${JSON.stringify(ready)},'');if(fs.existsSync(release))finish()`;
-		const child = spawn(process.execPath, ["-e", script], { cwd: dir, stdio: "inherit", shell: false });
+		const script = `const fs=require('fs');fs.writeFileSync(${JSON.stringify(helperPid)},String(process.pid));process.on('exit',code=>fs.writeFileSync(${JSON.stringify(helperExited)},String(code)));process.on('message',message=>{if(message==='release')process.exit(0)});setTimeout(()=>process.exit(2),5000);process.send('ready')`;
+		const child = spawn(process.execPath, ["-e", script], { cwd: dir, stdio: ["ignore", "inherit", "inherit", "ipc"], shell: false });
 		const closed = trackProcess(child, new Promise<number | null>((resolve, reject) => {
 			child.once("error", reject);
 			child.once("close", resolve);
 		}));
-		registerHelperDrain(release, helperPid, helperExited, closed);
-		await waitForFile(ready);
+		const ready = new Promise<void>((resolve, reject) => {
+			child.once("error", reject);
+			child.once("message", (message) => message === "ready" ? resolve() : reject(new Error(`Unexpected helper message: ${String(message)}`)));
+		});
+		registerHelperDrain(() => new Promise<void>((resolve, reject) => {
+			assert.equal(fs.existsSync(dir), true, "temp root must remain until its owner is released");
+			child.send("release", (error) => error ? reject(error) : resolve());
+		}), helperPid, helperExited, closed);
+		await ready;
 
 		const primaryFailure = new Error("injected failure after ownership registration");
 		await assert.rejects(cleanupTestOwnership(primaryFailure), (error) => error === primaryFailure);
@@ -203,7 +208,9 @@ describe("external CLI async lifecycle", () => {
 		config.deadlineAt = Date.now() + 60_000;
 		fs.writeFileSync(configPath, JSON.stringify(config));
 		const runnerDone = startRunner(configPath, path.resolve(import.meta.dirname, "../.."), { ...process.env, GIT_TRACE2_EVENT: trace });
-		registerHelperDrain(releaseGit, helperPid, helperExited, runnerDone);
+		registerHelperDrain(() => {
+			if (!fs.existsSync(releaseGit)) fs.writeFileSync(releaseGit, "");
+		}, helperPid, helperExited, runnerDone);
 		await waitForFile(gitStarted, 30_000);
 		const stoppedAt = Date.now();
 		deliverStopRequest({ asyncDir, source: "test" });
