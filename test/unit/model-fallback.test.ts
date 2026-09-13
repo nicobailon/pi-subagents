@@ -13,11 +13,17 @@ import {
 	resolveModelCandidate,
 	resolveSubagentModelOverride,
 } from "../../src/runs/shared/model-fallback.ts";
-import { clearExclusions, DEFAULT_MODEL_EXCLUSION_TTL_MS, findModelExclusion, getExcludedCount, recordModelFailure } from "../../src/runs/shared/model-exclusions.ts";
+import { clearExclusions, DEFAULT_MODEL_EXCLUSION_TTL_MS, findModelExclusion, getExcludedCount, recordModelFailure, reloadFromDisk, setDefaultTTL } from "../../src/runs/shared/model-exclusions.ts";
 import { resolveModelScopesForAgent } from "../../src/runs/shared/model-scope.ts";
 
-beforeEach(() => clearExclusions());
-afterEach(() => clearExclusions());
+beforeEach(() => {
+	setDefaultTTL(DEFAULT_MODEL_EXCLUSION_TTL_MS);
+	clearExclusions();
+});
+afterEach(() => {
+	setDefaultTTL(DEFAULT_MODEL_EXCLUSION_TTL_MS);
+	clearExclusions();
+});
 
 describe("model fallback helpers", () => {
 	const availableModels = [
@@ -291,6 +297,29 @@ describe("model fallback helpers", () => {
 		const exclusion = findModelExclusion("openai/gpt-5-mini");
 		assert.equal(exclusion?.reason, error);
 		assert.equal(exclusion?.expiresAt - exclusion!.recordedAt, 15 * 60_000);
+	});
+
+	it("preserves a longer live model exclusion when provisioning fails later", () => {
+		const model = "openai/gpt-5-mini";
+		const modelError = "rate limit exceeded";
+		recordRetryableModelFailure(model, modelError);
+		const original = findModelExclusion(model);
+		assert.ok(original);
+
+		recordRetryableModelFailure(model, "npm install pi-prompt-template-model failed with code 217");
+		reloadFromDisk();
+		const preserved = findModelExclusion(model);
+		assert.equal(preserved?.reason, modelError);
+		assert.equal(preserved?.recordedAt, original.recordedAt);
+		assert.equal(preserved?.expiresAt, original.expiresAt);
+	});
+
+	it("caps the provisioning TTL at a shorter configured default", () => {
+		const configuredTTL = 5 * 60_000;
+		setDefaultTTL(configuredTTL);
+		recordRetryableModelFailure("openai/gpt-5-mini", "npm install pi-prompt-template-model failed with code 217");
+		const exclusion = findModelExclusion("openai/gpt-5-mini");
+		assert.equal(exclusion?.expiresAt - exclusion!.recordedAt, configuredTTL);
 	});
 
 	it("caches provisioning failures that also carry a retryable signal with the short TTL", () => {
