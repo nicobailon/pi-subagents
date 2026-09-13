@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -11,15 +11,52 @@ import { type AsyncStatus, TEMP_ROOT_DIR } from "../../src/shared/types.ts";
 import { writeNodeCommand } from "../support/node-command.ts";
 
 const tempDirs: string[] = [];
-afterEach(() => {
-	for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+const activeProcesses = new Map<ChildProcess, Promise<unknown>>();
+const processDrains: Array<() => Promise<void>> = [];
+
+async function cleanupTestOwnership(primaryFailure?: unknown): Promise<void> {
+	const drains = await Promise.allSettled(processDrains.splice(0).map((drain) => drain()));
+	const failures = drains.filter((result): result is PromiseRejectedResult => result.status === "rejected").map((result) => result.reason);
+	if (activeProcesses.size > 0) failures.push(new Error(`Test-owned processes did not close: ${[...activeProcesses.keys()].map((child) => child.pid ?? "unknown").join(", ")}`));
+	if (failures.length > 0) throw new AggregateError(primaryFailure === undefined ? failures : [primaryFailure, ...failures], "Test-owned process cleanup did not drain");
+	for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 	const progressDir = path.join(TEMP_ROOT_DIR, "orca-progress");
 	if (fs.existsSync(progressDir)) {
 		for (const name of fs.readdirSync(progressDir)) {
 			if (name.startsWith("orca-observer-external-")) fs.rmSync(path.join(progressDir, name), { force: true });
 		}
 	}
-});
+	if (primaryFailure !== undefined) throw primaryFailure;
+}
+
+afterEach(() => cleanupTestOwnership());
+
+function trackProcess<T>(child: ChildProcess, closed: Promise<T>): Promise<T> {
+	activeProcesses.set(child, closed);
+	const remove = () => activeProcesses.delete(child);
+	void closed.then(remove, remove);
+	return closed;
+}
+
+function registerHelperDrain(releaseFile: string, pidFile: string, exitedFile: string, closed: Promise<unknown>): void {
+	processDrains.push(async () => {
+		if (!fs.existsSync(releaseFile)) fs.writeFileSync(releaseFile, "");
+		let closeTimer: NodeJS.Timeout | undefined;
+		try {
+			await Promise.race([
+				closed,
+				new Promise((_, reject) => { closeTimer = setTimeout(() => reject(new Error("Test-owned process did not close after release")), 5_000); }),
+			]);
+		} finally {
+			if (closeTimer) clearTimeout(closeTimer);
+		}
+		if (fs.existsSync(pidFile)) {
+			await waitForFile(exitedFile);
+			assert.equal(fs.readFileSync(exitedFile, "utf-8"), "0");
+			await waitForProcessExit(Number(fs.readFileSync(pidFile, "utf-8")));
+		}
+	});
+}
 
 async function waitForFile(file: string, timeoutMs = 5_000): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
@@ -60,10 +97,10 @@ async function waitForStatus(file: string, predicate: (status: AsyncStatus) => b
 function startRunner(configPath: string, cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<number | null> {
 	const repo = path.resolve(import.meta.dirname, "../..");
 	const child = spawn(process.execPath, [path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath], { cwd, env, stdio: "inherit", shell: false });
-	return new Promise((resolve, reject) => {
+	return trackProcess(child, new Promise<number | null>((resolve, reject) => {
 		child.once("error", reject);
 		child.once("close", resolve);
-	});
+	}));
 }
 
 function startRunnerWithStderr(configPath: string, cwd: string): Promise<{ exitCode: number | null; stderr: string }> {
@@ -71,10 +108,10 @@ function startRunnerWithStderr(configPath: string, cwd: string): Promise<{ exitC
 	const child = spawn(process.execPath, [path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath], { cwd, stdio: ["ignore", "ignore", "pipe"] });
 	let stderr = "";
 	child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf-8"); });
-	return new Promise((resolve, reject) => {
+	return trackProcess(child, new Promise((resolve, reject) => {
 		child.once("error", reject);
 		child.once("close", (exitCode) => resolve({ exitCode, stderr }));
-	});
+	}));
 }
 
 function writeExternalConfig(dir: string, id: string, script: string, controlConfig: Record<string, unknown>, cwd = dir): { asyncDir: string; configPath: string } {
@@ -113,14 +150,36 @@ async function createGitRepo(dir: string, dirty = false): Promise<string> {
 }
 
 function runProcess(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<number | null> {
-	return new Promise((resolve, reject) => {
-		const child = spawn(command, args, { cwd, stdio: "inherit", shell: false, env });
+	const child = spawn(command, args, { cwd, stdio: "inherit", shell: false, env });
+	return trackProcess(child, new Promise((resolve, reject) => {
 		child.once("error", reject);
 		child.once("close", resolve);
-	});
+	}));
 }
 
 describe("external CLI async lifecycle", () => {
+	it("drains test-owned process ownership after an early failure", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-external-early-failure-"));
+		tempDirs.push(dir);
+		const ready = path.join(dir, "helper-ready");
+		const release = path.join(dir, "release-helper");
+		const helperPid = path.join(dir, "helper-pid");
+		const helperExited = path.join(dir, "helper-exited");
+		const script = `const fs=require('fs'),path=require('path'),release=${JSON.stringify(release)};fs.writeFileSync(${JSON.stringify(helperPid)},String(process.pid));process.on('exit',code=>fs.writeFileSync(${JSON.stringify(helperExited)},String(code)));let watcher,timer;const finish=()=>{watcher.close();clearTimeout(timer);process.exit(0)};watcher=fs.watch(path.dirname(release),()=>{if(fs.existsSync(release))finish()});timer=setTimeout(()=>process.exit(2),5000);fs.writeFileSync(${JSON.stringify(ready)},'');if(fs.existsSync(release))finish()`;
+		const child = spawn(process.execPath, ["-e", script], { cwd: dir, stdio: "inherit", shell: false });
+		const closed = trackProcess(child, new Promise<number | null>((resolve, reject) => {
+			child.once("error", reject);
+			child.once("close", resolve);
+		}));
+		registerHelperDrain(release, helperPid, helperExited, closed);
+		await waitForFile(ready);
+
+		const primaryFailure = new Error("injected failure after ownership registration");
+		await assert.rejects(cleanupTestOwnership(primaryFailure), (error) => error === primaryFailure);
+		assert.equal(activeProcesses.size, 0);
+		assert.equal(fs.existsSync(dir), false);
+	});
+
 	it("aborts a blocked Git baseline before launching the external process", async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-external-baseline-abort-"));
 		tempDirs.push(dir);
@@ -144,16 +203,13 @@ describe("external CLI async lifecycle", () => {
 		config.deadlineAt = Date.now() + 60_000;
 		fs.writeFileSync(configPath, JSON.stringify(config));
 		const runnerDone = startRunner(configPath, path.resolve(import.meta.dirname, "../.."), { ...process.env, GIT_TRACE2_EVENT: trace });
+		registerHelperDrain(releaseGit, helperPid, helperExited, runnerDone);
 		await waitForFile(gitStarted, 30_000);
 		const stoppedAt = Date.now();
 		deliverStopRequest({ asyncDir, source: "test" });
 		let deadlineTimer: NodeJS.Timeout | undefined;
 		const settlement = await Promise.race([runnerDone, new Promise<"deadline">((resolve) => { deadlineTimer = setTimeout(() => resolve("deadline"), 5_000); })]);
 		if (deadlineTimer) clearTimeout(deadlineTimer);
-		fs.writeFileSync(releaseGit, "");
-		await waitForFile(helperExited);
-		assert.equal(fs.readFileSync(helperExited, "utf-8"), "0");
-		await waitForProcessExit(Number(fs.readFileSync(helperPid, "utf-8")));
 		assert.notEqual(settlement, "deadline");
 		assert.ok(Date.now() - stoppedAt < 5_000);
 		assert.equal(fs.existsSync(externalStarted), false);
