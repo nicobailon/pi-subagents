@@ -17,32 +17,39 @@ export async function verifyRevival(
 	const sourceStatus = JSON.parse(fs.readFileSync(`${source.asyncDir}/status.json`, "utf8"));
 	const sessionFile: string = sourceStatus.steps[0].sessionFile;
 	assert.ok(fs.existsSync(sessionFile));
-	assert.equal(inspectSessionLease(sessionFile).state, "free");
+	const initialLease = inspectSessionLease(sessionFile);
+	assert.equal(initialLease.state, "free");
+	const { canonicalSessionFile, canonicalSessionId } = initialLease;
 	const root = path.dirname(source.asyncDir);
 	const before = new Set(fs.readdirSync(root));
 	const completed = nextCompletion("standalone child response verified REVIVAL_");
-	// Hold the winner's real provider call while the other runner acquires the same session.
-	const attempts = await Promise.allSettled(["REVIVAL_A", "REVIVAL_B"].map((message) => tool.execute(
-		message, { action: "resume", id: source.asyncId, message, acceptance: false, timeoutMs: 20000 },
+	// Establish a real owner first, then challenge it while its provider call holds the lease.
+	const winnerLaunch = await tool.execute(
+		"REVIVAL_A", { action: "resume", id: source.asyncId, message: "REVIVAL_A", acceptance: false, timeoutMs: 20000 },
 		new AbortController().signal, undefined, ctx,
-	)));
-	const winners = attempts.filter((attempt) => attempt.status === "fulfilled");
-	const losers = attempts.filter((attempt) => attempt.status === "rejected");
-	assert.equal(winners.length, 1, "exactly one revival may acquire the session");
-	assert.equal(losers.length, 1);
-	const winner = winners[0].value.details as Run;
+	);
+	const winner = winnerLaunch.details as Run;
+	const winnerStatus = JSON.parse(fs.readFileSync(`${winner.asyncDir}/status.json`, "utf8"));
+	assert.notEqual(winnerStatus.pid, process.pid);
+	assert.doesNotThrow(() => process.kill(winnerStatus.pid, 0));
 	const lease = inspectSessionLease(sessionFile);
-	assert.equal(lease.state, "owned");
 	assert.ok(lease.state === "owned");
+	assert.equal(lease.canonicalSessionFile, canonicalSessionFile);
+	assert.equal(lease.canonicalSessionId, canonicalSessionId);
+	assert.equal(lease.owner.canonicalSessionFile, canonicalSessionFile);
 	assert.equal(lease.owner.runId, winner.asyncId);
 	assert.equal(lease.owner.sourceRunId, source.asyncId);
 	assert.equal(lease.owner.parentSessionId, ctx.sessionManager.getSessionId());
-	assert.match(String(losers[0].reason), /already owned by run/);
-	assert.ok(String(losers[0].reason).includes(winner.asyncId));
-	fs.writeFileSync("/stage/revival-competition.json", JSON.stringify({ winner, refusal: String(losers[0].reason), owner: { runId: lease.owner.runId, sourceRunId: lease.owner.sourceRunId, pid: lease.owner.pid } }, null, 2));
+	assert.equal(lease.owner.pid, winnerStatus.pid);
 	await waitForFile("/stage/lifecycle.jsonl", (text) => text.trim().split("\n").map((line) => JSON.parse(line)).some((event) => event.event === "request" && event.pid === lease.owner.pid));
 	const request = fs.readFileSync("/stage/lifecycle.jsonl", "utf8").trim().split("\n").map((line) => JSON.parse(line)).find((event) => event.event === "request" && event.pid === lease.owner.pid);
 	assert.ok(JSON.stringify(request.messages).includes("standalone child response verified SINGLE"), "revival must load the actual previous SDK conversation");
+	const refusal = await tool.execute(
+		"REVIVAL_B", { action: "resume", id: source.asyncId, message: "REVIVAL_B", acceptance: false, timeoutMs: 20000 },
+		new AbortController().signal, undefined, ctx,
+	).then(() => assert.fail("a second revival must not acquire the owned session"), String);
+	assert.ok(refusal.includes(`'${canonicalSessionFile}' is already owned by run '${winner.asyncId}'`), "a second revival must refuse the exact owned session and name its owner");
+	fs.writeFileSync("/stage/revival-competition.json", JSON.stringify({ winner, refusal, owner: { runId: lease.owner.runId, sourceRunId: lease.owner.sourceRunId, pid: lease.owner.pid } }, null, 2));
 	const contenders = fs.readdirSync(root).filter((name) => !before.has(name));
 	assert.equal(contenders.length, 2, "both requests must reach independent configured runners");
 	const losingId = contenders.find((id) => id !== winner.asyncId)!;
@@ -50,9 +57,19 @@ export async function verifyRevival(
 	const losingTerminal = JSON.parse(fs.readFileSync(`${root}/${losingId}/process-terminal.json`, "utf8"));
 	assert.equal(losingTerminal.state, "observed");
 	const losingStatus = JSON.parse(fs.readFileSync(`${root}/${losingId}/status.json`, "utf8"));
+	assert.equal(losingStatus.state, "failed");
+	assert.notEqual(losingStatus.pid, winnerStatus.pid);
+	assert.notEqual(losingStatus.processTerminal.runnerProcessInstanceId, winnerStatus.processTerminal.runnerProcessInstanceId);
 	assert.throws(() => process.kill(losingStatus.pid, 0), { code: "ESRCH" });
-	assert.equal(inspectSessionLease(sessionFile).state, "owned", "loser cleanup must not release the winner's lease");
 	assert.ok(!fs.readFileSync("/stage/lifecycle.jsonl", "utf8").trim().split("\n").map((line) => JSON.parse(line)).some((event) => event.pid === losingStatus.pid), "loser must not enter the provider/session");
+	const retainedLease = inspectSessionLease(sessionFile);
+	assert.ok(retainedLease.state === "owned", "loser cleanup must not release the winner's lease");
+	assert.equal(retainedLease.canonicalSessionId, canonicalSessionId);
+	assert.deepEqual(
+		{ token: retainedLease.owner.token, runId: retainedLease.owner.runId, sourceRunId: retainedLease.owner.sourceRunId, parentSessionId: retainedLease.owner.parentSessionId, pid: retainedLease.owner.pid },
+		{ token: lease.owner.token, runId: lease.owner.runId, sourceRunId: lease.owner.sourceRunId, parentSessionId: lease.owner.parentSessionId, pid: lease.owner.pid },
+		"loser cleanup must not replace or release the winner's lease",
+	);
 	fs.writeFileSync("/stage/release", "go");
 	await completed;
 	await finish(winner, "complete", lease.owner.token);
