@@ -760,25 +760,19 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 						...(request.childTarget ? { childTarget: request.childTarget } : {}),
 						...(request.interview !== undefined ? { interview: request.interview } : {}),
 						requestBody: request.message,
-						...(request.expectsReply ? { replyHint: supervisorReplyHint(request.id) } : {}),
+						replyHint: supervisorReplyHint(request.id),
 					},
 				}, { triggerTurn: true });
-				// sendMessage accepts synchronously; one-way updates stay on disk until it returns.
-				if (!request.expectsReply) removeRequestFile(request.requestFile);
 			} catch (error) {
-				// Allow an existing later scan to retry an unaccepted one-way update.
-				if (!request.expectsReply) seenFiles.delete(file);
 				console.error(`Failed to surface supervisor request ${request.id} as a user turn:`, error);
 			}
-			if (request.expectsReply) {
-				(pi as { events?: IntercomEventBus }).events?.emit(INTERCOM_DETACH_REQUEST_EVENT, {
-					requestId: request.id,
-					runId: request.runId,
-					agent: request.agent,
-					childIndex: request.childIndex,
-				});
-				if (pending.has(request.id)) markForegroundSupervisorAttention(request, state);
-			}
+			(pi as { events?: IntercomEventBus }).events?.emit(INTERCOM_DETACH_REQUEST_EVENT, {
+				requestId: request.id,
+				runId: request.runId,
+				agent: request.agent,
+				childIndex: request.childIndex,
+			});
+			if (pending.has(request.id)) markForegroundSupervisorAttention(request, state);
 		}
 		channels?.retire?.();
 	};
