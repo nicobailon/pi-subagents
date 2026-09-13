@@ -3136,6 +3136,30 @@ describe("scripted workflow runtime", () => {
 		}
 	});
 
+	it("restores the caller process cwd after a successful workflow run", async () => {
+		const original = process.cwd();
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-cwd-restore-"));
+		const callerCwd = path.join(root, "caller");
+		const workflowCwd = path.join(root, "workflow");
+		fs.mkdirSync(callerCwd);
+		fs.mkdirSync(workflowCwd);
+		try {
+			process.chdir(callerCwd);
+			const expectedCwd = process.cwd();
+			const result = await runWorkflowScript({
+				processCwd: workflowCwd,
+				script: `return 42;`,
+				async launch(key) { return { key, ok: true, output: "unexpected", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "unexpected", artifactPaths: [] }; },
+			});
+			assert.equal(result.value, 42);
+			assert.equal(process.cwd(), expectedCwd, "runWorkflowScript must leave the caller cwd unchanged");
+		} finally {
+			process.chdir(original);
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects an unavailable workflow process cwd before worker creation", async () => {
 		const missing = path.join(os.tmpdir(), `missing-workflow-cwd-${process.pid}`);
 		fs.rmSync(missing, { recursive: true, force: true });
