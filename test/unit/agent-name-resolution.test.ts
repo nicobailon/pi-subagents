@@ -46,14 +46,26 @@ describe("resolveAgentName", () => {
 
 describe("findConfiguredProjectRoot", () => {
 	it("does not reinterpret user config as project config", () => {
-		const home = os.homedir();
-		fs.mkdirSync(path.join(home, "tmp"), { recursive: true });
-		const nested = fs.mkdtempSync(path.join(home, "tmp", "agent-project-"));
-		fs.mkdirSync(path.join(home, ".pi"), { recursive: true });
+		const previousHome = process.env.HOME;
+		const previousUserProfile = process.env.USERPROFILE;
+		const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), "agent-home-"));
 
-		assert.equal(findConfiguredProjectRoot(nested), null);
+		try {
+			process.env.HOME = isolatedHome;
+			process.env.USERPROFILE = isolatedHome;
+			const nested = fs.mkdtempSync(path.join(isolatedHome, "agent-project-"));
+			fs.mkdirSync(path.join(isolatedHome, ".pi"));
 
-		fs.mkdirSync(path.join(nested, ".pi"));
-		assert.equal(findConfiguredProjectRoot(nested), nested);
+			assert.equal(findConfiguredProjectRoot(nested), null);
+
+			fs.mkdirSync(path.join(nested, ".pi"));
+			assert.equal(findConfiguredProjectRoot(nested), nested);
+		} finally {
+			if (previousHome === undefined) delete process.env.HOME;
+			else process.env.HOME = previousHome;
+			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = previousUserProfile;
+			fs.rmSync(isolatedHome, { recursive: true, force: true });
+		}
 	});
 });
