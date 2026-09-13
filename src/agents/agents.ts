@@ -707,12 +707,20 @@ function effectiveAgentMatch(matches: AgentConfig[]): { agent?: AgentConfig; err
 
 export function resolveAgentName(name: string, agents: AgentConfig[]): { agent?: AgentConfig; error?: string } {
 	const raw = name.trim();
-	const exact = agents.filter((agent) => agent.name === raw || agent.localName === raw);
-	if (exact.length === 1) return exact[0] ? { agent: exact[0] } : {};
-	if (exact.length > 1) {
-		const effective = effectiveAgentMatch(exact);
+	const canonical = agents.filter((agent) => agent.name === raw);
+	if (canonical.length === 1) return canonical[0] ? { agent: canonical[0] } : {};
+	if (canonical.length > 1) {
+		const effective = effectiveAgentMatch(canonical);
 		if (effective.agent) return effective;
-		return { error: `Ambiguous agent name '${name}': ${exact.map((agent) => agent.name).join(", ")}` };
+		return { error: `Ambiguous agent name '${name}': ${canonical.map((agent) => agent.name).join(", ")}` };
+	}
+
+	const local = agents.filter((agent) => agent.localName === raw);
+	if (local.length === 1) return local[0] ? { agent: local[0] } : {};
+	if (local.length > 1) {
+		const effective = effectiveAgentMatch(local);
+		if (effective.agent) return effective;
+		return { error: `Ambiguous local agent name '${name}': ${local.map((agent) => agent.name).join(", ")}` };
 	}
 
 	const aliases = agents.filter((agent) => agent.aliases?.includes(raw));
@@ -833,8 +841,16 @@ function isProjectRootCandidate(dir: string): boolean {
 
 function findProjectRootCandidates(cwd: string): string[] {
 	const roots: string[] = [];
+	const windowsProfile = process.env.HOMEDRIVE && process.env.HOMEPATH
+		? `${process.env.HOMEDRIVE}${process.env.HOMEPATH}`
+		: undefined;
+	const homeDirs = new Set([os.homedir(), process.env.HOME, process.env.USERPROFILE, windowsProfile]
+		.filter((value): value is string => Boolean(value?.trim()))
+		.map((value) => path.resolve(value)));
 	let currentDir = cwd;
 	while (true) {
+		// ~/.pi and ~/.agents are user configuration, never an implicit project.
+		if (homeDirs.has(path.resolve(currentDir))) return roots;
 		if (isProjectRootCandidate(currentDir)) roots.push(currentDir);
 
 		const parentDir = path.dirname(currentDir);
