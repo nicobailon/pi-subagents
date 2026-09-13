@@ -1030,9 +1030,9 @@ describe("watchdog blockers in completion notices", () => {
 						seq: 3,
 						lastUpdate: 1,
 						warnings: [
-							{ severity: "blocker", category: "test-gap", summary: "Claims tests passed without running them", evidence: "e", recommendedAction: "r", addressed: false, stalemate: false },
-							{ severity: "concern", category: "other", summary: "Concern is not listed", evidence: "e", recommendedAction: "r", addressed: true, stalemate: false },
-							{ severity: "blocker", category: "scope-drift", summary: "Kept editing after being told to stop", evidence: "e", recommendedAction: "r", addressed: false, stalemate: true },
+							{ severity: "blocker", importance: "high", category: "test-gap", summary: "Claims tests passed without running them", evidence: "e", recommendedAction: "r", addressed: false, stalemate: false },
+							{ severity: "concern", importance: "low", category: "other", summary: "Concern is not listed", evidence: "e", recommendedAction: "r", addressed: true, stalemate: false },
+							{ severity: "blocker", importance: "high", category: "scope-drift", summary: "Kept editing after being told to stop", evidence: "e", recommendedAction: "r", addressed: false, stalemate: true },
 						],
 					},
 				},

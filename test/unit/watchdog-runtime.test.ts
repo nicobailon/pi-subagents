@@ -43,6 +43,7 @@ function enabledConfig(overrides: Partial<ResolvedWatchdogConfig> = {}): Resolve
 function warning(): WatchdogWarning {
 	return {
 		severity: "concern",
+		importance: "high",
 		summary: "Runtime concern",
 		evidence: "The runtime test emitted a concern.",
 		recommendedAction: "Review the displayed warning before accepting the turn.",
@@ -385,6 +386,28 @@ describe("main watchdog runtime", () => {
 		assert.equal(snapshot.lastWarning?.state, "displayed");
 		assert.equal(displayed.length, 1);
 		assert.equal((displayed[0] as { state?: string }).state, "displayed");
+	});
+
+	it("routes low and medium findings only to persisted user entries, independent of severity", async () => {
+		for (const severity of ["concern", "blocker"] as const) {
+			for (const importance of ["low", "medium", "high"] as const) {
+				const messages: WatchdogWarningDetails[] = [];
+				const entries: WatchdogWarningDetails[] = [];
+				const runtime = new MainWatchdogRuntime({
+					resolveConfig: () => configResult(enabledConfig()),
+					review: (request) => {
+						request.emitWarning({ ...warning(), severity, importance, summary: `${severity}-${importance}` });
+						return { stopReason: "stop" };
+					},
+					displayWarning: (details) => messages.push(details),
+					displayUserWarning: (details) => entries.push(details),
+				});
+				runtime.enqueueDelta("Assistant:\nWorking");
+				await runtime.handleAgentEnd({}, { cwd: "/tmp/project" });
+				assert.equal(messages.length, importance === "high" ? 1 : 0);
+				assert.equal(entries.length, importance === "high" ? 0 : 1);
+			}
+		}
 	});
 
 	it("drops stale async warning callbacks after reset", async () => {

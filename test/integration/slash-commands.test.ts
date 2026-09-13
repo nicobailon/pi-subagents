@@ -213,6 +213,7 @@ function createWatchdogHarness(review?: WatchdogReviewFunction) {
 	const commands = new Map<string, RegisteredSlashCommand>();
 	const renderers = new Map<string, (message: { content: string; details?: unknown }, options: { expanded: boolean }, theme: { fg(name: string, value: string): string; bold(value: string): string }) => { render(width: number): string[] } | undefined>();
 	const sent: unknown[] = [];
+	const entries: Array<{ customType: string; data: unknown }> = [];
 	const pi = {
 		events: createEventBus(),
 		on() {},
@@ -221,11 +222,13 @@ function createWatchdogHarness(review?: WatchdogReviewFunction) {
 		registerMessageRenderer(type: string, renderer: (message: { content: string; details?: unknown }, options: { expanded: boolean }, theme: { fg(name: string, value: string): string; bold(value: string): string }) => { render(width: number): string[] } | undefined) {
 			renderers.set(type, renderer);
 		},
+		registerEntryRenderer() {},
+		appendEntry(customType: string, data: unknown) { entries.push({ customType, data }); },
 		getThinkingLevel() { return "medium" as const; },
 		sendMessage(message: unknown) { sent.push(message); },
 	};
 	const runtime = registerMainWatchdog!(pi as never, review ? { review } : undefined);
-	return { commands, renderers, runtime, sent };
+	return { commands, renderers, runtime, sent, entries };
 }
 
 async function captureSlashCommandParams(
@@ -464,23 +467,19 @@ describe("subagents watchdog slash command", { skip: !available ? "watchdog comm
 		});
 	});
 
-	it("sends deterministic concern and blocker warning messages through the renderer path", async () => {
+	it("routes explicit low and medium test findings to entries and high findings to messages", async () => {
 		await withIsolatedHome(async () => {
-			const { commands, renderers, sent } = createWatchdogHarness();
-			await commands.get("subagents-watchdog")!.handler("test concern check the concern", createCommandContext());
-			await commands.get("subagents-watchdog")!.handler("test blocker check the blocker", createCommandContext());
+			const { commands, renderers, sent, entries } = createWatchdogHarness();
+			await commands.get("subagents-watchdog")!.handler("test concern low check the concern", createCommandContext());
+			await commands.get("subagents-watchdog")!.handler("test concern medium check the medium concern", createCommandContext());
+			await commands.get("subagents-watchdog")!.handler("test blocker high check the blocker", createCommandContext());
 
-			const concern = sent[0] as { customType?: string; content?: string; display?: boolean; details?: Record<string, unknown> };
-			const blocker = sent[1] as { customType?: string; content?: string; display?: boolean; details?: Record<string, unknown> };
-			assert.equal(concern.customType, "subagent_watchdog_warning");
-			assert.equal(concern.display, true);
-			assert.equal(concern.details?.severity, "concern");
-			assert.equal(concern.details?.source, "main");
-			assert.equal(concern.details?.state, "displayed");
-			assert.match(concern.content ?? "", /source="main"/);
-			assert.match(concern.content ?? "", /<state>displayed<\/state>/);
-			assert.match(concern.content ?? "", /<recommended_action>/);
+			assert.equal(entries.length, 2);
+			assert.deepEqual(entries.map((entry) => (entry.data as any).importance), ["low", "medium"]);
+			assert.equal(sent.length, 1);
+			const blocker = sent[0] as { customType?: string; content?: string; display?: boolean; details?: Record<string, unknown> };
 			assert.equal(blocker.details?.severity, "blocker");
+			assert.equal(blocker.details?.importance, "high");
 			assert.match(blocker.content ?? "", /<blocker_guidance>/);
 
 			const renderer = renderers.get("subagent_watchdog_warning")!;
@@ -497,7 +496,7 @@ describe("subagents watchdog slash command", { skip: !available ? "watchdog comm
 					assert.equal(request.emitWarning({
 						severity: "concern",
 						category: "test-gap",
-						confidence: "high",
+						importance: "high",
 						source: "main",
 						summary: "Focused validation is missing",
 						evidence: "The reviewed turn delta says changes were made but contains no test command.",

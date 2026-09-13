@@ -216,7 +216,7 @@ export function watchdogWarningFromLspDiagnostics(result: WatchdogLspResult): Wa
 	return {
 		severity,
 		category: "correctness",
-		confidence: "high",
+		importance: "high",
 		source: "lsp",
 		summary: `LSP found ${count} ${kind}${count === 1 ? "" : "s"} in changed ${count === 1 ? "file" : "files"}.`,
 		evidence: evidence || formatDiagnostic(primary),

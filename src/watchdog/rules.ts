@@ -51,7 +51,7 @@ export function evaluateLaunchRule(rules: WatchdogRulesConfig | undefined, agent
 }
 
 export function ruleViolationWarning(violation: WatchdogRuleViolation): WatchdogWarning {
-	return { severity: "concern", category: "missed-constraint", confidence: "high", source: "main", ...violation };
+	return { severity: "concern", category: "missed-constraint", importance: "high", source: "main", ...violation };
 }
 
 export function applyWatchdogLaunchRules(input: { cwd: string; agent: string; model?: string; warn?: (violation: WatchdogRuleViolation) => void }): string | undefined {

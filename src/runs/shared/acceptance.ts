@@ -1421,7 +1421,7 @@ export async function evaluateAcceptance(input: {
 	if (input.watchdog) {
 		const unresolved = unresolvedChildWatchdogBlockers(input.watchdog);
 		ledger.runtimeChecks.push(unresolved.length
-			? { id: "watchdog-blocker", status: "failed", message: `Unresolved watchdog blocker: ${unresolved[0]!.summary}` }
+			? { id: "watchdog-blocker", status: "failed", message: "Unresolved watchdog blocker (details are available in child watchdog status)." }
 			: { id: "watchdog-blocker", status: "passed", message: "No unresolved watchdog blockers." });
 	}
 

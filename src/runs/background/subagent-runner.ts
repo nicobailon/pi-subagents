@@ -3184,7 +3184,7 @@ export async function runSubagent(
 			return;
 		}
 		if (event.type === "message_end") {
-			const next = applyChildWatchdogMessage(step.watchdog, event.message, now);
+			const next = applyChildWatchdogMessage(step.watchdog, event.message);
 			if (next) step.watchdog = next;
 			if (next && (event.message as { role?: unknown } | undefined)?.role === "custom") {
 				statusPayload.lastUpdate = now;

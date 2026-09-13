@@ -12,11 +12,11 @@ import { loadWatchdogGuidance } from "./guidance.ts";
 import { boundWatchdogReviewText, type WatchdogReviewFunction, type WatchdogReviewRequest } from "./runtime.ts";
 import {
 	WATCHDOG_WARNING_CATEGORIES,
-	WATCHDOG_WARNING_CONFIDENCES,
+	WATCHDOG_WARNING_IMPORTANCES,
 	WATCHDOG_WARNING_SEVERITIES,
 	type ResolvedWatchdogConfig,
 	type WatchdogCategory,
-	type WatchdogConfidence,
+	type WatchdogImportance,
 	type WatchdogSeverity,
 	type WatchdogWarning,
 } from "./types.ts";
@@ -27,11 +27,11 @@ const WatchdogAskParams = Type.Object({ question: Type.String(), evidence: Type.
 
 const WatchdogWarnParams = Type.Object({
 	severity: Type.String({ enum: WATCHDOG_WARNING_SEVERITIES, description: "concern for actionable risk, blocker for a likely wrong or unsafe outcome" }),
+	importance: Type.String({ enum: WATCHDOG_WARNING_IMPORTANCES, description: "low or medium for user-only visibility; high when the parent model must receive the finding" }),
 	summary: Type.String({ description: "One concise sentence naming the issue." }),
 	evidence: Type.String({ description: "Specific evidence from the turn delta or inspected files." }),
 	recommendedAction: Type.String({ description: "Specific action the parent should take before accepting or continuing." }),
 	category: Type.Optional(Type.String({ enum: WATCHDOG_WARNING_CATEGORIES })),
-	confidence: Type.Optional(Type.String({ enum: WATCHDOG_WARNING_CONFIDENCES })),
 }, { additionalProperties: false });
 
 type WatchdogWarnParams = Static<typeof WatchdogWarnParams>;
@@ -182,8 +182,8 @@ function nonEmptyString(value: string, field: string): string {
 function toWatchdogWarning(params: WatchdogWarnParams): WatchdogWarning {
 	return {
 		severity: params.severity as WatchdogSeverity,
+		importance: params.importance as WatchdogImportance,
 		category: (params.category ?? "other") as WatchdogCategory,
-		confidence: (params.confidence ?? "medium") as WatchdogConfidence,
 		source: "main",
 		summary: nonEmptyString(params.summary, "summary"),
 		evidence: nonEmptyString(params.evidence, "evidence"),
@@ -197,7 +197,7 @@ function createWatchdogWarnTool(request: WatchdogReviewRequest): AgentTool<typeo
 		label: "Watchdog warning",
 		description: [
 			"Emit one actionable main-session watchdog warning.",
-			"Use only for medium/high confidence concerns or blockers that the parent should consider before accepting the work.",
+			"Set importance explicitly: low or medium for user-only visibility, high only when the parent model must receive the finding.",
 			"Do not use for nits, praise, informational notes, or clean reviews.",
 		].join(" "),
 		parameters: WatchdogWarnParams,
@@ -227,8 +227,8 @@ export function buildWatchdogSystemPrompt(ctx: Pick<ExtensionContext, "cwd">, op
 		options.hasScope ? "Use the Current scope record alongside supplied activity evidence; an unrelated user question does not cancel older authorized work." : undefined,
 		`You are read-only. You may use ${options.hasDiff ? "read, grep, find, ls, and watchdog_diff (the full repo diff since the session baseline; pass a path to narrow it)" : "read, grep, find, and ls"}. Do not edit files, run shell commands, spawn agents, or mutate state.`,
 		"Emit warnings only by calling watchdog_warn. Freeform assistant text is ignored and must not be used to report warnings.",
-		"Emit only medium/high confidence actionable concerns or blockers: missed user constraints, correctness risks, test gaps that matter, unsafe changes, stale facts, loop risks, or scope drift.",
-		"Do not emit nits, style preferences, low-confidence guesses, informational notes, praise, or summaries.",
+		"Emit only actionable concerns or blockers: missed user constraints, correctness risks, test gaps that matter, unsafe changes, stale facts, loop risks, or scope drift.",
+		"Do not emit nits, style preferences, unsupported guesses, informational notes, praise, or summaries.",
 		"If the turn is clean, call no tools and end normally.",
 		"Use severity='blocker' only when the issue should stop acceptance until addressed; otherwise use severity='concern'.",
 		guidance ? `\nStanding instructions from WATCHDOG.md (project first, then user):\n${guidance}` : undefined,

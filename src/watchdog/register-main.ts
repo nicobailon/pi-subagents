@@ -160,10 +160,10 @@ export function buildWatchdogStatus(snapshot: ReturnType<MainWatchdogRuntime["ge
 	return lines.join("\n");
 }
 
-function parseTestCommand(input: string): { severity: "concern" | "blocker"; text: string } | undefined {
-	const match = input.match(/^test\s+(concern|blocker)\s+([\s\S]+)$/);
+function parseTestCommand(input: string): { severity: "concern" | "blocker"; importance: "low" | "medium" | "high"; text: string } | undefined {
+	const match = input.match(/^test\s+(concern|blocker)\s+(low|medium|high)\s+([\s\S]+)$/);
 	if (!match) return undefined;
-	return { severity: match[1] as "concern" | "blocker", text: match[2]!.trim() };
+	return { severity: match[1] as "concern" | "blocker", importance: match[2] as "low" | "medium" | "high", text: match[3]!.trim() };
 }
 
 function formatThinking(value: ThinkingLevel | false | undefined): string {
@@ -231,11 +231,11 @@ function buildCheckText(runtime: MainWatchdogRuntime, ctx: ExtensionCommandConte
 	return lines.join("\n");
 }
 
-function createTestWarning(severity: "concern" | "blocker", text: string): WatchdogWarning {
+function createTestWarning(severity: "concern" | "blocker", importance: "low" | "medium" | "high", text: string): WatchdogWarning {
 	return {
 		severity,
 		category: "other",
-		confidence: "high",
+		importance,
 		source: "main",
 		state: "displayed",
 		summary: text,
@@ -366,15 +366,14 @@ async function handleWatchdogCommand(
 	const test = parseTestCommand(input);
 	if (test) {
 		if (!test.text) {
-			ctx.ui.notify("Usage: /subagents-watchdog test concern|blocker <text>", "error");
+			ctx.ui.notify("Usage: /subagents-watchdog test concern|blocker low|medium|high <text>", "error");
 			return;
 		}
-		const warning = createTestWarning(test.severity, test.text);
-		const details = runtime.recordDisplayedWarning(warning);
-		pi.sendMessage(createWatchdogWarningMessage(details, { display: true, details }));
+		const warning = createTestWarning(test.severity, test.importance, test.text);
+		runtime.displayRecordedWarning(warning);
 		return;
 	}
-	ctx.ui.notify(`Usage: /subagents-watchdog [status|on|off|session on|session off|recommend-model|model recommended|model <provider/model[:thinking]>|model inherit|thinking ${THINKING_LEVELS.join("|")}|thinking inherit|session model recommended|check|test concern <text>|test blocker <text>]`, "error");
+	ctx.ui.notify(`Usage: /subagents-watchdog [status|on|off|session on|session off|recommend-model|model recommended|model <provider/model[:thinking]>|model inherit|thinking ${THINKING_LEVELS.join("|")}|thinking inherit|session model recommended|check|test concern|blocker low|medium|high <text>]`, "error");
 }
 
 export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatchdogOptions = {}): MainWatchdogRuntime {
@@ -388,6 +387,7 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 		reviewDescription: options.review ? "injected seam" : "real model review",
 		reviewChangesOnly: true,
 		displayWarning: (details, options) => pi.sendMessage(createWatchdogWarningMessage(details, { display: true, details }), options),
+		displayUserWarning: (details) => pi.appendEntry(SUBAGENT_WATCHDOG_WARNING_TYPE, details),
 		displayClarification: (content) => pi.sendMessage({ customType: "subagent_watchdog_clarification", content, display: true }, { deliverAs: "steer", triggerTurn: true }),
 	});
 
@@ -400,6 +400,12 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 			return new Text(content, 0, 0);
 		}
 		return renderWatchdogWarning(details, renderOptions, theme);
+	});
+	pi.registerEntryRenderer<WatchdogWarningDetails>(SUBAGENT_WATCHDOG_WARNING_TYPE, (entry, renderOptions, theme) => {
+		const details = entry.data as WatchdogWarningDetails | undefined;
+		return details?.summary && details.evidence && details.recommendedAction
+			? renderWatchdogWarning(details, renderOptions, theme)
+			: undefined;
 	});
 
 	pi.registerCommand("subagents-watchdog", {

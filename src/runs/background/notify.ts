@@ -624,14 +624,16 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 	const reconciledFromDetachedChild = typeof result.reconciledFromDetachedChild === "string" ? result.reconciledFromDetachedChild : undefined;
 	const asyncDir = nonemptyPath(result.asyncDir);
 	const watchdogBlockers: SubagentNotifyWatchdogBlocker[] = [];
-	const collectWatchdogBlockers = (owner: string, progress: ChildWatchdogProgress | undefined) => {
+	const watchdogConcerns: string[] = [];
+	const collectWatchdogFindings = (owner: string, progress: ChildWatchdogProgress | undefined) => {
 		for (const warning of progress?.warnings ?? []) {
-			if (warning.severity !== "blocker") continue;
-			watchdogBlockers.push({ agent: owner, summary: warning.summary, addressed: warning.addressed, stalemate: warning.stalemate });
+			if (warning.importance !== "high") continue;
+			if (warning.severity === "blocker") watchdogBlockers.push({ agent: owner, summary: warning.summary, addressed: warning.addressed, stalemate: warning.stalemate });
+			else watchdogConcerns.push(`${owner}: ${warning.summary}\nEvidence: ${warning.evidence}\nRecommended action: ${warning.recommendedAction}`);
 		}
 	};
-	collectWatchdogBlockers(agent, result.watchdog);
-	for (const child of result.results ?? []) collectWatchdogBlockers(typeof child.agent === "string" ? child.agent : agent, child.watchdog);
+	collectWatchdogFindings(agent, result.watchdog);
+	for (const child of result.results ?? []) collectWatchdogFindings(typeof child.agent === "string" ? child.agent : agent, child.watchdog);
 	const session =
 		result.shareUrl
 			? { label: "Session", value: result.shareUrl }
@@ -652,7 +654,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		...(asyncDir ? { asyncDir } : {}),
 		...(result.source ? { source: result.source } : {}),
 		...(taskInfo ? { taskInfo } : {}),
-		resultPreview,
+		resultPreview: watchdogConcerns.length ? `${resultPreview}\n\nHigh-importance watchdog concerns:\n${watchdogConcerns.map((warning) => `- ${warning}`).join("\n")}` : resultPreview,
 		...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
 		...(handoffPath ? { handoffPath } : {}),
 		...(workflowRunId ? { workflowRunId } : {}),

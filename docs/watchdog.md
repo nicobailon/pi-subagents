@@ -6,7 +6,7 @@ The watchdog is an opt-in second model that reviews what the agent just did and 
 
 | Timing | Trigger | Gate | Delivery |
 |---|---|---|---|
-| Boundary review | `agent_end` of every main or child turn | Repo changed | Steered into the transcript; the agent gets one continuation, then that turn is reviewed again |
+| Boundary review | `agent_end` of every main or child turn | Repo changed | Routed by finding importance; high is steered to the model, low/medium are persisted for the user only |
 | Main activity review | `agent_end`, with `clarification: true` | New delivered orchestration evidence; at most one additional review per user prompt | Same warning/clarification path, even without local edits |
 | Cadence review | Every `cadence.everyNTools` tool results, minimum 5 | Opt-in | Steered after the current tool, before the next step |
 | LSP pre-pass | Before boundary review | Changed TypeScript/JavaScript files | Diagnostics become watchdog findings without a model call |
@@ -38,30 +38,30 @@ That means: main every 10 tools, worker every 5, other children every 20, review
 
 ## What you see
 
-Every finding is an ordinary transcript message: expandable, scrollable, and persisted in session JSONL. A clean review shows nothing.
+Every finding requires `importance: low | medium | high`. Low and medium are persisted for the user but excluded from model context and continuations. High findings retain model-visible delivery. Severity independently controls thresholds and acceptance, so a low-importance blocker still blocks acceptance. Clean reviews show nothing.
 
 ```
 you ─▶ agent turn ─▶ edits repo ─▶ agent_end ─▶ watchdog review
                                              ├─ clean: turn ends
-                                             └─ warning: steered in; agent continues once
+                                             └─ warning: low/medium user entry, or high steered message
 ```
 
-Collapsed warnings show the title and evidence line. Expanded warnings show evidence, recommended action, category, and source:
+Collapsed warnings show the title and evidence line. Expanded warnings show evidence, recommended action, importance, category, and source:
 
 ```
 ● Subagent watchdog Blocker (displayed): Claims tests passed without running them
   Evidence: The transcript claims `npm test` passed but no test command appears in the tool log.
   Recommended action: Run the focused test before finishing.
-  Category: Test Gap · Source: main
+  Importance: High · Category: Test Gap · Source: main
 ```
 
 When consecutive boundary reviews raise the same warning, the agent is not making progress. After `stalemateRepeats` identical warnings in a row (default 3), the warning is shown as `stalemate`, no continuation is triggered, and the turn ends. Your next prompt resets the count.
 
 Child watchdog findings are lifted into the parent in three ways:
 
-- The result envelope contains `watchdog.warnings` with severity, category, summary, evidence, recommended action, `addressed`, and `stalemate`, bounded to the last 20.
+- Internal/user inspection retains the last 20 findings, including importance and full details. Parent model results may include only high-importance findings.
 - The acceptance runtime check `watchdog-blocker` fails on blockers that are unaddressed or stalemate.
-- Completion notices include `Watchdog blockers:` lines, and Fleet/status views show `wd:<n>` plus `resolve watchdog blockers`.
+- Completion notices may include high-importance concerns and blockers; low/medium finding text is omitted.
 
 `/subagents-watchdog status` shows setting sources, enabled state, runtime state, review trigger, scope, cadence, LSP status, selected model/thinking, child overrides, timeout, stalemate count, launch-rule count, review backend, last warning, changed paths, and config errors when present.
 

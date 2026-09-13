@@ -30,7 +30,7 @@ describe("watchdog launch rules", () => {
 		const warning = ruleViolationWarning(denied!);
 		assert.equal(warning.severity, "concern");
 		assert.equal(warning.category, "missed-constraint");
-		assert.equal(warning.confidence, "high");
+		assert.equal(warning.importance, "high");
 		assert.equal(warning.source, "main");
 		assert.equal(warning.agent, "scout");
 	});

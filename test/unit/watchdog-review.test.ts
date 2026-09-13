@@ -307,7 +307,7 @@ describe("main watchdog review adapter", () => {
 			fauxAssistantMessage(fauxToolCall("watchdog_warn", {
 				severity: "blocker",
 				category: "correctness",
-				confidence: "high",
+				importance: "high",
 				summary: "The test claim is unverified",
 				evidence: "The delta says tests passed but no test command appears.",
 				recommendedAction: "Run the focused test before accepting the result.",
@@ -322,7 +322,7 @@ describe("main watchdog review adapter", () => {
 		assert.deepEqual(warnings[0], {
 			severity: "blocker",
 			category: "correctness",
-			confidence: "high",
+			importance: "high",
 			source: "main",
 			summary: "The test claim is unverified",
 			evidence: "The delta says tests passed but no test command appears.",
@@ -454,6 +454,11 @@ describe("main watchdog review adapter", () => {
 		await createMainWatchdogReview(ctx, { streamFn: without.streamFn, diffBaseline: () => undefined })(request(enabledConfig(), []));
 		assert.deepEqual(without.calls[0]?.context.tools?.map((tool) => tool.name).sort(), ["find", "grep", "ls", "read", "watchdog_warn"]);
 		assert.doesNotMatch(String(without.calls[0]?.context.systemPrompt ?? ""), /watchdog_diff/);
+		const schema = without.calls[0]?.context.tools?.find((tool) => tool.name === "watchdog_warn")?.parameters as any;
+		assert.deepEqual(schema.required?.includes("importance"), true);
+		assert.deepEqual(schema.properties.importance.enum, ["low", "medium", "high"]);
+		assert.equal(schema.properties.confidence, undefined);
+		assert.equal(schema.additionalProperties, false);
 	});
 
 	it("does not expose mutating tools to the watchdog agent", async () => {

@@ -15,8 +15,8 @@ export const WATCHDOG_WARNING_CATEGORIES = [
 ] as const;
 export type WatchdogCategory = typeof WATCHDOG_WARNING_CATEGORIES[number];
 
-export const WATCHDOG_WARNING_CONFIDENCES = ["medium", "high"] as const;
-export type WatchdogConfidence = typeof WATCHDOG_WARNING_CONFIDENCES[number];
+export const WATCHDOG_WARNING_IMPORTANCES = ["low", "medium", "high"] as const;
+export type WatchdogImportance = typeof WATCHDOG_WARNING_IMPORTANCES[number];
 
 export const WATCHDOG_WARNING_SOURCES = ["main", "child", "lsp"] as const;
 export type WatchdogWarningSource = typeof WATCHDOG_WARNING_SOURCES[number];
@@ -44,11 +44,11 @@ export type WatchdogWarningState = typeof WATCHDOG_WARNING_STATES[number];
 
 export interface WatchdogWarning {
 	severity: WatchdogSeverity;
+	importance: WatchdogImportance;
 	summary: string;
 	evidence: string;
 	recommendedAction: string;
 	category?: WatchdogCategory;
-	confidence?: WatchdogConfidence;
 	source?: WatchdogWarningSource;
 	agent?: string;
 	runId?: string;

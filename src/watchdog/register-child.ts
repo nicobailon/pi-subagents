@@ -10,7 +10,8 @@ import {
 	type ChildWatchdogPhase,
 	type ChildWatchdogStatusEvent,
 } from "./child-status.ts";
-import type { ResolvedWatchdogConfig, WatchdogWarningDetails } from "./types.ts";
+import type { ChildWatchdogWarningSummary } from "../shared/types.ts";
+import { SUBAGENT_WATCHDOG_WARNING_TYPE, type ResolvedWatchdogConfig, type WatchdogWarningDetails } from "./types.ts";
 
 export function childResolvedConfig(config: ChildWatchdogConfig): ResolvedWatchdogConfig {
 	return {
@@ -58,7 +59,7 @@ export function registerChildWatchdog(
 	let currentContext: ExtensionContext | undefined;
 	let diffBaseline: WatchdogDiffBaseline | undefined;
 	let seq = 0;
-	const emitStatus = (phase: ChildWatchdogPhase, reason?: string): void => {
+	const emitStatus = (phase: ChildWatchdogPhase, reason?: string, warning?: ChildWatchdogWarningSummary): void => {
 		writeStatus({
 			type: CHILD_WATCHDOG_STATUS_EVENT,
 			...(childConfig.runId ? { runId: childConfig.runId } : {}),
@@ -68,6 +69,7 @@ export function registerChildWatchdog(
 			phase,
 			ts: Date.now(),
 			...(reason ? { reason } : {}),
+			...(warning ? { warning } : {}),
 		});
 	};
 	const resolved = childResolvedConfig(childConfig);
@@ -78,7 +80,13 @@ export function registerChildWatchdog(
 		reviewChangesOnly: true,
 		displayWarning: (details, options) => {
 			const childDetails = childWarningDetails(details, childConfig);
+			emitStatus("reviewing", undefined, { severity: childDetails.severity, importance: childDetails.importance, category: childDetails.category, summary: childDetails.summary, evidence: childDetails.evidence, recommendedAction: childDetails.recommendedAction, ...(childDetails.displayedAt ? { displayedAt: childDetails.displayedAt } : {}), addressed: false, stalemate: childDetails.state === "stalemate" });
 			pi.sendMessage(createWatchdogWarningMessage(childDetails, { display: true, details: childDetails }), options);
+		},
+		displayUserWarning: (details) => {
+			const childDetails = childWarningDetails(details, childConfig);
+			emitStatus("reviewing", undefined, { severity: childDetails.severity, importance: childDetails.importance, category: childDetails.category, summary: childDetails.summary, evidence: childDetails.evidence, recommendedAction: childDetails.recommendedAction, ...(childDetails.displayedAt ? { displayedAt: childDetails.displayedAt } : {}), addressed: false, stalemate: childDetails.state === "stalemate" });
+			pi.appendEntry(SUBAGENT_WATCHDOG_WARNING_TYPE, childDetails);
 		},
 	});
 	const rememberContext = (ctx: ExtensionContext) => {

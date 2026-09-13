@@ -34,12 +34,12 @@ export function formatWatchdogWarningContent(warning: WatchdogWarning): string {
 	const details = normalizeWatchdogWarningDetails(warning);
 	const attrs = [
 		`severity="${escapeXmlAttribute(details.severity)}"`,
+		`importance="${escapeXmlAttribute(details.importance)}"`,
 		`category="${escapeXmlAttribute(details.category)}"`,
 		`source="${escapeXmlAttribute(details.source)}"`,
 		`guidance="weigh, don't blindly obey"`,
 	];
 	const optionalTags = [
-		tag("confidence", details.confidence),
 		tag("agent", details.agent),
 		tag("run_id", details.runId),
 		tag("state", details.state),

@@ -26,7 +26,7 @@ export function formatWatchdogWarningRenderText(warning: WatchdogWarningDetails)
 		`Subagent watchdog ${subject}${labels.length ? ` (${labels.join(", ")})` : ""}: ${warning.summary}`,
 		`Evidence: ${warning.evidence}`,
 		`Recommended action: ${warning.recommendedAction}`,
-		`Category: ${titleCase(warning.category)} · Source: ${warning.source}${warning.agent ? ` · Agent: ${warning.agent}` : ""}${warning.runId ? ` · Run: ${warning.runId}` : ""}`,
+		`Importance: ${titleCase(warning.importance)} · Category: ${titleCase(warning.category)} · Source: ${warning.source}${warning.agent ? ` · Agent: ${warning.agent}` : ""}${warning.runId ? ` · Run: ${warning.runId}` : ""}`,
 	];
 	if (warning.state === "failed" && warning.error) lines.push(`Failure: ${warning.error}`);
 	if (warning.state === "stalemate" && warning.stalemateRepeats !== undefined) {

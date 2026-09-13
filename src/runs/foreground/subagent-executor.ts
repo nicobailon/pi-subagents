@@ -28,6 +28,7 @@ import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
 import { applyWatchdogLaunchRules } from "../../watchdog/rules.ts";
+import { childWatchdogProgressForModel } from "../../watchdog/child-status.ts";
 import { buildModelCandidates, normalizeParentModel, resolveEffectiveSubagentModel, resolveModelOrigin, type ModelOrigin, type ParentModel } from "../shared/model-fallback.ts";
 import { getHostBuiltinToolNames } from "../shared/child-tool-plan.ts";
 import { resolveEffectiveOutputSchema } from "../shared/child-launch-plan.ts";
@@ -2989,11 +2990,20 @@ function withResolvedContext(
 }
 
 function withAggregatedToolUsage(result: AgentToolResult<Details>): AgentToolResult<Details> {
-	if (result.details.results.length === 0) return result;
-	const usage = sumResultsUsage(result.details.results);
+	const highWarnings = result.details.results.flatMap((child) => child.watchdog?.warnings?.filter((warning) => warning.importance === "high") ?? []);
+	const projected: AgentToolResult<Details> = {
+		...result,
+		...(highWarnings.length ? { content: [...result.content, { type: "text", text: ["High-importance watchdog findings:", ...highWarnings.map((warning) => `- ${warning.severity}: ${warning.summary}\n  Evidence: ${warning.evidence}\n  Recommended action: ${warning.recommendedAction}`)].join("\n") }] } : {}),
+		details: {
+			...result.details,
+			results: result.details.results.map((child) => ({ ...child, ...(child.watchdog ? { watchdog: childWatchdogProgressForModel(child.watchdog) } : {}) })),
+		},
+	};
+	if (projected.details.results.length === 0) return projected;
+	const usage = sumResultsUsage(projected.details.results);
 	return usage.input !== 0 || usage.output !== 0 || usage.cacheRead !== 0 || usage.cacheWrite !== 0 || usage.cost !== 0 || usage.turns !== 0
-		? { ...result, usage: toAgentToolUsage(usage) }
-		: result;
+		? { ...projected, usage: toAgentToolUsage(usage) }
+		: projected;
 }
 
 function toExecutionErrorResult(params: SubagentParamsLike, error: unknown, contextSummary?: ContextSummary): AgentToolResult<Details> {
