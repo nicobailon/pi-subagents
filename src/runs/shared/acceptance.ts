@@ -432,29 +432,11 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, opt
 	lines.push(
 		"",
 		options.structuredOutput
-			? "Include an `acceptanceReport` object in your final `structured_output` tool call in this shape:"
-			: "Finish with a fenced JSON block tagged `acceptance-report` in this shape:",
-		"Use empty arrays when no items apply; array fields contain strings unless object entries are shown.",
-		"Empty-string entries (`[\"\"]`) are ignored; use `[]` when nothing applies.",
-		"`criteriaSatisfied[].status` must be exactly one of: satisfied, not-satisfied, not-applicable.",
-		"`commandsRun[].result` must be exactly one of: passed, failed, not-run.",
-		"`manualNotes` and `notes` are optional strings; an empty string means no note and does not satisfy `manual-notes` evidence.",
-		...(options.structuredOutput ? [] : ["```acceptance-report"]),
-		JSON.stringify({
-			criteriaSatisfied: acceptance.criteria
-				.filter((criterion) => criterion.severity !== "recommended")
-				.map((criterion) => ({ id: criterion.id, status: "satisfied", evidence: "specific proof" })),
-			changedFiles: ["src/file.ts"],
-			testsAddedOrUpdated: ["test/file.test.ts"],
-			commandsRun: [{ command: "command", result: "passed", summary: "short result" }],
-			validationOutput: ["validation output or concise summary"],
-			residualRisks: ["none"],
-			noStagedFiles: true,
-			diffSummary: "short description of the diff",
-			reviewFindings: ["blocker: file.ts:12 - issue found, or no blockers"],
-			manualNotes: "anything else the parent should know",
-		}, null, 2),
-		...(options.structuredOutput ? [] : ["```"]),
+			? "Put `acceptanceReport` in the final `structured_output` call."
+			: "Fence tag: `acceptance-report`.",
+		"Keys: criteriaSatisfied[{id,status,evidence}], changedFiles, testsAddedOrUpdated, commandsRun[{command,result,summary}], validationOutput, residualRisks, noStagedFiles, diffSummary, reviewFindings, manualNotes.",
+		"`criteriaSatisfied[].status` ∈ satisfied | not-satisfied | not-applicable. `commandsRun[].result` ∈ passed | failed | not-run.",
+		"Empty arrays when none. Do not use `[\"\"]`. `manualNotes` optional; empty string does not satisfy `manual-notes`.",
 	);
 	return lines.join("\n");
 }

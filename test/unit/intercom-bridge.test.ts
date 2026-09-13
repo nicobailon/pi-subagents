@@ -164,7 +164,8 @@ describe("resolveIntercomBridge", () => {
 		assert.match(bridge.instruction, /normal assistant text/i);
 		assert.match(bridge.instruction, /contact_supervisor/);
 		assert.match(bridge.instruction, /need_decision/);
-		assert.match(bridge.instruction, /progress_update/);
+		assert.match(bridge.instruction, /Do not send progress_update/);
+		assert.doesNotMatch(bridge.instruction, /Meaningful progress/);
 		assert.match(bridge.instruction, /focused task result/i);
 	});
 });

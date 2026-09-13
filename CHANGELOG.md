@@ -15,6 +15,7 @@
 - Accept a child id on `/subagents-stop <run-id> <child-id>` so RPC hosts and non-TUI sessions can stop one child of a multi-child async run or workflow without stopping the whole run. Thanks to [@yanqianglu](https://github.com/yanqianglu) for #1603.
 
 ### Changed
+- Do not inject `progress_update` supervisor notices into the parent session or trigger a parent turn; `need_decision` / `interview_request` still wake. Default bridge and builtin agents no longer tell children to send progress pings. Shrink writer acceptance prompts to a field list instead of a pasted JSON schema.
 - Reduce internal verbosity in launch, status, output, settings, and worktree cleanup paths without changing behavior.
 - Include a direct resumable child id in missing workflow receipt guidance when retained status proves it is safe.
 - Clarify `workflowScript` contracts: each distinct retained resume pass needs a new stable workflow key, and durable child output paths should use explicit bindings plus returned path metadata.

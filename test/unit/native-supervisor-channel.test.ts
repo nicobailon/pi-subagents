@@ -48,21 +48,23 @@ function makeState(sessionId: string | null, ctx: unknown): SubagentState {
 	};
 }
 
-function writeRequest(input: { sessionId: string; runId: string; agent?: string; index?: number; message?: string; createdAt?: number; expiresAt?: number }): string {
+function writeRequest(input: { sessionId: string; runId: string; agent?: string; index?: number; message?: string; createdAt?: number; expiresAt?: number; reason?: "need_decision" | "interview_request" | "progress_update"; expectsReply?: boolean }): string {
 	const agent = input.agent ?? "worker";
 	const index = input.index ?? 0;
 	const channelDir = resolveSupervisorChannelDir(input.runId, agent, index);
 	createdChannels.push(channelDir);
 	ensureSupervisorChannelDir(channelDir);
 	const requestId = randomUUID();
+	const reason = input.reason ?? "need_decision";
+	const expectsReply = input.expectsReply ?? reason !== "progress_update";
 	fs.writeFileSync(path.join(channelDir, "requests", `${requestId}.json`), JSON.stringify({
 		type: "subagent.supervisor.request",
 		id: requestId,
 		createdAt: input.createdAt ?? Date.now(),
 		...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
-		reason: "need_decision",
-		message: input.message ?? "Need a decision",
-		expectsReply: true,
+		reason,
+		message: input.message ?? (reason === "progress_update" ? "UPDATE: working" : "Need a decision"),
+		expectsReply,
 		orchestratorSessionId: input.sessionId,
 		orchestratorTarget: "shared-name",
 		runId: input.runId,
@@ -155,6 +157,39 @@ describe("native supervisor channel", () => {
 		assert.deepEqual(sent[0]?.options, { triggerTurn: true });
 		assert.equal(channel.pending.has(matchingId), false, "disposed channel clears pending requests");
 		assert.equal(sent.some(({ message }) => message.details?.id === otherId), false);
+	});
+
+	it("does not inject progress_update into the parent session or wake a turn", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const progressId = writeRequest({
+			sessionId: currentSessionId,
+			runId: `run-${randomUUID()}`,
+			reason: "progress_update",
+		});
+		const sent: Array<{ message: { details?: { id?: string } }; options?: { triggerTurn?: boolean } }> = [];
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: (
+				message: { details?: { id?: string } },
+				options?: { triggerTurn?: boolean },
+			) => { sent.push({ message, options }); },
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx), { platform: "darwin" });
+		channel.start();
+		channel.dispose();
+		assert.equal(sent.length, 0);
+		assert.equal(channel.pending.has(progressId), false);
 	});
 
 	it("uses polling instead of native watchers on Windows", () => {

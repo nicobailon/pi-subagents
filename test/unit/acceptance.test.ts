@@ -244,23 +244,20 @@ describe("acceptance gates", () => {
 		assert.match(prompt, /## Acceptance Contract/);
 		assert.match(prompt, /Acceptance level: checked/);
 		assert.match(prompt, /Patch the bug/);
-		assert.match(prompt, /```acceptance-report/);
-		assert.match(prompt, /array fields contain strings/);
-		assert.match(prompt, /empty-string entr(?:y|ies).*\[\s*""\s*\]/i);
-		assert.match(prompt, /criteriaSatisfied\[\]\.status.*satisfied, not-satisfied, not-applicable/);
-		assert.match(prompt, /commandsRun\[\]\.result.*passed, failed, not-run/);
-		assert.match(prompt, /manualNotes.*optional strings.*empty string.*does not satisfy.*manual-notes/);
-		assert.match(prompt, /"reviewFindings": \[\n    "blocker:/);
+		assert.match(prompt, /Fence tag: `acceptance-report`/);
+		assert.match(prompt, /criteriaSatisfied/);
+		assert.match(prompt, /satisfied \| not-satisfied \| not-applicable/);
+		assert.match(prompt, /passed \| failed \| not-run/);
+		assert.match(prompt, /manualNotes.*optional/);
+		assert.doesNotMatch(prompt, /```acceptance-report\n\{/);
 	});
 
-	it("includes every required resolved criterion in report examples", () => {
+	it("lists every required resolved criterion without dumping a JSON example", () => {
 		const inferred = resolveEffectiveAcceptance({ agentName: "worker", task: "Implement the fix", mode: "single", async: true });
-		const inferredExample = formatAcceptancePrompt(inferred).match(/```acceptance-report\n([\s\S]*?)\n```/);
-		assert.ok(inferredExample?.[1]);
-		assert.deepEqual(
-			(JSON.parse(inferredExample[1]!) as { criteriaSatisfied: Array<{ id: string }> }).criteriaSatisfied.map((criterion) => criterion.id),
-			["criterion-1", "criterion-2"],
-		);
+		const inferredPrompt = formatAcceptancePrompt(inferred);
+		assert.match(inferredPrompt, /criterion-1/);
+		assert.match(inferredPrompt, /criterion-2/);
+		assert.doesNotMatch(inferredPrompt, /```acceptance-report\n\{/);
 
 		const custom = resolveEffectiveAcceptance({
 			agentName: "worker",
@@ -270,12 +267,9 @@ describe("acceptance gates", () => {
 				{ id: "recommended-check", must: "Recommended", severity: "recommended" },
 			] },
 		});
-		const customExample = formatAcceptancePrompt(custom).match(/```acceptance-report\n([\s\S]*?)\n```/);
-		assert.ok(customExample?.[1]);
-		assert.deepEqual(
-			(JSON.parse(customExample[1]!) as { criteriaSatisfied: Array<{ id: string }> }).criteriaSatisfied.map((criterion) => criterion.id),
-			["required-check"],
-		);
+		const customPrompt = formatAcceptancePrompt(custom);
+		assert.match(customPrompt, /required-check/);
+		assert.match(customPrompt, /recommended-check/);
 	});
 
 	it("parses acceptance-report fences and ignores unrelated json fences", () => {

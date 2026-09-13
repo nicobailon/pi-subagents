@@ -431,15 +431,11 @@ Use `contact_supervisor` with `reason: "interview_request"` when the child needs
 
 Do not use `contact_supervisor` just to resolve review-only/no-project-edit versus progress-writing or output-artifact instructions. The child must not modify project/source files, but returning findings through its normal response or configured output artifact is allowed unless the parent explicitly set `output: false`.
 
-Use `contact_supervisor` with `reason: "progress_update"` when:
-- a child is explicitly asked for progress
-- a meaningful discovery changes the plan
-- a long-running child needs to report a blocked/progress checkpoint without waiting for normal tool return flow
+Do not use `contact_supervisor` with `reason: "progress_update"`. Fleet already shows child tools and output. Status belongs in the final handoff. Progress pings do not wake the parent and must not be used as a coordination channel.
 
 Message conventions:
 - `reason: "need_decision"` and `reason: "interview_request"` wait for the parent reply and return it to the child.
-- `reason: "progress_update"` is non-blocking and should stay concise.
-- Child-side routine completion handoffs are not expected. Native supervisor messages are for decisions, structured input, and meaningful progress updates while a child is still running.
+- Child-side routine completion handoffs are not expected. Native supervisor messages are for blocking decisions and structured input while a child is still running.
 
 If bridge instructions provide the child-facing tool, a child can ask:
 

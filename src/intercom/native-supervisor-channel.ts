@@ -666,13 +666,14 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 				continue;
 			}
 			seenFiles.add(file);
-			if (request.expectsReply) {
-				pending.set(request.id, request);
-				markForegroundSupervisorAttention(request, state);
-			}
-			else {
+			if (!request.expectsReply) {
+				// progress_update: Fleet already shows child activity. Do not inject a
+				// parent user message or trigger a parent model turn.
 				removeRequestFile(request.requestFile);
+				continue;
 			}
+			pending.set(request.id, request);
+			markForegroundSupervisorAttention(request, state);
 			pi.sendMessage({
 				customType: "subagent_supervisor_request",
 				content: requestVisibleText(request),
@@ -686,15 +687,13 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 					childIndex: request.childIndex,
 				},
 			}, { triggerTurn: true });
-			if (request.expectsReply) {
-				(pi as { events?: IntercomEventBus }).events?.emit(INTERCOM_DETACH_REQUEST_EVENT, {
-					requestId: request.id,
-					runId: request.runId,
-					agent: request.agent,
-					childIndex: request.childIndex,
-				});
-				if (pending.has(request.id)) markForegroundSupervisorAttention(request, state);
-			}
+			(pi as { events?: IntercomEventBus }).events?.emit(INTERCOM_DETACH_REQUEST_EVENT, {
+				requestId: request.id,
+				runId: request.runId,
+				agent: request.agent,
+				childIndex: request.childIndex,
+			});
+			if (pending.has(request.id)) markForegroundSupervisorAttention(request, state);
 		}
 	};
 
