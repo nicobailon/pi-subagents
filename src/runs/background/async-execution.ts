@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
+import * as nodeModule from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
 import { createAtomicJsonWriter, writePrivateAtomicJson } from "../../shared/atomic-json.ts";
@@ -88,7 +88,7 @@ import { normalizeExtensionBindings, omitExtensionBindingsEnv, type ExtensionBin
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
 import { resolveRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
 
-const require = createRequire(import.meta.url);
+const require = nodeModule.createRequire(import.meta.url);
 const piPackageRoot = resolvePiPackageRoot() ?? resolveInstalledPiPackageRoot();
 
 function resolveJitiCliFromPackageJson(packageJsonPath: string): string | undefined {
@@ -113,12 +113,12 @@ function resolveJitiCliPath(): string | undefined {
 	const candidates: Array<() => string | undefined> = [
 		() => require.resolve("jiti/package.json"),
 		() => piPackageRoot
-			? createRequire(path.join(piPackageRoot, "package.json")).resolve("jiti/package.json")
+			? nodeModule.createRequire(path.join(piPackageRoot, "package.json")).resolve("jiti/package.json")
 			: undefined,
 		() => {
 			if (!process.argv[1]) return undefined;
 			const piEntry = fs.realpathSync(process.argv[1]);
-			return createRequire(piEntry).resolve("jiti/package.json");
+			return nodeModule.createRequire(piEntry).resolve("jiti/package.json");
 		},
 		() => piPackageRoot ? path.join(piPackageRoot, "node_modules", "jiti", "package.json") : undefined,
 	];
@@ -137,8 +137,13 @@ function resolveJitiCliPath(): string | undefined {
 
 const jitiCliPath = resolveJitiCliPath();
 const asyncRunnerSourcePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
-const nativeTypeScriptSupport = "typescript" in process.features;
-const nativeRunnerSupported = nativeTypeScriptSupport && !asyncRunnerSourcePath.split(path.sep).some((segment) => segment.toLowerCase() === "node_modules");
+const sourceUnderNodeModules = asyncRunnerSourcePath.split(path.sep).some((segment) => segment.toLowerCase() === "node_modules");
+function supportsNativeRunner(nodeExecutable: string): boolean {
+	return Boolean(process.features.typescript)
+	&& typeof nodeModule.registerHooks === "function"
+	&& nodeExecutable === process.execPath
+	&& !sourceUnderNodeModules;
+}
 
 interface AsyncExecutionContext {
 	pi: ExtensionAPI;
@@ -386,11 +391,9 @@ export function formatAsyncStartedMessage(headline: string, interactive: boolean
 	return [headline, "", ...guidance].join("\n");
 }
 
-/**
- * Check if jiti is available for async execution
- */
+/** Check whether detached async execution has a supported runtime. */
 export function isAsyncAvailable(): boolean {
-	return nativeRunnerSupported || jitiCliPath !== undefined;
+	return resolveBunPiExecutable() !== undefined || supportsNativeRunner(resolveNodeExecutable()) || jitiCliPath !== undefined;
 }
 
 export function resolveAsyncRunnerLogPaths(cfg: object): { stdoutPath: string; stderrPath: string } | undefined {
@@ -656,11 +659,20 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 
 	// The compiled host exposes its SDK only through Pi's extension loader.
 	const binaryHost = resolveBunPiExecutable();
+	const nodeExecutable = resolveNodeExecutable();
+	const configuredExtensions = (cfg as { steps?: Array<{ extensions?: unknown[]; subagentOnlyExtensions?: unknown[]; requiredExtensions?: unknown[] }> }).steps?.some(
+		(step) => (step.extensions?.length ?? 0) > 0 || (step.subagentOnlyExtensions?.length ?? 0) > 0 || (step.requiredExtensions?.length ?? 0) > 0,
+	) ?? false;
+	// Keep provider/tool extensions in Jiti's host-alias boundary; the native preload
+	// only certifies the runner's imports, not a separately loaded extension graph.
+	const nativeRunnerSupported = supportsNativeRunner(nodeExecutable) && !configuredExtensions;
 	const runner = asyncRunnerSourcePath;
 	const bootstrap = path.join(path.dirname(runner), "binary-bootstrap.ts");
 	if (binaryHost && !fs.existsSync(bootstrap)) return { error: `Background runner bootstrap not found: ${bootstrap}` };
 	if (!binaryHost && !nativeRunnerSupported && !jitiCliPath) {
-		return { error: "native Node TypeScript support and upstream jiti for TypeScript execution are unavailable; use Node 22.19+ or ensure package dependencies are installed" };
+		return { error: sourceUnderNodeModules
+			? "Background runner source is installed under node_modules, so upstream jiti is required for TypeScript execution."
+			: "Background runner requires enabled native TypeScript with synchronous module hooks, or installed upstream jiti for TypeScript execution." };
 	}
 	if (!binaryHost && !piPackageRoot) {
 		return { error: `Background children require a supported standalone Pi host or the installed npm package (${PI_CODING_AGENT_PACKAGE}); neither is available.` };
@@ -677,7 +689,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	const launchBarrierToken = hasRevivalLease ? undefined : runnerProcessInstanceId;
 	const launchConfig = { ...cfg, runnerProcessInstanceId, ...(launchBarrierToken ? { launchBarrierToken } : {}) };
 	writePrivateAtomicJson(cfgPath, launchConfig);
-	const command = binaryHost ?? resolveNodeExecutable();
+	const command = binaryHost ?? nodeExecutable;
 	const launchForStartup = launchConfig as typeof launchConfig & { asyncDir?: unknown; id?: unknown; sessionId?: unknown; completionOwnerId?: unknown; revivalLease?: unknown };
 	const launchAsyncDir = typeof launchForStartup.asyncDir === "string" ? launchForStartup.asyncDir : undefined;
 	const launchRunId = typeof launchForStartup.id === "string" ? launchForStartup.id : suffix;
@@ -723,7 +735,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 				// npm must override inherited bundled layouts (#2071); binaries retain release assets.
 				PI_PACKAGE_DIR: binaryHost ? process.env.PI_PACKAGE_DIR : piPackageRoot,
 				[JITI_ALIAS_ENV]: binaryHost ? undefined : JSON.stringify(hostPeerAliases.aliases),
-			PI_ASYNC_NATIVE_RUNNER: !binaryHost && nativeRunnerSupported ? "1" : "0",
+				PI_ASYNC_NATIVE_RUNNER: !binaryHost && nativeRunnerSupported ? "1" : "0",
 				PI_SUBAGENT_RUNNER_CONFIG: binaryHost ? cfgPath : undefined,
 			},
 		});

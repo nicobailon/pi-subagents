@@ -56,6 +56,24 @@ jobs:
           bun test test/unit/scripted-workflow.test.ts
           --test-name-pattern "portable workflow parity|regex literals|template expressions|portable plain helper|nested plain helper|unawaited child launch|unawaited runs.all|directly returned runs.run|docs-style awaited|awaited native Promise|Promise.resolve|Promise.all|then chain|new Promise wrapper"
 
+  runner-loader-capability:
+    strategy:
+      matrix:
+        include:
+          - node: 22.14.0
+            loader: jiti
+          - node: 22.19.0
+            loader: native
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci --ignore-scripts
+      - run: node test/smoke/runner-loader-capability.mjs ${{ matrix.loader }}
+
   pi085-clean-install:
     runs-on: ubuntu-latest
     timeout-minutes: 10

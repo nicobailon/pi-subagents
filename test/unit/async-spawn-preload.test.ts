@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import * as fs from "node:fs";
-import { syncBuiltinESMExports } from "node:module";
+import * as nodeModule from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
@@ -54,7 +54,7 @@ test("executeAsyncSingle preloads all peer aliases before the selected runner lo
 			// Stop at the only external I/O seam: no fake pid or detached lifecycle.
 			throw new Error("spawn boundary captured");
 		});
-		syncBuiltinESMExports();
+		nodeModule.syncBuiltinESMExports();
 		for (const scenario of ["supplemental", "complete", "stable", "pre-chord", "missing-stable"]) {
 			if (scenario === "complete") writeHostPackage(server);
 			if (scenario === "stable") {
@@ -68,8 +68,9 @@ test("executeAsyncSingle preloads all peer aliases before the selected runner lo
 				for (const specifier of ["@earendil-works/chord", "@earendil-works/chord/context"]) delete expectedAliases[specifier];
 			}
 			if (scenario === "missing-stable") fs.unlinkSync(expectedAliases["@earendil-works/pi-agent-core/node"]!);
+			const configuredExtension = scenario === "pre-chord" ? fileURLToPath(import.meta.url) : undefined;
 			const result = executeAsyncSingle(`spawn-preload-${scenario}`, {
-				agent: "worker", task: "Inspect launch wiring", agentConfig: makeAgent("worker"),
+				agent: "worker", task: "Inspect launch wiring", agentConfig: makeAgent("worker", configuredExtension ? { extensions: [configuredExtension] } : {}),
 				ctx: { pi: { events: { emit() {} } }, cwd: root, currentSessionId: "spawn-preload-session" },
 				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 				shareEnabled: false, sessionRoot: path.join(root, "sessions"), maxSubagentDepth: 1, acceptance: false,
@@ -90,14 +91,16 @@ test("executeAsyncSingle preloads all peer aliases before the selected runner lo
 			assert.equal(args[0], "--import");
 			assert.equal(args[1], new URL("../../runner-peer-preload.mjs", import.meta.url).href);
 			assert.ok(fs.existsSync(fileURLToPath(args[1])));
-			if ("typescript" in process.features) assert.equal(args[2], "--experimental-strip-types");
+			const nativeRunner = Boolean(process.features.typescript) && typeof nodeModule.registerHooks === "function" && !configuredExtension;
+			if (nativeRunner) assert.equal(args[2], "--experimental-strip-types");
 			else assert.match(args[2], /[/\\]jiti-cli\.mjs$/);
 			assert.match(args[3], /[/\\]subagent-runner\.ts$/);
 			assert.equal(args.length, 5);
+			assert.equal(options.env.PI_ASYNC_NATIVE_RUNNER, nativeRunner ? "1" : "0");
 		}
 	} finally {
 		t.mock.restoreAll();
-		syncBuiltinESMExports();
+		nodeModule.syncBuiltinESMExports();
 		if (originalArgv1 === undefined) delete process.argv[1];
 		else process.argv[1] = originalArgv1;
 		fs.rmSync(root, { recursive: true, force: true });

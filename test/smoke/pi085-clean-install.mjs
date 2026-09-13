@@ -40,6 +40,7 @@ fs.writeFileSync(path.join(host, "package.json"), JSON.stringify({ private: true
 run("host-install", "npm", ["install", "--no-audit", "--no-fund"], host);
 const packed = JSON.parse(run("pack", "npm", ["pack", "--json", "--pack-destination", root], source).stdout)[0];
 assert.ok(packed.files.some(file => file.path === "runner-peer-preload.mjs"), "peer preload must ship");
+assert.ok(packed.files.some(file => file.path === "runner-peer-loader.mjs"), "older-Node peer loader must ship");
 fs.writeFileSync(path.join(extension, "package.json"), JSON.stringify({ private: true, dependencies: { "pi-subagents": `file:${path.join(root, packed.filename)}` } }));
 run("extension-install", "npm", ["install", "--no-audit", "--no-fund"], extension);
 const installed = path.join(extension, "node_modules/pi-subagents");
@@ -66,7 +67,7 @@ if (!isPi0850) {
 }
 fs.writeFileSync(path.join(root, "aliases.json"), JSON.stringify(resolved, null, 2));
 for (const file of ["pi085-child.ts", "pi085-extension.ts"]) fs.copyFileSync(new URL(file, import.meta.url), path.join(cwd, file));
-const childEnv = { SMOKE_EXTENSION: installed, JITI_ALIAS: JSON.stringify(resolved.aliases) };
+const childEnv = { SMOKE_EXTENSION: installed, JITI_ALIAS: JSON.stringify(resolved.aliases), PI_ASYNC_NATIVE_RUNNER: "0" };
 const jiti = path.join(extension, "node_modules/jiti/lib/jiti-cli.mjs");
 const args = [jiti, path.join(cwd, "pi085-child.ts")];
 // The real file-extension gate must fail with aliases alone, not just an import mock.
@@ -77,6 +78,12 @@ if (isPi0850) {
 const preload = Object.keys(resolved.aliases).length ? ["--import", pathToFileURL(path.join(installed, "runner-peer-preload.mjs")).href] : [];
 const positive = run("child", process.execPath, [...preload, ...args], cwd, childEnv);
 assert.match(positive.stdout, /PASS public SDK\/default child factory/);
+const packedSelection = run("packed-selection", process.execPath, [
+	path.join(source, "test/smoke/packed-runner-selection.mjs"),
+	installed,
+	resolvePackageSubpath(pi, "."),
+], cwd, childEnv);
+assert.match(packedSelection.stdout, /PASS packed node_modules selects Jiti/);
 assert.equal(findHostPeerPackageDir(pi, "@earendil-works/pi-server"), undefined);
 if (version === "0.85.1") assert.equal(findHostPeerPackageDir(pi, "@earendil-works/pi-client"), undefined);
 console.log(`${positive.stdout.trim()}\nArtifacts: ${root}`);
