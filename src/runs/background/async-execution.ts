@@ -136,6 +136,7 @@ function resolveJitiCliPath(): string | undefined {
 }
 
 const jitiCliPath = resolveJitiCliPath();
+const nativeTypeScriptSupport = "typescript" in process.features;
 
 interface AsyncExecutionContext {
 	pi: ExtensionAPI;
@@ -387,7 +388,7 @@ export function formatAsyncStartedMessage(headline: string, interactive: boolean
  * Check if jiti is available for async execution
  */
 export function isAsyncAvailable(): boolean {
-	return jitiCliPath !== undefined;
+	return nativeTypeScriptSupport || jitiCliPath !== undefined;
 }
 
 export function resolveAsyncRunnerLogPaths(cfg: object): { stdoutPath: string; stderrPath: string } | undefined {
@@ -656,8 +657,8 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 	const bootstrap = path.join(path.dirname(runner), "binary-bootstrap.ts");
 	if (binaryHost && !fs.existsSync(bootstrap)) return { error: `Background runner bootstrap not found: ${bootstrap}` };
-	if (!binaryHost && !jitiCliPath) {
-		return { error: "upstream jiti for TypeScript execution could not be found; ensure package dependencies are installed" };
+	if (!binaryHost && !nativeTypeScriptSupport && !jitiCliPath) {
+		return { error: "native Node TypeScript support and upstream jiti for TypeScript execution are unavailable; use Node 22.19+ or ensure package dependencies are installed" };
 	}
 	if (!binaryHost && !piPackageRoot) {
 		return { error: `Background children require a supported standalone Pi host or the installed npm package (${PI_CODING_AGENT_PACKAGE}); neither is available.` };
@@ -705,7 +706,9 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			: [];
 		const args = binaryHost
 			? ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-session", "--mode", "rpc", "--extension", bootstrap]
-			: [...preload, jitiCliPath!, runner, cfgPath];
+			: nativeTypeScriptSupport
+				? [...preload, "--experimental-strip-types", runner, cfgPath]
+				: [...preload, jitiCliPath!, runner, cfgPath];
 		const proc = spawn(command, args, {
 			cwd,
 			...backgroundProcessOptions(),
