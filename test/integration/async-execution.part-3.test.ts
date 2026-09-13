@@ -2414,4 +2414,54 @@ export default function() {
 		assert.match(result.content[0]?.text ?? "", /async-cfg-/);
 	});
 
+	it("returns promptly when a revival runner exits before startup readiness", { timeout: 90_000, skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const sourceId = `async-revive-exit-before-ready-${Date.now().toString(36)}`;
+		const sessionFile = path.join(tempDir, "revival-exit-session.jsonl");
+		fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 1, id: "revival-exit-session", cwd: fs.realpathSync(tempDir) })}\n`);
+		mockPi.onCall({ output: "Initial work" });
+		executeAsyncSingle(sourceId, {
+			agent: "worker",
+			task: "Initial work",
+			agentConfig: makeAgent("worker", { completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionFile,
+			maxSubagentDepth: 2,
+		});
+		const initialResult = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(sourceId, 60_000), "utf8")) as { success: boolean };
+		assert.equal(initialResult.success, true);
+
+		const preloadFile = path.join(tempDir, "exit-before-ready.mjs");
+		fs.writeFileSync(preloadFile, `
+if (process.argv.some((arg) => arg.endsWith("subagent-runner.ts"))) process.exit(1);
+`);
+		const previousNodeOptions = process.env.NODE_OPTIONS;
+		const startedAt = Date.now();
+		let failed: AsyncExecutionResult;
+		try {
+			process.env.NODE_OPTIONS = [previousNodeOptions, `--import=${pathToFileURL(preloadFile).href}`].filter(Boolean).join(" ");
+			failed = await makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]).execute(
+				"resume-exit-before-ready",
+				{ action: "resume", id: sourceId, message: "Continue" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			) as AsyncExecutionResult;
+		} finally {
+			if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+			else process.env.NODE_OPTIONS = previousNodeOptions;
+		}
+		assert.equal(failed.isError, true);
+		assert.match(failed.content[0]?.text ?? "", /runner exited before startup state 'ready'/);
+		assert.ok(Date.now() - startedAt < 5_000, "runner exit must interrupt startup wait promptly");
+		const failedRun = fs.readdirSync(ASYNC_DIR).map((runId) => path.join(ASYNC_DIR, runId)).find((asyncDir) => {
+			try { return JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8")).error?.includes("runner exited before startup state 'ready'"); } catch { return false; }
+		});
+		assert.ok(failedRun);
+		const failedStatus = JSON.parse(fs.readFileSync(path.join(failedRun, "status.json"), "utf8")) as { processTerminal?: unknown };
+		const failedTerminal = JSON.parse(fs.readFileSync(path.join(failedRun, "process-terminal.json"), "utf8"));
+		assert.deepEqual(failedStatus.processTerminal, failedTerminal, "status and terminal proof must agree after an early runner exit");
+	});
+
 });
