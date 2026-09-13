@@ -322,6 +322,21 @@ describe("model fallback helpers", () => {
 		assert.equal(exclusion?.expiresAt - exclusion!.recordedAt, configuredTTL);
 	});
 
+	it("preserves live model diagnostics with a short configured default", () => {
+		const model = "openai/gpt-5-mini";
+		const modelError = "rate limit exceeded";
+		setDefaultTTL(5 * 60_000);
+		recordRetryableModelFailure(model, modelError);
+		const original = findModelExclusion(model);
+		assert.ok(original);
+
+		recordRetryableModelFailure(model, "npm install pi-prompt-template-model failed with code 217");
+		const preserved = findModelExclusion(model);
+		assert.equal(preserved?.reason, modelError);
+		assert.equal(preserved?.recordedAt, original.recordedAt);
+		assert.equal(preserved?.expiresAt, original.expiresAt);
+	});
+
 	it("caches provisioning failures that also carry a retryable signal with the short TTL", () => {
 		for (const error of [
 			"npm ci failed: fetch failed",

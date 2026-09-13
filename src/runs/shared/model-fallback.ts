@@ -638,7 +638,7 @@ export function recordRetryableModelFailure(model: string | undefined, error: st
 		modelId,
 		reason: error,
 		...(provider ? { provider } : {}),
-		...(isProvisioningFailure(error) ? { ttlMs: PROVISIONING_FAILURE_TTL_MS, preserveLonger: true } : {}),
+		...(isProvisioningFailure(error) ? { ttlMs: PROVISIONING_FAILURE_TTL_MS, preserveExisting: true } : {}),
 	});
 }
 

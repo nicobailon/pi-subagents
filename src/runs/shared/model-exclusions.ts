@@ -17,7 +17,7 @@ export type ModelExclusion = ModelExclusionTarget & {
 type RecordModelFailureOptions = ModelExclusionTarget & {
 	reason?: string;
 	ttlMs?: number;
-	preserveLonger?: boolean;
+	preserveExisting?: boolean;
 };
 
 let exclusions: ModelExclusion[] = [];
@@ -214,10 +214,10 @@ export function recordModelFailure(options: RecordModelFailureOptions): void {
 		? { modelId: options.modelId, ...(options.provider ? { provider: options.provider } : {}) }
 		: { provider: options.provider };
 	const expiresAt = now + ttl;
-	if (options.preserveLonger) {
+	if (options.preserveExisting) {
 		const key = dedupKey(target);
 		const existing = exclusions.find((entry) => dedupKey(entry) === key && entry.expiresAt > now);
-		if (existing && existing.expiresAt > expiresAt) return;
+		if (existing) return;
 	}
 	const exclusion: ModelExclusion = {
 		...target,
