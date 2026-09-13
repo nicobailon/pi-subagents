@@ -788,17 +788,26 @@ function formatAcceptanceSummary(agent: AgentConfig): string | undefined {
 	else if (policy) {
 		const modifiers = [
 			...(policy.evidence ?? []),
-			...(policy.verify ?? []).map((command) => `verify: ${command.id}`),
+			...(policy.verify ?? []).map((command) => `verify: ${formatAcceptanceDisplayLabel(command.id)}`),
 			...(policy.criteria?.length ? [`criteria: ${policy.criteria.length}`] : []),
 			...(policy.stopRules?.length ? [`stopRules: ${policy.stopRules.length}`] : []),
 		];
 		if (policy.review === false) modifiers.push("review: off");
-		else if (policy.review) modifiers.push(`review: ${formatReviewGateLabel(policy.review)}`);
+		else if (policy.review) {
+			const displayReview = policy.review.agent
+				? { ...policy.review, agent: formatAcceptanceDisplayLabel(policy.review.agent) }
+				: policy.review;
+			modifiers.push(`review: ${formatReviewGateLabel(displayReview)}`);
+		}
 		if (policy.report) modifiers.push(`report: ${policy.report}`);
 		summary.push(`Acceptance: ${policy.level ?? "auto"}${modifiers.length > 0 ? ` (${modifiers.join(", ")})` : ""}`);
 	}
 	if (agent.acceptanceRole) summary.push(`Acceptance role: ${agent.acceptanceRole}`);
 	return summary.length > 0 ? summary.join("; ") : undefined;
+}
+
+function formatAcceptanceDisplayLabel(value: string): string {
+	return JSON.stringify(previewDisplayText(value, 80));
 }
 
 const EXTERNAL_JOB_CAPABILITIES = { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false } as const;
