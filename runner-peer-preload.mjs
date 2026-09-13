@@ -1,4 +1,4 @@
-import { registerHooks } from "node:module";
+import * as nodeModule from "node:module";
 import { pathToFileURL } from "node:url";
 
 const aliases = JSON.parse(process.env.JITI_ALIAS ?? "{}");
@@ -9,9 +9,11 @@ const redirected = new Set([
 	"@earendil-works/pi-tui",
 ]);
 
-registerHooks({
+// Older Node hosts use Jiti's resolver; synchronous hooks are unavailable there.
+nodeModule.registerHooks?.({
 	resolve(specifier, context, nextResolve) {
-		if ((nativeRunner ? specifier.startsWith("@earendil-works/") && aliases[specifier] : redirected.has(specifier) && aliases[specifier])) {
+		const redirect = nativeRunner ? specifier.startsWith("@earendil-works/") : redirected.has(specifier);
+		if (redirect && aliases[specifier]) {
 			return nextResolve(pathToFileURL(aliases[specifier]).href, context);
 		}
 		try {

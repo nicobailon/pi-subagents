@@ -139,7 +139,8 @@ const jitiCliPath = resolveJitiCliPath();
 const asyncRunnerSourcePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 export function supportsNativeTypeScriptRuntime(nodeVersion: string): boolean {
 	const [major = 0, minor = 0] = nodeVersion.split(".").map(Number);
-	return Number.isFinite(major) && Number.isFinite(minor) && (major > 22 || (major === 22 && minor >= 19));
+	return Number.isFinite(major) && Number.isFinite(minor)
+		&& (major >= 24 || (major === 23 && minor >= 5) || (major === 22 && minor >= 19));
 }
 
 const nativeTypeScriptSupport = supportsNativeTypeScriptRuntime(process.versions.node);
@@ -728,7 +729,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 				// npm must override inherited bundled layouts (#2071); binaries retain release assets.
 				PI_PACKAGE_DIR: binaryHost ? process.env.PI_PACKAGE_DIR : piPackageRoot,
 				[JITI_ALIAS_ENV]: binaryHost ? undefined : JSON.stringify(hostPeerAliases.aliases),
-			PI_ASYNC_NATIVE_RUNNER: !binaryHost && nativeRunnerSupported ? "1" : "0",
+				PI_ASYNC_NATIVE_RUNNER: !binaryHost && nativeRunnerSupported ? "1" : "0",
 				PI_SUBAGENT_RUNNER_CONFIG: binaryHost ? cfgPath : undefined,
 			},
 		});

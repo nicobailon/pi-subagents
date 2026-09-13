@@ -1,12 +1,25 @@
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import * as fs from "node:fs";
+import * as nodeModule from "node:module";
 import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
+
+test("peer preload can start the Jiti fallback on hosts without synchronous module hooks", () => {
+	const result = childProcess.spawnSync(process.execPath, [
+		"--import", new URL("../../runner-peer-preload.mjs", import.meta.url).href,
+		"--eval", "process.stdout.write('preload-ready')",
+	], {
+		encoding: "utf8",
+		env: { ...process.env, JITI_ALIAS: "{}", PI_ASYNC_NATIVE_RUNNER: "0" },
+	});
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(result.stdout, "preload-ready");
+});
 
 test("executeAsyncSingle preloads all peer aliases before the selected runner loader when aliases exist", async (t) => {
 	const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "async-spawn-preload-")));
@@ -51,8 +64,11 @@ test("executeAsyncSingle preloads all peer aliases before the selected runner lo
 		const { makeAgent } = await import("../support/helpers.ts");
 		const { executeAsyncSingle, supportsNativeTypeScriptRuntime } = await import("../../src/runs/background/async-execution.ts");
 		assert.equal(supportsNativeTypeScriptRuntime("22.14.0"), false);
+		assert.equal(supportsNativeTypeScriptRuntime("22.18.0"), false);
 		assert.equal(supportsNativeTypeScriptRuntime("22.19.0"), true);
-		assert.equal(supportsNativeTypeScriptRuntime("23.0.0"), true);
+		assert.equal(supportsNativeTypeScriptRuntime("23.0.0"), false);
+		assert.equal(supportsNativeTypeScriptRuntime("23.5.0"), true);
+		assert.equal(supportsNativeTypeScriptRuntime("24.0.0"), true);
 		const spawn = t.mock.method(childProcess, "spawn", () => {
 			// Stop at the only external I/O seam: no fake pid or detached lifecycle.
 			throw new Error("spawn boundary captured");
@@ -93,8 +109,11 @@ test("executeAsyncSingle preloads all peer aliases before the selected runner lo
 			assert.equal(args[0], "--import");
 			assert.equal(args[1], new URL("../../runner-peer-preload.mjs", import.meta.url).href);
 			assert.ok(fs.existsSync(fileURLToPath(args[1])));
-			if (supportsNativeTypeScriptRuntime(process.versions.node)) assert.equal(args[2], "--experimental-strip-types");
+			const expectedLoader = process.env.PI_TEST_RUNNER_LOADER ?? (typeof nodeModule.registerHooks === "function" ? "native" : "jiti");
+			assert.ok(expectedLoader === "native" || expectedLoader === "jiti");
+			if (expectedLoader === "native") assert.equal(args[2], "--experimental-strip-types");
 			else assert.match(args[2], /[/\\]jiti-cli\.mjs$/);
+			assert.equal(options.env.PI_ASYNC_NATIVE_RUNNER, expectedLoader === "native" ? "1" : "0");
 			assert.match(args[3], /[/\\]subagent-runner\.ts$/);
 			assert.equal(args.length, 5);
 		}
