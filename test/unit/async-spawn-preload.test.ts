@@ -8,7 +8,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 
-test("executeAsyncSingle preloads all peer aliases before jiti when any aliases exist", async (t) => {
+test("executeAsyncSingle preloads all peer aliases before the selected runner loader when aliases exist", async (t) => {
 	const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "async-spawn-preload-")));
 	const host = path.join(root, "host");
 	const server = "@earendil-works/pi-server";
@@ -90,7 +90,8 @@ test("executeAsyncSingle preloads all peer aliases before jiti when any aliases 
 			assert.equal(args[0], "--import");
 			assert.equal(args[1], new URL("../../runner-peer-preload.mjs", import.meta.url).href);
 			assert.ok(fs.existsSync(fileURLToPath(args[1])));
-			assert.match(args[2], /[/\\]jiti-cli\.mjs$/);
+			if ("typescript" in process.features) assert.equal(args[2], "--experimental-strip-types");
+			else assert.match(args[2], /[/\\]jiti-cli\.mjs$/);
 			assert.match(args[3], /[/\\]subagent-runner\.ts$/);
 			assert.equal(args.length, 5);
 		}
