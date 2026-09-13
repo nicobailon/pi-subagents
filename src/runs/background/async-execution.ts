@@ -136,7 +136,9 @@ function resolveJitiCliPath(): string | undefined {
 }
 
 const jitiCliPath = resolveJitiCliPath();
+const asyncRunnerSourcePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 const nativeTypeScriptSupport = "typescript" in process.features;
+const nativeRunnerSupported = nativeTypeScriptSupport && !asyncRunnerSourcePath.split(path.sep).some((segment) => segment.toLowerCase() === "node_modules");
 
 interface AsyncExecutionContext {
 	pi: ExtensionAPI;
@@ -388,7 +390,7 @@ export function formatAsyncStartedMessage(headline: string, interactive: boolean
  * Check if jiti is available for async execution
  */
 export function isAsyncAvailable(): boolean {
-	return nativeTypeScriptSupport || jitiCliPath !== undefined;
+	return nativeRunnerSupported || jitiCliPath !== undefined;
 }
 
 export function resolveAsyncRunnerLogPaths(cfg: object): { stdoutPath: string; stderrPath: string } | undefined {
@@ -654,10 +656,10 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 
 	// The compiled host exposes its SDK only through Pi's extension loader.
 	const binaryHost = resolveBunPiExecutable();
-	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
+	const runner = asyncRunnerSourcePath;
 	const bootstrap = path.join(path.dirname(runner), "binary-bootstrap.ts");
 	if (binaryHost && !fs.existsSync(bootstrap)) return { error: `Background runner bootstrap not found: ${bootstrap}` };
-	if (!binaryHost && !nativeTypeScriptSupport && !jitiCliPath) {
+	if (!binaryHost && !nativeRunnerSupported && !jitiCliPath) {
 		return { error: "native Node TypeScript support and upstream jiti for TypeScript execution are unavailable; use Node 22.19+ or ensure package dependencies are installed" };
 	}
 	if (!binaryHost && !piPackageRoot) {
@@ -706,7 +708,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			: [];
 		const args = binaryHost
 			? ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-session", "--mode", "rpc", "--extension", bootstrap]
-			: nativeTypeScriptSupport
+			: nativeRunnerSupported
 				? [...preload, "--experimental-strip-types", runner, cfgPath]
 				: [...preload, jitiCliPath!, runner, cfgPath];
 		const proc = spawn(command, args, {
@@ -721,6 +723,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 				// npm must override inherited bundled layouts (#2071); binaries retain release assets.
 				PI_PACKAGE_DIR: binaryHost ? process.env.PI_PACKAGE_DIR : piPackageRoot,
 				[JITI_ALIAS_ENV]: binaryHost ? undefined : JSON.stringify(hostPeerAliases.aliases),
+			PI_ASYNC_NATIVE_RUNNER: !binaryHost && nativeRunnerSupported ? "1" : "0",
 				PI_SUBAGENT_RUNNER_CONFIG: binaryHost ? cfgPath : undefined,
 			},
 		});
