@@ -11,6 +11,7 @@ import type {
 	AcceptanceLedger,
 	AcceptanceLevel,
 	AcceptanceReport,
+	AcceptanceReviewGate,
 	AcceptanceRole,
 	AcceptanceRuntimeCheck,
 	AcceptanceRuntimeCheckStatus,
@@ -506,6 +507,12 @@ function acceptanceRequiresChildReport(acceptance: ResolvedAcceptanceConfig): bo
 	return acceptance.criteria.length > 0 || acceptance.evidence.length > 0;
 }
 
+/** Label a declared review gate the same way in prompts and capability summaries. */
+export function formatReviewGateLabel(review: AcceptanceReviewGate): string {
+	const status = review.required === false ? "optional" : "required";
+	return review.agent ? `${status} by ${review.agent}` : status;
+}
+
 export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, options: { reportOptional?: boolean; structuredOutput?: boolean } = {}): string {
 	if (acceptance.level === "none") return "";
 	if (options.reportOptional && !acceptanceRequiresChildReport(acceptance)) return "";
@@ -525,7 +532,7 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, opt
 		for (const command of acceptance.verify) lines.push(`- ${command.id}: ${command.command}`);
 	}
 	if (acceptance.review) {
-		lines.push("", `Review gate: ${acceptance.review.required === false ? "optional" : "required"}${acceptance.review.agent ? ` by ${acceptance.review.agent}` : ""}.`);
+		lines.push("", `Review gate: ${formatReviewGateLabel(acceptance.review)}.`);
 		if (acceptance.review.focus) lines.push(`Review focus: ${acceptance.review.focus}`);
 	}
 	if (acceptance.stopRules.length > 0) {
