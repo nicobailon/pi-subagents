@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve as resolvePath } from "node:path";
 import { Worker } from "node:worker_threads";
@@ -1169,7 +1169,7 @@ export interface WorkflowChildSettledNotification {
 
 export interface RunWorkflowScriptOptions {
 	script: string;
-	/** Parent Pi process cwd to refresh before workflow worker construction. */
+	/** Parent-session cwd used to recover a stale process cwd. */
 	processCwd?: string;
 	/** Workflow run ID for notifications. Required when onChildSettled is provided. */
 	workflowRunId?: string;
@@ -1924,54 +1924,39 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	}
 	const launchSemaphore = new Semaphore(options.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
 
-	let previousCwd: string | undefined;
 	if (options.processCwd !== undefined) {
+		let staleCwd = false;
 		try {
-			previousCwd = process.cwd();
-		} catch {
-			// The runner's cwd was already removed; there is nothing restorable.
-			previousCwd = undefined;
+			realpathSync(process.cwd());
+		} catch (error) {
+			const code = typeof error === "object" && error !== null && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
+			if (code !== "ENOENT") throw new Error("Workflow current cwd could not be validated.", { cause: error });
+			staleCwd = true;
 		}
 		try {
-			process.chdir(options.processCwd);
+			if (staleCwd) process.chdir(options.processCwd);
+			else {
+				const target = realpathSync(options.processCwd);
+				if (!statSync(target).isDirectory()) {
+					const error = new Error(`ENOTDIR: not a directory, access '${target}'`) as NodeJS.ErrnoException;
+					error.code = "ENOTDIR";
+					throw error;
+				}
+				accessSync(target, constants.X_OK);
+			}
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
-			throw new Error(
-				`Workflow process cwd is unavailable: ${options.processCwd}: ${detail}`,
-				{ cause: error },
-			);
+			throw new Error(`Workflow process cwd is unavailable: ${options.processCwd}: ${detail}`, { cause: error });
 		}
 	}
 
 	let acornPath: string;
-	let worker: Worker;
 	try {
-		try {
-			acornPath = resolveWorkflowParserEntry();
-		} catch (error) {
-			throw new Error("Workflow parser dependency 'acorn' is unavailable from pi-subagents. Reinstall pi-subagents dependencies before launching workflowScript.", { cause: error });
-		}
-		worker = new Worker(WORKER_SOURCE, { eval: true, workerData: { acornPath } });
-	} finally {
-		// The worker captured the repaired cwd during construction. Re-anchoring the
-		// runner is only a temporary repair so it must not leak to the caller: restore
-		// the previous cwd unless it was removed, in which case keeping the repaired
-		// cwd is the desired outcome and restore failure is not an error.
-		if (previousCwd !== undefined) {
-			try {
-				process.chdir(previousCwd);
-			} catch (error) {
-				// A removed previous directory is the expected case, so keeping the repaired
-				// cwd is the desired outcome. Any other restore failure leaves the process
-				// anchored to options.processCwd and would silently change which project
-				// later work uses, so surface it instead of hiding it.
-				const code = typeof error === "object" && error !== null && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-				if (code !== "ENOENT") {
-					console.error("Workflow cwd restore failed:", error);
-				}
-			}
-		}
+		acornPath = resolveWorkflowParserEntry();
+	} catch (error) {
+		throw new Error("Workflow parser dependency 'acorn' is unavailable from pi-subagents. Reinstall pi-subagents dependencies before launching workflowScript.", { cause: error });
 	}
+	const worker = new Worker(WORKER_SOURCE, { eval: true, workerData: { acornPath } });
 	const emits: unknown[] = [];
 	const consoleEntries: WorkflowScriptResult["console"] = [];
 	const trace: WorkflowScriptTraceEntry[] = [];
