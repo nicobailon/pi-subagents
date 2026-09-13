@@ -649,15 +649,17 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		assert.match(String((sent[0] as { content?: unknown }).content ?? ""), /Detached foreground run run-123/);
 	});
 
-	it("does not reserve a foreground detach shortcut by default", () => {
+	it("preserves /subagents-fleet without reserving a global shortcut by default", () => {
+		const commands = new Map<string, RegisteredSlashCommand>();
 		const shortcuts = new Map<string, unknown>();
 		registerSlashCommands!({
 			events: createEventBus(),
-			registerCommand() {},
+			registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
 			registerShortcut(key: string, spec: unknown) { shortcuts.set(key, spec); },
 			sendMessage() {},
 		}, createState(process.cwd()));
-		assert.equal(shortcuts.has("ctrl+b"), false);
+		assert.ok(commands.has("subagents-fleet"));
+		assert.equal(shortcuts.size, 0);
 	});
 
 	it("/subagents-stop keeps the selector within its allocated width", async () => {

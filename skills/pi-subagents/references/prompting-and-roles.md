@@ -29,7 +29,7 @@ Agents use the `subagent(...)` tool for execution, management, status, and contr
 - `/subagents-detach [run-id]` — detach an active foreground single-subagent run without terminating its child
 - `/subagents-steer <run-id> [--child <child-id>] <message>` — steer a live async run (or one child of it) from non-TUI sessions and RPC hosts
 - `/subagent-cost` — show parent plus child token usage and cost for the session
-- `/subagents-fleet` — open the live fleet inspector with per-child controls; `Ctrl+Alt+F` opens it during an active foreground turn, `↑↓`/`jk` selects children, `PgUp`/`PgDn` scrolls transcript detail, `s` steers the selected live async child, and `D` stops its top-level async run after confirmation
+- `/subagents-fleet` — open the live fleet inspector with per-child controls; `↑↓`/`jk` selects children, `PgUp`/`PgDn` scrolls transcript detail, `s` steers the selected live async child, and `D` stops its top-level async run after confirmation
 - `/subagents-watchdog` — inspect or configure the opt-in adversarial change watchdog (model, on/off, recommend-model, check)
 - `/subagents-doctor` — diagnose setup, discovery, async paths, and intercom bridge state
 - `/subagents-models [agent]` — show the live runtime-loaded builtin model mapping

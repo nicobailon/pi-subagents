@@ -12,7 +12,7 @@ A background child is a pi session created inside the detached runner process. T
 
 Live progress shows compact detail for single, chain, and parallel modes: a bounded one-line task, current tool, recent output, token counts, aggregate cost, duration, activity freshness, current-tool duration, and chain graph metadata when available. Workflow `label` metadata wins over raw task text in compact multi-child cards.
 
-Press Pi's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step. Running-card hints also advertise `Ctrl+Alt+F` for the Fleet inspector.
+Press Pi's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step.
 
 Sequential chains show a flow line like `done scout → running worker`. Chains with parallel steps show per-step cards instead. Chain status uses `label` and `phase` metadata when present, while falling back to agent names for older chains.
 
@@ -35,7 +35,7 @@ async subagent worker · background
   ● Step 1/1: worker · running
     task: Review authentication boundaries
     ⎿  read: src/auth.ts | 2.0s
-    Press configured-expand-key for live detail · Ctrl+Alt+F Fleet
+    Press configured-expand-key for live detail
 ```
 
 To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.
@@ -55,7 +55,7 @@ For compact chat results with FleetView as the only live editor surface, merge t
 ```
 
 - `inlineToolDisplay: "summary"` keeps one static result row per call, alongside its call heading. A completed status query is not proof that the queried child has finished.
-- `fleetView: true` retains live progress. Open `/subagents-fleet` or press `Ctrl+Alt+F` for details instead of repeatedly requesting status just to watch progress. Pi's expand key does not expand summary results; keep `"rich"` if you want expandable inline output.
+- `fleetView: true` retains live progress. Open `/subagents-fleet` for details instead of repeatedly requesting status just to watch progress. Pi's expand key does not expand summary results; keep `"rich"` if you want expandable inline output.
 - `asyncWidget: false` hides only the additional under-editor async widget, leaving FleetView available. This configuration reduces visible surfaces; it does not guarantee ordering relative to other extensions.
 
 Thanks to [DraconDev](https://github.com/DraconDev) for reporting the display noise and suggesting summary mode in [#1931](https://github.com/nicobailon/pi-subagents/issues/1931).
@@ -100,8 +100,6 @@ Default keys:
 - `H` — open the selected active async child through the available Inspect plugin
 
 Set `fleetKeybindings` in the extension config to replace inspector-level keys when a terminal intercepts keys such as `PgUp`, `PgDn`, `Home`, or `End`. Prompt modes keep fixed keys such as `Esc`, `Enter`, `Tab`, and stop-confirmation `Y`/`N`.
-
-`Ctrl+Alt+F` opens the same inspector even while a foreground turn is active and slash input is queued.
 
 Enter and `H` use the available Inspect plugin. On macOS with Ghostty 1.3+ (TERM_PROGRAM=ghostty), this includes the other bundled open-only plugin using Ghostty's preview AppleScript API; status and close are unavailable because no binding is written. In a child-specific inspector, type ordinary guidance and press Enter to send it through the acknowledged steer channel; `steer <message>`, `status`, and `stop` remain available as explicit controls. The bundled Herdr plugin uses Herdr 0.7.5+.
 

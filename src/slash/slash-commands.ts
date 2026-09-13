@@ -25,7 +25,6 @@ import { resolveAsyncStatusChild } from "../runs/shared/child-identity.ts";
 import { readStatus } from "../shared/utils.ts";
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
 import { readWorkflowReceipt } from "../workflows/workflow-receipt.ts";
-import { FLEET_OPEN_SHORTCUT } from "../shared/shortcuts.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import { registerPromptWorkflowCommands } from "./prompt-workflows.ts";
 import { openSubagentsAdmin } from "./subagents-admin.ts";
@@ -974,11 +973,6 @@ export function registerSlashCommands(
 	pi.registerCommand("subagents-fleet", {
 		description: "Open the live subagent fleet inspector",
 		handler: async (_args, ctx) => showFleet(ctx),
-	});
-
-	pi.registerShortcut(FLEET_OPEN_SHORTCUT, {
-		description: "Open subagent fleet inspector",
-		handler: async (ctx) => showFleet(ctx),
 	});
 
 	const detachForegroundRun = (args: string, ctx: ExtensionContext): void => {

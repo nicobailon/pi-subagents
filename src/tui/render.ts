@@ -26,7 +26,7 @@ import {
 	WIDGET_KEY,
 } from "../shared/types.ts";
 import { previewDisplayText, sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
-import { FLEET_OPEN_SHORTCUT, formatShortcutLabel } from "../shared/shortcuts.ts";
+import { formatShortcutLabel } from "../shared/shortcuts.ts";
 import { formatContextUsage, formatTokens, formatUsage, formatDuration, formatModelThinking, formatToolCall, formatTokenUsage, shortenPath } from "../shared/formatters.ts";
 import { getDisplayItems, getSingleResultOutput, PROMPT_REDACTED } from "../shared/utils.ts";
 import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
@@ -95,11 +95,11 @@ function liveDetailKeyText(): string {
 }
 
 export function liveDetailHintText(): string {
-	return `Press ${liveDetailKeyText()} for live detail · ${formatShortcutLabel(FLEET_OPEN_SHORTCUT)} Fleet`;
+	return `Press ${liveDetailKeyText()} for live detail`;
 }
 
 function workflowDetailHintText(): string {
-	return `Press ${liveDetailKeyText()} for details · ${formatShortcutLabel(FLEET_OPEN_SHORTCUT)} Fleet`;
+	return `Press ${liveDetailKeyText()} for details`;
 }
 
 function foregroundSingleHintText(shortcut?: string): string {
