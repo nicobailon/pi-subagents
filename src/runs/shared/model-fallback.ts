@@ -607,11 +607,39 @@ export function isRetryableModelFailureAttempt(input: { error: string | undefine
 // but do not establish that the model is unhealthy for subsequent requests.
 const REQUEST_SHAPE_FAILURE_PATTERN = /\b(?:bad[ _]request|invalid[ _]argument|invalid_request_error)\b/i;
 
+/**
+ * Failures that originate while assembling the child environment (extension
+ * npm install into a child prefix, a preflight script, spawning a helper)
+ * instead of from the provider. Their text can still trip the broad model
+ * failure patterns above: a package whose name contains the substring "model"
+ * next to a sentence containing "failed" matches {@link RETRYABLE_MODEL_FAILURE_PATTERNS}
+ * even though no model request ever happened. Retrying a different model
+ * cannot fix the environment, so keep the record only long enough to damp
+ * repeated attempts instead of blaming the model for the default TTL.
+ */
+const PROVISIONING_FAILURE_PATTERNS = [
+	/^npm (?:install|ci|uninstall|exec|run)\b/i,
+	/\bnpm\b[^\n]*failed with code \d+/i,
+	/\bnpm\b[^\n]*exited with code \d+/i,
+	/\bpreflight\b/i,
+];
+
+const PROVISIONING_FAILURE_TTL_MS = 15 * 60_000;
+
+function isProvisioningFailure(error: string): boolean {
+	return PROVISIONING_FAILURE_PATTERNS.some((pattern) => pattern.test(error));
+}
+
 export function recordRetryableModelFailure(model: string | undefined, error: string | undefined): void {
 	if (!model || !error || !isRetryableModelFailure(error) || isContextOverflow(error)) return;
 	if (REQUEST_SHAPE_FAILURE_PATTERN.test(error) || isTransientNoOutputFailure(error)) return;
 	const { provider, modelId } = parseModelKey(model);
-	recordModelFailure({ modelId, reason: error, ...(provider ? { provider } : {}) });
+	recordModelFailure({
+		modelId,
+		reason: error,
+		...(provider ? { provider } : {}),
+		...(isProvisioningFailure(error) ? { ttlMs: PROVISIONING_FAILURE_TTL_MS, preserveExisting: true } : {}),
+	});
 }
 
 /**

@@ -13,11 +13,17 @@ import {
 	resolveModelCandidate,
 	resolveSubagentModelOverride,
 } from "../../src/runs/shared/model-fallback.ts";
-import { clearExclusions, findModelExclusion, getExcludedCount, recordModelFailure } from "../../src/runs/shared/model-exclusions.ts";
+import { clearExclusions, DEFAULT_MODEL_EXCLUSION_TTL_MS, findModelExclusion, getExcludedCount, recordModelFailure, reloadFromDisk, setDefaultTTL } from "../../src/runs/shared/model-exclusions.ts";
 import { resolveModelScopesForAgent } from "../../src/runs/shared/model-scope.ts";
 
-beforeEach(() => clearExclusions());
-afterEach(() => clearExclusions());
+beforeEach(() => {
+	setDefaultTTL(DEFAULT_MODEL_EXCLUSION_TTL_MS);
+	clearExclusions();
+});
+afterEach(() => {
+	setDefaultTTL(DEFAULT_MODEL_EXCLUSION_TTL_MS);
+	clearExclusions();
+});
 
 describe("model fallback helpers", () => {
 	const availableModels = [
@@ -281,6 +287,86 @@ describe("model fallback helpers", () => {
 			recordRetryableModelFailure("openai/gpt-5-mini", error);
 			assert.equal(findModelExclusion("openai/gpt-5-mini")?.reason, error);
 			assert.equal(getExcludedCount(), 1);
+		}
+	});
+
+	it("caches provisioning npm failures with a short TTL instead of the 24h default", () => {
+		const error = "npm install pi-prompt-template-model --prefix <profile>/.pi/npm --legacy-peer-deps failed with code 217";
+		assert.equal(isRetryableModelFailure(error), true);
+		recordRetryableModelFailure("openai/gpt-5-mini", error);
+		const exclusion = findModelExclusion("openai/gpt-5-mini");
+		assert.equal(exclusion?.reason, error);
+		assert.equal(exclusion?.expiresAt - exclusion!.recordedAt, 15 * 60_000);
+	});
+
+	it("preserves a longer live model exclusion when provisioning fails later", () => {
+		const model = "openai/gpt-5-mini";
+		const modelError = "rate limit exceeded";
+		recordRetryableModelFailure(model, modelError);
+		const original = findModelExclusion(model);
+		assert.ok(original);
+
+		recordRetryableModelFailure(model, "npm install pi-prompt-template-model failed with code 217");
+		reloadFromDisk();
+		const preserved = findModelExclusion(model);
+		assert.equal(preserved?.reason, modelError);
+		assert.equal(preserved?.recordedAt, original.recordedAt);
+		assert.equal(preserved?.expiresAt, original.expiresAt);
+	});
+
+	it("caps the provisioning TTL at a shorter configured default", () => {
+		const configuredTTL = 5 * 60_000;
+		setDefaultTTL(configuredTTL);
+		recordRetryableModelFailure("openai/gpt-5-mini", "npm install pi-prompt-template-model failed with code 217");
+		const exclusion = findModelExclusion("openai/gpt-5-mini");
+		assert.equal(exclusion?.expiresAt - exclusion!.recordedAt, configuredTTL);
+	});
+
+	it("preserves live model diagnostics with a short configured default", () => {
+		const model = "openai/gpt-5-mini";
+		const modelError = "rate limit exceeded";
+		setDefaultTTL(5 * 60_000);
+		recordRetryableModelFailure(model, modelError);
+		const original = findModelExclusion(model);
+		assert.ok(original);
+
+		recordRetryableModelFailure(model, "npm install pi-prompt-template-model failed with code 217");
+		const preserved = findModelExclusion(model);
+		assert.equal(preserved?.reason, modelError);
+		assert.equal(preserved?.recordedAt, original.recordedAt);
+		assert.equal(preserved?.expiresAt, original.expiresAt);
+	});
+
+	it("caches provisioning failures that also carry a retryable signal with the short TTL", () => {
+		for (const error of [
+			"npm ci failed: fetch failed",
+			"npm install pi-prompt-template-model@0.12.2 failed with code 503",
+			"preflight failed: timeout waiting for node",
+		]) {
+			clearExclusions();
+			assert.equal(isRetryableModelFailure(error), true, error);
+			recordRetryableModelFailure("openai/gpt-5-mini", error);
+			const exclusion = findModelExclusion("openai/gpt-5-mini");
+			assert.ok(exclusion, error);
+			assert.equal(exclusion.expiresAt - exclusion.recordedAt, 15 * 60_000, error);
+		}
+	});
+
+	it("keeps the default 24h TTL for model-health failures", () => {
+		recordRetryableModelFailure("openai/gpt-5-mini", "rate limit exceeded");
+		const exclusion = findModelExclusion("openai/gpt-5-mini");
+		assert.equal(exclusion?.expiresAt - exclusion?.recordedAt, DEFAULT_MODEL_EXCLUSION_TTL_MS);
+	});
+
+	it("does not record provisioning text that carries no retryable signal", () => {
+		for (const error of [
+			"npm ci exited with code 1",
+			"npm install pi-prompt-template-model left the tree unchanged",
+			"preflight ok",
+		]) {
+			clearExclusions();
+			recordRetryableModelFailure("openai/gpt-5-mini", error);
+			assert.equal(getExcludedCount(), 0, error);
 		}
 	});
 

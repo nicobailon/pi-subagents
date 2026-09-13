@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Cache child-launch provisioning failures (npm install into a child prefix, preflight, helper bootstrap) with a 15 minute exclusion instead of the default 24h, so a transient bootstrap failure cannot keep excluding a healthy model for a full day. Thanks to [@rnavarro](https://github.com/rnavarro) for #2204.
 - Prefer exact canonical agent names over packaged local-name fallbacks, and never reinterpret home-level user agent directories as project configuration. This prevents a plain `scout` launch from becoming ambiguous with `code-analysis.scout` and keeps Windows tests from leaking project fixtures into `~/.pi/agents`.
 - Stop registering and advertising a default global `Ctrl+Alt+F` Fleet shortcut; `/subagents-fleet` and FleetView remain available. Thanks to [@miaomiaozii](https://github.com/miaomiaozii) for #2196.
 - Let headless parent and nested coordinator sessions answer blocking child supervisor requests without deadlocking their final background-work drain. Thanks to [@ProDrifterDK](https://github.com/ProDrifterDK) for #2185.

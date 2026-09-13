@@ -17,6 +17,7 @@ export type ModelExclusion = ModelExclusionTarget & {
 type RecordModelFailureOptions = ModelExclusionTarget & {
 	reason?: string;
 	ttlMs?: number;
+	preserveExisting?: boolean;
 };
 
 let exclusions: ModelExclusion[] = [];
@@ -183,7 +184,7 @@ function readPersistedExclusion(entry: unknown, index: number): PersistedExclusi
 	return { ok: true, exclusion: { modelId, ...(provider === undefined ? {} : { provider }), ...metadata } };
 }
 
-function dedupKey(entry: ModelExclusion): string {
+function dedupKey(entry: ModelExclusionTarget): string {
 	return `${entry.provider ?? ""}|${entry.modelId ?? ""}`;
 }
 
@@ -207,16 +208,22 @@ function deduplicate(items: ModelExclusion[]): ModelExclusion[] {
  */
 export function recordModelFailure(options: RecordModelFailureOptions): void {
 	ensureLoaded();
-	const ttl = options.ttlMs ?? defaultTTLMs;
+	const ttl = Math.min(options.ttlMs ?? defaultTTLMs, defaultTTLMs);
 	const now = Date.now();
 	const target: ModelExclusionTarget = options.modelId !== undefined
 		? { modelId: options.modelId, ...(options.provider ? { provider: options.provider } : {}) }
 		: { provider: options.provider };
+	const expiresAt = now + ttl;
+	if (options.preserveExisting) {
+		const key = dedupKey(target);
+		const existing = exclusions.find((entry) => dedupKey(entry) === key && entry.expiresAt > now);
+		if (existing) return;
+	}
 	const exclusion: ModelExclusion = {
 		...target,
 		reason: options.reason ?? "runtime-failure",
 		recordedAt: now,
-		expiresAt: now + ttl,
+		expiresAt,
 	};
 	exclusions.unshift(exclusion);
 	exclusions = deduplicate(exclusions);
