@@ -232,7 +232,7 @@ test("running single-subagent cards show the configured detach shortcut", () => 
 		"ctrl+b",
 	));
 	assert.match(configured, /task: reviewer task/);
-	assert.match(configured, /Ctrl\+Alt\+F Fleet/);
+	assert.doesNotMatch(configured, /Fleet/);
 	assert.match(configured, /Ctrl\+B to run in background/);
 
 	const unconfigured = componentText(renderSubagentResult(toolResult as never, { expanded: false }, theme as any));
@@ -283,7 +283,7 @@ test("compact multi-result cards prefer bounded workflow labels over raw tasks",
 	assert.match(text, /task: Review auth flow x+/);
 	assert.doesNotMatch(text, /raw task that should not win/);
 	assert.match(text, /\.\.\.$/m);
-	assert.match(text, /Ctrl\+Alt\+F Fleet/);
+	assert.doesNotMatch(text, /Fleet/);
 });
 
 test("workflow checklist does not map child-local result indexes onto graph nodes", () => {
@@ -359,7 +359,8 @@ test("collapsed async workflow widgets render compact lane rows while expanded w
 	assert.match(collapsed, /review · reviewer · queued/);
 	assert.match(collapsed, /gate · reviewer · queued/);
 	assert.doesNotMatch(collapsed, /bottleneck/);
-	assert.match(collapsed, /Press configured-expand-key for details · Ctrl\+Alt\+F Fleet/);
+	assert.match(collapsed, /Press configured-expand-key for details/);
+	assert.doesNotMatch(collapsed, /Fleet/);
 	assert.equal((collapsed.match(/1\/5 done · 1 active · 3 queued/g) ?? []).length, 1);
 	assert.doesNotMatch(collapsed, /Step \d\/\d|task:|workspace:|ref:|out(?:put)?:/i);
 
@@ -412,7 +413,8 @@ test("compact foreground workflow results use checklist phases instead of child 
 	assert.match(text, /1\/2 done · 1 active/);
 	assert.match(text, /✓ inventory/);
 	assert.match(text, /writers 1 active/);
-	assert.match(text, /Press configured-expand-key for live detail · Ctrl\+Alt\+F Fleet/);
+	assert.match(text, /Press configured-expand-key for live detail/);
+	assert.doesNotMatch(text, /Fleet/);
 	assert.doesNotMatch(text, /Step \d\/\d|task:|workspace:|ref:|out(?:put)?:/i);
 });
 
