@@ -24,13 +24,13 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
       - name: Unit tests
-        run: npm test
+        run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test ${{ runner.os == 'Windows' && '--test-concurrency=2' || '' }} test/unit/*.test.ts
       - name: Integration tests
         timeout-minutes: 10
         env:
           NODE_DISABLE_COMPILE_CACHE: '1'
           PI_SUBAGENTS_TERMINAL_EVIDENCE_DIR: ${{ runner.temp }}/1906-terminal-evidence
-        run: npm run test:integration
+        run: node --experimental-strip-types --import ./test/support/register-loader.mjs --test ${{ runner.os == 'Windows' && '--test-concurrency=2' || '' }} test/integration/*.test.ts
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
