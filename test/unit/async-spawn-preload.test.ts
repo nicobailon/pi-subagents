@@ -49,7 +49,10 @@ test("executeAsyncSingle preloads all peer aliases before the selected runner lo
 		// helpers -> mock-pi -> child-session -> readonly evidence -> child hooks
 		// also loads async-execution. Set the host before importing that graph.
 		const { makeAgent } = await import("../support/helpers.ts");
-		const { executeAsyncSingle } = await import("../../src/runs/background/async-execution.ts");
+		const { executeAsyncSingle, supportsNativeTypeScriptRuntime } = await import("../../src/runs/background/async-execution.ts");
+		assert.equal(supportsNativeTypeScriptRuntime("22.14.0"), false);
+		assert.equal(supportsNativeTypeScriptRuntime("22.19.0"), true);
+		assert.equal(supportsNativeTypeScriptRuntime("23.0.0"), true);
 		const spawn = t.mock.method(childProcess, "spawn", () => {
 			// Stop at the only external I/O seam: no fake pid or detached lifecycle.
 			throw new Error("spawn boundary captured");
@@ -90,7 +93,7 @@ test("executeAsyncSingle preloads all peer aliases before the selected runner lo
 			assert.equal(args[0], "--import");
 			assert.equal(args[1], new URL("../../runner-peer-preload.mjs", import.meta.url).href);
 			assert.ok(fs.existsSync(fileURLToPath(args[1])));
-			if ("typescript" in process.features) assert.equal(args[2], "--experimental-strip-types");
+			if (supportsNativeTypeScriptRuntime(process.versions.node)) assert.equal(args[2], "--experimental-strip-types");
 			else assert.match(args[2], /[/\\]jiti-cli\.mjs$/);
 			assert.match(args[3], /[/\\]subagent-runner\.ts$/);
 			assert.equal(args.length, 5);

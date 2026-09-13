@@ -11,7 +11,7 @@ const redirected = new Set([
 
 registerHooks({
 	resolve(specifier, context, nextResolve) {
-		if ((nativeRunner ? aliases[specifier] : redirected.has(specifier) && aliases[specifier])) {
+		if ((nativeRunner ? specifier.startsWith("@earendil-works/") && aliases[specifier] : redirected.has(specifier) && aliases[specifier])) {
 			return nextResolve(pathToFileURL(aliases[specifier]).href, context);
 		}
 		try {

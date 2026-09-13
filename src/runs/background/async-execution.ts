@@ -137,7 +137,12 @@ function resolveJitiCliPath(): string | undefined {
 
 const jitiCliPath = resolveJitiCliPath();
 const asyncRunnerSourcePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
-const nativeTypeScriptSupport = "typescript" in process.features;
+export function supportsNativeTypeScriptRuntime(nodeVersion: string): boolean {
+	const [major = 0, minor = 0] = nodeVersion.split(".").map(Number);
+	return Number.isFinite(major) && Number.isFinite(minor) && (major > 22 || (major === 22 && minor >= 19));
+}
+
+const nativeTypeScriptSupport = supportsNativeTypeScriptRuntime(process.versions.node);
 const nativeRunnerSupported = nativeTypeScriptSupport && !asyncRunnerSourcePath.split(path.sep).some((segment) => segment.toLowerCase() === "node_modules");
 
 interface AsyncExecutionContext {
