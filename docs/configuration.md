@@ -6,7 +6,7 @@ Settings-level keys (`subagents.defaultModel`, `defaultProvider`, `defaultThinki
 
 ## Project root resolution (settings)
 
-By default, project settings resolve from the nearest parent directory that contains `.pi` or `.agents`, preserving existing nested-project behavior. In monorepos or git worktrees where an incidental nested `.pi` directory should not shadow the repository-level config, set this in the repository root `.pi/settings.json`:
+By default, project settings resolve from the nearest parent directory that contains `.pi` or `.agents`, preserving existing nested-project behavior. Discovery stops at the user home directory, including when the home is reached through a filesystem alias such as a symlink or Windows junction, so home-level `.pi` and `.agents` remain user configuration rather than project configuration. In monorepos or git worktrees where an incidental nested `.pi` directory should not shadow the repository-level config, set this in the repository root `.pi/settings.json`:
 
 ```json
 {

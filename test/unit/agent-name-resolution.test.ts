@@ -15,7 +15,7 @@ function makeAgent(name: string, localName?: string): AgentConfig {
 		inheritSkills: false,
 		systemPrompt: "Inspect",
 		source: "project",
-		filePath: `/.pi/agents/${name}.md`,
+		filePath: path.join(".pi", "agents", `${name}.md`),
 	};
 }
 
@@ -45,15 +45,19 @@ describe("resolveAgentName", () => {
 });
 
 describe("findConfiguredProjectRoot", () => {
-	it("does not reinterpret user config as project config", () => {
+	it("does not reinterpret user config reached through a home alias as project config", () => {
 		const previousHome = process.env.HOME;
 		const previousUserProfile = process.env.USERPROFILE;
-		const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), "agent-home-"));
+		const isolatedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-home-"));
+		const isolatedHome = path.join(isolatedRoot, "home");
+		const homeAlias = path.join(isolatedRoot, "home-alias");
 
 		try {
+			fs.mkdirSync(isolatedHome);
+			fs.symlinkSync(isolatedHome, homeAlias, process.platform === "win32" ? "junction" : "dir");
 			process.env.HOME = isolatedHome;
 			process.env.USERPROFILE = isolatedHome;
-			const nested = fs.mkdtempSync(path.join(isolatedHome, "agent-project-"));
+			const nested = fs.mkdtempSync(path.join(homeAlias, "agent-project-"));
 			fs.mkdirSync(path.join(isolatedHome, ".pi"));
 
 			assert.equal(findConfiguredProjectRoot(nested), null);
@@ -65,7 +69,7 @@ describe("findConfiguredProjectRoot", () => {
 			else process.env.HOME = previousHome;
 			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
 			else process.env.USERPROFILE = previousUserProfile;
-			fs.rmSync(isolatedHome, { recursive: true, force: true });
+			fs.rmSync(isolatedRoot, { recursive: true, force: true });
 		}
 	});
 });

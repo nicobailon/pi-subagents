@@ -846,11 +846,12 @@ function findProjectRootCandidates(cwd: string): string[] {
 		: undefined;
 	const homeDirs = new Set([os.homedir(), process.env.HOME, process.env.USERPROFILE, windowsProfile]
 		.filter((value): value is string => Boolean(value?.trim()))
-		.map((value) => path.resolve(value)));
+		.filter(isDirectory)
+		.map((value) => fs.realpathSync.native(value)));
 	let currentDir = cwd;
 	while (true) {
 		// ~/.pi and ~/.agents are user configuration, never an implicit project.
-		if (homeDirs.has(path.resolve(currentDir))) return roots;
+		if (isDirectory(currentDir) && homeDirs.has(fs.realpathSync.native(currentDir))) return roots;
 		if (isProjectRootCandidate(currentDir)) roots.push(currentDir);
 
 		const parentDir = path.dirname(currentDir);
