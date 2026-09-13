@@ -158,9 +158,14 @@ describe("worktree", () => {
 			await assert.rejects(() => createWorktrees(repoDir, "ready-rejected", 1, {
 				provider: "native",
 				onProgress: (snapshot) => {
-					if (snapshot.command?.result) {
-						assert.equal("stdout" in snapshot.command.result, false);
-						assert.equal("stderr" in snapshot.command.result, false);
+					const commands = [snapshot.command, ...snapshot.attempts.flatMap((attempt) => [attempt.command, attempt.hookCommand])];
+					for (const command of commands) {
+						if (!command?.result) continue;
+						assert.equal("stdout" in command.result, false);
+						assert.equal("stdoutBuffer" in command.result, false);
+						assert.equal("stderr" in command.result, false);
+						assert.equal(Object.values(command.result).some(Buffer.isBuffer), false);
+						assert.equal(JSON.stringify(command.result).includes('"data"'), false);
 					}
 					if (snapshot.phase === "ready") throw new Error("ready publication rejected");
 				},

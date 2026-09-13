@@ -2,6 +2,26 @@ import { spawn } from "node:child_process";
 import { createOwnedProcessTreeController } from "../background/owned-process-tree.ts";
 import type { ProcessTreeTerminal } from "../../shared/types.ts";
 
+function terminateCommandTree(pid: number, controller: ReturnType<typeof createOwnedProcessTreeController>): Promise<ProcessTreeTerminal> {
+	if (process.platform !== "win32") return controller.terminate();
+	return new Promise((resolve) => {
+		let settled = false;
+		const fallback = () => {
+			if (settled) return;
+			settled = true;
+			void controller.terminate().then(resolve);
+		};
+		const cleanup = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+		cleanup.once("error", fallback);
+		cleanup.once("close", (status) => {
+			if (settled) return;
+			if (status !== 0) return fallback();
+			settled = true;
+			resolve({ state: "observed", mechanism: "windows-taskkill", pid, verifiedAt: Date.now() });
+		});
+	});
+}
+
 export interface SetupCommandOptions {
 	cwd?: string;
 	env?: NodeJS.ProcessEnv;
@@ -19,6 +39,7 @@ export interface SetupCommandOptions {
 
 export interface SetupCommandResult {
 	stdout: string;
+	stdoutBuffer: Buffer;
 	stderr: string;
 	status: number | null;
 	signal: NodeJS.Signals | null;
@@ -46,7 +67,7 @@ export async function runSetupCommand(
 	options: SetupCommandOptions,
 ): Promise<SetupCommandResult> {
 	const result: SetupCommandResult = {
-		stdout: "", stderr: "", status: null, signal: null, outputIncomplete: false,
+		stdout: "", stdoutBuffer: Buffer.alloc(0), stderr: "", status: null, signal: null, outputIncomplete: false,
 	};
 	const maxBuffer = options.maxBuffer ?? 1024 * 1024;
 	if (!Number.isSafeInteger(maxBuffer) || maxBuffer <= 0) throw new Error("Invalid setup command maxBuffer");
@@ -84,7 +105,8 @@ export async function runSetupCommand(
 	let directSettled = false;
 	const releaseUnknownIO = () => {
 		if (!directSettled || result.processTree?.state !== "unknown") return;
-		result.error ??= commandError("Worktree setup process tree settlement is unverified", "PROCESS_TREE_UNVERIFIED");
+		const detail = result.processTree.diagnostic ? `: ${result.processTree.diagnostic}` : "";
+		result.error = commandError(`Worktree setup process tree settlement is unverified${detail}`, "PROCESS_TREE_UNVERIFIED");
 		result.outputIncomplete = true;
 		// Only local I/O is released; unknown descendant ownership remains retained.
 		child.stdin.destroy();
@@ -101,7 +123,7 @@ export async function runSetupCommand(
 			releaseUnknownIO();
 			return;
 		}
-		termination = tree.terminate().then((proof) => {
+		termination = terminateCommandTree(result.pid!, tree).then((proof) => {
 			result.processTree = proof;
 			releaseUnknownIO();
 			return proof;
@@ -177,7 +199,8 @@ export async function runSetupCommand(
 		if (termination) result.processTree = await termination;
 		const cancelled = cancellation();
 		if (cancelled) fail(cancelled);
-		result.stdout = Buffer.concat(stdout).toString("utf8");
+		result.stdoutBuffer = Buffer.concat(stdout);
+		result.stdout = result.stdoutBuffer.toString("utf8");
 		result.stderr = Buffer.concat(stderr).toString("utf8");
 		return result;
 	} finally {

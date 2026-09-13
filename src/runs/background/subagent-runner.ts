@@ -1,10 +1,9 @@
-import { execFile, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
-import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { arbitrateCompletionGuardRescue, createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
@@ -38,6 +37,7 @@ import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifact
 import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
+import { runSetupCommand } from "../shared/worktree-setup-command.ts";
 import {
 	type ActivityState,
 	type ArtifactConfig,
@@ -669,8 +669,6 @@ function writeRunLog(
 	write(logPath, lines.join("\n"));
 }
 
-const execFileAsync = promisify(execFile);
-
 function expectedMissingGitEvidence(error: unknown): boolean {
 	if (typeof (error as { code?: unknown })?.code !== "number") return false;
 	const stderr = (error as { stderr?: unknown }).stderr;
@@ -680,13 +678,24 @@ function expectedMissingGitEvidence(error: unknown): boolean {
 
 async function readGitFingerprint(cwd: string, signal: AbortSignal, onError: (error: unknown) => void): Promise<string | undefined> {
 	try {
-		const options = { cwd, signal, encoding: "buffer" as const, maxBuffer: 16 * 1024 * 1024, timeout: 30_000, windowsHide: true };
-		const { stdout: headOutput } = await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], options);
+		const runGit = async (args: string[]) => {
+			const result = await runSetupCommand("git", args, {
+				cwd, signal, maxBuffer: 16 * 1024 * 1024, deadlineAt: Date.now() + 30_000,
+				acceptedExitCodes: Array.from({ length: 256 }, (_, code) => code),
+			});
+			if (result.error) throw result.error;
+			if (result.status !== 0) {
+				throw Object.assign(new Error(result.stderr || `git exited with ${result.status}`), { code: result.status, stderr: result.stderr });
+			}
+			return result.stdoutBuffer;
+		};
+		const headOutput = await runGit(["rev-parse", "--verify", "HEAD"]);
 		const head = headOutput.toString("utf-8").trim();
 		if (!head) return undefined;
-		const { stdout: status } = await execFileAsync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=normal"], options);
+		const status = await runGit(["status", "--porcelain=v1", "-z", "--untracked-files=normal"]);
 		return `${head}\0${status.toString("base64")}`;
 	} catch (error) {
+		if ((error as NodeJS.ErrnoException)?.code === "PROCESS_TREE_UNVERIFIED") throw error;
 		if (!signal.aborted && !expectedMissingGitEvidence(error)) onError(error);
 		return undefined;
 	}
@@ -2758,6 +2767,7 @@ export async function runSubagent(
 	};
 	const externalActivityEvidence = new Map<number, ExternalActivityEvidence>();
 	const gitProbesByCwd = new Map<string, Promise<string | undefined>>();
+	let periodicGitProbeFailure: { index: number; error: Error; message: string } | undefined;
 	const reportedGitProbeErrors = new Set<string>();
 	const reportGitProbeError = (externalCwd: string, error: unknown): void => {
 		if (reportedGitProbeErrors.has(externalCwd)) return;
@@ -2771,6 +2781,25 @@ export async function runSubagent(
 		const probe = readGitFingerprint(externalCwd, runStopSignal, (error) => reportGitProbeError(externalCwd, error)).finally(() => gitProbesByCwd.delete(externalCwd));
 		gitProbesByCwd.set(externalCwd, probe);
 		return probe;
+	};
+	const recordPeriodicGitProbeFailure = (index: number, error: unknown): void => {
+		if (periodicGitProbeFailure) return;
+		const cause = error instanceof Error ? error : new Error(String(error));
+		const message = `PROCESS_TREE_UNVERIFIED: ${cause.message}`;
+		periodicGitProbeFailure = { index, error: cause, message };
+		statusPayload.error = message;
+		const step = statusPayload.steps[index];
+		if (step) step.error = message;
+		statusPayload.lastUpdate = Date.now();
+		writeStatusPayload();
+		appendJsonl(eventsPath, JSON.stringify({
+			type: "subagent.run.process_tree_unverified",
+			ts: statusPayload.lastUpdate,
+			runId: id,
+			index,
+			code: "PROCESS_TREE_UNVERIFIED",
+			message,
+		}));
 	};
 	const prepareExternalActivity = async (index: number, externalCwd: string, signal: AbortSignal): Promise<void> => {
 		if (!controlConfig.enabled) return;
@@ -3334,6 +3363,8 @@ export async function runSubagent(
 							} else {
 								updateRunnerActivityState(Date.now(), index);
 							}
+						}).catch((error: unknown) => {
+							recordPeriodicGitProbeFailure(index, error);
 						}).finally(() => {
 							delete evidence.probeInFlight;
 						});
@@ -3401,11 +3432,15 @@ export async function runSubagent(
 	};
 	const finalizeWorktree = async (setup: WorktreeSetup, stepIndex: number, flatStartIndex: number, action: () => void, deadlineAt?: number): Promise<void> => {
 		let admitted = false;
-		try { await withWorktreeTransaction(() => {
-			if (deadlineAt !== undefined && Date.now() >= deadlineAt) throw new Error("Run deadline expired before worktree cleanup");
-			admitted = true;
-			action();
-		}); }
+		try {
+			await Promise.all([...externalActivityEvidence.values()].map((evidence) => evidence.probeInFlight).filter((probe): probe is Promise<void> => probe !== undefined));
+			if (periodicGitProbeFailure) throw periodicGitProbeFailure.error;
+			await withWorktreeTransaction(() => {
+				if (deadlineAt !== undefined && Date.now() >= deadlineAt) throw new Error("Run deadline expired before worktree cleanup");
+				admitted = true;
+				action();
+			});
+		}
 		catch (error) {
 			if (admitted) throw error;
 			const reason = `Worktree finalization retained; manual reconciliation required: ${error instanceof Error ? error.message : String(error)}`;
@@ -4972,6 +5007,34 @@ export async function runSubagent(
 			if (singleResult.exitCode !== 0) {
 				break;
 			}
+		}
+	}
+
+	await Promise.all([...externalActivityEvidence.values()].map((evidence) => evidence.probeInFlight).filter((probe): probe is Promise<void> => probe !== undefined));
+	if (periodicGitProbeFailure) {
+		stopped = false;
+		timedOut = false;
+		interrupted = false;
+		delete statusPayload.stopped;
+		delete statusPayload.timedOut;
+		statusPayload.error = periodicGitProbeFailure.message;
+		const step = statusPayload.steps[periodicGitProbeFailure.index];
+		if (step) {
+			step.status = "failed";
+			step.error = periodicGitProbeFailure.message;
+			step.exitCode = 1;
+			delete step.stopped;
+			delete step.timedOut;
+		}
+		const result = results[periodicGitProbeFailure.index];
+		if (result) {
+			result.success = false;
+			result.exitCode = 1;
+			result.error = periodicGitProbeFailure.message;
+			result.output = periodicGitProbeFailure.message;
+			result.stopped = false;
+			result.timedOut = false;
+			result.interrupted = false;
 		}
 	}
 

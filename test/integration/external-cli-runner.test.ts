@@ -80,6 +80,16 @@ async function waitForProcessExit(pid: number): Promise<void> {
 	throw new Error(`Timed out waiting for helper process ${pid} to exit`);
 }
 
+function processIsActive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+		throw error;
+	}
+}
+
 async function waitForStatus(file: string, predicate: (status: AsyncStatus) => boolean, timeoutMs = 10_000): Promise<AsyncStatus> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
@@ -103,9 +113,9 @@ function startRunner(configPath: string, cwd: string, env: NodeJS.ProcessEnv = p
 	}));
 }
 
-function startRunnerWithStderr(configPath: string, cwd: string): Promise<{ exitCode: number | null; stderr: string }> {
+function startRunnerWithStderr(configPath: string, cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<{ exitCode: number | null; stderr: string }> {
 	const repo = path.resolve(import.meta.dirname, "../..");
-	const child = spawn(process.execPath, [path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath], { cwd, stdio: ["ignore", "ignore", "pipe"] });
+	const child = spawn(process.execPath, [path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath], { cwd, env, stdio: ["ignore", "ignore", "pipe"] });
 	let stderr = "";
 	child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf-8"); });
 	return trackProcess(child, new Promise((resolve, reject) => {
@@ -191,12 +201,15 @@ describe("external CLI async lifecycle", () => {
 		const gitDir = await createGitRepo(dir);
 		const gitStarted = path.join(dir, "git-started");
 		const releaseGit = path.join(dir, "release-git");
-		const helperPid = path.join(dir, "helper-pid");
-		const helperExited = path.join(dir, "helper-exited");
+		const wrapperPid = path.join(dir, "wrapper-pid");
+		const descendantPid = path.join(dir, "descendant-pid");
 		const trace = path.join(dir, "git-trace.jsonl");
 		const externalStarted = path.join(dir, "external-started");
 		const hook = path.join(dir, "fsmonitor-hook.cjs");
-		const hookSource = `const fs=require('fs'),path=require('path'),release=${JSON.stringify(releaseGit)};fs.writeFileSync(${JSON.stringify(helperPid)},String(process.pid));fs.writeFileSync(${JSON.stringify(gitStarted)},'');process.stdout.on('error',()=>{});process.on('exit',code=>fs.writeFileSync(${JSON.stringify(helperExited)},String(code)));let done=false,watcher,timer;const finish=()=>{if(done)return;done=true;watcher?.close();clearTimeout(timer);process.stdout.write('token\\0')};watcher=fs.watch(path.dirname(release),()=>{if(fs.existsSync(release))finish()});timer=setTimeout(finish,15000);if(fs.existsSync(release))finish()`;
+		const descendant = path.join(dir, "fsmonitor-descendant.cjs");
+		const descendantSource = `const fs=require('fs'),path=require('path'),release=${JSON.stringify(releaseGit)};fs.writeFileSync(${JSON.stringify(descendantPid)},String(process.pid));fs.writeFileSync(${JSON.stringify(gitStarted)},'');let done=false,watcher,timer;const finish=()=>{if(done)return;done=true;watcher?.close();clearTimeout(timer);process.stdout.write('token\\0')};watcher=fs.watch(path.dirname(release),()=>{if(fs.existsSync(release))finish()});timer=setTimeout(finish,15000);if(fs.existsSync(release))finish()`;
+		fs.writeFileSync(descendant, `${descendantSource}\n`, "utf-8");
+		const hookSource = `const fs=require('fs'),{spawn}=require('child_process');fs.writeFileSync(${JSON.stringify(wrapperPid)},String(process.pid));const child=spawn(process.execPath,[${JSON.stringify(descendant)}],{cwd:process.cwd(),stdio:['ignore','pipe','inherit'],shell:false});child.stdout.pipe(process.stdout);child.once('error',error=>{throw error});child.once('close',code=>process.exit(code??1))`;
 		fs.writeFileSync(hook, `${hookSource}\n`, "utf-8");
 		const hookCommand = `${JSON.stringify(process.execPath)} ${JSON.stringify(hook)}`;
 		assert.equal(await runProcess("git", ["config", "core.fsmonitor", hookCommand], gitDir), 0);
@@ -208,10 +221,13 @@ describe("external CLI async lifecycle", () => {
 		config.deadlineAt = Date.now() + 60_000;
 		fs.writeFileSync(configPath, JSON.stringify(config));
 		const runnerDone = startRunner(configPath, path.resolve(import.meta.dirname, "../.."), { ...process.env, GIT_TRACE2_EVENT: trace });
-		registerHelperDrain(() => {
-			if (!fs.existsSync(releaseGit)) fs.writeFileSync(releaseGit, "");
-		}, helperPid, helperExited, runnerDone);
-		await waitForFile(gitStarted, 30_000);
+		processDrains.push(async () => {
+			const pids = [wrapperPid, descendantPid].filter(fs.existsSync).map((file) => Number(fs.readFileSync(file, "utf-8")));
+			if (!pids.some(processIsActive)) return;
+			fs.writeFileSync(releaseGit, "");
+			await Promise.all(pids.map(waitForProcessExit));
+		});
+		await Promise.all([waitForFile(gitStarted, 30_000), waitForFile(wrapperPid, 30_000), waitForFile(descendantPid, 30_000)]);
 		const stoppedAt = Date.now();
 		deliverStopRequest({ asyncDir, source: "test" });
 		let deadlineTimer: NodeJS.Timeout | undefined;
@@ -220,9 +236,90 @@ describe("external CLI async lifecycle", () => {
 		assert.notEqual(settlement, "deadline");
 		assert.ok(Date.now() - stoppedAt < 5_000);
 		assert.equal(fs.existsSync(externalStarted), false);
+		await Promise.all([wrapperPid, descendantPid].map((file) => waitForProcessExit(Number(fs.readFileSync(file, "utf-8")))));
+		assert.equal(fs.existsSync(releaseGit), false, "passing cleanup must come from production tree termination");
 		const gitCommands = fs.readFileSync(trace, "utf-8").trim().split("\n").map((line) => JSON.parse(line)).filter((event) => event.event === "start").map((event) => event.argv?.[1]);
 		assert.ok(gitCommands.includes("rev-parse"));
 		assert.ok(gitCommands.includes("status"));
+	});
+
+	it("fails closed when stopped Git baseline tree ownership cannot be verified", { skip: process.platform === "win32" }, async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-external-baseline-unknown-"));
+		tempDirs.push(dir);
+		const gitDir = await createGitRepo(dir);
+		const gitStarted = path.join(dir, "git-started");
+		const releaseGit = path.join(dir, "release-git");
+		const helperPid = path.join(dir, "helper-pid");
+		const externalStarted = path.join(dir, "external-started");
+		const hook = path.join(dir, "fsmonitor-hook.cjs");
+		const hookSource = `const fs=require('fs'),path=require('path'),release=${JSON.stringify(releaseGit)};fs.writeFileSync(${JSON.stringify(helperPid)},String(process.pid));fs.writeFileSync(${JSON.stringify(gitStarted)},'');process.stdout.on('error',()=>{});let done=false,watcher;const finish=()=>{if(done)return;done=true;watcher?.close();process.stdout.write('token\\0')};watcher=fs.watch(path.dirname(release),()=>{if(fs.existsSync(release))finish()});if(fs.existsSync(release))finish()`;
+		fs.writeFileSync(hook, `${hookSource}\n`, "utf-8");
+		assert.equal(await runProcess("git", ["config", "core.fsmonitor", `${JSON.stringify(process.execPath)} ${JSON.stringify(hook)}`], gitDir), 0);
+		const fakeBin = path.join(dir, "bin");
+		fs.mkdirSync(fakeBin);
+		fs.writeFileSync(path.join(fakeBin, "ps"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+		const { asyncDir, configPath } = writeExternalConfig(dir, "external-baseline-unknown", `require('fs').writeFileSync(${JSON.stringify(externalStarted)},'')`, attentionControl, gitDir);
+		const runnerDone = startRunnerWithStderr(configPath, path.resolve(import.meta.dirname, "../.."), {
+			...process.env, PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
+		});
+		processDrains.push(async () => {
+			if (!fs.existsSync(helperPid)) return;
+			const pid = Number(fs.readFileSync(helperPid, "utf-8"));
+			if (!processIsActive(pid)) return;
+			fs.writeFileSync(releaseGit, "");
+			await waitForProcessExit(pid);
+		});
+		await waitForFile(gitStarted, 30_000);
+		deliverStopRequest({ asyncDir, source: "test" });
+		const result = await runnerDone;
+		assert.equal(result.exitCode, 1);
+		assert.match(result.stderr, /process tree settlement is unverified/i);
+		assert.match(result.stderr, /ps exited with 1/i);
+		assert.equal(fs.existsSync(externalStarted), false);
+		assert.equal(fs.existsSync(releaseGit), false, "unknown-ownership failure must not need passing-path release");
+	});
+
+	it("settles a stopped periodic Git probe ownership failure without an unhandled rejection", { skip: process.platform === "win32" }, async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-external-periodic-unknown-"));
+		tempDirs.push(dir);
+		const gitDir = await createGitRepo(dir);
+		const hookCalls = path.join(dir, "hook-calls");
+		const periodicStarted = path.join(dir, "periodic-started");
+		const releaseGit = path.join(dir, "release-git");
+		const helperPid = path.join(dir, "helper-pid");
+		const externalStarted = path.join(dir, "external-started");
+		const hook = path.join(dir, "fsmonitor-hook.cjs");
+		const hookSource = `const fs=require('fs'),path=require('path');const count=fs.existsSync(${JSON.stringify(hookCalls)})?Number(fs.readFileSync(${JSON.stringify(hookCalls)},'utf8'))+1:1;fs.writeFileSync(${JSON.stringify(hookCalls)},String(count));if(count===1){process.stdout.write('token\\0')}else{const release=${JSON.stringify(releaseGit)};fs.writeFileSync(${JSON.stringify(helperPid)},String(process.pid));fs.writeFileSync(${JSON.stringify(periodicStarted)},'');process.stdout.on('error',()=>{});let done=false,watcher;const finish=()=>{if(done)return;done=true;watcher?.close();process.stdout.write('token\\0')};watcher=fs.watch(path.dirname(release),()=>{if(fs.existsSync(release))finish()});if(fs.existsSync(release))finish()}`;
+		fs.writeFileSync(hook, `${hookSource}\n`, "utf-8");
+		assert.equal(await runProcess("git", ["config", "core.fsmonitor", `${JSON.stringify(process.execPath)} ${JSON.stringify(hook)}`], gitDir), 0);
+		const fakeBin = path.join(dir, "bin");
+		fs.mkdirSync(fakeBin);
+		fs.writeFileSync(path.join(fakeBin, "ps"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+		const externalScript = `const fs=require('fs');fs.writeFileSync(${JSON.stringify(externalStarted)},'');setInterval(()=>{},1000)`;
+		const { asyncDir, configPath } = writeExternalConfig(dir, "external-periodic-unknown", externalScript, attentionControl, gitDir);
+		const runnerDone = startRunnerWithStderr(configPath, path.resolve(import.meta.dirname, "../.."), {
+			...process.env, PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
+		});
+		processDrains.push(async () => {
+			if (!fs.existsSync(helperPid)) return;
+			const pid = Number(fs.readFileSync(helperPid, "utf-8"));
+			if (!processIsActive(pid)) return;
+			fs.writeFileSync(releaseGit, "");
+			await waitForProcessExit(pid);
+		});
+		await Promise.all([waitForFile(externalStarted, 30_000), waitForFile(periodicStarted, 30_000)]);
+		deliverStopRequest({ asyncDir, source: "test" });
+		const runner = await runnerDone;
+		assert.equal(runner.exitCode, 0, runner.stderr);
+		assert.doesNotMatch(runner.stderr, /triggerUncaughtException|UnhandledPromiseRejection/);
+		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+		assert.equal(status.state, "failed");
+		assert.match(status.error, /PROCESS_TREE_UNVERIFIED/);
+		const result = JSON.parse(fs.readFileSync(path.join(dir, "result.json"), "utf-8"));
+		assert.equal(result.state, "failed");
+		assert.equal(result.success, false);
+		assert.match(result.summary, /PROCESS_TREE_UNVERIFIED/);
+		assert.equal(fs.existsSync(releaseGit), false, "unknown ownership must remain retained until test-owner cleanup");
 	});
 
 	it("reports unexpected Git fingerprint failures once", async () => {

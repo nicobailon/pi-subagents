@@ -180,7 +180,7 @@ export interface WorktreeSetupProgress {
 	setup: WorktreeSetup;
 	attempts: Array<{ index: number; branch: string; path?: string; validated: boolean; command?: WorktreeSetupProgress["command"]; hookCommand?: WorktreeSetupProgress["command"] }>;
 	phase: string;
-	command?: { command: string; args: string[]; pid?: number; processGroupId?: number; result?: Omit<SetupCommandResult, "stdout" | "stderr"> };
+	command?: { command: string; args: string[]; pid?: number; processGroupId?: number; result?: Omit<SetupCommandResult, "stdout" | "stdoutBuffer" | "stderr"> };
 	unknown?: string;
 	cleanup?: WorktreeCleanupReport;
 }
@@ -245,7 +245,7 @@ class SetupTransaction {
 			...options, signal: this.options.signal, deadlineAt: this.options.deadlineAt,
 			onSpawn: (process) => { Object.assign(this.progress.command!, process); this.publish(); },
 		});
-		const { stdout: _stdout, stderr: _stderr, ...metadata } = result;
+		const { stdout: _stdout, stdoutBuffer: _stdoutBuffer, stderr: _stderr, ...metadata } = result;
 		this.progress.command.result = metadata;
 		if (result.processTree?.state === "unknown") this.unknown(result.error ?? "Command tree settlement unverified");
 		this.publish();
@@ -1295,7 +1295,7 @@ async function compensateSetup(tx: SetupTransaction): Promise<WorktreeCleanupRep
 			deadlineAt: tx.options.deadlineAt, acceptedExitCodes,
 			onSpawn: (process) => { Object.assign(tx.progress.command!, process); tx.publish(); },
 		});
-		const { stdout: _stdout, stderr: _stderr, ...metadata } = result;
+		const { stdout: _stdout, stdoutBuffer: _stdoutBuffer, stderr: _stderr, ...metadata } = result;
 		tx.progress.command.result = metadata;
 		if (result.processTree?.state === "unknown") tx.unknown(result.error ?? "Rollback command settlement unverified");
 		tx.publish();
