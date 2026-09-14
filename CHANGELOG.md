@@ -34,6 +34,7 @@
 
 ### Fixed
 
+- Preserve bounded main-watchdog user scope across session compaction while still clearing transient orchestration activity. Thanks to [@nimeetshah0](https://github.com/nimeetshah0) for #2263.
 - Preserve a readable async result reference when completion replay or archive persistence fails, then retry durable persistence without duplicating delivery. Thanks to [@shaharmor](https://github.com/shaharmor) for #2267 and #2266.
 - Honor `PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT` in the detached background runner's host-package detection. The foreground `resolvePiCliScript` path already accepts it as an explicit override; the detached runner ignored it and failed closed with "neither is available" on hosts whose install layout automatic discovery cannot identify (wrapper installs, non-standard layouts). Both child kinds now resolve the same host with the same precedence and still validate the canonical package, and the spawn tests pin the variable so ambient values cannot skew them. Thanks to [@Yaphet2015](https://github.com/Yaphet2015) for #2254.
 - Keep the resolved report in the foreground diagnostic artifact when explicit acceptance rejects a child that saved its output; the file-only pointer no longer overwrites it. Thanks to [@pgoodjohn](https://github.com/pgoodjohn) for #2255.
