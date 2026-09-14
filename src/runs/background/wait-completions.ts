@@ -118,8 +118,8 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 /**
  * Record a consumed terminal payload for later surfacing by bg_wait, pruning
  * stale entries with the same TTL that dedupes completion notifications. The result
- * file is deleted after delivery, so this record is the only in-process source once
- * the watcher has consumed it.
+ * file is deleted after durable replay succeeds, so this record is the in-process
+ * source once the watcher has consumed it. Returns whether that replay is durable.
  */
 export function recordWaitCompletion(
 	state: SubagentState,
@@ -128,7 +128,7 @@ export function recordWaitCompletion(
 	now: number,
 	ttlMs: number,
 	persistence?: { resultsDir: string; sessionId: string },
-): void {
+): boolean {
 	const store = state.completedResults ??= new Map();
 	for (const [key, entry] of store) {
 		if (now - entry.seenAt > ttlMs) store.delete(key);
@@ -149,6 +149,7 @@ export function recordWaitCompletion(
 		}
 	}
 	store.set(runId, { seenAt: now, completion });
+	return completion.archivePath !== undefined;
 }
 
 /**
@@ -170,7 +171,29 @@ export function collectWaitCompletions(terminal: AsyncRunSummary[], state: Subag
 	for (const run of terminal) {
 		const recorded = state.completedResults?.get(run.id);
 		if (recorded) {
-			add(recorded.completion);
+			if (recorded.completion.archivePath) {
+				add(recorded.completion);
+				continue;
+			}
+			const publicResultPath = resultFilePath(resultsDir, run.id);
+			let readableResultPath = publicResultPath;
+			try {
+				try {
+					readableResultPath = run.sessionId
+						? resultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id) ?? publicResultPath
+						: publicResultPath;
+				} catch (error) {
+					if (!isAccessDenied(error) || !run.sessionId) throw error;
+					readableResultPath = fallbackResultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id) ?? publicResultPath;
+				}
+				fs.readFileSync(readableResultPath, "utf-8");
+				add(recorded.completion, readableResultPath);
+				continue;
+			} catch (error) {
+				if (errorCode(error) !== "ENOENT") throw error;
+			}
+			const replay = readCompletionReplay(resultsDir, run.id, { sessionId: run.sessionId });
+			add(replay?.completion ?? recorded.completion);
 			continue;
 		}
 		const publicResultPath = resultFilePath(resultsDir, run.id);

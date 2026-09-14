@@ -431,7 +431,7 @@ export function createResultWatcher(
 			if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
 			// Recorded before dedupe and before the unlink below so bg_wait can
 			// use the in-memory record or its bounded durable replay after cleanup.
-			recordWaitCompletion(state, runId, data, Date.now(), completionTtlMs, {
+			const completionPersisted = recordWaitCompletion(state, runId, data, Date.now(), completionTtlMs, {
 				resultsDir,
 				sessionId,
 			});
@@ -459,6 +459,10 @@ export function createResultWatcher(
 				}
 				if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
 				if (markReplacedPayload()) return;
+				if (!completionPersisted) {
+					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+					return;
+				}
 				if (!removeDeliveredResult(file, sessionId, runId, toolCallId)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
@@ -516,6 +520,10 @@ export function createResultWatcher(
 				}
 				if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
 				if (markReplacedPayload()) return;
+				if (!completionPersisted) {
+					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+					return;
+				}
 				if (!removeDeliveredResult(file, sessionId, runId, toolCallId)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
@@ -603,6 +611,10 @@ export function createResultWatcher(
 				return;
 			}
 			if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
+			if (!completionPersisted) {
+				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+				return;
+			}
 			if (!removeDeliveredResult(file, sessionId, runId, toolCallId)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 		} catch (error) {
 			if (isAccessDenied(error)) {

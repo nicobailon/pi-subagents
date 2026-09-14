@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildCompletionKey } from "../../src/runs/background/completion-dedupe.ts";
 import { createResultWatcher as createRawResultWatcher } from "../../src/runs/background/result-watcher.ts";
+import { collectWaitCompletions } from "../../src/runs/background/wait-completions.ts";
 import registerSubagentNotify from "../../src/runs/background/notify.ts";
 import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
@@ -16,6 +17,7 @@ import { prepareMissionLaunch, writeMissionAsyncBinding } from "../../src/missio
 import { readMission, updateMission } from "../../src/missions/store.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, type SubagentState } from "../../src/shared/types.ts";
+import type { AsyncRunSummary } from "../../src/runs/background/async-status.ts";
 
 const COMPLETION_OWNER_ID = "completion-owner-default";
 
@@ -601,6 +603,56 @@ describe("result watcher", () => {
 			assert.equal(observerCalls, 2);
 			assert.equal(deliveries, 1);
 			assert.equal(emitted, 1);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("retains a readable result reference until failed completion replay persistence recovers", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-replay-failure-"));
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			const runId = "replay-failure";
+			const resultPath = path.join(resultsDir, `${runId}.json`);
+			const archiveDir = path.join(resultsDir, "output-archives");
+			fs.writeFileSync(archiveDir, "blocks archive persistence");
+			writeIndexedResult(resultPath, {
+				id: runId, runId, sessionId: "session-current", success: true,
+				summary: "READABLE_FINDING",
+			});
+			let deliveries = 0;
+			const state = createState();
+			state.currentSessionId = "session-current";
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				notifier: { deliver: async () => { deliveries += 1; return true; } },
+			});
+			const terminal = [{ id: runId, sessionId: "session-current" }] as AsyncRunSummary[];
+			try {
+				watcher.primeExistingResults();
+				assert.equal(await waitForPredicate(() => {
+					if (deliveries !== 1 || !fs.existsSync(resultPath)) return false;
+					return typeof (JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { notificationDeliveredAt?: unknown }).notificationDeliveredAt === "number";
+				}), true);
+				const beforeReferences: string[] = [];
+				assert.equal(collectWaitCompletions(terminal, state, resultsDir, (text) => beforeReferences.push(text))?.[0]?.runId, runId);
+				assert.deepEqual(beforeReferences, [`Result [${runId}]: ${resultPath}`]);
+				assert.match(fs.readFileSync(resultPath, "utf-8"), /READABLE_FINDING/);
+
+				fs.rmSync(archiveDir);
+				watcher.primeExistingResults();
+				assert.equal(await waitForPredicate(() => !fs.existsSync(resultPath)), true);
+				const afterReferences: string[] = [];
+				const completion = collectWaitCompletions(terminal, state, resultsDir, (text) => afterReferences.push(text))?.[0];
+				assert.equal(completion?.runId, runId);
+				assert.equal(typeof completion?.archivePath, "string");
+				assert.deepEqual(afterReferences, [`Result [${runId}]: ${completion!.archivePath}`]);
+				assert.match(fs.readFileSync(completion!.archivePath!, "utf-8"), /READABLE_FINDING/);
+				assert.equal(deliveries, 1);
+			} finally {
+				watcher.stopResultWatcher();
+			}
 		} finally {
 			console.error = originalError;
 			fs.rmSync(resultsDir, { recursive: true, force: true });
