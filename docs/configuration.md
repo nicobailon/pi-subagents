@@ -430,7 +430,7 @@ Foreground children remain sessions inside the parent. Npm background children r
 export PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/path/to/pi-coding-agent-package
 ```
 
-Overrides host-package discovery for spawned children. Foreground CLI resolution uses this root to locate the `pi` CLI script, and the detached background runner uses it for jiti host resolution and peer-package aliases, so both child kinds agree on one host. Set it when automatic discovery cannot identify the host: a distribution whose manifest no longer carries the upstream package name, a wrapper install, or a non-standard layout. The value must be the coding-agent package root (the directory containing its `package.json`); peer packages are discovered from that install tree. Empty or whitespace-only values are ignored, and an explicit value wins over argv and package-manager discovery.
+Overrides host-package discovery for spawned children. Foreground CLI resolution uses this root to locate the `pi` CLI script, and the detached background runner uses it for jiti host resolution and peer-package aliases, so both child kinds agree on one host. It is consulted when argv-based automatic discovery cannot identify the host: a distribution whose manifest no longer carries the upstream package name, a wrapper install, or a non-standard layout. The value must be the coding-agent package root (the directory containing its `package.json`); peer packages are discovered from that install tree. Empty or whitespace-only values are ignored.
 
 ## `intercomBridge`
 
