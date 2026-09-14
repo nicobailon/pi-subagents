@@ -181,7 +181,7 @@ describe("workflow wait completion projection", () => {
 		}
 	});
 
-	it("does not surface malformed indexed payloads", (t) => {
+	it("reports malformed indexed payloads", (t) => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-malformed-indexed-"));
 		t.after(() => fs.rmSync(resultsDir, { recursive: true, force: true }));
 		const runId = "malformed-run";
@@ -190,7 +190,10 @@ describe("workflow wait completion projection", () => {
 		fs.writeFileSync(resultPath, "{\"runId\":");
 		const terminal: AsyncRunSummary[] = [{ id: runId, sessionId: "owner", asyncDir: resultsDir, mode: "single", state: "complete", startedAt: Date.now(), steps: [] }];
 		const references: string[] = [];
-		assert.equal(collectWaitCompletions(terminal, { currentSessionId: "owner" } as SubagentState, resultsDir, (text) => references.push(text)), undefined);
+		assert.throws(
+			() => collectWaitCompletions(terminal, { currentSessionId: "owner" } as SubagentState, resultsDir, (text) => references.push(text)),
+			/Failed to read subagent result .*Unexpected end of JSON input/,
+		);
 		assert.deepEqual(references, []);
 	});
 

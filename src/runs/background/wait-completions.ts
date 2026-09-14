@@ -60,13 +60,7 @@ function waitResultPayloadCandidate(resultsDir: string, run: AsyncRunSummary): s
 function readWaitResultPayload(candidatePath: string, run: AsyncRunSummary): Record<string, unknown> | undefined {
 	// A terminal run without session ownership cannot safely claim a payload.
 	if (!run.sessionId) return undefined;
-	let payload: unknown;
-	try {
-		payload = JSON.parse(fs.readFileSync(candidatePath, "utf-8"));
-	} catch (error) {
-		if (error instanceof SyntaxError) return undefined;
-		throw error;
-	}
+	const payload: unknown = JSON.parse(fs.readFileSync(candidatePath, "utf-8"));
 	if (!resultPayloadMatchesSessionRun(payload, run.sessionId, run.id)) return undefined;
 	return payload as Record<string, unknown>;
 }
