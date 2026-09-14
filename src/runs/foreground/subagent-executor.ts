@@ -6292,6 +6292,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 			const policyAction = action === "stop" ? "stopRun" : action === "steer" ? "steerRun" : action === "schedule.create" ? "scheduleCreate" : action === "inspector.open" ? "inspectorOpen" : action === "project.open" ? "projectOpen" : undefined;
 			if (policyAction) {
+				// Child-safe mode is a hard capability boundary; the policy is an operator
+				// preference. Refuse first, so the gate never prompts for an action that is
+				// going to be rejected anyway and never masks the more specific reason.
+				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
+					return { content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }], isError: true, details: { mode: "management", results: [] } };
+				}
 				const decision = resolveAuthorityDecision({ action: policyAction, ...(deps.config.authorityPolicy === undefined ? {} : { policy: deps.config.authorityPolicy }) });
 				if (decision === "forbid") {
 					return { content: [{ type: "text", text: `Authority policy forbids action '${action}'.` }], isError: true, details: { mode: "management", results: [] } };

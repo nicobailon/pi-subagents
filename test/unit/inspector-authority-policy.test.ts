@@ -24,11 +24,12 @@ function createState(): SubagentState {
 	};
 }
 
-function createExecutor(authorityPolicy?: AuthorityPolicyConfig) {
+function createExecutor(authorityPolicy?: AuthorityPolicyConfig, childSafe = false) {
 	return createSubagentExecutor({
 		pi: { events: { emit() {}, on() { return () => {}; } }, getSessionName() { return "parent"; } } as any,
 		state: createState(),
 		config: { maxSubagentDepth: 2, control: {}, intercomBridge: {}, ...(authorityPolicy ? { authorityPolicy } : {}) } as any,
+		...(childSafe ? { allowMutatingManagementActions: false } : {}),
 		asyncByDefault: false,
 		tempArtifactsDir: os.tmpdir(),
 		getSubagentSessionRoot: () => os.tmpdir(),
@@ -47,8 +48,8 @@ function ctx(ui?: { confirm: () => Promise<boolean> }) {
 	} as any;
 }
 
-async function run(action: string, policy?: AuthorityPolicyConfig, ui?: { confirm: () => Promise<boolean> }): Promise<{ text: string; isError?: boolean }> {
-	const result = await createExecutor(policy).execute(action, { action }, new AbortController().signal, undefined, ctx(ui));
+async function run(action: string, policy?: AuthorityPolicyConfig, ui?: { confirm: () => Promise<boolean> }, childSafe = false): Promise<{ text: string; isError?: boolean }> {
+	const result = await createExecutor(policy, childSafe).execute(action, { action }, new AbortController().signal, undefined, ctx(ui));
 	return { text: result.content.find((entry) => entry.type === "text")?.text ?? "", ...(result.isError === undefined ? {} : { isError: result.isError }) };
 }
 
@@ -114,5 +115,30 @@ describe("inspector and project pane authority policy", () => {
 
 		assert.equal(isError, true);
 		assert.match(text, /requires user confirmation for action 'inspector\.open'/);
+	});
+
+	it("refuses project.open in child-safe fanout mode without prompting for authority", async () => {
+		let asked = 0;
+		const { text, isError } = await run("project.open", undefined, { confirm: async () => { asked += 1; return true; } }, true);
+
+		assert.equal(asked, 0);
+		assert.equal(isError, true);
+		assert.match(text, /Action 'project\.open' is not available from child-safe subagent fanout mode\./);
+	});
+
+	it("reports the child-safe restriction for inspector.open rather than the policy that also forbids it", async () => {
+		const { text, isError } = await run("inspector.open", { inspectorOpen: "forbid" }, undefined, true);
+
+		assert.equal(isError, true);
+		assert.match(text, /Action 'inspector\.open' is not available from child-safe subagent fanout mode\./);
+	});
+
+	it("refuses schedule.create in child-safe fanout mode without prompting for authority", async () => {
+		let asked = 0;
+		const { text, isError } = await run("schedule.create", { scheduleCreate: "confirm" }, { confirm: async () => { asked += 1; return true; } }, true);
+
+		assert.equal(asked, 0);
+		assert.equal(isError, true);
+		assert.match(text, /Action 'schedule\.create' is not available from child-safe subagent fanout mode\./);
 	});
 });
