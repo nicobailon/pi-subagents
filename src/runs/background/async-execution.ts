@@ -95,14 +95,15 @@ const piPackageRoot = resolveAsyncPiPackageRoot();
  * The detached runner resolves the same host package the foreground
  * `resolvePiCliScript` path resolves, so an explicit
  * `PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT` override must be honored here
- * too. Without it, hosts whose manifest does not identify as the upstream
- * package (renamed distributions, wrappers, non-standard installs) fail
+ * too. Precedence mirrors the foreground resolver: argv-based discovery wins
+ * first (the foreground returns the argv script before any candidate), the
+ * environment override is consulted when that discovery cannot identify the
+ * host (renamed distributions, wrappers, non-standard installs), and the
+ * package-manager entry is last. Without the override, such hosts fail
  * closed with "neither is available" while foreground children launch fine.
- * Explicit env wins over argv and package-manager discovery, mirroring the
- * foreground candidate order.
  */
 function resolveAsyncPiPackageRoot(env: NodeJS.ProcessEnv = process.env): string | undefined {
-	return env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || resolvePiPackageRoot() || resolveInstalledPiPackageRoot();
+	return resolvePiPackageRoot() || env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || resolveInstalledPiPackageRoot();
 }
 
 function resolveJitiCliFromPackageJson(packageJsonPath: string): string | undefined {
