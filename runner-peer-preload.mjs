@@ -3,6 +3,8 @@ import { pathToFileURL } from "node:url";
 
 const aliases = JSON.parse(process.env.JITI_ALIAS ?? "{}");
 const nativeRunner = process.env.PI_ASYNC_NATIVE_RUNNER === "1";
+// Pi's jiti loader owns aliases for external extensions; these hooks only supply peers to our compiled package.
+const packageRootUrl = new URL("./", import.meta.url).href;
 const redirected = new Set([
 	"@earendil-works/pi-tui",
 ]);
@@ -10,7 +12,8 @@ const redirected = new Set([
 if (typeof nodeModule.registerHooks === "function") {
 	nodeModule.registerHooks({
 		resolve(specifier, context, nextResolve) {
-			if ((nativeRunner ? aliases[specifier] : redirected.has(specifier) && aliases[specifier])) {
+			const packageImport = context.parentURL?.startsWith(packageRootUrl) === true;
+			if ((nativeRunner && packageImport ? aliases[specifier] : redirected.has(specifier) && aliases[specifier])) {
 				return nextResolve(pathToFileURL(aliases[specifier]).href, context);
 			}
 			try {
@@ -23,6 +26,6 @@ if (typeof nodeModule.registerHooks === "function") {
 	});
 } else {
 	nodeModule.register(new URL("./runner-peer-loader.mjs", import.meta.url), {
-		data: { aliases, nativeRunner },
+		data: { aliases, nativeRunner, packageRootUrl },
 	});
 }
