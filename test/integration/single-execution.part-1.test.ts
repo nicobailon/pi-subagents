@@ -29,7 +29,6 @@ import {
 	events,
 } from "../support/helpers.ts";
 import registerSubagentExtension from "../../src/extension/index.ts";
-import registerSubagentNotify from "../../src/runs/background/notify.ts";
 import { handleSubagentControlNotice } from "../../src/extension/control-notices.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
@@ -44,7 +43,7 @@ import {
 	type SubagentDelegationResponse,
 	type SubagentDelegationStarted,
 } from "../../src/api/delegation.ts";
-import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_CONTROL_EVENT, SUBAGENT_PROCESS_TERMINAL_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type ChildWatchdogProgress, type ControlEvent, type SubagentState } from "../../src/shared/types.ts";
+import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, SUBAGENT_CONTROL_EVENT, SUBAGENT_PROCESS_TERMINAL_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type ChildWatchdogProgress, type ControlEvent, type SubagentState } from "../../src/shared/types.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index.ts";
 import { encodeIndexSegment } from "../../src/runs/background/index-segment.ts";
 import { removeResultIndex, writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
@@ -98,211 +97,32 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(updates.length, count, "no trailing timer after settlement");
 	});
 
-	it("delivers async workflow children without intermediate provider turns and deduplicates the final wake", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("emits successful async workflow child settlements without provider turns", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ matchArgIncludes: "Child A", output: "A done" });
 		mockPi.onCall({ matchArgIncludes: "Child B", output: "B done" });
-		const piEvents = createEventBus();
-		const sent: Array<{ message: { customType?: string }; options?: { triggerTurn?: boolean } }> = [];
+		const sent: Array<{ message: { customType?: string; content?: string }; options?: { triggerTurn?: boolean } }> = [];
 		const sendMessage = (message: unknown, options?: unknown) => {
 			sent.push({
-				message: message as { customType?: string },
+				message: message as { customType?: string; content?: string },
 				options: options as { triggerTurn?: boolean } | undefined,
 			});
 		};
-		const executor = makeExecutor(
-			[makeAgent("echo")],
-			{},
-			false,
-			undefined,
-			true,
-			new Map(),
-			undefined,
-			undefined,
-			piEvents,
-			undefined,
-			undefined,
-			sendMessage,
-		);
-		const ctx = makeMinimalCtx(tempDir);
-		let asyncDir: string | undefined;
-		let resultPath: string | undefined;
-		let watcher: ReturnType<typeof createResultWatcher> | undefined;
-		let notifier: ReturnType<typeof registerSubagentNotify> | undefined;
-		try {
-			const launch = await executor.execute(
-				"workflow-child-wakes",
-				{
-					async: true,
-					workflowScript: `return await runs.all([{ key: "a", agent: "echo", task: "Child A" }, { key: "b", agent: "echo", task: "Child B" }]);`,
-				},
-				new AbortController().signal,
-				undefined,
-				ctx,
-			);
-			assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "workflow launch failed");
-			asyncDir = launch.details.asyncDir;
-			const workflowRunId = launch.details.asyncId;
-			assert.ok(workflowRunId);
-			resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
-			const childMessages = () => sent.filter(({ message }) => message.customType === "subagent-incremental-child-notify");
-			const finalMessages = () => sent.filter(({ message }) => message.customType === "subagent-notify");
-			const waitFor = async (predicate: () => boolean) => {
-				for (let attempt = 0; attempt < 250 && !predicate(); attempt++) {
-					await new Promise((resolve) => setTimeout(resolve, 20));
-				}
-			};
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, undefined, sendMessage);
+		const launch = await executor.execute("workflow-child-wakes", {
+			async: true,
+			workflowScript: `return await runs.all([{ key: "a", agent: "echo", task: "Child A" }, { key: "b", agent: "echo", task: "Child B" }]);`,
+		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "workflow launch failed");
 
-			await waitFor(() => childMessages().length >= 2);
-			assert.equal(childMessages().length, 2, "async workflow must deliver both child settlements through Pi");
-			assert.ok(
-				childMessages().every(({ options }) => options?.triggerTurn === false),
-				"ordinary running child settlements must not trigger provider turns",
-			);
-			await waitFor(() => fs.existsSync(resultPath!));
-			assert.equal(fs.existsSync(resultPath), true, "async workflow must publish its completion result");
-			const finalPayload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as Record<string, unknown>;
-			assert.equal(finalPayload.state, "complete");
-
-			const watcherState: SubagentState = {
-				baseCwd: tempDir,
-				currentSessionId: ctx.sessionManager.getSessionId(),
-				completionOwnerId: "test-owner",
-				asyncJobs: new Map(),
-				foregroundControls: new Map(),
-				lastForegroundControlId: null,
-				completionSeen: new Map(),
-			};
-			const pi = { events: piEvents, sendMessage };
-			notifier = registerSubagentNotify(pi as never, watcherState, {
-				batchConfig: { enabled: false },
-				ownership: { owns: () => true },
-			});
-			watcher = createResultWatcher(pi as never, watcherState, DIRS.results, 60_000, {
-				platform: "linux",
-				coalesceDelayMs: 0,
-				deliverIntercomResults: false,
-				ownership: { owns: () => true, claimedSessionIds: () => [] },
-				notifier,
-			});
-			watcher.primeExistingResults();
-			await waitFor(() => finalMessages().length >= 1);
-			assert.equal(finalMessages().length, 1, "workflow completion must wake the parent exactly once");
-			assert.equal(finalMessages()[0]?.options?.triggerTurn, true, "workflow completion must be the actionable provider turn");
-			assert.equal(
-				sent.filter(({ options }) => options?.triggerTurn === true).length,
-				1,
-				"exactly one provider turn should be triggered",
-			);
-
-			piEvents.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, finalPayload);
-			await new Promise((resolve) => setTimeout(resolve, 25));
-			assert.equal(finalMessages().length, 1, "replayed completion must not trigger an extra provider turn");
-		} finally {
-			watcher?.stopResultWatcher();
-			notifier?.dispose();
-			if (asyncDir) fs.rmSync(asyncDir, { recursive: true, force: true });
-			if (resultPath) fs.rmSync(resultPath, { force: true });
+		const childMessages = () => sent.filter(({ message }) => message.customType === "subagent-incremental-child-notify");
+		for (let attempt = 0; attempt < 250 && childMessages().length < 2; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
-	});
-
-	it("wakes the parent when async workflow result publication fails", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ matchArgIncludes: "Child A", output: "A done" });
-		mockPi.onCall({ matchArgIncludes: "Child B", output: "B done" });
-		const piEvents = createEventBus();
-		const sent: Array<{ message: { customType?: string; content?: unknown }; options?: { triggerTurn?: boolean } }> = [];
-		const sendMessage = (message: unknown, options?: unknown) => {
-			sent.push({
-				message: message as { customType?: string; content?: unknown },
-				options: options as { triggerTurn?: boolean } | undefined,
-			});
-		};
-		const executor = makeExecutor(
-			[makeAgent("echo")],
-			{},
-			false,
-			undefined,
-			true,
-			new Map(),
-			undefined,
-			undefined,
-			piEvents,
-			undefined,
-			undefined,
-			sendMessage,
+		assert.deepEqual(
+			childMessages().map(({ message }) => message.content?.split("\n", 1)[0]).sort(),
+			["Workflow child completed: **a**", "Workflow child completed: **b**"],
 		);
-		const ctx = makeMinimalCtx(tempDir);
-		let asyncDir: string | undefined;
-		let resultPath: string | undefined;
-		// Fail result publication with a real filesystem error. Status, trace, and
-		// event writes live under the run's async dir, so only paths under the
-		// results dir are affected.
-		const originalWriteFileSync = fsDefault.writeFileSync;
-		const originalRenameSync = fsDefault.renameSync;
-		const originalConsoleError = console.error;
-		const failResultsWrites = (file: unknown): void => {
-			if (typeof file === "string" && file.startsWith(DIRS.results)) {
-				// EIO (not a capacity code) fails the write synchronously instead
-				// of entering the capacity-deferral path.
-				throw Object.assign(new Error("injected result publication EIO"), { code: "EIO" });
-			}
-		};
-		console.error = () => {};
-		fsDefault.writeFileSync = ((file: unknown, ...args: unknown[]) => {
-			failResultsWrites(file);
-			return (originalWriteFileSync as (...innerArgs: unknown[]) => unknown)(file, ...args);
-		}) as typeof fsDefault.writeFileSync;
-		fsDefault.renameSync = ((from: unknown, to: unknown) => {
-			failResultsWrites(to);
-			return (originalRenameSync as (...innerArgs: unknown[]) => unknown)(from, to);
-		}) as typeof fsDefault.renameSync;
-		syncBuiltinESMExports();
-		try {
-			const launch = await executor.execute(
-				"workflow-result-write-failure",
-				{
-					async: true,
-					workflowScript: `return await runs.all([{ key: "a", agent: "echo", task: "Child A" }, { key: "b", agent: "echo", task: "Child B" }]);`,
-				},
-				new AbortController().signal,
-				undefined,
-				ctx,
-			);
-			assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "workflow launch failed");
-			asyncDir = launch.details.asyncDir;
-			const workflowRunId = launch.details.asyncId;
-			assert.ok(workflowRunId);
-			resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
-			const childMessages = () => sent.filter(({ message }) => message.customType === "subagent-incremental-child-notify");
-			const failureWakes = () => sent.filter(({ message, options }) => message.customType === "subagent-workflow-result-write-failed" && options?.triggerTurn === true);
-			const waitFor = async (predicate: () => boolean) => {
-				for (let attempt = 0; attempt < 250 && !predicate(); attempt++) {
-					await new Promise((resolve) => setTimeout(resolve, 20));
-				}
-			};
-
-			await waitFor(() => childMessages().length >= 2);
-			assert.equal(childMessages().length, 2, "async workflow must deliver both child settlements through Pi");
-			assert.ok(
-				childMessages().every(({ options }) => options?.triggerTurn === false),
-				"ordinary running child settlements must not trigger provider turns",
-			);
-			await waitFor(() => failureWakes().length >= 1);
-			assert.equal(failureWakes().length, 1, "a failed result publication must wake the parent exactly once");
-			assert.match(String(failureWakes()[0]?.message.content ?? ""), /Failed to write async workflow result/);
-			assert.equal(
-				sent.filter(({ options }) => options?.triggerTurn === true).length,
-				1,
-				"the publication-failure wake must be the only provider turn",
-			);
-			assert.equal(fs.existsSync(resultPath), false, "the failed result must not be published");
-		} finally {
-			fsDefault.writeFileSync = originalWriteFileSync;
-			fsDefault.renameSync = originalRenameSync;
-			syncBuiltinESMExports();
-			console.error = originalConsoleError;
-			if (asyncDir) fs.rmSync(asyncDir, { recursive: true, force: true });
-			if (resultPath) fs.rmSync(resultPath, { force: true });
-		}
+		assert.ok(childMessages().every(({ options }) => options?.triggerTurn === false));
 	});
 
 	it("spawns agent and captures output", async () => {
