@@ -28,6 +28,7 @@ import type { ChildWatchdogProgress, SubagentState } from "../../src/shared/type
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
 import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
+import { TestRunnerLifecycle } from "./runner-lifecycle-fixture.ts";
 
 interface ModelAttempt {
 	success?: boolean;
@@ -288,18 +289,29 @@ let tempDir: string;
 let agentDir: string;
 let mockPi: MockPi;
 let previousAgentDir: string | undefined;
+const runnerLifecycle = new TestRunnerLifecycle();
+const retainedTempDirs = new Set<string>();
 
 export function installSingleExecutionHooks() {
 	before(() => {
+		runnerLifecycle.install();
 		mockPi = createMockPi();
 		mockPi.install();
 	});
 
-	after(() => {
-		mockPi.uninstall();
+	after(async () => {
+		try {
+			await runnerLifecycle.cleanup();
+			for (const dir of retainedTempDirs) removeTempDir(dir);
+			retainedTempDirs.clear();
+		} finally {
+			mockPi.uninstall();
+			runnerLifecycle.uninstall();
+		}
 	});
 
-	beforeEach(() => {
+	beforeEach((context) => {
+		runnerLifecycle.beginTest(context.name);
 		tempDir = createTempDir();
 		agentDir = createTempDir("pi-subagent-agent-");
 		previousAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -308,12 +320,22 @@ export function installSingleExecutionHooks() {
 		clearExclusions();
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
 		clearExclusions();
-		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-		removeTempDir(agentDir);
-		removeTempDir(tempDir);
+		try {
+			await runnerLifecycle.cleanup();
+			for (const dir of retainedTempDirs) removeTempDir(dir);
+			retainedTempDirs.clear();
+			removeTempDir(agentDir);
+			removeTempDir(tempDir);
+		} catch (error) {
+			retainedTempDirs.add(agentDir);
+			retainedTempDirs.add(tempDir);
+			throw error;
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
 	});
 }
 

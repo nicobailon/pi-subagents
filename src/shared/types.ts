@@ -664,6 +664,12 @@ export type ProcessTreeTerminal =
 		verifiedAt: number;
 	}
 	| {
+		state: "observed";
+		mechanism: "windows-process-handle";
+		pid: number;
+		verifiedAt: number;
+	}
+	| {
 		state: "unknown";
 		reason: "unsupported-platform" | "signal-failed" | "verification-failed";
 		diagnostic?: string;

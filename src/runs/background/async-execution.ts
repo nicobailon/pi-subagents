@@ -156,6 +156,14 @@ const asyncRunnerSourcePath = path.join(
 	`subagent-runner${path.extname(fileURLToPath(import.meta.url))}`,
 );
 const sourceUnderNodeModules = asyncRunnerSourcePath.split(path.sep).some((segment) => segment.toLowerCase() === "node_modules");
+type AsyncRunnerTestObserver = (proc: ChildProcess, identity: { runId: string; asyncDir: string; runnerProcessInstanceId: string }) => void;
+let asyncRunnerTestObserver: AsyncRunnerTestObserver | undefined;
+
+/** Test-harness seam for exact detached-runner ownership; not part of the package API. */
+export function setAsyncRunnerTestObserver(observer: AsyncRunnerTestObserver | undefined): void {
+	asyncRunnerTestObserver = observer;
+}
+
 function supportsNativeRunner(nodeExecutable: string): boolean {
 	return Boolean(process.features.typescript)
 	&& typeof nodeModule.registerHooks === "function"
@@ -852,6 +860,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			const terminationObserved = terminateRunnerBeforeProceed(proc.pid);
 			return { pid: proc.pid, runnerProcessInstanceId, error: message, terminationObserved, startupDidNotProceed: true };
 		}
+		asyncRunnerTestObserver?.(proc, { runId: launchRunId, asyncDir: launchAsyncDir, runnerProcessInstanceId });
 		try {
 			onBeforeProceed?.(runnerProcessInstanceId);
 		} catch (error) {

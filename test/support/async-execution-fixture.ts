@@ -19,6 +19,7 @@ import { createEventBus, createMockPi, createTempDir, makeAgent, removeTempDir, 
 import type { MockPi } from "./helpers.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
+import { TestRunnerLifecycle } from "./runner-lifecycle-fixture.ts";
 
 interface LaunchResolvedExtensions {
 	version?: number;
@@ -605,26 +606,45 @@ function readMockPiArgsMatching(mockPi: MockPi, text: string): string[] {
 // Mutable bindings stay live and process-local under the default test isolation.
 let tempDir: string;
 let mockPi: MockPi;
+const runnerLifecycle = new TestRunnerLifecycle();
+const retainedTempDirs = new Set<string>();
 
 export function installAsyncExecutionHooks(): void {
 	before(() => {
+		runnerLifecycle.install();
 		mockPi = createMockPi();
 		mockPi.install();
 	});
 
-	after(() => {
-		mockPi.uninstall();
+	after(async () => {
+		try {
+			await runnerLifecycle.cleanup();
+			for (const dir of retainedTempDirs) removeTempDir(dir);
+			retainedTempDirs.clear();
+		} finally {
+			mockPi.uninstall();
+			runnerLifecycle.uninstall();
+		}
 	});
 
-	beforeEach(() => {
+	beforeEach((context) => {
+		runnerLifecycle.beginTest(context.name);
 		tempDir = createTempDir();
 		mockPi.reset();
 		clearExclusions();
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
 		clearExclusions();
-		removeTempDir(tempDir);
+		try {
+			await runnerLifecycle.cleanup();
+			for (const dir of retainedTempDirs) removeTempDir(dir);
+			retainedTempDirs.clear();
+			removeTempDir(tempDir);
+		} catch (error) {
+			retainedTempDirs.add(tempDir);
+			throw error;
+		}
 	});
 }
 
