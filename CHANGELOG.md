@@ -25,7 +25,7 @@
 
 ### Changed
 
-- Gate the `inspector.open` and `project.open` tool actions behind `authorityPolicy` as `inspectorOpen` and `projectOpen`. `inspectorOpen` defaults to `"auto"` because a plugin must already report itself available; `projectOpen` defaults to `"confirm"` because it spawns `herdr` with no availability check and opens a pane that hosts its own Pi session. Set `"projectOpen": "auto"` to keep the previous unprompted behavior. Opening an inspector from the fleet TUI is unchanged.
+- Gate the `inspector.open` and `project.open` tool actions behind `authorityPolicy` as `inspectorOpen` and `projectOpen`. `inspectorOpen` defaults to `"auto"` because a plugin must already report itself available; `projectOpen` defaults to `"confirm"` because it spawns `herdr` with no availability check and opens a pane that hosts its own Pi session. Set `"projectOpen": "auto"` to keep the previous unprompted behavior. Opening an inspector from the fleet TUI is unchanged. Thanks to [@kevthedawg](https://github.com/kevthedawg) for #2269.
 - Ship compiled JavaScript in the npm package so Pi no longer transpiles the extension and detached runner when they load. On the reported cold-start path, the extension entry loaded in about 226 ms instead of 2,831 ms. Thanks to [@821869798](https://github.com/821869798) for #2248.
 
 ### Removed
