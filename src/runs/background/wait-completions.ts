@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import type { ArtifactPaths, SubagentState, Usage, WaitCompletion, WaitCompletionChild } from "../../shared/types.ts";
 import type { AsyncRunSummary } from "./async-status.ts";
 import { readCompletionReplay, writeCompletionReplay } from "./completion-replay.ts";
-import { fallbackResultPayloadPathForSessionRun, resultFilePath, resultPayloadPathForSessionRun } from "./result-files.ts";
+import { fallbackResultPayloadPathForSessionRun, resultFilePath, resultPayloadMatchesSessionRun, resultPayloadPathForSessionRun } from "./result-files.ts";
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 import { projectTimeoutRecovery } from "../shared/mutation-evidence.ts";
 
@@ -177,16 +177,34 @@ export function collectWaitCompletions(terminal: AsyncRunSummary[], state: Subag
 			}
 			const publicResultPath = resultFilePath(resultsDir, run.id);
 			let readableResultPath = publicResultPath;
+			let usingPublicFallback = true;
 			try {
 				try {
-					readableResultPath = run.sessionId
-						? resultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id) ?? publicResultPath
-						: publicResultPath;
+					const indexedResultPath = run.sessionId
+						? resultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id)
+						: undefined;
+					readableResultPath = indexedResultPath ?? publicResultPath;
+					usingPublicFallback = indexedResultPath === undefined;
 				} catch (error) {
 					if (!isAccessDenied(error) || !run.sessionId) throw error;
-					readableResultPath = fallbackResultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id) ?? publicResultPath;
+					const pendingResultPath = fallbackResultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id);
+					readableResultPath = pendingResultPath ?? publicResultPath;
+					usingPublicFallback = pendingResultPath === undefined;
 				}
-				fs.readFileSync(readableResultPath, "utf-8");
+				const raw = fs.readFileSync(readableResultPath, "utf-8");
+				if (usingPublicFallback && run.sessionId) {
+					let payload: unknown;
+					try {
+						payload = JSON.parse(raw);
+					} catch {
+						payload = undefined;
+					}
+					if (!resultPayloadMatchesSessionRun(payload, run.sessionId, run.id)) {
+						const replay = readCompletionReplay(resultsDir, run.id, { sessionId: run.sessionId });
+						add(replay?.completion ?? recorded.completion);
+						continue;
+					}
+				}
 				add(recorded.completion, readableResultPath);
 				continue;
 			} catch (error) {

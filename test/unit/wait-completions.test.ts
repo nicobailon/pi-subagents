@@ -7,7 +7,7 @@ import { writeCompletionReplay } from "../../src/runs/background/completion-repl
 import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 import type { AsyncRunSummary } from "../../src/runs/background/async-status.ts";
-import { collectWaitCompletions, toWaitCompletion } from "../../src/runs/background/wait-completions.ts";
+import { collectWaitCompletions, recordWaitCompletion, toWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 
 describe("workflow wait completion projection", () => {
 	it("returns readable evidence references from the matched result namespace and its replay", (t) => {
@@ -33,6 +33,32 @@ describe("workflow wait completion projection", () => {
 		assert.deepEqual(references, [`Result [${runId}]: ${replay.archivePath}`]);
 		assert.equal(JSON.parse(fs.readFileSync(replay.archivePath, "utf8")).entries[0].text, "NESTED_FINDING");
 		assert.equal(collectWaitCompletions([{ ...terminal[0]!, sessionId: "sibling" }], state, resultsDir), undefined);
+	});
+
+	it("only references an unindexed public fallback owned by the completed run session", (t) => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-public-fallback-"));
+		t.after(() => fs.rmSync(resultsDir, { recursive: true, force: true }));
+		const runId = "shared-run";
+		const terminal: AsyncRunSummary[] = [{ id: runId, sessionId: "owner", asyncDir: resultsDir, mode: "single", state: "complete", startedAt: Date.now(), steps: [] }];
+		// SAFETY: recordWaitCompletion initializes the only state collection used by this fixture.
+		const state = { currentSessionId: "owner" } as SubagentState;
+		recordWaitCompletion(state, runId, { runId, sessionId: "owner", agent: "owner-agent", success: true }, Date.now(), 60_000);
+		const resultPath = path.join(resultsDir, `${runId}.json`);
+		fs.writeFileSync(resultPath, JSON.stringify({ runId, sessionId: "foreign", agent: "foreign-agent", state: "failed", results: [{ error: "FOREIGN_PAYLOAD" }] }));
+
+		const foreignReferences: string[] = [];
+		const foreignCompletion = collectWaitCompletions(terminal, state, resultsDir, (text) => foreignReferences.push(text))?.[0];
+		assert.deepEqual(foreignReferences, []);
+		assert.equal(foreignCompletion?.agent, "owner-agent");
+		assert.equal(foreignCompletion?.state, undefined);
+		assert.equal(foreignCompletion?.results, undefined);
+		assert.doesNotMatch(JSON.stringify(foreignCompletion), /foreign-agent|FOREIGN_PAYLOAD/);
+
+		fs.writeFileSync(resultPath, JSON.stringify({ runId, sessionId: "owner", agent: "owner-payload" }));
+		const ownerReferences: string[] = [];
+		const ownerCompletion = collectWaitCompletions(terminal, state, resultsDir, (text) => ownerReferences.push(text))?.[0];
+		assert.equal(ownerCompletion?.agent, "owner-agent");
+		assert.deepEqual(ownerReferences, [`Result [${runId}]: ${resultPath}`]);
 	});
 
 	it("omits absent and malformed receipt references", () => {

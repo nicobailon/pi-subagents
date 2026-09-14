@@ -241,10 +241,15 @@ function pendingResultExists(resultsDir: string, sessionId: string, runId: strin
 	return firstExistingResultFile(resultPendingPaths(resultsDir, sessionId, runId)) !== undefined;
 }
 
+export function resultPayloadMatchesSessionRun(data: unknown, sessionId: string, runId: string): boolean {
+	if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+	const record = data as Record<string, unknown>;
+	return (nonEmptyString(record.runId) ?? nonEmptyString(record.id)) === runId && nonEmptyString(record.sessionId) === sessionId;
+}
+
 function pendingResultPayloadMatches(filePath: string, sessionId: string, runId: string): boolean {
 	try {
-		const data = JSON.parse(fs.readFileSync(filePath, "utf-8")) as Record<string, unknown>;
-		return (nonEmptyString(data.runId) ?? nonEmptyString(data.id)) === runId && nonEmptyString(data.sessionId) === sessionId;
+		return resultPayloadMatchesSessionRun(JSON.parse(fs.readFileSync(filePath, "utf-8")), sessionId, runId);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !isUnaddressableResultCandidate(error)) console.error(`Ignoring invalid pending async result '${filePath}':`, error);
 		return false;
@@ -252,8 +257,7 @@ function pendingResultPayloadMatches(filePath: string, sessionId: string, runId:
 }
 
 function assertPendingResultPayloadMatches(filePath: string, sessionId: string, runId: string): boolean {
-	const data = JSON.parse(fs.readFileSync(filePath, "utf-8")) as Record<string, unknown>;
-	return (nonEmptyString(data.runId) ?? nonEmptyString(data.id)) === runId && nonEmptyString(data.sessionId) === sessionId;
+	return resultPayloadMatchesSessionRun(JSON.parse(fs.readFileSync(filePath, "utf-8")), sessionId, runId);
 }
 
 export function promotePendingResultFile(resultsDir: string, sessionId: string, runId: string, file = resultFileName(runId), options: { logFailure?: boolean } = {}): "none" | "promoted" | "pending" {
