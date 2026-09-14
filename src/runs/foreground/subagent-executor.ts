@@ -99,7 +99,7 @@ import { dismissRecoveredWorkflow } from "./async-dismiss-action.ts";
 import { promotePausedWorkflowIfSettled, reconcileDetachedWorkflowChildCompletion } from "./workflow-detach-reconcile.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveAsyncRootResultPath, waitForImportedAsyncRoot } from "../background/chain-root-attachment.ts";
-import { removeResultIndex, resultFilePath, writeAsyncResultFile } from "../background/result-files.ts";
+import { fallbackResultPayloadPathForSessionRun, removeResultIndex, resultFilePath, writeAsyncResultFile } from "../background/result-files.ts";
 import { attachRootChildrenToSteps, createNestedRoute, findNestedControlResult, inheritedNestedParentAddressOf, inheritedNestedRouteOf, resolveNestedAsyncDir, snapshotNestedEventFiles, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedParentAddress, type NestedRoute, type NestedRunResolutionScope } from "../shared/nested-events.ts";
 import type { ChildRuntimeConfig } from "../shared/child-runtime-config.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
@@ -5273,16 +5273,22 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				let pendingResultPublication: Promise<boolean> | undefined;
 				let settleResultPublication: ((published: boolean) => void) | undefined;
 				let resultWriteFailureWakeDelivered = false;
-				const reportResultWriteFailure = (error: unknown): void => {
+				const reportResultWriteFailure = (error: unknown): boolean => {
 					const message = `Failed to write async workflow result ${resultPath}: ${error instanceof Error ? error.message : String(error)}`;
 					console.error(message, error);
+					try {
+						if (currentSessionId && fallbackResultPayloadPathForSessionRun(path.dirname(resultPath), currentSessionId, workflowRunId)) return true;
+					} catch (pendingError) {
+						console.error(`Failed to verify pending async workflow result '${workflowRunId}':`, pendingError);
+					}
 					appendWorkflowEvent({ type: "subagent.workflow.result_write_failed", error: message });
 					// A missing result file means the result watcher will never deliver the
 					// terminal completion wake. Intermediate child notices are context-only
 					// once their turns are suppressed, so surface the failure as its own
 					// actionable wake instead of leaving the parent asleep.
-					if (resultWriteFailureWakeDelivered) return;
+					if (resultWriteFailureWakeDelivered) return false;
 					resultWriteFailureWakeDelivered = true;
+					if (deps.state.currentSessionId !== currentSessionId || deps.state.completionOwnerId !== completionOwnerId) return false;
 					try {
 						deps.pi.sendMessage(
 							{
@@ -5296,6 +5302,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						console.error(`Failed to send workflow result write failure notification for '${workflowRunId}':`, sendError);
 					}
 					deps.refreshResultDelivery?.();
+					return false;
 				};
 				const runPersistence = createCapacityResilientJsonWriter({
 					keepAlive: true,
@@ -5304,7 +5311,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						if (filePath === resultPath) settleResultPublication?.(true);
 					},
 					onError: (error, filePath) => {
-						if (filePath === resultPath) { reportResultWriteFailure(error); settleResultPublication?.(false); }
+						if (filePath === resultPath) settleResultPublication?.(reportResultWriteFailure(error));
 						else console.error(`Failed to persist async workflow state '${filePath}':`, error);
 					},
 					write: (filePath, payload) => filePath === resultPath
@@ -5385,8 +5392,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						if (!resultPublished) pendingResultPublication = new Promise<boolean>((resolve) => { settleResultPublication = resolve; });
 						return true;
 					} catch (error) {
-						reportResultWriteFailure(error);
-						return false;
+						return reportResultWriteFailure(error);
 					}
 				};
 				const projectWorkflowActivity = () => {
