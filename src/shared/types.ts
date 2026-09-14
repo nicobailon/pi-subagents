@@ -2291,8 +2291,8 @@ export interface SubagentState {
 	lastUiContext: ExtensionContext | null;
 	poller: NodeJS.Timeout | null;
 	completionSeen: Map<string, number>;
-	/** Terminal result payloads observed by the result watcher, keyed by run id and pruned by the completion TTL. */
-	completedResults?: Map<string, { seenAt: number; completion: WaitCompletion }>;
+	/** Session-owned terminal result payloads observed by the result watcher, keyed by run id and pruned by the completion TTL. */
+	completedResults?: Map<string, { sessionId: string; seenAt: number; completion: WaitCompletion }>;
 	watcher: FSWatcher | null;
 	watcherRestartTimer: ReturnType<typeof setTimeout> | null;
 	resultFileCoalescer: {

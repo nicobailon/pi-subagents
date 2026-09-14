@@ -146,7 +146,8 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
  * Record a consumed terminal payload for later surfacing by bg_wait, pruning
  * stale entries with the same TTL that dedupes completion notifications. The result
  * file is deleted after durable replay succeeds, so this record is the in-process
- * source once the watcher has consumed it. Returns whether that replay is durable.
+ * source once the watcher has consumed it. Payload ownership must be explicit and
+ * agree with persistence ownership. Returns whether that replay is durable.
  */
 export function recordWaitCompletion(
 	state: SubagentState,
@@ -156,6 +157,8 @@ export function recordWaitCompletion(
 	ttlMs: number,
 	persistence?: { resultsDir: string; sessionId: string },
 ): boolean {
+	const sessionId = asNonEmptyString(data.sessionId);
+	if (!sessionId || (persistence && persistence.sessionId !== sessionId)) return false;
 	const store = state.completedResults ??= new Map();
 	for (const [key, entry] of store) {
 		if (now - entry.seenAt > ttlMs) store.delete(key);
@@ -175,7 +178,7 @@ export function recordWaitCompletion(
 			console.error(`Failed to persist completion replay for '${runId}':`, error);
 		}
 	}
-	store.set(runId, { seenAt: now, completion });
+	store.set(runId, { sessionId, seenAt: now, completion });
 	return completion.archivePath !== undefined;
 }
 
@@ -197,7 +200,7 @@ export function collectWaitCompletions(terminal: AsyncRunSummary[], state: Subag
 	};
 	for (const run of terminal) {
 		const recorded = state.completedResults?.get(run.id);
-		if (recorded) {
+		if (recorded && recorded.sessionId === run.sessionId) {
 			if (recorded.completion.archivePath) {
 				add(recorded.completion);
 				continue;
@@ -245,7 +248,7 @@ export function collectWaitCompletions(terminal: AsyncRunSummary[], state: Subag
 			// read. Prefer its in-memory record, then the durable replay written before
 			// result cleanup so watcher reloads do not lose completion details.
 			const late = state.completedResults?.get(run.id);
-			if (late) {
+			if (late && late.sessionId === run.sessionId) {
 				add(late.completion);
 				continue;
 			}

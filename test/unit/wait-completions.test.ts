@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { writeCompletionReplay } from "../../src/runs/background/completion-replay.ts";
 import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
-import type { SubagentState } from "../../src/shared/types.ts";
+import type { SubagentState, WaitCompletion } from "../../src/shared/types.ts";
 import type { AsyncRunSummary } from "../../src/runs/background/async-status.ts";
 import { collectWaitCompletions, recordWaitCompletion, toWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 
@@ -59,6 +59,63 @@ describe("workflow wait completion projection", () => {
 		const ownerCompletion = collectWaitCompletions(terminal, state, resultsDir, (text) => ownerReferences.push(text))?.[0];
 		assert.equal(ownerCompletion?.agent, "owner-agent");
 		assert.deepEqual(ownerReferences, [`Result [${runId}]: ${resultPath}`]);
+	});
+
+	it("does not surface an in-memory completion after the run id is reused by another session", (t) => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-memory-owner-"));
+		t.after(() => fs.rmSync(resultsDir, { recursive: true, force: true }));
+		const runId = "shared-run";
+		const state = { currentSessionId: "session-b" } as SubagentState;
+		assert.equal(recordWaitCompletion(state, runId, {
+			runId,
+			sessionId: "session-a",
+			agent: "session-a-agent",
+			state: "failed",
+			results: [{ error: "SESSION_A_ONLY" }],
+		}, Date.now(), 60_000, { resultsDir, sessionId: "session-a" }), true);
+		const terminal = [{ id: runId, sessionId: "session-b" }] as AsyncRunSummary[];
+		const references: string[] = [];
+
+		assert.equal(collectWaitCompletions(terminal, state, resultsDir, (text) => references.push(text)), undefined);
+		assert.deepEqual(references, []);
+		assert.equal(state.completedResults?.get(runId)?.sessionId, "session-a");
+	});
+
+	it("owner-gates the in-memory completion discovered during the result-file race", (t) => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-late-memory-owner-"));
+		t.after(() => fs.rmSync(resultsDir, { recursive: true, force: true }));
+		const runId = "shared-run";
+		const completion = toWaitCompletion({ agent: "recorded-agent", success: true }, runId);
+		const entry = { sessionId: "session-a", seenAt: Date.now(), completion };
+		class LateCompletionMap extends Map<string, typeof entry> {
+			private reads = 0;
+			override get(key: string): typeof entry | undefined {
+				this.reads += 1;
+				return this.reads === 1 ? undefined : super.get(key);
+			}
+		}
+		const collect = (sessionId: string): WaitCompletion[] | undefined => {
+			const completedResults = new LateCompletionMap([[runId, entry]]);
+			const state = { currentSessionId: sessionId, completedResults } as SubagentState;
+			return collectWaitCompletions([{ id: runId, sessionId }] as AsyncRunSummary[], state, resultsDir);
+		};
+
+		assert.equal(collect("session-b"), undefined);
+		assert.equal(collect("session-a")?.[0]?.agent, "recorded-agent");
+	});
+
+	it("refuses to record a completion without matching payload and persistence ownership", (t) => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-record-owner-"));
+		t.after(() => fs.rmSync(resultsDir, { recursive: true, force: true }));
+		const state = { currentSessionId: "session-a" } as SubagentState;
+
+		assert.equal(recordWaitCompletion(state, "missing", { runId: "missing" }, Date.now(), 60_000), false);
+		assert.equal(recordWaitCompletion(state, "mismatch", {
+			runId: "mismatch",
+			sessionId: "session-a",
+		}, Date.now(), 60_000, { resultsDir, sessionId: "session-b" }), false);
+		assert.equal(state.completedResults, undefined);
+		assert.equal(fs.existsSync(path.join(resultsDir, "completion-replay")), false);
 	});
 
 	it("rejects foreign unindexed public payloads before the watcher records completion", (t) => {

@@ -634,6 +634,7 @@ describe("bg_wait tool", () => {
 					writeStatus(asyncRoot, "run-b", "complete", { sessionId: "sess-1" });
 					// Simulates the watcher: payload recorded, file consumed and deleted.
 					recordWaitCompletion(state, "run-b", {
+						sessionId: "sess-1",
 						agent: "worker",
 						mode: "single",
 						state: "complete",
