@@ -9,14 +9,20 @@ import { executeAsyncSingle } from "../../src/runs/background/async-execution.ts
 import { makeAgent } from "../support/helpers.ts";
 
 // Spawn-boundary tests, not substitutes for the real official Linux loader gate.
-for (const missingBootstrap of [false, true]) {
-	test(`compiled background launch ${missingBootstrap ? "rejects a missing bootstrap" : "uses Pi's loader without npm aliases"}`, (t) => {
+for (const [entry, missingBootstrap] of [
+	["/$bunfs/root/pi-native", false],
+	["/$bunfs/root/pi-native", true],
+	["B:/~BUN/root/pi-native.exe", false],
+	["B:\\~BUN\\root\\pi-native.exe", false],
+	["B:/~BUN/root/pi-native.exe", true],
+] as const) {
+	test(`compiled background launch ${entry} ${missingBootstrap ? "rejects a missing bootstrap" : "uses Pi's loader without npm aliases"}`, (t) => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "binary-spawn-"));
 		const argv1 = process.argv[1];
 		const bun = Object.getOwnPropertyDescriptor(process.versions, "bun");
 		const env = { ...process.env };
 		Object.defineProperty(process.versions, "bun", { value: "1.3.14", configurable: true });
-		process.argv[1] = "/$bunfs/root/pi-native";
+		process.argv[1] = entry;
 		process.env.PI_SUBAGENT_PI_BINARY = path.join(root, "pi-native");
 		process.env.PI_PACKAGE_DIR = path.join(root, "release-assets");
 		process.env.PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT = "/stale/npm-root";

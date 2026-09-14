@@ -63,7 +63,7 @@ export interface PiSpawnDeps {
 export function resolveBunPiExecutable(deps: PiSpawnDeps = {}): string | undefined {
 	const bunVersion = deps.bunVersion ?? process.versions.bun;
 	const entry = deps.argv1 ?? process.argv[1];
-	if (!bunVersion || !entry?.startsWith("/$bunfs/")) return undefined;
+	if (!bunVersion || !entry || !/^(?:\/\$bunfs\/|B:[\\/]~BUN[\\/])/.test(entry)) return undefined;
 	const env = deps.env ?? process.env;
 	return env[PI_SUBAGENT_PI_BINARY_ENV]?.trim() || (deps.execPath ?? process.execPath);
 }
