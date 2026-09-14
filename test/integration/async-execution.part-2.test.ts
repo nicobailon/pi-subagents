@@ -16,6 +16,7 @@ import { deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, req
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { getHostBuiltinToolNames } from "../../src/runs/shared/child-tool-plan.ts";
+import { reloadFromDisk } from "../../src/runs/shared/model-exclusions.ts";
 import { SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION } from "../../src/shared/types.ts";
 import type { AsyncResultPayload, AsyncStatusPayload, MockPiCallRecord } from "../support/async-execution-fixture.ts";
 import {
@@ -2288,6 +2289,57 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(payload.results[0].error ?? "", /^bash failed \(exit 1\)/);
 		assert.match(payload.results[0].error ?? "", /timed out/i);
 		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("background runs stop on provisioning failure and exclude the model from the next launch", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const task = `Provisioning cache isolation ${Date.now().toString(36)}`;
+		const primaryId = `provisioning-cache-${Date.now().toString(36)}`;
+		const primaryModel = `openai/${primaryId}:high`;
+		mockPi.onCall({ matchArgIncludes: task, createError: "preflight failed: model startup failed" });
+		mockPi.onCall({ matchArgIncludes: task, output: "fallback after cached exclusion" });
+		const launch = (id: string) => executeAsyncSingle(id, {
+			agent: "worker",
+			task,
+			agentConfig: makeAgent("worker", {
+				model: primaryModel,
+				fallbackModels: ["anthropic/claude-sonnet-4:low"],
+			}),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			availableModels: [
+				{ provider: "openai", id: primaryId, fullId: `openai/${primaryId}` },
+				{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+			],
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const firstId = `async-provisioning-failure-${Date.now().toString(36)}`;
+		launch(firstId);
+		const firstPayload = await readAsyncPayload(firstId);
+		assert.equal(firstPayload.success, false);
+		assert.equal(firstPayload.results[0]?.modelAttempts?.length, 1);
+		assert.match(firstPayload.results[0]?.error ?? "", /preflight failed: model startup failed/u);
+		assert.equal(mockPi.callCount(), 1);
+
+		// The exclusion was persisted by the detached runner; emulate a later host
+		// loading that shared cache before launching again.
+		reloadFromDisk();
+		const secondId = `${firstId}-retry`;
+		launch(secondId);
+		const secondPayload = await readAsyncPayload(secondId);
+		assert.equal(secondPayload.success, true);
+		assert.deepEqual(secondPayload.results[0]?.attemptedModels, ["anthropic/claude-sonnet-4:low"]);
+		assert.equal(secondPayload.results[0]?.skippedModels?.[0]?.model, primaryModel);
+		assert.match(secondPayload.results[0]?.skippedModels?.[0]?.reason ?? "", /preflight failed: model startup failed/u);
+		assert.equal(mockPi.callCount(), 2);
 	});
 
 	it("background runs do not retry raw connection stderr after child activity", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

@@ -81,6 +81,7 @@ import {
 	formatSubagentModelVerificationError,
 	formatModelAttemptNote,
 	isContextOverflow,
+	isProvisioningFailure,
 	isRetryableModelFailureAttempt,
 	recordRetryableModelFailure,
 } from "../shared/model-fallback.ts";
@@ -2072,7 +2073,10 @@ async function runSyncCompletionInner(
 				}
 			}
 			if (recoveringAbort && !attemptSucceeded) break modelAttemptsLoop;
-			if (options.workflowChildPermitLaunch && !attemptSucceeded) break modelAttemptsLoop;
+			if (options.workflowChildPermitLaunch && !attemptSucceeded) {
+				if (isProvisioningFailure(result.error)) recordRetryableModelFailure(result.model ?? candidate, result.error);
+				break modelAttemptsLoop;
+			}
 			// Preserve the legacy intercom handoff contract: once this logical run has
 			// been handed to a supervisor, terminating that attempt must not launch a
 			// model fallback. Explicit user detach retains fallback.
@@ -2080,7 +2084,7 @@ async function runSyncCompletionInner(
 			if (attemptSucceeded) break modelAttemptsLoop;
 
 			const retryableModelFailure = isRetryableModelFailureAttempt({ error: result.error, messages: result.messages, toolCount: result.progressSummary?.toolCount });
-			if (retryableModelFailure) recordRetryableModelFailure(result.model ?? candidate, result.error);
+			if (retryableModelFailure || isProvisioningFailure(result.error)) recordRetryableModelFailure(result.model ?? candidate, result.error);
 			if (isContextOverflow(result.error)) {
 				result.contextOverflow = true;
 				attemptNotes.push(`[fallback] ${attempt.model} failed: context overflow — the input exceeds this model's context window. Reduce the task input or use a model with a larger context window.`);

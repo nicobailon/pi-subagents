@@ -650,8 +650,8 @@ const PROVISIONING_FAILURE_PATTERNS = [
 
 const PROVISIONING_FAILURE_TTL_MS = 15 * 60_000;
 
-function isProvisioningFailure(error: string): boolean {
-	return PROVISIONING_FAILURE_PATTERNS.some((pattern) => pattern.test(error));
+export function isProvisioningFailure(error: string | undefined): boolean {
+	return Boolean(error && PROVISIONING_FAILURE_PATTERNS.some((pattern) => pattern.test(error)));
 }
 
 export function recordRetryableModelFailure(model: string | undefined, error: string | undefined): void {

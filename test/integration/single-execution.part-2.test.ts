@@ -64,7 +64,7 @@ import { createWorktrees } from "../../src/runs/shared/worktree.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import { clearExclusions, recordModelFailure } from "../../src/runs/shared/model-exclusions.ts";
-import { createWorkflowChildPermit, workflowChildPermitConsumed } from "../../src/shared/workflow-child-permit.ts";
+import { claimWorkflowChildPermit, createWorkflowChildPermit, workflowChildPermitConsumed } from "../../src/shared/workflow-child-permit.ts";
 import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-adapters.ts";
 import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
 
@@ -2503,9 +2503,9 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(mockPi.callCount(), 0);
 	});
 
-	it("does not retry an unchanged provisioning failure on a fallback model", async () => {
+	it("does not retry a provisioning failure in the same launch and excludes it from the next launch", async () => {
 		mockPi.onCall({ createError: "preflight failed: model startup failed" });
-		mockPi.onCall({ output: "must not run" });
+		mockPi.onCall({ output: "fallback after cached exclusion" });
 		const agents = [makeAgent("worker", {
 			model: "openai/gpt-5-mini",
 			fallbackModels: ["anthropic/claude-sonnet-4"],
@@ -2520,6 +2520,63 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.match(result.error ?? "", /preflight failed: model startup failed/u);
 		assert.equal(result.modelAttempts?.length, 1);
 		assert.equal(mockPi.callCount(), 1);
+
+		const nextResult = await runSync(tempDir, agents, "worker", "Try again", {
+			runId: "provisioning-failure-cached-exclusion",
+			acceptance: false,
+		});
+
+		assert.equal(nextResult.exitCode, 0);
+		assert.deepEqual(nextResult.attemptedModels, ["anthropic/claude-sonnet-4"]);
+		assert.equal(nextResult.skippedModels?.[0]?.model, "openai/gpt-5-mini");
+		assert.match(nextResult.skippedModels?.[0]?.reason ?? "", /preflight failed: model startup failed/u);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("excludes a provisioning failure from a permitted workflow child on the next launch", async () => {
+		mockPi.onCall({ output: "projection probe" });
+		mockPi.onCall({ createError: "preflight failed: model startup failed" });
+		mockPi.onCall({ output: "fallback after cached exclusion" });
+		const primaryAgent = [makeAgent("worker", { model: "openai/gpt-5-mini" })];
+		const probe = await runSync(tempDir, primaryAgent, "worker", "Read a file", {
+			runId: "workflow-child-provisioning-probe",
+			acceptance: false,
+		});
+		assert.ok(probe.launchContractDigest);
+		const workflowRunId = "workflow-child-provisioning-failure";
+		const childKey = "main";
+		const permit = createWorkflowChildPermit({
+			issuerPackage: "test-package",
+			workflowRunId,
+			childKey,
+			agent: "worker",
+			launchContractDigest: probe.launchContractDigest,
+			context: "fresh",
+		});
+		assert.equal(claimWorkflowChildPermit(permit, workflowRunId, childKey), undefined);
+
+		const failed = await runSync(tempDir, primaryAgent, "worker", "Read a file", {
+			runId: workflowRunId,
+			acceptance: false,
+			workflowChildPermitLaunch: { permit, workflowRunId, childKey },
+		});
+
+		assert.equal(failed.exitCode, 1);
+		assert.equal(workflowChildPermitConsumed(permit), true);
+		assert.equal(mockPi.callCount(), 2);
+
+		const nextResult = await runSync(tempDir, [makeAgent("worker", {
+			model: "openai/gpt-5-mini",
+			fallbackModels: ["anthropic/claude-sonnet-4"],
+		})], "worker", "Try again", {
+			runId: "workflow-child-provisioning-cached-exclusion",
+			acceptance: false,
+		});
+
+		assert.equal(nextResult.exitCode, 0);
+		assert.deepEqual(nextResult.attemptedModels, ["anthropic/claude-sonnet-4"]);
+		assert.equal(nextResult.skippedModels?.[0]?.model, "openai/gpt-5-mini");
+		assert.equal(mockPi.callCount(), 3);
 	});
 
 	it("does not retry a non-zero exit after tool activity", async () => {
