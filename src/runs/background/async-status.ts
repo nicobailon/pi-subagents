@@ -546,6 +546,14 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		const asyncDir = path.join(asyncDirRoot, entry);
 		let status: (AsyncStatus & { cwd?: string }) | null;
 		try {
+			// Reconciliation can rewrite state; session-scoped discovery does not own foreign runs.
+			if (options.sessionId !== undefined) {
+				const stored = readStatus(asyncDir);
+				if (stored && stored.sessionId !== options.sessionId) {
+					observeStatus?.(stored);
+					continue;
+				}
+			}
 			const reconciliation = options.reconcile === false
 				? undefined
 				: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now }, observeStatus);

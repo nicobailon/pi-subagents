@@ -1,4 +1,10 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { randomUUID } from "node:crypto";
+import { nestedRunScope } from "../../src/runs/shared/nested-events.ts";
+import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { describe, it } from "node:test";
 import { drainOutstandingWork } from "../../src/runs/background/auto-drain.ts";
 import type { Details, SubagentState } from "../../src/shared/types.ts";
@@ -20,6 +26,36 @@ function waitResult(text: string, isError = false, windowElapsed = false) {
 }
 
 describe("headless background-work auto-drain", () => {
+	it("discovers both owned storage scopes, forwards them to wait, and leaves sibling work alone", async (t) => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-drain-scopes-"));
+		const nestedRootRunId = randomUUID();
+		const nested = nestedRunScope(nestedRootRunId);
+		const ordinary = { asyncDirRoot: path.join(root, "runs"), resultsDir: path.join(root, "results") };
+		t.after(() => { for (const dir of [root, nested.asyncDirRoot]) fs.rmSync(dir, { recursive: true, force: true }); });
+		const writeStatus = (dir: string, sessionId: string, status: "running" | "complete") => {
+			fs.mkdirSync(dir, { recursive: true });
+			fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify({ runId: path.basename(dir), sessionId, mode: "single", state: status, pid: process.pid, startedAt: Date.now(), lastUpdate: Date.now(), steps: [] }));
+			updateActiveRunIndex(dir, status);
+		};
+		const owned = [path.join(ordinary.asyncDirRoot, "workflow"), path.join(nested.asyncDirRoot, "persona")];
+		for (const dir of owned) writeStatus(dir, "owner", "running");
+		const sibling = path.join(nested.asyncDirRoot, "sibling-persona");
+		writeStatus(sibling, "sibling-session", "running");
+		let waits = 0;
+		await drainOutstandingWork({
+			state: state("owner"), ...ordinary, nestedRootRunId,
+			wait: async (_params, _signal, deps) => {
+				assert.equal(deps.nestedRootRunId, nestedRootRunId);
+				assert.equal(deps.asyncDirRoot, ordinary.asyncDirRoot);
+				assert.equal(deps.resultsDir, ordinary.resultsDir);
+				writeStatus(owned[waits++]!, "owner", "complete");
+				return waitResult("done");
+			},
+		});
+		assert.equal(waits, 2, "drain must continue when only nested owned work remains");
+		assert.equal(JSON.parse(fs.readFileSync(path.join(sibling, "status.json"), "utf8")).state, "running");
+	});
+
 	it("is a no-op when the exact session has no work", async () => {
 		let waited = false;
 		await drainOutstandingWork({

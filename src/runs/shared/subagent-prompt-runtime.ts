@@ -17,6 +17,7 @@ import { registerChildWatchdog } from "../../watchdog/register-child.ts";
 import type { ChildWatchdogConfig } from "../../watchdog/child-status.ts";
 import { requestWatchdogPermission, type WatchdogPermissionRequest, type WatchdogPermissionResult } from "../../watchdog/permission-arbiter.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../watchdog/types.ts";
+import { inheritedNestedRouteOf } from "./nested-events.ts";
 import { registerWaitTool } from "../background/wait-tool.ts";
 import { drainOutstandingWork } from "../background/auto-drain.ts";
 import {
@@ -466,7 +467,8 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 		watcherRestartTimer: null,
 		resultFileCoalescer: { schedule: () => false, clear: () => {} },
 	} as unknown as SubagentState;
-	if (typeof pi.registerTool === "function") registerWaitTool(pi, waitState, config.waitTool.enabled, undefined, config.waitTool.defaultTimeoutMs);
+	const nestedRootRunId = inheritedNestedRouteOf(config)?.rootRunId;
+	if (typeof pi.registerTool === "function") registerWaitTool(pi, waitState, config.waitTool.enabled, undefined, config.waitTool.defaultTimeoutMs, { nestedRootRunId });
 	const supervisorMetadata = childSupervisorMetadata(config);
 	let nativeSupervisorClientRegistered = false;
 	const registerNativeSupervisorClientOnce = (): void => {
@@ -495,7 +497,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 		}
 		config.holdFinalDrain?.(true);
 		try {
-			await drainOutstandingWork({ state: waitState, events: pi.events, hasPendingSupervisorRequest: config.hasPendingSupervisorRequest }, drainObservation);
+			await drainOutstandingWork({ state: waitState, events: pi.events, nestedRootRunId, hasPendingSupervisorRequest: config.hasPendingSupervisorRequest }, drainObservation);
 		} finally {
 			config.holdFinalDrain?.(false);
 		}

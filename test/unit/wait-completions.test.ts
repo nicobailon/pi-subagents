@@ -1,8 +1,40 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { toWaitCompletion } from "../../src/runs/background/wait-completions.ts";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { writeCompletionReplay } from "../../src/runs/background/completion-replay.ts";
+import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
+import type { SubagentState } from "../../src/shared/types.ts";
+import type { AsyncRunSummary } from "../../src/runs/background/async-status.ts";
+import { collectWaitCompletions, toWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 
 describe("workflow wait completion projection", () => {
+	it("returns readable evidence references from the matched result namespace and its replay", (t) => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-evidence-"));
+		t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+		const resultsDir = path.join(root, "nested", "root-run");
+		const runId = "persona";
+		const data = { runId, sessionId: "owner", results: [{ agent: "persona", output: "NESTED_FINDING" }] };
+		const resultPath = path.join(resultsDir, `${runId}.json`);
+		writeAsyncResultFile(resultPath, data);
+		writeAsyncResultFile(path.join(root, `${runId}.json`), { ...data, results: [{ output: "WRONG_NAMESPACE" }] });
+		const terminal: AsyncRunSummary[] = [{ id: runId, sessionId: "owner", asyncDir: root, mode: "single", state: "complete", startedAt: Date.now(), steps: [] }];
+		// SAFETY: the collector only reads the optional completedResults store from this fixture.
+		const state = { currentSessionId: "owner" } as SubagentState;
+		const references: string[] = [];
+		assert.equal(collectWaitCompletions(terminal, state, resultsDir, (text) => references.push(text))?.[0]?.runId, runId);
+		assert.deepEqual(references, [`Result [${runId}]: ${resultPath}`]);
+		assert.equal(JSON.parse(fs.readFileSync(resultPath, "utf8")).results[0].output, "NESTED_FINDING");
+		const replay = writeCompletionReplay({ resultsDir, runId, sessionId: "owner", completion: toWaitCompletion(data, runId), data, now: Date.now(), ttlMs: 60_000 });
+		fs.rmSync(resultPath);
+		references.length = 0;
+		assert.equal(collectWaitCompletions(terminal, state, resultsDir, (text) => references.push(text))?.[0]?.archivePath, replay.archivePath);
+		assert.deepEqual(references, [`Result [${runId}]: ${replay.archivePath}`]);
+		assert.equal(JSON.parse(fs.readFileSync(replay.archivePath, "utf8")).entries[0].text, "NESTED_FINDING");
+		assert.equal(collectWaitCompletions([{ ...terminal[0]!, sessionId: "sibling" }], state, resultsDir), undefined);
+	});
+
 	it("omits absent and malformed receipt references", () => {
 		for (const workflowReceipt of [undefined, null, [], "path", { path: "" }, { path: 42 }]) {
 			assert.equal("workflowReceiptPath" in toWaitCompletion({ workflowReceipt }, "run"), false);
