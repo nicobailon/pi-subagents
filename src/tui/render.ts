@@ -2545,6 +2545,10 @@ function buildSingleLineWidgetLines(jobs: AsyncJobState[], theme: Theme, width: 
 	if (counts.failed.length > 0) parts.push(`${counts.failed.length} failed`);
 	if (counts.stopped.length > 0) parts.push(`${counts.stopped.length} stopped`);
 	if (counts.paused.length > 0) parts.push(`${counts.paused.length} paused`);
+	for (const status of ["partial", "rejected"] as const) {
+		const count = jobs.filter((job) => job.status === status).length;
+		if (count > 0) parts.push(`${count} ${status}`);
+	}
 	if (!hasActive && counts.complete.length > 0) parts.push(`${counts.complete.length}/${jobs.length} done`);
 	return [truncLine(`${theme.fg(hasActive ? "accent" : "dim", glyph)} ${theme.fg(hasActive ? "accent" : "dim", "subagents")} (${parts.join(", ") || `${jobs.length} total`})`, width)];
 }
@@ -2817,6 +2821,7 @@ function buildWidgetComponent(jobs: AsyncJobState[], ui: ExtensionContext["ui"])
 		let cachedExpanded: boolean | undefined;
 		let cachedLines: string[] | undefined;
 		let cachedCoverage = "[]";
+		let collapsed = false;
 		const invalidate = (): void => {
 			cachedLines = undefined;
 			resetWidgetLayoutSession();
@@ -2830,6 +2835,14 @@ function buildWidgetComponent(jobs: AsyncJobState[], ui: ExtensionContext["ui"])
 		};
 		asyncWidgetUpdates.set(ui, update);
 		const component = Object.assign(container, {
+			// Only the mouse fields used here, without requiring newer Pi type exports.
+			handleMouse(event: { type: string; button: string; y: number; shift: boolean; alt: boolean; ctrl: boolean }) {
+				if (event.type !== "click" || event.button !== "left" || event.y !== 0) return undefined;
+				if (event.shift || event.alt || event.ctrl) return undefined;
+				collapsed = !collapsed;
+				invalidate();
+				return { handled: true };
+			},
 			dispose(): void {
 				if (asyncWidgetUpdates.get(ui) === update) asyncWidgetUpdates.delete(ui);
 				if (asyncWidgetInvalidations.get(ui) === invalidate) asyncWidgetInvalidations.delete(ui);
@@ -2872,7 +2885,10 @@ function buildWidgetComponent(jobs: AsyncJobState[], ui: ExtensionContext["ui"])
 			cachedRenderWidth = renderWidth;
 			cachedFrame = frame;
 			cachedExpanded = expanded;
-			cachedLines = fitAdaptiveWidgetLines(roots, buildLines, theme, width, expanded, frame, projectionFor).map((line) => paddedWidgetLine(line, renderWidth));
+			cachedLines = (collapsed
+				? buildSingleLineWidgetLines(jobs, theme, width, frame)
+				: fitAdaptiveWidgetLines(roots, buildLines, theme, width, expanded, frame, projectionFor)
+			).map((line) => paddedWidgetLine(line, renderWidth));
 			return cachedLines;
 		};
 		return component;

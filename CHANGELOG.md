@@ -35,6 +35,7 @@
 
 ### Added
 
+- Left-click the async widget header in mouse-enabled Pi fullscreen mode to fold it into a live status summary and unfold it again, independently of global tool expansion. Progress updates preserve the fold state; run execution and notifications are unchanged.
 - Allow agents to declare an inline JSON Schema `outputSchema` default, with launch objects overriding it and explicit `false` opting out. Thanks to [@peedrr](https://github.com/peedrr) for #2180.
 - Add `PI_SUBAGENT_CACHE_RETENTION` to set a prompt-cache retention tier for child sessions only, so a parent on the 1h tier can keep children on the cheaper-to-write 5m tier they are too short-lived to benefit from. Unset by default, leaving children on the parent's retention. Spawned children take it through the launch environment; in-process children pin it per request on their own session rather than on shared process state. Thanks to [@johnwards](https://github.com/johnwards) for #2190.
 - Add a session-scoped public host API for required native-child extension module paths. Required extensions survive agent overrides and detached/nested launches, appear by safe host ID in launch evidence, and fail closed when denied or unable to load before model resolution. Thanks to [@gkoreli](https://github.com/gkoreli) for #2153.

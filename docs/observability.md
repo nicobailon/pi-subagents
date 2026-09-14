@@ -40,6 +40,17 @@ async subagent worker · background
 
 To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.
 
+In Pi fullscreen mode with mouse dispatch (verified with Pi TUI 0.85.1), left-click
+anywhere on the async widget's header row to fold it into a live one-line status
+summary. Click again to restore the usual layout. No knowledge of extension commands
+or keyboard shortcuts is needed. The summary counts the widget's tracked runs,
+including workflow parents and children, rather than unique agents.
+
+Folding stays in effect across progress updates and does not change Pi's global
+expand setting, run execution, or completion notifications. Task rows, drag and
+wheel events, and modifier clicks are left unhandled. The state resets when the
+widget is removed or Pi reloads. Regular mode keeps the existing keyboard controls.
+
 ### Reducing status display noise
 
 Chat records tool-call history; FleetView and the async widget show live run/child updates. Separate `subagent({ action: "status", id: "..." })` calls leave separate historical entries even when their `Status target: run …` labels match. A matching run ID identifies the queried run, not the tool call, and is not evidence of duplicate execution. Live Fleet/widget refreshes do not merge those entries.
