@@ -8,7 +8,7 @@
  */
 
 import assert from "node:assert/strict";
-import { after, beforeEach, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { createDefaultChildSessionFactory, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
 import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
@@ -42,7 +42,7 @@ describe("child model resolution diagnostic", () => {
 		clearExclusions();
 		tempDir = createTempDir();
 	});
-	after(() => removeTempDir(tempDir));
+	afterEach(() => removeTempDir(tempDir));
 
 	it("explains a foreground model that only an unloaded provider extension serves", async () => {
 		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => unresolvedModelPi() });
