@@ -71,6 +71,42 @@ describe("in-process foreground child", () => {
 		}
 	});
 
+	it("keeps concurrent foreground siblings attached to captured parent after parent completion", async () => {
+		const key = Symbol.for("pi.langfuse.contexts.v1");
+		const globals = globalThis as unknown as Record<symbol, unknown>;
+		const spanId = "b".repeat(16);
+		globals[key] = new Map([["trace-parent", { traceId: "a".repeat(32), spanId, rootSessionId: "root", depth: 0 }]]);
+		const launches: ChildSessionLaunch[] = [];
+		const inner = childSessionFactory();
+		const wrapped: ChildSessionFactory = { ...inner, create: async (launch) => {
+			launches.push(launch);
+			return inner.create(launch);
+		} };
+		try {
+			mockPi.onCall({ output: "first" }); mockPi.onCall({ output: "second" });
+			const results = await Promise.all([0, 1].map(index => runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+				runId: "sibling-run", index, parentSessionId: "trace-parent", childSessionFactory: wrapped,
+			})));
+			assert.ok(results.every(result => result.exitCode === 0));
+			delete globals[key];
+			const replies = launches.map(launch => {
+				let handler: ((payload: unknown) => void) | undefined;
+				launch.hooks.find(hook => hook.name === "pi-subagents:trace-parent")!.factory({ events: {
+					on: (_name: string, callback: typeof handler) => { handler = callback; },
+				} } as never);
+				let reply: any;
+				handler!({ reply: (value: unknown) => { reply = value; } });
+				return reply;
+			});
+			assert.deepEqual(replies.map(reply => reply.childIndex).sort(), [0, 1]);
+			for (const reply of replies) {
+				assert.equal(reply.spanId, spanId); assert.equal(reply.parentSessionId, "trace-parent");
+				assert.equal(reply.agent, "echo"); assert.equal(reply.runId, "sibling-run");
+				assert.equal(reply.parentToolCallId, undefined);
+			}
+		} finally { delete globals[key]; }
+	});
+
 	it("adds the fanout hook and nested route only for fanout-authorized children", async () => {
 		const route = createNestedRoute("hooks-fanout");
 		try {

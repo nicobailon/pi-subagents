@@ -70,6 +70,7 @@ import { inheritedNestedParentAddressOf, inheritedNestedRouteOf, nestedResultsPa
 import type { ChildRuntimeConfig } from "../shared/child-runtime-config.ts";
 import { childSessionFactoryModule } from "../shared/child-session.ts";
 import { inheritedChildRuntime } from "../shared/child-launch.ts";
+import { captureTraceParent } from "../shared/trace-parent.ts";
 import { resultFilePath } from "./result-files.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetState } from "../shared/usage-budget.ts";
@@ -1345,6 +1346,7 @@ export function executeAsyncChain(
 			{
 				id,
 				steps,
+				traceParent: captureTraceParent(ctx.parentSessionId ?? ctx.currentSessionId, (ctx.childRuntime?.depth ?? 0) + 1),
 				resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : resultFilePath(DIRS.results, id),
 				cwd: runnerCwd,
 				placeholder: "{previous}",
@@ -1953,6 +1955,8 @@ export function executeAsyncSingle(
 						...(lane ? { lane } : {}),
 					},
 				],
+				traceParent: captureTraceParent(ctx.parentSessionId ?? ctx.currentSessionId, (ctx.childRuntime?.depth ?? 0) + 1),
+				sourceRunId: params.revivalLease?.sourceRunId ?? params.externalJobFollowUp?.sourceRunId,
 				resultPath: params.parentWorkflowRunId !== undefined && (params.revivalLease !== undefined || params.workflowAwaitAsync === true)
 					? workflowAwaitedAsyncResultPath(asyncDir)
 					: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : resultFilePath(DIRS.results, id),

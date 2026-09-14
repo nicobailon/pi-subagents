@@ -70,6 +70,30 @@ describe("active async capacity", () => {
 		}
 	});
 
+	it("removes a newly created slot when initial owner persistence fails", () => {
+		const rootDir = tempRoot();
+		const sessionId = "session-quota";
+		try {
+			assert.throws(
+				() => acquireActiveAsyncCapacity({ sessionId, limit: 1, runId: "run-a", kind: "runner", asyncDir: path.join(rootDir, "run-a") }, {
+					rootDir,
+					writeInitialOwner(filePath) {
+						fs.writeFileSync(filePath, "");
+						throw Object.assign(new Error("quota exhausted"), { code: "EDQUOT" });
+					},
+				}),
+				(error: unknown) => error instanceof Error && (error as NodeJS.ErrnoException).code === "EDQUOT",
+			);
+			assert.deepEqual(getActiveAsyncCapacitySnapshot(sessionId, 1, { rootDir }), { used: 0, limit: 1 });
+
+			const retry = acquireActiveAsyncCapacity({ sessionId, limit: 1, runId: "run-b", kind: "runner", asyncDir: path.join(rootDir, "run-b") }, { rootDir });
+			assert.ok(retry);
+			assert.equal(retry.owner.runId, "run-b");
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
 	it("uses the injected clock for reservation and start timestamps", () => {
 		const rootDir = tempRoot();
 		let now = 100;

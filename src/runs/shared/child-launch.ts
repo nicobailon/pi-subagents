@@ -33,6 +33,7 @@ import {
 } from "./child-tool-plan.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import { createChildHooks } from "./child-hooks.ts";
+import { resolveTraceParent, traceParentHook, type TraceParentContext } from "./trace-parent.ts";
 import type { ChildSessionLaunch, ChildSessionStorage } from "./child-session.ts";
 
 /** Environment variable pi-mcp-adapter reads for the tools a child may expose. */
@@ -59,6 +60,9 @@ export function inheritedChildRuntime(config: ChildRuntimeConfig | undefined): I
 }
 
 export interface BuildInProcessChildLaunchInput {
+	traceParent?: Readonly<TraceParentContext>;
+	sourceRunId?: string;
+	parentToolCallId?: string;
 	parentSessionId?: string;
 	forkCacheKey?: string;
 	sessionEnabled: boolean;
@@ -288,7 +292,15 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		...(!toolPlan.explicitToolAllowlist && toolPlan.excludeTools.length > 0 ? { excludeTools: toolPlan.excludeTools } : {}),
 		extensionPaths,
 		ambientExtensions,
-		hooks: createChildHooks(config),
+		hooks: [traceParentHook(resolveTraceParent({
+			parentSessionId: config.parentSessionId,
+			depth: config.depth,
+			runId: config.runId,
+			agent: config.agent,
+			childIndex: config.childIndex,
+			sourceRunId: input.sourceRunId,
+			parentToolCallId: input.parentToolCallId,
+		}, input.traceParent, input.host === "parent")), ...createChildHooks(config)],
 		...(input.host === "runner" ? { processEnv: childProcessEnv(input, toolPlan) } : {}),
 		runtime: config,
 		noSkills: !input.inheritSkills,

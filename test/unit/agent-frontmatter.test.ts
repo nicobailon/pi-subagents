@@ -14,8 +14,12 @@ import { applyThinkingSuffix } from "../../src/runs/shared/child-tool-plan.ts";
 import { THINKING_LEVELS } from "../../src/shared/model-info.ts";
 
 const tempDirs: string[] = [];
+type JsonValue = boolean | number | string | null | JsonObject | JsonValue[];
+type JsonObject = Record<string, JsonValue>;
+type LinkedWorktree = { repo: string; worktree: string };
+type LinkedWorktreePackage = { packageAgentName: string; packageAgentPath: string; settingsPath: string };
 
-function writeJson(filePath: string, value: unknown): void {
+function writeJson(filePath: string, value: JsonObject): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	fs.writeFileSync(filePath, JSON.stringify(value, null, 2), "utf-8");
 }
@@ -25,7 +29,7 @@ function writeAgent(filePath: string, body: string): void {
 	fs.writeFileSync(filePath, body, "utf-8");
 }
 
-function createNestedLinkedWorktree(): { repo: string; worktree: string } {
+function createNestedLinkedWorktree(): LinkedWorktree {
 	const repo = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-linked-worktree-"));
 	tempDirs.push(repo);
 	execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
@@ -40,7 +44,7 @@ function createNestedLinkedWorktree(): { repo: string; worktree: string } {
 	return { repo, worktree };
 }
 
-function writeLinkedWorktreePackage(repo: string): { packageAgentName: string; packageAgentPath: string; settingsPath: string } {
+function writeLinkedWorktreePackage(repo: string): LinkedWorktreePackage {
 	const packageAgentName = "issue950-workflow.reviewer";
 	const packageRoot = path.join(repo, ".pi", "vendor", "workflow");
 	const packageAgentPath = path.join(packageRoot, "agents", "reviewer.md");
@@ -1784,7 +1788,7 @@ Do work
 		const allowed = buildInProcessChildLaunch({ ...launch, model: "openai-codex/gpt-5.6-luna:low" });
 
 		assert.ok(allowed.toolPlan.runtimeExtensions.some((extensionPath) => extensionPath.endsWith("fast-mode-extension.ts")));
-		assert.deepEqual(allowed.session.hooks.map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:fast-mode"]);
+		assert.deepEqual(allowed.session.hooks.map((hook) => hook.name), ["pi-subagents:trace-parent", "pi-subagents:prompt-runtime", "pi-subagents:fast-mode"]);
 		assert.throws(() => buildInProcessChildLaunch({ ...launch, model: "anthropic/claude-sonnet-4" }), /fast mode supports only/);
 	});
 });

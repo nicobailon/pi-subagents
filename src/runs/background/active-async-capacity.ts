@@ -44,6 +44,7 @@ interface CapacityOptions {
 	abandonedSlotReleaseAfterMs?: number | false;
 	pidLiveness?: (pid: number) => PidLiveness;
 	afterSlotRename?: (releasedDir: string) => void;
+	writeInitialOwner?: (filePath: string, owner: ActiveAsyncCapacityOwnerV1) => void;
 	writeOwner?: (filePath: string, owner: ActiveAsyncCapacityOwnerV1) => void;
 }
 
@@ -364,7 +365,7 @@ export function getActiveAsyncCapacitySnapshot(
 	return reconcileActiveAsyncCapacity(sessionId, limit, options);
 }
 
-function createSlot(poolDir: string, owner: ActiveAsyncCapacityOwnerV1): boolean {
+function createSlot(poolDir: string, owner: ActiveAsyncCapacityOwnerV1, options: CapacityOptions): boolean {
 	const destination = slotDir(poolDir, owner.slot);
 	fs.mkdirSync(poolDir, { recursive: true, mode: 0o700 });
 	try {
@@ -373,9 +374,16 @@ function createSlot(poolDir: string, owner: ActiveAsyncCapacityOwnerV1): boolean
 		if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
 		throw error;
 	}
-	// If owner persistence fails, the corrupt occupied directory remains and
-	// fails closed instead of becoming available to another admission.
-	fs.writeFileSync(path.join(destination, "owner.json"), `${JSON.stringify(owner, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
+	try {
+		const ownerPath = path.join(destination, "owner.json");
+		if (options.writeInitialOwner) options.writeInitialOwner(ownerPath, owner);
+		else fs.writeFileSync(ownerPath, `${JSON.stringify(owner, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
+	} catch (error) {
+		// This call created the directory and has not exposed a handle yet, so no
+		// runner can own it. Roll it back instead of leaking permanent capacity.
+		fs.rmSync(destination, { recursive: true, force: true });
+		throw error;
+	}
 	return true;
 }
 
@@ -474,7 +482,7 @@ export function acquireActiveAsyncCapacity(
 			asyncDir: input.asyncDir,
 			reservedAt: options.now?.() ?? Date.now(),
 		};
-		if (createSlot(poolDir, owner)) return handleFor(owner, input.limit, { ...options, rootDir });
+		if (createSlot(poolDir, owner, options)) return handleFor(owner, input.limit, { ...options, rootDir });
 	}
 	throw new ActiveAsyncCapacityError(snapshotFor(input.sessionId, input.limit, rootDir));
 }

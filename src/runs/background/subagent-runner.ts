@@ -197,6 +197,8 @@ interface SubagentRunConfig {
 	childSessionFactoryModule?: string;
 	/** The launching executor's own child runtime when it was itself an in-process child. */
 	inheritedChildRuntime?: InheritedChildRuntime;
+	traceParent?: import("../shared/trace-parent.ts").TraceParentContext;
+	sourceRunId?: string;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
@@ -669,6 +671,8 @@ interface SingleStepContext {
 	childSessions: ChildSessionFactory;
 	/** The launching executor's own child runtime; nested route, depth, and ceilings come from here. */
 	inheritedChildRuntime?: InheritedChildRuntime;
+	traceParent?: import("../shared/trace-parent.ts").TraceParentContext;
+	sourceRunId?: string;
 	registerInterrupt?: (interrupt: (() => void) | undefined) => void;
 	registerTimeout?: (interrupt: (() => void) | undefined) => void;
 	registerStop?: (stop: (() => void) | undefined) => void;
@@ -1074,6 +1078,8 @@ async function runSingleStepInner(
 		let watchdogSink: ((event: ChildWatchdogStatusEvent) => void) | undefined;
 		const launch = buildInProcessChildLaunch(omitUndefinedProperties({
 			parentSessionId: step.parentSessionId,
+			traceParent: ctx.traceParent,
+			sourceRunId: ctx.sourceRunId,
 			forkCacheKey: step.context === "fork" ? deriveForkPromptCacheKey(step.parentSessionId) : undefined,
 			sessionEnabled,
 			sessionDir,
@@ -3544,6 +3550,8 @@ async function runSubagent(
 					piPackageRoot: config.piPackageRoot,
 					childSessions,
 					inheritedChildRuntime: config.inheritedChildRuntime,
+					traceParent: config.traceParent,
+					sourceRunId: config.sourceRunId,
 					childIntercomTarget: config.childIntercomTargets?.[fi],
 					orchestratorIntercomTarget: config.controlIntercomTarget,
 					nestedRoute: config.nestedRoute,
@@ -3941,6 +3949,8 @@ async function runSubagent(
 							piPackageRoot: config.piPackageRoot,
 							childSessions,
 							inheritedChildRuntime: config.inheritedChildRuntime,
+					traceParent: config.traceParent,
+					sourceRunId: config.sourceRunId,
 							childIntercomTarget: config.childIntercomTargets?.[fi],
 							orchestratorIntercomTarget: config.controlIntercomTarget,
 							nestedRoute: config.nestedRoute,
@@ -4306,6 +4316,8 @@ async function runSubagent(
 				piPackageRoot: config.piPackageRoot,
 				childSessions,
 				inheritedChildRuntime: config.inheritedChildRuntime,
+					traceParent: config.traceParent,
+					sourceRunId: config.sourceRunId,
 				childIntercomTarget: config.childIntercomTargets?.[flatIndex],
 				orchestratorIntercomTarget: config.controlIntercomTarget,
 				nestedRoute: config.nestedRoute,
