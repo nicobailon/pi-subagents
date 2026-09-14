@@ -1,10 +1,18 @@
 # Standalone background execution
 
-Supported standalone target: **official Pi 0.85.1, Linux x64**. Keep its adjacent release assets with the executable. Other versions, operating systems, architectures and packagers are not covered.
+Supported standalone target: **official Pi 0.85.1, Linux x64**. Keep its adjacent release assets with the executable. Other versions, operating systems, architectures and packagers are outside the fully validated support target; limited experimental Windows coverage is described below.
 
 Pi's extension loader supplies its embedded SDK to `binary-bootstrap.ts`, which awaits the existing configured runner before exiting. Startup authorization, revival leases, controls, disposal and process-close observation remain shared with npm. Each independent run has its own host; native sessions inside that run share it. No per-session CLI protocol, runtime download/install, alternate SDK or foreground fallback is introduced. Npm Pi keeps its Node runner, peer aliases and detected npm `PI_PACKAGE_DIR` override (including refusal when no npm root exists).
 
 Implementation and lifecycle fixtures derive from [@xz-dev](https://github.com/xz-dev)'s [PR #2049](https://github.com/nicobailon/pi-subagents/pull/2049), source commit `910807bfefcf9ee41d73fa25ec86dcd75ab8f4b2` (Xiangzhe, `xiangzhedev@gmail.com`). Integration retains the lifecycle contract and reduces commentary rather than removing its evidence gates.
+
+## Experimental Windows host recognition
+
+The resolver recognizes Bun's Windows virtual entrypoint prefixes, `B:/~BUN/` and `B:\~BUN\`, alongside `/$bunfs/`. It launches the real `process.execPath` (or the existing executable override). The `B:` prefix is virtual, not the installation drive; `pi-native.exe` is not a required executable name.
+
+A local Windows x64 smoke passed with **xz-dev/pi `0.85.1-xz.169.1.gb5f4d0ff`, Bun 1.4.2**: a fresh async worker executed a read-only Git command, returned its result, delivered the native completion notification, and exited with code 0 and no remaining runner process. This is not validation of the official Windows distribution or every Bun-compiled Pi host. Windows remains **experimental**: the full standalone lifecycle matrix has not been validated there.
+
+Node-hosted npm Pi keeps its existing runner path and is not affected by this virtual-entrypoint detection defect. Installing only the pi-subagents extension through npm does not change a Bun-compiled Pi host into an npm Pi host.
 
 ## Official binary gate
 
