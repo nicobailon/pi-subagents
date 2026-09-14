@@ -44,37 +44,30 @@ function errorMessage(error: unknown): string {
 
 const STRUCTURED_OUTPUT_INLINE_LIMIT_BYTES = 4 * 1024;
 
-interface WaitResultPayloadCandidate {
-	path: string;
-	unindexedPublic: boolean;
-}
-
-function waitResultPayloadCandidate(resultsDir: string, run: AsyncRunSummary): WaitResultPayloadCandidate {
+function waitResultPayloadCandidate(resultsDir: string, run: AsyncRunSummary): string {
 	const publicPath = resultFilePath(resultsDir, run.id);
-	if (!run.sessionId) return { path: publicPath, unindexedPublic: true };
+	if (!run.sessionId) return publicPath;
 	try {
 		const indexedPath = resultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id);
-		return indexedPath
-			? { path: indexedPath, unindexedPublic: false }
-			: { path: publicPath, unindexedPublic: true };
+		return indexedPath ?? publicPath;
 	} catch (error) {
 		if (!isAccessDenied(error)) throw error;
 		const pendingPath = fallbackResultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id);
-		return pendingPath
-			? { path: pendingPath, unindexedPublic: false }
-			: { path: publicPath, unindexedPublic: true };
+		return pendingPath ?? publicPath;
 	}
 }
 
-function readWaitResultPayload(candidate: WaitResultPayloadCandidate, run: AsyncRunSummary): Record<string, unknown> | undefined {
+function readWaitResultPayload(candidatePath: string, run: AsyncRunSummary): Record<string, unknown> | undefined {
+	// A terminal run without session ownership cannot safely claim a payload.
+	if (!run.sessionId) return undefined;
 	let payload: unknown;
 	try {
-		payload = JSON.parse(fs.readFileSync(candidate.path, "utf-8"));
+		payload = JSON.parse(fs.readFileSync(candidatePath, "utf-8"));
 	} catch (error) {
-		if (candidate.unindexedPublic && error instanceof SyntaxError) return undefined;
+		if (error instanceof SyntaxError) return undefined;
 		throw error;
 	}
-	if (candidate.unindexedPublic && (!run.sessionId || !resultPayloadMatchesSessionRun(payload, run.sessionId, run.id))) return undefined;
+	if (!resultPayloadMatchesSessionRun(payload, run.sessionId, run.id)) return undefined;
 	return payload as Record<string, unknown>;
 }
 
@@ -210,13 +203,13 @@ export function collectWaitCompletions(terminal: AsyncRunSummary[], state: Subag
 				continue;
 			}
 			try {
-				const candidate = waitResultPayloadCandidate(resultsDir, run);
-				if (!readWaitResultPayload(candidate, run)) {
+				const candidatePath = waitResultPayloadCandidate(resultsDir, run);
+				if (!readWaitResultPayload(candidatePath, run)) {
 					const replay = readCompletionReplay(resultsDir, run.id, { sessionId: run.sessionId });
 					add(replay?.completion ?? recorded.completion);
 					continue;
 				}
-				add(recorded.completion, candidate.path);
+				add(recorded.completion, candidatePath);
 				continue;
 			} catch (error) {
 				if (errorCode(error) !== "ENOENT") throw error;
@@ -225,9 +218,9 @@ export function collectWaitCompletions(terminal: AsyncRunSummary[], state: Subag
 			add(replay?.completion ?? recorded.completion);
 			continue;
 		}
-		let candidate: WaitResultPayloadCandidate;
+		let candidatePath: string;
 		try {
-			candidate = waitResultPayloadCandidate(resultsDir, run);
+			candidatePath = waitResultPayloadCandidate(resultsDir, run);
 		} catch (error) {
 			const publicResultPath = resultFilePath(resultsDir, run.id);
 			throw new Error(`Failed to read subagent result '${publicResultPath}': ${errorMessage(error)}`, {
@@ -235,16 +228,16 @@ export function collectWaitCompletions(terminal: AsyncRunSummary[], state: Subag
 			});
 		}
 		try {
-			const payload = readWaitResultPayload(candidate, run);
+			const payload = readWaitResultPayload(candidatePath, run);
 			if (!payload) {
 				const replay = readCompletionReplay(resultsDir, run.id, { sessionId: run.sessionId });
 				if (replay) add(replay.completion);
 				continue;
 			}
-			add(toWaitCompletion(payload, run.id), candidate.path);
+			add(toWaitCompletion(payload, run.id), candidatePath);
 		} catch (error) {
 			if (errorCode(error) !== "ENOENT") {
-				throw new Error(`Failed to read subagent result '${candidate.path}': ${errorMessage(error)}`, {
+				throw new Error(`Failed to read subagent result '${candidatePath}': ${errorMessage(error)}`, {
 					cause: error instanceof Error ? error : undefined,
 				});
 			}

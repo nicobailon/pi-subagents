@@ -84,6 +84,54 @@ describe("workflow wait completion projection", () => {
 		assert.deepEqual(ownerReferences, [`Result [${runId}]: ${resultPath}`]);
 	});
 
+	it("validates stale indexed public payload ownership with and without memory", (t) => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-stale-index-"));
+		t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+		for (const hasMemory of [false, true]) {
+			for (const payloadOwner of ["owner", "foreign"]) {
+				const resultsDir = path.join(root, `${hasMemory ? "memory" : "no-memory"}-${payloadOwner}`);
+				const runId = "shared-run";
+				const resultPath = path.join(resultsDir, `${runId}.json`);
+				writeAsyncResultFile(resultPath, { runId, sessionId: "owner", agent: "initial-owner" });
+				// Leave the owner's index intact while replacing its public payload.
+				fs.writeFileSync(resultPath, JSON.stringify({
+					runId,
+					sessionId: payloadOwner,
+					agent: `${payloadOwner}-payload`,
+					state: payloadOwner === "owner" ? "complete" : "failed",
+					results: payloadOwner === "foreign" ? [{ error: "FOREIGN_PAYLOAD" }] : undefined,
+				}));
+				const terminal: AsyncRunSummary[] = [{ id: runId, sessionId: "owner", asyncDir: resultsDir, mode: "single", state: "complete", startedAt: Date.now(), steps: [] }];
+				const state = { currentSessionId: "owner" } as SubagentState;
+				if (hasMemory) recordWaitCompletion(state, runId, { runId, sessionId: "owner", agent: "memory-owner", success: true }, Date.now(), 60_000);
+				const references: string[] = [];
+				const completion = collectWaitCompletions(terminal, state, resultsDir, (text) => references.push(text))?.[0];
+
+				if (payloadOwner === "owner") {
+					assert.equal(completion?.agent, hasMemory ? "memory-owner" : "owner-payload");
+					assert.deepEqual(references, [`Result [${runId}]: ${resultPath}`]);
+				} else {
+					assert.equal(completion?.agent, hasMemory ? "memory-owner" : undefined);
+					assert.deepEqual(references, []);
+					assert.doesNotMatch(JSON.stringify(completion) ?? "", /foreign-payload|FOREIGN_PAYLOAD|failed/);
+				}
+			}
+		}
+	});
+
+	it("does not surface malformed indexed payloads", (t) => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-malformed-indexed-"));
+		t.after(() => fs.rmSync(resultsDir, { recursive: true, force: true }));
+		const runId = "malformed-run";
+		const resultPath = path.join(resultsDir, `${runId}.json`);
+		writeAsyncResultFile(resultPath, { runId, sessionId: "owner", agent: "initial-owner" });
+		fs.writeFileSync(resultPath, "{\"runId\":");
+		const terminal: AsyncRunSummary[] = [{ id: runId, sessionId: "owner", asyncDir: resultsDir, mode: "single", state: "complete", startedAt: Date.now(), steps: [] }];
+		const references: string[] = [];
+		assert.equal(collectWaitCompletions(terminal, { currentSessionId: "owner" } as SubagentState, resultsDir, (text) => references.push(text)), undefined);
+		assert.deepEqual(references, []);
+	});
+
 	it("omits absent and malformed receipt references", () => {
 		for (const workflowReceipt of [undefined, null, [], "path", { path: "" }, { path: 42 }]) {
 			assert.equal("workflowReceiptPath" in toWaitCompletion({ workflowReceipt }, "run"), false);
