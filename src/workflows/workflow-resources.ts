@@ -125,7 +125,7 @@ function validatePlainJson(value: unknown, path: string, depth = 0): void {
 	}
 }
 
-function normalizeArgs(value: unknown): { args: Record<string, unknown> } | { error: string } {
+export function normalizeWorkflowArgs(value: unknown): { args: Record<string, unknown> } | { error: string } {
 	if (value === undefined) return { args: {} };
 	if (!isPlainRecord(value)) return { error: "workflow args must be a plain JSON object." };
 	try {
@@ -135,6 +135,17 @@ function normalizeArgs(value: unknown): { args: Record<string, unknown> } | { er
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
+}
+
+export function deepFreezeWorkflowArgs<T extends Record<string, unknown>>(args: T): Readonly<T> {
+	deepFreezeWorkflowValue(args);
+	return args;
+}
+
+function deepFreezeWorkflowValue(value: unknown): void {
+	if (!Array.isArray(value) && !isPlainRecord(value)) return;
+	for (const entry of Object.values(value)) deepFreezeWorkflowValue(entry);
+	Object.freeze(value);
 }
 
 function resolveRunCi(args: Readonly<Record<string, unknown>>): ReturnType<WorkflowResourceDefinition["resolve"]> {
@@ -191,7 +202,7 @@ function resolveResource(nameValue: unknown, argsValue?: unknown, sessionId?: st
 	if (!RESOURCE_NAME_PATTERN.test(name)) return { ok: false, error: "workflow must use a safe resource name." };
 	const resource = findWorkflowResource(name) ?? (sessionId ? registry().bySession.get(sessionId)?.get(name) : undefined);
 	if (!resource) return { ok: false, error: `Unknown workflow resource '${name}'. Available resources: ${listWorkflowResourceNames().join(", ")}.` };
-	const normalizedArgs = normalizeArgs(argsValue);
+	const normalizedArgs = normalizeWorkflowArgs(argsValue);
 	if ("error" in normalizedArgs) return { ok: false, error: normalizedArgs.error };
 	const resolved = resource.resolve(normalizedArgs.args);
 	if (resolved && typeof (resolved as unknown as { then?: unknown }).then === "function") {

@@ -79,6 +79,18 @@ describe("workflow receipts", () => {
 		assert.deepEqual(readWorkflowReceipt(asyncRoot, "workflow-resource").resource, resource);
 	});
 
+	it("round-trips the canonical workflow argument digest and rejects malformed digests", () => {
+		const asyncRoot = tempRoot();
+		const asyncDir = path.join(asyncRoot, "workflow-args");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		const argsDigest = "a".repeat(64);
+		writeWorkflowReceipt(asyncDir, buildWorkflowReceipt({ workflowRunId: "workflow-args", state: "complete", children: [], argsDigest }));
+		assert.equal(readWorkflowReceipt(asyncRoot, "workflow-args").argsDigest, argsDigest);
+		assert.throws(() => buildWorkflowReceipt({ workflowRunId: "workflow-args", state: "complete", children: [], argsDigest: "invalid" }), /argsDigest/);
+		fs.writeFileSync(path.join(asyncDir, "workflow-receipt.json"), JSON.stringify({ ...buildWorkflowReceipt({ workflowRunId: "workflow-args", state: "complete", children: [], argsDigest }), argsDigest: "invalid" }));
+		assert.throws(() => readWorkflowReceipt(asyncRoot, "workflow-args"), /argsDigest is invalid/);
+	});
+
 	it("round-trips bounded host CI/gate state in terminal receipts", () => {
 		const asyncRoot = tempRoot();
 		const asyncDir = path.join(asyncRoot, "workflow-host");

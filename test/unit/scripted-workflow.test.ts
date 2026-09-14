@@ -46,6 +46,34 @@ async function stopChild(child: ChildProcess): Promise<void> {
 }
 
 describe("scripted workflow runtime", () => {
+	it("exposes supplied and executor-normalized empty arguments as deeply frozen values", async () => {
+		const launch = async (key: string) => ({ key, ok: true, output: "unused", artifactPaths: [] });
+		const status = async (key: string) => ({ key, ok: true, output: "unused", artifactPaths: [] });
+		const supplied = await runWorkflowScript({
+			script: `return { value: args.nested.items[0], rootFrozen: Object.isFrozen(args), nestedFrozen: Object.isFrozen(args.nested), arrayFrozen: Object.isFrozen(args.nested.items) };`,
+			args: { nested: { items: ["kept"] } },
+			launch,
+			status,
+		});
+		assert.deepEqual(supplied.value, { value: "kept", rootFrozen: true, nestedFrozen: true, arrayFrozen: true });
+
+		const omitted = await runWorkflowScript({ script: `return { args, frozen: Object.isFrozen(args) };`, launch, status });
+		assert.deepEqual(omitted.value, { args: {}, frozen: true });
+
+		const escape = await runWorkflowScript({
+			script: [
+				`const attempts = [args, args.nested, args.nested.items].map((value) => {`,
+				`  try { return value.constructor.constructor("return typeof process")(); } catch (error) { return error.constructor.name; }`,
+				`});`,
+				`return attempts;`,
+			].join("\n"),
+			args: { nested: { items: ["kept"] } },
+			launch,
+			status,
+		});
+		assert.deepEqual(escape.value, ["EvalError", "EvalError", "EvalError"], "args prototypes must belong to the VM realm so Function is blocked by codeGeneration.strings:false");
+	});
+
 	it("uses ordinary statement-body return semantics", async () => {
 		const implicit = await runWorkflowScript({
 			script: `({ answer: 42 });`,

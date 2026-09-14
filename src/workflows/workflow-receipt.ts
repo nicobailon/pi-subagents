@@ -37,6 +37,7 @@ export function buildWorkflowReceipt(input: {
 	workflowRunId: string;
 	state: WorkflowReceiptState;
 	children: WorkflowScriptChildResult[];
+	argsDigest?: string;
 	hostSteps?: WorkflowReceipt["hostSteps"];
 	workflowChildren?: WorkflowReceipt["workflowChildren"];
 	resource?: WorkflowResourceProvenance;
@@ -44,6 +45,7 @@ export function buildWorkflowReceipt(input: {
 	createdAt?: number;
 }): WorkflowReceipt {
 	const workflowRunId = assertSafeRunId(input.workflowRunId, "workflowRunId");
+	if (input.argsDigest !== undefined && !/^[a-f0-9]{64}$/u.test(input.argsDigest)) throw new Error("workflow receipt argsDigest must be a lowercase SHA-256 digest.");
 	if (input.workflowChildren?.workflowRunId !== undefined && input.workflowChildren.workflowRunId !== workflowRunId) throw new Error("workflowChildren workflowRunId does not match its receipt.");
 	const entries: Record<string, WorkflowReceiptEntry> = Object.create(null) as Record<string, WorkflowReceiptEntry>;
 	for (const child of input.children) {
@@ -75,7 +77,7 @@ export function buildWorkflowReceipt(input: {
 	const hostSteps = input.hostSteps?.map((hostStep, index) => parseHostStepNode(hostStep, `workflow receipt hostSteps[${index}]`));
 	if (hostSteps) assertUniqueHostStepIds(hostSteps, "workflow receipt");
 	const resource = parseWorkflowResource(input.resource, "workflow receipt");
-	return { version: WORKFLOW_RECEIPT_VERSION, workflowRunId, state: input.state, createdAt: input.createdAt ?? Date.now(), entries, ...(resource ? { resource } : {}), ...(hostSteps?.length ? { hostSteps } : {}), ...(input.workflowChildren ? { workflowChildren: input.workflowChildren } : {}), ...(input.terminalOutcome ? { terminalOutcome: input.terminalOutcome } : {}) };
+	return { version: WORKFLOW_RECEIPT_VERSION, workflowRunId, state: input.state, createdAt: input.createdAt ?? Date.now(), entries, ...(input.argsDigest ? { argsDigest: input.argsDigest } : {}), ...(resource ? { resource } : {}), ...(hostSteps?.length ? { hostSteps } : {}), ...(input.workflowChildren ? { workflowChildren: input.workflowChildren } : {}), ...(input.terminalOutcome ? { terminalOutcome: input.terminalOutcome } : {}) };
 }
 
 export function writeWorkflowReceipt(asyncDir: string, receipt: WorkflowReceipt): string {
@@ -345,10 +347,11 @@ export function readWorkflowReceipt(asyncDirRoot: string, workflowRunId: string)
 		assertUniqueHostStepIds(hostSteps, receiptPath);
 	}
 	const workflowResolution = parseWorkflowResolution(receipt.workflowResolution, receiptPath);
+	if (receipt.argsDigest !== undefined && (typeof receipt.argsDigest !== "string" || !/^[a-f0-9]{64}$/u.test(receipt.argsDigest))) throw new Error(`Invalid workflow receipt '${receiptPath}': argsDigest is invalid.`);
 	const resource = parseWorkflowResource(receipt.resource, receiptPath);
 	const terminalOutcome = parseTerminalOutcome(receipt.terminalOutcome, `Invalid workflow receipt '${receiptPath}': terminalOutcome`);
 	const recovery = parseRecovery(receipt.recovery, workflowRunId, entries, receiptPath);
-	return { version: 1, workflowRunId, state: receipt.state, createdAt: receipt.createdAt, entries, ...(resource ? { resource } : {}), ...(hostSteps?.length ? { hostSteps } : {}), ...(workflowChildren ? { workflowChildren } : {}), ...(workflowResolution ? { workflowResolution } : {}), ...(terminalOutcome ? { terminalOutcome } : {}), ...(recovery ? { recovery } : {}) };
+	return { version: 1, workflowRunId, state: receipt.state, createdAt: receipt.createdAt, entries, ...(receipt.argsDigest ? { argsDigest: receipt.argsDigest } : {}), ...(resource ? { resource } : {}), ...(hostSteps?.length ? { hostSteps } : {}), ...(workflowChildren ? { workflowChildren } : {}), ...(workflowResolution ? { workflowResolution } : {}), ...(terminalOutcome ? { terminalOutcome } : {}), ...(recovery ? { recovery } : {}) };
 }
 
 export function resolveWorkflowReceiptResumeEntry(input: {

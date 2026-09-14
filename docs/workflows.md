@@ -69,6 +69,16 @@ subagent({ action: "validate", workflowScriptPath: "workflows/review.js" });
 
 The fields are mutually exclusive. Relative paths resolve against the request `cwd`; absolute paths pass through. The host reads the file before validation, schedule creation, or workflow sandbox execution. The sandbox still has no filesystem access. Missing, unreadable, and empty files return file input errors instead of script syntax errors.
 
+Inline and file-backed scripts accept bounded plain-JSON `args`:
+
+```js
+subagent({ workflowScriptPath: "workflows/review.js", args: { target: "src/workflows" } });
+// workflows/review.js
+return runs.run("review", { agent: "reviewer", task: `Review ${args.target}` });
+```
+
+Omitted arguments are an empty object. The `args` object, its nested objects, and its arrays are frozen in the sandbox. Arguments are data only: they do not grant `runs.host` or other authority. Normalized arguments are persisted with workflow and schedule evidence for replay and diagnosis, so do not put secrets in them. Routine status text does not render argument values.
+
 ### Named workflow resources for permission extensions
 
 Use a named workflow resource when a permission or policy extension needs to distinguish extension-resolved workflow content from raw model-authored scripts:

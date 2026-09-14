@@ -12,6 +12,8 @@ Use `{ action: "validate", workflowScript }` to check statically decidable synta
 
 Use `workflowScriptPath` instead of `workflowScript` to load the same JavaScript statement body from a file. The two fields are mutually exclusive. Relative paths resolve against the request `cwd`, and absolute paths pass through. The host reads the file before validation, scheduling, or sandbox execution. The workflow sandbox still has no filesystem access. Missing, unreadable, and empty files fail as file input errors.
 
+Raw inline and file-backed scripts accept bounded plain-JSON `args`, including during `validate` and `schedule.create`. Omitted raw args become `{}`; supplied args are deeply frozen in the sandbox. Normalized args persist in run and schedule evidence for diagnosis and exact replay, so never include secrets. Args are data only and do not grant `runs.host` authority.
+
 For permission-extension interoperability, use one of the package-owned named resources with bounded `args` instead of caller-supplied workflow text:
 
 ```js
@@ -22,9 +24,9 @@ For permission-extension interoperability, use one of the package-owned named re
 The host resolves the script and authority internally and records bounded provenance in workflow details and receipts. Named resources cannot be combined with `agent`, `task`, `workflowScript`, or `workflowScriptPath`; user/project resource registries are not part of this first slice.
 
 ```js
-{ workflowScriptPath: "workflows/review.js", cwd: "/path/to/project" }
-{ action: "validate", workflowScriptPath: "workflows/review.js" }
-{ action: "schedule.create", every: "6h", workflowScriptPath: "workflows/review.js" }
+{ workflowScriptPath: "workflows/review.js", args: { target: "src/workflows" }, cwd: "/path/to/project" }
+{ action: "validate", workflowScriptPath: "workflows/review.js", args: { target: "src/workflows" } }
+{ action: "schedule.create", every: "6h", workflowScriptPath: "workflows/review.js", args: { target: "src/workflows" } }
 ```
 
 ```js

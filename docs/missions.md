@@ -103,10 +103,10 @@ subagent({
 Create a fixed recurring workflow:
 
 ```ts
-subagent({ action: "schedule.create", id: "backlog", every: "6h", catchUp: "latest", workflowScript: "..." })
+subagent({ action: "schedule.create", id: "backlog", every: "6h", catchUp: "latest", workflowScript: "return runs.run('main', { agent: 'worker', task: args.task })", args: { task: "Maintain core" } })
 ```
 
-Fixed intervals support `m`, `h`, `d`, and `w` units and advance from the planned time without completion drift.
+Fixed intervals support `m`, `h`, `d`, and `w` units and advance from the planned time without completion drift. Schedule arguments are normalized and persisted for exact replay after reload; do not put secrets in them.
 
 Create a quiet recurring workflow whose successful completions stay visible but do not wake the parent session:
 

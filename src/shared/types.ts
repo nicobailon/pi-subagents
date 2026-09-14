@@ -231,6 +231,7 @@ export interface WorkflowReceipt {
 	state: WorkflowReceiptState;
 	createdAt: number;
 	entries: Record<string, WorkflowReceiptEntry>;
+	argsDigest?: string;
 	resource?: WorkflowResourceProvenance;
 	hostSteps?: HostStepNode[];
 	workflowChildren?: WorkflowChildSummary;
@@ -1492,6 +1493,8 @@ export interface Details {
 	mission?: MissionRecord;
 	workflow?: {
 		value?: unknown;
+		args?: Record<string, unknown>;
+		argsDigest?: string;
 		resource?: WorkflowResourceProvenance;
 		preflightWarnings?: string[];
 		trace: Array<{

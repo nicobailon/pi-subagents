@@ -952,6 +952,12 @@ function omitUndefinedWorkflowValues(value, seen = new Set()) {
   return normalized;
 }
 
+function deepFreezeWorkflowArgs(value) {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const entry of Object.values(value)) deepFreezeWorkflowArgs(entry);
+  return Object.freeze(value);
+}
+
 parentPort.on("message", async (message) => {
   if (message.type === "response") {
     const entry = pending.get(message.callId);
@@ -971,6 +977,9 @@ parentPort.on("message", async (message) => {
     if (message.stateEnabled) sandbox.state = state;
     const context = vm.createContext(sandbox, { codeGeneration: { strings: false, wasm: false } });
     contextObjectPrototype = vm.runInContext("Object.prototype", context);
+    // Rebuild args inside the VM realm: a worker-realm object would expose the worker's unrestricted
+    // Function through args.constructor.constructor, bypassing codeGeneration.strings: false.
+    sandbox.args = deepFreezeWorkflowArgs(vm.runInContext("JSON.parse", context)(JSON.stringify(message.args ?? {})));
     let compiled;
     try {
       assertPortableWorkflowScript(message.script);
@@ -1169,6 +1178,8 @@ export interface WorkflowChildSettledNotification {
 
 export interface RunWorkflowScriptOptions {
 	script: string;
+	/** Normalized raw-script input exposed as the deeply frozen sandbox global `args`. */
+	args?: Readonly<Record<string, unknown>>;
 	/** Parent-session cwd used to recover a stale process cwd. */
 	processCwd?: string;
 	/** Workflow run ID for notifications. Required when onChildSettled is provided. */
@@ -2537,6 +2548,6 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			respond(deliver(promise), `runs.run('${key}') result`, (error) => children.set(key, responseBoundaryFailure(key, error)));
 		});
 
-		worker.postMessage({ type: "start", script: options.script, stateEnabled: options.state !== undefined });
+		worker.postMessage({ type: "start", script: options.script, ...(options.args ? { args: options.args } : {}), stateEnabled: options.state !== undefined });
 	});
 }

@@ -227,6 +227,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(args?.type, "object");
 		assert.equal(args?.maxProperties, 16);
 		assert.match(String(args?.description ?? ""), /bounded plain-JSON/i);
+		assert.match(String(args?.description ?? ""), /inline.*file-backed.*deeply frozen.*persisted.*secrets/i);
 		const workflowScript = SubagentParams?.properties?.workflowScript;
 		assert.equal(workflowScript?.type, "string");
 		assert.equal(workflowScript?.minLength, 1);

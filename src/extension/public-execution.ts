@@ -89,10 +89,10 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	if (hasNamedWorkflow && (params.workflowScript !== undefined || params.workflowScriptPath !== undefined)) {
 		return { ok: false, error: "workflow is mutually exclusive with workflowScript and workflowScriptPath.", mode: "workflow" };
 	}
-	if (!hasNamedWorkflow && params.args !== undefined) {
-		return { ok: false, error: "args requires a named workflow resource.", mode: "workflow" };
-	}
 	const hasWorkflowInput = params.workflowScript !== undefined || params.workflowScriptPath !== undefined || hasNamedWorkflow;
+	if (!hasWorkflowInput && params.args !== undefined) {
+		return { ok: false, error: "args requires workflow, workflowScript, or workflowScriptPath.", mode: "workflow" };
+	}
 	const hasCapacityOverride = params.globalConcurrencyLimit !== undefined || params.maxSubagentSpawnsPerRun !== undefined;
 	if (hasCapacityOverride) {
 		const capacityOverrideError = validateWorkflowCapacityOverrides(params);

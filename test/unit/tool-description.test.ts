@@ -72,9 +72,11 @@ describe("registered subagent tool description", () => {
 		for (const description of [DEFAULT_SUBAGENT_TOOL_DESCRIPTION, FULL_SUBAGENT_TOOL_DESCRIPTION, COMPACT_SUBAGENT_TOOL_DESCRIPTION]) {
 			for (const contract of [
 				/one child with \{agent,task\?\}/,
-				/exactly one of workflowScript, workflowScriptPath or \{workflow,args\}/,
+				/exactly one of \{workflowScript,args\?\}, \{workflowScriptPath,args\?\} or \{workflow,args\}/,
 				/agent\/task exclude workflow inputs; task excludes action.*agent may target management actions/,
 				/workflowScriptPath loads from request cwd before sandbox/,
+				/Raw-script sandboxes add deeply frozen args/,
+				/raw-script args persist as evidence, so never include secrets/,
 				/action is management\/control; validate accepts either script without launching/,
 				/action:"list",capabilities:true.*executable, non-disabled.*runner.available === true/,
 				/Passive PATH\/PATHEXT\/X_OK.*not authentication\/version\/launch proof/,

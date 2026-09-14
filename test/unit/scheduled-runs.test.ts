@@ -345,6 +345,7 @@ describe("project schedule management", () => {
 			{ action: "schedule.create", id: "revision-alias-base-ref", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", baseRef: "@" },
 			{ action: "schedule.create", id: "object-id-base-ref", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", baseRef: "a".repeat(40) },
 			{ action: "schedule.create", id: "sha256-object-id-base-ref", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", baseRef: "a".repeat(64) },
+			{ action: "schedule.create", id: "invalid-args", every: "1h", workflowScript: "return 1", args: { task: "" } },
 			{ action: "schedule.create", id: "mission-id", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", missionId: "mission-1" },
 			{ action: "schedule.create", id: "mission-off", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", mission: false },
 		] as const) {
@@ -353,22 +354,38 @@ describe("project schedule management", () => {
 		}
 	});
 
-	it("persists and forwards a scheduled workflow baseRef", async () => {
+	it("persists and forwards scheduled workflow arguments and baseRef", async () => {
 		const h = harness();
+		const args = { task: "review", nested: { retries: 2 } };
 		const created = await h.manager.handleToolCall({
 			action: "schedule.create",
 			id: "base-ref",
 			every: "1h",
 			baseRef: "@/foo",
+			args,
 			workflowScript: "return runs.run('main', { agent: 'worker' })",
 		}, h.ctx);
 		assert.equal(created.isError, undefined);
+		assert.doesNotMatch(text(created), /review|retries/);
 		assert.equal(listScheduledRunSummaries(h.ctx.cwd, path.join(h.root, "stores"))[0]?.target.baseRef, "@/foo");
+		assert.deepEqual(listScheduledRunSummaries(h.ctx.cwd, path.join(h.root, "stores"))[0]?.target.args, args);
+		args.nested.retries = 99;
 
-		const running = h.manager.handleToolCall({ action: "schedule.run", id: "base-ref" }, h.ctx);
+		h.manager.stop();
+		const restoredLaunches: Launch[] = [];
+		const restored = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			storeRoot: path.join(h.root, "stores"),
+			now: () => h.clock.now,
+			timers: new FakeTimers(),
+			launch: (params, launchCtx) => new Promise((resolve) => restoredLaunches.push({ params: params as Record<string, unknown>, ctx: launchCtx, resolve: resolve as Launch["resolve"] })) as never,
+		});
+		restored.bindSession(h.ctx);
+		const running = restored.handleToolCall({ action: "schedule.run", id: "base-ref" }, h.ctx);
 		await flush();
-		assert.equal(h.launches[0]?.params.baseRef, "@/foo");
-		h.launches[0]!.resolve({ content: [{ type: "text", text: "Async" }], details: { mode: "workflow", results: [], asyncId: "base-ref-async" } });
+		assert.equal(restoredLaunches[0]?.params.baseRef, "@/foo");
+		assert.deepEqual(restoredLaunches[0]?.params.args, { task: "review", nested: { retries: 2 } });
+		restoredLaunches[0]!.resolve({ content: [{ type: "text", text: "Async" }], details: { mode: "workflow", results: [], asyncId: "base-ref-async" } });
 		const result = await running;
 		assert.equal(result.isError, undefined);
 	});
@@ -464,6 +481,23 @@ describe("project schedule management", () => {
 		const result = await h.manager.handleToolCall({ action: "schedule.list" }, h.ctx);
 		assert.equal(result.isError, true);
 		assert.match(text(result), /Failed to read schedule record/);
+	});
+
+	it("fails closed when persisted schedule arguments are invalid", async () => {
+		const h = harness();
+		await h.manager.handleToolCall({ action: "schedule.create", id: "tampered-args", every: "1h", workflowScript: "return 1", args: { task: "valid" } }, h.ctx);
+		h.manager.stop();
+		const schedulePath = path.join(scheduledRunStorePath(h.ctx.cwd, undefined, path.join(h.root, "stores")), "tampered-args", "schedule.json");
+		const record = JSON.parse(fs.readFileSync(schedulePath, "utf-8")) as { target: { args: unknown } };
+		record.target.args = { task: "" };
+		fs.writeFileSync(schedulePath, JSON.stringify(record));
+
+		const restored = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			storeRoot: path.join(h.root, "stores"),
+			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
+		});
+		assert.throws(() => restored.bindSession(h.ctx), /workflow args\.task must not be empty/);
 	});
 
 	it("skips orphan schedule directories during restore and listing", async () => {
@@ -703,7 +737,7 @@ describe("recurring schedule execution", () => {
 		h.clock.now += 3_600_000;
 		h.timers.fireAll();
 		assert.equal(h.launches.length, 1);
-		assert.deepEqual(h.launches[0]?.params, { workflowScript: "return runs.run('main', { agent: 'worker', task: 'Maintain backlog' })", async: true, context: "fresh", cwd: h.ctx.cwd, mission: false, scheduleOrigin: { id: "hourly", name: "workflowScript -> agent worker" } });
+		assert.deepEqual(h.launches[0]?.params, { workflowScript: "return runs.run('main', { agent: 'worker', task: 'Maintain backlog' })", args: {}, async: true, context: "fresh", cwd: h.ctx.cwd, mission: false, scheduleOrigin: { id: "hourly", name: "workflowScript -> agent worker" } });
 		h.launches[0]!.resolve({ content: [{ type: "text", text: "Async worker" }], details: { mode: "single", results: [], asyncId: "async-1", asyncDir: "/tmp/async-1" } });
 		await flush();
 		assert.deepEqual([...h.manager.observedCompletionRunIds()], ["async-1"]);

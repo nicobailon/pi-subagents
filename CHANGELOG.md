@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Accept bounded plain-JSON `args` for inline, file-backed, validated, and scheduled workflow scripts. Scripts receive deeply frozen arguments; schedules retain normalized values for replay, and workflow evidence binds them to a canonical digest (#2233).
+
 ### Fixed
 
 - Keep non-reply supervisor progress updates out of parent model turns while continuing to consume their request files; decisions and structured interviews still wake and wait for replies. Thanks to [@moofone](https://github.com/moofone) for #2229 and [@dajiaohuang](https://github.com/dajiaohuang) for #2230.

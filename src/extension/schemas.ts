@@ -342,7 +342,7 @@ const SubagentParamProperties = {
 		description: "create/update agent config; object or JSON string."
 	})),
 	workflow: Type.Optional(Type.String({ minLength: 1, description: "Extension-owned workflow resource." })),
-	args: Type.Optional(Type.Unsafe({ type: "object", maxProperties: 16, additionalProperties: true, description: "Bounded plain-JSON resource args." })),
+	args: Type.Optional(Type.Unsafe({ type: "object", maxProperties: 16, additionalProperties: true, description: "Bounded plain-JSON args for named, inline, or file-backed workflows; raw-script args are exposed deeply frozen and persisted, so do not include secrets." })),
 	workflowScript: Type.Optional(Type.String({ minLength: 1, description: "Inline JavaScript statement body; raw/unknown provenance, no runs.host. Use explicit return and top-level await; see tool guidance/guide workflows." })),
 	workflowScriptPath: Type.Optional(Type.String({ minLength: 1, description: "Raw script file; host reads from request cwd before sandbox. Mutually exclusive with workflowScript and workflow." })),
 	globalConcurrencyLimit: Type.Optional(Type.Integer({ minimum: 1 })),

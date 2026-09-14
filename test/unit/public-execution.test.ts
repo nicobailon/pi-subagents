@@ -5,9 +5,11 @@ import { normalizePublicSubagentExecution } from "../../src/extension/public-exe
 describe("public subagent execution normalization", () => {
 	it("accepts structured single-child, workflow, management, and schedules", () => {
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1", globalConcurrencyLimit: 4, maxSubagentSpawnsPerRun: 8 }), { ok: true, params: { workflowScript: "return 1", globalConcurrencyLimit: 4, maxSubagentSpawnsPerRun: 8 } });
+		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return args.task", args: { task: "review" } }), { ok: true, params: { workflowScript: "return args.task", args: { task: "review" } } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflow: "review", args: { task: "Review this" } }), { ok: true, params: { workflow: "review", args: { task: "Review this" } } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1", preflight: { version: 1, lanes: [] } }), { ok: true, params: { workflowScript: "return 1", preflight: { version: 1, lanes: [] } } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScriptPath: "workflows/review.js", globalConcurrencyLimit: 2 }), { ok: true, params: { workflowScriptPath: "workflows/review.js", globalConcurrencyLimit: 2 } });
+		assert.deepEqual(normalizePublicSubagentExecution({ workflowScriptPath: "workflows/review.js", args: { task: "review" } }), { ok: true, params: { workflowScriptPath: "workflows/review.js", args: { task: "review" } } });
 		const task = "Use `quotes`\nand newlines";
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: " worker ", task, context: "fresh", async: false }), {
 			ok: true,
@@ -53,8 +55,8 @@ describe("public subagent execution normalization", () => {
 		assert.deepEqual(normalizePublicSubagentExecution({ action: " list " }), { ok: true, params: { action: "list" } });
 		assert.deepEqual(normalizePublicSubagentExecution({ action: " list ", capabilities: true }), { ok: true, params: { action: "list", capabilities: true } });
 		assert.deepEqual(
-			normalizePublicSubagentExecution({ action: " validate ", workflowScript: "return 1" }),
-			{ ok: true, params: { action: "validate", workflowScript: "return 1" } },
+			normalizePublicSubagentExecution({ action: " validate ", workflowScript: "return args.task", args: { task: "review" } }),
+			{ ok: true, params: { action: "validate", workflowScript: "return args.task", args: { task: "review" } } },
 		);
 		assert.deepEqual(
 			normalizePublicSubagentExecution({ action: " validate ", workflowScriptPath: "workflow.js" }),
@@ -65,8 +67,8 @@ describe("public subagent execution normalization", () => {
 			{ ok: true, params: { action: "validate", workflowScript: "return 1", maxSubagentSpawnsPerRun: 5 } },
 		);
 		assert.deepEqual(
-			normalizePublicSubagentExecution({ action: " schedule.create ", every: "1h", workflowScript: "return 1" }),
-			{ ok: true, params: { action: "schedule.create", every: "1h", workflowScript: "return 1" } },
+			normalizePublicSubagentExecution({ action: " schedule.create ", every: "1h", workflowScript: "return args.task", args: { task: "review" } }),
+			{ ok: true, params: { action: "schedule.create", every: "1h", workflowScript: "return args.task", args: { task: "review" } } },
 		);
 		assert.deepEqual(
 			normalizePublicSubagentExecution({ action: " schedule.create ", every: "1h", workflowScriptPath: "/tmp/workflow.js" }),
@@ -114,6 +116,14 @@ describe("public subagent execution normalization", () => {
 		] as const) {
 			const result = normalizePublicSubagentExecution(params);
 			assert.equal(result.ok, false, JSON.stringify(params));
+		}
+	});
+
+	it("rejects bare arguments and arguments on direct child launches", () => {
+		for (const params of [{ args: {} }, { agent: "worker", task: "work", args: {} }] as const) {
+			const result = normalizePublicSubagentExecution(params);
+			assert.equal(result.ok, false);
+			if (!result.ok) assert.match(result.error, /args requires workflow/);
 		}
 	});
 
