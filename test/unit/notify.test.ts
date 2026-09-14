@@ -982,7 +982,7 @@ describe("scheduled completions", () => {
 		assert.equal((sent[0]!.message as { display?: boolean }).display, true);
 	});
 
-		it("wakes once for an actionable child failure but not an ordinary running success", () => {
+	it("wakes once for an actionable child failure but not an ordinary running success", () => {
 		const triggerTurns: boolean[] = [];
 		const pi = {
 			sendMessage(_message: unknown, options: unknown) {
@@ -1003,7 +1003,7 @@ describe("scheduled completions", () => {
 		assert.equal(incrementalChildCompletionTriggersTurn(terminal, undefined), true);
 	});
 
-it("still wakes the session when a quiet scheduled run fails, stops, or pauses", async () => {
+	it("still wakes the session when a quiet scheduled run fails, stops, or pauses", async () => {
 		const quietOrigin = { ...scheduledResult.scheduleOrigin, quiet: true };
 		assert.equal(scheduledCompletionTriggersTurn({ id: "45daa203" }, "completed"), true);
 		for (const outcome of ["failed", "stopped", "paused"] as const) {
