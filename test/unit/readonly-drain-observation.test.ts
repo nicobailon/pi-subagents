@@ -147,7 +147,8 @@ for (const kind of ["empty", "dead-owned", "result-queued-owned", "result-runnin
 				assert.equal(counts.index, 1, "first predicate is false, with no wait/final requery");
 				if (proof) assert.equal(proof.settled(), ["empty", "unrelated-running", "unrelated-dead", "terminal-owned", "unrelated-scale"].includes(kind));
 				const capturedCounts = { ...counts };
-				if (kind.includes("dead")) assert.equal(JSON.parse(originalRead(join(dirs[0], "status.json"), "utf8")).state, "failed", "ordinary dead-PID repair remains");
+				if (kind === "dead-owned") assert.equal(JSON.parse(originalRead(join(dirs[0], "status.json"), "utf8")).state, "failed", "owned dead-PID repair remains");
+				if (kind === "unrelated-dead") assert.equal(JSON.parse(originalRead(join(dirs[0], "status.json"), "utf8")).state, "running", "session-scoped drain leaves foreign runs untouched");
 				if (kind.startsWith("result-")) assert.equal(JSON.parse(originalRead(join(dirs[0], "status.json"), "utf8")).state, "complete", "ordinary result repair remains");
 				return { counts: capturedCounts, outcome };
 			} finally {

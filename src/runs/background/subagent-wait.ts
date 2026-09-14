@@ -39,6 +39,7 @@
  */
 
 import * as fs from "node:fs";
+import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
 	listBackgroundWorkWakeChannels,
@@ -61,6 +62,7 @@ import {
 	type Usage,
 	type WaitCompletion,
 } from "../../shared/types.ts";
+import { nestedRunScope } from "../shared/nested-events.ts";
 import { formatDuration, shortenPath } from "../../shared/formatters.ts";
 import { toAgentToolUsage } from "../../shared/utils.ts";
 import { collectWaitCompletions } from "./wait-completions.ts";
@@ -103,6 +105,8 @@ export interface SubagentWaitDeps {
 	onUpdate?: (result: AgentToolResult<Details>) => void;
 	asyncDirRoot?: string;
 	resultsDir?: string;
+	/** Root from the child's validated inherited route, not a tool argument. */
+	nestedRootRunId?: string;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
 	pollIntervalMs?: number;
@@ -266,20 +270,37 @@ function backgroundWorkForSession(deps: SubagentWaitDeps, nowMs: number): Backgr
 	return deps.backgroundWork?.snapshot(sessionId, nowMs) ?? snapshotBackgroundWork(sessionId, nowMs);
 }
 
-/** Queued/running runs from this session, including runs that need attention. */
-function activeRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps): AsyncRunSummary[] {
-	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
-	const resultsDir = deps.resultsDir ?? DIRS.results;
-	const runs = listAsyncRuns(asyncDirRoot, {
-		states: [...ACTIVE_STATES],
+export function waitRunScopes(deps: Pick<SubagentWaitDeps, "asyncDirRoot" | "resultsDir" | "nestedRootRunId">): Array<{ asyncDirRoot: string; resultsDir: string }> {
+	return [
+		{ asyncDirRoot: deps.asyncDirRoot ?? DIRS.async, resultsDir: deps.resultsDir ?? DIRS.results },
+		...(deps.nestedRootRunId ? [nestedRunScope(deps.nestedRootRunId)] : []),
+	];
+}
+
+function collectScopedCompletions(terminal: AsyncRunSummary[], deps: SubagentWaitDeps, references: string[]): WaitCompletion[] | undefined {
+	const completions = waitRunScopes(deps).flatMap((scope) => collectWaitCompletions(
+		terminal.filter((run) => path.resolve(path.dirname(run.asyncDir)) === path.resolve(scope.asyncDirRoot)),
+		deps.state, scope.resultsDir, (reference) => references.push(reference),
+	) ?? []);
+	return completions.length ? completions : undefined;
+}
+
+/** Immediate-session runs only; named lookups can also recover already-terminal results. */
+function runsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps, activeOnly = true): AsyncRunSummary[] {
+	const runs = waitRunScopes(deps).flatMap(({ asyncDirRoot, resultsDir }) => listAsyncRuns(asyncDirRoot, {
+		states: activeOnly ? [...ACTIVE_STATES] : undefined,
 		sessionId: deps.state.currentSessionId ?? undefined,
 		resultsDir,
 		kill: deps.kill,
 		now: deps.now,
 		includeNested: false,
 		...(params.id ? { runId: params.id } : {}),
-	});
+	}));
 	return params.id ? runs.filter((run) => matchesId(run, params.id!)) : runs;
+}
+
+function activeRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps): AsyncRunSummary[] {
+	return runsForSession(params, deps);
 }
 
 /** Runs (from the initial set) currently flagged needs_attention, for reporting. */
@@ -289,9 +310,7 @@ function attentionRunsForSession(params: SubagentWaitParams, deps: SubagentWaitD
 
 /** Exact initial runs in any state, for the final summary. */
 function runsForIds(runIds: Iterable<string>, deps: SubagentWaitDeps): AsyncRunSummary[] {
-	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
-	const resultsDir = deps.resultsDir ?? DIRS.results;
-	return [...runIds].flatMap((runId) => listAsyncRuns(asyncDirRoot, {
+	return waitRunScopes(deps).flatMap(({ asyncDirRoot, resultsDir }) => [...runIds].flatMap((runId) => listAsyncRuns(asyncDirRoot, {
 		sessionId: deps.state.currentSessionId ?? undefined,
 		resultsDir,
 		kill: deps.kill,
@@ -299,7 +318,7 @@ function runsForIds(runIds: Iterable<string>, deps: SubagentWaitDeps): AsyncRunS
 		includeNested: false,
 		runId,
 		exactRunId: true,
-	}));
+	})));
 }
 
 function summarizeTerminalRuns(runs: AsyncRunSummary[], providerFinishedCount = 0): string {
@@ -635,6 +654,7 @@ export async function waitForSubagents(
 		? params.timeoutMs
 		: deps.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
 	const startedAt = now();
+	const sessionId = deps.state.currentSessionId;
 	const waitForAll = params.id ? true : params.all === true;
 	if (params.nonBlocking && !params.id) {
 		return result("Non-blocking wait subscriptions require id so the registration can bind one exact run identity.", true);
@@ -647,7 +667,7 @@ export async function waitForSubagents(
 	let foreground: ForegroundResumeRun[];
 	let providerSnapshot: BackgroundWorkSnapshot;
 	try {
-		active = activeRunsForSession(params, deps);
+		active = runsForSession(params, deps, !params.id);
 		foreground = activeDetachedForegroundRuns(params, deps).map((run) => ({
 			...run,
 			children: run.children.map((child) => ({ ...child })),
@@ -666,9 +686,21 @@ export async function waitForSubagents(
 		const exact = candidates.filter((candidate) => candidate.id === params.id);
 		const matches = exact.length > 0 ? exact : candidates;
 		if (matches.length > 1) {
-			return result(`Ambiguous subagent run id prefix "${params.id}" matched ${matches.length} active runs: ${matches.map((candidate) => candidate.id).join(", ")}. Pass a longer id.`, true);
+			return result(`Ambiguous subagent run id prefix "${params.id}" matched ${matches.length} runs: ${matches.map((candidate) => candidate.id).join(", ")}. Pass a longer id.`, true);
 		}
 		const selected = matches[0];
+		if (selected?.kind === "async" && !ACTIVE_STATES.includes(selected.run.state)) {
+			try {
+				const references: string[] = [];
+				const completions = collectScopedCompletions([selected.run], deps, references);
+				return result(
+					`Run "${selected.id}" is terminal. Outcome: ${summarizeTerminalRuns([selected.run])}.${formatCompletionRecovery(completions)}${references.length ? `\n${references.join("\n")}` : ""}`,
+					deps.failOnFailedRuns === true && (selected.run.state === "failed" || selected.run.state === "partial"), completions,
+				);
+			} catch (error) {
+				return result(error instanceof Error ? error.message : String(error), true);
+			}
+		}
 		if (selected && params.nonBlocking) {
 			if (!deps.subscribe) {
 				return result("Non-blocking wait subscriptions require a long-lived interactive subagent runtime; this runtime can only use blocking bg_wait calls.", true);
@@ -752,6 +784,7 @@ export async function waitForSubagents(
 		}
 		try {
 			await waitForWake(pollIntervalMs, signal, deps);
+			if (deps.state.currentSessionId !== sessionId) return result("Wait stopped because the active session changed.", true);
 			active = activeRunsForSession(waitParams, deps);
 			attention = attentionRunsForSession(waitParams, deps, initialAsyncIds);
 			providerSnapshot = params.id ? providerSnapshot : backgroundWorkForSession(deps, now());
@@ -774,6 +807,7 @@ export async function waitForSubagents(
 	let failedAsyncCount: number;
 	let completions: WaitCompletion[] | undefined;
 	let resumeGuidance = "";
+	const references: string[] = [];
 	const activeProviderIds = new Set(providerActive.map(backgroundWorkIdentity));
 	const providerFinishedCount = [...initialProviderIds].filter((id) => !activeProviderIds.has(id)).length;
 	try {
@@ -783,7 +817,7 @@ export async function waitForSubagents(
 		failedAsyncCount = terminal.filter((run) => run.state === "failed" || run.state === "partial").length;
 		terminalSummary = summarizeTerminalRuns(terminal, providerFinishedCount);
 		resumeGuidance = formatResumeFirstFailedRunsNote(terminal);
-		completions = collectWaitCompletions(terminal, deps.state, deps.resultsDir ?? DIRS.results);
+		completions = collectScopedCompletions(terminal, deps, references);
 	} catch (error) {
 		return result(error instanceof Error ? error.message : String(error), true);
 	}
@@ -799,7 +833,7 @@ export async function waitForSubagents(
 		+ providerActive.filter((item) => initialProviderIds.has(backgroundWorkIdentity(item))).length;
 	const elapsed = formatDuration(now() - startedAt);
 	const outcome = terminalSummary ? ` Outcome: ${terminalSummary}.` : "";
-	const recoveryNote = formatCompletionRecovery(completions);
+	const recoveryNote = formatCompletionRecovery(completions) + (references.length ? `\n${references.join("\n")}\n` : "");
 
 	if (waitForAll) {
 		const foregroundResult = !params.id && foreground.length > 0 && relevantAttention.length === 0

@@ -38,6 +38,27 @@ jobs:
           path: ${{ runner.temp }}/1906-terminal-evidence/shared-cwd-terminal.json
           if-no-files-found: ignore
 
+  native-nested-wait:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts
+      - name: Install native Pi SDK
+        run: npm install --prefix "${{ runner.temp }}/native-host" --no-package-lock --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
+      - name: Native nested result consumption
+        env:
+          PI_SUBAGENTS_NATIVE_PI_ROOT: ${{ runner.temp }}/native-host/node_modules/@earendil-works/pi-coding-agent
+          NODE_DISABLE_COMPILE_CACHE: '1'
+        run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --import ./test/support/native-peer-loader.mjs --test test/integration/nested-async-wait.test.ts
+
   bun-workflow-script:
     runs-on: ubuntu-latest
     timeout-minutes: 10

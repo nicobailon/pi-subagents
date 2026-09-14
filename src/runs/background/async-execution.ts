@@ -73,6 +73,7 @@ import type { ChildRuntimeConfig } from "../shared/child-runtime-config.ts";
 import { childSessionFactoryModule } from "../shared/child-session.ts";
 import { inheritedChildRuntime } from "../shared/child-launch.ts";
 import { resultFilePath } from "./result-files.ts";
+import { updateActiveRunIndex } from "./active-run-index.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetState } from "../shared/usage-budget.ts";
 import type { ImportedAsyncRoot } from "./chain-root-attachment.ts";
@@ -837,6 +838,8 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 				pid: proc.pid,
 				processTerminal: { version: 1, state: "pending", runId: initialStatus.runId, runnerProcessInstanceId },
 			});
+			// Aggregate waits must see the launch before the runner's first status update.
+			updateActiveRunIndex(path.dirname(initialStatusPath), initialStatus.state, initialStatus.toolCallId);
 		} catch (error) {
 			const message = `Failed to persist initial async status: ${error instanceof Error ? error.message : String(error)}`;
 			if (launchAsyncDir) persistPreProceedStartupFailure(launchAsyncDir, launchRunId, runnerProcessInstanceId, launchSessionId, launchCompletionOwnerId, message);

@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { createEventBus } from "../support/helpers.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT } from "../../src/runs/shared/runtime-acknowledged-extensions.ts";
 import { clearStructuredOutputCaptures } from "../../src/runs/shared/structured-output.ts";
 import { getAgentDir } from "../../src/shared/utils.ts";
@@ -10,7 +11,10 @@ import { formatChildToolDiagnostic, type ChildToolDiagnostic } from "../../src/r
 import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
 import type { ChildWatchdogConfig } from "../../src/watchdog/child-status.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../src/watchdog/types.ts";
-import { SUBAGENT_FOREGROUND_COMPLETE_EVENT, type SubagentState } from "../../src/shared/types.ts";
+import { randomUUID } from "node:crypto";
+import { createNestedRoute, nestedResultsPath } from "../../src/runs/shared/nested-events.ts";
+import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
+import { SUBAGENT_ASYNC_COMPLETE_EVENT, TEMP_ROOT_DIR, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type SubagentState } from "../../src/shared/types.ts";
 import registerSubagentPromptRuntime, {
 	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
@@ -93,6 +97,81 @@ it("reads a late-installed owner barrier for each final drain and balances the h
 	for (const handler of listeners.get(SUBAGENT_FOREGROUND_COMPLETE_EVENT) ?? []) handler();
 	await ended;
 	assert.deepEqual(held, [true, false, true, false]);
+});
+
+it("does not grant nested wait access for an invalid inherited route", async (t) => {
+	const route = createNestedRoute(randomUUID());
+	const runId = randomUUID();
+	const root = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", route.rootRunId);
+	const dir = path.join(root, runId);
+	t.after(() => { for (const entry of [root, path.dirname(route.eventSink)]) fs.rmSync(entry, { recursive: true, force: true }); });
+	t.mock.method(console, "error", () => {});
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify({ runId, sessionId: "owner", mode: "single", state: "running", pid: process.pid, startedAt: Date.now(), steps: [] }));
+	updateActiveRunIndex(dir, "running");
+	const tools = new Map<string, { execute: Function }>();
+	// SAFETY: this fixture supplies the registration API and session identity used by the empty wait path.
+	registerSubagentPromptRuntime({
+		on: () => {}, registerTool: (tool: { name: string; execute: Function }) => tools.set(tool.name, tool),
+	} as never, childConfig({ runtimeState: { currentSessionId: "owner" } as SubagentState, nestedRoute: { ...route, capabilityToken: "invalid" } }));
+	const result = await tools.get("bg_wait")!.execute("wait", { id: runId, timeoutMs: 1 });
+	assert.match(result.content[0].text, /No active run matched/);
+});
+
+it("registered child bg_wait discovers nested personas and agent_end drains the same scope", async () => {
+	const route = createNestedRoute(randomUUID());
+	const runId = randomUUID();
+	const asyncRoot = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", route.rootRunId);
+	const asyncDir = path.join(asyncRoot, runId);
+	const resultPath = nestedResultsPath(route.rootRunId, runId);
+	const sessionId = "nested-reviewer-session.jsonl";
+	const handlers = new Map<string, Function[]>();
+	const events = createEventBus();
+	const tools = new Map<string, { execute: Function }>();
+	const held: boolean[] = [];
+	const ctx = { hasUI: false, sessionManager: { getSessionFile: () => sessionId } };
+	const emit = async (event: string) => { for (const fn of handlers.get(event) ?? []) await fn({}, ctx); };
+	const writeStatus = (state: "running" | "complete") => {
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+			runId, sessionId, mode: "single", state, pid: process.pid,
+			startedAt: Date.now(), lastUpdate: Date.now(), steps: [{ agent: "persona", status: state }],
+		}));
+		updateActiveRunIndex(asyncDir, state);
+	};
+	try {
+		// SAFETY: this fixture supplies the registration/event APIs exercised by the wait and drain hooks.
+		registerSubagentPromptRuntime({
+			on: (event: string, fn: Function) => handlers.set(event, [...(handlers.get(event) ?? []), fn]),
+			registerTool: (tool: { name: string; execute: Function }) => tools.set(tool.name, tool),
+			events,
+		} as never, childConfig({ fanoutChild: true, nestedRoute: route, holdFinalDrain: (value) => { held.push(value); } }));
+		await emit("session_start");
+		writeStatus("running");
+		const wait = tools.get("bg_wait")!;
+		const timed = await wait.execute("wait", { id: runId, timeoutMs: 1 }, undefined, undefined, ctx);
+		assert.deepEqual(timed.details.wait?.activeRunIds, [runId], "registered wait must discover its nested persona");
+
+		let settled = false;
+		const draining = emit("agent_end").then(() => { settled = true; });
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(settled, false, "agent_end cannot skip the nested namespace");
+		assert.deepEqual(held, [true]);
+		fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+		fs.writeFileSync(resultPath, JSON.stringify({ runId, sessionId, success: true, results: [{ agent: "persona", output: "PERSONA_EVIDENCE" }] }));
+		writeStatus("complete");
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, undefined);
+		await draining;
+		assert.deepEqual(held, [true, false]);
+		const terminal = await wait.execute("collect", { id: runId }, undefined, undefined, ctx);
+		assert.equal(terminal.details.completions?.[0]?.runId, runId);
+		assert.ok(terminal.content.some((part: { text?: string }) => part.text?.includes(resultPath)), "model receives a readable result reference, not details alone");
+		assert.equal(JSON.parse(fs.readFileSync(resultPath, "utf8")).results[0].output, "PERSONA_EVIDENCE");
+	} finally {
+		fs.rmSync(asyncRoot, { recursive: true, force: true });
+		fs.rmSync(path.dirname(resultPath), { recursive: true, force: true });
+		fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
+	}
 });
 
 function supervisorConfig(overrides: Partial<ChildRuntimeConfig> = {}): ChildRuntimeConfig {

@@ -157,13 +157,20 @@ export function recordWaitCompletion(
  * so a direct read never observes a torn write; the read is deliberately read-only —
  * the watcher owns notification and cleanup.
  */
-export function collectWaitCompletions(terminal: AsyncRunSummary[], state: SubagentState, resultsDir: string): WaitCompletion[] | undefined {
+export function collectWaitCompletions(terminal: AsyncRunSummary[], state: SubagentState, resultsDir: string, onReference?: (text: string) => void): WaitCompletion[] | undefined {
 	if (terminal.length === 0) return undefined;
 	const completions: WaitCompletion[] = [];
+	const add = (completion: WaitCompletion, resultPath?: string): void => {
+		completions.push(completion);
+		// Tool details are not model context. Publish the evidence address in content
+		// without copying potentially unbounded reviewer output into every wait.
+		const reference = completion.archivePath ?? resultPath;
+		if (reference) onReference?.(`Result [${completion.runId}]: ${reference}`);
+	};
 	for (const run of terminal) {
 		const recorded = state.completedResults?.get(run.id);
 		if (recorded) {
-			completions.push(recorded.completion);
+			add(recorded.completion);
 			continue;
 		}
 		const publicResultPath = resultFilePath(resultsDir, run.id);
@@ -184,7 +191,7 @@ export function collectWaitCompletions(terminal: AsyncRunSummary[], state: Subag
 		}
 		try {
 			const raw = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as Record<string, unknown>;
-			completions.push(toWaitCompletion(raw, run.id));
+			add(toWaitCompletion(raw, run.id), resultPath);
 		} catch (error) {
 			if (errorCode(error) !== "ENOENT") {
 				throw new Error(`Failed to read subagent result '${resultPath}': ${errorMessage(error)}`, {
@@ -196,12 +203,12 @@ export function collectWaitCompletions(terminal: AsyncRunSummary[], state: Subag
 			// result cleanup so watcher reloads do not lose completion details.
 			const late = state.completedResults?.get(run.id);
 			if (late) {
-				completions.push(late.completion);
+				add(late.completion);
 				continue;
 			}
 			try {
 				const replay = readCompletionReplay(resultsDir, run.id, { sessionId: run.sessionId });
-				if (replay) completions.push(replay.completion);
+				if (replay) add(replay.completion);
 			} catch (replayError) {
 				throw new Error(`Failed to read completion replay for '${run.id}': ${errorMessage(replayError)}`, {
 					cause: replayError instanceof Error ? replayError : undefined,

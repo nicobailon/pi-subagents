@@ -1065,8 +1065,15 @@ export function isTopLevelAsyncDir(asyncDir: string): boolean {
 	return containedPath(DIRS.async, resolved) && !containedPath(path.join(TEMP_ROOT_DIR, "nested-subagent-runs"), resolved);
 }
 
-export function nestedResultsPath(rootRunId: string, id: string): string {
+export function nestedRunScope(rootRunId: string) {
 	assertSafeId("rootRunId", rootRunId);
+	return {
+		asyncDirRoot: path.join(TEMP_ROOT_DIR, "nested-subagent-runs", rootRunId),
+		resultsDir: path.join(DIRS.results, "nested", rootRunId),
+	};
+}
+
+export function nestedResultsPath(rootRunId: string, id: string): string {
 	assertSafeId("id", id);
-	return path.join(DIRS.results, "nested", rootRunId, `${id}.json`);
+	return path.join(nestedRunScope(rootRunId).resultsDir, `${id}.json`);
 }

@@ -3,6 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { randomUUID } from "node:crypto";
+import { nestedRunScope } from "../../src/runs/shared/nested-events.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
@@ -97,6 +99,128 @@ function baseDeps(root: string, state: SubagentState, overrides: Partial<Subagen
 }
 
 describe("bg_wait tool", () => {
+	for (const alreadyTerminal of [false, true]) {
+		for (const prefix of [false, true]) {
+			it(`collects nested results by ${prefix ? "prefix" : "exact id"} ${alreadyTerminal ? "after early completion" : "across active-to-terminal transition"}`, async (t) => {
+				const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-nested-"));
+				const nestedRootRunId = randomUUID();
+				const scope = nestedRunScope(nestedRootRunId);
+				t.after(() => {
+					for (const dir of [root, scope.asyncDirRoot, scope.resultsDir]) fs.rmSync(dir, { recursive: true, force: true });
+				});
+				const runId = randomUUID();
+				const resultPath = path.join(scope.resultsDir, `${runId}.json`);
+				const outputPath = path.join(root, "persona.md");
+				fs.writeFileSync(outputPath, "PERSONA_EVIDENCE");
+				const finish = () => {
+					writeAsyncResultFile(resultPath, { runId, sessionId: "owner", success: true, results: [{ agent: "persona", output: "PERSONA_EVIDENCE", artifactPaths: { outputPath } }] });
+					writeStatus(scope.asyncDirRoot, runId, "complete", { sessionId: "owner" });
+				};
+				if (alreadyTerminal) finish();
+				else writeStatus(scope.asyncDirRoot, runId, "running", { sessionId: "owner" });
+				let polls = 0;
+				const result = await waitForSubagents({ id: prefix ? runId.slice(0, 8) : runId }, undefined, baseDeps(root, makeState("owner"), {
+					nestedRootRunId, sleep: async () => { polls++; finish(); },
+				}));
+				assert.equal(result.isError, undefined, textOf(result));
+				assert.equal(polls, alreadyTerminal ? 0 : 1);
+				assert.equal(result.details.completions?.[0]?.runId, runId);
+				assert.equal(result.details.completions?.[0]?.results?.[0]?.artifactPaths?.outputPath, outputPath);
+				assert.ok(textOf(result).includes(resultPath));
+				assert.equal(JSON.parse(fs.readFileSync(resultPath, "utf8")).results[0].output, "PERSONA_EVIDENCE");
+			});
+		}
+	}
+
+	it("all:true collects ordinary workflow and nested results but excludes siblings and other roots", async (t) => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-mixed-"));
+		const nestedRootRunId = randomUUID();
+		const nested = nestedRunScope(nestedRootRunId);
+		const otherRoot = nestedRunScope(randomUUID());
+		const ordinary = { asyncDirRoot: path.join(root, "runs"), resultsDir: path.join(root, "results") };
+		t.after(() => { for (const dir of [root, nested.asyncDirRoot, nested.resultsDir, otherRoot.asyncDirRoot]) fs.rmSync(dir, { recursive: true, force: true }); });
+		const owned = [[ordinary, "workflow-owned"], [nested, "persona-one"], [nested, "persona-two"]] as const;
+		for (const [scope, id] of owned) writeStatus(scope.asyncDirRoot, id, "running", { sessionId: "owner" });
+		writeStatus(nested.asyncDirRoot, "sibling-persona", "running", { sessionId: "sibling-coordinator" });
+		writeStatus(ordinary.asyncDirRoot, "foreign-workflow", "running", { sessionId: "other-session" });
+		writeStatus(otherRoot.asyncDirRoot, "outside-route", "running", { sessionId: "owner" });
+		const state = makeState("owner");
+		let polls = 0;
+		const deps = baseDeps(root, state, { nestedRootRunId, sleep: async () => {
+			const [scope, id] = owned[polls++]!;
+			writeAsyncResultFile(path.join(scope.resultsDir, `${id}.json`), { runId: id, sessionId: "owner", results: [{ structuredOutput: { finding: id } }] });
+			writeStatus(scope.asyncDirRoot, id, "complete", { sessionId: "owner" });
+		} });
+		const result = await waitForSubagents({ all: true }, undefined, deps);
+		assert.equal(polls, 3);
+		assert.match(textOf(result), /3 complete/);
+		assert.deepEqual(new Set(result.details.completions?.map((c) => c.runId)), new Set(owned.map(([, id]) => id)));
+		for (const completion of result.details.completions ?? []) assert.deepEqual(completion.results?.[0]?.structuredOutput, { finding: completion.runId });
+		for (const id of ["sibling-persona", "sibling-", "foreign-workflow", "outside-route"]) {
+			assert.match(textOf(await waitForSubagents({ id }, undefined, deps)), /No active run matched/);
+		}
+		writeStatus(nested.asyncDirRoot, "sibling-persona", "complete", { sessionId: "sibling-coordinator" });
+		assert.match(textOf(await waitForSubagents({ id: "sibling-persona" }, undefined, deps)), /No active run matched/);
+	});
+
+	it("does not reconcile a sibling coordinator's nested runs during aggregate discovery", async (t) => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-sibling-reconcile-"));
+		const nestedRootRunId = randomUUID();
+		const scope = nestedRunScope(nestedRootRunId);
+		t.after(() => { for (const dir of [root, scope.asyncDirRoot]) fs.rmSync(dir, { recursive: true, force: true }); });
+		writeStatus(scope.asyncDirRoot, "foreign-persona", "running", { sessionId: "sibling", pid: 987654, lastUpdate: 1, startedAt: 1 });
+		const statusPath = path.join(scope.asyncDirRoot, "foreign-persona", "status.json");
+		const before = fs.readFileSync(statusPath, "utf8");
+		let probes = 0;
+		const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, makeState("owner"), {
+			nestedRootRunId, kill: () => { probes++; return false; },
+		}));
+		assert.equal(probes, 0, "sharing a root does not authorize probing or reconciling sibling processes");
+		assert.match(textOf(result), /Nothing to wait for/);
+		assert.equal(fs.readFileSync(statusPath, "utf8"), before);
+	});
+
+	it("resolves prefix ambiguity across scopes and prefers an exact already-terminal id", async (t) => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-prefix-scopes-"));
+		const nestedRootRunId = randomUUID();
+		const scope = nestedRunScope(nestedRootRunId);
+		t.after(() => { for (const dir of [root, scope.asyncDirRoot]) fs.rmSync(dir, { recursive: true, force: true }); });
+		const deps = baseDeps(root, makeState("owner"), { nestedRootRunId });
+		writeStatus(deps.asyncDirRoot!, "shared-prefix-active", "running", { sessionId: "owner" });
+		writeStatus(scope.asyncDirRoot, "shared-prefix", "complete", { sessionId: "owner" });
+		const ambiguous = await waitForSubagents({ id: "shared-p" }, undefined, deps);
+		assert.equal(ambiguous.isError, true);
+		assert.match(textOf(ambiguous), /Ambiguous.*2 runs/);
+		const exact = await waitForSubagents({ id: "shared-prefix" }, undefined, deps);
+		assert.equal(exact.isError, undefined);
+		assert.match(textOf(exact), /is terminal.*1 complete/);
+	});
+
+	it("preserves nested timeout, supervisor attention, and session-change boundaries", async (t) => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-nested-control-"));
+		const nestedRootRunId = randomUUID();
+		const scope = nestedRunScope(nestedRootRunId);
+		t.after(() => { for (const dir of [root, scope.asyncDirRoot]) fs.rmSync(dir, { recursive: true, force: true }); });
+		const runId = randomUUID();
+		const state = makeState("owner");
+		let clock = Date.now();
+		const deps = baseDeps(root, state, { nestedRootRunId, now: () => clock, sleep: async () => { clock += 250; } });
+		writeStatus(scope.asyncDirRoot, runId, "running", { sessionId: "owner" });
+		const timed = await waitForSubagents({ all: true, timeoutMs: 250 }, undefined, deps);
+		assert.equal(timed.isError, undefined);
+		assert.deepEqual(timed.details.wait?.activeRunIds, [runId]);
+		assert.equal(timed.details.wait?.reason, "window_elapsed");
+		writeStatus(scope.asyncDirRoot, runId, "running", { sessionId: "owner", activityState: "needs_attention", currentTool: "contact_supervisor" });
+		const attention = await waitForSubagents({ all: true, stopOnAttention: false }, undefined, deps);
+		assert.match(textOf(attention), /attention required/);
+		const barrier = await waitForSubagents({ all: true }, undefined, { ...deps, hasPendingSupervisorRequest: () => true });
+		assertSupervisorYield(barrier, [runId]);
+		writeStatus(scope.asyncDirRoot, runId, "running", { sessionId: "owner" });
+		const changed = await waitForSubagents({ id: runId }, undefined, { ...deps, sleep: async () => { state.currentSessionId = "sibling"; } });
+		assert.equal(changed.isError, true);
+		assert.match(textOf(changed), /session changed/);
+	});
+
 	it("resolves waitTool config and environment overrides strictly", () => {
 		assert.deepEqual(resolveWaitToolConfig(undefined, {}), { enabled: true });
 		assert.deepEqual(resolveWaitToolConfig(false, {}), { enabled: false });
