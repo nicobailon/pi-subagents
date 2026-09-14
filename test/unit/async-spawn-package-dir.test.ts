@@ -13,8 +13,8 @@ test("detached spawn does not keep an inherited bundled-layout PI_PACKAGE_DIR", 
 	const bundled = fs.mkdtempSync(path.join(os.tmpdir(), "bundled-pi-"));
 	const previous = process.env.PI_PACKAGE_DIR;
 	const previousRoot = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
-	// The launch path resolves the host root from this variable first; an
-	// ambient value from the outer environment would change the spawn env.
+	// The launch path consults this variable when argv discovery cannot identify
+	// the host; an ambient value from the outer environment would change the spawn env.
 	delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
 	process.env.PI_PACKAGE_DIR = bundled;
 	const spawn = t.mock.method(childProcess, "spawn", () => {
@@ -82,6 +82,38 @@ test("detached launch honors the package-root environment override when host det
 		syncBuiltinESMExports();
 		if (previous === undefined) delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
 		else process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = previous;
+	}
+});
+
+test("detached launch ignores a whitespace-only package-root override", async (t) => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "blank-package-root-"));
+	const previous = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+	process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = "   ";
+	const manifests = [resolvePiPackageRoot(), resolveInstalledPiPackageRoot()]
+		.filter((dir): dir is string => Boolean(dir)).map((dir) => path.join(dir, "package.json"));
+	assert.ok(manifests.length > 0, "fixture must start with a detectable npm root");
+	const exists = fs.existsSync;
+	t.mock.method(fs, "existsSync", (file) => manifests.includes(String(file)) ? false : exists(file));
+	const spawn = t.mock.method(childProcess, "spawn", () => { throw new Error("must not spawn"); });
+	syncBuiltinESMExports();
+	try {
+		// With auto-discovery hidden, a blank override must not count as a host root.
+		const { executeAsyncSingle: launch } = await import("../../src/runs/background/async-execution.ts?blank-package-root");
+		const result = launch("blank-package-root", {
+			agent: "worker", task: "Inspect files", agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: root, currentSessionId: "blank-package-root" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, sessionRoot: path.join(root, "sessions"), maxSubagentDepth: 1, acceptance: false,
+		});
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]!.text, /installed npm package.*neither is available/);
+		assert.equal(spawn.mock.calls.length, 0);
+	} finally {
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
+		if (previous === undefined) delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+		else process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = previous;
+		fs.rmSync(root, { recursive: true, force: true });
 	}
 });
 
