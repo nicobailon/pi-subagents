@@ -30,7 +30,7 @@
 ### Fixed
 
 - Add the ambient-extension rule to Pi's model-not-found error when a child's model comes from an extension-registered provider that was not loaded for it: a foreground child now reports that agents needing a provider extension's models must run as background children (`async: true`) or load the extension explicitly through `subagentOnlyExtensions`/`extensions`, and a background child launched without the ambient extensions gets the matching remedies. When `capabilityCeiling.denyExtensions` blocks every extension, both hosts report the policy instead of remedies the ceiling discards. The core error, exit code, and failure detection are unchanged. Thanks to [@pwguler](https://github.com/pwguler) for #2240.
-- Retry an unused fallback model after a provider stream closes before its terminal event. These transient failures do not create a cached model exclusion.
+- Retry an unused fallback model after a provider stream closes before its terminal event. These transient failures do not create a cached model exclusion. Thanks to [@ghostwriternr](https://github.com/ghostwriternr) for #2256.
 - Remote Herdr bridge discovery no longer blocks the parent session while waiting for the remote Pi to start.
 
 - Recognize Windows Bun virtual entrypoints when launching standalone background children, retaining the existing Linux and npm paths. Windows coverage remains experimental; see `docs/standalone-background.md`. Thanks to [@JohnsonRan](https://github.com/JohnsonRan) for #2241.
