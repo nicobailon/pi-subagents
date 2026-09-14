@@ -577,6 +577,20 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/model.*(?:load|fail|error)/i,
 ];
 
+const TRANSIENT_STREAM_FAILURE_PATTERNS = [
+	// Pi's Anthropic provider uses this exact error when a stream closes before
+	// its terminal event.
+	/^Anthropic stream ended before message_stop$/,
+	// Node's fetch reports a prematurely closed response body with this message.
+	/^terminated$/,
+];
+
+function isTransientStreamFailure(error: string | undefined): boolean {
+	if (!error) return false;
+	const normalized = error.trim();
+	return TRANSIENT_STREAM_FAILURE_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
 /**
  * Failures reported as `<tool> failed (exit N): ...` or `<tool> failed with
  * exit code N` come from a tool call inside the child's task, not from the
@@ -589,7 +603,7 @@ const TOOL_FAILURE_PREFIX = /^[\w.:@/-]+ failed (?:(?:\(exit \d+\):)|(?:with exi
 export function isRetryableModelFailure(error: string | undefined): boolean {
 	if (!error) return false;
 	if (TOOL_FAILURE_PREFIX.test(error.trim())) return false;
-	return RETRYABLE_MODEL_FAILURE_PATTERNS.some((pattern) => pattern.test(error));
+	return isTransientStreamFailure(error) || RETRYABLE_MODEL_FAILURE_PATTERNS.some((pattern) => pattern.test(error));
 }
 
 function messageError(message: unknown): string | undefined {
@@ -641,7 +655,7 @@ function isProvisioningFailure(error: string): boolean {
 
 export function recordRetryableModelFailure(model: string | undefined, error: string | undefined): void {
 	if (!model || !error || !isRetryableModelFailure(error) || isContextOverflow(error)) return;
-	if (REQUEST_SHAPE_FAILURE_PATTERN.test(error) || isTransientNoOutputFailure(error)) return;
+	if (REQUEST_SHAPE_FAILURE_PATTERN.test(error) || isTransientNoOutputFailure(error) || isTransientStreamFailure(error)) return;
 	const { provider, modelId } = parseModelKey(model);
 	recordModelFailure({
 		modelId,

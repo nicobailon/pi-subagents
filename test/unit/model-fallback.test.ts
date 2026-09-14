@@ -601,6 +601,38 @@ describe("model fallback helpers", () => {
 		assert.equal(isRetryableModelFailure("500"), true);
 	});
 
+	it("retries premature stream termination without caching a model exclusion", () => {
+		const model = "anthropic/claude-sonnet-4";
+		for (const error of [
+			"Anthropic stream ended before message_stop",
+			"Anthropic stream ended before message_stop\n",
+			"terminated",
+			"terminated\n",
+		]) {
+			clearExclusions();
+			const messages = [{ role: "assistant", errorMessage: error }];
+			assert.equal(isRetryableModelFailure(error), true, error);
+			assert.equal(isRetryableModelFailureAttempt({ error, messages, toolCount: 0 }), true, error);
+			assert.equal(isRetryableModelFailureAttempt({ error, messages, toolCount: 1 }), false, error);
+			recordRetryableModelFailure(model, error);
+			assert.equal(findModelExclusion(model), undefined, error);
+			assert.equal(getExcludedCount(), 0, error);
+		}
+	});
+
+	it("does not confuse local termination with a provider stream failure", () => {
+		for (const error of [
+			"Subagent process terminated by signal SIGTERM.",
+			"child terminated before steering delivery",
+			"Terminated",
+			"TypeError: terminated",
+			"401 terminated",
+			"bash failed (exit 1): terminated",
+		]) {
+			assert.equal(isRetryableModelFailure(error), false, error);
+		}
+	});
+
 	it("retries OpenRouter's status-prefixed 401 only before tool activity", () => {
 		const error = '401: {"message":"User not found.","code":401}';
 		const messages = [{ role: "assistant", errorMessage: error }];
