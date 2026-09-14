@@ -18,7 +18,7 @@ import type { SteeringStatus } from "../../src/shared/types.ts";
 import {
 	installAsyncExecutionHooks, available, isAsyncAvailable, ASYNC_DIR,
 	createSubagentExecutor, waitForMockPiCall, waitForAsyncState, tempDir, mockPi,
-	makeAsyncExecutor, readAsyncPayload, RESULTS_DIR, waitForAsyncEvent,
+	makeAsyncExecutor, readAsyncPayload, RESULTS_DIR,
 } from "../support/async-execution-fixture.ts";
 
 type SteeringTargets = { steering?: { recent: Array<{ id: string; targets: Array<{ index: number; state: string; reason?: string }> }> } };
@@ -30,7 +30,7 @@ function recentSteering(status: AsyncStatusPayload, requestId: string): { index:
 describe("async workflow steer inbox", { skip: !available ? "pi packages not available" : undefined }, () => {
 	installAsyncExecutionHooks();
 
-	for (const outcome of ["complete", "failed", "stopped"]) it(`settles steering without terminal status when result index publication fails (${outcome})`, { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+	for (const outcome of ["complete", "failed", "stopped"]) it(`settles steering with the committed terminal result when index creation fails (${outcome})`, { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		const release = path.join(tempDir, "index-failure-release");
 		const indexPath = path.join(RESULTS_DIR, "result-index");
 		mockPi.onCall({ steps: [{ waitForPath: release, jsonl: [events.assistantMessage("done")] }] });
@@ -62,26 +62,29 @@ describe("async workflow steer inbox", { skip: !available ? "pi packages not ava
 				const stop = await executor.execute("stop-index-steering", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx);
 				assert.notEqual(stop.isError, true);
 			} else fs.writeFileSync(release, "go");
-			await waitForAsyncEvent(runId, "subagent.workflow.result_write_failed");
+			await waitForAsyncState(runId, (candidate) => candidate.state === outcome, 15_000);
 			const before = fs.readFileSync(path.join(asyncDir, "status.json"), "utf8");
 			const status = JSON.parse(before) as { state: string; endedAt?: number; activityState?: string; steering: SteeringStatus };
-			assert.equal(status.state, "running", "failed index publication cannot authorize terminal status");
-			assert.equal(status.endedAt, undefined);
+			assert.equal(status.state, outcome, "the matching committed payload authorizes the truthful terminal status");
+			assert.equal(typeof status.endedAt, "number");
 			assert.equal(status.activityState, "needs_attention");
 			assert.equal(status.steering.pending, 0);
 			assert.equal(status.steering.failed, 2);
 			assert.equal(status.steering.delivered, 0);
 			assert.ok(status.steering.recent.every((request) => request.targets[0]?.state === "failed" && request.targets[0].reason === `run became ${outcome} before steering delivery settled; delivery unconfirmed`));
-			assert.equal(fs.existsSync(path.join(ASYNC_DIR, ".active-runs", runId)), true);
+			assert.equal(fs.existsSync(path.join(ASYNC_DIR, ".active-runs", runId)), false);
 			assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${runId}.json`)), false);
 			assert.equal(fs.existsSync(path.join(RESULTS_DIR, "result-pending", "session-index-steering", `${runId}.json`)), true);
-			const unpublished = JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, "result-pending", "session-index-steering", `${runId}.json`), "utf8"));
-			assert.equal(unpublished.state, outcome, "computed outcome is retained only in unpublished result");
-			if (outcome !== "complete") assert.equal(unpublished.activityState, "needs_attention", "failure finalization preserves steering attention");
+			const committed = JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, "result-pending", "session-index-steering", `${runId}.json`), "utf8"));
+			assert.equal(committed.runId, runId);
+			assert.equal(committed.sessionId, "session-index-steering");
+			assert.equal(committed.state, outcome);
+			if (outcome !== "complete") assert.equal(committed.activityState, "needs_attention", "failure finalization preserves steering attention");
 			assert.equal(fs.existsSync(steerInboxClosedPath(asyncDir)), true);
 			const journal = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf8");
 			assert.equal(journal.split("\n").filter((line) => line.includes('"type":"subagent.steer.failed"')).length, 2);
-			assert.doesNotMatch(journal, /"type":"subagent.workflow.completed"/);
+			assert.match(journal, new RegExp(`"type":"subagent\\.workflow\\.completed"[^\\n]*"state":"${outcome}"`));
+			assert.doesNotMatch(journal, /"type":"subagent\.workflow\.result_write_failed"/);
 			releaseSteer();
 			await new Promise((resolve) => setTimeout(resolve, 350));
 			assert.equal(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"), before);
