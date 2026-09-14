@@ -34,18 +34,18 @@ import {
 const MAX_LAUNCH_RESOLVED_EXTENSION_IDS = 32;
 const PROMPT_RUNTIME_EXTENSION_PATH = path.join(
 	path.dirname(fileURLToPath(import.meta.url)),
-	"subagent-prompt-runtime.ts",
+	`subagent-prompt-runtime${path.extname(fileURLToPath(import.meta.url))}`,
 );
 const FANOUT_CHILD_EXTENSION_PATH = path.join(
 	path.dirname(fileURLToPath(import.meta.url)),
 	"..",
 	"..",
 	"extension",
-	"fanout-child.ts",
+	`fanout-child${path.extname(fileURLToPath(import.meta.url))}`,
 );
 const FAST_MODE_EXTENSION_PATH = path.join(
 	path.dirname(fileURLToPath(import.meta.url)),
-	"fast-mode-extension.ts",
+	`fast-mode-extension${path.extname(fileURLToPath(import.meta.url))}`,
 );
 const SUBAGENT_RUNTIME_EXTENSION_PATHS = new Set([
 	PROMPT_RUNTIME_EXTENSION_PATH,

@@ -3,6 +3,8 @@
 .pi-subagents/
 .DS_Store
 node_modules/
+dist-pkg/
+*.tgz
 .fallow/
 tmp/
 

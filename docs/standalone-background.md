@@ -54,4 +54,6 @@ PI_CODING_AGENT_DIR="$(mktemp -d)" "$release_dir/pi/pi" \
   --no-extensions --no-skills --no-prompt-templates --extension "$PWD/index.ts"
 ```
 
+This command targets a source checkout. The published npm package uses the compiled `index.js` entry instead.
+
 Configure a provider in that isolated session, ask for a read-only background child and inspect its notification/run artifacts. This loads only the checkout for that process; it does not install the candidate or reuse normal credentials. Keep the parent alive for notifications.

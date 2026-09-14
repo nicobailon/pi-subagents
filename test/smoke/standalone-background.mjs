@@ -32,7 +32,9 @@ function run(name, command, args) {
 	assert.ifError(result.error);
 	return result;
 }
-const packed = run("pack", "npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", root]);
+const built = run("build-package", process.execPath, ["scripts/build-package.mjs"]);
+assert.equal(built.status, 0, built.stderr);
+const packed = run("pack", "npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", root, path.join(source, "dist-pkg")]);
 assert.equal(packed.status, 0, packed.stderr);
 const tarball = JSON.parse(packed.stdout)[0];
 assert.equal(run("extract", "tar", ["-xf", path.join(root, tarball.filename), "-C", root]).status, 0);
@@ -67,8 +69,8 @@ assert.match(negative.stderr, /Cannot find (?:module|package).*pi-coding-agent/)
 const version = run("version", "bwrap", [...sandbox, "--", "/stage/pi-native", "--version"]);
 assert.equal(version.status, 0, version.stderr);
 fs.writeFileSync(path.join(root, "identity.json"), JSON.stringify({ binary, sha256: release.binarySha256, version: version.stdout.trim(), packed: tarball.filename, network: "unshared", automaticInstall: "disabled; negative control verified" }, null, 2));
-const bootstrap = "/stage/package/src/runs/background/binary-bootstrap.ts";
-if (mode === "missing-bootstrap") fs.renameSync(path.join(root, "package/src/runs/background/binary-bootstrap.ts"), path.join(root, "withheld-binary-bootstrap.ts"));
+const bootstrap = "/stage/package/src/runs/background/binary-bootstrap.js";
+if (mode === "missing-bootstrap") fs.renameSync(path.join(root, "package/src/runs/background/binary-bootstrap.js"), path.join(root, "withheld-binary-bootstrap.js"));
 const hostArgs = ["/stage/pi-native", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-session", "--mode", "rpc"];
 console.log(`Artifacts: ${root}`);
 if (mode === "bootstrap-errors") {

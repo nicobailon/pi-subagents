@@ -82,6 +82,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22.19.0
+      - run: npm ci --ignore-scripts
       - name: Real Pi 0.85.1 background child smoke
         run: node --experimental-strip-types test/smoke/clean-install.mjs "${{ runner.temp }}/clean-install-smoke" 0.85.1
       - uses: actions/upload-artifact@v4

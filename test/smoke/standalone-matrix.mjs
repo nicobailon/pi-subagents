@@ -23,7 +23,7 @@ assert.ok(root && path.isAbsolute(root) && !fs.existsSync(root), "provide a fres
 function sha(file) { return createHash("sha256").update(fs.readFileSync(file)).digest("hex"); }
 assert.equal(sha(binary), release.binarySha256, "binary does not match the pinned official release");
 fs.mkdirSync(root, { recursive: true });
-const inputs = ["index.ts", "package.json", "package-lock.json",
+const inputs = ["index.ts", "package.json", "package-lock.json", "scripts/build-package.mjs", "tsconfig.build.json", "tsconfig.json",
 	...fs.readdirSync(source).filter((file) => file.endsWith(".mjs")),
 	...fs.readdirSync(path.join(source, "src"), { recursive: true }).map((file) => `src/${file}`),
 	...fs.readdirSync(path.join(source, "test/smoke")).filter((file) => file.startsWith("standalone-")).map((file) => `test/smoke/${file}`),

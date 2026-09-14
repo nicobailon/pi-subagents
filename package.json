@@ -54,6 +54,8 @@
     "CHANGELOG.md"
   ],
   "scripts": {
+    "build:pkg": "node scripts/build-package.mjs",
+    "pack:pkg": "npm run build:pkg && npm pack ./dist-pkg",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:unit",
     "test:unit": "node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/*.test.ts",

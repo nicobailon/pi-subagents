@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { parseFrontmatter, parseFrontmatterList } from "../../src/agents/frontmatter.ts";
-import registerSubagents from "../../index.ts";
-import { requestAsyncInterrupt, requestAsyncSteer, requestAsyncStop } from "../../src/runs/background/control-channel.ts";
+import { parseFrontmatter, parseFrontmatterList } from "../../src/agents/frontmatter.js";
+import registerSubagents from "../../index.js";
+import { requestAsyncInterrupt, requestAsyncSteer, requestAsyncStop } from "../../src/runs/background/control-channel.js";
 import { verifyRevival } from "./standalone-revival.ts";
 import { verifySharedRun } from "./standalone-shared.ts";
 
@@ -73,7 +73,7 @@ export default function registerSmoke(pi: ExtensionAPI) {
 				...(mode === "tool-timeout" ? { toolTimeoutMs: 1000 } : {}),
 			}, new AbortController().signal, undefined, ctx);
 			if (mode === "missing-bootstrap") {
-				assert.ok(fs.existsSync("/stage/withheld-binary-bootstrap.ts"));
+				assert.ok(fs.existsSync("/stage/withheld-binary-bootstrap.js"));
 				await assert.rejects(launching, /Background runner bootstrap not found/);
 				console.log("PASS standalone native async missing-bootstrap: missing asset rejected at the public launch boundary");
 				process.exit(0);

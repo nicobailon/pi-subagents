@@ -37,16 +37,26 @@ function run(name, command, args, workdir, extra = {}, success = true) {
 }
 fs.writeFileSync(path.join(host, "package.json"), JSON.stringify({ private: true, dependencies: { "@earendil-works/pi-coding-agent": version } }));
 run("host-install", "npm", ["install", "--no-audit", "--no-fund"], host);
-const packed = JSON.parse(run("pack", "npm", ["pack", "--json", "--pack-destination", root], source).stdout)[0];
+run("build-package", process.execPath, ["scripts/build-package.mjs"], source);
+const packed = JSON.parse(run("pack", "npm", ["pack", "--json", "--pack-destination", root, path.join(source, "dist-pkg")], source).stdout)[0];
 assert.ok(packed.files.some(file => file.path === "runner-peer-preload.mjs"), "peer preload must ship");
 assert.ok(packed.files.some(file => file.path === "runner-peer-loader.mjs"), "older-Node peer loader must ship");
+assert.equal(packed.files.some(file => file.path.endsWith(".ts") && !file.path.endsWith(".d.ts")), false, "package must not ship TypeScript sources");
+assert.ok(packed.files.some(file => file.path === "index.js"), "compiled extension entry must ship");
+assert.ok(packed.files.some(file => file.path === "src/runs/background/subagent-runner.js"), "compiled background runner must ship");
 fs.writeFileSync(path.join(extension, "package.json"), JSON.stringify({ private: true, dependencies: { "pi-subagents": `file:${path.join(root, packed.filename)}` } }));
 run("extension-install", "npm", ["install", "--no-audit", "--no-fund"], extension);
 const installed = path.join(extension, "node_modules/pi-subagents");
 const pi = path.join(host, "node_modules/@earendil-works/pi-coding-agent");
 const { createJiti } = await import(pathToFileURL(path.join(extension, "node_modules/jiti/lib/jiti.mjs")).href);
 const jitiLoader = createJiti(import.meta.url, { fsCache: false });
-const { resolveHostPeerAliases, findHostPeerPackageDir, resolvePackageSubpath } = await jitiLoader.import(path.join(installed, "src/runs/background/runner-aliases.ts"));
+delete process.env.PI_SUBAGENT_CHILD;
+const entryLoader = createJiti(import.meta.url, { moduleCache: false, tryNative: false });
+const entryStarted = performance.now();
+const entry = await entryLoader.import(path.join(installed, "index.js"));
+assert.equal(typeof entry.default, "function", "compiled extension entry must export its factory");
+console.log(`PASS compiled package entry loaded through Jiti in ${Math.round(performance.now() - entryStarted)} ms`);
+const { resolveHostPeerAliases, findHostPeerPackageDir, resolvePackageSubpath } = await import(pathToFileURL(path.join(installed, "src/runs/background/runner-aliases.js")).href);
 if (version === "0.85.1") assert.equal(findHostPeerPackageDir(pi, "@earendil-works/pi-client"), undefined, "stable host must remain missing client");
 run("pristine-public-sdk", process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(pathToFileURL(resolvePackageSubpath(pi, ".")).href)})`], cwd);
 const resolved = resolveHostPeerAliases(pi);
@@ -72,6 +82,6 @@ const packedSelection = run("packed-selection", process.execPath, [
 	installed,
 	resolvePackageSubpath(pi, "."),
 ], cwd, childEnv);
-assert.match(packedSelection.stdout, /PASS packed node_modules selects Jiti/);
+assert.match(packedSelection.stdout, /PASS packed node_modules selects compiled JavaScript/);
 if (version === "0.85.1") assert.equal(findHostPeerPackageDir(pi, "@earendil-works/pi-client"), undefined);
 console.log(`${positive.stdout.trim()}\nArtifacts: ${root}`);

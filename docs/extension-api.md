@@ -559,3 +559,7 @@ The main runtime files in this repository:
 | `src/intercom/intercom-bridge.ts` | Runtime intercom bridge instructions and diagnostics. |
 | `src/extension/schemas.ts` / `src/shared/types.ts` | Tool schemas, shared types, and event constants. |
 | `test/unit/` / `test/integration/` | Unit and loader-based integration tests. |
+
+### Published package vs source checkout
+
+The npm tarball ships TypeScript compiler output with the same file layout and a compiled `index.js` entry. A Git checkout continues to run `index.ts` directly, so local extension development does not require a build step. Run `npm run pack:pkg` to build and pack the same artifact published to npm.

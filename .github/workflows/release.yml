@@ -24,5 +24,7 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Run tests
         run: npm run test:all
+      - name: Build published package
+        run: npm run build:pkg
       - name: Publish to npm
-        run: npm publish --provenance
+        run: npm publish ./dist-pkg --provenance
