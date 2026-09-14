@@ -274,7 +274,7 @@ export class MainWatchdogRuntime {
 		return this.getSnapshot();
 	}
 
-	reset(_reason = "reset", options: { clearReviewInputSignature?: boolean; resetChangeSignature?: boolean; clearLspLedger?: boolean; clearScope?: boolean } = {}): void {
+	reset(_reason = "reset", options: { clearReviewInputSignature?: boolean; resetChangeSignature?: boolean; clearLspLedger?: boolean; clearScope?: boolean; clearActivity?: boolean } = {}): void {
 		this.activeReviewAbortController?.abort();
 		this.abortActiveAgentEnd();
 		this.epoch++;
@@ -296,10 +296,8 @@ export class MainWatchdogRuntime {
 			this.lspLedger.reset();
 			this.lastLspSnapshot = undefined;
 		}
-		if (options.clearScope) {
-			this.scope.reset();
-			this.clearActivity();
-		}
+		if (options.clearScope) this.scope.reset();
+		if (options.clearScope || options.clearActivity) this.clearActivity();
 		if (options.clearReviewInputSignature) this.lastReviewInputSignature = undefined;
 		if (options.resetChangeSignature) this.resetRepoChangeBaseline({ reviewed: true });
 		this.guard.reset();
