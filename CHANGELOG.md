@@ -28,6 +28,7 @@
 
 ### Fixed
 
+- Honor `PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT` in the detached background runner's host-package detection. The foreground `resolvePiCliScript` path already accepts it as an explicit override; the detached runner ignored it and failed closed with "neither is available" on hosts whose manifest or install layout automatic discovery cannot identify (renamed distributions, wrappers). Both child kinds now resolve the same host, and the spawn tests pin the variable so ambient values cannot skew them.
 - Remote Herdr bridge discovery no longer blocks the parent session while waiting for the remote Pi to start.
 
 - Keep non-reply supervisor progress updates out of parent model turns while continuing to consume their request files; decisions and structured interviews still wake and wait for replies. Thanks to [@moofone](https://github.com/moofone) for #2229 and [@dajiaohuang](https://github.com/dajiaohuang) for #2230.
