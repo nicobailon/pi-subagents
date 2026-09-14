@@ -168,6 +168,7 @@ describe("non-blocking wait subscriptions", () => {
 
 			writeStatus(asyncRoot, "run-exact", "complete", { sessionId: "session-a" });
 			recordWaitCompletion(restoredState, "run-exact", {
+				runId: "run-exact",
 				sessionId: "session-a",
 				agent: "worker",
 				state: "complete",

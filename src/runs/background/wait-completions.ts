@@ -158,7 +158,8 @@ export function recordWaitCompletion(
 	persistence?: { resultsDir: string; sessionId: string },
 ): boolean {
 	const sessionId = asNonEmptyString(data.sessionId);
-	if (!sessionId || (persistence && persistence.sessionId !== sessionId)) return false;
+	if (!sessionId || !resultPayloadMatchesSessionRun(data, sessionId, runId)) return false;
+	if (persistence && persistence.sessionId !== sessionId) return false;
 	const store = state.completedResults ??= new Map();
 	for (const [key, entry] of store) {
 		if (now - entry.seenAt > ttlMs) store.delete(key);

@@ -110,6 +110,11 @@ describe("workflow wait completion projection", () => {
 		const state = { currentSessionId: "session-a" } as SubagentState;
 
 		assert.equal(recordWaitCompletion(state, "missing", { runId: "missing" }, Date.now(), 60_000), false);
+		assert.equal(recordWaitCompletion(state, "expected-run", {
+			runId: "foreign-run",
+			sessionId: "session-a",
+			agent: "foreign-agent",
+		}, Date.now(), 60_000), false);
 		assert.equal(recordWaitCompletion(state, "mismatch", {
 			runId: "mismatch",
 			sessionId: "session-a",
