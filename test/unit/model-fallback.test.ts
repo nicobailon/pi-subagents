@@ -354,6 +354,16 @@ describe("model fallback helpers", () => {
 		}
 	});
 
+	it("does not retry provisioning failures on a different model", () => {
+		for (const error of [
+			"preflight failed: model startup failed",
+			"npm install pi-prompt-template-model failed with code 217",
+		]) {
+			assert.equal(isRetryableModelFailure(error), true, error);
+			assert.equal(isRetryableModelFailureAttempt({ error, messages: [], toolCount: 0 }), false, error);
+		}
+	});
+
 	it("keeps the default 24h TTL for model-health failures", () => {
 		recordRetryableModelFailure("openai/gpt-5-mini", "rate limit exceeded");
 		const exclusion = findModelExclusion("openai/gpt-5-mini");

@@ -619,6 +619,7 @@ function isTransientNoOutputFailure(error: string | undefined): boolean {
 
 export function isRetryableModelFailureAttempt(input: { error: string | undefined; messages?: readonly unknown[]; toolCount?: number }): boolean {
 	if (!isRetryableModelFailure(input.error)) return false;
+	if (isProvisioningFailure(input.error ?? "")) return false;
 	if ((input.toolCount ?? 0) > 0) return false;
 	if (isTransientNoOutputFailure(input.error)) return true;
 	if ((input.toolCount ?? 0) === 0 && (input.messages?.length ?? 0) === 0) return true;

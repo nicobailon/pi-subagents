@@ -2503,6 +2503,25 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	it("does not retry an unchanged provisioning failure on a fallback model", async () => {
+		mockPi.onCall({ createError: "preflight failed: model startup failed" });
+		mockPi.onCall({ output: "must not run" });
+		const agents = [makeAgent("worker", {
+			model: "openai/gpt-5-mini",
+			fallbackModels: ["anthropic/claude-sonnet-4"],
+		})];
+
+		const result = await runSync(tempDir, agents, "worker", "Read a file", {
+			runId: "provisioning-failure-no-fallback",
+			acceptance: false,
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /preflight failed: model startup failed/u);
+		assert.equal(result.modelAttempts?.length, 1);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
 	it("does not retry a non-zero exit after tool activity", async () => {
 		mockPi.onCall({ jsonl: [events.toolStart("read", { path: "package.json" })], exitCode: 1 });
 		mockPi.onCall({ output: "must not run" });
