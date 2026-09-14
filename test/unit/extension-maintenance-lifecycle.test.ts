@@ -9,8 +9,13 @@ const script = String.raw`
 	const originalSetInterval = globalThis.setInterval;
 	const originalClearTimeout = globalThis.clearTimeout;
 	const originalClearInterval = globalThis.clearInterval;
-	globalThis.setTimeout = ((handler, delay, ...args) => { const timer = originalSetTimeout(handler, delay, ...args); active.add(timer); return timer; });
-	globalThis.setInterval = ((handler, delay, ...args) => { const timer = originalSetInterval(handler, delay, ...args); active.add(timer); return timer; });
+	const isMaintenanceTimer = (kind, delay) => {
+		const stack = (new Error().stack ?? "").replaceAll("\\", "/");
+		return (kind === "timeout" && (delay === 30_000 || delay === 60_000) && stack.includes("/src/extension/index.ts"))
+			|| (kind === "interval" && delay === 1_000 && stack.includes("/src/runs/background/wait-subscriptions.ts"));
+	};
+	globalThis.setTimeout = ((handler, delay, ...args) => { const timer = originalSetTimeout(handler, delay, ...args); if (isMaintenanceTimer("timeout", delay)) active.add(timer); return timer; });
+	globalThis.setInterval = ((handler, delay, ...args) => { const timer = originalSetInterval(handler, delay, ...args); if (isMaintenanceTimer("interval", delay)) active.add(timer); return timer; });
 	globalThis.clearTimeout = ((timer) => { active.delete(timer); return originalClearTimeout(timer); });
 	globalThis.clearInterval = ((timer) => { active.delete(timer); return originalClearInterval(timer); });
 	const { default: registerSubagentExtension } = await import("./src/extension/index.ts");
