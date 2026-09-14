@@ -10,6 +10,7 @@
 import assert from "node:assert/strict";
 import { after, beforeEach, describe, it } from "node:test";
 import { createDefaultChildSessionFactory, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
+import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { buildRunnerChildLaunch } from "../../src/runs/background/runner-child-launch.ts";
 import { runChildSession } from "../../src/runs/background/run-child-session.ts";
@@ -35,7 +36,12 @@ function unresolvedModelPi(): PiCodingAgentModule {
 describe("child model resolution diagnostic", () => {
 	let tempDir: string;
 
-	beforeEach(() => { tempDir = createTempDir(); });
+	beforeEach(() => {
+		// A failed foreground attempt records a short-lived model exclusion, which
+		// would otherwise filter the next attempt at the same model.
+		clearExclusions();
+		tempDir = createTempDir();
+	});
 	after(() => removeTempDir(tempDir));
 
 	it("explains a foreground model that only an unloaded provider extension serves", async () => {
@@ -56,6 +62,23 @@ describe("child model resolution diagnostic", () => {
 		assert.match(result.error ?? "", /load the provider extension explicitly with `subagentOnlyExtensions` or `extensions` in the agent frontmatter/);
 	});
 
+	it("tells a foreground child that the capability ceiling denied the extension, not the frontmatter", async () => {
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => unresolvedModelPi() });
+		const result = await runSync(tempDir, [makeAgent("provider-model-worker", { model: MODEL })], "provider-model-worker", "Task", {
+			runId: "foreground-model-policy",
+			waitToolEnabled: false,
+			childSessionFactory: factory,
+			capabilityCeiling: { version: 1, denyExtensions: true, sources: ["policy-fixture"] },
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.ok(result.error?.startsWith(MODEL_NOT_FOUND), `core error must stay first, got: ${result.error}`);
+		assert.match(result.error ?? "", /Capability ceiling from policy-fixture denies extensions/);
+		assert.match(result.error ?? "", /`async: true` does not help either/);
+		assert.match(result.error ?? "", /Relax the capability ceiling to allow extensions/);
+		assert.doesNotMatch(result.error ?? "", /must run as background children/);
+	});
+
 	it("keeps the plain model-not-found error for a background child that loaded the ambient extensions", async () => {
 		const launch = buildRunnerChildLaunch(
 			{ agent: "provider-model-worker", task: "Task" },
@@ -69,5 +92,21 @@ describe("child model resolution diagnostic", () => {
 		assert.equal(run.exitCode, 1);
 		assert.equal(run.error, MODEL_NOT_FOUND);
 		assert.equal(run.messages.length, 0);
+	});
+
+	it("tells a background child that the capability ceiling denied the extension", async () => {
+		const launch = buildRunnerChildLaunch(
+			{ agent: "provider-model-worker", task: "Task" },
+			{ cwd: tempDir, id: "runner-model-policy", flatIndex: 0, capabilityCeiling: { version: 1, denyExtensions: true, sources: ["policy-fixture"] } },
+			{ model: MODEL, sessionEnabled: false, watchdogStatus: () => {} },
+		);
+		assert.equal(launch.session.ambientExtensions, false, "the ceiling must disable ambient extensions for this launch");
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => unresolvedModelPi() });
+		const run = await runChildSession({ factory, launch, prompt: "Task: Task", appendChildEvent: () => {}, writeOutputLine: () => {} });
+
+		assert.equal(run.exitCode, 1);
+		assert.match(run.error ?? "", /Capability ceiling from policy-fixture denies extensions/);
+		assert.match(run.error ?? "", /does not enable ambient loading/);
+		assert.match(run.error ?? "", /Relax the capability ceiling to allow extensions/);
 	});
 });
