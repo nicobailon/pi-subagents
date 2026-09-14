@@ -73,6 +73,7 @@ import { assertThinkingWithinCeiling, intersectThinkingCeilings } from "../../sh
 import { MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, MISSING_STRUCTURED_OUTPUT_CALL_ERROR } from "../shared/structured-output.ts";
 import { formatMidToolExitError, isOrdinaryToolForMidToolExit } from "../shared/process-signal.ts";
 import { formatChildToolDiagnostic } from "../shared/tool-availability.ts";
+import { formatChildModelResolutionDiagnostic, isChildModelResolutionFailure } from "../shared/model-resolution-diagnostic.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, hasSingleOutputChangedSinceSnapshot, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
@@ -1314,8 +1315,21 @@ async function runSingleAttempt(
 			result.runtimeAcknowledgedExtensions = capture.runtimeAcknowledgedExtensions();
 			if (session?.machineEvidence) result.nativeMachine = { provider: "herdr", machineId: session.machineEvidence.machineId, ...(session.machineEvidence.initial ? { initialGit: session.machineEvidence.initial } : {}), ...(session.machineEvidence.final ? { finalGit: session.machineEvidence.final } : {}) };
 			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
-			if (!closeError && promptError !== undefined) {
-				closeError = promptError instanceof Error ? promptError.message : String(promptError);
+			const promptErrorMessage = promptError === undefined ? undefined : promptError instanceof Error ? promptError.message : String(promptError);
+			if (!closeError && promptErrorMessage !== undefined) {
+				closeError = promptErrorMessage;
+			}
+			// A foreground child never loads the parent's ambient extensions, so a
+			// provider one registers resolves as "not found" before the child starts.
+			// Annotate only a creation/prompt failure that produced no turn; keep the
+			// core error and add the host rule and both remedies after it.
+			if (promptErrorMessage !== undefined
+				&& closeError === promptErrorMessage
+				&& isChildModelResolutionFailure(promptErrorMessage)
+				&& (result.messages?.length ?? 0) === 0
+				&& result.usage.turns === 0
+				&& !launch.session.ambientExtensions) {
+				closeError = `${promptErrorMessage}\n\n${formatChildModelResolutionDiagnostic({ agent: agent.name, model: launch.session.model, host: "parent" })}`;
 			}
 			const forcedDrainAfterFinalSuccess = (forced || forcedTermination) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
 			const forcedDrainAfterEmptyTerminal = forcedDrainAfterFinalSuccess && hasEmptyTerminalAssistantResponse(result.messages ?? []);

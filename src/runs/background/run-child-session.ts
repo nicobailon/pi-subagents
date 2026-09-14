@@ -20,6 +20,7 @@ import {
 } from "../../watchdog/child-status.ts";
 import { projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleState } from "../shared/child-lifecycle.ts";
 import { formatSubagentModelVerificationError } from "../shared/model-fallback.ts";
+import { formatChildModelResolutionDiagnostic, isChildModelResolutionFailure } from "../shared/model-resolution-diagnostic.ts";
 import { isMutatingTool, resolveCurrentPath } from "../shared/long-running-guard.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } from "../shared/tool-timeout.ts";
 import { createReportedChildSessionInput, type InProcessChildLaunch } from "../shared/child-launch.ts";
@@ -576,8 +577,21 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 			const closed = finish();
 			const finalOutput = getFinalOutput(messages);
 			let finalError = error ?? assistantError;
-			if (!finalError && promptError !== undefined) {
-				finalError = promptError instanceof Error ? promptError.message : String(promptError);
+			const promptErrorMessage = promptError === undefined ? undefined : promptError instanceof Error ? promptError.message : String(promptError);
+			if (!finalError && promptErrorMessage !== undefined) {
+				finalError = promptErrorMessage;
+			}
+			// A child launched without the ambient extensions resolves a provider
+			// extension's model as "not found". Annotate only a creation/prompt failure
+			// that produced no turn; keep the core error and add the rule and the
+			// remedies that load the extension for this child.
+			if (promptErrorMessage !== undefined
+				&& finalError === promptErrorMessage
+				&& isChildModelResolutionFailure(promptErrorMessage)
+				&& messages.length === 0
+				&& usage.turns === 0
+				&& !input.launch.session.ambientExtensions) {
+				finalError = `${promptErrorMessage}\n\n${formatChildModelResolutionDiagnostic({ agent: input.launch.config.agent, model: input.launch.session.model, host: "runner" })}`;
 			}
 			const forcedDrainAfterFinalSuccess = (forced || forcedTermination) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !finalError;
 			const forcedDrainAfterEmptyTerminal = forcedDrainAfterFinalSuccess && hasEmptyTerminalAssistantResponse(messages);
