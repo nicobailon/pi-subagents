@@ -364,6 +364,20 @@ export function scheduledCompletionTriggersTurn(origin: ScheduleOrigin | undefin
 	return !(origin?.quiet === true && outcome === "completed");
 }
 
+/**
+ * Child settlement is useful context, but an ordinary successful child does not
+ * establish the workflow's dependency barrier while its workflow is running.
+ * Keep actionable outcomes waking the parent, and preserve a terminal child as
+ * the barrier for hosts that do not emit a separate workflow completion wake.
+ */
+export function incrementalChildCompletionTriggersTurn(
+	child: Pick<IncrementalChildCompletion, "outcome" | "workflowRunning">,
+	origin: ScheduleOrigin | undefined,
+): boolean {
+	if (child.workflowRunning && child.outcome === "completed") return false;
+	return scheduledCompletionTriggersTurn(origin, child.outcome);
+}
+
 export function formatIncrementalChildCompletion(child: IncrementalChildCompletion): string {
 	const statusText = child.outcome === "completed" ? "completed"
 		: child.outcome === "failed" ? "failed"

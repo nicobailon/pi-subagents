@@ -14,6 +14,7 @@ import registerSubagentNotify, {
 	type RegisterSubagentNotifyOptions,
 	type SubagentNotifyDetails,
 	scheduledCompletionTriggersTurn,
+	incrementalChildCompletionTriggersTurn,
 } from "../../src/runs/background/notify.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
 import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
@@ -981,7 +982,28 @@ describe("scheduled completions", () => {
 		assert.equal((sent[0]!.message as { display?: boolean }).display, true);
 	});
 
-	it("still wakes the session when a quiet scheduled run fails, stops, or pauses", async () => {
+		it("wakes once for an actionable child failure but not an ordinary running success", () => {
+		const triggerTurns: boolean[] = [];
+		const pi = {
+			sendMessage(_message: unknown, options: unknown) {
+				if ((options as { triggerTurn?: boolean }).triggerTurn === true) triggerTurns.push(true);
+			},
+		};
+		for (const notification of [
+			{ workflowRunId: "workflow-1", childKey: "ready", outcome: "completed" as const, workflowRunning: true },
+			{ workflowRunId: "workflow-1", childKey: "broken", outcome: "failed" as const, workflowRunning: true },
+		]) {
+			pi.sendMessage(notification, { triggerTurn: incrementalChildCompletionTriggersTurn(notification, undefined) });
+		}
+		assert.equal(triggerTurns.length, 1, "only the actionable child failure should trigger a provider turn");
+	});
+
+	it("keeps a terminal child settlement as the workflow barrier", () => {
+		const terminal = { workflowRunId: "workflow-2", childKey: "last", outcome: "completed" as const, workflowRunning: false };
+		assert.equal(incrementalChildCompletionTriggersTurn(terminal, undefined), true);
+	});
+
+it("still wakes the session when a quiet scheduled run fails, stops, or pauses", async () => {
 		const quietOrigin = { ...scheduledResult.scheduleOrigin, quiet: true };
 		assert.equal(scheduledCompletionTriggersTurn({ id: "45daa203" }, "completed"), true);
 		for (const outcome of ["failed", "stopped", "paused"] as const) {

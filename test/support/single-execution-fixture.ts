@@ -344,9 +344,10 @@ export function installSingleExecutionHooks() {
 		piEvents = createEventBus(),
 		discoverAgentsForCwd?: (cwd: string) => typeof agents,
 		childRuntime?: ChildRuntimeConfig,
+		sendMessage?: (message: unknown, options: unknown) => void,
 	) {
 		return createSubagentExecutor!({
-			pi: { events: piEvents, getSessionName: () => undefined },
+			pi: { events: piEvents, getSessionName: () => undefined, ...(sendMessage ? { sendMessage } : {}) },
 			...(childRuntime ? { childRuntime } : {}),
 			state: {
 				baseCwd: tempDir,

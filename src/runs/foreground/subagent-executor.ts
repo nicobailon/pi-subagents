@@ -121,7 +121,7 @@ import { handleInspectorAction, INSPECTOR_ACTIONS } from "../../inspectors/actio
 import { createBuiltinInspectorPlugins } from "../../inspectors/plugins.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
 import { previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowChildSettledNotification, type WorkflowLanePlan, type WorkflowReceiptResumeReference, type WorkflowScriptChildResult, type WorkflowScriptTraceEntry, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
-import { formatIncrementalChildCompletion, scheduledCompletionTriggersTurn } from "../background/notify.ts";
+import { formatIncrementalChildCompletion, incrementalChildCompletionTriggersTurn } from "../background/notify.ts";
 import { executeWorkflowHostCommand, resolveWorkflowHostOutputClaimPath, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "../../workflows/host-command.ts";
 import { buildWorkflowReceipt, readWorkflowReceipt, workflowReceiptPath, resolveWorkflowReceiptResumeEntry, writeWorkflowReceipt, type WorkflowReceipt, type WorkflowReceiptState } from "../../workflows/workflow-receipt.ts";
 import { upsertHostStep, validHostStepNodes } from "../shared/host-step-status.ts";
@@ -5709,7 +5709,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 											content: formatIncrementalChildCompletion(notification),
 											display: notification.outcome !== "completed",
 										},
-										{ triggerTurn: scheduledCompletionTriggersTurn(requestParams.scheduleOrigin, notification.outcome) },
+										{ triggerTurn: incrementalChildCompletionTriggersTurn(notification, requestParams.scheduleOrigin) },
 									);
 								} catch (sendError) {
 									console.error(`Failed to send incremental child completion notification for '${notification.childKey}':`, sendError);

@@ -97,6 +97,28 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(updates.length, count, "no trailing timer after settlement");
 	});
 
+	it("does not trigger parent provider turns for ordinary successful workflow child settlements", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ matchArgIncludes: "Child A", output: "A done" });
+		mockPi.onCall({ matchArgIncludes: "Child B", output: "B done" });
+		const triggerTurns: unknown[] = [];
+		const executor = makeExecutor(
+			[makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined,
+			createEventBus(), undefined, undefined,
+			(_message, options) => {
+				if ((options as { triggerTurn?: boolean }).triggerTurn === true) triggerTurns.push(options);
+			},
+		);
+		const result = await executor.execute(
+			"workflow-child-wakes",
+			{ async: false, workflowScript: `return await runs.all([{ key: "a", agent: "echo", task: "Child A" }, { key: "b", agent: "echo", task: "Child B" }]);` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.equal(triggerTurns.length, 0, "ordinary child settlements must not trigger parent provider turns");
+	});
+
 	it("spawns agent and captures output", async () => {
 		mockPi.onCall({ output: "Hello from mock agent" });
 		const agents = makeAgentConfigs(["echo"]);
