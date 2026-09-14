@@ -6290,6 +6290,18 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
 				}
 			}
+			const policyAction = action === "stop" ? "stopRun" : action === "steer" ? "steerRun" : action === "schedule.create" ? "scheduleCreate" : action === "inspector.open" ? "inspectorOpen" : action === "project.open" ? "projectOpen" : undefined;
+			if (policyAction) {
+				const decision = resolveAuthorityDecision({ action: policyAction, ...(deps.config.authorityPolicy === undefined ? {} : { policy: deps.config.authorityPolicy }) });
+				if (decision === "forbid") {
+					return { content: [{ type: "text", text: `Authority policy forbids action '${action}'.` }], isError: true, details: { mode: "management", results: [] } };
+				}
+				if (decision === "confirm") {
+					if (!ctx.hasUI) return { content: [{ type: "text", text: `Authority policy requires user confirmation for action '${action}', but this session has no interactive UI.` }], isError: true, details: { mode: "management", results: [] } };
+					const confirmed = await ctx.ui.confirm(`Authorize subagent ${action}?`, `Authority policy requires confirmation before '${action}'.`);
+					if (!confirmed) return { content: [{ type: "text", text: `Action '${action}' canceled; authority was not granted.` }], details: { mode: "management", results: [] } };
+				}
+			}
 			if ((HERDR_PROJECT_PANE_ACTIONS as readonly string[]).includes(action)) {
 				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
 					return { content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }], isError: true, details: { mode: "management", results: [] } };
@@ -6325,18 +6337,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					...(deps.config.missions ? { config: deps.config.missions } : {}),
 					...(currentSessionId ? { currentSessionId } : {}),
 				});
-			}
-			const policyAction = action === "stop" ? "stopRun" : action === "steer" ? "steerRun" : action === "schedule.create" ? "scheduleCreate" : undefined;
-			if (policyAction) {
-				const decision = resolveAuthorityDecision({ action: policyAction, ...(deps.config.authorityPolicy === undefined ? {} : { policy: deps.config.authorityPolicy }) });
-				if (decision === "forbid") {
-					return { content: [{ type: "text", text: `Authority policy forbids action '${action}'.` }], isError: true, details: { mode: "management", results: [] } };
-				}
-				if (decision === "confirm") {
-					if (!ctx.hasUI) return { content: [{ type: "text", text: `Authority policy requires user confirmation for action '${action}', but this session has no interactive UI.` }], isError: true, details: { mode: "management", results: [] } };
-					const confirmed = await ctx.ui.confirm(`Authorize subagent ${action}?`, `Authority policy requires confirmation before '${action}'.`);
-					if (!confirmed) return { content: [{ type: "text", text: `Action '${action}' canceled; authority was not granted.` }], details: { mode: "management", results: [] } };
-				}
 			}
 			if ((WATCHDOG_TOOL_ACTIONS as readonly string[]).includes(action)) {
 				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {

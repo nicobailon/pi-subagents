@@ -518,12 +518,16 @@ Automatic missions are enabled by default for ordinary launches with a task. Use
     "spawnBudgetGrant": "confirm",
     "scheduleCreate": "auto",
     "stopRun": "auto",
-    "steerRun": "auto"
+    "steerRun": "auto",
+    "inspectorOpen": "auto",
+    "projectOpen": "confirm"
   }
 }
 ```
 
 Each fixed action resolves to `"auto"`, `"confirm"`, or `"forbid"`. This is intentionally a small action map, not a generic policy language. Confirm-required control actions fail closed without an interactive UI.
+
+`inspectorOpen` and `projectOpen` cover the `inspector.open` and `project.open` tool actions, which launch an external inspector host or a Herdr project pane. `inspector.open` only reaches a plugin that reports itself available, so it defaults to `"auto"`; `project.open` runs `herdr` (or `HERDR_BIN`) with no such check and opens a pane that hosts its own Pi session, so it defaults to `"confirm"`. Set `"projectOpen": "auto"` to restore the previous unprompted behavior. The policy applies to the tool actions; opening an inspector from the fleet TUI is already an explicit operator keypress and is unaffected.
 
 ## `artifactDir`
 

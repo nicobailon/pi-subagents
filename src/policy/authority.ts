@@ -5,6 +5,8 @@ export const AUTHORITY_ACTIONS = [
 	"scheduleCreate",
 	"stopRun",
 	"steerRun",
+	"inspectorOpen",
+	"projectOpen",
 ] as const;
 
 export type AuthorityAction = typeof AUTHORITY_ACTIONS[number];
@@ -18,6 +20,8 @@ const DEFAULT_AUTHORITY_POLICY: Record<AuthorityAction, AuthorityDecision> = {
 	scheduleCreate: "auto",
 	stopRun: "auto",
 	steerRun: "auto",
+	inspectorOpen: "auto",
+	projectOpen: "confirm",
 };
 
 export function resolveAuthorityDecision(input: {
