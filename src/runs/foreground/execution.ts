@@ -2197,7 +2197,6 @@ async function runSyncCompletionInner(
 				savedPath: result.savedOutputPath,
 				outputReference: result.outputReference,
 			}).displayOutput;
-			artifactOutputByResult.set(result, result.finalOutput);
 		}
 		result.error = result.error ? `${result.error}\n${acceptanceFailure}` : acceptanceFailure;
 		if (artifactPathsResult && options.artifactConfig?.enabled !== false && options.artifactConfig?.includeOutput !== false) {
