@@ -44,6 +44,7 @@ export interface ArmWaitSubscriptionInput {
 }
 
 export interface WaitSubscriptionManager {
+	start(): void;
 	arm(input: ArmWaitSubscriptionInput): WaitSubscriptionRecord;
 	restore(): void;
 	reconcile(): void;
@@ -109,6 +110,7 @@ export function createWaitSubscriptionManager(
 	state.waitSubscriptions = subscriptions;
 	const unresolvedRestoredForegroundTokens = new Set<string>();
 	let disposed = false;
+	let interval: ReturnType<typeof setInterval> | undefined;
 	let lastForeignSweepAt = 0;
 
 	/**
@@ -283,10 +285,13 @@ export function createWaitSubscriptionManager(
 		SUBAGENT_RESULT_INTERCOM_EVENT,
 	];
 	const unsubscribes = wakeChannels.map((channel) => pi.events.on(channel, reconcile));
-	const interval = setInterval(reconcile, options.pollIntervalMs ?? RECONCILE_INTERVAL_MS);
-	interval.unref?.();
 
 	return {
+		start() {
+			if (disposed || interval) return;
+			interval = setInterval(reconcile, options.pollIntervalMs ?? RECONCILE_INTERVAL_MS);
+			interval.unref?.();
+		},
 		arm(input) {
 			const sessionId = state.currentSessionId;
 			if (!sessionId) throw new Error("A wait subscription requires an active session identity.");
@@ -338,7 +343,8 @@ export function createWaitSubscriptionManager(
 		dispose() {
 			if (disposed) return;
 			disposed = true;
-			clearInterval(interval);
+			if (interval) clearInterval(interval);
+			interval = undefined;
 			for (const unsubscribe of unsubscribes) {
 				try { unsubscribe(); } catch { /* best effort */ }
 			}

@@ -442,14 +442,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const tempArtifactsDir = getArtifactsDir(null);
 	const artifactCleanupDays = config.artifactConfig?.cleanupDays ?? DEFAULT_ARTIFACT_CONFIG.cleanupDays;
 	cleanupAllArtifactDirs(artifactCleanupDays);
-	const resultIndexCleanupTimer = setTimeout(() => {
-		try {
-			cleanupResultIndexes(DIRS.results);
-		} catch (error) {
-			console.error("Failed to clean stale subagent result indexes:", error);
-		}
-	}, 30_000);
-	resultIndexCleanupTimer.unref?.();
+	let resultIndexCleanupTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const state: SubagentState = {
 		baseCwd: "",
@@ -595,23 +588,39 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const { startResultWatcher, transitionResultDelivery, primeExistingResults, stopResultWatcher } = resultWatcher;
 	refreshResultDelivery = resultWatcher.refreshResultDelivery;
 	const asyncRetentionAbort = new AbortController();
-	const asyncRetentionTimer = setTimeout(async () => {
-		try {
-			await cleanupAsyncRetention({
-				asyncDirRoot: DIRS.async,
-				resultsDir: DIRS.results,
-				signal: asyncRetentionAbort.signal,
-				protectedRunIds: new Set([
-					...state.asyncJobs.keys(),
-					...(state.workflowControllers?.keys() ?? []),
-					...scheduledRunManager.referencedAsyncRunIds(),
-				]),
-			});
-		} catch (error) {
-			console.error("Failed to clean retained async subagent state:", error);
+	let asyncRetentionTimer: ReturnType<typeof setTimeout> | undefined;
+	const startSessionMaintenance = () => {
+		if (!resultIndexCleanupTimer) {
+			resultIndexCleanupTimer = setTimeout(() => {
+				try {
+					cleanupResultIndexes(DIRS.results);
+				} catch (error) {
+					console.error("Failed to clean stale subagent result indexes:", error);
+				}
+			}, 30_000);
+			resultIndexCleanupTimer.unref?.();
 		}
-	}, ASYNC_RETENTION_DELAY_MS);
-	asyncRetentionTimer.unref?.();
+		waitSubscriptionManager.start();
+		if (!asyncRetentionTimer) {
+			asyncRetentionTimer = setTimeout(async () => {
+				try {
+					await cleanupAsyncRetention({
+						asyncDirRoot: DIRS.async,
+						resultsDir: DIRS.results,
+						signal: asyncRetentionAbort.signal,
+						protectedRunIds: new Set([
+							...state.asyncJobs.keys(),
+							...(state.workflowControllers?.keys() ?? []),
+							...scheduledRunManager.referencedAsyncRunIds(),
+						]),
+					});
+				} catch (error) {
+					console.error("Failed to clean retained async subagent state:", error);
+				}
+			}, ASYNC_RETENTION_DELAY_MS);
+			asyncRetentionTimer.unref?.();
+		}
+	};
 
 	const executorDeps: Parameters<typeof createSubagentExecutor>[0] = {
 		pi,
@@ -1041,8 +1050,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			state.workflowControllers?.clear();
 			state.workflowChildStops?.clear();
 			clearRuntimeAgentsForPi(pi);
-			clearTimeout(resultIndexCleanupTimer);
-			clearTimeout(asyncRetentionTimer);
+			if (resultIndexCleanupTimer) clearTimeout(resultIndexCleanupTimer);
+			resultIndexCleanupTimer = undefined;
+			if (asyncRetentionTimer) clearTimeout(asyncRetentionTimer);
+			asyncRetentionTimer = undefined;
 			asyncRetentionAbort.abort();
 			stopResultWatcher();
 			resultDeliveryOwnership.clear();
@@ -1152,6 +1163,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", (event, ctx) => {
 		installRuntime(ctx);
+		startSessionMaintenance();
 		const recovering = event.reason === "startup" || event.reason === "reload" || event.reason === "resume";
 		resetSessionState(ctx, recovering, event.previousSessionFile);
 		releaseHostSessionLiveness();
