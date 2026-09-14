@@ -5272,10 +5272,30 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				};
 				let pendingResultPublication: Promise<boolean> | undefined;
 				let settleResultPublication: ((published: boolean) => void) | undefined;
+				let resultWriteFailureWakeDelivered = false;
 				const reportResultWriteFailure = (error: unknown): void => {
 					const message = `Failed to write async workflow result ${resultPath}: ${error instanceof Error ? error.message : String(error)}`;
 					console.error(message, error);
 					appendWorkflowEvent({ type: "subagent.workflow.result_write_failed", error: message });
+					// A missing result file means the result watcher will never deliver the
+					// terminal completion wake. Intermediate child notices are context-only
+					// once their turns are suppressed, so surface the failure as its own
+					// actionable wake instead of leaving the parent asleep.
+					if (resultWriteFailureWakeDelivered) return;
+					resultWriteFailureWakeDelivered = true;
+					try {
+						deps.pi.sendMessage(
+							{
+								customType: "subagent-workflow-result-write-failed",
+								content: message,
+								display: true,
+							},
+							{ triggerTurn: true },
+						);
+					} catch (sendError) {
+						console.error(`Failed to send workflow result write failure notification for '${workflowRunId}':`, sendError);
+					}
+					deps.refreshResultDelivery?.();
 				};
 				const runPersistence = createCapacityResilientJsonWriter({
 					keepAlive: true,

@@ -205,6 +205,106 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 	});
 
+	it("wakes the parent when async workflow result publication fails", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ matchArgIncludes: "Child A", output: "A done" });
+		mockPi.onCall({ matchArgIncludes: "Child B", output: "B done" });
+		const piEvents = createEventBus();
+		const sent: Array<{ message: { customType?: string; content?: unknown }; options?: { triggerTurn?: boolean } }> = [];
+		const sendMessage = (message: unknown, options?: unknown) => {
+			sent.push({
+				message: message as { customType?: string; content?: unknown },
+				options: options as { triggerTurn?: boolean } | undefined,
+			});
+		};
+		const executor = makeExecutor(
+			[makeAgent("echo")],
+			{},
+			false,
+			undefined,
+			true,
+			new Map(),
+			undefined,
+			undefined,
+			piEvents,
+			undefined,
+			undefined,
+			sendMessage,
+		);
+		const ctx = makeMinimalCtx(tempDir);
+		let asyncDir: string | undefined;
+		let resultPath: string | undefined;
+		// Fail result publication with a real filesystem error. Status, trace, and
+		// event writes live under the run's async dir, so only paths under the
+		// results dir are affected.
+		const originalWriteFileSync = fsDefault.writeFileSync;
+		const originalRenameSync = fsDefault.renameSync;
+		const originalConsoleError = console.error;
+		const failResultsWrites = (file: unknown): void => {
+			if (typeof file === "string" && file.startsWith(DIRS.results)) {
+				// EIO (not a capacity code) fails the write synchronously instead
+				// of entering the capacity-deferral path.
+				throw Object.assign(new Error("injected result publication EIO"), { code: "EIO" });
+			}
+		};
+		console.error = () => {};
+		fsDefault.writeFileSync = ((file: unknown, ...args: unknown[]) => {
+			failResultsWrites(file);
+			return (originalWriteFileSync as (...innerArgs: unknown[]) => unknown)(file, ...args);
+		}) as typeof fsDefault.writeFileSync;
+		fsDefault.renameSync = ((from: unknown, to: unknown) => {
+			failResultsWrites(to);
+			return (originalRenameSync as (...innerArgs: unknown[]) => unknown)(from, to);
+		}) as typeof fsDefault.renameSync;
+		syncBuiltinESMExports();
+		try {
+			const launch = await executor.execute(
+				"workflow-result-write-failure",
+				{
+					async: true,
+					workflowScript: `return await runs.all([{ key: "a", agent: "echo", task: "Child A" }, { key: "b", agent: "echo", task: "Child B" }]);`,
+				},
+				new AbortController().signal,
+				undefined,
+				ctx,
+			);
+			assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "workflow launch failed");
+			asyncDir = launch.details.asyncDir;
+			const workflowRunId = launch.details.asyncId;
+			assert.ok(workflowRunId);
+			resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
+			const childMessages = () => sent.filter(({ message }) => message.customType === "subagent-incremental-child-notify");
+			const failureWakes = () => sent.filter(({ message, options }) => message.customType === "subagent-workflow-result-write-failed" && options?.triggerTurn === true);
+			const waitFor = async (predicate: () => boolean) => {
+				for (let attempt = 0; attempt < 250 && !predicate(); attempt++) {
+					await new Promise((resolve) => setTimeout(resolve, 20));
+				}
+			};
+
+			await waitFor(() => childMessages().length >= 2);
+			assert.equal(childMessages().length, 2, "async workflow must deliver both child settlements through Pi");
+			assert.ok(
+				childMessages().every(({ options }) => options?.triggerTurn === false),
+				"ordinary running child settlements must not trigger provider turns",
+			);
+			await waitFor(() => failureWakes().length >= 1);
+			assert.equal(failureWakes().length, 1, "a failed result publication must wake the parent exactly once");
+			assert.match(String(failureWakes()[0]?.message.content ?? ""), /Failed to write async workflow result/);
+			assert.equal(
+				sent.filter(({ options }) => options?.triggerTurn === true).length,
+				1,
+				"the publication-failure wake must be the only provider turn",
+			);
+			assert.equal(fs.existsSync(resultPath), false, "the failed result must not be published");
+		} finally {
+			fsDefault.writeFileSync = originalWriteFileSync;
+			fsDefault.renameSync = originalRenameSync;
+			syncBuiltinESMExports();
+			console.error = originalConsoleError;
+			if (asyncDir) fs.rmSync(asyncDir, { recursive: true, force: true });
+			if (resultPath) fs.rmSync(resultPath, { force: true });
+		}
+	});
+
 	it("spawns agent and captures output", async () => {
 		mockPi.onCall({ output: "Hello from mock agent" });
 		const agents = makeAgentConfigs(["echo"]);

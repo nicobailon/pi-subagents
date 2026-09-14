@@ -99,7 +99,10 @@ describe("host workflow result publication", { skip: !available }, () => {
 				await new Promise<void>((resolve) => setImmediate(resolve));
 				assert.equal(state.workflowControllers?.has(id), false);
 				assert.equal(state.asyncJobs.get(id)?.status, "running");
-				assert.equal(notifications, 0); assert.equal(refreshes, 0);
+				// A failed publication must wake the parent: without the terminal
+				// result file the watcher can never deliver the completion wake.
+				assert.equal(notifications, 1); assert.equal(refreshes, 1);
+				assert.match(notificationContent, /Failed to write async workflow result/);
 				assert.match(fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf8"), /injected workflow retry EIO/);
 				assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${id}.json`)), false);
 				return;
