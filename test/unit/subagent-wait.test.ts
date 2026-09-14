@@ -600,7 +600,7 @@ describe("bg_wait tool", () => {
 		}
 	});
 
-	it("ignores malformed unindexed public result payloads", async () => {
+	it("reports malformed unindexed public result payloads", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-completions-malformed-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
@@ -615,9 +615,9 @@ describe("bg_wait tool", () => {
 				},
 			}));
 
-			assert.equal(result.isError, undefined);
+			assert.equal(result.isError, true);
 			assert.equal(result.details.completions, undefined);
-			assert.doesNotMatch(textOf(result), /run-bad\.json|Result \[run-bad\]/);
+			assert.match(textOf(result), /Failed to read subagent result .*run-bad\.json/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
