@@ -98,7 +98,7 @@ const piPackageRoot = resolveAsyncPiPackageRoot();
  * too. Precedence mirrors the foreground resolver: argv-based discovery wins
  * first (the foreground returns the argv script before any candidate), the
  * environment override is consulted when that discovery cannot identify the
- * host (renamed distributions, wrappers, non-standard installs), and the
+ * host (wrapper installs, non-standard layouts), and the
  * package-manager entry is last. Without the override, such hosts fail
  * closed with "neither is available" while foreground children launch fine.
  */
