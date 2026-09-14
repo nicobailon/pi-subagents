@@ -435,7 +435,7 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 	});
 	pi.on("session_before_switch", () => runtime.reset("session switch", { clearReviewInputSignature: true, clearLspLedger: true, clearScope: true }));
 	pi.on("session_before_fork", () => runtime.reset("session fork", { clearReviewInputSignature: true, clearLspLedger: true, clearScope: true }));
-	pi.on("session_compact", () => runtime.reset("session compact", { clearScope: true }));
+	pi.on("session_compact", () => runtime.reset("session compact", { clearActivity: true }));
 	pi.on("session_shutdown", () => {
 		currentContext = undefined;
 		runtime.dispose();
