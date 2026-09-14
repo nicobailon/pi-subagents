@@ -532,6 +532,7 @@ describe("bg_wait tool", () => {
 					fs.writeFileSync(path.join(resultsDir, "run-recovery.json"), JSON.stringify({
 						id: "run-recovery",
 						runId: "run-recovery",
+						sessionId: "sess-1",
 						mode: "single",
 						state: "failed",
 						success: false,
@@ -599,7 +600,7 @@ describe("bg_wait tool", () => {
 		}
 	});
 
-	it("reports malformed terminal result files as actionable errors", async () => {
+	it("ignores malformed unindexed public result payloads", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-completions-malformed-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
@@ -614,9 +615,9 @@ describe("bg_wait tool", () => {
 				},
 			}));
 
-			assert.equal(result.isError, true);
-			assert.match(textOf(result), /Failed to read subagent result/);
-			assert.match(textOf(result), /run-bad\.json/);
+			assert.equal(result.isError, undefined);
+			assert.equal(result.details.completions, undefined);
+			assert.doesNotMatch(textOf(result), /run-bad\.json|Result \[run-bad\]/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

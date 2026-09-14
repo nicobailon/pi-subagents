@@ -61,6 +61,29 @@ describe("workflow wait completion projection", () => {
 		assert.deepEqual(ownerReferences, [`Result [${runId}]: ${resultPath}`]);
 	});
 
+	it("rejects foreign unindexed public payloads before the watcher records completion", (t) => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-public-prewatcher-"));
+		t.after(() => fs.rmSync(resultsDir, { recursive: true, force: true }));
+		const runId = "shared-run";
+		const terminal: AsyncRunSummary[] = [{ id: runId, sessionId: "owner", asyncDir: resultsDir, mode: "single", state: "complete", startedAt: Date.now(), steps: [] }];
+		const state = { currentSessionId: "owner" } as SubagentState;
+		const resultPath = path.join(resultsDir, `${runId}.json`);
+		fs.writeFileSync(resultPath, JSON.stringify({ runId, sessionId: "foreign", agent: "foreign-agent", state: "failed", results: [{ error: "FOREIGN_PAYLOAD" }] }));
+
+		const foreignReferences: string[] = [];
+		const foreignCompletion = collectWaitCompletions(terminal, state, resultsDir, (text) => foreignReferences.push(text));
+		assert.equal(foreignCompletion, undefined);
+		assert.deepEqual(foreignReferences, []);
+
+		fs.writeFileSync(resultPath, JSON.stringify({ runId, sessionId: "owner", agent: "owner-agent", state: "complete", success: true }));
+		const ownerReferences: string[] = [];
+		const ownerCompletion = collectWaitCompletions(terminal, state, resultsDir, (text) => ownerReferences.push(text))?.[0];
+		assert.equal(ownerCompletion?.agent, "owner-agent");
+		assert.equal(ownerCompletion?.state, "complete");
+		assert.equal(ownerCompletion?.success, true);
+		assert.deepEqual(ownerReferences, [`Result [${runId}]: ${resultPath}`]);
+	});
+
 	it("omits absent and malformed receipt references", () => {
 		for (const workflowReceipt of [undefined, null, [], "path", { path: "" }, { path: 42 }]) {
 			assert.equal("workflowReceiptPath" in toWaitCompletion({ workflowReceipt }, "run"), false);

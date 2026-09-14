@@ -44,6 +44,40 @@ function errorMessage(error: unknown): string {
 
 const STRUCTURED_OUTPUT_INLINE_LIMIT_BYTES = 4 * 1024;
 
+interface WaitResultPayloadCandidate {
+	path: string;
+	unindexedPublic: boolean;
+}
+
+function waitResultPayloadCandidate(resultsDir: string, run: AsyncRunSummary): WaitResultPayloadCandidate {
+	const publicPath = resultFilePath(resultsDir, run.id);
+	if (!run.sessionId) return { path: publicPath, unindexedPublic: true };
+	try {
+		const indexedPath = resultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id);
+		return indexedPath
+			? { path: indexedPath, unindexedPublic: false }
+			: { path: publicPath, unindexedPublic: true };
+	} catch (error) {
+		if (!isAccessDenied(error)) throw error;
+		const pendingPath = fallbackResultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id);
+		return pendingPath
+			? { path: pendingPath, unindexedPublic: false }
+			: { path: publicPath, unindexedPublic: true };
+	}
+}
+
+function readWaitResultPayload(candidate: WaitResultPayloadCandidate, run: AsyncRunSummary): Record<string, unknown> | undefined {
+	let payload: unknown;
+	try {
+		payload = JSON.parse(fs.readFileSync(candidate.path, "utf-8"));
+	} catch (error) {
+		if (candidate.unindexedPublic && error instanceof SyntaxError) return undefined;
+		throw error;
+	}
+	if (candidate.unindexedPublic && (!run.sessionId || !resultPayloadMatchesSessionRun(payload, run.sessionId, run.id))) return undefined;
+	return payload as Record<string, unknown>;
+}
+
 export function projectStructuredOutput(value: unknown): unknown {
 	if (value === undefined) return undefined;
 	const serialized = JSON.stringify(value);
@@ -175,37 +209,14 @@ export function collectWaitCompletions(terminal: AsyncRunSummary[], state: Subag
 				add(recorded.completion);
 				continue;
 			}
-			const publicResultPath = resultFilePath(resultsDir, run.id);
-			let readableResultPath = publicResultPath;
-			let usingPublicFallback = true;
 			try {
-				try {
-					const indexedResultPath = run.sessionId
-						? resultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id)
-						: undefined;
-					readableResultPath = indexedResultPath ?? publicResultPath;
-					usingPublicFallback = indexedResultPath === undefined;
-				} catch (error) {
-					if (!isAccessDenied(error) || !run.sessionId) throw error;
-					const pendingResultPath = fallbackResultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id);
-					readableResultPath = pendingResultPath ?? publicResultPath;
-					usingPublicFallback = pendingResultPath === undefined;
+				const candidate = waitResultPayloadCandidate(resultsDir, run);
+				if (!readWaitResultPayload(candidate, run)) {
+					const replay = readCompletionReplay(resultsDir, run.id, { sessionId: run.sessionId });
+					add(replay?.completion ?? recorded.completion);
+					continue;
 				}
-				const raw = fs.readFileSync(readableResultPath, "utf-8");
-				if (usingPublicFallback && run.sessionId) {
-					let payload: unknown;
-					try {
-						payload = JSON.parse(raw);
-					} catch {
-						payload = undefined;
-					}
-					if (!resultPayloadMatchesSessionRun(payload, run.sessionId, run.id)) {
-						const replay = readCompletionReplay(resultsDir, run.id, { sessionId: run.sessionId });
-						add(replay?.completion ?? recorded.completion);
-						continue;
-					}
-				}
-				add(recorded.completion, readableResultPath);
+				add(recorded.completion, candidate.path);
 				continue;
 			} catch (error) {
 				if (errorCode(error) !== "ENOENT") throw error;
@@ -214,28 +225,26 @@ export function collectWaitCompletions(terminal: AsyncRunSummary[], state: Subag
 			add(replay?.completion ?? recorded.completion);
 			continue;
 		}
-		const publicResultPath = resultFilePath(resultsDir, run.id);
-		let resultPath = publicResultPath;
+		let candidate: WaitResultPayloadCandidate;
 		try {
-			resultPath = run.sessionId
-				? resultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id) ?? publicResultPath
-				: publicResultPath;
+			candidate = waitResultPayloadCandidate(resultsDir, run);
 		} catch (error) {
-			if (!isAccessDenied(error) || !run.sessionId) throw error;
-			try {
-				resultPath = fallbackResultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id) ?? publicResultPath;
-			} catch (fallbackError) {
-				throw new Error(`Failed to read subagent result '${publicResultPath}': ${errorMessage(fallbackError)}`, {
-					cause: fallbackError instanceof Error ? fallbackError : undefined,
-				});
-			}
+			const publicResultPath = resultFilePath(resultsDir, run.id);
+			throw new Error(`Failed to read subagent result '${publicResultPath}': ${errorMessage(error)}`, {
+				cause: error instanceof Error ? error : undefined,
+			});
 		}
 		try {
-			const raw = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as Record<string, unknown>;
-			add(toWaitCompletion(raw, run.id), resultPath);
+			const payload = readWaitResultPayload(candidate, run);
+			if (!payload) {
+				const replay = readCompletionReplay(resultsDir, run.id, { sessionId: run.sessionId });
+				if (replay) add(replay.completion);
+				continue;
+			}
+			add(toWaitCompletion(payload, run.id), candidate.path);
 		} catch (error) {
 			if (errorCode(error) !== "ENOENT") {
-				throw new Error(`Failed to read subagent result '${resultPath}': ${errorMessage(error)}`, {
+				throw new Error(`Failed to read subagent result '${candidate.path}': ${errorMessage(error)}`, {
 					cause: error instanceof Error ? error : undefined,
 				});
 			}
