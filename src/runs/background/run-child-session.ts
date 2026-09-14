@@ -591,7 +591,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				&& messages.length === 0
 				&& usage.turns === 0
 				&& !input.launch.session.ambientExtensions) {
-				finalError = `${promptErrorMessage}\n\n${formatChildModelResolutionDiagnostic({ agent: input.launch.config.agent, model: input.launch.session.model, host: "runner" })}`;
+				finalError = `${promptErrorMessage}\n\n${formatChildModelResolutionDiagnostic({ agent: input.launch.config.agent, model: input.launch.session.model, host: "runner", capabilityCeiling: input.launch.toolPlan.capabilityCeiling })}`;
 			}
 			const forcedDrainAfterFinalSuccess = (forced || forcedTermination) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !finalError;
 			const forcedDrainAfterEmptyTerminal = forcedDrainAfterFinalSuccess && hasEmptyTerminalAssistantResponse(messages);
