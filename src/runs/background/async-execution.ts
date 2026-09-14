@@ -89,7 +89,21 @@ import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/
 import { resolveRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
 
 const require = nodeModule.createRequire(import.meta.url);
-const piPackageRoot = resolvePiPackageRoot() ?? resolveInstalledPiPackageRoot();
+const piPackageRoot = resolveAsyncPiPackageRoot();
+
+/**
+ * The detached runner resolves the same host package the foreground
+ * `resolvePiCliScript` path resolves, so an explicit
+ * `PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT` override must be honored here
+ * too. Without it, hosts whose manifest does not identify as the upstream
+ * package (renamed distributions, wrappers, non-standard installs) fail
+ * closed with "neither is available" while foreground children launch fine.
+ * Explicit env wins over argv and package-manager discovery, mirroring the
+ * foreground candidate order.
+ */
+function resolveAsyncPiPackageRoot(env: NodeJS.ProcessEnv = process.env): string | undefined {
+	return env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || resolvePiPackageRoot() || resolveInstalledPiPackageRoot();
+}
 
 function resolveJitiCliFromPackageJson(packageJsonPath: string): string | undefined {
 	if (!fs.existsSync(packageJsonPath)) return undefined;
