@@ -49,13 +49,6 @@ run("extension-install", "npm", ["install", "--no-audit", "--no-fund"], extensio
 const installed = path.join(extension, "node_modules/pi-subagents");
 const pi = path.join(host, "node_modules/@earendil-works/pi-coding-agent");
 const { createJiti } = await import(pathToFileURL(path.join(extension, "node_modules/jiti/lib/jiti.mjs")).href);
-const jitiLoader = createJiti(import.meta.url, { fsCache: false });
-delete process.env.PI_SUBAGENT_CHILD;
-const entryLoader = createJiti(import.meta.url, { moduleCache: false, tryNative: false });
-const entryStarted = performance.now();
-const entry = await entryLoader.import(path.join(installed, "index.js"));
-assert.equal(typeof entry.default, "function", "compiled extension entry must export its factory");
-console.log(`PASS compiled package entry loaded through Jiti in ${Math.round(performance.now() - entryStarted)} ms`);
 const { resolveHostPeerAliases, findHostPeerPackageDir, resolvePackageSubpath } = await import(pathToFileURL(path.join(installed, "src/runs/background/runner-aliases.js")).href);
 if (version === "0.85.1") assert.equal(findHostPeerPackageDir(pi, "@earendil-works/pi-client"), undefined, "stable host must remain missing client");
 run("pristine-public-sdk", process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(pathToFileURL(resolvePackageSubpath(pi, ".")).href)})`], cwd);
@@ -70,6 +63,17 @@ for (const specifier of ["@earendil-works/chord", "@earendil-works/chord/context
 }
 assert.equal(resolved.aliases["@earendil-works/pi-client/unix"], undefined);
 fs.writeFileSync(path.join(root, "aliases.json"), JSON.stringify(resolved, null, 2));
+// Pi serves its own packages to extensions as virtual modules; the fixture stands in with jiti aliases to the host install.
+delete process.env.PI_SUBAGENT_CHILD;
+const entryLoader = createJiti(import.meta.url, {
+	moduleCache: false,
+	tryNative: false,
+	alias: { "@earendil-works/pi-coding-agent": resolvePackageSubpath(pi, "."), ...resolved.aliases },
+});
+const entryStarted = performance.now();
+const entry = await entryLoader.import(path.join(installed, "index.js"));
+assert.equal(typeof entry.default, "function", "compiled extension entry must export its factory");
+console.log(`PASS compiled package entry loaded through Jiti in ${Math.round(performance.now() - entryStarted)} ms`);
 for (const file of ["pi085-child.ts", "pi085-extension.ts"]) fs.copyFileSync(new URL(file, import.meta.url), path.join(cwd, file));
 const childEnv = { SMOKE_EXTENSION: installed, JITI_ALIAS: JSON.stringify(resolved.aliases), PI_ASYNC_NATIVE_RUNNER: "0" };
 const jiti = path.join(extension, "node_modules/jiti/lib/jiti-cli.mjs");
