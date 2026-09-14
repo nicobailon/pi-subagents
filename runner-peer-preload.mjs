@@ -23,6 +23,6 @@ if (typeof nodeModule.registerHooks === "function") {
 	});
 } else {
 	nodeModule.register(new URL("./runner-peer-loader.mjs", import.meta.url), {
-		data: { aliases },
+		data: { aliases, nativeRunner },
 	});
 }
