@@ -12,6 +12,7 @@
     "./external-runs": "./src/api/external-runs.ts",
     "./agents": "./src/api/agents.ts",
     "./delegation": "./src/api/delegation.ts",
+		"./delegation-ledger": "./src/api/delegation-ledger.ts",
     "./capability-ceiling": "./src/api/capability-ceiling.ts",
     "./workflow-resources": "./src/api/workflow-resources.ts",
     "./required-child-extensions": "./src/api/required-child-extensions.ts",

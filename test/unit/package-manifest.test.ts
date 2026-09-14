@@ -123,6 +123,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./workflow-resources": "./src/api/workflow-resources.ts",
 		"./required-child-extensions": "./src/api/required-child-extensions.ts",
 		"./delegation": "./src/api/delegation.ts",
+		"./delegation-ledger": "./src/api/delegation-ledger.ts",
 		"./preflight": "./src/api/preflight.ts",
 		"./control-channel": "./src/api/control-channel.ts",
 		"./intercom-bridge": "./src/api/intercom-bridge.ts",
@@ -147,6 +148,13 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(typeof externalRuns.updateExternalRun, "function");
 	assert.equal(typeof externalRuns.snapshotExternalRuns, "function");
 	assert.equal(typeof externalRuns.unregisterExternalRun, "function");
+	const delegationLedger = await import("pi-subagents/delegation-ledger");
+	assert.equal(delegationLedger.DELEGATION_LEDGER_VERSION, 1);
+	assert.equal(delegationLedger.DELEGATION_LEDGER_KEY, "pi-subagents.delegation-ledger.v1");
+	assert.equal(typeof delegationLedger.recordDelegationStarted, "function");
+	assert.equal(typeof delegationLedger.recordDelegationTerminal, "function");
+	assert.equal(typeof delegationLedger.getDelegationRecordByRun, "function");
+	assert.equal(typeof delegationLedger.snapshotDelegationRecords, "function");
 	const capability = await import("pi-subagents/capability-ceiling");
 	const workflowResources = await import("pi-subagents/workflow-resources");
 	assert.deepEqual(Object.keys(workflowResources), ["registerWorkflowResource"]);

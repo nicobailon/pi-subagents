@@ -11,6 +11,10 @@ import {
 } from "../api/delegation.ts";
 import { parseSubagentDelegationRequest } from "./delegation-request.ts";
 import {
+	recordDelegationStarted,
+	recordDelegationTerminal,
+} from "../api/delegation-ledger.ts";
+import {
 	parsePromptTemplateRequest,
 	toDelegationUpdate,
 	toPromptTemplateResponse,
@@ -109,6 +113,8 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 	const attemptControllers = new Map<string, AbortController>();
 	const pendingAttemptCancels = new Map<string, true>();
 	const activeOwnedNodes = new Map<string, { attemptKey: string; controller: AbortController }>();
+	/** Agent identity per attempt key, for ledger records on early terminals that omit it. */
+	const delegationAgents = new Map<string, string>();
 	const settledAttempts = new Map<string, true>();
 	const subscriptions: Array<() => void> = [];
 	let disposed = false;
@@ -150,9 +156,24 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 		boundedRemember(pendingLegacyCancels, requestId);
 	};
 	const emitTerminal = (key: string, payload: SubagentDelegationResponse): void => {
-		if (disposed || settledAttempts.has(key)) return;
-		rememberIdentity(settledAttempts, key);
-		options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, payload);
+	if (disposed || settledAttempts.has(key)) return;
+	rememberIdentity(settledAttempts, key);
+	options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, payload);
+	if (payload.status !== "invalid_request") {
+		try {
+			recordDelegationTerminal({
+				requestId: payload.requestId,
+				ownerRunId: payload.ownerRunId,
+				nodeId: payload.nodeId,
+				...(delegationAgents.get(key) !== undefined ? { agent: delegationAgents.get(key) } : {}),
+				...(payload.agent !== undefined ? { agent: payload.agent } : {}),
+				status: payload.status,
+				...(payload.runId !== undefined ? { runId: payload.runId } : {}),
+				...(payload.launchContractDigest !== undefined ? { launchContractDigest: payload.launchContractDigest } : {}),
+			});
+		} catch {}
+	}
+	delegationAgents.delete(key);
 	};
 
 	subscribe(PROMPT_TEMPLATE_SUBAGENT_CANCEL_EVENT, (data) => {
@@ -238,6 +259,16 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 		if (!structuredRequest && legacyControllers.has(requestId)) return;
 		if (structuredRequest && key) {
 			if (attemptControllers.has(key) || settledAttempts.has(key)) return;
+			try {
+				recordDelegationStarted({
+					requestId,
+					ownerRunId: structuredRequest.ownerRunId,
+					nodeId: structuredRequest.nodeId,
+					agent: structuredRequest.agent,
+				});
+			} catch {}
+			if (delegationAgents.size > 8_192) delegationAgents.delete(delegationAgents.keys().next().value!);
+			delegationAgents.set(key, structuredRequest.agent);
 			if (pendingAttemptCancels.delete(key)) {
 				emitTerminal(key, {
 					requestId,

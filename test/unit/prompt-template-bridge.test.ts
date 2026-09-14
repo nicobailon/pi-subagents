@@ -10,6 +10,11 @@ import {
 	registerPromptTemplateDelegationBridge,
 	type PromptTemplateBridgeEvents,
 } from "../../src/slash/prompt-template-bridge.ts";
+import {
+	DELEGATION_LEDGER_KEY,
+	getDelegationRecordByRun,
+	snapshotDelegationRecords,
+} from "../../src/api/delegation-ledger.ts";
 
 class FakeEvents implements PromptTemplateBridgeEvents {
 	private handlers = new Map<string, Array<(data: unknown) => void>>();
@@ -240,5 +245,76 @@ describe("prompt-template delegation bridge", () => {
 		assert.match(response.errorText ?? "", /removed.*workflowScript/i);
 		assert.equal(executeCalls, 0);
 		bridge.dispose();
+	});
+});
+
+describe("prompt-template delegation bridge delegation ledger", () => {
+	function clearDelegationLedger(): void {
+		delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(DELEGATION_LEDGER_KEY)];
+	}
+
+	it("records accepted delegations and terminal outcomes in the host ledger", async () => {
+		clearDelegationLedger();
+		const events = new FakeEvents();
+		const bridge = registerPromptTemplateDelegationBridge({
+			events,
+			getContext: () => ({ cwd: "/repo" }),
+			executeStructured: async () => ({
+				details: {
+					runId: "run-ledger-1",
+					results: [{ agent: "worker", finalOutput: "ok", exitCode: 0, launchContractDigest: "digest-1" }],
+				},
+			}),
+		});
+		const responsePromise = once(events, PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT);
+		events.emit(PROMPT_TEMPLATE_SUBAGENT_REQUEST_EVENT, structuredRequest());
+		await responsePromise;
+		const record = getDelegationRecordByRun("run-ledger-1", { agent: "worker" });
+		assert.ok(record, "expected a completed ledger record");
+		assert.equal(record.status, "completed");
+		assert.equal(record.runId, "run-ledger-1");
+		assert.equal(record.launchContractDigest, "digest-1");
+		assert.equal(typeof record.startedAt, "number");
+		assert.equal(typeof record.endedAt, "number");
+		bridge.dispose();
+		clearDelegationLedger();
+	});
+
+	it("records early terminal outcomes with the requested agent identity", async () => {
+		clearDelegationLedger();
+		const events = new FakeEvents();
+		const bridge = registerPromptTemplateDelegationBridge({
+			events,
+			getContext: () => null,
+			executeStructured: async () => { throw new Error("structured request should not execute without a context"); },
+		});
+		const responsePromise = once(events, PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT);
+		events.emit(PROMPT_TEMPLATE_SUBAGENT_REQUEST_EVENT, structuredRequest());
+		const response = await responsePromise as { status: string };
+		assert.equal(response.status, "unavailable_context");
+		const records = snapshotDelegationRecords();
+		assert.equal(records.length, 1);
+		assert.equal(records[0].status, "unavailable_context");
+		assert.equal(records[0].agent, "worker");
+		assert.equal(records[0].runId, undefined);
+		bridge.dispose();
+		clearDelegationLedger();
+	});
+
+	it("invalid requests never reach the ledger", async () => {
+		clearDelegationLedger();
+		const events = new FakeEvents();
+		const bridge = registerPromptTemplateDelegationBridge({
+			events,
+			getContext: () => ({ cwd: "/repo" }),
+			executeStructured: async () => ({ content: [{ type: "text", text: "unreachable" }] }),
+		});
+		const responsePromise = once(events, PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT);
+		events.emit(PROMPT_TEMPLATE_SUBAGENT_REQUEST_EVENT, structuredRequest({ agent: "" }));
+		const response = await responsePromise as { status: string };
+		assert.equal(response.status, "invalid_request");
+		assert.equal(snapshotDelegationRecords().length, 0);
+		bridge.dispose();
+		clearDelegationLedger();
 	});
 });

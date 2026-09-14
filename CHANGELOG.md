@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Highlights
-- Workflow scripts accept `args`, so one script can be reused with different inputs, including from schedules.
+- Structured delegations are now recorded in a host-owned in-process ledger exposed as `pi-subagents/delegation-ledger`, so downstream tools can prove a child run happened without trusting planner-writable artifact files.- Workflow scripts accept `args`, so one script can be reused with different inputs, including from schedules.
 - Subagents can run on another computer through a saved Herdr machine.
 - Async children can be asked to checkpoint before their deadline instead of being killed mid-task.
 - Slow local models no longer time out at five minutes in the detached runner; Pi's `httpIdleTimeoutMs` now applies.
