@@ -53,7 +53,6 @@ import {
 	type JsonSchemaObject,
 	type MaxOutputConfig,
 	type NestedRouteInfo,
-	type ProcessTerminal,
 	type ResolvedControlConfig,
 	type ResolvedToolBudget,
 	type RunFanoutBudgetDescriptor,
@@ -157,7 +156,7 @@ const asyncRunnerSourcePath = path.join(
 	`subagent-runner${path.extname(fileURLToPath(import.meta.url))}`,
 );
 const sourceUnderNodeModules = asyncRunnerSourcePath.split(path.sep).some((segment) => segment.toLowerCase() === "node_modules");
-type AsyncRunnerTestObserver = (proc: ChildProcess, identity: { runId: string; asyncDir: string; runnerProcessInstanceId: string }, processTerminal: Promise<ProcessTerminal>) => void;
+type AsyncRunnerTestObserver = (proc: ChildProcess, identity: { runId: string; asyncDir: string; runnerProcessInstanceId: string }) => void;
 let asyncRunnerTestObserver: AsyncRunnerTestObserver | undefined;
 
 /** Test-harness seam for exact detached-runner ownership; not part of the package API. */
@@ -771,8 +770,6 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			},
 		});
 		let observedProcessExit: { exitCode: number | null; signal: NodeJS.Signals | null } | undefined;
-		let resolveProcessTerminal!: (proof: ProcessTerminal) => void;
-		const processTerminal = new Promise<ProcessTerminal>((resolve) => { resolveProcessTerminal = resolve; });
 		proc.once("exit", (exitCode, signal) => { observedProcessExit = { exitCode, signal }; });
 		const processClosed = new Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>((resolve) => {
 			proc.once("close", (exitCode, signal) => {
@@ -791,13 +788,12 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			const asyncDir = launch.asyncDir;
 			const runId = launch.id;
 			if (typeof asyncDir !== "string" || typeof runId !== "string") return;
-			const finalized = finalizeProcessTerminal(asyncDir, runId, {
+			finalizeProcessTerminal(asyncDir, runId, {
 				processInstanceId: runnerProcessInstanceId,
 				closeObservedAt: Date.now(),
 				exitCode,
 				signal,
 			});
-			resolveProcessTerminal(finalized);
 			const persisted = readProcessTerminal(asyncDir, { runId, runnerProcessInstanceId });
 			if (!persisted) return;
 			if (launch.nestedRoute && launch.nestedSelf) {
@@ -864,7 +860,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			const terminationObserved = terminateRunnerBeforeProceed(proc.pid);
 			return { pid: proc.pid, runnerProcessInstanceId, error: message, terminationObserved, startupDidNotProceed: true };
 		}
-		asyncRunnerTestObserver?.(proc, { runId: launchRunId, asyncDir: launchAsyncDir, runnerProcessInstanceId }, processTerminal);
+		asyncRunnerTestObserver?.(proc, { runId: launchRunId, asyncDir: launchAsyncDir, runnerProcessInstanceId });
 		try {
 			onBeforeProceed?.(runnerProcessInstanceId);
 		} catch (error) {

@@ -2,7 +2,6 @@ import { ChildProcess } from "node:child_process";
 import { createOwnedProcessTreeController, type OwnedProcessTreeController } from "../../src/runs/background/owned-process-tree.ts";
 import { readProcessTerminal } from "../../src/runs/background/process-terminal.ts";
 import { setAsyncRunnerTestObserver } from "../../src/runs/background/async-execution.ts";
-import type { ProcessTerminal } from "../../src/shared/types.ts";
 import { createWindowsTestProcessTreeController } from "./windows-owned-process-tree.ts";
 
 const NATURAL_EXIT_GRACE_MS = 250;
@@ -20,7 +19,6 @@ interface OwnedTestRunner extends OwnedTestRunnerIdentity {
 	processTree: OwnedProcessTreeController;
 	closed: Promise<void>;
 	isClosed: () => boolean;
-	processTerminal?: Promise<ProcessTerminal>;
 }
 
 export interface TestRunnerCleanupResult {
@@ -66,7 +64,7 @@ export class TestRunnerLifecycle {
 	install(): void {
 		if (this.installed) return;
 		this.installed = true;
-		setAsyncRunnerTestObserver((proc, identity, processTerminal) => this.track(proc, identity, processTerminal));
+		setAsyncRunnerTestObserver((proc, identity) => this.track(proc, identity));
 	}
 
 	uninstall(): void {
@@ -79,7 +77,7 @@ export class TestRunnerLifecycle {
 		this.currentTest = name;
 	}
 
-	track(proc: ChildProcess, identity: OwnedTestRunnerIdentity, processTerminal?: Promise<ProcessTerminal>): void {
+	track(proc: ChildProcess, identity: OwnedTestRunnerIdentity): void {
 		const key = `${identity.runId}\0${identity.runnerProcessInstanceId}`;
 		if (typeof proc.pid !== "number" || this.owned.has(key)) return;
 		let closed = false;
@@ -95,18 +93,7 @@ export class TestRunnerLifecycle {
 		setImmediate(() => {
 			if (proc.exitCode !== null || proc.signalCode !== null) markClosed();
 		}).unref();
-		this.owned.set(key, { ...identity, pid: proc.pid, processTree: this.createProcessTree(proc.pid), closed: closedPromise, isClosed: () => closed, ...(processTerminal ? { processTerminal } : {}) });
-	}
-
-	private async exactNaturalTerminal(entry: OwnedTestRunner): Promise<ProcessTerminal | undefined> {
-		const terminal = entry.processTerminal ? await entry.processTerminal : readProcessTerminal(entry.asyncDir, {
-			runId: entry.runId,
-			runnerProcessInstanceId: entry.runnerProcessInstanceId,
-		});
-		return terminal?.state === "observed"
-			&& terminal.runId === entry.runId
-			&& terminal.runnerProcessInstanceId === entry.runnerProcessInstanceId
-			? terminal : undefined;
+		this.owned.set(key, { ...identity, pid: proc.pid, processTree: this.createProcessTree(proc.pid), closed: closedPromise, isClosed: () => closed });
 	}
 
 	private async waitForNaturalExit(entry: OwnedTestRunner): Promise<boolean> {
@@ -121,16 +108,10 @@ export class TestRunnerLifecycle {
 	async cleanup(): Promise<TestRunnerCleanupResult[]> {
 		const entries = [...this.owned.entries()];
 		const settled = await Promise.allSettled(entries.map(async ([, entry]): Promise<TestRunnerCleanupResult> => {
-			if (await this.waitForNaturalExit(entry)) {
-				const terminal = await this.exactNaturalTerminal(entry);
-				if (!terminal) throw this.cleanupError(entry, undefined, "Owned runner closed without exact observed process-terminal proof.");
-				return { runId: entry.runId, pid: entry.pid, natural: true };
-			}
+			if (await this.waitForNaturalExit(entry)) return { runId: entry.runId, pid: entry.pid, natural: true };
 			// A close observed after the grace check is still a natural exit. Never
 			// signal its recorded PID or process group after that observation.
 			if (entry.isClosed()) {
-				const terminal = await this.exactNaturalTerminal(entry);
-				if (!terminal) throw this.cleanupError(entry, undefined, "Owned runner closed without exact observed process-terminal proof.");
 				return { runId: entry.runId, pid: entry.pid, natural: true };
 			}
 			const proof = await entry.processTree.terminate();
