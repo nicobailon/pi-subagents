@@ -15,12 +15,18 @@ const passthrough = (specifier: string) => ({ url: specifier, shortCircuit: true
 
 test("fallback loader aliases every host peer for a plain-JavaScript runner", async () => {
 	const loader = await import(`${loaderUrl.href}?native`);
-	loader.initialize({ aliases, nativeRunner: true, packageRootUrl });
+	loader.initialize({ aliases, nativeRunner: true, compiledRunner: true, packageRootUrl });
 	const packageContext = { parentURL: new URL("src/runs/background/subagent-runner.js", packageRootUrl).href };
 	assert.equal(loader.resolve("@earendil-works/pi-ai", packageContext, passthrough).url, pathToFileURL(aliases["@earendil-works/pi-ai"]).href);
 	assert.equal(loader.resolve("@earendil-works/pi-tui", packageContext, passthrough).url, pathToFileURL(aliases["@earendil-works/pi-tui"]).href);
 	assert.equal(loader.resolve("node:fs", packageContext, passthrough).url, "node:fs");
 	assert.equal(loader.resolve("@earendil-works/pi-ai", { parentURL: "file:///host/pi-loader.js" }, passthrough).url, "@earendil-works/pi-ai");
+});
+
+test("fallback loader aliases external imports for a native TypeScript runner", async () => {
+	const loader = await import(`${loaderUrl.href}?native-typescript`);
+	loader.initialize({ aliases, nativeRunner: true, compiledRunner: false, packageRootUrl });
+	assert.equal(loader.resolve("@earendil-works/pi-ai", { parentURL: "file:///tmp/child-factory.mjs" }, passthrough).url, pathToFileURL(aliases["@earendil-works/pi-ai"]).href);
 });
 
 test("fallback loader redirects only the TUI for a jiti-hosted TypeScript runner", async () => {

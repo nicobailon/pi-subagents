@@ -757,6 +757,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 				PI_PACKAGE_DIR: binaryHost ? process.env.PI_PACKAGE_DIR : piPackageRoot,
 				[JITI_ALIAS_ENV]: binaryHost ? undefined : JSON.stringify(hostPeerAliases.aliases),
 				PI_ASYNC_NATIVE_RUNNER: !binaryHost && (runnerIsJavaScript || nativeRunnerSupported) ? "1" : "0",
+				PI_ASYNC_COMPILED_RUNNER: !binaryHost && runnerIsJavaScript ? "1" : "0",
 				PI_SUBAGENT_RUNNER_CONFIG: binaryHost ? cfgPath : undefined,
 			},
 		});

@@ -83,6 +83,7 @@ test("executeAsyncSingle preloads all peer aliases before the selected runner lo
 			assert.match(args[3], /[/\\]subagent-runner\.ts$/);
 			assert.equal(args.length, 5);
 			assert.equal(options.env.PI_ASYNC_NATIVE_RUNNER, nativeRunner ? "1" : "0");
+			assert.equal(options.env.PI_ASYNC_COMPILED_RUNNER, "0");
 		}
 	} finally {
 		t.mock.restoreAll();
