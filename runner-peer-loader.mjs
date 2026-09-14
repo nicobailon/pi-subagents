@@ -2,8 +2,6 @@ import { pathToFileURL } from "node:url";
 
 let aliases = {};
 const redirected = new Set([
-	"@earendil-works/pi-server",
-	"@earendil-works/pi-server/unix",
 	"@earendil-works/pi-tui",
 ]);
 

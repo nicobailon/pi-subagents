@@ -31,11 +31,11 @@ For a focused diagnostic, use `node test/smoke/standalone-background.mjs "$relea
 
 ## Npm regressions and local trial
 
-Existing npm clean-install CI covers real SDK 0.85.0 and 0.85.1. The standalone CI job also checks the public npm launch path without execution-time network:
+Existing npm clean-install CI covers real SDK 0.85.1. The standalone CI job also checks the public npm launch path without execution-time network:
 
 ```bash
 npm_checks="$(mktemp -d)"
-node test/smoke/pi085-clean-install.mjs "$npm_checks/sdk" 0.85.1
+node test/smoke/clean-install.mjs "$npm_checks/sdk" 0.85.1
 node test/smoke/npm-background.mjs "$npm_checks/sdk" "$npm_checks/launch"
 ```
 

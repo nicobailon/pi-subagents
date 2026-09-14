@@ -106,7 +106,7 @@ test("resolves pi-agent-core/node to its exact package export instead of appendi
 		fs.mkdirSync(distDir, { recursive: true });
 		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({
 			name: "@earendil-works/pi-agent-core",
-			version: "0.85.0-test",
+			version: "0.85.1-test",
 			exports: {
 				".": "./dist/index.js",
 				"./node": "./dist/node.js",
@@ -212,7 +212,7 @@ test("chord is omitted before 0.85, but required host-first on chord-era and unk
 			writePackage(pkg === "@earendil-works/pi-coding-agent" ? host : path.join(host, "node_modules", pkg), pkg, "0.84.3", exports);
 		}
 		const hostExports = packages.get("@earendil-works/pi-coding-agent")!;
-		const preChord = resolveHostPeerAliases(host, extension);
+		const preChord = resolveHostPeerAliases(host);
 		assert.deepEqual(preChord.missing, []);
 		assert.equal(preChord.aliases[chord], undefined);
 		assert.equal(preChord.aliases[`${chord}/context`], undefined);
@@ -220,79 +220,21 @@ test("chord is omitted before 0.85, but required host-first on chord-era and unk
 		writePackage(path.join(extension, "node_modules", chord), chord, "0.85.1", { ".": "./index.mjs", "./context": "./context.mjs" });
 		for (const version of ["0.85.0", "0.85.1", "1.0.0", "0.84.4-test", "unknown"]) {
 			writePackage(host, "@earendil-works/pi-coding-agent", version, hostExports);
-			const result = resolveHostPeerAliases(host, extension);
+			const result = resolveHostPeerAliases(host);
 			for (const specifier of [chord, `${chord}/context`]) assert.ok(result.missing.includes(specifier), version);
 		}
 		writePackage(host, "@earendil-works/pi-coding-agent", "0.85.1", hostExports);
 		writePackage(hostChord, chord, "0.85.1", { ".": "./index.mjs", "./context": "./context.mjs" });
-		let result = resolveHostPeerAliases(host, extension);
+		let result = resolveHostPeerAliases(host);
 		assert.deepEqual(result.missing, []);
 		assert.equal(result.aliases[chord], path.join(hostChord, "index.mjs"));
 		assert.equal(result.aliases[`${chord}/context`], path.join(hostChord, "context.mjs"));
 		fs.unlinkSync(path.join(hostChord, "context.mjs"));
-		assert.deepEqual(resolveHostPeerAliases(host, extension).missing, [`${chord}/context`]);
+		assert.deepEqual(resolveHostPeerAliases(host).missing, [`${chord}/context`]);
 		writePackage(host, "@earendil-works/pi-coding-agent", "0.84.3", hostExports);
 		fs.rmSync(path.join(host, "node_modules", "@earendil-works/pi-tui"), { recursive: true });
-		result = resolveHostPeerAliases(host, extension);
+		result = resolveHostPeerAliases(host);
 		assert.deepEqual(result.missing, ["@earendil-works/pi-tui"], "pre-chord hosts still require TUI");
-	} finally {
-		fs.rmSync(root, { recursive: true, force: true });
-	}
-});
-
-test("server supplementation is host-first, missing-only, and restricted to matching 0.85.0", () => {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-server-alias-"));
-	const host = path.join(root, "host");
-	const extension = path.join(root, "extension");
-	const server = "@earendil-works/pi-server";
-	function writePackage(dir: string, name: string, version: string, exports: Record<string, string> = {}) {
-		fs.mkdirSync(dir, { recursive: true });
-		fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, version, exports }));
-		for (const target of Object.values(exports)) fs.writeFileSync(path.join(dir, target), "export {};\n");
-	}
-	const localServer = path.join(extension, "node_modules", server);
-	const hostServer = path.join(host, "node_modules", server);
-	const exports = { ".": "./public.mjs", "./unix": "./unix.mjs" };
-	try {
-		writePackage(host, "@earendil-works/pi-coding-agent", "0.85.0", { ".": "./sdk.mjs" });
-		writePackage(localServer, server, "0.85.0", exports);
-		writePackage(path.join(extension, "node_modules", "@earendil-works/pi-tui"), "@earendil-works/pi-tui", "0.85.0", exports);
-		let result = resolveHostPeerAliases(host, extension);
-		assert.deepEqual(result.supplemental, [server, `${server}/unix`]);
-		assert.equal(result.aliases[server], path.join(localServer, "public.mjs"));
-		assert.ok(result.missing.includes("@earendil-works/pi-tui"), "other missing peers stay closed");
-
-		writePackage(hostServer, server, "0.85.0", { ".": "./host.mjs" });
-		result = resolveHostPeerAliases(host, extension);
-		assert.equal(result.aliases[server], path.join(hostServer, "host.mjs"));
-		assert.deepEqual(result.supplemental, [`${server}/unix`]);
-		writePackage(hostServer, server, "0.86.0", { ".": "./host.mjs" });
-		assert.ok(resolveHostPeerAliases(host, extension).missing.includes(`${server}/unix`));
-		fs.rmSync(hostServer, { recursive: true });
-
-		for (const version of ["0.84.0", "0.85.1", "0.85.0-test"]) {
-			writePackage(host, "@earendil-works/pi-coding-agent", version, { ".": "./sdk.mjs" });
-			result = resolveHostPeerAliases(host, extension);
-			assert.deepEqual(result.supplemental, []);
-			for (const specifier of [server, `${server}/unix`, "@earendil-works/pi-client/unix"]) {
-				assert.ok(!result.missing.includes(specifier));
-				assert.equal(result.aliases[specifier], undefined);
-			}
-			assert.ok(result.missing.includes("@earendil-works/pi-agent-core/node"));
-		}
-		writePackage(host, "@earendil-works/pi-coding-agent", "0.85.0", { ".": "./sdk.mjs" });
-		writePackage(localServer, server, "0.85.1", exports);
-		assert.deepEqual(resolveHostPeerAliases(host, extension).supplemental, []);
-		writePackage(localServer, server, "0.85.0", exports);
-		fs.unlinkSync(path.join(localServer, "unix.mjs"));
-		assert.ok(resolveHostPeerAliases(host, extension).missing.includes(`${server}/unix`));
-
-		// Non-exception hosts ignore experimental packages even when installed.
-		writePackage(host, "@earendil-works/pi-coding-agent", "0.86.0", { ".": "./sdk.mjs" });
-		writePackage(hostServer, server, "0.86.0", exports);
-		result = resolveHostPeerAliases(host, extension);
-		assert.deepEqual(result.supplemental, []);
-		assert.equal(result.aliases[`${server}/unix`], undefined);
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
 	}

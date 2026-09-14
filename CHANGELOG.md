@@ -6,6 +6,10 @@
 
 - Accept bounded plain-JSON `args` for inline, file-backed, validated, and scheduled workflow scripts. Scripts receive deeply frozen arguments; schedules retain normalized values for replay, and workflow evidence binds them to a canonical digest (#2233).
 
+### Removed
+
+- Drop the Pi 0.85.0 `pi-server` supplementation shim and its bundled dependency; supported Pi 0.85.1+ hosts ship the runtime package themselves. Pi 0.85.0 is no longer supported.
+
 ### Fixed
 
 - Keep non-reply supervisor progress updates out of parent model turns while continuing to consume their request files; decisions and structured interviews still wake and wait for replies. Thanks to [@moofone](https://github.com/moofone) for #2229 and [@dajiaohuang](https://github.com/dajiaohuang) for #2230.

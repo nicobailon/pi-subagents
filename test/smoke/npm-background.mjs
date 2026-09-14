@@ -1,5 +1,5 @@
 // Real npm CLI -> public subagent tool -> detached Node runner -> SDK session.
-// Reuse pi085-clean-install.mjs provisioning; no installs during this check.
+// Reuse clean-install.mjs provisioning; no installs during this check.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -17,7 +17,7 @@ assert.ok(root && path.isAbsolute(root) && !fs.existsSync(root), "fresh artifact
 const installed = path.join(npmRoot, "extension/node_modules/pi-subagents");
 const sdk = "host/node_modules/@earendil-works/pi-coding-agent";
 const version = JSON.parse(fs.readFileSync(path.join(npmRoot, sdk, "package.json"), "utf8")).version;
-assert.ok(["0.85.0", "0.85.1"].includes(version));
+assert.equal(version, "0.85.1");
 for (const name of ["", "tmp", "home", "agent", "work/.pi/agents"]) fs.mkdirSync(path.join(root, name), { recursive: true });
 fs.cpSync(installed, path.join(root, "package"), { recursive: true });
 fs.mkdirSync(path.join(root, "package/test/smoke"), { recursive: true });

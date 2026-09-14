@@ -74,7 +74,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: node test/smoke/runner-loader-capability.mjs ${{ matrix.loader }}
 
-  pi085-clean-install:
+  clean-install:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -82,23 +82,17 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22.19.0
-      - name: Real Pi 0.85.0 background child smoke
-        run: node --experimental-strip-types test/smoke/pi085-clean-install.mjs "${{ runner.temp }}/pi0850-smoke" 0.85.0
       - name: Real Pi 0.85.1 background child smoke
-        run: node --experimental-strip-types test/smoke/pi085-clean-install.mjs "${{ runner.temp }}/pi0851-smoke" 0.85.1
+        run: node --experimental-strip-types test/smoke/clean-install.mjs "${{ runner.temp }}/clean-install-smoke" 0.85.1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: pi085-smoke-logs
+          name: clean-install-smoke-logs
           path: |
-            ${{ runner.temp }}/pi0850-smoke/*.log
-            ${{ runner.temp }}/pi0850-smoke/aliases.json
-            ${{ runner.temp }}/pi0850-smoke/host/package-lock.json
-            ${{ runner.temp }}/pi0850-smoke/extension/package-lock.json
-            ${{ runner.temp }}/pi0851-smoke/*.log
-            ${{ runner.temp }}/pi0851-smoke/aliases.json
-            ${{ runner.temp }}/pi0851-smoke/host/package-lock.json
-            ${{ runner.temp }}/pi0851-smoke/extension/package-lock.json
+            ${{ runner.temp }}/clean-install-smoke/*.log
+            ${{ runner.temp }}/clean-install-smoke/aliases.json
+            ${{ runner.temp }}/clean-install-smoke/host/package-lock.json
+            ${{ runner.temp }}/clean-install-smoke/extension/package-lock.json
 
   official-standalone:
     # The official Linux x64 release only; 22.04 permits bubblewrap namespaces.
@@ -130,7 +124,7 @@ jobs:
       - name: Complete isolated official binary matrix
         run: node test/smoke/standalone-matrix.mjs "$RUNNER_TEMP/pi-official/pi/pi" "$RUNNER_TEMP/standalone-matrix"
       - name: Provision npm host for public launch regression
-        run: node test/smoke/pi085-clean-install.mjs "$RUNNER_TEMP/npm-background-sdk" 0.85.1
+        run: node test/smoke/clean-install.mjs "$RUNNER_TEMP/npm-background-sdk" 0.85.1
       - name: Isolated real npm public launch
         run: node test/smoke/npm-background.mjs "$RUNNER_TEMP/npm-background-sdk" "$RUNNER_TEMP/npm-background"
       - name: Require completed Linux smoke receipts
