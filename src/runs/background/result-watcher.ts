@@ -411,7 +411,9 @@ export function createResultWatcher(
 			if (typeof data.sessionId !== "string" || !data.sessionId) return;
 			const sessionId = data.sessionId;
 			const completionOwnerId = data.completionOwnerId;
-			const runId = data.runId ?? data.id ?? file.replace(/\.json$/i, "");
+			const runId = typeof data.runId === "string" && data.runId
+				? data.runId
+				: typeof data.id === "string" && data.id ? data.id : file.replace(/\.json$/i, "");
 			const toolCallId = typeof data.toolCallId === "string" ? data.toolCallId : undefined;
 			let observerSucceeded = true;
 			try {

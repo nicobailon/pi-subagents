@@ -177,6 +177,33 @@ describe("result watcher", () => {
 		}
 	});
 
+	it("records an id-alias result when runId is empty", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-id-alias-"));
+		try {
+			const state = createState();
+			state.currentSessionId = "session-current";
+			const resultPath = path.join(resultsDir, "alias-run.json");
+			writeIndexedResult(resultPath, {
+				id: "alias-run",
+				runId: "",
+				sessionId: "session-current",
+				success: true,
+				summary: "done",
+			});
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000);
+			try {
+				watcher.primeExistingResults();
+				assert.equal(await waitForPredicate(() => !fs.existsSync(resultPath)), true);
+			} finally {
+				watcher.stopResultWatcher();
+			}
+			assert.equal(state.completedResults?.get("alias-run")?.sessionId, "session-current");
+			assert.equal(state.completedResults?.get("alias-run")?.completion.runId, "alias-run");
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("hands predecessor results to the replacement session without widening ownership", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-transition-"));
 		try {
@@ -1416,7 +1443,7 @@ describe("result watcher", () => {
 				assert.equal(state.watcher, null);
 				assert.notEqual(state.watcherRestartTimer, null);
 
-				writeIndexedResult(path.join(resultsDir, "done.json"), { sessionId: "session-1", summary: "done" });
+				writeIndexedResult(path.join(resultsDir, "done.json"), { id: "done", sessionId: "session-1", summary: "done" });
 				poll?.();
 				await new Promise((resolve) => setTimeout(resolve, 10));
 			} finally {
@@ -2292,7 +2319,7 @@ describe("result watcher", () => {
 			const emitted: string[] = [];
 			const watcher = createResultWatcher({ events: { on: () => () => {}, emit(event) { emitted.push(event); } } }, state, resultsDir, 60_000);
 			const resultFile = "expired.json";
-			const result = { sessionId: "session-1", agent: "worker", success: true, summary: "new result", timestamp: 123 };
+			const result = { id: "expired", sessionId: "session-1", agent: "worker", success: true, summary: "new result", timestamp: 123 };
 			const resultPath = path.join(resultsDir, resultFile);
 			writeIndexedResult(resultPath, result);
 			state.completionSeen.set(buildCompletionKey(result, `result:${resultFile}`), Date.now() - 61_000);
