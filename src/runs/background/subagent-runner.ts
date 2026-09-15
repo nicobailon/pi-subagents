@@ -150,6 +150,7 @@ import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session
 import { buildExternalCliPrompt, runExternalCli } from "../shared/external-cli-runner.ts";
 import { resolveClaudeCodeLaunch } from "../shared/claude-code-adapter.ts";
 import { resolveCodexExecLaunch } from "../shared/codex-exec-adapter.ts";
+import { resolveGeminiAgentLaunch } from "../shared/gemini-agent-adapter.ts";
 import { resolveCursorAgentLaunch } from "../shared/cursor-agent-adapter.ts";
 import { resolveExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { formatHerdrMachineHint, prepareHerdrMachineExternalCliRun } from "../shared/herdr-machine.ts";
@@ -938,6 +939,8 @@ export async function runSingleStepInner(
 		}
 		const adapterLaunch = step.runner.adapter === "codex-exec" || step.runner.adapter === "codex-exec-writer"
 			? resolveCodexExecLaunch({ adapter: step.runner.adapter, command: step.runner.command, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
+			: step.runner.adapter === "gemini-agent" || step.runner.adapter === "gemini-agent-writer"
+				? resolveGeminiAgentLaunch({ adapter: step.runner.adapter, command: step.runner.command })
 			: step.runner.adapter === "claude-code" || step.runner.adapter === "claude-code-writer"
 				? resolveClaudeCodeLaunch({ adapter: step.runner.adapter, command: step.runner.command })
 				: step.runner.adapter === "cursor-agent" || step.runner.adapter === "cursor-agent-writer"
@@ -949,11 +952,16 @@ export async function runSingleStepInner(
 			if (chunk.length > 0) ctx.onExternalStreamActivity?.();
 			ctx.orcaProgressTab?.append(chunk.toString("utf-8"));
 		};
+		const externalPrompt = buildExternalCliPrompt(step.systemPrompt ?? "", task);
+		// SAFETY: only Gemini launches expose serializePrompt, selected by the adapter dispatch above.
+		const serializedPrompt = "serializePrompt" in (adapterLaunch ?? {})
+			? (adapterLaunch as ReturnType<typeof resolveGeminiAgentLaunch>).serializePrompt(externalPrompt)
+			: externalPrompt;
 		const externalInput = omitUndefinedProperties({
 			command: adapterLaunch?.command ?? runner.command,
 			args: adapterLaunch?.args ?? runner.args,
 			cwd: externalCwd,
-			prompt: buildExternalCliPrompt(step.systemPrompt ?? "", task),
+			prompt: serializedPrompt,
 			asyncDir: path.dirname(ctx.outputFile),
 			stepIndex: ctx.flatIndex,
 			environment: adapterLaunch?.environment,

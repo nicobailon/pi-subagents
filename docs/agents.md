@@ -97,6 +97,15 @@ node --experimental-strip-types --import ./test/support/register-loader.mjs \
 
 The read-only smoke must report `writeCanaryExists: false`. The writer smoke must report `writeCanaryMatches: true`. Both reports include startup duration and terminal proof without raw protocol output, prompts, or credentials.
 
+The built-in `gemini-agent` and `gemini-agent-writer` profiles are local-only `agy` one-shot modes. Both require an installed, authenticated `agy` CLI and existing vendor settings. They send one handoff as a stream-JSON user event over stdin and require one successful terminal result; prompts are never placed in argv.
+
+| Profile | Intent | agy mode |
+|---|---|---|
+| `gemini-agent` | Plan-mode advisory | `plan` |
+| `gemini-agent-writer` | Explicit write request | `accept-edits` |
+
+Both pass `--sandbox`, but this adapter does not claim hard read-only, workspace-write boundedness, approval, tools, or persistence guarantees. Enforcement and persistence remain vendor-managed and unverified. The writer also requires appropriate pre-existing `permissions.allow` rules in vendor settings because headless agy cannot prompt for required command permissions. This adapter deliberately never uses `--dangerously-skip-permissions`; without those rules, runs fail closed and no write is claimed. They are rejected for Herdr machine placement in this release. Maintainers should use disposable live canaries before making stronger authority claims.
+
 The built-in `claude-code` and `claude-code-writer` profiles are the supported Claude Code one-shot modes. Both require an installed Claude Code CLI that is already authenticated through its normal local login. Claude Code 2.1.150 needs the user setting source for normal OAuth/keychain authentication, so both adapters load user settings but exclude project and local settings. User-level Claude Code settings and hooks are therefore an operator-trusted prerequisite. Review or disable unsafe user hooks before using either profile.
 
 | Profile | Access | Permission mode | Built-in tools |

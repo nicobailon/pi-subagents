@@ -246,6 +246,9 @@ export function formatHerdrMachineRunnerUnsupported(input: {
 	if (input.runnerType !== undefined && input.runnerType !== "pi" && input.runnerType !== "external-cli") {
 		return `Agent '${input.agentName}' requested machine '${input.machine}', but this runner cannot use pane-native Herdr placement. Use native Pi or a built-in Claude, Codex, or Cursor profile.`;
 	}
+	if (input.runnerType === "external-cli" && (input.adapter === "gemini-agent" || input.adapter === "gemini-agent-writer")) {
+		return `Agent '${input.agentName}' requested machine '${input.machine}', but Gemini/agy profiles are local-only in this release. Remove machine placement.`;
+	}
 	if (input.runnerType === "external-cli" && (input.adapter === undefined || !SUPPORTED_MACHINE_ADAPTERS.has(input.adapter))) {
 		return `Agent '${input.agentName}' requested machine '${input.machine}', but generic external-cli commands cannot be remote-wrapped safely. Use claude-code, claude-code-writer, codex-exec, codex-exec-writer, cursor-agent, or cursor-agent-writer.`;
 	}

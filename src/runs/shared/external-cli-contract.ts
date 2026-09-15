@@ -31,6 +31,8 @@ export const CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS = [
 	"claude-code-writer",
 	"cursor-agent",
 	"cursor-agent-writer",
+	"gemini-agent",
+	"gemini-agent-writer",
 ] as const;
 export type CodeOwnedExternalCliAdapterId = typeof CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS[number];
 
@@ -45,6 +47,7 @@ const RESERVED_READ_ONLY_ADAPTERS = [
 	{ name: "claude-code", writer: "claude-code-writer", access: "file-write" },
 	{ name: "codex-exec", writer: "codex-exec-writer", access: "workspace-write" },
 	{ name: "cursor-agent", writer: "cursor-agent-writer", access: "workspace-write" },
+	{ name: "gemini-agent", writer: "gemini-agent-writer", access: "accept-edits" },
 ] as const;
 
 export function validateCodeOwnedProfileRunner(
@@ -58,7 +61,8 @@ export function validateCodeOwnedProfileRunner(
 	const selectionNames = [agent.name, ...(agent.localName ? [agent.localName] : []), ...(agent.aliases ?? [])];
 	for (const adapter of RESERVED_READ_ONLY_ADAPTERS) {
 		if (selectionNames.includes(adapter.name) && !(agent.runner?.type === "external-cli" && agent.runner.adapter === adapter.name)) {
-			return `Selection name '${adapter.name}' is reserved for the read-only '${adapter.name}' adapter. Use '${adapter.writer}' for explicit ${adapter.access} access.`;
+			const mode = adapter.name === "gemini-agent" ? "plan-mode" : "read-only";
+			return `Selection name '${adapter.name}' is reserved for the ${mode} '${adapter.name}' adapter. Use '${adapter.writer}' for explicit ${adapter.access} access.`;
 		}
 	}
 	return undefined;
@@ -90,6 +94,8 @@ export function resolveExternalCliRunnerStatus(input: {
 	const claudeCodeWriter = input.adapter === "claude-code-writer";
 	const cursorAgent = input.adapter === "cursor-agent";
 	const cursorAgentWriter = input.adapter === "cursor-agent-writer";
+	const geminiAgent = input.adapter === "gemini-agent";
+	const geminiAgentWriter = input.adapter === "gemini-agent-writer";
 	const cursor = cursorAgent || cursorAgentWriter;
 	const unsupported = cursor ? PROMPT_FILE_UNSUPPORTED : UNSUPPORTED;
 	return {
@@ -104,6 +110,8 @@ export function resolveExternalCliRunnerStatus(input: {
 		...(claudeCodeWriter ? { safety: { access: "workspace-write" as const, authentication: "existing-cli-required" as const, permissionMode: "acceptEdits" as const, tools: "Read,Write,Edit,Glob,Grep" as const, mcp: "empty-strict" as const, settingSources: "user" as const, userSettingsTrust: "required" as const, sessionPersistence: false as const } } : {}),
 		...(cursorAgent ? { safety: { access: "read-only" as const, authentication: "cursor-api-key-or-existing-login" as const, mode: "ask" as const, sandbox: "enabled" as const, workspaceTrust: "existing-required" as const, sessionReuse: false as const } } : {}),
 		...(cursorAgentWriter ? { safety: { access: "workspace-write" as const, authentication: "cursor-api-key-or-existing-login" as const, mode: "print" as const, sandbox: "enabled" as const, workspaceTrust: "existing-required" as const, sessionReuse: false as const } } : {}),
+		...(geminiAgent ? { safety: { mode: "plan" as const, sandbox: "enabled" as const, authentication: "existing-cli-required" as const, settingSources: "vendor-managed" as const, sessionPersistence: "vendor-managed" as const, enforcement: "unverified" as const } } : {}),
+		...(geminiAgentWriter ? { safety: { mode: "accept-edits" as const, sandbox: "enabled" as const, authentication: "existing-cli-required" as const, settingSources: "vendor-managed" as const, sessionPersistence: "vendor-managed" as const, enforcement: "unverified" as const } } : {}),
 		...(input.machine ? { machine: input.machine } : {}),
 		capabilities: {
 			stop: true,
