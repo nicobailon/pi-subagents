@@ -2,9 +2,9 @@
  * A child whose model comes from an extension-registered provider fails to
  * start when that extension is not loaded into it, and Pi core reports only
  * that the model is unknown. These tests drive the real failure paths for both
- * hosts: a foreground child must be told the ambient-extension rule and its two
- * remedies, and a child that did load the ambient extensions must keep the
- * plain core error.
+ * hosts: a foreground child must be told that it inherits the parent's
+ * registered providers and how to load the extension itself, and a child that
+ * did load the ambient extensions must keep the plain core error.
  */
 
 import assert from "node:assert/strict";
@@ -40,7 +40,7 @@ describe("child model resolution diagnostic", () => {
 	});
 	afterEach(() => removeTempDir(tempDir));
 
-	it("explains a foreground model that only an unloaded provider extension serves", async () => {
+	it("explains a foreground model that no parent provider serves", async () => {
 		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => unresolvedModelPi() });
 		const result = await runSync(tempDir, [makeAgent("provider-model-worker", { model: MODEL })], "provider-model-worker", "Task", {
 			runId: "foreground-model-resolution",
@@ -52,10 +52,10 @@ describe("child model resolution diagnostic", () => {
 		assert.equal(result.usage.turns, 0);
 		assert.deepEqual(result.messages, []);
 		assert.ok(result.error?.startsWith(MODEL_NOT_FOUND), `core error must stay first, got: ${result.error}`);
-		assert.match(result.error ?? "", /Agent 'provider-model-worker' ran as a foreground child, which never loads the parent's ambient extensions/);
-		assert.match(result.error ?? "", /If 'pengepul\/commandcode\/deepseek\/deepseek-v4\.1-flash' is served by a provider extension, that extension is not loaded for this child/);
-		assert.match(result.error ?? "", /must run as background children \(`async: true`\)/);
-		assert.match(result.error ?? "", /load the provider extension explicitly with `subagentOnlyExtensions` or `extensions` in the agent frontmatter/);
+		assert.match(result.error ?? "", /Agent 'provider-model-worker' ran as a foreground child, which never loads the parent's ambient extensions but inherits the providers they registered/);
+		assert.match(result.error ?? "", /If 'pengepul\/commandcode\/deepseek\/deepseek-v4\.1-flash' is served by a provider extension, that extension registered no such provider in the parent session/);
+		assert.doesNotMatch(result.error ?? "", /`async: true`/);
+		assert.match(result.error ?? "", /load the extension for this child with `subagentOnlyExtensions` or `extensions` in the agent frontmatter/);
 	});
 
 	it("tells a foreground child that the capability ceiling denied the extension, not the frontmatter", async () => {

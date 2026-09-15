@@ -65,9 +65,8 @@ export function formatChildModelResolutionDiagnostic(diagnostic: ChildModelResol
 	}
 	if (diagnostic.host === "parent") {
 		return [
-			`${subject} ran as a foreground child, which never loads the parent's ambient extensions.`,
-			`If ${model} is served by a provider extension, that extension is not loaded for this child: agents that need models from a provider extension must run as background children (\`async: true\`) with \`extensions\` unset, which load the ambient extensions; a background child with an \`extensions\` list loads only what it lists.`,
-			"To keep this child in the foreground, load the provider extension explicitly with `subagentOnlyExtensions` or `extensions` in the agent frontmatter.",
+			`${subject} ran as a foreground child, which never loads the parent's ambient extensions but inherits the providers they registered.`,
+			`If ${model} is served by a provider extension, that extension registered no such provider in the parent session: check the parent's \`/model\` list, or load the extension for this child with \`subagentOnlyExtensions\` or \`extensions\` in the agent frontmatter.`,
 		].join("\n");
 	}
 	return [
