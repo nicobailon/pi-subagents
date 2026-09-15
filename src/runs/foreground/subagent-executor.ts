@@ -4012,6 +4012,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	try {
 		const launched = await runSync(ctx.cwd, agents, params.agent!, task, compactOptional<Parameters<typeof runSync>[4]>({
 			machine: foregroundMachine,
+			parentProviderRegistry: ctx.modelRegistry,
 			remoteReads: foregroundMachine ? readsOverride : undefined,
 			permissions: deps.config.permissions,
 			runtimeSnapshotHost: deps.pi,

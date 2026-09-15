@@ -66,7 +66,7 @@ export function formatChildModelResolutionDiagnostic(diagnostic: ChildModelResol
 	if (diagnostic.host === "parent") {
 		return [
 			`${subject} ran as a foreground child, which never loads the parent's ambient extensions but inherits the providers they registered.`,
-			`If ${model} is served by a provider extension, that extension registered no such provider in the parent session: check the parent's \`/model\` list, or load the extension for this child with \`subagentOnlyExtensions\` or \`extensions\` in the agent frontmatter.`,
+			`If ${model} is served by a provider extension, check the parent's \`/model\` list and the child extension diagnostics, or load the extension for this child with \`subagentOnlyExtensions\` or \`extensions\` in the agent frontmatter.`,
 		].join("\n");
 	}
 	return [

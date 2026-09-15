@@ -221,6 +221,24 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.doesNotMatch(result.content[0]?.text ?? "", /Console:/);
 	});
 
+	it("binds each public foreground launch to its invoking model registry", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "A completed" });
+		mockPi.onCall({ output: "B completed" });
+		const executor = makeExecutor([makeAgent("echo")]);
+		const ctxA = makeMinimalCtx(tempDir);
+		const ctxB = makeMinimalCtx(tempDir);
+
+		const resultA = await executor.executePublic("provider-owner-a", { agent: "echo", task: "Run A", async: false }, new AbortController().signal, undefined, ctxA);
+		const resultB = await executor.executePublic("provider-owner-b", { agent: "echo", task: "Run B", async: false }, new AbortController().signal, undefined, ctxB);
+
+		assert.equal(resultA.isError, undefined, resultA.content[0]?.text ?? "");
+		assert.equal(resultB.isError, undefined, resultB.content[0]?.text ?? "");
+		assert.equal(mockPi.sessions.length, 2);
+		assert.equal(mockPi.sessions[0]!.launch.parentProviderRegistry, ctxA.modelRegistry);
+		assert.equal(mockPi.sessions[1]!.launch.parentProviderRegistry, ctxB.modelRegistry);
+		assert.notEqual(mockPi.sessions[0]!.launch.parentProviderRegistry, mockPi.sessions[1]!.launch.parentProviderRegistry);
+	});
+
 	it("keeps public structured children alive when tool results backfill without execution_end", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [

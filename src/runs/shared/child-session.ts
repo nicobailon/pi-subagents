@@ -5,8 +5,7 @@
  * parent pi process for foreground children, the detached runner process for
  * background children. The factory is injectable so tests can script a child
  * without the real runtime; the default implementation wraps
- * `createAgentSession` from a pi package module and shares one `ModelRuntime`
- * across every child it creates.
+ * `createAgentSession` from a pi package module.
  */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -51,6 +50,8 @@ export interface ChildSessionLaunch {
 	cwd: string;
 	/** Resolved pane-native placement. Local launches omit this field. */
 	machine?: HerdrMachineReference;
+	/** Process-local provider source owned by the invoking foreground parent. */
+	parentProviderRegistry?: ParentProviderRegistry;
 	/** Logical names resolved only by the remote ambient package. */
 	remoteResources?: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false };
 	storage: ChildSessionStorage;
@@ -140,33 +141,30 @@ type ModelRuntimeInstance = Awaited<ReturnType<PiCodingAgentModule["ModelRuntime
 
 export type ParentProviderRegistry = Pick<ModelRuntimeInstance, "getRegisteredProviderIds" | "getRegisteredProviderConfig" | "getRegisteredNativeProvider">;
 
-let parentProviders: ParentProviderRegistry | undefined;
-
-/** The host's model registry, whose extension-registered providers a child without ambient extensions inherits before flushing its own, which take precedence. */
-export function setParentProviderRegistry(registry: ParentProviderRegistry | undefined): void {
-	parentProviders = registry;
-}
-
-async function inheritParentProviders(modelRuntime: ModelRuntimeInstance, onError: ((error: ChildSessionExtensionError) => void) | undefined): Promise<void> {
-	if (!parentProviders) return;
+function inheritParentProviders(modelRuntime: ModelRuntimeInstance, parentProviders: ParentProviderRegistry, claimedProviderIds: ReadonlySet<string>, onError: ((error: ChildSessionExtensionError) => void) | undefined): boolean {
+	let providerIds: readonly string[];
+	try {
+		providerIds = parentProviders.getRegisteredProviderIds();
+	} catch (error) {
+		onError?.({ extensionPath: "<parent-providers>", event: "inherit_provider", error });
+		throw new Error(`Failed to enumerate parent providers: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+	}
 	let registered = false;
-	for (const providerId of parentProviders.getRegisteredProviderIds()) {
+	for (const providerId of new Set(providerIds)) {
+		if (claimedProviderIds.has(providerId)) continue;
 		try {
 			const native = parentProviders.getRegisteredNativeProvider(providerId);
 			const config = native ? undefined : parentProviders.getRegisteredProviderConfig(providerId);
 			if (native) modelRuntime.registerNativeProvider(native);
 			else if (config) modelRuntime.registerProvider(providerId, config);
-			else continue;
+			else throw new Error(`Parent provider '${providerId}' has no registered native provider or config.`);
 			registered = true;
 		} catch (error) {
-			onError?.({ extensionPath: `<parent-provider:${providerId}>`, event: "register_provider", error });
+			onError?.({ extensionPath: `<parent-provider:${providerId}>`, event: "inherit_provider", error });
+			throw new Error(`Failed to inherit parent provider '${providerId}': ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 		}
 	}
-	try {
-		if (registered) await modelRuntime.refresh({ allowNetwork: false });
-	} catch (error) {
-		onError?.({ extensionPath: "<parent-provider:refresh>", event: "register_provider", error });
-	}
+	return registered;
 }
 
 const CHILD_PROMPT_RUNTIME_EXTENSION_PATH = "<inline:pi-subagents:prompt-runtime>";
@@ -208,11 +206,13 @@ function applyProcessEnv(values: Record<string, string | undefined> | undefined)
 	}
 }
 
-async function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModule["DefaultResourceLoader"]>, modelRuntime: ModelRuntimeInstance, onError: ((error: ChildSessionExtensionError) => void) | undefined, requiredPaths: ReadonlySet<string>): Promise<void> {
-	if (!("getExtensions" in loader) || typeof loader.getExtensions !== "function") return;
+function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModule["DefaultResourceLoader"]>, modelRuntime: ModelRuntimeInstance, onError: ((error: ChildSessionExtensionError) => void) | undefined, requiredPaths: ReadonlySet<string>): { claimedProviderIds: Set<string>; registered: boolean } {
+	const claimedProviderIds = new Set<string>();
+	if (!("getExtensions" in loader) || typeof loader.getExtensions !== "function") return { claimedProviderIds, registered: false };
 	const { runtime } = loader.getExtensions();
 	let registered = false;
 	for (const { name, config, extensionPath } of runtime.pendingProviderRegistrations ?? []) {
+		claimedProviderIds.add(name);
 		try {
 			modelRuntime.registerProvider(name, config);
 			registered = true;
@@ -223,6 +223,7 @@ async function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAge
 	}
 	if (Array.isArray(runtime.pendingProviderRegistrations)) runtime.pendingProviderRegistrations = [];
 	for (const { provider, extensionPath } of runtime.pendingNativeProviderRegistrations ?? []) {
+		claimedProviderIds.add(provider.id);
 		try {
 			modelRuntime.registerNativeProvider(provider);
 			registered = true;
@@ -232,12 +233,12 @@ async function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAge
 		}
 	}
 	if (Array.isArray(runtime.pendingNativeProviderRegistrations)) runtime.pendingNativeProviderRegistrations = [];
-	if (registered) await modelRuntime.refresh({ allowNetwork: false });
+	return { claimedProviderIds, registered };
 }
 
 /**
- * Default factory: real pi sessions sharing one `ModelRuntime`, created lazily
- * on the first child launch and dropped on `dispose()`.
+ * Default factory: detached/background sessions retain the existing shared
+ * runtime; each parent-bound foreground launch gets an isolated runtime.
  */
 export function createDefaultChildSessionFactory(options: DefaultChildSessionFactoryOptions = {}): ChildSessionFactory {
 	const loadPiCodingAgent = options.loadPiCodingAgent ?? (() => import("@earendil-works/pi-coding-agent"));
@@ -256,7 +257,9 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 	return {
 		async create(launch) {
 			const pi = await loadPiCodingAgent();
-			const modelRuntime = await sharedRuntime(pi);
+			const modelRuntime = launch.parentProviderRegistry
+				? await pi.ModelRuntime.create()
+				: await sharedRuntime(pi);
 			const agentDir = getAgentDir();
 			const settingsManager = pi.SettingsManager.create(launch.cwd, agentDir);
 			// Foreground children share Pi's global theme with the parent, so reinitializing it
@@ -288,8 +291,18 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				const loadErrors = requiredPaths.size > 0
 					? loader.getExtensions().errors.filter(({ path }) => requiredPaths.has(path)) : [];
 				if (loadErrors.length > 0) throw new Error(`Required child extension failed to load: ${loadErrors.map(({ path, error }) => `${path}: ${error}`).join("; ")}`);
-				if (!launch.ambientExtensions) await inheritParentProviders(modelRuntime, launch.onExtensionError);
-				await flushQueuedProviderRegistrations(loader, modelRuntime, launch.onExtensionError, requiredPaths);
+				const queued = flushQueuedProviderRegistrations(loader, modelRuntime, launch.onExtensionError, requiredPaths);
+				const inherited = launch.parentProviderRegistry
+					? inheritParentProviders(modelRuntime, launch.parentProviderRegistry, queued.claimedProviderIds, launch.onExtensionError)
+					: false;
+				if (queued.registered || inherited) {
+					try {
+						await modelRuntime.refresh({ allowNetwork: false });
+					} catch (error) {
+						launch.onExtensionError?.({ extensionPath: "<provider-refresh>", event: "refresh_providers", error });
+						throw new Error(`Failed to refresh child providers: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+					}
+				}
 				const sessionManager = launch.storage.kind === "file"
 					? pi.SessionManager.open(launch.storage.sessionFile, undefined, launch.cwd)
 					: launch.storage.kind === "dir"

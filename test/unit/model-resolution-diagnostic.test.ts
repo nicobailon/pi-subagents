@@ -23,7 +23,7 @@ describe("child model resolution diagnostic", () => {
 			host: "parent",
 		});
 		assert.match(text, /Agent 'provider-model-worker' ran as a foreground child, which never loads the parent's ambient extensions but inherits the providers they registered/);
-		assert.match(text, /If 'pengepul\/commandcode\/deepseek\/deepseek-v4\.1-flash' is served by a provider extension, that extension registered no such provider in the parent session/);
+		assert.match(text, /If 'pengepul\/commandcode\/deepseek\/deepseek-v4\.1-flash' is served by a provider extension, check the parent's `\/model` list and the child extension diagnostics/);
 		assert.doesNotMatch(text, /`async: true`/);
 		assert.match(text, /`subagentOnlyExtensions` or `extensions` in the agent frontmatter/);
 		assert.doesNotMatch(text, /background child without the ambient extensions/);
