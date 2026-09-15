@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- The Ghostty inspector no longer takes over when `TERM_PROGRAM=ghostty` comes from a terminal that embeds the Ghostty kernel (such as cmux) instead of the standalone Ghostty app. It now probes whether an application named "Ghostty" is actually reachable via AppleScript; when the probe fails (missing app, stale LaunchServices registration, or a non-Ghostty bundle), the inspector falls back to the `inspector.command` hint instead of emitting `-1728`/`-2741` AppleScript errors.
+
 ## [0.68.0] - 2026-09-15
 
 ### Highlights
