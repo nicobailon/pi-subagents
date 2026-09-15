@@ -5230,6 +5230,7 @@ export async function runConfiguredSubagent(config: SubagentRunConfig, options?:
 	let startupCommitted = config.revivalLease === undefined && config.launchBarrierToken === undefined;
 	const startupPath = path.join(config.asyncDir, "runner-startup.json");
 	const startupAckPath = path.join(config.asyncDir, "runner-startup-ack.json");
+	const startupConfirmPath = path.join(config.asyncDir, "runner-startup-confirm.json");
 	const startupProceedPath = path.join(config.asyncDir, "runner-startup-proceed.json");
 	const releaseOnExit = (): void => {
 		try {
@@ -5254,11 +5255,11 @@ export async function runConfiguredSubagent(config: SubagentRunConfig, options?:
 			writeAtomicJson(startupPath, { state: "ready", token: lease.owner.token, pid: process.pid, owner: lease.owner });
 			await waitForStartupControl(startupAckPath, lease.owner.token, "ack");
 			writeAtomicJson(startupPath, { state: "acknowledged", token: lease.owner.token, pid: process.pid });
-			await waitForStartupControl(startupAckPath, lease.owner.token, "confirm");
+			await waitForStartupControl(startupConfirmPath, lease.owner.token, "confirm");
 			writeAtomicJson(startupPath, { state: "confirmed", token: lease.owner.token, pid: process.pid });
 			await waitForStartupControl(startupProceedPath, lease.owner.token, "proceed");
 			startupCommitted = true;
-			for (const controlPath of [startupAckPath, startupProceedPath]) {
+			for (const controlPath of [startupAckPath, startupConfirmPath, startupProceedPath]) {
 				try {
 					fs.rmSync(controlPath, { force: true });
 				} catch {

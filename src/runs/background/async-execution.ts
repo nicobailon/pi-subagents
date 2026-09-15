@@ -552,6 +552,7 @@ async function terminateRunnerBeforeProceedAsync(proc: ChildProcess, processClos
 async function completeRunnerStartupHandshake(
 	startupPath: string,
 	startupAckPath: string,
+	startupConfirmPath: string,
 	startupProceedPath: string,
 	proc: ChildProcess,
 	processClosed: Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>,
@@ -578,7 +579,7 @@ async function completeRunnerStartupHandshake(
 		const terminationObserved = await terminateRunnerBeforeProceedAsync(proc, processClosed);
 		return { pid: proc.pid, runnerProcessInstanceId, error: acknowledged.error, terminationObserved, startupDidNotProceed: true };
 	}
-	try { writeRunnerStartupControl(startupAckPath, { action: "confirm", token: ready.token }); } catch (error) {
+	try { writeRunnerStartupControl(startupConfirmPath, { action: "confirm", token: ready.token }); } catch (error) {
 		const message = `Failed to confirm async runner startup: ${error instanceof Error ? error.message : String(error)}`;
 		persistStartupFailure(message);
 		const terminationObserved = await terminateRunnerBeforeProceedAsync(proc, processClosed);
@@ -719,11 +720,13 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 		? path.join(launchAsyncDir, "runner-startup.json")
 		: undefined;
 	const startupAckPath = startupPath ? path.join(path.dirname(startupPath), "runner-startup-ack.json") : undefined;
+	const startupConfirmPath = startupPath ? path.join(path.dirname(startupPath), "runner-startup-confirm.json") : undefined;
 	const startupProceedPath = launchAsyncDir && (startupPath || launchBarrierToken)
 		? path.join(launchAsyncDir, "runner-startup-proceed.json")
 		: undefined;
 	if (startupPath) fs.rmSync(startupPath, { force: true });
 	if (startupAckPath) fs.rmSync(startupAckPath, { force: true });
+	if (startupConfirmPath) fs.rmSync(startupConfirmPath, { force: true });
 	if (startupProceedPath) fs.rmSync(startupProceedPath, { force: true });
 
 	const logPaths = resolveAsyncRunnerLogPaths(launchConfig);
@@ -874,11 +877,11 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			}
 		}
 		proc.unref();
-		if (startupPath && startupAckPath && startupProceedPath) {
+		if (startupPath && startupAckPath && startupConfirmPath && startupProceedPath) {
 			const persistStartupFailure = (message: string) => {
 				if (launchAsyncDir) persistPreProceedStartupFailure(launchAsyncDir, launchRunId, runnerProcessInstanceId, launchSessionId, launchCompletionOwnerId, message);
 			};
-			return completeRunnerStartupHandshake(startupPath, startupAckPath, startupProceedPath, proc, processClosed, () => observedProcessExit ?? (proc.exitCode !== null || proc.signalCode !== null ? { exitCode: proc.exitCode, signal: proc.signalCode } : undefined), runnerProcessInstanceId, persistStartupFailure);
+			return completeRunnerStartupHandshake(startupPath, startupAckPath, startupConfirmPath, startupProceedPath, proc, processClosed, () => observedProcessExit ?? (proc.exitCode !== null || proc.signalCode !== null ? { exitCode: proc.exitCode, signal: proc.signalCode } : undefined), runnerProcessInstanceId, persistStartupFailure);
 		}
 		return { pid: proc.pid, runnerProcessInstanceId };
 	} catch (error) {
