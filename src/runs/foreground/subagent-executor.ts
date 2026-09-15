@@ -5287,7 +5287,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					// once their turns are suppressed, so surface the failure as its own
 					// actionable wake instead of leaving the parent asleep.
 					if (resultWriteFailureWakeDelivered) return false;
-					resultWriteFailureWakeDelivered = true;
 					if (deps.state.currentSessionId !== currentSessionId || deps.state.completionOwnerId !== completionOwnerId) return false;
 					try {
 						deps.pi.sendMessage(
@@ -5298,6 +5297,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							},
 							{ triggerTurn: true },
 						);
+						resultWriteFailureWakeDelivered = true;
 					} catch (sendError) {
 						console.error(`Failed to send workflow result write failure notification for '${workflowRunId}':`, sendError);
 					}
