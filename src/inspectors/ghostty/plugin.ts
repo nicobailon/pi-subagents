@@ -24,7 +24,13 @@ export function createGhosttyInspectorPlugin(deps: GhosttyPluginDeps = {}): Insp
 			const hostBundle = context.env.__CFBundleIdentifier?.trim();
 			if (hostBundle) return hostBundle === GHOSTTY_BUNDLE_ID;
 			// __CFBundleIdentifier 缺失(SSH/tmux 等非 GUI 宿主)时退回 osascript 探测 Ghostty app 可达。
-			return detectGhosttyApp(deps.runner);
+			// detectGhosttyApp 透传探测错误; 此处作为可用性谓词将探测失败归约为不可用
+			// (InspectorPlugin.available 契约为 boolean, 探测失败语义上即 "不可接管")。
+			try {
+				return await detectGhosttyApp(deps.runner);
+			} catch {
+				return false;
+			}
 		},
 		owns: () => false,
 		open: (context, launch, params) => openGhosttyInspector(context, launch, params, deps.runner),
