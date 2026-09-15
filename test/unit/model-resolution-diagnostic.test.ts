@@ -16,15 +16,15 @@ describe("child model resolution diagnostic", () => {
 		assert.equal(isChildModelResolutionFailure(undefined), false);
 	});
 
-	it("names the foreground ambient-extension rule, the model, and both remedies", () => {
+	it("names the foreground provider-inheritance rule, the model, and the remedies", () => {
 		const text = formatChildModelResolutionDiagnostic({
 			agent: "provider-model-worker",
 			model: "pengepul/commandcode/deepseek/deepseek-v4.1-flash",
 			host: "parent",
 		});
-		assert.match(text, /Agent 'provider-model-worker' ran as a foreground child, which never loads the parent's ambient extensions/);
-		assert.match(text, /If 'pengepul\/commandcode\/deepseek\/deepseek-v4\.1-flash' is served by a provider extension, that extension is not loaded for this child: agents that need models from a provider extension must run as background children \(`async: true`\)/);
-		assert.match(text, /must run as background children \(`async: true`\)/);
+		assert.match(text, /Agent 'provider-model-worker' ran as a foreground child, which never loads the parent's ambient extensions but inherits the providers they registered/);
+		assert.match(text, /If 'pengepul\/commandcode\/deepseek\/deepseek-v4\.1-flash' is served by a provider extension, that extension registered no such provider in the parent session/);
+		assert.doesNotMatch(text, /`async: true`/);
 		assert.match(text, /`subagentOnlyExtensions` or `extensions` in the agent frontmatter/);
 		assert.doesNotMatch(text, /background child without the ambient extensions/);
 		assert.doesNotMatch(text, /Capability ceiling/);
