@@ -56,6 +56,25 @@ describe("Ghostty inspector availability", () => {
 		const plugin = createGhosttyInspectorPlugin({ platform: "darwin", runner: runnerReturning("  \n") });
 		assert.equal(await plugin.available(ctx({ TERM_PROGRAM: "ghostty" })), false);
 	});
+
+	it("takes over when __CFBundleIdentifier is the Ghostty bundle", async () => {
+		const plugin = createGhosttyInspectorPlugin({ platform: "darwin", runner: runnerReturning("1.3.2") });
+		assert.equal(await plugin.available(ctx({ TERM_PROGRAM: "ghostty", __CFBundleIdentifier: "com.mitchellh.ghostty" })), true);
+	});
+
+	it("does not take over when __CFBundleIdentifier is a different host (cmux), even with a reachable Ghostty app", async () => {
+		// cmux 内嵌 Ghostty 内核但宿主 bundle 是 com.cmuxterm.app; 即便系统也装了独立 Ghostty,
+		// 也不应接管, 否则 AppleScript 会操作独立 Ghostty 的窗口而非当前 cmux 会话。
+		const plugin = createGhosttyInspectorPlugin({ platform: "darwin", runner: runnerReturning("1.3.2") });
+		assert.equal(await plugin.available(ctx({ TERM_PROGRAM: "ghostty", __CFBundleIdentifier: "com.cmuxterm.app" })), false);
+	});
+
+	it("falls back to the osascript probe when __CFBundleIdentifier is absent", async () => {
+		const ok = createGhosttyInspectorPlugin({ platform: "darwin", runner: runnerReturning("1.3.2") });
+		assert.equal(await ok.available(ctx({ TERM_PROGRAM: "ghostty" })), true);
+		const fail = createGhosttyInspectorPlugin({ platform: "darwin", runner: failingRunner(new Error("-1728")) });
+		assert.equal(await fail.available(ctx({ TERM_PROGRAM: "ghostty" })), false);
+	});
 });
 
 describe("Ghostty inspector open", () => {
