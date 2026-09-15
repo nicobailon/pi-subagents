@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { GhosttyRunner } from "../../src/inspectors/ghostty/actions.ts";
-import { detectGhosttyApp } from "../../src/inspectors/ghostty/actions.ts";
 import { createGhosttyInspectorPlugin } from "../../src/inspectors/ghostty/plugin.ts";
 import type { InspectorContext, InspectorLaunch, InspectorParams } from "../../src/inspectors/types.ts";
 
@@ -43,19 +42,17 @@ describe("Ghostty inspector availability", () => {
 		assert.equal(await plugin.available(ctx({})), false);
 	});
 
-	it("takes over when a real Ghostty app responds with a version", async () => {
-		const plugin = createGhosttyInspectorPlugin({ platform: "darwin", runner: runnerReturning("1.3.2\n") });
-		assert.equal(await plugin.available(ctx({ TERM_PROGRAM: "Ghostty" })), true);
-	});
-
-	it("does not take over when osascript fails (cmux with stale Ghostty registration, -1728)", async () => {
-		const plugin = createGhosttyInspectorPlugin({ platform: "darwin", runner: failingRunner(new Error("execution error: -1728")) });
-		assert.equal(await plugin.available(ctx({ TERM_PROGRAM: "ghostty" })), false);
-	});
-
-	it("does not take over when the app returns an empty version", async () => {
-		const plugin = createGhosttyInspectorPlugin({ platform: "darwin", runner: runnerReturning("  \n") });
-		assert.equal(await plugin.available(ctx({ TERM_PROGRAM: "ghostty" })), false);
+	it("does not take over without current-host identity even when Ghostty is reachable", async () => {
+		let calls = 0;
+		const plugin = createGhosttyInspectorPlugin({
+			platform: "darwin",
+			runner: async () => {
+				calls += 1;
+				return { stdout: "1.3.2\n", stderr: "" };
+			},
+		});
+		assert.equal(await plugin.available(ctx({ TERM_PROGRAM: "Ghostty" })), false);
+		assert.equal(calls, 0);
 	});
 
 	it("takes over when __CFBundleIdentifier is the Ghostty bundle", async () => {
@@ -70,27 +67,6 @@ describe("Ghostty inspector availability", () => {
 		assert.equal(await plugin.available(ctx({ TERM_PROGRAM: "ghostty", __CFBundleIdentifier: "com.cmuxterm.app" })), false);
 	});
 
-	it("falls back to the osascript probe when __CFBundleIdentifier is absent", async () => {
-		const ok = createGhosttyInspectorPlugin({ platform: "darwin", runner: runnerReturning("1.3.2") });
-		assert.equal(await ok.available(ctx({ TERM_PROGRAM: "ghostty" })), true);
-		const fail = createGhosttyInspectorPlugin({ platform: "darwin", runner: failingRunner(new Error("-1728")) });
-		assert.equal(await fail.available(ctx({ TERM_PROGRAM: "ghostty" })), false);
-	});
-});
-
-describe("detectGhosttyApp", () => {
-	it("returns true when the probe yields a non-empty version", async () => {
-		assert.equal(await detectGhosttyApp(runnerReturning("1.3.2")), true);
-	});
-
-	it("returns false when the app responds with an empty version", async () => {
-		assert.equal(await detectGhosttyApp(runnerReturning("  \n")), false);
-	});
-
-	it("propagates probe failures instead of swallowing them", async () => {
-		// preserve-error-signals: 超时/权限/osascript 报错等诊断信号必须透传, 不在此处吞成 false。
-		await assert.rejects(() => detectGhosttyApp(failingRunner(new Error("execution error: -1728"))), /-1728/);
-	});
 });
 
 describe("Ghostty inspector open", () => {

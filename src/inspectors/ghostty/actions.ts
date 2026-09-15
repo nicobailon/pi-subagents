@@ -51,22 +51,6 @@ function result(text: string, isError = false): AgentToolResult<Details> {
 
 const failureHint = "Ghostty inspector requires Ghostty 1.3+ and Automation permission for osascript.";
 
-/**
- * 探测名为 "Ghostty" 的应用是否可达并响应。
- *
- * `TERM_PROGRAM=ghostty` 不足以区分独立 Ghostty 与内嵌 Ghostty 内核的终端(如 cmux, 应用名是 cmux)。
- * 成功时返回 stdout 是否非空(空 version 视为不可用); 探测过程本身失败(超时/权限/osascript 报错)
- * 一律透传给调用方, 由可用性谓词决定是否归约, 不在此处吞掉诊断信号。
- */
-export async function detectGhosttyApp(runner: GhosttyRunner = defaultRunner): Promise<boolean> {
-	const output = await runner(["-e", 'tell application "Ghostty" to return version'], {
-		encoding: "utf8",
-		timeout: 3_000,
-		maxBuffer: 4 * 1024,
-	});
-	return output.stdout.trim().length > 0;
-}
-
 export async function openGhosttyInspector(
 	context: InspectorContext,
 	launch: InspectorLaunch,
