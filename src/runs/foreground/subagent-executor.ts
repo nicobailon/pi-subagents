@@ -30,7 +30,6 @@ import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
 import { applyWatchdogLaunchRules } from "../../watchdog/rules.ts";
 import { childWatchdogProgressForModel } from "../../watchdog/child-status.ts";
 import { normalizeParentModel, resolveEffectiveSubagentModel, resolveModelOrigin, resolveModelSelection, type ModelOrigin, type ParentModel } from "../shared/model-resolution.ts";
-import { getHostBuiltinToolNames } from "../shared/child-tool-plan.ts";
 import { projectChainOutputSchemas, resolveEffectiveOutputSchema } from "../shared/child-launch-plan.ts";
 import { formatRetainedChildren, listRetainedChildren } from "../background/retained-children.ts";
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
@@ -4016,7 +4015,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			remoteReads: foregroundMachine ? readsOverride : undefined,
 			permissions: deps.config.permissions,
 			runtimeSnapshotHost: deps.pi,
-			hostAvailableBuiltins: getHostBuiltinToolNames(deps.pi),
 			parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 			requiredExtensions,
 			llmIntentArbiter: createTaskMutationArbiter({ model: ctx.model, modelRegistry: ctx.modelRegistry, sessionId: ctx.sessionManager.getSessionId() }),

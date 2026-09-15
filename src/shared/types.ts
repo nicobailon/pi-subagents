@@ -2486,8 +2486,6 @@ export interface RunSyncOptions {
 	preferredModelProvider?: string;
 	/** Parent Pi event host used to snapshot runtime-registered MCP servers before child launch. */
 	runtimeSnapshotHost?: import("../runs/shared/mcp-direct-tool-allowlist.ts").McpRuntimeSnapshotHost;
-	/** Builtin tool names the host runtime provides; used to intersect agent-declared tools. */
-	hostAvailableBuiltins?: readonly string[];
 	/** Optional subagent model-scope enforcement. */
 	modelScope?: ModelScopeRule | ModelScopeRule[];
 	/** Skills to make available (overrides agent default if provided) */

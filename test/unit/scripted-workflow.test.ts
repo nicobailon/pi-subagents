@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { Worker } from "node:worker_threads";
-import { resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
+import { formatChildToolDiagnostic } from "../../src/runs/shared/tool-availability.ts";
 import { formatWorkflowJsonPreview, previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
 import { workflowChildSummary } from "../../src/workflows/workflow-child-summary.ts";
 import { preflightWorkflowWorktrees } from "../../src/runs/foreground/subagent-executor.ts";
@@ -918,26 +918,25 @@ describe("scripted workflow runtime", () => {
 		assert.equal(launches, 0);
 	});
 
-	it("classifies a review-lane missing tool contract as a failed child, not a completed review", async () => {
+	it("classifies a review lane whose child registry lacks repository tools as failed, not completed", async () => {
 		await assert.rejects(
 			runWorkflowScript({
 				script: `return await runs.run("review", { agent: "reviewer", task: "Review the diff" });`,
-				async launch(key) {
-					resolvePiLaunchToolPlan({
-						agentName: "reviewer",
-						tools: ["read", "grep", "find", "ls"],
-						hostAvailableBuiltins: [],
-					});
-					return { key, ok: true, output: "Unable to inspect the repository.", artifactPaths: [] };
+				async launch() {
+					throw new Error(formatChildToolDiagnostic({
+						agent: "reviewer",
+						required: ["read", "grep", "find", "ls"],
+						available: ["contact_supervisor"],
+						missing: ["read", "grep", "find", "ls"],
+					}));
 				},
 				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 			}),
 			(error: unknown) => {
 				assert.ok(error instanceof WorkflowScriptError);
-				assert.match(error.message, /Run 'review' failed: Agent 'reviewer': tool contract could not be satisfied/);
-				assert.match(error.message, /lane infrastructure failure, not a completed review\/scout result/);
+				assert.match(error.message, /Run 'review' failed: Agent 'reviewer' requested unavailable child tools: read, grep, find, ls\./);
 				assert.equal(error.partial.children[0]?.ok, false);
-				assert.match(error.partial.children[0]?.error ?? "", /tool contract could not be satisfied/);
+				assert.match(error.partial.children[0]?.error ?? "", /requested unavailable child tools/);
 				assert.equal(error.partial.trace.find((entry) => entry.key === "review" && entry.state === "failed")?.state, "failed");
 				const summary = workflowChildSummary({
 					parentToolCallId: "tool-call",

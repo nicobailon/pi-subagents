@@ -15,7 +15,6 @@ import { createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir, resolv
 import { deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, requestAsyncSteer } from "../../src/runs/background/control-channel.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
-import { getHostBuiltinToolNames } from "../../src/runs/shared/child-tool-plan.ts";
 import { SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION } from "../../src/shared/types.ts";
 import type { AsyncResultPayload, AsyncStatusPayload, MockPiCallRecord } from "../support/async-execution-fixture.ts";
 import {
@@ -1122,9 +1121,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const agent = makeAgent("extension-worker", { tools, subagentOnlyExtensions: [path.join(tempDir, "child-provider.ts")] });
 		fs.writeFileSync(agent.subagentOnlyExtensions![0]!, "export default function () {}\n");
 		mockPi.onCall({ output: "foreground done" });
-		const foreground = await runSync(tempDir, [agent], agent.name, "Inspect using fixture search", {
-			hostAvailableBuiltins: getHostBuiltinToolNames(host), acceptance: false,
-		});
+		const foreground = await runSync(tempDir, [agent], agent.name, "Inspect using fixture search", { acceptance: false });
 		assert.equal(foreground.exitCode, 0, foreground.error);
 		assert.deepEqual(mockPi.sessions[0]?.launch.tools, tools);
 		assert.deepEqual(mockPi.sessions[0]?.launch.runtime.requiredTools, tools);

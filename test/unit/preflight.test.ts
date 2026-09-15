@@ -1013,33 +1013,6 @@ Project prompt.
 		assert.equal(implicit.contract.context, "fresh");
 	});
 
-	it("fails a review/scout preflight when host pruning drops a permitted repository tool", async () => {
-		const cwd = path.join(tempDir, "repo-scout-host-prune");
-		fs.mkdirSync(cwd, { recursive: true });
-		writeAgent(path.join(cwd, ".pi", "agents", "scout.md"), `---
-name: scout
-description: Project scout
-tools:
-  - read
-  - grep
-  - find
-  - ls
----
-Project prompt.
-`);
-
-		const result = await resolveSubagentLaunchContract({
-			agent: "scout",
-			cwd,
-			hostAvailableBuiltins: [],
-		});
-		assert.equal(result.ok, false);
-		assert.equal(result.code, "denied_required_tool");
-		assert.match(result.message, /Agent 'scout': tool contract could not be satisfied/);
-		assert.match(result.message, /permitted required repository tools \[read, grep, find, ls\]/);
-		assert.match(result.message, /lane infrastructure failure, not a completed review\/scout result/);
-	});
-
 	it("fails closed when a capability ceiling denies read required for child skills", async () => {
 		const cwd = path.join(tempDir, "repo");
 		fs.mkdirSync(cwd, { recursive: true });

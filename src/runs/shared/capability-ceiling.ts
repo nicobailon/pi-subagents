@@ -30,7 +30,6 @@ export interface SubagentCapabilityAudit {
 	agentAllowed: boolean;
 	agentRestrictionSources?: string[];
 	/** Builtin tools declared but unavailable on the host runtime. */
-	unavailableHostBuiltins?: string[];
 }
 
 export interface RegisterSubagentCapabilityCeilingOptions {

@@ -18,7 +18,6 @@ export interface RunnerChildLaunchContext {
 	runFanoutBudget?: BuildInProcessChildLaunchInput["runFanoutBudget"];
 	capabilityCeiling?: BuildInProcessChildLaunchInput["capabilityCeiling"];
 	inheritedChildRuntime?: InheritedChildRuntime;
-	hostAvailableBuiltins?: readonly string[];
 }
 
 export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChildLaunchContext, attempt: {
@@ -85,7 +84,6 @@ export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChil
 		thinkingCeiling: step.thinkingCeiling,
 		maxSubagentDepth: step.maxSubagentDepth,
 		inherited: ctx.inheritedChildRuntime,
-		hostAvailableBuiltins: ctx.hostAvailableBuiltins,
 		host: "runner",
 	});
 }

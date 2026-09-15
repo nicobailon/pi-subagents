@@ -119,13 +119,6 @@ export interface BuildInProcessChildLaunchInput {
 	 * them and exposes the child environment external extensions read.
 	 */
 	host: "parent" | "runner";
-	/**
-	 * Pi core tool names the host runtime provides. When set, child tool plans
-	 * intersect known core slots with this set; declared non-core names remain
-	 * for child startup validation. Review/scout lanes fail closed when a requested,
-	 * still-permitted repository inspection tool is missing from that set.
-	 */
-	hostAvailableBuiltins?: readonly string[];
 }
 
 export interface InProcessChildCapture {
@@ -208,7 +201,6 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		agentName: input.childAgentName,
 		permissionRules: input.permissionRules,
 		runtimeSnapshotHost: input.runtimeSnapshotHost,
-		hostAvailableBuiltins: input.hostAvailableBuiltins,
 	});
 
 	const inherited = input.inherited;

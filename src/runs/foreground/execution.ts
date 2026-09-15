@@ -426,7 +426,6 @@ async function runSingleAttempt(
 		thinkingCeiling: options.thinkingCeiling,
 		maxSubagentDepth: options.maxSubagentDepth,
 		runtimeSnapshotHost: options.runtimeSnapshotHost,
-		hostAvailableBuiltins: options.hostAvailableBuiltins,
 		inherited: options.childRuntime,
 		host: "parent",
 	});

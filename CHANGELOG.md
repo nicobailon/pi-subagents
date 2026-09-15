@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- A parent session's own `--tools` allowlist no longer limits which tools its children may hold. Pi filters a session's tool registry by that allowlist, so predicting a child's tools from the parent read a narrow dispatcher session as a runtime without `read`, `bash`, or `grep`, stripped those tools from every child, and compounded at each hop. Children are separate sessions that build their own tools, so the prediction is gone: a child now launches with the tools its agent declares and fails on its own registry, before its first model call, when one is genuinely missing. Thanks to [@carlesba](https://github.com/carlesba) for #2289.
 - The Ghostty inspector no longer takes over when `TERM_PROGRAM=ghostty` comes from a terminal that embeds the Ghostty kernel (such as cmux) instead of the standalone Ghostty app. Availability now requires the macOS host bundle id (`__CFBundleIdentifier`) to identify Ghostty itself; absent or different host identity declines to the `inspector.command` hint instead of targeting an unrelated Ghostty window or emitting `-1728`/`-2741` AppleScript errors. Thanks to [@wangpi26](https://github.com/wangpi26) for #2281.
 - Keep optional global package-root discovery silent when the package manager is unavailable, so a host without `npm` no longer prints `/bin/sh: npm: command not found` during startup. Thanks to [@PhrZer](https://github.com/PhrZer) for #2287.
 
