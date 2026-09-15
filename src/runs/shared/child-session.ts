@@ -142,17 +142,15 @@ export type ParentProviderRegistry = Pick<ModelRuntimeInstance, "getRegisteredPr
 
 let parentProviders: ParentProviderRegistry | undefined;
 
-/** The host's model registry, whose extension-registered providers a child without ambient extensions inherits. */
+/** The host's model registry, whose extension-registered providers a child without ambient extensions inherits before flushing its own, which take precedence. */
 export function setParentProviderRegistry(registry: ParentProviderRegistry | undefined): void {
 	parentProviders = registry;
 }
 
 async function inheritParentProviders(modelRuntime: ModelRuntimeInstance, onError: ((error: ChildSessionExtensionError) => void) | undefined): Promise<void> {
 	if (!parentProviders) return;
-	const known = new Set(modelRuntime.getRegisteredProviderIds());
 	let registered = false;
 	for (const providerId of parentProviders.getRegisteredProviderIds()) {
-		if (known.has(providerId)) continue;
 		try {
 			const native = parentProviders.getRegisteredNativeProvider(providerId);
 			const config = native ? undefined : parentProviders.getRegisteredProviderConfig(providerId);
@@ -164,7 +162,11 @@ async function inheritParentProviders(modelRuntime: ModelRuntimeInstance, onErro
 			onError?.({ extensionPath: `<parent-provider:${providerId}>`, event: "register_provider", error });
 		}
 	}
-	if (registered) await modelRuntime.refresh({ allowNetwork: false });
+	try {
+		if (registered) await modelRuntime.refresh({ allowNetwork: false });
+	} catch (error) {
+		onError?.({ extensionPath: "<parent-provider:refresh>", event: "register_provider", error });
+	}
 }
 
 const CHILD_PROMPT_RUNTIME_EXTENSION_PATH = "<inline:pi-subagents:prompt-runtime>";
@@ -286,8 +288,8 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				const loadErrors = requiredPaths.size > 0
 					? loader.getExtensions().errors.filter(({ path }) => requiredPaths.has(path)) : [];
 				if (loadErrors.length > 0) throw new Error(`Required child extension failed to load: ${loadErrors.map(({ path, error }) => `${path}: ${error}`).join("; ")}`);
-				await flushQueuedProviderRegistrations(loader, modelRuntime, launch.onExtensionError, requiredPaths);
 				if (!launch.ambientExtensions) await inheritParentProviders(modelRuntime, launch.onExtensionError);
+				await flushQueuedProviderRegistrations(loader, modelRuntime, launch.onExtensionError, requiredPaths);
 				const sessionManager = launch.storage.kind === "file"
 					? pi.SessionManager.open(launch.storage.sessionFile, undefined, launch.cwd)
 					: launch.storage.kind === "dir"

@@ -34,26 +34,45 @@ function fakePi(runtime: Record<string, unknown>, onResolve: () => void): PiCodi
 describe("default factory parent provider inheritance", () => {
 	afterEach(() => setParentProviderRegistry(undefined));
 
-	it("registers the parent's extension providers before resolving a child without ambient extensions", async () => {
+	it("registers the parent's providers, including overrides of ids the child already knows, before resolving a child without ambient extensions", async () => {
 		const calls: string[] = [];
 		let refreshed = false;
 		const bifrost = { baseUrl: "https://bifrost.example", api: "openai-completions", models: [{ id: "gemini" }] };
+		const anthropicOverride = { baseUrl: "https://proxy.example", api: "anthropic", models: [] };
 		const nativeProvider = { id: "native-router" };
+		const parentConfig: Record<string, unknown> = { bifrost, anthropic: anthropicOverride };
 		setParentProviderRegistry({
-			getRegisteredProviderIds: () => ["bifrost", "native-router", "already-known"],
-			getRegisteredProviderConfig: (id) => (id === "bifrost" ? bifrost : undefined),
+			getRegisteredProviderIds: () => ["bifrost", "native-router", "anthropic"],
+			getRegisteredProviderConfig: (id) => parentConfig[id],
 			getRegisteredNativeProvider: (id) => (id === "native-router" ? nativeProvider : undefined),
 		} as never);
 		const runtime = {
-			getRegisteredProviderIds: () => ["already-known"],
-			registerProvider: (id: string, config: unknown) => { calls.push(`config:${id}`); assert.equal(config, bifrost); },
+			registerProvider: (id: string, config: unknown) => { calls.push(`config:${id}`); assert.equal(config, parentConfig[id]); },
 			registerNativeProvider: (provider: unknown) => { calls.push("native"); assert.equal(provider, nativeProvider); },
 			refresh: async () => { refreshed = true; },
 		};
 		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => fakePi(runtime, () => calls.push("resolve")) });
 		await assert.rejects(() => factory.create(launch(false)), /stop/);
-		assert.deepEqual(calls, ["config:bifrost", "native", "resolve"]);
+		assert.deepEqual(calls, ["config:bifrost", "native", "config:anthropic", "resolve"]);
 		assert.equal(refreshed, true);
+	});
+
+	it("reports a refresh failure without aborting model resolution", async () => {
+		const errors: string[] = [];
+		let resolved = false;
+		setParentProviderRegistry({
+			getRegisteredProviderIds: () => ["bifrost"],
+			getRegisteredProviderConfig: () => ({ models: [] }),
+			getRegisteredNativeProvider: () => undefined,
+		} as never);
+		const runtime = {
+			registerProvider: () => {},
+			refresh: async () => { throw new Error("offline refresh failed"); },
+		};
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => fakePi(runtime, () => { resolved = true; }) });
+		await assert.rejects(() => factory.create({ ...launch(false), onExtensionError: ({ extensionPath, error }) => errors.push(`${extensionPath}: ${(error as Error).message}`) }), /stop/);
+		assert.deepEqual(errors, ["<parent-provider:refresh>: offline refresh failed"]);
+		assert.equal(resolved, true);
 	});
 
 	it("leaves a child with ambient extensions to register providers itself", async () => {
