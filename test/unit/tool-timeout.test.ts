@@ -68,7 +68,7 @@ describe("effectiveToolTimeoutMs", () => {
 		}
 		assert.equal(defaultToolTimeoutMs("bash"), undefined);
 		assert.equal(effectiveToolTimeoutMs("bash", undefined), undefined);
-		assert.deepEqual([...DEFAULT_FAST_TOOL_TIMEOUT_TOOLS].sort(), ["edit", "find", "grep", "ls", "read", "structured_output", "write"]);
+		assert.deepEqual([...DEFAULT_FAST_TOOL_TIMEOUT_TOOLS].sort(), ["agent_memory_append", "edit", "find", "grep", "ls", "read", "structured_output", "write"]);
 	});
 
 	it("lets an explicit configured timeout win for non-exempt tools", () => {

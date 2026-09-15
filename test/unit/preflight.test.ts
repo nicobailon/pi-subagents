@@ -7,6 +7,10 @@ import { registerSubagentCapabilityCeiling, resolveSubagentCapabilityCeiling } f
 import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
 import { resolveSubagentLaunchContract, SUBAGENT_LAUNCH_CONTRACT_VERSION } from "../../src/api/preflight.ts";
 import { clearSkillCache } from "../../src/agents/skills.ts";
+import { discoverAgents } from "../../src/agents/agents.ts";
+import { buildEffectiveSystemPrompt } from "../../src/runs/shared/effective-system-prompt.ts";
+import { resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
+import { resolveLaunchBinding } from "../../src/shared/launch-contract.ts";
 import { computeMcpServerHash } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
 import { TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
 
@@ -168,6 +172,49 @@ Project prompt.
 		} finally {
 			handle.dispose();
 		}
+	});
+
+	it("binds memory guidance from the finalized append tool plan", async () => {
+		const cwd = path.join(tempDir, "memory-repo");
+		fs.mkdirSync(path.join(cwd, ".git"), { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "memory-worker.md"), `---
+name: memory-worker
+description: Restricted memory worker
+tools:
+  - write
+excludeTools:
+  - agent_memory_append
+memory: { scope: project, path: memory-worker }
+---
+Use configured memory.
+`);
+		const task = "Inspect without updating memory.";
+		const agent = discoverAgents(cwd).agents.find((candidate) => candidate.name === "memory-worker");
+		assert.ok(agent);
+		const result = await resolveSubagentLaunchContract({ agent: agent.name, cwd, task, intercomBridge: { mode: "off" } });
+		assert.equal(result.ok, true);
+		if (!result.ok) return;
+		const toolPlan = resolvePiLaunchToolPlan({
+			tools: agent.tools,
+			excludeTools: agent.excludeTools,
+			allowNestedSubagents: agent.allowNestedSubagents,
+			extensions: agent.extensions,
+			subagentOnlyExtensions: agent.subagentOnlyExtensions,
+			mcpDirectTools: agent.mcpDirectTools,
+			cwd,
+			agentMemoryAppend: true,
+			agentName: agent.name,
+		});
+		assert.equal(toolPlan.internalTools.includes("agent_memory_append"), false);
+		const expected = resolveLaunchBinding({
+			agent,
+			task,
+			systemPrompt: buildEffectiveSystemPrompt({ agent, resolvedSkills: [], cwd, agentMemoryAppendAvailable: false }),
+			skills: [],
+			toolPlan,
+			outputMode: "inline",
+		});
+		assert.equal(result.contract.launchContractDigest, expected.launchContractDigest);
 	});
 
 	it("projects concurrent children under distinct run-id roots for an explicit sessionDir", async () => {

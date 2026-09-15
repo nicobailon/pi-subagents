@@ -7,6 +7,7 @@ import type { ResolvedWaitToolConfig } from "../background/wait-config.ts";
 import type { ChildToolDiagnostic } from "./tool-availability.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "./capability-ceiling.ts";
 import type { RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
+import type { AgentMemoryAppendTarget } from "../../agents/agent-memory.ts";
 
 /**
  * Set in processes that host child sessions (the async runner). The extension
@@ -94,6 +95,7 @@ export interface ChildRuntimeConfig {
 	/** Installation-local downward owner-channel barrier; never inherited or serialized into descendants. */
 	hasPendingSupervisorRequest?: () => boolean;
 	structuredOutput?: ChildStructuredOutput;
+	agentMemoryAppend?: AgentMemoryAppendTarget;
 	requiredTools?: string[];
 	mcpDirectTools?: string[];
 	/** Receives the tool-availability diagnostic at every agent start; undefined when every required tool is present. */

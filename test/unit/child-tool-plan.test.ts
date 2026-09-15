@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import { getHostBuiltinToolNames, resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
 import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
 import { MCP_RUNTIME_SNAPSHOT_EVENT, MCP_RUNTIME_SNAPSHOT_VERSION, type McpRuntimeSnapshotHost } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
+import { AGENT_MEMORY_APPEND_TOOL } from "../../src/agents/agent-memory.ts";
 
 /** A parent whose pi-mcp-adapter answers snapshot requests for one runtime-only server. */
 function runtimeSnapshotHost(serverName: string): McpRuntimeSnapshotHost {
@@ -27,6 +28,77 @@ describe("child tool plan", () => {
 				() => resolvePiLaunchToolPlan({ tools: ["read"], mcpDirectTools: ["runtime-only/search"], cwd, agentName: "browser", runtimeSnapshotHost: runtimeSnapshotHost("runtime-only") }),
 				/cannot be provided to in-process children; MCP tools must come from an ambient adapter extension in a background child/,
 			);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("agent memory append tool plan", () => {
+	it("adds the internal append tool only when a write capability survives policy", () => {
+		const writer = resolvePiLaunchToolPlan({ tools: ["read", "write"], agentMemoryAppend: true });
+		assert.deepEqual(writer.internalTools, [AGENT_MEMORY_APPEND_TOOL]);
+		assert.deepEqual(writer.effectiveToolAllowlist, ["read", "write", AGENT_MEMORY_APPEND_TOOL]);
+		assert.deepEqual(writer.requiredChildTools, ["read", "write", AGENT_MEMORY_APPEND_TOOL]);
+		assert.equal(writer.runtimeExtensions.some((extension) => extension.endsWith("agent-memory-runtime.ts")), false);
+		const asked = resolvePiLaunchToolPlan({ tools: ["write"], agentMemoryAppend: true, permissionRules: { write: "ask" } });
+		assert.equal(asked.agentMemoryAppendPermission, "ask");
+		assert.equal(asked.internalTools.includes(AGENT_MEMORY_APPEND_TOOL), true);
+
+		for (const plan of [
+			resolvePiLaunchToolPlan({ tools: ["read"], agentMemoryAppend: true }),
+			resolvePiLaunchToolPlan({ tools: ["read", "write"], agentMemoryAppend: true, excludeTools: [AGENT_MEMORY_APPEND_TOOL] }),
+			resolvePiLaunchToolPlan({ agentMemoryAppend: true, excludeTools: ["edit", "write", "bash"] }),
+			resolvePiLaunchToolPlan({ tools: ["write"], agentMemoryAppend: true, permissionRules: { write: "deny" } }),
+			resolvePiLaunchToolPlan({ tools: ["read", "write"], agentMemoryAppend: true, capabilityCeiling: { version: 1, allowedTools: ["read"], sources: ["test"] } }),
+		]) {
+			assert.equal(plan.internalTools.includes(AGENT_MEMORY_APPEND_TOOL), false);
+		}
+	});
+
+	it("excludes the local append tool from pane-native remote Pi launches", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-memory-machine-"));
+		try {
+			const launch = buildInProcessChildLaunch({
+				host: "parent",
+				machine: { provider: "herdr", id: "machine", target: "host", cwd },
+				cwd,
+				childAgentName: "memory-agent",
+				childIndex: 0,
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritGlobalContext: false,
+				inheritSkills: false,
+				tools: ["write"],
+				agentMemoryAppend: { rootDir: path.join(cwd, ".pi", "agent-memory"), scopedPath: "memory-agent" },
+			});
+			assert.equal(launch.config.agentMemoryAppend, undefined);
+			assert.equal(launch.toolPlan.effectiveToolAllowlist.includes(AGENT_MEMORY_APPEND_TOOL), false);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("carries the append target on the existing prompt runtime", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-memory-hook-"));
+		try {
+			const launch = buildInProcessChildLaunch({
+				host: "parent",
+				cwd,
+				childAgentName: "memory-agent",
+				childIndex: 0,
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritGlobalContext: false,
+				inheritSkills: false,
+				tools: ["write"],
+				permissionRules: { write: "ask" },
+				agentMemoryAppend: { rootDir: path.join(cwd, ".pi", "agent-memory"), scopedPath: "memory-agent" },
+			});
+			assert.deepEqual(launch.config.agentMemoryAppend, { rootDir: path.join(cwd, ".pi", "agent-memory"), scopedPath: "memory-agent" });
+			assert.deepEqual(launch.config.permissions?.rules, { write: "ask", [AGENT_MEMORY_APPEND_TOOL]: "ask" });
+			assert.equal(launch.session.hooks.some((hook) => hook.name === "pi-subagents:agent-memory"), false);
+			assert.ok(launch.toolPlan.effectiveToolAllowlist.includes(AGENT_MEMORY_APPEND_TOOL));
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}

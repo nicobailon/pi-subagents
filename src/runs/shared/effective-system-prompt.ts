@@ -1,5 +1,5 @@
 import type { AgentConfig } from "../../agents/agents.ts";
-import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
+import { buildAgentMemoryInjection, restrictAgentMemoryWrites } from "../../agents/agent-memory.ts";
 import { appendAgentRefinementOverlay } from "../../agents/agent-refinements.ts";
 import { buildSkillInjection } from "../../agents/skills.ts";
 import { injectOutputPathSystemPrompt } from "./single-output.ts";
@@ -10,6 +10,8 @@ export interface EffectiveSystemPromptInput {
 	resolvedSkills: Parameters<typeof buildSkillInjection>[0];
 	/** Directory that scopes memory and refinement lookups. */
 	cwd: string;
+	/** False for runners that cannot receive the local append-only memory tool. */
+	agentMemoryAppendAvailable?: boolean;
 	/** Omit when the caller injects the output path through another channel. */
 	outputPath?: string;
 }
@@ -26,7 +28,8 @@ function appendSection(prompt: string, section: string): string {
 export function buildEffectiveSystemPrompt(input: EffectiveSystemPromptInput): string {
 	let prompt = input.agent.systemPrompt?.trim() ?? "";
 	if (input.resolvedSkills.length > 0) prompt = appendSection(prompt, buildSkillInjection(input.resolvedSkills));
-	const memoryInjection = buildAgentMemoryInjection(input.agent, input.cwd);
+	const builtMemory = buildAgentMemoryInjection(input.agent, input.cwd);
+	const memoryInjection = input.agentMemoryAppendAvailable === false ? restrictAgentMemoryWrites(builtMemory) : builtMemory;
 	if (memoryInjection) prompt = appendSection(prompt, memoryInjection);
 	prompt = appendAgentRefinementOverlay(prompt, { cwd: input.cwd, agentName: input.agent.name });
 	return injectOutputPathSystemPrompt(prompt, input.outputPath, input.agent);

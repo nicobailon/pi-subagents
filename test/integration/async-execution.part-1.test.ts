@@ -402,6 +402,38 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.launchContractDigest, preflight.contract.launchContractDigest);
 	});
 
+	it("keeps writable memory in preflight, startup, status, and result launch digests", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const agentName = `memory-async-${Date.now().toString(36)}`;
+		const task = "Append durable agent memory.";
+		const agentPath = path.join(tempDir, ".pi", "agents", `${agentName}.md`);
+		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+		fs.writeFileSync(agentPath, `---\nname: ${agentName}\ndescription: Memory writer\ntools:\n  - write\nmemory: { scope: project, path: ${agentName} }\ncompletionGuard: false\n---\nUse the configured memory tool.\n`, "utf8");
+		const discovered = discoverAgents(tempDir).agents.find((agent) => agent.name === agentName);
+		assert.ok(discovered);
+		const preflight = await resolveSubagentLaunchContract({ agent: agentName, cwd: tempDir, task, runId: "memory-async" });
+		assert.equal(preflight.ok, true);
+		if (!preflight.ok) return;
+		assert.ok(preflight.contract.tools.internalTools.includes("agent_memory_append"));
+
+		mockPi.onCall({ output: "memory async done" });
+		// SAFETY: this executor invocation uses the async single-agent input shape asserted immediately below.
+		const launch = await makeAsyncExecutor([discovered]).execute(
+			"memory-async-launch",
+			{ agent: agentName, task, async: true, runId: "memory-async", acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		) as AsyncExecutionResult;
+		assert.equal(launch.isError, undefined, launch.content?.[0]?.text);
+		assert.equal(launch.details.launchContractDigest, preflight.contract.launchContractDigest);
+		assert.ok(launch.details.asyncId);
+		const payload = await readAsyncPayload(launch.details.asyncId);
+		assert.equal(payload.launchContractDigest, preflight.contract.launchContractDigest);
+		assert.equal(payload.results[0]?.launchContractDigest, preflight.contract.launchContractDigest);
+		const status = await waitForAsyncState(launch.details.asyncId, (value) => value.state === "complete");
+		assert.equal(status.steps?.[0]?.launchContractDigest, preflight.contract.launchContractDigest);
+	});
+
 	it("persists the actual launch digest in async status and result metadata", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			output: "digest-bound async done",

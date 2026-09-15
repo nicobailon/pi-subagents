@@ -1,3 +1,5 @@
+import { AGENT_MEMORY_APPEND_TOOL } from "../../agents/agent-memory.ts";
+
 export const TOOL_TIMEOUT_ENV = "PI_SUBAGENT_TOOL_TIMEOUT_MS";
 
 /** Maximum delay a Node.js timer accepts without overflow. */
@@ -13,6 +15,7 @@ export const DEFAULT_FAST_TOOL_TIMEOUT_TOOLS = new Set([
 	"edit",
 	"write",
 	"structured_output",
+	AGENT_MEMORY_APPEND_TOOL,
 ]);
 
 /** Tools whose normal job can be to wait for a person or another run. */

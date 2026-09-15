@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it } from "node:test";
 import { createChildHooks } from "../../src/runs/shared/child-hooks.ts";
 import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
 import { childSupervisorMetadata, evaluateChildToolDiagnostic, type ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
+import { buildAgentMemoryInjection } from "../../src/agents/agent-memory.ts";
+import type { AgentConfig } from "../../src/agents/agents.ts";
 
 function baseConfig(overrides: Partial<ChildRuntimeConfig> = {}): ChildRuntimeConfig {
 	return { fanoutChild: false, depth: 1, waitTool: { enabled: true }, fast: false, ...overrides };
@@ -30,11 +35,40 @@ function fakePi(available: string[]): FakePi {
 	return { handlers, tools, api };
 }
 
+function installHooks(hooks: ReturnType<typeof createChildHooks>, pi: FakePi): void {
+	// SAFETY: fakePi implements the extension methods used by child hooks in this test.
+	const api = pi.api as never;
+	for (const hook of hooks) hook.factory(api);
+}
+
 describe("child runtime config", () => {
 	it("creates the prompt runtime hook always and the fast and fanout hooks on demand", () => {
 		assert.deepEqual(createChildHooks(baseConfig()).map((hook) => hook.name), ["pi-subagents:prompt-runtime"]);
 		assert.deepEqual(createChildHooks(baseConfig({ fast: true })).map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:fast-mode"]);
 		assert.deepEqual(createChildHooks(baseConfig({ fanoutChild: true })).map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:fanout-child"]);
+	});
+
+	it("registers agent memory append through the existing prompt runtime", () => {
+		const pi = fakePi([]);
+		installHooks(createChildHooks(baseConfig({ agentMemoryAppend: { rootDir: "/tmp/agent-memory", scopedPath: "worker" } })), pi);
+		assert.equal(pi.tools.some((tool) => tool.name === "agent_memory_append"), true);
+	});
+
+	it("downgrades memory guidance when the finalized runtime has no append target", async () => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-memory-guidance-"));
+		try {
+			fs.mkdirSync(path.join(project, ".pi", "agent-memory", "worker"), { recursive: true });
+			fs.writeFileSync(path.join(project, ".pi", "agent-memory", "worker", "MEMORY.md"), "existing\n");
+			const agent: AgentConfig = { name: "worker", description: "worker", source: "project", filePath: "worker.md", systemPromptMode: "replace", inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false, tools: ["write"], memory: { scope: "project", path: "worker" } };
+			const pi = fakePi([]);
+			installHooks(createChildHooks(baseConfig({ inheritProjectContext: true })), pi);
+			// SAFETY: this registered before_agent_start handler returns only the documented optional systemPrompt rewrite.
+			const rewritten = await pi.handlers.get("before_agent_start")?.[0]?.({ systemPrompt: buildAgentMemoryInjection(agent, project) }) as { systemPrompt: string } | undefined;
+			assert.match(rewritten?.systemPrompt ?? "", /read-only, role-specific memory scope/);
+			assert.doesNotMatch(rewritten?.systemPrompt ?? "", /use agent_memory_append/);
+		} finally {
+			fs.rmSync(project, { recursive: true, force: true });
+		}
 	});
 
 	it("provides the coordinator reply tool before agent_start without granting it to leaves", async () => {
@@ -45,7 +79,7 @@ describe("child runtime config", () => {
 				inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
 			});
 			const pi = fakePi([]);
-			for (const hook of launch.session.hooks) hook.factory(pi.api as never);
+			installHooks(launch.session.hooks, pi);
 			const ctx = { sessionManager: { getSessionId: () => "coordinator-B", getSessionFile: () => "/sessions/B.jsonl" } };
 			try {
 				for (const handler of pi.handlers.get("session_start") ?? []) await handler({}, ctx);
@@ -73,7 +107,7 @@ describe("child runtime config", () => {
 			inheritSkills: true,
 		});
 		const pi = fakePi(["read"]);
-		for (const hook of createChildHooks(config)) hook.factory(pi.api as never);
+		installHooks(createChildHooks(config), pi);
 
 		assert.throws(() => pi.handlers.get("agent_start")?.[0]?.({}), /Agent 'config-agent' requested unavailable child tools: fixture_search/);
 		assert.deepEqual(diagnostics, [{ agent: "config-agent", required: ["read", "fixture_search"], available: ["read", "bg_wait", "structured_output"], missing: ["fixture_search"] }]);

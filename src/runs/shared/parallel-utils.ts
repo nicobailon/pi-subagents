@@ -1,3 +1,5 @@
+import type { AgentMemoryAppendTarget } from "../../agents/agent-memory.ts";
+
 export type ResolvedRunnerConfig = import("../../shared/types.ts").AgentRunnerConfig;
 
 export interface RunnerSubagentStep {
@@ -75,6 +77,7 @@ export interface RunnerSubagentStep {
 	waitToolEnabled?: boolean;
 	waitToolDefaultTimeoutMs?: number;
 	structuredOutput?: import("./structured-output.ts").StructuredOutputRuntime;
+	agentMemoryAppend?: AgentMemoryAppendTarget;
 	structuredOutputSchema?: import("../../shared/types.ts").JsonSchemaObject;
 	agentContract?: import("../../shared/types.ts").AgentContract;
 	definitionDigest?: string;

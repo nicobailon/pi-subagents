@@ -20,6 +20,8 @@ import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../watchdog/types.ts";
 import { inheritedNestedRouteOf } from "./nested-events.ts";
 import { registerWaitTool } from "../background/wait-tool.ts";
 import { drainOutstandingWork } from "../background/auto-drain.ts";
+import { restrictAgentMemoryWrites } from "../../agents/agent-memory.ts";
+import { registerAgentMemoryRuntime } from "./agent-memory-runtime.ts";
 import {
 	childSupervisorMetadata,
 	evaluateChildToolDiagnostic,
@@ -451,6 +453,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 	registerRuntimeExtensionAcknowledgements(pi, config.runtimeAcknowledgements);
 	registerPermissionGate(pi, config.permissions, config.childWatchdog);
 	registerToolBudget(pi, config.toolBudget);
+	if (config.agentMemoryAppend) registerAgentMemoryRuntime(pi, config.agentMemoryAppend);
 	registerChildWatchdog(pi, config.childWatchdog, config.watchdogStatus);
 	const waitState = config.runtimeState ?? {
 		baseCwd: "",
@@ -529,9 +532,9 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 
 		const { inheritProjectContext, inheritGlobalContext, inheritSkills } = config;
 		const fanoutChild = config.fanoutChild;
-		let rewritten = event.systemPrompt;
+		let rewritten = config.agentMemoryAppend ? event.systemPrompt : restrictAgentMemoryWrites(event.systemPrompt);
 		if (inheritProjectContext !== undefined || inheritGlobalContext !== undefined || inheritSkills !== undefined || fanoutChild) {
-			rewritten = rewriteSubagentPrompt(event.systemPrompt, {
+			rewritten = rewriteSubagentPrompt(rewritten, {
 				inheritProjectContext: inheritProjectContext ?? true,
 				inheritGlobalContext: inheritGlobalContext ?? true,
 				inheritSkills: inheritSkills ?? true,

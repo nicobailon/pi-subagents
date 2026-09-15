@@ -37,6 +37,7 @@ import type { ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import type { ChildSessionLaunch, ChildSessionStorage } from "./child-session.ts";
 import type { ArbiterModelContext } from "./llm-intent-arbiter.ts";
 import { resolveRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
+import { AGENT_MEMORY_APPEND_TOOL, type AgentMemoryAppendTarget } from "../../agents/agent-memory.ts";
 
 /** Environment variable pi-mcp-adapter reads for the tools a child may expose. */
 export const MCP_DIRECT_TOOLS_ENV = "MCP_DIRECT_TOOLS";
@@ -97,6 +98,7 @@ export interface BuildInProcessChildLaunchInput {
 	nestedRoute?: { rootRunId: string; eventSink: string; controlInbox: string; capabilityToken: string };
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	structuredOutput?: StructuredOutputRuntime;
+	agentMemoryAppend?: AgentMemoryAppendTarget;
 	fast?: boolean;
 	toolBudget?: ResolvedToolBudget;
 	permissionRules?: PermissionRules;
@@ -201,6 +203,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		cwd: input.cwd,
 		requireReadTool: input.requireReadTool,
 		structuredOutput: Boolean(input.structuredOutput),
+		agentMemoryAppend: Boolean(input.agentMemoryAppend && !input.machine),
 		fast: input.fast,
 		model: input.model,
 		capabilityCeiling: input.capabilityCeiling,
@@ -223,8 +226,12 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 	];
 	const nestedRoute = fanout ? (input.nestedRoute ?? inheritedRoute) : undefined;
 	const childDepth = resolveChildDepth(input.maxSubagentDepth, inherited);
-	const permissions = input.permissionRules && Object.keys(input.permissionRules).length > 0
-		? { rules: input.permissionRules, ...(input.permissionAuditPath ? { auditPath: input.permissionAuditPath } : {}) }
+	const effectivePermissionRules = { ...(input.permissionRules ?? {}) };
+	if (toolPlan.agentMemoryAppendPermission && toolPlan.agentMemoryAppendPermission !== "allow") {
+		effectivePermissionRules[AGENT_MEMORY_APPEND_TOOL] = toolPlan.agentMemoryAppendPermission;
+	}
+	const permissions = Object.keys(effectivePermissionRules).length > 0
+		? { rules: effectivePermissionRules, ...(input.permissionAuditPath ? { auditPath: input.permissionAuditPath } : {}) }
 		: undefined;
 	let supervisorDir: string | undefined;
 	if (input.orchestratorIntercomTarget && input.parentSessionId && input.runId) {
@@ -233,6 +240,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		fs.mkdirSync(path.join(supervisorDir, "replies"), { recursive: true });
 	}
 	const thinkingCeiling = intersectThinkingCeilings(input.thinkingCeiling, inherited?.thinkingCeiling);
+	const agentMemoryAppend = toolPlan.internalTools.includes(AGENT_MEMORY_APPEND_TOOL) ? input.agentMemoryAppend : undefined;
 
 	let structuredValue: unknown;
 	let structuredAcceptanceReport: unknown;
@@ -289,6 +297,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		...(toolPlan.effectiveMcpTools.length > 0 ? { mcpDirectTools: toolPlan.effectiveMcpTools } : {}),
 		fast: input.fast === true,
 	};
+	if (agentMemoryAppend) config.agentMemoryAppend = agentMemoryAppend;
 	const capturedHooks = createCapturedChildHooks(config, input.host === "runner");
 
 	const extensionPaths = toolPlan.extensionArgs.filter((extensionPath) => !isSubagentRuntimeExtensionPath(extensionPath));

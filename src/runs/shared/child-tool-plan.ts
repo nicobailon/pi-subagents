@@ -21,8 +21,9 @@ import {
 } from "../../shared/types.ts";
 import { THINKING_LEVELS } from "../../shared/model-info.ts";
 import { getAgentDir } from "../../shared/utils.ts";
-import type { PermissionRules } from "./permissions.ts";
+import { permissionDecision, type PermissionDecision, type PermissionRules } from "./permissions.ts";
 import { snapshotRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
+import { AGENT_MEMORY_APPEND_TOOL } from "../../agents/agent-memory.ts";
 import {
 	capabilityCeilingAgentRestrictionSources,
 	intersectSubagentCapabilityCeilings,
@@ -172,6 +173,8 @@ export interface ResolvePiLaunchToolPlanInput {
 	mcpDirectTools?: string[];
 	cwd?: string;
 	requireReadTool?: boolean;
+	/** Add the internal append-only tool when this child has writable agent memory. */
+	agentMemoryAppend?: boolean;
 	structuredOutput?:
 		| boolean
 		| {
@@ -209,6 +212,7 @@ export interface PiLaunchToolPlan {
 	effectiveMcpTools: string[];
 	explicitToolAllowlist: boolean;
 	internalTools: string[];
+	agentMemoryAppendPermission?: PermissionDecision;
 	effectiveToolAllowlist: string[];
 	requiredChildTools: string[];
 	fanoutAuthorized: boolean;
@@ -462,7 +466,20 @@ export function resolvePiLaunchToolPlan(
 		input.tools !== undefined ||
 		(input.mcpDirectTools?.length ?? 0) > 0 ||
 		allowedToolSet !== undefined;
-	const internalTools = (input.structuredOutput ? ["structured_output"] : []).filter((tool) => !excludedToolSet.has(tool));
+	const writeTools = ["edit", "write", "bash"];
+	const effectiveMemoryWriteTools = input.tools === undefined
+		? writeTools.filter((tool) => !excludedToolSet.has(tool) && (!allowedToolSet || allowedToolSet.has(tool)))
+		: writeTools.filter((tool) => effectiveDeclaredBuiltinTools.includes(tool));
+	const writePermissions = effectiveMemoryWriteTools.map((tool) => permissionDecision(input.permissionRules, tool));
+	const agentMemoryAppendPermission = input.permissionRules?.[AGENT_MEMORY_APPEND_TOOL]
+		?? (writePermissions.includes("allow") ? "allow" : writePermissions.includes("ask") ? "ask" : "deny");
+	const memoryAppendAllowed = input.agentMemoryAppend === true
+		&& !excludedToolSet.has(AGENT_MEMORY_APPEND_TOOL)
+		&& agentMemoryAppendPermission !== "deny";
+	const internalTools = [
+		...(input.structuredOutput ? ["structured_output"] : []),
+		...(memoryAppendAllowed ? [AGENT_MEMORY_APPEND_TOOL] : []),
+	].filter((tool) => !excludedToolSet.has(tool));
 	const effectiveToolAllowlist = [
 		...new Set([
 			...effectiveDeclaredBuiltinTools,
@@ -605,7 +622,7 @@ export function resolvePiLaunchToolPlan(
 				...(unavailableHostBuiltins.length > 0 ? { unavailableHostBuiltins } : {}),
 			} satisfies SubagentCapabilityAudit)
 		: undefined;
-	return {
+	const plan: PiLaunchToolPlan = {
 		...(capabilityCeiling ? { capabilityCeiling } : {}),
 		requestedBuiltinTools,
 		declaredBuiltinTools,
@@ -628,6 +645,8 @@ export function resolvePiLaunchToolPlan(
 		unavailableHostBuiltins,
 		...(capabilityAudit ? { capabilityAudit } : {}),
 	};
+	if (memoryAppendAllowed) plan.agentMemoryAppendPermission = agentMemoryAppendPermission;
+	return plan;
 }
 
 // Capability ceilings persisted before #1685 may still name hyphenated MCP server prefixes with underscores.

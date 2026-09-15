@@ -73,6 +73,7 @@ export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChil
 			...(step.runFanoutPath ? { parentPath: `${ctx.runFanoutBudget.parentPath ? `${ctx.runFanoutBudget.parentPath}/` : ""}${step.runFanoutPath}` } : {}),
 		} : undefined,
 		structuredOutput: attempt.structuredOutput,
+		agentMemoryAppend: step.agentMemoryAppend,
 		toolBudget: step.toolBudget,
 		permissionRules: step.permissionRules,
 		permissionAuditPath: step.permissionRules && ctx.artifactsDir

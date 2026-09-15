@@ -388,9 +388,10 @@ This is independent of Pi's own parent/session/project memory system and writes 
 How it works:
 
 - On each run, the first 200 lines of `MEMORY.md` in the resolved memory directory are injected into the child system prompt, so the agent can recall accumulated role notes such as threat-model entries, release gotchas, or verified commands.
-- Agents with write tools (`edit`, `write`, or `bash`, or no `tools` allowlist at all) are told they may append concise dated entries to the file.
+- Project memory resolves to the main checkout from standard linked Git worktrees whose metadata lives under `<main>/.git/worktrees/`, so isolated children share one durable role memory and worktree cleanup does not remove it. Custom `--separate-git-dir` layouts keep their current project-root behavior because Git does not retain a safely verifiable main-checkout path there.
+- Local native Pi agents with write tools (`edit`, `write`, or `bash`, or no `tools` allowlist at all) receive the internal `agent_memory_append` tool. It appends one bounded record without replacing concurrent entries; agents are told not to update `MEMORY.md` with generic editing tools. External runners and pane-native remote Pi runs do not receive this local tool.
 - Agents without write tools receive a read-only memory block and are not instructed to edit it. A read-only reviewer can recall prior notes without gaining write capability.
-- The memory directory is never created eagerly. The agent's own `write` tool creates it (and `MEMORY.md`) on the first persist.
+- The memory directory is never created eagerly. `agent_memory_append` creates it (and `MEMORY.md`) on the first persisted record.
 - Memory paths are validated against `.`/`..` traversal and symlink escape. An unsafe or unresolvable scope is silently skipped rather than breaking the run.
 
 Scopes:

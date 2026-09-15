@@ -189,6 +189,29 @@ describe("async runner execution", () => {
 		assert.equal(result.steps[0]?.contextLimit, 128_000);
 	});
 
+	it("carries writable project memory into native async runner steps", () => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "async-agent-memory-"));
+		try {
+			fs.mkdirSync(path.join(project, ".pi"), { recursive: true });
+			const memoryAgent = { ...agent("memory-worker"), tools: ["write"], memory: { scope: "project" as const, path: "memory-worker" } };
+			const result = buildAsyncRunnerSteps("memory-run", {
+				chain: [{ agent: "memory-worker", task: "append memory" }],
+				agents: [memoryAgent],
+				ctx: { ...ctx, cwd: project },
+				cwd: project,
+				asyncDir: path.join(project, ".pi", "async"),
+				maxSubagentDepth: 2,
+			});
+			assert.ok("steps" in result);
+			assert.deepEqual(result.steps[0]?.agentMemoryAppend, {
+				rootDir: path.join(project, ".pi", "agent-memory"),
+				scopedPath: "memory-worker",
+			});
+		} finally {
+			fs.rmSync(project, { recursive: true, force: true });
+		}
+	});
+
 	it("carries explicit nested fanout authorization into async runner steps", () => {
 		const nestedAgent = { ...agent("delegator"), allowNestedSubagents: true };
 		const result = buildAsyncRunnerSteps("nested-fanout-run", {
@@ -242,6 +265,8 @@ describe("async runner execution", () => {
 	it("attaches external runner config and rejects unsupported Pi-only overrides", (t) => {
 		const external = agent("external");
 		external.runner = { type: "external-cli", command: process.execPath, args: ["fake.mjs"] };
+		external.tools = ["write"];
+		external.memory = { scope: "project", path: "external" };
 		const registration = registerRequiredChildExtensions({ sessionId: ctx.currentSessionId, extensions: [{ id: "native-only", path: import.meta.filename }] });
 		t.after(registration.dispose);
 		const built = buildAsyncRunnerSteps("external-run", {
@@ -255,6 +280,9 @@ describe("async runner execution", () => {
 		assert.deepEqual(built.steps[0]?.runner, external.runner);
 		assert.equal(built.steps[0]?.model, undefined);
 		assert.equal(built.steps[0]?.requiredExtensions, undefined);
+		assert.equal(built.steps[0]?.agentMemoryAppend, undefined);
+		assert.match(built.steps[0]?.systemPrompt ?? "", /read-only, role-specific memory scope/);
+		assert.doesNotMatch(built.steps[0]?.systemPrompt ?? "", /use agent_memory_append/);
 
 		const rejected = buildAsyncRunnerSteps("external-rejected", {
 			chain: [{ agent: "external", task: "review", model: "provider/model" }],
