@@ -38,6 +38,8 @@
 
 ### Fixed
 
+- Allow checked writers to explicitly preserve a host-bound staged index while still rejecting child-created index changes (#2280).
+
 - Preserve the main watchdog's user scope across session compaction while clearing temporary activity state. Thanks to [@nimeetshah0](https://github.com/nimeetshah0) for #2263.
 - Resolve provider-extension models in local, in-process foreground children. Such a child never loads the parent's ambient extensions, so its model runtime only knew Pi's built-in providers and every model from an extension-registered provider failed with `Model "…" not found`; the child now inherits the providers registered in the parent session before resolving its model. Pane-native remote foreground children continue to use the remote machine's provider discovery and configuration. Builtin agents on such a model no longer need `async: true`. Thanks to [@lallenlowe](https://github.com/lallenlowe) for #2274.
 - Preserve a readable async result when result indexing or archiving fails, then retry saving it without delivering it twice. Thanks to [@shaharmor](https://github.com/shaharmor) for #2267 and #2266.

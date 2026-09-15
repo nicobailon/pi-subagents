@@ -1342,7 +1342,28 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(status.steps?.[0]?.acceptance?.status, "review-required");
 	});
 
+	it("persists background staged-index baseline failures without launching a child", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const id = `async-preserved-index-failure-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Preserve the staged index",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-preserved-index" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: { level: "checked", preserveStagedIndex: true },
+		});
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id, 10_000), "utf-8")) as AsyncResultPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
+		const diagnostic = /Unable to capture staged index baseline:.*not a git repository/is;
 
+		assert.equal(payload.success, false);
+		assert.match(payload.results[0]?.error ?? "", diagnostic);
+		assert.equal(status.steps?.[0]?.status, "failed");
+		assert.match(status.steps?.[0]?.error ?? "", diagnostic);
+		assert.equal(mockPi.callCount(), 0);
+	});
 
 	it("async chains reject malformed named output references before spawning", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const id = `async-malformed-output-ref-${Date.now().toString(36)}`;

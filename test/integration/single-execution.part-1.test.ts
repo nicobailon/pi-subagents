@@ -3828,6 +3828,41 @@ Answer only from the supplied synthetic text.
 		assert.equal(result.details.results[0]?.acceptance?.verifyRuns[0]?.id, "gate");
 	});
 
+	it("preserves an explicitly bound staged index through a foreground launch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const cwd = fs.mkdtempSync(path.join(tempDir, "preserved-index-"));
+		execFileSync("git", ["init", "-q"], { cwd });
+		fs.writeFileSync(path.join(cwd, "owned.txt"), "parent staged\n", "utf-8");
+		execFileSync("git", ["add", "owned.txt"], { cwd });
+		const before = execFileSync("git", ["write-tree"], { cwd, encoding: "utf-8" }).trim();
+		mockPi.onCall({ output: [
+			"review complete",
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "implemented" }],
+				changedFiles: [],
+				testsAddedOrUpdated: [],
+				commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+				validationOutput: ["tests passed"],
+				residualRisks: [],
+				noStagedFiles: false,
+			}),
+			"```",
+		].join("\n") });
+		const executor = makeExecutor([makeAgent("worker")]);
+
+		const result = await executor.execute(
+			"preserved-index",
+			{ async: false, agent: "worker", task: "Review the fix without edits", cwd, acceptance: { level: "checked", preserveStagedIndex: true } },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(cwd),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "preserved index run failed");
+		assert.equal(result.details.results[0]?.acceptance?.status, "checked");
+		assert.equal(execFileSync("git", ["write-tree"], { cwd, encoding: "utf-8" }).trim(), before);
+	});
+
 	it("lets runs.all siblings settle when one verified gate fails", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const acceptedReport = [
 			"done",

@@ -88,7 +88,7 @@ import {
 	shouldEscalateMutatingFailures,
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
-import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput } from "../shared/acceptance.ts";
+import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, captureStagedIndexBaseline, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput } from "../shared/acceptance.ts";
 import { PROMPT_REDACTED } from "../../shared/utils.ts";
 import { attachContractProjections, isAgentContract } from "../shared/agent-contract.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
@@ -1892,6 +1892,22 @@ async function runSyncCompletionInner(
 	const verifyModel = Boolean(candidate) && !options.modelOverrideFromParent;
 	let lastResult: SingleResult | undefined;
 	let recoveryPrompt = task;
+	let stagedIndexBaseline: string | undefined;
+	if (effectiveAcceptance.preserveStagedIndex) {
+		try {
+			stagedIndexBaseline = captureStagedIndexBaseline(options.cwd ?? runtimeCwd);
+		} catch (error) {
+			return redactResultPrompt(withRunContext({
+				index: options.index ?? 0,
+				agent: agentName,
+				task,
+				exitCode: 1,
+				messages: [],
+				usage: emptyUsage(),
+				error: error instanceof Error ? error.message : String(error),
+			}, options.context));
+		}
+	}
 	for (let attemptIndex = 0; attemptIndex < 2; attemptIndex++) {
 		const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
 		const attemptResult = await runSingleAttempt(runtimeCwd, agent, recoveryPrompt, candidate, attemptOptions, {
@@ -2022,6 +2038,7 @@ async function runSyncCompletionInner(
 					? { content: childWrittenOutput, path: options.outputPath, authoritative: options.outputMode === "file-only", durable: result.savedOutputPath !== undefined }
 					: undefined,
 				cwd: options.cwd ?? runtimeCwd,
+				stagedIndexBaseline,
 				reportOptional: isAgentContract(options.agentContract),
 				artifactsDir: options.artifactsDir,
 				runId: options.runId,

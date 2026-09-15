@@ -136,7 +136,7 @@ import { assertThinkingWithinCeiling } from "../../shared/thinking-ceiling.ts";
 import { resolveLaunchBinding } from "../../shared/launch-contract.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
-import { acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveAcceptanceReportMode, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
+import { acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, captureStagedIndexBaseline, evaluateAcceptance, formatAcceptancePrompt, resolveAcceptanceReportMode, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
 import { attachContractProjections, isAgentContract } from "../shared/agent-contract.ts";
 import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests, statusStepDescription } from "./chain-append.ts";
@@ -1118,6 +1118,7 @@ export async function runSingleStepInner(
 	const aggregateUsage = emptyUsage();
 	let launched = false;
 	let recoveryTask = task;
+	let stagedIndexBaseline: string | undefined;
 	singleLaunch: for (let attemptIndex = 0; attemptIndex < 2; attemptIndex++) {
 		if (ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break singleLaunch;
 		const expectedModelForVerification = candidate && !step.skipPrimaryModelVerification ? candidate : undefined;
@@ -1214,6 +1215,14 @@ export async function runSingleStepInner(
 		// Each attempt rewrites the step output log; synchronous appends keep a
 		// retried attempt from interleaving with the previous attempt's flush.
 		fs.writeFileSync(ctx.outputFile, "", "utf-8");
+		if (step.effectiveAcceptance?.preserveStagedIndex && stagedIndexBaseline === undefined) {
+			try {
+				stagedIndexBaseline = captureStagedIndexBaseline(step.cwd ?? ctx.cwd);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { agent: step.agent, output: message, error: message, exitCode: 1, context: step.context };
+			}
+		}
 		const run = await runChildSession(omitUndefinedProperties({
 			factory: ctx.childSessions,
 			launch,
@@ -1494,6 +1503,7 @@ export async function runSingleStepInner(
 				? { content: childWrittenOutput, path: step.outputPath, authoritative: step.outputMode === "file-only", durable: resolvedOutput.savedPath !== undefined }
 				: undefined,
 			cwd: step.cwd ?? ctx.cwd,
+			stagedIndexBaseline,
 			signal: combinedAbortSignal([ctx.timeoutSignal, ctx.stopSignal]),
 			abortMessage: ctx.stopSignal?.aborted ? ctx.stopMessage ?? "Subagent stopped by user." : ctx.timeoutMessage ?? "Subagent timed out.",
 			reportOptional: isAgentContract(step.agentContract),

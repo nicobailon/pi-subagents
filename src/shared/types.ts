@@ -1039,6 +1039,8 @@ export interface AcceptanceReviewGate {
 export interface AcceptanceConfig {
 	level?: AcceptanceLevel;
 	report?: "on" | "off";
+	/** Preserve an intentional launch-time staged index, while rejecting any terminal index change. */
+	preserveStagedIndex?: true;
 	criteria?: Array<string | AcceptanceGate>;
 	evidence?: AcceptanceEvidenceKind[];
 	verify?: AcceptanceVerifyCommand[];
@@ -1063,6 +1065,7 @@ export interface ResolvedAcceptanceConfig {
 	inferredReason: string[];
 	criteria: ResolvedAcceptanceGate[];
 	evidence: AcceptanceEvidenceKind[];
+	preserveStagedIndex?: true;
 	verify: AcceptanceVerifyCommand[];
 	review?: AcceptanceReviewGate | false;
 	stopRules: string[];

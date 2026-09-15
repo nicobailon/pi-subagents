@@ -9,6 +9,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import {
 	acceptanceFailureMessage,
 	aggregateAcceptanceReport,
+	captureStagedIndexBaseline,
 	evaluateAcceptance,
 	formatAcceptancePrompt,
 	normalizeAcceptanceInput,
@@ -750,6 +751,81 @@ describe("acceptance gates", () => {
 		}
 	});
 
+	it("accepts an explicitly preserved staged index when only working-tree content changes", async () => {
+		const cwd = tempGitRepo();
+		try {
+			fs.writeFileSync(path.join(cwd, "owned.txt"), "parent staged\n", "utf-8");
+			execFileSync("git", ["add", "owned.txt"], { cwd });
+			fs.mkdirSync(path.join(cwd, "nested"));
+			const baseline = captureStagedIndexBaseline(path.join(cwd, "nested"));
+			fs.writeFileSync(path.join(cwd, "working-only.txt"), "child fix\n", "utf-8");
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "Implement a fix",
+				explicit: { level: "checked", preserveStagedIndex: true },
+			});
+			const ledger = await evaluateAcceptance({
+				acceptance,
+				output: report({ noStagedFiles: false }),
+				cwd: path.join(cwd, "nested"),
+				stagedIndexBaseline: baseline,
+			});
+
+			assert.equal(ledger.status, "checked");
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "evidence:no-staged-files"), undefined);
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "staged-index-unchanged")?.status, "passed");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a changed or unavailable staged-index baseline", async () => {
+		const cwd = tempGitRepo();
+		try {
+			fs.writeFileSync(path.join(cwd, "owned.txt"), "parent staged\n", "utf-8");
+			execFileSync("git", ["add", "owned.txt"], { cwd });
+			const baseline = captureStagedIndexBaseline(cwd);
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "Implement a fix",
+				explicit: { level: "checked", preserveStagedIndex: true },
+			});
+			fs.writeFileSync(path.join(cwd, "child-staged.txt"), "unexpected\n", "utf-8");
+			execFileSync("git", ["add", "child-staged.txt"], { cwd });
+
+			const changed = await evaluateAcceptance({ acceptance, output: report({ noStagedFiles: false }), cwd, stagedIndexBaseline: baseline });
+			const unavailable = await evaluateAcceptance({ acceptance, output: report({ noStagedFiles: false }), cwd });
+
+			assert.equal(changed.status, "rejected");
+			assert.equal(changed.runtimeChecks.find((check) => check.id === "staged-index-unchanged")?.status, "failed");
+			assert.equal(unavailable.status, "rejected");
+			assert.match(acceptanceFailureMessage(unavailable) ?? "", /baseline is unavailable/);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("fails closed when a staged-index baseline cannot be captured", () => {
+		const cwd = tempRepo();
+		try {
+			assert.throws(() => captureStagedIndexBaseline(cwd), /Unable to capture staged index baseline/);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("captures staged-index baselines in SHA-256 repositories", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "acceptance-sha256-"));
+		try {
+			execFileSync("git", ["init", "--object-format=sha256", "-q"], { cwd });
+			fs.writeFileSync(path.join(cwd, "staged.txt"), "content\n", "utf-8");
+			execFileSync("git", ["add", "staged.txt"], { cwd });
+			assert.match(captureStagedIndexBaseline(cwd), /^[0-9a-f]{64}$/);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
 	it("still rejects missing changed and test evidence and empty required commands", async () => {
 		const cwd = tempRepo();
 		try {
@@ -886,6 +962,34 @@ describe("acceptance gates", () => {
 			assert.equal(failLedger.status, "rejected");
 			assert.equal(failLedger.childReport?.commandsRun?.[0]?.result, "passed");
 			assert.equal(failLedger.verifyRuns[0]?.status, "failed");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects when a successful verify command changes a preserved staged index", async () => {
+		const cwd = tempGitRepo();
+		try {
+			fs.writeFileSync(path.join(cwd, "owned.txt"), "parent staged\n", "utf-8");
+			execFileSync("git", ["add", "owned.txt"], { cwd });
+			const baseline = captureStagedIndexBaseline(cwd);
+			fs.writeFileSync(path.join(cwd, "verify-staged.txt"), "verify mutation\n", "utf-8");
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "Implement a fix",
+				explicit: {
+					level: "verified",
+					preserveStagedIndex: true,
+					verify: [{ id: "stage", command: "git add verify-staged.txt" }],
+				},
+			});
+
+			const ledger = await evaluateAcceptance({ acceptance, output: report({ noStagedFiles: false }), cwd, stagedIndexBaseline: baseline });
+
+			assert.equal(ledger.status, "rejected");
+			assert.equal(ledger.verifyRuns[0]?.status, "passed");
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "staged-index-unchanged")?.status, "failed");
+			assert.notEqual(captureStagedIndexBaseline(cwd), baseline);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
@@ -1467,6 +1571,9 @@ describe("acceptance gates", () => {
 		assert.deepEqual(validateAcceptanceInput({ level: "verified", verify: [{ id: "tests", command: "npm test" }, { id: "lint", command: "npm run lint" }] }), []);
 		assert.deepEqual(validateAcceptanceInput({ level: "checked" }), []);
 		assert.deepEqual(validateAcceptanceInput({ level: "checked", report: "on" }), []);
+		assert.deepEqual(validateAcceptanceInput({ level: "checked", preserveStagedIndex: true }), []);
+		assert.match(validateAcceptanceInput({ level: "checked", preserveStagedIndex: false }).join("\n"), /preserveStagedIndex must be true/);
+		assert.match(validateAcceptanceInput({ preserveStagedIndex: true }).join("\n"), /requires level checked or verified/);
 		assert.match(validateAcceptanceInput({ report: "sometimes" }).join("\n"), /acceptance\.report must be on or off/);
 		assert.deepEqual(validateAcceptanceInput({ verify: [{ id: "missing-command" }] }), ["acceptance.verify[0].command is required."]);
 		assert.deepEqual(validateAcceptanceInput({ verify: [{ id: "fractional", command: "npm test", timeoutMs: 1.5 }] }), ["acceptance.verify[0].timeoutMs must be an integer >= 1."]);

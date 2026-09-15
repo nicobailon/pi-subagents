@@ -381,6 +381,8 @@ The `/subagents-steer <run-id> [--child <child-id>] <message>` slash command is 
 
 Every run resolves an effective acceptance policy. Callers may omit `acceptance` for the inferred default, or set it on single runs, top-level parallel task items, chain steps, static parallel tasks, and dynamic fanout templates.
 
+Checked writers reject staged files by default. When a parent intentionally starts a single writer with reviewed staged content, opt in with `acceptance: { level: "checked", preserveStagedIndex: true }`. The host captures the repository-wide index tree immediately before each launch (including each retained resume) and accepts only if `git write-tree` produces the same tree at completion. Working-tree-only fixes are allowed; child-created staging is rejected. Capture or terminal Git failures, including an unavailable or unmerged index, fail closed. This option does not stage or restore files and should not be used for concurrent writers sharing one worktree.
+
 Prefer an inline JSON object. JSON-encoded object strings are tolerated only during input normalization; invalid strings fail closed. `true` is invalid. Supported evidence kinds are `changed-files`, `tests-added`, `commands-run`, `validation-output`, `residual-risks`, `no-staged-files`, `diff-summary`, `review-findings`, and `manual-notes`. For example: `{level:"checked",evidence:["commands-run","changed-files"],review:{required:true}}`. Evidence levels end at `verified`; independent review is a separate gate, not a stronger evidence level.
 
 ```ts
