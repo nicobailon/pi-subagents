@@ -5,6 +5,7 @@ import type { Message, Usage as PiUsage } from "@earendil-works/pi-ai";
 import { previewDisplayText, sanitizeDisplayText, truncateDisplayText } from "./display-text.ts";
 import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
+import type { SessionUsageTotals } from "./session-tokens.ts";
 import { validateAsyncStatusLaneMetadata } from "../runs/shared/lane-metadata.ts";
 
 const DEFAULT_CONFIG_DIR_NAME = ".pi";
@@ -351,6 +352,49 @@ export function sumResultsUsage(results: SingleResult[]): Usage {
 		usage.turns += result.usage.turns;
 	}
 	return usage;
+}
+
+export function hasUsageValue(usage: Usage): boolean {
+	return usage.input !== 0 || usage.output !== 0 || usage.cacheRead !== 0 || usage.cacheWrite !== 0 || usage.cost !== 0 || usage.turns !== 0;
+}
+
+export interface StepUsageBackfill {
+	usage: Usage;
+	totalCost: { inputTokens: number; outputTokens: number; costUsd: number };
+}
+
+/**
+ * Decide a session-parse backfill for a background step whose
+ * event-accumulated usage came back empty. Live `message_end` events may
+ * carry no usage for some providers while the persisted child session file
+ * does; in that case adopt this step's session delta so wait/resume/workflow
+ * collection can report real numbers. Returns null when events already
+ * reported usage, when nothing was parsed, or when this step added no
+ * tokens. A null baseline means the session file did not exist when the step
+ * started (fresh context), so the full cumulative parse is this step's own.
+ */
+export function backfillStepUsageFromSession(input: {
+	current: Usage | undefined;
+	baseline: SessionUsageTotals | null;
+	cumulative: SessionUsageTotals | null;
+}): StepUsageBackfill | null {
+	const current = input.current ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+	if (hasUsageValue(current)) return null;
+	if (!input.cumulative) return null;
+	const base = input.baseline ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+	const usage: Usage = {
+		input: Math.max(0, input.cumulative.input - base.input),
+		output: Math.max(0, input.cumulative.output - base.output),
+		cacheRead: Math.max(0, input.cumulative.cacheRead - base.cacheRead),
+		cacheWrite: Math.max(0, input.cumulative.cacheWrite - base.cacheWrite),
+		cost: Math.max(0, input.cumulative.cost - base.cost),
+		turns: Math.max(0, input.cumulative.turns - base.turns),
+	};
+	if (usage.input + usage.output === 0) return null;
+	return {
+		usage,
+		totalCost: { inputTokens: usage.input, outputTokens: usage.output, costUsd: usage.cost },
+	};
 }
 
 export function toAgentToolUsage(usage: Usage): PiUsage {

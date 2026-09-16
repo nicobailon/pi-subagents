@@ -101,7 +101,7 @@ import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDi
 import { formatSubagentModelVerificationError, isContextOverflow } from "../shared/model-resolution.ts";
 import { markProcessTerminalCandidateLeaseRelease, processTerminalPath, writeProcessTerminalCandidate, type ProcessTerminalCandidate } from "./process-terminal.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, unconsumedSteerReason, updateSteeringTarget } from "./steering.ts";
-import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getAgentDir, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
+import { PROMPT_REDACTED, backfillStepUsageFromSession, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getAgentDir, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
 import { evaluateCompletionMutationGuard, expectsImplementationMutation, hasMutationToolCapability, validateImplementationToolContract } from "../shared/completion-guard.ts";
 import { planCompletionEvidence, projectSettlementDiagnostic } from "../shared/completion-evidence.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
@@ -116,7 +116,7 @@ import {
 	shouldEscalateMutatingFailures,
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
-import { parseSessionTokens } from "../../shared/session-tokens.ts";
+import { parseSessionTokens, parseSessionUsage } from "../../shared/session-tokens.ts";
 import type { TokenUsage } from "../../shared/types.ts";
 import {
 	cleanupWorktrees,
@@ -4561,6 +4561,10 @@ export async function runSubagent(
 			}
 			const singleCwd = singleWorktreeSetup?.worktrees[0]?.agentCwd ?? cwd;
 			const stepStartTime = Date.now();
+			// Baseline for session-parse usage reconciliation at step end: the child
+			// session file may already hold inherited history (fork context). A null
+			// baseline means the file did not exist yet (fresh context).
+			const stepBaselineUsage = config.sessionDir ? parseSessionUsage(config.sessionDir) : null;
 			statusPayload.currentStep = flatIndex;
 			requiredStatusStep(statusPayload, flatIndex).status = "running";
 			delete requiredStatusStep(statusPayload, flatIndex).activityState;
@@ -4762,6 +4766,21 @@ export async function runSubagent(
 			if (stepTokens) {
 				requiredStatusStep(statusPayload, flatIndex).tokens = stepTokens;
 				statusPayload.totalTokens = { ...previousCumulativeTokens };
+			}
+			// Backfill zero event-accumulated step usage from the persisted child
+			// session (some providers omit usage on live events). results[] was pushed
+			// above in this same iteration, so its last entry is this step's.
+			const stepUsageBackfill = config.sessionDir
+				? backfillStepUsageFromSession({ current: singleResult.usage, baseline: stepBaselineUsage, cumulative: parseSessionUsage(config.sessionDir) })
+				: null;
+			if (stepUsageBackfill) {
+				singleResult.usage = { ...stepUsageBackfill.usage };
+				singleResult.totalCost = { ...stepUsageBackfill.totalCost };
+				const recorded = results[results.length - 1];
+				if (recorded && recorded.agent === singleResult.agent) {
+					recorded.usage = singleResult.usage;
+					recorded.totalCost = singleResult.totalCost;
+				}
 			}
 			statusPayload.lastUpdate = stepEndTime;
 			writeStatusPayload();

@@ -6,6 +6,7 @@
 
 - The Ghostty inspector no longer takes over when `TERM_PROGRAM=ghostty` comes from a terminal that embeds the Ghostty kernel (such as cmux) instead of the standalone Ghostty app. Availability now requires the macOS host bundle id (`__CFBundleIdentifier`) to identify Ghostty itself; absent or different host identity declines to the `inspector.command` hint instead of targeting an unrelated Ghostty window or emitting `-1728`/`-2741` AppleScript errors. Thanks to [@wangpi26](https://github.com/wangpi26) for #2281.
 - Keep optional global package-root discovery silent when the package manager is unavailable, so a host without `npm` no longer prints `/bin/sh: npm: command not found` during startup. Thanks to [@PhrZer](https://github.com/PhrZer) for #2287.
+- Reconcile background child token/cost totals from the persisted child session at step completion when live usage events carry no usage (observed with some providers), so async `wait`/`resume`/workflow collection reports real numbers instead of zero. A step-start baseline keeps inherited fork history out of the step delta. Follow-up to #1666.
 
 ## [0.68.0] - 2026-09-15
 
