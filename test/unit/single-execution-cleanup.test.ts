@@ -16,7 +16,7 @@ for (const mode of ["failure", "success", "ordinary"] as const) {
 		const home = path.join(scratch, "home"), tmp = path.join(scratch, "tmp");
 		fs.mkdirSync(home);
 		fs.mkdirSync(tmp);
-		const env = { ...process.env, HOME: home, TMPDIR: tmp };
+		const env = { ...process.env, HOME: home, USERPROFILE: home, TMPDIR: tmp, TMP: tmp, TEMP: tmp };
 		delete env.PI_SUBAGENTS_TEMP_ROOT;
 		const argv = ["--experimental-strip-types", "--import", fileURLToPath(new URL("../support/isolated-temp-root.mjs", import.meta.url)), fileURLToPath(new URL("../support/single-execution-cleanup-process.ts", import.meta.url)), mode];
 		console.log(JSON.stringify({ subprocessLaunch: { executable: process.execPath, argv, home, tmp, rootOverride: null } }));
