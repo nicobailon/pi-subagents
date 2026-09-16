@@ -6,7 +6,7 @@
 
 - The Ghostty inspector no longer takes over when `TERM_PROGRAM=ghostty` comes from a terminal that embeds the Ghostty kernel (such as cmux) instead of the standalone Ghostty app. Availability now requires the macOS host bundle id (`__CFBundleIdentifier`) to identify Ghostty itself; absent or different host identity declines to the `inspector.command` hint instead of targeting an unrelated Ghostty window or emitting `-1728`/`-2741` AppleScript errors. Thanks to [@wangpi26](https://github.com/wangpi26) for #2281.
 - Keep optional global package-root discovery silent when the package manager is unavailable, so a host without `npm` no longer prints `/bin/sh: npm: command not found` during startup. Thanks to [@PhrZer](https://github.com/PhrZer) for #2287.
-- Reconcile foreground child token/cost totals from the child's session messages when live `message_end` events carry no usage (observed with some providers), so delegated turns reach the parent footer and session totals instead of silently dropping to zero. History inherited by the child (e.g. forked parent turns) is excluded via a pre-prompt baseline. Follow-up to #1666.
+- Reconcile foreground child token/cost totals from the child's session messages when live `message_end` events carry no usage (observed with some providers), so delegated turns reach the parent footer and session totals instead of silently dropping to zero. History inherited by the child (e.g. forked parent turns) is excluded via a pre-prompt baseline. Follow-up to #1666. Thanks to [@riique](https://github.com/riique) for #2295.
 
 ## [0.68.0] - 2026-09-15
 

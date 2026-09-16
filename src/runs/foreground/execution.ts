@@ -1642,7 +1642,7 @@ async function runSingleAttempt(
 	});
 	if (completionEvidence.fileMutation) {
 		result.effects = {
-			...(result.effects ?? {}),
+			...result.effects,
 			fileMutation: completionEvidence.fileMutation,
 		};
 	}
@@ -1686,10 +1686,13 @@ async function runSingleAttempt(
 	// Live events may miss usage that providers only persist on session messages;
 	// adopt session totals when they exceed the event-accumulated ones.
 	reconcileUsageFromSessionMessages(result, reconciledSessionMessages, prePromptMessageCount);
+	progress.tokens = result.usage.input + result.usage.output;
+	progress.inputTokens = result.usage.input;
+	progress.outputTokens = result.usage.output;
 	if (result.progressSummary) {
 		result.progressSummary = {
 			...result.progressSummary,
-			tokens: result.usage.input + result.usage.output,
+			tokens: progress.tokens,
 		};
 	}
 	if (options.onUpdate) {
