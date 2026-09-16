@@ -136,6 +136,68 @@ function sumUsage(target: Usage, source: Usage): void {
 	target.turns += source.turns;
 }
 
+/** Provider-shaped usage fields beyond pi's canonical `input`/`output` names. */
+type LooseMessageUsage = {
+	input?: unknown;
+	inputTokens?: unknown;
+	output?: unknown;
+	outputTokens?: unknown;
+	cacheRead?: unknown;
+	cacheReadTokens?: unknown;
+	cacheWrite?: unknown;
+	cacheWriteTokens?: unknown;
+	cost?: unknown;
+};
+
+function usageNumber(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function usageCostTotal(cost: unknown): number {
+	if (typeof cost === "number") return usageNumber(cost);
+	if (cost !== null && typeof cost === "object") return usageNumber((cost as { total?: unknown }).total);
+	return 0;
+}
+
+/** Normalize one assistant message's usage, tolerating provider-field variants. */
+function normalizeMessageUsage(usage: unknown): Usage {
+	const normalized = emptyUsage();
+	const loose = (usage ?? {}) as LooseMessageUsage;
+	normalized.input = usageNumber(loose.input ?? loose.inputTokens);
+	normalized.output = usageNumber(loose.output ?? loose.outputTokens);
+	normalized.cacheRead = usageNumber(loose.cacheRead ?? loose.cacheReadTokens);
+	normalized.cacheWrite = usageNumber(loose.cacheWrite ?? loose.cacheWriteTokens);
+	normalized.cost = usageCostTotal(loose.cost);
+	return normalized;
+}
+
+function usageTokenTotal(usage: Usage): number {
+	return usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+}
+
+function sumSessionMessagesUsage(messages: readonly unknown[] | undefined, fromIndex: number): Usage {
+	const usage = emptyUsage();
+	for (const message of messages?.slice(fromIndex) ?? []) {
+		if ((message as { role?: unknown }).role !== "assistant") continue;
+		usage.turns++;
+		sumUsage(usage, normalizeMessageUsage((message as { usage?: unknown }).usage));
+	}
+	return usage;
+}
+
+/**
+ * Live `message_end` events may carry no usage for some providers while the
+ * persisted session messages do. Adopt the session totals when they exceed the
+ * event-accumulated ones so footer and session accounting stay correct.
+ * `fromIndex` skips history the child inherited (e.g. forked parent turns).
+ */
+function reconcileUsageFromSessionMessages(result: SingleResult, messages: readonly unknown[] | undefined, fromIndex: number): void {
+	const reconciled = sumSessionMessagesUsage(messages, fromIndex);
+	if (usageTokenTotal(reconciled) > usageTokenTotal(result.usage)) {
+		result.usage = reconciled;
+	}
+}
+
 function persistSingleResultMetadata(input: {
 	metadataPath?: string;
 	enabled: boolean;
@@ -505,6 +567,11 @@ async function runSingleAttempt(
 	}, options.context);
 	const startTime = Date.now();
 	const controlConfig = options.controlConfig ?? DEFAULT_CONTROL_CONFIG;
+	// Session-message handles for usage reconciliation after the run settles.
+	// The live `session` binding lives inside the promise executor below, so the
+	// tail of this function reads usage through these hoisted handles instead.
+	let reconciledSessionMessages: readonly unknown[] | undefined;
+	let prePromptMessageCount = 0;
 	let interruptedByControl = false;
 	const allControlEvents: ControlEvent[] = [];
 	let pendingControlEvents: ControlEvent[] = [];
@@ -1092,12 +1159,9 @@ async function runSingleAttempt(
 					const terminalAssistantStop = (evt.message as { stopReason?: string }).stopReason === "stop" && !hasToolCall;
 					const u = evt.message.usage;
 					if (u) {
-						const window = (u.input || 0) + (u.cacheRead || 0);
-						result.usage.input += u.input || 0;
-						result.usage.output += u.output || 0;
-						result.usage.cacheRead += u.cacheRead || 0;
-						result.usage.cacheWrite += u.cacheWrite || 0;
-						result.usage.cost += u.cost?.total || 0;
+						const normalized = normalizeMessageUsage(u);
+						const window = normalized.input + normalized.cacheRead;
+						sumUsage(result.usage, normalized);
 						progress.tokens = result.usage.input + result.usage.output;
 						progress.inputTokens = result.usage.input;
 						progress.outputTokens = result.usage.output;
@@ -1385,6 +1449,10 @@ async function runSingleAttempt(
 					return;
 				}
 				session = created;
+				// Baseline for usage reconciliation: the child may inherit history
+				// (e.g. forked parent turns) whose usage must not count as its own.
+				prePromptMessageCount = created.messages.length;
+				reconciledSessionMessages = created.messages;
 				const steer = created.steer.bind(created);
 				const followUp = created.followUp.bind(created);
 				created.steer = async (text) => {
@@ -1615,6 +1683,15 @@ async function runSingleAttempt(
 		? result.outputReference.message
 		: fullOutput;
 	result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
+	// Live events may miss usage that providers only persist on session messages;
+	// adopt session totals when they exceed the event-accumulated ones.
+	reconcileUsageFromSessionMessages(result, reconciledSessionMessages, prePromptMessageCount);
+	if (result.progressSummary) {
+		result.progressSummary = {
+			...result.progressSummary,
+			tokens: result.usage.input + result.usage.output,
+		};
+	}
 	if (options.onUpdate) {
 		const finalText = result.finalOutput || result.error || "(no output)";
 		const progressSnapshot = snapshotProgress(progress);
