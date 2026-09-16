@@ -16,12 +16,23 @@ function fileBarrier(file: string): Promise<void> {
 	return new Promise((resolve, reject) => {
 		// libuv on Windows compares long event paths against this watch path; expand TEMP's 8.3 aliases.
 		const watcher = fs.watch(fs.realpathSync.native(path.dirname(file)), check);
-		const deadline = setTimeout(() => { watcher.close(); reject(new Error(`Missing barrier: ${file}`)); }, 15_000);
-		function check() {
-			if (!fs.existsSync(file)) return;
+		// Watch events are hints, not guaranteed delivery; the barrier is file existence.
+		const poll = setInterval(check, 50);
+		const deadline = setTimeout(() => {
+			if (check()) return;
+			cleanup();
+			reject(new Error(`Missing barrier: ${file}`));
+		}, 15_000);
+		function cleanup() {
 			clearTimeout(deadline);
+			clearInterval(poll);
 			watcher.close();
+		}
+		function check() {
+			if (!fs.existsSync(file)) return false;
+			cleanup();
 			resolve();
+			return true;
 		}
 		check();
 	});
@@ -250,6 +261,45 @@ describe("native runner result publication", { skip: !available ? "pi packages u
 		const ready = fileBarrier(file);
 		fs.writeFileSync(file, "");
 		await ready;
+	});
+	it("observes an aliased barrier without native watch delivery and closes the watcher", async (t) => {
+		const directory = path.join(tempDir, "barrier-directory");
+		const alias = path.join(tempDir, "barrier-alias");
+		fs.mkdirSync(directory);
+		fs.symlinkSync(directory, alias, "junction");
+		t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+		let closes = 0;
+		t.mock.method(fs, "watch", ((watched) => {
+			assert.equal(watched, fs.realpathSync.native(directory));
+			// Deliberately never deliver a callback, even though the file is created.
+			return { close() { closes++; } } as fs.FSWatcher;
+		}) as typeof fs.watch);
+		const file = path.join(alias, "ready");
+		const exists = t.mock.method(fs, "existsSync");
+		const ready = fileBarrier(file);
+		fs.writeFileSync(file, "");
+		t.mock.timers.tick(50);
+		await ready;
+		assert.equal(closes, 1);
+		const checks = exists.mock.callCount();
+		t.mock.timers.tick(15_000);
+		assert.equal(exists.mock.callCount(), checks, "successful observation clears both timers");
+		assert.equal(closes, 1);
+	});
+	it("rejects an absent barrier and closes its watcher and timers", async (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+		let closes = 0;
+		t.mock.method(fs, "watch", (() => ({ close() { closes++; } })) as typeof fs.watch);
+		const file = path.join(tempDir, "missing");
+		const exists = t.mock.method(fs, "existsSync");
+		const rejected = assert.rejects(fileBarrier(file), { message: `Missing barrier: ${file}` });
+		t.mock.timers.tick(15_000);
+		await rejected;
+		assert.equal(closes, 1);
+		const checks = exists.mock.callCount();
+		t.mock.timers.tick(15_000);
+		assert.equal(exists.mock.callCount(), checks, "failed observation clears both timers");
+		assert.equal(closes, 1);
 	});
 	for (const outcome of ["recovered", "retry-error"] as const) {
 		it(`keeps Darwin delivery demand until deferred indexed final result publication settles (${outcome})`, { skip: !isAsyncAvailable() ? "jiti unavailable" : undefined }, async () => {

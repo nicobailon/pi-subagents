@@ -27,6 +27,7 @@ import {
 import type { ChildWatchdogProgress, SubagentState } from "../../src/shared/types.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
+import { SingleExecutionCleanupHooks } from "./single-execution-cleanup.ts";
 
 interface ProgressSummary {
 	agent: string;
@@ -279,6 +280,14 @@ let tempDir: string;
 let agentDir: string;
 let mockPi: MockPi;
 let previousAgentDir: string | undefined;
+const cleanupHooks = new SingleExecutionCleanupHooks();
+let guardedCleanup = false;
+
+export function registerSingleExecutionCleanup(events: ReturnType<typeof createEventBus>) {
+	const cleanup = cleanupHooks.register(events);
+	guardedCleanup = true;
+	return cleanup;
+}
 
 export function installSingleExecutionHooks() {
 	before(() => {
@@ -286,11 +295,13 @@ export function installSingleExecutionHooks() {
 		mockPi.install();
 	});
 
-	after(() => {
+	after(async () => {
+		await cleanupHooks.beforeUninstall();
 		mockPi.uninstall();
 	});
 
 	beforeEach(() => {
+		cleanupHooks.beforeSetup();
 		tempDir = createTempDir();
 		agentDir = createTempDir("pi-subagent-agent-");
 		previousAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -298,11 +309,22 @@ export function installSingleExecutionHooks() {
 		mockPi.reset();
 	});
 
-	afterEach(() => {
-		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-		removeTempDir(agentDir);
-		removeTempDir(tempDir);
+	afterEach(async () => {
+		try {
+			await cleanupHooks.beforeRemoval();
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
+		if (guardedCleanup) {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		} else {
+			removeTempDir(agentDir);
+			removeTempDir(tempDir);
+		}
+		cleanupHooks.afterRemoval();
+		guardedCleanup = false;
 	});
 }
 

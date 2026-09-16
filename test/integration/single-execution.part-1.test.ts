@@ -14,7 +14,7 @@ import {
 	tempDir, agentDir, mockPi, available, runSync, getFinalOutput, utils,
 	createSubagentExecutor, escapeRegExp, pathContainsSegments, waitForFileContent,
 	mockAssistantMessage, readCall, readCallArgs, readAllCallArgs, makeExecutor,
-	installSingleExecutionHooks,
+	installSingleExecutionHooks, registerSingleExecutionCleanup,
 } from "../support/single-execution-fixture.ts";
 import assert from "node:assert/strict";
 import fsDefault, * as fs from "node:fs";
@@ -1831,83 +1831,94 @@ Answer only from the supplied synthetic text.
 	});
 
 	it("starts omitted external CLI single-child calls in async mode", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		const markerPath = path.join(tempDir, "external-single-omitted-async-started");
-		const executor = makeExecutor([
-			makeAgent("external", {
-				runner: { type: "external-cli", command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started"); process.stdout.write("single async result")`] },
-				model: "mock/default-model",
-				modelSource: { type: "subagents.defaultModel", scope: "user", path: "/settings.json", model: "mock/default-model" },
-			}),
-		]);
-		const result = await executor.execute(
-			"external-single-omitted-async",
-			{ agent: "external", task: "Run external" },
-			new AbortController().signal,
-			undefined,
-			{ ...makeMinimalCtx(tempDir), model: { provider: "mock", id: "parent-model" } },
-		);
+		const cleanupEvents = createEventBus();
+		const cleanup = registerSingleExecutionCleanup(cleanupEvents);
+		const { result, resultPath } = await cleanup.run(async () => {
+			const markerPath = path.join(tempDir, "external-single-omitted-async-started");
+			const executor = makeExecutor([
+				makeAgent("external", {
+					runner: { type: "external-cli", command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started"); process.stdout.write("single async result")`] },
+					model: "mock/default-model",
+					modelSource: { type: "subagents.defaultModel", scope: "user", path: "/settings.json", model: "mock/default-model" },
+				}),
+			], {}, false, undefined, true, new Map(), undefined, undefined, cleanupEvents);
+			const result = await executor.execute(
+				"external-single-omitted-async",
+				{ agent: "external", task: "Run external" },
+				new AbortController().signal,
+				undefined,
+				{ ...makeMinimalCtx(tempDir), model: { provider: "mock", id: "parent-model" } },
+			);
 
-		assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
-		assert.ok(result.details.asyncId);
-		assert.match(result.content[0]?.text ?? "", /Async: external/);
-		assert.equal(await waitForFileContent(markerPath, "started"), "started");
-		assert.equal(mockPi.callCount(), 0);
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
+			assert.ok(result.details.asyncId);
+			cleanup.expect(result.details.asyncId, result.details.asyncDir!);
+			assert.match(result.content[0]?.text ?? "", /Async: external/);
+			assert.equal(await waitForFileContent(markerPath, "started"), "started");
+			assert.equal(mockPi.callCount(), 0);
 
-		const resultPath = path.join(DIRS.results, `${result.details.asyncId}.json`);
-		let runResult: { state?: string } = {};
-		for (let attempt = 0; attempt < 100; attempt++) {
-			if (fs.existsSync(resultPath)) runResult = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
-			if (runResult.state === "complete" || runResult.state === "failed") break;
-			await new Promise((resolve) => setTimeout(resolve, 20));
-		}
-		assert.equal(runResult.state, "complete");
+			const resultPath = path.join(DIRS.results, `${result.details.asyncId}.json`);
+			let runResult: { state?: string } = {};
+			for (let attempt = 0; attempt < 100; attempt++) {
+				if (fs.existsSync(resultPath)) runResult = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+				if (runResult.state === "complete" || runResult.state === "failed") break;
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.equal(runResult.state, "complete");
 
+			return { result, resultPath };
+		});
 		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		fs.rmSync(resultPath, { force: true });
 	});
 
 	it("lets explicit fast false opt out external CLI agents from inherited fast mode", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		const markerPath = path.join(tempDir, "external-fast-false-started");
-		const executor = makeExecutor([
-			makeAgent("external", {
-				fast: true,
-				runner: { type: "external-cli", command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started"); process.stdout.write("external fast false result")`] },
-			}),
-		]);
+		const cleanupEvents = createEventBus();
+		const cleanup = registerSingleExecutionCleanup(cleanupEvents);
+		const { result, resultPath } = await cleanup.run(async () => {
+			const markerPath = path.join(tempDir, "external-fast-false-started");
+			const executor = makeExecutor([
+				makeAgent("external", {
+					fast: true,
+					runner: { type: "external-cli", command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started"); process.stdout.write("external fast false result")`] },
+				}),
+			], {}, false, undefined, true, new Map(), undefined, undefined, cleanupEvents);
 
-		const rejected = await executor.execute(
-			"external-fast-inherited",
-			{ agent: "external", task: "Run external", async: true },
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-		assert.equal(rejected.isError, true);
-		assert.match(rejected.content[0]?.text ?? "", /does not support fast mode/);
-		assert.equal(fs.existsSync(markerPath), false);
+			const rejected = await executor.execute(
+				"external-fast-inherited",
+				{ agent: "external", task: "Run external", async: true },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(rejected.isError, true);
+			assert.match(rejected.content[0]?.text ?? "", /does not support fast mode/);
+			assert.equal(fs.existsSync(markerPath), false);
 
-		const result = await executor.execute(
-			"external-fast-false",
-			{ agent: "external", task: "Run external", async: true, fast: false },
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
+			const result = await executor.execute(
+				"external-fast-false",
+				{ agent: "external", task: "Run external", async: true, fast: false },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
 
-		assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
-		assert.ok(result.details.asyncId);
-		assert.equal(await waitForFileContent(markerPath, "started"), "started");
-		assert.equal(mockPi.callCount(), 0);
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
+			assert.ok(result.details.asyncId);
+			cleanup.expect(result.details.asyncId, result.details.asyncDir!);
+			assert.equal(await waitForFileContent(markerPath, "started"), "started");
+			assert.equal(mockPi.callCount(), 0);
 
-		const resultPath = path.join(DIRS.results, `${result.details.asyncId}.json`);
-		let runResult: { state?: string } = {};
-		for (let attempt = 0; attempt < 100; attempt++) {
-			if (fs.existsSync(resultPath)) runResult = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
-			if (runResult.state === "complete" || runResult.state === "failed") break;
-			await new Promise((resolve) => setTimeout(resolve, 20));
-		}
-		assert.equal(runResult.state, "complete");
-
+			const resultPath = path.join(DIRS.results, `${result.details.asyncId}.json`);
+			let runResult: { state?: string } = {};
+			for (let attempt = 0; attempt < 100; attempt++) {
+				if (fs.existsSync(resultPath)) runResult = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+				if (runResult.state === "complete" || runResult.state === "failed") break;
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.equal(runResult.state, "complete");
+			return { result, resultPath };
+		});
 		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		fs.rmSync(resultPath, { force: true });
 	});
@@ -2346,55 +2357,67 @@ Answer only from the supplied synthetic text.
 	});
 
 	it("keeps ordinary async workflow child results in the watcher-owned path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ output: "async child done" });
-		const executor = makeExecutor([makeAgent("echo")]);
-		const result = await executor.execute(
-			`scripted-workflow-async-child-${Date.now()}`,
-			{ workflowScript: `return await runs.run("background", { agent: "echo", task: "Async child", async: true });`, async: false },
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-		const childRunId = (result.details.workflow?.value as { runId?: string } | undefined)?.runId;
-		assert.ok(childRunId);
-		const childDir = path.join(DIRS.async, childRunId);
-		const childResultPath = path.join(DIRS.results, `${childRunId}.json`);
-		for (let attempt = 0; attempt < 200 && !fs.existsSync(childResultPath); attempt++) {
-			await new Promise((resolve) => setTimeout(resolve, 20));
-		}
-		assert.equal(fs.existsSync(childResultPath), true);
-		assert.equal(fs.existsSync(path.join(childDir, "workflow-result.json")), false);
+		const cleanupEvents = createEventBus();
+		const cleanup = registerSingleExecutionCleanup(cleanupEvents);
+		const { childDir, childResultPath } = await cleanup.run(async () => {
+			mockPi.onCall({ output: "async child done" });
+			const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, cleanupEvents);
+			const result = await executor.execute(
+				`scripted-workflow-async-child-${Date.now()}`,
+				{ workflowScript: `return await runs.run("background", { agent: "echo", task: "Async child", async: true });`, async: false },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			const childRunId = (result.details.workflow?.value as { runId?: string } | undefined)?.runId;
+			assert.ok(childRunId);
+			const childDir = path.join(DIRS.async, childRunId);
+			cleanup.expect(childRunId, childDir);
+			const childResultPath = path.join(DIRS.results, `${childRunId}.json`);
+			for (let attempt = 0; attempt < 200 && !fs.existsSync(childResultPath); attempt++) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.equal(fs.existsSync(childResultPath), true);
+			assert.equal(fs.existsSync(path.join(childDir, "workflow-result.json")), false);
+			return { childDir, childResultPath };
+		});
 		fs.rmSync(childDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		fs.rmSync(childResultPath, { force: true });
 	});
 
 	it("applies an agent deadline to a workflow-launched async child", { skip: !createSubagentExecutor ? "executor not importable" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
-		mockPi.onCall({ delay: 5_000, output: "too late" });
-		const executor = makeExecutor([makeAgent("slow", { defaultTimeoutMs: 150 })]);
-		const result = await executor.execute(
-			`scripted-workflow-async-child-timeout-${Date.now()}`,
-			{
-				workflowScript: `return await runs.run("background", { agent: "slow", task: "Wait", async: true });`,
-				async: false,
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-		const childRunId = (result.details.workflow?.value as { runId?: string } | undefined)?.runId;
-		assert.ok(childRunId, JSON.stringify(result.details.workflow?.value ?? result.content));
-		const childDir = path.join(DIRS.async, childRunId);
-		const childResultPath = path.join(DIRS.results, `${childRunId}.json`);
-		let persisted: { timeoutMs?: number; state?: string; results?: Array<{ timedOut?: boolean; error?: string }> } = {};
-		for (let attempt = 0; attempt < 200; attempt++) {
-			if (fs.existsSync(childResultPath)) persisted = JSON.parse(fs.readFileSync(childResultPath, "utf-8"));
-			if (persisted.state === "failed") break;
-			await new Promise((resolve) => setTimeout(resolve, 20));
-		}
-		assert.equal(persisted.timeoutMs, 150);
-		assert.equal(persisted.state, "failed");
-		assert.deepEqual(persisted.results?.map((entry) => entry.timedOut), [true]);
-		assert.deepEqual(persisted.results?.map((entry) => entry.error), ["Subagent timed out after 150ms."]);
+		const cleanupEvents = createEventBus();
+		const cleanup = registerSingleExecutionCleanup(cleanupEvents);
+		const { childDir, childResultPath } = await cleanup.run(async () => {
+			mockPi.onCall({ delay: 5_000, output: "too late" });
+			const executor = makeExecutor([makeAgent("slow", { defaultTimeoutMs: 150 })], {}, false, undefined, true, new Map(), undefined, undefined, cleanupEvents);
+			const result = await executor.execute(
+				`scripted-workflow-async-child-timeout-${Date.now()}`,
+				{
+					workflowScript: `return await runs.run("background", { agent: "slow", task: "Wait", async: true });`,
+					async: false,
+				},
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			const childRunId = (result.details.workflow?.value as { runId?: string } | undefined)?.runId;
+			assert.ok(childRunId, JSON.stringify(result.details.workflow?.value ?? result.content));
+			const childDir = path.join(DIRS.async, childRunId);
+			cleanup.expect(childRunId, childDir);
+			const childResultPath = path.join(DIRS.results, `${childRunId}.json`);
+			let persisted: { timeoutMs?: number; state?: string; results?: Array<{ timedOut?: boolean; error?: string }> } = {};
+			for (let attempt = 0; attempt < 200; attempt++) {
+				if (fs.existsSync(childResultPath)) persisted = JSON.parse(fs.readFileSync(childResultPath, "utf-8"));
+				if (persisted.state === "failed") break;
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.equal(persisted.timeoutMs, 150);
+			assert.equal(persisted.state, "failed");
+			assert.deepEqual(persisted.results?.map((entry) => entry.timedOut), [true]);
+			assert.deepEqual(persisted.results?.map((entry) => entry.error), ["Subagent timed out after 150ms."]);
+			return { childDir, childResultPath };
+		});
 		fs.rmSync(childDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		fs.rmSync(childResultPath, { force: true });
 	});

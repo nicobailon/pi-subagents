@@ -15,6 +15,15 @@ process.env.USERPROFILE = isolatedHome;
 if (!nestedTestProcess) delete process.env.PI_CODING_AGENT_DIR;
 process.env.PI_SUBAGENTS_TEST_LOADER = "1";
 
+let retainOwnedRoot = false;
+
+/** Test-only, irreversible opt-in when the single-execution guard cannot prove settlement. */
+export function retainSingleExecutionTempRoot() {
+	if (!configuredTempRoot) retainOwnedRoot = true;
+}
+
 if (!configuredTempRoot) {
-	process.on("exit", () => fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
+	process.on("exit", () => {
+		if (!retainOwnedRoot) fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+	});
 }

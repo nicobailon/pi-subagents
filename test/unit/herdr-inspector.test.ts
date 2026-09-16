@@ -76,16 +76,45 @@ describe("Herdr inspector", () => {
 		}
 	});
 
-	it("normalizes missing binaries, timeouts, and supported versions", async () => {
+	it("normalizes missing binaries, timeouts, and supported versions", async (t) => {
 		const missing = createHerdrClient({ spawn: (() => { throw Object.assign(new Error("missing"), { code: "ENOENT" }); }) as never });
 		const missingResult = await missing.run(["--version"]);
 		assert.equal(missingResult.ok, false);
 		if (!missingResult.ok) assert.equal(missingResult.error.code, "HERDR_UNAVAILABLE");
 
-		const timeout = createHerdrClient({ spawn: (() => fakeChild()) as never });
-		const timeoutResult = await timeout.run(["pane", "get", "w1:p2"], { timeoutMs: 5 });
-		assert.equal(timeoutResult.ok, false);
-		if (!timeoutResult.ok) assert.equal(timeoutResult.error.code, "TIMEOUT");
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		try {
+			const child = fakeChild();
+			let kills = 0, settled = false;
+			child.kill = () => { kills++; return true; };
+			const timeout = createHerdrClient({ spawn: (() => child) as never });
+			const pending = timeout.run(["pane", "get", "w1:p2"], { timeoutMs: 5 });
+			void pending.then(() => { settled = true; });
+			t.mock.timers.tick(4);
+			await Promise.resolve();
+			assert.equal(settled, false);
+			assert.equal(kills, 0);
+			t.mock.timers.tick(1);
+			const timeoutResult = await pending;
+			assert.equal(timeoutResult.ok, false);
+			if (!timeoutResult.ok) assert.equal(timeoutResult.error.code, "TIMEOUT");
+			assert.equal(kills, 1);
+			t.mock.timers.tick(5);
+			assert.equal(kills, 1);
+
+			const closingChild = fakeChild();
+			let closeKills = 0;
+			closingChild.kill = () => { closeKills++; return true; };
+			const closing = createHerdrClient({ spawn: (() => closingChild) as never });
+			const success = closing.run(["pane", "get", "w1:p2"], { timeoutMs: 5 });
+			t.mock.timers.tick(4);
+			closingChild.emit("close", 0);
+			assert.equal((await success).ok, true);
+			t.mock.timers.tick(1);
+			assert.equal(closeKills, 0, "successful close clears the timeout");
+		} finally {
+			t.mock.timers.reset();
+		}
 
 		const gone = createHerdrClient({ spawn: (() => {
 			const child = fakeChild();

@@ -123,6 +123,10 @@ describe("native supervisor channel", () => {
 					setImmediate, clearImmediate,
 				},
 			});
+			// Node's lazy rimraf captures fs bindings; initialize it before installing the polling spy.
+			const cleanupSeed = path.join(ownDir, "cleanup-seed");
+			fs.writeFileSync(cleanupSeed, "");
+			fs.rmSync(cleanupSeed);
 			const readdir = fsDefault.readdirSync;
 			let scans = 0;
 			fsDefault.readdirSync = ((dir: fs.PathLike, options: unknown) => {
