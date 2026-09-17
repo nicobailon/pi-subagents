@@ -12,6 +12,7 @@ import {
 	collectFleetStatusEntries,
 	fleetAgentIdentityColor,
 	formatFleetElapsed,
+	formatFleetRate,
 	formatFleetTokens,
 	resolveFleetViewPlacement,
 } from "../../src/tui/fleet-status.ts";
@@ -212,6 +213,17 @@ describe("below-editor subagent FleetView", () => {
 		assert.equal(formatFleetTokens(484_000, 129_000), "↓ 129.0k window · 484.0k spent");
 	});
 
+	it("formats the live average only once a sample is old and fast enough", () => {
+		assert.equal(formatFleetRate(13_100, 11_000), "1191 tok/s avg");
+		assert.equal(formatFleetRate(900, 120_000), "7.5 tok/s avg");
+		assert.equal(formatFleetRate(500, 5_000), "100 tok/s avg");
+		assert.equal(formatFleetRate(9_950, 100_000), "99.5 tok/s avg");
+		assert.equal(formatFleetRate(500, 4_999), undefined);
+		assert.equal(formatFleetRate(42, 3_600_000), undefined, "a rate too slow to read must not render as 0.0 tok/s");
+		assert.equal(formatFleetRate(0, 60_000), undefined);
+		assert.equal(formatFleetRate(Number.NaN, 60_000), undefined);
+	});
+
 	it("renders cached external jobs with an external marker and elapsed time", () => {
 		clearExternalRuns();
 		registerExternalRun({
@@ -361,6 +373,50 @@ describe("below-editor subagent FleetView", () => {
 			assert.equal(component.render(80).length, 1);
 			assert.deepEqual(fleet.handleKey("\x1b[D"), { consume: true });
 			assert.ok(component.render(80).length > 1, "Left should also expand the roster");
+		} finally {
+			fleet.dispose();
+		}
+	});
+
+	it("shows live throughput, and drops it before it squeezes the agent label", () => {
+		const state = stateForTest();
+		state.activeAsyncCapacity = { used: 1, limit: 4 };
+		const now = Date.now();
+		state.foregroundControls.set("run-rate", {
+			runId: "run-rate",
+			mode: "single",
+			startedAt: now - 11_000,
+			updatedAt: now,
+			currentAgent: "worker",
+			description: "Measure throughput",
+			model: "anthropic/fable-5",
+			thinking: "low",
+			tokens: 13_100,
+		});
+		let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				requestRender() {},
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext(ctx);
+			const tui = { requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor };
+			const component = widgetFactory!(tui, theme);
+			assert.deepEqual(fleet.handleKey("\x1b[B"), { consume: true });
+			const row = (width: number): string => component.render(width).find((line) => line.includes("worker"))!;
+			// Wide enough for the rate, narrow enough that it costs the label its last columns.
+			assert.match(row(100), /worker \(fable-5 · thinking low\) · running.*11s · \d+ tok\/s avg · ↓ 13\.1k tokens/);
+			assert.match(row(70), /worker \(fable-5 · thinking low\) · running.*11s · ↓ 13\.1k tokens/);
+			assert.doesNotMatch(row(70), /tok\/s/);
+			for (const line of component.render(70)) assert.ok(visibleWidth(line) <= 70, `line exceeded width: ${line}`);
 		} finally {
 			fleet.dispose();
 		}

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Show a lifetime average throughput on live rows in the below-editor Fleet status widget, between the elapsed time and the token total: cumulative input-plus-output tokens, including prompt tokens read from cache, over wall-clock time that includes thinking, tool calls, and provider waits. It is not the model's decode rate, so it is labelled `tok/s avg`. It appears on running rows after five seconds, and the render drops it before it would truncate the agent label. Workflow wrapper rows keep attributing usage to their child rows, and external and project-pane rows carry no token totals to average (#2307).
+
 ### Fixed
 
 - The Ghostty inspector no longer takes over when `TERM_PROGRAM=ghostty` comes from a terminal that embeds the Ghostty kernel (such as cmux) instead of the standalone Ghostty app. Availability now requires the macOS host bundle id (`__CFBundleIdentifier`) to identify Ghostty itself; absent or different host identity declines to the `inspector.command` hint instead of targeting an unrelated Ghostty window or emitting `-1728`/`-2741` AppleScript errors. Thanks to [@wangpi26](https://github.com/wangpi26) for #2281.

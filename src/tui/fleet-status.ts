@@ -111,6 +111,27 @@ function detailElapsed(row: Pick<AsyncStatusWorkflowRow, "startedAt" | "endedAt"
 	return duration !== undefined ? formatFleetElapsed(duration) : undefined;
 }
 
+// Early samples are noisy because tokens only move once per turn, so hold the
+// rate back until the row has been running long enough to average out.
+const MIN_FLEET_RATE_WINDOW_MS = 5_000;
+// Below this the row would read "0.0 tok/s", which looks stalled rather than slow.
+const MIN_FLEET_RATE_TOKENS_PER_SECOND = 0.1;
+
+/**
+ * Lifetime average throughput for a live row: cumulative tokens over wall-clock
+ * time. The numerator counts input and output, including prompt tokens the
+ * provider read from cache instead of decoding, and the denominator includes
+ * thinking, tool calls, and provider waits. This is not the model's decode rate.
+ * Returns undefined when the sample is too small or too slow to be worth showing.
+ */
+export function formatFleetRate(tokens: number, elapsedMs: number): string | undefined {
+	if (!Number.isFinite(tokens) || !Number.isFinite(elapsedMs)) return undefined;
+	if (tokens <= 0 || elapsedMs < MIN_FLEET_RATE_WINDOW_MS) return undefined;
+	const perSecond = tokens / (elapsedMs / 1000);
+	if (perSecond < MIN_FLEET_RATE_TOKENS_PER_SECOND) return undefined;
+	return `${perSecond >= 100 ? Math.round(perSecond) : perSecond.toFixed(1)} tok/s avg`;
+}
+
 export function formatFleetTokens(count: number, window?: number, windowCount = 1): string {
 	const compact = (value: number): string => value >= 1_000_000
 		? `${(value / 1_000_000).toFixed(1)}M`
@@ -862,12 +883,22 @@ export class SubagentFleetStatus {
 			: "";
 		const left = `${prefix} ${this.bullet(rosterIndex, selectedIndex, theme)} ${theme.fg(fleetAgentIdentityColor(entry.agent), agent)} · ${entry.state}${checklist}`;
 		const elapsed = Date.now() - entry.startedAt;
-		const rightText = entry.projectPane
+		const rate = entry.state === "running" && !entry.workflowWrapper
+			? formatFleetRate(entry.tokens, elapsed)
+			: undefined;
+		const usage = entry.workflowWrapper ? "usage on child rows" : formatFleetTokens(entry.tokens, entry.window);
+		const rightFor = (includeRate: boolean): string => theme.fg("dim", entry.projectPane
 			? `${entry.projectPane.summary ?? "—"} · ${formatFleetElapsed(Date.now() - entry.projectPane.refreshedAt)} ago`
-				: entry.external ? formatFleetElapsed(elapsed) : `${formatFleetElapsed(elapsed)} · ${entry.workflowWrapper ? "usage on child rows" : formatFleetTokens(entry.tokens, entry.window)}`;
-		const right = theme.fg("dim", rightText);
-		if (unclipped) return `${left} ${right}`;
-		return rightAlign(left, right, width);
+			: entry.external
+				? formatFleetElapsed(elapsed)
+				: [formatFleetElapsed(elapsed), includeRate ? rate : undefined, usage].filter((part): part is string => part !== undefined).join(" · "));
+		const right = rightFor(true);
+		// The rate is the least essential field, so drop it before it squeezes the agent label.
+		// This also decides what the unclipped measurement below reports: a row that fits once the
+		// rate is dropped is still visible, so a narrow roster does not revoke workflow coverage.
+		const fitted = rate && visibleWidth(left) > width - visibleWidth(right) - 1 ? rightFor(false) : right;
+		if (unclipped) return `${left} ${fitted}`;
+		return rightAlign(left, fitted, width);
 	}
 
 	private renderNestedRow(row: FleetNestedRow, last: boolean, width: number, theme: Theme): string {

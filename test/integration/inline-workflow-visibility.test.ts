@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { Editor } from "@earendil-works/pi-tui";
+import { Editor, visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AsyncJobState, SubagentState } from "../../src/shared/types.ts";
 import { WIDGET_KEY } from "../../src/shared/types.ts";
@@ -51,6 +51,28 @@ it("collapses only after the actual same-UI roster renders, and restores on deac
 		h.activate(); h.roster();
 		h.mounted.get(FLEET_STATUS_WIDGET_KEY)!.dispose?.();
 		assert.match(h.asyncText(), /unique-worker/);
+	} finally { h.close(); }
+});
+
+it("keeps coverage when the roster drops a rate it had no room for", () => {
+	const h = harness(10);
+	try {
+		const [alpha] = materialize(h);
+		alpha.steps = [{ agent: "alpha-worker", status: "running", startedAt: Date.now() - 60_000, tokens: { input: 9_000, output: 60, total: 9_060 } }];
+		renderWidget(h.ctx, [...h.state.asyncJobs.values()]);
+		h.activate();
+		const row = (width: number): string => h.roster(width).split("\n").find((line) => line.includes("alpha-worker"))!;
+		assert.match(row(240), /· running.*\d+ tok\/s avg · ↓ 9\.1k tokens/);
+		// Walk down to the boundary where the rate stops fitting and the render drops it.
+		let width = 240;
+		while (width > 20 && row(width).includes("tok/s")) width--;
+		assert.match(row(width), /· running.*↓ 9\.1k tokens/);
+		assert.doesNotMatch(row(width), /tok\/s/);
+		assert.equal(visibleWidth(row(width)), width, "the row fits once the rate is dropped");
+		assert.match(row(width + 1), /tok\/s avg/);
+		// A row that fits once the rate is dropped is still visible, so coverage survives.
+		h.roster(width);
+		assert.match(h.asyncText(), /Workflow children shown in Fleet roster/);
 	} finally { h.close(); }
 });
 
