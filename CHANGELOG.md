@@ -16,7 +16,7 @@
 ### Fixed
 
 - The Ghostty inspector only activates when the macOS host bundle id identifies the standalone Ghostty app. Terminals that embed Ghostty (such as cmux) set `TERM_PROGRAM=ghostty` too, which previously targeted an unrelated Ghostty window or emitted `-1728`/`-2741` AppleScript errors; those hosts now fall back to the `inspector.command` hint. Thanks to [@wangpi26](https://github.com/wangpi26) for #2281.
-- Keep source-layout async runners on native Node TypeScript when child extensions are configured, while short-circuiting host peer aliases so Pi's extension loader and generated factories resolve the same filesystem targets. Thanks to [@qsgy-edge](https://github.com/qsgy-edge).
+- Keep source-layout async runners on native Node TypeScript when child extensions are configured, while short-circuiting host peer aliases so Pi's extension loader and generated factories resolve the same filesystem targets. Thanks to [@qsgy-edge](https://github.com/qsgy-edge) for #2314.
 - Hosts without `npm` no longer print `/bin/sh: npm: command not found` during startup; global package-root discovery is optional and now stays silent when the package manager is missing. Thanks to [@PhrZer](https://github.com/PhrZer) for #2287.
 
 ## [0.68.0] - 2026-09-15
