@@ -4,7 +4,7 @@
 
 ### Added
 
-- Typed gates: `gate` accepts `{ command, output: "json", schema?, timeoutMs? }`. A passing command's JSON stdout becomes the child's `structuredOutput` (schema-validated when `schema` is given), so a post-run classifier can supply a verdict that `runs.lanes` and workflow scripts branch on without the parent reading the child's output. Invalid, empty, or truncated stdout fails the gate instead of dropping the verdict; typed gates are never memoized; `output: "json"` cannot be combined with `outputSchema`. Documented command-runner agents as typed workflow steps, with a runnable `examples/typed-gate`.
+- Typed gates: `gate` accepts `{ command, output: "json", schema?, timeoutMs? }`. A passing command's JSON stdout becomes the child's `structuredOutput` (schema-validated when `schema` is given), so a post-run classifier can supply a verdict that `runs.lanes` and workflow scripts branch on without the parent reading the child's output. Invalid, empty, or truncated stdout fails the gate instead of dropping the verdict; typed gates are never memoized; a typed gate cannot be combined with an `outputSchema` from the launch or the agent's frontmatter. Documented command-runner agents as typed workflow steps, with a runnable `examples/typed-gate`.
 
 ### Fixed
 

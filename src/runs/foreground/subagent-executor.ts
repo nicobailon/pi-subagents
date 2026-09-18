@@ -4809,14 +4809,18 @@ function normalizeGateParams(params: SubagentParamsLike): GateParamsNormalizatio
 	}
 	const normalized = normalizeGateAcceptance(params.gate, params.acceptance);
 	if (!normalized.ok) return { ok: false, error: normalized.error };
-	// Both the gate shorthand and an explicit acceptance.verify list normalize to the
-	// same verify commands, so one check covers both spellings of the conflict.
-	if (acceptanceHasTypedVerify(normalized.acceptance) && params.outputSchema !== undefined && params.outputSchema !== false) {
-		return { ok: false, error: (params.gate === undefined ? "acceptance.verify: " : "gate.output: ") + TYPED_VERIFY_OUTPUT_SCHEMA_CONFLICT };
-	}
 	if (params.gate === undefined) return { ok: true, params };
 	const { gate: _gate, ...rest } = params;
 	return { ok: true, params: { ...rest, ...(normalized.acceptance !== undefined ? { acceptance: normalized.acceptance } : {}) } };
+}
+
+function describeTypedVerifyOutputSchemaConflict(effective: SubagentParamsLike, requested: SubagentParamsLike): string | undefined {
+	if (!acceptanceHasTypedVerify(effective.acceptance)) return undefined;
+	if (effective.outputSchema === undefined || effective.outputSchema === false) return undefined;
+	const agent = effective.agent ?? "?";
+	const schemaSource = requested.outputSchema !== undefined && requested.outputSchema !== false ? "outputSchema" : `agent '${agent}' outputSchema`;
+	const verifySource = requested.gate !== undefined ? "gate.output" : requested.acceptance !== undefined ? "acceptance.verify" : `agent '${agent}' defaultAcceptance`;
+	return `${verifySource}: ${TYPED_VERIFY_OUTPUT_SCHEMA_CONFLICT.replace("with outputSchema", `with ${schemaSource}`)}`;
 }
 
 function formatWorkflowValue(value: unknown): string {
@@ -6894,6 +6898,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 		const modelScope = discovered.modelScope;
 		effectiveParams = applySingleAgentLaunchDefaults(effectiveParams, discoveredAgents);
+		// The gate shorthand, an explicit acceptance.verify list, and an agent's
+		// defaultAcceptance all normalize to verify commands, and the agent's
+		// frontmatter outputSchema has been merged by now, so this one check keeps
+		// a run to a single structured-output source regardless of spelling.
+		const typedVerifyConflict = describeTypedVerifyOutputSchemaConflict(effectiveParams, params);
+		if (typedVerifyConflict) return buildRequestedModeError(effectiveParams, typedVerifyConflict);
 		// An agent-level defaultContext is a preference, unlike an explicit request.
 		// Prefer fork only when the parent session is persisted and has a current leaf;
 		// otherwise use fresh immediately instead of launching a guaranteed-to-fail fork.

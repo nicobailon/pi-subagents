@@ -3889,6 +3889,17 @@ Answer only from the supplied synthetic text.
 		);
 		assert.equal(explicit.isError, true);
 		assert.match(explicit.content[0]?.text ?? "", /acceptance\.verify: .*cannot be combined with outputSchema/);
+
+		const declared = makeExecutor([makeAgent("typed", { outputSchema: { type: "object" } })]);
+		const frontmatter = await declared.execute(
+			"typed-gate-agent-schema",
+			{ async: false, agent: "typed", task: "Review", gate: { command: "true", output: "json" } },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(frontmatter.isError, true);
+		assert.match(frontmatter.content[0]?.text ?? "", /gate\.output: .*cannot be combined with agent 'typed' outputSchema/);
 		assert.equal(mockPi.callCount(), 0);
 	});
 
