@@ -55,7 +55,7 @@ import { isScheduledRunAction } from "../background/scheduled-runs.ts";
 import { encodeIndexSegment } from "../background/index-segment.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
-import { normalizeGateAcceptance, parseGateInput, resolveAcceptanceReportMode, validateAcceptanceInput, validateExecutionAcceptance, validateExecutionAcceptancePolicy } from "../shared/acceptance.ts";
+import { acceptanceHasTypedVerify, normalizeGateAcceptance, resolveAcceptanceReportMode, TYPED_VERIFY_OUTPUT_SCHEMA_CONFLICT, validateAcceptanceInput, validateExecutionAcceptance, validateExecutionAcceptancePolicy } from "../shared/acceptance.ts";
 import { canPreferFork, createForkContextResolver, resolveSubagentLaunchContext } from "../../shared/fork-context.ts";
 import { createPrunedForkSessionWriter } from "../../shared/pruned-fork.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
@@ -4809,11 +4809,12 @@ function normalizeGateParams(params: SubagentParamsLike): GateParamsNormalizatio
 	}
 	const normalized = normalizeGateAcceptance(params.gate, params.acceptance);
 	if (!normalized.ok) return { ok: false, error: normalized.error };
-	if (params.gate === undefined) return { ok: true, params };
-	const parsedGate = parseGateInput(params.gate);
-	if (parsedGate.ok && parsedGate.gate.output === "json" && params.outputSchema !== undefined && params.outputSchema !== false) {
-		return { ok: false, error: "gate.output: \"json\" cannot be combined with outputSchema; the child would have two structured-output sources." };
+	// Both the gate shorthand and an explicit acceptance.verify list normalize to the
+	// same verify commands, so one check covers both spellings of the conflict.
+	if (acceptanceHasTypedVerify(normalized.acceptance) && params.outputSchema !== undefined && params.outputSchema !== false) {
+		return { ok: false, error: (params.gate === undefined ? "acceptance.verify: " : "gate.output: ") + TYPED_VERIFY_OUTPUT_SCHEMA_CONFLICT };
 	}
+	if (params.gate === undefined) return { ok: true, params };
 	const { gate: _gate, ...rest } = params;
 	return { ok: true, params: { ...rest, ...(normalized.acceptance !== undefined ? { acceptance: normalized.acceptance } : {}) } };
 }

@@ -3868,17 +3868,28 @@ Answer only from the supplied synthetic text.
 		assert.equal(result.details.results[0]?.structuredOutput, undefined);
 	});
 
-	it("rejects a typed gate combined with outputSchema before launch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("rejects a typed gate combined with outputSchema before launch, in both spellings", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
-		const result = await executor.execute(
+		const shorthand = await executor.execute(
 			"typed-gate-conflict",
 			{ async: false, agent: "echo", task: "Review", gate: { command: "true", output: "json" }, outputSchema: { type: "object" } },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
 		);
-		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /cannot be combined with outputSchema/);
+		assert.equal(shorthand.isError, true);
+		assert.match(shorthand.content[0]?.text ?? "", /gate\.output: .*cannot be combined with outputSchema/);
+
+		const explicit = await executor.execute(
+			"typed-verify-conflict",
+			{ async: false, agent: "echo", task: "Review", acceptance: { level: "verified", verify: [{ id: "v", command: "true", output: "json" }] }, outputSchema: { type: "object" } },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(explicit.isError, true);
+		assert.match(explicit.content[0]?.text ?? "", /acceptance\.verify: .*cannot be combined with outputSchema/);
+		assert.equal(mockPi.callCount(), 0);
 	});
 
 	it("preserves an explicitly bound staged index through a foreground launch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

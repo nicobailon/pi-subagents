@@ -237,6 +237,14 @@ export function parseGateInput(gate: unknown): { ok: true; gate: GateObjectInput
 	return { ok: true, gate: parsed };
 }
 
+/** True when an acceptance policy declares at least one `output: "json"` verify command, from either the gate shorthand or an explicit verify list. */
+export function acceptanceHasTypedVerify(acceptance: AcceptanceInput | undefined): boolean {
+	if (!acceptance || typeof acceptance !== "object") return false;
+	return Array.isArray(acceptance.verify) && acceptance.verify.some((command) => command && typeof command === "object" && command.output === "json");
+}
+
+export const TYPED_VERIFY_OUTPUT_SCHEMA_CONFLICT = "a typed verify command (output: \"json\") cannot be combined with outputSchema; the child would have two structured-output sources.";
+
 export function normalizeGateAcceptance(gate: unknown, acceptance: AcceptanceInput | undefined): GateAcceptanceNormalizationResult {
 	if (gate === undefined) {
 		if (acceptance === undefined) return { ok: true };

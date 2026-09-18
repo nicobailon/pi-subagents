@@ -424,7 +424,7 @@ A gate given as `{ command, output: "json" }` runs like a string gate, and then 
 - A passing command must print one JSON document on stdout (at most 12,000 characters). The parsed value becomes `result.structuredOutput`, is recorded on the verify run as `structuredOutput`, and is projected into `status.json`. When `schema` is given, the value must validate against it.
 - Empty, truncated, non-JSON, or schema-invalid stdout marks the gate `failed` with a `structuredOutputError`; explicit acceptance then fails the run, exactly as a non-zero exit would. The verdict is never silently dropped.
 - Typed gates are never memoized: their input (a report, a log) can change without the tracked tree changing.
-- `output: "json"` cannot be combined with `outputSchema`; a child has one structured-output source. An agent whose frontmatter declares `outputSchema` keeps its own `structured_output` call, and the gate value is ignored for it.
+- `output: "json"` cannot be combined with `outputSchema`, whether written as `gate` or as an explicit `acceptance.verify` entry; preflight rejects both. A child has one structured-output source. An agent whose frontmatter declares `outputSchema` keeps its own `structured_output` call, and the gate value is ignored for it.
 - `runs.lanes` treats a bridged `structuredOutput.verdict === "blocked"` like any other blocked stage. Scripts read the value as `result.structuredOutput`.
 
 ### Levels and inference

@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
 	acceptanceFailureMessage,
+	acceptanceHasTypedVerify,
 	evaluateAcceptance,
 	normalizeGateAcceptance,
 	parseGateInput,
@@ -66,6 +67,15 @@ describe("gate object form", () => {
 			assert.equal(parsed.ok, false, JSON.stringify(gate));
 			assert.match(parsed.ok ? "" : parsed.error, pattern, JSON.stringify(gate));
 		}
+	});
+
+	it("detects typed verify commands in either spelling", () => {
+		assert.equal(acceptanceHasTypedVerify(undefined), false);
+		assert.equal(acceptanceHasTypedVerify("checked"), false);
+		assert.equal(acceptanceHasTypedVerify({ level: "verified", verify: [{ id: "v", command: "x" }] }), false);
+		assert.equal(acceptanceHasTypedVerify({ level: "verified", verify: [{ id: "v", command: "x", output: "json" }] }), true);
+		const gate = normalizeGateAcceptance({ command: "x", output: "json" }, undefined);
+		assert.equal(gate.ok && acceptanceHasTypedVerify(gate.acceptance), true);
 	});
 
 	it("accepts output and schema on explicit acceptance.verify entries", () => {
