@@ -679,12 +679,8 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	// The compiled host exposes its SDK only through Pi's extension loader.
 	const binaryHost = resolveBunPiExecutable();
 	const nodeExecutable = resolveNodeExecutable();
-	const configuredExtensions = (cfg as { steps?: Array<{ extensions?: unknown[]; subagentOnlyExtensions?: unknown[]; requiredExtensions?: unknown[] }> }).steps?.some(
-		(step) => (step.extensions?.length ?? 0) > 0 || (step.subagentOnlyExtensions?.length ?? 0) > 0 || (step.requiredExtensions?.length ?? 0) > 0,
-	) ?? false;
-	// Keep provider/tool extensions in Jiti's host-alias boundary; the native preload
-	// only certifies the runner's imports, not a separately loaded extension graph.
-	const nativeRunnerSupported = supportsNativeRunner(nodeExecutable) && !configuredExtensions;
+	// Native peer aliases use a short-circuit result so both Pi's loader and generated factories keep filesystem resolution semantics.
+	const nativeRunnerSupported = supportsNativeRunner(nodeExecutable);
 	const runner = asyncRunnerSourcePath;
 	const runnerIsJavaScript = path.extname(runner) === ".js";
 	const bootstrap = path.join(path.dirname(runner), `binary-bootstrap${path.extname(fileURLToPath(import.meta.url))}`);
