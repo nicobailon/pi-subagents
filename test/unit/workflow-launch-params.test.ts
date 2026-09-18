@@ -302,6 +302,21 @@ describe("workflow launch params", () => {
 		);
 	});
 
+	it("projects an object gate into a typed verify command", () => {
+		const gate = { command: "classify.sh --report r.md", output: "json", schema: { type: "object" }, timeoutMs: 5000 };
+		assert.deepEqual(
+			prepareWorkflowLaunchParams({}, { agent: "reviewer", task: "Review", gate }, "workflow-run", "typed"),
+			{
+				agent: "reviewer",
+				task: "Review",
+				workflowAwaitAsync: true,
+				workflowParentRunId: "workflow-run",
+				workflowKey: "typed",
+				acceptance: { level: "verified", verify: [{ id: "gate", command: "classify.sh --report r.md", output: "json", schema: { type: "object" }, timeoutMs: 5000 }] },
+			},
+		);
+	});
+
 	it("preserves a bridge override for retained workflow children", () => {
 		assert.deepEqual(
 			prepareWorkflowLaunchParams(

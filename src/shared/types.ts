@@ -1028,6 +1028,10 @@ export interface AcceptanceVerifyCommand {
 	cwd?: string;
 	env?: Record<string, string>;
 	allowFailure?: boolean;
+	/** When "json", a passing command's stdout is parsed and becomes the run's structured output. */
+	output?: "json";
+	/** Optional JSON Schema the parsed stdout must satisfy; only meaningful with `output: "json"`. */
+	schema?: JsonSchemaObject;
 }
 
 export interface AcceptanceReviewGate {
@@ -1124,6 +1128,10 @@ export interface AcceptanceVerifyResult {
 		diffHash: string;
 	};
 	artifactError?: string;
+	/** Parsed stdout of a passing `output: "json"` command. */
+	structuredOutput?: unknown;
+	/** Why a passing `output: "json"` command still failed: invalid JSON, truncated stdout, or schema mismatch. */
+	structuredOutputError?: string;
 }
 
 export interface AcceptanceReviewResult {

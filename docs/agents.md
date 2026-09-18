@@ -58,6 +58,10 @@ If you disabled the old bundled `gpt-pro` workaround with `agentOverrides.gpt-pr
 
 The Pi async run remains the source of truth for status, artifacts, wake/wait, mission attachment, retention, and diagnostics.
 
+### Command-runner agents as typed steps
+
+`runner.type: external-cli` with a plain `command` (no `adapter`) runs any local executable as a subagent: the assembled prompt is written to stdin, stdout becomes the child's output, and the run gets the usual run id, status, mission entry, and workflow key. This is how a classifier, a scoring script, or a small evaluation model becomes a `runs.run` step. Such agents are async-only (workflows launch children async by default; a direct `async: false` call is refused), receive no forked transcript, and cannot produce `structuredOutput` themselves; parse their `output` in the workflow, or pair them with a [typed gate](tool-reference.md#typed-gates). Generic commands are local-only; saved-machine placement accepts only the code-owned adapters below.
+
 ### Advisory runner data boundary
 
 External CLI agents use their own runner contract. They are deliberate execution modes, not implicit recovery paths for a failed native `subagent` workflow. For backlog lanes and other subagent-governed workflows, switching to an external, foreground, or CLI runner requires explicit owner approval after the exact failure/run/worktree state is recorded and the worktree is verified clean or its partial diff is captured. Do not pass native Pi child options such as model override, structured output, acceptance/agent contract, tool budgets, fast mode, fork context, skills, or native Pi tools unless the adapter explicitly implements them.

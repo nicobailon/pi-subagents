@@ -1006,6 +1006,56 @@ describe("scripted workflow runtime", () => {
 		);
 	});
 
+	it("accepts an object gate with json output and rejects malformed object gates", async () => {
+		const launches: Record<string, unknown>[] = [];
+		const gate = { command: "classify.sh --report r.md", output: "json", schema: { type: "object" }, timeoutMs: 5000 };
+		await runWorkflowScript({
+			script: `return runs.run("typed", { agent: "reviewer", gate: ${JSON.stringify(gate)} });`,
+			async launch(key, params) { launches.push(params); return { key, ok: true, output: "done", artifactPaths: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.deepEqual(launches[0]?.gate, gate);
+		for (const [bad, pattern] of [
+			[`{ command: "x", output: "yaml" }`, /gate\.output must be "json"/],
+			[`{ command: "x", schema: {} }`, /gate\.schema requires gate\.output/],
+			[`{ command: "x", cwd: "." }`, /gate\.cwd is not supported/],
+			[`{ output: "json" }`, /non-empty command string/],
+		] as const) {
+			await assert.rejects(
+				runWorkflowScript({
+					script: `return runs.run("invalid", { agent: "reviewer", gate: ${bad} });`,
+					async launch(key) { return { key, ok: true, output: "done", artifactPaths: [] }; },
+					async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				}),
+				(error: unknown) => error instanceof WorkflowScriptError && pattern.test(error.message),
+				bad,
+			);
+		}
+	});
+
+	it("lanes block on a verdict supplied through a typed gate", async () => {
+		const launched: string[] = [];
+		const result = await runWorkflowScript({
+			script: `
+				const board = await runs.lanes([{ key: "pr", stages: [
+					{ key: "review", agent: "reviewer", gate: { command: "classify.sh", output: "json" } },
+					{ key: "land", agent: "worker", task: "Land it" }
+				] }]);
+				return board[0].stages.map((stage) => [stage.key, stage.state, stage.verdict ?? "none"]);
+			`,
+			async launch(key, params) {
+				launched.push(key);
+				// The runtime bridges a passing json gate into structuredOutput; the workflow only sees the result.
+				return key === "pr.review"
+					? { key, ok: true, output: "", structuredOutput: { verdict: "blocked", action: "writer-fix" }, artifactPaths: [] }
+					: { key, ok: true, output: "done", artifactPaths: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.deepEqual(launched, ["pr.review"]);
+		assert.deepEqual(result.value, [["review", "blocked", "blocked"], ["land", "skipped", "none"]]);
+	});
+
 	it("reuses a gated key when acceptance false is explicit", async () => {
 		const launches: string[] = [];
 		const result = await runWorkflowScript({

@@ -5,7 +5,7 @@ import { Worker } from "node:worker_threads";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../runs/shared/parallel-utils.ts";
 import { HOST_STEP_MAX_COUNT } from "../runs/shared/host-step-status.ts";
 import { classifyTaskMutationIntent } from "../runs/shared/task-intent.ts";
-import { describeGateAcceptanceConflict } from "../runs/shared/acceptance.ts";
+import { describeGateAcceptanceConflict, parseGateInput } from "../runs/shared/acceptance.ts";
 import type { AcceptanceRecoveryMetadata, HostStepNode, SingleResult } from "../shared/types.ts";
 import { normalizeWorkflowHostCommandParams, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "./host-command.ts";
 
@@ -633,6 +633,24 @@ function validateLaneMetadata(value, label, workflowKey) {
   }
 }
 
+// Mirrors parseGateInput in src/runs/shared/acceptance.ts; the sandbox cannot import it.
+function describeGateShapeError(gate) {
+  const shape = "gate must be a non-empty command string or { command, output?: \"json\", schema?, timeoutMs? }.";
+  if (typeof gate === "string") return gate.trim() ? undefined : shape;
+  if (!gate || typeof gate !== "object" || Array.isArray(gate)) return shape;
+  for (const key of Object.keys(gate)) {
+    if (!["command", "output", "schema", "timeoutMs"].includes(key)) return "gate." + key + " is not supported.";
+  }
+  if (typeof gate.command !== "string" || !gate.command.trim()) return shape;
+  if (gate.output !== undefined && gate.output !== "json") return "gate.output must be \"json\" when present.";
+  if (gate.schema !== undefined) {
+    if (gate.output !== "json") return "gate.schema requires gate.output: \"json\".";
+    if (!gate.schema || typeof gate.schema !== "object" || Array.isArray(gate.schema)) return "gate.schema must be a JSON Schema object.";
+  }
+  if (gate.timeoutMs !== undefined && (!Number.isInteger(gate.timeoutMs) || gate.timeoutMs < 1)) return "gate.timeoutMs must be an integer >= 1.";
+  return undefined;
+}
+
 function describeGateAcceptanceConflict(gate, acceptance) {
   const render = (value) => {
     let encoded;
@@ -658,7 +676,10 @@ function validateRunCall(key, params, label, fingerprints) {
   if (params.worktree !== undefined && typeof params.worktree !== "boolean") throw new Error(label + " worktree must be true or false.");
   if (params.baseRef !== undefined && (typeof params.baseRef !== "string" || !validGitRef(params.baseRef))) throw new Error(label + " baseRef must be a valid Git ref: use HEAD or a supported named ref (for example, refs/heads/main). Full 40/64-character commit IDs and revision expressions are unsupported.");
   validateLaneMetadata(params.lane, label + " lane", key);
-  if (params.gate !== undefined && (typeof params.gate !== "string" || !params.gate.trim())) throw new Error(label + " gate must be a non-empty command string.");
+  if (params.gate !== undefined) {
+    const gateError = describeGateShapeError(params.gate);
+    if (gateError) throw new Error(label + " " + gateError);
+  }
   if (params.gate !== undefined && params.acceptance !== undefined && params.acceptance !== false) throw new Error(label + " gate cannot be combined with acceptance; use one gate command or acceptance.verify." + describeGateAcceptanceConflict(params.gate, params.acceptance));
   if (params.gate !== undefined && params.resume !== undefined) throw new Error(label + " gate is not supported with retained resume.");
   if (params.extensionBindings !== undefined && params.resume !== undefined) throw new Error(label + " extensionBindings is not supported with retained resume; resume uses the original retained child binding.");
@@ -2418,8 +2439,9 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (params.baseRef !== undefined && (typeof params.baseRef !== "string" || !validGitRef(params.baseRef))) {
 				return respond(Promise.reject(new Error(`runs.run('${key}') ${BASE_REF_VALIDATION_ERROR}`)));
 			}
-			if (params.gate !== undefined && (typeof params.gate !== "string" || !params.gate.trim())) {
-				return respond(Promise.reject(new Error(`runs.run('${key}') gate must be a non-empty command string.`)));
+			if (params.gate !== undefined) {
+				const parsedGate = parseGateInput(params.gate);
+				if (!parsedGate.ok) return respond(Promise.reject(new Error(`runs.run('${key}') ${parsedGate.error}`)));
 			}
 			if (params.gate !== undefined && params.acceptance !== undefined && params.acceptance !== false) {
 				return respond(Promise.reject(new Error(`runs.run('${key}') gate cannot be combined with acceptance; use one gate command or acceptance.verify.` + describeGateAcceptanceConflict(params.gate, params.acceptance))));

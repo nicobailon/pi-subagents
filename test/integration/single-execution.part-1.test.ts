@@ -3828,6 +3828,59 @@ Answer only from the supplied synthetic text.
 		assert.equal(result.details.results[0]?.acceptance?.verifyRuns[0]?.id, "gate");
 	});
 
+	it("bridges a typed gate's json stdout into the child's structuredOutput", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Review complete. See report." });
+		const executor = makeExecutor([makeAgent("echo")]);
+		const gate = {
+			command: `${process.execPath} -e "process.stdout.write(JSON.stringify({ verdict: 'blocked', action: 'writer-fix' }))"`,
+			output: "json",
+			schema: { type: "object", properties: { verdict: { type: "string", enum: ["ok", "blocked"] } }, required: ["verdict"] },
+		};
+
+		const result = await executor.execute(
+			"typed-gate",
+			{ async: false, agent: "echo", task: "Review the report without edits", gate },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "typed gate failed");
+		const child = result.details.results[0];
+		assert.equal(child?.acceptance?.status, "verified");
+		assert.equal(child?.acceptance?.verifyRuns[0]?.status, "passed");
+		assert.deepEqual(child?.structuredOutput, { verdict: "blocked", action: "writer-fix" });
+	});
+
+	it("fails the run when a typed gate prints something other than schema-valid json", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Review complete." });
+		const executor = makeExecutor([makeAgent("echo")]);
+		const result = await executor.execute(
+			"typed-gate-invalid",
+			{ async: false, agent: "echo", task: "Review the report without edits", gate: { command: `${process.execPath} -e "process.stdout.write('WRITER-FIX report=r.md')"`, output: "json" } },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /verification 'gate' failed: output: "json" stdout is not valid JSON/);
+		assert.equal(result.details.results[0]?.structuredOutput, undefined);
+	});
+
+	it("rejects a typed gate combined with outputSchema before launch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const result = await executor.execute(
+			"typed-gate-conflict",
+			{ async: false, agent: "echo", task: "Review", gate: { command: "true", output: "json" }, outputSchema: { type: "object" } },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /cannot be combined with outputSchema/);
+	});
+
 	it("preserves an explicitly bound staged index through a foreground launch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const cwd = fs.mkdtempSync(path.join(tempDir, "preserved-index-"));
 		execFileSync("git", ["init", "-q"], { cwd });

@@ -1016,6 +1016,34 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(elapsedMs < timeoutMs + 4_000, `timeout should cancel acceptance verification well before the verify command completes, elapsed ${elapsedMs}ms`);
 	});
 
+	it("bridges a typed gate's json stdout into an async child's structuredOutput", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Review complete. See report." });
+		const id = `async-typed-gate-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "reviewer",
+			task: "Review the report without edits",
+			agentConfig: makeAgent("reviewer"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: true, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: true, cleanupDays: 7 },
+			artifactsDir: path.join(tempDir, ".pi/subagents", "artifacts"),
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: {
+				level: "verified",
+				verify: [{ id: "gate", command: `${process.execPath} -e "process.stdout.write(JSON.stringify({ verdict: 'blocked' }))"`, output: "json", schema: { type: "object", required: ["verdict"] } }],
+			},
+		});
+
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.state, "complete", payload.results[0]?.error);
+		assert.equal(payload.results[0]?.acceptance?.status, "verified");
+		assert.deepEqual(payload.results[0]?.acceptance?.verifyRuns?.[0]?.structuredOutput, { verdict: "blocked" });
+		assert.deepEqual(payload.results[0]?.structuredOutput, { verdict: "blocked" });
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
+		assert.deepEqual(status.steps?.[0]?.structuredOutput, { verdict: "blocked" });
+	});
+
 	it("async launch messages tell the parent not to sleep-poll", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const artifactConfig = {
 			enabled: false,

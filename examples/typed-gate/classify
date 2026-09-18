@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# A stand-in classifier with the stdin -> JSON contract that both a typed gate
+# and a command-runner agent expect. It scores text with a few keyword rules so
+# the example runs with no API key. Swap the body of `score` for a real
+# classifier (TypeSafe Jev, a local model, a lookup service) and keep the shape.
+#
+#   classify --report PATH   read the text from a file   (gate usage)
+#   classify --stdin         read the text from stdin    (agent usage)
+set -euo pipefail
+
+mode=''
+report=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --report) report=$2; mode=report; shift 2 ;;
+    --stdin) mode=stdin; shift ;;
+    --json) shift ;;
+    *) printf 'classify: unknown option %s\n' "$1" >&2; exit 4 ;;
+  esac
+done
+case "$mode" in
+  report) [ -f "$report" ] || { printf 'classify: report not found: %s\n' "$report" >&2; exit 4; }; text=$(cat "$report") ;;
+  stdin) text=$(cat) ;;
+  *) printf 'usage: classify --report PATH | --stdin\n' >&2; exit 4 ;;
+esac
+
+# score: a tiny rule table. Each rule adds to `risk` and can force a verdict.
+risk=0
+verdict=ok
+notes=()
+if grep -qiE '\b(P0|blocker|critical)\b' <<<"$text"; then risk=$((risk + 60)); verdict=blocked; notes+=("blocker-level finding"); fi
+if grep -qiE '\b(P1|major|high)\b' <<<"$text"; then risk=$((risk + 25)); notes+=("major finding"); fi
+if grep -qiE 'credential|secret|token|remote (code|command) execution|rm -rf|--force' <<<"$text"; then risk=$((risk + 30)); notes+=("security-sensitive"); fi
+if grep -qiE '\bno (issues|blockers)( found)?\b|LGTM' <<<"$text"; then risk=0; verdict=ok; notes+=("explicit clean verdict"); fi
+[ "$risk" -gt 100 ] && risk=100
+
+jq -cn --arg verdict "$verdict" --argjson risk "$risk" --argjson notes "$(printf '%s\n' "${notes[@]:-}" | jq -R . | jq -s 'map(select(length > 0))')" \
+  '{verdict: $verdict, risk: ($risk / 100), notes: $notes}'
