@@ -23,6 +23,7 @@
 - Indexed workflow status transcripts now follow async workflow steps to their child-owned transcript tail. Thanks to [@swarajban](https://github.com/swarajban) for #2304.
 - Stop independent root sessions from publishing or restoring a shared permission-forwarding identity. Detached runners now receive only their validated launch parent, while environment-only forwarding from in-process foreground children remains unsupported pending a session-scoped permission-extension API. Thanks to [@kasumikira](https://github.com/kasumikira) for #2321.
 - Give the bundled reviewer a bounded, read-only view of the staged and unstaged working-tree delta against its launch `HEAD`, plus untracked paths, without restoring shell access. Committed ranges still require a supplied diff artifact. Thanks to [@nateberkopec](https://github.com/nateberkopec) for #2306.
+- Document `/subagent-cost` as the supported combined accounting view because Pi's custom completion messages cannot add async child usage to built-in session totals. Thanks to [@swarajban](https://github.com/swarajban) for #2313.
 
 ## [0.69.0] - 2026-09-18
 

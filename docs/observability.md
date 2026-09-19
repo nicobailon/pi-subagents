@@ -27,6 +27,12 @@ subagent({ action: "status", id: "..." })      // one run
 
 Or ask naturally: "Show me the current async runs."
 
+### Usage and cost accounting
+
+Run `/subagent-cost` for the parent session's combined parent and child token usage and cost. It includes completed async workflow children, recovering their persisted usage from receipts and metadata when needed.
+
+Pi's built-in session totals do not automatically include child usage delivered only by an async completion notification. Those notifications are custom messages, and Pi's public custom-message API does not carry accounted usage. `/subagent-cost` is therefore the supported accounting view for async child usage; do not infer child totals from Pi's footer or `/session` alone.
+
 The under-editor async widget gives a short view while work runs. Its expand key follows your Pi keybinding:
 
 ```text
