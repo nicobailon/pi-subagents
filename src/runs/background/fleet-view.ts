@@ -525,7 +525,32 @@ function appendTranscriptBody(lines: string[], sourceLabel: string, sourceLines:
 	lines.push(...body.reverse());
 }
 
+function resolveWorkflowTranscriptChild(status: AsyncStatus, asyncDir: string, options: TranscriptOptions): { status: AsyncStatus; asyncDir: string } | undefined {
+	if (status.mode !== "workflow" || options.index === undefined) return undefined;
+	const step = status.steps?.[options.index];
+	if (step?.async !== true || typeof step.runId !== "string" || !/^[A-Za-z0-9_-]+$/.test(step.runId) || step.runId === status.runId) return undefined;
+	try {
+		const asyncRoot = fs.realpathSync(path.dirname(asyncDir));
+		const childDir = path.join(asyncRoot, step.runId);
+		if (fs.realpathSync(childDir) !== childDir || fs.lstatSync(path.join(childDir, "status.json")).isSymbolicLink()) return undefined;
+		const childStatus = readStatus(childDir);
+		return childStatus?.runId === step.runId
+			&& childStatus.parentWorkflowRunId === status.runId
+			&& typeof step.workflowKey === "string" && step.workflowKey.length > 0
+			&& childStatus.workflowKey === step.workflowKey
+			&& typeof status.sessionId === "string" && status.sessionId.length > 0
+			&& childStatus.sessionId === status.sessionId
+			? { status: childStatus, asyncDir: childDir }
+			: undefined;
+	} catch (error) {
+		if (typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
 export function formatAsyncRunTranscript(status: AsyncStatus, asyncDir: string, options: TranscriptOptions = {}): string {
+	const workflowChild = resolveWorkflowTranscriptChild(status, asyncDir, options);
+	if (workflowChild) return formatAsyncRunTranscript(workflowChild.status, workflowChild.asyncDir, { ...options, index: undefined });
 	const lineLimit = transcriptLineLimit(options.lines);
 	const selected = selectTranscriptStep(status, options);
 	const stepOutputPath = selected.index !== undefined ? path.join(asyncDir, `output-${selected.index}.log`) : undefined;
