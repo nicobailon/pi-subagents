@@ -20,6 +20,15 @@ function runtimeSnapshotHost(serverName: string): McpRuntimeSnapshotHost {
 }
 
 describe("child tool plan", () => {
+	it("does not grant watchdog_diff unless an agent explicitly requests it", () => {
+		for (const agentName of ["worker", "scout", "project-reviewer"]) {
+			const plan = resolvePiLaunchToolPlan({ tools: ["read", "contact_supervisor"], agentName });
+			assert.equal(plan.effectiveToolAllowlist.includes("watchdog_diff"), false);
+		}
+		const bundledReviewer = resolvePiLaunchToolPlan({ tools: ["read", "watchdog_diff", "contact_supervisor"], agentName: "reviewer" });
+		assert.deepEqual(bundledReviewer.effectiveToolAllowlist, ["read", "watchdog_diff", "contact_supervisor"]);
+	});
+
 	it("fails a launch that selects MCP tools from the adapter's runtime snapshot", () => {
 		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-runtime-mcp-"));
 		try {

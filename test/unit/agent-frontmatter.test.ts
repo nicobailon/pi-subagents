@@ -1930,7 +1930,7 @@ Do work
 			const expectedTools = {
 				worker: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
 				delegate: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
-				reviewer: ["read", "grep", "find", "ls", "contact_supervisor"],
+				reviewer: ["read", "grep", "find", "ls", "watchdog_diff", "contact_supervisor"],
 				scout: ["read", "grep", "find", "ls", "bash", "write", "contact_supervisor"],
 				researcher: ["read", "write", "web_search", "fetch_content", "get_search_content", "source_check"],
 				"evidence-auditor": ["read", "web_search", "fetch_content", "get_search_content", "source_check"],

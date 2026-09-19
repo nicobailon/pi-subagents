@@ -156,8 +156,8 @@ describe("agent management config parsing", () => {
 		assert.ok(capabilities);
 		const reviewer = capabilities.agents.find((agent) => agent.name === "reviewer");
 		assert.ok(reviewer, "reviewer builtin should be present in capability output");
-		assert.deepEqual(reviewer.tools.names, ["read", "grep", "find", "ls", "contact_supervisor"]);
-		assert.match(readText(listed), /Tools: read, grep, find, ls, contact_supervisor/);
+		assert.deepEqual(reviewer.tools.names, ["read", "grep", "find", "ls", "watchdog_diff", "contact_supervisor"]);
+		assert.match(readText(listed), /Tools: read, grep, find, ls, watchdog_diff, contact_supervisor/);
 		assert.equal("acceptance" in reviewer, false);
 	});
 

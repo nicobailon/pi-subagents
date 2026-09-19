@@ -244,6 +244,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 	let structuredAcceptanceProvided = false;
 
 	const config: ChildRuntimeConfig = {
+		cwd: input.cwd,
 		...(input.runId ? { runId: input.runId } : {}),
 		agent: input.childAgentName,
 		childIndex: input.childIndex,
