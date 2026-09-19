@@ -156,6 +156,43 @@ describe("buildDoctorReport", () => {
 		}
 	});
 
+	it("distinguishes dedicated runner forwarding from root state", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-parent-routing-"));
+		const previousChild = process.env.PI_SUBAGENT_CHILD;
+		const previousParent = process.env.PI_SUBAGENT_PARENT_SESSION;
+		const report = () => buildDoctorReport({
+			cwd: root, config: {}, state: makeState(root),
+			deps: {
+				isAsyncAvailable: () => true,
+				discoverAgentsAll: () => ({ builtin: [], user: [], project: [], chains: [], userDir: root, projectDir: root, userChainDir: root, projectChainDir: root, userSettingsPath: path.join(root, "user.json"), projectSettingsPath: path.join(root, "project.json") }),
+				discoverAvailableSkills: () => [],
+				diagnoseIntercomBridge: () => ({ active: false, mode: "off", wantsIntercom: false, supervisorChannelAvailable: false, extensionDir: "none" }),
+			},
+		});
+		try {
+			process.env.PI_SUBAGENT_CHILD = "1";
+			process.env.PI_SUBAGENT_PARENT_SESSION = "launch-parent";
+			const runnerReport = report();
+			assert.match(runnerReport, /runner parent session: set \(launch-parent\) — explicit target for this dedicated child process/);
+			assert.doesNotMatch(runnerReport, /foreground external ask forwarding/);
+
+			delete process.env.PI_SUBAGENT_CHILD;
+			process.env.PI_SUBAGENT_PARENT_SESSION = "legacy-root";
+			const legacyReport = report();
+			assert.match(legacyReport, /root parent session: ignored legacy process-global value — root sessions do not use it for routing/);
+			assert.match(legacyReport, /foreground external ask forwarding: unavailable until the permission extension supports a session-scoped target/);
+
+			delete process.env.PI_SUBAGENT_PARENT_SESSION;
+			assert.match(report(), /root parent session: not set \(healthy\) — detached forwarding is attached at runner launch/);
+		} finally {
+			if (previousChild === undefined) delete process.env.PI_SUBAGENT_CHILD;
+			else process.env.PI_SUBAGENT_CHILD = previousChild;
+			if (previousParent === undefined) delete process.env.PI_SUBAGENT_PARENT_SESSION;
+			else process.env.PI_SUBAGENT_PARENT_SESSION = previousParent;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps reporting when a directory or discovery check fails", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-failure-"));
 		try {
