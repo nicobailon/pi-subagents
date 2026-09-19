@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Indexed workflow status transcripts now follow async workflow steps to their child-owned transcript tail. Thanks to [@swarajban](https://github.com/swarajban) for #2304.
+
 ## [0.69.0] - 2026-09-18
 
 ### Highlights

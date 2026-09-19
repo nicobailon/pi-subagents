@@ -556,6 +556,71 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("renders an indexed async workflow child's owned transcript", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-workflow-child-transcript-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const parentDir = path.join(asyncRoot, "workflow-parent");
+			const childDir = path.join(asyncRoot, "workflow-child");
+			fs.mkdirSync(parentDir, { recursive: true });
+			fs.mkdirSync(childDir);
+			fs.writeFileSync(path.join(parentDir, "status.json"), JSON.stringify({
+				runId: "workflow-parent", sessionId: "trusted-session", mode: "workflow", state: "running", startedAt: 100,
+				steps: [{ agent: "worker", workflowKey: "build", status: "running", async: true, runId: "workflow-child" }],
+			}));
+			const writeChildStatus = (overrides: Record<string, unknown> = {}) => fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify({
+				runId: "workflow-child", sessionId: "trusted-session", parentWorkflowRunId: "workflow-parent", workflowKey: "build",
+				mode: "single", state: "running", startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+				...overrides,
+			}));
+			writeChildStatus();
+			fs.writeFileSync(path.join(childDir, "output-0.log"), "CHILD_OWNED_TRANSCRIPT_SENTINEL\n");
+
+			const result = inspectSubagentStatus({ id: "workflow-parent", view: "transcript", index: 0 }, {
+				asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"),
+			});
+			const text = textContent(result);
+			assert.match(text, /CHILD_OWNED_TRANSCRIPT_SENTINEL/);
+			assert.doesNotMatch(text, /\(no transcript lines available yet\)/);
+
+			const inspect = () => textContent(inspectSubagentStatus({ id: "workflow-parent", view: "transcript", index: 0 }, {
+				asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"),
+			}));
+			for (const mismatch of [
+				{ runId: "mismatched-child" },
+				{ parentWorkflowRunId: "different-parent" },
+				{ workflowKey: "different-key" },
+				{ sessionId: "different-session" },
+			]) {
+				writeChildStatus(mismatch);
+				const refused = inspect();
+				assert.match(refused, /\(no transcript lines available yet\)/, JSON.stringify(mismatch));
+				assert.doesNotMatch(refused, /CHILD_OWNED_TRANSCRIPT_SENTINEL/, JSON.stringify(mismatch));
+			}
+
+			fs.unlinkSync(path.join(childDir, "status.json"));
+			assert.match(inspect(), /\(no transcript lines available yet\)/);
+
+			fs.writeFileSync(path.join(childDir, "status.json"), "{malformed");
+			const malformed = inspectSubagentStatus({ id: "workflow-parent", view: "transcript", index: 0 }, {
+				asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"),
+			});
+			assert.equal(malformed.isError, true);
+			assert.match(textContent(malformed), /Failed to parse async status file .*workflow-child.*status\.json/);
+
+			fs.rmSync(path.join(childDir, "status.json"));
+			fs.mkdirSync(path.join(childDir, "status.json"));
+			const unreadable = inspectSubagentStatus({ id: "workflow-parent", view: "transcript", index: 0 }, {
+				asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"),
+			});
+			assert.equal(unreadable.isError, true);
+			assert.match(textContent(unreadable), /Failed to read async status file .*workflow-child.*status\.json/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("shows host steps in exact workflow status checklist", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-workflow-host-checklist-"));
 		try {
