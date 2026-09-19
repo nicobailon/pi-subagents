@@ -23,6 +23,17 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Typecheck
         run: npm run typecheck
+      - name: Provision issue-2297 real Pi/router diagnostic
+        if: runner.os == 'Windows'
+        run: npm install --prefix "${{ runner.temp }}/issue-2297-host" --no-package-lock --ignore-scripts @earendil-works/pi-coding-agent@0.85.1 pi-router@0.5.4
+      - name: Issue-2297 Windows real pi-router resolution diagnostic
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        env:
+          PI_SUBAGENTS_NATIVE_PI_ROOT: ${{ runner.temp }}/issue-2297-host/node_modules/@earendil-works/pi-coding-agent
+          PI_SUBAGENTS_ISSUE_2297_ROUTER_ROOT: ${{ runner.temp }}/issue-2297-host/node_modules/pi-router
+          NODE_DISABLE_COMPILE_CACHE: '1'
+        run: npm run build:pkg && node --experimental-strip-types --import ./test/support/native-peer-loader.mjs test/diagnostics/issue-2297-windows-router.mjs
       - name: Unit tests
         run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test ${{ runner.os == 'Windows' && '--test-concurrency=2' || '' }} test/unit/*.test.ts
       - name: Integration tests
