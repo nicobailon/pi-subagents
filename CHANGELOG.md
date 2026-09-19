@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep project-scoped agent memory stable across standard linked Git worktrees. Thanks to [@freezscholte](https://github.com/freezscholte) for #2293.
+
 ## [0.69.0] - 2026-09-18
 
 ### Highlights

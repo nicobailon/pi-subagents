@@ -12,15 +12,17 @@
  * never collide with the owner's `~/.pi/agent/memory/{project}/` system.
  */
 
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
-import { findNearestProjectRoot, type AgentConfig, type AgentMemoryConfig } from "./agents.ts";
+import { findNearestGitRoot, findNearestProjectRoot, type AgentConfig, type AgentMemoryConfig } from "./agents.ts";
 
 export const AGENT_MEMORY_DIR_NAME = "agent-memory";
 export const AGENT_MEMORY_FILE = "MEMORY.md";
 export const MAX_MEMORY_LINES = 200;
 const MAX_MEMORY_BYTES = 16 * 1024;
+const MAX_GITDIR_FILE_BYTES = 4 * 1024;
 
 const WRITE_TOOLS = new Set(["edit", "write", "bash"]);
 
@@ -68,6 +70,91 @@ export function agentHasWriteTools(agent: Pick<AgentConfig, "tools">): boolean {
 function isWithin(child: string, parent: string): boolean {
 	const rel = path.relative(parent, child);
 	return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+function comparablePath(candidate: string): string {
+	let canonical: string;
+	try {
+		canonical = fs.realpathSync.native(candidate);
+	} catch {
+		canonical = fs.realpathSync(candidate);
+	}
+	const normalized = path.normalize(canonical);
+	return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function samePath(left: string, right: string): boolean {
+	if (comparablePath(left) === comparablePath(right)) return true;
+	if (process.platform !== "win32") return false;
+	// Git for Windows and Node can spell the same temp path through different
+	// drive or 8.3 aliases, so use filesystem identity as the fail-closed fallback.
+	const leftStat = fs.statSync(left);
+	const rightStat = fs.statSync(right);
+	return leftStat.dev !== 0 && leftStat.ino !== 0 && leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+}
+
+function readBoundedRegularFile(file: string): string | undefined {
+	const stat = fs.lstatSync(file);
+	if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_GITDIR_FILE_BYTES) return undefined;
+	return fs.readFileSync(file, "utf8");
+}
+
+function gitConfirmsWorktree(projectRoot: string, commonGitDir: string): boolean {
+	const result = spawnSync("git", ["-C", projectRoot, "rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel"], {
+		encoding: "utf8",
+		timeout: 2_000,
+		maxBuffer: MAX_GITDIR_FILE_BYTES * 2,
+		windowsHide: true,
+	});
+	if (result.status !== 0) return false;
+	const lines = result.stdout.trim().split(/\r?\n/);
+	if (lines.length !== 2) return false;
+	try {
+		return samePath(lines[0]!, commonGitDir) && samePath(lines[1]!, projectRoot);
+	} catch {
+		return false;
+	}
+}
+
+function resolveLinkedWorktreeMain(worktreeRoot: string): string {
+	const marker = path.join(worktreeRoot, ".git");
+	try {
+		const gitdir = readBoundedRegularFile(marker)?.match(/^gitdir:\s*(.+?)\s*$/m)?.[1];
+		if (!gitdir) return worktreeRoot;
+		const worktreeGitDir = fs.realpathSync(path.resolve(worktreeRoot, gitdir));
+		const backlink = readBoundedRegularFile(path.join(worktreeGitDir, "gitdir"))?.trim();
+		if (!backlink || !samePath(path.resolve(worktreeGitDir, backlink), marker)) return worktreeRoot;
+		const worktreesDir = path.dirname(worktreeGitDir);
+		const commonGitDir = path.dirname(worktreesDir);
+		if (path.basename(worktreesDir) !== "worktrees" || path.basename(commonGitDir) !== ".git") return worktreeRoot;
+		const main = fs.realpathSync(path.dirname(commonGitDir));
+		const commonStat = fs.lstatSync(commonGitDir);
+		if (commonStat.isSymbolicLink() || !commonStat.isDirectory()) return worktreeRoot;
+		const relativeGitDir = path.relative(fs.realpathSync(commonGitDir), worktreeGitDir).split(path.sep);
+		return relativeGitDir.length === 2 && relativeGitDir[0] === "worktrees" && gitConfirmsWorktree(worktreeRoot, commonGitDir)
+			? main
+			: worktreeRoot;
+	} catch {
+		return worktreeRoot;
+	}
+}
+
+/** Map the selected project path from a verified linked worktree onto the main checkout. */
+function resolveProjectMemoryRoot(projectRoot: string): string {
+	const gitRoot = findNearestGitRoot(projectRoot);
+	if (!gitRoot) return projectRoot;
+	const main = resolveLinkedWorktreeMain(gitRoot);
+	try {
+		if (samePath(main, gitRoot)) return projectRoot;
+		const relativeProject = path.relative(fs.realpathSync(gitRoot), fs.realpathSync(projectRoot));
+		if (relativeProject.startsWith("..") || path.isAbsolute(relativeProject)) return projectRoot;
+		const mapped = path.resolve(main, relativeProject);
+		if (!fs.existsSync(mapped)) return mapped;
+		const canonical = fs.realpathSync(mapped);
+		return samePath(canonical, main) || isWithin(canonical, main) ? canonical : projectRoot;
+	} catch {
+		return projectRoot;
+	}
 }
 
 /**
@@ -198,9 +285,9 @@ export function buildAgentMemoryInjection(agent: AgentConfig, cwd: string): stri
 	if (memory.scope === "user") {
 		rootDir = path.join(getAgentDir(), AGENT_MEMORY_DIR_NAME);
 	} else {
-		const projectRoot = findNearestProjectRoot(cwd);
+		const projectRoot = findNearestProjectRoot(cwd) ?? findNearestGitRoot(cwd);
 		if (!projectRoot) return "";
-		rootDir = path.join(getProjectConfigDir(projectRoot), AGENT_MEMORY_DIR_NAME);
+		rootDir = path.join(getProjectConfigDir(resolveProjectMemoryRoot(projectRoot)), AGENT_MEMORY_DIR_NAME);
 	}
 
 	const resolved = resolveMemoryDir(rootDir, memory.path);
