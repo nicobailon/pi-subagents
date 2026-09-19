@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -68,6 +69,14 @@ function mkProject(): string {
 function writeMemoryFile(memoryDir: string, contents: string): void {
 	fs.mkdirSync(memoryDir, { recursive: true });
 	fs.writeFileSync(path.join(memoryDir, AGENT_MEMORY_FILE), contents, "utf-8");
+}
+
+function commitFixture(project: string, trackedFile: string): void {
+	execFileSync("git", ["init", "-q"], { cwd: project });
+	execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: project });
+	execFileSync("git", ["config", "user.name", "Test"], { cwd: project });
+	execFileSync("git", ["add", trackedFile], { cwd: project });
+	execFileSync("git", ["commit", "-qm", "fixture"], { cwd: project });
 }
 
 afterEach(() => {
@@ -267,6 +276,122 @@ describe("buildAgentMemoryInjection", () => {
 		assert.match(injection, new RegExp(`Memory file: ${escapeRegex(memoryFile)}`));
 		assert.match(injection, new RegExp(`No ${AGENT_MEMORY_FILE} exists yet`));
 		assert.match(injection, /You may create it/);
+	});
+
+	it("resolves project memory through a linked worktree when Git trace writes to stderr", () => {
+		const root = mkdtemp("pi-subagents-mem-worktree-");
+		const project = path.join(root, "project");
+		const worktree = path.join(root, "worktree");
+		fs.mkdirSync(path.join(project, ".pi", "agents"), { recursive: true });
+		fs.writeFileSync(path.join(project, ".pi", "agents", "probe.md"), "probe\n");
+		commitFixture(project, ".pi/agents/probe.md");
+		execFileSync("git", ["worktree", "add", "-qb", "probe", worktree], { cwd: project });
+		const expectedFile = path.join(fs.realpathSync.native(project), ".pi", AGENT_MEMORY_DIR_NAME, "probe", AGENT_MEMORY_FILE);
+		writeMemoryFile(path.dirname(expectedFile), "marker: shared-main-memory\n");
+		const agent = makeAgent({ memory: { scope: "project", path: "probe" }, tools: ["read", "write"] });
+		const previousGitTrace = process.env.GIT_TRACE;
+		process.env.GIT_TRACE = "1";
+		let injection: string;
+		try {
+			injection = buildAgentMemoryInjection(agent, path.join(worktree, ".pi", "agents"));
+		} finally {
+			if (previousGitTrace === undefined) delete process.env.GIT_TRACE;
+			else process.env.GIT_TRACE = previousGitTrace;
+		}
+		assert.match(injection, /marker: shared-main-memory/);
+		assert.match(injection, new RegExp(`Memory file: ${escapeRegex(expectedFile)}`));
+		assert.doesNotMatch(injection, new RegExp(escapeRegex(path.join(worktree, ".pi", AGENT_MEMORY_DIR_NAME))));
+
+		const marker = path.join(worktree, ".git");
+		const absoluteGitDir = fs.readFileSync(marker, "utf8").match(/^gitdir:\s*(.+?)\s*$/m)?.[1];
+		assert.ok(absoluteGitDir);
+		const markerFd = fs.openSync(marker, "r+");
+		try {
+			fs.ftruncateSync(markerFd, 0);
+			fs.writeFileSync(markerFd, `gitdir: ${path.relative(fs.realpathSync(worktree), path.resolve(worktree, absoluteGitDir))}\n`);
+		} finally {
+			fs.closeSync(markerFd);
+		}
+		injection = buildAgentMemoryInjection(agent, worktree);
+		assert.match(injection, /marker: shared-main-memory/);
+		assert.match(injection, new RegExp(`Memory file: ${escapeRegex(expectedFile)}`));
+	});
+
+	it("maps nested project memory from a linked worktree to the same main-checkout path", () => {
+		const root = mkdtemp("pi-subagents-mem-nested-worktree-");
+		const project = path.join(root, "project");
+		const worktree = path.join(root, "worktree");
+		const nested = path.join("packages", "app");
+		fs.mkdirSync(path.join(project, nested, ".pi", "agents"), { recursive: true });
+		fs.writeFileSync(path.join(project, nested, ".pi", "agents", "probe.md"), "probe\n");
+		commitFixture(project, `${nested}/.pi/agents/probe.md`);
+		execFileSync("git", ["worktree", "add", "-qb", "nested", worktree], { cwd: project });
+		const expectedFile = path.join(fs.realpathSync.native(project), nested, ".pi", AGENT_MEMORY_DIR_NAME, "probe", AGENT_MEMORY_FILE);
+		writeMemoryFile(path.dirname(expectedFile), "marker: nested-main-memory\n");
+		const agent = makeAgent({ memory: { scope: "project", path: "probe" }, tools: ["read", "write"] });
+		const injection = buildAgentMemoryInjection(agent, path.join(worktree, nested));
+		assert.match(injection, /marker: nested-main-memory/);
+		assert.match(injection, new RegExp(`Memory file: ${escapeRegex(expectedFile)}`));
+	});
+
+	it("rejects a forged marker pointing at another repository's valid worktree metadata", () => {
+		const project = mkProject();
+		const other = path.join(mkdtemp("pi-subagents-mem-other-repo-"), "project");
+		const otherWorktree = path.join(path.dirname(other), "worktree");
+		fs.mkdirSync(other, { recursive: true });
+		fs.writeFileSync(path.join(other, "tracked.txt"), "fixture\n");
+		commitFixture(other, "tracked.txt");
+		execFileSync("git", ["worktree", "add", "-qb", "other", otherWorktree], { cwd: other });
+		const otherGitDir = fs.readFileSync(path.join(otherWorktree, ".git"), "utf8").match(/^gitdir:\s*(.+?)\s*$/m)?.[1];
+		assert.ok(otherGitDir);
+		fs.writeFileSync(path.join(project, ".git"), `gitdir: ${otherGitDir}\n`);
+		writeMemoryFile(path.join(project, ".pi", AGENT_MEMORY_DIR_NAME, "probe"), "marker: checkout-local\n");
+		writeMemoryFile(path.join(other, ".pi", AGENT_MEMORY_DIR_NAME, "probe"), "marker: other-repository\n");
+		const injection = buildAgentMemoryInjection(makeAgent({ memory: { scope: "project", path: "probe" }, tools: ["read"] }), project);
+		assert.match(injection, /marker: checkout-local/);
+		assert.doesNotMatch(injection, /marker: other-repository/);
+	});
+
+	it("rejects self-consistent forged worktree metadata that Git does not recognize", () => {
+		const project = mkProject();
+		const fakeMain = mkdtemp("pi-subagents-mem-forged-main-");
+		const fakeWorktreeGitDir = path.join(fakeMain, ".git", "worktrees", "forged");
+		fs.mkdirSync(fakeWorktreeGitDir, { recursive: true });
+		fs.writeFileSync(path.join(project, ".git"), `gitdir: ${fakeWorktreeGitDir}\n`);
+		fs.writeFileSync(path.join(fakeWorktreeGitDir, "gitdir"), `${path.join(project, ".git")}\n`);
+		writeMemoryFile(path.join(project, ".pi", AGENT_MEMORY_DIR_NAME, "probe"), "marker: checkout-local\n");
+		writeMemoryFile(path.join(fakeMain, ".pi", AGENT_MEMORY_DIR_NAME, "probe"), "marker: forged-main\n");
+		const injection = buildAgentMemoryInjection(makeAgent({ memory: { scope: "project", path: "probe" }, tools: ["read"] }), project);
+		assert.match(injection, /marker: checkout-local/);
+		assert.doesNotMatch(injection, /marker: forged-main/);
+	});
+
+	it("uses the Git root when a linked worktree has no local project config directory", () => {
+		const root = mkdtemp("pi-subagents-mem-unconfigured-worktree-");
+		const project = path.join(root, "project");
+		const worktree = path.join(root, "worktree");
+		fs.mkdirSync(project, { recursive: true });
+		fs.writeFileSync(path.join(project, "tracked.txt"), "fixture\n");
+		commitFixture(project, "tracked.txt");
+		execFileSync("git", ["worktree", "add", "-qb", "probe", worktree], { cwd: project });
+		writeMemoryFile(path.join(project, ".pi", AGENT_MEMORY_DIR_NAME, "probe"), "marker: git-root-memory\n");
+		const agent = makeAgent({ memory: { scope: "project", path: "probe" }, tools: ["read"] });
+		assert.equal(findNearestProjectRoot(worktree), null);
+		assert.match(buildAgentMemoryInjection(agent, worktree), /marker: git-root-memory/);
+	});
+
+	it("keeps project memory checkout-local for unsupported separate Git directories", () => {
+		const root = mkdtemp("pi-subagents-mem-separate-git-dir-");
+		const project = path.join(root, "project");
+		const gitDir = path.join(root, "metadata");
+		fs.mkdirSync(path.join(project, ".pi", "agents"), { recursive: true });
+		execFileSync("git", ["init", "-q", `--separate-git-dir=${gitDir}`, project]);
+		writeMemoryFile(path.join(project, ".pi", AGENT_MEMORY_DIR_NAME, "probe"), "marker: checkout-local\n");
+		writeMemoryFile(path.join(root, ".pi", AGENT_MEMORY_DIR_NAME, "probe"), "marker: unsupported-remap\n");
+		const injection = buildAgentMemoryInjection(makeAgent({ memory: { scope: "project", path: "probe" }, tools: ["read"] }), project);
+		assert.match(injection, /marker: checkout-local/);
+		assert.doesNotMatch(injection, /marker: unsupported-remap/);
+		assert.match(injection, new RegExp(`Memory file: ${escapeRegex(path.join(project, ".pi", AGENT_MEMORY_DIR_NAME, "probe", AGENT_MEMORY_FILE))}`));
 	});
 
 	it("injects a read-only block for agents without write tools", () => {

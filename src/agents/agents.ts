@@ -853,7 +853,7 @@ function findProjectRootCandidates(cwd: string): string[] {
 	}
 }
 
-function findNearestGitRoot(cwd: string): string | null {
+export function findNearestGitRoot(cwd: string): string | null {
 	let currentDir = cwd;
 	while (true) {
 		if (fs.existsSync(path.join(currentDir, ".git"))) return currentDir;

@@ -392,6 +392,7 @@ This is independent of Pi's own parent/session/project memory system and writes 
 How it works:
 
 - On each run, the first 200 lines of `MEMORY.md` in the resolved memory directory are injected into the child system prompt, so the agent can recall accumulated role notes such as threat-model entries, release gotchas, or verified commands.
+- Project memory resolves to the main checkout from standard linked Git worktrees whose metadata lives under `<main>/.git/worktrees/`, so isolated children share one durable role memory and worktree cleanup does not remove it. Custom `--separate-git-dir` layouts keep their current project-root behavior because Git does not retain a safely verifiable main-checkout path there.
 - Agents with write tools (`edit`, `write`, or `bash`, or no `tools` allowlist at all) are told they may append concise dated entries to the file.
 - Agents without write tools receive a read-only memory block and are not instructed to edit it. A read-only reviewer can recall prior notes without gaining write capability.
 - The memory directory is never created eagerly. The agent's own `write` tool creates it (and `MEMORY.md`) on the first persist.
