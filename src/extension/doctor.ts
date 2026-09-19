@@ -203,12 +203,17 @@ function formatPermissionSystemSection(): string[] {
 	const lines: string[] = [];
 	const parentSession = process.env["PI_SUBAGENT_PARENT_SESSION"] ?? "";
 	const trimmed = parentSession.trim();
-	if (trimmed) {
-		lines.push(`- parent session: set (${trimmed})`);
-	} else {
-		lines.push("- parent session: not set — ask forwarding from background children will not reach a parent UI");
-	}
 	const isChild = process.env["PI_SUBAGENT_CHILD"] === "1";
+	if (isChild && trimmed) {
+		lines.push(`- runner parent session: set (${trimmed}) — explicit target for this dedicated child process`);
+	} else if (isChild) {
+		lines.push("- runner parent session: not set — this child process has no forwarding target");
+	} else if (trimmed) {
+		lines.push("- root parent session: ignored legacy process-global value — root sessions do not use it for routing");
+	} else {
+		lines.push("- root parent session: not set (healthy) — detached forwarding is attached at runner launch");
+	}
+	if (!isChild) lines.push("- foreground external ask forwarding: unavailable until the permission extension supports a session-scoped target");
 	lines.push(`- subagent process: ${isChild ? "yes (PI_SUBAGENT_CHILD=1)" : "no"}`);
 	// Whether pi-permission-system is installed and where it stores config is
 	// outside pi-subagents' control, so we only report the forwarding signal we

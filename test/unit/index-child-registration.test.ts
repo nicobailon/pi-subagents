@@ -732,6 +732,7 @@ describe("subagent extension child mode", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
 			import { currentCompletionOwnerId } from "./src/shared/completion-owner.ts";
+			process.env.PI_SUBAGENT_PARENT_SESSION = "stale-legacy-root";
 			const completionOwnerId = currentCompletionOwnerId();
 			function createRuntime(sessionId) {
 				const eventListeners = new Map();
@@ -774,6 +775,7 @@ describe("subagent extension child mode", () => {
 			const first = createRuntime("independent-first");
 			registerSubagentExtension(first.pi);
 			for (const handler of first.handlers.get("session_start")) await handler({ reason: "startup" }, first.ctx);
+			if (process.env.PI_SUBAGENT_PARENT_SESSION !== undefined) throw new Error("first root retained a legacy parent identity");
 			first.events.emit("subagent:async-complete", {
 				id: "independent-baseline", agent: "worker", success: true, summary: "Baseline",
 				exitCode: 0, timestamp: Date.now(), sessionId: "independent-first", completionOwnerId,
@@ -783,6 +785,7 @@ describe("subagent extension child mode", () => {
 			const second = createRuntime("independent-second");
 			registerSubagentExtension(second.pi);
 			for (const handler of second.handlers.get("session_start")) await handler({ reason: "startup" }, second.ctx);
+			if (process.env.PI_SUBAGENT_PARENT_SESSION !== undefined) throw new Error("second root published a parent identity");
 
 			for (const handler of first.handlers.get("agent_end")) await handler({}, first.ctx);
 			first.events.emit("subagent:async-complete", {
@@ -794,8 +797,8 @@ describe("subagent extension child mode", () => {
 			}
 
 			for (const handler of first.handlers.get("session_shutdown")) await handler();
-			if (process.env.PI_SUBAGENT_PARENT_SESSION !== "independent-second") {
-				throw new Error("independent shutdown cleared another runtime's parent session identity");
+			if (process.env.PI_SUBAGENT_PARENT_SESSION !== undefined) {
+				throw new Error("independent shutdown restored a root parent session identity");
 			}
 			for (const handler of second.handlers.get("agent_end")) await handler({}, second.ctx);
 			second.events.emit("subagent:async-complete", {
@@ -807,8 +810,25 @@ describe("subagent extension child mode", () => {
 			}
 			for (const handler of second.handlers.get("session_shutdown")) await handler();
 			if (process.env.PI_SUBAGENT_PARENT_SESSION !== undefined) {
-				throw new Error("owning shutdown left its parent session identity active");
+				throw new Error("final shutdown left a root parent session identity active");
 			}
+
+			const reverseFirst = createRuntime("reverse-first");
+			const reverseSecond = createRuntime("reverse-second");
+			registerSubagentExtension(reverseFirst.pi);
+			registerSubagentExtension(reverseSecond.pi);
+			for (const handler of reverseFirst.handlers.get("session_start")) await handler({ reason: "startup" }, reverseFirst.ctx);
+			for (const handler of reverseSecond.handlers.get("session_start")) await handler({ reason: "startup" }, reverseSecond.ctx);
+			for (const handler of reverseSecond.handlers.get("session_shutdown")) await handler();
+			if (process.env.PI_SUBAGENT_PARENT_SESSION !== undefined) throw new Error("reverse shutdown restored a root identity");
+			for (const handler of reverseFirst.handlers.get("agent_end")) await handler({}, reverseFirst.ctx);
+			reverseFirst.events.emit("subagent:async-complete", {
+				id: "reverse-completion", agent: "worker", success: true, summary: "Done",
+				exitCode: 0, timestamp: Date.now(), sessionId: "reverse-first", completionOwnerId,
+			});
+			if ((reverseFirst.eventDeliveries.get("subagent:async-complete") ?? 0) === 0) throw new Error("reverse shutdown removed the surviving runtime subscription");
+			for (const handler of reverseFirst.handlers.get("session_shutdown")) await handler();
+			if (process.env.PI_SUBAGENT_PARENT_SESSION !== undefined) throw new Error("reverse final shutdown restored a root identity");
 		`;
 
 		execFileSync(
@@ -1020,7 +1040,7 @@ describe("subagent extension child mode", () => {
 			if (oldRuntime.sent.length !== 0) throw new Error("stale completion sent after runtime cleanup");
 			for (const handler of oldRuntime.handlers.get("session_shutdown")) await handler({ reason: "reload" });
 			if (eventListeners.get("subagent:async-complete")?.size !== oldListenerCount
-				|| process.env.PI_SUBAGENT_PARENT_SESSION !== "notify-reload-session") {
+				|| process.env.PI_SUBAGENT_PARENT_SESSION !== undefined) {
 				throw new Error("stale shutdown changed the replacement runtime");
 			}
 
