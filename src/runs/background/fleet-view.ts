@@ -543,7 +543,7 @@ function resolveWorkflowTranscriptChild(status: AsyncStatus, asyncDir: string, o
 			? { status: childStatus, asyncDir: childDir }
 			: undefined;
 	} catch (error) {
-		if (typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		if (isNotFoundError(error)) return undefined;
 		throw error;
 	}
 }

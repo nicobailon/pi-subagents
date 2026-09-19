@@ -385,6 +385,35 @@ describe("scripted workflow runtime", () => {
 		].join("\n"));
 		assert.equal(keyed.ok, false);
 		assert.ok(keyed.errors.some((error) => error.message.includes("'results.someChild' is keyed access")));
+		assert.equal(validateWorkflowScript([
+			`let results = await runs.all([{ key: "someChild", agent: "reviewer", task: "Review" }]);`,
+			`return results.someChild;`,
+		].join("\n")).ok, false);
+		assert.equal(validateWorkflowScript([
+			`let results = await runs.all([{ key: "someChild", agent: "reviewer", task: "Review" }]);`,
+			`emit(results.someChild);`,
+			`results = { someChild: "local" };`,
+		].join("\n")).ok, false);
+		assert.equal(validateWorkflowScript([
+			`let results = await runs.all([{ key: "someChild", agent: "reviewer", task: "Review" }]);`,
+			`if (args.replace) results = { someChild: "local" };`,
+			`return results.someChild;`,
+		].join("\n")).ok, false);
+		assert.deepEqual(validateWorkflowScript([
+			`let results = await runs.all([{ key: "someChild", agent: "reviewer", task: "Review" }]);`,
+			`results = { someChild: "local" };`,
+			`return results.someChild;`,
+		].join("\n")), { ok: true, errors: [] });
+		assert.deepEqual(validateWorkflowScript([
+			`let results = await runs.all([{ key: "someChild", agent: "reviewer", task: "Review" }]);`,
+			`holder = results = { someChild: "local" };`,
+			`return results.someChild;`,
+		].join("\n")), { ok: true, errors: [] });
+		assert.equal(validateWorkflowScript([
+			`let results = await runs.all([{ key: "someChild", agent: "reviewer", task: "Review" }]);`,
+			`results ||= { someChild: "local" };`,
+			`return results.someChild;`,
+		].join("\n")).ok, false);
 
 		const shadowed = validateWorkflowScript([
 			`const results = await runs.all([{ key: "someChild", agent: "reviewer", task: "Review" }]);`,

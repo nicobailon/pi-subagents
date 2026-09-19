@@ -689,7 +689,6 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	// The compiled host exposes its SDK only through Pi's extension loader.
 	const binaryHost = resolveBunPiExecutable();
 	const nodeExecutable = resolveNodeExecutable();
-	// Native peer aliases use a short-circuit result so both Pi's loader and generated factories keep filesystem resolution semantics.
 	const nativeRunnerSupported = supportsNativeRunner(nodeExecutable);
 	const runner = asyncRunnerSourcePath;
 	const runnerIsJavaScript = path.extname(runner) === ".js";
@@ -743,6 +742,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			stdoutFd = fs.openSync(logPaths.stdoutPath, "a");
 			stderrFd = fs.openSync(logPaths.stderrPath, "a");
 		}
+		// Short-circuit native peer aliases so Pi's loader and generated factories preserve filesystem resolution semantics.
 		const preload = Object.keys(hostPeerAliases.aliases).length > 0
 			? ["--import", new URL("../../../runner-peer-preload.mjs", import.meta.url).href]
 			: [];
@@ -761,7 +761,6 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			PI_PACKAGE_DIR: binaryHost ? process.env.PI_PACKAGE_DIR : piPackageRoot,
 			[JITI_ALIAS_ENV]: binaryHost ? undefined : JSON.stringify(hostPeerAliases.aliases),
 			PI_ASYNC_NATIVE_RUNNER: !binaryHost && (runnerIsJavaScript || nativeRunnerSupported) ? "1" : "0",
-			PI_ASYNC_COMPILED_RUNNER: !binaryHost && runnerIsJavaScript ? "1" : "0",
 			PI_SUBAGENT_RUNNER_CONFIG: binaryHost ? cfgPath : undefined,
 		};
 		if (launchParentSessionId === undefined) delete runnerEnv[SUBAGENT_PARENT_SESSION_ENV];

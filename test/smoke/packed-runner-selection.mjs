@@ -39,5 +39,4 @@ assert.match(args.at(-2), /[/\\]subagent-runner\.js$/);
 assert.doesNotMatch(args.join(" "), /jiti-cli\.mjs/);
 assert.equal(args.includes("--experimental-strip-types"), false);
 assert.equal(options.env.PI_ASYNC_NATIVE_RUNNER, "1");
-assert.equal(options.env.PI_ASYNC_COMPILED_RUNNER, "1");
 console.log("PASS packed node_modules selects compiled JavaScript");

@@ -57,7 +57,7 @@ describe("host workflow result publication", { skip: !available }, () => {
 			assert.equal(child.asyncDir, path.join(ASYNC_DIR, childId));
 			assert.equal(payload.workflow.trace.at(-1).state, "started");
 			assert.equal(notices.some((notice) => notice.customType === "subagent-incremental-child-notify"), false);
-			assert.match(background ? payload.summary : result.content[0].text, /dispatch completed.*1 child run\(s\) remain running/i);
+			assert.match(background ? payload.summary : result.content[0].text, /dispatch completed.*1 child run remains running/i);
 			if (background) {
 				assert.equal(payload.results[0].state, "running");
 				assert.equal(payload.results[0].success, undefined);

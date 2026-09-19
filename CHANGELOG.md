@@ -24,6 +24,10 @@
 - Stop independent root sessions from publishing or restoring a shared permission-forwarding identity. Detached runners now receive only their validated launch parent, while environment-only forwarding from in-process foreground children remains unsupported pending a session-scoped permission-extension API. Thanks to [@kasumikira](https://github.com/kasumikira) for #2321.
 - Give the bundled reviewer a bounded, read-only view of the staged and unstaged working-tree delta against its launch `HEAD`, plus untracked paths, without restoring shell access. Committed ranges still require a supplied diff artifact. Thanks to [@nateberkopec](https://github.com/nateberkopec) for #2306.
 - Document `/subagent-cost` as the supported combined accounting view because Pi's custom completion messages cannot add async child usage to built-in session totals. Thanks to [@swarajban](https://github.com/swarajban) for #2313.
+- A parent session's own `--tools` allowlist no longer limits which tools its children may hold. Pi filters a session's tool registry by that allowlist, so predicting a child's tools from the parent read a narrow dispatcher session as a runtime without `read`, `bash`, or `grep`, stripped those tools from every child, and compounded at each hop. Children are separate sessions that build their own tools, so the prediction is gone: a child now launches with the tools its agent declares and fails on its own registry, before its first model call, when one is genuinely missing. Thanks to [@carlesba](https://github.com/carlesba) for #2289.
+- Keep source-layout async runners on native Node TypeScript when child extensions are configured, while short-circuiting host peer aliases so Pi's extension loader and generated factories resolve the same filesystem targets. Thanks to [@qsgy-edge](https://github.com/qsgy-edge) for #2314.
+- Orca progress tabs no longer break under `fish`. The viewer one-liner no longer relies on backslashes, which fish collapses inside single quotes, so tabs mirror progress again instead of opening on a `node -e` `SyntaxError`. Thanks to [@yourfriendaaron](https://github.com/yourfriendaaron) for #2294.
+- Avoid rejecting keyed property access after a mutable `runs.all(...)` result binding is reassigned.
 
 ## [0.69.0] - 2026-09-18
 
@@ -38,11 +42,9 @@
 
 ### Fixed
 
-- A parent session's own `--tools` allowlist no longer limits which tools its children may hold. Pi filters a session's tool registry by that allowlist, so predicting a child's tools from the parent read a narrow dispatcher session as a runtime without `read`, `bash`, or `grep`, stripped those tools from every child, and compounded at each hop. Children are separate sessions that build their own tools, so the prediction is gone: a child now launches with the tools its agent declares and fails on its own registry, before its first model call, when one is genuinely missing. Thanks to [@carlesba](https://github.com/carlesba) for #2289.
 - The Ghostty inspector only activates when the macOS host bundle id identifies the standalone Ghostty app. Terminals that embed Ghostty (such as cmux) set `TERM_PROGRAM=ghostty` too, which previously targeted an unrelated Ghostty window or emitted `-1728`/`-2741` AppleScript errors; those hosts now fall back to the `inspector.command` hint. Thanks to [@wangpi26](https://github.com/wangpi26) for #2281.
-- Keep source-layout async runners on native Node TypeScript when child extensions are configured, while short-circuiting host peer aliases so Pi's extension loader and generated factories resolve the same filesystem targets. Thanks to [@qsgy-edge](https://github.com/qsgy-edge) for #2314.
 - Hosts without `npm` no longer print `/bin/sh: npm: command not found` during startup; global package-root discovery is optional and now stays silent when the package manager is missing. Thanks to [@PhrZer](https://github.com/PhrZer) for #2287.
-- Orca progress tabs no longer break under `fish`. The viewer one-liner no longer relies on backslashes, which fish collapses inside single quotes, so tabs mirror progress again instead of opening on a `node -e` `SyntaxError`. Thanks to [@yourfriendaaron](https://github.com/yourfriendaaron) for #2294.
+- Fixed `docs/tool-reference.md`, which claimed a default `maxOutput` cap of 200 KB / 5,000 lines. The cap applies only when `maxOutput` is set.
 
 ## [0.68.0] - 2026-09-15
 

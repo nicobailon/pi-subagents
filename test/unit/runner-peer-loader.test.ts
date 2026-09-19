@@ -31,11 +31,11 @@ test("native preload leaves the SDK extension loader's require.resolve intact", 
 			sdkLoader,
 		], {
 			encoding: "utf8",
-			env: { ...process.env, JITI_ALIAS: JSON.stringify({ typebox: target }), PI_ASYNC_NATIVE_RUNNER: "1", PI_ASYNC_COMPILED_RUNNER: "0" },
+			env: { ...process.env, JITI_ALIAS: JSON.stringify({ typebox: target }), PI_ASYNC_NATIVE_RUNNER: "1" },
 			timeout: 10_000,
 		});
 		assert.equal(child.status, 0, child.stderr);
-		assert.equal(child.stdout.trim(), target);
+		assert.equal(child.stdout.trim(), fs.realpathSync(target));
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
 	}
@@ -45,7 +45,7 @@ const passthrough = (specifier: string) => ({ url: specifier, shortCircuit: true
 
 test("fallback loader aliases every host peer for a plain-JavaScript runner", async () => {
 	const loader = await import(`${loaderUrl.href}?native`);
-	loader.initialize({ aliases, nativeRunner: true, compiledRunner: true, packageRootUrl });
+	loader.initialize({ aliases, nativeRunner: true });
 	const packageContext = { parentURL: new URL("src/runs/background/subagent-runner.js", packageRootUrl).href };
 	assert.equal(loader.resolve("@earendil-works/pi-ai", packageContext, passthrough).url, pathToFileURL(aliases["@earendil-works/pi-ai"]).href);
 	assert.equal(loader.resolve("@earendil-works/pi-tui", packageContext, passthrough).url, pathToFileURL(aliases["@earendil-works/pi-tui"]).href);
@@ -55,7 +55,7 @@ test("fallback loader aliases every host peer for a plain-JavaScript runner", as
 
 test("fallback loader aliases external imports for a native TypeScript runner", async () => {
 	const loader = await import(`${loaderUrl.href}?native-typescript`);
-	loader.initialize({ aliases, nativeRunner: true, compiledRunner: false, packageRootUrl });
+	loader.initialize({ aliases, nativeRunner: true });
 	assert.equal(loader.resolve("@earendil-works/pi-ai", { parentURL: "file:///tmp/child-factory.mjs" }, passthrough).url, pathToFileURL(aliases["@earendil-works/pi-ai"]).href);
 });
 

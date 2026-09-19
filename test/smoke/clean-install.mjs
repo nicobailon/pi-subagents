@@ -79,7 +79,6 @@ const childEnv = {
 	SMOKE_EXTENSION: installed,
 	JITI_ALIAS: JSON.stringify(resolved.aliases),
 	PI_ASYNC_NATIVE_RUNNER: "1",
-	PI_ASYNC_COMPILED_RUNNER: "1",
 };
 const jiti = path.join(extension, "node_modules/jiti/lib/jiti-cli.mjs");
 const args = [jiti, path.join(cwd, "pi085-child.ts")];

@@ -567,7 +567,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 	const runningChildren = (result.mode === "workflow" || agent === "workflow")
 		? result.results?.filter((child) => childStatus(child) === "running").length ?? 0 : 0;
 	const taskInfo = runningChildren > 0
-		? ` (${status === "completed" ? "dispatch complete; " : ""}${runningChildren} children running or uncollected)`
+		? ` (${status === "completed" ? "dispatch complete; " : ""}${runningChildren} ${runningChildren === 1 ? "child" : "children"} running or uncollected)`
 		: result.taskIndex !== undefined && result.totalTasks !== undefined
 			? ` (${result.taskIndex + 1}/${result.totalTasks})`
 			: undefined;

@@ -1610,6 +1610,15 @@ function bindingPatternContainsName(node: unknown, name: string): boolean {
 	return false;
 }
 
+function definitelyReassignsBinding(node: unknown, name: string): boolean {
+	let assignment = node;
+	while (astNode(assignment) && assignment.type === "AssignmentExpression" && assignment.operator !== "&&=" && assignment.operator !== "||=" && assignment.operator !== "??=") {
+		if (bindingPatternContainsName(assignment.left, name)) return true;
+		assignment = assignment.right;
+	}
+	return false;
+}
+
 function lexicalDeclarationContainsName(node: unknown, name: string): boolean {
 	if (!astNode(node)) return false;
 	if (node.type === "VariableDeclaration" && node.kind !== "var" && Array.isArray(node.declarations)) {
@@ -1904,16 +1913,20 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 			for (const declaration of statement.declarations) {
 				if (!astNode(declaration) || !astNode(declaration.id) || declaration.id.type !== "Identifier" || !astNode(declaration.init) || declaration.init.type !== "AwaitExpression" || !astNode(declaration.init.argument) || !directRunsCall(declaration.init.argument, "all")) continue;
 				const name = declaration.id.name as string;
+				const laterStatements = workflowBody.body.slice(statementIndex + 1);
 				const keys = new Set(directRunsAllKeys(declaration.init.argument).map((entry) => entry.key));
 				if (keys.size === 0) continue;
 				const args = Array.isArray(declaration.init.argument.arguments) ? declaration.init.argument.arguments : [];
 				const itemCount = astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements) ? args[0].elements.length : 0;
 				const arrayResultShape = Array.from({ length: itemCount });
-				for (const later of workflowBody.body.slice(statementIndex + 1)) walkAstWithoutShadowedIdentifier(later, name, (node) => {
-					if (node.type !== "MemberExpression" || !astNode(node.object) || node.object.type !== "Identifier" || node.object.name !== name) return;
-					const property = node.computed === true ? literalString(node.property) : astNode(node.property) && node.property.type === "Identifier" ? node.property.name as string : undefined;
-					if (property && keys.has(property) && !(property in arrayResultShape)) errors.push({ message: `runs.all returns an ordered array; '${name}.${property}' is keyed access. Use an index, destructuring, or map(...).`, ...nodeLocation(node) });
-				});
+				for (const later of laterStatements) {
+					walkAstWithoutShadowedIdentifier(later, name, (node) => {
+						if (node.type !== "MemberExpression" || !astNode(node.object) || node.object.type !== "Identifier" || node.object.name !== name) return;
+						const property = node.computed === true ? literalString(node.property) : astNode(node.property) && node.property.type === "Identifier" ? node.property.name as string : undefined;
+						if (property && keys.has(property) && !(property in arrayResultShape)) errors.push({ message: `runs.all returns an ordered array; '${name}.${property}' is keyed access. Use an index, destructuring, or map(...).`, ...nodeLocation(node) });
+					});
+					if (statement.kind !== "const" && astNode(later) && later.type === "ExpressionStatement" && definitelyReassignsBinding(later.expression, name)) break;
+				}
 			}
 		}
 	}
