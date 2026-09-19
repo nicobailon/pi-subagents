@@ -20,7 +20,7 @@ import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLau
 import { injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { applyWatchdogLaunchRules, sendRuleViolationWarning } from "../../watchdog/rules.ts";
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveExistingReadInstructionPaths, resolveExistingReadPaths, writeInitialProgressFile, type ChainStep, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
-import type { RunnerStep } from "../shared/parallel-utils.ts";
+import { isDynamicRunnerGroup, isParallelGroup, type RunnerStep } from "../shared/parallel-utils.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
 import { PI_CODING_AGENT_PACKAGE, resolveBunPiExecutable, resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../shared/pi-spawn.ts";
 import { JITI_ALIAS_ENV, resolveHostPeerAliases } from "./runner-aliases.ts";
@@ -69,7 +69,7 @@ import {
 	resolveChildMaxSubagentDepth,
 } from "../../shared/types.ts";
 import { inheritedNestedParentAddressOf, inheritedNestedRouteOf, nestedResultsPath, nestedSummaryFromAsyncStatus, writeNestedEvent } from "../shared/nested-events.ts";
-import type { ChildRuntimeConfig } from "../shared/child-runtime-config.ts";
+import { SUBAGENT_PARENT_SESSION_ENV, type ChildRuntimeConfig } from "../shared/child-runtime-config.ts";
 import { childSessionFactoryModule } from "../shared/child-session.ts";
 import { inheritedChildRuntime } from "../shared/child-launch.ts";
 import { resultFilePath } from "./result-files.ts";
@@ -673,9 +673,18 @@ export function emitProcessTerminalEvent(ctx: AsyncExecutionContext, proof: unkn
 	}
 }
 
-function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Omit<AsyncStatus, "pid" | "processTerminal">, initialStatusPath: string, onProcessTerminal?: (proof: unknown) => void, onBeforeProceed?: (runnerProcessInstanceId: string) => void, requestedCwd = cwd): SpawnRunnerResult | Promise<SpawnRunnerResult> {
+function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Omit<AsyncStatus, "pid" | "processTerminal">, initialStatusPath: string, launchParentSessionId: string | undefined, onProcessTerminal?: (proof: unknown) => void, onBeforeProceed?: (runnerProcessInstanceId: string) => void, requestedCwd = cwd): SpawnRunnerResult | Promise<SpawnRunnerResult> {
 	const cwdError = preflightLaunchCwd(requestedCwd, cwd);
 	if (cwdError) return { error: cwdError };
+	if (launchParentSessionId !== undefined && (!launchParentSessionId || launchParentSessionId.trim() !== launchParentSessionId)) {
+		return { error: "Background runner parent session identity is invalid." };
+	}
+	const steps = (cfg as { steps?: unknown }).steps;
+	if (!Array.isArray(steps)) return { error: "Background runner launch is missing its steps." };
+	const inconsistentParent = (steps as RunnerStep[]).some((step) => isParallelGroup(step)
+		? step.parallel.some((child) => child.parentSessionId !== launchParentSessionId)
+		: (isDynamicRunnerGroup(step) ? step.parallel.parentSessionId : step.parentSessionId) !== launchParentSessionId);
+	if (inconsistentParent) return { error: "Background runner steps have inconsistent parent session identities." };
 
 	// The compiled host exposes its SDK only through Pi's extension loader.
 	const binaryHost = resolveBunPiExecutable();
@@ -744,22 +753,24 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 				: nativeRunnerSupported
 				? [...preload, "--experimental-strip-types", runner, cfgPath]
 				: [...preload, jitiCliPath!, runner, cfgPath];
+		const runnerEnv: NodeJS.ProcessEnv = {
+			...omitExtensionBindingsEnv(process.env),
+			...childCacheRetentionEnv(),
+			[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: binaryHost ? undefined : piPackageRoot,
+			// npm must override inherited bundled layouts (#2071); binaries retain release assets.
+			PI_PACKAGE_DIR: binaryHost ? process.env.PI_PACKAGE_DIR : piPackageRoot,
+			[JITI_ALIAS_ENV]: binaryHost ? undefined : JSON.stringify(hostPeerAliases.aliases),
+			PI_ASYNC_NATIVE_RUNNER: !binaryHost && (runnerIsJavaScript || nativeRunnerSupported) ? "1" : "0",
+			PI_ASYNC_COMPILED_RUNNER: !binaryHost && runnerIsJavaScript ? "1" : "0",
+			PI_SUBAGENT_RUNNER_CONFIG: binaryHost ? cfgPath : undefined,
+		};
+		if (launchParentSessionId === undefined) delete runnerEnv[SUBAGENT_PARENT_SESSION_ENV];
+		else runnerEnv[SUBAGENT_PARENT_SESSION_ENV] = launchParentSessionId;
 		const proc = spawn(command, args, {
 			cwd,
 			...backgroundProcessOptions(),
 			stdio: ["ignore", stdoutFd ?? "ignore", stderrFd ?? "ignore"],
-			env: {
-				...omitExtensionBindingsEnv(process.env),
-				// Unset leaves the inherited parent value in place. See childCacheRetention.
-				...childCacheRetentionEnv(),
-				[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: binaryHost ? undefined : piPackageRoot,
-				// npm must override inherited bundled layouts (#2071); binaries retain release assets.
-				PI_PACKAGE_DIR: binaryHost ? process.env.PI_PACKAGE_DIR : piPackageRoot,
-				[JITI_ALIAS_ENV]: binaryHost ? undefined : JSON.stringify(hostPeerAliases.aliases),
-				PI_ASYNC_NATIVE_RUNNER: !binaryHost && (runnerIsJavaScript || nativeRunnerSupported) ? "1" : "0",
-				PI_ASYNC_COMPILED_RUNNER: !binaryHost && runnerIsJavaScript ? "1" : "0",
-				PI_SUBAGENT_RUNNER_CONFIG: binaryHost ? cfgPath : undefined,
-			},
+			env: runnerEnv,
 		});
 		let observedProcessExit: { exitCode: number | null; signal: NodeJS.Signals | null } | undefined;
 		proc.once("exit", (exitCode, signal) => { observedProcessExit = { exitCode, signal }; });
@@ -914,6 +925,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		worktreeBranchPrefix,
 		asyncDir,
 	} = params;
+	const launchParentSessionId = ctx.parentSessionId ?? ctx.currentSessionId;
 	const outputBaseDir = params.outputBaseDir;
 	const resultMode = params.resultMode ?? "chain";
 	const chainSkills = params.chainSkills ?? [];
@@ -1154,7 +1166,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			if (contractError) throw new AsyncStartValidationError(contractError);
 		}
 		return {
-			parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+			parentSessionId: launchParentSessionId,
 			permissionRules,
 			...(params.capabilityCeiling ? { capabilityCeiling: params.capabilityCeiling } : {}),
 			...(runFanoutPath ? { runFanoutPath } : {}),
@@ -1325,6 +1337,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		});
 		const steps = params.attachRoot
 			? [{
+					parentSessionId: launchParentSessionId,
 					agent: params.attachRoot.agent,
 					task: "",
 					label: params.attachRoot.label ?? `Attached root ${params.attachRoot.runId}`,
@@ -1495,6 +1508,7 @@ export function executeAsyncChain(
 	}
 	const initialStatusAt = Date.now();
 	const initialCompletionOwnerId = ctx.completionOwnerId ?? currentCompletionOwnerId();
+	const launchParentSessionId = ctx.parentSessionId ?? ctx.currentSessionId;
 
 	let spawnResult: SpawnRunnerResult = {};
 	try {
@@ -1562,6 +1576,7 @@ export function executeAsyncChain(
 				steps: initialStatusSteps,
 			},
 			path.join(asyncDir, "status.json"),
+			launchParentSessionId,
 			(proof) => emitProcessTerminalEvent(ctx, proof),
 			(runnerProcessInstanceId) => params.activeAsyncCapacity?.markStarted(runnerProcessInstanceId),
 		) as SpawnRunnerResult;
@@ -2052,13 +2067,14 @@ export function executeAsyncSingle(
 	let spawnResultOrPromise: SpawnRunnerResult | Promise<SpawnRunnerResult> = {};
 	const initialStatusAt = Date.now();
 	const initialCompletionOwnerId = ctx.completionOwnerId ?? currentCompletionOwnerId();
+	const launchParentSessionId = ctx.parentSessionId ?? ctx.currentSessionId;
 	try {
 		spawnResultOrPromise = spawnRunner(
 			{
 				id,
 				steps: [
 					{
-						parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+						parentSessionId: launchParentSessionId,
 						permissionRules,
 						...(capabilityCeiling ? { capabilityCeiling } : {}),
 						agent,
@@ -2183,6 +2199,7 @@ export function executeAsyncSingle(
 				steps: [{ agent, status: "pending", ...(lane ? { lane } : {}), ...(model ? { model } : {}), ...(contextLimit !== undefined ? { contextLimit } : {}) }],
 			},
 			path.join(asyncDir, "status.json"),
+			launchParentSessionId,
 			(proof) => emitProcessTerminalEvent(ctx, proof),
 			(runnerProcessInstanceId) => params.activeAsyncCapacity?.markStarted(runnerProcessInstanceId),
 			params.requestedCwd ?? runnerCwd,

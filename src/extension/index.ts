@@ -511,7 +511,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		: undefined;
 	let executorScheduled: ((id: string, params: SubagentParamsLike, signal: AbortSignal, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
 	let goalTurnId = 0;
-	let parentSessionEnvValue: string | null = null;
 	let releaseHostSessionLiveness = () => {};
 	const scheduledStoreRoot = config.scheduledRuns?.storeRoot === undefined ? undefined : resolveScheduledStoreRoot(config.scheduledRuns.storeRoot);
 	const scheduledRunManager = createScheduledRunManager({
@@ -979,17 +978,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		};
 		const projectPaneOwnerRoot = path.resolve(ctx.cwd);
 		restoreHerdrProjectPaneSnapshots(state, [...new Set([...(state.herdrProjectPanes?.keys() ?? []), ...listHerdrProjectPaneRoots(projectPaneOwnerRoot), projectPaneOwnerRoot])]);
-		// Set PI_SUBAGENT_PARENT_SESSION for permission-system forwarding.
-		// Only set in the root session (the interactive UI session), not in a
-		// child host: the runner process inherits the parent's value through
-		// its environment at spawn time and must not overwrite it with a child
-		// session's identity.
+		// Root hosts may contain independent sessions, so a process-global parent
+		// identity is unsafe. Dedicated child runners retain their launch-owned value.
 		if (!process.env[SUBAGENT_CHILD_ENV]) {
-			const sessionId = ctx.sessionManager.getSessionId();
-			if (sessionId) {
-				process.env[SUBAGENT_PARENT_SESSION_ENV] = sessionId;
-				parentSessionEnvValue = sessionId;
-			}
+			delete process.env[SUBAGENT_PARENT_SESSION_ENV];
 		}
 		state.lastUiContext = ctx;
 		let phaseStartedAt = Date.now();
@@ -1037,7 +1029,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		cleanup() {
 			if (runtimeCleaned) return;
 			runtimeCleaned = true;
-			const shuttingDownParentSession = parentSessionEnvValue;
 			releaseHostSessionLiveness();
 			releaseHostSessionLiveness = () => {};
 			// Workflow continuations retain their launch context; abort them before
@@ -1085,10 +1076,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			state.supervisorOwnerSessionId = null;
 			state.statusProjectionSessionId = null;
 			state.parentSessionFile = null;
-			parentSessionEnvValue = null;
-			if (shuttingDownParentSession && process.env[SUBAGENT_PARENT_SESSION_ENV] === shuttingDownParentSession) {
-				delete process.env[SUBAGENT_PARENT_SESSION_ENV];
-			}
 			if (runtimeEntry.sessionManager && runtimeRegistry.bySessionManager.get(runtimeEntry.sessionManager) === runtimeEntry) {
 				runtimeRegistry.bySessionManager.delete(runtimeEntry.sessionManager);
 			}

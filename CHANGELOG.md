@@ -50,6 +50,7 @@
 ### Fixed
 
 - Indexed workflow status transcripts now follow async workflow steps to their child-owned transcript tail. Thanks to [@swarajban](https://github.com/swarajban) for #2304.
+- Stop independent root sessions from publishing or restoring a shared permission-forwarding identity. Detached runners now receive only their validated launch parent, while environment-only forwarding from in-process foreground children remains unsupported pending a session-scoped permission-extension API. Thanks to [@kasumikira](https://github.com/kasumikira) for #2321.
 
 ## [0.69.0] - 2026-09-18
 
