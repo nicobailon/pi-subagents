@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Wake root `bg_wait` calls when an owned nested child is waiting on `contact_supervisor`. Thanks to [@geril07](https://github.com/geril07) for #2344.
 - Prevent publishing the TypeScript source checkout directly to npm; only the compiled `dist-pkg` artifact is publishable. Thanks to [@niko-operal](https://github.com/niko-operal) for #2300.
 - Keep explicitly detached workflow children visible as running work, preserve their result lookup after the coordinator exits, and avoid reporting launch receipts as completed results. Thanks to [@shaharmor](https://github.com/shaharmor) for #2299.
 - Reject direct async managed-worktree launches from a dirty source before returning a receipt or creating provisional run state. Thanks to [@rtbe](https://github.com/rtbe) for #2311.

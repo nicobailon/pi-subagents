@@ -12,6 +12,7 @@ export function registerWaitTool(
 	subscriptions?: Pick<WaitSubscriptionManager, "arm">,
 	defaultTimeoutMs?: number,
 	child?: { nestedRootRunId?: string },
+	hasPendingSupervisorRequest?: () => boolean,
 ): void {
 	const description = `Wait for background, provider, or detached work that has no native completion notification, then return.
 
@@ -30,6 +31,7 @@ Non-blocking subscriptions are visible in subagent status and differ from disabl
 		nestedRootRunId: child?.nestedRootRunId,
 		events: pi.events,
 		enabled,
+		hasPendingSupervisorRequest,
 		...(defaultTimeoutMs !== undefined ? { defaultTimeoutMs } : {}),
 		onUpdate,
 		...(subscriptions && ctx?.hasUI ? { subscribe: (input) => subscriptions.arm(input) } : {}),

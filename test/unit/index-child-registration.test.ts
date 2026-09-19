@@ -531,6 +531,89 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
+	it("yields registered root bg_wait for an owned nested supervisor request", () => {
+		const script = String.raw`
+			import assert from "node:assert/strict";
+			import * as fs from "node:fs";
+			import * as path from "node:path";
+			import registerSubagentExtension from "./index.ts";
+			import { updateActiveRunIndex } from "./src/runs/background/active-run-index.ts";
+			import { ensureSupervisorChannelDir, resolveSupervisorChannelDir } from "./src/intercom/native-supervisor-channel.ts";
+			import { DIRS, INTERCOM_DETACH_REQUEST_EVENT } from "./src/shared/types.ts";
+
+			const handlers = new Map();
+			const eventHandlers = new Map();
+			const events = {
+				on(channel, handler) {
+					eventHandlers.set(channel, [...(eventHandlers.get(channel) ?? []), handler]);
+					return () => eventHandlers.set(channel, (eventHandlers.get(channel) ?? []).filter((candidate) => candidate !== handler));
+				},
+				emit(channel, payload) { for (const handler of eventHandlers.get(channel) ?? []) handler(payload); },
+			};
+			let bgWaitTool;
+			const fakePi = new Proxy({
+				events,
+				on(channel, handler) { handlers.set(channel, [...(handlers.get(channel) ?? []), handler]); },
+				registerTool(tool) { if (tool.name === "bg_wait") bgWaitTool = tool; },
+				registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+
+			const runId = "workflow-root-" + crypto.randomUUID();
+			const requestId = "nested-request-" + crypto.randomUUID();
+			const runtimeSessionId = "owner-runtime-" + crypto.randomUUID();
+			const ownerSessionId = "owner-session-" + crypto.randomUUID();
+			const asyncDir = path.join(DIRS.async, runId);
+			const channelDir = resolveSupervisorChannelDir("nested-reviewer-run", "reviewer", 0);
+			const requestFile = path.join(channelDir, "requests", requestId + ".json");
+			const ctx = {
+				cwd: process.cwd(), hasUI: false,
+				sessionManager: {
+					getSessionId() { return ownerSessionId; },
+					getSessionFile() { return runtimeSessionId; },
+					getEntries() { return []; },
+				},
+				modelRegistry: { getAvailable() { return []; } },
+			};
+
+			try {
+				fs.mkdirSync(asyncDir, { recursive: true });
+				fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+					runId, sessionId: runtimeSessionId, mode: "workflow", state: "running",
+					startedAt: Date.now(), lastUpdate: Date.now(), cwd: process.cwd(), pid: process.pid,
+					steps: [{ agent: "worker", status: "running", index: 0 }],
+				}), "utf-8");
+				updateActiveRunIndex(asyncDir, "running");
+				registerSubagentExtension(fakePi);
+				for (const handler of handlers.get("session_start") ?? []) await handler({ reason: "startup" }, ctx);
+				if (!bgWaitTool) throw new Error("bg_wait tool not registered");
+
+				const startedAt = Date.now();
+				const waiting = bgWaitTool.execute("nested-supervisor", { id: runId, timeoutMs: 1500 }, new AbortController().signal, undefined, ctx);
+				await new Promise((resolve) => setTimeout(resolve, 25));
+				ensureSupervisorChannelDir(channelDir);
+				fs.writeFileSync(requestFile, JSON.stringify({
+					type: "subagent.supervisor.request", id: requestId, createdAt: Date.now(), expiresAt: Date.now() + 60_000,
+					reason: "need_decision", message: "Choose the safe path", expectsReply: true,
+					orchestratorSessionId: ownerSessionId, runId: "nested-reviewer-run", agent: "reviewer", childIndex: 0,
+				}), "utf-8");
+				events.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId, runId: "nested-reviewer-run", agent: "reviewer", childIndex: 0 });
+
+				const result = await waiting;
+				assert.equal(result.isError, undefined);
+				assert.deepEqual(result.details.wait, {
+					reason: "supervisor_request", timedOut: false, activeRunIds: [runId], activeProviderItems: [],
+				});
+				assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).state, "running");
+				assert.ok(Date.now() - startedAt < 1200, "bg_wait did not yield promptly");
+			} finally {
+				for (const handler of handlers.get("session_shutdown") ?? []) await handler();
+				fs.rmSync(asyncDir, { recursive: true, force: true });
+				fs.rmSync(channelDir, { recursive: true, force: true });
+			}
+		`;
+		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" });
+	});
+
 	it("does not restore the async widget from tool results when asyncWidget is disabled", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-async-widget-config-"));
 		try {
