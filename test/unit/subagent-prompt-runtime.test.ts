@@ -12,6 +12,7 @@ import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-con
 import type { ChildWatchdogConfig } from "../../src/watchdog/child-status.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../src/watchdog/types.ts";
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { createNestedRoute, nestedResultsPath } from "../../src/runs/shared/nested-events.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, TEMP_ROOT_DIR, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type SubagentState } from "../../src/shared/types.ts";
@@ -221,6 +222,48 @@ const CONFIGURED_SKILLS_SECTION = "\n\nThe following configured skills are avail
 describe("subagent prompt runtime", () => {
 	it("ignores an unconfigured path-based load", () => {
 		assert.doesNotThrow(() => registerSubagentPromptRuntime({} as never));
+	});
+
+	it("registers a requested watchdog_diff at launch HEAD and fails closed outside Git", async (t) => {
+		const repo = fs.mkdtempSync(path.join(os.tmpdir(), "reviewer-runtime-diff-"));
+		const outside = fs.mkdtempSync(path.join(os.tmpdir(), "reviewer-runtime-no-git-"));
+		t.after(() => {
+			fs.rmSync(repo, { recursive: true, force: true });
+			fs.rmSync(outside, { recursive: true, force: true });
+		});
+		execFileSync("git", ["init", "-q"], { cwd: repo });
+		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repo });
+		execFileSync("git", ["config", "user.name", "Test User"], { cwd: repo });
+		fs.writeFileSync(path.join(repo, "tracked.txt"), "base\n");
+		execFileSync("git", ["add", "."], { cwd: repo });
+		execFileSync("git", ["commit", "-q", "-m", "base"], { cwd: repo });
+
+		const registered = new Map<string, unknown>();
+		const handlers = new Map<string, Function>();
+		const diagnostics: Array<ChildToolDiagnostic | undefined> = [];
+		registerSubagentPromptRuntime({
+			on: (event: string, handler: Function) => handlers.set(event, handler),
+			registerTool: (tool: { name: string }) => registered.set(tool.name, tool),
+			getAllTools: () => [...registered.keys()].map((name) => ({ name })),
+		} as never, childConfig({ cwd: repo, requiredTools: ["watchdog_diff"], toolDiagnostic: (value) => diagnostics.push(value) }));
+		assert.ok(registered.has("watchdog_diff"), "the required child runtime registers the bounded diff tool");
+		handlers.get("agent_start")?.({});
+		assert.equal(diagnostics.at(-1), undefined);
+		fs.writeFileSync(path.join(repo, "tracked.txt"), "changed\n");
+		const diffTool = registered.get("watchdog_diff") as { execute(id: string, params: object): Promise<{ content: Array<{ text: string }> }> };
+		const result = await diffTool.execute("review", {});
+		assert.match(result.content[0]?.text ?? "", /\+changed/);
+		assert.equal(registered.has("contact_supervisor"), false, "reviewing the fixture needs no supervisor contact");
+
+		const outsideTools = new Map<string, unknown>();
+		const outsideHandlers = new Map<string, Function>();
+		registerSubagentPromptRuntime({
+			on: (event: string, handler: Function) => outsideHandlers.set(event, handler),
+			registerTool: (tool: { name: string }) => outsideTools.set(tool.name, tool),
+			getAllTools: () => [...outsideTools.keys()].map((name) => ({ name })),
+		} as never, childConfig({ cwd: outside, requiredTools: ["watchdog_diff"] }));
+		assert.equal(outsideTools.has("watchdog_diff"), false);
+		assert.throws(() => outsideHandlers.get("agent_start")?.({}), /requested unavailable child tools: watchdog_diff/);
 	});
 
 	it("registers no permission hook by default and routes ask only to the watchdog arbiter", async () => {

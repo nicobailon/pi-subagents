@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Give the bundled reviewer a bounded, read-only view of the staged and unstaged working-tree delta against its launch `HEAD`, plus untracked paths, without restoring shell access. Committed ranges still require a supplied diff artifact. Thanks to [@nateberkopec](https://github.com/nateberkopec) for #2306.
+
 ## [0.69.0] - 2026-09-18
 
 ### Highlights
