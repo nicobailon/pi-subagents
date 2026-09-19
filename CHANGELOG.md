@@ -47,6 +47,10 @@
 
 - Reconcile native foreground and background child usage from terminal child-session messages when live events are missing or partial. Thanks to [@riique](https://github.com/riique) for #2295 and #2296.
 
+### Fixed
+
+- Indexed workflow status transcripts now follow async workflow steps to their child-owned transcript tail. Thanks to [@swarajban](https://github.com/swarajban) for #2304.
+
 ## [0.69.0] - 2026-09-18
 
 ### Highlights
