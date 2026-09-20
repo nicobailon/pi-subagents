@@ -77,4 +77,18 @@ describe("loadHostPiCodingAgent", () => {
 		process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = broken;
 		await assert.rejects(loadHostPiCodingAgent(), /broken entry/);
 	});
+
+	it("rejects an override root whose package name differs", async () => {
+		const wrong = path.join(tmp, "wrong-pi-coding-agent");
+		fs.mkdirSync(path.join(wrong, "dist"), { recursive: true });
+		fs.writeFileSync(path.join(wrong, "package.json"), JSON.stringify({
+			name: "some-other-package",
+			version: "0.0.0-fake",
+			type: "module",
+			exports: { ".": { import: "./dist/index.js" } },
+		}));
+		fs.writeFileSync(path.join(wrong, "dist", "index.js"), "throw new Error('must not be imported');");
+		process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = wrong;
+		await assert.rejects(loadHostPiCodingAgent(), /expected "@earendil-works\/pi-coding-agent"/);
+	});
 });
