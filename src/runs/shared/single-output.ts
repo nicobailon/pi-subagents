@@ -2,7 +2,16 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import type { OutputMode, SavedOutputReference } from "../../shared/types.ts";
-import { hasMutationToolCapability } from "./completion-guard.ts";
+
+const READ_ONLY_OUTPUT_TOOLS = new Set([
+	"read", "grep", "find", "ls", "web_search", "fetch_content", "get_search_content",
+	"source_check", "intercom", "contact_supervisor", "structured_output",
+]);
+
+function hasOutputWriteCapability(tools: string[] | undefined, mcpDirectTools: string[] | undefined): boolean {
+	if ((mcpDirectTools?.length ?? 0) > 0 || tools === undefined) return true;
+	return tools.some((tool) => !READ_ONLY_OUTPUT_TOOLS.has(tool));
+}
 
 export interface SingleOutputSnapshot {
 	exists: boolean;
@@ -93,7 +102,7 @@ interface OutputInstructionCapabilities {
 }
 
 function formatOutputPathInstruction(outputPath: string, capabilities?: OutputInstructionCapabilities): string {
-	const delivery = !capabilities || hasMutationToolCapability(capabilities.tools, capabilities.mcpDirectTools)
+	const delivery = !capabilities || hasOutputWriteCapability(capabilities.tools, capabilities.mcpDirectTools)
 		? `Write your findings to exactly this path: ${outputPath}`
 		: [
 			"Return the complete artifact in your final response.",

@@ -53,9 +53,6 @@ import {
 } from "../../shared/utils.ts";
 import { resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, resolveToolTimeoutMs, toolTimeoutCallKey, toolTimeoutFromEnv } from "../shared/tool-timeout.ts";
-import { evaluateCompletionMutationGuard, expectsImplementationMutation, hasMutationToolCapability, validateImplementationToolContract } from "../shared/completion-guard.ts";
-import { planCompletionEvidence } from "../shared/completion-evidence.ts";
-import { arbitrateCompletionGuardRescue } from "../shared/llm-intent-arbiter.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
@@ -439,34 +436,6 @@ async function runSingleAttempt(
 	}
 
 	const effectiveSystemPrompt = shared.systemPrompt;
-	const contractTools = toolPlan.explicitToolAllowlist ? toolPlan.effectiveToolAllowlist : undefined;
-	const contractError = validateImplementationToolContract({
-		agent: agent.name,
-		task: shared.originalTask ?? task,
-		tools: contractTools,
-		mcpDirectTools: toolPlan.effectiveMcpTools,
-		configuredExtensions: toolPlan.configuredExtensions,
-		requestedTools: toolPlan.requestedBuiltinTools,
-		acceptanceRole: agent.acceptanceRole,
-		completionGuard: agent.completionGuard,
-	});
-	if (contractError) {
-		return {
-			index: options.index ?? 0,
-			agent: agent.name,
-			task,
-			...(childSessionName ? { sessionName: childSessionName } : {}),
-			messages: [],
-			finalOutput: "",
-			exitCode: 1,
-			error: contractError,
-			usage: emptyUsage(),
-			model: modelArg,
-			progressSummary: { status: "failed", toolCount: 0, tokens: 0, durationMs: 0 },
-			...(toolPlan.capabilityCeiling ? { capabilityCeiling: toolPlan.capabilityCeiling } : {}),
-			...(toolPlan.capabilityAudit ? { capabilityAudit: toolPlan.capabilityAudit } : {}),
-		};
-	}
 	const fast = options.fast ?? agent.fast;
 	const { launchContractDigest } = resolveLaunchBinding({
 		agent,
@@ -553,7 +522,6 @@ async function runSingleAttempt(
 		return result;
 	}
 	const mutationSnapshot = options.machine ? { source: "tracked-files" as const, trackedOnly: true as const, cwd: options.cwd ?? runtimeCwd, dirtyFiles: [], fingerprints: {}, unavailable: "Local Git evidence is not authoritative for a pane-native remote run." } : snapshotTrackedMutations(options.cwd ?? runtimeCwd);
-	let observedMutationAttempt = false;
 	let structuredOutputToolInvoked = false;
 	let structuredOutputMessageStartIndex: number | undefined;
 	let toolAvailabilityError: string | undefined;
@@ -1059,7 +1027,6 @@ async function runSingleAttempt(
 					result.toolBudget = toolBudgetState(options.toolBudget, progress.toolCount);
 				}
 				const mutates = isMutatingTool(evt.toolName, toolArgs, agent.mutationTools);
-				observedMutationAttempt = observedMutationAttempt || mutates;
 				pendingToolResult = { tool: evt.toolName ?? "tool", path: activeTool?.path, mutates, startedAt: now };
 				fireUpdate();
 			}
@@ -1548,70 +1515,6 @@ async function runSingleAttempt(
 		fullOutput = fullOutput.trim()
 			? `${timeoutMessage}\n\n${result.timeoutRecovery.message}\n\nPartial output before timeout:\n${fullOutput}`
 			: `${timeoutMessage}\n\n${result.timeoutRecovery.message}`;
-	}
-	const completionGuardEnabled = isAgentContract(options.agentContract) ? agent.completionGuard === true : agent.completionGuard !== false;
-	const completionGuard = ((result.exitCode === 0 && !result.error) || toolAvailabilityError) && completionGuardEnabled
-		? evaluateCompletionMutationGuard({
-			agent: agent.name,
-			task: shared.originalTask ?? task,
-			messages: result.messages ?? [],
-			tools: contractTools,
-			mcpDirectTools: toolPlan.effectiveMcpTools,
-			mutationTools: agent.mutationTools,
-			toolAvailabilityError,
-			mutationEvidence,
-		})
-		: undefined;
-	const mutationAttemptObserved = observedMutationAttempt || mutationEvidence.attemptedMutation;
-	let completionGuardTriggered = completionGuard?.triggered === true && !mutationAttemptObserved;
-	// The classifier is deliberately narrow, so a read-only review task can
-	// still be misread as implementation. Arbitrate BEFORE any failure side
-	// effect is published (effects, exit code, progress, notifications,
-	// acceptance, output persistence): only a confident read-only verdict
-	// rescues, and the task text alone is evidence — never the child's own
-	// final message.
-	let arbiterRescued = false;
-	if (completionGuardTriggered) {
-		const arbitration = await arbitrateCompletionGuardRescue({
-			guardTriggered: true,
-			task: shared.originalTask ?? task,
-			arbiter: options.llmIntentArbiter,
-		});
-		completionGuardTriggered = arbitration.triggered;
-		arbiterRescued = arbitration.rescued;
-	}
-	const completionEvidence = planCompletionEvidence({
-		guard: completionGuard,
-		guardTriggered: completionGuardTriggered,
-		completionGuardEnabled,
-		mutationCapable: hasMutationToolCapability(contractTools, toolPlan.effectiveMcpTools),
-		implementationMutationExpected: expectsImplementationMutation(agent.name, shared.originalTask ?? task),
-		mutationAttemptObserved,
-		mutationEvidence,
-		arbiterRescued,
-		agentContractEnabled: isAgentContract(options.agentContract),
-	});
-	if (completionEvidence.fileMutation) {
-		result.effects = {
-			...(result.effects ?? {}),
-			fileMutation: completionEvidence.fileMutation,
-		};
-	}
-	if (completionEvidence.legacyFailureError) {
-		result.exitCode = 1;
-		result.error = completionEvidence.legacyFailureError;
-		progress.status = "failed";
-		progress.error = result.error;
-		emitControlEvent(buildControlEvent({
-			from: progress.activityState,
-			to: "needs_attention",
-			runId: options.runId ?? agent.name,
-			agent: agent.name,
-			index: options.index,
-			ts: Date.now(),
-			message: `${agent.name} completed without making edits for an implementation task`,
-			reason: "completion_guard",
-		}));
 	}
 		if (options.outputPath && result.exitCode === 0) {
 			const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, shared.outputSnapshot, options.outputClaimPath);

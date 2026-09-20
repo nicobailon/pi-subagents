@@ -43,7 +43,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			hostCommands: [{ key: "check", command }],
 		}) };
 		const registration = registerWorkflowResource({ sessionId: ctx.sessionManager.getSessionId(), definition });
-		const executor = makeAsyncExecutor([makeAgent("reviewer", { completionGuard: false })]);
+		const executor = makeAsyncExecutor([makeAgent("reviewer")]);
 		mockPi.onCall({ output: "Background review completed" });
 		try {
 			const pending = executor.executePublic("registered-background", { workflow: definition.name, async: true }, new AbortController().signal, undefined, ctx);
@@ -234,7 +234,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const launch = executeAsyncSingle(id, {
 			agent: "worker",
 			task: "Report the configured reasoning level.",
-			agentConfig: makeAgent("worker", { model: "mock/test-model", thinking: "high", completionGuard: false }),
+			agentConfig: makeAgent("worker", { model: "mock/test-model", thinking: "high" }),
 			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model" }],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-result-thinking" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
@@ -258,7 +258,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		executeAsyncSingle(id, {
 			agent: "worker",
 			task: "Persist usage",
-			agentConfig: makeAgent("worker", { completionGuard: false }),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-usage-artifact" },
 			artifactConfig: { enabled: true, includeInput: false, includeOutput: true, includeJsonl: false, includeMetadata: true, cleanupDays: 7 },
 			artifactsDir,
@@ -282,7 +282,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const launch = executeAsyncSingle(id, {
 			agent: "worker",
 			task: "Remain visible while starting",
-			agentConfig: makeAgent("worker", { completionGuard: false, model: "mock/test-model" }),
+			agentConfig: makeAgent("worker", { model: "mock/test-model" }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-initial-status" },
 			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 128_000 }],
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
@@ -373,7 +373,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const task = "Compare bridged async launch identity.";
 		const agentPath = path.join(tempDir, ".pi", "agents", `${agentName}.md`);
 		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
-		fs.writeFileSync(agentPath, `---\nname: ${agentName}\ndescription: Bridged async worker\ntools:\n  - read\ncompletionGuard: false\n---\nAnswer from the task only.\n`, "utf-8");
+		fs.writeFileSync(agentPath, `---\nname: ${agentName}\ndescription: Bridged async worker\ntools:\n  - read\n---\nAnswer from the task only.\n`, "utf-8");
 		const discovered = discoverAgents(tempDir).agents.find((agent) => agent.name === agentName);
 		assert.ok(discovered, "expected temporary agent definition to be discovered");
 
@@ -409,7 +409,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		});
 		const id = `async-launch-digest-${Date.now().toString(36)}`;
 		const privateExtension = path.join(tempDir, "extensions", "private-extension.ts");
-		const recoveryAgentConfig = makeAgent("worker", { completionGuard: false, extensions: [privateExtension], tools: ["read"], systemPrompt: "Base prompt" });
+		const recoveryAgentConfig = makeAgent("worker", { extensions: [privateExtension], tools: ["read"], systemPrompt: "Base prompt" });
 		const launch = executeAsyncSingle(id, {
 			agent: "worker",
 			task: "Exercise launch digest reporting",
@@ -461,7 +461,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const launch = executeAsyncSingle(`async-thinking-ceiling-${Date.now().toString(36)}`, {
 			agent: "worker",
 			task: "Use the strongest available reasoning.",
-			agentConfig: makeAgent("worker", { model: "mock/test-model", maxThinking: "xhigh", completionGuard: false }),
+			agentConfig: makeAgent("worker", { model: "mock/test-model", maxThinking: "xhigh" }),
 			thinkingOverride: "max",
 			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model" }],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
@@ -470,26 +470,6 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		});
 		assert.equal(launch.isError, true);
 		assert.match(launch.content[0]?.text ?? "", /max.*xhigh.*worker/);
-		assert.equal(mockPi.callCount(), 0);
-	});
-
-	it("rejects implementation workers without mutation-capable tools before spawn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
-		const id = `async-readonly-worker-contract-${Date.now().toString(36)}`;
-		mockPi.onCall({ output: "should not spawn" });
-		const launch = executeAsyncSingle(id, {
-			agent: "worker",
-			task: "Implement the requested source fix",
-			agentConfig: makeAgent("worker", { tools: ["read", "grep", "find", "ls", "contact_supervisor"] }),
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-			shareEnabled: false,
-			sessionRoot: path.join(tempDir, "sessions"),
-			maxSubagentDepth: 2,
-			acceptance: false,
-		});
-
-		assert.equal(launch.isError, true);
-		assert.match(launch.content[0]?.text ?? "", /no mutation-capable tools/);
 		assert.equal(mockPi.callCount(), 0);
 	});
 
@@ -703,75 +683,6 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(mockPi.callCount(), 0);
 	});
 
-	it("rejects implementation workers when a capability ceiling removes mutation tools before spawn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
-		const id = `async-ceiling-readonly-worker-contract-${Date.now().toString(36)}`;
-		mockPi.onCall({ output: "should not spawn" });
-		const launch = executeAsyncSingle(id, {
-			agent: "worker",
-			task: "Implement the requested source fix",
-			agentConfig: makeAgent("worker", { tools: ["read", "write"] }),
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-			shareEnabled: false,
-			sessionRoot: path.join(tempDir, "sessions"),
-			maxSubagentDepth: 2,
-			acceptance: false,
-			capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["test"] },
-		});
-
-		assert.equal(launch.isError, true);
-		assert.match(launch.content[0]?.text ?? "", /no mutation-capable tools/);
-		assert.equal(mockPi.callCount(), 0);
-	});
-
-	it("rejects workflow implementation workers without mutation-capable tools before spawn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
-		const id = `async-workflow-readonly-worker-contract-${Date.now().toString(36)}`;
-		mockPi.onCall({ output: "should not spawn" });
-		const launch = executeAsyncChain(id, {
-			chain: [{ agent: "worker", task: "Implement the requested source fix" }],
-			resultMode: "chain",
-			agents: [makeAgent("worker", { tools: ["read", "grep", "find", "ls", "contact_supervisor"] })],
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-			shareEnabled: false,
-			maxSubagentDepth: 2,
-			acceptance: false,
-		});
-
-		assert.equal(launch.isError, true);
-		assert.match(launch.content[0]?.text ?? "", /no mutation-capable tools/);
-		assert.equal(mockPi.callCount(), 0);
-	});
-
-	it("rejects workflow read-only workers after previous-output templates resolve to implementation tasks", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		const id = `async-workflow-resolved-readonly-worker-contract-${Date.now().toString(36)}`;
-		mockPi.onCall({ output: "Implement the requested source fix" });
-		mockPi.onCall({ output: "should not spawn" });
-		const launch = executeAsyncChain(id, {
-			chain: [
-				{ agent: "producer", task: "Return the next instruction" },
-				{ agent: "worker", task: "{previous}" },
-			],
-			resultMode: "chain",
-			agents: [
-				makeAgent("producer", { completionGuard: false }),
-				makeAgent("worker", { tools: ["read", "grep", "find", "ls", "contact_supervisor"] }),
-			],
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-			shareEnabled: false,
-			maxSubagentDepth: 2,
-			acceptance: false,
-		});
-
-		assert.equal(launch.isError, undefined);
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
-		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		assert.equal(payload.success, false);
-		assert.match(payload.results[1]?.error ?? "", /no mutation-capable tools/);
-		assert.equal(mockPi.callCount(), 1);
-	});
-
 	it("background parallel groups report usage budget state and block queued children", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "first async result" });
 		const id = `async-usage-budget-${Date.now().toString(36)}`;
@@ -814,7 +725,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const sessionFile = path.join(tempDir, "sessions", "parent-session", "session.jsonl");
 		const ctx = makeMinimalCtx(tempDir);
 		ctx.sessionManager.getSessionFile = () => sessionFile;
-		const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })], { artifactDir: "session" });
+		const executor = makeAsyncExecutor([makeAgent("worker")], { artifactDir: "session" });
 
 		const launch = await executor.execute(
 			"async-session-artifact-dir",
@@ -844,7 +755,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const handle = registerSubagentCapabilityCeiling({ sessionId, ceiling: { allowedTools: ["read"], denyExtensions: true }, source: "test" });
 		let waitForOwnedRun: (() => Promise<void>) | undefined;
 		try {
-			const executor = makeAsyncExecutor([makeAgent("worker", { tools: ["read", "write"], completionGuard: false })]);
+			const executor = makeAsyncExecutor([makeAgent("worker", { tools: ["read", "write"] })]);
 			const id = `async-capability-${Date.now().toString(36)}`;
 			const ctx = makeMinimalCtx(tempDir);
 			ctx.sessionManager.getSessionId = () => sessionId;
@@ -924,7 +835,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		executeAsyncSingle(id, {
 			agent: "worker",
 			task: `Handle ${sentinel} without persisting it`,
-			agentConfig: makeAgent("worker", { completionGuard: false }),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: true, includeInput: true, includeOutput: true, includeJsonl: false, includeTranscript: true, includeMetadata: true, cleanupDays: 7 },
 			artifactsDir: path.join(tempDir, ".pi/subagents", "artifacts"),
@@ -961,7 +872,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		executeAsyncSingle(id, {
 			agent: "worker",
 			task: "Fail before output",
-			agentConfig: makeAgent("worker", { completionGuard: false }),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: true, includeInput: true, includeOutput: true, includeJsonl: false, includeMetadata: true, cleanupDays: 7 },
 			artifactsDir: path.join(tempDir, ".pi/subagents", "artifacts"),
@@ -988,7 +899,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		executeAsyncSingle(id, {
 			agent: "worker",
 			task: "Complete after generated artifacts are cleaned",
-			agentConfig: makeAgent("worker", { completionGuard: false }),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: true, includeInput: true, includeOutput: true, includeJsonl: false, includeMetadata: true, cleanupDays: 7 },
 			artifactsDir,
@@ -1019,7 +930,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		executeAsyncSingle(id, {
 			agent: "worker",
 			task: "Report artifact persistence failure",
-			agentConfig: makeAgent("worker", { completionGuard: false }),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: true, includeInput: true, includeOutput: true, includeJsonl: false, includeMetadata: true, cleanupDays: 7 },
 			artifactsDir,

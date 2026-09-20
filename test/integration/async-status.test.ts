@@ -330,7 +330,7 @@ describe("async status helpers", () => {
 		}
 	});
 
-	it("preserves agent contract projections on step summaries", () => {
+	it("reads legacy mutation-effect fields as inert persisted JSON", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-contract-"));
 		try {
 			createAsyncDir(root, "run-contract", {
@@ -357,6 +357,7 @@ describe("async status helpers", () => {
 			assert.equal(step?.acceptance?.status, "rejected");
 			assert.equal(step?.review?.status, "not-requested");
 			assert.equal(step?.effects?.fileMutation?.status, "missing");
+			assert.equal(step?.execution?.success, true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

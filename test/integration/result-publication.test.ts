@@ -92,7 +92,7 @@ describe("native runner result publication", { skip: !available ? "pi packages u
 						collect: { as: "reviews" }, concurrency: 2,
 					},
 				],
-				agents: [makeAgent("producer", { completionGuard: false }), makeAgent("reviewer", { completionGuard: false })],
+				agents: [makeAgent("producer"), makeAgent("reviewer")],
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: sessionId, completionOwnerId: owner },
 				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 				shareEnabled: false, maxSubagentDepth: 2, acceptance: false,
@@ -305,7 +305,7 @@ describe("native runner result publication", { skip: !available ? "pi packages u
 				process.env.RESULT_PUBLICATION_TEST_ROOT = root;
 				mockPi.onCall({ output: "Indexed completion after capacity recovery" });
 				const receipt = executeAsyncSingle(id, {
-					agent: "worker", task: "Complete without a provider", agentConfig: makeAgent("worker", { completionGuard: false }),
+					agent: "worker", task: "Complete without a provider", agentConfig: makeAgent("worker"),
 					ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: sessionId, completionOwnerId: owner },
 					artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 					shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2, acceptance: false,

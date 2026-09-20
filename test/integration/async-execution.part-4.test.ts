@@ -207,7 +207,7 @@ setTimeout(() => process.exit(90), 15000).unref();
 				const connection = once(server, "connection", { signal: AbortSignal.timeout(20_000) });
 				const receipt = executeAsyncChain(id, {
 					chain: [{ agent: "worker", task: "Do work", worktree: true }],
-					agents: [makeAgent("worker", { completionGuard: false })],
+					agents: [makeAgent("worker")],
 					ctx: { pi: { events: bus }, cwd: repo, currentSessionId: "session-1" },
 					artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 					shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2, acceptance: false,
@@ -858,7 +858,6 @@ setTimeout(() => process.exit(90), 15000).unref();
 			assert.equal(child?.success, false);
 			assert.match(diagnostic, /^Subagent produced no output after terminal assistant stopReason "aborted"\./);
 			assert.match(diagnostic, new RegExp(`Required file-only output was not produced: ${escapeRegExp(outputPath)}`));
-			assert.doesNotMatch(diagnostic, /completed without making edits/);
 			assert.equal(child?.effects?.fileMutation?.status, "observed");
 			assert.equal(child?.effects?.fileMutation?.attempted, true);
 			assert.deepEqual(child?.effects?.fileMutation?.evidence?.changedFiles, ["input.md"]);
@@ -869,8 +868,6 @@ setTimeout(() => process.exit(90), 15000).unref();
 			assert.equal(status.activityState, "needs_attention");
 			assert.equal(status.steps?.[0]?.activityState, "needs_attention");
 			assert.equal(status.steps?.[0]?.error, diagnostic);
-			const eventsText = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf-8");
-			assert.doesNotMatch(eventsText, /completed without making edits/);
 		} finally {
 			removeTempDir(repo);
 		}
@@ -921,13 +918,10 @@ setTimeout(() => process.exit(90), 15000).unref();
 		assert.equal(child?.success, false);
 		assert.match(diagnostic, /^Subagent produced no output after terminal assistant stopReason "aborted"\./);
 		assert.match(diagnostic, /Required file-only output was not produced/);
-		assert.doesNotMatch(diagnostic, /completed without making edits/);
 		assert.equal(child?.effects?.settlementDiagnostic?.requiredOutput?.missing, true);
 		assert.equal(child?.effects?.settlementDiagnostic?.finalTextPresent, true);
 		assert.equal(fs.existsSync(outputPath), false);
 
-		const eventsText = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf-8");
-		assert.doesNotMatch(eventsText, /completed without making edits/);
 	});
 
 	it("reports bounded compaction failure context when file-only output is missing", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -1001,7 +995,7 @@ setTimeout(() => process.exit(90), 15000).unref();
 		const sourceId = `partial-source-${Date.now().toString(36)}`;
 		const sourceDir = path.join(ASYNC_DIR, sourceId);
 		const message = "Required file-only output was not produced: report.md";
-		const effects = { fileMutation: { status: "observed", expected: true, attempted: true, evidence: { source: "tracked-files", trackedOnly: true, cwd: tempDir, changedFiles: ["input.md"], attemptedMutation: true } } };
+		const effects = { fileMutation: { status: "observed", attempted: true, evidence: { source: "tracked-files", trackedOnly: true, cwd: tempDir, changedFiles: ["input.md"], attemptedMutation: true } } };
 		fs.mkdirSync(sourceDir, { recursive: true });
 		fs.writeFileSync(path.join(sourceDir, "status.json"), JSON.stringify({
 			runId: sourceId,
@@ -1071,7 +1065,7 @@ setTimeout(() => process.exit(90), 15000).unref();
 					concurrency: 2,
 				}],
 				resultMode: "parallel",
-				agents: [makeAgent("partial", { output: outputPath, outputMode: "file-only" }), makeAgent("failure", { completionGuard: false })],
+				agents: [makeAgent("partial", { output: outputPath, outputMode: "file-only" }), makeAgent("failure")],
 				ctx: { pi: { events: { emit() {} } }, cwd: repo, currentSessionId: "session-1" },
 				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 				shareEnabled: false,

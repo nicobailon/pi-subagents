@@ -5,7 +5,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../../src/runs/shared/mutation-evidence.ts";
-import { evaluateCompletionMutationGuard } from "../../src/runs/shared/completion-guard.ts";
 
 function git(cwd: string, args: string[]): void {
 	execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -107,25 +106,6 @@ describe("tracked mutation evidence", () => {
 			assert.equal(evidence.attemptedMutation, true);
 			assert.equal(fs.existsSync(marker), false);
 		});
-	});
-
-	it("uses tracked evidence as completion guard mutation proof", () => {
-		const guard = evaluateCompletionMutationGuard({
-			agent: "worker",
-			task: "Implement the requested fix.",
-			messages: [{ role: "assistant", content: [{ type: "text", text: "Implemented." }] }],
-			tools: ["edit"],
-			mutationEvidence: {
-				source: "tracked-files",
-				trackedOnly: true,
-				changedFiles: ["tracked.txt"],
-				attemptedMutation: true,
-			},
-		});
-
-		assert.equal(guard.expectedMutation, true);
-		assert.equal(guard.attemptedMutation, true);
-		assert.equal(guard.triggered, false);
 	});
 
 	it("formats bounded timeout recovery data", () => {

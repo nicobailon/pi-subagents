@@ -31,7 +31,7 @@ describe("foreign workflow tool steering (separate processes)", () => {
 		ctx.sessionManager.getSessionFile = () => sessionFile;
 		ctx.sessionManager.getSessionId = () => "different-runtime-id-in-owner";
 		const state: any = { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null };
-		const executor = createSubagentExecutor({ pi: { events: createEventBus(), getSessionName: () => undefined }, state, config: {}, asyncByDefault: false, tempArtifactsDir: tempDir, getSubagentSessionRoot: () => tempDir, expandTilde: p => p, discoverAgents: () => ({ agents: [makeAgent("worker", { completionGuard: false })] }) });
+		const executor = createSubagentExecutor({ pi: { events: createEventBus(), getSessionName: () => undefined }, state, config: {}, asyncByDefault: false, tempArtifactsDir: tempDir, getSubagentSessionRoot: () => tempDir, expandTilde: p => p, discoverAgents: () => ({ agents: [makeAgent("worker")] }) });
 		const launch = await executor.execute("owner", { workflowScript: 'return await runs.run("A", { agent: "worker", task: "Wait" });', async: true, mission: false }, new AbortController().signal, undefined, ctx);
 		assert.notEqual(launch.isError, true, JSON.stringify(launch));
 		const runId = launch.details.asyncId!;

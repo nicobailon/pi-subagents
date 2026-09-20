@@ -1,6 +1,7 @@
 ---
 name: codex-exec-writer
 description: Explicit workspace-writing one-shot execution through the installed Codex CLI
+acceptanceRole: writer
 runner:
   type: external-cli
   adapter: codex-exec-writer

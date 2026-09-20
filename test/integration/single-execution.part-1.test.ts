@@ -627,7 +627,7 @@ Answer only from the supplied synthetic text.
 		const task = "Return the plain result.";
 		const agentPath = path.join(tempDir, ".pi", "agents", `${agentName}.md`);
 		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
-		fs.writeFileSync(agentPath, `---\nname: ${agentName}\ndescription: Bridge override probe\ntools:\n  - read\ncompletionGuard: false\n---\nAnswer from the task only.\n`, "utf-8");
+		fs.writeFileSync(agentPath, `---\nname: ${agentName}\ndescription: Bridge override probe\ntools:\n  - read\n---\nAnswer from the task only.\n`, "utf-8");
 		const discovered = discoverAgents(tempDir).agents.find((agent) => agent.name === agentName);
 		assert.ok(discovered, "expected temporary agent definition to be discovered");
 		const intercomBridge = { mode: "off" as const };
@@ -667,7 +667,7 @@ Answer only from the supplied synthetic text.
 		const task = "Return the plain result.";
 		const agentPath = path.join(tempDir, ".pi", "agents", `${agentName}.md`);
 		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
-		fs.writeFileSync(agentPath, `---\nname: ${agentName}\ndescription: Bridge template probe\ncompletionGuard: false\n---\nAnswer from the task only.\n`, "utf-8");
+		fs.writeFileSync(agentPath, `---\nname: ${agentName}\ndescription: Bridge template probe\n---\nAnswer from the task only.\n`, "utf-8");
 		const discovered = discoverAgents(tempDir).agents.find((agent) => agent.name === agentName);
 		assert.ok(discovered, "expected temporary agent definition to be discovered");
 		const instructionFile = path.join(tempDir, "custom-bridge.md");
@@ -721,38 +721,6 @@ Answer only from the supplied synthetic text.
 
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
 		assert.doesNotMatch(readCallArgs().join("\n"), /This path is authoritative for this run/);
-	});
-
-	it("keeps escaped read-only delegate tasks from triggering the completion guard", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ output: "The exact user-facing response" });
-		const task = [
-			"This is a read-only skill compliance scenario, not an implementation assignment.",
-			"Read the supplied skill and write the exact user-facing response.",
-			"Do not edit files.",
-			"Use a scenario that discusses selection for an implementation task or closeout of an implementation assignment.",
-		].join("\\n");
-		const result = await makeExecutor([makeAgent("delegate", {
-			tools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
-			inheritProjectContext: true,
-			systemPromptMode: "append",
-		})]).execute(
-			"workflow-read-only-delegate",
-			{
-				async: false,
-				acceptance: false,
-				preflight: { version: 1, coverage: "complete", lanes: [{ key: "main", mode: "review" }] },
-				workflowScript: `return runs.all([{ key: "main", agent: "delegate", task: ${JSON.stringify(task)} }]);`,
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
-		const child = (result.details as { results?: Array<{ exitCode?: number; error?: string; output?: string }> } | undefined)?.results?.[0];
-		assert.equal(child?.exitCode, 0);
-		assert.equal(child?.error, undefined);
-		assert.match(result.content[0]?.text ?? "", /The exact user-facing response/);
 	});
 
 	it("consumes one exact host-only workflow child permit before spawn", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -2939,7 +2907,7 @@ Answer only from the supplied synthetic text.
 		execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
 		execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
 		mockPi.onCall({ output: "isolated feature", writeFiles: [{ path: "feature.txt", content: "feature\n" }] });
-		const executor = makeExecutor([makeAgent("worker", { completionGuard: false })]);
+		const executor = makeExecutor([makeAgent("worker")]);
 
 		const result = await executor.execute(
 			"direct-worktree",
@@ -3013,28 +2981,6 @@ Answer only from the supplied synthetic text.
 		const sessionHeader = JSON.parse(fs.readFileSync(childSessionFile, "utf-8").split("\n", 1)[0]!) as { cwd?: string };
 		assert.ok(sessionHeader.cwd);
 		assert.equal(path.basename(sessionHeader.cwd), path.basename(callCwd));
-	});
-
-	it("rejects workflowScript implementation children under a read-only capability ceiling before spawn", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ output: "completed without edits" });
-		const executor = makeExecutor([makeAgent("worker")]);
-
-		const result = await executor.execute(
-			"workflow-readonly-implementation-contract",
-			{
-				async: false,
-				workflowScript: `return await runs.run("impl", { agent: "worker", task: "Implement the requested source fix" });`,
-				capabilityCeiling: { version: 1, allowedTools: ["read", "grep", "find", "ls", "contact_supervisor"], denyExtensions: true, sources: ["test"] },
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /no mutation-capable tools/);
-		assert.doesNotMatch(result.content[0]?.text ?? "", /completed without making edits/);
-		assert.equal(mockPi.callCount(), 0);
 	});
 
 	it("stringifies workflow child results without object placeholders", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -3530,7 +3476,7 @@ Answer only from the supplied synthetic text.
 		const usefulReport = "# Review findings\n\nThe implementation loses the final report.";
 		const sharedOutput = path.join(tempDir, "review.md");
 		mockPi.onCall({ stdoutRaw: `${JSON.stringify(events.assistantMessage(usefulReport))}\n` });
-		const executor = makeExecutor([makeAgent("reviewer", { tools: ["read"], completionGuard: false })]);
+		const executor = makeExecutor([makeAgent("reviewer", { tools: ["read"] })]);
 
 		const result = await executor.execute(
 			"scripted-workflow-file-only-acceptance-collision",
@@ -3573,8 +3519,8 @@ Answer only from the supplied synthetic text.
 		});
 		mockPi.onCall({ output: "Read-only review completed.", matchArgIncludes: "Review the persisted implementation report without editing it" });
 		const executor = makeExecutor([
-			makeAgent("worker", { tools: ["read", "write"], completionGuard: false }),
-			makeAgent("reviewer", { tools: ["read"], completionGuard: false }),
+			makeAgent("worker", { tools: ["read", "write"] }),
+			makeAgent("reviewer", { tools: ["read"] }),
 		]);
 
 		const result = await executor.execute(
@@ -3641,7 +3587,7 @@ Answer only from the supplied synthetic text.
 		const sharedOutput = path.join(tempDir, "failed-review.md");
 		fs.writeFileSync(sharedOutput, "stale workflow output", "utf-8");
 		mockPi.onCall({ exitCode: 1, stderr: "review child failed before writing output" });
-		const executor = makeExecutor([makeAgent("reviewer", { completionGuard: false })]);
+		const executor = makeExecutor([makeAgent("reviewer")]);
 
 		const result = await executor.execute(
 			"scripted-workflow-missing-child-output-collision",

@@ -40,7 +40,6 @@ import { ChainOutputValidationError, validateChainOutputBindings } from "../shar
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { resolveAcceptanceReportMode, resolveEffectiveAcceptance, validateAcceptanceInput, validateExecutionAcceptance } from "../shared/acceptance.ts";
 import { createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
-import { validateImplementationToolContract } from "../shared/completion-guard.ts";
 import {
 	type AcceptanceInput,
 	type AgentContract,
@@ -1150,20 +1149,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		if (externalRunner && permissionRules) {
 			throw new AsyncStartValidationError(`Agent '${a.name}' uses runner.type='${externalRunnerType}', which cannot enforce native Pi child permission rules.`);
 		}
-		if (!externalRunner) {
-			const contractTools = toolPlan.explicitToolAllowlist ? toolPlan.effectiveToolAllowlist : undefined;
-			const contractError = validateImplementationToolContract({
-				agent: a.name,
-				task,
-				tools: contractTools,
-				mcpDirectTools: toolPlan.effectiveMcpTools,
-				configuredExtensions: toolPlan.configuredExtensions,
-				requestedTools: toolPlan.requestedBuiltinTools,
-				acceptanceRole: a.acceptanceRole,
-				completionGuard: a.completionGuard,
-			});
-			if (contractError) throw new AsyncStartValidationError(contractError);
-		}
 		return {
 			parentSessionId: launchParentSessionId,
 			permissionRules,
@@ -1201,7 +1186,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			...(!externalRunner ? { requiredExtensions } : {}),
 			mcpDirectTools: a.mcpDirectTools,
 			mutationTools: a.mutationTools,
-			completionGuard: a.completionGuard,
 			systemPrompt,
 			systemPromptMode: a.systemPromptMode,
 			inheritProjectContext: a.inheritProjectContext,
@@ -1959,20 +1943,6 @@ export function executeAsyncSingle(
 		runtimeSnapshotHost: ctx.pi,
 	});
 	const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
-	if (!externalRunner) {
-		const contractTools = toolPlan.explicitToolAllowlist ? toolPlan.effectiveToolAllowlist : undefined;
-		const contractError = validateImplementationToolContract({
-			agent: agentConfig.name,
-			task: taskText,
-			tools: contractTools,
-			mcpDirectTools: toolPlan.effectiveMcpTools,
-			configuredExtensions: toolPlan.configuredExtensions,
-			requestedTools: toolPlan.requestedBuiltinTools,
-			acceptanceRole: agentConfig.acceptanceRole,
-			completionGuard: agentConfig.completionGuard,
-		});
-		if (contractError) return formatAsyncStartError("single", contractError);
-	}
 	const fast = params.fast ?? agentConfig.fast;
 	const launchThinking = resolveEffectiveThinking(selectedModel, effectiveThinking);
 	const { definitionDigest, launchContractDigest } = resolveLaunchBinding({
@@ -2036,7 +2006,6 @@ export function executeAsyncSingle(
 		...(resolvedSkills.length ? { skills: resolvedSkills.map((skill) => skill.name) } : {}),
 		...(recoveryAgentConfig.skillPath ? { skillPath: [...recoveryAgentConfig.skillPath] } : {}),
 		...(recoveryAgentConfig.filePath ? { agentFilePath: recoveryAgentConfig.filePath } : {}),
-		...(recoveryAgentConfig.completionGuard !== undefined ? { completionGuard: recoveryAgentConfig.completionGuard } : {}),
 		...(recoveryAgentConfig.memory ? { memory: { ...recoveryAgentConfig.memory } } : {}),
 		...(outputPath ? { outputPath } : {}),
 		outputMode,
@@ -2104,7 +2073,6 @@ export function executeAsyncSingle(
 						...(!externalRunner ? { requiredExtensions } : {}),
 						mcpDirectTools: agentConfig.mcpDirectTools,
 						mutationTools: agentConfig.mutationTools,
-						completionGuard: agentConfig.completionGuard,
 						systemPrompt,
 						systemPromptMode: agentConfig.systemPromptMode,
 						inheritProjectContext: agentConfig.inheritProjectContext,

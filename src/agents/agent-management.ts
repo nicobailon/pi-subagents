@@ -280,7 +280,6 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		allowedAgents: _allowedAgents,
 		subagentOnlyExtensions: _subagentOnlyExtensions,
 		mutationTools: _mutationTools,
-		completionGuard: _completionGuard,
 		toolBudget: _toolBudget,
 		...editable
 	} = withoutExtensions;
@@ -318,7 +317,6 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		...(base.extensions !== undefined ? { extensions: [...base.extensions] } : {}),
 		...(base.subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions: [...base.subagentOnlyExtensions] } : {}),
 		...(base.mutationTools !== undefined ? { mutationTools: [...base.mutationTools] } : {}),
-		...(base.completionGuard !== undefined ? { completionGuard: base.completionGuard } : {}),
 		...(base.toolBudget !== undefined ? { toolBudget: base.toolBudget } : {}),
 	}, agent.filePath);
 }
@@ -383,10 +381,6 @@ export function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<
 	if (hasKey(cfg, "reads")) changed("defaultReads");
 	if (hasKey(cfg, "progress")) changed("defaultProgress");
 	if (hasKey(cfg, "maxSubagentDepth")) changed("maxSubagentDepth");
-	if (hasKey(cfg, "completionGuard")) {
-		changed("completionGuard");
-		if (cfg.completionGuard === true) fields.add("completionGuard");
-	}
 	if (hasKey(cfg, "toolBudget")) changed("toolBudget");
 
 	return fields;
@@ -598,10 +592,6 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 			target.maxSubagentDepth = cfg.maxSubagentDepth;
 		} else return "config.maxSubagentDepth must be an integer >= 0 or false when provided.";
 	}
-	if (hasKey(cfg, "completionGuard")) {
-		if (typeof cfg.completionGuard !== "boolean") return "config.completionGuard must be a boolean when provided.";
-		target.completionGuard = cfg.completionGuard;
-	}
 	if (hasKey(cfg, "toolBudget")) {
 		if (cfg.toolBudget === false || cfg.toolBudget === "") delete target.toolBudget;
 		else {
@@ -621,7 +611,6 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 			target.mutationTools?.length ? "mutationTools" : undefined,
 			target.skills?.length || target.skillPath?.length ? "skills" : undefined,
 			target.maxSubagentDepth !== undefined ? "maxSubagentDepth" : undefined,
-			target.completionGuard !== undefined ? "completionGuard" : undefined,
 			target.toolBudget ? "toolBudget" : undefined,
 		].filter((field): field is string => Boolean(field));
 		if (unsupported.length > 0) return `config.runner type '${target.runner.type}' does not support Pi-only fields: ${unsupported.join(", ")}.`;
@@ -963,7 +952,6 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.defaultReads?.length) lines.push(`Reads: ${agent.defaultReads.join(", ")}`);
 	if (agent.defaultProgress) lines.push("Progress: true");
 	if (agent.maxSubagentDepth !== undefined) lines.push(`Max subagent depth: ${agent.maxSubagentDepth}`);
-	if (agent.completionGuard === false) lines.push("Completion guard: false");
 	if (agent.toolBudget) lines.push(`Tool budget: ${JSON.stringify(agent.toolBudget)}`);
 	if (agent.memory) lines.push(`Memory: ${agent.memory.scope} scope, path: ${agent.memory.path}`);
 	if (agent.systemPrompt.trim()) lines.push("", "System Prompt:", agent.systemPrompt);

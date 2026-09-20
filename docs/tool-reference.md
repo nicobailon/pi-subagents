@@ -242,7 +242,7 @@ Agent definitions are not loaded into context by default. Management actions let
 
 { action: "update", agent: "code-analysis.scout", config: { model: "openai/gpt-4o" } }
 { action: "update", agent: "code-analysis.scout", config: { acceptance: "" } } // clear the frontmatter default
-{ action: "update", agent: "code-analysis.scout", config: { acceptanceRole: false } } // restore inferred name fallback
+{ action: "update", agent: "code-analysis.scout", config: { acceptanceRole: false } } // restore default lightweight attestation
 { action: "delete", agent: "scout" }
 
 { action: "eject", agent: "reviewer" }
@@ -431,13 +431,9 @@ A gate given as `{ command, output: "json" }` runs like a string gate, and then 
 
 Acceptance evidence levels are `auto`, `none`, `attested`, `checked`, and `verified`. `acceptance: "auto"` is the default.
 
-Review is a separate gate configured with `acceptance.review`:
+Automatic inference uses only the declared structured role: `acceptanceRole: "writer"` infers checked evidence, with `review: { agent: "reviewer", required: true }` for async and dynamic writers; `"read-only"` infers none; and an omitted role infers lightweight attestation. Task wording, risk vocabulary, and agent names do not affect inference. Explicit acceptance can raise or add policy, while `{ level: "none", reason: "..." }` disables inferred gates according to the existing policy rules.
 
-- Async, risky, and dynamic writer contexts infer checked evidence plus `review: { agent: "reviewer", required: true }`.
-- Tasks classified as read-only infer no acceptance by default, including reviews of release, migration, or security work; those topics do not turn a read-only task into implementation. With role metadata omitted, unknown risk-topic tasks retain their gate even when the agent name suggests a reviewer. Explicit acceptance requests still apply.
-- Normal writer tasks infer checked evidence without review.
-
-Agent frontmatter or `subagents.agentOverrides` may set `acceptanceRole: "read-only" | "writer"` for ambiguous tasks. Explicit task mutation or no-edit intent wins over that role, while omitted metadata preserves the existing reviewer/scout/worker name heuristics. The role affects acceptance inference only and does not change tool access.
+Agent frontmatter or `subagents.agentOverrides` may set `acceptanceRole`. The role affects acceptance inference only and does not change tool access. Review is a separate gate configured with `acceptance.review`.
 
 Edge cases:
 

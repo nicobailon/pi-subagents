@@ -24,7 +24,7 @@ fs.mkdirSync(path.join(root, "package/test/smoke"), { recursive: true });
 for (const name of ["standalone-parent.ts", "standalone-provider.ts", "standalone-observer.ts", "standalone-revival.ts", "standalone-shared.ts"]) fs.copyFileSync(new URL(name, import.meta.url), path.join(root, "package/test/smoke", name));
 fs.copyFileSync(process.execPath, path.join(root, "node"));
 fs.writeFileSync(path.join(root, "agent/settings.json"), JSON.stringify({ defaultProvider: "standalone-smoke", defaultModel: "local", packages: [] }));
-fs.writeFileSync(path.join(root, "work/.pi/agents/binary-smoke.md"), "---\nname: binary-smoke\ndescription: Real npm background launch\nmodel: standalone-smoke/local\ntools:\nextensions:\n  - /stage/package/test/smoke/standalone-observer.ts\n  - /stage/package/test/smoke/standalone-provider.ts\ncompletionGuard: false\n---\nReturn the scripted response.\n");
+fs.writeFileSync(path.join(root, "work/.pi/agents/binary-smoke.md"), "---\nname: binary-smoke\ndescription: Real npm background launch\nmodel: standalone-smoke/local\ntools:\nextensions:\n  - /stage/package/test/smoke/standalone-observer.ts\n  - /stage/package/test/smoke/standalone-provider.ts\n---\nReturn the scripted response.\n");
 const aliases = JSON.parse(fs.readFileSync(path.join(npmRoot, "aliases.json"), "utf8")).aliases;
 const mapped = Object.fromEntries(Object.entries(aliases).map(([key, value]) => [key, value.replaceAll(npmRoot, "/npm-fixture")]));
 const args = ["--die-with-parent", "--unshare-net", "--unshare-pid", "--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin"];

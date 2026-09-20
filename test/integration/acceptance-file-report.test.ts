@@ -494,7 +494,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 			const artifactsDir = path.join(tempDir, "report-only-artifacts");
 			mockPi.onCall({ output: acceptanceReport("satisfied", "report-only evidence") });
 
-			const result = await runSync!(tempDir, [makeAgent("worker", { completionGuard: false })], "worker", "Implement and report the fix.", {
+			const result = await runSync!(tempDir, [makeAgent("worker")], "worker", "Implement and report the fix.", {
 				runId: "acceptance-report-only",
 				acceptance: { level: "checked", criteria: ["Report the findings"] },
 				artifactsDir,
@@ -552,7 +552,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 				tempArtifactsDir: artifactsDir,
 				getSubagentSessionRoot: () => tempDir,
 				expandTilde: (p: string) => p,
-				discoverAgents: () => ({ agents: [makeAgent("worker", { completionGuard: false })] }),
+				discoverAgents: () => ({ agents: [makeAgent("worker")] }),
 			});
 
 			const result = await executor.execute(
@@ -595,7 +595,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 				tempArtifactsDir: artifactsDir,
 				getSubagentSessionRoot: () => tempDir,
 				expandTilde: (p: string) => p,
-				discoverAgents: () => ({ agents: [makeAgent("worker", { completionGuard: false })] }),
+				discoverAgents: () => ({ agents: [makeAgent("worker")] }),
 			});
 
 			const result = await executor.execute(
@@ -752,7 +752,7 @@ export default function() {
 				diagnostic.launch(() => executeAsyncSingle!(id, {
 					agent: "worker",
 					task: "Write the findings report.",
-					agentConfig: makeAgent("worker", { completionGuard: false }),
+					agentConfig: makeAgent("worker"),
 					ctx: { pi: { events: { emit: diagnostic.emit } }, cwd: tempDir, currentSessionId: "session-file-report" },
 					artifactConfig,
 					artifactsDir: path.join(tempDir, ".pi/subagents", "artifacts"),

@@ -33,7 +33,7 @@ describe("host workflow result publication", { skip: !available }, () => {
 		};
 		const pi = { events: createEventBus(), getSessionName: () => undefined, sendMessage(message: { customType: string; content: string }) { notices.push(message); } };
 		const executor = createSubagentExecutor!({ pi, state, config: {}, asyncByDefault: false, tempArtifactsDir: tempDir,
-			getSubagentSessionRoot: () => tempDir, expandTilde: (p: string) => p, discoverAgents: () => ({ agents: [makeAgent("worker", { completionGuard: false })] }),
+			getSubagentSessionRoot: () => tempDir, expandTilde: (p: string) => p, discoverAgents: () => ({ agents: [makeAgent("worker")] }),
 		});
 		const notifier = registerSubagentNotify(pi, state, { batchConfig: { enabled: false } });
 		let childId: string | undefined;

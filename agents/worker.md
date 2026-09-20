@@ -2,6 +2,7 @@
 name: worker
 description: Implementation agent for normal tasks and approved oracle handoffs
 aliases: developer, coder, implementer, develop
+acceptanceRole: writer
 thinking: high
 systemPromptMode: replace
 inheritProjectContext: true

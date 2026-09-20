@@ -69,7 +69,6 @@ interface AgentConfig {
 	toolBudget?: { soft?: number; hard: number; block?: string[] | "*" };
 	mcpDirectTools?: string[];
 	maxSubagentDepth?: number;
-	completionGuard?: boolean;
 }
 
 export function makeAgentConfigs(names: string[]): AgentConfig[] {

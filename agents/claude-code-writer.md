@@ -1,6 +1,7 @@
 ---
 name: claude-code-writer
 description: Explicit file-writing Claude Code CLI mode; requires local authentication and trusted user settings/hooks
+acceptanceRole: writer
 runner:
   type: external-cli
   adapter: claude-code-writer

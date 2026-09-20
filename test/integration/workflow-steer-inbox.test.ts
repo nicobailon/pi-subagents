@@ -36,7 +36,7 @@ describe("async workflow steer inbox", { skip: !available ? "pi packages not ava
 		mockPi.onCall({ steps: [{ waitForPath: release, jsonl: [events.assistantMessage("done")] }] });
 		const ctx = makeMinimalCtx(tempDir);
 		ctx.sessionManager.getSessionId = () => "session-index-steering";
-		const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]);
+		const executor = makeAsyncExecutor([makeAgent("worker")]);
 		const launch = await executor.execute("index-steering", {
 			workflowScript: `await runs.run("A", { agent: "worker", task: "Wait" }); ${outcome === "failed" ? 'throw new Error("script failed")' : 'return "done"'}`,
 			async: true,
@@ -102,7 +102,7 @@ describe("async workflow steer inbox", { skip: !available ? "pi packages not ava
 		mockPi.onCall({ steps: [{ waitForPath: release, jsonl: [events.assistantMessage("done")] }] });
 		const ctx = makeMinimalCtx(tempDir);
 		ctx.sessionManager.getSessionId = () => "session-batch-accounting";
-		const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]);
+		const executor = makeAsyncExecutor([makeAgent("worker")]);
 		const launch = await executor.execute("batch-accounting", { workflowScript: `return await runs.run("A", { agent: "worker", task: "Wait" });`, async: true }, new AbortController().signal, undefined, ctx);
 		assert.equal(launch.isError, undefined);
 		const runId = launch.details!.asyncId as string;
@@ -167,7 +167,7 @@ describe("async workflow steer inbox", { skip: !available ? "pi packages not ava
 		mockPi.onCall({ steps: [{ waitForPath: release, jsonl: [events.assistantMessage("done")] }] });
 		const ctx = makeMinimalCtx(tempDir);
 		ctx.sessionManager.getSessionId = () => "session-pending-steer";
-		const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]);
+		const executor = makeAsyncExecutor([makeAgent("worker")]);
 		const launch = await executor.execute("pending-steer", { workflowScript: `return await runs.run("A", { agent: "worker", task: "Wait" });`, async: true }, new AbortController().signal, undefined, ctx);
 		assert.equal(launch.isError, undefined);
 		const runId = launch.details!.asyncId as string;
@@ -218,7 +218,7 @@ describe("async workflow steer inbox", { skip: !available ? "pi packages not ava
 		mockPi.onCall({ steps: [{ waitForPath: release, jsonl: [events.assistantMessage("steered workflow child")] }] });
 		const ctx = makeMinimalCtx(tempDir);
 		ctx.sessionManager.getSessionId = () => "session-workflow-steer";
-		const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]);
+		const executor = makeAsyncExecutor([makeAgent("worker")]);
 
 		const launch = await executor.execute(
 			`workflow-steer-inbox-${Date.now().toString(36)}`,
@@ -278,7 +278,7 @@ describe("async workflow steer inbox", { skip: !available ? "pi packages not ava
 		mockPi.onCall({ steps: [{ waitForPath: releaseB, jsonl: [events.assistantMessage("B done")] }] });
 		const ctx = makeMinimalCtx(tempDir);
 		ctx.sessionManager.getSessionId = () => "session-workflow-targets";
-		const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]);
+		const executor = makeAsyncExecutor([makeAgent("worker")]);
 		const launch = await executor.execute("workflow-targets", {
 			workflowScript: parallel
 				? `return await Promise.all([runs.run("A", { agent: "worker", task: "A" }), runs.run("B", { agent: "worker", task: "B" })]);`

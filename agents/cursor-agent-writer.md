@@ -1,6 +1,7 @@
 ---
 name: cursor-agent-writer
 description: Explicit workspace-writing one-shot execution through the installed Cursor CLI
+acceptanceRole: writer
 runner:
   type: external-cli
   adapter: cursor-agent-writer

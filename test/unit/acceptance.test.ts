@@ -6,6 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { Message } from "@earendil-works/pi-ai";
+import { discoverAgentsAll } from "../../src/agents/agents.ts";
 import {
 	acceptanceFailureMessage,
 	aggregateAcceptanceReport,
@@ -64,6 +65,15 @@ function tempGitRepo(): string {
 }
 
 describe("acceptance gates", () => {
+	it("applies checked acceptance to declared builtin writer profiles", () => {
+		const builtins = discoverAgentsAll(tempRepo()).builtin;
+		const writerNames = ["worker", "claude-code-writer", "codex-exec-writer", "cursor-agent-writer"];
+		assert.deepEqual(writerNames.map((name) => builtins.find((agent) => agent.name === name)?.acceptanceRole), writerNames.map(() => "writer"));
+		assert.equal(builtins.find((agent) => agent.name === "delegate")?.acceptanceRole, undefined);
+		const worker = builtins.find((agent) => agent.name === "worker");
+		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", acceptanceRole: worker?.acceptanceRole }).level, "checked");
+	});
+
 	it("infers evidence levels and review requirements from declared roles", () => {
 		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", acceptanceRole: "read-only", task: "Implement the fix", mode: "single" }).level, "none");
 		assert.equal(resolveEffectiveAcceptance({ agentName: "reviewer", acceptanceRole: "writer", task: "Review-only. Do not edit.", mode: "single" }).level, "checked");

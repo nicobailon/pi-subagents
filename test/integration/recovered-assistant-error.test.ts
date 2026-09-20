@@ -57,7 +57,7 @@ interface FixtureResult {
 
 async function runFixture(host: Host, response: MockPiResponse, withStructuredOutput = false): Promise<FixtureResult> {
 	mockPi.onCall(response);
-	const agent = makeAgent("recovery-fixture", { completionGuard: false });
+	const agent = makeAgent("recovery-fixture");
 	const runId = `recovered-assistant-error-${host}-${randomUUID()}`;
 
 	if (host === "foreground") {

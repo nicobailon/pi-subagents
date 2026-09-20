@@ -53,7 +53,7 @@ for (const name of ["standalone-parent.ts", "standalone-provider.ts", "standalon
 fs.writeFileSync(path.join(root, "work/bunfig.toml"), '[install]\nauto = "disable"\n');
 fs.writeFileSync(path.join(root, "work/negative.ts"), 'import "@earendil-works/pi-coding-agent";\n');
 fs.mkdirSync(path.join(root, "work/.pi/agents"), { recursive: true });
-fs.writeFileSync(path.join(root, "work/.pi/agents/binary-smoke.md"), `---\nname: binary-smoke\ndescription: Isolated native async regression\nmodel: standalone-smoke/local\ntools: ${mode === "tool-timeout" ? "bash" : ""}\nextensions:\n  - /stage/package/test/smoke/standalone-observer.ts\n  - /stage/package/test/smoke/standalone-provider.ts\ncompletionGuard: false\n---\nReturn the scripted response.\n`);
+fs.writeFileSync(path.join(root, "work/.pi/agents/binary-smoke.md"), `---\nname: binary-smoke\ndescription: Isolated native async regression\nmodel: standalone-smoke/local\ntools: ${mode === "tool-timeout" ? "bash" : ""}\nextensions:\n  - /stage/package/test/smoke/standalone-observer.ts\n  - /stage/package/test/smoke/standalone-provider.ts\n---\nReturn the scripted response.\n`);
 fs.writeFileSync(path.join(root, "agent/settings.json"), JSON.stringify({ defaultProvider: "standalone-smoke", defaultModel: "local", packages: [] }));
 fs.mkdirSync(path.join(root, "agent/extensions"), { recursive: true });
 fs.writeFileSync(path.join(root, "agent/extensions/ambient-sentinel.ts"), 'import fs from "node:fs"; export default function () { fs.writeFileSync("/stage/ambient-loaded", String(process.pid)); }\n');
@@ -76,7 +76,7 @@ console.log(`Artifacts: ${root}`);
 if (mode === "bootstrap-errors") {
 	const nativeStep = {
 		agent: "binary-smoke", task: "Return the scripted response.", context: "fresh", model: "standalone-smoke/local",
-		tools: [], extensions: ["/stage/package/test/smoke/standalone-provider.ts"], completionGuard: false,
+		tools: [], extensions: ["/stage/package/test/smoke/standalone-provider.ts"],
 		inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
 	};
 	const cases = [

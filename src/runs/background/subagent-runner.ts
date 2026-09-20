@@ -4,7 +4,6 @@ import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
-import { arbitrateCompletionGuardRescue, createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
 import { installRunnerHttpDispatcher } from "./runner-http-dispatcher.ts";
 
 const isRunnerEntrypoint = Boolean(process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href);
@@ -102,8 +101,6 @@ import { formatSubagentModelVerificationError, isContextOverflow } from "../shar
 import { markProcessTerminalCandidateLeaseRelease, processTerminalPath, writeProcessTerminalCandidate, type ProcessTerminalCandidate } from "./process-terminal.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, unconsumedSteerReason, updateSteeringTarget } from "./steering.ts";
 import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getAgentDir, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
-import { evaluateCompletionMutationGuard, expectsImplementationMutation, hasMutationToolCapability, validateImplementationToolContract } from "../shared/completion-guard.ts";
-import { planCompletionEvidence, projectSettlementDiagnostic } from "../shared/completion-evidence.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
 import {
 	createMutatingFailureState,
@@ -704,8 +701,6 @@ interface SingleStepContext {
 	usageBudgetExhausted?: () => boolean | undefined;
 	/** Existing run-owned budget configuration; cost allowance is not settled by the live token ledger. */
 	usageBudget?: UsageBudgetConfig;
-	/** False when sibling work in the same Git worktree could have caused the tracked diff. */
-	trackedMutationEvidenceForCompletionGuard?: boolean;
 	orcaProgressTab?: OrcaProgressTab;
 }
 
@@ -732,7 +727,7 @@ export async function settleHerdrExternalRunnerError(error: unknown, adapter: He
 export async function runSingleStepInner(
 	step: SubagentStep,
 	ctx: SingleStepContext,
-): Promise<StepResult & { completionGuardTriggered?: boolean }> {
+): Promise<StepResult> {
 	if (step.importAsyncRoot) {
 		let importTimedOut = false;
 		let importStopped = false;
@@ -810,7 +805,6 @@ export async function runSingleStepInner(
 	const placeholderRegex = new RegExp(ctx.placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
 	let task = step.task.replace(placeholderRegex, () => ctx.previousOutput);
 	if (ctx.outputs) task = resolveOutputReferences(task, ctx.outputs);
-	const taskForCompletionGuard = task;
 	let resolvedTaskToolPlan: ReturnType<typeof resolvePiLaunchToolPlan> | undefined;
 	if (!step.runner) {
 		resolvedTaskToolPlan = resolvePiLaunchToolPlan(omitUndefinedProperties({
@@ -830,28 +824,6 @@ export async function runSingleStepInner(
 			requiredExtensions: step.requiredExtensions ?? ctx.inheritedChildRuntime?.requiredExtensions,
 			permissionRules: step.permissionRules,
 		}));
-		const contractTools = resolvedTaskToolPlan.explicitToolAllowlist ? resolvedTaskToolPlan.effectiveToolAllowlist : undefined;
-		const contractError = validateImplementationToolContract({
-			agent: step.agent,
-			task: taskForCompletionGuard,
-			tools: contractTools,
-			mcpDirectTools: resolvedTaskToolPlan.effectiveMcpTools,
-			configuredExtensions: resolvedTaskToolPlan.configuredExtensions,
-			requestedTools: resolvedTaskToolPlan.requestedBuiltinTools,
-			acceptanceRole: step.acceptanceRole,
-			completionGuard: step.completionGuard,
-		});
-		if (contractError) {
-			return omitUndefinedProperties({
-				agent: step.agent,
-				context: step.context,
-				output: contractError,
-				error: contractError,
-				exitCode: 1,
-				capabilityCeiling: resolvedTaskToolPlan.capabilityCeiling,
-				capabilityAudit: resolvedTaskToolPlan.capabilityAudit,
-			});
-		}
 	}
 	// Derive from the pre-acceptance task so internal acceptance/recovery
 	// instructions never leak into the display name.
@@ -1103,7 +1075,6 @@ export async function runSingleStepInner(
 	let finalOutputSnapshot: SingleOutputSnapshot | undefined;
 	let structuredAcceptanceReport: unknown;
 	let structuredAcceptanceReportError: string | undefined;
-	let completionGuardTriggeredFinal = false;
 	let toolBudget = step.toolBudget ? initialToolBudgetState(step.toolBudget) : undefined;
 	let toolBudgetBlocked = false;
 	let actualLaunchContractDigest = step.launchContractDigest;
@@ -1258,9 +1229,9 @@ export async function runSingleStepInner(
 		aggregateUsage.cacheWrite += run.usage.cacheWrite;
 		aggregateUsage.cost += run.usage.cost;
 		aggregateUsage.turns += run.usage.turns;
-		// A parked run still owes completion evidence when it actually finishes.
-		// Stopped/timedOut runs already have terminal failures; checking completion evidence there is meaningless.
-		const completionDiagnosticsEligible = !run.interrupted && !run.stopped && !run.timedOut;
+		// A parked run still owes output diagnostics when it actually finishes.
+		// Stopped/timedOut runs already have terminal failures, so terminal output diagnostics are deferred.
+		const terminalDiagnosticsEligible = !run.interrupted && !run.stopped && !run.timedOut;
 		const toolDiagnostic = run.exitCode === 0 && !run.error ? launch.capture.toolDiagnostic() : undefined;
 		const toolAvailabilityError = toolDiagnostic ? formatChildToolDiagnostic(toolDiagnostic) : undefined;
 		const runtimeAcknowledgedExtensions = launch.capture.runtimeAcknowledgedExtensions();
@@ -1276,7 +1247,7 @@ export async function runSingleStepInner(
 		let structuredOutput: unknown;
 		let structuredError: string | undefined;
 		let validatedStructuredOutput = false;
-		if (completionDiagnosticsEligible && effectiveStructuredOutput && run.exitCode === 0 && !run.error && !toolAvailabilityError && !midToolExitError) {
+		if (terminalDiagnosticsEligible && effectiveStructuredOutput && run.exitCode === 0 && !run.error && !toolAvailabilityError && !midToolExitError) {
 			if (!run.structuredOutputToolInvoked) {
 				structuredError = MISSING_STRUCTURED_OUTPUT_CALL_ERROR;
 			} else {
@@ -1298,13 +1269,13 @@ export async function runSingleStepInner(
 		const errorMessages = validatedStructuredOutput
 			? run.messages.slice(run.structuredOutputMessageStartIndex ?? run.messages.length)
 			: run.messages;
-		const hiddenError = completionDiagnosticsEligible && run.exitCode === 0 && !run.error && !toolAvailabilityError && !structuredError && !midToolExitError
+		const hiddenError = terminalDiagnosticsEligible && run.exitCode === 0 && !run.error && !toolAvailabilityError && !structuredError && !midToolExitError
 			? detectSubagentError(errorMessages)
 			: null;
 		const terminalEmptyAfterUsefulWork = !validatedStructuredOutput
 			&& hasEmptyTerminalAssistantResponse(run.messages)
 			&& (run.toolCount > 0 || Boolean(run.finalOutput.trim()));
-		const emptyOutputError = completionDiagnosticsEligible && run.exitCode === 0
+		const emptyOutputError = terminalDiagnosticsEligible && run.exitCode === 0
 			&& !run.error
 			&& !toolAvailabilityError
 			&& !structuredError
@@ -1313,48 +1284,10 @@ export async function runSingleStepInner(
 			&& (!hiddenError?.hasError || hasEmptyTerminalAssistantResponse(run.messages))
 			? formatEmptyTerminalAssistantResponseError(run.messages)
 			: undefined;
-		const completionGuardEnabled = isAgentContract(step.agentContract) ? step.completionGuard === true : step.completionGuard !== false;
-		const completionToolPlan = resolvedTaskToolPlan;
-		const completionTools = completionToolPlan ? (completionToolPlan.explicitToolAllowlist ? completionToolPlan.effectiveToolAllowlist : undefined) : step.tools;
 		const remoteGitChanged = run.nativeMachine?.initialGit && run.nativeMachine.finalGit ? run.nativeMachine.initialGit.head !== run.nativeMachine.finalGit.head || run.nativeMachine.initialGit.dirty !== run.nativeMachine.finalGit.dirty : undefined;
 		const mutationEvidence = run.nativeMachine ? { source: "tracked-files" as const, trackedOnly: true as const, changedFiles: [], attemptedMutation: remoteGitChanged === true, ...(remoteGitChanged === undefined ? { unavailable: "Remote Git before/after evidence was incomplete." } : {}) } : collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
 		finalMutationEvidence = mutationEvidence;
-		const completionMutationEvidence = ctx.trackedMutationEvidenceForCompletionGuard === false ? undefined : mutationEvidence;
-		const completionGuard = completionDiagnosticsEligible && run.exitCode === 0 && !run.error && !structuredError && !hiddenError?.hasError && !midToolExitError && !emptyOutputError && completionGuardEnabled
-			? evaluateCompletionMutationGuard(omitUndefinedProperties({
-				agent: step.agent,
-				task: taskForCompletionGuard,
-				messages: run.messages,
-				tools: completionTools,
-				mcpDirectTools: completionToolPlan?.effectiveMcpTools ?? step.mcpDirectTools,
-				mutationTools: step.mutationTools,
-				toolAvailabilityError,
-				mutationEvidence: completionMutationEvidence,
-			}))
-			: undefined;
-		const mutationAttemptObserved = run.observedMutationAttempt === true || completionMutationEvidence?.attemptedMutation === true;
-		let arbitration = { triggered: completionGuard?.triggered === true && !mutationAttemptObserved, rescued: false };
-		if (arbitration.triggered) {
-			const modelContext = launch.capture.completionIntentContext?.();
-			arbitration = await arbitrateCompletionGuardRescue({
-				guardTriggered: true,
-				task: taskForCompletionGuard,
-				// Construct lazily too: the shared gate refuses overlength tasks before
-				// registry/auth/model work. The child has already shut down normally.
-				arbiter: modelContext ? async (task) => createTaskMutationArbiter(modelContext)?.(task) ?? "unavailable" : undefined,
-			});
-		}
-		const completionEvidence = planCompletionEvidence({
-			guard: completionGuard,
-			guardTriggered: arbitration.triggered,
-			arbiterRescued: arbitration.rescued,
-			completionGuardEnabled,
-			mutationCapable: hasMutationToolCapability(completionTools, completionToolPlan?.effectiveMcpTools ?? step.mcpDirectTools),
-			implementationMutationExpected: expectsImplementationMutation(step.agent, taskForCompletionGuard),
-			mutationAttemptObserved,
-			mutationEvidence: completionMutationEvidence,
-			agentContractEnabled: isAgentContract(step.agentContract),
-		});
+		const mutationAttemptObserved = run.observedMutationAttempt === true || mutationEvidence.attemptedMutation === true;
 		const finalOutputHasPersistableFileContent = run.exitCode === 0 && !run.error && !emptyOutputError && Boolean(stripAcceptanceReport(run.finalOutput).trim());
 		const requiredOutput = step.outputMode === "file-only" && step.outputPath
 			? { kind: "file-only" as const, path: step.outputPath, missing: !fs.existsSync(step.outputPath) && !finalOutputHasPersistableFileContent }
@@ -1362,9 +1295,9 @@ export async function runSingleStepInner(
 				? { kind: "structured" as const, path: effectiveStructuredOutput.outputPath, missing: !fs.existsSync(effectiveStructuredOutput.outputPath) }
 			: undefined;
 		finalRequiredOutputMissing = requiredOutput?.missing;
-		const missingRequiredOutputError = completionDiagnosticsEligible ? formatRequiredOutputError(requiredOutput) : undefined;
+		const missingRequiredOutputError = terminalDiagnosticsEligible ? formatRequiredOutputError(requiredOutput) : undefined;
 		const missingRequiredOutputAfterMutation = Boolean(missingRequiredOutputError) && (mutationAttemptObserved || Boolean(mutationEvidence.changedFiles.length));
-		const effectiveExitCode = toolAvailabilityError || completionEvidence.legacyFailureError || midToolExitError || structuredError || emptyOutputError || missingRequiredOutputError
+		const effectiveExitCode = toolAvailabilityError || midToolExitError || structuredError || emptyOutputError || missingRequiredOutputError
 			? 1
 			: hiddenError?.hasError
 				? (hiddenError.exitCode ?? 1)
@@ -1382,8 +1315,7 @@ export async function runSingleStepInner(
 					? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
 					: `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
 				: undefined);
-		const error = underlyingError ?? missingRequiredOutputError ?? completionEvidence.legacyFailureError;
-		completionGuardTriggeredFinal = completionEvidence.guardTriggered && !underlyingError && !missingRequiredOutputError;
+		const error = underlyingError ?? missingRequiredOutputError;
 		finalOutputSnapshot = outputSnapshot;
 		if (step.toolBudget) {
 			const toolMessages = run.messages.filter((message) => message.role === "toolResult");
@@ -1391,18 +1323,16 @@ export async function runSingleStepInner(
 			toolBudgetBlocked = Boolean(blockedMessage);
 			toolBudget = toolBudgetState(step.toolBudget, toolMessages.length, blockedMessage ? (blockedMessage as { toolName?: string }).toolName : undefined);
 		}
-		const settlementDiagnostic = projectSettlementDiagnostic(completionEvidence, {
-			terminalFailed: effectiveExitCode !== 0,
+		const settlementDiagnostic = effectiveExitCode !== 0 ? {
 			finalTextPresent: Boolean(stripAcceptanceReport(run.finalOutput).trim()),
-			mutationObserved: mutationEvidence.attemptedMutation,
-			requiredOutput,
+			mutation: { attempted: mutationAttemptObserved, observed: mutationEvidence.attemptedMutation },
+			...(requiredOutput ? { requiredOutput } : {}),
 			afterCompactionSettlement: run.afterCompactionSettlement === true,
-		});
-		const fileMutationEffect = completionEvidence.fileMutation ?? (missingRequiredOutputAfterMutation ? { status: "observed" as const, expected: completionEvidence.mutationExpected, attempted: true, evidence: mutationEvidence } : undefined);
+		} : undefined;
+		const fileMutationEffect = missingRequiredOutputAfterMutation ? { status: "observed" as const, attempted: true as const, evidence: mutationEvidence } : undefined;
 		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, runtimeAcknowledgedExtensions, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(fileMutationEffect || settlementDiagnostic ? { effects: { ...(fileMutationEffect ? { fileMutation: fileMutationEffect } : {}), ...(settlementDiagnostic ? { settlementDiagnostic } : {}) } } : {}) } as RunChildSessionResult;
 		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break singleLaunch;
 		if (effectiveExitCode === 0 && !error) break singleLaunch;
-		if (completionEvidence.guardTriggered) break singleLaunch;
 		const recovery = planAbortRecovery({
 			messages: run.messages,
 			error,
@@ -1575,7 +1505,7 @@ export async function runSingleStepInner(
 		})
 		: {};
 
-	const result: StepResult & { completionGuardTriggered?: boolean } = omitUndefinedProperties({
+	const result: StepResult = omitUndefinedProperties({
 		agent: step.agent,
 		...(childSessionName ? { sessionName: childSessionName } : {}),
 		context: step.context,
@@ -1607,7 +1537,6 @@ export async function runSingleStepInner(
 		timeoutRecovery,
 		toolBudget,
 		toolBudgetBlocked: toolBudgetBlocked || undefined,
-		completionGuardTriggered: completionGuardTriggeredFinal,
 		...((finalResult as (RunChildSessionResult & { effects?: import("../../shared/types.ts").EffectsProjection }) | undefined)?.effects ? { effects: (finalResult as RunChildSessionResult & { effects?: import("../../shared/types.ts").EffectsProjection }).effects } : {}),
 		structuredOutput: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : (finalResult as (RunChildSessionResult & { structuredOutput?: unknown }) | undefined)?.structuredOutput,
 		structuredOutputPath: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : effectiveStructuredOutput?.outputPath,
@@ -1624,7 +1553,7 @@ export async function runSingleStepInner(
 async function runSingleStep(
 	step: SubagentStep,
 	ctx: SingleStepContext,
-): Promise<StepResult & { completionGuardTriggered?: boolean }> {
+): Promise<StepResult> {
 	if (!step.importAsyncRoot) ctx.orcaProgressTab?.section({ agent: step.agent, index: ctx.flatIndex, count: ctx.flatStepCount });
 	return runSingleStepInner(step, ctx);
 }
@@ -3794,7 +3723,6 @@ export async function runSubagent(
 					onSteerOutcome: (request, delivery) => applySteerDelivery(request.id, fi, delivery),
 					timeoutSignal: timeoutAbortController.signal,
 					stopSignal: stopAbortController.signal,
-					trackedMutationEvidenceForCompletionGuard: false,
 					timeoutMessage,
 					stopMessage,
 					toolTimeoutMs: task.toolTimeoutMs ?? config.toolTimeoutMs,
@@ -4207,7 +4135,6 @@ export async function runSubagent(
 							onSteerOutcome: (request, delivery) => applySteerDelivery(request.id, fi, delivery),
 							timeoutSignal: timeoutAbortController.signal,
 							stopSignal: stopAbortController.signal,
-							trackedMutationEvidenceForCompletionGuard: Boolean(worktreeSetup),
 							timeoutMessage,
 							stopMessage,
 							toolTimeoutMs: taskForRun.toolTimeoutMs ?? config.toolTimeoutMs,
@@ -4284,20 +4211,6 @@ export async function runSubagent(
 							exitCode: stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode, durationMs: taskDuration,
 						}));
 						if (stopped || childStopped) appendTerminalChildStatusEvent(fi, taskEndTime);
-						if (singleResult.completionGuardTriggered) {
-							const event = buildControlEvent(omitUndefinedProperties({
-								from: requiredStatusStep(statusPayload, fi).activityState,
-								to: "needs_attention",
-								runId: id,
-								agent: task.agent,
-								index: fi,
-								ts: taskEndTime,
-								message: `${task.agent} completed without making edits for an implementation task`,
-								reason: "completion_guard",
-							}));
-							appendControlEvent(event);
-						}
-
 						if (singleResult.exitCode !== 0 && failFast && !childStopped) aborted = true;
 						return stopped || childStopped ? { ...singleResult, output: stopMessage, error: stopMessage, exitCode: 1, interrupted: false, timedOut: false, stopped: true, skipped: false } : timedOut ? { ...singleResult, output: singleResult.output || (timeoutMessage ?? "Subagent timed out."), error: singleResult.error ?? timeoutMessage ?? "Subagent timed out.", exitCode: 1, interrupted: false, timedOut: true, skipped: false } : { ...singleResult, skipped: false };
 					},
@@ -4823,20 +4736,6 @@ export async function runSubagent(
 					}
 					writeStatusPayload();
 				});
-			}
-
-			if (singleResult.completionGuardTriggered) {
-				const event = buildControlEvent(omitUndefinedProperties({
-					from: requiredStatusStep(statusPayload, flatIndex).activityState,
-					to: "needs_attention",
-					runId: id,
-					agent: seqStep.agent,
-					index: flatIndex,
-					ts: stepEndTime,
-					message: `${seqStep.agent} completed without making edits for an implementation task`,
-					reason: "completion_guard",
-				}));
-				appendControlEvent(event);
 			}
 
 			flatIndex++;

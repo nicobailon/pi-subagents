@@ -104,7 +104,7 @@ interface RunSyncResult {
 	agentContract?: { version: 1 };
 	execution?: { status?: string; success?: boolean; exitCode?: number; error?: string };
 	review?: { status?: string };
-	effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean; message?: string } };
+	effects?: { fileMutation?: { status?: string; attempted?: boolean } };
 	acceptance?: {
 		status?: string;
 		verifyRuns?: Array<{ status?: string }>;

@@ -1434,39 +1434,26 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		}
 	});
 
-	it("rejects implementation runs without mutation-capable tools before spawn", async () => {
-		mockPi.onCall({ output: "should not spawn" });
-		const agents = [makeAgent("worker", { tools: ["read", "grep", "find", "ls", "contact_supervisor"] })];
+	it("completes no-edit foreground runs independently of task prose and tool capability", async () => {
+		const cleanRepo = path.join(tempDir, "no-edit-clean-repo");
+		fs.mkdirSync(cleanRepo);
+		execFileSync("git", ["init"], { cwd: cleanRepo, stdio: "ignore" });
+		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: cleanRepo });
+		execFileSync("git", ["config", "user.name", "Test User"], { cwd: cleanRepo });
+		fs.writeFileSync(path.join(cleanRepo, "tracked.txt"), "unchanged\n");
+		execFileSync("git", ["add", "tracked.txt"], { cwd: cleanRepo });
+		execFileSync("git", ["commit", "-m", "baseline"], { cwd: cleanRepo, stdio: "ignore" });
+		for (const [index, cwd, agent, task] of [
+			[0, tempDir, makeAgent("worker", { tools: ["read"] }), "Implement and write the approved patch."],
+			[1, cleanRepo, makeAgent("worker", { tools: ["read", "write", "bash"], mutationTools: ["replace"] }), "Fix the parser; input data mentions write, edit, bash, and replace."],
+		] as const) {
+			mockPi.onCall({ output: "Completed without workspace changes." });
+			const result = await runSync(cwd, [agent], "worker", task, { runId: `no-edit-foreground-${index}` });
 
-		const result = await runSync(tempDir, agents, "worker", "Implement the approved file changes", {
-			runId: "readonly-contract-run",
-		});
-
-		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /no mutation-capable tools/);
-		assert.equal(mockPi.callCount(), 0);
-		});
-
-	it("fails implementation runs that complete without mutation attempts", async () => {
-		mockPi.onCall({ output: "Validation:\nlet rawFilename = params.filename.trim();" });
-		const agents = [makeAgent("worker")];
-		const controlEvents: Array<{ message: string }> = [];
-
-		const result = await runSync(tempDir, agents, "worker", "Implement the approved file changes", {
-			runId: "guard-run",
-			onControlEvent: (event: { message: string }) => controlEvents.push(event),
-		});
-
-		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /completed without making edits/);
-		assert.equal(result.finalOutput, "Validation:\nlet rawFilename = params.filename.trim();");
-		assert.equal(result.progress.status, "failed");
-		assert.deepEqual(controlEvents.map((event) => event.message), [
-			"worker completed without making edits for an implementation task",
-		]);
-		assert.deepEqual(result.controlEvents?.map((event) => event.message), [
-			"worker completed without making edits for an implementation task",
-		]);
+			assert.equal(result.exitCode, 0, result.error);
+			assert.equal(result.error, undefined);
+			assert.equal(result.finalOutput, "Completed without workspace changes.");
+		}
 	});
 
 	it("preserves terminal empty-output diagnostics after useful foreground work", async () => {
@@ -1497,7 +1484,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 
 		assert.equal(result.exitCode, 1);
 		assert.match(result.error ?? "", /^Subagent produced no output after terminal assistant stopReason "aborted"\./);
-		assert.doesNotMatch(result.error ?? "", /completed without making edits/);
 		assert.equal(result.finalOutput, partialOutput);
 	});
 
@@ -1526,7 +1512,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			"Read-only review. Verify release recovery and security; do not edit files.",
 		].entries()) {
 			mockPi.onCall({ output: "VERDICT: PASS" });
-			const result = await runSync(tempDir, [makeAgent("reviewer", { tools: ["read"], completionGuard: false })], "reviewer", task, {
+			const result = await runSync(tempDir, [makeAgent("reviewer", { tools: ["read"], acceptanceRole: "read-only" })], "reviewer", task, {
 				runId: `reviewer-inferred-acceptance-${index}`,
 			});
 
@@ -1537,7 +1523,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 
 	it("agent contract keeps acceptance rejection out of execution status", async () => {
 		mockPi.onCall({ output: "Done\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"no proof\"}]}\n```" });
-		const agents = [makeAgent("worker", { tools: ["read"], completionGuard: false })];
+		const agents = [makeAgent("worker", { tools: ["read"] })];
 
 		const result = await runSync(tempDir, agents, "worker", "Summarize the fix", {
 			runId: "v1-acceptance-reject",
@@ -1551,22 +1537,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(result.execution?.success, true);
 		assert.equal(result.acceptance?.status, "rejected");
 		assert.match(result.acceptance.runtimeChecks?.[0]?.message ?? "", /not-satisfied/);
-	});
-
-	it("agent contract records explicit completion guard as an effect", async () => {
-		mockPi.onCall({ output: "Plan only" });
-		const agents = [makeAgent("worker", { tools: ["read", "write"], completionGuard: true })];
-
-		const result = await runSync(tempDir, agents, "worker", "Implement the approved file changes", {
-			runId: "v1-completion-effect",
-			agentContract: { version: 1 },
-		});
-
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.execution?.status, "completed");
-		assert.equal(result.effects?.fileMutation?.status, "missing");
-		assert.equal(result.effects?.fileMutation?.expected, true);
-		assert.equal(result.effects?.fileMutation?.attempted, false);
 	});
 
 	it("direct single tool calls support outputSchema", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -1600,7 +1570,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			const writerPath = path.join(tempDir, `writer-${relative}.md`);
 			const challengeOutput = relative ? "challenge-relative.md" : path.join(tempDir, "challenge-absolute.md");
 			mockPi.onCall({ output: "original writer report" });
-			mockPi.onCall({ output: "retained challenge report" });
+			mockPi.onCall({ output: "No better current-scope change is needed; the retained implementation remains correct." });
 			mockPi.onCall({ output: "repeated challenge report" });
 			const result = await makeExecutor([makeAgent("echo")], {}, true).execute(
 				`workflow-retained-output-${relative}`,
@@ -1635,7 +1605,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			assert.equal(challenge.outputReference, challengePath);
 			assert.notEqual(challenge.outputReference, writer.outputReference);
 			assert.equal(fs.readFileSync(writer.outputReference, "utf-8"), "original writer report");
-			assert.equal(fs.readFileSync(challenge.outputReference, "utf-8"), "retained challenge report");
+			assert.equal(fs.readFileSync(challenge.outputReference, "utf-8"), "No better current-scope change is needed; the retained implementation remains correct.");
 			assert.deepEqual(result.details.results.map((child) => child.savedOutputPath), [writerPath, challengePath, undefined]);
 		}
 		assert.equal(mockPi.callCount(), 6);
@@ -1888,7 +1858,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(fs.readFileSync(configuredOutput, "utf-8"), "resumed report");
 	});
 
-	it("preserves failed foreground resume errors and transcript metadata", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("preserves successful no-edit foreground resume output and transcript metadata", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 		mockPi.onCall({ output: "first report" });
 		const firstResult = await executor.execute(
@@ -1912,13 +1882,10 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			makeMinimalCtx(tempDir),
 		);
 
-		assert.equal(resumedResult.isError, true);
-		const resumedText = resumedResult.content.map((part) => part.type === "text" ? part.text : "").join("\n");
-		assert.match(resumedText, /Subagent completed without making edits for an implementation task/);
-		assert.doesNotMatch(resumedText, new RegExp(`^${escapeRegExp(partialOutput)}`));
+		assert.equal(resumedResult.isError, undefined);
 		const child = resumedResult.details.results[0];
 		assert.equal(child?.finalOutput, partialOutput);
-		assert.match(child?.error ?? "", /Subagent completed without making edits for an implementation task/);
+		assert.equal(child?.error, undefined);
 		assert.ok(child?.transcriptPath);
 		assert.equal(child?.transcriptPath, child?.artifactPaths?.transcriptPath);
 		assert.ok(child?.artifactPaths?.outputPath);
@@ -2190,37 +2157,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.deepEqual(child?.structuredOutput, { ok: true });
 	});
 
-	it("returns captured output when the foreground executor fails an implementation run", async () => {
-		mockPi.onCall({ output: "Oracle review:\n- finding one\n- finding two" });
-		const executor = makeExecutor([makeAgent("oracle")]);
-
-		const result = await executor.execute(
-			"failed-single-output",
-			{ agent: "oracle", task: "Implement the approved file changes" },
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		const text = result.content[0]?.text ?? "";
-		assert.equal(result.isError, true);
-		assert.match(text, /completed without making edits/);
-		assert.match(text, /Output:\nOracle review:\n- finding one\n- finding two/);
-		assert.match(text, /Output artifact: /);
-	});
-
-	it("fails future-tense implementation summaries when no mutation attempt occurred", async () => {
-		mockPi.onCall({ output: "I’ll do that now and report back after implementing." });
-		const agents = [makeAgent("worker")];
-
-		const result = await runSync(tempDir, agents, "worker", "Implement the approved fixes", {
-			runId: "guard-future-tense",
-		});
-
-		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /completed without making edits/);
-	});
-
 	it("allows declared read-only agents to mention implementation words without edits", async () => {
 		mockPi.onCall({ output: "Validation report after the patch" });
 		const agents = [makeAgent("architect", { tools: ["read", "grep", "find", "ls"] })];
@@ -2232,27 +2168,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.progress.status, "completed");
 		assert.equal(result.finalOutput, "Validation report after the patch");
-	});
-
-	it("keeps bash-enabled implementation tasks conservative unless completion guard is disabled", async () => {
-		mockPi.onCall({ output: "cold start test after patch" });
-		mockPi.onCall({ output: "cold start test after patch" });
-		const agents = [
-			makeAgent("test-runner", { tools: ["read", "grep", "bash", "ls"] }),
-			makeAgent("test-runner-optout", { tools: ["read", "grep", "bash", "ls"], completionGuard: false }),
-		];
-
-		const withoutOptOut = await runSync(tempDir, agents, "test-runner", "Patch the cold start test", {
-			runId: "guard-bash-conservative",
-		});
-		assert.equal(withoutOptOut.exitCode, 1);
-		assert.match(withoutOptOut.error ?? "", /completed without making edits/);
-
-		const withOptOut = await runSync(tempDir, agents, "test-runner-optout", "Patch the cold start test", {
-			runId: "guard-bash-optout",
-		});
-		assert.equal(withOptOut.exitCode, 0);
-		assert.equal(withOptOut.progress.status, "completed");
 	});
 
 	it("allows implementation runs when parsed messages include a real edit tool call", async () => {
@@ -2284,7 +2199,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 
 	it("resolves explicit agent aliases to canonical execution names", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Implemented" });
-		const executor = makeExecutor([makeAgent("worker", { aliases: ["developer"], completionGuard: false })]);
+		const executor = makeExecutor([makeAgent("worker", { aliases: ["developer"] })]);
 
 		const result = await executor.execute("single", { agent: "developer", task: "Implement" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 
@@ -4083,7 +3998,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(result.usage.turns, 0);
 	});
 
-	it("records blocked mutation effects when foreground implementation tools are missing", async () => {
+	it("preserves missing child tool failures without inferring mutation intent", async () => {
 		mockPi.onCall({ output: "I cannot edit because fixture_search is missing", missingTools: ["fixture_search"] });
 		const agents = [makeAgent("worker", { tools: ["read", "fixture_search"] })];
 
@@ -4091,11 +4006,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 
 		assert.equal(result.exitCode, 1);
 		assert.match(result.error ?? "", /these child tools were unavailable: fixture_search/);
-		assert.doesNotMatch(result.error ?? "", /completed without making edits/);
-		assert.equal(result.effects?.fileMutation?.status, "blocked");
-		assert.equal(result.effects?.fileMutation?.expected, true);
-		assert.equal(result.effects?.fileMutation?.attempted, false);
-		assert.match(result.effects?.fileMutation?.message ?? "", /these child tools were unavailable: fixture_search/);
+		assert.equal(result.effects?.fileMutation, undefined);
 	});
 
 	it("passes custom tool extensions through even when explicit extensions are allowlisted", { skip: process.platform === "win32" ? "extension path resolution intermittent on Windows CI" : undefined }, async () => {
@@ -4681,7 +4592,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		(receipt.progress as unknown as { recentOutput: string[] }).recentOutput.push("caller-only progress");
 		receipt.usage.turns = 999;
 		receipt.usage.input = 999;
-		receipt.effects = { fileMutation: { status: "missing", expected: true, attempted: false, message: "caller-only effect" } };
+		receipt.effects = { settlementDiagnostic: { finalTextPresent: false, mutation: { attempted: false, observed: false }, afterCompactionSettlement: false } };
 		receipt.execution = { status: "failed", success: false, exitCode: 99 };
 		receipt.review = { status: "blockers" };
 
@@ -4770,7 +4681,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		receipt.progress.status = "completed";
 		receipt.usage.turns = 999;
 		receipt.usage.input = 999;
-		receipt.effects = { fileMutation: { status: "observed", expected: false, attempted: true, message: "caller-only fallback effect" } };
+		receipt.effects = { settlementDiagnostic: { finalTextPresent: false, mutation: { attempted: true, observed: false }, afterCompactionSettlement: false } };
 		for (let attempt = 0; attempt < 100 && !terminal; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
 		assert.ok(terminal);
 		assert.equal(callbackCount, 1);
