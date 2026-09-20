@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -90,16 +89,4 @@ describe("Herdr inspector bootstrap", () => {
 		}
 	});
 
-	it("starts the packaged bootstrap with ordinary Node", () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-bootstrap-run-"));
-		try {
-			const { asyncDir, status } = writeCompletedRun(root);
-			const bootstrap = fileURLToPath(new URL("../../inspector-runner.mjs", import.meta.url));
-			const launched = spawnSync(process.execPath, [bootstrap, "--async-dir", asyncDir, "--run-id", status.runId], { encoding: "utf-8" });
-			assert.equal(launched.status, 0, launched.stderr);
-			assert.match(launched.stdout, /pi-subagents inspector for run-123/);
-		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
-		}
-	});
 });

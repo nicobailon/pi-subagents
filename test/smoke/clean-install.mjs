@@ -43,10 +43,21 @@ assert.ok(packed.files.some(file => file.path === "runner-peer-preload.mjs"), "p
 assert.ok(packed.files.some(file => file.path === "runner-peer-loader.mjs"), "older-Node peer loader must ship");
 assert.equal(packed.files.some(file => file.path.endsWith(".ts") && !file.path.endsWith(".d.ts")), false, "package must not ship TypeScript sources");
 assert.ok(packed.files.some(file => file.path === "index.js"), "compiled extension entry must ship");
+assert.ok(packed.files.some(file => file.path === "src/inspectors/inspector-runner.js"), "compiled inspector runner must ship");
 assert.ok(packed.files.some(file => file.path === "src/runs/background/subagent-runner.js"), "compiled background runner must ship");
 fs.writeFileSync(path.join(extension, "package.json"), JSON.stringify({ private: true, dependencies: { "pi-subagents": `file:${path.join(root, packed.filename)}` } }));
 run("extension-install", "npm", ["install", "--no-audit", "--no-fund"], extension);
 const installed = path.join(extension, "node_modules/pi-subagents");
+const inspectorRun = path.join(root, "inspector-run");
+fs.mkdirSync(inspectorRun);
+fs.writeFileSync(path.join(inspectorRun, "status.json"), JSON.stringify({
+	runId: "smoke-inspector", mode: "single", state: "completed", startedAt: Date.now(), cwd,
+	steps: [{ agent: "worker", status: "completed", recentOutput: ["done"] }],
+}));
+const inspector = run("inspector", process.execPath, [
+	path.join(installed, "inspector-runner.mjs"), "--async-dir", inspectorRun, "--run-id", "smoke-inspector",
+], cwd);
+assert.match(inspector.stdout, /pi-subagents inspector for smoke-inspector/);
 const pi = path.join(host, "node_modules/@earendil-works/pi-coding-agent");
 const { createJiti } = await import(pathToFileURL(path.join(extension, "node_modules/jiti/lib/jiti.mjs")).href);
 const { resolveHostPeerAliases, findHostPeerPackageDir, resolvePackageSubpath } = await import(pathToFileURL(path.join(installed, "src/runs/background/runner-aliases.js")).href);

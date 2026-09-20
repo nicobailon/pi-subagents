@@ -1,7 +1,7 @@
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { runInspector } = await jiti.import("./src/inspectors/inspector-runner.ts");
+const { runInspector } = await jiti.import("./src/inspectors/inspector-runner.js");
 
 try {
 	runInspector();

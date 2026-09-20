@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Launch the packaged inspector bootstrap from its compiled JavaScript instead of an absent TypeScript source. Thanks to [@pablog12](https://github.com/pablog12) for [#2360](https://github.com/nicobailon/pi-subagents/issues/2360).
 - Update the development SDK and npm-host smoke coverage for Pi 0.86.0, including compatibility with its stricter JSON message types.
 - Load the host `pi-coding-agent` for in-process child sessions from the resolved host package root instead of only a bare specifier, so foreground children launch on npm-hosted Pi installations where the extension's own `node_modules` tree cannot resolve the bare module (peers installed outside that tree). Thanks to [@nazerim](https://github.com/nazerim) for #2348.
 
