@@ -250,25 +250,29 @@ function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModu
  * the host package root and importing its entry by file URL yields the host's
  * single module instance.
  *
- * Root precedence: an explicit override, then the running pi process's own
- * location (the host that owns this child), then the package manager's view
+ * Root precedence: the running pi process's own location (the host that owns
+ * this child), then an explicit override, then the package manager's view
  * of pi-subagents' install tree as a last fallback. A selected root must be a
  * canonical pi-coding-agent package: other package names are rejected rather
- * than imported. Failures that are not module-resolution failures are
- * reported as-is, so host SDK evaluation errors are never masked by the bare
- * import fallback.
+ * than imported. Only a missing auto-discovered root or entry permits the
+ * bare import fallback; once an existing entry is imported, its evaluation
+ * and dependency errors are reported as-is.
  */
 export async function loadHostPiCodingAgent(): Promise<PiCodingAgentModule> {
 	const overrideRoot = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || undefined;
-	const root = overrideRoot ?? resolvePiPackageRoot() ?? resolveInstalledPiPackageRoot();
+	const runningRoot = resolvePiPackageRoot();
+	const selectedOverride = runningRoot === undefined ? overrideRoot : undefined;
+	const root = runningRoot ?? selectedOverride ?? resolveInstalledPiPackageRoot();
 	if (root) {
+		let entry: string;
 		try {
-			const entry = fs.realpathSync(resolveHostPackageEntry(root, overrideRoot));
-			return await import(pathToFileURL(entry).href);
+			entry = fs.realpathSync(resolveHostPackageEntry(root, selectedOverride));
 		} catch (error) {
-			if (overrideRoot !== undefined || !isModuleResolutionFailure(error)) throw error;
+			if (selectedOverride !== undefined || !isMissingPathError(error)) throw error;
 			// Auto-discovered root whose entry cannot be resolved: last-resort bare specifier.
+			return import(PI_CODING_AGENT_PACKAGE);
 		}
+		return import(pathToFileURL(entry).href);
 	}
 	return import(PI_CODING_AGENT_PACKAGE);
 }
@@ -293,9 +297,9 @@ function resolveHostPackageEntry(root: string, overrideRoot: string | undefined)
 	return path.resolve(root, entry);
 }
 
-function isModuleResolutionFailure(error: unknown): boolean {
+function isMissingPathError(error: unknown): boolean {
 	const code = (error as { code?: unknown } | null)?.code;
-	return code === "ENOENT" || code === "ERR_MODULE_NOT_FOUND" || code === "ERR_UNSUPPORTED_DIR_IMPORT";
+	return code === "ENOENT";
 }
 
 /**
