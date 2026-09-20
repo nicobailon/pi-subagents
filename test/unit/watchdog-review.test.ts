@@ -181,7 +181,7 @@ describe("main watchdog review adapter", () => {
 				"Use severity='blocker' only when the issue should stop acceptance until addressed; otherwise use severity='concern'.",
 				"",
 				"<cwd>",
-				"/tmp/watchdog-review",
+				"/tmp/watchdog-parent/../watchdog-review",
 				"</cwd>",
 			].join("\n"),
 			toolsAdded: getCurrentTools(calls[0]!.context.messages),

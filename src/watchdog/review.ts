@@ -1,4 +1,3 @@
-import * as path from "node:path";
 import { Agent, type AgentTool, type StreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { createReadOnlyTools, convertToLlm, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
@@ -233,7 +232,7 @@ export function buildWatchdogSystemPrompt(ctx: Pick<ExtensionContext, "cwd">, op
 		"Use severity='blocker' only when the issue should stop acceptance until addressed; otherwise use severity='concern'.",
 		guidance ? `\nStanding instructions from WATCHDOG.md (project first, then user):\n${guidance}` : undefined,
 		"\n<cwd>",
-		path.normalize(ctx.cwd),
+		ctx.cwd,
 		"</cwd>",
 	].filter((line): line is string => Boolean(line)).join("\n");
 }

@@ -3,6 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { createAssistantMessageEventStream, fauxAssistantMessage } from "@earendil-works/pi-ai";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createForkContextResolver } from "../../src/shared/fork-context.ts";
 import { createPrunedForkSessionWriter, pruneForkSessionFile, prunedForkRecoveryPath, type PrunedForkRecoveryPayload } from "../../src/shared/pruned-fork.ts";
 
@@ -41,21 +43,36 @@ describe("pruned fork sessions", () => {
 			const secondSession = path.join(tempDir, "second.jsonl");
 			writeJsonl(firstSession, largeForkEntries(parentSession));
 			writeJsonl(secondSession, largeForkEntries(parentSession));
-			const model = { provider: "extension-provider", id: "summary-model", api: "pi-registry-only", maxTokens: 9_000 };
+			type RegistryStreamArgs = Parameters<ExtensionContext["modelRegistry"]["streamSimple"]>;
+			type RegistryCall = { model: RegistryStreamArgs[0]; context: RegistryStreamArgs[1]; options: RegistryStreamArgs[2] };
+			const model: RegistryStreamArgs[0] = {
+				provider: "extension-provider",
+				id: "summary-model",
+				name: "Summary model",
+				api: "pi-registry-only",
+				baseUrl: "https://summary.invalid",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 16_000,
+				maxTokens: 9_000,
+			};
 			const controller = new AbortController();
-			const calls: Array<{ model: unknown; context: Record<string, unknown>; options: Record<string, unknown> }> = [];
+			const calls: RegistryCall[] = [];
 			const modelRegistry = {
 				getAvailable: () => [model],
 				find: (provider: string, id: string) => provider === model.provider && id === model.id ? model : undefined,
-				streamSimple(streamModel: unknown, context: Record<string, unknown>, options: Record<string, unknown>) {
+				streamSimple(streamModel: RegistryStreamArgs[0], context: RegistryStreamArgs[1], options?: RegistryStreamArgs[2]) {
 					calls.push({ model: streamModel, context, options });
-					const message = context.messages as Array<{ content: Array<{ text: string }> }>;
-					return {
-						result: async () => ({
-							stopReason: "stop",
-							content: [{ type: "text", text: validSummaryResponse(message[0]!.content[0]!.text) }],
-						}),
-					};
+					const input = context.messages[0];
+					if (input?.role !== "user" || !Array.isArray(input.content) || input.content[0]?.type !== "text") throw new Error("expected summary payload");
+					const stream = createAssistantMessageEventStream();
+					queueMicrotask(() => stream.push({
+						type: "done",
+						reason: "stop",
+						message: fauxAssistantMessage(validSummaryResponse(input.content[0].text), { stopReason: "stop" }),
+					}));
+					return stream;
 				},
 			};
 			const writer = await createPrunedForkSessionWriter({ modelRegistry } as never, {
@@ -66,14 +83,18 @@ describe("pruned fork sessions", () => {
 			await Promise.all([writer(firstSession), writer(secondSession)]);
 
 			assert.equal(calls.length, 1, "forks share one registry-routed summary request");
-			assert.equal(calls[0]!.model, model);
-			assert.deepEqual(Object.keys(calls[0]!.options).sort(), ["maxTokens", "signal"]);
-			assert.equal(calls[0]!.options.maxTokens, 4_096);
-			assert.equal(calls[0]!.options.signal, controller.signal);
-			assert.match(calls[0]!.context.systemPrompt as string, /Return strict JSON only/);
-			const messages = calls[0]!.context.messages as Array<Record<string, unknown>>;
-			assert.equal(messages.length, 1);
-			assert.equal(messages[0]!.role, "user");
+			const call = calls[0];
+			assert.ok(call);
+			assert.equal(call.model, model);
+			assert.ok(call.options);
+			assert.deepEqual(Object.keys(call.options).sort(), ["maxTokens", "signal"]);
+			assert.equal(call.options.maxTokens, 4_096);
+			assert.equal(call.options.signal, controller.signal);
+			assert.match(call.context.systemPrompt ?? "", /Return strict JSON only/);
+			assert.equal(call.context.messages.length, 1);
+			const message = call.context.messages[0];
+			assert.ok(message);
+			assert.equal(message.role, "user");
 			assert.equal(readRecovery(firstSession).records.length, 1);
 			assert.equal(readRecovery(secondSession).records.length, 1);
 		} finally {

@@ -83,14 +83,14 @@ const entryStarted = performance.now();
 const entry = await entryLoader.import(path.join(installed, "index.js"));
 assert.equal(typeof entry.default, "function", "compiled extension entry must export its factory");
 console.log(`PASS compiled package entry loaded through Jiti in ${Math.round(performance.now() - entryStarted)} ms`);
-for (const file of ["pi085-child.ts", "pi085-extension.ts"]) fs.copyFileSync(new URL(file, import.meta.url), path.join(cwd, file));
+for (const file of ["sdk-child.ts", "sdk-extension.ts"]) fs.copyFileSync(new URL(file, import.meta.url), path.join(cwd, file));
 const childEnv = {
 	SMOKE_EXTENSION: installed,
 	JITI_ALIAS: JSON.stringify(resolved.aliases),
 	PI_ASYNC_NATIVE_RUNNER: "1",
 };
 const jiti = path.join(extension, "node_modules/jiti/lib/jiti-cli.mjs");
-const args = [jiti, path.join(cwd, "pi085-child.ts")];
+const args = [jiti, path.join(cwd, "sdk-child.ts")];
 const preload = Object.keys(resolved.aliases).length ? ["--import", pathToFileURL(path.join(installed, "runner-peer-preload.mjs")).href] : [];
 const positive = run("child", process.execPath, [...preload, ...args], cwd, childEnv);
 assert.match(positive.stdout, /PASS public SDK\/default child factory/);

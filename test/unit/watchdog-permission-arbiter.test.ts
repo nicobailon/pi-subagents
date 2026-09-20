@@ -83,7 +83,7 @@ describe("watchdog permission arbiter", () => {
 				"Deny when uncertain. Do not produce freeform advice or ask the parent orchestrator.",
 				"",
 				"<cwd>",
-				"/tmp/watchdog-permission",
+				"/tmp/watchdog-parent/../watchdog-permission",
 				"</cwd>",
 			].join("\n"),
 			toolsAdded: getCurrentTools(calls[0]!.messages),

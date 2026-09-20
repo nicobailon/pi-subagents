@@ -1,4 +1,3 @@
-import * as path from "node:path";
 import { Agent, type AgentTool, type StreamFn } from "@earendil-works/pi-agent-core";
 import { convertToLlm, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
@@ -117,7 +116,7 @@ export function createWatchdogPermissionArbiter(options: WatchdogPermissionArbit
 					"Deny when uncertain. Do not produce freeform advice or ask the parent orchestrator.",
 					"",
 					"<cwd>",
-					path.normalize(request.ctx.cwd),
+					request.ctx.cwd,
 					"</cwd>",
 				].join("\n");
 				const tools = [tool];
