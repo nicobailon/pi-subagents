@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- Show each workflow child's resolved model and thinking level in parent status output. Thanks to [@grahama1970](https://github.com/grahama1970) for [#2364](https://github.com/nicobailon/pi-subagents/pull/2364).
 - Fix watchdog helper working-directory context and pruned-fork overflow summaries on Pi 0.86.1, and cut active SDK and standalone support over to 0.86.1. Thanks to [@chem](https://github.com/chem) for [#2362](https://github.com/nicobailon/pi-subagents/issues/2362).
 - Launch the packaged inspector bootstrap from its compiled JavaScript instead of an absent TypeScript source. Thanks to [@pablog12](https://github.com/pablog12) for [#2360](https://github.com/nicobailon/pi-subagents/issues/2360).
 - Load the host `pi-coding-agent` for in-process child sessions from the resolved host package root instead of only a bare specifier, so foreground children launch on npm-hosted Pi installations where the extension's own `node_modules` tree cannot resolve the bare module (peers installed outside that tree). Thanks to [@nazerim](https://github.com/nazerim) for #2348.
