@@ -8,7 +8,7 @@ import { agentStreamOptions } from "../shared/agent-stream-options.ts";
 import { opencodeSessionHeaders } from "../shared/opencode-session-headers.ts";
 import { decodeChildWatchdogConfig } from "./child-status.ts";
 import { childResolvedConfig } from "./register-child.ts";
-import { resolveWatchdogReviewModel } from "./review.ts";
+import { formatWatchdogCwdSection, resolveWatchdogReviewModel } from "./review.ts";
 
 const PermissionDecisionParams = Type.Object({
 	decision: Type.String({ enum: ["approve", "deny"] }),
@@ -115,9 +115,7 @@ export function createWatchdogPermissionArbiter(options: WatchdogPermissionArbit
 					"Call watchdog_permission_decision exactly once with approve or deny and a concise reason.",
 					"Deny when uncertain. Do not produce freeform advice or ask the parent orchestrator.",
 					"",
-					"<cwd>",
-					request.ctx.cwd,
-					"</cwd>",
+					formatWatchdogCwdSection(request.ctx.cwd),
 				].join("\n");
 				const tools = [tool];
 				agent = new Agent({

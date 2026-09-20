@@ -218,6 +218,11 @@ function createWatchdogWarnTool(request: WatchdogReviewRequest): AgentTool<typeo
 	};
 }
 
+export function formatWatchdogCwdSection(cwd: string): string {
+	if (/[\u0000-\u001F\u007F<>]/u.test(cwd)) throw new Error("Watchdog cwd cannot contain control characters or angle brackets.");
+	return `<cwd>\n${cwd}\n</cwd>`;
+}
+
 export function buildWatchdogSystemPrompt(ctx: Pick<ExtensionContext, "cwd">, options: { hasScope?: boolean; guidance?: string; hasDiff?: boolean } = {}): string {
 	const guidance = options.guidance?.trim();
 	return [
@@ -231,9 +236,7 @@ export function buildWatchdogSystemPrompt(ctx: Pick<ExtensionContext, "cwd">, op
 		"If the turn is clean, call no tools and end normally.",
 		"Use severity='blocker' only when the issue should stop acceptance until addressed; otherwise use severity='concern'.",
 		guidance ? `\nStanding instructions from WATCHDOG.md (project first, then user):\n${guidance}` : undefined,
-		"\n<cwd>",
-		ctx.cwd,
-		"</cwd>",
+		`\n${formatWatchdogCwdSection(ctx.cwd)}`,
 	].filter((line): line is string => Boolean(line)).join("\n");
 }
 
