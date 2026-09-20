@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Require substantial delegated mutation work to be classified by implementation topology before writer launch, preventing issue-wide writer commissions across independent seams without forcing artificial fanout.
+
 ## [0.70.0] - 2026-09-19
 
 ### Highlights
