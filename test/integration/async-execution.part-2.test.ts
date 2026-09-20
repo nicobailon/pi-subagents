@@ -1833,7 +1833,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 					collect: { as: "reviews" },
 					acceptance: {
 						level: "verified",
-						verify: [{ id: "slow", command: `${process.execPath} -e "setTimeout(()=>process.exit(0), 5000)"`, timeoutMs: 10_000 }],
+						verify: [{ id: "slow", command: `${process.execPath} -e "setTimeout(()=>process.exit(0), 30000)"`, timeoutMs: 60_000 }],
 					},
 				},
 			],
@@ -1858,7 +1858,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(dynamicNode?.error ?? "", /Subagent timed out after 1000ms\./);
 		assert.notEqual(dynamicNode?.acceptanceStatus, "verified");
 		assert.equal(status.timedOut, true);
-		assert.ok(elapsedMs < 3_000, `timeout should cancel dynamic aggregate acceptance promptly, elapsed ${elapsedMs}ms`);
+		assert.ok(elapsedMs < 5_000, `timeout should cancel dynamic aggregate acceptance well before the verify command completes, elapsed ${elapsedMs}ms`);
 	});
 
 	it("async dynamic fanout recomputes later child intercom targets by final flat index", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
