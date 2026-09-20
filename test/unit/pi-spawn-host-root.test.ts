@@ -57,7 +57,7 @@ describe("resolvePiPackageRoot host discovery", () => {
 		fs.rmSync(tmp, { recursive: true, force: true });
 	});
 
-	it("finds the package through a bin script whose realpath lives inside it", () => {
+	it("finds the package through a bin script whose realpath lives inside it", { skip: process.platform === "win32" ? "file symlinks require elevated privileges on Windows" : undefined }, () => {
 		const root = path.join(tmp, "install", PACKAGE_DIR);
 		writePackageRoot(root);
 		fs.mkdirSync(path.join(root, "dist", "bundle"), { recursive: true });
