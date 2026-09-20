@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { TextContent } from "@earendil-works/pi-ai";
-import { completeSimple } from "@earendil-works/pi-ai/compat";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resolveModelCandidate } from "../runs/shared/model-resolution.ts";
 import { splitKnownThinkingSuffix, toModelInfo } from "./model-info.ts";
@@ -417,22 +416,17 @@ export async function createPrunedForkSessionWriter(
 	if (!named) throw new Error(`Pruned fork model '${config.model}' must resolve to provider/model.`);
 	const model = ctx.modelRegistry.find(named.provider, named.id);
 	if (!model) throw new Error(`Pruned fork model '${config.model}' was not found as '${baseModel}'.`);
-	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-	if (auth.ok === false) throw new Error(`Pruned fork model auth failed for ${baseModel}: ${auth.error}`);
 
 	let sharedSummary: Promise<string> | undefined;
 	const summarize: SummaryFunction = async (payload) => {
 		sharedSummary ??= (async () => {
-			const response = await completeSimple(model, {
+			const response = await ctx.modelRegistry.streamSimple(model, {
 				systemPrompt: SYSTEM_PROMPT,
 				messages: [{ role: "user", content: [{ type: "text", text: payload }], timestamp: Date.now() }],
 			}, {
-				apiKey: auth.apiKey,
-				headers: auth.headers,
-				env: auth.env,
 				maxTokens: Math.min(MAX_SUMMARY_TOKENS, typeof model.maxTokens === "number" && model.maxTokens > 0 ? model.maxTokens : MAX_SUMMARY_TOKENS),
 				signal,
-			});
+			}).result();
 			if (response.stopReason === "error" || response.stopReason === "aborted") {
 				throw new Error(`Pruned fork summarization stopped with ${response.stopReason}${response.errorMessage ? `: ${response.errorMessage}` : ""}`);
 			}

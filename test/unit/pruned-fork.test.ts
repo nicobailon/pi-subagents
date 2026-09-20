@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { createForkContextResolver } from "../../src/shared/fork-context.ts";
-import { pruneForkSessionFile, prunedForkRecoveryPath, type PrunedForkRecoveryPayload } from "../../src/shared/pruned-fork.ts";
+import { createPrunedForkSessionWriter, pruneForkSessionFile, prunedForkRecoveryPath, type PrunedForkRecoveryPayload } from "../../src/shared/pruned-fork.ts";
 
 function writeJsonl(filePath: string, entries: unknown[]): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -33,6 +33,54 @@ function readRecovery(sessionFile: string): PrunedForkRecoveryPayload {
 }
 
 describe("pruned fork sessions", () => {
+	it("routes summaries through the Pi model registry with provider-neutral request options", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-pruned-registry-"));
+		try {
+			const parentSession = path.join(tempDir, "parent.jsonl");
+			const firstSession = path.join(tempDir, "first.jsonl");
+			const secondSession = path.join(tempDir, "second.jsonl");
+			writeJsonl(firstSession, largeForkEntries(parentSession));
+			writeJsonl(secondSession, largeForkEntries(parentSession));
+			const model = { provider: "extension-provider", id: "summary-model", api: "pi-registry-only", maxTokens: 9_000 };
+			const controller = new AbortController();
+			const calls: Array<{ model: unknown; context: Record<string, unknown>; options: Record<string, unknown> }> = [];
+			const modelRegistry = {
+				getAvailable: () => [model],
+				find: (provider: string, id: string) => provider === model.provider && id === model.id ? model : undefined,
+				streamSimple(streamModel: unknown, context: Record<string, unknown>, options: Record<string, unknown>) {
+					calls.push({ model: streamModel, context, options });
+					const message = context.messages as Array<{ content: Array<{ text: string }> }>;
+					return {
+						result: async () => ({
+							stopReason: "stop",
+							content: [{ type: "text", text: validSummaryResponse(message[0]!.content[0]!.text) }],
+						}),
+					};
+				},
+			};
+			const writer = await createPrunedForkSessionWriter({ modelRegistry } as never, {
+				mode: "pruned",
+				model: "extension-provider/summary-model",
+			}, controller.signal);
+
+			await Promise.all([writer(firstSession), writer(secondSession)]);
+
+			assert.equal(calls.length, 1, "forks share one registry-routed summary request");
+			assert.equal(calls[0]!.model, model);
+			assert.deepEqual(Object.keys(calls[0]!.options).sort(), ["maxTokens", "signal"]);
+			assert.equal(calls[0]!.options.maxTokens, 4_096);
+			assert.equal(calls[0]!.options.signal, controller.signal);
+			assert.match(calls[0]!.context.systemPrompt as string, /Return strict JSON only/);
+			const messages = calls[0]!.context.messages as Array<Record<string, unknown>>;
+			assert.equal(messages.length, 1);
+			assert.equal(messages[0]!.role, "user");
+			assert.equal(readRecovery(firstSession).records.length, 1);
+			assert.equal(readRecovery(secondSession).records.length, 1);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("spills transcript overflow to private recovery with stable visible refs", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-pruned-fork-"));
 		try {
