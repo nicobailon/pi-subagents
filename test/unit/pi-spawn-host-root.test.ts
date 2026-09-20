@@ -67,7 +67,9 @@ describe("resolvePiPackageRoot host discovery", () => {
 		const bin = path.join(binDir, "pi");
 		fs.symlinkSync(path.join(root, "dist", "bundle", "cli.js"), bin);
 		process.argv[1] = bin;
-		assert.equal(resolvePiPackageRoot(), root);
+		const resolved = resolvePiPackageRoot();
+		assert.ok(resolved);
+		assert.equal(fs.realpathSync(resolved), fs.realpathSync(root));
 	});
 
 	it("ignores unrelated packages higher up the tree", () => {
