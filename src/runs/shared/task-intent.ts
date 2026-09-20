@@ -145,6 +145,55 @@ function stripFrameworkInstructions(task: string): string {
 		.join("\n");
 }
 
+interface PipeTableRow {
+	parts: string[];
+	cells: string[];
+	firstCellIndex: number;
+}
+
+function parsePipeTableRow(line: string): PipeTableRow | undefined {
+	const parts: string[] = [];
+	let cellStart = 0;
+	for (let index = 0; index < line.length; index += 1) {
+		if (line[index] !== "|") continue;
+		let backslashIndex = index - 1;
+		while (backslashIndex >= 0 && line[backslashIndex] === "\\") backslashIndex -= 1;
+		if ((index - backslashIndex - 1) % 2 !== 0) continue;
+		parts.push(line.slice(cellStart, index));
+		cellStart = index + 1;
+	}
+	parts.push(line.slice(cellStart));
+	if (parts.length === 1) return undefined;
+	const firstCellIndex = parts[0]!.trim() === "" ? 1 : 0;
+	const lastCellIndex = parts.at(-1)!.trim() === "" ? parts.length - 1 : parts.length;
+	return { parts, cells: parts.slice(firstCellIndex, lastCellIndex), firstCellIndex };
+}
+
+function stripMarkdownToolsColumnValues(task: string): string {
+	const lines = task.split("\n");
+	for (let headerIndex = 0; headerIndex + 1 < lines.length; headerIndex += 1) {
+		const header = parsePipeTableRow(lines[headerIndex]!);
+		const separator = parsePipeTableRow(lines[headerIndex + 1]!);
+		if (!header || !separator || header.cells.length !== separator.cells.length) continue;
+		if (!separator.cells.every((cell) => /^\s*:?-{3,}:?\s*$/.test(cell))) continue;
+		const toolsIndex = header.cells.findIndex((cell) => cell.trim().toLowerCase() === "tools");
+		if (toolsIndex < 0) continue;
+
+		for (let rowIndex = headerIndex + 2; rowIndex < lines.length; rowIndex += 1) {
+			const row = parsePipeTableRow(lines[rowIndex]!);
+			if (!row || row.cells.length !== header.cells.length) break;
+			row.parts[row.firstCellIndex + toolsIndex] = " ";
+			lines[rowIndex] = row.parts.join("|");
+		}
+		headerIndex += 1;
+	}
+	return lines.join("\n");
+}
+
+function preprocessTaskMutationIntent(task: string): string {
+	return stripMarkdownToolsColumnValues(stripFrameworkInstructions(task));
+}
+
 function stripPatterns(task: string, patterns: RegExp[]): string {
 	let stripped = task;
 	for (const pattern of patterns) {
@@ -198,7 +247,7 @@ function hasImplementationIntent(agent: string, taskText: string): boolean {
 }
 
 export function classifyTaskMutationIntent(agent: string, task: string): TaskMutationIntent {
-	const taskText = stripPatterns(stripSeverityCompounds(stripFrameworkInstructions(task)), [FINDING_CLASSIFICATION_PATTERN]);
+	const taskText = stripPatterns(stripSeverityCompounds(preprocessTaskMutationIntent(task)), [FINDING_CLASSIFICATION_PATTERN]);
 	const taskTextWithoutScopedConstraints = stripPatterns(taskText, SCOPED_NO_EDIT_CONSTRAINT_PATTERNS);
 	const prohibitions = analyzeNoEditProhibitions(taskTextWithoutScopedConstraints);
 	if (prohibitions.present) {
@@ -237,7 +286,7 @@ const MAY_MUTATE_VERB_PATTERN = /\b(?:fix|implement|update|write|edit|modify|mig
  * does.
  */
 export function taskMayMutate(task: string): boolean {
-	const taskText = stripPatterns(stripSeverityCompounds(stripFrameworkInstructions(task)), [FINDING_CLASSIFICATION_PATTERN, ...SCOPED_NO_EDIT_CONSTRAINT_PATTERNS]);
+	const taskText = stripPatterns(stripSeverityCompounds(preprocessTaskMutationIntent(task)), [FINDING_CLASSIFICATION_PATTERN, ...SCOPED_NO_EDIT_CONSTRAINT_PATTERNS]);
 	const prohibitions = analyzeNoEditProhibitions(taskText);
 	if (prohibitions.blanket) return false;
 	return MAY_MUTATE_VERB_PATTERN.test(stripPatterns(prohibitions.strippedText, READ_ONLY_DELIVERABLE_PATTERNS));

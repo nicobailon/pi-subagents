@@ -188,6 +188,67 @@ describe("classifyTaskMutationIntent", () => {
 		assert.equal(classifyTaskMutationIntent("delegate", "Update package.json").kind, "implementation");
 		assert.equal(classifyTaskMutationIntent("worker", "Review only; fix the package.json").kind, "implementation");
 	});
+
+	it("ignores mutation verbs only in Markdown tools-column values", () => {
+		const table = "| name | tools |\n|---|---|\n| worker.md | read, grep, find, ls, bash, edit, write, contact_supervisor |";
+		const issueTask = `Verify every cell of this table against the actual files:\n\n${table}\n\nOutput the corrected table and a CORRECTIONS list.`;
+		assert.equal(classifyTaskMutationIntent("evidence-auditor", issueTask).kind, "unknown");
+		assert.equal(taskMayMutate(issueTask), false);
+
+		const mixedTable = [
+			"Inspect the result.",
+			"| Step |  ToOlS  | Notes |",
+			"| :--- | ---: | :---: |",
+			"| first | edit | inspect only |",
+			"| second | write, read | summarize behavior |",
+			"Report findings after the table.",
+		].join("\n");
+		assert.equal(classifyTaskMutationIntent("reviewer", mixedTable).kind, "read-only");
+		assert.equal(taskMayMutate(mixedTable), false);
+	});
+
+	it("uses backslash parity when parsing table delimiters", () => {
+		for (const task of [
+			String.raw`| name | tools | notes |
+| --- | --- | --- |
+| worker | edit \| inspect | notes |`,
+			String.raw`| name | tools | notes |
+| --- | --- | --- |
+| worker | edit \\| inspect |`,
+		]) {
+			assert.equal(classifyTaskMutationIntent("evidence-auditor", task).kind, "unknown", task);
+			assert.equal(taskMayMutate(task), false, task);
+		}
+	});
+
+	it("preserves mutation imperatives outside tools-column values", () => {
+		const table = [
+			"| Step | Tools | Instruction |",
+			"| --- | --- | --- |",
+			"| first | read | edit the parser |",
+		].join("\n");
+		assert.equal(classifyTaskMutationIntent("worker", table).kind, "implementation");
+		assert.equal(taskMayMutate(table), true);
+		const dataOnlyTable = table.replace("edit the parser", "review the parser");
+		for (const task of [
+			`Implement the fix.\n${dataOnlyTable}`,
+			`${dataOnlyTable}\nThen implement the fix.`,
+		]) {
+			assert.equal(classifyTaskMutationIntent("worker", task).kind, "implementation", task);
+			assert.equal(taskMayMutate(task), true, task);
+		}
+		assert.equal(taskMayMutate(`Inspect this table:\n${dataOnlyTable}\nThen run prettier --write files.`), true);
+	});
+
+	it("does not strip malformed or non-tools tables", () => {
+		for (const task of [
+			"| name | tools |\n| name | --- |\n| worker | edit |",
+			"| name | capabilities |\n| --- | --- |\n| worker | edit |",
+		]) {
+			assert.equal(classifyTaskMutationIntent("evidence-auditor", task).kind, "implementation", task);
+			assert.equal(taskMayMutate(task), true, task);
+		}
+	});
 });
 
 describe("taskMayMutate", () => {

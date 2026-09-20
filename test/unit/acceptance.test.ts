@@ -89,6 +89,29 @@ describe("acceptance gates", () => {
 		assert.deepEqual(resolved.criteria, []);
 	});
 
+	it("ignores only tools-column capability names when inferring acceptance", () => {
+		const table = "| name | tools |\n|---|---|\n| worker.md | read, grep, find, ls, bash, edit, write, contact_supervisor |";
+		const task = `Verify every cell of this table against the actual files:\n\n${table}\n\nOutput the corrected table and a CORRECTIONS list.`;
+		const resolved = resolveEffectiveAcceptance({ agentName: "evidence-auditor", task, mode: "single", async: true });
+		assert.equal(resolved.level, "attested");
+
+		const mutationTask = "| name | tools | instruction |\n| --- | --- | --- |\n| worker.md | edit, write | implement the fix |";
+		assert.equal(resolveEffectiveAcceptance({ agentName: "evidence-auditor", task: mutationTask, mode: "single", async: true }).level, "checked");
+	});
+
+	it("uses backslash parity when inferring acceptance from tools tables", () => {
+		for (const task of [
+			String.raw`| name | tools | notes |
+| --- | --- | --- |
+| worker | edit \| inspect | notes |`,
+			String.raw`| name | tools | notes |
+| --- | --- | --- |
+| worker | edit \\| inspect |`,
+		]) {
+			assert.equal(resolveEffectiveAcceptance({ agentName: "evidence-auditor", task, mode: "single", async: true }).level, "none", task);
+		}
+	});
+
 	it("uses explicit agent roles for ambiguous tasks while preserving task-intent precedence", () => {
 		assert.equal(resolveEffectiveAcceptance({
 			agentName: "explorer",
