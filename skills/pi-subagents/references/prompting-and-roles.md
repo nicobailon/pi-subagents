@@ -118,7 +118,7 @@ Use this after implementation when the user or applicable instructions request d
 
 ### Staged fix orchestration technique
 
-Use this when a broad diff has known reviewer findings across several items and the user wants the parent to “orchestrate subagents like a boss.” Keep the active worktree safe with a three-stage `workflowScript`:
+Use this when a broad diff has known reviewer findings across several items and the user wants the parent to “orchestrate subagents like a boss.” Keep mutation ownership explicit in the `workflowScript`:
 
 When staged seams are available, a low-tier writer should not receive the
 end-to-end issue. Use `runs.lanes` inside `workflowScript` to keep stages narrow:
@@ -126,44 +126,45 @@ a scout/red test, helper-only change, one render seam, validation, minimality
 challenge, or fresh review. Give the writer only its assigned implementation
 stage; keep sequencing and synthesis with the parent.
 
-1. A parallel read-only planning fanout, one reviewer per issue cluster. Each child inspects the real diff and returns exact files, line refs, proposed fixes, and focused validation. They must not edit.
-2. One writer worker. It receives the reviewer summaries as the awaited planning results (or their durable output paths) interpolated into its task, plus the parent’s accepted scope, stop rules, and verification contract. It is the only child allowed to edit the active worktree.
-3. A parallel read-only validation fanout. Validators inspect the worker diff from fresh context with distinct angles, report pass/fail, remaining blockers, and missing verification.
+1. A parallel read-only planning fanout, one reviewer per issue cluster or review angle. Each child inspects the real diff and returns exact files, line refs, proposed fixes, and focused validation. They must not edit.
+2. Classify the accepted fixes on the lane board before writer launch. If issue clusters are independently testable source or contract boundaries, use isolated component writers with exclusive file/contract ownership and focused gates. Each component must commit or produce another durable handoff; only after those handoffs are ready, start one integration-only owner.
+3. Use one writer for the complete fix only when the accepted fixes are one tightly coupled existing diff/seam and the lane board records evidence that splitting would create overlapping ownership or artificial handoffs. Give that writer the planning summaries, accepted scope, stop rules, and verification contract.
+4. Run fresh-context, read-only validation against the integrated or single-seam result. Validators use distinct angles and report pass/fail, remaining blockers, and missing verification.
 
 Prefer `async: true`, `context: "fresh"` for reviewers/validators, `outputMode: "file-only"` for large summaries, and per-stage output names that will not collide. Use stable `runs` keys plus `phase` and `label` on each launch item to make async status readable, and hold each awaited result in an ordinary JavaScript variable when a later step needs that specific result — interpolate it (or the durable output path you declared for that child) into the later task text instead of passing a whole aggregate blob. Use this pattern instead of launching several writer workers into a dirty worktree. Include non-blocking suggestions in the writer prompt only when they are small, safe, and do not expand product scope; otherwise record them as deferred.
 
 When one child returns a structured target list, use ordinary JavaScript to validate/filter it and map bounded entries into `runs.all`; do not use the removed chain fanout DSL.
 
-Example shape:
+Single-seam example shape (the lane board records that these are review angles on one tightly coupled deployment-lifecycle diff, not independent implementation contracts):
 
 ```typescript
 subagent({
   async: true,
   context: "fresh",
   workflowScript: `
-    // Stage 1: parallel read-only planning fanout (stable keys, one per issue cluster)
+    // Stage 1: parallel read-only review angles on one recorded single seam
     const plans = await runs.all([
-      { key: "deploy-plan", agent: "reviewer", phase: "Planning", label: "Deploy docs", task: "Plan fixes for deploy docs/workflow. Inspect the current diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/deploy.md", outputMode: "file-only" },
-      { key: "scheduler-plan", agent: "reviewer", phase: "Planning", label: "Scheduler contract", task: "Plan fixes for scheduler contract. Inspect the current diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/scheduler.md", outputMode: "file-only" },
-      { key: "sandbox-plan", agent: "reviewer", phase: "Planning", label: "Sandbox/security", task: "Plan fixes for sandbox/security. Inspect the current diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/sandbox.md", outputMode: "file-only" }
+      { key: "correctness-plan", agent: "reviewer", phase: "Planning", label: "Review lifecycle correctness", task: "Plan correctness fixes for the same deployment-lifecycle diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/correctness.md", outputMode: "file-only" },
+      { key: "regression-plan", agent: "reviewer", phase: "Planning", label: "Review lifecycle regressions", task: "Plan regression coverage for the same deployment-lifecycle diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/regressions.md", outputMode: "file-only" },
+      { key: "minimality-plan", agent: "reviewer", phase: "Planning", label: "Review lifecycle minimality", task: "Plan minimality fixes for the same deployment-lifecycle diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/minimality.md", outputMode: "file-only" }
     ]);
 
-    // Stage 2: single writer — the only child allowed to edit the active worktree.
+    // Stage 2: one writer for this lane-board-recorded single seam.
     // Under outputMode "file-only" the awaited .output is the saved-output
     // reference, so pass those managed artifact references to the writer.
     const worker = await runs.run("apply-fixes", {
       agent: "worker",
       phase: "Implementation",
       label: "Apply accepted fixes",
-      task: "Apply only the accepted fixes from these planning summaries. You are the sole writer for the active worktree. Run focused validation and report changed files, commands, failures, and remaining issues.\\n\\nDeploy plan: " + plans[0].output + "\\n\\nScheduler plan: " + plans[1].output + "\\n\\nSandbox plan: " + plans[2].output,
+      task: "Apply only the accepted fixes to the one deployment-lifecycle seam. The lane board records that splitting this existing diff would create overlapping ownership. You are the sole writer for this seam. Run focused validation and report changed files, commands, failures, and remaining issues.\\n\\nCorrectness plan: " + plans[0].output + "\\n\\nRegression plan: " + plans[1].output + "\\n\\nMinimality plan: " + plans[2].output,
       output: "worker/fixes.md",
       outputMode: "file-only"
     });
 
     // Stage 3: parallel read-only validation fanout
     const validations = await runs.all([
-      { key: "validate-deploy-scheduler", agent: "reviewer", phase: "Validation", label: "Deploy/scheduler validation", task: "Validate the post-worker diff for deploy and scheduler fixes. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/deploy-scheduler.md", outputMode: "file-only" },
-      { key: "validate-sandbox", agent: "reviewer", phase: "Validation", label: "Sandbox validation", task: "Validate the post-worker diff for sandbox/security fixes. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/sandbox.md", outputMode: "file-only" }
+      { key: "validate-behavior", agent: "reviewer", phase: "Validation", label: "Validate lifecycle behavior", task: "Validate behavior in the post-worker deployment-lifecycle diff. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/behavior.md", outputMode: "file-only" },
+      { key: "validate-minimality", agent: "reviewer", phase: "Validation", label: "Validate lifecycle minimality", task: "Validate minimality in the same post-worker deployment-lifecycle diff. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/minimality.md", outputMode: "file-only" }
     ]);
 
     return { worker: worker.output, validations: validations.map(v => v.output) };
