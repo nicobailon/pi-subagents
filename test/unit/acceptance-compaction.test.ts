@@ -16,10 +16,10 @@ import { createStructuredOutputRuntime } from "../../src/runs/shared/structured-
 const sdkRoot = process.env.PI_SUBAGENTS_NATIVE_SDK;
 for (const host of ["foreground", "runner"] as const) {
 	for (const [systemPromptMode, structured] of [["append", false], ["replace", false], ["append", true], ["replace", true]] as const) {
-		it(`exact acceptance survives actual SDK split-turn compaction: ${host}/${systemPromptMode}/${structured ? "structured" : "fenced"}`, { skip: !sdkRoot && "Set PI_SUBAGENTS_NATIVE_SDK to the isolated 0.86.0 SDK root" }, async () => {
+		it(`exact acceptance survives actual SDK split-turn compaction: ${host}/${systemPromptMode}/${structured ? "structured" : "fenced"}`, { skip: !sdkRoot && "Set PI_SUBAGENTS_NATIVE_SDK to the isolated 0.86.1 SDK root" }, async () => {
 			const entry = execFileSync(process.execPath, ["--input-type=module", "-e", "console.log(import.meta.resolve('@earendil-works/pi-coding-agent'))"], { cwd: sdkRoot, encoding: "utf8" }).trim();
 			const pi: PiCodingAgentModule = await import(entry);
-			assert.equal(pi.VERSION, "0.86.0");
+			assert.equal(pi.VERSION, "0.86.1");
 			const cwd = mkdtempSync(join(tmpdir(), "acceptance-compaction-"));
 			const agentDir = join(cwd, "agent"); mkdirSync(agentDir);
 			const oldDir = process.env.PI_CODING_AGENT_DIR;

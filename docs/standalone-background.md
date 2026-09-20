@@ -10,7 +10,7 @@ Implementation and lifecycle fixtures derive from [@xz-dev](https://github.com/x
 
 The resolver recognizes Bun's Windows virtual entrypoint prefixes, `B:/~BUN/` and `B:\~BUN\`, alongside `/$bunfs/`. It launches the real `process.execPath` (or the existing executable override). The `B:` prefix is virtual, not the installation drive; `pi-native.exe` is not a required executable name.
 
-A local Windows x64 smoke passed with **xz-dev/pi `0.85.1-xz.169.1.gb5f4d0ff`, Bun 1.4.2**: a fresh async worker executed a read-only Git command, returned its result, delivered the native completion notification, and exited with code 0 and no remaining runner process. This is not validation of the official Windows distribution or every Bun-compiled Pi host. Windows remains **experimental**: the full standalone lifecycle matrix has not been validated there.
+Windows remains **experimental**: the full standalone lifecycle matrix has not been validated there or for every Bun-compiled Pi host.
 
 Node-hosted npm Pi keeps its existing runner path and is not affected by this virtual-entrypoint detection defect. Installing only the pi-subagents extension through npm does not change a Bun-compiled Pi host into an npm Pi host.
 

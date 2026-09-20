@@ -46,7 +46,7 @@ async subagent worker · background
 
 To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.
 
-In Pi fullscreen mode with mouse dispatch (verified with Pi TUI 0.85.1), left-click
+In Pi fullscreen mode with mouse dispatch, left-click
 anywhere on the async widget's header row to fold it into a live one-line status
 summary. Click again to restore the usual layout. No knowledge of extension commands
 or keyboard shortcuts is needed. The summary counts the widget's tracked runs,
