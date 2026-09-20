@@ -248,28 +248,38 @@ function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModu
  * serves virtual module resolution to extension code, the bare import fails
  * with ERR_MODULE_NOT_FOUND even though the host itself runs fine. Resolving
  * the host package root and importing its entry by file URL yields the host's
- * single module instance. An explicit override root is authoritative: if it
- * cannot be imported, the error is surfaced rather than masked by a bare
- * import from a different tree.
+ * single module instance.
+ *
+ * Root precedence: an explicit override, then the running pi process's own
+ * location (the host that owns this child), then the package manager's view
+ * of pi-subagents' install tree as a last fallback. A selected root must be a
+ * canonical pi-coding-agent package: other package names are rejected rather
+ * than imported. Failures that are not module-resolution failures are
+ * reported as-is, so host SDK evaluation errors are never masked by the bare
+ * import fallback.
  */
 export async function loadHostPiCodingAgent(): Promise<PiCodingAgentModule> {
 	const overrideRoot = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || undefined;
-	const root = overrideRoot ?? resolveInstalledPiPackageRoot() ?? resolvePiPackageRoot();
+	const root = overrideRoot ?? resolvePiPackageRoot() ?? resolveInstalledPiPackageRoot();
 	if (root) {
 		try {
-			const entry = fs.realpathSync(resolveHostPackageEntry(root));
+			const entry = fs.realpathSync(resolveHostPackageEntry(root, overrideRoot));
 			return await import(pathToFileURL(entry).href);
 		} catch (error) {
-			if (overrideRoot !== undefined) throw error;
-			// Auto-discovered root was not importable; fall through to the bare specifier.
+			if (overrideRoot !== undefined || !isModuleResolutionFailure(error)) throw error;
+			// Auto-discovered root whose entry cannot be resolved: last-resort bare specifier.
 		}
 	}
 	return import(PI_CODING_AGENT_PACKAGE);
 }
 
-function resolveHostPackageEntry(root: string): string {
+function resolveHostPackageEntry(root: string, overrideRoot: string | undefined): string {
 	const packageJson = path.join(root, "package.json");
-	const pkg = JSON.parse(fs.readFileSync(packageJson, "utf8")) as { exports?: Record<string, unknown>; main?: unknown };
+	const pkg = JSON.parse(fs.readFileSync(packageJson, "utf8")) as { name?: unknown; exports?: Record<string, unknown>; main?: unknown };
+	if (pkg.name !== PI_CODING_AGENT_PACKAGE) {
+		const source = overrideRoot !== undefined ? ` (${PI_CODING_AGENT_PACKAGE_ROOT_ENV} override)` : "";
+		throw new Error(`refusing to load the host SDK from ${root}${source}: package.json name is "${String(pkg.name ?? "(none)")}", expected "${PI_CODING_AGENT_PACKAGE}"`);
+	}
 	const exported = pkg.exports?.["."] as string | Record<string, unknown> | undefined;
 	let entry: string | undefined;
 	if (typeof exported === "string") entry = exported;
@@ -281,6 +291,11 @@ function resolveHostPackageEntry(root: string): string {
 	}
 	if (!entry) entry = typeof pkg.main === "string" ? pkg.main : "index.js";
 	return path.resolve(root, entry);
+}
+
+function isModuleResolutionFailure(error: unknown): boolean {
+	const code = (error as { code?: unknown } | null)?.code;
+	return code === "ENOENT" || code === "ERR_MODULE_NOT_FOUND" || code === "ERR_UNSUPPORTED_DIR_IMPORT";
 }
 
 /**
