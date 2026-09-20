@@ -219,7 +219,7 @@ function createWatchdogWarnTool(request: WatchdogReviewRequest): AgentTool<typeo
 }
 
 export function formatWatchdogCwdSection(cwd: string): string {
-	if (/[\u0000-\u001F\u007F<>]/u.test(cwd)) throw new Error("Watchdog cwd cannot contain control characters or angle brackets.");
+	if (/[\p{Cc}\p{Zl}\p{Zp}<>]/u.test(cwd)) throw new Error("Watchdog cwd cannot contain control, line-separator, or angle-bracket characters.");
 	return `<cwd>\n${cwd}\n</cwd>`;
 }
 
