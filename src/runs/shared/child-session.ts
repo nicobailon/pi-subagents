@@ -7,10 +7,14 @@
  * without the real runtime; the default implementation wraps
  * `createAgentSession` from a pi package module.
  */
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { pinChildCacheRetention } from "../../shared/child-cache-retention.ts";
-import { getAgentDir } from "../../shared/utils.ts";
+import { getAgentDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
+import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "./pi-spawn.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import type { RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
 import type { HerdrMachineReference, HerdrRemoteGitStatus } from "../../shared/types.ts";
@@ -237,11 +241,54 @@ function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModu
 }
 
 /**
+ * Load the host's pi-coding-agent instance from a resolvable package root
+ * instead of a bare specifier. A bare import from extension code resolves
+ * against the extension's own node_modules tree; when pi is installed as an
+ * npm-hosted package (peer packages outside that tree) and the host no longer
+ * serves virtual module resolution to extension code, the bare import fails
+ * with ERR_MODULE_NOT_FOUND even though the host itself runs fine. Resolving
+ * the host package root and importing its entry by file URL yields the host's
+ * single module instance. An explicit override root is authoritative: if it
+ * cannot be imported, the error is surfaced rather than masked by a bare
+ * import from a different tree.
+ */
+export async function loadHostPiCodingAgent(): Promise<PiCodingAgentModule> {
+	const overrideRoot = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || undefined;
+	const root = overrideRoot ?? resolveInstalledPiPackageRoot() ?? resolvePiPackageRoot();
+	if (root) {
+		try {
+			const entry = fs.realpathSync(resolveHostPackageEntry(root));
+			return await import(pathToFileURL(entry).href);
+		} catch (error) {
+			if (overrideRoot !== undefined) throw error;
+			// Auto-discovered root was not importable; fall through to the bare specifier.
+		}
+	}
+	return import(PI_CODING_AGENT_PACKAGE);
+}
+
+function resolveHostPackageEntry(root: string): string {
+	const packageJson = path.join(root, "package.json");
+	const pkg = JSON.parse(fs.readFileSync(packageJson, "utf8")) as { exports?: Record<string, unknown>; main?: unknown };
+	const exported = pkg.exports?.["."] as string | Record<string, unknown> | undefined;
+	let entry: string | undefined;
+	if (typeof exported === "string") entry = exported;
+	else if (exported && typeof exported === "object") {
+		entry = typeof exported.import === "string" ? exported.import
+			: typeof exported.require === "string" ? exported.require
+			: typeof exported.default === "string" ? exported.default
+			: undefined;
+	}
+	if (!entry) entry = typeof pkg.main === "string" ? pkg.main : "index.js";
+	return path.resolve(root, entry);
+}
+
+/**
  * Default factory: detached/background sessions retain the existing shared
  * runtime; each parent-bound foreground launch gets an isolated runtime.
  */
 export function createDefaultChildSessionFactory(options: DefaultChildSessionFactoryOptions = {}): ChildSessionFactory {
-	const loadPiCodingAgent = options.loadPiCodingAgent ?? (() => import("@earendil-works/pi-coding-agent"));
+	const loadPiCodingAgent = options.loadPiCodingAgent ?? loadHostPiCodingAgent;
 	const shutdownTimeoutMs = options.shutdownTimeoutMs ?? 5_000;
 	let runtime: ReturnType<PiCodingAgentModule["ModelRuntime"]["create"]> | undefined;
 	const live = new Set<ChildSession>();
