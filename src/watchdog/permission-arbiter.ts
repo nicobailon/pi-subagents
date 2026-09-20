@@ -1,6 +1,8 @@
+import * as path from "node:path";
 import { Agent, type AgentTool, type StreamFn } from "@earendil-works/pi-agent-core";
 import { convertToLlm, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
+import { createInitialSystemMessage, toToolDeclaration } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { appendPermissionAudit, permissionArgsPreview } from "../runs/shared/permissions.ts";
 import { agentStreamOptions } from "../shared/agent-stream-options.ts";
@@ -108,17 +110,23 @@ export function createWatchdogPermissionArbiter(options: WatchdogPermissionArbit
 					env: auth.env || streamOptions?.env ? { ...(auth.env ?? {}), ...(streamOptions?.env ?? {}) } : undefined,
 					headers: { ...opencodeSessionHeaders(model, sessionId), ...(streamOptions?.headers ?? {}), ...(auth.headers ?? {}) },
 				});
+				const systemPrompt = [
+					"You are the pi-subagents watchdog permission arbiter.",
+					"Decide only whether this exact non-bash child tool call should proceed.",
+					"Call watchdog_permission_decision exactly once with approve or deny and a concise reason.",
+					"Deny when uncertain. Do not produce freeform advice or ask the parent orchestrator.",
+					"",
+					"<cwd>",
+					path.normalize(request.ctx.cwd),
+					"</cwd>",
+				].join("\n");
+				const tools = [tool];
 				agent = new Agent({
 					initialState: {
-						systemPrompt: [
-							"You are the pi-subagents watchdog permission arbiter.",
-							"Decide only whether this exact non-bash child tool call should proceed.",
-							"Call watchdog_permission_decision exactly once with approve or deny and a concise reason.",
-							"Deny when uncertain. Do not produce freeform advice or ask the parent orchestrator.",
-						].join("\n"),
+						messages: [createInitialSystemMessage(systemPrompt, tools.map(toToolDeclaration))!],
 						model: selection.model,
 						thinkingLevel: selection.thinkingLevel,
-						tools: [tool],
+						tools,
 					},
 					convertToLlm,
 					...agentStreamOptions(streamFn),

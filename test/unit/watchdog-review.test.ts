@@ -161,6 +161,35 @@ describe("main watchdog review adapter", () => {
 		assert.equal(result?.stopReason, "stop");
 	});
 
+	it("sends complete review instructions and the helper cwd in the leading system message", async () => {
+		const current = model("openai", "gpt-context");
+		const { streamFn, calls } = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
+		const context = { ...(createCtx({ current }) as object), cwd: "/tmp/watchdog-parent/../watchdog-review" } as never;
+
+		await createMainWatchdogReview(context, { streamFn })(request(enabledConfig(), []));
+
+		assert.deepEqual(calls[0]?.context.messages[0], {
+			role: "system",
+			content: [
+				"You are the main-session subagent watchdog for Pi.",
+				"Review only the supplied parent turn delta. Inspect repository files only when needed to verify a concrete concern.",
+				"You are read-only. You may use read, grep, find, and ls. Do not edit files, run shell commands, spawn agents, or mutate state.",
+				"Emit warnings only by calling watchdog_warn. Freeform assistant text is ignored and must not be used to report warnings.",
+				"Emit only actionable concerns or blockers: missed user constraints, correctness risks, test gaps that matter, unsafe changes, stale facts, loop risks, or scope drift.",
+				"Do not emit nits, style preferences, unsupported guesses, informational notes, praise, or summaries.",
+				"If the turn is clean, call no tools and end normally.",
+				"Use severity='blocker' only when the issue should stop acceptance until addressed; otherwise use severity='concern'.",
+				"",
+				"<cwd>",
+				"/tmp/watchdog-review",
+				"</cwd>",
+			].join("\n"),
+			toolsAdded: getCurrentTools(calls[0]!.context.messages),
+			timestamp: calls[0]?.context.messages[0]?.timestamp,
+		});
+		assert.deepEqual(getCurrentTools(calls[0]!.context.messages).map((tool) => tool.name).sort(), ["find", "grep", "ls", "read", "watchdog_warn"]);
+	});
+
 	it("records watchdog_warn emissions through the runtime seam", async () => {
 		const current = model("openai", "gpt-warning");
 		const ctx = createCtx({ current });
@@ -288,8 +317,8 @@ describe("main watchdog review adapter", () => {
 
 			await createMainWatchdogReview(ctx, { streamFn })(request(enabledConfig(), []));
 			const prompt = getCurrentSystemPrompt(calls[0]!.context.messages);
-			assert.match(prompt, /Standing instructions from WATCHDOG\.md \(project first, then user\):\nNever accept skipped tests\.\n\nu+$/);
-			assert.equal(prompt.split("(project first, then user):\n")[1]?.length, WATCHDOG_GUIDANCE_MAX_CHARS, "combined guidance is capped from the head");
+			assert.match(prompt, /Standing instructions from WATCHDOG\.md \(project first, then user\):\nNever accept skipped tests\.\n\nu+\n\n<cwd>/);
+			assert.equal(prompt.split("(project first, then user):\n")[1]?.split("\n\n<cwd>")[0]?.length, WATCHDOG_GUIDANCE_MAX_CHARS, "combined guidance is capped from the head");
 
 			const disabled = enabledConfig();
 			disabled.guidance = { watchdogMd: false };

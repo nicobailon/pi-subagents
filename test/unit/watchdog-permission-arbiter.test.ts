@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
-import { createAssistantMessageEventStream, fauxAssistantMessage, fauxToolCall, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, fauxAssistantMessage, fauxToolCall, getCurrentTools, type AssistantMessage, type Model, type TranscriptContext } from "@earendil-works/pi-ai";
 import { createWatchdogPermissionArbiter } from "../../src/watchdog/permission-arbiter.ts";
 
 function model(): Model<any> {
@@ -33,12 +33,15 @@ function responseStream(message: AssistantMessage) {
 	return stream;
 }
 
-function stream(decision: "approve" | "deny", reason: string): StreamFn {
+function stream(decision: "approve" | "deny", reason: string, calls: TranscriptContext[] = []): StreamFn {
 	const responses = [
 		fauxAssistantMessage(fauxToolCall("watchdog_permission_decision", { decision, reason }), { stopReason: "toolUse" }),
 		fauxAssistantMessage("done", { stopReason: "stop" }),
 	];
-	return () => responseStream(responses.shift()!);
+	return (_model, context) => {
+		calls.push(context);
+		return responseStream(responses.shift()!);
+	};
 }
 
 const childConfig = JSON.stringify({
@@ -58,6 +61,35 @@ describe("watchdog permission arbiter", () => {
 
 		const denied = await createWatchdogPermissionArbiter({ streamFn: stream("deny", "path is outside scope") })({ ctx: ctx(), toolName: "write", args: { path: "/etc/hosts" }, rawWatchdogConfig: childConfig });
 		assert.deepEqual(denied, { approved: false, reason: "path is outside scope", source: "watchdog" });
+	});
+
+	it("sends complete arbiter instructions and the helper cwd in the leading system message", async () => {
+		const calls: TranscriptContext[] = [];
+		const context = { ...(ctx() as object), cwd: "/tmp/watchdog-parent/../watchdog-permission" } as never;
+
+		await createWatchdogPermissionArbiter({ streamFn: stream("approve", "within scope", calls) })({
+			ctx: context,
+			toolName: "write",
+			args: { path: "out.txt" },
+			rawWatchdogConfig: childConfig,
+		});
+
+		assert.deepEqual(calls[0]?.messages[0], {
+			role: "system",
+			content: [
+				"You are the pi-subagents watchdog permission arbiter.",
+				"Decide only whether this exact non-bash child tool call should proceed.",
+				"Call watchdog_permission_decision exactly once with approve or deny and a concise reason.",
+				"Deny when uncertain. Do not produce freeform advice or ask the parent orchestrator.",
+				"",
+				"<cwd>",
+				"/tmp/watchdog-permission",
+				"</cwd>",
+			].join("\n"),
+			toolsAdded: getCurrentTools(calls[0]!.messages),
+			timestamp: calls[0]?.messages[0]?.timestamp,
+		});
+		assert.deepEqual(getCurrentTools(calls[0]!.messages).map((tool) => tool.name), ["watchdog_permission_decision"]);
 	});
 
 	it("fails closed when the child watchdog is unavailable and audits redacted decisions", async () => {
