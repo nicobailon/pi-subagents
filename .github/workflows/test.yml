@@ -62,7 +62,7 @@ jobs:
           node-version: 24
       - run: npm ci --ignore-scripts
       - name: Install native Pi SDK
-        run: npm install --prefix "${{ runner.temp }}/native-host" --no-package-lock --ignore-scripts @earendil-works/pi-coding-agent@0.86.0
+        run: npm install --prefix "${{ runner.temp }}/native-host" --no-package-lock --ignore-scripts @earendil-works/pi-coding-agent@0.86.1
       - name: Native nested result consumption
         env:
           PI_SUBAGENTS_NATIVE_PI_ROOT: ${{ runner.temp }}/native-host/node_modules/@earendil-works/pi-coding-agent
@@ -114,8 +114,8 @@ jobs:
         with:
           node-version: 22.19.0
       - run: npm ci --ignore-scripts
-      - name: Real Pi 0.86.0 background child smoke
-        run: node --experimental-strip-types test/smoke/clean-install.mjs "${{ runner.temp }}/clean-install-smoke" 0.86.0
+      - name: Real Pi 0.86.1 background child smoke
+        run: node --experimental-strip-types test/smoke/clean-install.mjs "${{ runner.temp }}/clean-install-smoke" 0.86.1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -156,13 +156,13 @@ jobs:
       - name: Complete isolated official binary matrix
         run: node test/smoke/standalone-matrix.mjs "$RUNNER_TEMP/pi-official/pi/pi" "$RUNNER_TEMP/standalone-matrix"
       - name: Provision npm host for public launch regression
-        run: node test/smoke/clean-install.mjs "$RUNNER_TEMP/npm-background-sdk" 0.86.0
+        run: node test/smoke/clean-install.mjs "$RUNNER_TEMP/npm-background-sdk" 0.86.1
       - name: Isolated real npm public launch
         run: node test/smoke/npm-background.mjs "$RUNNER_TEMP/npm-background-sdk" "$RUNNER_TEMP/npm-background"
       - name: Require completed Linux smoke receipts
         run: |
           node -e 'const a = require("node:assert/strict"); const r = require(process.env.RUNNER_TEMP + "/standalone-matrix/matrix.json"); a.equal(r.complete, true); a.equal(r.cases.length, 18); a.ok(r.cases.every(c => c.exitCode === 0 && !c.error));'
-          node -e 'const a = require("node:assert/strict"); const r = require(process.env.RUNNER_TEMP + "/npm-background/npm-launch.json"); a.equal(r.publicLaunch, true); a.equal(r.runtime, "Node"); a.equal(r.version, "0.86.0"); a.equal(r.network, "unshared");'
+          node -e 'const a = require("node:assert/strict"); const r = require(process.env.RUNNER_TEMP + "/npm-background/npm-launch.json"); a.equal(r.publicLaunch, true); a.equal(r.runtime, "Node"); a.equal(r.version, "0.86.1"); a.equal(r.network, "unshared");'
       - name: Collect bounded lifecycle evidence
         id: evidence
         if: always()

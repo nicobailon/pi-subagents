@@ -102,13 +102,13 @@
     "yaml": "2.8.3"
   },
   "devDependencies": {
-    "@earendil-works/pi-agent-core": "0.86.0",
-    "@earendil-works/pi-ai": "0.86.0",
-    "@earendil-works/pi-tui": "0.86.0",
+    "@earendil-works/pi-agent-core": "0.86.1",
+    "@earendil-works/pi-ai": "0.86.1",
+    "@earendil-works/pi-tui": "0.86.1",
     "@oxlint/plugins": "1.80.0",
     "@types/node": "24.13.3",
     "oxlint": "1.80.0",
     "typescript": "5.9.3",
-    "@earendil-works/pi-coding-agent": "0.86.0"
+    "@earendil-works/pi-coding-agent": "0.86.1"
   }
 }

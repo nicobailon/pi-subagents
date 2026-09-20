@@ -1,8 +1,8 @@
 {
-  "version": "0.85.1",
+  "version": "0.86.1",
   "platform": "linux",
   "arch": "x64",
-  "url": "https://github.com/earendil-works/pi/releases/download/v0.85.1/pi-linux-x64.tar.gz",
-  "archiveSha256": "494e498f47d74d21f40b3386f6a5e921a3d49531a169cab55bbdaca0ea1fe25a",
-  "binarySha256": "443bd83f30e4dbc7bac2eed9c6aa2461b9a15016fd555f48c92a0591d028c403"
+  "url": "https://github.com/earendil-works/pi/releases/download/v0.86.1/pi-linux-x64.tar.gz",
+  "archiveSha256": "2494f5587a8774a10296d00a7e504e7ad05596ca93e057cb89372c8b1a7f46a9",
+  "binarySha256": "9b939197c9ca98182981fc448ac6d441076d3c37360cf8dc649193e664fcf6f7"
 }

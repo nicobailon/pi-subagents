@@ -17,7 +17,7 @@ assert.ok(root && path.isAbsolute(root) && !fs.existsSync(root), "fresh artifact
 const installed = path.join(npmRoot, "extension/node_modules/pi-subagents");
 const sdk = "host/node_modules/@earendil-works/pi-coding-agent";
 const version = JSON.parse(fs.readFileSync(path.join(npmRoot, sdk, "package.json"), "utf8")).version;
-assert.equal(version, "0.86.0");
+assert.equal(version, "0.86.1");
 for (const name of ["", "tmp", "home", "agent", "work/.pi/agents"]) fs.mkdirSync(path.join(root, name), { recursive: true });
 fs.cpSync(installed, path.join(root, "package"), { recursive: true });
 fs.mkdirSync(path.join(root, "package/test/smoke"), { recursive: true });
