@@ -236,6 +236,8 @@ Disable and restore:
 - `subagent({ action: "eject", agent: "reviewer" })` copies a bundled builtin or package agent verbatim into the user or project agent dir (default `user`) as an editable custom file that shadows the original.
 - `subagent({ action: "reset", agent: "reviewer" })` deletes the scope's custom agent file and/or settings override entry, restoring the bundled default. It refuses if no bundled default exists (use `delete` for purely custom agents).
 
+A custom agent file that shadows a bundled agent replaces the bundled definition wholesale; it does not inherit omitted frontmatter, including `acceptanceRole`. Custom implementation profiles must declare `acceptanceRole: writer` explicitly when writer acceptance inference is intended. Without it, automatic acceptance uses lightweight attestation as described in the [frontmatter reference](#frontmatter-reference).
+
 `eject`, `disable`, `enable`, and `reset` accept `agentScope: "user" | "project"` and operate in one scope at a time. Project overrides still win over user ones, so a project-scope disable survives a user-scope `enable` until you target the project scope.
 
 ## Running external CLI agents on a Herdr saved machine

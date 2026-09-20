@@ -5,6 +5,7 @@
 ### Changed
 
 - Remove inferred no-edit completion failures and task-wording acceptance escalation. Completion now relies on process, output, explicit acceptance, verification, review, and staged-index gates; mutation observations are diagnostic only. The valid report from [@SuTang-vain](https://github.com/SuTang-vain) led us to remove the unreliable guarantee rather than add more syntax exceptions, replacing [#2351](https://github.com/nicobailon/pi-subagents/issues/2351), [#2353](https://github.com/nicobailon/pi-subagents/issues/2353), and [#2354](https://github.com/nicobailon/pi-subagents/issues/2354) with [#2355](https://github.com/nicobailon/pi-subagents/issues/2355).
+- Clarify that custom agent files replace shadowed bundled definitions wholesale, so custom implementation profiles must declare `acceptanceRole: writer` explicitly to use writer acceptance inference.
 - Split Windows tests across two isolated CI shards and batch repeated foreign-process steering checks while preserving the per-process concurrency limit.
 - Require substantial delegated mutation work to be classified by implementation topology before writer launch, preventing issue-wide writer commissions across independent seams without forcing artificial fanout.
 
