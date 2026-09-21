@@ -1376,7 +1376,7 @@ describe("async run status inspection", () => {
 		}
 	});
 
-	it("shows direct run-id recovery for workflow children", () => {
+	it("shows resolved child models and direct run-id recovery for workflow children", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-workflow-resume-"));
 		try {
 			const asyncRoot = path.join(root, "runs");

@@ -16,10 +16,6 @@ async function hostB(sessionFile: string, params: object, label: string, policy 
 	return JSON.parse(fs.readFileSync(output, "utf8"));
 }
 
-async function hostBatch(sessionFile: string, requests: Array<{ params: object; policy?: string }>, label: string): Promise<any[]> {
-	return hostB(sessionFile, requests, label);
-}
-
 describe("foreign workflow tool steering (separate processes)", () => {
 	installAsyncExecutionHooks();
 	it("delivers ID and directory requests with file-preferred identity; refuses wrong sessions and terminal runs", { timeout: 60000 }, async () => {
@@ -74,7 +70,7 @@ describe("foreign workflow tool steering (separate processes)", () => {
 		const sessionFile = path.join(tempDir, "parent.jsonl");
 		const status = JSON.stringify({ runId, mode: "workflow", state: "running", sessionId: sessionFile, completionOwnerId: "unavailable-owner", pid: 99999999, updatedAt: 1, steps: [{ status: "running", workflowKey: "A" }, { status: "running", workflowKey: "B" }] });
 		fs.writeFileSync(path.join(dir, "status.json"), status);
-		const [forbidden, confirmation, mismatch, b] = await hostBatch(sessionFile, [
+		const [forbidden, confirmation, mismatch, b] = await hostB(sessionFile, [
 			{ params: { dir }, policy: "forbid" },
 			{ params: { dir }, policy: "confirm" },
 			{ params: { dir, id: "another-workflow" } },

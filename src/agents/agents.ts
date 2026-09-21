@@ -1588,22 +1588,20 @@ function applyCustomAgentOverrides(
 	});
 }
 
-/** Discovery context for runtime-registered agents, which merge after ordinary sources. */
 export interface RuntimeAgentSettingsContext {
 	cwd: string;
 	scope: AgentScope;
 	preferredModelProvider?: string;
 }
 
-const RUNTIME_AGENT_OVERRIDE_FIELDS = ["model", "defaultProvider", "fast", "thinking"] as const;
-
 function runtimeAgentOverrides(settings: SubagentSettings): SubagentSettings {
 	const overrides: Record<string, BuiltinAgentOverrideConfig> = {};
 	for (const [name, override] of Object.entries(settings.overrides)) {
 		const narrowed: BuiltinAgentOverrideConfig = {};
-		for (const field of RUNTIME_AGENT_OVERRIDE_FIELDS) {
-			if (override[field] !== undefined) (narrowed as Record<string, unknown>)[field] = override[field];
-		}
+		if (override.model !== undefined) narrowed.model = override.model;
+		if (override.defaultProvider !== undefined) narrowed.defaultProvider = override.defaultProvider;
+		if (override.fast !== undefined) narrowed.fast = override.fast;
+		if (override.thinking !== undefined) narrowed.thinking = override.thinking;
 		if (Object.keys(narrowed).length > 0) overrides[name] = narrowed;
 	}
 	return { ...settings, overrides };

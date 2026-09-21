@@ -75,7 +75,7 @@ describe("pruned fork sessions", () => {
 					return stream;
 				},
 			};
-			const writer = await createPrunedForkSessionWriter({ modelRegistry } as never, {
+			const writer = await createPrunedForkSessionWriter({ modelRegistry }, {
 				mode: "pruned",
 				model: "extension-provider/summary-model",
 			}, controller.signal);

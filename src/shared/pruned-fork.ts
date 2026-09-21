@@ -402,7 +402,7 @@ function splitProviderModel(value: string): { provider: string; id: string } | u
 }
 
 export async function createPrunedForkSessionWriter(
-	ctx: ExtensionContext,
+	ctx: Pick<ExtensionContext, "modelRegistry" | "model">,
 	config: ForkContextConfig | undefined,
 	signal?: AbortSignal,
 ): Promise<(sessionFile: string) => Promise<void>> {
