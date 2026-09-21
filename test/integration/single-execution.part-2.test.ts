@@ -992,16 +992,33 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 
 	it("keeps unavailable cache classifications out of progress when cancelled before reconciliation", async () => {
 		mockPi.onCall({
-			jsonl: [{
-				type: "message_end",
-				message: {
-					role: "assistant",
-					content: [{ type: "text", text: "cache counters unavailable" }],
-					model: "mock/test-model",
-					stopReason: "length",
-					usage: { input: 9, output: 4, cost: { total: 0.002 } },
+			steps: [
+				{
+					jsonl: [{
+						type: "message_end",
+						message: {
+							role: "assistant",
+							content: [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "package.json" } }],
+							model: "mock/test-model",
+							stopReason: "toolUse",
+							usage: { input: 5, output: 3, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+						},
+					}],
 				},
-			}],
+				{ jsonl: [{ type: "tool_result_end", message: { role: "toolResult", toolCallId: "call-1", toolName: "read", isError: false, content: [] } }] },
+				{
+					jsonl: [{
+						type: "message_end",
+						message: {
+							role: "assistant",
+							content: [{ type: "text", text: "cache counters unavailable" }],
+							model: "mock/test-model",
+							stopReason: "length",
+							usage: { input: 9, output: 4, cost: { total: 0.002 } },
+						},
+					}],
+				},
+			],
 			keepAliveAfterFinalMessageMs: 10_000,
 		});
 		const controller = new AbortController();
@@ -1011,7 +1028,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			signal: controller.signal,
 			onUpdate: (update) => {
 				const progress = (update as { details?: { progress?: typeof observed } }).details?.progress?.[0];
-				if (!progress || progress.turnCount !== 1) return;
+				if (!progress || progress.turnCount !== 2) return;
 				observed.push(progress);
 				controller.abort();
 			},
@@ -1019,10 +1036,12 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 
 		assert.equal(result.exitCode, 1);
 		assert.ok(observed.length > 0);
-		assert.equal(observed.at(-1)?.inputTokens, 9);
-		assert.equal(observed.at(-1)?.outputTokens, 4);
+		assert.equal(observed.at(-1)?.inputTokens, 14);
+		assert.equal(observed.at(-1)?.outputTokens, 7);
 		assert.equal(observed.at(-1)?.cacheRead, undefined);
 		assert.equal(observed.at(-1)?.cacheWrite, undefined);
+		assert.equal((result.progress as { cacheRead?: number }).cacheRead, undefined);
+		assert.equal((result.progress as { cacheWrite?: number }).cacheWrite, undefined);
 	});
 
 	it("allows concurrent async launches in one turn", async () => {

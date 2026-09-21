@@ -520,6 +520,16 @@ async function runSingleAttempt(
 		lastActivityAt: startTime,
 	};
 	result.progress = progress;
+	const projectCompleteUsage = () => {
+		if (inputUsageComplete) progress.inputTokens = result.usage.input;
+		else delete progress.inputTokens;
+		if (outputUsageComplete) progress.outputTokens = result.usage.output;
+		else delete progress.outputTokens;
+		if (cacheReadUsageComplete) progress.cacheRead = result.usage.cacheRead;
+		else delete progress.cacheRead;
+		if (cacheWriteUsageComplete) progress.cacheWrite = result.usage.cacheWrite;
+		else delete progress.cacheWrite;
+	};
 	const attemptTimeout = resolveAttemptTimeout(options);
 	if (attemptTimeout?.remainingMs === 0) {
 		result.exitCode = 1;
@@ -1089,14 +1099,7 @@ async function runSingleAttempt(
 						progress.window = window;
 						progress.windowPeak = Math.max(progress.windowPeak ?? 0, window);
 					}
-					if (inputUsageComplete) progress.inputTokens = result.usage.input;
-					else delete progress.inputTokens;
-					if (outputUsageComplete) progress.outputTokens = result.usage.output;
-					else delete progress.outputTokens;
-					if (cacheReadUsageComplete) progress.cacheRead = result.usage.cacheRead;
-					else delete progress.cacheRead;
-					if (cacheWriteUsageComplete) progress.cacheWrite = result.usage.cacheWrite;
-					else delete progress.cacheWrite;
+					projectCompleteUsage();
 					if (evt.message.model) {
 						progress.model = evt.message.model;
 						if (!result.model) result.model = evt.message.model;
@@ -1323,14 +1326,7 @@ async function runSingleAttempt(
 			if (session && messageBaseline !== undefined) {
 				result.usage = reconcileAttemptUsage(result.usage, session.messages, messageBaseline);
 				progress.tokens = result.usage.input + result.usage.output;
-				if (inputUsageComplete) progress.inputTokens = result.usage.input;
-				else delete progress.inputTokens;
-				if (outputUsageComplete) progress.outputTokens = result.usage.output;
-				else delete progress.outputTokens;
-				if (cacheReadUsageComplete) progress.cacheRead = result.usage.cacheRead;
-				else delete progress.cacheRead;
-				if (cacheWriteUsageComplete) progress.cacheWrite = result.usage.cacheWrite;
-				else delete progress.cacheWrite;
+				projectCompleteUsage();
 				progress.turnCount = result.usage.turns;
 			}
 			finish(finalCode);
