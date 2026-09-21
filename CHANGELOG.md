@@ -13,6 +13,7 @@
 ### Fixed
 
 - Preserve and safely prune Pi 0.87 context edits when forking sessions, including replacement content and signed Anthropic thinking blocks.
+- Restore watchdog reviews and permission arbitration on the stable Pi 0.86.1 host package layout. Thanks to [@zieglar](https://github.com/zieglar) for the reproduction and version comparison in [#2377](https://github.com/nicobailon/pi-subagents/issues/2377).
 
 ## [0.70.1] - 2026-09-20
 
