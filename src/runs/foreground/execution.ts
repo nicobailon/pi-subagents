@@ -284,8 +284,6 @@ interface StructuredDelegationProgressState {
 	model?: string;
 	toolCount: number;
 	tokens: number;
-	cacheRead?: number;
-	cacheWrite?: number;
 	turnCount?: number;
 }
 
@@ -299,8 +297,6 @@ function captureStructuredDelegationProgressState(progress: AgentProgress, resul
 		model: progress.model ?? result.model,
 		toolCount: progress.toolCount,
 		tokens: progress.tokens,
-		cacheRead: progress.cacheRead,
-		cacheWrite: progress.cacheWrite,
 		turnCount: progress.turnCount,
 	};
 }
@@ -316,8 +312,6 @@ function structuredDelegationProgressChanged(
 		|| previous.model !== (progress.model ?? result.model)
 		|| previous.toolCount !== progress.toolCount
 		|| previous.tokens !== progress.tokens
-		|| previous.cacheRead !== progress.cacheRead
-		|| previous.cacheWrite !== progress.cacheWrite
 		|| previous.turnCount !== progress.turnCount
 		|| previous.recentOutput.length !== progress.recentOutput.length) return true;
 	for (let index = 0; index < progress.recentOutput.length; index++) {
