@@ -50,21 +50,26 @@ function readManifest(packageDir: string): PackageManifest | undefined {
 	}
 }
 
+const BLOCKED_EXPORT = Symbol("blocked export");
+
 /** Pick the import target of one exports entry (string, conditions object, or array of those). */
-function exportTarget(entry: unknown): string | undefined {
+function exportTarget(entry: unknown): string | typeof BLOCKED_EXPORT | undefined {
 	if (typeof entry === "string") return entry;
+	if (entry === null) return BLOCKED_EXPORT;
 	if (Array.isArray(entry)) {
+		let blocked = entry.length === 0;
 		for (const candidate of entry) {
 			const target = exportTarget(candidate);
-			if (target) return target;
+			if (typeof target === "string") return target;
+			if (target === BLOCKED_EXPORT) blocked = true;
 		}
-		return undefined;
+		return blocked ? BLOCKED_EXPORT : undefined;
 	}
 	if (entry && typeof entry === "object") {
 		const conditions = entry as Record<string, unknown>;
-		for (const condition of ["import", "node", "default"]) {
-			if (condition in conditions) {
-				const target = exportTarget(conditions[condition]);
+		for (const [condition, value] of Object.entries(conditions)) {
+			if (condition === "default" || condition === "import" || condition === "node" || condition === "node-addons" || condition === "module-sync") {
+				const target = exportTarget(value);
 				if (target) return target;
 			}
 		}
@@ -77,24 +82,28 @@ export function resolvePackageSubpath(packageDir: string, subpath: string): stri
 	const manifest = readManifest(packageDir);
 	if (!manifest) return undefined;
 	const exportsField = manifest.exports;
-	if (exportsField !== undefined) {
+	if (exportsField !== undefined && exportsField !== null) {
 		const map: Record<string, unknown> = typeof exportsField === "string" || Array.isArray(exportsField) || (exportsField && typeof exportsField === "object" && !Object.keys(exportsField as object).some((key) => key.startsWith(".")))
 			? { ".": exportsField }
 			: exportsField as Record<string, unknown>;
-		const exact = exportTarget(map[subpath]);
-		if (exact) return path.resolve(packageDir, exact);
+		if (subpath in map) {
+			const exact = exportTarget(map[subpath]);
+			return typeof exact === "string" ? path.resolve(packageDir, exact) : undefined;
+		}
+		let best: { entry: unknown; prefix: string; suffix: string } | undefined;
 		for (const [pattern, entry] of Object.entries(map)) {
 			const star = pattern.indexOf("*");
 			if (star === -1) continue;
 			const prefix = pattern.slice(0, star);
 			const suffix = pattern.slice(star + 1);
 			if (!subpath.startsWith(prefix) || !subpath.endsWith(suffix) || subpath.length < prefix.length + suffix.length) continue;
-			const target = exportTarget(entry);
-			if (!target) continue;
-			const wildcard = subpath.slice(prefix.length, subpath.length - suffix.length);
-			return path.resolve(packageDir, target.replace("*", wildcard));
+			if (!best || prefix.length > best.prefix.length || (prefix.length === best.prefix.length && suffix.length > best.suffix.length)) best = { entry, prefix, suffix };
 		}
-		return undefined;
+		if (!best) return undefined;
+		const target = exportTarget(best.entry);
+		if (typeof target !== "string") return undefined;
+		const wildcard = subpath.slice(best.prefix.length, subpath.length - best.suffix.length);
+		return path.resolve(packageDir, target.replaceAll("*", () => wildcard));
 	}
 	if (subpath !== ".") return undefined;
 	return path.resolve(packageDir, typeof manifest.main === "string" && manifest.main.trim() ? manifest.main : "index.js");

@@ -14,6 +14,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { pinChildCacheRetention } from "../../shared/child-cache-retention.ts";
 import { getAgentDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
+import { resolvePackageSubpath } from "../background/runner-aliases.ts";
 import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "./pi-spawn.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import type { RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
@@ -241,22 +242,11 @@ function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModu
 }
 
 /**
- * Load the host's pi-coding-agent instance from a resolvable package root
- * instead of a bare specifier. A bare import from extension code resolves
- * against the extension's own node_modules tree; when pi is installed as an
- * npm-hosted package (peer packages outside that tree) and the host no longer
- * serves virtual module resolution to extension code, the bare import fails
- * with ERR_MODULE_NOT_FOUND even though the host itself runs fine. Resolving
- * the host package root and importing its entry by file URL yields the host's
- * single module instance.
- *
- * Root precedence: the running pi process's own location (the host that owns
- * this child), then an explicit override, then the package manager's view
- * of pi-subagents' install tree as a last fallback. A selected root must be a
- * canonical pi-coding-agent package: other package names are rejected rather
- * than imported. Only a missing auto-discovered root or entry permits the
- * bare import fallback; once an existing entry is imported, its evaluation
- * and dependency errors are reported as-is.
+ * Load the host-owned pi-coding-agent module by absolute package entry so a
+ * child cannot resolve an extension-owned copy. Root precedence is the running
+ * host, an explicit override, then the install tree. Once any root is selected,
+ * its manifest, package identity, entry, and import must all succeed; the bare
+ * specifier is used only when no root resolves.
  */
 export async function loadHostPiCodingAgent(): Promise<PiCodingAgentModule> {
 	const overrideRoot = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || undefined;
@@ -264,14 +254,7 @@ export async function loadHostPiCodingAgent(): Promise<PiCodingAgentModule> {
 	const selectedOverride = runningRoot === undefined ? overrideRoot : undefined;
 	const root = runningRoot ?? selectedOverride ?? resolveInstalledPiPackageRoot();
 	if (root) {
-		let entry: string;
-		try {
-			entry = fs.realpathSync(resolveHostPackageEntry(root, selectedOverride));
-		} catch (error) {
-			if (selectedOverride !== undefined || !isMissingPathError(error)) throw error;
-			// Auto-discovered root whose entry cannot be resolved: last-resort bare specifier.
-			return import(PI_CODING_AGENT_PACKAGE);
-		}
+		const entry = fs.realpathSync(resolveHostPackageEntry(root, selectedOverride));
 		return import(pathToFileURL(entry).href);
 	}
 	return import(PI_CODING_AGENT_PACKAGE);
@@ -279,27 +262,26 @@ export async function loadHostPiCodingAgent(): Promise<PiCodingAgentModule> {
 
 function resolveHostPackageEntry(root: string, overrideRoot: string | undefined): string {
 	const packageJson = path.join(root, "package.json");
-	const pkg = JSON.parse(fs.readFileSync(packageJson, "utf8")) as { name?: unknown; exports?: Record<string, unknown>; main?: unknown };
+	const source = fs.readFileSync(packageJson, "utf8");
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(source);
+	} catch (error) {
+		throw new Error(`invalid host SDK manifest at ${packageJson}: malformed JSON`, { cause: error });
+	}
+	if (!isUnknownRecord(parsed)) throw new Error(`invalid host SDK manifest at ${packageJson}: expected a JSON object`);
+	const pkg = parsed;
 	if (pkg.name !== PI_CODING_AGENT_PACKAGE) {
 		const source = overrideRoot !== undefined ? ` (${PI_CODING_AGENT_PACKAGE_ROOT_ENV} override)` : "";
 		throw new Error(`refusing to load the host SDK from ${root}${source}: package.json name is "${String(pkg.name ?? "(none)")}", expected "${PI_CODING_AGENT_PACKAGE}"`);
 	}
-	const exported = pkg.exports?.["."] as string | Record<string, unknown> | undefined;
-	let entry: string | undefined;
-	if (typeof exported === "string") entry = exported;
-	else if (exported && typeof exported === "object") {
-		entry = typeof exported.import === "string" ? exported.import
-			: typeof exported.require === "string" ? exported.require
-			: typeof exported.default === "string" ? exported.default
-			: undefined;
-	}
-	if (!entry) entry = typeof pkg.main === "string" ? pkg.main : "index.js";
-	return path.resolve(root, entry);
+	const entry = resolvePackageSubpath(root, ".");
+	if (!entry) throw new Error(`host SDK manifest at ${packageJson} has no resolvable root export`);
+	return entry;
 }
 
-function isMissingPathError(error: unknown): boolean {
-	const code = (error as { code?: unknown } | null)?.code;
-	return code === "ENOENT";
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
