@@ -15,7 +15,7 @@ const MINIMUM_DYNAMIC_TOOLS_VERSION = [0, 86, 1] as const;
 let warnedUnsupportedHost = false;
 
 function supportsNativeDynamicTools(pi: ExtensionAPI): boolean {
-	if (typeof pi.getAllTools !== "function" || typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") return false;
+	if (typeof pi.getAllTools !== "function" || typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function" || typeof piAi.getCurrentTools !== "function") return false;
 	try {
 		const packageJsonUrl = new URL("../package.json", import.meta.resolve("@earendil-works/pi-coding-agent"));
 		const version = JSON.parse(fs.readFileSync(packageJsonUrl, "utf-8")).version as unknown;

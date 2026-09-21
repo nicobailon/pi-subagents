@@ -7,6 +7,7 @@ import {
 	fauxAssistantMessage,
 	fauxProvider,
 	fauxToolCall,
+	getCurrentSystemPrompt,
 	getCurrentTools,
 } from "@earendil-works/pi-ai";
 import {
@@ -48,6 +49,9 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 		faux.setResponses([
 			(context) => {
 				const tools = getCurrentTools(context.messages);
+				const systemPrompt = getCurrentSystemPrompt(context.messages);
+				assert.match(systemPrompt, /pi-subagents is installed/i);
+				assert.match(systemPrompt, /complexity alone is not authorization/i);
 				captured.push({ names: tools.map((tool) => tool.name), characters: serializedCharacters(tools) });
 				const loader = tools.find((tool) => tool.name === "subagents_enable");
 				const wait = tools.find((tool) => tool.name === "bg_wait");
