@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- In-process RPC `cost` method: returns the same parent-plus-child accounting `/subagent-cost` renders, as versioned data (`{ version: 1, parent, children, childTotal, total, unresolvedAsyncChildren }`), so other extensions can surface subagent spend without scraping slash output. `ping.capabilities.cost` advertises `{ version: 1 }`. The report logic moved unchanged into `src/slash/subagent-cost.ts`; `/subagent-cost` output is identical.
+
 ## [0.70.1] - 2026-09-20
 
 ### Highlights

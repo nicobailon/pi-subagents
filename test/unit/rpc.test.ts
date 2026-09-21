@@ -117,6 +117,11 @@ describe("subagent extension RPC bridge", () => {
 			(reply as { data: { capabilities?: { statusProjection?: unknown } } }).data.capabilities?.statusProjection,
 			{ version: 1, untargeted: "in-memory-when-ready", targeted: "executor" },
 		);
+		assert.deepEqual(
+			(reply as { data: { capabilities?: { cost?: unknown } } }).data.capabilities?.cost,
+			{ version: 1 },
+		);
+		assert.ok((reply as { data: { methods?: string[] } }).data.methods?.includes("cost"));
 
 		bridge.dispose();
 	});
@@ -1205,5 +1210,75 @@ describe("subagent extension RPC bridge", () => {
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
+	});
+
+	it("answers cost with structured parent-plus-child accounting from the session branch", async () => {
+		const events = new FakeEvents();
+		const childUsage = { input: 8, output: 3, cacheRead: 5, cacheWrite: 0, cost: 0.25, turns: 1 };
+		const branch = [
+			{ type: "message", message: { role: "assistant", usage: { input: 15, output: 3, cacheRead: 30, cacheWrite: 0, cost: { total: 0.25 } } } },
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "subagent",
+					details: { mode: "single", results: [{ agent: "reviewer", runId: "run-a", usage: childUsage, sessionFile: "/sessions/child-a.jsonl" }] },
+				},
+			},
+			// The same child completing through bg_wait must not be counted twice.
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "bg_wait",
+					details: { mode: "single", results: [], completions: [{ mode: "single", runId: "run-a", results: [{ agent: "reviewer", runId: "run-a", usage: childUsage }] }] },
+				},
+			},
+		];
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ({
+				cwd: "/repo",
+				sessionManager: {
+					getSessionId: () => "session-123",
+					getSessionFile: () => "/sessions/parent.jsonl",
+					getBranch: () => branch,
+				},
+			}) as any,
+			execute: async () => assert.fail("cost should not call executor"),
+			state: { baseCwd: "/repo" } as SubagentState,
+		});
+
+		const reply = await request(events, "cost-1", "cost");
+		assert.equal(reply.success, true);
+		assert.equal(reply.method, "cost");
+		const data = (reply as { data: { version: number; parent: Record<string, number>; children: Array<{ agent?: string; runId?: string; usage: Record<string, number> }>; childTotal: Record<string, number>; total: Record<string, number>; unresolvedAsyncChildren: number } }).data;
+		assert.equal(data.version, 1);
+		assert.deepEqual(data.parent, { input: 15, output: 3, cacheRead: 30, cacheWrite: 0, cost: 0.25, turns: 1 });
+		assert.equal(data.children.length, 1, "run identity deduplicates the bg_wait completion");
+		assert.equal(data.children[0]?.agent, "reviewer");
+		assert.equal(data.children[0]?.runId, "run-a");
+		assert.deepEqual(data.childTotal, childUsage);
+		assert.deepEqual(data.total, { input: 23, output: 6, cacheRead: 35, cacheWrite: 0, cost: 0.5, turns: 2 });
+		assert.equal(data.unresolvedAsyncChildren, 0);
+
+		const rejected = await request(events, "cost-2", "cost", "not-an-object");
+		assert.equal(rejected.success, false);
+		assert.equal((rejected as { error: { code: string } }).error.code, "invalid_params");
+
+		bridge.dispose();
+	});
+
+	it("cost requires an active session context like every non-ping method", async () => {
+		const events = new FakeEvents();
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => null,
+			execute: async () => assert.fail("cost should not call executor"),
+		});
+		const reply = await request(events, "cost-3", "cost");
+		assert.equal(reply.success, false);
+		assert.equal((reply as { error: { code: string } }).error.code, "no_active_session");
+		bridge.dispose();
 	});
 });

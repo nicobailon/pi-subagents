@@ -23,6 +23,7 @@ import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
 import { normalizePublicSubagentExecution } from "./public-execution.ts";
+import { collectSubagentCost, SUBAGENT_COST_REPORT_VERSION } from "../slash/subagent-cost.ts";
 import { ASYNC_STATUS_SNAPSHOT_KIND, ASYNC_STATUS_SNAPSHOT_VERSION, buildAsyncStatusSnapshotForState } from "../runs/background/async-status-snapshot.ts";
 import { isStoppableAsyncStatusStep, resolveAsyncStatusChild, stopStoppableAsyncStatusChildren, type ResolvedAsyncStatusChild } from "../runs/shared/child-identity.ts";
 
@@ -31,7 +32,7 @@ export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
 export const SUBAGENT_RPC_READY_EVENT = "subagents:rpc:v1:ready";
 export const SUBAGENT_RPC_REPLY_EVENT_PREFIX = "subagents:rpc:v1:reply:";
 
-export const SUBAGENT_RPC_METHODS = ["ping", "status", "manage", "spawn", "steer", "interrupt", "stop", "resume"] as const;
+export const SUBAGENT_RPC_METHODS = ["ping", "status", "manage", "spawn", "steer", "interrupt", "stop", "resume", "cost"] as const;
 export type SubagentRpcMethod = typeof SUBAGENT_RPC_METHODS[number];
 
 export interface SubagentRpcRequestEnvelope {
@@ -456,6 +457,7 @@ function pingData(ctx: ExtensionContext | null) {
 			launchResolvedExtensions: { version: 1, source: "launch-resolved" },
 			runtimeAcknowledgedExtensions: { version: 1, source: "child-runtime", event: "subagent:acknowledge-extension" },
 			processTerminalProof: { version: 1, lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION },
+			cost: { version: SUBAGENT_COST_REPORT_VERSION },
 		},
 		events: {
 			ready: SUBAGENT_RPC_READY_EVENT,
@@ -764,6 +766,13 @@ async function handleRequest(
 	}
 	if (request.method === "resume") {
 		return executeChecked(options, ctx, request.requestId, request.method, resumeParams(request.params));
+	}
+	if (request.method === "cost") {
+		// The same parent-plus-child accounting `/subagent-cost` renders, as data.
+		// Read-only: it walks the current session branch and existing artifacts,
+		// so callers should request it on their own turn boundaries, not on a timer.
+		if (request.params !== undefined && !isRecord(request.params)) throw new SubagentRpcError("invalid_params", "RPC cost params must be an object when provided.");
+		return collectSubagentCost(ctx, options.state ?? { baseCwd: ctx.cwd });
 	}
 	throw new SubagentRpcError("unsupported_method", `Unsupported subagent RPC method: ${String(request.method)}`);
 }
