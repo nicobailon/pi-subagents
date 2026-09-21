@@ -966,7 +966,7 @@ describe("subagent async widget rendering", () => {
 		assert.match(text, /Agent 1\/3: reviewer · running · active now · 5 turns · 18 tool uses · 44k token/);
 		assert.match(text, /Agent 2\/3: reviewer · running · active 2s ago · 4 turns · 13 tool uses · 22k token/);
 		assert.match(text, /Agent 3\/3: reviewer · running · grep \| 1\.0s · 3 turns · 11 tool uses · 19k token/);
-		assert.match(text, /Press \S(?:.*\S)? for live detail/);
+		assert.match(text, /Configure the expand key for live detail/);
 		assert.doesNotMatch(text, /widget truncated/);
 		assert.ok(lines.length <= 10, "collapsed component should stay under Pi's string-widget cap even though it bypasses it");
 	});
@@ -1195,7 +1195,7 @@ describe("subagent async widget rendering", () => {
 			assert.match(text, /issue-1695\.minimality-challenge · worker · active/);
 			assert.match(text, /issue-1695\.fresh-review · worker · queued/);
 			assert.doesNotMatch(text, /bottleneck ·/);
-			assert.match(text, /Press \S(?:.*\S)? for details/);
+			assert.match(text, /Configure the expand key for details/);
 			assert.match(text, /label-helpers/);
 			assert.doesNotMatch(text, /Step \d+\/9|task:|workspace:|out(?:put)?:|next:/i);
 		});
@@ -1381,7 +1381,7 @@ describe("subagent async widget rendering", () => {
 		assert.doesNotMatch(text, /Agent 1\/3: reviewer/);
 		assert.match(text, /⎿  active now/);
 		assert.match(text, /Agent 2\/3: reviewer · running\n\s+⎿  read \| 2\.0s/);
-		assert.match(text, /Press \S(?:.*\S)? for live detail/);
+		assert.match(text, /Configure the expand key for live detail/);
 		assert.match(text, /Agent 3\/3: reviewer · complete · 1\.5k token/);
 	});
 
@@ -1517,11 +1517,11 @@ describe("subagent async widget rendering", () => {
 		};
 
 		const collapsedText = buildWidgetLines([job], theme, 180).join("\n");
-		assert.match(collapsedText, /Press \S(?:.*\S)? for live detail/);
+		assert.match(collapsedText, /Configure the expand key for live detail/);
 		assert.doesNotMatch(collapsedText, /found renderWidget/);
 
 		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
-		assert.doesNotMatch(expandedText, /Press \S(?:.*\S)? for live detail/);
+		assert.doesNotMatch(expandedText, /Configure the expand key for live detail/);
 		assert.match(expandedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
 		assert.match(expandedText, outputPathPattern("/tmp/1/output-0.log"));
 		assert.match(expandedText, /grep: async widget/);
@@ -1735,14 +1735,14 @@ describe("subagent async widget rendering", () => {
 		assert.match(collapsedText, /reviewer · running · 23 tool uses · 49\.1s/);
 		assert.match(collapsedText, /task: Review the widget/);
 		assert.match(collapsedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
-		assert.match(collapsedText, /Press \S(?:.*\S)? for live detail/);
+		assert.match(collapsedText, /Configure the expand key for live detail/);
 		assert.match(collapsedText, outputPathPattern("/tmp/single-run/output-0.log"));
 		assert.doesNotMatch(collapsedText, /error: failed to inspect the widget/);
 
 		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
 		const expandedLines = expandedText.split("\n");
 		const expandedSummary = expandedLines.slice(0, 2).join("\n");
-		assert.doesNotMatch(expandedText, /Press \S(?:.*\S)? for live detail/);
+		assert.doesNotMatch(expandedText, /Configure the expand key for live detail/);
 		assert.doesNotMatch(expandedSummary, /step 1\/1/i);
 		assert.match(expandedSummary, /async subagent · background/);
 		assert.match(expandedSummary, /reviewer/);
@@ -1871,7 +1871,7 @@ describe("subagent async widget rendering", () => {
 
 		assert.match(text, /⎿  read 1\.0s/);
 		assert.doesNotMatch(text, /Step 1\/1/);
-		assert.doesNotMatch(text, /Press \S(?:.*\S)? for live detail/);
+		assert.doesNotMatch(text, /Configure the expand key for live detail/);
 	});
 
 	it("includes logical chain context for active async chain parallel groups", () => {
@@ -2007,7 +2007,7 @@ describe("subagent async widget rendering", () => {
 		assert.match(text, /chain · step 2\/2/);
 		assert.match(text, /Step 1\/2: parallel group · 3\/3 done/);
 		assert.match(text, /Step 2\/2: writer · running · 1 tool use/);
-		assert.match(text, /Press \S(?:.*\S)? for live detail/);
+		assert.match(text, /Configure the expand key for live detail/);
 		assert.match(text, outputPathPattern("/tmp/chain/output-3.log"));
 		assert.doesNotMatch(text, /step 4\/4/);
 		assert.doesNotMatch(text, /Step 4\/4/);

@@ -83,16 +83,16 @@ function capCompactMainWindowResult(component: Component, layout: MainWindowRend
 		if (lines.length <= maxLines) return lines;
 		const visibleRows = maxLines === 1 ? 1 : maxLines - 1;
 		const hiddenCount = lines.length - visibleRows;
-		const hint = theme.fg("accent", `… ${hiddenCount} rows hidden · ${expandKeyHint("to expand")}`);
+		const hint = theme.fg("accent", `… ${hiddenCount} rows hidden · ${expandKeyHint("to expand", "to view them")}`);
 		if (maxLines === 1) return [truncLine(`${lines[0] ?? ""} ${hint}`, width)];
 		return [...lines.slice(0, visibleRows), truncLine(hint, width)];
 	};
 	return capped;
 }
 
-function expandKeyHint(action: string): string {
+function expandKeyHint(action: string, unconfiguredAction = action): string {
 	const shortcut = keyText("app.tools.expand");
-	return shortcut ? `Press ${shortcut} ${action}` : `Configure the expand key ${action}`;
+	return shortcut ? `Press ${shortcut} ${action}` : `Configure the expand key ${unconfiguredAction}`;
 }
 
 export function liveDetailHintText(): string {
@@ -2704,7 +2704,7 @@ function fitWidgetLineBudget(lines: string[], theme: Theme, width: number, expan
 	const hiddenCount = lines.length - visibleLines;
 	const hint = expanded
 		? `… ${hiddenCount} live-detail lines hidden`
-		: `… ${hiddenCount} lines hidden · ${expandKeyHint("to expand")}`;
+		: `… ${hiddenCount} lines hidden · ${expandKeyHint("to expand", "to view them")}`;
 	return [...lines.slice(0, visibleLines), truncLine(theme.fg("dim", hint), width)];
 }
 

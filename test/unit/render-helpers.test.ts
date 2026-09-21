@@ -625,7 +625,7 @@ test("main-window renderer config caps only collapsed rich result rows", () => {
 	}, { expanded: false }, theme as any, undefined, { compactResultMaxLines: 3 }).render(120);
 
 	assert.equal(rendered.length, 3);
-	assert.match(rendered[2]!, /rows hidden · Configure the expand key to expand/);
+	assert.match(rendered[2]!, /rows hidden · Configure the expand key to view them/);
 
 	const expanded = renderSubagentResult({
 		content: [{ type: "text", text: "done" }],
