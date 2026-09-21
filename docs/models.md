@@ -82,7 +82,7 @@ For a persistent role override:
 }
 ```
 
-`subagents.defaultModel` and `subagents.defaultProvider` apply to builtin, package, user, and project agents. `defaultModel` fills only agents that do not set `model` in frontmatter. `defaultProvider` is also applied to frontmatter and override models so bare ids resolve against the intended provider. Per-run model overrides and `agentOverrides.<name>.model` win over frontmatter and the global default. The same `agentOverrides` block can change `tools`, `skills`, inherited context, prompt text, or disable an agent (see [agents.md](agents.md)); matching custom-agent frontmatter is replaced for any field set by the override.
+`subagents.defaultModel` and `subagents.defaultProvider` apply to builtin, package, user, project, and runtime-registered agents. `defaultModel` fills only agents that do not set `model` in frontmatter or in their runtime definition. `defaultProvider` is also applied to frontmatter and override models so bare ids resolve against the intended provider. Per-run model overrides and `agentOverrides.<name>.model` win over frontmatter and the global default. The same `agentOverrides` block can change `tools`, `skills`, inherited context, prompt text, or disable an agent (see [agents.md](agents.md)); matching custom-agent frontmatter is replaced for any field set by the override. Runtime-registered agents take only `model`, `defaultProvider`, `fast`, and `thinking` from `agentOverrides.<name>`; their other definition fields stay owned by the registering extension.
 
 ## Fast mode
 

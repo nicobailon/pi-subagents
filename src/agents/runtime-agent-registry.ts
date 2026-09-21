@@ -5,7 +5,7 @@ import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import { BUILTIN_AGENT_NAMES } from "./builtin-names.ts";
-import type { AgentConfig, AgentDefaultContext, AgentDiscoveryDiagnostic } from "./agents.ts";
+import { applyRuntimeAgentSettings, type AgentConfig, type AgentDefaultContext, type AgentDiscoveryDiagnostic, type RuntimeAgentSettingsContext } from "./agents.ts";
 
 export const RUNTIME_AGENT_REGISTRY_KEY = "pi-subagents.runtime-agents.v1";
 
@@ -417,10 +417,17 @@ function assertNoConfiguredCollision(configuredAgents: readonly AgentConfig[], r
 	}
 }
 
-export function mergeRuntimeAgents<T extends { agents: AgentConfig[]; agentDiagnostics?: AgentDiscoveryDiagnostic[] }>(pi: RuntimeAgentOwner, discovered: T, configuredAgents: readonly AgentConfig[] = discovered.agents): T {
-	const runtimeAgents = listRuntimeAgentConfigs(pi).filter((agent) => agent.disabled !== true);
-	if (runtimeAgents.length === 0) return discovered;
-	assertNoIdentityCollisions(runtimeAgents, "Runtime agent registration");
-	assertNoConfiguredCollision(configuredAgents, runtimeAgents);
+/**
+ * Append registered runtime agents to a discovery result. With `settings`, the
+ * runtime agents also receive the subagent model-tier settings that apply in
+ * that discovery context (see `applyRuntimeAgentSettings`); without it they
+ * carry only their registered definition.
+ */
+export function mergeRuntimeAgents<T extends { agents: AgentConfig[]; agentDiagnostics?: AgentDiscoveryDiagnostic[] }>(pi: RuntimeAgentOwner, discovered: T, configuredAgents: readonly AgentConfig[] = discovered.agents, settings?: RuntimeAgentSettingsContext): T {
+	const registered = listRuntimeAgentConfigs(pi).filter((agent) => agent.disabled !== true);
+	if (registered.length === 0) return discovered;
+	assertNoIdentityCollisions(registered, "Runtime agent registration");
+	assertNoConfiguredCollision(configuredAgents, registered);
+	const runtimeAgents = settings ? applyRuntimeAgentSettings(registered, settings) : registered;
 	return { ...discovered, agents: [...discovered.agents, ...runtimeAgents] };
 }

@@ -5,6 +5,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	type AgentConfig,
 	type AgentDiscoveryDiagnostic,
+	type AgentDiscoveryAllResult,
 	type AgentScope,
 	type AgentSource,
 	defaultInheritProjectContext,
@@ -125,24 +126,26 @@ function parsePackageConfig(value: unknown): { packageName?: string; error?: str
 	return parsePackageName(value, "config.package");
 }
 
-function allAgents(d: { builtin: AgentConfig[]; package: AgentConfig[]; user: AgentConfig[]; project: AgentConfig[] }): AgentConfig[] {
+type DiscoveredAgentSets = Pick<AgentDiscoveryAllResult, "builtin" | "package" | "user" | "project" | "cwd">;
+
+function allAgents(d: DiscoveredAgentSets): AgentConfig[] {
 	return [...d.builtin, ...d.package, ...d.user, ...d.project];
 }
 
 function effectiveAgentsForScope(
 	scope: AgentScope,
-	d: { builtin: AgentConfig[]; package: AgentConfig[]; user: AgentConfig[]; project: AgentConfig[] },
+	d: DiscoveredAgentSets,
 	runtimeAgentOwner?: RuntimeAgentOwner,
 ): AgentConfig[] {
 	let agents = mergeAgentsForScope(scope, d.user, d.project, d.builtin, d.package);
 	if (runtimeAgentOwner) {
-		agents = mergeRuntimeAgents(runtimeAgentOwner, { agents }, allAgents(d)).agents;
+		agents = mergeRuntimeAgents(runtimeAgentOwner, { agents }, allAgents(d), { cwd: d.cwd, scope }).agents;
 	}
 	return agents;
 }
 
 function availableAgentNamesFromDiscovery(
-	d: { builtin: AgentConfig[]; package: AgentConfig[]; user: AgentConfig[]; project: AgentConfig[] },
+	d: DiscoveredAgentSets,
 	runtimeAgentOwner?: RuntimeAgentOwner,
 ): string[] {
 	const agents = runtimeAgentOwner ? effectiveAgentsForScope("both", d, runtimeAgentOwner) : allAgents(d);
@@ -155,7 +158,7 @@ function availableAgentNames(cwd: string): string[] {
 
 function findAgentsInDiscovery(
 	name: string,
-	d: { builtin: AgentConfig[]; package: AgentConfig[]; user: AgentConfig[]; project: AgentConfig[] },
+	d: DiscoveredAgentSets,
 	scope: AgentScope = "both",
 	runtimeAgentOwner?: RuntimeAgentOwner,
 ): AgentConfig[] {

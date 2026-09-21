@@ -34,7 +34,7 @@ function allVisibleAgents(pi: RuntimeAgentOwner, cwd: string): AgentConfig[] {
 	const allConfigured = [...d.project, ...d.user, ...d.package, ...d.builtin];
 	const visibleConfigured = allConfigured.filter((agent) => !agent.disabled);
 	// Disabled definitions remain in collision checks even though the panel hides them.
-	const agents = mergeRuntimeAgents(pi, { agents: visibleConfigured }, allConfigured).agents;
+	const agents = mergeRuntimeAgents(pi, { agents: visibleConfigured }, allConfigured, { cwd, scope: "both" }).agents;
 	return agents.sort((a, b) => a.name.localeCompare(b.name) || sourceRank(a.source) - sourceRank(b.source));
 }
 

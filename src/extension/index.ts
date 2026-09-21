@@ -555,7 +555,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			...all.user,
 			...all.project,
 		];
-		const merged = mergeRuntimeAgents(pi, discovered, configuredAgents);
+		const merged = mergeRuntimeAgents(pi, discovered, configuredAgents, { cwd, scope, preferredModelProvider });
 		if (discovered.maxThinking === undefined) return merged;
 		return {
 			...merged,

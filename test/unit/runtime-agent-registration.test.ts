@@ -44,6 +44,11 @@ function makePiWithEvents(events: ExtensionAPI["events"]): ExtensionAPI {
 	return { on() {}, registerTool() {}, events } as unknown as ExtensionAPI;
 }
 
+function writeJson(filePath: string, value: unknown): void {
+	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+	fs.writeFileSync(filePath, JSON.stringify(value, null, 2), "utf-8");
+}
+
 function writeProjectAgent(name: string, aliases: string[] = []): void {
 	const filePath = path.join(tempProject, ".pi", "agents", `${name}.md`);
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -264,6 +269,123 @@ describe("runtime agent registration", () => {
 			assert.match(filteredText, /Agent: model-helper/);
 			assert.match(filteredText, /Effective model:\n  openai\/gpt-5-mini/);
 			assert.match(filteredText, /Source: runtime agent config/);
+		} finally {
+			registration.dispose();
+		}
+	});
+
+	it("applies subagent default model and thinking to runtime agents that declare none", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { defaultModel: "openai/gpt-5-mini", defaultThinking: "low" },
+		});
+		const unpinned = registerAgent({
+			pi,
+			name: "runtime-default-helper",
+			definition: { description: "Runtime default helper", systemPrompt: "Help.", tools: ["read"] },
+		});
+		const pinned = registerAgent({
+			pi,
+			name: "runtime-pinned-helper",
+			definition: { description: "Runtime pinned helper", systemPrompt: "Help.", model: "anthropic/claude-sonnet-4" },
+		});
+		try {
+			const settings = { cwd: tempProject, scope: "both" as const };
+			const merged = mergeRuntimeAgents(pi, discoverAgents(tempProject, "both"), undefined, settings).agents;
+			const defaulted = merged.find((candidate) => candidate.name === "runtime-default-helper");
+			assert.equal(defaulted?.model, "openai/gpt-5-mini");
+			assert.equal(defaulted?.thinking, "low");
+			assert.equal(defaulted?.modelSource?.type, "subagents.defaultModel");
+			assert.equal(defaulted?.modelSource?.scope, "user");
+			assert.deepEqual(defaulted?.tools, ["read"]);
+			assert.equal(defaulted?.systemPrompt, "Help.");
+
+			const kept = merged.find((candidate) => candidate.name === "runtime-pinned-helper");
+			assert.equal(kept?.model, "anthropic/claude-sonnet-4");
+			assert.equal(kept?.modelSource, undefined);
+			assert.equal(kept?.thinking, "low");
+
+			const bare = mergeRuntimeAgents(pi, discoverAgents(tempProject, "both")).agents
+				.find((candidate) => candidate.name === "runtime-default-helper");
+			assert.equal(bare?.model, undefined, "without a settings context the registered definition is returned as-is");
+		} finally {
+			unpinned.dispose();
+			pinned.dispose();
+		}
+	});
+
+	it("applies only model-tier agentOverrides fields to runtime agents, project over user", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: {
+				defaultModel: "openai/gpt-5-mini",
+				agentOverrides: {
+					"runtime-override-helper": {
+						model: "anthropic/claude-sonnet-4",
+						thinking: "high",
+						tools: ["bash"],
+						systemPrompt: "Replaced by settings.",
+						disabled: true,
+					},
+					"runtime-cleared-helper": { thinking: "high" },
+				},
+			},
+		});
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: {
+				agentOverrides: {
+					"runtime-override-helper": { thinking: "medium" },
+					"runtime-cleared-helper": { model: false },
+				},
+			},
+		});
+		const overridden = registerAgent({
+			pi,
+			name: "runtime-override-helper",
+			definition: { description: "Runtime override helper", systemPrompt: "Help.", tools: ["read"] },
+		});
+		const cleared = registerAgent({
+			pi,
+			name: "runtime-cleared-helper",
+			definition: { description: "Runtime cleared helper", systemPrompt: "Help.", model: "openai/gpt-5-mini" },
+		});
+		try {
+			const merged = mergeRuntimeAgents(pi, discoverAgents(tempProject, "both"), undefined, { cwd: tempProject, scope: "both" }).agents;
+			const agent = merged.find((candidate) => candidate.name === "runtime-override-helper");
+			assert.equal(agent?.model, "anthropic/claude-sonnet-4", "user override model wins over defaultModel");
+			assert.equal(agent?.thinking, "medium", "project override thinking wins over user override thinking");
+			assert.deepEqual(agent?.tools, ["read"], "tools stay extension-owned");
+			assert.equal(agent?.systemPrompt, "Help.", "systemPrompt stays extension-owned");
+			assert.notEqual(agent?.disabled, true, "disabled is not honored for runtime agents");
+
+			const back = merged.find((candidate) => candidate.name === "runtime-cleared-helper");
+			assert.equal(back?.model, undefined, "model: false clears the definition model so the agent inherits the session model");
+			assert.equal(back?.thinking, "high");
+		} finally {
+			overridden.dispose();
+			cleared.dispose();
+		}
+	});
+
+	it("reports the subagent default model source for runtime agents", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { defaultModel: "openai/gpt-5-mini" },
+		});
+		const registration = registerAgent({
+			pi,
+			name: "runtime-default-source-helper",
+			definition: { description: "Runtime default source helper", systemPrompt: "Help." },
+		});
+		try {
+			const ctx = {
+				cwd: tempProject,
+				modelRegistry: { getAvailable: () => [{ provider: "openai", id: "gpt-5-mini" }] },
+				model: { provider: "anthropic", id: "claude-sonnet-4" },
+				runtimeAgentOwner: pi,
+			};
+			const filtered = handleManagementAction("models", { agent: "runtime-default-source-helper" }, ctx);
+			const text = filtered.content.map((part) => part.type === "text" ? part.text ?? "" : "").join("\n");
+			assert.equal(filtered.isError, false);
+			assert.match(text, /Effective model:\n  openai\/gpt-5-mini/);
+			assert.match(text, /Source: user defaultModel/);
 		} finally {
 			registration.dispose();
 		}

@@ -125,7 +125,7 @@ function discoverSlashAgents(pi: ExtensionAPI, cwd: string, scope: AgentScope): 
 		...(scope !== "project" ? all.user : []),
 		...(scope !== "user" ? all.project : []),
 	];
-	const merged = mergeRuntimeAgents(pi, discovered, configuredAgents);
+	const merged = mergeRuntimeAgents(pi, discovered, configuredAgents, { cwd, scope });
 	return { ...merged, unknownAgentDiagnosticContext: { ...unknownAgentDiagnosticContext(discovered), agents: merged.agents } };
 }
 

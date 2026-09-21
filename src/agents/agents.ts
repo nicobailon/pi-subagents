@@ -1588,6 +1588,47 @@ function applyCustomAgentOverrides(
 	});
 }
 
+/** Discovery context for runtime-registered agents, which merge after ordinary sources. */
+export interface RuntimeAgentSettingsContext {
+	cwd: string;
+	scope: AgentScope;
+	preferredModelProvider?: string;
+}
+
+const RUNTIME_AGENT_OVERRIDE_FIELDS = ["model", "defaultProvider", "fast", "thinking"] as const;
+
+function runtimeAgentOverrides(settings: SubagentSettings): SubagentSettings {
+	const overrides: Record<string, BuiltinAgentOverrideConfig> = {};
+	for (const [name, override] of Object.entries(settings.overrides)) {
+		const narrowed: BuiltinAgentOverrideConfig = {};
+		for (const field of RUNTIME_AGENT_OVERRIDE_FIELDS) {
+			if (override[field] !== undefined) (narrowed as Record<string, unknown>)[field] = override[field];
+		}
+		if (Object.keys(narrowed).length > 0) overrides[name] = narrowed;
+	}
+	return { ...settings, overrides };
+}
+
+/**
+ * Runtime-registered agents keep their extension-owned definition (prompt,
+ * tools, context, budgets, and every other launch field) but follow the same
+ * model-tier settings as every other agent: `subagents.defaultModel`,
+ * `defaultProvider`, `defaultThinking`, and the `model`, `defaultProvider`,
+ * `fast`, and `thinking` fields of `agentOverrides.<name>`, user then project,
+ * provider-scoped overrides included. Other override fields are ignored for
+ * runtime agents. A definition `model` still wins over `defaultModel`.
+ */
+export function applyRuntimeAgentSettings(agents: AgentConfig[], context: RuntimeAgentSettingsContext): AgentConfig[] {
+	if (agents.length === 0) return agents;
+	const sources = getAgentDiscoverySources(context.cwd, context.preferredModelProvider);
+	const { user, project } = settingsForScope(sources, context.scope);
+	const defaultProvider = resolveSubagentDefaultProvider(user, project, sources.projectSettingsPath);
+	const defaultModel = resolveSubagentDefaultModel(user, project, sources.userSettingsPath, sources.projectSettingsPath, defaultProvider);
+	const defaultThinking = resolveSubagentDefaultThinking(user, project, sources.projectSettingsPath);
+	const withDefaults = applySubagentDefaultThinking(applySubagentDefaultModel(agents, defaultModel, defaultProvider), defaultThinking);
+	return applyCustomAgentOverrides(withDefaults, runtimeAgentOverrides(user), runtimeAgentOverrides(project), sources.userSettingsPath, sources.projectSettingsPath);
+}
+
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
 	draft: Pick<AgentConfig, "model" | "modelProvider" | "fast" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritGlobalContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "allowNestedSubagents" | "mcpDirectTools" | "extensions" | "subagentOnlyExtensions" | "mutationTools" | "toolBudget"> & Partial<Pick<AgentConfig, "description" | "machine" | "output" | "outputMode" | "defaultReads" | "excludeTools">>,
@@ -2434,6 +2475,7 @@ export interface AgentDiscoveryAllResult {
 	package: AgentConfig[];
 	user: AgentConfig[];
 	project: AgentConfig[];
+	cwd: string;
 	agentDiagnostics?: AgentDiscoveryDiagnostic[];
 	chains: ChainConfig[];
 	chainDiagnostics: ChainDiscoveryDiagnostic[];
@@ -2861,6 +2903,7 @@ function buildAllDiscovery(sources: AgentDiscoverySources, includeChains: boolea
 		],
 		chains,
 		chainDiagnostics: [...packageChainDiagnostics, ...(sources.userChains?.diagnostics ?? []), ...projectChainDiagnostics],
+		cwd: sources.cwd,
 		userDir: sources.userDir,
 		projectDir: sources.projectAgentsDir,
 		userChainDir: sources.userChainDir,
