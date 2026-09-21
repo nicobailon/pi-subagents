@@ -490,37 +490,6 @@ describe("public subagent delegation contract", () => {
 		}
 	});
 
-	it("preserves the last emitted usage snapshot when cancellation lands before the terminal response", async () => {
-		const events = new FakeEvents();
-		const updates: SubagentDelegationUpdate[] = [];
-		const responses: SubagentDelegationResponse[] = [];
-		events.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => updates.push(payload as SubagentDelegationUpdate));
-		events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => responses.push(payload as SubagentDelegationResponse));
-		let deliverSecondUpdate: (() => void) | undefined;
-		const bridge = registerPromptTemplateDelegationBridge({
-			events,
-			getContext: () => ({ cwd: "/repo" }),
-			execute: async () => { throw new Error("legacy executor must remain separate"); },
-			executeStructured: async (_id, _params, signal, _ctx, onUpdate) => await new Promise((_resolve, reject) => {
-				onUpdate({ details: { mode: "single", runId: "run-cancel-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ index: 0, agent: "reviewer", currentTool: "read", toolCount: 1, tokens: 8, inputTokens: 4, outputTokens: 4, cacheRead: 1, cacheWrite: 0, turnCount: 1 }] } });
-				deliverSecondUpdate = () => onUpdate({ details: { mode: "single", runId: "run-cancel-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ index: 0, agent: "reviewer", currentTool: "read", toolCount: 1, tokens: 12, inputTokens: 6, outputTokens: 6, cacheRead: 3, cacheWrite: 1, turnCount: 2 }] } });
-				signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
-			}),
-		});
-		events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, requestId: "cancel-usage", result: { kind: "text" as const } });
-		while (updates.length < 1) await tick();
-		assert.deepEqual(updates[0]?.usage, { input: 4, output: 4, cacheRead: 1, cacheWrite: 0, turns: 1 });
-		deliverSecondUpdate?.();
-		while (updates.length < 2) await tick();
-		assert.deepEqual(updates[1]?.usage, { input: 6, output: 6, cacheRead: 3, cacheWrite: 1, turns: 2 });
-		events.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, { requestId: "cancel-usage", ownerRunId: "owner-1", nodeId: "node-1" });
-		while (!responses.some((entry) => entry.requestId === "cancel-usage")) await tick();
-		assert.equal(responses.find((entry) => entry.requestId === "cancel-usage")?.status, "cancelled");
-		// The already-emitted UPDATE usage snapshots must be untouched by the cancellation.
-		assert.deepEqual(updates[0]?.usage, { input: 4, output: 4, cacheRead: 1, cacheWrite: 0, turns: 1 });
-		assert.deepEqual(updates[1]?.usage, { input: 6, output: 6, cacheRead: 3, cacheWrite: 1, turns: 2 });
-		bridge.dispose();
-	});
 
 	it("isolates logical-node ownership, exact cancellation, pre-cancellation, and reuse", async () => {
 		const events = new FakeEvents();

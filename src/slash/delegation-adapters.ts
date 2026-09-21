@@ -39,7 +39,6 @@ interface PromptTemplateDelegationTaskProgress {
 	toolCount?: number;
 	durationMs?: number;
 	tokens?: number;
-	usage?: SubagentDelegationUpdateUsage;
 }
 
 export interface PromptTemplateDelegationUpdate {
@@ -295,7 +294,6 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
 			toolCount: entry.toolCount,
 			durationMs: entry.durationMs,
 			tokens: entry.tokens,
-			usage: buildDelegationUpdateUsage(entry),
 		};
 	});
 	if (!progress && (!taskProgress || taskProgress.length === 0)) return undefined;
