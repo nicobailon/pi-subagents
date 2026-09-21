@@ -9,6 +9,7 @@
 ### Changed
 
 - Raise the optional `@earendil-works/pi-ai` peer dependency floor to 0.86.1 so package metadata no longer advertises unsupported older hosts. Thanks to [@samuela](https://github.com/samuela) for [#2373](https://github.com/nicobailon/pi-subagents/issues/2373).
+- Keep the full `subagent` tool dormant until an authorized request activates it through the compact discovery loader, reducing unrelated prompt context while preserving existing delegation behavior. Thanks to [@Knimoms](https://github.com/Knimoms) for [#2380](https://github.com/nicobailon/pi-subagents/pull/2380).
 
 ### Fixed
 
