@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { consumeStopRequestPayload, stopRequestPath, stopRequestsDir } from "../../src/runs/background/control-channel.ts";
+import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
 import {
 	SUBAGENT_RPC_PROTOCOL_VERSION,
 	SUBAGENT_RPC_READY_EVENT,
@@ -13,7 +14,7 @@ import {
 	subagentRpcReplyEvent,
 	type SubagentRpcReplyEnvelope,
 } from "../../src/extension/rpc.ts";
-import { SUBAGENT_CHILD_STATUS_EVENT, type Details, type SubagentChildStatusEvent, type SubagentState } from "../../src/shared/types.ts";
+import { DIRS, SUBAGENT_CHILD_STATUS_EVENT, type Details, type SubagentChildStatusEvent, type SubagentState } from "../../src/shared/types.ts";
 
 class FakeEvents {
 	readonly emitted: Array<{ event: string; data: unknown }> = [];
@@ -1267,6 +1268,65 @@ describe("subagent extension RPC bridge", () => {
 		assert.equal((rejected as { error: { code: string } }).error.code, "invalid_params");
 
 		bridge.dispose();
+	});
+
+	it("answers cost with receipt-recovered async usage and an unresolved lower bound", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-cost-async-"));
+		const workflowRunId = `workflow-rpc-cost-${process.pid}-${Date.now()}`;
+		const recoveredRunId = `child-rpc-cost-${process.pid}-${Date.now()}`;
+		const unresolvedRunId = `child-rpc-cost-missing-${process.pid}-${Date.now()}`;
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		try {
+			const sessionFile = path.join(root, "sessions", "parent.jsonl");
+			const artifactsDir = getArtifactsDir(sessionFile, root, "session");
+			const metadataPath = getArtifactPaths(artifactsDir, recoveredRunId, "reviewer", 0).metadataPath;
+			fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "workflow-receipt.json"), JSON.stringify({
+				version: 1,
+				workflowRunId,
+				state: "complete",
+				createdAt: Date.now(),
+				entries: {
+					recovered: { key: "recovered", agent: "reviewer", latestRunId: recoveredRunId, continuation: { runIds: [recoveredRunId] }, resumability: { state: "resumable" } },
+					unresolved: { key: "unresolved", agent: "worker", latestRunId: unresolvedRunId, continuation: { runIds: [unresolvedRunId] }, resumability: { state: "resumable" } },
+				},
+			}, null, 2), "utf-8");
+			const recoveredUsage = { input: 20, output: 4, cacheRead: 80, cacheWrite: 0, cost: 0.5, turns: 2 };
+			fs.writeFileSync(metadataPath, JSON.stringify({ runId: recoveredRunId, agent: "reviewer", usage: recoveredUsage }), "utf-8");
+
+			const events = new FakeEvents();
+			const bridge = registerSubagentRpcBridge({
+				events,
+				getContext: () => ({
+					cwd: root,
+					sessionManager: {
+						getSessionId: () => "session-async-cost",
+						getSessionFile: () => sessionFile,
+						getBranch: () => [{
+							type: "message",
+							message: { role: "toolResult", toolName: "subagent", details: { mode: "workflow", runId: workflowRunId, results: [] } },
+						}],
+					},
+				}) as any,
+				execute: async () => assert.fail("cost should not call executor"),
+				state: { baseCwd: root, artifactDirPreference: "session" } as SubagentState,
+			});
+
+			const reply = await request(events, "cost-async", "cost");
+			assert.equal(reply.success, true);
+			const data = (reply as { data: { children: Array<{ agent?: string; runId?: string }>; childTotal: Record<string, number>; total: Record<string, number>; unresolvedAsyncChildren: number } }).data;
+			assert.deepEqual(data.children.map(({ agent, runId }) => ({ agent, runId })), [{ agent: "reviewer", runId: recoveredRunId }]);
+			assert.deepEqual(data.childTotal, recoveredUsage);
+			assert.deepEqual(data.total, recoveredUsage, "totals remain a lower bound when metadata is unavailable");
+			assert.equal(data.unresolvedAsyncChildren, 1);
+			bridge.dispose();
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("cost requires an active session context like every non-ping method", async () => {
