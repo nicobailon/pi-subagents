@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { afterEach, describe, it } from "node:test";
 import registerSubagentExtension from "../../src/extension/index.ts";
 
@@ -8,11 +7,12 @@ type Tool = { name: string; description?: string; promptSnippet?: string; parame
 
 const runtimes: Array<{ handlers: Map<string, Handler[]>; context: any }> = [];
 
-function createRuntime(messages: any[] = [], excluded: string[] = []) {
+function createRuntime(messages: any[] = [], excluded: string[] = [], missingApis: string[] = []) {
 	const handlers = new Map<string, Handler[]>();
 	const tools = new Map<string, Tool>();
 	let activeNames = ["read"];
 	const excludedNames = new Set(excluded);
+	const missingApiNames = new Set(missingApis);
 	const pi = new Proxy({
 		events: { on() { return () => {}; }, emit() {} },
 		on(name: string, handler: Handler) {
@@ -33,7 +33,10 @@ function createRuntime(messages: any[] = [], excluded: string[] = []) {
 			activeNames = [...new Set(names.filter((name) => available.has(name)))];
 		},
 		registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
-	}, { get(target, property) { return property in target ? target[property as keyof typeof target] : () => undefined; } });
+	}, { get(target, property) {
+		if (missingApiNames.has(String(property))) return undefined;
+		return property in target ? target[property as keyof typeof target] : () => undefined;
+	} });
 	const context = {
 		cwd: process.cwd(), hasUI: false, model: undefined,
 		ui: { setWidget() {}, theme: { fg(_name: string, text: string) { return text; }, bg(_name: string, text: string) { return text; }, bold(text: string) { return text; } } },
@@ -55,6 +58,7 @@ function createRuntime(messages: any[] = [], excluded: string[] = []) {
 	return {
 		handlers, tools, context,
 		active: () => [...activeNames],
+		select: (names: string[]) => { activeNames = [...names]; },
 		async emit(name: string, event: any) {
 			const results = [];
 			for (const handler of handlers.get(name) ?? []) results.push(await handler(event, context));
@@ -70,38 +74,13 @@ afterEach(async () => {
 });
 
 describe("subagent tool activation", () => {
-	it("keeps eager compatibility when pi-ai lacks getCurrentTools", () => {
-		const script = String.raw`
-			import assert from "node:assert/strict";
-			import { mock } from "node:test";
-			const actual = await import("@earendil-works/pi-ai");
-			const { getCurrentTools: _missing, ...exports } = actual;
-			mock.module("@earendil-works/pi-ai", { exports: { ...exports, getCurrentTools: undefined } });
-			const { default: registerSubagentExtension } = await import("./src/extension/index.ts?missing-current-tools");
-			const tools = new Map();
-			let active = ["read"];
-			const pi = new Proxy({
-				events: { on() { return () => {}; }, emit() {} },
-				on() {},
-				registerTool(tool) { tools.set(tool.name, tool); active = [...new Set([...active, tool.name])]; },
-				getAllTools() { return [...tools.values()]; },
-				getActiveTools() { return [...active]; },
-				setActiveTools(names) { active = [...new Set(names)]; },
-				registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
-			}, { get(target, property) { return property in target ? target[property] : () => undefined; } });
-			registerSubagentExtension(pi);
-			assert.ok(active.includes("subagent"));
-			assert.equal(tools.has("subagents_enable"), false);
-		`;
-		const env = { ...process.env };
-		delete env.PI_SUBAGENT_CHILD;
-		const result = spawnSync(process.execPath, [
-			"--experimental-strip-types",
-			"--experimental-test-module-mocks",
-			"--import", "./test/support/isolated-temp-root.mjs",
-			"--input-type=module", "--eval", script,
-		], { cwd: process.cwd(), env, encoding: "utf-8" });
-		assert.equal(result.status, 0, result.stderr);
+	it("keeps subagent eager unless the host provides the complete dynamic-tool API", async () => {
+		for (const missing of ["getAllTools", "getActiveTools", "setActiveTools"]) {
+			const runtime = createRuntime([], [], [missing]);
+			await runtime.emit("session_start", { type: "session_start", reason: "startup" });
+			assert.ok(runtime.active().includes("subagent"), `${missing} must fail closed to eager subagent`);
+			assert.equal(runtime.tools.has("subagents_enable"), false);
+		}
 	});
 
 	it("starts fresh parents with a compact self-service loader and keeps support tools active", async () => {
@@ -159,12 +138,15 @@ describe("subagent tool activation", () => {
 	it("does not activate delegation from prompt keywords and reports an unavailable target", async () => {
 		const runtime = createRuntime();
 		await runtime.emit("session_start", { type: "session_start", reason: "startup" });
-		const events = await runtime.emit("before_agent_start", {
+		runtime.select(["read"]);
+		const selectedTools = runtime.active();
+		await runtime.emit("before_agent_start", {
 			type: "before_agent_start", prompt: "delegate this complex task", systemPrompt: "base",
-			systemPromptOptions: { selectedTools: runtime.active(), sections: new Map(), promptGuidelines: [] },
+			systemPromptOptions: { selectedTools, sections: new Map(), promptGuidelines: [] },
 		});
 		assert.equal(runtime.active().includes("subagent"), false);
-		assert.ok(events.length > 0);
+		assert.ok(runtime.active().includes("subagents_enable"));
+		assert.ok(selectedTools.includes("subagents_enable"));
 
 		(runtime.tools as Map<string, Tool>).delete("subagent");
 		const loader = runtime.tools.get("subagents_enable");
