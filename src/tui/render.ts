@@ -83,23 +83,24 @@ function capCompactMainWindowResult(component: Component, layout: MainWindowRend
 		if (lines.length <= maxLines) return lines;
 		const visibleRows = maxLines === 1 ? 1 : maxLines - 1;
 		const hiddenCount = lines.length - visibleRows;
-		const hint = theme.fg("accent", `… ${hiddenCount} rows hidden · ${liveDetailKeyText()} expands`);
+		const hint = theme.fg("accent", `… ${hiddenCount} rows hidden · ${expandKeyHint("to expand")}`);
 		if (maxLines === 1) return [truncLine(`${lines[0] ?? ""} ${hint}`, width)];
 		return [...lines.slice(0, visibleRows), truncLine(hint, width)];
 	};
 	return capped;
 }
 
-function liveDetailKeyText(): string {
-	return keyText("app.tools.expand") || "the configured expand key";
+function expandKeyHint(action: string): string {
+	const shortcut = keyText("app.tools.expand");
+	return shortcut ? `Press ${shortcut} ${action}` : `Configure the expand key ${action}`;
 }
 
 export function liveDetailHintText(): string {
-	return `Press ${liveDetailKeyText()} for live detail`;
+	return expandKeyHint("for live detail");
 }
 
 function workflowDetailHintText(): string {
-	return `Press ${liveDetailKeyText()} for details`;
+	return expandKeyHint("for details");
 }
 
 function foregroundSingleHintText(shortcut?: string): string {
@@ -2703,7 +2704,7 @@ function fitWidgetLineBudget(lines: string[], theme: Theme, width: number, expan
 	const hiddenCount = lines.length - visibleLines;
 	const hint = expanded
 		? `… ${hiddenCount} live-detail lines hidden`
-		: `… ${hiddenCount} lines hidden · ${liveDetailKeyText()} expands`;
+		: `… ${hiddenCount} lines hidden · ${expandKeyHint("to expand")}`;
 	return [...lines.slice(0, visibleLines), truncLine(theme.fg("dim", hint), width)];
 }
 
@@ -3416,7 +3417,7 @@ export function renderSubagentResult(
 			const c = new Container();
 			const detailIndent = mainWindowIndent(layout, 1);
 			c.addChild(new Text(truncLine(`${contextPrefix}${compactLine} · ${lines.length} lines`, width), 0, 0));
-			c.addChild(new Text(truncLine(theme.fg("accent", `${detailIndent}Press ${liveDetailKeyText()} for full output`), width), 0, 0));
+			c.addChild(new Text(truncLine(theme.fg("accent", `${detailIndent}${expandKeyHint("for full output")}`), width), 0, 0));
 			return compact(c);
 		}
 		const c = new Container();
