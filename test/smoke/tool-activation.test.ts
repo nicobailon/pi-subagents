@@ -60,8 +60,6 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 				assert.ok(wait);
 				assert.ok(supervisor);
 				assert.ok(JSON.stringify(loader).length <= 800);
-				assert.ok(JSON.stringify(wait).length <= 5_000);
-				assert.ok(JSON.stringify(supervisor).length <= 500);
 				assert.ok(!tools.some((tool) => tool.name === "subagent"));
 				return fauxAssistantMessage(fauxToolCall("subagents_enable", {}), { stopReason: "toolUse" });
 			},

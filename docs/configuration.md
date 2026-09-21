@@ -80,7 +80,7 @@ Replace `YOUR_PROVIDER` with the resolved Pi provider ID. Keep the outgoing mode
 
 On Pi 0.86.1 or newer, a fresh unrestricted parent starts with `subagents_enable`, `bg_wait`, and `subagent_supervisor` active while `subagent` stays registered but inactive. Calling `subagents_enable({})` preserves unrelated active tools and exposes `subagent` on the next model request. It does not launch a child or infer authority from prompt keywords.
 
-Native transcript tool selections are restored on resume, reload, and tree navigation, so an activated session stays activated and a cold session stays cold. Older history without tool-selection records keeps eager `subagent` availability. If Pi's allowlist or exclusions remove the loader, the extension does not hide `subagent`; if they remove `subagent`, the loader reports it unavailable. Hosts older than the verified dynamic-tool baseline keep eager behavior and log one compatibility warning.
+The recorded native `subagent` selection is restored on resume, reload, and tree navigation, so an activated session stays activated and a cold session stays cold. Older history without tool-selection records keeps eager `subagent` availability. If Pi's allowlist or exclusions remove the loader, the extension does not hide `subagent`; if they remove `subagent`, the loader reports it unavailable. Hosts older than the verified dynamic-tool baseline keep eager behavior and log one compatibility warning.
 
 ## `toolDescriptionMode`
 
