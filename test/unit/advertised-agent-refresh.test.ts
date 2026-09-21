@@ -43,10 +43,10 @@ it("emits bounded file-only snapshots, refreshes through management, and perform
 				modelRegistry: { getAvailable() { return []; }, getAll() { return []; } },
 				sessionManager: { getSessionId() { return "advertised-test"; }, getSessionFile() { return undefined; }, getBranch() { return []; } },
 			};
-			// Invoke the registered catalog lifecycle hook; unrelated host services are not started by this harness.
-			const refresh = (reason = "reload") => handlers.get("session_start").at(-1)({ reason }, ctx);
+			// Invoke the catalog hooks directly; activation lifecycle is registered after them.
+			const refresh = (reason = "reload") => handlers.get("session_start").at(-2)({ reason }, ctx);
 			const emit = (systemPrompt = "base", selectedTools = activeTools) => {
-				const result = handlers.get("before_agent_start").at(-1)({ systemPrompt, systemPromptOptions: { selectedTools: selectedTools ?? undefined } }, ctx);
+				const result = handlers.get("before_agent_start").at(-2)({ systemPrompt, systemPromptOptions: { selectedTools: selectedTools ?? undefined } }, ctx);
 				return result?.systemPrompt ?? systemPrompt;
 			};
 			const io = { statSync: 0, readdirSync: 0, readFileSync: 0 };

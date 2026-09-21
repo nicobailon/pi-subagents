@@ -61,6 +61,7 @@
     "test": "npm run test:unit",
     "test:unit": "node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/*.test.ts",
     "test:integration": "node --experimental-strip-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
+    "test:smoke:tool-activation": "node --experimental-strip-types --test test/smoke/tool-activation.test.ts",
     "test:all": "npm run test:unit && npm run test:integration"
   },
   "pi": {
