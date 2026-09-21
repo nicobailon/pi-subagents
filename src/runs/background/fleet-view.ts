@@ -600,7 +600,7 @@ export function formatAsyncRunTranscript(status: AsyncStatus, asyncDir: string, 
 		const outputPath = source.path;
 		const tail = readContainedTextTail(outputPath, lineLimit, [asyncDir], "output");
 		if (tail.error) warnings.push(`Output read failed for ${tail.path}: ${tail.error}`);
-		if (tail.lines.length === 0) continue;
+		if (!tail.lines.some((line) => line.trim().length > 0)) continue;
 		transcriptLines = tail.lines;
 		transcriptSource = `${source.label} from ${tail.path}`;
 		truncated = tail.truncated;

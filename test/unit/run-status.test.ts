@@ -884,6 +884,7 @@ describe("async run status inspection", () => {
 			const stdoutPath = path.join(root, "external-0.stdout.log");
 			const stderrPath = path.join(root, "external-0.stderr.log");
 			const outputPath = path.join(root, "output-0.log");
+			const finalOutputPath = path.join(root, "external-0.final.log");
 			const runner = { type: "external-cli", command: "example", args: [] } as never;
 			fs.writeFileSync(stdoutPath, "STDOUT_SENTINEL", "utf-8");
 			fs.writeFileSync(stderrPath, "STDERR_SENTINEL", "utf-8");
@@ -891,7 +892,7 @@ describe("async run status inspection", () => {
 				runId: "external-logs", mode: "single", state: "running", startedAt: 100, currentStep: 0,
 				steps: [{
 					agent: "worker", status: "running", runner,
-					externalProcess: { startedAt: 100, stdoutPath, stderrPath, finalOutputPath: outputPath },
+					externalProcess: { startedAt: 100, stdoutPath, stderrPath, finalOutputPath },
 				}],
 			};
 
@@ -905,17 +906,23 @@ describe("async run status inspection", () => {
 			assert.match(text, /STDOUT_SENTINEL/);
 
 			fs.writeFileSync(stderrPath, "RAW_FAILURE", "utf-8");
-			fs.writeFileSync(outputPath, "FINAL_OUTPUT", "utf-8");
+			fs.writeFileSync(outputPath, "SYNTHESIZED_OUTPUT", "utf-8");
+			fs.writeFileSync(finalOutputPath, "FINAL_OUTPUT", "utf-8");
 			status.state = "failed";
 			status.steps![0]!.status = "failed";
 			text = formatAsyncRunTranscript(status, root, { index: 0 });
-			assert.match(text, /Transcript tail.*output-0\.log/);
+			assert.match(text, /Transcript tail.*external-0\.final\.log/);
 			assert.match(text, /FINAL_OUTPUT/);
+			assert.doesNotMatch(text, /SYNTHESIZED_OUTPUT/);
 			assert.doesNotMatch(text, /RAW_FAILURE/);
-			fs.writeFileSync(outputPath, "", "utf-8");
-			text = formatAsyncRunTranscript(status, root, { index: 0 });
-			assert.match(text, /External stderr tail/);
-			assert.match(text, /RAW_FAILURE/);
+
+			fs.rmSync(outputPath);
+			for (const whitespace of ["\n", "   \n"]) {
+				fs.writeFileSync(finalOutputPath, whitespace, "utf-8");
+				text = formatAsyncRunTranscript(status, root, { index: 0 });
+				assert.match(text, /External stderr tail/);
+				assert.match(text, /RAW_FAILURE/);
+			}
 
 			assert.deepEqual(summarizeAsyncStatus(root, status).steps[0]?.externalProcess, status.steps![0]!.externalProcess);
 		} finally {
