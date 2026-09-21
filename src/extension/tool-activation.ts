@@ -53,9 +53,7 @@ function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	const sessionContext = (ctx.sessionManager as unknown as { buildSessionContext(): { messages?: unknown[] } }).buildSessionContext();
 	const messages = Array.isArray(sessionContext?.messages) ? sessionContext.messages : [];
 	if (hasNativeToolSelection(messages)) {
-		const getCurrentTools = (piAi as { getCurrentTools?: (messages: any[]) => Array<{ name: string }> }).getCurrentTools;
-		if (!getCurrentTools) return;
-		setSelection(pi, getCurrentTools(messages as any[]).some((tool) => tool.name === SUBAGENT_NAME));
+		setSelection(pi, piAi.getCurrentTools(messages as any[]).some((tool) => tool.name === SUBAGENT_NAME));
 		return;
 	}
 	setSelection(pi, messages.length > 0 && pi.getActiveTools().includes(SUBAGENT_NAME));

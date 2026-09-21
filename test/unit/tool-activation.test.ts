@@ -60,9 +60,7 @@ function createRuntime(messages: any[] = [], excluded: string[] = [], missingApi
 		active: () => [...activeNames],
 		select: (names: string[]) => { activeNames = [...names]; },
 		async emit(name: string, event: any) {
-			const results = [];
-			for (const handler of handlers.get(name) ?? []) results.push(await handler(event, context));
-			return results;
+			for (const handler of handlers.get(name) ?? []) await handler(event, context);
 		},
 	};
 }

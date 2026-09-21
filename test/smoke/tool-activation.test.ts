@@ -45,14 +45,14 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 	try {
 		const { default: registerSubagentExtension } = await import(`../../index.ts?native-activation=${Date.now()}`);
 		const faux = fauxProvider({ provider: "tool-activation", models: [{ id: "local" }], tokensPerSecond: 100_000 });
-		const captured: Array<{ names: string[]; characters: number }> = [];
+		const captured: number[] = [];
 		faux.setResponses([
 			(context) => {
 				const tools = getCurrentTools(context.messages);
 				const systemPrompt = getCurrentSystemPrompt(context.messages);
 				assert.match(systemPrompt, /pi-subagents is installed/i);
 				assert.match(systemPrompt, /complexity alone is not authorization/i);
-				captured.push({ names: tools.map((tool) => tool.name), characters: serializedCharacters(tools) });
+				captured.push(serializedCharacters(tools));
 				const loader = tools.find((tool) => tool.name === "subagents_enable");
 				const wait = tools.find((tool) => tool.name === "bg_wait");
 				const supervisor = tools.find((tool) => tool.name === "subagent_supervisor");
@@ -65,7 +65,7 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 			},
 			(context) => {
 				const tools = getCurrentTools(context.messages);
-				captured.push({ names: tools.map((tool) => tool.name), characters: serializedCharacters(tools) });
+				captured.push(serializedCharacters(tools));
 				const subagent = tools.find((tool) => tool.name === "subagent");
 				assert.ok(subagent);
 				assert.deepEqual(subagent.parameters, createSubagentParamsSchema());
@@ -88,10 +88,10 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 		await session.prompt("Use the authorized delegation tools.");
 
 		assert.equal(captured.length, 2);
-		assert.ok(captured[0]!.characters <= 5_500, `cold package schemas exceeded budget: ${captured[0]!.characters}`);
-		assert.ok(captured[1]!.characters <= 23_500, `activated package schemas exceeded budget: ${captured[1]!.characters}`);
-		assert.ok(captured[1]!.characters - captured[0]!.characters >= 17_500, "lazy activation should remove the full subagent schema from cold requests");
-		console.log(`schema characters cold=${captured[0]!.characters} activated=${captured[1]!.characters}`);
+		assert.ok(captured[0]! <= 5_500, `cold package schemas exceeded budget: ${captured[0]}`);
+		assert.ok(captured[1]! <= 23_500, `activated package schemas exceeded budget: ${captured[1]}`);
+		assert.ok(captured[1]! - captured[0]! >= 17_500, "lazy activation should remove the full subagent schema from cold requests");
+		console.log(`schema characters cold=${captured[0]} activated=${captured[1]}`);
 	} finally {
 		if (session) {
 			await (session.extensionRunner as any).emit({ type: "session_shutdown", reason: "quit" });
