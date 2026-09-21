@@ -60,7 +60,7 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 				assert.ok(wait);
 				assert.ok(supervisor);
 				assert.ok(JSON.stringify(loader).length <= 800);
-				assert.ok(JSON.stringify(wait).length <= 1_300);
+				assert.ok(JSON.stringify(wait).length <= 5_000);
 				assert.ok(JSON.stringify(supervisor).length <= 500);
 				assert.ok(!tools.some((tool) => tool.name === "subagent"));
 				return fauxAssistantMessage(fauxToolCall("subagents_enable", {}), { stopReason: "toolUse" });
@@ -90,8 +90,9 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 		await session.prompt("Use the authorized delegation tools.");
 
 		assert.equal(captured.length, 2);
-		assert.ok(captured[0]!.characters <= 2_700, `cold package schemas exceeded budget: ${captured[0]!.characters}`);
-		assert.ok(captured[1]!.characters <= 20_700, `activated package schemas exceeded budget: ${captured[1]!.characters}`);
+		assert.ok(captured[0]!.characters <= 5_500, `cold package schemas exceeded budget: ${captured[0]!.characters}`);
+		assert.ok(captured[1]!.characters <= 23_500, `activated package schemas exceeded budget: ${captured[1]!.characters}`);
+		assert.ok(captured[1]!.characters - captured[0]!.characters >= 17_500, "lazy activation should remove the full subagent schema from cold requests");
 		console.log(`schema characters cold=${captured[0]!.characters} activated=${captured[1]!.characters}`);
 	} finally {
 		if (session) {
