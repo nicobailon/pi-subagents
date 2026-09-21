@@ -667,6 +667,9 @@ function transcriptTarget(item: FleetItem, state: SubagentState): { path: string
 		};
 	}
 	const step = item.step ?? (item.run.steps.length === 1 ? item.run.steps[0] : undefined);
+	// External CLI logs are plain text, not structured session JSONL. Let the
+	// bounded async detail formatter select final output/stderr/stdout instead.
+	if (step?.runner?.type === "external-cli") return undefined;
 	const recordedSessionFile = step?.sessionFile ?? item.run.sessionFile;
 	const recordedPath = step?.transcriptPath ?? recordedSessionFile;
 	if (!recordedPath) return undefined;

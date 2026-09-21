@@ -2112,8 +2112,12 @@ function widgetStats(job: AsyncJobState, theme: Theme, projection = buildWorkflo
 	return statJoin(theme, parts);
 }
 
-function widgetStepStats(theme: Theme, step: NonNullable<AsyncJobState["steps"]>[number]): string {
+function widgetStepStats(theme: Theme, step: NonNullable<AsyncJobState["steps"]>[number], snapshotNow = Date.now()): string {
+	const externalElapsed = step.runner?.type === "external-cli" && step.externalProcess
+		? step.externalProcess.durationMs ?? Math.max(0, (step.externalProcess.endedAt ?? snapshotNow) - step.externalProcess.startedAt)
+		: undefined;
 	return statJoin(theme, [
+		step.runner?.type === "external-cli" ? "external-cli" : "",
 		step.turnCount !== undefined ? `${step.turnCount} turns` : "",
 		step.toolCount !== undefined ? formatToolUseStat(step.toolCount) : "",
 		step.tokens
@@ -2121,7 +2125,7 @@ function widgetStepStats(theme: Theme, step: NonNullable<AsyncJobState["steps"]>
 				? formatContextUsage(step.tokens, step.contextLimit) ?? formatTokenUsage(step.tokens, "token")
 				: step.tokens.total ? formatTokenUsage(step.tokens, "token") : ""
 			: "",
-		step.durationMs !== undefined ? formatDuration(step.durationMs) : "",
+		externalElapsed !== undefined ? formatDuration(externalElapsed) : step.durationMs !== undefined ? formatDuration(step.durationMs) : "",
 	]);
 }
 
@@ -2315,7 +2319,7 @@ function foregroundStyleWidgetStepLines(
 	const rowIndent = options?.rowIndent ?? "  ";
 	const detailIndent = options?.detailIndent ?? "    ";
 	const status = widgetStepStatus(step.status, theme);
-	const stats = widgetStepStats(theme, step);
+	const stats = widgetStepStats(theme, step, job.updatedAt);
 	const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
 	const collapseDetails = shouldCollapseSingleChildDetails(job, step);
 	const displayName = collapseDetails ? singleChildAgentName(job, step) : childDisplayName(step);
@@ -2471,7 +2475,7 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 		const step = row.step;
 		const status = widgetStepStatus(step.status, theme);
 		const activity = widgetStepActivityLine(step, width, false, job.updatedAt);
-		const stepStats = widgetStepStats(theme, step);
+		const stepStats = widgetStepStats(theme, step, job.updatedAt);
 		const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
 		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
 		const task = compactTaskText(step.description, step.label);

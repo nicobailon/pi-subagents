@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Make running and failed external CLI logs inspectable in Fleet, tool status, and TUI surfaces with bounded, contained reads ([#2375](https://github.com/nicobailon/pi-subagents/issues/2375), thanks [@Shujakuinkuraudo](https://github.com/Shujakuinkuraudo)).
 - Preserve and safely prune Pi 0.87 context edits when forking sessions, including replacement content and signed Anthropic thinking blocks.
 - Restore watchdog reviews and permission arbitration on the stable Pi 0.86.1 host package layout. Thanks to [@zieglar](https://github.com/zieglar) for the reproduction and version comparison in [#2377](https://github.com/nicobailon/pi-subagents/issues/2377).
 - Allow completed retained agents to resume when their own descendant allowlist excludes them, while preserving both parent authority and the descendant restriction; legacy retained children without original-authority recovery metadata now fail closed. Thanks to [@riskywhat](https://github.com/riskywhat) for [#2379](https://github.com/nicobailon/pi-subagents/issues/2379), building on the allowlist work in [#2338](https://github.com/nicobailon/pi-subagents/pull/2338) credited to [@shkrabov](https://github.com/shkrabov).

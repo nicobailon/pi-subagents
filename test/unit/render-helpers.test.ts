@@ -15,6 +15,27 @@ const theme = {
 	},
 };
 
+test("external-cli widget rows show their runner and elapsed time", () => {
+	const text = buildWidgetLines([{
+		asyncId: "external-widget",
+		asyncDir: "/tmp/external-widget",
+		status: "running",
+		mode: "single",
+		agents: ["worker"],
+		updatedAt: 6_100,
+		steps: [{
+			index: 0,
+			agent: "worker",
+			status: "running",
+			runner: { type: "external-cli" } as never,
+			externalProcess: { startedAt: 1_000, stdoutPath: "/tmp/stdout", stderrPath: "/tmp/stderr" },
+		}],
+	} as AsyncJobState], theme as never, 120, true).join("\n");
+	assert.match(text, /external-cli/);
+	assert.match(text, /5\.1s/);
+	assert.doesNotMatch(text, /0 tokens/);
+});
+
 function componentText(component: unknown): string {
 	if (typeof component !== "object" || component === null) return "";
 	if ("text" in component && typeof component.text === "string") return component.text;
