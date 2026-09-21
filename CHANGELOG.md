@@ -11,7 +11,7 @@
 
 ### Fixed
 
-- Apply `subagents.defaultModel`, `defaultProvider`, `defaultThinking`, and the model-tier fields of `agentOverrides.<name>` to runtime-registered agents. They previously skipped every operator model setting and silently inherited the parent session model.
+- Apply `subagents.defaultModel`, `defaultProvider`, `defaultThinking`, and the model-tier fields of `agentOverrides.<name>` to runtime-registered agents. They previously skipped every operator model setting and silently inherited the parent session model. Thanks to @bioShaun for #2368.
 - Show each workflow child's resolved model and thinking level in parent status output. Thanks to [@grahama1970](https://github.com/grahama1970) for [#2364](https://github.com/nicobailon/pi-subagents/pull/2364).
 - Fix watchdog helper working-directory context and pruned-fork overflow summaries on Pi 0.86.1, and cut active SDK and standalone support over to 0.86.1. Thanks to [@chem](https://github.com/chem) for [#2362](https://github.com/nicobailon/pi-subagents/issues/2362).
 - Launch the packaged inspector bootstrap from its compiled JavaScript instead of an absent TypeScript source. Thanks to [@pablog12](https://github.com/pablog12) for [#2360](https://github.com/nicobailon/pi-subagents/issues/2360).
