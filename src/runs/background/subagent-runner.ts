@@ -5215,7 +5215,19 @@ function startConfiguredSubagent(config: SubagentRunConfig): void {
 	);
 }
 
+function monitorTestParent(): void {
+	const parentPid = Number(process.env.PI_SUBAGENTS_TEST_PARENT_PID);
+	if (!Number.isSafeInteger(parentPid) || parentPid <= 0 || parentPid === process.pid) return;
+	const check = () => {
+		try { process.kill(parentPid, 0); }
+		catch { process.exit(1); }
+	};
+	check();
+	setInterval(check, 250).unref();
+}
+
 if (isRunnerEntrypoint) {
+monitorTestParent();
 const configArg = process.argv[2];
 if (configArg) {
 	try {
