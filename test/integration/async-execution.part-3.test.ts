@@ -1260,6 +1260,71 @@ export default function() {
 		}
 	});
 
+	it("revives retained agents without treating their descendant allowlist as parent authority", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const planner = makeAgent("planner", { allowedAgents: ["researcher"] });
+		const agents = [planner, makeAgent("researcher")];
+		const parentSessionFile = path.join(tempDir, "allowlist-parent.jsonl");
+		const plannerSessionFile = path.join(tempDir, "allowlist-planner.jsonl");
+		const header = JSON.stringify({ type: "session", version: 1, id: "allowlist", cwd: fs.realpathSync(tempDir) });
+		fs.writeFileSync(parentSessionFile, `${header}\n`);
+		fs.writeFileSync(plannerSessionFile, `${header}\n`);
+		const sessionId = "resume-allowlist-session";
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			sessionManager: {
+				getSessionId: () => sessionId,
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "leaf",
+				openSession: () => ({ createBranchedSession: () => plannerSessionFile }),
+			},
+		};
+		const executor = makeAsyncExecutor(agents);
+		mockPi.onCall({ output: "Initial planning complete" });
+		const launch = await executor.execute(
+			"allowlist-launch", { agent: "planner", task: "Plan", async: true, context: "fork", acceptance: false },
+			new AbortController().signal, undefined, ctx,
+		) as AsyncExecutionResult;
+		assert.ok(!launch.isError, launch.content[0]?.text);
+		assert.ok(launch.details.asyncId);
+		assert.equal((await readAsyncPayload(launch.details.asyncId)).success, true);
+
+		let retainedId = launch.details.asyncId;
+		for (const [index, output] of ["First continuation complete", "Second continuation complete"].entries()) {
+			mockPi.onCall({ output });
+			const resumed = await executor.execute(
+				`allowlist-resume-${index}`, { action: "resume", id: retainedId, message: "Continue", acceptance: false },
+				new AbortController().signal, undefined, ctx,
+			) as AsyncExecutionResult;
+			assert.ok(!resumed.isError, resumed.content[0]?.text);
+			assert.ok(resumed.details.asyncId);
+			retainedId = resumed.details.asyncId;
+			const payload = await readAsyncPayload(retainedId);
+			assert.equal(payload.success, true);
+			assert.deepEqual((payload.capabilityCeiling as { allowedAgents?: string[] } | undefined)?.allowedAgents, ["researcher"]);
+			const descriptor = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, retainedId, "recovery-descriptor.json"), "utf-8"));
+			assert.deepEqual(descriptor.allowedAgents, ["researcher"]);
+			assert.equal(descriptor.capabilityCeiling, undefined);
+		}
+
+		const restrictedExecutor = createSubagentExecutor!({
+			pi: { events: createEventBus(), getSessionName: () => undefined },
+			state: { baseCwd: tempDir, currentSessionId: sessionId, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => tempDir,
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents }),
+			childRuntime: { capabilityCeiling: { version: 1, allowedAgents: ["researcher"], denyExtensions: false, sources: ["test-current-caller"] } },
+		});
+		const rejected = await restrictedExecutor.execute(
+			"allowlist-rejected", { action: "resume", id: retainedId, message: "Continue", acceptance: false },
+			new AbortController().signal, undefined, ctx,
+		) as AsyncExecutionResult;
+		assert.equal(rejected.isError, true);
+		assert.match(rejected.content[0]?.text ?? "", /does not allow agent 'planner'/);
+	});
+
 	it("publishes each revival startup control on its distinct public file", { timeout: 40_000, skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		const agents = [makeAgent("worker")];
 		const parentSessionFile = path.join(tempDir, "startup-control-parent.jsonl");
