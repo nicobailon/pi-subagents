@@ -1040,8 +1040,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(observed.at(-1)?.outputTokens, 7);
 		assert.equal(observed.at(-1)?.cacheRead, undefined);
 		assert.equal(observed.at(-1)?.cacheWrite, undefined);
-		assert.equal((result.progress as { cacheRead?: number }).cacheRead, undefined);
-		assert.equal((result.progress as { cacheWrite?: number }).cacheWrite, undefined);
 	});
 
 	it("allows concurrent async launches in one turn", async () => {

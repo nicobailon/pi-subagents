@@ -49,14 +49,10 @@ export interface SubagentDelegationStarted {
 }
 
 /**
- * Cumulative per-attempt usage snapshot carried on a structured delegation
- * UPDATE. All counters describe the same attempt at the same observation
- * time and are finite non-negative values; a missing counter means the
- * value is unavailable, not zero. `tokens` on the update keeps its existing
- * input+output meaning -- this snapshot adds cache and turn counters
- * alongside it. An UPDATE does not promise final billed usage or cost; the
- * terminal response's `usage` remains authoritative, and retry attempts are
- * never aggregated into a single snapshot here.
+ * Cumulative usage for one attempt at one observation time. This snapshot is
+ * emitted only when every counter is known, finite, and non-negative. It does
+ * not combine retries or replace authoritative terminal usage; absence means
+ * unavailable, not zero. UPDATE `tokens` keeps its input-plus-output meaning.
  */
 export interface SubagentDelegationUpdateUsage {
 	input: number;

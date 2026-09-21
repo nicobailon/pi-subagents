@@ -7,7 +7,7 @@ import {
 	type SubagentDelegationUpdateUsage,
 	type SubagentDelegationValue,
 } from "../api/delegation.ts";
-import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, IntercomBridgeConfig, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, Usage } from "../shared/types.ts";
+import type { AcceptanceInput, AgentContract, AgentProgress, EffectsProjection, ExecutionProjection, IntercomBridgeConfig, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, Usage } from "../shared/types.ts";
 import { cloneJsonWithinByteLimit } from "./delegation-json.ts";
 
 export interface PromptTemplateDelegationRequest {
@@ -249,20 +249,7 @@ function isFiniteNonNegative(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
-/**
- * Projects a cumulative per-attempt usage snapshot from a progress entry,
- * only when every counter is present and a finite non-negative number.
- * Returns a fresh object each call so a later mutation of the source
- * progress (which keeps accumulating) never changes a snapshot already
- * handed to a caller.
- */
-function buildDelegationUpdateUsage(entry: {
-	inputTokens?: number;
-	outputTokens?: number;
-	cacheRead?: number;
-	cacheWrite?: number;
-	turnCount?: number;
-} | undefined): SubagentDelegationUpdateUsage | undefined {
+function buildDelegationUpdateUsage(entry: Pick<AgentProgress, "inputTokens" | "outputTokens" | "cacheRead" | "cacheWrite" | "turnCount"> | undefined): SubagentDelegationUpdateUsage | undefined {
 	if (!entry) return undefined;
 	const { inputTokens, outputTokens, cacheRead, cacheWrite, turnCount } = entry;
 	if (!isFiniteNonNegative(inputTokens)
