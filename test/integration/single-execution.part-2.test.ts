@@ -1733,6 +1733,48 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(resumed.savedOutputPath, undefined);
 	});
 
+	it("preserves original parent authority when reviving a foreground child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const callerRuntime: ChildRuntimeConfig = {
+			capabilityCeiling: {
+				version: 1,
+				allowedTools: ["read"],
+				allowedAgents: ["echo", "researcher"],
+				denyExtensions: true,
+				sources: ["original-parent"],
+			},
+		};
+		const executor = makeExecutor(
+			[makeAgent("echo", { allowedAgents: ["researcher"] }), makeAgent("researcher")],
+			{}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, callerRuntime,
+		);
+		const ctx = makeMinimalCtx(tempDir);
+		mockPi.onCall({ output: "Initial foreground work" });
+		const firstResult = await executor.execute(
+			"foreground-authority-first",
+			{ async: false, workflowScript: `return runs.run("first", { agent: "echo", task: "First", acceptance: false, output: false });` },
+			new AbortController().signal, undefined, ctx,
+		);
+		assert.equal(firstResult.isError, undefined, firstResult.content[0]?.text ?? "foreground launch failed");
+		const first = firstResult.details.workflow?.value as { runId?: string };
+		assert.ok(first.runId);
+
+		callerRuntime.capabilityCeiling = undefined;
+		mockPi.onCall({ output: "Resumed foreground work" });
+		const resumedResult = await executor.execute(
+			"foreground-authority-resume",
+			{ async: false, workflowScript: `return runs.run("resumed", { resume: ${JSON.stringify(first.runId)}, task: "Resume", acceptance: false, output: false });` },
+			new AbortController().signal, undefined, ctx,
+		);
+		assert.equal(resumedResult.isError, undefined, resumedResult.content[0]?.text ?? "foreground resume failed");
+		assert.deepEqual(readCall().runtime?.capabilityCeiling, {
+			version: 1,
+			allowedTools: ["read"],
+			allowedAgents: ["researcher"],
+			denyExtensions: true,
+			sources: ["agent:echo", "original-parent"],
+		});
+	});
+
 	it("retains inherited and disabled discovered schemas across definition changes", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const agentPath = path.join(tempDir, ".pi", "agents", "typed.md");
 		fs.mkdirSync(path.dirname(agentPath), { recursive: true });

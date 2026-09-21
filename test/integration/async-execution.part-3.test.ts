@@ -21,6 +21,7 @@ import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapac
 import { readPendingChainAppendRequests } from "../../src/runs/background/chain-append.ts";
 import { createRunFanoutBudget, getRunFanoutBudgetSnapshot, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 import { deriveForkPromptCacheKey } from "../../src/runs/shared/child-tool-plan.ts";
+import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
 import type { AsyncExecutionResult, AsyncResultPayload, AsyncStatusPayload } from "../support/async-execution-fixture.ts";
 import {
 	installAsyncExecutionHooks, waitForMockPiRuntime, available, isAsyncAvailable,
@@ -1278,7 +1279,21 @@ export default function() {
 				openSession: () => ({ createBranchedSession: () => plannerSessionFile }),
 			},
 		};
-		const executor = makeAsyncExecutor(agents);
+		const callerRuntime: ChildRuntimeConfig = {
+			capabilityCeiling: { version: 1, allowedTools: ["grep", "read"], allowedAgents: ["planner", "researcher"], denyExtensions: false, sources: ["original-parent"] },
+		};
+		const makeExecutor = () => createSubagentExecutor!({
+			pi: { events: createEventBus(), getSessionName: () => undefined },
+			state: { baseCwd: tempDir, currentSessionId: sessionId, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => tempDir,
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents }),
+			childRuntime: callerRuntime,
+		});
+		const executor = makeExecutor();
 		mockPi.onCall({ output: "Initial planning complete" });
 		const launch = await executor.execute(
 			"allowlist-launch", { agent: "planner", task: "Plan", async: true, context: "fork", acceptance: false },
@@ -1287,6 +1302,7 @@ export default function() {
 		assert.ok(!launch.isError, launch.content[0]?.text);
 		assert.ok(launch.details.asyncId);
 		assert.equal((await readAsyncPayload(launch.details.asyncId)).success, true);
+		callerRuntime.capabilityCeiling = { version: 1, allowedTools: ["read"], allowedAgents: ["planner", "researcher"], denyExtensions: false, sources: ["current-caller"] };
 
 		let retainedId = launch.details.asyncId;
 		for (const [index, output] of ["First continuation complete", "Second continuation complete"].entries()) {
@@ -1300,29 +1316,106 @@ export default function() {
 			retainedId = resumed.details.asyncId;
 			const payload = await readAsyncPayload(retainedId);
 			assert.equal(payload.success, true);
-			assert.deepEqual((payload.capabilityCeiling as { allowedAgents?: string[] } | undefined)?.allowedAgents, ["researcher"]);
+			assert.deepEqual(payload.capabilityCeiling, {
+				version: 1,
+				allowedTools: ["read"],
+				allowedAgents: ["researcher"],
+				denyExtensions: false,
+				sources: ["agent:planner", "current-caller", "original-parent"],
+			});
 			const descriptor = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, retainedId, "recovery-descriptor.json"), "utf-8"));
 			assert.deepEqual(descriptor.allowedAgents, ["researcher"]);
-			assert.equal(descriptor.capabilityCeiling, undefined);
+			assert.deepEqual(descriptor.capabilityCeiling, {
+				version: 1,
+				allowedTools: ["read"],
+				allowedAgents: ["planner", "researcher"],
+				denyExtensions: false,
+				sources: ["current-caller", "original-parent"],
+			});
 		}
 
-		const restrictedExecutor = createSubagentExecutor!({
-			pi: { events: createEventBus(), getSessionName: () => undefined },
-			state: { baseCwd: tempDir, currentSessionId: sessionId, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
-			config: {},
-			asyncByDefault: false,
-			tempArtifactsDir: tempDir,
-			getSubagentSessionRoot: () => tempDir,
-			expandTilde: (value: string) => value,
-			discoverAgents: () => ({ agents }),
-			childRuntime: { capabilityCeiling: { version: 1, allowedAgents: ["researcher"], denyExtensions: false, sources: ["test-current-caller"] } },
-		});
+		callerRuntime.capabilityCeiling = { version: 1, allowedAgents: ["researcher"], denyExtensions: false, sources: ["restricted-current-caller"] };
+		const restrictedExecutor = makeExecutor();
 		const rejected = await restrictedExecutor.execute(
 			"allowlist-rejected", { action: "resume", id: retainedId, message: "Continue", acceptance: false },
 			new AbortController().signal, undefined, ctx,
 		) as AsyncExecutionResult;
 		assert.equal(rejected.isError, true);
 		assert.match(rejected.content[0]?.text ?? "", /does not allow agent 'planner'/);
+	});
+
+	it("revives a current workflow child from persisted parent admission authority", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const agents = [makeAgent("planner", { allowedAgents: ["researcher"] }), makeAgent("researcher")];
+		const parentAuthority = { version: 1 as const, allowedAgents: ["planner", "researcher"], denyExtensions: false, sources: ["workflow-parent"] };
+		const ctx = makeMinimalCtx(tempDir);
+		const executor = createSubagentExecutor!({
+			pi: { events: createEventBus(), getSessionName: () => undefined, sendMessage() {} },
+			state: { baseCwd: tempDir, currentSessionId: "session-123", asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => tempDir,
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents }),
+			childRuntime: { capabilityCeiling: parentAuthority },
+		});
+		mockPi.onCall({ output: "Initial workflow child complete" });
+		const launch = await executor.execute(
+			"workflow-parent-authority-launch",
+			{ workflowScript: `return await runs.run("planner", { agent: "planner", task: "Plan", acceptance: false })`, async: true, mission: false, capabilityCeiling: parentAuthority },
+			new AbortController().signal, undefined, ctx,
+		) as AsyncExecutionResult;
+		assert.ok(!launch.isError, launch.content[0]?.text);
+		assert.ok(launch.details.asyncId);
+		await readAsyncPayload(launch.details.asyncId);
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, launch.details.asyncId, "status.json"), "utf-8"));
+		assert.deepEqual(status.admissionCapabilityCeiling, parentAuthority);
+
+		mockPi.onCall({ output: "Workflow child resumed" });
+		const resumed = await executor.execute(
+			"workflow-parent-authority-resume", { action: "resume", id: launch.details.asyncId, message: "Continue", acceptance: false },
+			new AbortController().signal, undefined, ctx,
+		) as AsyncExecutionResult;
+		assert.ok(!resumed.isError, resumed.content[0]?.text);
+		assert.ok(resumed.details.asyncId);
+		const payload = await readAsyncPayload(resumed.details.asyncId);
+		assert.equal(payload.success, true);
+		assert.deepEqual(payload.capabilityCeiling, {
+			version: 1,
+			allowedAgents: ["researcher"],
+			denyExtensions: false,
+			sources: ["agent:planner", "workflow-parent"],
+		});
+	});
+
+	it("fails closed when a retained workflow child lacks original-authority metadata", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+		const runId = `legacy-workflow-resume-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const sessionFile = path.join(tempDir, "legacy-workflow-child.jsonl");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(sessionFile, "{}\n");
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+			runId,
+			sessionId: "session-123",
+			mode: "workflow",
+			state: "complete",
+			startedAt: 100,
+			lastUpdate: 200,
+			cwd: tempDir,
+			capabilityCeiling: { version: 1, allowedAgents: ["researcher"], denyExtensions: false, sources: ["agent:planner"] },
+			steps: [{ agent: "planner", status: "complete", sessionFile }],
+		}));
+		try {
+			const result = await makeAsyncExecutor([makeAgent("planner", { allowedAgents: ["researcher"] }), makeAgent("researcher")]).execute(
+				"legacy-workflow-resume", { action: "resume", id: runId, message: "Continue", acceptance: false },
+				new AbortController().signal, undefined, makeMinimalCtx(tempDir),
+			) as AsyncExecutionResult;
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /missing its required run fan-out recovery identity/);
+			assert.equal(mockPi.callCount(), 0);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
 	});
 
 	it("publishes each revival startup control on its distinct public file", { timeout: 40_000, skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {

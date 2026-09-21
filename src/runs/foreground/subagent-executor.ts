@@ -2055,11 +2055,14 @@ async function resumeAsyncRun(input: {
 	if (!revivalSessionFile) {
 		return { content: [{ type: "text", text: `Async run '${target.runId}' child ${target.index} does not have a persisted session file to resume from.` }], isError: true, details: { mode: "management", results: [] } };
 	}
+	if (input.params.baseRef !== undefined && "managedWorktree" in target && target.managedWorktree === true) {
+		return { content: [{ type: "text", text: "Cannot resume with baseRef: retained managed-worktree children continue in their existing worktree. Start a new worktree run from that base ref instead." }], isError: true, details: { mode: "management", results: [] } };
+	}
 	if (target.source === "async" && asyncReviveRequiresRecoveryDescriptor(target)) {
 		return { content: [{ type: "text", text: `Async child '${target.runId}' is missing its required run fan-out recovery identity. Start a new run instead.` }], isError: true, details: { mode: "management", results: [] } };
 	}
-	if (input.params.baseRef !== undefined && "managedWorktree" in target && target.managedWorktree === true) {
-		return { content: [{ type: "text", text: "Cannot resume with baseRef: retained managed-worktree children continue in their existing worktree. Start a new worktree run from that base ref instead." }], isError: true, details: { mode: "management", results: [] } };
+	if (target.source === "nested" && !target.recoveryDescriptor) {
+		return { content: [{ type: "text", text: `Nested child '${target.runId}' is missing its required recovery identity. Start a new run instead.` }], isError: true, details: { mode: "management", results: [] } };
 	}
 	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(baseAgentConfig, recoveryDescriptor) : baseAgentConfig;
 	const agentConfig = intercomBridge.active ? applyIntercomBridgeToAgent(recoveryAgentConfig, intercomBridge) : recoveryAgentConfig;
@@ -2179,9 +2182,9 @@ async function resumeAsyncRun(input: {
 		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
 		...(input.params.toolBudget !== undefined ? { toolBudget: input.params.toolBudget } : {}),
-		// The retained runtime ceiling also contains the agent's descendant allowlist.
-		// Admission must instead use the original incoming authority plus the current caller.
-		capabilityCeiling: intersectSubagentCapabilityCeilings(recoveryDescriptor?.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(input.deps.state.currentSessionId)),
+		// Recovery descriptors, remembered foreground runs, and current workflow roots
+		// preserve parent authority before the selected agent's descendant ceiling.
+		capabilityCeiling: intersectSubagentCapabilityCeilings(recoveryDescriptor?.capabilityCeiling ?? (target.source === "foreground" || (target.source === "async" && target.mode === "workflow") ? target.capabilityCeiling : undefined), resolveCurrentSubagentCapabilityCeiling(input.deps.state.currentSessionId)),
 		runFanoutBudget: input.params.runFanoutBudget ?? recoveryDescriptor?.runFanoutBudget ?? createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(input.deps.config.maxSubagentSpawnsPerRun)),
 		parentWorkflowRunId: input.params.workflowParentRunId,
 		workflowKey: input.params.workflowKey,
@@ -5277,6 +5280,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					...(workflowSessionRoot ? { sessionRoot: workflowSessionRoot } : {}),
 					...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}),
 					pid: process.pid,
+					...(workflowCapabilityCeiling ? { admissionCapabilityCeiling: workflowCapabilityCeiling } : {}),
 					steps: [],
 					...(workflowPreflight ? { preflight: workflowPreflight } : {}),
 					workflow: { trace: [], emits: [], console: [], ...(workflowArgsEvidence ?? {}), ...(workflowResource ? { resource: workflowResource.provenance } : {}) },
@@ -5925,7 +5929,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						} catch (receiptError) {
 							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
 						}
-						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, workflowChildren, results: workflowResultChildren(workflow.children, status, false), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, workflowChildren, results: workflowResultChildren(workflow.children, status, false), workflow: status.workflow, ...(workflowCapabilityCeiling ? { admissionCapabilityCeiling: workflowCapabilityCeiling } : {}), ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						if (pendingResultPublication && !await pendingResultPublication) return;
 						persist();
 						deps.refreshResultDelivery?.();
@@ -5975,7 +5979,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						} catch (receiptError) {
 							appendWorkflowEvent({ type: "subagent.workflow.receipt_write_failed", error: `Failed to persist async workflow receipt: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}` });
 						}
-						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, workflowChildren, ...(terminalOutcome ? { terminalOutcome } : {}), results: workflowResultChildren(partial.children, status, true), workflow: status.workflow, ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, workflowChildren, ...(terminalOutcome ? { terminalOutcome } : {}), results: workflowResultChildren(partial.children, status, true), workflow: status.workflow, ...(workflowCapabilityCeiling ? { admissionCapabilityCeiling: workflowCapabilityCeiling } : {}), ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						if (pendingResultPublication && !await pendingResultPublication) return;
 						persist();
 						deps.refreshResultDelivery?.();

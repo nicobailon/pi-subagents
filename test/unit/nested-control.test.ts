@@ -385,6 +385,27 @@ describe("nested control routing", () => {
 		}
 	});
 
+	it("fails closed for terminal nested revival without original-authority metadata", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-terminal-no-recovery-"));
+		try {
+			const runId = "nested-no-recovery";
+			const parentSessionFile = path.join(root, "parent.jsonl");
+			const sessionFile = path.join(root, "parent", runId, "run-0", "session.jsonl");
+			fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+			fs.writeFileSync(parentSessionFile, "");
+			fs.writeFileSync(sessionFile, "");
+			const route = createNestedRun(runId, "complete", { sessionFile });
+
+			const result = await createExecutor(stateWithNestedRoute(route), [{ name: "worker", description: "Worker", prompt: "Do work" }])
+				.execute("resume", { action: "resume", id: runId, message: "continue" }, new AbortController().signal, undefined, ctx(root, parentSessionFile));
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /missing its required recovery identity/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("restores the original extension bindings for terminal nested revival", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-binding-recovery-"));
 		try {

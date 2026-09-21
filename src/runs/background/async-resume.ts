@@ -77,6 +77,7 @@ interface AsyncResultFile {
 	thinking?: string;
 	launchContractDigest?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	admissionCapabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	results?: Array<{ agent?: string; sessionName?: string; success?: boolean; sessionFile?: string; intercomTarget?: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling }>;
 }
 
@@ -140,6 +141,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 		thinking: validateOptionalString(data, "thinking", resultPath),
 		launchContractDigest: validateOptionalString(data, "launchContractDigest", resultPath),
 		...(data.capabilityCeiling === undefined ? {} : { capabilityCeiling: parseSubagentCapabilityCeiling(data.capabilityCeiling, `async result file '${resultPath}' capabilityCeiling`) }),
+		...(data.admissionCapabilityCeiling === undefined ? {} : { admissionCapabilityCeiling: parseSubagentCapabilityCeiling(data.admissionCapabilityCeiling, `async result file '${resultPath}' admissionCapabilityCeiling`) }),
 		...(typeof success === "boolean" ? { success } : {}),
 		...(results ? { results } : {}),
 	};
@@ -273,6 +275,7 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
 	if (status.cwd !== undefined && typeof status.cwd !== "string") throw new Error(`Invalid async status '${source}': cwd must be a string.`);
 	if (status.sessionFile !== undefined && typeof status.sessionFile !== "string") throw new Error(`Invalid async status '${source}': sessionFile must be a string.`);
 	if (status.capabilityCeiling !== undefined) status.capabilityCeiling = parseSubagentCapabilityCeiling(status.capabilityCeiling, `async status '${source}' capabilityCeiling`);
+	if (status.admissionCapabilityCeiling !== undefined) status.admissionCapabilityCeiling = parseSubagentCapabilityCeiling(status.admissionCapabilityCeiling, `async status '${source}' admissionCapabilityCeiling`);
 	if (status.steps !== undefined) {
 		if (!Array.isArray(status.steps)) throw new Error(`Invalid async status '${source}': steps must be an array.`);
 		status.steps.forEach((step, index) => {
@@ -296,9 +299,9 @@ function normalizeRecoveryAcceptance(value: unknown, descriptorPath: string): Ac
 	return value as AcceptanceInput;
 }
 
-export function asyncReviveRequiresRecoveryDescriptor(target: Pick<AsyncResumeTarget, "recoveryDescriptor" | "mode" | "sessionFile">): boolean {
+export function asyncReviveRequiresRecoveryDescriptor(target: Pick<AsyncResumeTarget, "recoveryDescriptor" | "mode" | "sessionFile" | "capabilityCeiling">): boolean {
 	if (target.recoveryDescriptor) return false;
-	return !(target.mode === "workflow" && Boolean(target.sessionFile));
+	return !(target.mode === "workflow" && target.sessionFile && target.capabilityCeiling);
 }
 
 function resumeTargetMode(status: AsyncStatus | null, result: AsyncResultFile | undefined): SubagentRunMode | undefined {
@@ -575,7 +578,9 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const stepModel = statusSteps[index]?.model ?? resultSteps[index]?.model ?? (stepCount === 1 ? result?.model : undefined);
 	const stepThinking = statusSteps[index]?.thinking ?? resultSteps[index]?.thinking ?? (stepCount === 1 ? result?.thinking : undefined);
 	const thinkingCeiling = statusSteps[index]?.thinkingCeiling ?? (stepCount === 1 ? recoveryDescriptor?.thinkingCeiling : undefined);
-	const capabilityCeiling = intersectSubagentCapabilityCeilings(status?.capabilityCeiling, statusSteps[index]?.capabilityCeiling, result?.capabilityCeiling, resultSteps[index]?.capabilityCeiling);
+	const capabilityCeiling = mode === "workflow"
+		? intersectSubagentCapabilityCeilings(status?.admissionCapabilityCeiling, result?.admissionCapabilityCeiling)
+		: intersectSubagentCapabilityCeilings(status?.capabilityCeiling, statusSteps[index]?.capabilityCeiling, result?.capabilityCeiling, resultSteps[index]?.capabilityCeiling);
 	const managedWorktreeCwd = location.asyncDir
 		? resolveRetainedWorktreeCwd(parallelHandoffPath(location.asyncDir), runId, index)
 		: undefined;

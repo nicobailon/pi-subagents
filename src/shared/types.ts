@@ -1895,6 +1895,8 @@ export interface AsyncStatus {
 	launchResolvedExtensions?: LaunchResolvedChildExtensions;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	/** Parent admission authority before the selected workflow child's descendant restrictions. */
+	admissionCapabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
 	workflow?: Details["workflow"];
 	workflowChildren?: WorkflowChildSummary;

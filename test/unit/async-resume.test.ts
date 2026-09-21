@@ -43,10 +43,11 @@ describe("async resume lookup", () => {
 		}
 	});
 
-	it("resolves a workflow child session without a recovery descriptor", () => {
+	it("requires a recovery descriptor for a legacy workflow child session", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-workflow-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
 			const sessionFile = path.join(root, "child-session.jsonl");
 			fs.writeFileSync(sessionFile, "", "utf-8");
 			writeJson(path.join(asyncRoot, "workflow-1", "status.json"), {
@@ -67,8 +68,41 @@ describe("async resume lookup", () => {
 			assert.equal(target.agent, "worker");
 			assert.equal(target.sessionFile, sessionFile);
 			assert.equal(target.recoveryDescriptor, undefined);
+			assert.equal(asyncReviveRequiresRecoveryDescriptor(target), true);
+			assert.equal(asyncReviveRequiresRecoveryDescriptor({}), true);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses a current workflow's persisted parent admission authority", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-current-workflow-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "child-session.jsonl");
+			const parentAuthority = { version: 1 as const, allowedAgents: ["researcher", "worker"], denyExtensions: false, sources: ["workflow-parent"] };
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncRoot, "workflow-2", "status.json"), {
+				runId: "workflow-2", mode: "workflow", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root,
+				admissionCapabilityCeiling: parentAuthority,
+				steps: [{ agent: "worker", status: "complete", sessionFile, capabilityCeiling: { version: 1, allowedAgents: ["researcher"], denyExtensions: false, sources: ["agent:worker"] } }],
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "workflow-2" }, { asyncDirRoot: asyncRoot, resultsDir });
+
+			assert.deepEqual(target.capabilityCeiling, parentAuthority);
 			assert.equal(asyncReviveRequiresRecoveryDescriptor(target), false);
-			assert.equal(asyncReviveRequiresRecoveryDescriptor({ mode: "single", sessionFile }), true);
+
+			fs.rmSync(path.join(asyncRoot, "workflow-2"), { recursive: true });
+			writeJson(path.join(resultsDir, "workflow-2.json"), {
+				runId: "workflow-2", mode: "workflow", state: "complete", success: true, cwd: root,
+				admissionCapabilityCeiling: parentAuthority,
+				results: [{ agent: "worker", success: true, sessionFile }],
+			});
+			const resultOnly = resolveAsyncResumeTarget({ id: "workflow-2" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.deepEqual(resultOnly.capabilityCeiling, parentAuthority);
+			assert.equal(asyncReviveRequiresRecoveryDescriptor(resultOnly), false);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
