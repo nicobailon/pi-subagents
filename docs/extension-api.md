@@ -114,7 +114,7 @@ pi.events.emit("subagents:rpc:v1:request", {
 });
 ```
 
-The RPC methods are `ping`, `status`, `manage`, `spawn`, `steer`, `interrupt`, `stop`, and `resume`. `status`, `manage`, `steer`, `interrupt`, and `resume` reuse normal package-owned actions.
+The RPC methods are `ping`, `status`, `manage`, `spawn`, `steer`, `interrupt`, `stop`, `resume`, and `cost`. `status`, `manage`, `steer`, `interrupt`, and `resume` reuse normal package-owned actions.
 
 Method notes:
 
@@ -122,6 +122,7 @@ Method notes:
 - `spawn` accepts structured single-child execution (`agent`, `task?`), inline `workflowScript`, or `workflowScriptPath` and is async-only: omit `async` or set `async: true`, omit `clarify`, and do not pass management `action` values. Relative script paths resolve against the request `cwd`. It goes through the same executor as the `subagent` tool, so agent discovery, validation, session attribution, configured spawn caps, child-safety depth, artifacts, and async status all behave the same.
 - `steer` requires an async run `id` (plus optional child `index`) and a non-empty `message`; its reply preserves the normal acknowledged-delivery result. Optional `mode` values are `steer` (default), `follow_up`, and `auto`, and receipts include `deliveryStatus: "delivered" | "queued"`. RPC steering disables the direct tool's pause-and-revive recovery in every mode so an extension keeps authority over the exact child it spawned; `ping.capabilities.nonRecoveringSteer` advertises this guarantee.
 - `resume` requires a run target and non-empty `message`. It delegates to the existing revival path, which validates current-session ownership, persisted session/recovery metadata, stopped/live state, capability ceilings, and the exclusive session lease before returning the new async run details. Callers may request a `file-only` output path for the revived result without overriding its model, tools, or budgets. `ping.capabilities.resume` advertises this seam.
+- `cost` returns the same parent-plus-child accounting `/subagent-cost` renders, as data: `{ version: 1, parent, children, childTotal, total, unresolvedAsyncChildren }`, where each usage is `{ input, output, cacheRead, cacheWrite, cost, turns }` and each child carries `label`, `agent`, `runId`, `usage`, and `sessionFile` when known. It is read-only and walks the current session branch plus existing run artifacts, so request it on your own turn boundaries (for example after `agent_settled` or an async completion wake), not on a timer. `unresolvedAsyncChildren` counts async children whose metadata could not be read; treat `childTotal` as a lower bound when it is non-zero, exactly as documented for `/subagent-cost` in [observability.md](observability.md). `ping.capabilities.cost` advertises `{ version: 1 }`.
 - `stop` targets current-session top-level async runs through the stop control channel and records a `stopped` lifecycle instead of reporting a timeout.
 - `status` keeps targeted and rich requests on the executor-backed path. A request with no `id`, `runId`, `dir`, `index`, `view`, or `lines` may use the restored in-memory projections and a short summary; when the live state is missing, stale, session-mismatched, or not restored, it falls back to normal executor status. Status `view`, `lines`, and `index` are forwarded for targeted transcript/fleet requests. Successful replies retain `text`, `details`, `fleet`, and `asyncSnapshot`; the short summary intentionally omits canonical filesystem details, wait subscriptions, and budget annotations.
 
@@ -136,6 +137,7 @@ Capability advertisements on `ping`:
 - `resume` — the revival seam described above.
 - `statusProjection: { version: 1, untargeted: "in-memory-when-ready", targeted: "executor" }` — untargeted status may use restored bounded projections; targeted or rich status remains executor-backed.
 - `fleetStatus: { version: 1 }` — successful `status` replies additionally include `data.fleet`.
+- `cost: { version: 1 }` — the `cost` method is available and returns the versioned report shape above.
 
 Structured delegation progress updates carry `runId` as soon as foreground execution allocates it, so a caller can retain the package-owned revival target even if its own tool turn is interrupted before the terminal response. Foreground `details.results[]` rows also include a numeric `index` that is unique within the run and stable across partial progress snapshots and the final result; use `(runId, index)` instead of row position to correlate single, counted parallel, and chain children.
 

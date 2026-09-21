@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- In-process RPC `cost` method: returns the same parent-plus-child accounting `/subagent-cost` renders, as versioned data (`{ version: 1, parent, children, childTotal, total, unresolvedAsyncChildren }`), so other extensions can surface subagent spend without scraping slash output. `ping.capabilities.cost` advertises `{ version: 1 }`. The report logic moved unchanged into `src/slash/subagent-cost.ts`; `/subagent-cost` output is identical. Thanks to [@raymondtri](https://github.com/raymondtri) for [#2378](https://github.com/nicobailon/pi-subagents/pull/2378).
+
 ### Changed
 
 - Raise the optional `@earendil-works/pi-ai` peer dependency floor to 0.86.1 so package metadata no longer advertises unsupported older hosts. Thanks to [@samuela](https://github.com/samuela) for [#2373](https://github.com/nicobailon/pi-subagents/issues/2373).

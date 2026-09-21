@@ -31,7 +31,7 @@ Or ask naturally: "Show me the current async runs."
 
 Run `/subagent-cost` for the parent session's combined parent and child token usage and cost. It includes completed async workflow children when their persisted receipts and metadata remain available. Missing child metadata is reported as unavailable when the receipt identifies that child. If the workflow receipt itself is missing, unreadable, invalid, or non-terminal, affected children can be omitted from the total without an unavailable count, so treat the result as a lower bound when run artifacts are unavailable.
 
-Pi's built-in session totals do not automatically include child usage delivered only by an async completion notification. Those notifications are custom messages, and Pi's public custom-message API does not carry accounted usage. `/subagent-cost` is therefore the supported accounting view for async child usage; do not infer child totals from Pi's footer or `/session` alone.
+Pi's built-in session totals do not automatically include child usage delivered only by an async completion notification. Those notifications are custom messages, and Pi's public custom-message API does not carry accounted usage. `/subagent-cost` is therefore the supported accounting view for async child usage; do not infer child totals from Pi's footer or `/session` alone. Other extensions can read the same report as data through the in-process RPC `cost` method (see [extension-api.md](extension-api.md#in-process-event-bus-rpc)) instead of scraping the slash output.
 
 The under-editor async widget gives a short view while work runs. Its expand key follows your Pi keybinding:
 
