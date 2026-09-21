@@ -28,7 +28,8 @@ function supportsNativeDynamicTools(pi: ExtensionAPI): boolean {
 			if (part !== minimum) return part > minimum;
 		}
 		return true;
-	} catch {
+	} catch (error) {
+		console.warn("[pi-subagents] Failed to detect dynamic tool support; keeping subagent eagerly available:", error);
 		return false;
 	}
 }
@@ -111,7 +112,8 @@ export function registerSubagentToolActivation(
 	pi.on("before_agent_start", (event) => {
 		const available = pi.getAllTools();
 		if (!Array.isArray(available) || !available.some((tool) => tool.name === LOADER_NAME)) return;
-		if (!event.systemPromptOptions.selectedTools.includes(LOADER_NAME)) event.systemPromptOptions.selectedTools.push(LOADER_NAME);
+		const selectedTools = event.systemPromptOptions.selectedTools ??= [...pi.getActiveTools()];
+		if (!selectedTools.includes(LOADER_NAME)) selectedTools.push(LOADER_NAME);
 		if (!pi.getActiveTools().includes(LOADER_NAME)) pi.setActiveTools([...pi.getActiveTools(), LOADER_NAME]);
 	});
 }

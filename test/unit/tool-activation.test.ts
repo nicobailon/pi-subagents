@@ -143,6 +143,13 @@ describe("subagent tool activation", () => {
 		assert.equal(runtime.active().includes("subagent"), false);
 		assert.ok(runtime.active().includes("subagents_enable"));
 		assert.ok(selectedTools.includes("subagents_enable"));
+		const defaultSelectionEvent = {
+			type: "before_agent_start", prompt: "continue", systemPrompt: "base",
+			systemPromptOptions: { selectedTools: undefined as string[] | undefined, sections: new Map(), promptGuidelines: [] },
+		};
+		await runtime.emit("before_agent_start", defaultSelectionEvent);
+		assert.ok(defaultSelectionEvent.systemPromptOptions.selectedTools?.includes("read"));
+		assert.ok(defaultSelectionEvent.systemPromptOptions.selectedTools?.includes("subagents_enable"));
 
 		(runtime.tools as Map<string, Tool>).delete("subagent");
 		const loader = runtime.tools.get("subagents_enable");
