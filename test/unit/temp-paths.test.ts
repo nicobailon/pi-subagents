@@ -133,6 +133,20 @@ console.log(JSON.stringify({ agentDir: getAgentDir(), profilePath: path.join(pro
 		}
 	});
 
+	it("records a nested test process as the runner parent", () => {
+		const loaderUrl = new URL("../support/isolated-temp-root.mjs", import.meta.url).href;
+		const result = spawnSync(process.execPath, [
+			"--import", loaderUrl,
+			"--input-type=module",
+			"--eval", "console.log(process.env.PI_SUBAGENTS_TEST_PARENT_PID)",
+		], {
+			encoding: "utf-8",
+			env: { ...process.env, PI_SUBAGENTS_TEST_LOADER: "loaded", PI_SUBAGENTS_TEST_PARENT_PID: String(process.pid) },
+		});
+		assert.equal(result.status, 0, result.stderr);
+		assert.equal(result.stdout.trim(), String(result.pid));
+	});
+
 	it("anchors shared temp directories under one scoped root", () => {
 		assert.equal(path.dirname(RESULTS_DIR), TEMP_ROOT_DIR);
 		assert.equal(path.dirname(ASYNC_DIR), TEMP_ROOT_DIR);

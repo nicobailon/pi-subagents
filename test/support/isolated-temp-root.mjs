@@ -13,13 +13,15 @@ process.env.TMPDIR = tempRoot;
 process.env.TMP = tempRoot;
 process.env.TEMP = tempRoot;
 
-const nestedTestProcess = process.env.PI_SUBAGENTS_TEST_LOADER === "1";
-if (!nestedTestProcess) process.env.PI_SUBAGENTS_TEST_PARENT_PID = String(process.pid);
+const loaderState = process.env.PI_SUBAGENTS_TEST_LOADER;
+const nestedTestProcess = loaderState !== undefined;
+const testFileProcess = process.env.NODE_TEST_CONTEXT !== undefined && loaderState !== "test-file";
+if (!nestedTestProcess || testFileProcess) process.env.PI_SUBAGENTS_TEST_PARENT_PID = String(process.pid);
 const isolatedHome = path.join(tempRoot, "home");
 process.env.HOME = isolatedHome;
 process.env.USERPROFILE = isolatedHome;
 if (!nestedTestProcess) delete process.env.PI_CODING_AGENT_DIR;
-process.env.PI_SUBAGENTS_TEST_LOADER = "1";
+process.env.PI_SUBAGENTS_TEST_LOADER = testFileProcess ? "test-file" : "loaded";
 
 if (!configuredTempRoot) {
 	process.on("exit", () => fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
