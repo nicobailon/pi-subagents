@@ -5,6 +5,7 @@ import type { ChildSession, ChildSessionEvent, ChildSessionFactory } from "../..
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { runChildSession } from "../../src/runs/background/run-child-session.ts";
 import { buildRunnerChildLaunch } from "../../src/runs/background/runner-child-launch.ts";
+import { toSubagentDelegationUpdate } from "../../src/slash/delegation-adapters.ts";
 import { makeAgent } from "../support/helpers.ts";
 
 const inherited = { role: "assistant", content: [{ type: "text", text: "old" }], timestamp: 1, usage: { input: 100, output: 100, cacheRead: 100, cacheWrite: 100, cost: { total: 100 } } } as unknown as AgentMessage;
@@ -47,6 +48,10 @@ describe("terminal usage reconciliation owners", () => {
 		const details = updates.at(-1)!;
 		assert.deepEqual(details.results[0]!.usage, expected);
 		assert.deepEqual({ tokens: details.progress[0]!.tokens, inputTokens: details.progress[0]!.inputTokens, outputTokens: details.progress[0]!.outputTokens, turnCount: details.progress[0]!.turnCount }, { tokens: 8, inputTokens: 5, outputTokens: 3, turnCount: 1 });
+		assert.equal(details.progress[0]!.cacheRead, undefined);
+		assert.equal(details.progress[0]!.cacheWrite, undefined);
+		const update = toSubagentDelegationUpdate({ requestId: "usage-test", ownerRunId: "owner", nodeId: "node", agent: "worker", task: "test usage", context: "fresh", cwd: process.cwd(), result: { kind: "text" } }, { details });
+		assert.equal(update?.usage, undefined);
 	});
 
 	it("reconciles background settlement after success and failure", async () => {

@@ -64,7 +64,7 @@ import { createWorktrees } from "../../src/runs/shared/worktree.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import { createWorkflowChildPermit, workflowChildPermitConsumed } from "../../src/shared/workflow-child-permit.ts";
-import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-adapters.ts";
+import { toSubagentDelegationExecutionParams, toSubagentDelegationUpdate } from "../../src/slash/delegation-adapters.ts";
 import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
 
 describe("single sync execution", { skip: !available ? "pi packages not available" : undefined }, () => {
@@ -2880,7 +2880,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 				events.toolEnd("write"),
 				events.toolResult("write", "Wrote side-effect.txt"),
 				{ type: "compaction_start" },
-				{ type: "message_end", message: { role: "assistant", content: [], model: "openai/gpt-5-mini", stopReason: "aborted", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
+				{ type: "message_end", message: { role: "assistant", content: [], model: "openai/gpt-5-mini", stopReason: "aborted", usage: { input: 10, output: 0, cacheRead: 2, cacheWrite: 1, cost: { total: 0.01 } } } },
 				{ type: "agent_settled" },
 			],
 			writeFiles: [{ path: "side-effect.txt", content: "done" }, { path: sessionFile, content: "{}\n" }],
@@ -2889,10 +2889,22 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		});
 		mockPi.onCall({ output: "Recovered from retained session" });
 
-		const result = await runSync(tempDir, [makeAgent("echo", { model: "openai/gpt-5-mini" })], "echo", "Task", { runId: "same-model-abort-recovery", sessionFile });
+		const attemptUsage: Array<{ input: number; output: number; cacheRead: number; cacheWrite: number; turns: number }> = [];
+		const delegationRequest = { requestId: "retry-usage", ownerRunId: "owner", nodeId: "node", agent: "echo", task: "Task", context: "fresh", cwd: tempDir, result: { kind: "text" } } satisfies SubagentDelegationRequest;
+		const result = await runSync(tempDir, [makeAgent("echo", { model: "openai/gpt-5-mini" })], "echo", "Task", {
+			runId: "same-model-abort-recovery",
+			sessionFile,
+			onUpdate(update) {
+				const usage = toSubagentDelegationUpdate(delegationRequest, update)?.usage;
+				if (usage) attemptUsage.push(usage);
+			},
+		});
 
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.finalOutput, "Recovered from retained session");
+		assert.deepEqual(attemptUsage[0], { input: 10, output: 0, cacheRead: 2, cacheWrite: 1, turns: 1 });
+		assert.deepEqual(attemptUsage.at(-1), { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, turns: 1 });
+		assert.deepEqual(result.usage, { input: 110, output: 50, cacheRead: 2, cacheWrite: 1, cost: 0.011, turns: 2 });
 		assert.equal(mockPi.callCount(), 2);
 		for (const args of readAllCallArgs()) {
 			assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5-mini");
