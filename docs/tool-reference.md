@@ -144,7 +144,7 @@ Explicit `context: "fork"` fails fast when the parent session is not persisted, 
 
 When the inherited transcript contains signed Anthropic `thinking` / `redacted_thinking` blocks, `pi-subagents` strips those provider-private blocks from the forked child session: a thinking signature is bound to the session that produced it and cannot be replayed into a branch. The child keeps its requested thinking level and reasons fresh from its first turn; sanitizing the inherited transcript is not a downgrade. Explicit `context: "fork"` never silently downgrades to `fresh`.
 
-In workflow runs that omit `context`, each `runs.run` child follows the global `defaultSubagentContext` when set, then its own `defaultContext`. Without the global setting, a fresh-default scout can run fresh beside a fork-default worker. If the parent session file or current leaf is not available yet, implicit fork-default children run fresh. Pass explicit `context: "fork"` or `context: "fresh"` when you intentionally want one context for every child.
+In workflow runs that omit `context`, each `runs.run` child follows the global `defaultSubagentContext` when set, then its own `defaultContext`. Without the global setting, a fresh-default worker can run fresh beside a fork-default oracle. If the parent session file or current leaf is not available yet, implicit fork-default children run fresh. Pass explicit `context: "fork"` or `context: "fresh"` when you intentionally want one context for every child.
 
 ### Workflow steering
 

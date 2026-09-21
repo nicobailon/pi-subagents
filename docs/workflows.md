@@ -10,7 +10,7 @@ Use orchestration as parent-agent guidance, not as a runtime workflow mode. For 
 clarify → scout → worker → fresh reviewers → worker
 ```
 
-Packaged `worker`, `oracle`, and `advisor` default to forked context when a launch omits `context`. If the parent has no persisted session file or current leaf yet, that implicit default falls back to `fresh`. Pass `context: "fresh"` when you intentionally want a fresh child run, or `context: "fork"` when fork must remain strict.
+Packaged `worker` defaults to fresh context so implementation starts from its assigned brief instead of the parent's unfinished conversation. Packaged `oracle` and `advisor` default to forked context; if the parent has no persisted session file or current leaf yet, that implicit default falls back to `fresh`. Explicit `context`, `context: "profile"`, and global `defaultSubagentContext` still override these profile defaults.
 
 Child-safety boundaries are enforced at runtime:
 

@@ -493,7 +493,7 @@ subagent({
   workflowScript: `return runs.run("oracle-check", { agent: "oracle", task: "Review my current direction, challenge assumptions, and propose the best next move." })`
 })
 
-// Implementation only after explicit approval. Worker defaults to forked context.
+// Implementation only after explicit approval. Worker defaults to fresh context.
 subagent({
   workflowScript: `return runs.run("implementation", { agent: "worker", task: "Implement the approved approach: ..." })`
 })

@@ -8,6 +8,7 @@
 
 ### Changed
 
+- Packaged `worker` agents now default to fresh context so implementation briefs do not compete with the parent's unfinished conversation. Explicit and globally configured fork context remain available. Thanks to [@eduardopicolo-cb](https://github.com/eduardopicolo-cb) for [#2384](https://github.com/nicobailon/pi-subagents/issues/2384).
 - Raise the optional `@earendil-works/pi-ai` peer dependency floor to 0.86.1 so package metadata no longer advertises unsupported older hosts. Thanks to [@samuela](https://github.com/samuela) for [#2373](https://github.com/nicobailon/pi-subagents/issues/2373).
 - Keep the full `subagent` tool dormant until an authorized request activates it through the compact discovery loader, reducing unrelated prompt context without changing direct command, RPC, TUI, or nested-child execution. Thanks to [@Knimoms](https://github.com/Knimoms) for [#2380](https://github.com/nicobailon/pi-subagents/pull/2380).
 
