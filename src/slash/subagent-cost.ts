@@ -215,10 +215,11 @@ export function collectSubagentCost(
 			addArtifactsDir(status?.cwd);
 			const receipt = readWorkflowReceipt(DIRS.async, workflowRunId);
 			const summaryChildren = new Map((receipt.workflowChildren?.children ?? []).map((child) => [child.childId, child]));
-			const refsByRunId = new Map<string, { runId: string; agent: string }>();
+			const refsByRunId = new Map<string, { runId: string; agent?: string }>();
 			const addRef = (runId: string | undefined, agent: string | undefined): void => {
-				if (!runId || !agent || refsByRunId.has(runId)) return;
-				refsByRunId.set(runId, { runId, agent });
+				if (!runId) return;
+				const existing = refsByRunId.get(runId);
+				if (!existing || (!existing.agent && agent)) refsByRunId.set(runId, { runId, ...(agent ? { agent } : {}) });
 			};
 			for (const [key, entry] of Object.entries(receipt.entries)) {
 				const summaryChild = summaryChildren.get(key);
@@ -232,7 +233,11 @@ export function collectSubagentCost(
 			}
 			for (const ref of refsByRunId.values()) {
 				if (seenChildren.has(`run:${ref.runId}`)) continue;
-				const usage = metadataUsage([...artifactsDirs], ref);
+				if (!ref.agent) {
+					unresolvedAsyncChildren += 1;
+					continue;
+				}
+				const usage = metadataUsage([...artifactsDirs], { runId: ref.runId, agent: ref.agent });
 				if (!usage || !addChild({ ...ref, usage })) unresolvedAsyncChildren += 1;
 			}
 		} catch (error) {

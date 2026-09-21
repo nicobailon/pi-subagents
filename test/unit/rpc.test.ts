@@ -1275,6 +1275,7 @@ describe("subagent extension RPC bridge", () => {
 		const workflowRunId = `workflow-rpc-cost-${process.pid}-${Date.now()}`;
 		const recoveredRunId = `child-rpc-cost-${process.pid}-${Date.now()}`;
 		const unresolvedRunId = `child-rpc-cost-missing-${process.pid}-${Date.now()}`;
+		const unresolvedWorkflowRunId = `workflow-rpc-cost-missing-${process.pid}-${Date.now()}`;
 		const asyncDir = path.join(DIRS.async, workflowRunId);
 		try {
 			const sessionFile = path.join(root, "sessions", "parent.jsonl");
@@ -1292,6 +1293,7 @@ describe("subagent extension RPC bridge", () => {
 				entries: {
 					recovered: { key: "recovered", agent: "reviewer", latestRunId: recoveredRunId, continuation: { runIds: [recoveredRunId] }, resumability: { state: "resumable" } },
 					unresolved: { key: "unresolved", agent: "worker", latestRunId: unresolvedRunId, continuation: { runIds: [unresolvedRunId] }, resumability: { state: "resumable" } },
+					nestedWorkflow: { key: "nestedWorkflow", latestRunId: unresolvedWorkflowRunId, continuation: { runIds: [unresolvedWorkflowRunId] }, resumability: { state: "resumable" } },
 				},
 			}, null, 2), "utf-8");
 			const recoveredUsage = { input: 20, output: 4, cacheRead: 80, cacheWrite: 0, cost: 0.5, turns: 2 };
@@ -1321,7 +1323,7 @@ describe("subagent extension RPC bridge", () => {
 			assert.deepEqual(data.children.map(({ agent, runId }) => ({ agent, runId })), [{ agent: "reviewer", runId: recoveredRunId }]);
 			assert.deepEqual(data.childTotal, recoveredUsage);
 			assert.deepEqual(data.total, recoveredUsage, "totals remain a lower bound when metadata is unavailable");
-			assert.equal(data.unresolvedAsyncChildren, 1);
+			assert.equal(data.unresolvedAsyncChildren, 2);
 			bridge.dispose();
 		} finally {
 			fs.rmSync(asyncDir, { recursive: true, force: true });
