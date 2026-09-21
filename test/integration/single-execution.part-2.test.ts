@@ -40,6 +40,7 @@ import registerSubagentExtension from "../../src/extension/index.ts";
 import { handleSubagentControlNotice } from "../../src/extension/control-notices.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import {
+	SUBAGENT_DELEGATION_CANCEL_EVENT,
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
 	SUBAGENT_DELEGATION_STARTED_EVENT,
@@ -991,7 +992,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		}
 	});
 
-	it("emits cumulative UPDATE usage across multiple assistant messages that agrees with the terminal usage", async () => {
+	it("emits complete cumulative UPDATE usage but omits unavailable cache classifications before cancellation", async () => {
 		mockPi.onCall({
 			steps: [
 				{
@@ -1029,6 +1030,19 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 				},
 			],
 		});
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "cache counters unavailable" }],
+					model: "mock/test-model",
+					stopReason: "length",
+					usage: { input: 9, output: 4, cost: { total: 0.002 } },
+				},
+			}],
+			keepAliveAfterFinalMessageMs: 10_000,
+		});
 		const extensionEvents = createEventBus();
 		const runtimeHandlers = new Map<string, Array<(event: unknown, ctx: ReturnType<typeof makeMinimalCtx>) => void>>();
 		const fakePi = new Proxy({
@@ -1062,11 +1076,11 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 				getEntries: () => [],
 			},
 		};
-		const updates: Array<{ usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; turns: number } }> = [];
+		const updates: Array<{ recentOutput?: string; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; turns: number } }> = [];
 		const responses: SubagentDelegationResponse[] = [];
 		extensionEvents.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => {
 			if ((payload as { ownerRunId?: unknown }).ownerRunId === "owner-usage-snapshot") {
-				updates.push(payload as { usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; turns: number } });
+				updates.push(payload as { recentOutput?: string; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; turns: number } });
 			}
 		});
 		extensionEvents.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
@@ -1131,6 +1145,30 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			});
 			// Cumulative across both assistant turns in the attempt: 5+11 input, 3+7 output, 2+6 cacheRead, 1+4 cacheWrite, 2 turns.
 			assert.deepEqual(lastUpdateUsage, { input: 16, output: 10, cacheRead: 8, cacheWrite: 5, turns: 2 });
+
+			const unavailableStart = updates.length;
+			const unavailableRequest = {
+				...usageRequest,
+				requestId: "usage-snapshot-unavailable",
+				nodeId: "node-usage-unavailable",
+				task: "Report usage without provider cache counters",
+			} satisfies SubagentDelegationRequest;
+			extensionEvents.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, unavailableRequest);
+			const unavailableDeadlineAt = Date.now() + 30_000;
+			while (!updates.slice(unavailableStart).some((entry) => entry.recentOutput?.includes("cache counters unavailable")) && Date.now() < unavailableDeadlineAt) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.ok(updates.slice(unavailableStart).some((entry) => entry.recentOutput?.includes("cache counters unavailable")));
+			extensionEvents.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, {
+				requestId: unavailableRequest.requestId,
+				ownerRunId: unavailableRequest.ownerRunId,
+				nodeId: unavailableRequest.nodeId,
+			});
+			while (!responses.some((entry) => entry.requestId === unavailableRequest.requestId) && Date.now() < unavailableDeadlineAt) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.equal(responses.find((entry) => entry.requestId === unavailableRequest.requestId)?.status, "cancelled");
+			assert.ok(updates.slice(unavailableStart).every((entry) => entry.usage === undefined), "UPDATE usage must remain absent when cache counters are unavailable");
 		} finally {
 			for (const handler of runtimeHandlers.get("session_shutdown") ?? []) {
 				await handler({}, ctx);

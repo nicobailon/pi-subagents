@@ -333,6 +333,9 @@ function structuredDelegationProgressChanged(
 	return false;
 }
 
+function isCompleteUsageCounter(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
 
 const STOPPED_BEFORE_COMPLETION_ERROR = "Subagent stopped before completion.";
 const AFTER_COMPACTION_SETTLEMENT = Symbol("afterCompactionSettlement");
@@ -495,6 +498,10 @@ async function runSingleAttempt(
 		pendingControlEvents.push(event);
 		options.onControlEvent?.(event);
 	};
+	let inputUsageComplete = true;
+	let outputUsageComplete = true;
+	let cacheReadUsageComplete = true;
+	let cacheWriteUsageComplete = true;
 
 	const progress: AgentProgress = {
 		index: options.index ?? 0,
@@ -509,10 +516,6 @@ async function runSingleAttempt(
 		tokens: 0,
 		...(modelArg ? { model: modelArg } : {}),
 		...(resolvedThinking ? { thinking: resolvedThinking } : {}),
-		inputTokens: 0,
-		outputTokens: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
 		durationMs: 0,
 		lastActivityAt: startTime,
 	};
@@ -1071,6 +1074,10 @@ async function runSingleAttempt(
 					const hasToolCall = toolCalls.length > 0;
 					const terminalAssistantStop = (evt.message as { stopReason?: string }).stopReason === "stop" && !hasToolCall;
 					const u = evt.message.usage;
+					inputUsageComplete &&= isCompleteUsageCounter(u?.input);
+					outputUsageComplete &&= isCompleteUsageCounter(u?.output);
+					cacheReadUsageComplete &&= isCompleteUsageCounter(u?.cacheRead);
+					cacheWriteUsageComplete &&= isCompleteUsageCounter(u?.cacheWrite);
 					if (u) {
 						const window = (u.input || 0) + (u.cacheRead || 0);
 						result.usage.input += u.input || 0;
@@ -1079,13 +1086,17 @@ async function runSingleAttempt(
 						result.usage.cacheWrite += u.cacheWrite || 0;
 						result.usage.cost += u.cost?.total || 0;
 						progress.tokens = result.usage.input + result.usage.output;
-						progress.inputTokens = result.usage.input;
-						progress.outputTokens = result.usage.output;
-						progress.cacheRead = result.usage.cacheRead;
-						progress.cacheWrite = result.usage.cacheWrite;
 						progress.window = window;
 						progress.windowPeak = Math.max(progress.windowPeak ?? 0, window);
 					}
+					if (inputUsageComplete) progress.inputTokens = result.usage.input;
+					else delete progress.inputTokens;
+					if (outputUsageComplete) progress.outputTokens = result.usage.output;
+					else delete progress.outputTokens;
+					if (cacheReadUsageComplete) progress.cacheRead = result.usage.cacheRead;
+					else delete progress.cacheRead;
+					if (cacheWriteUsageComplete) progress.cacheWrite = result.usage.cacheWrite;
+					else delete progress.cacheWrite;
 					if (evt.message.model) {
 						progress.model = evt.message.model;
 						if (!result.model) result.model = evt.message.model;
@@ -1312,10 +1323,14 @@ async function runSingleAttempt(
 			if (session && messageBaseline !== undefined) {
 				result.usage = reconcileAttemptUsage(result.usage, session.messages, messageBaseline);
 				progress.tokens = result.usage.input + result.usage.output;
-				progress.inputTokens = result.usage.input;
-				progress.outputTokens = result.usage.output;
-				progress.cacheRead = result.usage.cacheRead;
-				progress.cacheWrite = result.usage.cacheWrite;
+				if (inputUsageComplete) progress.inputTokens = result.usage.input;
+				else delete progress.inputTokens;
+				if (outputUsageComplete) progress.outputTokens = result.usage.output;
+				else delete progress.outputTokens;
+				if (cacheReadUsageComplete) progress.cacheRead = result.usage.cacheRead;
+				else delete progress.cacheRead;
+				if (cacheWriteUsageComplete) progress.cacheWrite = result.usage.cacheWrite;
+				else delete progress.cacheWrite;
 				progress.turnCount = result.usage.turns;
 			}
 			finish(finalCode);
