@@ -48,6 +48,24 @@ export interface SubagentDelegationStarted {
 	nodeId: string;
 }
 
+/**
+ * Cumulative per-attempt usage snapshot carried on a structured delegation
+ * UPDATE. All counters describe the same attempt at the same observation
+ * time and are finite non-negative values; a missing counter means the
+ * value is unavailable, not zero. `tokens` on the update keeps its existing
+ * input+output meaning -- this snapshot adds cache and turn counters
+ * alongside it. An UPDATE does not promise final billed usage or cost; the
+ * terminal response's `usage` remains authoritative, and retry attempts are
+ * never aggregated into a single snapshot here.
+ */
+export interface SubagentDelegationUpdateUsage {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	turns: number;
+}
+
 export interface SubagentDelegationUpdate extends SubagentDelegationStarted {
 	runId?: string;
 	currentTool?: string;
@@ -59,6 +77,7 @@ export interface SubagentDelegationUpdate extends SubagentDelegationStarted {
 	toolCount?: number;
 	durationMs?: number;
 	tokens?: number;
+	usage?: SubagentDelegationUpdateUsage;
 }
 
 export type SubagentDelegationStatus =

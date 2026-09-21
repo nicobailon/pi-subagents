@@ -959,6 +959,9 @@ export interface AgentProgress {
 	thinking?: string;
 	inputTokens?: number;
 	outputTokens?: number;
+	/** Cumulative cache-read/cache-write tokens for the current attempt, alongside inputTokens/outputTokens. */
+	cacheRead?: number;
+	cacheWrite?: number;
 	window?: number;
 	windowPeak?: number;
 	durationMs: number;
