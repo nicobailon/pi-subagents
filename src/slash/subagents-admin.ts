@@ -29,12 +29,12 @@ function sourceRank(source: AgentConfig["source"]): number {
 	return 3;
 }
 
-function allVisibleAgents(pi: RuntimeAgentOwner, cwd: string): AgentConfig[] {
-	const d = discoverAgentsAll(cwd);
+function allVisibleAgents(pi: RuntimeAgentOwner, cwd: string, preferredModelProvider?: string): AgentConfig[] {
+	const d = discoverAgentsAll(cwd, preferredModelProvider);
 	const allConfigured = [...d.project, ...d.user, ...d.package, ...d.builtin];
 	const visibleConfigured = allConfigured.filter((agent) => !agent.disabled);
 	// Disabled definitions remain in collision checks even though the panel hides them.
-	const agents = mergeRuntimeAgents(pi, { agents: visibleConfigured }, allConfigured, { cwd, scope: "both" }).agents;
+	const agents = mergeRuntimeAgents(pi, { agents: visibleConfigured }, allConfigured, { cwd, scope: "both", preferredModelProvider }).agents;
 	return agents.sort((a, b) => a.name.localeCompare(b.name) || sourceRank(a.source) - sourceRank(b.source));
 }
 
@@ -159,7 +159,7 @@ function readOnlyAgentMessage(agent: AgentConfig, field: EditableOverrideField):
 }
 
 async function selectAgent(pi: RuntimeAgentOwner, ctx: ExtensionContext, args: string): Promise<AgentSelection> {
-	const agents = allVisibleAgents(pi, ctx.cwd);
+	const agents = allVisibleAgents(pi, ctx.cwd, ctx.model?.provider);
 	const requestedName = args.trim().split(/\s+/)[0] ?? "";
 	if (agents.length === 0) return { kind: "not-found", agents, requestedName: requestedName || undefined };
 

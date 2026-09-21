@@ -1212,7 +1212,7 @@ Drive the failing test first.
 		});
 	}
 
-	it("shows runtime agents but refuses edits without writing configuration", async () => {
+	it("shows provider-scoped runtime agent metadata but refuses edits without writing configuration", async () => {
 		const sent: Array<{ content?: string }> = [];
 		const notified: string[] = [];
 		const pi = {
@@ -1225,15 +1225,28 @@ Drive the failing test first.
 			definition: { description: "Runtime admin helper", systemPrompt: "Help at runtime." },
 		});
 		try {
+			fs.mkdirSync(path.join(tempDir, "agent-home"), { recursive: true });
+			fs.writeFileSync(path.join(tempDir, "agent-home", "settings.json"), JSON.stringify({
+				subagents: {
+					agentOverridesByProvider: {
+						custom: { "runtime-admin-helper": { model: "custom/provider-model", thinking: "high" } },
+					},
+				},
+			}));
 			await openSubagentsAdmin(pi, {
 				cwd: tempDir, hasUI: false,
 				modelRegistry: { getAvailable: () => [] },
+				model: { provider: "custom", id: "session-model" },
 			} as never, "runtime-admin-helper");
 			assert.match(sent.at(-1)?.content ?? "", /Agent: runtime-admin-helper \(runtime\)/);
+			assert.match(sent.at(-1)?.content ?? "", /Model: custom\/provider-model/);
+			assert.match(sent.at(-1)?.content ?? "", /Thinking: high/);
+			fs.rmSync(path.join(tempDir, "agent-home", "settings.json"));
 
 			await openSubagentsAdmin(pi, {
 				cwd: tempDir, hasUI: true,
 				modelRegistry: { getAvailable: () => [{ provider: "custom", id: "new-model" }] },
+				model: { provider: "custom", id: "session-model" },
 				ui: {
 					select: async () => "custom/new-model",
 					notify: (message: string) => notified.push(message),

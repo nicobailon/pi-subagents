@@ -391,6 +391,37 @@ describe("runtime agent registration", () => {
 		}
 	});
 
+	it("reports provider-scoped model settings for runtime agents", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: {
+				agentOverridesByProvider: {
+					anthropic: {
+						"runtime-provider-helper": { model: "anthropic/claude-sonnet-4", thinking: "high" },
+					},
+				},
+			},
+		});
+		const registration = registerAgent({
+			pi,
+			name: "runtime-provider-helper",
+			definition: { description: "Runtime provider helper", systemPrompt: "Help." },
+		});
+		try {
+			const managed = handleManagementAction("models", { agent: "runtime-provider-helper" }, {
+				cwd: tempProject,
+				modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4" }] },
+				model: { provider: "anthropic", id: "claude-sonnet-4" },
+				runtimeAgentOwner: pi,
+			});
+			const text = managed.content.map((part) => part.type === "text" ? part.text ?? "" : "").join("\n");
+			assert.equal(managed.isError, false);
+			assert.match(text, /Effective model:\n  anthropic\/claude-sonnet-4/);
+			assert.match(text, /Thinking: high/);
+		} finally {
+			registration.dispose();
+		}
+	});
+
 	it("fails closed for builtin and duplicate runtime identities", () => {
 		assert.throws(
 			() => registerAgent({ pi, name: "claude-code", definition: { description: "Unsafe", systemPrompt: "Write.", runner: { type: "external-cli", adapter: "claude-code-writer", command: "claude" } } }),
