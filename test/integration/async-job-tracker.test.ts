@@ -2183,7 +2183,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("bridges async child status events from events.jsonl to the parent event bus", async () => {
+	it("bridges async child started events from events.jsonl to the parent event bus", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		try {
 			const runDir = path.join(asyncRoot, "run-child-status");
@@ -2201,9 +2201,8 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				version: 1,
 				runId: "run-child-status",
 				childId: "slow",
-				status: "stopped",
+				status: "started",
 				ts: 123,
-				reason: "user",
 				stepIndex: 0,
 				agent: "worker",
 				workflowKey: "slow",
@@ -2227,9 +2226,8 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				version: 1,
 				runId: "run-child-status",
 				childId: "slow",
-				status: "stopped",
+				status: "started",
 				ts: 123,
-				reason: "user",
 				source: "async",
 				asyncDir: runDir,
 				stepIndex: 0,

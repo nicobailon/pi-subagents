@@ -5,6 +5,7 @@
 ### Added
 
 - In-process RPC `cost` method: returns the same parent-plus-child accounting `/subagent-cost` renders, as versioned data (`{ version: 1, parent, children, childTotal, total, unresolvedAsyncChildren }`), so other extensions can surface subagent spend without scraping slash output. `ping.capabilities.cost` advertises `{ version: 1 }`. The report logic moved unchanged into `src/slash/subagent-cost.ts`; `/subagent-cost` output is identical. Thanks to [@raymondtri](https://github.com/raymondtri) for [#2378](https://github.com/nicobailon/pi-subagents/pull/2378).
+- Emit public lifecycle events for async `workflowScript` roots and their dynamically launched keyed children so companion UIs can follow authoritative run artifacts without scraping terminal output. Thanks to [@navidemad](https://github.com/navidemad) for [#2382](https://github.com/nicobailon/pi-subagents/pull/2382).
 
 ### Changed
 

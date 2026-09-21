@@ -206,16 +206,20 @@ Nested fanout status is stored as compact sidecar event/registry metadata and me
 
 Consumers should read these JSON files instead of scraping terminal output. Unknown fields and event types should be ignored for forward compatibility.
 
-RPC hosts that need low-latency child-stop UI hints can subscribe to the
-`subagent:child-status` event advertised by RPC `ping` as `events.childStatus`.
-The payload uses `type: "subagent.child-status"`, `version: 1`, `runId`,
-`childId`, `status` (`"stopping"` or `"stopped"`), `ts`, and optional child
-metadata such as `stepIndex`, `agent`, `childRunId`, `workflowKey`, `phase`, and
-`label`. These events are observer hints only. They can duplicate across RPC and
-async replay paths, and they are not replayed after a host restart. Status
-snapshots remain authoritative for recovery and final state. Child stop control
-still uses the normal `stop` request with `childId`; there is no separate child
-stop API.
+Companion UIs and RPC hosts that need low-latency child lifecycle hints can
+subscribe to the `subagent:child-status` event advertised by RPC `ping` as
+`events.childStatus`. The payload uses `type: "subagent.child-status"`,
+`version: 1`, `runId`, `childId`, `status` (`"started"`, `"stopping"`, or
+`"stopped"`), `ts`, and optional child metadata such as `asyncDir`, `stepIndex`,
+`agent`, `childRunId`, `workflowKey`, `phase`, and `label`. Async
+`workflowScript` roots emit `"started"` once the keyed child has a concrete
+launch identity; `childId` and `workflowKey` are the stable workflow key, while
+`stepIndex` is only a convenience projection for the current status snapshot.
+These events are observer hints only. They can duplicate across the live event
+bus and async replay paths, and they are not replayed after a host restart.
+Status snapshots remain authoritative for recovery and final state. Child stop
+control still uses the normal `stop` request with `childId`; there is no separate
+child stop API.
 
 ### Status and result fields
 
@@ -307,7 +311,7 @@ Async events:
 - `subagent:async-started`
 - `subagent:async-complete`
 
-The `subagent:async-started` payload includes `task`, the backwards-compatible first child task truncated to 50 characters, and `goal`, the workflow-level caller task truncated to 120 characters (falling back to the first child task). Companion UI extensions can combine `goal`, `workflowGraph`, and the live lifecycle artifacts under `asyncDir` without scraping terminal output.
+The `subagent:async-started` payload includes `task`, the backwards-compatible first child task truncated to 50 characters, and `goal`, the workflow-level caller task truncated to 120 characters (falling back to the first child task). Async `workflowScript` roots emit the same event with `mode: "workflow"` after their initial `status.json` is durable; their keyed children are then announced dynamically through `subagent:child-status`. Companion UI extensions can combine those hints with the authoritative live lifecycle artifacts under `asyncDir` without scraping terminal output.
 
 Intercom delivery events:
 
