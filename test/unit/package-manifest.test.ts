@@ -21,7 +21,7 @@ const hostPeerPackages = [
 ] as const;
 const expectedHostPeerRanges = {
 	"@earendil-works/pi-agent-core": "*",
-	"@earendil-works/pi-ai": ">=0.80.0",
+	"@earendil-works/pi-ai": ">=0.86.1",
 	"@earendil-works/pi-coding-agent": "*",
 	"@earendil-works/pi-tui": "*",
 } satisfies Record<(typeof hostPeerPackages)[number], string>;

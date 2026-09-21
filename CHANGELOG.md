@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Raise the optional `@earendil-works/pi-ai` peer dependency floor to 0.86.1 so package metadata no longer advertises unsupported older hosts. Thanks to [@samuela](https://github.com/samuela) for [#2373](https://github.com/nicobailon/pi-subagents/issues/2373).
+
 ### Fixed
 
 - Preserve and safely prune Pi 0.87 context edits when forking sessions, including replacement content and signed Anthropic thinking blocks.
