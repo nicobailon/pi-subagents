@@ -48,8 +48,7 @@ function setSelection(pi: ExtensionAPI, includeSubagent: boolean): void {
 function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	const available = pi.getAllTools();
 	if (!Array.isArray(available) || !Array.isArray(pi.getActiveTools())) return;
-	const registered = new Set(available.map((tool) => tool.name));
-	if (!registered.has(LOADER_NAME)) return;
+	if (!available.some((tool) => tool.name === LOADER_NAME)) return;
 	const sessionContext = (ctx.sessionManager as unknown as { buildSessionContext(): { messages?: unknown[] } }).buildSessionContext();
 	const messages = Array.isArray(sessionContext?.messages) ? sessionContext.messages : [];
 	if (hasNativeToolSelection(messages)) {
@@ -79,8 +78,7 @@ export function registerSubagentToolActivation(
 		promptSnippet: "pi-subagents is installed. For authorized specialist, independent-review, or parallel work, call subagents_enable, then subagent. Authorization must come from the current request or applicable instructions; complexity alone is not authorization.",
 		parameters,
 		async execute() {
-			const registered = new Set(pi.getAllTools().map((tool) => tool.name));
-			if (!registered.has(SUBAGENT_NAME)) return {
+			if (!pi.getAllTools().some((tool) => tool.name === SUBAGENT_NAME)) return {
 				isError: true,
 				content: [{ type: "text", text: "Cannot enable unavailable tools: subagent." }],
 				details: { unavailable: [SUBAGENT_NAME] },

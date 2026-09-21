@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, test } from "node:test";
+import { test } from "node:test";
 import {
 	fauxAssistantMessage,
 	fauxProvider,
@@ -20,11 +20,6 @@ import {
 import { createSubagentParamsSchema } from "../../src/extension/schemas.ts";
 
 const packageToolNames = new Set(["subagents_enable", "bg_wait", "subagent_supervisor", "subagent"]);
-const roots: string[] = [];
-
-afterEach(() => {
-	for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
-});
 
 function serializedCharacters(tools: ReturnType<typeof getCurrentTools>): number {
 	return tools.filter((tool) => packageToolNames.has(tool.name)).reduce((total, tool) => total + JSON.stringify(tool).length, 0);
@@ -32,7 +27,6 @@ function serializedCharacters(tools: ReturnType<typeof getCurrentTools>): number
 
 test("native Pi exposes the full subagent schema on the request immediately after activation", { timeout: 30_000 }, async () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-activation-"));
-	roots.push(root);
 	const cwd = path.join(root, "project");
 	const agentDir = path.join(root, "agent");
 	fs.mkdirSync(cwd);
@@ -99,5 +93,6 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 		}
 		if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
 		if (priorChild === undefined) delete process.env.PI_SUBAGENT_CHILD; else process.env.PI_SUBAGENT_CHILD = priorChild;
+		fs.rmSync(root, { recursive: true, force: true });
 	}
 });

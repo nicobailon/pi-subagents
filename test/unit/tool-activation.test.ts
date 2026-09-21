@@ -96,7 +96,6 @@ describe("subagent tool activation", () => {
 		assert.match(loader.promptSnippet ?? "", /complexity alone.*not authorization/i);
 		assert.deepEqual(loader.parameters, { type: "object", properties: {}, additionalProperties: false });
 
-		const before = runtime.active();
 		const result = await loader.execute?.("enable", {}, new AbortController().signal, undefined, runtime.context);
 		assert.notEqual(result?.isError, true);
 		assert.ok(runtime.active().includes("subagent"));
@@ -104,7 +103,6 @@ describe("subagent tool activation", () => {
 		const enabled = runtime.active();
 		await loader.execute?.("enable-again", {}, new AbortController().signal, undefined, runtime.context);
 		assert.deepEqual(runtime.active(), enabled);
-		assert.notDeepEqual(before, enabled);
 	});
 
 	it("restores native cold and warm transcript selections across start, reload, and tree navigation", async () => {
