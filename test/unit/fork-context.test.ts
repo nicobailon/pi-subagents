@@ -357,6 +357,32 @@ describe("createForkContextResolver", () => {
 		}
 	});
 
+	it("removes signed Anthropic thinking blocks from context-edit replacements", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-context-edit-thinking-"));
+		try {
+			const parentSessionFile = path.join(tempDir, "parent.jsonl");
+			const childSessionFile = path.join(tempDir, "child.jsonl");
+			writeMinimalSessionFile(parentSessionFile, "parent");
+			writeSessionJsonl(childSessionFile, [
+				{ type: "session", version: 3, id: "child", timestamp: "2026-09-21T00:00:00.000Z", cwd: "/tmp", parentSession: parentSessionFile },
+				{ type: "message", id: "assistant-1", parentId: null, timestamp: "2026-09-21T00:00:01.000Z", message: { role: "assistant", provider: "anthropic", api: "anthropic-messages", model: "anthropic/claude-sonnet-4", content: [{ type: "text", text: "original" }] } },
+				{ type: "context_edit", id: "edit-1", parentId: "assistant-1", timestamp: "2026-09-21T00:00:02.000Z", targetId: "assistant-1", replacement: { content: [{ type: "thinking", thinking: "private replacement", thinkingSignature: "signed" }, { type: "text", text: "replacement" }] } },
+			]);
+			const resolver = createForkContextResolver({
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "edit-1",
+			}, "fork", {
+				openSession: () => ({ createBranchedSession: () => childSessionFile }),
+			});
+
+			assert.equal(resolver.sessionFileForIndex(0), childSessionFile);
+			const entries = fs.readFileSync(childSessionFile, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+			assert.deepEqual(entries[2].replacement.content, [{ type: "text", text: "replacement" }]);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("allows unsigned thinking blocks in forked sessions", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-unsigned-thinking-"));
 		try {

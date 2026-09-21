@@ -29,6 +29,8 @@ type SessionEntry = Record<string, unknown> & {
 	id?: string;
 	parentId?: string | null;
 	timestamp?: string;
+	targetId?: string;
+	replacement?: { content?: unknown } | null;
 	message?: Record<string, unknown>;
 };
 
@@ -114,27 +116,36 @@ function stringsInValue(value: unknown): string[] {
 	return [];
 }
 
+function pushContentStrings(strings: string[], role: unknown, content: unknown): void {
+	if (role === "toolResult") strings.push(...textBlocks(content).map(({ block }) => block.text as string));
+	if (role === "assistant" && Array.isArray(content)) {
+		for (const blockValue of content) {
+			if (!blockValue || typeof blockValue !== "object" || Array.isArray(blockValue)) continue;
+			const block = blockValue as Record<string, unknown>;
+			if (block.type === "text" && typeof block.text === "string") strings.push(block.text);
+			else if (block.type === "thinking" && typeof block.thinking === "string") strings.push(block.thinking);
+			else if (block.type === "toolCall") strings.push(stableJson(block.arguments ?? {}), ...stringsInValue(block.arguments));
+		}
+	}
+	if (role === "user") {
+		if (typeof content === "string") strings.push(content);
+		else strings.push(...textBlocks(content).map(({ block }) => block.text as string));
+	}
+}
+
 function modelFacingStrings(entries: SessionEntry[]): string[] {
 	const strings: string[] = [];
+	const entriesById = new Map(entries.flatMap((entry) => entry.id ? [[entry.id, entry] as const] : []));
 	for (const entry of entries) {
 		const message = entry.type === "message" && entry.message && typeof entry.message === "object" ? entry.message : undefined;
-		if (message?.role === "toolResult") strings.push(...textBlocks(message.content).map(({ block }) => block.text as string));
-		if (message?.role === "assistant" && Array.isArray(message.content)) {
-			for (const blockValue of message.content) {
-				if (!blockValue || typeof blockValue !== "object" || Array.isArray(blockValue)) continue;
-				const block = blockValue as Record<string, unknown>;
-				if (block.type === "text" && typeof block.text === "string") strings.push(block.text);
-				else if (block.type === "thinking" && typeof block.thinking === "string") strings.push(block.thinking);
-				else if (block.type === "toolCall") strings.push(stableJson(block.arguments ?? {}), ...stringsInValue(block.arguments));
-			}
-		}
-		if (message?.role === "user") {
-			if (typeof message.content === "string") strings.push(message.content);
-			else strings.push(...textBlocks(message.content).map(({ block }) => block.text as string));
+		if (message) pushContentStrings(strings, message.role, message.content);
+		if (entry.type === "context_edit" && entry.replacement && entry.targetId) {
+			const target = entriesById.get(entry.targetId);
+			const role = target?.type === "custom_message" ? "user" : target?.message?.role;
+			pushContentStrings(strings, role, entry.replacement.content);
 		}
 		if (entry.type === "custom_message") {
-			if (typeof entry.content === "string") strings.push(entry.content);
-			else strings.push(...textBlocks(entry.content).map(({ block }) => block.text as string));
+			pushContentStrings(strings, "user", entry.content);
 		}
 		if ((entry.type === "compaction" || entry.type === "branch_summary") && typeof entry.summary === "string") strings.push(entry.summary);
 	}
@@ -185,23 +196,25 @@ function collectOverflowItems(entries: SessionEntry[]): OverflowItem[] {
 			apply,
 		});
 	};
-
-	for (const entry of entries) {
-		const message = entry.type === "message" && entry.message && typeof entry.message === "object" ? entry.message : undefined;
-		const role = message?.role;
-		if (role === "toolResult" && message) {
-			const toolCallId = typeof message.toolCallId === "string" ? message.toolCallId : undefined;
-			const toolName = typeof message.toolName === "string" ? message.toolName : undefined;
-			for (const { block } of textBlocks(message.content)) {
+	const collectContent = (
+		entry: SessionEntry,
+		source: Record<string, unknown>,
+		owner: Record<string, unknown>,
+		userLabel = "User:",
+	): boolean => {
+		if (source.role === "toolResult") {
+			const toolCallId = typeof source.toolCallId === "string" ? source.toolCallId : undefined;
+			const toolName = typeof source.toolName === "string" ? source.toolName : undefined;
+			for (const { block } of textBlocks(owner.content)) {
 				const body = block.text as string;
-				add(entry, "tool-result", `Tool result: ${toolName ?? "unknown"}${toolCallId ? ` ${toolCallId}` : ""}${message.isError === true ? " (error)" : ""}`, body, (summary, ref) => {
+				add(entry, "tool-result", `Tool result: ${toolName ?? "unknown"}${toolCallId ? ` ${toolCallId}` : ""}${source.isError === true ? " (error)" : ""}`, body, (summary, ref) => {
 					block.text = `${summary}\nRecovery ref: ${ref}`;
-				}, { toolCallId, toolName, isError: message.isError === true });
+				}, { toolCallId, toolName, isError: source.isError === true });
 			}
-			continue;
+			return true;
 		}
-		if (role === "assistant" && message && Array.isArray(message.content)) {
-			for (const blockValue of message.content) {
+		if (source.role === "assistant" && Array.isArray(owner.content)) {
+			for (const blockValue of owner.content) {
 				if (!blockValue || typeof blockValue !== "object" || Array.isArray(blockValue)) continue;
 				const block = blockValue as Record<string, unknown>;
 				if (block.type === "text" && typeof block.text === "string") {
@@ -217,30 +230,36 @@ function collectOverflowItems(entries: SessionEntry[]): OverflowItem[] {
 					}, { toolCallId: block.id, toolName: block.name });
 				}
 			}
-			continue;
+			return true;
 		}
-		if (role === "user" && message) {
-			if (typeof message.content === "string") {
-				const body = message.content;
-				add(entry, "user-text", "User:", body, (summary, ref) => { message.content = `${summary}\nRecovery ref: ${ref}`; });
-			} else {
-				for (const { block } of textBlocks(message.content)) {
-					const body = block.text as string;
-					add(entry, "user-text", "User:", body, (summary, ref) => { block.text = `${summary}\nRecovery ref: ${ref}`; });
-				}
+		if (source.role !== "user") return false;
+		if (typeof owner.content === "string") {
+			const body = owner.content;
+			add(entry, "user-text", userLabel, body, (summary, ref) => { owner.content = `${summary}\nRecovery ref: ${ref}`; });
+		} else {
+			for (const { block } of textBlocks(owner.content)) {
+				const body = block.text as string;
+				add(entry, "user-text", userLabel, body, (summary, ref) => { block.text = `${summary}\nRecovery ref: ${ref}`; });
+			}
+		}
+		return true;
+	};
+	const entriesById = new Map(entries.flatMap((entry) => entry.id ? [[entry.id, entry] as const] : []));
+
+	for (const entry of entries) {
+		const message = entry.type === "message" && entry.message && typeof entry.message === "object" ? entry.message : undefined;
+		if (message && collectContent(entry, message, message)) continue;
+		if (entry.type === "context_edit" && entry.replacement && entry.targetId) {
+			const target = entriesById.get(entry.targetId);
+			if (target?.type === "custom_message") {
+				collectContent(entry, { role: "user" }, entry.replacement, `Extension message: ${String(target.customType ?? "unknown")}`);
+			} else if (target?.message) {
+				collectContent(entry, target.message, entry.replacement);
 			}
 			continue;
 		}
 		if (entry.type === "custom_message") {
-			if (typeof entry.content === "string") {
-				const body = entry.content;
-				add(entry, "user-text", `Extension message: ${String(entry.customType ?? "unknown")}`, body, (summary, ref) => { entry.content = `${summary}\nRecovery ref: ${ref}`; });
-			} else {
-				for (const { block } of textBlocks(entry.content)) {
-					const body = block.text as string;
-					add(entry, "user-text", `Extension message: ${String(entry.customType ?? "unknown")}`, body, (summary, ref) => { block.text = `${summary}\nRecovery ref: ${ref}`; });
-				}
-			}
+			collectContent(entry, { role: "user" }, entry, `Extension message: ${String(entry.customType ?? "unknown")}`);
 			continue;
 		}
 		if ((entry.type === "compaction" || entry.type === "branch_summary") && typeof entry.summary === "string") {

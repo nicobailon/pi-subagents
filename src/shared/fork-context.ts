@@ -16,6 +16,8 @@ interface BranchSessionEntry {
 	cwd?: string;
 	parentId?: string | null;
 	timestamp?: string;
+	targetId?: string;
+	replacement?: { content?: unknown } | null;
 	message?: {
 		role?: string;
 		content?: unknown;
@@ -110,11 +112,16 @@ function isUnsafeAnthropicThinkingBlock(message: BranchSessionEntry["message"], 
 
 function sanitizeUnsafeThinkingBlocks(entries: BranchSessionEntry[]): boolean {
 	let sanitized = false;
+	const entriesById = new Map(entries.flatMap((entry) => entry.id ? [[entry.id, entry] as const] : []));
 	for (const entry of entries) {
-		if (entry.type !== "message" || entry.message?.role !== "assistant" || !Array.isArray(entry.message.content)) continue;
-		const filtered = entry.message.content.filter((block) => !isUnsafeAnthropicThinkingBlock(entry.message, block));
-		if (filtered.length === entry.message.content.length) continue;
-		entry.message.content = filtered;
+		const targetMessage = entry.type === "context_edit" && entry.targetId
+			? entriesById.get(entry.targetId)?.message
+			: entry.message;
+		const contentOwner = entry.type === "context_edit" ? entry.replacement : targetMessage;
+		if (targetMessage?.role !== "assistant" || !contentOwner || !Array.isArray(contentOwner.content)) continue;
+		const filtered = contentOwner.content.filter((block) => !isUnsafeAnthropicThinkingBlock(targetMessage, block));
+		if (filtered.length === contentOwner.content.length) continue;
+		contentOwner.content = filtered;
 		sanitized = true;
 	}
 	return sanitized;

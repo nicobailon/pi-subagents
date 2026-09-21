@@ -164,6 +164,51 @@ describe("pruned fork sessions", () => {
 		}
 	});
 
+	it("summarizes context-edit replacement overflow", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-pruned-context-edit-"));
+		try {
+			const parentSession = path.join(tempDir, "parent.jsonl");
+			const childSession = path.join(tempDir, "child.jsonl");
+			const replacement = "replacement-overflow-".repeat(5_000);
+			writeJsonl(childSession, [
+				{ type: "session", version: 3, id: "child", cwd: "/tmp", parentSession },
+				{ type: "message", id: "user-1", parentId: null, message: { role: "user", content: "Original prompt." } },
+				{ type: "context_edit", id: "edit-1", parentId: "user-1", targetId: "user-1", replacement: { content: replacement } },
+			]);
+
+			await pruneForkSessionFile(childSession, async (payload) => validSummaryResponse(payload, "Replacement context summarized."));
+
+			const entries = fs.readFileSync(childSession, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+			assert.match(entries[2].replacement.content, /^Replacement context summarized\.\nRecovery ref:/);
+			assert.ok(!fs.readFileSync(childSession, "utf-8").includes(replacement));
+			assert.equal(readRecovery(childSession).records[0]?.sourceEntryId, "edit-1");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("preserves null context-edit omissions while pruning their raw target", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-pruned-context-omission-"));
+		try {
+			const parentSession = path.join(tempDir, "parent.jsonl");
+			const childSession = path.join(tempDir, "child.jsonl");
+			const omitted = "omitted-overflow-".repeat(5_000);
+			writeJsonl(childSession, [
+				{ type: "session", version: 3, id: "child", cwd: "/tmp", parentSession },
+				{ type: "message", id: "user-1", parentId: null, message: { role: "user", content: omitted } },
+				{ type: "context_edit", id: "edit-1", parentId: "user-1", targetId: "user-1", replacement: null },
+			]);
+
+			await pruneForkSessionFile(childSession, async (payload) => validSummaryResponse(payload, "Omitted raw context summarized."));
+
+			const entries = fs.readFileSync(childSession, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+			assert.equal(entries[2].replacement, null);
+			assert.ok(!fs.readFileSync(childSession, "utf-8").includes(omitted));
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("fails closed for invalid JSON and missing item summaries", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-pruned-invalid-summary-"));
 		try {
