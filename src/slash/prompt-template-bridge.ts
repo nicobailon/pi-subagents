@@ -82,6 +82,20 @@ function sameRecentTools(
 	return left.every((tool, index) => tool.tool === right[index]?.tool && tool.args === right[index]?.args);
 }
 
+/** A cache-only or turn-only change with unchanged tokens/tool progress must still count as a change, not a heartbeat. */
+function sameUpdateUsage(
+	left: SubagentDelegationUpdate["usage"],
+	right: SubagentDelegationUpdate["usage"],
+): boolean {
+	if (left === right) return true;
+	if (!left || !right) return false;
+	return left.input === right.input
+		&& left.output === right.output
+		&& left.cacheRead === right.cacheRead
+		&& left.cacheWrite === right.cacheWrite
+		&& left.turns === right.turns;
+}
+
 /** Duration is a heartbeat clock, not delegation-visible progress; terminal usage remains authoritative. */
 function sameStructuredDelegationUpdateProgress(left: SubagentDelegationUpdate, right: SubagentDelegationUpdate): boolean {
 	return left.requestId === right.requestId
@@ -95,7 +109,8 @@ function sameStructuredDelegationUpdateProgress(left: SubagentDelegationUpdate, 
 		&& sameRecentTools(left.recentTools, right.recentTools)
 		&& left.model === right.model
 		&& left.toolCount === right.toolCount
-		&& left.tokens === right.tokens;
+		&& left.tokens === right.tokens
+		&& sameUpdateUsage(left.usage, right.usage);
 }
 
 export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: string }>(

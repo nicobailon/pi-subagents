@@ -43,6 +43,7 @@ import {
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
 	SUBAGENT_DELEGATION_STARTED_EVENT,
+	SUBAGENT_DELEGATION_UPDATE_EVENT,
 	type SubagentDelegationRequest,
 	type SubagentDelegationResponse,
 	type SubagentDelegationStarted,
@@ -983,6 +984,153 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			assert.equal(typeof literalResponse.usage?.durationMs, "number");
 			const plainResponse = terminalResponses.find((response) => response.result?.kind === "text" && response.result.text === "registered structured second node");
 			assert.ok(plainResponse);
+		} finally {
+			for (const handler of runtimeHandlers.get("session_shutdown") ?? []) {
+				await handler({}, ctx);
+			}
+		}
+	});
+
+	it("emits cumulative UPDATE usage across multiple assistant messages that agrees with the terminal usage", async () => {
+		mockPi.onCall({
+			steps: [
+				{
+					jsonl: [{
+						type: "message_end",
+						message: {
+							role: "assistant",
+							content: [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "package.json" } }],
+							model: "mock/test-model",
+							stopReason: "toolUse",
+							usage: { input: 5, output: 3, cacheRead: 2, cacheWrite: 1, cost: { total: 0.001 } },
+						},
+					}],
+					delay: 20,
+				},
+				{
+					jsonl: [{
+						type: "tool_result_end",
+						message: { role: "toolResult", toolCallId: "call-1", toolName: "read", isError: false, content: [{ type: "text", text: "{}" }] },
+					}],
+					delay: 20,
+				},
+				{
+					jsonl: [{
+						type: "message_end",
+						message: {
+							role: "assistant",
+							content: [{ type: "text", text: "final answer" }],
+							model: "mock/test-model",
+							stopReason: "stop",
+							usage: { input: 11, output: 7, cacheRead: 6, cacheWrite: 4, cost: { total: 0.0125 } },
+						},
+					}],
+					delay: 20,
+				},
+			],
+		});
+		const extensionEvents = createEventBus();
+		const runtimeHandlers = new Map<string, Array<(event: unknown, ctx: ReturnType<typeof makeMinimalCtx>) => void>>();
+		const fakePi = new Proxy({
+			events: extensionEvents,
+			on(event: string, handler: (event: unknown, ctx: ReturnType<typeof makeMinimalCtx>) => void) {
+				const handlers = runtimeHandlers.get(event) ?? [];
+				handlers.push(handler);
+				runtimeHandlers.set(event, handlers);
+				return () => runtimeHandlers.set(event, (runtimeHandlers.get(event) ?? []).filter((entry) => entry !== handler));
+			},
+			registerTool() {},
+			registerCommand() {},
+			registerShortcut() {},
+			registerMessageRenderer() {},
+			sendMessage() {},
+			getSessionName() { return undefined; },
+		}, {
+			get(target, prop) {
+				if (prop in target) return target[prop as keyof typeof target];
+				return () => undefined;
+			},
+		});
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			modelRegistry: {
+				getAvailable: () => [{ provider: "mock", id: "test-model", reasoning: true }],
+			},
+			sessionManager: {
+				getSessionId: () => "usage-snapshot-session",
+				getSessionFile: () => path.join(tempDir, "usage-snapshot-session.jsonl"),
+				getEntries: () => [],
+			},
+		};
+		const updates: Array<{ usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; turns: number } }> = [];
+		const responses: SubagentDelegationResponse[] = [];
+		extensionEvents.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => {
+			if ((payload as { ownerRunId?: unknown }).ownerRunId === "owner-usage-snapshot") {
+				updates.push(payload as { usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; turns: number } });
+			}
+		});
+		extensionEvents.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
+			if ((payload as { ownerRunId?: unknown }).ownerRunId === "owner-usage-snapshot") {
+				responses.push(payload as SubagentDelegationResponse);
+			}
+		});
+
+		const usageRequest = {
+			requestId: "usage-snapshot-a",
+			ownerRunId: "owner-usage-snapshot",
+			nodeId: "node-usage-a",
+			agent: "worker",
+			task: "Report cumulative usage across turns",
+			context: "fresh",
+			cwd: tempDir,
+			model: "mock/test-model",
+			thinking: "high",
+			result: { kind: "text" },
+		} satisfies SubagentDelegationRequest;
+
+		try {
+			const previousChildEnv = process.env[SUBAGENT_CHILD_ENV];
+			delete process.env[SUBAGENT_CHILD_ENV];
+			try {
+				registerSubagentExtension(fakePi as never);
+			} finally {
+				if (previousChildEnv === undefined) delete process.env[SUBAGENT_CHILD_ENV];
+				else process.env[SUBAGENT_CHILD_ENV] = previousChildEnv;
+			}
+			for (const handler of runtimeHandlers.get("session_start") ?? []) {
+				await handler({ reason: "startup" }, ctx);
+			}
+			extensionEvents.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, usageRequest);
+
+			const responseDeadlineAt = Date.now() + 30_000;
+			while (responses.length < 1 && Date.now() < responseDeadlineAt) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.equal(responses.length, 1);
+			const [response] = responses;
+			assert.equal(response.status, "completed");
+
+			const usageUpdates = updates.filter((entry) => entry.usage !== undefined);
+			assert.ok(usageUpdates.length >= 2, `expected at least two UPDATEs carrying usage, got ${JSON.stringify(updates)}`);
+			// Cumulative counters must monotonically reflect the running attempt, not reset or mix turns.
+			for (let index = 1; index < usageUpdates.length; index++) {
+				const previous = usageUpdates[index - 1]?.usage;
+				const current = usageUpdates[index]?.usage;
+				assert.ok(previous && current);
+				assert.ok(current.cacheRead >= previous.cacheRead, "cacheRead must not regress across an attempt");
+				assert.ok(current.cacheWrite >= previous.cacheWrite, "cacheWrite must not regress across an attempt");
+			}
+			const lastUpdateUsage = usageUpdates.at(-1)?.usage;
+			assert.ok(lastUpdateUsage);
+			assert.deepEqual(lastUpdateUsage, {
+				input: response.usage?.input,
+				output: response.usage?.output,
+				cacheRead: response.usage?.cacheRead,
+				cacheWrite: response.usage?.cacheWrite,
+				turns: response.usage?.turns,
+			});
+			// Cumulative across both assistant turns in the attempt: 5+11 input, 3+7 output, 2+6 cacheRead, 1+4 cacheWrite, 2 turns.
+			assert.deepEqual(lastUpdateUsage, { input: 16, output: 10, cacheRead: 8, cacheWrite: 5, turns: 2 });
 		} finally {
 			for (const handler of runtimeHandlers.get("session_shutdown") ?? []) {
 				await handler({}, ctx);

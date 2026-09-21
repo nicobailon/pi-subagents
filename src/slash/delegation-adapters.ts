@@ -4,6 +4,7 @@ import {
 	type SubagentDelegationStatus,
 	type SubagentDelegationThinking,
 	type SubagentDelegationUpdate,
+	type SubagentDelegationUpdateUsage,
 	type SubagentDelegationValue,
 } from "../api/delegation.ts";
 import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, IntercomBridgeConfig, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, Usage } from "../shared/types.ts";
@@ -38,6 +39,7 @@ interface PromptTemplateDelegationTaskProgress {
 	toolCount?: number;
 	durationMs?: number;
 	tokens?: number;
+	usage?: SubagentDelegationUpdateUsage;
 }
 
 export interface PromptTemplateDelegationUpdate {
@@ -52,6 +54,7 @@ export interface PromptTemplateDelegationUpdate {
 	toolCount?: number;
 	durationMs?: number;
 	tokens?: number;
+	usage?: SubagentDelegationUpdateUsage;
 	taskProgress?: PromptTemplateDelegationTaskProgress[];
 }
 
@@ -108,6 +111,11 @@ export interface PromptTemplateBridgeResult {
 			toolCount?: number;
 			durationMs?: number;
 			tokens?: number;
+			inputTokens?: number;
+			outputTokens?: number;
+			cacheRead?: number;
+			cacheWrite?: number;
+			turnCount?: number;
 		}>;
 	};
 }
@@ -238,6 +246,34 @@ function buildDelegationMessages(
 	return [{ role: "assistant", content }];
 }
 
+function isFiniteNonNegative(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+/**
+ * Projects a cumulative per-attempt usage snapshot from a progress entry,
+ * only when every counter is present and a finite non-negative number.
+ * Returns a fresh object each call so a later mutation of the source
+ * progress (which keeps accumulating) never changes a snapshot already
+ * handed to a caller.
+ */
+function buildDelegationUpdateUsage(entry: {
+	inputTokens?: number;
+	outputTokens?: number;
+	cacheRead?: number;
+	cacheWrite?: number;
+	turnCount?: number;
+} | undefined): SubagentDelegationUpdateUsage | undefined {
+	if (!entry) return undefined;
+	const { inputTokens, outputTokens, cacheRead, cacheWrite, turnCount } = entry;
+	if (!isFiniteNonNegative(inputTokens)
+		|| !isFiniteNonNegative(outputTokens)
+		|| !isFiniteNonNegative(cacheRead)
+		|| !isFiniteNonNegative(cacheWrite)
+		|| !isFiniteNonNegative(turnCount)) return undefined;
+	return { input: inputTokens, output: outputTokens, cacheRead, cacheWrite, turns: turnCount };
+}
+
 export function toDelegationUpdate(requestId: string, update: PromptTemplateBridgeResult): PromptTemplateDelegationUpdate | undefined {
 	const progress = update.details?.progress?.[0];
 	const taskProgress = update.details?.progress?.map((entry) => {
@@ -259,6 +295,7 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
 			toolCount: entry.toolCount,
 			durationMs: entry.durationMs,
 			tokens: entry.tokens,
+			usage: buildDelegationUpdateUsage(entry),
 		};
 	});
 	if (!progress && (!taskProgress || taskProgress.length === 0)) return undefined;
@@ -277,6 +314,7 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
 		recentTools: sanitizeRecentTools(progress?.recentTools),
 		model: progress ? resolveProgressModel(update, progress) : undefined,
 		toolCount: progress?.toolCount,
+		usage: buildDelegationUpdateUsage(progress),
 		durationMs: progress?.durationMs,
 		tokens: progress?.tokens,
 		taskProgress,
@@ -325,6 +363,7 @@ export function toSubagentDelegationUpdate(
 		...(typeof legacy.toolCount === "number" ? { toolCount: legacy.toolCount } : {}),
 		...(typeof legacy.durationMs === "number" ? { durationMs: legacy.durationMs } : {}),
 		...(typeof legacy.tokens === "number" ? { tokens: legacy.tokens } : {}),
+		...(legacy.usage ? { usage: legacy.usage } : {}),
 	};
 }
 

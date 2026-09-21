@@ -331,6 +331,89 @@ describe("public subagent delegation contract", () => {
 		bridge.dispose();
 	});
 
+	it("emits a structured delegation update when only cumulative cache or turn counters change", async () => {
+		const events = new FakeEvents();
+		const updates: SubagentDelegationUpdate[] = [];
+		events.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => updates.push(payload as SubagentDelegationUpdate));
+		const bridge = registerPromptTemplateDelegationBridge({
+			events,
+			getContext: () => ({ cwd: "/repo" }),
+			execute: async () => { throw new Error("legacy executor must remain separate"); },
+			executeStructured: async (_id, _params, _signal, _ctx, onUpdate) => {
+				const base = {
+					index: 0,
+					agent: "reviewer",
+					currentTool: "read",
+					toolCount: 1,
+					durationMs: 1_000,
+					tokens: 16,
+					inputTokens: 8,
+					outputTokens: 8,
+					cacheRead: 0,
+					cacheWrite: 0,
+					turnCount: 1,
+				};
+				onUpdate({ details: { mode: "single", runId: "run-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [base] } });
+				// Exact duplicate: tokens/tool progress and usage counters are unchanged, so this is a heartbeat.
+				onUpdate({ details: { mode: "single", runId: "run-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ ...base }] } });
+				// Only cacheRead changes.
+				onUpdate({ details: { mode: "single", runId: "run-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ ...base, cacheRead: 4 }] } });
+				// Only cacheWrite changes.
+				onUpdate({ details: { mode: "single", runId: "run-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ ...base, cacheRead: 4, cacheWrite: 2 }] } });
+				// Only turns changes.
+				onUpdate({ details: { mode: "single", runId: "run-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ ...base, cacheRead: 4, cacheWrite: 2, turnCount: 2 }] } });
+				return {
+					details: {
+						mode: "single",
+						runId: "run-usage",
+						results: [{ agent: "reviewer", exitCode: 0, model: "openai/gpt-5", finalOutput: "done", usage: { input: 8, output: 8, cacheRead: 4, cacheWrite: 2, cost: 0, turns: 2 } }],
+					},
+				};
+			},
+		});
+		const responsePromise = once(events, SUBAGENT_DELEGATION_RESPONSE_EVENT);
+		events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, result: { kind: "text" as const } });
+		assert.equal((await responsePromise as SubagentDelegationResponse).status, "completed");
+		assert.equal(updates.length, 4);
+		assert.deepEqual(updates[0]?.usage, { input: 8, output: 8, cacheRead: 0, cacheWrite: 0, turns: 1 });
+		assert.deepEqual(updates[1]?.usage, { input: 8, output: 8, cacheRead: 4, cacheWrite: 0, turns: 1 });
+		assert.deepEqual(updates[2]?.usage, { input: 8, output: 8, cacheRead: 4, cacheWrite: 2, turns: 1 });
+		assert.deepEqual(updates[3]?.usage, { input: 8, output: 8, cacheRead: 4, cacheWrite: 2, turns: 2 });
+		bridge.dispose();
+	});
+
+	it("omits usage from a structured delegation update when counters are absent or invalid", async () => {
+		const events = new FakeEvents();
+		const updates: SubagentDelegationUpdate[] = [];
+		events.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => updates.push(payload as SubagentDelegationUpdate));
+		const bridge = registerPromptTemplateDelegationBridge({
+			events,
+			getContext: () => ({ cwd: "/repo" }),
+			execute: async () => { throw new Error("legacy executor must remain separate"); },
+			executeStructured: async (_id, _params, _signal, _ctx, onUpdate) => {
+				// Legacy-shaped progress: no cache/turn counters at all.
+				onUpdate({ details: { mode: "single", runId: "run-invalid", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ index: 0, agent: "reviewer", currentTool: "read", toolCount: 1, tokens: 8 }] } });
+				// A negative counter must not project usage.
+				onUpdate({ details: { mode: "single", runId: "run-invalid", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ index: 0, agent: "reviewer", currentTool: "write", toolCount: 2, tokens: 16, inputTokens: -1, outputTokens: 8, cacheRead: 0, cacheWrite: 0, turnCount: 1 }] } });
+				// A NaN counter must not project usage.
+				onUpdate({ details: { mode: "single", runId: "run-invalid", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ index: 0, agent: "reviewer", currentTool: "grep", toolCount: 3, tokens: 16, inputTokens: 8, outputTokens: Number.NaN, cacheRead: 0, cacheWrite: 0, turnCount: 1 }] } });
+				return {
+					details: {
+						mode: "single",
+						runId: "run-invalid",
+						results: [{ agent: "reviewer", exitCode: 0, model: "openai/gpt-5", finalOutput: "done", usage: { input: 8, output: 8, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 } }],
+					},
+				};
+			},
+		});
+		const responsePromise = once(events, SUBAGENT_DELEGATION_RESPONSE_EVENT);
+		events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, result: { kind: "text" as const } });
+		assert.equal((await responsePromise as SubagentDelegationResponse).status, "completed");
+		assert.equal(updates.length, 3);
+		for (const update of updates) assert.equal(update.usage, undefined);
+		bridge.dispose();
+	});
+
 	it("always delivers the complete structured terminal error after quiet heartbeats", async () => {
 		const events = new FakeEvents();
 		const updates: SubagentDelegationUpdate[] = [];
@@ -405,6 +488,38 @@ describe("public subagent delegation contract", () => {
 			if (expectedStatus === "failed") assert.match(response.error ?? "", /structured result/);
 			bridge.dispose();
 		}
+	});
+
+	it("preserves the last emitted usage snapshot when cancellation lands before the terminal response", async () => {
+		const events = new FakeEvents();
+		const updates: SubagentDelegationUpdate[] = [];
+		const responses: SubagentDelegationResponse[] = [];
+		events.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => updates.push(payload as SubagentDelegationUpdate));
+		events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => responses.push(payload as SubagentDelegationResponse));
+		let deliverSecondUpdate: (() => void) | undefined;
+		const bridge = registerPromptTemplateDelegationBridge({
+			events,
+			getContext: () => ({ cwd: "/repo" }),
+			execute: async () => { throw new Error("legacy executor must remain separate"); },
+			executeStructured: async (_id, _params, signal, _ctx, onUpdate) => await new Promise((_resolve, reject) => {
+				onUpdate({ details: { mode: "single", runId: "run-cancel-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ index: 0, agent: "reviewer", currentTool: "read", toolCount: 1, tokens: 8, inputTokens: 4, outputTokens: 4, cacheRead: 1, cacheWrite: 0, turnCount: 1 }] } });
+				deliverSecondUpdate = () => onUpdate({ details: { mode: "single", runId: "run-cancel-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ index: 0, agent: "reviewer", currentTool: "read", toolCount: 1, tokens: 12, inputTokens: 6, outputTokens: 6, cacheRead: 3, cacheWrite: 1, turnCount: 2 }] } });
+				signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+			}),
+		});
+		events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, requestId: "cancel-usage", result: { kind: "text" as const } });
+		while (updates.length < 1) await tick();
+		assert.deepEqual(updates[0]?.usage, { input: 4, output: 4, cacheRead: 1, cacheWrite: 0, turns: 1 });
+		deliverSecondUpdate?.();
+		while (updates.length < 2) await tick();
+		assert.deepEqual(updates[1]?.usage, { input: 6, output: 6, cacheRead: 3, cacheWrite: 1, turns: 2 });
+		events.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, { requestId: "cancel-usage", ownerRunId: "owner-1", nodeId: "node-1" });
+		while (!responses.some((entry) => entry.requestId === "cancel-usage")) await tick();
+		assert.equal(responses.find((entry) => entry.requestId === "cancel-usage")?.status, "cancelled");
+		// The already-emitted UPDATE usage snapshots must be untouched by the cancellation.
+		assert.deepEqual(updates[0]?.usage, { input: 4, output: 4, cacheRead: 1, cacheWrite: 0, turns: 1 });
+		assert.deepEqual(updates[1]?.usage, { input: 6, output: 6, cacheRead: 3, cacheWrite: 1, turns: 2 });
+		bridge.dispose();
 	});
 
 	it("isolates logical-node ownership, exact cancellation, pre-cancellation, and reuse", async () => {

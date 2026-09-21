@@ -284,6 +284,9 @@ interface StructuredDelegationProgressState {
 	model?: string;
 	toolCount: number;
 	tokens: number;
+	cacheRead?: number;
+	cacheWrite?: number;
+	turnCount?: number;
 }
 
 function captureStructuredDelegationProgressState(progress: AgentProgress, result: SingleResult): StructuredDelegationProgressState {
@@ -296,6 +299,9 @@ function captureStructuredDelegationProgressState(progress: AgentProgress, resul
 		model: progress.model ?? result.model,
 		toolCount: progress.toolCount,
 		tokens: progress.tokens,
+		cacheRead: progress.cacheRead,
+		cacheWrite: progress.cacheWrite,
+		turnCount: progress.turnCount,
 	};
 }
 
@@ -310,6 +316,9 @@ function structuredDelegationProgressChanged(
 		|| previous.model !== (progress.model ?? result.model)
 		|| previous.toolCount !== progress.toolCount
 		|| previous.tokens !== progress.tokens
+		|| previous.cacheRead !== progress.cacheRead
+		|| previous.cacheWrite !== progress.cacheWrite
+		|| previous.turnCount !== progress.turnCount
 		|| previous.recentOutput.length !== progress.recentOutput.length) return true;
 	for (let index = 0; index < progress.recentOutput.length; index++) {
 		if (previous.recentOutput[index] !== progress.recentOutput[index]) return true;
@@ -502,6 +511,8 @@ async function runSingleAttempt(
 		...(resolvedThinking ? { thinking: resolvedThinking } : {}),
 		inputTokens: 0,
 		outputTokens: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
 		durationMs: 0,
 		lastActivityAt: startTime,
 	};
@@ -1070,6 +1081,8 @@ async function runSingleAttempt(
 						progress.tokens = result.usage.input + result.usage.output;
 						progress.inputTokens = result.usage.input;
 						progress.outputTokens = result.usage.output;
+						progress.cacheRead = result.usage.cacheRead;
+						progress.cacheWrite = result.usage.cacheWrite;
 						progress.window = window;
 						progress.windowPeak = Math.max(progress.windowPeak ?? 0, window);
 					}
@@ -1301,6 +1314,8 @@ async function runSingleAttempt(
 				progress.tokens = result.usage.input + result.usage.output;
 				progress.inputTokens = result.usage.input;
 				progress.outputTokens = result.usage.output;
+				progress.cacheRead = result.usage.cacheRead;
+				progress.cacheWrite = result.usage.cacheWrite;
 				progress.turnCount = result.usage.turns;
 			}
 			finish(finalCode);
