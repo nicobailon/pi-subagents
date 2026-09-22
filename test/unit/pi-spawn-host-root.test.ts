@@ -131,6 +131,7 @@ describe("resolveRunningPiPackageRoot", () => {
 			["/foreign/package.json", JSON.stringify({ name: "someone-else" })],
 		]);
 		const base = {
+			platform: "linux" as const,
 			argv1: "/missing/entry.js",
 			realpathSync: () => { throw new Error("missing"); },
 			readFileSync: (filePath: string) => {
