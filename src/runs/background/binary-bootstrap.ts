@@ -1,7 +1,10 @@
 import * as fs from "node:fs";
-import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createJiti } from "jiti";
+import * as piCore from "@earendil-works/pi-agent-core";
+import * as piAi from "@earendil-works/pi-ai/compat";
+import * as piTui from "@earendil-works/pi-tui";
 import * as sdk from "@earendil-works/pi-coding-agent";
 import { installRunnerHttpDispatcher } from "./runner-http-dispatcher.ts";
 import { runConfiguredSubagent, validateSubagentRunConfig } from "./subagent-runner-bootstrap.ts";
@@ -32,7 +35,22 @@ export default async function runBinaryBootstrap(): Promise<never> {
 		installRunnerHttpDispatcher({ agentDir: getAgentDir(), cwd: process.cwd() });
 		await runConfiguredSubagent(config, {
 			loadPiCodingAgent: async () => sdk,
-			loadExecutionModule: async () => createRequire(import.meta.url)(`./subagent-runner${path.extname(fileURLToPath(import.meta.url))}`),
+			loadExecutionModule: async () => {
+				// Native Bun imports bypass Pi's Jiti virtual peers in the compiled host.
+				const jiti = createJiti(import.meta.url, {
+					tryNative: false,
+					moduleCache: false,
+					virtualModules: {
+						"@earendil-works/pi-agent-core": piCore,
+						"@earendil-works/pi-ai": piAi,
+						"@earendil-works/pi-ai/compat": piAi,
+						"@earendil-works/pi-tui": piTui,
+						"@earendil-works/pi-coding-agent": sdk,
+					},
+				});
+				const runner = `./subagent-runner${path.extname(fileURLToPath(import.meta.url))}`;
+				return jiti.import<typeof import("./subagent-runner.ts")>(runner);
+			},
 		});
 		process.exit(0);
 	} catch (error) {
