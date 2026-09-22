@@ -5,7 +5,7 @@ import type { OutputMode, SavedOutputReference } from "../../shared/types.ts";
 
 const READ_ONLY_OUTPUT_TOOLS = new Set([
 	"read", "grep", "find", "ls", "web_search", "fetch_content", "get_search_content",
-	"source_check", "intercom", "contact_supervisor", "structured_output",
+	"source_check", "intercom", "contact_supervisor", "structured_output", "watchdog_diff",
 ]);
 
 function hasOutputWriteCapability(tools: string[] | undefined, mcpDirectTools: string[] | undefined): boolean {

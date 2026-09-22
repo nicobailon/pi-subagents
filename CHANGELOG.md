@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- Treat the bundled reviewer's `watchdog_diff` tool as read-only when assigning a single output path, so reviewers return their complete artifact for runtime persistence as introduced in [#426](https://github.com/nicobailon/pi-subagents/issues/426), with thanks to Alexander Gerdes ([@Avg8888](https://github.com/Avg8888)). Thanks to [@riskywhat](https://github.com/riskywhat) for [#2405](https://github.com/nicobailon/pi-subagents/issues/2405).
 - Prevent duplicate completion notifications when multiple extension registrations for the same session coexist in one process. Thanks to [@hongchu098](https://github.com/hongchu098) for [#2389](https://github.com/nicobailon/pi-subagents/issues/2389).
 - Make running and failed external CLI logs inspectable in Fleet, tool status, and TUI surfaces with bounded, contained reads ([#2375](https://github.com/nicobailon/pi-subagents/issues/2375), thanks [@Shujakuinkuraudo](https://github.com/Shujakuinkuraudo)).
 - Preserve and safely prune Pi 0.87 context edits when forking sessions, including replacement content and signed Anthropic thinking blocks.
