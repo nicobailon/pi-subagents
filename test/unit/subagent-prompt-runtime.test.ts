@@ -11,7 +11,6 @@ import { formatChildToolDiagnostic, type ChildToolDiagnostic } from "../../src/r
 import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
 import type { ChildWatchdogConfig } from "../../src/watchdog/child-status.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../src/watchdog/types.ts";
-import { WATCHDOG_DIFF_UNAVAILABLE_BASELINE } from "../../src/watchdog/diff-tool.ts";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createNestedRoute, nestedResultsPath } from "../../src/runs/shared/nested-events.ts";
@@ -267,12 +266,13 @@ describe("subagent prompt runtime", () => {
 		assert.equal(outsideTools.has("watchdog_diff"), true);
 		assert.doesNotThrow(() => outsideHandlers.get("agent_start")?.({}));
 		assert.deepEqual(outsideDiagnostics, [undefined]);
-		const unavailable = outsideTools.get("watchdog_diff") as typeof diffTool;
-		assert.deepEqual(await unavailable.execute("review", {}), {
-			content: [{ type: "text", text: WATCHDOG_DIFF_UNAVAILABLE_BASELINE }],
-			details: { chars: WATCHDOG_DIFF_UNAVAILABLE_BASELINE.length },
-		});
-		assert.deepEqual(await unavailable.execute("review", { path: "tracked.txt", stat: true }), await unavailable.execute("review", {}));
+		const unavailable = outsideTools.get("watchdog_diff") as { execute(id: string, params: object): Promise<{ content: Array<{ type: string; text: string }>; details: { chars: number } }> };
+		const unavailableResult = await unavailable.execute("review", {});
+		assert.equal(unavailableResult.content[0]?.type, "text");
+		assert.match(unavailableResult.content[0]?.text ?? "", /no valid Git HEAD baseline/);
+		assert.match(unavailableResult.content[0]?.text ?? "", /No diff can be shown/);
+		assert.equal(unavailableResult.details.chars, unavailableResult.content[0]?.text.length);
+		assert.deepEqual(await unavailable.execute("review", { path: "tracked.txt", stat: true }), unavailableResult);
 		assert.equal(outsideTools.has("contact_supervisor"), false);
 
 		const missingHandlers = new Map<string, Function>();
