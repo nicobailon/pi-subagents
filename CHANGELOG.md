@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- Preserve validated structured output as evidence when a later provider failure or abort keeps the child run failed, without hiding independent watchdog findings or starting an extra continuation turn. Thanks to [@grahama1970](https://github.com/grahama1970) for [#2411](https://github.com/nicobailon/pi-subagents/issues/2411).
 - Treat the bundled reviewer's `watchdog_diff` tool as read-only when assigning a single output path, so reviewers return their complete artifact for runtime persistence as introduced in [#426](https://github.com/nicobailon/pi-subagents/issues/426), with thanks to Alexander Gerdes ([@Avg8888](https://github.com/Avg8888)). Thanks to [@riskywhat](https://github.com/riskywhat) for [#2405](https://github.com/nicobailon/pi-subagents/issues/2405).
 - Respect `disable-model-invocation: true` in subagent skill injection: hidden skills are no longer leaked into child `<available_skills>` prompts, even when a caller resolves them by name, and no longer surface in model-facing proactive skill recommendations. Thanks to [@toRolex](https://github.com/toRolex) for [#2400](https://github.com/nicobailon/pi-subagents/pull/2400).
 - Resolve npm-hosted peer aliases to their canonical package paths so pnpm symlinks preserve dependency scope and module identity. Thanks to [@henriquebastos](https://github.com/henriquebastos) for [#2409](https://github.com/nicobailon/pi-subagents/pull/2409).

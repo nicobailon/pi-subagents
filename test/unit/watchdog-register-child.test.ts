@@ -66,7 +66,14 @@ describe("child watchdog registration", () => {
 
 		assert.equal(sent.length, 0, "settled child must not receive a turn-triggering warning");
 		assert.equal(appended.length, 1, "the real blocker remains visible as a status-only entry");
-		assert.ok(statuses.some((event) => (event as { warning?: { severity?: string } }).warning?.severity === "blocker"));
+		assert.deepEqual((appended[0] as { details?: { severity?: string; summary?: string } }).details && {
+			severity: (appended[0] as { details: { severity: string } }).details.severity,
+			summary: (appended[0] as { details: { summary: string } }).details.summary,
+		}, { severity: "blocker", summary: "Independent blocker" });
+		assert.ok(statuses.some((event) => {
+			const status = event as { phase?: string; warning?: { severity?: string; summary?: string } };
+			return status.phase === "reviewing" && status.warning?.severity === "blocker" && status.warning.summary === "Independent blocker";
+		}), "the status sink must retain the late blocker evidence");
 		runtime.dispose();
 	});
 });

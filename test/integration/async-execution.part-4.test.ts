@@ -562,6 +562,83 @@ setTimeout(() => process.exit(90), 15000).unref();
 		});
 	});
 
+	for (const terminal of ["error", "aborted"] as const) {
+		it(`background preserves structured evidence when a later ${terminal} terminal keeps the run failed`, { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+			const id = `async-structured-${terminal}-${Date.now().toString(36)}`;
+			const terminalMessage = {
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [],
+					model: "mock/test-model",
+					stopReason: terminal,
+					errorMessage: terminal === "error" ? "later provider failure" : "This operation was aborted",
+					usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+				},
+			};
+			mockPi.onCall({
+				structuredOutputCapture: { ok: true },
+				jsonl: [
+					{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
+					{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+					{ type: "tool_execution_end", toolName: "structured_output" },
+					terminalMessage,
+				],
+			});
+
+			executeAsyncSingle(id, {
+				agent: "worker", task: "Return data, then fail", agentConfig: makeAgent("worker"), acceptance: false,
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2,
+				structuredOutputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } },
+			});
+
+			const payload = await readAsyncPayload(id);
+			const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+			const child = payload.results[0]!;
+			assert.equal(payload.success, false);
+			assert.equal(payload.state, "failed");
+			assert.equal(child.success, false);
+			assert.deepEqual(child.structuredOutput, { ok: true });
+			assert.ok(child.structuredOutputPath);
+			assert.deepEqual(JSON.parse(fs.readFileSync(child.structuredOutputPath, "utf-8")), { ok: true });
+			assert.equal(status.state, "failed");
+			assert.equal(status.steps?.[0]?.status, "failed");
+			assert.deepEqual(status.steps?.[0]?.structuredOutput, { ok: true });
+			assert.equal(status.steps?.[0]?.structuredOutputPath, child.structuredOutputPath);
+		});
+	}
+
+	it("background keeps invalid and missing structured captures absent", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		for (const capture of ["invalid", "missing"] as const) {
+			const id = `async-structured-${capture}-${Date.now().toString(36)}`;
+			mockPi.onCall(capture === "invalid" ? {
+				jsonl: [
+					{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: "invalid" } } },
+					{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output validation failed." }], isError: true } },
+					{ type: "tool_execution_end", toolName: "structured_output", isError: true },
+					events.assistantMessage("done"),
+				],
+			} : { output: "done" });
+
+			executeAsyncSingle(id, {
+				agent: "worker", task: "Return data", agentConfig: makeAgent("worker"), acceptance: false,
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2,
+				structuredOutputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } },
+			});
+
+			const payload = await readAsyncPayload(id);
+			const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+			assert.equal(payload.success, false);
+			assert.equal(payload.results[0]?.structuredOutput, undefined);
+			assert.equal(status.steps?.[0]?.structuredOutput, undefined);
+			assert.equal(fs.existsSync(path.join(ASYNC_DIR, id, "structured-output", "output.json")), false);
+		}
+	});
+
 	it("background child watchdog tail timeout still finalizes successful output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		await withIsolatedWatchdogSettings(tempDir, async () => {
 			writeWatchdogSettings(tempDir, 150);

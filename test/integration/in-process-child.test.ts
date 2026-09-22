@@ -278,7 +278,8 @@ describe("in-process foreground child", () => {
 
 		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "structured-invalid", acceptance: false, structuredOutput: structured });
 		assert.equal(result.exitCode, 1);
-		assert.match(result.error ?? "", /Missing structured_output call/);
+		assert.match(result.error ?? "", /Structured output validation failed/);
+		assert.equal(result.structuredOutputFailed, true);
 		assert.equal(result.structuredOutput, undefined);
 		assert.equal(fs.existsSync(structured.outputPath), false);
 	});

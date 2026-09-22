@@ -1248,17 +1248,23 @@ export async function runSingleStepInner(
 		let structuredOutput: unknown;
 		let structuredError: string | undefined;
 		let validatedStructuredOutput = false;
-		if (terminalDiagnosticsEligible && effectiveStructuredOutput && run.exitCode === 0 && !run.error && !toolAvailabilityError && !midToolExitError) {
-			if (!run.structuredOutputToolInvoked) {
+		if (effectiveStructuredOutput) {
+			const otherwiseSuccessful = terminalDiagnosticsEligible && run.exitCode === 0 && !run.error && !toolAvailabilityError && !midToolExitError;
+			if (!run.structuredOutputToolInvoked && otherwiseSuccessful) {
 				structuredError = MISSING_STRUCTURED_OUTPUT_CALL_ERROR;
-			} else {
+			} else if (run.structuredOutputToolInvoked) {
 				const structured = await readStructuredOutput({
 					schema: effectiveStructuredOutput.schema,
 					schemaPath: effectiveStructuredOutput.schemaPath,
 					outputPath: effectiveStructuredOutput.outputPath,
 				});
-				if (structured.error === MISSING_STRUCTURED_OUTPUT_CALL_ERROR) structuredError = formatStructuredOutputRejectionError(run.messages);
-				else if (structured.error) structuredError = structured.error;
+				if (structured.error) {
+					if (otherwiseSuccessful) {
+						structuredError = structured.error === MISSING_STRUCTURED_OUTPUT_CALL_ERROR
+							? formatStructuredOutputRejectionError(run.messages)
+							: structured.error;
+					}
+				}
 				else {
 					structuredOutput = structured.value;
 					const acceptanceReport = readStructuredOutputAcceptanceReport(effectiveStructuredOutput);
@@ -1540,10 +1546,10 @@ export async function runSingleStepInner(
 		toolBudget,
 		toolBudgetBlocked: toolBudgetBlocked || undefined,
 		...((finalResult as (RunChildSessionResult & { effects?: import("../../shared/types.ts").EffectsProjection }) | undefined)?.effects ? { effects: (finalResult as RunChildSessionResult & { effects?: import("../../shared/types.ts").EffectsProjection }).effects } : {}),
-		structuredOutput: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : (finalResult as (RunChildSessionResult & { structuredOutput?: unknown }) | undefined)?.structuredOutput,
-		structuredOutputFailed: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : finalResult?.structuredOutputFailed,
-		structuredOutputPath: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : effectiveStructuredOutput?.outputPath,
-		structuredOutputSchemaPath: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : effectiveStructuredOutput?.schemaPath,
+		structuredOutput: (finalResult as (RunChildSessionResult & { structuredOutput?: unknown }) | undefined)?.structuredOutput,
+		structuredOutputFailed: finalResult?.structuredOutputFailed,
+		structuredOutputPath: effectiveStructuredOutput?.outputPath,
+		structuredOutputSchemaPath: effectiveStructuredOutput?.schemaPath,
 		acceptance: effectiveAcceptance,
 		watchdog: finalResult?.watchdog,
 		...(capabilityAudit ? { capabilityCeiling: capabilityAudit.ceiling, capabilityAudit } : {}),
