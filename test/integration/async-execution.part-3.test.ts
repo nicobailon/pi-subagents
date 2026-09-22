@@ -19,6 +19,7 @@ import { createEventBus, createTempDir, events, makeAgent, makeMinimalCtx, remov
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey, getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
 import { readPendingChainAppendRequests } from "../../src/runs/background/chain-append.ts";
+import { readActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { createRunFanoutBudget, getRunFanoutBudgetSnapshot, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 import { deriveForkPromptCacheKey } from "../../src/runs/shared/child-tool-plan.ts";
 import { INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR, validateStructuredOutputValue } from "../../src/runs/shared/structured-output.ts";
@@ -32,6 +33,37 @@ import {
 	readLastMockPiArgs, readMockPiArgs, readMockPiArgsMatching, tempDir, mockPi,
 	makeAsyncExecutor, readAsyncPayload, observeSharedCwdRunner,
 } from "../support/async-execution-fixture.ts";
+
+function waitForPath(file: string): Promise<void> {
+	return new Promise((resolve) => {
+		const inspect = () => {
+			if (!fs.existsSync(file)) return;
+			watcher.close();
+			resolve();
+		};
+		const watcher = fs.watch(path.dirname(file), inspect);
+		inspect();
+	});
+}
+
+function waitForJson<T>(file: string, predicate: (value: T) => boolean): Promise<T> {
+	return new Promise((resolve, reject) => {
+		const inspect = () => {
+			try {
+				const value = JSON.parse(fs.readFileSync(file, "utf8")) as T;
+				if (!predicate(value)) return;
+				watcher.close();
+				resolve(value);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+				watcher.close();
+				reject(error);
+			}
+		};
+		const watcher = fs.watch(path.dirname(file), inspect);
+		inspect();
+	});
+}
 
 describe("async execution utilities", { skip: !available ? "pi packages not available" : undefined }, () => {
 	installAsyncExecutionHooks();
@@ -2266,7 +2298,7 @@ syncBuiltinESMExports();
 
 		const preloadFile = path.join(tempDir, "exit-before-ready.mjs");
 		fs.writeFileSync(preloadFile, `
-if (process.argv.some((arg) => arg.endsWith("subagent-runner.ts"))) process.exit(1);
+if (process.argv.some((arg) => arg.endsWith("subagent-runner-bootstrap.ts"))) process.exit(1);
 `);
 		const previousNodeOptions = process.env.NODE_OPTIONS;
 		const startedAt = Date.now();
@@ -2397,5 +2429,140 @@ syncBuiltinESMExports();
 		assert.equal(Object.values((terminalEmission.candidate as { expectedWriters: Record<string, number> }).expectedWriters).every((count) => count === 0), true);
 		assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${id}.json`)), false, "a pre-proceed exit must not publish a result");
 	});
+
+	for (const revival of [false, true]) {
+		it(`${revival ? "revival" : "fresh"} post-proceed import rejection settles parent-owned lifecycle`, async () => {
+			const id = `post-proceed-import-${revival ? "revival" : "fresh"}-${Date.now().toString(36)}`;
+			const asyncDir = path.join(ASYNC_DIR, id);
+			const sessionId = `session-${id}`;
+			const startedPath = path.join(tempDir, `${id}-import-started`);
+			const rejectPath = path.join(tempDir, `${id}-reject`);
+			const fixturePath = path.join(tempDir, `${id}-execution.mjs`);
+			fs.writeFileSync(fixturePath, `
+import fs from "node:fs";
+import path from "node:path";
+const started = process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED;
+const reject = process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT;
+fs.writeFileSync(started, "started");
+await new Promise((resolve) => {
+  const inspect = () => { if (fs.existsSync(reject)) { watcher.close(); resolve(); } };
+  const watcher = fs.watch(path.dirname(reject), inspect);
+  inspect();
+});
+throw new Error("injected parent-visible heavy import rejection");
+`);
+			const sessionFile = path.join(tempDir, `${id}.jsonl`);
+			if (revival) fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 1, id: `child-${id}`, cwd: fs.realpathSync(tempDir) })}\n`);
+			const callsBefore = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length;
+			const previousModule = process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE;
+			const previousStarted = process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED;
+			const previousReject = process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT;
+			try {
+				process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE = pathToFileURL(fixturePath).href;
+				process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED = startedPath;
+				process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT = rejectPath;
+				executeAsyncSingle(id, {
+					agent: "worker", task: "Must never start", agentConfig: makeAgent("worker"),
+					ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: sessionId },
+					artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+					shareEnabled: false,
+					...(revival ? { sessionFile, revivalLease: { sessionFile, runId: id, sourceRunId: `source-${id}`, parentSessionId: sessionId } } : {}),
+					maxSubagentDepth: 2,
+				});
+				await waitForPath(startedPath);
+			} finally {
+				if (previousModule === undefined) delete process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE; else process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE = previousModule;
+				if (previousStarted === undefined) delete process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED; else process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED = previousStarted;
+				if (previousReject === undefined) delete process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT; else process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT = previousReject;
+			}
+			assert.equal(fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length, callsBefore);
+			fs.writeFileSync(rejectPath, "reject");
+			const terminal = await waitForJson<{ state: string }>(path.join(asyncDir, "process-terminal.json"), (value) => value.state !== "pending");
+			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"));
+			const candidate = JSON.parse(fs.readFileSync(path.join(asyncDir, "process-terminal-candidate.json"), "utf8"));
+			assert.equal(status.state, "failed");
+			assert.match(status.error, /injected parent-visible heavy import rejection/);
+			assert.equal(terminal.state, "observed");
+			assert.deepEqual(candidate.writers, {});
+			assert.deepEqual(candidate.expectedWriters, { 0: 0 });
+			assert.equal(readActiveRunIndex(ASYNC_DIR)?.includes(id) ?? false, false);
+			assert.equal(getActiveAsyncCapacitySnapshot(sessionId, 1).used, 0);
+			assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${id}.json`)), false);
+			if (revival) {
+				assert.equal(fs.realpathSync(candidate.sessionFile), fs.realpathSync(sessionFile));
+				assert.equal(typeof candidate.revivalLeaseToken, "string");
+				assert.equal(candidate.revivalLeaseReleaseAcknowledged, true);
+			}
+		});
+	}
+
+	for (const revival of [false, true]) {
+		it(`${revival ? "revival" : "fresh multi-step"} post-import setup rejection settles parent-owned lifecycle`, async () => {
+			const id = `post-import-setup-${revival ? "revival" : "fresh"}-${Date.now().toString(36)}`;
+			const asyncDir = path.join(ASYNC_DIR, id);
+			const sessionId = `session-${id}`;
+			const startedPath = path.join(tempDir, `${id}-setup-started`);
+			const rejectPath = path.join(tempDir, `${id}-setup-reject`);
+			const factoryPath = path.join(tempDir, `${id}-factory.mjs`);
+			fs.writeFileSync(factoryPath, `
+import fs from "node:fs";
+import path from "node:path";
+const started = ${JSON.stringify(startedPath)};
+const reject = ${JSON.stringify(rejectPath)};
+fs.writeFileSync(started, "started");
+await new Promise((resolve) => {
+  const inspect = () => { if (fs.existsSync(reject)) { watcher.close(); resolve(); } };
+  const watcher = fs.watch(path.dirname(reject), inspect);
+  inspect();
+});
+throw new Error("injected pre-run child factory rejection");
+`);
+			const sessionFile = path.join(tempDir, `${id}.jsonl`);
+			if (revival) fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 1, id: `child-${id}`, cwd: fs.realpathSync(tempDir) })}\n`);
+			const callsBefore = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length;
+			const originalFactoryModule = childSessionFactoryModule();
+			try {
+				setChildSessionFactoryModule(factoryPath);
+				const common = {
+					ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: sessionId },
+					artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+					shareEnabled: false,
+					maxSubagentDepth: 2,
+				};
+				if (revival) {
+					executeAsyncSingle(id, {
+						agent: "worker", task: "Must never start", agentConfig: makeAgent("worker"), ...common,
+						sessionFile, revivalLease: { sessionFile, runId: id, sourceRunId: `source-${id}`, parentSessionId: sessionId },
+					});
+				} else {
+					executeAsyncChain(id, {
+						chain: [{ agent: "worker", task: "First must never start" }, { agent: "worker", task: "Second must never start" }],
+						agents: [makeAgent("worker")], ...common, sessionRoot: path.join(tempDir, "sessions"),
+					});
+				}
+				await waitForPath(startedPath);
+			} finally {
+				setChildSessionFactoryModule(originalFactoryModule);
+			}
+			assert.equal(fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length, callsBefore);
+			fs.writeFileSync(rejectPath, "reject");
+			const terminal = await waitForJson<{ state: string }>(path.join(asyncDir, "process-terminal.json"), (value) => value.state !== "pending");
+			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"));
+			const candidate = JSON.parse(fs.readFileSync(path.join(asyncDir, "process-terminal-candidate.json"), "utf8"));
+			assert.equal(status.state, "failed");
+			assert.match(status.error, /injected pre-run child factory rejection/);
+			assert.equal(terminal.state, "observed");
+			assert.deepEqual(candidate.writers, {});
+			assert.deepEqual(candidate.expectedWriters, revival ? { 0: 0 } : { 0: 0, 1: 0 });
+			assert.equal(readActiveRunIndex(ASYNC_DIR)?.includes(id) ?? false, false);
+			assert.equal(getActiveAsyncCapacitySnapshot(sessionId, 1).used, 0);
+			assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${id}.json`)), false);
+			if (revival) {
+				assert.equal(fs.realpathSync(candidate.sessionFile), fs.realpathSync(sessionFile));
+				assert.equal(typeof candidate.revivalLeaseToken, "string");
+				assert.equal(candidate.revivalLeaseReleaseAcknowledged, true);
+			}
+		});
+	}
 
 });

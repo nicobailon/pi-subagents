@@ -35,7 +35,7 @@ assert.equal(result.isError, true);
 assert.match(result.content[0].text, /packed spawn captured/);
 assert.equal(spawn.mock.callCount(), 1);
 const [, args, options] = spawn.mock.calls[0].arguments;
-assert.match(args.at(-2), /[/\\]subagent-runner\.js$/);
+assert.match(args.at(-2), /[/\\]subagent-runner-bootstrap\.js$/);
 assert.doesNotMatch(args.join(" "), /jiti-cli\.mjs/);
 assert.equal(args.includes("--experimental-strip-types"), false);
 assert.equal(options.env.PI_ASYNC_NATIVE_RUNNER, "1");

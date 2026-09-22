@@ -85,7 +85,7 @@ if (mode === "bootstrap-errors") {
 		{ name: "relative-input", configPath: "relative.json", expected: /Missing absolute PI_SUBAGENT_RUNNER_CONFIG/ },
 		{ name: "missing-file", configPath: "/stage/not-present.json", expected: /ENOENT/ },
 		{ name: "malformed-json", payload: "{", expected: /Subagent binary runner error/ },
-		{ name: "invalid-shape", payload: "{}", expected: /Invalid binary runner configuration/ },
+		{ name: "invalid-shape", payload: "{}", expected: /Invalid runner configuration: 'id' must be a non-empty string/ },
 		{ name: "wrong-authorization", barrier: true, expected: /startup control token does not match/ },
 		{ name: "missing-authorization", barrier: true, expected: /waiting for runner startup control 'proceed'/ },
 	];

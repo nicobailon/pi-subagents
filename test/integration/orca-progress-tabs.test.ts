@@ -95,6 +95,7 @@ describe("Orca progress-tab observer", () => {
 				systemPrompt: "Use native Pi",
 				systemPromptMode: "replace",
 				inheritProjectContext: false,
+				inheritGlobalContext: false,
 				inheritSkills: false,
 			}],
 			resultPath,
@@ -108,7 +109,7 @@ describe("Orca progress-tab observer", () => {
 		const repo = path.resolve(import.meta.dirname, "../..");
 		const exitCode = await runProcess(
 			process.execPath,
-			[path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath],
+			[path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner-bootstrap.ts"), configPath],
 			repo,
 			{
 				...process.env,
@@ -152,8 +153,8 @@ describe("Orca progress-tab observer", () => {
 			sessionId: "session-orca-parallel",
 			steps: [{
 				parallel: [
-					{ agent: "worker", task: "One", systemPrompt: "Use native Pi", systemPromptMode: "replace", inheritProjectContext: false, inheritSkills: false },
-					{ agent: "reviewer", task: "Two", systemPrompt: "Use native Pi", systemPromptMode: "replace", inheritProjectContext: false, inheritSkills: false },
+					{ agent: "worker", task: "One", systemPrompt: "Use native Pi", systemPromptMode: "replace", inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false },
+					{ agent: "reviewer", task: "Two", systemPrompt: "Use native Pi", systemPromptMode: "replace", inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false },
 				],
 				concurrency: 2,
 			}],
@@ -168,7 +169,7 @@ describe("Orca progress-tab observer", () => {
 		const repo = path.resolve(import.meta.dirname, "../..");
 		const exitCode = await runProcess(
 			process.execPath,
-			[path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath],
+			[path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner-bootstrap.ts"), configPath],
 			repo,
 			{
 				...process.env,

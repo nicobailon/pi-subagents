@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as sdk from "@earendil-works/pi-coding-agent";
 import { installRunnerHttpDispatcher } from "./runner-http-dispatcher.ts";
-import { runConfiguredSubagent, type SubagentRunConfig } from "./subagent-runner.ts";
+import { runConfiguredSubagent, validateSubagentRunConfig } from "./subagent-runner-bootstrap.ts";
 import { getAgentDir } from "../../shared/utils.ts";
 
 /**
@@ -17,10 +17,9 @@ export default async function runBinaryBootstrap(): Promise<never> {
 	delete process.env.PI_SUBAGENT_RUNNER_CONFIG;
 	try {
 		if (!configPath || !path.isAbsolute(configPath)) throw new Error("Missing absolute PI_SUBAGENT_RUNNER_CONFIG path");
-		const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as SubagentRunConfig;
-		if (!config || typeof config.id !== "string" || typeof config.asyncDir !== "string" || !Array.isArray(config.steps)) {
-			throw new Error("Invalid binary runner configuration");
-		}
+		const rawConfig: unknown = JSON.parse(fs.readFileSync(configPath, "utf8"));
+		validateSubagentRunConfig(rawConfig);
+		const config = rawConfig;
 		try {
 			fs.unlinkSync(configPath);
 		} catch {

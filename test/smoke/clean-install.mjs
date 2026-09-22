@@ -43,7 +43,8 @@ assert.ok(packed.files.some(file => file.path === "runner-peer-loader.mjs"), "ol
 assert.equal(packed.files.some(file => file.path.endsWith(".ts") && !file.path.endsWith(".d.ts")), false, "package must not ship TypeScript sources");
 assert.ok(packed.files.some(file => file.path === "index.js"), "compiled extension entry must ship");
 assert.ok(packed.files.some(file => file.path === "src/inspectors/inspector-runner.js"), "compiled inspector runner must ship");
-assert.ok(packed.files.some(file => file.path === "src/runs/background/subagent-runner.js"), "compiled background runner must ship");
+assert.ok(packed.files.some(file => file.path === "src/runs/background/subagent-runner-bootstrap.js"), "compiled background bootstrap must ship");
+assert.ok(packed.files.some(file => file.path === "src/runs/background/subagent-runner.js"), "compiled background execution module must ship");
 fs.writeFileSync(path.join(extension, "package.json"), JSON.stringify({ private: true, dependencies: { "pi-subagents": `file:${path.join(root, packed.filename)}` } }));
 run("extension-install", "npm", ["install", "--no-audit", "--no-fund"], extension);
 const installed = path.join(extension, "node_modules/pi-subagents");

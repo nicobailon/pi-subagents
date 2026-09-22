@@ -5,10 +5,6 @@ import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { installRunnerHttpDispatcher } from "./runner-http-dispatcher.ts";
-
-const isRunnerEntrypoint = Boolean(process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href);
-// Detached Node runners skip Pi's CLI dispatcher setup; install the runner's own.
-if (isRunnerEntrypoint) installRunnerHttpDispatcher({ agentDir: getAgentDir(), cwd: process.cwd() });
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "./result-files.ts";
 import { createFileCoalescer } from "../../shared/file-coalescer.ts";
@@ -98,7 +94,8 @@ import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelSt
 import { claimRunFanoutBatch, getRunFanoutBudgetSnapshot } from "../shared/run-fanout-budget.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
 import { formatSubagentModelVerificationError, isContextOverflow } from "../shared/model-resolution.ts";
-import { markProcessTerminalCandidateLeaseRelease, processTerminalPath, writeProcessTerminalCandidate, type ProcessTerminalCandidate } from "./process-terminal.ts";
+import { processTerminalPath, writeProcessTerminalCandidate, type ProcessTerminalCandidate } from "./process-terminal.ts";
+import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, unconsumedSteerReason, updateSteeringTarget } from "./steering.ts";
 import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getAgentDir, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
@@ -143,7 +140,7 @@ import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } 
 import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
 import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writeWorktreeSetupHandoff } from "../shared/parallel-handoff.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
-import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
+import type { SessionLeaseRequest } from "../shared/session-lease.ts";
 import { buildExternalCliPrompt, runExternalCli } from "../shared/external-cli-runner.ts";
 import { resolveClaudeCodeLaunch } from "../shared/claude-code-adapter.ts";
 import { resolveCodexExecLaunch } from "../shared/codex-exec-adapter.ts";
@@ -5105,165 +5102,40 @@ export async function runSubagent(
 	}
 }
 
-async function waitForStartupControl(
-	controlPath: string,
-	token: string,
-	action: "ack" | "confirm" | "proceed",
-	timeoutMs = 30_000,
-): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() <= deadline) {
-		if (fs.existsSync(controlPath)) {
-			let payload: { action?: unknown; token?: unknown };
-			try {
-				payload = JSON.parse(fs.readFileSync(controlPath, "utf-8")) as { action?: unknown; token?: unknown };
-			} catch (error) {
-				throw new Error(`Failed to read runner startup control '${controlPath}': ${error instanceof Error ? error.message : String(error)}`);
-			}
-			if (payload.token !== token) throw new Error("Runner startup control token does not match.");
-			if (payload.action === action) return;
-			if (payload.action !== "ack" && payload.action !== "confirm" && payload.action !== "proceed") throw new Error("Runner startup control action is invalid.");
-		}
-		await new Promise((resolve) => setTimeout(resolve, 20));
-	}
-	throw new Error(`Timed out after ${timeoutMs}ms waiting for runner startup control '${action}'.`);
-}
-
-// Both hosts enter here: startup authorization, revival leases and disposal stay shared.
-export async function runConfiguredSubagent(config: SubagentRunConfig, options?: DefaultChildSessionFactoryOptions): Promise<void> {
-	let lease: ReturnType<typeof acquireSessionLease> | undefined;
-	let startupCommitted = config.revivalLease === undefined && config.launchBarrierToken === undefined;
-	const startupPath = path.join(config.asyncDir, "runner-startup.json");
-	const startupAckPath = path.join(config.asyncDir, "runner-startup-ack.json");
-	const startupConfirmPath = path.join(config.asyncDir, "runner-startup-confirm.json");
-	const startupProceedPath = path.join(config.asyncDir, "runner-startup-proceed.json");
-	const releaseOnExit = (): void => {
-		try {
-			lease?.release();
-		} catch {
-			// Exit cleanup is best effort; a dead-owner lease is reclaimed on the next revival.
-		}
-	};
-	process.once("exit", releaseOnExit);
+/** Heavy execution entry loaded by the bootstrap only after startup commits. */
+export async function runConfiguredSubagentExecution(config: SubagentRunConfig, options?: DefaultChildSessionFactoryOptions): Promise<void> {
+	let childSessions: ChildSessionFactory;
 	try {
-		if (config.launchBarrierToken) {
-			await waitForStartupControl(startupProceedPath, config.launchBarrierToken, "proceed");
-			startupCommitted = true;
-			try {
-				fs.rmSync(startupProceedPath, { force: true });
-			} catch {
-				// Startup control cleanup is best effort after the parent commits the run.
-			}
-		} else if (config.revivalLease) {
-			lease = acquireSessionLease(config.revivalLease);
-			config.revivalLeaseToken = lease.owner.token;
-			writeAtomicJson(startupPath, { state: "ready", token: lease.owner.token, pid: process.pid, owner: lease.owner });
-			await waitForStartupControl(startupAckPath, lease.owner.token, "ack");
-			writeAtomicJson(startupPath, { state: "acknowledged", token: lease.owner.token, pid: process.pid });
-			await waitForStartupControl(startupConfirmPath, lease.owner.token, "confirm");
-			writeAtomicJson(startupPath, { state: "confirmed", token: lease.owner.token, pid: process.pid });
-			await waitForStartupControl(startupProceedPath, lease.owner.token, "proceed");
-			startupCommitted = true;
-			for (const controlPath of [startupAckPath, startupConfirmPath, startupProceedPath]) {
-				try {
-					fs.rmSync(controlPath, { force: true });
-				} catch {
-					// Startup control cleanup is best effort after the parent commits the run.
-				}
-			}
-		}
-		const childSessions = await loadRunnerChildSessionFactory(config, options);
-		try {
-			await runSubagent(config, childSessions);
-		} finally {
-			try {
-				await childSessions.dispose();
-			} catch (error) {
-				console.error("Failed to dispose runner child sessions:", error);
-			}
-		}
+		// Detached Node runners do not receive Pi's CLI dispatcher setup. Binary
+		// hosts install the same dispatcher before entering the shared bootstrap.
+		if (!options?.loadPiCodingAgent) installRunnerHttpDispatcher({ agentDir: getAgentDir(), cwd: process.cwd() });
+		childSessions = await loadRunnerChildSessionFactory(config, options);
 	} catch (error) {
-		if (!startupCommitted) {
-			try {
-				writeAtomicJson(startupPath, { state: "error", pid: process.pid, error: error instanceof Error ? error.message : String(error) });
-			} catch {
-				// The parent will time out and terminate this runner if the handshake cannot be written.
-			}
+		try {
+			persistRunnerStartupFailure({
+				asyncDir: config.asyncDir,
+				runId: config.id,
+				runnerProcessInstanceId: config.runnerProcessInstanceId ?? "unknown-runner-instance",
+				message: `Subagent runner startup failed: ${error instanceof Error ? error.message : String(error)}`,
+				...(config.sessionId ? { sessionId: config.sessionId } : {}),
+				...(config.completionOwnerId ? { completionOwnerId: config.completionOwnerId } : {}),
+				candidate: {
+					...(config.revivalLease?.sessionFile ? { sessionFile: config.revivalLease.sessionFile } : {}),
+					...(config.revivalLeaseToken ? { revivalLeaseToken: config.revivalLeaseToken } : {}),
+				},
+			});
+		} catch (persistenceError) {
+			console.error("Failed to persist runner setup failure:", persistenceError);
 		}
 		throw error;
-	} finally {
-		process.off("exit", releaseOnExit);
-		if (lease) {
-			let acknowledged = false;
-			try {
-				acknowledged = lease.release();
-			} catch (error) {
-				console.error("Failed to release session revival lease:", error);
-			}
-			try {
-				markProcessTerminalCandidateLeaseRelease(config.asyncDir, lease.owner.token, acknowledged);
-			} catch (error) {
-				console.error("Failed to record session revival lease release:", error);
-			}
-		}
 	}
-}
-
-function startConfiguredSubagent(config: SubagentRunConfig): void {
-	// Child sessions and the extensions loaded into them may leave handles
-	// behind even after shutdown; the run is fully persisted by now, so exit
-	// explicitly instead of waiting for the event loop to drain.
-	runConfiguredSubagent(config).then(
-		() => process.exit(0),
-		(runErr) => {
-			console.error("Subagent runner error:", runErr);
-			process.exit(1);
-		},
-	);
-}
-
-function monitorTestParent(): void {
-	const parentPid = Number(process.env.PI_SUBAGENTS_TEST_PARENT_PID);
-	if (!Number.isSafeInteger(parentPid) || parentPid <= 0 || parentPid === process.pid) return;
-	const check = () => {
-		try { process.kill(parentPid, 0); }
-		catch { process.exit(1); }
-	};
-	check();
-	setInterval(check, 250).unref();
-}
-
-if (isRunnerEntrypoint) {
-monitorTestParent();
-const configArg = process.argv[2];
-if (configArg) {
 	try {
-		const configJson = fs.readFileSync(configArg, "utf-8");
-		const config = JSON.parse(configJson) as SubagentRunConfig;
+		await runSubagent(config, childSessions);
+	} finally {
 		try {
-			fs.unlinkSync(configArg);
-		} catch {
-			// Temp config cleanup is best effort.
+			await childSessions.dispose();
+		} catch (error) {
+			console.error("Failed to dispose runner child sessions:", error);
 		}
-		startConfiguredSubagent(config);
-	} catch (err) {
-		console.error("Subagent runner error:", err);
-		process.exit(1);
 	}
-} else {
-	let input = "";
-	process.stdin.setEncoding("utf-8");
-	process.stdin.on("data", (chunk) => {
-		input += chunk;
-	});
-	process.stdin.on("end", () => {
-		try {
-			const config = JSON.parse(input) as SubagentRunConfig;
-			startConfiguredSubagent(config);
-		} catch (err) {
-			console.error("Subagent runner error:", err);
-			process.exit(1);
-		}
-	});
-}
 }
