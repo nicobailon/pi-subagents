@@ -11,7 +11,7 @@ export function findPiPackageRootFromEntry(
 	entryPoint: string,
 	deps: Pick<PiSpawnDeps, "platform" | "existsSync" | "readFileSync"> = {},
 ): string | undefined {
-	const pathApi = (deps.platform ?? process.platform) === "win32" ? path.win32 : path;
+	const pathApi = (deps.platform ?? process.platform) === "win32" ? path.win32 : path.posix;
 	const existsSync = deps.existsSync ?? fs.existsSync;
 	const readFileSync = deps.readFileSync ?? ((filePath, encoding) => fs.readFileSync(filePath, encoding));
 	let dir = pathApi.dirname(entryPoint);
@@ -72,7 +72,7 @@ function validateRunningPiRoot(
 	root: string,
 	source: Exclude<RunningPiPackageRoot, { reason: string }>["source"],
 	readFileSync: (filePath: string, encoding: "utf-8") => string,
-	manifestPath = path.join(root, "package.json"),
+	manifestPath: string,
 ): RunningPiPackageRoot {
 	const sourceLabel = source === "PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT" ? `${source} override` : source;
 	let parsed: unknown;
@@ -91,6 +91,8 @@ function validateRunningPiRoot(
 /** Resolve only package roots that can be attributed to the process that owns this session. */
 export function resolveRunningPiPackageRoot(deps: PiSpawnDeps = {}): RunningPiPackageRoot | undefined {
 	const env = deps.env ?? process.env;
+	const platform = deps.platform ?? process.platform;
+	const pathApi = platform === "win32" ? path.win32 : path.posix;
 	const argv1 = deps.argv1 ?? process.argv[1];
 	const readFileSync = deps.readFileSync ?? ((filePath, encoding) => fs.readFileSync(filePath, encoding));
 	const existsSync = deps.existsSync ?? fs.existsSync;
@@ -110,13 +112,11 @@ export function resolveRunningPiPackageRoot(deps: PiSpawnDeps = {}): RunningPiPa
 		[PI_CODING_AGENT_PACKAGE_ROOT_ENV, env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]],
 	] as const) {
 		const root = value?.trim();
-		if (root) return validateRunningPiRoot(root, source, readFileSync);
+		if (root) return validateRunningPiRoot(root, source, readFileSync, pathApi.join(root, "package.json"));
 	}
 
 	const bunVersion = deps.bunVersion ?? process.versions.bun;
 	if (!bunVersion || !argv1 || !/^(?:\/\$bunfs\/|B:[\\/]~BUN[\\/])/.test(argv1)) return undefined;
-	const platform = deps.platform ?? process.platform;
-	const pathApi = platform === "win32" ? path.win32 : path.posix;
 	const imagePath = deps.execPath ?? process.execPath;
 	let canonicalImage = imagePath;
 	try {

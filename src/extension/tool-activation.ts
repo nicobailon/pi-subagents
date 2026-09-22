@@ -58,7 +58,7 @@ function readHostPiManifest(
 	readFileSync: (filePath: string, encoding: "utf-8") => string = (filePath, encoding) => fs.readFileSync(filePath, encoding),
 	platform: NodeJS.Platform = process.platform,
 ): HostPiProbe {
-	const manifestPath = (platform === "win32" ? path.win32 : path).join(root, "package.json");
+	const manifestPath = (platform === "win32" ? path.win32 : path.posix).join(root, "package.json");
 	let source: string;
 	try {
 		source = readFileSync(manifestPath, "utf-8");
