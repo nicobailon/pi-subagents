@@ -38,10 +38,10 @@ function waitForPath(file: string): Promise<void> {
 	return new Promise((resolve) => {
 		const inspect = () => {
 			if (!fs.existsSync(file)) return;
-			watcher.close();
+			fs.unwatchFile(file, inspect);
 			resolve();
 		};
-		const watcher = fs.watch(path.dirname(file), inspect);
+		fs.watchFile(file, { interval: 20 }, inspect);
 		inspect();
 	});
 }
@@ -52,15 +52,15 @@ function waitForJson<T>(file: string, predicate: (value: T) => boolean): Promise
 			try {
 				const value = JSON.parse(fs.readFileSync(file, "utf8")) as T;
 				if (!predicate(value)) return;
-				watcher.close();
+				fs.unwatchFile(file, inspect);
 				resolve(value);
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-				watcher.close();
+				fs.unwatchFile(file, inspect);
 				reject(error);
 			}
 		};
-		const watcher = fs.watch(path.dirname(file), inspect);
+		fs.watchFile(file, { interval: 20 }, inspect);
 		inspect();
 	});
 }
@@ -2445,8 +2445,8 @@ const started = process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED;
 const reject = process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT;
 fs.writeFileSync(started, "started");
 await new Promise((resolve) => {
-  const inspect = () => { if (fs.existsSync(reject)) { watcher.close(); resolve(); } };
-  const watcher = fs.watch(path.dirname(reject), inspect);
+  const inspect = () => { if (fs.existsSync(reject)) { fs.unwatchFile(reject, inspect); resolve(); } };
+  fs.watchFile(reject, { interval: 20 }, inspect);
   inspect();
 });
 throw new Error("injected parent-visible heavy import rejection");
@@ -2511,8 +2511,8 @@ const started = ${JSON.stringify(startedPath)};
 const reject = ${JSON.stringify(rejectPath)};
 fs.writeFileSync(started, "started");
 await new Promise((resolve) => {
-  const inspect = () => { if (fs.existsSync(reject)) { watcher.close(); resolve(); } };
-  const watcher = fs.watch(path.dirname(reject), inspect);
+  const inspect = () => { if (fs.existsSync(reject)) { fs.unwatchFile(reject, inspect); resolve(); } };
+  fs.watchFile(reject, { interval: 20 }, inspect);
   inspect();
 });
 throw new Error("injected pre-run child factory rejection");

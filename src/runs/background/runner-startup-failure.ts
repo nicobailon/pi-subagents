@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import type { AsyncStatus } from "../../shared/types.ts";
-import type { ProcessTerminalCandidate } from "./process-terminal.ts";
+import { readProcessTerminalCandidate, type ProcessTerminalCandidate } from "./process-terminal-candidate.ts";
 
 interface RunnerStartupFailureInput {
 	asyncDir: string;
@@ -41,8 +41,10 @@ export function persistRunnerStartupFailure(input: RunnerStartupFailureInput): v
 			runnerProcessInstanceId: input.runnerProcessInstanceId,
 		},
 	});
+	const existingCandidate = readProcessTerminalCandidate(input.asyncDir);
 	const stepCount = Math.max(1, status.steps?.length ?? 0);
 	writePrivateAtomicJson(path.join(input.asyncDir, "process-terminal-candidate.json"), {
+		...existingCandidate,
 		version: 1,
 		runId: input.runId,
 		runnerProcessInstanceId: input.runnerProcessInstanceId,

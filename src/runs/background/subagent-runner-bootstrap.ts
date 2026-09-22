@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { acquireSessionLease } from "../shared/session-lease.ts";
+import { readProcessTerminalCandidate, writeProcessTerminalCandidate, markProcessTerminalCandidateLeaseRelease } from "./process-terminal-candidate.ts";
 import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
 import type { DefaultChildSessionFactoryOptions } from "../shared/child-session.ts";
 import type { SubagentRunConfig } from "./subagent-runner.ts";
@@ -156,7 +157,6 @@ export async function runConfiguredSubagent(rawConfig: unknown, options: RunnerB
 		if (lease) {
 			// Persist token identity before the heavy import so an import rejection
 			// still leaves the parent enough evidence to prove lease release.
-			const { readProcessTerminalCandidate, writeProcessTerminalCandidate } = await import("./process-terminal.ts");
 			const candidate = readProcessTerminalCandidate(config.asyncDir);
 			if (candidate) {
 				writeProcessTerminalCandidate(config.asyncDir, {
@@ -207,7 +207,6 @@ export async function runConfiguredSubagent(rawConfig: unknown, options: RunnerB
 				console.error("Failed to release session revival lease:", error);
 			}
 			try {
-				const { markProcessTerminalCandidateLeaseRelease } = await import("./process-terminal.ts");
 				markProcessTerminalCandidateLeaseRelease(config.asyncDir, lease.owner.token, acknowledged);
 			} catch (error) {
 				console.error("Failed to record session revival lease release:", error);
