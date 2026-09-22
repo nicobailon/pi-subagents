@@ -1,6 +1,7 @@
 .pi/todos/
 .pi/subagents/
 .pi-subagents/
+.worktrees/
 .DS_Store
 node_modules/
 dist-pkg/
