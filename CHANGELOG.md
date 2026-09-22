@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- Publish async runner startup readiness before the execution graph is imported, so a cold module cache or a slow disk can no longer spend the parent's 10-second `ready` deadline and fail a revival before its startup code runs. Thanks to [@qsgy-edge](https://github.com/qsgy-edge) for [#2415](https://github.com/nicobailon/pi-subagents/pull/2415).
 - Treat the bundled reviewer's `watchdog_diff` tool as read-only when assigning a single output path, so reviewers return their complete artifact for runtime persistence as introduced in [#426](https://github.com/nicobailon/pi-subagents/issues/426), with thanks to Alexander Gerdes ([@Avg8888](https://github.com/Avg8888)). Thanks to [@riskywhat](https://github.com/riskywhat) for [#2405](https://github.com/nicobailon/pi-subagents/issues/2405).
 - Respect `disable-model-invocation: true` in subagent skill injection: hidden skills are no longer leaked into child `<available_skills>` prompts, even when a caller resolves them by name, and no longer surface in model-facing proactive skill recommendations. Thanks to [@toRolex](https://github.com/toRolex) for [#2400](https://github.com/nicobailon/pi-subagents/pull/2400).
 - Prevent duplicate completion notifications when multiple extension registrations for the same session coexist in one process. Thanks to [@hongchu098](https://github.com/hongchu098) for [#2389](https://github.com/nicobailon/pi-subagents/issues/2389).

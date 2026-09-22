@@ -2199,7 +2199,7 @@ syncBuiltinESMExports();
 
 		const preloadFile = path.join(tempDir, "exit-before-ready.mjs");
 		fs.writeFileSync(preloadFile, `
-if (process.argv.some((arg) => arg.endsWith("subagent-runner.ts"))) process.exit(1);
+if (process.argv.some((arg) => arg.endsWith("runner-bootstrap.ts"))) process.exit(1);
 `);
 		const previousNodeOptions = process.env.NODE_OPTIONS;
 		const startedAt = Date.now();

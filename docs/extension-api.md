@@ -552,7 +552,9 @@ The main runtime files in this repository:
 | `src/runs/shared/child-tool-plan.ts` | Tool, MCP, and extension resolution for a child launch. |
 | `src/runs/shared/child-runtime-config.ts` | `ChildRuntimeConfig`: everything the child-side hooks need. |
 | `src/runs/shared/child-hooks.ts` | The inline hook extensions every child gets (prompt runtime, fast mode, fanout). |
-| `src/runs/background/subagent-runner.ts` | Detached async runner; hosts background child sessions in its own process. |
+| `src/runs/background/runner-bootstrap.ts` | Detached async runner entry; completes the parent's startup handshake before the execution graph is imported. |
+| `src/runs/background/runner-startup.ts` | Startup phase of the detached runner: control files, the `ready`/`ack`/`confirm`/`proceed` handshake, and the revival lease handoff. |
+| `src/runs/background/subagent-runner.ts` | Detached async runner execution graph; hosts background child sessions in its own process, and is also runnable as a direct entry. |
 | `src/runs/background/run-child-session.ts` | Drives one background child session and mirrors its events into the run artifacts. |
 | `src/runs/background/runner-aliases.ts` | Aliases the host peer packages to the installed pi package for the runner (`JITI_ALIAS`). |
 | `src/runs/background/async-execution.ts` | Background launch support. |

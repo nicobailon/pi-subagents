@@ -62,9 +62,14 @@ function resolveRelativeImport(fromFile: string, specifier: string): string | un
 }
 
 test("every host peer package the detached async runner imports is aliased to the installed pi package (issues #334, #526)", () => {
-	const entryPoint = path.join(projectRoot, "src", "runs", "background", "subagent-runner.ts");
-	const visited = new Set<string>([entryPoint]);
-	const queue: string[] = [entryPoint];
+	// The bootstrap entry publishes startup readiness before importing the
+	// execution graph, so both roots and the dynamic import are walked here.
+	const entryPoints = [
+		path.join(projectRoot, "src", "runs", "background", "runner-bootstrap.ts"),
+		path.join(projectRoot, "src", "runs", "background", "subagent-runner.ts"),
+	];
+	const visited = new Set<string>(entryPoints);
+	const queue: string[] = [...entryPoints];
 	const violations: string[] = [];
 	const aliased = new Set(HOST_PEER_ALIASES.map((entry) => entry.specifier));
 
@@ -96,6 +101,27 @@ test("every host peer package the detached async runner imports is aliased to th
 	const resolved = resolveHostPeerAliases(packageRoot);
 	assert.deepEqual(resolved.missing, []);
 	for (const specifier of aliased) assert.ok(fs.existsSync(resolved.aliases[specifier]!), `alias target for ${specifier} exists`);
+});
+
+test("publishes startup readiness without statically importing the execution graph (issue #2403)", () => {
+	const bootstrap = path.join(projectRoot, "src", "runs", "background", "runner-bootstrap.ts");
+	const executionGraph = path.join(projectRoot, "src", "runs", "background", "subagent-runner.ts");
+	const visited = new Set<string>([bootstrap]);
+	const queue: string[] = [bootstrap];
+	while (queue.length > 0) {
+		const file = queue.shift()!;
+		for (const specifier of extractStaticImportSpecifiers(fs.readFileSync(file, "utf-8"))) {
+			if (matchingHostPeerPackage(specifier) || !specifier.startsWith(".")) continue;
+			const resolved = resolveRelativeImport(file, specifier);
+			if (!resolved || visited.has(resolved)) continue;
+			visited.add(resolved);
+			queue.push(resolved);
+		}
+	}
+	assert.ok(
+		!visited.has(executionGraph),
+		"runner-bootstrap.ts must reach the execution graph through a dynamic import, so the parent's ready deadline never waits on it",
+	);
 });
 
 test("resolves pi-agent-core/node to its exact package export instead of appending to the root alias", () => {

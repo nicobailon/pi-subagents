@@ -151,11 +151,11 @@ function resolveJitiCliPath(): string | undefined {
 }
 
 const jitiCliPath = resolveJitiCliPath();
-const asyncRunnerSourcePath = path.join(
+const asyncRunnerEntryPath = path.join(
 	path.dirname(fileURLToPath(import.meta.url)),
-	`subagent-runner${path.extname(fileURLToPath(import.meta.url))}`,
+	`runner-bootstrap${path.extname(fileURLToPath(import.meta.url))}`,
 );
-const sourceUnderNodeModules = asyncRunnerSourcePath.split(path.sep).some((segment) => segment.toLowerCase() === "node_modules");
+const sourceUnderNodeModules = asyncRunnerEntryPath.split(path.sep).some((segment) => segment.toLowerCase() === "node_modules");
 function supportsNativeRunner(nodeExecutable: string): boolean {
 	return Boolean(process.features.typescript)
 	&& typeof nodeModule.registerHooks === "function"
@@ -689,7 +689,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	const binaryHost = resolveBunPiExecutable();
 	const nodeExecutable = resolveNodeExecutable();
 	const nativeRunnerSupported = supportsNativeRunner(nodeExecutable);
-	const runner = asyncRunnerSourcePath;
+	const runner = asyncRunnerEntryPath;
 	const runnerIsJavaScript = path.extname(runner) === ".js";
 	const bootstrap = path.join(path.dirname(runner), `binary-bootstrap${path.extname(fileURLToPath(import.meta.url))}`);
 	if (binaryHost && !fs.existsSync(bootstrap)) return { error: `Background runner bootstrap not found: ${bootstrap}` };

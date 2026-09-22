@@ -143,7 +143,8 @@ import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } 
 import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
 import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writeWorktreeSetupHandoff } from "../shared/parallel-handoff.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
-import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
+import { performRunnerStartupHandshake, type RunnerStartupOutcome } from "./runner-startup.ts";
+import type { SessionLeaseRequest } from "../shared/session-lease.ts";
 import { buildExternalCliPrompt, runExternalCli } from "../shared/external-cli-runner.ts";
 import { resolveClaudeCodeLaunch } from "../shared/claude-code-adapter.ts";
 import { resolveCodexExecLaunch } from "../shared/codex-exec-adapter.ts";
@@ -5098,38 +5099,13 @@ export async function runSubagent(
 	}
 }
 
-async function waitForStartupControl(
-	controlPath: string,
-	token: string,
-	action: "ack" | "confirm" | "proceed",
-	timeoutMs = 30_000,
-): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() <= deadline) {
-		if (fs.existsSync(controlPath)) {
-			let payload: { action?: unknown; token?: unknown };
-			try {
-				payload = JSON.parse(fs.readFileSync(controlPath, "utf-8")) as { action?: unknown; token?: unknown };
-			} catch (error) {
-				throw new Error(`Failed to read runner startup control '${controlPath}': ${error instanceof Error ? error.message : String(error)}`);
-			}
-			if (payload.token !== token) throw new Error("Runner startup control token does not match.");
-			if (payload.action === action) return;
-			if (payload.action !== "ack" && payload.action !== "confirm" && payload.action !== "proceed") throw new Error("Runner startup control action is invalid.");
-		}
-		await new Promise((resolve) => setTimeout(resolve, 20));
-	}
-	throw new Error(`Timed out after ${timeoutMs}ms waiting for runner startup control '${action}'.`);
-}
-
-// Both hosts enter here: startup authorization, revival leases and disposal stay shared.
-export async function runConfiguredSubagent(config: SubagentRunConfig, options?: DefaultChildSessionFactoryOptions): Promise<void> {
-	let lease: ReturnType<typeof acquireSessionLease> | undefined;
-	let startupCommitted = config.revivalLease === undefined && config.launchBarrierToken === undefined;
-	const startupPath = path.join(config.asyncDir, "runner-startup.json");
-	const startupAckPath = path.join(config.asyncDir, "runner-startup-ack.json");
-	const startupConfirmPath = path.join(config.asyncDir, "runner-startup-confirm.json");
-	const startupProceedPath = path.join(config.asyncDir, "runner-startup-proceed.json");
+// Both hosts enter here; disposal and the revival lease stay shared. The
+// bootstrap entry completes the startup handshake before importing this
+// module's execution graph and passes the outcome in; binary hosts and direct
+// callers leave it undefined and get the same handshake here (issue #2403).
+export async function runConfiguredSubagent(config: SubagentRunConfig, options?: DefaultChildSessionFactoryOptions, providedStartup?: RunnerStartupOutcome): Promise<void> {
+	const startup = providedStartup ?? await performRunnerStartupHandshake(config);
+	const lease = startup.lease;
 	const releaseOnExit = (): void => {
 		try {
 			lease?.release();
@@ -5139,32 +5115,6 @@ export async function runConfiguredSubagent(config: SubagentRunConfig, options?:
 	};
 	process.once("exit", releaseOnExit);
 	try {
-		if (config.launchBarrierToken) {
-			await waitForStartupControl(startupProceedPath, config.launchBarrierToken, "proceed");
-			startupCommitted = true;
-			try {
-				fs.rmSync(startupProceedPath, { force: true });
-			} catch {
-				// Startup control cleanup is best effort after the parent commits the run.
-			}
-		} else if (config.revivalLease) {
-			lease = acquireSessionLease(config.revivalLease);
-			config.revivalLeaseToken = lease.owner.token;
-			writeAtomicJson(startupPath, { state: "ready", token: lease.owner.token, pid: process.pid, owner: lease.owner });
-			await waitForStartupControl(startupAckPath, lease.owner.token, "ack");
-			writeAtomicJson(startupPath, { state: "acknowledged", token: lease.owner.token, pid: process.pid });
-			await waitForStartupControl(startupConfirmPath, lease.owner.token, "confirm");
-			writeAtomicJson(startupPath, { state: "confirmed", token: lease.owner.token, pid: process.pid });
-			await waitForStartupControl(startupProceedPath, lease.owner.token, "proceed");
-			startupCommitted = true;
-			for (const controlPath of [startupAckPath, startupConfirmPath, startupProceedPath]) {
-				try {
-					fs.rmSync(controlPath, { force: true });
-				} catch {
-					// Startup control cleanup is best effort after the parent commits the run.
-				}
-			}
-		}
 		const childSessions = await loadRunnerChildSessionFactory(config, options);
 		try {
 			await runSubagent(config, childSessions);
@@ -5175,15 +5125,6 @@ export async function runConfiguredSubagent(config: SubagentRunConfig, options?:
 				console.error("Failed to dispose runner child sessions:", error);
 			}
 		}
-	} catch (error) {
-		if (!startupCommitted) {
-			try {
-				writeAtomicJson(startupPath, { state: "error", pid: process.pid, error: error instanceof Error ? error.message : String(error) });
-			} catch {
-				// The parent will time out and terminate this runner if the handshake cannot be written.
-			}
-		}
-		throw error;
 	} finally {
 		process.off("exit", releaseOnExit);
 		if (lease) {
