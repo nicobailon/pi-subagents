@@ -1,5 +1,7 @@
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import * as sdk from "@earendil-works/pi-coding-agent";
 import { installRunnerHttpDispatcher } from "./runner-http-dispatcher.ts";
 import { runConfiguredSubagent, validateSubagentRunConfig } from "./subagent-runner-bootstrap.ts";
@@ -28,7 +30,10 @@ export default async function runBinaryBootstrap(): Promise<never> {
 		// Pi applies httpIdleTimeoutMs to its dispatcher only after extension
 		// factories return; this factory never does, so install the runner's own.
 		installRunnerHttpDispatcher({ agentDir: getAgentDir(), cwd: process.cwd() });
-		await runConfiguredSubagent(config, { loadPiCodingAgent: async () => sdk });
+		await runConfiguredSubagent(config, {
+			loadPiCodingAgent: async () => sdk,
+			loadExecutionModule: async () => createRequire(import.meta.url)(`./subagent-runner${path.extname(fileURLToPath(import.meta.url))}`),
+		});
 		process.exit(0);
 	} catch (error) {
 		console.error("Subagent binary runner error:", error);

@@ -166,7 +166,7 @@ console.log(JSON.stringify({ agentDir: getAgentDir(), profilePath: path.join(pro
 			const result = spawnSync(process.execPath, [
 				"--experimental-strip-types",
 				"--import", new URL("../support/register-loader.mjs", import.meta.url).href,
-				fileURLToPath(new URL("../../src/runs/background/subagent-runner.ts", import.meta.url)),
+				fileURLToPath(new URL("../../src/runs/background/subagent-runner-bootstrap.ts", import.meta.url)),
 				configPath,
 			], {
 				env: { ...process.env, PI_SUBAGENTS_TEST_PARENT_PID: "2147483647" },

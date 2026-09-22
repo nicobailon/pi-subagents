@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { acquireSessionLease } from "../shared/session-lease.ts";
+import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
 import type { DefaultChildSessionFactoryOptions } from "../shared/child-session.ts";
 import type { SubagentRunConfig } from "./subagent-runner.ts";
 
@@ -179,7 +180,6 @@ export async function runConfiguredSubagent(rawConfig: unknown, options: RunnerB
 			}
 		} else if (!executionLoaded) {
 			try {
-				const { persistRunnerStartupFailure } = await import("./runner-startup-failure.ts");
 				persistRunnerStartupFailure({
 					asyncDir: config.asyncDir,
 					runId: config.id,

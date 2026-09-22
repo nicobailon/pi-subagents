@@ -62,7 +62,6 @@ function nextMessage(child: ChildProcess, type: string): Promise<ChildMessage> {
 
 function waitForStartupState(startupPath: string, state: string): Promise<Record<string, unknown>> {
 	return new Promise((resolve, reject) => {
-		const directory = path.dirname(startupPath);
 		const inspect = () => {
 			try {
 				const payload = JSON.parse(fs.readFileSync(startupPath, "utf8")) as Record<string, unknown>;
@@ -72,8 +71,8 @@ function waitForStartupState(startupPath: string, state: string): Promise<Record
 				if ((error as NodeJS.ErrnoException).code !== "ENOENT") { cleanup(); reject(error); }
 			}
 		};
-		const watcher = fs.watch(directory, inspect);
-		const cleanup = () => watcher.close();
+		fs.watchFile(startupPath, { interval: 20 }, inspect);
+		const cleanup = () => fs.unwatchFile(startupPath, inspect);
 		inspect();
 	});
 }

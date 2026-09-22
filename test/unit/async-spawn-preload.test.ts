@@ -80,7 +80,7 @@ test("executeAsyncSingle preloads all peer aliases before the selected runner lo
 			const nativeRunner = Boolean(process.features.typescript) && typeof nodeModule.registerHooks === "function";
 			if (nativeRunner) assert.equal(args[2], "--experimental-strip-types");
 			else assert.match(args[2], /[/\\]jiti-cli\.mjs$/);
-			assert.match(args[3], /[/\\]subagent-runner\.ts$/);
+			assert.match(args[3], /[/\\]subagent-runner-bootstrap\.ts$/);
 			assert.equal(args.length, 5);
 			assert.equal(options.env.PI_ASYNC_NATIVE_RUNNER, nativeRunner ? "1" : "0");
 		}
