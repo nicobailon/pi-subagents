@@ -3,6 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import type { AgentConfig } from "../../src/agents/agents.ts";
+import { recommendProactiveSkillSubagents } from "../../src/agents/proactive-skills.ts";
 import {
 	buildSkillInjection,
 	clearSkillCache,
@@ -14,12 +16,12 @@ let tempDir = "";
 function writeSkill(
 	skillDir: string,
 	body: string,
-	options: { description?: string; disableModelInvocation?: boolean } = {},
+	options: { description?: string; disableModelInvocation?: boolean | string } = {},
 ): void {
 	fs.mkdirSync(skillDir, { recursive: true });
 	const lines = ["---"];
 	lines.push(`description: ${options.description ?? "Test description"}`);
-	if (options.disableModelInvocation) lines.push("disable-model-invocation: true");
+	if (options.disableModelInvocation !== undefined) lines.push(`disable-model-invocation: ${options.disableModelInvocation}`);
 	lines.push("---", "", body, "");
 	fs.writeFileSync(path.join(skillDir, "SKILL.md"), lines.join("\n"), "utf-8");
 }
@@ -28,7 +30,7 @@ function makeProjectSkill(
 	cwd: string,
 	name: string,
 	body: string,
-	options: { description?: string; disableModelInvocation?: boolean } = {},
+	options: { description?: string; disableModelInvocation?: boolean | string } = {},
 ): void {
 	writeSkill(path.join(cwd, ".pi", "skills", name), body, options);
 }
@@ -113,15 +115,50 @@ describe("disable-model-invocation filtering", () => {
 		assert.equal(winner?.disableModelInvocation, true);
 	});
 
-	it("treats non-'true' disable-model-invocation values as model-invocable", () => {
-		fs.mkdirSync(path.join(tempDir, ".pi", "skills", "loose-skill"), { recursive: true });
-		fs.writeFileSync(
-			path.join(tempDir, ".pi", "skills", "loose-skill", "SKILL.md"),
-			"---\ndescription: Loose flag\ndisable-model-invocation: yes\n---\n\nBody\n",
-			"utf-8",
-		);
+	it("matches host YAML boolean semantics in injection and proactive recommendations", () => {
+		const cases = [
+			{ name: "plain-true", value: "true", hidden: true },
+			{ name: "quoted-true", value: '"true"', hidden: false },
+			{ name: "title-true", value: "True", hidden: true },
+			{ name: "upper-true", value: "TRUE", hidden: true },
+			{ name: "plain-false", value: "false", hidden: false },
+			{ name: "plain-yes", value: "yes", hidden: false },
+		] as const;
+		for (const testCase of cases) {
+			makeProjectSkill(tempDir, testCase.name, `${testCase.name} body.`, {
+				disableModelInvocation: testCase.value,
+			});
+		}
 
-		const skill = discoverAvailableSkills(tempDir).find((entry) => entry.name === "loose-skill");
-		assert.equal(skill?.disableModelInvocation, undefined);
+		const availableSkills = discoverAvailableSkills(tempDir);
+		for (const testCase of cases) {
+			const skill = availableSkills.find((entry) => entry.name === testCase.name);
+			assert.equal(skill?.disableModelInvocation, testCase.hidden ? true : undefined, testCase.name);
+		}
+
+		const names = cases.map((testCase) => testCase.name);
+		const { resolved } = resolveSkills(names, tempDir);
+		const injection = buildSkillInjection(resolved);
+		for (const testCase of cases) {
+			const matcher = new RegExp(`<name>${testCase.name}</name>`);
+			testCase.hidden ? assert.doesNotMatch(injection, matcher) : assert.match(injection, matcher);
+		}
+
+		const agents: AgentConfig[] = ["one", "two"].map((name) => ({
+			name,
+			description: `${name} agent`,
+			systemPrompt: "",
+			systemPromptMode: "replace",
+			inheritProjectContext: false,
+			inheritSkills: false,
+			source: "project",
+			filePath: `/tmp/${name}.md`,
+			skills: names,
+		}));
+		const recommendations = recommendProactiveSkillSubagents({ agents, availableSkills });
+		assert.deepEqual(
+			recommendations.map((entry) => entry.skill),
+			["plain-false", "plain-yes", "quoted-true"],
+		);
 	});
 });

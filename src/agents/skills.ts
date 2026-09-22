@@ -6,6 +6,7 @@ import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { parse as parseYaml } from "yaml";
 import { parseFrontmatter } from "./frontmatter.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 
@@ -412,12 +413,17 @@ function maybeReadSkillDescription(filePath: string): string | undefined {
 
 function maybeReadSkillDisableModelInvocation(filePath: string): boolean | undefined {
 	try {
-		const { frontmatter } = parseFrontmatter(fs.readFileSync(filePath, "utf-8"));
-		// Match the pi host's skill loader semantics: only the literal string
-		// "true" disables model invocation; other values stay model-invocable.
+		const content = fs.readFileSync(filePath, "utf-8").replace(/\r\n/g, "\n");
+		if (!content.startsWith("---")) return undefined;
+		const endIndex = content.indexOf("\n---", 3);
+		if (endIndex === -1) return undefined;
+		const parsed: unknown = parseYaml(content.slice(4, endIndex));
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+		// Match the pi host's skill loader semantics: only YAML boolean true
+		// disables model invocation; strings and other values stay invocable.
 		// Hidden skills remain user-invocable via explicit `/skill:name` commands
 		// but must stay out of the model-facing default skill set.
-		return frontmatter["disable-model-invocation"] === "true" ? true : undefined;
+		return (parsed as Record<string, unknown>)["disable-model-invocation"] === true ? true : undefined;
 	} catch {
 		// Best-effort metadata extraction.
 		return undefined;
