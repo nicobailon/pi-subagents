@@ -214,12 +214,12 @@ describe("host dynamic tool support detection", () => {
 
 	it("accepts a validated 0.87 Bun bin/share host image", () => {
 		const hostApi = { getAllTools() {}, getActiveTools() {}, setActiveTools() {} } as any;
-		const manifestPath = "/opt/pi/share/pi-coding-agent/package.json";
+		const manifestPath = "/synthetic-host/share/pi-coding-agent/package.json";
 		assert.equal(unsupportedDynamicToolsReason(hostApi, {
 			platform: "linux",
 			bunVersion: "1.2.0",
 			argv1: "/$bunfs/root/pi",
-			execPath: "/opt/pi/bin/pi",
+			execPath: "/synthetic-host/bin/pi",
 			env: {},
 			realpathSync: (value) => value,
 			existsSync: (value) => value === manifestPath,

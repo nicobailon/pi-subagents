@@ -99,11 +99,19 @@ export function resolveRunningPiPackageRoot(deps: PiSpawnDeps = {}): RunningPiPa
 	const realpathSync = deps.realpathSync ?? fs.realpathSync;
 
 	if (argv1) {
+		let entry: string | undefined;
 		try {
-			const root = findPiPackageRootFromEntry(realpathSync(argv1), { platform: deps.platform, existsSync, readFileSync });
-			if (root) return { root, source: "argv" };
+			entry = realpathSync(argv1);
 		} catch {
 			// Virtual Bun entries and non-filesystem launchers continue to explicit host evidence.
+		}
+		if (entry) {
+			try {
+				const root = findPiPackageRootFromEntry(entry, { platform, existsSync, readFileSync });
+				if (root) return { root, source: "argv" };
+			} catch (error) {
+				return { reason: `Could not inspect the running Pi entry at ${entry}: ${error instanceof Error ? error.message : String(error)}` };
+			}
 		}
 	}
 

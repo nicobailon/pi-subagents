@@ -112,6 +112,18 @@ describe("resolveRunningPiPackageRoot", () => {
 		}
 	});
 
+	it("reports an unreadable argv-owned manifest instead of selecting an override", () => {
+		const reason = resolutionReason(resolveRunningPiPackageRoot({
+			platform: "linux",
+			argv1: "/synthetic-host/pi/dist/cli.js",
+			env: { [PI_PACKAGE_DIR_ENV]: "/fallback" },
+			realpathSync: (value) => value,
+			existsSync: (value) => value === "/synthetic-host/pi/package.json",
+			readFileSync: () => { throw new Error("manifest unreadable"); },
+		}));
+		assert.match(reason, /running Pi entry.*manifest unreadable/);
+	});
+
 	it("prefers PI_PACKAGE_DIR, ignores blanks, and fails closed on explicit invalid roots", () => {
 		const manifests = new Map([
 			["/pi-owned/package.json", JSON.stringify({ name: "@earendil-works/pi-coding-agent" })],
@@ -147,21 +159,23 @@ describe("resolveRunningPiPackageRoot", () => {
 
 	it("recognizes POSIX share and Windows adjacent compiled Bun layouts", () => {
 		const manifest = JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "0.87.0" });
-		const posixManifest = "/opt/pi/share/pi-coding-agent/package.json";
+		const posixRoot = path.posix.join("/", "synthetic-host", "share", "pi-coding-agent");
+		const posixManifest = path.posix.join(posixRoot, "package.json");
 		assert.deepEqual(resolveRunningPiPackageRoot({
-			platform: "linux", bunVersion: "1.2.0", argv1: "/$bunfs/root/pi", execPath: "/opt/pi/bin/pi", env: {},
+			platform: "linux", bunVersion: "1.2.0", argv1: "/$bunfs/root/pi", execPath: "/synthetic-host/bin/pi", env: {},
 			realpathSync: (value) => value,
 			existsSync: (value) => value === posixManifest,
 			readFileSync: (value) => value === posixManifest ? manifest : (() => { throw new Error("unexpected"); })(),
-		}), { root: "/opt/pi/share/pi-coding-agent", source: "bun-share" });
+		}), { root: posixRoot, source: "bun-share" });
 
-		const windowsManifest = "C:\\Pi\\package.json";
+		const windowsRoot = path.win32.join("Q:\\", "synthetic-host", "pi");
+		const windowsManifest = path.win32.join(windowsRoot, "package.json");
 		assert.deepEqual(resolveRunningPiPackageRoot({
-			platform: "win32", bunVersion: "1.2.0", argv1: "B:\\~BUN\\root\\pi.exe", execPath: "C:\\Pi\\pi.exe", env: {},
+			platform: "win32", bunVersion: "1.2.0", argv1: "B:\\~BUN\\root\\pi.exe", execPath: path.win32.join(windowsRoot, "pi.exe"), env: {},
 			realpathSync: (value) => value,
 			existsSync: (value) => value === windowsManifest,
 			readFileSync: (value) => value === windowsManifest ? manifest : (() => { throw new Error("unexpected"); })(),
-		}), { root: "C:\\Pi", source: "bun-adjacent" });
+		}), { root: windowsRoot, source: "bun-adjacent" });
 	});
 
 	it("does not infer image layouts for ordinary Node processes named pi", () => {
