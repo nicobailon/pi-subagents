@@ -21,19 +21,58 @@ let warnedUnsupportedHost = false;
 /** Returns why dynamic tool activation is unavailable, or undefined when the host supports it. */
 export function unsupportedDynamicToolsReason(pi: ExtensionAPI): string | undefined {
 	if (typeof pi.getAllTools !== "function" || typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function" || typeof piAi.getCurrentTools !== "function") return UNSUPPORTED_HOST_MESSAGE;
-	const version = resolveHostPiVersion();
-	if (!version) return "Could not locate the running Pi installation to verify dynamic tool support";
-	return supportsMinimumVersion(version) ? undefined : UNSUPPORTED_HOST_MESSAGE;
+	const probe = probeHostPiVersion();
+	if ("reason" in probe) return probe.reason;
+	return supportsMinimumVersion(probe.version) ? undefined : `${UNSUPPORTED_HOST_MESSAGE} (detected ${probe.version} in ${probe.root})`;
 }
 
-function readHostPiVersionFromRoot(root: string | undefined): string | undefined {
-	if (!root) return undefined;
+type HostPiProbe = { version: string; root: string } | { reason: string };
+
+/**
+ * The host SDK is not a dependency of this package, so a bare module
+ * resolution only works where it happens to be installed next to us (a
+ * repository checkout with devDependencies). Distributed installs read the
+ * version from the running host instead, using the same root precedence as
+ * host-owned child sessions: running host, explicit override, install tree.
+ * A selected root must expose a valid manifest — failures are reported
+ * rather than silently falling through to a different Pi installation.
+ */
+function probeHostPiVersion(): HostPiProbe {
+	const override = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || undefined;
+	const runningRoot = resolvePiPackageRoot();
+	const selected = runningRoot ?? override ?? resolveInstalledPiPackageRoot();
+	if (selected) return readHostPiManifest(selected, runningRoot === undefined && override !== undefined);
+	return { reason: "Could not locate the running Pi installation to verify dynamic tool support" };
+}
+
+function readHostPiManifest(root: string, fromOverride: boolean): HostPiProbe {
+	const manifestPath = path.join(root, "package.json");
+	let source: string;
 	try {
-		const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf-8")) as { name?: unknown; version?: unknown };
-		return pkg.name === PI_CODING_AGENT_PACKAGE && typeof pkg.version === "string" ? pkg.version : undefined;
-	} catch {
-		return undefined;
+		source = fs.readFileSync(manifestPath, "utf-8");
+	} catch (error) {
+		return { reason: `Could not read the Pi package manifest at ${manifestPath}: ${errorMessage(error)}` };
 	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(source);
+	} catch (error) {
+		return { reason: `Invalid Pi package manifest at ${manifestPath}: ${errorMessage(error)}` };
+	}
+	if (!isRecord(parsed) || parsed.name !== PI_CODING_AGENT_PACKAGE) {
+		return { reason: `${manifestPath} is not ${PI_CODING_AGENT_PACKAGE}${fromOverride ? ` (${PI_CODING_AGENT_PACKAGE_ROOT_ENV} override)` : ""}` };
+	}
+	return typeof parsed.version === "string" && parsed.version
+		? { version: parsed.version, root }
+		: { reason: `The Pi package manifest at ${manifestPath} has no version` };
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function supportsMinimumVersion(version: string): boolean {
@@ -45,22 +84,6 @@ export function supportsMinimumVersion(version: string): boolean {
 		if (part !== minimum) return part > minimum;
 	}
 	return true;
-}
-
-/**
- * The host SDK is not a dependency of this package, so a bare module
- * resolution only works where it happens to be installed next to us (a
- * repository checkout with devDependencies). Distributed installs read the
- * version from the running host instead, using the same root precedence as
- * host-owned child sessions.
- */
-function resolveHostPiVersion(): string | undefined {
-	const override = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || undefined;
-	for (const root of [resolvePiPackageRoot(), override, resolveInstalledPiPackageRoot()]) {
-		const version = readHostPiVersionFromRoot(root);
-		if (version) return version;
-	}
-	return undefined;
 }
 
 function hasNativeToolSelection(messages: unknown[]): boolean {
