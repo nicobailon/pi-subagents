@@ -27,6 +27,7 @@ export interface ProactiveSkillSubagentRecommendation {
 export interface AvailableSkill {
 	name: string;
 	description?: string;
+	disableModelInvocation?: boolean;
 }
 
 function positiveInteger(value: unknown): number | undefined {
@@ -140,7 +141,9 @@ export function recommendProactiveSkillSubagents(input: {
 	}
 
 	return [...counts.entries()]
-		.filter(([skill, sources]) => sources.size >= config.minReferences && (!availableByName || availableByName.has(skill)))
+		// Hidden skills (disable-model-invocation: true) are user-only and must
+		// never surface in model-facing proactive recommendations.
+		.filter(([skill, sources]) => sources.size >= config.minReferences && (!availableByName || availableByName.has(skill)) && availableByName?.get(skill)?.disableModelInvocation !== true)
 		.map(([skill, sources]) => {
 			const description = availableByName?.get(skill)?.description;
 			return {

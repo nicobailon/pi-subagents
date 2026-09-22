@@ -105,17 +105,31 @@ describe("disable-model-invocation filtering", () => {
 	});
 
 	it("re-reads disableModelInvocation when the same file is re-registered at a higher-priority source", () => {
-		// pushEntry's same-file priority-upgrade branch strips old metadata and
-		// re-reads it; the flag must survive even when only one source sees it.
-		makeProjectSkill(tempDir, "upgrade-skill", "Upgrade body.", { disableModelInvocation: true });
-		const discovered = discoverAvailableSkills(tempDir).find((skill) => skill.name === "upgrade-skill");
-		assert.equal(discovered?.disableModelInvocation, true);
-		// Re-registering via a second, lower-priority source must not clear the flag.
-		makeProjectPackageSkill(tempDir, "upgrade-skill-pkg", "upgrade-skill", "Package version.");
+		// pushEntry's same-file priority-upgrade branch runs only when the seen
+		// map already holds that exact resolved file. The .pi/skills root scan
+		// resolves symlinks and would see the same dir first at project
+		// priority, hiding the upgrade, so surface it only via a settings entry
+		// (project-settings). Then add a same-target symlink whose basename the
+		// root scan picks up as a project skill, hitting the same resolved file
+		// at higher priority. walkSkillDirectories names skills from the SKILL.md
+		// parent dir, so both entries resolve to the same real dir + name.
+		const realDir = path.join(tempDir, "skills-src", "upgrade-skill");
+		writeSkill(realDir, "Upgrade body.", { disableModelInvocation: true });
+		const settingsFile = path.join(tempDir, ".pi", "settings.json");
+		fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+		fs.writeFileSync(settingsFile, JSON.stringify({ skills: ["../skills-src/upgrade-skill"] }, null, 2), "utf-8");
+
 		clearSkillCache();
-		const after = discoverAvailableSkills(tempDir).find((skill) => skill.name === "upgrade-skill");
-		assert.equal(after?.source, "project");
-		assert.equal(after?.disableModelInvocation, true);
+		const first = discoverAvailableSkills(tempDir).find((skill) => skill.name === "upgrade-skill");
+		assert.equal(first?.source, "project-settings");
+		assert.equal(first?.disableModelInvocation, true);
+
+		fs.mkdirSync(path.join(tempDir, ".pi", "skills"), { recursive: true });
+		fs.symlinkSync(realDir, path.join(tempDir, ".pi", "skills", "upgrade-skill"), "dir");
+		clearSkillCache();
+		const upgraded = discoverAvailableSkills(tempDir).find((skill) => skill.name === "upgrade-skill");
+		assert.equal(upgraded?.source, "project");
+		assert.equal(upgraded?.disableModelInvocation, true);
 	});
 
 	it("treats non-'true' disable-model-invocation values as model-invocable", () => {

@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- Respect `disable-model-invocation: true` in subagent skill injection: hidden skills are no longer leaked into child `<available_skills>` prompts, even when a caller resolves them by name, and no longer surface in model-facing proactive skill recommendations. Thanks to [@toRolex](https://github.com/toRolex) for [#2400](https://github.com/nicobailon/pi-subagents/pull/2400).
 - Prevent duplicate completion notifications when multiple extension registrations for the same session coexist in one process. Thanks to [@hongchu098](https://github.com/hongchu098) for [#2389](https://github.com/nicobailon/pi-subagents/issues/2389).
 - Make running and failed external CLI logs inspectable in Fleet, tool status, and TUI surfaces with bounded, contained reads ([#2375](https://github.com/nicobailon/pi-subagents/issues/2375), thanks [@Shujakuinkuraudo](https://github.com/Shujakuinkuraudo)).
 - Preserve and safely prune Pi 0.87 context edits when forking sessions, including replacement content and signed Anthropic thinking blocks.
