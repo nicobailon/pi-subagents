@@ -144,7 +144,8 @@ export function resolveHostPeerAliases(piPackageRoot: string): { aliases: Record
 	for (const { specifier, pkg, subpath } of required) {
 		const packageDir = findPeerPackageDir(piPackageRoot, pkg, hostManifest?.name);
 		const target = packageDir ? resolvePackageSubpath(packageDir, subpath) : undefined;
-		if (target && fs.existsSync(target)) aliases[specifier] = target;
+		// Native loaders short-circuit resolution, so aliases must retain the real package's dependency scope.
+		if (target && fs.existsSync(target)) aliases[specifier] = fs.realpathSync(target);
 		else missing.push(specifier);
 	}
 	return { aliases, missing };
