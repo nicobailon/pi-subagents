@@ -1,7 +1,10 @@
 import * as fs from "node:fs";
+import * as path from "node:path";
 import * as piAi from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../shared/utils.ts";
+import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../runs/shared/pi-spawn.ts";
 
 interface ActivationDetails {
 	enabled?: string[];
@@ -12,26 +15,52 @@ interface ActivationDetails {
 const LOADER_NAME = "subagents_enable";
 const SUBAGENT_NAME = "subagent";
 const MINIMUM_DYNAMIC_TOOLS_VERSION = [0, 86, 1] as const;
+const UNSUPPORTED_HOST_MESSAGE = "Dynamic tool activation requires Pi 0.86.1 or newer";
 let warnedUnsupportedHost = false;
 
-function supportsNativeDynamicTools(pi: ExtensionAPI): boolean {
-	if (typeof pi.getAllTools !== "function" || typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function" || typeof piAi.getCurrentTools !== "function") return false;
+/** Returns why dynamic tool activation is unavailable, or undefined when the host supports it. */
+export function unsupportedDynamicToolsReason(pi: ExtensionAPI): string | undefined {
+	if (typeof pi.getAllTools !== "function" || typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function" || typeof piAi.getCurrentTools !== "function") return UNSUPPORTED_HOST_MESSAGE;
+	const version = resolveHostPiVersion();
+	if (!version) return "Could not locate the running Pi installation to verify dynamic tool support";
+	return supportsMinimumVersion(version) ? undefined : UNSUPPORTED_HOST_MESSAGE;
+}
+
+function readHostPiVersionFromRoot(root: string | undefined): string | undefined {
+	if (!root) return undefined;
 	try {
-		const packageJsonUrl = new URL("../package.json", import.meta.resolve("@earendil-works/pi-coding-agent"));
-		const version = JSON.parse(fs.readFileSync(packageJsonUrl, "utf-8")).version as unknown;
-		if (typeof version !== "string") return false;
-		const parsed = version.split(".").slice(0, 3).map(Number);
-		if (parsed.length !== 3 || parsed.some((part) => !Number.isInteger(part) || part < 0)) return false;
-		for (let index = 0; index < 3; index++) {
-			const part = parsed[index]!;
-			const minimum = MINIMUM_DYNAMIC_TOOLS_VERSION[index]!;
-			if (part !== minimum) return part > minimum;
-		}
-		return true;
-	} catch (error) {
-		console.warn("[pi-subagents] Failed to detect dynamic tool support; keeping subagent eagerly available:", error);
-		return false;
+		const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf-8")) as { name?: unknown; version?: unknown };
+		return pkg.name === PI_CODING_AGENT_PACKAGE && typeof pkg.version === "string" ? pkg.version : undefined;
+	} catch {
+		return undefined;
 	}
+}
+
+export function supportsMinimumVersion(version: string): boolean {
+	const parsed = version.split(".").slice(0, 3).map(Number);
+	if (parsed.length !== 3 || parsed.some((part) => !Number.isInteger(part) || part < 0)) return false;
+	for (let index = 0; index < 3; index++) {
+		const part = parsed[index]!;
+		const minimum = MINIMUM_DYNAMIC_TOOLS_VERSION[index]!;
+		if (part !== minimum) return part > minimum;
+	}
+	return true;
+}
+
+/**
+ * The host SDK is not a dependency of this package, so a bare module
+ * resolution only works where it happens to be installed next to us (a
+ * repository checkout with devDependencies). Distributed installs read the
+ * version from the running host instead, using the same root precedence as
+ * host-owned child sessions.
+ */
+function resolveHostPiVersion(): string | undefined {
+	const override = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || undefined;
+	for (const root of [resolvePiPackageRoot(), override, resolveInstalledPiPackageRoot()]) {
+		const version = readHostPiVersionFromRoot(root);
+		if (version) return version;
+	}
+	return undefined;
 }
 
 function hasNativeToolSelection(messages: unknown[]): boolean {
@@ -63,10 +92,11 @@ export function registerSubagentToolActivation(
 	pi: ExtensionAPI,
 	options: { advertisedPrompt: () => string | undefined },
 ): void {
-	if (!supportsNativeDynamicTools(pi)) {
+	const unsupportedReason = unsupportedDynamicToolsReason(pi);
+	if (unsupportedReason) {
 		if (!warnedUnsupportedHost) {
 			warnedUnsupportedHost = true;
-			console.warn("[pi-subagents] Dynamic tool activation requires Pi 0.86.1 or newer; keeping subagent eagerly available.");
+			console.warn(`[pi-subagents] ${unsupportedReason}; keeping subagent eagerly available.`);
 		}
 		return;
 	}

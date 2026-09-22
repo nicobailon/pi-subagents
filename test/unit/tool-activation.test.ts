@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import registerSubagentExtension from "../../src/extension/index.ts";
+import { supportsMinimumVersion, unsupportedDynamicToolsReason } from "../../src/extension/tool-activation.ts";
+import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
+import { PI_CODING_AGENT_PACKAGE, resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
 
 type Handler = (event: any, context: any) => any;
 type Tool = { name: string; description?: string; promptSnippet?: string; parameters?: unknown; execute?: (...args: any[]) => any };
@@ -156,5 +162,58 @@ describe("subagent tool activation", () => {
 		const result = await loader?.execute?.("missing", {}, new AbortController().signal, undefined, runtime.context);
 		assert.equal(result?.isError, true);
 		assert.match(result?.content?.[0]?.text ?? "", /unavailable.*subagent/i);
+	});
+});
+
+function withHostPackageRoot(manifest: Record<string, unknown>, run: () => void): void {
+	assert.equal(resolvePiPackageRoot(), undefined, "the test process must not look like a running host package");
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-host-root-"));
+	fs.writeFileSync(path.join(root, "package.json"), JSON.stringify(manifest));
+	const prior = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+	process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = root;
+	try {
+		run();
+	} finally {
+		if (prior === undefined) delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+		else process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = prior;
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+}
+
+describe("host dynamic tool support detection", () => {
+	it("compares the host version against the 0.86.1 floor", () => {
+		for (const [version, supported] of [
+			["0.85.9", false], ["0.86.0", false], ["0.86.1", true], ["0.87.0", true], ["1.0.0", true],
+			["0.86", false], ["0.86.1-rc.1", false], ["0.87.0-beta.2", false], ["v0.87.0", false], ["current", false],
+		] as const) {
+			assert.equal(supportsMinimumVersion(version), supported, `version ${version}`);
+		}
+	});
+
+	it("reports an accurate reason for a host below the floor", () => {
+		const hostApi = { getAllTools() {}, getActiveTools() {}, setActiveTools() {} } as any;
+		withHostPackageRoot({ name: PI_CODING_AGENT_PACKAGE, version: "0.86.0" }, () => {
+			assert.equal(unsupportedDynamicToolsReason(hostApi), "Dynamic tool activation requires Pi 0.86.1 or newer");
+		});
+		withHostPackageRoot({ name: PI_CODING_AGENT_PACKAGE, version: "0.88.0" }, () => {
+			assert.equal(unsupportedDynamicToolsReason(hostApi), undefined);
+		});
+		withHostPackageRoot({ name: "@someone-else/tool", version: "0.86.0" }, () => {
+			assert.equal(unsupportedDynamicToolsReason(hostApi), undefined, "an unrelated package root must not gate the host version");
+		});
+	});
+
+	it("stays eager below the floor and activates the loader at or above it", async () => {
+		let old!: ReturnType<typeof createRuntime>;
+		withHostPackageRoot({ name: PI_CODING_AGENT_PACKAGE, version: "0.86.0" }, () => { old = createRuntime(); });
+		await old.emit("session_start", { type: "session_start", reason: "startup" });
+		assert.equal(old.tools.has("subagents_enable"), false);
+		assert.ok(old.active().includes("subagent"));
+
+		let supported!: ReturnType<typeof createRuntime>;
+		withHostPackageRoot({ name: PI_CODING_AGENT_PACKAGE, version: "0.88.0" }, () => { supported = createRuntime(); });
+		await supported.emit("session_start", { type: "session_start", reason: "startup" });
+		assert.ok(supported.tools.has("subagents_enable"));
+		assert.equal(supported.active().includes("subagent"), false);
 	});
 });
