@@ -3,12 +3,81 @@ import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
+import type { Message } from "@earendil-works/pi-ai";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
 import type { JsonSchemaObject } from "../../shared/types.ts";
 import type { ResolvedAcceptanceReportMode } from "./acceptance.ts";
 
 export const MISSING_STRUCTURED_OUTPUT_CALL_ERROR = "Missing structured_output call; this step has outputSchema and must finish by calling structured_output.";
 export const MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR = "Missing acceptanceReport in structured_output call; acceptance.report is \"on\".";
+export const STRUCTURED_OUTPUT_REJECTION_ERROR = "structured_output was invoked but no valid output was captured.";
+export const INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR = "Structured output invocation was rejected: invalid outputSchema.";
+export const STRUCTURED_OUTPUT_VALIDATOR_UNAVAILABLE_ERROR = "Structured output invocation was rejected: validator unavailable.";
+export const MAX_STRUCTURED_OUTPUT_REJECTION_ERROR_BYTES = 4096;
+
+function utf8Prefix(value: string, maxBytes: number): string {
+	if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
+	const suffix = "...";
+	const contentLimit = maxBytes - Buffer.byteLength(suffix, "utf8");
+	let bytes = 0;
+	let result = "";
+	for (const character of value) {
+		const characterBytes = Buffer.byteLength(character, "utf8");
+		if (bytes + characterBytes > contentLimit) break;
+		result += character;
+		bytes += characterBytes;
+	}
+	return result + suffix;
+}
+
+function messageText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((part): part is { type: "text"; text: string } => Boolean(part) && typeof part === "object" && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string")
+		.map((part) => part.text)
+		.join("\n");
+}
+
+function sanitizeStructuredOutputRejection(text: string): string {
+	const withoutControls = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
+	if (/invalid outputSchema(?:\s*:|$)/i.test(withoutControls)) return INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR;
+	if (/failed to validate structured output:|cannot load typebox\/compile/i.test(withoutControls)) return STRUCTURED_OUTPUT_VALIDATOR_UNAVAILABLE_ERROR;
+	const validationMarker = "Structured output validation failed:";
+	const markerIndex = withoutControls.indexOf(validationMarker);
+	const diagnostic = markerIndex >= 0 ? withoutControls.slice(markerIndex) : withoutControls;
+	const lines = diagnostic.split(/\r?\n/).filter((line) => {
+		const trimmed = line.trim();
+		return trimmed.length > 0
+			&& !/^at\s/.test(trimmed)
+			&& !/^(?:arguments?|parameters?|submitted value|input|outputSchema|schema|stack)\s*:/i.test(trimmed);
+	});
+	const sanitized = lines.join("\n")
+		.replace(/\b(received|actual|got)(?:\s+value)?\s*[:=]\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\{[^\n]*\}|\[[^\n]*\]|\S+)/gi, "$1: [redacted]")
+		.trim();
+	return sanitized || STRUCTURED_OUTPUT_REJECTION_ERROR;
+}
+
+/** Returns bounded evidence from the latest failed structured_output result in a terminal transcript. */
+export function formatStructuredOutputRejectionError(messages: readonly Message[]): string {
+	const toolCallIds = new Set<string>();
+	for (const message of messages) {
+		if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+		for (const part of message.content) {
+			const call = part as { type?: unknown; id?: unknown; name?: unknown };
+			if (call.type === "toolCall" && call.name === "structured_output" && typeof call.id === "string") toolCallIds.add(call.id);
+		}
+	}
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const message = messages[index] as Message & { toolCallId?: unknown; toolName?: unknown; isError?: unknown };
+		if (message.role !== "toolResult" || message.isError !== true) continue;
+		const matchingName = message.toolName === "structured_output";
+		const matchingId = typeof message.toolCallId === "string" && toolCallIds.has(message.toolCallId);
+		if (!matchingName && !matchingId) continue;
+		return utf8Prefix(sanitizeStructuredOutputRejection(messageText(message.content)), MAX_STRUCTURED_OUTPUT_REJECTION_ERROR_BYTES);
+	}
+	return STRUCTURED_OUTPUT_REJECTION_ERROR;
+}
 
 export interface StructuredOutputRuntime {
 	schema: JsonSchemaObject;

@@ -21,6 +21,7 @@ import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapac
 import { readPendingChainAppendRequests } from "../../src/runs/background/chain-append.ts";
 import { createRunFanoutBudget, getRunFanoutBudgetSnapshot, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 import { deriveForkPromptCacheKey } from "../../src/runs/shared/child-tool-plan.ts";
+import { INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR, validateStructuredOutputValue } from "../../src/runs/shared/structured-output.ts";
 import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
 import type { AsyncExecutionResult, AsyncResultPayload, AsyncStatusPayload } from "../support/async-execution-fixture.ts";
 import {
@@ -741,6 +742,72 @@ export default function() {
 		assert.equal(payload.results[0]?.savedOutputPath, outputPath);
 		const savedOutput = fs.readFileSync(outputPath, "utf-8");
 		assert.equal(savedOutput, JSON.stringify(expectedStructuredOutput, null, 2));
+	});
+
+	it("background settlement preserves rejected structured_output evidence", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const diagnostic = "Structured output validation failed: ok: is required";
+		mockPi.onCall({
+			jsonl: [
+				{ type: "message_end", message: { role: "assistant", content: [{ type: "toolCall", id: "structured-rejected", name: "structured_output", arguments: { value: {} } }], model: "mock/test-model", stopReason: "toolUse", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
+				{ type: "tool_execution_start", toolCallId: "structured-rejected", toolName: "structured_output", args: { value: {} } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolCallId: "structured-rejected", toolName: "structured_output", isError: true, content: [{ type: "text", text: diagnostic }] } },
+				{ type: "tool_execution_end", toolCallId: "structured-rejected", toolName: "structured_output" },
+			],
+		});
+		const id = `async-single-schema-rejected-${Date.now().toString(36)}`;
+
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Return structured data",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+			acceptance: false,
+			structuredOutputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } },
+		});
+
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id, 10_000), "utf-8")) as AsyncResultPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
+		assert.equal(payload.success, false);
+		assert.match(payload.results[0]?.error ?? "", /Structured output validation failed: ok: is required/);
+		assert.doesNotMatch(payload.results[0]?.error ?? "", /Missing structured_output call/);
+		assert.equal(payload.results[0]?.structuredOutputFailed, true);
+		assert.match(status.steps?.[0]?.error ?? "", /Structured output validation failed: ok: is required/);
+	});
+
+	it("does not persist malformed outputSchema compiler text in background evidence", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const sentinel = "BACKGROUND_PRIVATE_SCHEMA_SENTINEL";
+		const structuredOutputSchema = { type: "string", pattern: `${sentinel}_[invalid` };
+		const validation = await validateStructuredOutputValue(structuredOutputSchema, "value");
+		assert.equal(validation.status, "invalid");
+		if (validation.status !== "invalid") return;
+		assert.match(validation.message, new RegExp(sentinel));
+		mockPi.onCall({
+			jsonl: [
+				{ type: "tool_execution_start", toolCallId: "structured-malformed-schema", toolName: "structured_output", args: { value: "value" } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolCallId: "structured-malformed-schema", toolName: "structured_output", isError: true, content: [{ type: "text", text: `Structured output validation failed: ${validation.message}` }] } },
+				{ type: "tool_execution_end", toolCallId: "structured-malformed-schema", toolName: "structured_output" },
+			],
+		});
+		const id = `async-single-malformed-schema-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker", task: "Return structured data", agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2,
+			acceptance: false, structuredOutputSchema,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payloadText = fs.readFileSync(resultPath, "utf-8");
+		const payload = JSON.parse(payloadText) as AsyncResultPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
+		assert.match(payload.results[0]?.error ?? "", new RegExp(`^${escapeRegExp(INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR)}`));
+		assert.equal(payloadText.includes(sentinel), false);
+		assert.equal((status.steps?.[0]?.error ?? "").includes(sentinel), false);
 	});
 
 	it("background execution inherits a discovered agent outputSchema", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {

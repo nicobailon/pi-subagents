@@ -39,6 +39,7 @@ import {
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { handleSubagentControlNotice } from "../../src/extension/control-notices.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
+import { INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR, validateStructuredOutputValue } from "../../src/runs/shared/structured-output.ts";
 import {
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
@@ -2175,6 +2176,61 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.match(child?.error ?? "", /Missing structured_output call/);
 		assert.ok(child?.structuredOutputPath);
 		assert.equal(fs.existsSync(path.dirname(child.structuredOutputPath)), false);
+	});
+
+	it("reports rejected structured_output evidence and lets a later valid call win", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const rejectedEvents = [
+			{ type: "message_end", message: { role: "assistant", content: [{ type: "toolCall", id: "structured-rejected", name: "structured_output", arguments: { value: {} } }], model: "mock/test-model", stopReason: "toolUse", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
+			{ type: "tool_execution_start", toolCallId: "structured-rejected", toolName: "structured_output", args: { value: {} } },
+			{ type: "tool_result_end", message: { role: "toolResult", toolCallId: "structured-rejected", toolName: "structured_output", isError: true, content: [{ type: "text", text: "Structured output validation failed: ok: is required" }] } },
+			{ type: "tool_execution_end", toolCallId: "structured-rejected", toolName: "structured_output" },
+		];
+		mockPi.onCall({ stdoutRaw: rejectedEvents.map((entry) => JSON.stringify(entry)).join("\n") + "\n" });
+		const executor = makeExecutor([makeAgent("echo")]);
+		const params = { agent: "echo", task: "Return structured data", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, acceptance: false, artifacts: false } as const;
+
+		const rejected = await executor.execute("single-schema-rejected", params, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+
+		assert.equal(rejected.isError, true);
+		assert.equal(rejected.details.results[0]?.structuredOutputFailed, true);
+		assert.match(rejected.details.results[0]?.error ?? "", /Structured output validation failed: ok: is required/);
+		assert.doesNotMatch(rejected.details.results[0]?.error ?? "", /Missing structured_output call/);
+
+		mockPi.reset();
+		mockPi.onCall({
+			stdoutRaw: rejectedEvents.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+			structuredOutput: { ok: true },
+		});
+		const recovered = await executor.execute("single-schema-recovered", params, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+
+		assert.equal(recovered.isError, undefined, recovered.content[0]?.text);
+		assert.deepEqual(recovered.details.results[0]?.structuredOutput, { ok: true });
+	});
+
+	it("does not expose malformed outputSchema compiler text in foreground results", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const sentinel = "FOREGROUND_PRIVATE_SCHEMA_SENTINEL";
+		const outputSchema = { type: "string", pattern: `${sentinel}_[invalid` };
+		const validation = await validateStructuredOutputValue(outputSchema, "value");
+		assert.equal(validation.status, "invalid");
+		if (validation.status !== "invalid") return;
+		assert.match(validation.message, new RegExp(sentinel));
+		mockPi.onCall({
+			jsonl: [
+				{ type: "tool_execution_start", toolCallId: "structured-malformed-schema", toolName: "structured_output", args: { value: "value" } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolCallId: "structured-malformed-schema", toolName: "structured_output", isError: true, content: [{ type: "text", text: `Structured output validation failed: ${validation.message}` }] } },
+				{ type: "tool_execution_end", toolCallId: "structured-malformed-schema", toolName: "structured_output" },
+			],
+		});
+
+		const result = await makeExecutor([makeAgent("echo")]).execute(
+			"single-schema-malformed",
+			{ agent: "echo", task: "Return structured data", outputSchema, acceptance: false, artifacts: false },
+			new AbortController().signal, undefined, makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.equal(result.details.results[0]?.error, INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR);
+		assert.doesNotMatch(JSON.stringify(result.details.results[0]), new RegExp(sentinel));
 	});
 
 	it("enforces a discovered agent outputSchema and lets false opt out", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
