@@ -5,20 +5,25 @@ import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
 
 export const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
 export const PI_SUBAGENT_PI_BINARY_ENV = "PI_SUBAGENT_PI_BINARY";
+export const PI_PACKAGE_DIR_ENV = "PI_PACKAGE_DIR";
 
 export function findPiPackageRootFromEntry(
 	entryPoint: string,
+	deps: Pick<PiSpawnDeps, "platform" | "existsSync" | "readFileSync"> = {},
 ): string | undefined {
-	let dir = path.dirname(entryPoint);
-	while (dir !== path.dirname(dir)) {
-		const packageJsonPath = path.join(dir, "package.json");
-		if (fs.existsSync(packageJsonPath)) {
-			const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8")) as {
+	const pathApi = (deps.platform ?? process.platform) === "win32" ? path.win32 : path;
+	const existsSync = deps.existsSync ?? fs.existsSync;
+	const readFileSync = deps.readFileSync ?? ((filePath, encoding) => fs.readFileSync(filePath, encoding));
+	let dir = pathApi.dirname(entryPoint);
+	while (dir !== pathApi.dirname(dir)) {
+		const packageJsonPath = pathApi.join(dir, "package.json");
+		if (existsSync(packageJsonPath)) {
+			const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
 				name?: unknown;
 			};
 			if (pkg.name === PI_CODING_AGENT_PACKAGE) return dir;
 		}
-		dir = path.dirname(dir);
+		dir = pathApi.dirname(dir);
 	}
 	return undefined;
 }
@@ -57,6 +62,79 @@ export interface PiSpawnDeps {
 	resolvePackageEntry?: () => string;
 	piPackageRoot?: string;
 	env?: NodeJS.ProcessEnv;
+}
+
+export type RunningPiPackageRoot =
+	| { root: string; source: "argv" | "PI_PACKAGE_DIR" | "PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT" | "bun-adjacent" | "bun-share" }
+	| { reason: string };
+
+function validateRunningPiRoot(
+	root: string,
+	source: Exclude<RunningPiPackageRoot, { reason: string }>["source"],
+	readFileSync: (filePath: string, encoding: "utf-8") => string,
+	manifestPath = path.join(root, "package.json"),
+): RunningPiPackageRoot {
+	const sourceLabel = source === "PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT" ? `${source} override` : source;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(readFileSync(manifestPath, "utf-8"));
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { reason: `Could not read a valid Pi package manifest at ${manifestPath} (${sourceLabel}): ${message}` };
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || (parsed as { name?: unknown }).name !== PI_CODING_AGENT_PACKAGE) {
+		return { reason: `${manifestPath} is not ${PI_CODING_AGENT_PACKAGE} (${sourceLabel})` };
+	}
+	return { root, source };
+}
+
+/** Resolve only package roots that can be attributed to the process that owns this session. */
+export function resolveRunningPiPackageRoot(deps: PiSpawnDeps = {}): RunningPiPackageRoot | undefined {
+	const env = deps.env ?? process.env;
+	const argv1 = deps.argv1 ?? process.argv[1];
+	const readFileSync = deps.readFileSync ?? ((filePath, encoding) => fs.readFileSync(filePath, encoding));
+	const existsSync = deps.existsSync ?? fs.existsSync;
+	const realpathSync = deps.realpathSync ?? fs.realpathSync;
+
+	if (argv1) {
+		try {
+			const root = findPiPackageRootFromEntry(realpathSync(argv1), { platform: deps.platform, existsSync, readFileSync });
+			if (root) return { root, source: "argv" };
+		} catch {
+			// Virtual Bun entries and non-filesystem launchers continue to explicit host evidence.
+		}
+	}
+
+	for (const [source, value] of [
+		[PI_PACKAGE_DIR_ENV, env[PI_PACKAGE_DIR_ENV]],
+		[PI_CODING_AGENT_PACKAGE_ROOT_ENV, env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]],
+	] as const) {
+		const root = value?.trim();
+		if (root) return validateRunningPiRoot(root, source, readFileSync);
+	}
+
+	const bunVersion = deps.bunVersion ?? process.versions.bun;
+	if (!bunVersion || !argv1 || !/^(?:\/\$bunfs\/|B:[\\/]~BUN[\\/])/.test(argv1)) return undefined;
+	const platform = deps.platform ?? process.platform;
+	const pathApi = platform === "win32" ? path.win32 : path.posix;
+	const imagePath = deps.execPath ?? process.execPath;
+	let canonicalImage = imagePath;
+	try {
+		canonicalImage = realpathSync(imagePath);
+	} catch {
+		// A validated adjacent manifest can still establish ownership when canonicalization is unavailable.
+	}
+	const imageDir = pathApi.dirname(canonicalImage);
+	const candidates = [
+		{ root: imageDir, source: "bun-adjacent" as const },
+		{ root: pathApi.resolve(imageDir, "..", "share", "pi-coding-agent"), source: "bun-share" as const },
+	];
+	for (const candidate of candidates) {
+		const manifestPath = pathApi.join(candidate.root, "package.json");
+		if (!existsSync(manifestPath)) continue;
+		return validateRunningPiRoot(candidate.root, candidate.source, readFileSync, manifestPath);
+	}
+	return undefined;
 }
 
 /** Compiled Pi's entrypoint is virtual; execPath is the real (possibly renamed) image. */

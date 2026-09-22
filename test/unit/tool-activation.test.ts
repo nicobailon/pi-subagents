@@ -176,12 +176,16 @@ function withHostPackageRoot(manifest: Record<string, unknown> | string, run: ()
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-host-root-"));
 	fs.writeFileSync(path.join(root, "package.json"), typeof manifest === "string" ? manifest : JSON.stringify(manifest));
 	const prior = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+	const priorPiPackageDir = process.env.PI_PACKAGE_DIR;
+	delete process.env.PI_PACKAGE_DIR;
 	process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = root;
 	try {
 		run();
 	} finally {
 		if (prior === undefined) delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
 		else process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = prior;
+		if (priorPiPackageDir === undefined) delete process.env.PI_PACKAGE_DIR;
+		else process.env.PI_PACKAGE_DIR = priorPiPackageDir;
 		fs.rmSync(root, { recursive: true, force: true });
 	}
 }
@@ -208,9 +212,26 @@ describe("host dynamic tool support detection", () => {
 		});
 	});
 
+	it("accepts a validated 0.87 Bun bin/share host image", () => {
+		const hostApi = { getAllTools() {}, getActiveTools() {}, setActiveTools() {} } as any;
+		const manifestPath = "/opt/pi/share/pi-coding-agent/package.json";
+		assert.equal(unsupportedDynamicToolsReason(hostApi, {
+			platform: "linux",
+			bunVersion: "1.2.0",
+			argv1: "/$bunfs/root/pi",
+			execPath: "/opt/pi/bin/pi",
+			env: {},
+			realpathSync: (value) => value,
+			existsSync: (value) => value === manifestPath,
+			readFileSync: (value) => value === manifestPath
+				? JSON.stringify({ name: PI_CODING_AGENT_PACKAGE, version: "0.87.0" })
+				: (() => { throw new Error(`unexpected read: ${value}`); })(),
+		}), undefined);
+	});
+
 	it("keeps manifest failures visible instead of falling through", () => {		const hostApi = { getAllTools() {}, getActiveTools() {}, setActiveTools() {} } as any;
 		withHostPackageRoot("{ not json", () => {
-			assert.match(unsupportedDynamicToolsReason(hostApi) ?? "", /Invalid Pi package manifest at .*package\.json/);
+			assert.match(unsupportedDynamicToolsReason(hostApi) ?? "", /Could not read a valid Pi package manifest at .*package\.json/);
 		});
 		withHostPackageRoot({ name: PI_CODING_AGENT_PACKAGE }, () => {
 			assert.match(unsupportedDynamicToolsReason(hostApi) ?? "", /has no version/);
@@ -225,7 +246,9 @@ describe("host dynamic tool support detection", () => {
 	it("refuses to gate on an SDK that is not the running host", async () => {
 		const hostApi = { getAllTools() {}, getActiveTools() {}, setActiveTools() {} } as any;
 		const prior = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+		const priorPiPackageDir = process.env.PI_PACKAGE_DIR;
 		delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+		delete process.env.PI_PACKAGE_DIR;
 		try {
 			assert.equal(resolvePiPackageRoot(), undefined);
 			assert.match(unsupportedDynamicToolsReason(hostApi) ?? "", /Could not verify the running Pi installation|Could not locate the running Pi installation/);
@@ -235,6 +258,7 @@ describe("host dynamic tool support detection", () => {
 			assert.ok(runtime.active().includes("subagent"));
 		} finally {
 			if (prior !== undefined) process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = prior;
+			if (priorPiPackageDir !== undefined) process.env.PI_PACKAGE_DIR = priorPiPackageDir;
 		}
 	});
 

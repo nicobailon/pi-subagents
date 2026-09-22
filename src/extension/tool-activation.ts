@@ -4,7 +4,7 @@ import * as piAi from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../shared/utils.ts";
-import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../runs/shared/pi-spawn.ts";
+import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot, resolveRunningPiPackageRoot, type PiSpawnDeps } from "../runs/shared/pi-spawn.ts";
 
 interface ActivationDetails {
 	enabled?: string[];
@@ -19,9 +19,9 @@ const UNSUPPORTED_HOST_MESSAGE = "Dynamic tool activation requires Pi 0.86.1 or 
 let warnedUnsupportedHost = false;
 
 /** Returns why dynamic tool activation is unavailable, or undefined when the host supports it. */
-export function unsupportedDynamicToolsReason(pi: ExtensionAPI): string | undefined {
+export function unsupportedDynamicToolsReason(pi: ExtensionAPI, deps: PiSpawnDeps = {}): string | undefined {
 	if (typeof pi.getAllTools !== "function" || typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function" || typeof piAi.getCurrentTools !== "function") return UNSUPPORTED_HOST_MESSAGE;
-	const probe = probeHostPiVersion();
+	const probe = probeHostPiVersion(deps);
 	if ("reason" in probe) return probe.reason;
 	return supportsMinimumVersion(probe.version) ? undefined : `${UNSUPPORTED_HOST_MESSAGE} (detected ${probe.version} in ${probe.root})`;
 }
@@ -32,31 +32,36 @@ type HostPiProbe = { version: string; root: string } | { reason: string };
  * The host SDK is not a dependency of this package, so a bare module
  * resolution only works where it happens to be installed next to us (a
  * repository checkout with devDependencies). Distributed installs read the
- * version from the Pi that owns the session instead: the running host, then
- * an explicit override, the same roots host-owned child sessions use. A
+ * version from the Pi that owns the session instead: argv ownership, Pi's
+ * package directory, the explicit subagents override, then validated compiled
+ * image layouts. A
  * selected root must expose a valid manifest — failures are reported rather
  * than silently falling through to a different Pi installation.
  */
-function probeHostPiVersion(): HostPiProbe {
-	const override = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || undefined;
-	const runningRoot = resolvePiPackageRoot();
+function probeHostPiVersion(deps: PiSpawnDeps): HostPiProbe {
+	const runningRoot = resolveRunningPiPackageRoot(deps);
 	// Only the running host and an explicit override identify the Pi that owns this
 	// session. An SDK reached through our own install tree cannot be proven to be
 	// that installation, so it may inform the reason but never the gate: dynamic
 	// activation stays off until the host is verified.
-	const ownerRoot = runningRoot ?? override;
-	if (ownerRoot) return readHostPiManifest(ownerRoot, runningRoot === undefined);
+	if (runningRoot && "reason" in runningRoot) return runningRoot;
+	if (runningRoot) return readHostPiManifest(runningRoot.root, runningRoot.source === "PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT", deps.readFileSync, deps.platform);
 	const installedRoot = resolveInstalledPiPackageRoot();
 	return { reason: installedRoot
 		? `Could not verify the running Pi installation; ${installedRoot} is not confirmed to be the host that owns this session`
 		: "Could not locate the running Pi installation to verify dynamic tool support" };
 }
 
-function readHostPiManifest(root: string, fromOverride: boolean): HostPiProbe {
-	const manifestPath = path.join(root, "package.json");
+function readHostPiManifest(
+	root: string,
+	fromOverride: boolean,
+	readFileSync: (filePath: string, encoding: "utf-8") => string = (filePath, encoding) => fs.readFileSync(filePath, encoding),
+	platform: NodeJS.Platform = process.platform,
+): HostPiProbe {
+	const manifestPath = (platform === "win32" ? path.win32 : path).join(root, "package.json");
 	let source: string;
 	try {
-		source = fs.readFileSync(manifestPath, "utf-8");
+		source = readFileSync(manifestPath, "utf-8");
 	} catch (error) {
 		return { reason: `Could not read the Pi package manifest at ${manifestPath}: ${errorMessage(error)}` };
 	}
