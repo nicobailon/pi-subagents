@@ -38,6 +38,16 @@ import {
 
 describe("async execution utilities", { skip: !available ? "pi packages not available" : undefined }, () => {
 	installAsyncExecutionHooks();
+	const makeLifecycleExecutor = (eventBus: ReturnType<typeof createEventBus>) => createSubagentExecutor!({
+		pi: { events: eventBus, getSessionName: () => undefined, sendMessage() {} },
+		state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+		config: {},
+		asyncByDefault: false,
+		tempArtifactsDir: tempDir,
+		getSubagentSessionRoot: () => tempDir,
+		expandTilde: (value: string) => value,
+		discoverAgents: () => ({ agents: [makeAgent("worker")] }),
+	});
 
 	it("executes a registered mixed background workflow with captured grants after disposal", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		const ctx = makeMinimalCtx(tempDir);
@@ -122,23 +132,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const childEvents: SubagentChildStatusEvent[] = [];
 		eventBus.on(SUBAGENT_ASYNC_STARTED_EVENT, (payload) => rootEvents.push(payload as Record<string, unknown>));
 		eventBus.on(SUBAGENT_CHILD_STATUS_EVENT, (payload) => childEvents.push(payload as SubagentChildStatusEvent));
-		const state: SubagentState = {
-			baseCwd: tempDir,
-			currentSessionId: null,
-			asyncJobs: new Map(),
-			foregroundControls: new Map(),
-			lastForegroundControlId: null,
-		};
-		const executor = createSubagentExecutor!({
-			pi: { events: eventBus, getSessionName: () => undefined, sendMessage() {} },
-			state,
-			config: {},
-			asyncByDefault: false,
-			tempArtifactsDir: tempDir,
-			getSubagentSessionRoot: () => tempDir,
-			expandTilde: (value: string) => value,
-			discoverAgents: () => ({ agents: [makeAgent("worker")] }),
-		});
+		const executor = makeLifecycleExecutor(eventBus);
 		const context = makeMinimalCtx(tempDir);
 		const ownerSession = path.join(tempDir, "workflow-owner-session.jsonl");
 		context.sessionManager.getSessionFile = () => ownerSession;
@@ -188,39 +182,28 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		);
 	});
 
-	it("does not announce a workflow child when its launch identity status write fails", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async (t) => {
+	it("delays a workflow child announcement until launch identity persistence recovers", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async (t) => {
 		const eventBus = createEventBus();
 		const childEvents: SubagentChildStatusEvent[] = [];
 		eventBus.on(SUBAGENT_CHILD_STATUS_EVENT, (payload) => childEvents.push(payload as SubagentChildStatusEvent));
-		const state: SubagentState = {
-			baseCwd: tempDir,
-			currentSessionId: null,
-			asyncJobs: new Map(),
-			foregroundControls: new Map(),
-			lastForegroundControlId: null,
-		};
-		const executor = createSubagentExecutor!({
-			pi: { events: eventBus, getSessionName: () => undefined, sendMessage() {} },
-			state,
-			config: {},
-			asyncByDefault: false,
-			tempArtifactsDir: tempDir,
-			getSubagentSessionRoot: () => tempDir,
-			expandTilde: (value: string) => value,
-			discoverAgents: () => ({ agents: [makeAgent("worker")] }),
-		});
+		const executor = makeLifecycleExecutor(eventBus);
 		const context = makeMinimalCtx(tempDir);
 		context.sessionManager.getSessionFile = () => path.join(tempDir, "failed-identity-owner.jsonl");
 		mockPi.onCall({ output: "child still completed" });
 		const originalRenameSync = fsDefault.renameSync;
 		let failedIdentityWrites = 0;
+		let identityWriteAttempts = 0;
 		t.mock.method(fsDefault, "renameSync", ((source: fs.PathLike, target: fs.PathLike) => {
-			if (failedIdentityWrites === 0 && path.basename(String(target)) === "status.json") {
+			if (path.basename(String(target)) === "status.json") {
 				const payload = JSON.parse(fs.readFileSync(source, "utf8")) as AsyncStatusPayload;
 				if (payload.mode === "workflow" && payload.steps?.some((step) => typeof step.runId === "string" && step.runId.length > 0)) {
-					failedIdentityWrites += 1;
-					const error = Object.assign(new Error("simulated identity status write failure"), { code: "EACCES" });
-					throw error;
+					identityWriteAttempts += 1;
+					if (identityWriteAttempts <= 2) assert.equal(childEvents.length, 0);
+					if (failedIdentityWrites === 0) {
+						failedIdentityWrites += 1;
+						const error = Object.assign(new Error("simulated identity status write failure"), { code: "EACCES" });
+						throw error;
+					}
 				}
 			}
 			return originalRenameSync(source, target);
@@ -245,35 +228,24 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(result.results[0]?.output, "child still completed");
 		assert.equal(mockPi.callCount(), 1);
 		assert.equal(failedIdentityWrites, 1);
-		await waitForAsyncState(runId, (status) => status.state === "complete");
-		assert.equal(childEvents.some((event) => event.runId === runId && event.status === "started"), false);
+		assert.ok(identityWriteAttempts >= 2);
+		const finalStatus = await waitForAsyncState(runId, (status) => status.state === "complete");
+		const startedChildren = childEvents.filter((event) => event.runId === runId && event.status === "started");
+		assert.equal(startedChildren.length, 1);
+		assert.equal(startedChildren[0]?.childRunId, finalStatus.steps?.[0]?.runId);
 		const journal = fs.readFileSync(path.join(ASYNC_DIR, runId, "events.jsonl"), "utf8")
 			.trim()
 			.split("\n")
 			.map((line) => JSON.parse(line) as SubagentChildStatusEvent);
-		assert.equal(journal.some((event) => event.type === "subagent.child-status" && event.status === "started"), false);
+		const journalStarted = journal.filter((event) => event.type === "subagent.child-status" && event.status === "started");
+		assert.equal(journalStarted.length, 1);
+		assert.equal(journalStarted[0]?.childRunId, startedChildren[0]?.childRunId);
 	});
 
 	it("continues async workflow execution when a root-start subscriber throws", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async (t) => {
 		const eventBus = createEventBus();
 		eventBus.on(SUBAGENT_ASYNC_STARTED_EVENT, () => { throw new Error("simulated root-start subscriber failure"); });
-		const state: SubagentState = {
-			baseCwd: tempDir,
-			currentSessionId: null,
-			asyncJobs: new Map(),
-			foregroundControls: new Map(),
-			lastForegroundControlId: null,
-		};
-		const executor = createSubagentExecutor!({
-			pi: { events: eventBus, getSessionName: () => undefined, sendMessage() {} },
-			state,
-			config: {},
-			asyncByDefault: false,
-			tempArtifactsDir: tempDir,
-			getSubagentSessionRoot: () => tempDir,
-			expandTilde: (value: string) => value,
-			discoverAgents: () => ({ agents: [makeAgent("worker")] }),
-		});
+		const executor = makeLifecycleExecutor(eventBus);
 		const context = makeMinimalCtx(tempDir);
 		context.sessionManager.getSessionFile = () => path.join(tempDir, "throwing-root-subscriber-owner.jsonl");
 		mockPi.onCall({ output: "workflow child completed" });
@@ -301,23 +273,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	it("continues workflow child execution when a child-status subscriber throws", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async (t) => {
 		const eventBus = createEventBus();
 		eventBus.on(SUBAGENT_CHILD_STATUS_EVENT, () => { throw new Error("simulated child-status subscriber failure"); });
-		const state: SubagentState = {
-			baseCwd: tempDir,
-			currentSessionId: null,
-			asyncJobs: new Map(),
-			foregroundControls: new Map(),
-			lastForegroundControlId: null,
-		};
-		const executor = createSubagentExecutor!({
-			pi: { events: eventBus, getSessionName: () => undefined, sendMessage() {} },
-			state,
-			config: {},
-			asyncByDefault: false,
-			tempArtifactsDir: tempDir,
-			getSubagentSessionRoot: () => tempDir,
-			expandTilde: (value: string) => value,
-			discoverAgents: () => ({ agents: [makeAgent("worker")] }),
-		});
+		const executor = makeLifecycleExecutor(eventBus);
 		const context = makeMinimalCtx(tempDir);
 		context.sessionManager.getSessionFile = () => path.join(tempDir, "throwing-subscriber-owner.jsonl");
 		mockPi.onCall({ output: "child completed despite observer" });

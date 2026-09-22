@@ -5348,10 +5348,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					deps.refreshResultDelivery?.();
 					return false;
 				};
+				const pendingWorkflowChildAnnouncements = new Map<string, NonNullable<AsyncStatus["steps"]>[number]>();
+				let announcePersistedWorkflowChildren = (): void => {};
 				const runPersistence = createCapacityResilientJsonWriter({
 					keepAlive: true,
 					onSuccess: (filePath, payload) => {
-						if (filePath === statusPath) queueActiveRunIndex(payload as AsyncStatus);
+						if (filePath === statusPath) {
+							announcePersistedWorkflowChildren();
+							queueActiveRunIndex(payload as AsyncStatus);
+						}
 						if (filePath === resultPath) settleResultPublication?.(true);
 					},
 					onError: (error, filePath) => {
@@ -5372,14 +5377,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				// terminal writes stay fail-fast on purpose: no child work is at risk by then, and
 				// silently dropping a terminal write would leave status.json and the active-run
 				// index pinned at "running" after the result already says complete.
-				const persist = (options: { tolerateStatusWriteFailure?: boolean } = {}): boolean => {
-					if (persistClosed) return false;
+				const persist = (options: { tolerateStatusWriteFailure?: boolean } = {}): void => {
+					if (persistClosed) return;
 					const liveJob = deps.state.asyncJobs.get(workflowRunId);
-					if (liveJob && (liveJob.status === "complete" || liveJob.status === "failed") && status.state !== "complete" && status.state !== "failed") return false;
+					if (liveJob && (liveJob.status === "complete" || liveJob.status === "failed") && status.state !== "complete" && status.state !== "failed") return;
 					const workflowState = status.state === "complete" ? "completed" : status.state === "failed" || status.state === "rejected" ? "failed" : status.state === "paused" ? "paused" : status.state === "stopped" ? "stopped" : "running";
 					status.workflowChildren = workflowChildSummary({ parentToolCallId: toolCallId, workflowRunId, workflowState, inventoryComplete: workflowState !== "running", trace: status.workflow?.trace, steps: status.steps });
 					status.lastUpdate = Date.now();
-					let statusWritten = true;
 					if (!initialPersistenceComplete) {
 						writeAtomicJson(statusPath, status);
 						initialPersistenceComplete = true;
@@ -5387,8 +5391,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					} else if (options.tolerateStatusWriteFailure) {
 						try {
 							runPersistence.write(statusPath, { ...status });
-							statusWritten = runPersistence.pendingCount() === 0;
-							if (statusWritten) statusPersistenceDegraded = false;
+							if (runPersistence.pendingCount() === 0) statusPersistenceDegraded = false;
 						} catch (error) {
 							const message = `Failed to persist async workflow state ${statusPath}: ${error instanceof Error ? error.message : String(error)}`;
 							console.error(message, error);
@@ -5400,7 +5403,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									console.error(`Failed to record degraded status persistence for '${statusPath}':`, eventError);
 								}
 							}
-							statusWritten = false;
 						}
 					} else {
 						runPersistence.write(statusPath, { ...status });
@@ -5428,7 +5430,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						liveJob.workflow = status.workflow;
 						liveJob.workflowChildren = status.workflowChildren;
 					}
-					return statusWritten;
 				};
 				const writeWorkflowResult = (payload: Record<string, unknown>): boolean => {
 					try {
@@ -5680,6 +5681,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							console.error("Failed to emit workflow child status event:", error);
 						}
 					};
+					announcePersistedWorkflowChildren = () => {
+						for (const [key, step] of pendingWorkflowChildAnnouncements) {
+							if (!step.runId) continue;
+							announceWorkflowChild(key, step);
+							pendingWorkflowChildAnnouncements.delete(key);
+						}
+					};
 					const runHostCommand = workflowHostCommandRunner({
 						workflowCwd,
 						artifactsDir: workflowArtifactsDir,
@@ -5897,8 +5905,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 											step.async = launch.async;
 											if (launch.runId) step.runId = launch.runId;
 											if (childRequest.lane) step.lane = childRequest.lane;
-											const identityPersisted = persist({ tolerateStatusWriteFailure: true });
-											if (step.runId && identityPersisted) announceWorkflowChild(key, step);
+											if (step.runId) pendingWorkflowChildAnnouncements.set(key, step);
+											persist({ tolerateStatusWriteFailure: true });
 										}
 										recordMissionWorkflowChild(missionBinding, workflowRunId, key, { status: "running", agent: launch.agent, ...(launch.sessionFile ? { sessionPath: launch.sessionFile } : {}) });
 									});
