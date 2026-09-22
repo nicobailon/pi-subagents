@@ -108,7 +108,8 @@ export function listRetainedChildren(asyncDirRoot: string, sessionId: string): R
 }
 
 export function formatRetainedChildren(children: RetainedChild[]): string {
-	if (children.length === 0) return "No retained workflow children in the active parent session. If a retained-writer challenge is required, launch a same-role fallback challenge and label it as fallback.";
+	const noKnownEligibleTargetGuidance = 'children.list is workflow-only and is not an exhaustive list of direct native children. If the exact run id of the intended child is known, inspect it with subagent({ action: "status", id: "..." }); if status identifies the candidate, attempt subagent({ action: "resume", id: "...", message: "..." }), which authoritatively checks eligibility and may reject it. Launch a same-role fallback challenge, labeled as fallback, only when there is no known candidate or resume rejects eligibility.';
+	if (children.length === 0) return `No retained workflow children in the active parent session. ${noKnownEligibleTargetGuidance}`;
 	const retained = children.slice(0, MAX_RETAINED_CHILDREN);
 	if (!retained.some((child) => child.resumability.state === "resumable")) {
 		const resumable = children.slice(MAX_RETAINED_CHILDREN).find((child) => child.resumability.state === "resumable");
@@ -130,6 +131,6 @@ export function formatRetainedChildren(children: RetainedChild[]): string {
 			] : []),
 			...(child.tokenTotals ? [`  tokens: input ${child.tokenTotals.input}, output ${child.tokenTotals.output}, total ${child.tokenTotals.total}`] : []),
 		]),
-		...(hasResumableChild ? [] : ["No resumable retained child is listed. Launch a same-role fallback challenge and label it as fallback."]),
+		...(hasResumableChild ? [] : [`No resumable retained workflow child is listed. ${noKnownEligibleTargetGuidance}`]),
 	].join("\n");
 }

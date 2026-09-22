@@ -90,7 +90,7 @@ describe("registered subagent tool description", () => {
 				/not for final reviews\/gates/,
 				/one writer per cwd\/worktree.*fresh-context read-only reviewers/i,
 				/output on runs.run\/runs.all, not task filename prose.*outputReference.*outputPathMapping.*artifactPaths/,
-				/children.list.*resume only resumable rows.*stored agent\/model\/tool contract.*If none is resumable.*same-role fallback challenge/,
+				/children.list is workflow-only, not an exhaustive list of direct native children.*exact run id.*action:"status",id.*status identifies the candidate.*action:"resume",id,message.*authoritatively checks eligibility, may reject it.*labeled same-role fallback only when no known candidate exists or resume rejects eligibility/,
 				/latest returned runId.*distinct resume pass needs a new stable key.*identical launch parameters/,
 				/Oracle\/advisor.*supervisor dialogue/,
 				/raw workflowScript\/workflowScriptPath cannot use runs.host/,

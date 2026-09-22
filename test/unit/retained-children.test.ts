@@ -107,6 +107,24 @@ describe("retained child roster", () => {
 			assert.equal(children[0]?.resumability.state, "resumable");
 			assert.match(formatted, /resumability: resumable\n  session: .*child-52\.jsonl\n  resume: subagent\(\{ action: "resume", id: "child-52", message: "\.\.\." \}\)/);
 			assert.equal(children.some((child) => child.runId === "child-50" || child.runId === "child-51"), false);
+			assert.doesNotMatch(formatted, /Launch a same-role fallback/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("explains exact-id inspection when the workflow-only roster is empty", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-retained-children-"));
+		try {
+			writeRetainedRun(root, 1, { parentWorkflowRunId: null });
+
+			const children = listRetainedChildren(path.join(root, "runs"), "parent-a");
+			const formatted = formatRetainedChildren(children);
+
+			assert.deepEqual(children, []);
+			assert.match(formatted, /children\.list is workflow-only and is not an exhaustive list of direct native children/);
+			assert.match(formatted, /action: "status".*status identifies the candidate.*action: "resume".*authoritatively checks eligibility and may reject it/);
+			assert.match(formatted, /fallback.*only when there is no known candidate or resume rejects eligibility/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -166,7 +184,9 @@ describe("retained child roster", () => {
 			assert.match(formatted, /resumability: not resumable \(stopped run\)/);
 			assert.match(formatted, /resumability: not resumable \(no persisted session file\)/);
 			assert.doesNotMatch(formatted, /resume: subagent/);
-			assert.match(formatted, /No resumable retained child is listed\. Launch a same-role fallback challenge and label it as fallback\./);
+			assert.match(formatted, /No resumable retained workflow child is listed/);
+			assert.match(formatted, /action: "status".*status identifies the candidate.*action: "resume".*authoritatively checks eligibility and may reject it/);
+			assert.match(formatted, /fallback.*only when there is no known candidate or resume rejects eligibility/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
