@@ -32,17 +32,24 @@ type HostPiProbe = { version: string; root: string } | { reason: string };
  * The host SDK is not a dependency of this package, so a bare module
  * resolution only works where it happens to be installed next to us (a
  * repository checkout with devDependencies). Distributed installs read the
- * version from the running host instead, using the same root precedence as
- * host-owned child sessions: running host, explicit override, install tree.
- * A selected root must expose a valid manifest — failures are reported
- * rather than silently falling through to a different Pi installation.
+ * version from the Pi that owns the session instead: the running host, then
+ * an explicit override, the same roots host-owned child sessions use. A
+ * selected root must expose a valid manifest — failures are reported rather
+ * than silently falling through to a different Pi installation.
  */
 function probeHostPiVersion(): HostPiProbe {
 	const override = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || undefined;
 	const runningRoot = resolvePiPackageRoot();
-	const selected = runningRoot ?? override ?? resolveInstalledPiPackageRoot();
-	if (selected) return readHostPiManifest(selected, runningRoot === undefined && override !== undefined);
-	return { reason: "Could not locate the running Pi installation to verify dynamic tool support" };
+	// Only the running host and an explicit override identify the Pi that owns this
+	// session. An SDK reached through our own install tree cannot be proven to be
+	// that installation, so it may inform the reason but never the gate: dynamic
+	// activation stays off until the host is verified.
+	const ownerRoot = runningRoot ?? override;
+	if (ownerRoot) return readHostPiManifest(ownerRoot, runningRoot === undefined);
+	const installedRoot = resolveInstalledPiPackageRoot();
+	return { reason: installedRoot
+		? `Could not verify the running Pi installation; ${installedRoot} is not confirmed to be the host that owns this session`
+		: "Could not locate the running Pi installation to verify dynamic tool support" };
 }
 
 function readHostPiManifest(root: string, fromOverride: boolean): HostPiProbe {

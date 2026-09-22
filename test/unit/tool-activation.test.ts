@@ -6,14 +6,14 @@ import { afterEach, describe, it } from "node:test";
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { supportsMinimumVersion, unsupportedDynamicToolsReason } from "../../src/extension/tool-activation.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
-import { PI_CODING_AGENT_PACKAGE, resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
+import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
 
 type Handler = (event: any, context: any) => any;
 type Tool = { name: string; description?: string; promptSnippet?: string; parameters?: unknown; execute?: (...args: any[]) => any };
 
 const runtimes: Array<{ handlers: Map<string, Handler[]>; context: any }> = [];
 
-function createRuntime(messages: any[] = [], excluded: string[] = [], missingApis: string[] = []) {
+function createRuntime(messages: any[] = [], excluded: string[] = [], missingApis: string[] = [], declareHost = true) {
 	const handlers = new Map<string, Handler[]>();
 	const tools = new Map<string, Tool>();
 	let activeNames = ["read"];
@@ -54,9 +54,15 @@ function createRuntime(messages: any[] = [], excluded: string[] = [], missingApi
 	};
 	const childEnv = process.env.PI_SUBAGENT_CHILD;
 	delete process.env.PI_SUBAGENT_CHILD;
+	// The gate trusts the running host or an explicit override only, and this
+	// test process is neither, so declare the host it is exercising.
+	const hostRoot = declareHost ? process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] ?? resolveInstalledPiPackageRoot() : undefined;
+	const declaredHost = declareHost && process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] === undefined && hostRoot !== undefined;
+	if (declaredHost) process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = hostRoot;
 	try {
 		registerSubagentExtension(pi as any);
 	} finally {
+		if (declaredHost) delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
 		if (childEnv === undefined) delete process.env.PI_SUBAGENT_CHILD;
 		else process.env.PI_SUBAGENT_CHILD = childEnv;
 	}
@@ -202,8 +208,7 @@ describe("host dynamic tool support detection", () => {
 		});
 	});
 
-	it("keeps manifest failures visible instead of falling through", () => {
-		const hostApi = { getAllTools() {}, getActiveTools() {}, setActiveTools() {} } as any;
+	it("keeps manifest failures visible instead of falling through", () => {		const hostApi = { getAllTools() {}, getActiveTools() {}, setActiveTools() {} } as any;
 		withHostPackageRoot("{ not json", () => {
 			assert.match(unsupportedDynamicToolsReason(hostApi) ?? "", /Invalid Pi package manifest at .*package\.json/);
 		});
@@ -215,6 +220,22 @@ describe("host dynamic tool support detection", () => {
 			assert.match(reason, /is not @earendil-works\/pi-coding-agent/);
 			assert.match(reason, /PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT override/);
 		});
+	});
+
+	it("refuses to gate on an SDK that is not the running host", async () => {
+		const hostApi = { getAllTools() {}, getActiveTools() {}, setActiveTools() {} } as any;
+		const prior = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+		delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+		try {
+			assert.equal(resolvePiPackageRoot(), undefined);
+			assert.match(unsupportedDynamicToolsReason(hostApi) ?? "", /Could not verify the running Pi installation|Could not locate the running Pi installation/);
+			const runtime = createRuntime([], [], [], false);
+			await runtime.emit("session_start", { type: "session_start", reason: "startup" });
+			assert.equal(runtime.tools.has("subagents_enable"), false);
+			assert.ok(runtime.active().includes("subagent"));
+		} finally {
+			if (prior !== undefined) process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = prior;
+		}
 	});
 
 	it("stays eager below the floor and activates the loader at or above it", async () => {
