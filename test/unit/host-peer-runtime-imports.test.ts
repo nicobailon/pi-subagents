@@ -116,8 +116,8 @@ test("resolves pi-agent-core/node to its exact package export instead of appendi
 		fs.writeFileSync(path.join(distDir, "node.js"), "export {};\n", "utf-8");
 
 		const resolved = resolveHostPeerAliases(root);
-		assert.equal(resolved.aliases["@earendil-works/pi-agent-core"], path.join(distDir, "index.js"));
-		assert.equal(resolved.aliases["@earendil-works/pi-agent-core/node"], path.join(distDir, "node.js"));
+		assert.equal(resolved.aliases["@earendil-works/pi-agent-core"], fs.realpathSync(path.join(distDir, "index.js")));
+		assert.equal(resolved.aliases["@earendil-works/pi-agent-core/node"], fs.realpathSync(path.join(distDir, "node.js")));
 		assert.notEqual(resolved.aliases["@earendil-works/pi-agent-core/node"], path.join(distDir, "index.js", "node"));
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
@@ -227,8 +227,8 @@ test("chord is omitted before 0.85, but required host-first on chord-era and unk
 		writePackage(hostChord, chord, "0.85.1", { ".": "./index.mjs", "./context": "./context.mjs" });
 		let result = resolveHostPeerAliases(host);
 		assert.deepEqual(result.missing, []);
-		assert.equal(result.aliases[chord], path.join(hostChord, "index.mjs"));
-		assert.equal(result.aliases[`${chord}/context`], path.join(hostChord, "context.mjs"));
+		assert.equal(result.aliases[chord], fs.realpathSync(path.join(hostChord, "index.mjs")));
+		assert.equal(result.aliases[`${chord}/context`], fs.realpathSync(path.join(hostChord, "context.mjs")));
 		fs.unlinkSync(path.join(hostChord, "context.mjs"));
 		assert.deepEqual(resolveHostPeerAliases(host).missing, [`${chord}/context`]);
 		writePackage(host, "@earendil-works/pi-coding-agent", "0.84.3", hostExports);
