@@ -188,6 +188,72 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		);
 	});
 
+	it("does not announce a workflow child when its launch identity status write fails", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async (t) => {
+		const eventBus = createEventBus();
+		const childEvents: SubagentChildStatusEvent[] = [];
+		eventBus.on(SUBAGENT_CHILD_STATUS_EVENT, (payload) => childEvents.push(payload as SubagentChildStatusEvent));
+		const state: SubagentState = {
+			baseCwd: tempDir,
+			currentSessionId: null,
+			asyncJobs: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+		};
+		const executor = createSubagentExecutor!({
+			pi: { events: eventBus, getSessionName: () => undefined, sendMessage() {} },
+			state,
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => tempDir,
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents: [makeAgent("worker")] }),
+		});
+		const context = makeMinimalCtx(tempDir);
+		context.sessionManager.getSessionFile = () => path.join(tempDir, "failed-identity-owner.jsonl");
+		mockPi.onCall({ output: "child still completed" });
+		const originalRenameSync = fsDefault.renameSync;
+		let failedIdentityWrites = 0;
+		t.mock.method(fsDefault, "renameSync", ((source: fs.PathLike, target: fs.PathLike) => {
+			if (failedIdentityWrites === 0 && path.basename(String(target)) === "status.json") {
+				const payload = JSON.parse(fs.readFileSync(source, "utf8")) as AsyncStatusPayload;
+				if (payload.mode === "workflow" && payload.steps?.some((step) => typeof step.runId === "string" && step.runId.length > 0)) {
+					failedIdentityWrites += 1;
+					const error = Object.assign(new Error("simulated identity status write failure"), { code: "EACCES" });
+					throw error;
+				}
+			}
+			return originalRenameSync(source, target);
+		}) as typeof fsDefault.renameSync);
+		syncBuiltinESMExports();
+		t.after(() => syncBuiltinESMExports());
+		const originalError = console.error;
+		console.error = () => {};
+		t.after(() => { console.error = originalError; });
+
+		const launch = await executor.execute(
+			"workflow-failed-identity-persist",
+			{ workflowScript: `return await runs.run("child", { agent: "worker", task: "Continue after persistence failure" });`, async: true, mission: false },
+			new AbortController().signal,
+			undefined,
+			context,
+		);
+		const runId = launch.details.asyncId;
+		assert.ok(runId);
+		const result = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(runId), "utf8")) as AsyncResultPayload;
+		assert.equal(result.success, true, result.error);
+		assert.equal(result.results[0]?.output, "child still completed");
+		assert.equal(mockPi.callCount(), 1);
+		assert.equal(failedIdentityWrites, 1);
+		await waitForAsyncState(runId, (status) => status.state === "complete");
+		assert.equal(childEvents.some((event) => event.runId === runId && event.status === "started"), false);
+		const journal = fs.readFileSync(path.join(ASYNC_DIR, runId, "events.jsonl"), "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as SubagentChildStatusEvent);
+		assert.equal(journal.some((event) => event.type === "subagent.child-status" && event.status === "started"), false);
+	});
+
 	it("persists the committed terminal workflow outcome when result index creation fails", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		const id = `async-workflow-result-index-failure-${Date.now().toString(36)}`;
 		const resultIndexPath = path.join(RESULTS_DIR, "result-index");

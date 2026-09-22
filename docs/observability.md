@@ -311,7 +311,7 @@ Async events:
 - `subagent:async-started`
 - `subagent:async-complete`
 
-The `subagent:async-started` payload includes `task`, the backwards-compatible first child task truncated to 50 characters, and `goal`, the workflow-level caller task truncated to 120 characters (falling back to the first child task). Async `workflowScript` roots emit the same event with `mode: "workflow"` after their initial `status.json` is durable; their keyed children are then announced dynamically through `subagent:child-status`. Companion UI extensions can combine those hints with the authoritative live lifecycle artifacts under `asyncDir` without scraping terminal output.
+For regular async starts, the `subagent:async-started` payload includes redacted `task` and `goal` prompt fields. Async `workflowScript` roots emit the same event with `mode: "workflow"` after their initial `status.json` is durable; workflow roots can omit `task`, and any included prompt fields are redacted. Their keyed children are then announced dynamically through `subagent:child-status`. Companion UI extensions can combine those hints with the authoritative live lifecycle artifacts under `asyncDir` without scraping terminal output.
 
 Intercom delivery events:
 
