@@ -26,6 +26,7 @@ interface ResolvedSkill {
 	content: string;
 	description?: string;
 	source: SkillSource;
+	disableModelInvocation?: boolean;
 }
 
 interface SkillCacheEntry {
@@ -38,6 +39,7 @@ interface CachedSkillEntry {
 	filePath: string;
 	source: SkillSource;
 	description?: string;
+	disableModelInvocation?: boolean;
 	order: number;
 }
 
@@ -408,6 +410,20 @@ function maybeReadSkillDescription(filePath: string): string | undefined {
 	}
 }
 
+function maybeReadSkillDisableModelInvocation(filePath: string): boolean | undefined {
+	try {
+		const { frontmatter } = parseFrontmatter(fs.readFileSync(filePath, "utf-8"));
+		// Match the pi host's skill loader semantics: only the literal string
+		// "true" disables model invocation; other values stay model-invocable.
+		// Hidden skills remain user-invocable via explicit `/skill:name` commands
+		// but must stay out of the model-facing default skill set.
+		return frontmatter["disable-model-invocation"] === "true" ? true : undefined;
+	} catch {
+		// Best-effort metadata extraction.
+		return undefined;
+	}
+}
+
 function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: SkillSearchPath[]): CachedSkillEntry[] {
 	const entries: CachedSkillEntry[] = [];
 	const seen = new Map<string, number>();
@@ -419,16 +435,18 @@ function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: Skil
 		if (!fs.existsSync(resolvedFile)) return;
 		const source = inferSkillSource(resolvedFile, cwd, agentDir, sourceHint);
 		const description = maybeReadSkillDescription(resolvedFile);
+		const disableModelInvocation = maybeReadSkillDisableModelInvocation(resolvedFile);
 		const existingIndex = seen.get(resolvedFile);
 		if (existingIndex !== undefined) {
 			const existing = entries[existingIndex];
 			if (existing && (SOURCE_PRIORITY[source] ?? 0) > (SOURCE_PRIORITY[existing.source] ?? 0)) {
-				const { description: _description, ...existingWithoutDescription } = existing;
+				const { description: _description, disableModelInvocation: _disableModelInvocation, ...existingWithoutMetadata } = existing;
 				entries[existingIndex] = {
-					...existingWithoutDescription,
+					...existingWithoutMetadata,
 					name,
 					source,
 					...(description !== undefined ? { description } : {}),
+					...(disableModelInvocation !== undefined ? { disableModelInvocation } : {}),
 				};
 			}
 			return;
@@ -439,6 +457,7 @@ function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: Skil
 			filePath: resolvedFile,
 			source,
 			...(description !== undefined ? { description } : {}),
+			...(disableModelInvocation !== undefined ? { disableModelInvocation } : {}),
 			order: order++,
 		});
 	};
@@ -598,11 +617,13 @@ function readSkill(
 		const raw = fs.readFileSync(skillPath, "utf-8");
 		const content = stripSkillFrontmatter(raw);
 		const description = parseSkillDescription(raw);
+		const disableModelInvocation = maybeReadSkillDisableModelInvocation(skillPath);
 		const skill: ResolvedSkill = {
 			name: skillName,
 			path: skillPath,
 			content,
 			...(description !== undefined ? { description } : {}),
+			...(disableModelInvocation !== undefined ? { disableModelInvocation } : {}),
 			source,
 		};
 
@@ -679,7 +700,12 @@ export function resolveSkillsWithFallback(
 }
 
 export function buildSkillInjection(skills: ResolvedSkill[]): string {
-	if (skills.length === 0) return "";
+	// Hidden skills (disable-model-invocation: true) must never reach a child
+	// prompt, even if a caller resolves them by name. This is the single
+	// chokepoint every prompt-injection path funnels through, so filtering
+	// here closes the leak regardless of which caller assembled the list.
+	const visibleSkills = skills.filter((skill) => !skill.disableModelInvocation);
+	if (visibleSkills.length === 0) return "";
 
 	const lines = [
 		"The following configured skills are available to this subagent.",
@@ -688,7 +714,7 @@ export function buildSkillInjection(skills: ResolvedSkill[]): string {
 		"",
 		"<available_skills>",
 	];
-	for (const skill of skills) {
+	for (const skill of visibleSkills) {
 		lines.push("  <skill>");
 		lines.push(`    <name>${escapeXmlText(skill.name)}</name>`);
 		lines.push(`    <description>${escapeXmlText(skill.description ?? "")}</description>`);
@@ -736,6 +762,7 @@ export function discoverAvailableSkills(cwd: string): Array<{
 	name: string;
 	source: SkillSource;
 	description?: string;
+	disableModelInvocation?: boolean;
 }> {
 	const skills = getCachedSkills(cwd);
 	return skills
@@ -744,6 +771,7 @@ export function discoverAvailableSkills(cwd: string): Array<{
 			name: s.name,
 			source: s.source,
 			...(s.description !== undefined ? { description: s.description } : {}),
+			...(s.disableModelInvocation !== undefined ? { disableModelInvocation: s.disableModelInvocation } : {}),
 		}))
 		.sort((a, b) => a.name.localeCompare(b.name));
 }
