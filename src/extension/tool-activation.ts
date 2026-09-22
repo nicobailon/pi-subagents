@@ -4,7 +4,7 @@ import * as piAi from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../shared/utils.ts";
-import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../runs/shared/pi-spawn.ts";
+import { PI_CODING_AGENT_PACKAGE, resolvePiPackageRoot } from "../runs/shared/pi-spawn.ts";
 
 interface ActivationDetails {
 	enabled?: string[];
@@ -32,15 +32,16 @@ type HostPiProbe = { version: string; root: string } | { reason: string };
  * The host SDK is not a dependency of this package, so a bare module
  * resolution only works where it happens to be installed next to us (a
  * repository checkout with devDependencies). Distributed installs read the
- * version from the running host instead, using the same root precedence as
- * host-owned child sessions: running host, explicit override, install tree.
+ * version from the running host instead, using either the running executable
+ * or an explicit authoritative override. An extension-adjacent SDK is useful
+ * for module loading, but does not prove which version owns the live host.
  * A selected root must expose a valid manifest — failures are reported
  * rather than silently falling through to a different Pi installation.
  */
 function probeHostPiVersion(): HostPiProbe {
 	const override = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || undefined;
 	const runningRoot = resolvePiPackageRoot();
-	const selected = runningRoot ?? override ?? resolveInstalledPiPackageRoot();
+	const selected = runningRoot ?? override;
 	if (selected) return readHostPiManifest(selected, runningRoot === undefined && override !== undefined);
 	return { reason: "Could not locate the running Pi installation to verify dynamic tool support" };
 }

@@ -6,14 +6,14 @@ import { afterEach, describe, it } from "node:test";
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { supportsMinimumVersion, unsupportedDynamicToolsReason } from "../../src/extension/tool-activation.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
-import { PI_CODING_AGENT_PACKAGE, resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
+import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
 
 type Handler = (event: any, context: any) => any;
 type Tool = { name: string; description?: string; promptSnippet?: string; parameters?: unknown; execute?: (...args: any[]) => any };
 
 const runtimes: Array<{ handlers: Map<string, Handler[]>; context: any }> = [];
 
-function createRuntime(messages: any[] = [], excluded: string[] = [], missingApis: string[] = []) {
+function createRuntime(messages: any[] = [], excluded: string[] = [], missingApis: string[] = [], authoritativeHost = true) {
 	const handlers = new Map<string, Handler[]>();
 	const tools = new Map<string, Tool>();
 	let activeNames = ["read"];
@@ -53,12 +53,22 @@ function createRuntime(messages: any[] = [], excluded: string[] = [], missingApi
 		modelRegistry: { getAvailable() { return []; } },
 	};
 	const childEnv = process.env.PI_SUBAGENT_CHILD;
+	const hostRootEnv = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+	let temporaryHostRoot: string | undefined;
 	delete process.env.PI_SUBAGENT_CHILD;
+	if (authoritativeHost && hostRootEnv === undefined) {
+		temporaryHostRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-supported-host-"));
+		fs.writeFileSync(path.join(temporaryHostRoot, "package.json"), JSON.stringify({ name: PI_CODING_AGENT_PACKAGE, version: "0.87.0" }));
+		process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = temporaryHostRoot;
+	} else if (!authoritativeHost) delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
 	try {
 		registerSubagentExtension(pi as any);
 	} finally {
 		if (childEnv === undefined) delete process.env.PI_SUBAGENT_CHILD;
 		else process.env.PI_SUBAGENT_CHILD = childEnv;
+		if (hostRootEnv === undefined) delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+		else process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = hostRootEnv;
+		if (temporaryHostRoot) fs.rmSync(temporaryHostRoot, { recursive: true, force: true });
 	}
 	runtimes.push({ handlers, context });
 	return {
@@ -78,6 +88,15 @@ afterEach(async () => {
 });
 
 describe("subagent tool activation", () => {
+	it("keeps subagent eager when running-host identity is unresolved even with an adjacent SDK", async () => {
+		assert.equal(resolvePiPackageRoot(), undefined, "the test process must not look like a running host package");
+		assert.ok(resolveInstalledPiPackageRoot(), "the test must have an adjacent SDK installation");
+		const runtime = createRuntime([], [], [], false);
+		await runtime.emit("session_start", { type: "session_start", reason: "startup" });
+		assert.equal(runtime.tools.has("subagents_enable"), false);
+		assert.ok(runtime.active().includes("subagent"));
+	});
+
 	it("keeps subagent eager unless the host provides the complete dynamic-tool API", async () => {
 		for (const missing of ["getAllTools", "getActiveTools", "setActiveTools"]) {
 			const runtime = createRuntime([], [], [missing]);

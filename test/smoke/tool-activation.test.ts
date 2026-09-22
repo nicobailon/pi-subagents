@@ -18,6 +18,8 @@ import {
 	createAgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { createSubagentParamsSchema } from "../../src/extension/schemas.ts";
+import { resolveInstalledPiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
+import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 
 const packageToolNames = new Set(["subagents_enable", "bg_wait", "subagent_supervisor", "subagent"]);
 
@@ -33,7 +35,11 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 	fs.mkdirSync(agentDir);
 	const priorAgentDir = process.env.PI_CODING_AGENT_DIR;
 	const priorChild = process.env.PI_SUBAGENT_CHILD;
+	const priorHostRoot = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+	const hostRoot = resolveInstalledPiPackageRoot();
+	assert.ok(hostRoot, "the smoke test requires the installed host SDK");
 	process.env.PI_CODING_AGENT_DIR = agentDir;
+	process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = hostRoot;
 	delete process.env.PI_SUBAGENT_CHILD;
 	let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
 	try {
@@ -93,6 +99,7 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 		}
 		if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
 		if (priorChild === undefined) delete process.env.PI_SUBAGENT_CHILD; else process.env.PI_SUBAGENT_CHILD = priorChild;
+		if (priorHostRoot === undefined) delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]; else process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = priorHostRoot;
 		fs.rmSync(root, { recursive: true, force: true });
 	}
 });
