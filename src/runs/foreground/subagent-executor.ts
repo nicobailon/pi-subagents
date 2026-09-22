@@ -5670,7 +5670,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							...(step.label ? { label: step.label } : {}),
 						};
 						appendWorkflowEvent({ ...childEvent });
-						deps.pi.events.emit(SUBAGENT_CHILD_STATUS_EVENT, childEvent);
+						try {
+							deps.pi.events.emit(SUBAGENT_CHILD_STATUS_EVENT, childEvent);
+						} catch (error) {
+							console.error("Failed to emit workflow child status event:", error);
+						}
 					};
 					const runHostCommand = workflowHostCommandRunner({
 						workflowCwd,
