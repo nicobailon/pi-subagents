@@ -55,6 +55,21 @@ describe("proactive skill subagent recommendations", () => {
 		assert.deepEqual(recommendations[0]?.sources, ["agent:ui-reviewer", "chain:ui-check"]);
 	});
 
+	it("does not recommend hidden skills (disable-model-invocation: true)", () => {
+		const recommendations = recommendProactiveSkillSubagents({
+			agents: [
+				agent("one", ["hidden-skill", "visible-skill"]),
+				agent("two", ["hidden-skill", "visible-skill"]),
+			],
+			availableSkills: [
+				{ name: "hidden-skill", description: "User-only.", disableModelInvocation: true },
+				{ name: "visible-skill", description: "Model-invocable." },
+			],
+		});
+
+		assert.deepEqual(recommendations.map((entry) => entry.skill), ["visible-skill"]);
+	});
+
 	it("filters unavailable orchestration skills and honors config bounds", () => {
 		const recommendations = recommendProactiveSkillSubagents({
 			agents: [
