@@ -5,6 +5,7 @@ import { Type, type Static } from "typebox";
 
 export const WATCHDOG_DIFF_TOOL_NAME = "watchdog_diff";
 export const WATCHDOG_DIFF_MAX_CHARS = 24_000;
+export const WATCHDOG_DIFF_UNAVAILABLE_BASELINE = "watchdog_diff unavailable: this cwd has no valid Git HEAD baseline. No diff can be shown; inspect files with independent read-only tools instead.";
 const MAX_UNTRACKED_FILES = 50;
 
 export interface WatchdogDiffBaseline {
@@ -52,19 +53,24 @@ function bound(text: string): string {
 
 /** In a shared cwd, changes already pending when the session started also appear. */
 export function createWatchdogDiffTool(
-	baseline: WatchdogDiffBaseline,
+	baseline: WatchdogDiffBaseline | undefined,
 	options: { workingTreeAtLaunch?: boolean } = {},
 ): AgentTool<typeof WatchdogDiffParams, { chars: number }> {
 	const workingTreeAtLaunch = options.workingTreeAtLaunch === true;
 	return {
 		name: WATCHDOG_DIFF_TOOL_NAME,
 		label: "Watchdog diff",
-		description: workingTreeAtLaunch
+		description: !baseline
+			? "Report that a Git HEAD diff baseline is unavailable in this cwd. No diff is generated."
+			: workingTreeAtLaunch
 			? "Show the current staged and unstaged working-tree delta against reviewer-launch HEAD, plus untracked file paths. Committed ranges are not included. Optional path narrows it; stat:true returns per-file counts only."
 			: "Show the repository diff since the review baseline, plus untracked file paths. Optional path narrows it; stat:true returns per-file counts only.",
 		parameters: WatchdogDiffParams,
 		executionMode: "sequential",
 		async execute(_toolCallId, params: WatchdogDiffParams) {
+			if (!baseline) {
+				return { content: [{ type: "text", text: WATCHDOG_DIFF_UNAVAILABLE_BASELINE }], details: { chars: WATCHDOG_DIFF_UNAVAILABLE_BASELINE.length } };
+			}
 			const pathFilter = validatePath(params.path);
 			const diff = runGit(baseline.root, ["diff", "--no-color", "--no-ext-diff", ...(params.stat === true ? ["--stat"] : []), baseline.ref, "--", ...(pathFilter ? [pathFilter] : [])]);
 			if (!diff.ok) throw new Error(`git diff failed: ${diff.stderr || "unknown error"}`);

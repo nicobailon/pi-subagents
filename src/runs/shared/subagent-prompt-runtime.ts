@@ -456,10 +456,11 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 	registerToolBudget(pi, config.toolBudget);
 	if (config.structuredOutput && !config.structuredOutput.terminalState) config.structuredOutput.terminalState = { captured: false };
 	registerChildWatchdog(pi, config.childWatchdog, config.watchdogStatus, config.structuredOutput?.terminalState);
-	const reviewerLaunchBaseline = config.requiredTools?.includes(WATCHDOG_DIFF_TOOL_NAME) && config.cwd
+	const requestedWatchdogDiff = config.requiredTools?.includes(WATCHDOG_DIFF_TOOL_NAME);
+	const reviewerLaunchBaseline = requestedWatchdogDiff && config.cwd
 		? captureWatchdogDiffBaseline(config.cwd)
 		: undefined;
-	if (reviewerLaunchBaseline && typeof pi.registerTool === "function") {
+	if (requestedWatchdogDiff && typeof pi.registerTool === "function") {
 		pi.registerTool(createWatchdogDiffTool(reviewerLaunchBaseline, { workingTreeAtLaunch: true }));
 	}
 	const waitState = config.runtimeState ?? {
