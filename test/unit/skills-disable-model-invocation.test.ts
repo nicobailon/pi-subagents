@@ -33,18 +33,6 @@ function makeProjectSkill(
 	writeSkill(path.join(cwd, ".pi", "skills", name), body, options);
 }
 
-function makeProjectPackageSkill(cwd: string, packageName: string, name: string, body: string): void {
-	const packageRoot = path.join(cwd, ".pi", "npm", "node_modules", packageName);
-	const skillDir = path.join(packageRoot, "skills", name);
-	fs.mkdirSync(skillDir, { recursive: true });
-	fs.writeFileSync(
-		path.join(packageRoot, "package.json"),
-		JSON.stringify({ name: packageName, version: "1.0.0", pi: { skills: ["./skills"] } }, null, 2),
-		"utf-8",
-	);
-	fs.writeFileSync(path.join(skillDir, "SKILL.md"), `${body}\n`, "utf-8");
-}
-
 describe("disable-model-invocation filtering", () => {
 	beforeEach(() => {
 		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-skills-disable-invocation-"));
@@ -104,32 +92,25 @@ describe("disable-model-invocation filtering", () => {
 		assert.equal(buildSkillInjection(resolved), "");
 	});
 
-	it("re-reads disableModelInvocation when the same file is re-registered at a higher-priority source", () => {
-		// pushEntry's same-file priority-upgrade branch runs only when the seen
-		// map already holds that exact resolved file. The .pi/skills root scan
-		// resolves symlinks and would see the same dir first at project
-		// priority, hiding the upgrade, so surface it only via a settings entry
-		// (project-settings). Then add a same-target symlink whose basename the
-		// root scan picks up as a project skill, hitting the same resolved file
-		// at higher priority. walkSkillDirectories names skills from the SKILL.md
-		// parent dir, so both entries resolve to the same real dir + name.
-		const realDir = path.join(tempDir, "skills-src", "upgrade-skill");
-		writeSkill(realDir, "Upgrade body.", { disableModelInvocation: true });
+	it("carries disableModelInvocation through name-level source precedence", () => {
+		// Two DIFFERENT files that share the skill name: a cwd-level settings
+		// skill (project-settings) and a .pi/skills project skill. Name-level
+		// dedup (chooseHigherPrioritySkill in getCachedSkills) keeps the higher-
+		// priority project entry; that entry must carry the flag read from its own
+		// file. This is the real path by which a flagged project skill wins over an
+		// unflagged same-named settings skill.
+		const settingsSkillDir = path.join(tempDir, "skills", "upgrade-skill");
+		writeSkill(settingsSkillDir, "Settings body.");
 		const settingsFile = path.join(tempDir, ".pi", "settings.json");
 		fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
-		fs.writeFileSync(settingsFile, JSON.stringify({ skills: ["../skills-src/upgrade-skill"] }, null, 2), "utf-8");
+		fs.writeFileSync(settingsFile, JSON.stringify({ skills: ["../skills"] }, null, 2), "utf-8");
+
+		makeProjectSkill(tempDir, "upgrade-skill", "Project body.", { disableModelInvocation: true });
 
 		clearSkillCache();
-		const first = discoverAvailableSkills(tempDir).find((skill) => skill.name === "upgrade-skill");
-		assert.equal(first?.source, "project-settings");
-		assert.equal(first?.disableModelInvocation, true);
-
-		fs.mkdirSync(path.join(tempDir, ".pi", "skills"), { recursive: true });
-		fs.symlinkSync(realDir, path.join(tempDir, ".pi", "skills", "upgrade-skill"), "dir");
-		clearSkillCache();
-		const upgraded = discoverAvailableSkills(tempDir).find((skill) => skill.name === "upgrade-skill");
-		assert.equal(upgraded?.source, "project");
-		assert.equal(upgraded?.disableModelInvocation, true);
+		const winner = discoverAvailableSkills(tempDir).find((skill) => skill.name === "upgrade-skill");
+		assert.equal(winner?.source, "project");
+		assert.equal(winner?.disableModelInvocation, true);
 	});
 
 	it("treats non-'true' disable-model-invocation values as model-invocable", () => {
