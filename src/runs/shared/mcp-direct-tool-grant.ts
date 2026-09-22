@@ -140,12 +140,7 @@ function sanitizeServerPrefix(serverName: string): string {
 function formatToolName(toolName: string, serverName: string, prefix: McpToolPrefix): string {
 	const serverPrefix = getServerPrefix(serverName, prefix);
 	const sanitized = toolName.replace(/\./g, "_");
-	// Some servers prefix their tool names with the server name (codegraph ->
-	// codegraph_explore). pi-mcp-adapter registers such a name unchanged, so
-	// keep the two sides in agreement instead of demanding codegraph_codegraph_explore.
-	if (serverPrefix && sanitized.startsWith(`${serverPrefix}_`) && sanitized.length > serverPrefix.length + 1) {
-		return sanitized;
-	}
+	// L’adaptateur ajoute le préfixe même si le nom brut le contient déjà.
 	return serverPrefix ? `${serverPrefix}_${sanitized}` : sanitized;
 }
 

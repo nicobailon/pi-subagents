@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { evaluateChildToolDiagnostic } from "../../src/runs/shared/child-runtime-config.ts";
 import { planMcpDirectToolGrant } from "../../src/runs/shared/mcp-direct-tool-grant.ts";
 
 test("plans server grants from explicit metadata facts and preserves resource filtering", () => {
@@ -154,10 +155,10 @@ test("matches adapter mcp-prefixed policy names", () => {
 	assert.deepEqual(grant.selections, [{ name: "demo_search_records", selector: "demo/search_records" }]);
 });
 
-test("keeps a tool name that already carries the server prefix, matching adapter registration", () => {
+test("ajoute le préfixe de l’adaptateur même si le nom brut le contient déjà", () => {
 	for (const [toolPrefix, serverName, expectedName] of [
-		["server", "codegraph", "codegraph_explore"],
-		["short", "codegraph-mcp", "codegraph_explore"],
+		["server", "codegraph", "codegraph_codegraph_explore"],
+		["short", "codegraph-mcp", "codegraph_codegraph_explore"],
 		["none", "codegraph", "codegraph_explore"],
 	] as const) {
 		const grant = planMcpDirectToolGrant({
@@ -168,6 +169,36 @@ test("keeps a tool name that already carries the server prefix, matching adapter
 		});
 
 		assert.deepEqual(grant.selections, [{ name: expectedName, selector: `${serverName}/codegraph_explore` }]);
+	}
+});
+
+test("résout les outils SearXNG vers les noms enregistrés par l’adaptateur", () => {
+	const rawNames = ["searxng_web_search", "searxng_search_suggestions", "web_url_read"];
+	for (const [toolPrefix, registeredNames] of [
+		["server", ["searxng_searxng_web_search", "searxng_searxng_search_suggestions", "searxng_web_url_read"]],
+		["short", ["searxng_searxng_web_search", "searxng_searxng_search_suggestions", "searxng_web_url_read"]],
+		["none", rawNames],
+		["mcp", ["mcp__searxng_searxng_web_search", "mcp__searxng_searxng_search_suggestions", "mcp__searxng_web_url_read"]],
+	] as const) {
+		for (const perServer of [false, true]) {
+			const grant = planMcpDirectToolGrant({
+				selectors: rawNames.map((name) => `searxng/${name}`),
+				servers: { searxng: perServer ? { toolPrefix } : {} },
+				metadata: { searxng: { tools: rawNames.map((name) => ({ name })) } },
+				toolPrefix: perServer ? "none" : toolPrefix,
+			});
+			const names = grant.selections.map((selection) => selection.name);
+			assert.deepEqual(names, registeredNames);
+			assert.deepEqual(grant.unresolvedSelectors, []);
+			assert.equal(evaluateChildToolDiagnostic({
+				requiredTools: names,
+				mcpDirectTools: names,
+			}, [...registeredNames]), undefined);
+			assert.deepEqual(evaluateChildToolDiagnostic({
+				requiredTools: names,
+				mcpDirectTools: names,
+			}, registeredNames.slice(1))?.missingMcpDirectTools, [registeredNames[0]]);
+		}
 	}
 });
 
