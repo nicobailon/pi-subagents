@@ -216,6 +216,73 @@ describe("in-process foreground child", () => {
 		assert.deepEqual(JSON.parse(fs.readFileSync(structured.outputPath, "utf-8")), { ok: true });
 	});
 
+	it("preserves captured structured evidence when a later provider error fails the run", async () => {
+		const structured = createStructuredOutputRuntime(
+			{ type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } },
+			tempDir,
+			{ acceptanceReport: "optional" },
+		);
+		const acceptanceReport = { criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "captured" }] };
+		mockPi.onCall({
+			structuredOutputCapture: { ok: true },
+			structuredOutputAcceptanceReport: acceptanceReport,
+			jsonl: [
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true }, acceptanceReport } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+				{ type: "message_end", message: { role: "assistant", content: [], model: "mock/test-model", stopReason: "error", errorMessage: "later provider failure", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
+			],
+		});
+
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "structured-then-error", acceptance: false, structuredOutput: structured });
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /later provider failure/);
+		assert.equal(result.progress?.status, "failed");
+		assert.deepEqual(result.structuredOutput, { ok: true });
+		assert.deepEqual((result as SingleResult & { structuredAcceptanceReport?: unknown }).structuredAcceptanceReport, acceptanceReport);
+		assert.deepEqual(JSON.parse(fs.readFileSync(structured.outputPath, "utf-8")), { ok: true });
+		assert.deepEqual(JSON.parse(fs.readFileSync(structured.acceptanceReportPath!, "utf-8")), acceptanceReport);
+	});
+
+	it("preserves captured structured evidence when the run is explicitly aborted", async () => {
+		const structured = createStructuredOutputRuntime({ type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, tempDir);
+		const controller = new AbortController();
+		mockPi.onCall({
+			structuredOutputCapture: { ok: true },
+			jsonl: [
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+			],
+			hangUntilAbort: true,
+		});
+
+		const run = runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "structured-then-abort", acceptance: false, structuredOutput: structured, signal: controller.signal });
+		await waitFor(() => mockPi.sessions[0]?.scriptedFinalEmitted === true);
+		controller.abort();
+		const result = await run;
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /stopped before completion/i);
+		assert.equal(result.progress?.status, "failed");
+		assert.deepEqual(result.structuredOutput, { ok: true });
+		assert.deepEqual(JSON.parse(fs.readFileSync(structured.outputPath, "utf-8")), { ok: true });
+	});
+
+	it("keeps a rejected structured invocation absent and failed", async () => {
+		const structured = createStructuredOutputRuntime({ type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, tempDir);
+		mockPi.onCall({ jsonl: [
+			{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: "invalid" } } },
+			{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output validation failed." }], isError: true } },
+			{ type: "tool_execution_end", toolName: "structured_output", isError: true },
+		] });
+
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "structured-invalid", acceptance: false, structuredOutput: structured });
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /Missing structured_output call/);
+		assert.equal(result.structuredOutput, undefined);
+		assert.equal(fs.existsSync(structured.outputPath), false);
+	});
+
 	it("fails when the child never calls structured_output", async () => {
 		const structured = createStructuredOutputRuntime({ type: "object" }, tempDir);
 		mockPi.onCall({ output: "prose only" });
@@ -223,6 +290,7 @@ describe("in-process foreground child", () => {
 		assert.equal(result.exitCode, 1);
 		assert.match(result.error ?? "", /Missing structured_output call/);
 		assert.equal(result.structuredOutputFailed, true);
+		assert.equal(result.structuredOutput, undefined);
 	});
 
 	it("keeps a detached child running in-process and delivers its terminal result", async () => {

@@ -1446,19 +1446,11 @@ async function runSingleAttempt(
 		result.exitCode = 1;
 	}
 	let validatedStructuredOutput = false;
-	if (options.structuredOutput && result.exitCode === 0 && !result.error) {
+	if (options.structuredOutput) {
 		result.structuredOutputSchemaPath = options.structuredOutput.schemaPath;
 		result.structuredOutputPath = options.structuredOutput.outputPath;
 		const structured = capture.structuredOutput();
-		if (!structuredOutputToolInvoked) {
-			result.exitCode = 1;
-			result.error = MISSING_STRUCTURED_OUTPUT_CALL_ERROR;
-			result.structuredOutputFailed = true;
-		} else if (!structured.called) {
-			result.exitCode = 1;
-			result.error = formatStructuredOutputRejectionError(result.messages ?? []);
-			result.structuredOutputFailed = true;
-		} else {
+		if (structuredOutputToolInvoked && structured.called) {
 			result.structuredOutput = structured.value;
 			const acceptanceMode = options.structuredOutput.acceptanceReportPath
 				? options.structuredOutput.acceptanceReportRequired ? "required" : "optional"
@@ -1470,6 +1462,12 @@ async function runSingleAttempt(
 			(result as SingleResult & { structuredAcceptanceReport?: unknown; structuredAcceptanceReportError?: string }).structuredAcceptanceReportError = acceptanceReportError;
 			writeStructuredOutputArtifacts(options.structuredOutput, structured.value, acceptanceMode ? structured.acceptanceReport : undefined);
 			validatedStructuredOutput = true;
+		} else if (result.exitCode === 0 && !result.error) {
+			result.exitCode = 1;
+			result.error = structuredOutputToolInvoked
+				? formatStructuredOutputRejectionError(result.messages ?? [])
+				: MISSING_STRUCTURED_OUTPUT_CALL_ERROR;
+			result.structuredOutputFailed = true;
 		}
 	}
 	if (result.exitCode === 0 && !result.error) {
