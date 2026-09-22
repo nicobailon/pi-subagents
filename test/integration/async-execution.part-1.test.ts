@@ -182,6 +182,57 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		);
 	});
 
+	it("announces a retained workflow child with its revived run identity", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const eventBus = createEventBus();
+		const childEvents: SubagentChildStatusEvent[] = [];
+		eventBus.on(SUBAGENT_CHILD_STATUS_EVENT, (payload) => childEvents.push(payload as SubagentChildStatusEvent));
+		const executor = makeLifecycleExecutor(eventBus);
+		const context = makeMinimalCtx(tempDir);
+		context.sessionManager.getSessionFile = () => path.join(tempDir, "retained-workflow-owner.jsonl");
+		mockPi.onCall({ output: "initial retained output" });
+		const source = await executor.execute(
+			"retained-workflow-source",
+			{ agent: "worker", task: "Create retained child", async: true },
+			new AbortController().signal,
+			undefined,
+			context,
+		);
+		const sourceRunId = source.details.asyncId;
+		assert.ok(sourceRunId);
+		await waitForAsyncResultFile(sourceRunId);
+
+		mockPi.onCall({ output: "retained continuation complete" });
+		const launch = await executor.execute(
+			"retained-workflow-lifecycle",
+			{
+				workflowScript: `return await runs.run("retained", { resume: ${JSON.stringify(sourceRunId)}, task: "Continue retained child" });`,
+				async: true,
+				mission: false,
+			},
+			new AbortController().signal,
+			undefined,
+			context,
+		);
+		const workflowRunId = launch.details.asyncId;
+		assert.ok(workflowRunId);
+		const result = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(workflowRunId), "utf8")) as AsyncResultPayload;
+		assert.equal(result.success, true, result.error);
+		assert.equal(result.results[0]?.output, "retained continuation complete");
+		const finalStatus = await waitForAsyncState(workflowRunId, (status) => status.state === "complete");
+		const started = childEvents.filter((event) => event.runId === workflowRunId && event.status === "started");
+		assert.equal(started.length, 1);
+		assert.equal(started[0]?.workflowKey, "retained");
+		assert.equal(started[0]?.childId, "retained");
+		assert.equal(started[0]?.childRunId, finalStatus.steps?.[0]?.runId);
+		assert.notEqual(started[0]?.childRunId, sourceRunId);
+		const journalStarted = fs.readFileSync(path.join(ASYNC_DIR, workflowRunId, "events.jsonl"), "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as SubagentChildStatusEvent)
+			.filter((event) => event.type === "subagent.child-status" && event.status === "started");
+		assert.deepEqual(journalStarted.map(({ workflowKey, childRunId }) => ({ workflowKey, childRunId })), started.map(({ workflowKey, childRunId }) => ({ workflowKey, childRunId })));
+	});
+
 	it("delays a workflow child announcement until launch identity persistence recovers", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async (t) => {
 		const eventBus = createEventBus();
 		const childEvents: SubagentChildStatusEvent[] = [];

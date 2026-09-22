@@ -1812,6 +1812,7 @@ async function resumeAsyncRun(input: {
 	parentModel?: ParentModel;
 	absoluteDeadlineAt?: number;
 	signal?: AbortSignal;
+	onLaunch?: (launch: { agent: string; sessionName?: string; sessionFile?: string; async: boolean; runId?: string }) => void;
 }): Promise<AgentToolResult<Details>> {
 	const followUp = (input.params.message ?? input.params.task ?? "").trim();
 	const attachChain = (input.params.chain?.length ?? 0) > 0 ? input.params.chain as ChainStep[] : undefined;
@@ -1921,7 +1922,7 @@ async function resumeAsyncRun(input: {
 	}
 	if (target.source === "async" && target.runner?.type === "external-job") {
 		if (attachChain) return { content: [{ type: "text", text: "External-job follow-up does not support chain attachment. Use action='resume' with message instead." }], isError: true, details: { mode: "management", results: [] } };
-		return resumeExternalJobFollowUp({
+		const resumed = await resumeExternalJobFollowUp({
 			target,
 			followUp,
 			baseAgentConfig,
@@ -1935,6 +1936,9 @@ async function resumeAsyncRun(input: {
 			parentSessionFile,
 			absoluteDeadlineAt: input.absoluteDeadlineAt,
 		});
+		const resumedRunId = resumed.details.runId ?? resumed.details.asyncId;
+		if (!resumed.isError && resumedRunId) input.onLaunch?.({ agent: target.agent, async: true, runId: resumedRunId });
+		return resumed;
 	}
 
 	if (attachChain) {
@@ -2041,6 +2045,7 @@ async function resumeAsyncRun(input: {
 			return result;
 		}
 		const attachedId = result.details.asyncId ?? runId;
+		input.onLaunch?.({ agent: target.agent, ...(target.sessionFile ? { sessionFile: target.sessionFile } : {}), async: true, runId: attachedId });
 		const lines = [
 			`Attached async subagent ${target.runId} as the first step of a new chain.`,
 			`Chain run: ${attachedId}`,
@@ -2193,9 +2198,11 @@ async function resumeAsyncRun(input: {
 		workflowKey: input.params.workflowKey,
 		activeAsyncCapacity,
 	}));
+	const notifyLaunch = (): void => input.onLaunch?.({ agent: target.agent, sessionFile: revivalSessionFile, async: true, runId });
 	if (result.isError) {
 		const startedStatus = readStatus(revivalAsyncDir);
 		if (input.params.workflowParentRunId !== undefined && startedStatus?.runId === runId && startedStatus.processTerminal?.runnerProcessInstanceId) {
+			notifyLaunch();
 			return {
 				...result,
 				details: {
@@ -2210,6 +2217,7 @@ async function resumeAsyncRun(input: {
 		activeAsyncCapacity?.rollback();
 		return result;
 	}
+	notifyLaunch();
 	for (const brief of queuedBriefs) fs.rmSync(brief.path, { force: true });
 	if (queuedBriefs.length > 0 && sourceAsyncDir) {
 		const sourceStatus = readStatus(sourceAsyncDir);
@@ -6668,7 +6676,18 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots, abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) })));
 			}
 			if (action === "resume") {
-				return resumeAsyncRun(omitUndefinedProperties({ params: paramsWithResolvedCwd, requestCwd, ctx, deps, parentModel: requestParentModel, signal }));
+				return resumeAsyncRun(omitUndefinedProperties({
+					params: paramsWithResolvedCwd,
+					requestCwd,
+					ctx,
+					deps,
+					parentModel: requestParentModel,
+					signal,
+					...(workflowLaunchObserver ? { onLaunch: (launch: Parameters<NonNullable<typeof workflowLaunchObserver>>[0]) => {
+						workflowLaunchObservers.delete(params);
+						workflowLaunchObserver(launch);
+					} } : {}),
+				}));
 			}
 			if (action === "steer") {
 				if (paramsWithResolvedCwd.mode !== undefined && resolveSteerDeliveryMode(paramsWithResolvedCwd.mode) === undefined) {

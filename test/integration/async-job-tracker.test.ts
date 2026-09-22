@@ -292,6 +292,33 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("preserves a workflow job's established session root when attaching its start event", () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-workflow-session-root-");
+		const sessionRoot = createTempDir("pi-explicit-workflow-sessions-");
+		try {
+			const state = createState();
+			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot);
+			const runId = "workflow-established-session-root";
+			const asyncDir = path.join(asyncRoot, runId);
+			state.asyncJobs.set(runId, {
+				asyncId: runId,
+				asyncDir,
+				sessionRoot,
+				status: "running",
+				mode: "workflow",
+				startedAt: 100,
+				updatedAt: 100,
+			});
+
+			tracker.handleStarted({ id: runId, asyncDir, agent: "workflow", mode: "workflow" });
+
+			assert.equal(state.asyncJobs.get(runId)?.sessionRoot, sessionRoot);
+		} finally {
+			removeTempDir(asyncRoot);
+			removeTempDir(sessionRoot);
+		}
+	});
+
 	it("ignores unregistered session roots from async start events", () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-forged-session-root-");
 		try {

@@ -700,7 +700,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		const agents = firstGroupCount && firstGroupCount > 0
 			? rawAgents?.slice(0, firstGroupCount)
 			: rawAgents;
-		const sessionRoot = state.liveAsyncSessionRoots?.get(info.id);
+		const existingJob = state.asyncJobs.get(info.id);
+		const sessionRoot = state.liveAsyncSessionRoots?.get(info.id) ?? existingJob?.sessionRoot;
 		state.liveAsyncSessionRoots?.delete(info.id);
 		externalJobBridgeRuns.delete(info.id);
 		terminalPublications.delete(info.id);
