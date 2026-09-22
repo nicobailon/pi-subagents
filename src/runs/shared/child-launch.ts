@@ -240,6 +240,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 	let structuredAcceptanceReport: unknown;
 	let structuredCalled = false;
 	let structuredAcceptanceProvided = false;
+	const structuredTerminalState = { captured: false };
 
 	const config: ChildRuntimeConfig = {
 		cwd: input.cwd,
@@ -276,6 +277,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 			? {
 				structuredOutput: {
 					schema: input.structuredOutput.schema,
+					terminalState: structuredTerminalState,
 					...(input.structuredOutput.acceptanceReportPath
 						? { acceptanceReport: input.structuredOutput.acceptanceReportRequired ? "required" as const : "optional" as const }
 						: {}),
@@ -284,6 +286,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 						structuredValue = value;
 						structuredAcceptanceProvided = acceptanceReport !== undefined;
 						structuredAcceptanceReport = acceptanceReport;
+						structuredTerminalState.captured = true;
 					},
 				},
 			}

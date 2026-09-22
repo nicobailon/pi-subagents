@@ -345,7 +345,7 @@ export class MainWatchdogRuntime {
 		this.resetRepoChangeBaseline();
 	}
 
-	handleTurnEnd(event: unknown, ctx: ContextLike): void {
+	handleTurnEnd(event: unknown, ctx: ContextLike, structuredTerminal = false): void {
 		if (this.disposed) return;
 		this.refreshConfig(ctx.cwd);
 		if (!this.isEnabled()) return;
@@ -362,6 +362,7 @@ export class MainWatchdogRuntime {
 				includeUserPrompt: this.includeUserPromptInNextDelta,
 				userPrompt: this.userPrompt,
 				events: [event],
+				structuredTerminal,
 			});
 			this.includeUserPromptInNextDelta = false;
 			this.enqueueDelta(delta);

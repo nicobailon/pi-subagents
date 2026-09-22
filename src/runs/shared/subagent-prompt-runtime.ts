@@ -404,6 +404,7 @@ function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undef
 }
 
 function registerStructuredOutputTool(pi: ExtensionAPI, structured: NonNullable<ChildRuntimeConfig["structuredOutput"]>): void {
+	const terminalState = structured.terminalState ??= { captured: false };
 	const required = structured.acceptanceReport === "required";
 	const parameters = createStructuredOutputToolParameters(structured.schema, { acceptanceReport: structured.acceptanceReport });
 	const registerTool = pi.registerTool as unknown as (tool: {
@@ -433,6 +434,7 @@ function registerStructuredOutputTool(pi: ExtensionAPI, structured: NonNullable<
 				}
 			}
 			structured.capture(params.value, structured.acceptanceReport ? params.acceptanceReport : undefined);
+			terminalState.captured = true;
 			return {
 				content: [{ type: "text", text: "Structured output captured." }],
 				details: {},
@@ -452,7 +454,8 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 	registerRuntimeExtensionAcknowledgements(pi, config.runtimeAcknowledgements);
 	registerPermissionGate(pi, config.permissions, config.childWatchdog);
 	registerToolBudget(pi, config.toolBudget);
-	registerChildWatchdog(pi, config.childWatchdog, config.watchdogStatus);
+	if (config.structuredOutput && !config.structuredOutput.terminalState) config.structuredOutput.terminalState = { captured: false };
+	registerChildWatchdog(pi, config.childWatchdog, config.watchdogStatus, config.structuredOutput?.terminalState);
 	const reviewerLaunchBaseline = config.requiredTools?.includes(WATCHDOG_DIFF_TOOL_NAME) && config.cwd
 		? captureWatchdogDiffBaseline(config.cwd)
 		: undefined;

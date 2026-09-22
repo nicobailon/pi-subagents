@@ -21,6 +21,8 @@ export interface WatchdogTurnDeltaInput {
 	messages?: unknown[];
 	events?: unknown[];
 	finalAssistantStop?: boolean;
+	/** A validated structured output is the authoritative terminal response. */
+	structuredTerminal?: boolean;
 }
 
 function textFromContent(content: unknown): string {
@@ -122,13 +124,15 @@ function messagesFromEvent(event: unknown): unknown[] {
 	return [];
 }
 
-export function formatWatchdogReviewMessage(message: unknown): string | undefined {
+export function formatWatchdogReviewMessage(message: unknown, options: { structuredTerminal?: boolean } = {}): string | undefined {
 	if (!message || typeof message !== "object") return undefined;
 	const input = message as MessageLike;
 	if (input.role === "custom" && input.customType === SUBAGENT_WATCHDOG_WARNING_TYPE) return undefined;
 	if (input.role === "assistant") {
 		const text = textFromContent(input.content);
-		const lines = text ? ["Assistant:", text] : ["Assistant: (no text)"];
+		const lines = text
+			? ["Assistant:", text]
+			: [options.structuredTerminal ? "Assistant: (validated structured output is the terminal response; no prose is required)" : "Assistant: (no text)"];
 		if (input.stopReason === "stop") lines.push("Assistant stop: stop");
 		return lines.join("\n");
 	}
@@ -147,16 +151,18 @@ export function formatWatchdogTurnDelta(input: WatchdogTurnDeltaInput): string {
 	const sections: string[] = [];
 	if (input.includeUserPrompt && input.userPrompt?.trim()) sections.push(["User prompt:", input.userPrompt].join("\n"));
 	for (const message of input.messages ?? []) {
-		const section = formatWatchdogReviewMessage(message);
+		const section = formatWatchdogReviewMessage(message, { structuredTerminal: input.structuredTerminal });
 		if (section) sections.push(section);
 	}
 	for (const event of input.events ?? []) {
 		for (const message of messagesFromEvent(event)) {
-			const section = formatWatchdogReviewMessage(message);
+			const section = formatWatchdogReviewMessage(message, { structuredTerminal: input.structuredTerminal });
 			if (section) sections.push(section);
 		}
 	}
-	if (input.finalAssistantStop) sections.push("Final assistant stop: stop without tool call");
+	if (input.finalAssistantStop) sections.push(input.structuredTerminal
+		? "Final assistant stop: validated structured output completed the response"
+		: "Final assistant stop: stop without tool call");
 	return sections.join("\n\n---\n\n");
 }
 

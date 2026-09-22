@@ -539,6 +539,29 @@ setTimeout(() => process.exit(90), 15000).unref();
 		});
 	});
 
+	it("background publishes a structured-only terminal after watchdog settlement", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		await withIsolatedWatchdogSettings(tempDir, async () => {
+			writeWatchdogSettings(tempDir);
+			const id = `async-watchdog-structured-${Date.now().toString(36)}`;
+			const callsBefore = mockPi.callCount();
+			mockPi.onCall({ jsonl: [childWatchdogStatus(id, "idle", 1)], structuredOutput: { ok: true } });
+
+			executeAsyncSingle(id, {
+				agent: "worker", task: "Return data", agentConfig: makeAgent("worker"),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2,
+				structuredOutputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } },
+			});
+
+			const payload = await readAsyncPayload(id);
+			assert.equal(payload.success, true, payload.results[0]?.error);
+			assert.deepEqual(payload.results[0]?.structuredOutput, { ok: true });
+			assert.equal((payload.results[0] as { watchdog?: { phase?: string } }).watchdog?.phase, "idle");
+			assert.equal(mockPi.callCount(), callsBefore + 1, "settled structured completion must not continue with another turn");
+		});
+	});
+
 	it("background child watchdog tail timeout still finalizes successful output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		await withIsolatedWatchdogSettings(tempDir, async () => {
 			writeWatchdogSettings(tempDir, 150);
@@ -576,7 +599,7 @@ setTimeout(() => process.exit(90), 15000).unref();
 		await withIsolatedWatchdogSettings(tempDir, async () => {
 			writeWatchdogSettings(tempDir);
 			const id = `async-watchdog-blocker-${Date.now().toString(36)}`;
-			mockPi.onCall({ jsonl: [events.acceptanceReport(), events.watchdogStatusWarning("blocker", "Claims tests passed without running them", { runId: id, agent: "worker", childIndex: 0 })] });
+			mockPi.onCall({ jsonl: [events.acceptanceReport(), events.watchdogStatusWarning("blocker", "Claims tests passed without running them", { runId: id, agent: "worker", childIndex: 0 })], structuredOutput: { ok: true } });
 
 			executeAsyncSingle(id, {
 				agent: "worker",
@@ -588,12 +611,14 @@ setTimeout(() => process.exit(90), 15000).unref();
 				sessionRoot: path.join(tempDir, "sessions"),
 				maxSubagentDepth: 2,
 				acceptance: { level: "checked", criteria: ["Ship it"] },
+				structuredOutputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } },
 			});
 
 			const resultPath = await waitForAsyncResultFile(id, 10_000);
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			assert.equal(payload.success, false);
 			const child = payload.results[0] as AsyncResultPayload["results"][number] & { watchdog?: { warnings?: Array<{ severity: string; addressed: boolean; summary: string }> } };
+			assert.deepEqual(child.structuredOutput, { ok: true }, "a real blocker remains visible alongside valid structured evidence");
 			assert.deepEqual(child.watchdog?.warnings?.map((warning) => [warning.severity, warning.addressed]), [["blocker", false]]);
 			const check = child.acceptance?.runtimeChecks?.find((entry) => entry.id === "watchdog-blocker");
 			assert.equal(check?.status, "failed");

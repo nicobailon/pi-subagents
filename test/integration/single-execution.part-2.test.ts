@@ -67,6 +67,7 @@ import { createResultWatcher } from "../../src/runs/background/result-watcher.ts
 import { createWorkflowChildPermit, workflowChildPermitConsumed } from "../../src/shared/workflow-child-permit.ts";
 import { toSubagentDelegationExecutionParams, toSubagentDelegationUpdate } from "../../src/slash/delegation-adapters.ts";
 import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
+import { createStructuredOutputRuntime } from "../../src/runs/shared/structured-output.ts";
 
 describe("single sync execution", { skip: !available ? "pi packages not available" : undefined }, () => {
 	installSingleExecutionHooks();
@@ -4251,6 +4252,24 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		});
 	});
 
+	it("completes a structured-only foreground terminal after watchdog settlement", async () => {
+		await withIsolatedWatchdogSettings(tempDir, async () => {
+			writeWatchdogSettings(tempDir);
+			const callsBefore = mockPi.callCount();
+			mockPi.onCall({
+				jsonl: [childWatchdogStatus("idle", 1)],
+				structuredOutput: { ok: true },
+			});
+			const structuredOutput = createStructuredOutputRuntime({ type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, tempDir);
+
+			const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Return data", { runId: "watchdog-structured-terminal", structuredOutput });
+
+			assert.equal(result.exitCode, 0, result.error);
+			assert.deepEqual(result.structuredOutput, { ok: true });
+			assert.equal(mockPi.callCount(), callsBefore + 1, "settled structured completion must not continue with another turn");
+		});
+	});
+
 	it("falls back after child watchdog tail timeout without failing successful foreground output", async () => {
 		await withIsolatedWatchdogSettings(tempDir, async () => {
 			writeWatchdogSettings(tempDir, 150);
@@ -4328,13 +4347,15 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			const acceptance = { level: "checked" as const, criteria: ["Ship it"] };
 			const blockerCheck = (result: RunSyncResult) => result.acceptance?.runtimeChecks?.find((entry) => entry.id === "watchdog-blocker");
 
-			mockPi.onCall({ jsonl: [events.watchdogStatusWarning("concern", "Minor naming concern", { runId: "watchdog-child-run", agent: "echo", childIndex: 0 }), events.acceptanceReport(), events.watchdogStatusWarning("blocker", "Claims tests passed without running them", { importance: "low", seq: 2, runId: "watchdog-child-run", agent: "echo", childIndex: 0 })] });
-			const unaddressed = await runSync(tempDir, agents, "echo", "Task", { runId: "watchdog-child-run", acceptance });
+			mockPi.onCall({ jsonl: [events.watchdogStatusWarning("concern", "Minor naming concern", { runId: "watchdog-child-run", agent: "echo", childIndex: 0 }), events.acceptanceReport(), events.watchdogStatusWarning("blocker", "Claims tests passed without running them", { importance: "low", seq: 2, runId: "watchdog-child-run", agent: "echo", childIndex: 0 })], structuredOutput: { ok: true } });
+			const structuredOutput = createStructuredOutputRuntime({ type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, tempDir);
+			const unaddressed = await runSync(tempDir, agents, "echo", "Task", { runId: "watchdog-child-run", acceptance, structuredOutput });
 			assert.deepEqual(unaddressed.watchdog?.warnings?.map((warning) => [warning.severity, warning.addressed]), [["concern", true], ["blocker", false]]);
 			assert.equal(blockerCheck(unaddressed)?.status, "failed");
 			assert.equal(blockerCheck(unaddressed)?.message, "Unresolved watchdog blocker (details are available in child watchdog status).");
 			assert.equal(unaddressed.acceptance?.status, "rejected");
 			assert.equal(unaddressed.exitCode, 1);
+			assert.deepEqual(unaddressed.structuredOutput, { ok: true }, "a real blocker remains visible alongside valid structured evidence");
 			assert.match(unaddressed.error ?? "", /Unresolved watchdog blocker/);
 			assert.doesNotMatch(unaddressed.error ?? "", /Claims tests passed without running them/);
 

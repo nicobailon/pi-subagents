@@ -390,6 +390,7 @@ describe("subagent prompt runtime", () => {
 	it("registered structured_output tool accepts valid schema output and captures it", async () => {
 		{
 			const captured: unknown[] = [];
+			const terminalState = { captured: false };
 			let execute: ((_id: string, params: { value: unknown }) => Promise<{ terminate?: boolean }>) | undefined;
 			let parameters: unknown;
 
@@ -402,7 +403,7 @@ describe("subagent prompt runtime", () => {
 				},
 				on() {},
 			} as { registerTool(tool: { name: string; parameters: unknown; execute: (_id: string, params: { value: unknown }) => Promise<{ terminate?: boolean }> }): void; on(): void }, childConfig({
-				structuredOutput: { schema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, capture: (value) => captured.push(value) },
+				structuredOutput: { schema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, terminalState, capture: (value) => captured.push(value) },
 			}));
 
 			assert.ok(execute, "structured_output tool should be registered");
@@ -412,9 +413,12 @@ describe("subagent prompt runtime", () => {
 				required: ["value"],
 				additionalProperties: false,
 			});
+			await assert.rejects(execute("invalid", { value: { ok: "not-boolean" } }), /validation failed/);
+			assert.equal(terminalState.captured, false, "schema rejection is not a terminal capture");
 			const result = await execute("tool-1", { value: { ok: true } });
 			assert.equal(result.terminate, true);
 			assert.deepEqual(captured, [{ ok: true }]);
+			assert.equal(terminalState.captured, true);
 		}
 	});
 
