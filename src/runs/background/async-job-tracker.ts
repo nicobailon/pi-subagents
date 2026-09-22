@@ -265,23 +265,27 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				if ((parsed as { type?: unknown }).type === "subagent.child-status") {
 					const event = parsed as Partial<SubagentChildStatusEvent>;
 					if (event.version !== 1 || typeof event.runId !== "string" || typeof event.childId !== "string" || (event.status !== "started" && event.status !== "stopping" && event.status !== "stopped") || typeof event.ts !== "number") return;
-					pi.events.emit(SUBAGENT_CHILD_STATUS_EVENT, {
-						type: "subagent.child-status",
-						version: 1,
-						runId: event.runId,
-						childId: event.childId,
-						status: event.status,
-						ts: event.ts,
-						...(typeof event.reason === "string" ? { reason: event.reason } : {}),
-						source: event.source === "rpc" ? "rpc" : "async",
-						asyncDir: job.asyncDir,
-						...(typeof event.stepIndex === "number" ? { stepIndex: event.stepIndex } : {}),
-						...(typeof event.agent === "string" ? { agent: event.agent } : {}),
-						...(typeof event.childRunId === "string" ? { childRunId: event.childRunId } : {}),
-						...(typeof event.workflowKey === "string" ? { workflowKey: event.workflowKey } : {}),
-						...(typeof event.phase === "string" ? { phase: event.phase } : {}),
-						...(typeof event.label === "string" ? { label: event.label } : {}),
-					} satisfies SubagentChildStatusEvent);
+					try {
+						pi.events.emit(SUBAGENT_CHILD_STATUS_EVENT, {
+							type: "subagent.child-status",
+							version: 1,
+							runId: event.runId,
+							childId: event.childId,
+							status: event.status,
+							ts: event.ts,
+							...(typeof event.reason === "string" ? { reason: event.reason } : {}),
+							source: event.source === "rpc" ? "rpc" : "async",
+							asyncDir: job.asyncDir,
+							...(typeof event.stepIndex === "number" ? { stepIndex: event.stepIndex } : {}),
+							...(typeof event.agent === "string" ? { agent: event.agent } : {}),
+							...(typeof event.childRunId === "string" ? { childRunId: event.childRunId } : {}),
+							...(typeof event.workflowKey === "string" ? { workflowKey: event.workflowKey } : {}),
+							...(typeof event.phase === "string" ? { phase: event.phase } : {}),
+							...(typeof event.label === "string" ? { label: event.label } : {}),
+						} satisfies SubagentChildStatusEvent);
+					} catch (error) {
+						console.error("Failed to emit async child status event:", error);
+					}
 					return;
 				}
 				if ((parsed as { type?: unknown }).type === "subagent.steering.notice") {

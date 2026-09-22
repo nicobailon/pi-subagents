@@ -254,6 +254,50 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(journal.some((event) => event.type === "subagent.child-status" && event.status === "started"), false);
 	});
 
+	it("continues async workflow execution when a root-start subscriber throws", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async (t) => {
+		const eventBus = createEventBus();
+		eventBus.on(SUBAGENT_ASYNC_STARTED_EVENT, () => { throw new Error("simulated root-start subscriber failure"); });
+		const state: SubagentState = {
+			baseCwd: tempDir,
+			currentSessionId: null,
+			asyncJobs: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+		};
+		const executor = createSubagentExecutor!({
+			pi: { events: eventBus, getSessionName: () => undefined, sendMessage() {} },
+			state,
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => tempDir,
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents: [makeAgent("worker")] }),
+		});
+		const context = makeMinimalCtx(tempDir);
+		context.sessionManager.getSessionFile = () => path.join(tempDir, "throwing-root-subscriber-owner.jsonl");
+		mockPi.onCall({ output: "workflow child completed" });
+		const diagnostics: unknown[][] = [];
+		const originalError = console.error;
+		console.error = (...args: unknown[]) => { diagnostics.push(args); };
+		t.after(() => { console.error = originalError; });
+
+		const launch = await executor.execute(
+			"workflow-throwing-root-start-subscriber",
+			{ workflowScript: `return await runs.run("child", { agent: "worker", task: "Continue workflow" });`, async: true, mission: false },
+			new AbortController().signal,
+			undefined,
+			context,
+		);
+		const runId = launch.details.asyncId;
+		assert.ok(runId);
+		const result = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(runId), "utf8")) as AsyncResultPayload;
+		assert.equal(result.success, true, result.error);
+		assert.equal(result.results[0]?.output, "workflow child completed");
+		assert.equal(mockPi.callCount(), 1);
+		assert.ok(diagnostics.some(([message]) => message === "Failed to emit async workflow start event:"));
+	});
+
 	it("continues workflow child execution when a child-status subscriber throws", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async (t) => {
 		const eventBus = createEventBus();
 		eventBus.on(SUBAGENT_CHILD_STATUS_EVENT, () => { throw new Error("simulated child-status subscriber failure"); });

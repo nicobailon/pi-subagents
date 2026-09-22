@@ -5479,20 +5479,24 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					return { content: [{ type: "text", text: `Failed to create async workflow storage: ${error instanceof Error ? error.message : String(error)}` }], isError: true, details: { mode: "workflow", results: [] } };
 				}
 				appendWorkflowEvent({ type: "subagent.workflow.started", ...(workflowArgsDigest ? { argsDigest: workflowArgsDigest } : {}) });
-				deps.pi.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
-					lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
-					id: workflowRunId,
-					asyncDir,
-					cwd: workflowCwd,
-					...(workflowSessionRoot ? { sessionRoot: workflowSessionRoot } : {}),
-					pid: process.pid,
-					sessionId: currentSessionId ?? undefined,
-					completionOwnerId,
-					mode: "workflow",
-					agent: "workflow",
-					goal: derivedObjective.trim() ? PROMPT_REDACTED : undefined,
-					...(timeout !== undefined ? { timeoutMs: timeout, deadlineAt: startedAt + timeout } : {}),
-				});
+				try {
+					deps.pi.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
+						lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+						id: workflowRunId,
+						asyncDir,
+						cwd: workflowCwd,
+						...(workflowSessionRoot ? { sessionRoot: workflowSessionRoot } : {}),
+						pid: process.pid,
+						sessionId: currentSessionId ?? undefined,
+						completionOwnerId,
+						mode: "workflow",
+						agent: "workflow",
+						goal: derivedObjective.trim() ? PROMPT_REDACTED : undefined,
+						...(timeout !== undefined ? { timeoutMs: timeout, deadlineAt: startedAt + timeout } : {}),
+					});
+				} catch (error) {
+					console.error("Failed to emit async workflow start event:", error);
+				}
 				// The runner does not execute workflow scripts: this active owner must consume its own
 				// durable steer inbox, deliver through in-process child controls, and persist receipts.
 				const emitWorkflowSteerEvent = (type: string, requestId: string, index?: number, extra: Record<string, unknown> = {}): void => {

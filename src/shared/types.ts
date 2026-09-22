@@ -1689,9 +1689,9 @@ export interface AsyncStartedEvent {
 	mode?: SubagentRunMode;
 	agent?: string;
 	agents?: string[];
-	/** Truncated first child task retained for backwards compatibility. */
+	/** Redacted prompt marker for the first child task; workflow roots may omit this field. */
 	task?: string;
-	/** Workflow-level caller task, falling back to the first child task. */
+	/** Redacted prompt marker for the workflow-level caller task or first-child fallback. */
 	goal?: string;
 	chain?: string[];
 	chainStepCount?: number;
