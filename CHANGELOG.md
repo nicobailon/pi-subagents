@@ -19,6 +19,7 @@
 - Restore watchdog reviews and permission arbitration on the stable Pi 0.86.1 host package layout. Thanks to [@zieglar](https://github.com/zieglar) for the reproduction and version comparison in [#2377](https://github.com/nicobailon/pi-subagents/issues/2377).
 - Allow completed retained agents to resume when their own descendant allowlist excludes them, while preserving both parent authority and the descendant restriction; legacy retained children without original-authority recovery metadata now fail closed. Thanks to [@riskywhat](https://github.com/riskywhat) for [#2379](https://github.com/nicobailon/pi-subagents/issues/2379), building on the allowlist work in [#2338](https://github.com/nicobailon/pi-subagents/pull/2338) credited to [@shkrabov](https://github.com/shkrabov).
 - Report cumulative usage on structured delegation updates without treating unavailable provider cache counters as zero. Thanks to [@bioShaun](https://github.com/bioShaun) for [#2374](https://github.com/nicobailon/pi-subagents/pull/2374).
+- Match MCP direct tool names to the names pi-mcp-adapter registers when a server name prefixes its own tool names, sanitize server prefixes the same way, and honor the adapter's `mcp` prefix mode and per-server `toolPrefix`. Thanks to [@qsgy-edge](https://github.com/qsgy-edge) for [#2395](https://github.com/nicobailon/pi-subagents/pull/2395).
 
 ## [0.70.1] - 2026-09-20
 

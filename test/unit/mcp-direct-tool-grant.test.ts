@@ -153,3 +153,76 @@ test("matches adapter mcp-prefixed policy names", () => {
 
 	assert.deepEqual(grant.selections, [{ name: "demo_search_records", selector: "demo/search_records" }]);
 });
+
+test("keeps a tool name that already carries the server prefix, matching adapter registration", () => {
+	for (const [toolPrefix, serverName, expectedName] of [
+		["server", "codegraph", "codegraph_explore"],
+		["short", "codegraph-mcp", "codegraph_explore"],
+		["none", "codegraph", "codegraph_explore"],
+	] as const) {
+		const grant = planMcpDirectToolGrant({
+			selectors: [`${serverName}/codegraph_explore`],
+			servers: { [serverName]: {} },
+			metadata: { [serverName]: { tools: [{ name: "codegraph_explore" }, { name: "codegraph_status" }] } },
+			toolPrefix,
+		});
+
+		assert.deepEqual(grant.selections, [{ name: expectedName, selector: `${serverName}/codegraph_explore` }]);
+	}
+});
+
+test("sanitizes server prefixes the way adapter registration does", () => {
+	for (const [toolPrefix, serverName, expectedName] of [
+		["server", "my server.x", "my_20_server_2e_x_ping"],
+		["short", "weird  server-mcp", "weird_20__20_server_ping"],
+		["mcp", "my server.x", "mcp__my_20_server_2e_x_ping"],
+	] as const) {
+		const grant = planMcpDirectToolGrant({
+			selectors: [serverName],
+			servers: { [serverName]: {} },
+			metadata: { [serverName]: { tools: [{ name: "ping" }] } },
+			toolPrefix,
+		});
+
+		assert.deepEqual(grant.selections, [{ name: expectedName, selector: `${serverName}/ping` }]);
+	}
+});
+
+test("supports the adapter mcp prefix mode", () => {
+	const grant = planMcpDirectToolGrant({
+		selectors: ["codegraph"],
+		servers: { codegraph: {} },
+		metadata: { codegraph: { tools: [{ name: "ping" }, { name: "codegraph_explore" }] } },
+		toolPrefix: "mcp",
+	});
+
+	assert.deepEqual(grant.selections, [
+		{ name: "mcp__codegraph_ping", selector: "codegraph/ping" },
+		{ name: "mcp__codegraph_codegraph_explore", selector: "codegraph/codegraph_explore" },
+	]);
+});
+
+test("honours a per-server toolPrefix over the global setting", () => {
+	const grant = planMcpDirectToolGrant({
+		selectors: ["demo", "demo-mcp"],
+		servers: { demo: { toolPrefix: "none" }, "demo-mcp": { toolPrefix: "short" } },
+		metadata: { demo: { tools: [{ name: "ping" }] }, "demo-mcp": { tools: [{ name: "ping" }] } },
+		toolPrefix: "server",
+	});
+
+	assert.deepEqual(grant.selections, [
+		{ name: "ping", selector: "demo/ping" },
+		{ name: "demo_ping", selector: "demo-mcp/ping" },
+	]);
+});
+
+test("sanitizes dotted tool names the way adapter registration does", () => {
+	const grant = planMcpDirectToolGrant({
+		selectors: ["github"],
+		servers: { github: {} },
+		metadata: { github: { tools: [{ name: "repo.search" }] } },
+		toolPrefix: "server",
+	});
+
+	assert.deepEqual(grant.selections, [{ name: "github_repo_search", selector: "github/repo.search" }]);
+});

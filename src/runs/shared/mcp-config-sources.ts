@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { findConfiguredProjectRoot } from "../../agents/agents.ts";
 import { getAgentDir, getConfigDirName, getProjectConfigDir } from "../../shared/utils.ts";
+import type { McpToolPrefix } from "./mcp-direct-tool-grant.ts";
 
 const PACKAGE_CONFIG_ROOT = "npm";
 const PACKAGE_GIT_ROOT = "git";
@@ -32,6 +33,8 @@ export interface McpServerDefinition {
 	exposeResources?: boolean;
 	includeTools?: string[];
 	excludeTools?: string[];
+	/** Per-server override of the global `settings.toolPrefix`, matching the adapter. */
+	toolPrefix?: McpToolPrefix;
 	protocolVersion?: string;
 	directTools?: boolean | string[];
 	httpTransport?: string;

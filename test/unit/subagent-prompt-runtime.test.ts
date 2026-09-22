@@ -1014,7 +1014,7 @@ describe("subagent prompt runtime", () => {
 				missing: ["rust_symbols_workspace_symbols", "fixture_search"],
 				missingMcpDirectTools: ["rust_symbols_workspace_symbols"],
 			});
-			assert.match(formatChildToolDiagnostic(diagnostic!), /host\/pi-mcp-adapter registration problem/);
+			assert.match(formatChildToolDiagnostic(diagnostic!), /must match what the host or pi-mcp-adapter registers/);
 			assert.match(formatChildToolDiagnostic(diagnostic!), /fixture_search/);
 		}
 	});
