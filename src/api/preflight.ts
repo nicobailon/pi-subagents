@@ -341,6 +341,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	const runId = input.runId ?? "preflight";
 	const skillInput = normalizeSkillInput(input.skill);
 	const outputOverride = normalizeSingleOutputOverride(input.output, agent.output);
+	const explicitOutput = typeof input.output === "string" && input.output.length > 0;
 	const behavior = resolveStepBehavior(agent, {
 		...(outputOverride !== undefined ? { output: outputOverride } : {}),
 		...(input.outputMode !== undefined ? { outputMode: input.outputMode } : {}),
@@ -451,7 +452,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		model,
 		...(fast !== undefined ? { fast } : {}),
 		...(effectiveThinking ? { thinking: effectiveThinking } : {}),
-		systemPrompt: buildEffectiveSystemPrompt({ agent, resolvedSkills: resolvedSkills.resolved, cwd: effectiveCwd, ...(outputPath ? { outputPath } : {}) }),
+		systemPrompt: buildEffectiveSystemPrompt({ agent, resolvedSkills: resolvedSkills.resolved, cwd: effectiveCwd, explicitOutput, ...(outputPath ? { outputPath } : {}) }),
 		skills: requestedSkills,
 		toolPlan,
 		...(outputPath ? { outputPath } : {}),

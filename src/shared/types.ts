@@ -2409,6 +2409,8 @@ export interface ForegroundChildSessionControls {
 }
 
 export interface RunSyncOptions {
+	/** True when the caller passed an explicit output string (params.output); controls output-path wording. */
+	explicitOutput?: boolean;
 	/** Exact discovery provenance for an unknown-agent error; omission uses defensive fallback discovery. */
 	unknownAgentDiagnosticContext?: import("../agents/agents.ts").UnknownAgentDiagnosticContext;
 	/** Session factory for the in-process child; defaults to the process-wide factory. */

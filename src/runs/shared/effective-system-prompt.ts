@@ -12,6 +12,8 @@ export interface EffectiveSystemPromptInput {
 	cwd: string;
 	/** Omit when the caller injects the output path through another channel. */
 	outputPath?: string;
+	/** True when the caller passed an explicit output string (params.output). */
+	explicitOutput?: boolean;
 }
 
 function appendSection(prompt: string, section: string): string {
@@ -29,5 +31,5 @@ export function buildEffectiveSystemPrompt(input: EffectiveSystemPromptInput): s
 	const memoryInjection = buildAgentMemoryInjection(input.agent, input.cwd);
 	if (memoryInjection) prompt = appendSection(prompt, memoryInjection);
 	prompt = appendAgentRefinementOverlay(prompt, { cwd: input.cwd, agentName: input.agent.name });
-	return injectOutputPathSystemPrompt(prompt, input.outputPath, input.agent);
+	return injectOutputPathSystemPrompt(prompt, input.outputPath, input.agent, input.explicitOutput);
 }

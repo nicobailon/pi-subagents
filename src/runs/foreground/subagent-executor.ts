@@ -3889,6 +3889,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
 	let readsOverride: string[] | false | undefined = params.reads;
 	const rawOutput = params.output !== undefined ? params.output : agentConfig.output;
+	const explicitOutput = typeof params.output === "string" && params.output.length > 0;
 	let effectiveOutput = normalizeSingleOutputOverride(rawOutput, agentConfig.output);
 	const effectiveOutputMode = params.outputMode ?? agentConfig.outputMode ?? "inline";
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth, deps.childRuntime);
@@ -3977,7 +3978,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		? `[Read from: ${readPaths.join(", ")}]\n\n`
 		: "";
 	task = readsInstruction + task;
-	task = injectSingleOutputInstruction(task, outputPath, agentConfig);
+	task = injectSingleOutputInstruction(task, outputPath, agentConfig, explicitOutput);
 
 	let effectiveSkills: string[] | undefined;
 	if (skillOverride === false) {
@@ -4043,6 +4044,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		: undefined;
 	try {
 		const launched = await runSync(ctx.cwd, agents, params.agent!, task, compactOptional<Parameters<typeof runSync>[4]>({
+			explicitOutput,
 			machine: foregroundMachine,
 			parentProviderRegistry: ctx.modelRegistry,
 			remoteReads: foregroundMachine ? readsOverride : undefined,

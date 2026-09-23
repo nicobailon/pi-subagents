@@ -84,8 +84,8 @@ describe("resolveSingleOutputPath", () => {
 });
 
 describe("injectSingleOutputInstruction", () => {
-	it("appends direct-write instructions for mutation-capable agents", () => {
-		const output = injectSingleOutputInstruction("Analyze this", "/tmp/report.md", { tools: ["read", "write"] });
+	it("appends direct-write instructions for mutation-capable agents (explicit output)", () => {
+		const output = injectSingleOutputInstruction("Analyze this", "/tmp/report.md", { tools: ["read", "write"] }, true);
 		assert.match(output, /Write your findings to exactly this path: \/tmp\/report.md/);
 		assert.match(output, /This path is authoritative for this run\./);
 		assert.match(output, /Ignore any other output filename or output path mentioned elsewhere/);
@@ -120,8 +120,8 @@ describe("requestedOutputPathFromTask", () => {
 });
 
 describe("injectOutputPathSystemPrompt", () => {
-	it("adds the authoritative runtime output path to the system prompt", () => {
-		const output = injectOutputPathSystemPrompt("Output format (`old.md`):", "/tmp/new.md");
+	it("adds the authoritative runtime output path to the system prompt (explicit output)", () => {
+		const output = injectOutputPathSystemPrompt("Output format (`old.md`):", "/tmp/new.md", undefined, true);
 		assert.match(output, /^Output format \(`old\.md`\):/);
 		assert.match(output, /Runtime output path override:/);
 		assert.match(output, /Write your findings to exactly this path: \/tmp\/new\.md/);
@@ -407,5 +407,26 @@ describe("output dir creation at injection time", () => {
 		const outputPath = path.join(base, "nested", "findings.md");
 		injectOutputPathSystemPrompt("base prompt", outputPath);
 		assert.equal(fs.existsSync(path.dirname(outputPath)), true);
+	});
+});
+
+describe("tiered output wording", () => {
+	it("default (agent frontmatter) output reads as a collection point", () => {
+		const out = injectSingleOutputInstruction("task", "/tmp/x/findings.md");
+		assert.match(out, /This path is the collection point for this run\./);
+		assert.doesNotMatch(out, /This path is authoritative for this run\./);
+	});
+
+	it("explicit caller output keeps the authoritative wording", () => {
+		const out = injectSingleOutputInstruction("task", "/tmp/x/findings.md", undefined, true);
+		assert.match(out, /This path is authoritative for this run\./);
+		assert.match(out, /Ignore any other output filename or output path mentioned elsewhere/);
+	});
+
+	it("system prompt prefix is tiered too", () => {
+		const def = injectOutputPathSystemPrompt("base", "/tmp/x/findings.md");
+		assert.match(def, /Runtime output path collection point:/);
+		const exp = injectOutputPathSystemPrompt("base", "/tmp/x/findings.md", undefined, true);
+		assert.match(exp, /Runtime output path override:/);
 	});
 });

@@ -424,7 +424,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(configured.isError, undefined, configured.content[0]?.text ?? "workflow failed");
 		const configuredTask = readCallArgs().join("\n");
 		assert.match(configuredTask, new RegExp(escapeRegExp(configuredPath)));
-		assert.match(configuredTask, /This path is authoritative for this run/);
+		assert.match(configuredTask, /This path is the collection point for this run/);
 		assert.equal(fs.readFileSync(configuredPath, "utf-8"), "Agent report");
 	});
 
@@ -1373,6 +1373,10 @@ Answer only from the supplied synthetic text.
 			await pending.catch(() => undefined);
 		}
 		assert.equal(mockPi.callCount(), 1);
+		// ensureSingleOutputDir pre-creates the claimed dirname; replace the real
+		// directory with an alias *after* claim registration to keep testing the
+		// post-claim identity-change rejection.
+		fs.rmSync(lateLink, { recursive: true, force: true });
 		fs.symlinkSync(reportsDir, lateLink, "dir");
 		fs.writeFileSync(releasePath, "go", "utf-8");
 

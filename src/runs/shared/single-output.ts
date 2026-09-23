@@ -101,7 +101,15 @@ interface OutputInstructionCapabilities {
 	mcpDirectTools?: string[];
 }
 
-function formatOutputPathInstruction(outputPath: string, capabilities?: OutputInstructionCapabilities): string {
+/**
+ * Tiered wording: an explicit output string passed by the caller
+ * (params.output) keeps the authoritative semantics — the caller knows the
+ * contract. An output that only comes from the agent frontmatter default is
+ * worded as a collection point: a deliverable path named in the task
+ * instructions takes precedence, and the runtime still persists the final
+ * response there.
+ */
+function formatOutputPathInstruction(outputPath: string, capabilities?: OutputInstructionCapabilities, opts?: { explicit?: boolean }): string {
 	const delivery = !capabilities || hasOutputWriteCapability(capabilities.tools, capabilities.mcpDirectTools)
 		? `Write your findings to exactly this path: ${outputPath}`
 		: [
@@ -109,10 +117,17 @@ function formatOutputPathInstruction(outputPath: string, capabilities?: OutputIn
 			`The runtime will persist it to exactly this path: ${outputPath}`,
 			"Do not call contact_supervisor merely because no write-capable tool is available.",
 		].join("\n");
+	if (opts?.explicit) {
+		return [
+			delivery,
+			"This path is authoritative for this run.",
+			"Ignore any other output filename or output path mentioned elsewhere, including output destinations in the base agent prompt, system prompt, or task instructions.",
+		].join("\n");
+	}
 	return [
 		delivery,
-		"This path is authoritative for this run.",
-		"Ignore any other output filename or output path mentioned elsewhere, including output destinations in the base agent prompt, system prompt, or task instructions.",
+		"This path is the collection point for this run.",
+		"If the task instructions name a deliverable path, that takes precedence; your final response is still persisted here by the runtime.",
 	].join("\n");
 }
 
@@ -150,16 +165,16 @@ export function ensureSingleOutputDir(outputPath: string): void {
 	}
 }
 
-export function injectSingleOutputInstruction(task: string, outputPath: string | undefined, capabilities?: OutputInstructionCapabilities): string {
+export function injectSingleOutputInstruction(task: string, outputPath: string | undefined, capabilities?: OutputInstructionCapabilities, explicit?: boolean): string {
 	if (!outputPath) return task;
 	ensureSingleOutputDir(outputPath);
-	return `${task}\n\n---\n**Output:**\n${formatOutputPathInstruction(outputPath, capabilities)}`;
+	return `${task}\n\n---\n**Output:**\n${formatOutputPathInstruction(outputPath, capabilities, { explicit })}`;
 }
 
-export function injectOutputPathSystemPrompt(systemPrompt: string, outputPath: string | undefined, capabilities?: OutputInstructionCapabilities): string {
+export function injectOutputPathSystemPrompt(systemPrompt: string, outputPath: string | undefined, capabilities?: OutputInstructionCapabilities, explicit?: boolean): string {
 	if (!outputPath) return systemPrompt;
 	ensureSingleOutputDir(outputPath);
-	const instruction = `Runtime output path override:\n${formatOutputPathInstruction(outputPath, capabilities)}`;
+	const instruction = `${explicit ? "Runtime output path override" : "Runtime output path collection point"}:\n${formatOutputPathInstruction(outputPath, capabilities, { explicit })}`;
 	return systemPrompt ? `${systemPrompt}\n\n${instruction}` : instruction;
 }
 
