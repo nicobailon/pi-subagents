@@ -157,7 +157,17 @@ export function finalizeProcessTerminal(
 	const existing = readProcessTerminal(asyncDir, { runId, runnerProcessInstanceId: runnerClose.processInstanceId });
 	if (existing && fs.existsSync(processTerminalPath(asyncDir))) {
 		if (existing.state === "observed" && existing.runId === runId && existing.runnerProcessInstanceId === runnerClose.processInstanceId) return existing;
-		if (existing.state === "unknown") return existing;
+		if (existing.state === "unknown") {
+			// A sticky runner-published unknown proof keeps its reason; only add the observed exit. Unreadable or mismatched sidecars read back as proof-write-failed and stay untouched.
+			if (existing.instances?.length || existing.reason === "proof-write-failed") return existing;
+			const withExit: ProcessTerminal = { ...existing, instances: [{ kind: "runner", ...runnerClose }] };
+			try {
+				writeAtomicJson(processTerminalPath(asyncDir), withExit);
+				return withExit;
+			} catch {
+				return existing;
+			}
+		}
 	}
 	let proof: ProcessTerminal;
 	let candidateForOverlay: ProcessTerminalCandidate | undefined;

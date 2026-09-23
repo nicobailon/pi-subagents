@@ -278,3 +278,18 @@ test("process-terminal reports unknown when the runner candidate is unavailable"
 		fs.rmSync(asyncDir, { recursive: true, force: true });
 	}
 });
+
+test("process-terminal adds the observed runner exit to a sticky runner-published unknown proof", () => {
+	const asyncDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-process-terminal-"));
+	try {
+		const sticky = { version: 1, state: "unknown", runId: "run-3", runnerProcessInstanceId: "runner-3", reason: "process-tree-unverified", diagnostic: "Worktree setup settlement unknown" };
+		fs.writeFileSync(path.join(asyncDir, "process-terminal.json"), JSON.stringify(sticky));
+		const exit = { processInstanceId: "runner-3", closeObservedAt: 50, exitCode: null, signal: "SIGKILL" };
+		const expected = { ...sticky, instances: [{ kind: "runner", ...exit }] };
+
+		assert.deepEqual(finalizeProcessTerminal(asyncDir, "run-3", exit), expected);
+		assert.deepEqual(readProcessTerminal(asyncDir, { runId: "run-3", runnerProcessInstanceId: "runner-3" }), expected);
+	} finally {
+		fs.rmSync(asyncDir, { recursive: true, force: true });
+	}
+});
