@@ -2541,11 +2541,15 @@ function validateExecutionInput(
 	context: UnknownAgentDiagnosticContext,
 ): AgentToolResult<Details> | null {
 	if (Number(hasChain) + Number(hasTasks) + Number(hasSingle) !== 1) {
+		const agentList = agents.map((a) => a.name).join(", ") || "none";
+		const noMode = !hasChain && !hasTasks && !hasSingle;
 		return {
 			content: [
 				{
 					type: "text",
-					text: `Provide exactly one mode. Agents: ${agents.map((a) => a.name).join(", ") || "none"}`,
+					text: noMode && typeof params.workflowKey === "string"
+						? `Workflow child '${params.workflowKey}' has no agent. Pass { key, agent, task }. Agents: ${agentList}`
+						: `Provide exactly one mode. Agents: ${agentList}`,
 				},
 			],
 			isError: true,
