@@ -1881,7 +1881,7 @@ async function resumeAsyncRun(input: {
 	const discoveredAgents = discovered.agents;
 	const unknownAgentDiagnosticContext = diagnosticContextFromDiscovery(discovered, effectiveCwd, scope);
 	const modelScope = discovered.modelScope;
-	const sessionName = resolveIntercomSessionTarget(input.deps.pi.getSessionName(), input.ctx.sessionManager.getSessionId());
+	const sessionName = resolveIntercomSessionTarget(input.deps.childRuntime?.intercomSessionName ?? input.deps.pi.getSessionName(), input.ctx.sessionManager.getSessionId());
 	const recoveryDescriptor = "recoveryDescriptor" in target ? target.recoveryDescriptor : undefined;
 	const recoveryContext = recoveryDescriptor?.context ?? (input.params.context === "profile" ? undefined : input.params.context);
 	const intercomBridge = resolveIntercomBridge({
@@ -6604,7 +6604,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 				let orchestratorTarget: string | undefined;
 				try {
-					orchestratorTarget = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
+					orchestratorTarget = resolveIntercomSessionTarget(deps.childRuntime?.intercomSessionName ?? deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
 				} catch (error) {
 					if (!sessionError) sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 				}
@@ -7039,7 +7039,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if ("error" in contextPolicyResult) return buildRequestedModeError(effectiveParams, contextPolicyResult.error);
 		const contextPolicy = contextPolicyResult;
 		effectiveParams = contextPolicy.params;
-		const sessionName = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
+		const sessionName = resolveIntercomSessionTarget(deps.childRuntime?.intercomSessionName ?? deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
 		const intercomBridge = resolveIntercomBridge({
 			config: deps.config.intercomBridge,
 			override: effectiveParams.intercomBridge,

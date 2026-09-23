@@ -2367,6 +2367,8 @@ export interface IntercomEventBus {
 
 export const INTERCOM_DETACH_REQUEST_EVENT = "pi-intercom:detach-request";
 export const INTERCOM_DETACH_RESPONSE_EVENT = "pi-intercom:detach-response";
+/** pi-intercom asks each session for a fixed intercom ID at session start; `claim(id)` answers synchronously. */
+export const INTERCOM_SESSION_IDENTITY_EVENT = "intercom:session-identity";
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 export const SUBAGENT_PROCESS_TERMINAL_EVENT = "subagent:process-terminal";

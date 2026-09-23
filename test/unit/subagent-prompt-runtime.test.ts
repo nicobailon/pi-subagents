@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createNestedRoute, nestedResultsPath } from "../../src/runs/shared/nested-events.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT, TEMP_ROOT_DIR, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type SubagentState } from "../../src/shared/types.ts";
+import { INTERCOM_SESSION_IDENTITY_EVENT, SUBAGENT_ASYNC_COMPLETE_EVENT, TEMP_ROOT_DIR, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type SubagentState } from "../../src/shared/types.ts";
 import registerSubagentPromptRuntime, {
 	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
@@ -1041,24 +1041,31 @@ describe("subagent prompt runtime", () => {
 		}
 	});
 
-	it("sets the child intercom session name from the config during agent startup", async () => {
-		let sessionName: string | undefined;
-		let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) | undefined;
+	for (const intercomAsks of [true, false]) {
+		it(`names an intercom child ${intercomAsks ? "readably when pi-intercom takes its route as the intercom ID" : "by its route when pi-intercom does not ask for an ID"}`, async () => {
+			const events = createEventBus();
+			let sessionName: string | undefined;
+			let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) | undefined;
 
-		registerSubagentPromptRuntime({
-			on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) {
-				if (event === "before_agent_start") beforeAgentStart = handler;
-			},
-			getAllTools: () => [{ name: "intercom" }, { name: "contact_supervisor" }],
-			setSessionName(name: string) {
-				sessionName = name;
-			},
-		} as { on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void; getAllTools(): Array<{ name: string }>; setSessionName(name: string): void }, childConfig({ intercomSessionName: "subagent-worker-78f659a3", sessionName: "worker: display name" }));
+			registerSubagentPromptRuntime({
+				events,
+				on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) {
+					if (event === "before_agent_start") beforeAgentStart = handler;
+				},
+				getAllTools: () => [{ name: "intercom" }, { name: "contact_supervisor" }],
+				setSessionName(name: string) {
+					sessionName = name;
+				},
+			} as never, childConfig({ intercomSessionName: "subagent-worker-78f659a3", sessionName: "worker: display name" }));
 
-		await beforeAgentStart?.({ systemPrompt: BASE_PROMPT });
+			const claimed: string[] = [];
+			if (intercomAsks) events.emit(INTERCOM_SESSION_IDENTITY_EVENT, { version: 1, claim: (id: string) => claimed.push(id) });
+			await beforeAgentStart?.({ systemPrompt: BASE_PROMPT });
 
-		assert.equal(sessionName, "subagent-worker-78f659a3");
-	});
+			assert.deepEqual(claimed, intercomAsks ? ["subagent-worker-78f659a3"] : []);
+			assert.equal(sessionName, intercomAsks ? "worker: display name" : "subagent-worker-78f659a3");
+		});
+	}
 
 	it("rewrites the final child-visible prompt through before_agent_start", async () => {
 		let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) | undefined;

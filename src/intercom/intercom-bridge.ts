@@ -90,6 +90,8 @@ interface ResolveIntercomBridgeInput {
 	agentDir?: string;
 }
 
+// Inside a child, callers pass the child's intercom route instead of its session
+// name: the name is a readable label and need not be unique.
 export function resolveIntercomSessionTarget(sessionName: string | undefined, sessionId: string, intercomSessionId = process.env[PI_INTERCOM_SESSION_ID_ENV]): string {
 	const trimmedName = sessionName?.trim();
 	if (trimmedName) return trimmedName;

@@ -11,6 +11,7 @@ import { validateAcceptanceReport } from "./acceptance.ts";
 import { formatChildToolDiagnostic } from "./tool-availability.ts";
 import { shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge } from "./tool-budget.ts";
 import type { ResolvedToolBudget, SubagentState } from "../../shared/types.ts";
+import { INTERCOM_SESSION_IDENTITY_EVENT } from "../../shared/types.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { getAgentDir } from "../../shared/utils.ts";
 import { registerChildWatchdog } from "../../watchdog/register-child.ts";
@@ -527,13 +528,23 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 		return { messages };
 	});
 
+	// pi-intercom asks at session start for this session's intercom ID. Claiming
+	// the route there frees the session name for the readable label. An older
+	// pi-intercom never asks and routes by name, so the route stays the name.
+	const routingName = config.intercomSessionName;
+	let intercomIdClaimed = false;
+	if (routingName) {
+		pi.events.on(INTERCOM_SESSION_IDENTITY_EVENT, (request: unknown) => {
+			if (!request || typeof request !== "object" || !("version" in request) || request.version !== 1 || !("claim" in request) || typeof request.claim !== "function") return;
+			request.claim(routingName);
+			intercomIdClaimed = true;
+		});
+	}
+
 	onRuntimeEvent("before_agent_start", async (event: unknown) => {
 		if (!event || typeof event !== "object" || !("systemPrompt" in event) || typeof event.systemPrompt !== "string") return undefined;
 		registerNativeSupervisorClientOnce();
-		// The intercom target is a routing address and always wins; the display
-		// name (agent + task excerpt, computed by the parent at launch) only
-		// applies when the bridge is not addressing this child.
-		const childSessionName = config.intercomSessionName || config.sessionName;
+		const childSessionName = intercomIdClaimed ? config.sessionName || routingName : routingName || config.sessionName;
 		if (childSessionName && typeof pi.setSessionName === "function") {
 			pi.setSessionName(childSessionName);
 		}

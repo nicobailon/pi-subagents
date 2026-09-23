@@ -163,6 +163,17 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(readCall().runtime?.sessionName, "echo: Say hello to the world");
 	});
 
+	it("addresses a nested child's supervisor by the parent child's intercom route, not its session name", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "ok" });
+		const parentChild = { intercomSessionName: "subagent-planner-run1-1" } as ChildRuntimeConfig;
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, parentChild);
+
+		const result = await executor.execute("nested-route", { agent: "echo", task: "Hi", intercomBridge: { mode: "always" } }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+
+		assert.equal(result.isError, undefined, result.content[0]?.text);
+		assert.equal(readCall().runtime?.orchestratorTarget, "subagent-planner-run1-1");
+	});
+
 	it("rejects invalid foreground cwd before spawning Pi", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 		const requestedCwd = "missing-local-cwd";

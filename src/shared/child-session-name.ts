@@ -13,8 +13,10 @@ import { PROMPT_REDACTED } from "./utils.ts";
  *     rendering the parent stream can label each child row.
  *
  * The name is display-only metadata. When the intercom bridge is active the
- * child keeps its machine intercom target as the session name instead — that
- * name is a routing address and must win (see subagent-prompt-runtime).
+ * child claims its machine intercom target as its pi-intercom session ID and
+ * keeps this readable name. With a pi-intercom that does not support the claim,
+ * the target stays the session name because it routes by name
+ * (see subagent-prompt-runtime).
  */
 
 /** Longest task excerpt kept in the name; the full string is capped below. */
