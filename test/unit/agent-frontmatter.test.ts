@@ -1764,7 +1764,7 @@ Do work
 		assert.equal(worker?.extraFields?.fast, undefined);
 	});
 
-	it("adds the fast extension only for allowlisted native models", () => {
+	it("adds the fast extension only for native OpenAI-Codex models", () => {
 		const launch = {
 			host: "parent" as const,
 			cwd: process.cwd(),
@@ -1776,11 +1776,12 @@ Do work
 			childIndex: 0,
 			fast: true,
 		};
-		const allowed = buildInProcessChildLaunch({ ...launch, model: "openai-codex/gpt-5.6-luna:low" });
+		const allowed = buildInProcessChildLaunch({ ...launch, model: "openai-codex/gpt-6-sol:low" });
 
 		assert.ok(allowed.toolPlan.runtimeExtensions.some((extensionPath) => extensionPath.endsWith("fast-mode-extension.ts")));
 		assert.deepEqual(allowed.session.hooks.map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:fast-mode"]);
 		assert.throws(() => buildInProcessChildLaunch({ ...launch, model: "anthropic/claude-sonnet-4" }), /fast mode supports only/);
+		assert.throws(() => buildInProcessChildLaunch({ ...launch, model: "openai/gpt-6-sol" }), /fast mode supports only/);
 	});
 });
 
