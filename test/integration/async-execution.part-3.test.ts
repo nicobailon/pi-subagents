@@ -41,7 +41,11 @@ function watchTimeoutMessage(what: string, asyncDir: string, extra?: () => strin
 	const read = (name: string) => {
 		try { return fs.readFileSync(path.join(asyncDir, name), "utf8").slice(-2000); } catch (error) { return `<${(error as NodeJS.ErrnoException).code ?? "unreadable"}>`; }
 	};
-	return `Timed out after ${WATCH_TIMEOUT_MS}ms waiting for ${what}\nstatus.json: ${read("status.json")}\nrunner.stderr.log: ${read("runner.stderr.log")}${extra ? `\n${extra()}` : ""}`;
+	let details = "";
+	if (extra) {
+		try { details = `\n${extra()}`; } catch (error) { details = `\n<diagnostics failed: ${String(error)}>`; }
+	}
+	return `Timed out after ${WATCH_TIMEOUT_MS}ms waiting for ${what}\nstatus.json: ${read("status.json")}\nrunner.stderr.log: ${read("runner.stderr.log")}${details}`;
 }
 
 function waitForPath(file: string, asyncDir: string): Promise<void> {
@@ -2468,10 +2472,11 @@ const started = process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED;
 const reject = process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT;
 const watchStarted = ${JSON.stringify(watchStartedPath)};
 const rejectSeen = ${JSON.stringify(rejectSeenPath)};
+const mark = (file, text) => { try { fs.writeFileSync(file, text); } catch {} };
 fs.writeFileSync(started, "started");
 await new Promise((resolve) => {
-  const inspect = () => { if (fs.existsSync(reject)) { fs.unwatchFile(reject, inspect); fs.writeFileSync(rejectSeen, "seen"); resolve(); } };
-  fs.writeFileSync(watchStarted, "watching");
+  const inspect = () => { if (fs.existsSync(reject)) { fs.unwatchFile(reject, inspect); mark(rejectSeen, "seen"); resolve(); } };
+  mark(watchStarted, "watching");
   fs.watchFile(reject, { interval: 20 }, inspect);
   inspect();
 });
@@ -2486,13 +2491,16 @@ throw new Error("injected parent-visible heavy import rejection");
 			const processEvents = new Map<number, Array<{ type: "exit" | "close"; at: string; exitCode: number | null; signal: NodeJS.Signals | null }>>();
 			const childProcessChannel = channel("child_process");
 			const observeProcess = (message: unknown) => {
-				const proc = (message as { process?: unknown }).process;
-				if (!(proc instanceof ChildProcess) || typeof proc.pid !== "number") return;
-				const pid = proc.pid;
-				const seen: Array<{ type: "exit" | "close"; at: string; exitCode: number | null; signal: NodeJS.Signals | null }> = [];
-				processEvents.set(pid, seen);
-				proc.once("exit", (exitCode, signal) => { seen.push({ type: "exit", at: new Date().toISOString(), exitCode, signal }); });
-				proc.once("close", (exitCode, signal) => { seen.push({ type: "close", at: new Date().toISOString(), exitCode, signal }); });
+				// Diagnostics must never affect the spawn they observe.
+				try {
+					const proc = (message as { process?: unknown }).process;
+					if (!(proc instanceof ChildProcess) || typeof proc.pid !== "number") return;
+					const pid = proc.pid;
+					const seen: Array<{ type: "exit" | "close"; at: string; exitCode: number | null; signal: NodeJS.Signals | null }> = [];
+					processEvents.set(pid, seen);
+					proc.once("exit", (exitCode, signal) => { seen.push({ type: "exit", at: new Date().toISOString(), exitCode, signal }); });
+					proc.once("close", (exitCode, signal) => { seen.push({ type: "close", at: new Date().toISOString(), exitCode, signal }); });
+				} catch {}
 			};
 			const timeoutDetails = () => {
 				const read = (name: string) => {
