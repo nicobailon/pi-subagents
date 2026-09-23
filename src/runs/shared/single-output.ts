@@ -133,13 +133,32 @@ export function outputPathMappingFromTask(task: string, savedPath: string | unde
 	return { requestedPath, savedPath };
 }
 
+/**
+ * Make sure the parent directory of the configured output path exists before
+ * the child process starts. When the runtime only persists the output itself
+ * (persistSingleOutput) the directory is created at write time, but a child
+ * that writes the file itself (write-capable tools) fails with ENOENT when
+ * the directory was never created. Idempotent; failures warn and do not block
+ * (the runtime persist path remains the fallback).
+ */
+export function ensureSingleOutputDir(outputPath: string): void {
+	try {
+		const dir = path.dirname(outputPath);
+		if (dir) fs.mkdirSync(dir, { recursive: true });
+	} catch (err) {
+		console.warn(`[pi-subagents] ensureSingleOutputDir failed for ${outputPath}:`, err);
+	}
+}
+
 export function injectSingleOutputInstruction(task: string, outputPath: string | undefined, capabilities?: OutputInstructionCapabilities): string {
 	if (!outputPath) return task;
+	ensureSingleOutputDir(outputPath);
 	return `${task}\n\n---\n**Output:**\n${formatOutputPathInstruction(outputPath, capabilities)}`;
 }
 
 export function injectOutputPathSystemPrompt(systemPrompt: string, outputPath: string | undefined, capabilities?: OutputInstructionCapabilities): string {
 	if (!outputPath) return systemPrompt;
+	ensureSingleOutputDir(outputPath);
 	const instruction = `Runtime output path override:\n${formatOutputPathInstruction(outputPath, capabilities)}`;
 	return systemPrompt ? `${systemPrompt}\n\n${instruction}` : instruction;
 }

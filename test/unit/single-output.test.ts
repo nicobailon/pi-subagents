@@ -7,6 +7,7 @@ import type { Message, Usage } from "@earendil-works/pi-ai";
 import {
 	captureSingleOutputSnapshot,
 	extractChildWrittenOutput,
+	ensureSingleOutputDir,
 	finalizeSingleOutput,
 	formatSavedOutputReference,
 	injectOutputPathSystemPrompt,
@@ -369,5 +370,42 @@ describe("finalizeSingleOutput", () => {
 		});
 
 		assert.equal(result.displayOutput.match(/Output saved to:/g)?.length, 1);
+	});
+});
+
+describe("ensureSingleOutputDir", () => {
+	it("creates missing parent directories before the child starts", () => {
+		const base = fs.mkdtempSync(path.join(os.tmpdir(), "pi-so-"));
+		tempDirs.push(base);
+		const deep = path.join(base, "a", "b", "c", "out.md");
+		ensureSingleOutputDir(deep);
+		assert.equal(fs.existsSync(path.dirname(deep)), true);
+	});
+
+	it("is idempotent when the directory already exists", () => {
+		const base = fs.mkdtempSync(path.join(os.tmpdir(), "pi-so-"));
+		tempDirs.push(base);
+		const target = path.join(base, "out.md");
+		ensureSingleOutputDir(target);
+		ensureSingleOutputDir(target);
+		assert.equal(fs.existsSync(base), true);
+	});
+});
+
+describe("output dir creation at injection time", () => {
+	it("injectSingleOutputInstruction creates the output directory", () => {
+		const base = fs.mkdtempSync(path.join(os.tmpdir(), "pi-so-"));
+		tempDirs.push(base);
+		const outputPath = path.join(base, "nested", "findings.md");
+		injectSingleOutputInstruction("do the work", outputPath);
+		assert.equal(fs.existsSync(path.dirname(outputPath)), true);
+	});
+
+	it("injectOutputPathSystemPrompt creates the output directory", () => {
+		const base = fs.mkdtempSync(path.join(os.tmpdir(), "pi-so-"));
+		tempDirs.push(base);
+		const outputPath = path.join(base, "nested", "findings.md");
+		injectOutputPathSystemPrompt("base prompt", outputPath);
+		assert.equal(fs.existsSync(path.dirname(outputPath)), true);
 	});
 });
