@@ -325,6 +325,20 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 		assert.throws(() => normalizeWorktreeBranchPrefix("../unsafe"), /invalid/i);
 	});
 
+	it("keeps naming labels within the 256-byte cap when truncation splits a multi-byte character", () => {
+		// Regression: truncateUtf8 cut the encoded buffer at exactly maxBytes and
+		// decoded the dangling bytes to U+FFFD (3 bytes each), so the stored label
+		// could exceed WORKTREE_NAMING_LABEL_MAX_BYTES (256) and fail read-side
+		// validation with "naming.label exceeds 256 UTF-8 bytes".
+		for (let pad = 0; pad < 8; pad++) {
+			const task = `${"x".repeat(pad)}${"审".repeat(120)} tail`;
+			const naming = buildWorktreeNaming({ runId: "run", index: 0, agent: "worker", task });
+			const labelBytes = Buffer.byteLength(naming.label, "utf-8");
+			assert.ok(labelBytes <= 256, `label must fit the 256-byte cap, got ${labelBytes} (pad=${pad})`);
+			assert.ok(!naming.label.endsWith("\uFFFD"), `label must not end with U+FFFD (pad=${pad})`);
+		}
+	});
+
 	it("createWorktrees maps subdirectory cwd to each agentCwd", async () => {
 		const repoDir = createRepo("pi-worktree-subdir-");
 		const nestedDir = path.join(repoDir, "packages", "app");

@@ -439,9 +439,14 @@ function shortWorktreeHash(value: string): string {
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {
-	if (Buffer.byteLength(value, "utf-8") <= maxBytes) return value;
-	const truncated = Buffer.from(value, "utf-8").subarray(0, maxBytes).toString("utf-8");
-	return /[\uD800-\uDFFF]$/u.test(truncated) ? truncated.slice(0, -1) : truncated;
+	const bytes = Buffer.from(value, "utf-8");
+	if (bytes.length <= maxBytes) return value;
+	// Back off to a code-point boundary before decoding: cutting mid-sequence
+	// emits U+FFFD (3 bytes per dangling byte), which can push the re-encoded
+	// result beyond maxBytes (e.g. a 256-byte cap yields a 258-byte string).
+	let end = maxBytes;
+	while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end -= 1;
+	return bytes.subarray(0, end).toString("utf-8");
 }
 
 /** Convert an arbitrary label to a single safe filesystem/branch component. */
