@@ -34,10 +34,25 @@ import {
 	makeAsyncExecutor, readAsyncPayload, observeSharedCwdRunner,
 } from "../support/async-execution-fixture.ts";
 
-function waitForPath(file: string): Promise<void> {
-	return new Promise((resolve) => {
+const WATCH_TIMEOUT_MS = 30_000;
+
+// A runner that never starts or never settles must fail this test by name, not stall the whole CI step.
+function watchTimeoutMessage(what: string, asyncDir: string): string {
+	const read = (name: string) => {
+		try { return fs.readFileSync(path.join(asyncDir, name), "utf8").slice(-2000); } catch (error) { return `<${(error as NodeJS.ErrnoException).code ?? "unreadable"}>`; }
+	};
+	return `Timed out after ${WATCH_TIMEOUT_MS}ms waiting for ${what}\nstatus.json: ${read("status.json")}\nrunner.stderr.log: ${read("runner.stderr.log")}`;
+}
+
+function waitForPath(file: string, asyncDir: string): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			fs.unwatchFile(file, inspect);
+			reject(new Error(watchTimeoutMessage(file, asyncDir)));
+		}, WATCH_TIMEOUT_MS);
 		const inspect = () => {
 			if (!fs.existsSync(file)) return;
+			clearTimeout(timer);
 			fs.unwatchFile(file, inspect);
 			resolve();
 		};
@@ -46,16 +61,22 @@ function waitForPath(file: string): Promise<void> {
 	});
 }
 
-function waitForJson<T>(file: string, predicate: (value: T) => boolean): Promise<T> {
+function waitForJson<T>(file: string, predicate: (value: T) => boolean, asyncDir: string): Promise<T> {
 	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			fs.unwatchFile(file, inspect);
+			reject(new Error(watchTimeoutMessage(`a matching ${file}`, asyncDir)));
+		}, WATCH_TIMEOUT_MS);
 		const inspect = () => {
 			try {
 				const value = JSON.parse(fs.readFileSync(file, "utf8")) as T;
 				if (!predicate(value)) return;
+				clearTimeout(timer);
 				fs.unwatchFile(file, inspect);
 				resolve(value);
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+				clearTimeout(timer);
 				fs.unwatchFile(file, inspect);
 				reject(error);
 			}
@@ -2469,7 +2490,7 @@ throw new Error("injected parent-visible heavy import rejection");
 					...(revival ? { sessionFile, revivalLease: { sessionFile, runId: id, sourceRunId: `source-${id}`, parentSessionId: sessionId } } : {}),
 					maxSubagentDepth: 2,
 				});
-				await waitForPath(startedPath);
+				await waitForPath(startedPath, asyncDir);
 			} finally {
 				if (previousModule === undefined) delete process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE; else process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE = previousModule;
 				if (previousStarted === undefined) delete process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED; else process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED = previousStarted;
@@ -2477,7 +2498,7 @@ throw new Error("injected parent-visible heavy import rejection");
 			}
 			assert.equal(fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length, callsBefore);
 			fs.writeFileSync(rejectPath, "reject");
-			const terminal = await waitForJson<{ state: string }>(path.join(asyncDir, "process-terminal.json"), (value) => value.state !== "pending");
+			const terminal = await waitForJson<{ state: string }>(path.join(asyncDir, "process-terminal.json"), (value) => value.state !== "pending", asyncDir);
 			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"));
 			const candidate = JSON.parse(fs.readFileSync(path.join(asyncDir, "process-terminal-candidate.json"), "utf8"));
 			assert.equal(status.state, "failed");
@@ -2540,13 +2561,13 @@ throw new Error("injected pre-run child factory rejection");
 						agents: [makeAgent("worker")], ...common, sessionRoot: path.join(tempDir, "sessions"),
 					});
 				}
-				await waitForPath(startedPath);
+				await waitForPath(startedPath, asyncDir);
 			} finally {
 				setChildSessionFactoryModule(originalFactoryModule);
 			}
 			assert.equal(fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length, callsBefore);
 			fs.writeFileSync(rejectPath, "reject");
-			const terminal = await waitForJson<{ state: string }>(path.join(asyncDir, "process-terminal.json"), (value) => value.state !== "pending");
+			const terminal = await waitForJson<{ state: string }>(path.join(asyncDir, "process-terminal.json"), (value) => value.state !== "pending", asyncDir);
 			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"));
 			const candidate = JSON.parse(fs.readFileSync(path.join(asyncDir, "process-terminal-candidate.json"), "utf8"));
 			assert.equal(status.state, "failed");
