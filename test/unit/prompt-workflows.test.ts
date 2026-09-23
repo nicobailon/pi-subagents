@@ -83,6 +83,11 @@ Say hi
 
 		assert.ok(names.includes("linked"), names.join(", "));
 		assert.equal(names.includes("dangling"), false);
+
+		if (process.platform !== "win32") {
+			fs.symlinkSync(path.join(promptsDir, "loop.md"), path.join(promptsDir, "loop.md"));
+			assert.throws(() => discoverPromptWorkflows(cwd), { code: "ELOOP" });
+		}
 	});
 
 	it("runs a named workflow through native subagent execution", async () => {
