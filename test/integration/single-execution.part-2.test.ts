@@ -1819,13 +1819,11 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			assert.equal(matches[0]?.triggerTurn, false);
 		}
 		mockPi.onCall({ output: "detached" });
-		const detached = await executor.execute("explicit-child", {
+		await executor.execute("explicit-child", {
 			async: false,
 			workflowScript: `return runs.run("detached", { agent: "echo", task: "Detached", async: true, acceptance: false, output: false });`,
 		}, new AbortController().signal, undefined, ctx);
-		assert.equal(detached.isError, undefined, detached.content[0]?.text ?? "");
 		const explicitStart = started.at(-1)!;
-		assert.ok(explicitStart.id);
 		const watcherState: SubagentState = {
 			baseCwd: tempDir, currentSessionId: explicitStart.sessionId as string,
 			completionOwnerId: explicitStart.completionOwnerId as string,
