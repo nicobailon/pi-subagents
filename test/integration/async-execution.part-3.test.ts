@@ -2475,10 +2475,9 @@ const rejectSeen = ${JSON.stringify(rejectSeenPath)};
 const mark = (file, text) => { try { fs.writeFileSync(file, text); } catch {} };
 fs.writeFileSync(started, "started");
 await new Promise((resolve) => {
-  const inspect = () => { if (fs.existsSync(reject)) { fs.unwatchFile(reject, inspect); mark(rejectSeen, "seen"); resolve(); } };
   mark(watchStarted, "watching");
-  fs.watchFile(reject, { interval: 20 }, inspect);
-  inspect();
+  // fs.watchFile missed the parent's rejection marker on Ubuntu CI (#2462); poll existence directly.
+  const timer = setInterval(() => { if (fs.existsSync(reject)) { clearInterval(timer); mark(rejectSeen, "seen"); resolve(); } }, 20);
 });
 throw new Error("injected parent-visible heavy import rejection");
 `);
@@ -2583,9 +2582,7 @@ const started = ${JSON.stringify(startedPath)};
 const reject = ${JSON.stringify(rejectPath)};
 fs.writeFileSync(started, "started");
 await new Promise((resolve) => {
-  const inspect = () => { if (fs.existsSync(reject)) { fs.unwatchFile(reject, inspect); resolve(); } };
-  fs.watchFile(reject, { interval: 20 }, inspect);
-  inspect();
+  const timer = setInterval(() => { if (fs.existsSync(reject)) { clearInterval(timer); resolve(); } }, 20);
 });
 throw new Error("injected pre-run child factory rejection");
 `);
