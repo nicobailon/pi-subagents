@@ -1768,6 +1768,44 @@ syncBuiltinESMExports();
 		assert.equal((await readAsyncPayload(result.details.asyncId)).success, true);
 	});
 
+	it("preserves a defaulted bounded lifetime when reviving an async run", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Initial bounded work" });
+		const sourceId = `async-revive-lifetime-${Date.now().toString(36)}`;
+		const sessionFile = path.join(tempDir, "sessions", "bounded-lifetime.jsonl");
+		fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		executeAsyncSingle(sourceId, {
+			agent: "worker",
+			task: "Initial work",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			sessionFile,
+			maxSubagentDepth: 2,
+			timeoutMs: 60_000,
+		});
+		await readAsyncPayload(sourceId);
+		const descriptor = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, sourceId, "recovery-descriptor.json"), "utf-8"));
+		assert.equal(descriptor.executionLifetime, undefined);
+		assert.deepEqual(descriptor.effectiveExecutionLifetime, { mode: "bounded", timeoutMs: 60_000 });
+
+		mockPi.onCall({ output: "Revived bounded work" });
+		const result = await makeAsyncExecutor([makeAgent("worker")]).execute(
+			"revive-lifetime",
+			{ action: "resume", id: sourceId, message: "Continue" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		) as AsyncExecutionResult;
+		assert.ok(!result.isError, result.content[0]?.text);
+		assert.ok(result.details.asyncId);
+		await readAsyncPayload(result.details.asyncId);
+		const revivedStatus = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, result.details.asyncId, "status.json"), "utf-8"));
+		assert.deepEqual(revivedStatus.effectiveExecutionLifetime, { mode: "bounded", timeoutMs: 60_000 });
+	});
+
 	it("revives an inherited parent model outside the current registry", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Initial async work" });
 		const sourceId = `async-revive-parent-model-${Date.now().toString(36)}`;

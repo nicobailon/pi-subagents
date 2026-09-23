@@ -117,6 +117,7 @@ import type { TokenUsage } from "../../shared/types.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
+	worktreeSetupHookTimeoutForLifetime,
 	withWorktreeTransaction,
 	WorktreeSetupError,
 	type WorktreeSetupProgress,
@@ -3998,7 +3999,7 @@ export async function runSubagent(
 						baseRef: config.baseRef,
 						branchPrefix: config.worktreeBranchPrefix,
 						setupHook: config.worktreeSetupHook
-							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs ?? (config.executionLifetime?.mode === "unbounded" ? false : undefined) })
+							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: worktreeSetupHookTimeoutForLifetime(config.worktreeSetupHookTimeoutMs, config.executionLifetime) })
 							: undefined,
 						baseDir: config.worktreeBaseDir,
 						onProgress: (progress) => {
@@ -4438,7 +4439,7 @@ export async function runSubagent(
 						baseRef: config.baseRef,
 						branchPrefix: config.worktreeBranchPrefix,
 						setupHook: config.worktreeSetupHook
-							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs ?? (config.executionLifetime?.mode === "unbounded" ? false : undefined) })
+							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: worktreeSetupHookTimeoutForLifetime(config.worktreeSetupHookTimeoutMs, config.executionLifetime) })
 							: undefined,
 						baseDir: config.worktreeBaseDir,
 						onProgress: (progress) => {

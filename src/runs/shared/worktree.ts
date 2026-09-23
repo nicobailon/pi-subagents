@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { resolveAuthorityDecision, type AuthorityPolicyConfig } from "../../policy/authority.ts";
 import { PROJECT_SUBAGENTS_RELATIVE_DIR } from "../../shared/artifacts.ts";
 import { getAgentDir } from "../../shared/utils.ts";
-import type { ManagedWorktreeProvider, WorktreeNaming, WorktreeProvider } from "../../shared/types.ts";
+import type { ExecutionLifetime, ManagedWorktreeProvider, WorktreeNaming, WorktreeProvider } from "../../shared/types.ts";
 
 export const DEFAULT_WORKTREE_PROVIDER: WorktreeProvider = "auto";
 export const DEFAULT_WORKTREE_BASE_REF = "HEAD";
@@ -776,7 +776,11 @@ function linkNodeModulesIfPresent(toplevel: string, worktreePath: string): boole
 	}
 }
 
-function parseHookTimeout(timeoutMs: number | false | undefined): number | undefined {
+export function worktreeSetupHookTimeoutForLifetime(configuredTimeoutMs: number | undefined, executionLifetime?: ExecutionLifetime): number | false | undefined {
+	return configuredTimeoutMs ?? (executionLifetime?.mode === "unbounded" ? false : undefined);
+}
+
+export function resolveWorktreeSetupHookTimeout(timeoutMs: number | false | undefined): number | undefined {
 	if (timeoutMs === false) return undefined;
 	if (timeoutMs === undefined) return DEFAULT_WORKTREE_SETUP_HOOK_TIMEOUT_MS;
 	if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
@@ -814,7 +818,7 @@ function resolveWorktreeSetupHook(
 
 	return {
 		hookPath: resolvedPath,
-		timeoutMs: parseHookTimeout(config.timeoutMs),
+		timeoutMs: resolveWorktreeSetupHookTimeout(config.timeoutMs),
 	};
 }
 
