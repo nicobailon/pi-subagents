@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Worktree naming labels stay within the 256-byte limit when truncated at a multi-byte UTF-8 boundary, so async status remains readable. Thanks to [@chenhaoxiang](https://github.com/chenhaoxiang) for [#2446](https://github.com/nicobailon/pi-subagents/pull/2446).
+
 ## [0.71.0] - 2026-09-23
 
 ### Highlights
