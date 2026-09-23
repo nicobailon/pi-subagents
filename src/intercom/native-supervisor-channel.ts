@@ -487,7 +487,9 @@ function refreshPendingRequests(pending: Map<string, PendingSupervisorRequest>, 
 
 function formatPendingLine(request: PendingSupervisorRequest): string {
 	const replyHint = request.expectsReply ? ` Reply: ${supervisorReplyHint(request.id)}` : "";
-	return `- ${request.id}: ${request.agent} [${request.runId}#${request.childIndex}] ${request.reason}.${replyHint}`;
+	const header = `- ${request.id}: ${request.agent} [${request.runId}#${request.childIndex}] ${request.reason}.${replyHint}`;
+	// The request notice can be missed; pending is the parent's only way to read the question again.
+	return request.message ? `${header}\n  ${request.message.replace(/\n/g, "\n  ")}` : header;
 }
 
 function requestVisibleText(request: PendingSupervisorRequest): string {

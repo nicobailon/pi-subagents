@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- `subagent_supervisor` `pending` now shows each request's question text, so a parent that missed the request notice can still read and answer it ([#2460](https://github.com/nicobailon/pi-subagents/issues/2460)).
 - Awaited workflow children now emit `subagent:async-complete` without sending a separate child notification. Thanks to [@mmarabel](https://github.com/mmarabel) for [#2456](https://github.com/nicobailon/pi-subagents/issues/2456).
 - Async status now reports a subagent's actual context limit once its session starts, including a window raised by an extension, instead of the parent registry's value. Thanks to [@johnhenaot](https://github.com/johnhenaot) for [#2448](https://github.com/nicobailon/pi-subagents/pull/2448).
 - TypeBox is now a host-provided peer instead of a bundled dependency, so Pi no longer warns about the manifest and the extension, children, and background runners all use Pi's TypeBox copy. Thanks to [@felipemm](https://github.com/felipemm) for [#2454](https://github.com/nicobailon/pi-subagents/issues/2454) and [#2455](https://github.com/nicobailon/pi-subagents/pull/2455).
