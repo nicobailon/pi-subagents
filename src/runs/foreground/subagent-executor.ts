@@ -59,6 +59,7 @@ import { canPreferFork, createForkContextResolver, resolveSubagentLaunchContext 
 import { createPrunedForkSessionWriter } from "../../shared/pruned-fork.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
+import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../shared/types.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
 import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightSpawnBudget, preflightSpawnBudgetGrant, reserveSpawnBudget } from "../shared/spawn-budget.ts";
@@ -2241,6 +2242,7 @@ async function resumeAsyncRun(input: {
 			input.signal?.removeEventListener("abort", stopOnAbort);
 		}
 		if (completed.importedPublication) removeWorkflowAwaitedResult(asyncDir, resultPath, revivedId, completed.importedPublication);
+		emitWorkflowAwaitedChildComplete(input.deps.pi, input.deps.state, revivedId, asyncDir, input.params.workflowParentRunId, completed);
 		const usage = importedAsyncRootUsage(completed);
 		const childResult: SingleResult = {
 			index: 0,
@@ -3251,10 +3253,36 @@ function removeWorkflowAwaitedResult(asyncDir: string, resultPath: string, runId
 	removeResultIndex(asyncDir, publication.sessionId, runId, publication.toolCallId);
 }
 
+function emitWorkflowAwaitedChildComplete(
+	pi: ExtensionAPI,
+	state: SubagentState,
+	runId: string,
+	asyncDir: string,
+	parentWorkflowRunId: string | undefined,
+	completed: Awaited<ReturnType<typeof waitForImportedAsyncRoot>>,
+): void {
+	const status = readStatus(asyncDir);
+	pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+		id: runId,
+		runId,
+		sessionId: status?.sessionId ?? state.currentSessionId,
+		completionOwnerId: status?.completionOwnerId ?? state.completionOwnerId ?? currentCompletionOwnerId(),
+		asyncDir,
+		agent: completed.agent,
+		mode: "single",
+		state: completed.stopped ? "stopped" : completed.success ? "complete" : "failed",
+		success: completed.success,
+		timestamp: Date.now(),
+		triggerTurn: false,
+		awaitedByWorkflow: true,
+		parentWorkflowRunId,
+	});
+}
+
 async function waitForWorkflowAsyncSingleResult(
 	params: SubagentParamsLike,
 	launchResult: AgentToolResult<Details>,
-	options: { runId: string; task: string; signal?: AbortSignal; state: SubagentState; kill?: ExecutorDeps["kill"] },
+	options: { runId: string; task: string; signal?: AbortSignal; state: SubagentState; pi: ExtensionAPI; kill?: ExecutorDeps["kill"] },
 ): Promise<AgentToolResult<Details>> {
 	if (params.workflowAwaitAsync !== true || !launchResult.details.asyncDir) return launchResult;
 	const asyncDir = launchResult.details.asyncDir;
@@ -3272,6 +3300,7 @@ async function waitForWorkflowAsyncSingleResult(
 		options.signal?.removeEventListener("abort", stopOnAbort);
 	}
 	if (completed.importedPublication) removeWorkflowAwaitedResult(asyncDir, resultPath, options.runId, completed.importedPublication);
+	emitWorkflowAwaitedChildComplete(options.pi, options.state, options.runId, asyncDir, params.workflowParentRunId, completed);
 	const usage = importedAsyncRootUsage(completed);
 	const childResult: SingleResult = omitUndefinedProperties({
 		index: 0,
@@ -3466,7 +3495,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			lane: params.lane,
 			workflowAwaitAsync: params.workflowAwaitAsync,
 		}));
-		return waitForWorkflowAsyncSingleResult(params, asyncResult, { runId: id, task: params.task ?? "", signal: data.signal, state: deps.state, kill: deps.kill });
+		return waitForWorkflowAsyncSingleResult(params, asyncResult, { runId: id, task: params.task ?? "", signal: data.signal, state: deps.state, pi: deps.pi, kill: deps.kill });
 	}
 
 	return null;

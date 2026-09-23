@@ -25,7 +25,7 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createServer, type Socket } from "node:net";
 import { once } from "node:events";
-import { SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
+import { SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
 import {
 	createTempDir,
 	createEventBus,
@@ -1785,6 +1785,71 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(resumed.ok, true);
 		assert.deepEqual(resumed.structuredOutput, { ok: true });
 		assert.equal(resumed.savedOutputPath, undefined);
+	});
+
+	it("pairs awaited workflow child starts and completions on success, failure and revival", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const bus = createEventBus();
+		const started: Array<Record<string, unknown>> = [];
+		const completed: Array<Record<string, unknown>> = [];
+		bus.on(SUBAGENT_ASYNC_STARTED_EVENT, (event) => started.push(event as Record<string, unknown>));
+		bus.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (event) => completed.push(event as Record<string, unknown>));
+		const executor = makeExecutor([makeAgent("echo")], {}, true, undefined, true, new Map(), undefined, undefined, bus);
+		const ctx = makeMinimalCtx(tempDir);
+		let firstRunId: string | undefined;
+		for (const [task, call] of [
+			["Succeeded", { output: "done" }],
+			["Failed", { stderr: "failure", exitCode: 1 }],
+			["Revived", { output: "revived" }],
+		] as const) {
+			mockPi.onCall(call);
+			const script = task === "Revived"
+				? `return runs.run("child", { resume: ${JSON.stringify(firstRunId)}, task: "Revived", acceptance: false, output: false });`
+				: `return runs.run("child", { agent: "echo", task: ${JSON.stringify(task)}, acceptance: false, output: false });`;
+			const result = await executor.execute(`awaited-${task}`, { async: false, workflowScript: script }, new AbortController().signal, undefined, ctx);
+			assert.equal(result.isError, task === "Failed" ? true : undefined, result.content[0]?.text ?? "");
+			const newStarts = started.filter((event) => !completed.some((done) => done.id === event.id));
+			assert.equal(newStarts.length, 0, "every started awaited child must settle");
+			const child = started.at(-1)!;
+			if (task === "Succeeded") firstRunId = child.id as string;
+			const matches = completed.filter((event) => event.id === child.id);
+			assert.equal(matches.length, 1);
+			assert.equal(matches[0]?.awaitedByWorkflow, true);
+			assert.equal(matches[0]?.parentWorkflowRunId, child.parentWorkflowRunId);
+			assert.equal(matches[0]?.sessionId, child.sessionId);
+			assert.equal(matches[0]?.completionOwnerId, child.completionOwnerId);
+			assert.equal(matches[0]?.success, task !== "Failed");
+			assert.equal(matches[0]?.triggerTurn, false);
+		}
+		mockPi.onCall({ output: "detached" });
+		const detached = await executor.execute("explicit-child", {
+			async: false,
+			workflowScript: `return runs.run("detached", { agent: "echo", task: "Detached", async: true, acceptance: false, output: false });`,
+		}, new AbortController().signal, undefined, ctx);
+		assert.equal(detached.isError, undefined, detached.content[0]?.text ?? "");
+		const explicitStart = started.at(-1)!;
+		assert.ok(explicitStart.id);
+		assert.equal(completed.filter((event) => event.id === explicitStart.id).length, 0, "detached child is not settled by the workflow waiter");
+		const watcherState: SubagentState = {
+			baseCwd: tempDir, currentSessionId: explicitStart.sessionId as string,
+			completionOwnerId: explicitStart.completionOwnerId as string,
+			asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null,
+			completionSeen: new Map(), resultFileCoalescer: { schedule: () => false, clear() {} },
+		};
+		const watcher = createResultWatcher({ events: bus }, watcherState, DIRS.results, 60_000, {
+			coalesceDelayMs: 0, deliverIntercomResults: false,
+			notifier: { deliver: async () => true },
+		});
+		try {
+			for (let attempt = 0; attempt < 100 && !completed.some((event) => event.id === explicitStart.id); attempt++) {
+				watcher.refreshResultDelivery();
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+			const matches = completed.filter((event) => event.id === explicitStart.id);
+			assert.equal(matches.length, 1);
+			assert.equal(matches[0]?.awaitedByWorkflow, undefined);
+		} finally {
+			watcher.stopResultWatcher();
+		}
 	});
 
 	it("preserves original parent authority when reviving a foreground child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

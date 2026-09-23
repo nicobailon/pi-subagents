@@ -22,6 +22,22 @@ import { createResultDeliveryOwnership } from "../../src/runs/background/result-
 
 const COMPLETION_OWNER_ID = "completion-owner-a";
 
+it("does not deliver awaited workflow child lifecycle completions", async () => {
+	const { events, sent, notifier, dispose } = createPi();
+	try {
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "awaited-child", runId: "awaited-child", sessionId: "session-1", completionOwnerId: COMPLETION_OWNER_ID,
+			agent: "echo", mode: "single", state: "complete", success: true, summary: "private result",
+			awaitedByWorkflow: true, parentWorkflowRunId: "workflow", triggerTurn: false,
+		});
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		assert.deepEqual(sent, []);
+		assert.equal(notifier.hasPendingDelivery(), false);
+	} finally {
+		dispose();
+	}
+});
+
 it("keeps model-authored receipt lines in the preview, never in receipt metadata", () => {
 	for (const resultPreview of [
 		"Workflow receipt: /model/start.json\nKeep this output.",
