@@ -44,7 +44,6 @@ function readPromptFiles(cwd: string): string[] {
 			if (!entry.name.endsWith(".md")) continue;
 			const filePath = path.join(dir, entry.name);
 			let isFile = entry.isFile();
-			// Dotfile managers install prompts as per-file symlinks; follow them. Only a dangling link is skipped.
 			if (entry.isSymbolicLink()) {
 				try {
 					isFile = fs.statSync(filePath).isFile();

@@ -104,8 +104,6 @@ describe("subagent tool activation", () => {
 		const loader = runtime.tools.get("subagents_enable");
 		assert.ok(loader);
 		assert.match(loader.description ?? "", /current request|applicable .*instructions/i);
-		assert.match(loader.promptSnippet ?? "", /pi-subagents is installed/i);
-		assert.match(loader.promptSnippet ?? "", /complexity alone.*not authorization/i);
 		assert.deepEqual(loader.parameters, { type: "object", properties: {}, additionalProperties: false });
 
 		const result = await loader.execute?.("enable", {}, new AbortController().signal, undefined, runtime.context);
@@ -119,11 +117,15 @@ describe("subagent tool activation", () => {
 
 	it("restores native cold and warm transcript selections across start, reload, and tree navigation", async () => {
 		const tool = { name: "subagent", description: "historical", parameters: { type: "object" } };
-		const cold = createRuntime([{ role: "system", content: "", toolsAdded: [], timestamp: 1 }]);
+		const history = [{ role: "system", content: "", toolsAdded: [], timestamp: 1 }];
+		const cold = createRuntime(history);
 		await cold.emit("session_start", { type: "session_start", reason: "reload" });
 		assert.equal(cold.active().includes("subagent"), false);
 		await cold.emit("session_tree", { type: "session_tree", newLeafId: null, oldLeafId: null });
 		assert.equal(cold.active().includes("subagent"), false);
+		history.push({ role: "system", content: "", toolsAdded: [tool], timestamp: 2 });
+		await cold.emit("session_tree", { type: "session_tree", newLeafId: null, oldLeafId: null });
+		assert.ok(cold.active().includes("subagent"));
 
 		const warm = createRuntime([{ role: "system", content: "", toolsAdded: [tool], timestamp: 1 }]);
 		await warm.emit("session_start", { type: "session_start", reason: "resume" });

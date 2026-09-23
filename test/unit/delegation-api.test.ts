@@ -356,11 +356,8 @@ describe("public subagent delegation contract", () => {
 				onUpdate({ details: { mode: "single", runId: "run-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [base] } });
 				// Exact duplicate: tokens/tool progress and usage counters are unchanged, so this is a heartbeat.
 				onUpdate({ details: { mode: "single", runId: "run-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ ...base }] } });
-				// Only cacheRead changes.
 				onUpdate({ details: { mode: "single", runId: "run-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ ...base, cacheRead: 4 }] } });
-				// Only cacheWrite changes.
 				onUpdate({ details: { mode: "single", runId: "run-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ ...base, cacheRead: 4, cacheWrite: 2 }] } });
-				// Only turns changes.
 				onUpdate({ details: { mode: "single", runId: "run-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ ...base, cacheRead: 4, cacheWrite: 2, turnCount: 2 }] } });
 				return {
 					details: {
@@ -391,11 +388,8 @@ describe("public subagent delegation contract", () => {
 			getContext: () => ({ cwd: "/repo" }),
 			execute: async () => { throw new Error("legacy executor must remain separate"); },
 			executeStructured: async (_id, _params, _signal, _ctx, onUpdate) => {
-				// Legacy-shaped progress: no cache/turn counters at all.
 				onUpdate({ details: { mode: "single", runId: "run-invalid", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ index: 0, agent: "reviewer", currentTool: "read", toolCount: 1, tokens: 8 }] } });
-				// A negative counter must not project usage.
 				onUpdate({ details: { mode: "single", runId: "run-invalid", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ index: 0, agent: "reviewer", currentTool: "write", toolCount: 2, tokens: 16, inputTokens: -1, outputTokens: 8, cacheRead: 0, cacheWrite: 0, turnCount: 1 }] } });
-				// A NaN counter must not project usage.
 				onUpdate({ details: { mode: "single", runId: "run-invalid", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ index: 0, agent: "reviewer", currentTool: "grep", toolCount: 3, tokens: 16, inputTokens: 8, outputTokens: Number.NaN, cacheRead: 0, cacheWrite: 0, turnCount: 1 }] } });
 				return {
 					details: {

@@ -402,22 +402,22 @@ function parseSkillDescription(content: string): string | undefined {
 	return parseFrontmatter(content).frontmatter.description;
 }
 
-function maybeReadSkillDescription(filePath: string): string | undefined {
+function maybeReadSkillMetadata(filePath: string): Pick<CachedSkillEntry, "description" | "disableModelInvocation"> {
 	try {
-		return parseSkillDescription(fs.readFileSync(filePath, "utf-8"));
+		const content = fs.readFileSync(filePath, "utf-8");
+		return { description: parseSkillDescription(content), disableModelInvocation: maybeReadSkillDisableModelInvocation(content) };
 	} catch {
-		// Description parsing is best-effort metadata extraction.
-		return undefined;
+		return {};
 	}
 }
 
-function maybeReadSkillDisableModelInvocation(filePath: string): boolean | undefined {
+function maybeReadSkillDisableModelInvocation(content: string): boolean | undefined {
 	try {
-		const content = fs.readFileSync(filePath, "utf-8").replace(/\r\n/g, "\n");
-		if (!content.startsWith("---")) return undefined;
-		const endIndex = content.indexOf("\n---", 3);
+		const normalized = content.replace(/\r\n/g, "\n");
+		if (!normalized.startsWith("---")) return undefined;
+		const endIndex = normalized.indexOf("\n---", 3);
 		if (endIndex === -1) return undefined;
-		const parsed: unknown = parseYaml(content.slice(4, endIndex));
+		const parsed: unknown = parseYaml(normalized.slice(4, endIndex));
 		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
 		// Match the pi host's skill loader semantics: only YAML boolean true
 		// disables model invocation; strings and other values stay invocable.
@@ -440,8 +440,7 @@ function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: Skil
 		const resolvedFile = path.resolve(filePath);
 		if (!fs.existsSync(resolvedFile)) return;
 		const source = inferSkillSource(resolvedFile, cwd, agentDir, sourceHint);
-		const description = maybeReadSkillDescription(resolvedFile);
-		const disableModelInvocation = maybeReadSkillDisableModelInvocation(resolvedFile);
+		const { description, disableModelInvocation } = maybeReadSkillMetadata(resolvedFile);
 		const existingIndex = seen.get(resolvedFile);
 		if (existingIndex !== undefined) {
 			const existing = entries[existingIndex];
@@ -623,7 +622,7 @@ function readSkill(
 		const raw = fs.readFileSync(skillPath, "utf-8");
 		const content = stripSkillFrontmatter(raw);
 		const description = parseSkillDescription(raw);
-		const disableModelInvocation = maybeReadSkillDisableModelInvocation(skillPath);
+		const disableModelInvocation = maybeReadSkillDisableModelInvocation(raw);
 		const skill: ResolvedSkill = {
 			name: skillName,
 			path: skillPath,

@@ -98,14 +98,14 @@ export function supportsMinimumVersion(version: string): boolean {
 	return true;
 }
 
-function hasNativeToolSelection(messages: unknown[]): boolean {
+function hasNativeToolSelection(messages: Parameters<typeof piAi.getCurrentTools>[0]): boolean {
 	return messages.some((message) => !!message && typeof message === "object"
 		&& (Object.hasOwn(message, "toolsAdded") || Object.hasOwn(message, "toolsRemoved")));
 }
 
 function setSelection(pi: ExtensionAPI, includeSubagent: boolean): void {
 	const active = pi.getActiveTools();
-	const next = includeSubagent ? [...active] : active.filter((name) => name !== SUBAGENT_NAME);
+	const next = includeSubagent ? [...active, SUBAGENT_NAME] : active.filter((name) => name !== SUBAGENT_NAME);
 	if (!next.includes(LOADER_NAME)) next.push(LOADER_NAME);
 	pi.setActiveTools([...new Set(next)]);
 }
@@ -114,10 +114,10 @@ function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	const available = pi.getAllTools();
 	if (!Array.isArray(available) || !Array.isArray(pi.getActiveTools())) return;
 	if (!available.some((tool) => tool.name === LOADER_NAME)) return;
-	const sessionContext = (ctx.sessionManager as unknown as { buildSessionContext(): { messages?: unknown[] } }).buildSessionContext();
-	const messages = Array.isArray(sessionContext?.messages) ? sessionContext.messages : [];
+	// SAFETY: The running Pi session manager exposes buildSessionContext, but its read-only extension type omits it.
+	const messages = (ctx.sessionManager as typeof ctx.sessionManager & { buildSessionContext(): { messages: Parameters<typeof piAi.getCurrentTools>[0] } }).buildSessionContext().messages;
 	if (hasNativeToolSelection(messages)) {
-		setSelection(pi, piAi.getCurrentTools(messages as any[]).some((tool) => tool.name === SUBAGENT_NAME));
+		setSelection(pi, piAi.getCurrentTools(messages).some((tool) => tool.name === SUBAGENT_NAME));
 		return;
 	}
 	setSelection(pi, messages.length > 0 && pi.getActiveTools().includes(SUBAGENT_NAME));
@@ -150,7 +150,7 @@ export function registerSubagentToolActivation(
 				details: { unavailable: [SUBAGENT_NAME] },
 			};
 			try {
-				pi.setActiveTools([...new Set([...pi.getActiveTools(), SUBAGENT_NAME])]);
+				setSelection(pi, true);
 			} catch (error) {
 				return {
 					isError: true,

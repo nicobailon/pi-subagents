@@ -18,6 +18,8 @@
 
 ### Fixed
 
+- Restore `subagent` when navigating from an inactive session branch to one with recorded tool activation.
+- Keep workflow terminal proof and capacity retention unknown when the persisted child roster is missing.
 - Background runners and external CLI agents no longer inherit Git's repository-routing variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_CONFIG_*`, and the rest of `git rev-parse --local-env-vars`). When Pi was started from a Git hook or with `git --git-dir`, those variables made a child's Git commands act on the parent's repository instead of the child's working directory. Other variables, including `GIT_AUTHOR_*`, still pass through, and an external agent's explicit environment allowlist is unchanged. Thanks to [@alexei-led](https://github.com/alexei-led) for [#2437](https://github.com/nicobailon/pi-subagents/issues/2437) and [#2440](https://github.com/nicobailon/pi-subagents/pull/2440).
 - `/prompt-workflow` now finds prompt files that are symlinks (as installed by dotfile managers such as GNU Stow or homeshick), and skips dangling links instead of failing. Thanks to [@nietaki](https://github.com/nietaki) for [#2430](https://github.com/nicobailon/pi-subagents/issues/2430).
 - A `runs.run`/`runs.all` workflow child without an `agent` now fails with an error naming that child (`Workflow child 'r1' has no agent…`) instead of the generic "Provide exactly one mode" message. Thanks to [@matthewmathistrellys](https://github.com/matthewmathistrellys) for raising the confusing error in [#2422](https://github.com/nicobailon/pi-subagents/issues/2422).

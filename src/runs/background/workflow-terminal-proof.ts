@@ -20,8 +20,9 @@ export type WorkflowChildProcessEvidence =
  * Synchronous children run inside the workflow host and have no process of their own.
  */
 export function readWorkflowChildProcessEvidence(workflowAsyncDir: string, steps: AsyncStatus["steps"]): WorkflowChildProcessEvidence {
+	if (!steps) return { state: "unknown", reason: "workflow child roster is missing" };
 	const children: ProcessTerminal[] = [];
-	for (const step of steps ?? []) {
+	for (const step of steps) {
 		const label = step.workflowKey ?? step.agent;
 		if (typeof step.async !== "boolean") return { state: "unknown", reason: `workflow child ${label} is missing async classification` };
 		if (!step.async) continue;

@@ -67,6 +67,14 @@ describe("readWorkflowTerminalProof", () => {
 		});
 	}));
 
+	it("does not accept a missing child roster as an empty workflow", () => withFixture(({ asyncDir }) => {
+		assert.deepEqual(readWorkflowTerminalProof(asyncDir, undefined, summary(), 0, 2_000), {
+			version: 1, kind: "workflow", runId: "workflow-run", state: "unknown", dispatchClosed: true,
+			reason: "workflow child roster is missing",
+		});
+		assert.equal(readWorkflowTerminalProof(asyncDir, [], summary({ children: [] }), 0, 2_000).state, "observed");
+	}));
+
 	it("returns observed after every async child has writer-exit evidence", () => withFixture(({ asyncDir, writeChild }) => {
 		const proof = observedChild();
 		writeChild({ state: "complete", processTerminal: { ...runnerIdentity, state: "pending" } }, proof);
