@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { setImmediate } from "node:timers/promises";
 import { describe, it } from "node:test";
+import { prepareWorkflowLaunchParams } from "../../src/runs/foreground/subagent-executor.ts";
 import { createEventBus, makeAgent, makeMinimalCtx } from "../support/helpers.ts";
 import { installSingleExecutionHooks, makeExecutor, mockPi, tempDir } from "../support/single-execution-fixture.ts";
 
@@ -23,30 +24,54 @@ describe("execution lifetime at the executor boundary", () => {
 		assert.equal(mockPi.callCount(), 0);
 	});
 
-	for (const workflow of [false, true]) {
-		it(`keeps an explicitly unbounded ${workflow ? "workflow and child" : "foreground child"} alive beyond thirty minutes`, async (t) => {
-			t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
-			mockPi.onCall({ delay: HALF_HOUR + 60_000, output: "completed after thirty minutes" });
-			const executor = makeExecutor([{ ...makeAgent("echo"), defaultTimeoutMs: 500 }], { timeoutMs: 200 });
-			let settled = false;
-			const resultPromise = executor.executePublic("unbounded", {
-				...(workflow ? { workflowScript: 'return await runs.run("worker", {agent:"echo",task:"continue"});' } : { agent: "echo", task: "continue" }),
-				executionLifetime: { mode: "unbounded" }, async: false, context: "fresh", acceptance: false, mission: false,
-			}, new AbortController().signal, undefined, makeMinimalCtx(tempDir)).finally(() => { settled = true; });
-			await flushUntil(() => mockPi.callCount() === 1);
-			await setImmediate();
-			t.mock.timers.tick(HALF_HOUR + 1);
-			await setImmediate();
-			assert.equal(settled, false);
-			assert.equal(mockPi.sessions[0]?.aborted, false);
-			assert.deepEqual(mockPi.sessions[0]?.launch.runtime.executionLifetime, { mode: "unbounded" });
-			t.mock.timers.tick(60_000);
-			await flushUntil(() => settled);
-			const result = await resultPromise;
-			assert.equal(result.isError, undefined, JSON.stringify(result.content));
-			assert.deepEqual(result.details.effectiveExecutionLifetime, { mode: "unbounded" });
-		});
-	}
+	it("keeps an explicitly unbounded foreground child alive beyond thirty minutes", async (t) => {
+		t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+		mockPi.onCall({ delay: HALF_HOUR + 60_000, output: "completed after thirty minutes" });
+		const executor = makeExecutor([{ ...makeAgent("echo"), defaultTimeoutMs: 500 }], { timeoutMs: 200 });
+		let settled = false;
+		const resultPromise = executor.executePublic("unbounded", {
+			agent: "echo", task: "continue", executionLifetime: { mode: "unbounded" }, async: false, context: "fresh", acceptance: false, mission: false,
+		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir)).finally(() => { settled = true; });
+		await flushUntil(() => mockPi.callCount() === 1);
+		await setImmediate();
+		t.mock.timers.tick(HALF_HOUR + 1);
+		await setImmediate();
+		assert.equal(settled, false);
+		assert.equal(mockPi.sessions[0]?.aborted, false);
+		assert.deepEqual(mockPi.sessions[0]?.launch.runtime.executionLifetime, { mode: "unbounded" });
+		t.mock.timers.tick(60_000);
+		await flushUntil(() => settled);
+		const result = await resultPromise;
+		assert.equal(result.isError, undefined, JSON.stringify(result.content));
+		assert.deepEqual(result.details.effectiveExecutionLifetime, { mode: "unbounded" });
+	});
+
+	it("keeps an unbounded workflow child independent of the parent deadline", async (t) => {
+		t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+		mockPi.onCall({ delay: HALF_HOUR + 60_000, output: "workflow child completed" });
+		const params = prepareWorkflowLaunchParams(
+			{ executionLifetime: { mode: "unbounded" }, async: false, context: "fresh", acceptance: false, mission: false },
+			{ agent: "echo", task: "continue" },
+			"workflow-parent",
+			"worker",
+			{ parentDeadlineAt: Date.now() + 500 },
+		);
+		assert.deepEqual(params.executionLifetime, { mode: "unbounded" });
+		assert.equal(params.workflowParentDeadlineAt, undefined);
+		const executor = makeExecutor([{ ...makeAgent("echo"), defaultTimeoutMs: 500 }], { timeoutMs: 200 });
+		let settled = false;
+		const resultPromise = executor.execute("workflow-child", params, new AbortController().signal, undefined, makeMinimalCtx(tempDir)).finally(() => { settled = true; });
+		await flushUntil(() => mockPi.callCount() === 1);
+		await setImmediate();
+		t.mock.timers.tick(HALF_HOUR + 1);
+		await setImmediate();
+		assert.equal(settled, false);
+		assert.equal(mockPi.sessions[0]?.aborted, false);
+		assert.deepEqual(mockPi.sessions[0]?.launch.runtime.executionLifetime, { mode: "unbounded" });
+		t.mock.timers.tick(60_000);
+		await flushUntil(() => settled);
+		assert.equal((await resultPromise).isError, undefined);
+	});
 
 	for (const lifetime of [undefined, { mode: "bounded" as const, timeoutMs: 1000 }]) {
 		it(`enforces ${lifetime ? "the explicit bounded deadline" : "the omitted lifetime's thirty minute default"}`, async (t) => {
