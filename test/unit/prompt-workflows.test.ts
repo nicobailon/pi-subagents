@@ -68,6 +68,23 @@ Project body $1
 		assert.equal(workflow?.model, "openai/gpt-5-mini");
 	});
 
+	it("discovers symlinked prompt files and skips dangling links", () => {
+		const promptsDir = path.join(agentDir, "prompts");
+		writePrompt(path.join(tempDir, "dotfiles"), "linked", `---
+description: Linked prompt
+---
+Say hi
+`);
+		fs.mkdirSync(promptsDir, { recursive: true });
+		fs.symlinkSync(path.join(tempDir, "dotfiles", "linked.md"), path.join(promptsDir, "linked.md"));
+		fs.symlinkSync(path.join(tempDir, "dotfiles", "missing.md"), path.join(promptsDir, "dangling.md"));
+
+		const names = discoverPromptWorkflows(cwd).map((entry) => entry.name);
+
+		assert.ok(names.includes("linked"), names.join(", "));
+		assert.equal(names.includes("dangling"), false);
+	});
+
 	it("runs a named workflow through native subagent execution", async () => {
 		writePrompt(path.join(cwd, ".pi", "prompts"), "native-run", `---
 description: Run native prompt
