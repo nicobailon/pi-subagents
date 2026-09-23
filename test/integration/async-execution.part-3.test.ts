@@ -37,11 +37,11 @@ import {
 const WATCH_TIMEOUT_MS = 30_000;
 
 // A runner that never starts or never settles must fail this test by name, not stall the whole CI step.
-function watchTimeoutMessage(what: string, asyncDir: string): string {
+function watchTimeoutMessage(what: string, asyncDir: string, extra?: () => string): string {
 	const read = (name: string) => {
 		try { return fs.readFileSync(path.join(asyncDir, name), "utf8").slice(-2000); } catch (error) { return `<${(error as NodeJS.ErrnoException).code ?? "unreadable"}>`; }
 	};
-	return `Timed out after ${WATCH_TIMEOUT_MS}ms waiting for ${what}\nstatus.json: ${read("status.json")}\nrunner.stderr.log: ${read("runner.stderr.log")}`;
+	return `Timed out after ${WATCH_TIMEOUT_MS}ms waiting for ${what}\nstatus.json: ${read("status.json")}\nrunner.stderr.log: ${read("runner.stderr.log")}${extra ? `\n${extra()}` : ""}`;
 }
 
 function waitForPath(file: string, asyncDir: string): Promise<void> {
@@ -61,11 +61,11 @@ function waitForPath(file: string, asyncDir: string): Promise<void> {
 	});
 }
 
-function waitForJson<T>(file: string, predicate: (value: T) => boolean, asyncDir: string): Promise<T> {
+function waitForJson<T>(file: string, predicate: (value: T) => boolean, asyncDir: string, extra?: () => string): Promise<T> {
 	return new Promise((resolve, reject) => {
 		const timer = setTimeout(() => {
 			fs.unwatchFile(file, inspect);
-			reject(new Error(watchTimeoutMessage(`a matching ${file}`, asyncDir)));
+			reject(new Error(watchTimeoutMessage(`a matching ${file}`, asyncDir, extra)));
 		}, WATCH_TIMEOUT_MS);
 		const inspect = () => {
 			try {
@@ -2458,15 +2458,20 @@ syncBuiltinESMExports();
 			const sessionId = `session-${id}`;
 			const startedPath = path.join(tempDir, `${id}-import-started`);
 			const rejectPath = path.join(tempDir, `${id}-reject`);
+			const watchStartedPath = path.join(tempDir, `${id}-watch-started`);
+			const rejectSeenPath = path.join(tempDir, `${id}-reject-seen`);
 			const fixturePath = path.join(tempDir, `${id}-execution.mjs`);
 			fs.writeFileSync(fixturePath, `
 import fs from "node:fs";
 import path from "node:path";
 const started = process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED;
 const reject = process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT;
+const watchStarted = ${JSON.stringify(watchStartedPath)};
+const rejectSeen = ${JSON.stringify(rejectSeenPath)};
 fs.writeFileSync(started, "started");
 await new Promise((resolve) => {
-  const inspect = () => { if (fs.existsSync(reject)) { fs.unwatchFile(reject, inspect); resolve(); } };
+  const inspect = () => { if (fs.existsSync(reject)) { fs.unwatchFile(reject, inspect); fs.writeFileSync(rejectSeen, "seen"); resolve(); } };
+  fs.writeFileSync(watchStarted, "watching");
   fs.watchFile(reject, { interval: 20 }, inspect);
   inspect();
 });
@@ -2478,41 +2483,79 @@ throw new Error("injected parent-visible heavy import rejection");
 			const previousModule = process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE;
 			const previousStarted = process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED;
 			const previousReject = process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT;
+			const processEvents = new Map<number, Array<{ type: "exit" | "close"; at: string; exitCode: number | null; signal: NodeJS.Signals | null }>>();
+			const childProcessChannel = channel("child_process");
+			const observeProcess = (message: unknown) => {
+				const proc = (message as { process?: unknown }).process;
+				if (!(proc instanceof ChildProcess) || typeof proc.pid !== "number") return;
+				const pid = proc.pid;
+				const seen: Array<{ type: "exit" | "close"; at: string; exitCode: number | null; signal: NodeJS.Signals | null }> = [];
+				processEvents.set(pid, seen);
+				proc.once("exit", (exitCode, signal) => { seen.push({ type: "exit", at: new Date().toISOString(), exitCode, signal }); });
+				proc.once("close", (exitCode, signal) => { seen.push({ type: "close", at: new Date().toISOString(), exitCode, signal }); });
+			};
+			const timeoutDetails = () => {
+				const read = (name: string) => {
+					try { return fs.readFileSync(path.join(asyncDir, name), "utf8"); } catch (error) { return `<${(error as NodeJS.ErrnoException).code ?? "unreadable"}>`; }
+				};
+				const status = (() => { try { return JSON.parse(read("status.json")) as { pid?: unknown }; } catch { return {}; } })();
+				const pid = status.pid;
+				let liveness = "unknown (no runner PID in status.json)";
+				if (typeof pid === "number") {
+					try { process.kill(pid, 0); liveness = "PID exists (not proof of runner identity or exit)"; }
+					catch (error) { liveness = `PID check failed: ${(error as NodeJS.ErrnoException).code ?? String(error)}`; }
+				}
+				return [
+					`diagnostic timestamp: ${new Date().toISOString()}`,
+					`process-terminal.json: ${read("process-terminal.json")}`,
+					`process-terminal-candidate.json: ${read("process-terminal-candidate.json")}`,
+					`runner-startup-proceed.json (authorization, not readiness): ${read("runner-startup-proceed.json")}`,
+					`events.jsonl tail: ${read("events.jsonl").slice(-4000)}`,
+					`fixture markers: ${JSON.stringify({ importStarted: fs.existsSync(startedPath), rejection: fs.existsSync(rejectPath), watchStarted: fs.existsSync(watchStartedPath), rejectSeen: fs.existsSync(rejectSeenPath) })}`,
+					`runner PID ${String(pid)} liveness: ${liveness}`,
+					`runner ChildProcess events: ${JSON.stringify(typeof pid === "number" ? processEvents.get(pid) ?? "not captured" : "PID unavailable")}`,
+				].join("\n");
+			};
+			childProcessChannel.subscribe(observeProcess);
 			try {
-				process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE = pathToFileURL(fixturePath).href;
-				process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED = startedPath;
-				process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT = rejectPath;
-				executeAsyncSingle(id, {
-					agent: "worker", task: "Must never start", agentConfig: makeAgent("worker"),
-					ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: sessionId },
-					artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-					shareEnabled: false,
-					...(revival ? { sessionFile, revivalLease: { sessionFile, runId: id, sourceRunId: `source-${id}`, parentSessionId: sessionId } } : {}),
-					maxSubagentDepth: 2,
-				});
-				await waitForPath(startedPath, asyncDir);
+				try {
+					process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE = pathToFileURL(fixturePath).href;
+					process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED = startedPath;
+					process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT = rejectPath;
+					executeAsyncSingle(id, {
+						agent: "worker", task: "Must never start", agentConfig: makeAgent("worker"),
+						ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: sessionId },
+						artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+						shareEnabled: false,
+						...(revival ? { sessionFile, revivalLease: { sessionFile, runId: id, sourceRunId: `source-${id}`, parentSessionId: sessionId } } : {}),
+						maxSubagentDepth: 2,
+					});
+					await waitForPath(startedPath, asyncDir);
+				} finally {
+					if (previousModule === undefined) delete process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE; else process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE = previousModule;
+					if (previousStarted === undefined) delete process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED; else process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED = previousStarted;
+					if (previousReject === undefined) delete process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT; else process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT = previousReject;
+				}
+				assert.equal(fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length, callsBefore);
+				fs.writeFileSync(rejectPath, "reject");
+				const terminal = await waitForJson<{ state: string }>(path.join(asyncDir, "process-terminal.json"), (value) => value.state !== "pending", asyncDir, timeoutDetails);
+				const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"));
+				const candidate = JSON.parse(fs.readFileSync(path.join(asyncDir, "process-terminal-candidate.json"), "utf8"));
+				assert.equal(status.state, "failed");
+				assert.match(status.error, /injected parent-visible heavy import rejection/);
+				assert.equal(terminal.state, "observed");
+				assert.deepEqual(candidate.writers, {});
+				assert.deepEqual(candidate.expectedWriters, { 0: 0 });
+				assert.equal(readActiveRunIndex(ASYNC_DIR)?.includes(id) ?? false, false);
+				assert.equal(getActiveAsyncCapacitySnapshot(sessionId, 1).used, 0);
+				assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${id}.json`)), false);
+				if (revival) {
+					assert.equal(fs.realpathSync(candidate.sessionFile), fs.realpathSync(sessionFile));
+					assert.equal(typeof candidate.revivalLeaseToken, "string");
+					assert.equal(candidate.revivalLeaseReleaseAcknowledged, true);
+				}
 			} finally {
-				if (previousModule === undefined) delete process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE; else process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE = previousModule;
-				if (previousStarted === undefined) delete process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED; else process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED = previousStarted;
-				if (previousReject === undefined) delete process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT; else process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT = previousReject;
-			}
-			assert.equal(fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length, callsBefore);
-			fs.writeFileSync(rejectPath, "reject");
-			const terminal = await waitForJson<{ state: string }>(path.join(asyncDir, "process-terminal.json"), (value) => value.state !== "pending", asyncDir);
-			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"));
-			const candidate = JSON.parse(fs.readFileSync(path.join(asyncDir, "process-terminal-candidate.json"), "utf8"));
-			assert.equal(status.state, "failed");
-			assert.match(status.error, /injected parent-visible heavy import rejection/);
-			assert.equal(terminal.state, "observed");
-			assert.deepEqual(candidate.writers, {});
-			assert.deepEqual(candidate.expectedWriters, { 0: 0 });
-			assert.equal(readActiveRunIndex(ASYNC_DIR)?.includes(id) ?? false, false);
-			assert.equal(getActiveAsyncCapacitySnapshot(sessionId, 1).used, 0);
-			assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${id}.json`)), false);
-			if (revival) {
-				assert.equal(fs.realpathSync(candidate.sessionFile), fs.realpathSync(sessionFile));
-				assert.equal(typeof candidate.revivalLeaseToken, "string");
-				assert.equal(candidate.revivalLeaseReleaseAcknowledged, true);
+				childProcessChannel.unsubscribe(observeProcess);
 			}
 		});
 	}
