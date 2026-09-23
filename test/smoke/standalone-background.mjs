@@ -25,7 +25,7 @@ assert.equal(createHash("sha256").update(fs.readFileSync(binary)).digest("hex"),
 const root = process.argv[3] ? path.resolve(process.argv[3]) : fs.mkdtempSync(path.join(os.tmpdir(), "pi-standalone-smoke-"));
 fs.mkdirSync(root, { recursive: true });
 assert.deepEqual(fs.readdirSync(root), [], "requires an empty artifact directory");
-const coreSdk = /(?:^|\/)@earendil-works\/(?:pi-coding-agent|pi-agent-core|pi-ai|pi-tui)(?:\/|$)/;
+const coreSdk = /(?:^|\/)(?:@earendil-works\/(?:pi-coding-agent|pi-agent-core|pi-ai|pi-tui)|typebox)(?:\/|$)/;
 function run(name, command, args) {
 	const result = spawnSync(command, args, { cwd: source, encoding: "utf8", timeout: 90_000, maxBuffer: 10 * 1024 * 1024 });
 	fs.writeFileSync(path.join(root, `${name}.log`), `${result.stdout ?? ""}${result.stderr ?? ""}`);

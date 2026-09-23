@@ -6,6 +6,9 @@ import * as piCore from "@earendil-works/pi-agent-core";
 import * as piAi from "@earendil-works/pi-ai/compat";
 import * as piTui from "@earendil-works/pi-tui";
 import * as sdk from "@earendil-works/pi-coding-agent";
+import * as typebox from "typebox";
+import * as typeboxCompile from "typebox/compile";
+import * as typeboxValue from "typebox/value";
 import { installRunnerHttpDispatcher } from "./runner-http-dispatcher.ts";
 import { runConfiguredSubagent, validateSubagentRunConfig } from "./subagent-runner-bootstrap.ts";
 import { getAgentDir } from "../../shared/utils.ts";
@@ -46,6 +49,9 @@ export default async function runBinaryBootstrap(): Promise<never> {
 						"@earendil-works/pi-ai/compat": piAi,
 						"@earendil-works/pi-tui": piTui,
 						"@earendil-works/pi-coding-agent": sdk,
+						typebox,
+						"typebox/compile": typeboxCompile,
+						"typebox/value": typeboxValue,
 					},
 				});
 				const runner = `./subagent-runner${path.extname(fileURLToPath(import.meta.url))}`;
