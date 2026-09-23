@@ -94,6 +94,9 @@
     },
     "@earendil-works/pi-tui": {
       "optional": true
+    },
+    "typebox": {
+      "optional": true
     }
   },
   "dependencies": {
@@ -110,6 +113,7 @@
     "@types/node": "24.13.3",
     "oxlint": "1.80.0",
     "typescript": "5.9.3",
-    "@earendil-works/pi-coding-agent": "0.87.0"
+    "@earendil-works/pi-coding-agent": "0.87.0",
+    "typebox": "1.3.27"
   }
 }
