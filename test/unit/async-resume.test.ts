@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { applySteeringRecoveryAgentConfig, asyncReviveRequiresRecoveryDescriptor, buildRevivedAsyncTask, resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
+import { applySteeringRecoveryAgentConfig, asyncReviveRequiresRecoveryDescriptor, buildRevivedAsyncTask, readAsyncRecoveryDescriptor, resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 
@@ -1063,4 +1063,21 @@ describe("async resume lookup", () => {
 		assert.match(task, /Original session file: \/tmp\/session\.jsonl/);
 		assert.match(task, /Follow-up:\nWhat changed\?/);
 	});
+});
+
+it("preserves and validates explicit execution lifetime in persisted recovery", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-lifetime-recovery-"));
+	try {
+		const descriptor = {
+			version: 1, runFanoutBudget: createRunFanoutBudget("lifetime-recovery", 64), sourceRunId: "lifetime-recovery", agent: "worker", cwd: root,
+			systemPromptMode: "replace", inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false, maxSubagentDepth: 2, share: false, outputMode: "inline", executionLifetime: { mode: "unbounded" }, effectiveExecutionLifetime: { mode: "unbounded" },
+		};
+		writeJson(path.join(root, "recovery-descriptor.json"), descriptor);
+		assert.deepEqual(readAsyncRecoveryDescriptor(root)?.executionLifetime, { mode: "unbounded" });
+		assert.deepEqual(readAsyncRecoveryDescriptor(root)?.effectiveExecutionLifetime, { mode: "unbounded" });
+		writeJson(path.join(root, "recovery-descriptor.json"), { ...descriptor, executionLifetime: { mode: "bounded", timeoutMs: 2_147_483_648 } });
+		assert.throws(() => readAsyncRecoveryDescriptor(root), /executionLifetime/);
+	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
 });

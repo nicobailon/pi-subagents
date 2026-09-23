@@ -93,6 +93,7 @@ interface AsyncRunStepSummary {
 }
 
 export interface AsyncRunSummary {
+	effectiveExecutionLifetime?: AsyncStatus["effectiveExecutionLifetime"];
 	id: string;
 	asyncDir: string;
 	toolCallId?: string;
@@ -421,6 +422,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		startedAt: status.startedAt,
 		lastUpdate: status.lastUpdate,
 		endedAt: status.endedAt,
+		...(status.effectiveExecutionLifetime ? { effectiveExecutionLifetime: status.effectiveExecutionLifetime } : {}),
 		...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
 		...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
 		...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),

@@ -820,6 +820,8 @@ export interface RunFanoutRejection extends RunFanoutBudgetSnapshot {
 }
 
 export interface SteeringRecoveryDescriptor {
+	executionLifetime?: ExecutionLifetime;
+	effectiveExecutionLifetime?: ExecutionLifetime;
 	/** Captured response identity authority; absence means no declared aliases on revival. */
 	modelResponseAliases?: Record<string, string[]>;
 	version: 1;
@@ -1424,6 +1426,8 @@ export interface AgentCapabilityRow {
 	extensions?: { names?: string[]; subagentOnly?: string[]; skills?: string[] };
 }
 
+export type ExecutionLifetime = { mode: "unbounded" } | { mode: "bounded"; timeoutMs: number };
+
 export interface Details {
 	mode: SubagentResultMode | "management";
 	workflowReceiptPath?: string;
@@ -1459,6 +1463,7 @@ export interface Details {
 	asyncId?: string;
 	background?: boolean;
 	asyncDir?: string;
+	effectiveExecutionLifetime?: ExecutionLifetime;
 	timeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
@@ -1678,6 +1683,7 @@ export interface NestedRunSummary extends NestedRunAddress {
 	startedAt?: number;
 	endedAt?: number;
 	lastUpdate?: number;
+	effectiveExecutionLifetime?: ExecutionLifetime;
 	timeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
@@ -1724,6 +1730,7 @@ export interface AsyncStartedEvent {
 	launchResolvedExtensions?: LaunchResolvedChildExtensions;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
 	usageBudget?: UsageBudgetState;
+	effectiveExecutionLifetime?: ExecutionLifetime;
 	timeoutMs?: number;
 	deadlineAt?: number;
 	turnBudget?: TurnBudgetState;
@@ -1893,6 +1900,7 @@ export interface AsyncStatus {
 	startedAt: number;
 	endedAt?: number;
 	lastUpdate?: number;
+	effectiveExecutionLifetime?: ExecutionLifetime;
 	timeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
@@ -2077,6 +2085,7 @@ export interface AsyncJobState {
 	activeParallelGroup?: boolean;
 	startedAt?: number;
 	updatedAt?: number;
+	effectiveExecutionLifetime?: ExecutionLifetime;
 	timeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
@@ -2137,6 +2146,7 @@ export interface ForegroundResumeChild {
 	agentContract?: AgentContract;
 	/** Private bounded launch fields needed to preserve the child contract on resume. */
 	resumeContract?: {
+		executionLifetime?: ExecutionLifetime;
 		modelResponseAliases?: Record<string, string[]>;
 		outputSchema?: JsonSchemaObject | false;
 		agentContract?: AgentContract;
@@ -2429,6 +2439,7 @@ export interface ForegroundChildSessionControls {
 }
 
 export interface RunSyncOptions {
+	executionLifetime?: ExecutionLifetime;
 	/** Exact discovery provenance for an unknown-agent error; omission uses defensive fallback discovery. */
 	unknownAgentDiagnosticContext?: import("../agents/agents.ts").UnknownAgentDiagnosticContext;
 	/** Session factory for the in-process child; defaults to the process-wide factory. */
@@ -2454,6 +2465,7 @@ export interface RunSyncOptions {
 	requestedCwd?: string;
 	signal?: AbortSignal;
 	interruptSignal?: AbortSignal;
+	effectiveExecutionLifetime?: ExecutionLifetime;
 	timeoutMs?: number;
 	deadlineAt?: number;
 	/** Per-call per-tool timeout (ms), resolved with the agent/config/environment ladder at execution. */

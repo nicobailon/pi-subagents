@@ -27,6 +27,7 @@ export type { ChildLaunchPlan, ChildLaunchPlanInput, OutputOverrideInput, Resolv
 
 /** Sequential step: single agent execution */
 export interface SequentialStep {
+	executionLifetime?: import("./types.ts").ExecutionLifetime;
 	agent: string;
 	task?: string;
 	phase?: string;

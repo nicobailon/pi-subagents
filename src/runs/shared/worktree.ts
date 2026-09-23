@@ -117,7 +117,8 @@ interface WorktreeTaskCwdConflict {
 
 interface WorktreeSetupHookConfig {
 	hookPath: string;
-	timeoutMs?: number;
+	/** False disables the hook deadline; omission preserves the legacy default. */
+	timeoutMs?: number | false;
 }
 
 export interface CreateWorktreesOptions {
@@ -142,7 +143,7 @@ export interface CreateWorktreesOptions {
 
 interface ResolvedWorktreeSetupHook {
 	hookPath: string;
-	timeoutMs: number;
+	timeoutMs: number | undefined;
 }
 
 interface WorktreeSetupHookInput {
@@ -775,7 +776,8 @@ function linkNodeModulesIfPresent(toplevel: string, worktreePath: string): boole
 	}
 }
 
-function parseHookTimeout(timeoutMs: number | undefined): number {
+function parseHookTimeout(timeoutMs: number | false | undefined): number | undefined {
+	if (timeoutMs === false) return undefined;
 	if (timeoutMs === undefined) return DEFAULT_WORKTREE_SETUP_HOOK_TIMEOUT_MS;
 	if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
 		throw new Error("worktree setup hook timeout must be an integer greater than 0");

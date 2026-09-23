@@ -65,6 +65,7 @@ import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightS
 import { claimRunFanoutBatch, claimRunFanoutBatchWithCommit, createRunFanoutBudget, formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor, RunFanoutLimitError, writeRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
 import { retainLiveForegroundNestedRoute } from "../../integrations/pi-web-session-liveness.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
+import { resolveExecutionLifetime } from "../shared/execution-lifetime.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContract } from "../shared/agent-contract.ts";
@@ -162,6 +163,7 @@ import {
 	type ControlEvent,
 	type Details,
 	type ExtensionConfig,
+	type ExecutionLifetime,
 	type ForegroundResumeChild,
 	type ForegroundChildSessionControls,
 	type ForegroundSteerInput,
@@ -376,6 +378,7 @@ export interface SubagentParamsLike {
 	intercomBridge?: IntercomBridgeConfig;
 	async?: boolean;
 	foregroundOnly?: boolean;
+	executionLifetime?: ExecutionLifetime;
 	timeoutMs?: number;
 	maxRuntimeMs?: number;
 	/** Async runs only: steer the child to checkpoint and stop this many ms before the run deadline. */
@@ -771,6 +774,7 @@ function rememberForegroundRun(state: SubagentState, input: { modelResponseAlias
 		updatedAt,
 		children: input.results.map((result, index) => {
 			const resumeContract = omitUndefinedProperties({
+				executionLifetime: input.params.executionLifetime,
 				modelResponseAliases: input.modelResponseAliases,
 				outputSchema: input.params.outputSchema,
 				agentContract: input.params.agentContract,
@@ -1643,14 +1647,14 @@ function providerFollowUpSupport(providerName: string): { ok: true } | { ok: fal
 	}
 }
 
-function externalJobFollowUpStarted(input: { sourceRunId: string; runId: string; asyncDir: string; duplicate?: boolean; interactive: boolean }): AgentToolResult<Details> {
+function externalJobFollowUpStarted(input: { sourceRunId: string; runId: string; asyncDir: string; duplicate?: boolean; interactive: boolean; contract: Pick<Details, "effectiveExecutionLifetime" | "timeoutMs" | "deadlineAt"> }): AgentToolResult<Details> {
 	const lines = [
 		input.duplicate ? `External-job follow-up already exists for ${input.sourceRunId}.` : `Started external-job follow-up for ${input.sourceRunId}.`,
 		`Follow-up run: ${input.runId}`,
 		`Async dir: ${input.asyncDir}`,
 		`Status if needed: subagent({ action: "status", id: "${input.runId}" })`,
 	];
-	return { content: [{ type: "text", text: formatAsyncStartedMessage(lines.join("\n"), input.interactive) }], details: { mode: "single", results: [], asyncId: input.runId, asyncDir: input.asyncDir } };
+	return { content: [{ type: "text", text: formatAsyncStartedMessage(lines.join("\n"), input.interactive) }], details: { mode: "single", results: [], asyncId: input.runId, asyncDir: input.asyncDir, ...input.contract } };
 }
 
 function externalRunnerControlError(asyncDir: string, action: "steer" | "resume"): AgentToolResult<Details> | undefined {
@@ -1668,6 +1672,10 @@ function externalRunnerControlError(asyncDir: string, action: "steer" | "resume"
 }
 
 async function resumeExternalJobFollowUp(input: {
+	executionLifetime?: ExecutionLifetime;
+	timeoutMs?: number;
+	requestedLifetime: boolean;
+	effectiveExecutionLifetime: ExecutionLifetime;
 	target: AsyncResumeSourceTarget;
 	followUp: string;
 	baseAgentConfig: AgentConfig;
@@ -1703,7 +1711,15 @@ async function resumeExternalJobFollowUp(input: {
 	const currentSessionId = input.deps.state.currentSessionId;
 	if (!currentSessionId) return { content: [{ type: "text", text: "External-job follow-up requires an active parent session." }], isError: true, details: { mode: "management", results: [] } };
 	if (fs.existsSync(asyncDir) || fs.existsSync(resultFilePath(DIRS.results, runId))) {
-		return externalJobFollowUpStarted({ sourceRunId: input.target.runId, runId, asyncDir, duplicate: true, interactive: input.ctx.hasUI });
+		const status = readStatus(asyncDir);
+		const savedLifetime = status?.effectiveExecutionLifetime;
+		const verifiedLifetime = resolveExecutionLifetime(savedLifetime);
+		if (!savedLifetime || verifiedLifetime.error) return { content: [{ type: "text", text: "The existing external-job follow-up execution contract is unavailable. Refusing to redispatch or assume its lifetime." }], isError: true, details: { mode: "management", results: [] } };
+		if ((input.requestedLifetime && externalJobStableJson(verifiedLifetime.effectiveExecutionLifetime) !== externalJobStableJson(input.effectiveExecutionLifetime))
+			|| (input.executionLifetime?.mode !== "unbounded" && input.absoluteDeadlineAt !== undefined && status?.deadlineAt !== input.absoluteDeadlineAt)) {
+			return { content: [{ type: "text", text: "The existing external-job follow-up has a different execution contract. Its lifetime cannot be changed by replaying the same follow-up." }], isError: true, details: { mode: "management", results: [] } };
+		}
+		return externalJobFollowUpStarted({ sourceRunId: input.target.runId, runId, asyncDir, duplicate: true, interactive: input.ctx.hasUI, contract: { effectiveExecutionLifetime: verifiedLifetime.effectiveExecutionLifetime, timeoutMs: status?.timeoutMs, deadlineAt: status?.deadlineAt } });
 	}
 
 	const depthState = checkSubagentDepth(input.deps.config.maxSubagentDepth, input.deps.childRuntime);
@@ -1733,6 +1749,8 @@ async function resumeExternalJobFollowUp(input: {
 		runner: { type: "external-job", provider: runner.provider, options: runner.options },
 	};
 	const result = await executeAsyncSingle(runId, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
+		executionLifetime: input.executionLifetime,
+		timeoutMs: input.timeoutMs,
 		agent: input.target.agent,
 		task: input.followUp,
 		goal: input.followUp,
@@ -1779,7 +1797,7 @@ async function resumeExternalJobFollowUp(input: {
 		activeAsyncCapacity?.rollback();
 		return result;
 	}
-	return externalJobFollowUpStarted({ sourceRunId: input.target.runId, runId: result.details.asyncId ?? runId, asyncDir: result.details.asyncDir ?? asyncDir, interactive: input.ctx.hasUI });
+	return externalJobFollowUpStarted({ sourceRunId: input.target.runId, runId: result.details.asyncId ?? runId, asyncDir: result.details.asyncDir ?? asyncDir, interactive: input.ctx.hasUI, contract: result.details });
 }
 
 function resolveRequestedResumeTarget(params: SubagentParamsLike, deps: ExecutorDeps, parentSessionFile: string | null): ResumeSourceTarget | { kind: "live-nested"; target: ResolvedSubagentRunId & { kind: "nested" } } {
@@ -1922,7 +1940,15 @@ async function resumeAsyncRun(input: {
 	}
 	if (target.source === "async" && target.runner?.type === "external-job") {
 		if (attachChain) return { content: [{ type: "text", text: "External-job follow-up does not support chain attachment. Use action='resume' with message instead." }], isError: true, details: { mode: "management", results: [] } };
+		const timeout = resolveForegroundTimeout(input.params);
+		if (timeout.error) return buildRequestedModeError(input.params, timeout.error);
+		const lifetime = resolveExecutionLifetime(input.params.executionLifetime, timeout.timeoutMs);
+		if (lifetime.error) return buildRequestedModeError(input.params, lifetime.error);
 		const resumed = await resumeExternalJobFollowUp({
+			executionLifetime: input.params.executionLifetime,
+			timeoutMs: timeout.timeoutMs,
+			requestedLifetime: input.params.executionLifetime !== undefined || input.params.timeoutMs !== undefined || input.params.maxRuntimeMs !== undefined,
+			effectiveExecutionLifetime: lifetime.effectiveExecutionLifetime!,
 			target,
 			followUp,
 			baseAgentConfig,
@@ -2188,6 +2214,7 @@ async function resumeAsyncRun(input: {
 		...(recoveryDescriptor?.skills ? { skills: [...recoveryDescriptor.skills] } : {}),
 		...(acceptance !== undefined ? { acceptance } : {}),
 		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
+		executionLifetime: input.params.executionLifetime ?? foregroundContract?.executionLifetime ?? recoveryDescriptor?.executionLifetime,
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
 		...(input.params.toolBudget !== undefined ? { toolBudget: input.params.toolBudget } : {}),
 		// Recovery descriptors, remembered foreground runs, and current workflow roots
@@ -2819,14 +2846,14 @@ function applySingleAgentLaunchDefaults(params: SubagentParamsLike, agents: Agen
 	if ((params.chain?.length ?? 0) > 0 || (params.tasks?.length ?? 0) > 0 || !params.agent) return params;
 	const agent = agents.find((candidate) => candidate.name === params.agent);
 	if (!agent) return params;
-	const parentTimeoutMs = params.timeoutMs === undefined && params.maxRuntimeMs === undefined && agent.defaultTimeoutMs === undefined && params.workflowParentDeadlineAt !== undefined
+	const parentTimeoutMs = params.executionLifetime === undefined && params.timeoutMs === undefined && params.maxRuntimeMs === undefined && agent.defaultTimeoutMs === undefined && params.workflowParentDeadlineAt !== undefined
 		? Math.max(1, params.workflowParentDeadlineAt - Date.now())
 		: undefined;
 	const outputSchema = params.outputSchema === false ? false : resolveEffectiveOutputSchema(agent, params.outputSchema);
 	return {
 		...params,
 		...(params.async === undefined && agent.defaultAsync !== undefined ? { async: agent.defaultAsync } : {}),
-		...(params.timeoutMs === undefined && params.maxRuntimeMs === undefined && agent.defaultTimeoutMs !== undefined
+		...(params.executionLifetime === undefined && params.timeoutMs === undefined && params.maxRuntimeMs === undefined && agent.defaultTimeoutMs !== undefined
 			? { timeoutMs: agent.defaultTimeoutMs }
 			: {}),
 		...(parentTimeoutMs !== undefined ? { timeoutMs: parentTimeoutMs } : {}),
@@ -2889,6 +2916,7 @@ export function resolveConfigDefaultTimeoutMs(raw: unknown): number | undefined 
 }
 
 export function resolveForegroundTimeout(params: SubagentParamsLike, defaultTimeoutMs?: number): { timeoutMs?: number; error?: string } {
+	if (params.executionLifetime !== undefined) return resolveExecutionLifetime(params.executionLifetime);
 	const rawTimeout = params.timeoutMs;
 	const rawMaxRuntime = params.maxRuntimeMs;
 	if (rawTimeout === undefined && rawMaxRuntime === undefined) {
@@ -3453,6 +3481,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			extensionBindings: params.extensionBindings,
 			acceptance: params.acceptance,
 			timeoutMs: data.timeoutMs,
+			executionLifetime: data.params.executionLifetime,
 			toolBudget: data.toolBudget,
 			usageBudget: data.usageBudget,
 			configToolBudget: data.configToolBudget,
@@ -3477,7 +3506,7 @@ async function createSingleWorktreeSetup(
 	runId: string,
 	agent: string,
 	setupHook: ExtensionConfig["worktreeSetupHook"],
-	setupHookTimeoutMs: ExtensionConfig["worktreeSetupHookTimeoutMs"],
+	setupHookTimeoutMs: ExtensionConfig["worktreeSetupHookTimeoutMs"] | false,
 	baseDir: ExtensionConfig["worktreeBaseDir"],
 	baseRef: string | undefined,
 	provider: ExtensionConfig["worktreeProvider"],
@@ -3902,7 +3931,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		runId,
 		params.agent!,
 		deps.config.worktreeSetupHook,
-		deps.config.worktreeSetupHookTimeoutMs,
+		deps.config.worktreeSetupHookTimeoutMs ?? (params.executionLifetime?.mode === "unbounded" ? false : undefined),
 		deps.config.worktreeBaseDir,
 		params.baseRef,
 		deps.config.worktreeProvider,
@@ -4142,6 +4171,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				recordRun(params.agent!, cleanTask, result.exitCode, result.progressSummary?.durationMs ?? 0, result);
 			},
 			timeoutMs: data.timeoutMs,
+			executionLifetime: data.params.executionLifetime,
 			deadlineAt,
 			toolTimeoutMs: params.toolTimeoutMs,
 			configToolTimeoutMs: data.configToolTimeoutMs,
@@ -4199,6 +4229,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		mode: "single",
 		runId,
 		timeoutMs: data.timeoutMs,
+		effectiveExecutionLifetime: resolveExecutionLifetime(data.params.executionLifetime, data.timeoutMs).effectiveExecutionLifetime,
 		results: [r],
 		...(effectiveToolBudget.toolBudget ? { toolBudget: effectiveToolBudget.toolBudget } : {}),
 		progress: params.includeProgress ? allProgress : undefined,
@@ -4758,7 +4789,7 @@ export function prepareWorkflowLaunchParams(
 	const capabilityCeiling = intersectSubagentCapabilityCeilings(workflowDefaults.capabilityCeiling, options.capabilityCeiling);
 	const lane = normalizeWorkflowLaneMetadata(Object.hasOwn(childParams, "lane") ? childParams.lane : workflowDefaults.lane, `workflow child '${workflowKey}'.lane`);
 	assertWorkflowLaneKey(lane, workflowKey, `workflow child '${workflowKey}'.lane`);
-	const parentTimeoutMs = options.parentDeadlineAt === undefined
+	const parentTimeoutMs = childParams.executionLifetime !== undefined || workflowDefaults.executionLifetime !== undefined || options.parentDeadlineAt === undefined
 		|| childParams.timeoutMs !== undefined
 		|| childParams.maxRuntimeMs !== undefined
 		|| workflowDefaults.timeoutMs !== undefined
@@ -4772,6 +4803,10 @@ export function prepareWorkflowLaunchParams(
 		if (childParams.gate !== undefined || workflowDefaults.gate !== undefined) {
 			throw new Error("gate is not supported with retained resume; resume uses the retained child contract.");
 		}
+		const requestedExecutionLifetime = childParams.executionLifetime ?? workflowDefaults.executionLifetime;
+		const lifetime = resolveExecutionLifetime(requestedExecutionLifetime);
+		if (lifetime.error) throw new Error(lifetime.error);
+		const executionLifetime = requestedExecutionLifetime === undefined ? undefined : lifetime.effectiveExecutionLifetime;
 		const timeoutMs = childParams.timeoutMs ?? childParams.maxRuntimeMs ?? workflowDefaults.timeoutMs ?? workflowDefaults.maxRuntimeMs;
 		const toolBudget = childParams.toolBudget ?? workflowDefaults.toolBudget;
 		const intercomBridge = childParams.intercomBridge ?? workflowDefaults.intercomBridge;
@@ -4806,6 +4841,7 @@ export function prepareWorkflowLaunchParams(
 			...(options.runFanoutBudget ? { runFanoutBudget: { ...options.runFanoutBudget, parentPath: `${options.runFanoutBudget.parentPath ? `${options.runFanoutBudget.parentPath}/` : ""}workflow[${workflowKey}]` } } : {}),
 			...(options.missionDetached ? { mission: false } : {}),
 			...(timeoutMs !== undefined ? { timeoutMs: timeoutMs as number } : {}),
+			...omitUndefinedProperties({ executionLifetime }),
 			...(toolBudget !== undefined ? { toolBudget: toolBudget as ToolBudgetConfig } : {}),
 			...(control !== undefined ? { control } : {}),
 			...(intercomBridge !== undefined ? { intercomBridge: intercomBridge as IntercomBridgeConfig } : {}),
@@ -5079,6 +5115,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const workflowPermitContext = workflowPermitContexts.get(params);
 		const delegatedWorkflowPermit = workflowPermitContext && "root" in workflowPermitContext ? workflowPermitContext.root : undefined;
 		const workflowChildPermitLaunch = workflowPermitContext && "child" in workflowPermitContext ? workflowPermitContext.child : undefined;
+		if (params.executionLifetime === undefined && deps.childRuntime?.executionLifetime !== undefined) params = { ...params, executionLifetime: deps.childRuntime.executionLifetime };
 		if (!preserveActiveSession) deps.state.baseCwd = ctx.cwd;
 		deps.state.foregroundRuns ??= new Map();
 		deps.state.foregroundControls ??= new Map();
@@ -5116,6 +5153,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			});
 			return buildWorkflowValidationResult(validation, "management", workflowPreflight);
 		}
+		const lifetimeValidation = resolveExecutionLifetime(requestParams.executionLifetime);
+		if (lifetimeValidation.error) return buildRequestedModeError(requestParams, lifetimeValidation.error);
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
 		if (normalizedAction === "resume" && requestParams.extensionBindings !== undefined) return buildRequestedModeError(requestParams, "extensionBindings is not supported with action='resume'; resume uses the original retained child binding.");
 		let workflowResource: { permit: WorkflowResourcePermit; provenance: WorkflowResourceProvenance; authority: WorkflowResourceAuthority } | undefined;
@@ -5162,7 +5201,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 			}
 			const parentCwd = ctx.cwd;
-			const timeout = requestParams.timeoutMs ?? requestParams.maxRuntimeMs ?? (requestParams.async === false ? resolveConfigDefaultTimeoutMs(deps.config.timeoutMs) ?? DEFAULT_FOREGROUND_TIMEOUT_MS : undefined);
+			const lifetime = resolveForegroundTimeout(requestParams, requestParams.async === false ? resolveConfigDefaultTimeoutMs(deps.config.timeoutMs) ?? DEFAULT_FOREGROUND_TIMEOUT_MS : undefined);
+			if (lifetime.error) return buildRequestedModeError(requestParams, lifetime.error);
+			const timeout = lifetime.timeoutMs;
+			const effectiveExecutionLifetime = resolveExecutionLifetime(requestParams.executionLifetime, timeout).effectiveExecutionLifetime!;
 			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
 			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);
 			const workflowCwd = resolveRequestedCwd(parentCwd, requestParams.cwd);
@@ -5243,6 +5285,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const detachWorkflowChildMissions = autoMission || missionBinding !== undefined || requestParams.mission === false;
 			const workflowState = missionBinding ? createMissionWorkflowState(missionBinding.location, missionBinding.missionId) : undefined;
 			const attachWorkflowMission = (result: AgentToolResult<Details>): AgentToolResult<Details> => {
+				result = { ...result, details: { ...result.details, effectiveExecutionLifetime } };
 				if (!missionBinding) return missionWarning ? { ...result, details: { ...result.details, missionWarning } } : result;
 				try {
 					return attachMissionToLaunchResult({ binding: missionBinding, result });
@@ -5290,6 +5333,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					state: "running",
 					startedAt,
 					lastUpdate: startedAt,
+					effectiveExecutionLifetime,
 					...(timeout !== undefined ? { deadlineAt: startedAt + timeout, timeoutMs: timeout } : {}),
 					cwd: workflowCwd,
 					...(workflowSessionRoot ? { sessionRoot: workflowSessionRoot } : {}),
@@ -5477,7 +5521,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					status.toolCount = toolCounts.length > 0 ? toolCounts.reduce((total, count) => total + count, 0) : undefined;
 					status.currentStep = runningSteps.length === 1 ? steps.indexOf(runningSteps[0]!) : undefined;
 				};
-				const workflowJob: AsyncJobState = { asyncId: workflowRunId, asyncDir, toolCallId, cwd: workflowCwd, ...(workflowSessionRoot ? { sessionRoot: workflowSessionRoot } : {}), status: "running", sessionId: currentSessionId ?? undefined, mode: "workflow", agents: [], steps: [], ...(workflowPreflight ? { preflight: workflowPreflight } : {}), startedAt, updatedAt: startedAt, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), ...(timeout !== undefined ? { timeoutMs: timeout, deadlineAt: startedAt + timeout } : {}), workflow: status.workflow, workflowChildren: status.workflowChildren };
+				const workflowJob: AsyncJobState = { asyncId: workflowRunId, asyncDir, toolCallId, cwd: workflowCwd, ...(workflowSessionRoot ? { sessionRoot: workflowSessionRoot } : {}), status: "running", sessionId: currentSessionId ?? undefined, mode: "workflow", agents: [], steps: [], ...(workflowPreflight ? { preflight: workflowPreflight } : {}), startedAt, updatedAt: startedAt, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), effectiveExecutionLifetime, ...(timeout !== undefined ? { timeoutMs: timeout, deadlineAt: startedAt + timeout } : {}), workflow: status.workflow, workflowChildren: status.workflowChildren };
 				deps.state.asyncJobs.set(workflowRunId, workflowJob);
 				deps.state.fleetJobs ??= new Map();
 				deps.state.fleetJobs.set(workflowRunId, workflowJob);
@@ -7260,6 +7304,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 
 		const attachMission = (result: AgentToolResult<Details>): AgentToolResult<Details> => {
+			result = { ...result, details: { ...result.details, effectiveExecutionLifetime: resolveExecutionLifetime(effectiveParams.executionLifetime, foregroundTimeout.timeoutMs).effectiveExecutionLifetime } };
 			if (!missionBinding) return missionWarning ? { ...result, details: { ...result.details, missionWarning } } : result;
 			try {
 				return attachMissionToLaunchResult({ binding: delegatedExecution ? { ...missionBinding, announceInContent: false } : missionBinding, result });

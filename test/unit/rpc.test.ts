@@ -103,6 +103,10 @@ describe("subagent extension RPC bridge", () => {
 			true,
 		);
 		assert.deepEqual(
+			(reply as { data: { capabilities?: { executionLifetime?: unknown } } }).data.capabilities?.executionLifetime,
+			{ version: 1, modes: ["unbounded", "bounded"] },
+		);
+		assert.deepEqual(
 			(reply as { data: { capabilities?: { managementActions?: unknown } } }).data.capabilities?.managementActions,
 			["schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.delete"],
 		);
@@ -648,10 +652,11 @@ describe("subagent extension RPC bridge", () => {
 			},
 		});
 
-		const reply = await request(events, "spawn-structured", "spawn", { agent: "worker", task: "Do work" });
+		const reply = await request(events, "spawn-structured", "spawn", { agent: "worker", task: "Do work", executionLifetime: { mode: "unbounded" } });
 		assert.equal(reply.success, true);
 		assert.equal(executedParams.agent, "worker");
 		assert.equal(executedParams.task, "Do work");
+		assert.deepEqual(executedParams.executionLifetime, { mode: "unbounded" });
 		assert.equal(executedParams.async, true);
 		assert.equal(executedParams.output, true);
 		assert.equal(executedParams.workflowScript, undefined);

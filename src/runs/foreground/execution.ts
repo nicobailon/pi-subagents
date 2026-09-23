@@ -432,6 +432,7 @@ async function runSingleAttempt(
 		maxSubagentDepth: options.maxSubagentDepth,
 		runtimeSnapshotHost: options.runtimeSnapshotHost,
 		inherited: options.childRuntime,
+		executionLifetime: options.executionLifetime,
 		host: "parent",
 	});
 	if (!options.machine && options.parentProviderRegistry) launch.session.parentProviderRegistry = options.parentProviderRegistry;
@@ -1262,7 +1263,7 @@ async function runSingleAttempt(
 			toolTimeoutHardFinishTimer.unref?.();
 		};
 		const armToolTimeout = (event: { toolCallId?: unknown; toolName: string }): void => {
-			const timeoutForTool = effectiveToolTimeoutMs(event.toolName, options.toolTimeoutMs);
+			const timeoutForTool = effectiveToolTimeoutMs(event.toolName, options.toolTimeoutMs, options.executionLifetime);
 			if (timeoutForTool === undefined) return;
 			const elapsed = Date.now() - startTime;
 			const runRemaining = attemptTimeout ? Math.max(0, attemptTimeout.remainingMs - elapsed) : undefined;
@@ -1667,6 +1668,7 @@ async function runSyncCompletionInner(
 		}, options.context));
 	}
 	const toolTimeout = resolveToolTimeoutMs({
+		executionLifetime: options.executionLifetime,
 		callValue: options.toolTimeoutMs,
 		agentValue: agent.defaultToolTimeoutMs,
 		configValue: options.configToolTimeoutMs,

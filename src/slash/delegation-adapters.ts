@@ -125,6 +125,7 @@ export interface DelegatedSubagentExecutionParams {
 	context: "fresh" | "fork";
 	model?: string;
 	cwd: string;
+	executionLifetime?: import("../shared/types.ts").ExecutionLifetime;
 	timeoutMs?: number;
 	toolBudget?: ToolBudgetConfig;
 	skill?: string | string[] | boolean;
@@ -307,7 +308,7 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
 }
 
 export function toSubagentDelegationExecutionParams(request: SubagentDelegationRequest): DelegatedSubagentExecutionParams {
-	return {
+	const params: DelegatedSubagentExecutionParams = {
 		agent: request.agent,
 		task: request.task,
 		context: request.context,
@@ -326,6 +327,8 @@ export function toSubagentDelegationExecutionParams(request: SubagentDelegationR
 		foregroundOnly: true,
 		clarify: false,
 	};
+	if (request.executionLifetime !== undefined) params.executionLifetime = request.executionLifetime;
+	return params;
 }
 
 export function toSubagentDelegationUpdate(

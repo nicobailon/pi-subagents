@@ -35,6 +35,7 @@ export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChil
 		: "";
 	return buildInProcessChildLaunch({
 		machine: step.machine,
+		executionLifetime: step.executionLifetime,
 		remoteSkillNames: step.skills,
 		remoteReads: step.remoteReads,
 		parentSessionId: step.parentSessionId,

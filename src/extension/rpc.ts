@@ -449,6 +449,7 @@ function pingData(ctx: ExtensionContext | null) {
 			fleetStatus: { version: 1 },
 			asyncStatusSnapshot: { kind: ASYNC_STATUS_SNAPSHOT_KIND, version: ASYNC_STATUS_SNAPSHOT_VERSION },
 			asyncSpawn: true,
+			executionLifetime: { version: 1, modes: ["unbounded", "bounded"] },
 			steer: true,
 			nonRecoveringSteer: true,
 			interrupt: true,

@@ -33,6 +33,7 @@ export interface SubagentDelegationRequest {
 	cwd: string;
 	model?: string;
 	thinking?: SubagentDelegationThinking;
+	executionLifetime?: import("../shared/types.ts").ExecutionLifetime;
 	timeoutMs?: number;
 	toolBudget?: SubagentDelegationToolBudget;
 	skill?: string | string[] | boolean;

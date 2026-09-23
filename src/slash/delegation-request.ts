@@ -1,3 +1,4 @@
+import { resolveExecutionLifetime } from "../runs/shared/execution-lifetime.ts";
 import {
 	type SubagentDelegationRequest,
 } from "../api/delegation.ts";
@@ -21,6 +22,7 @@ const supportedFields = new Set([
 	"model",
 	"thinking",
 	"timeoutMs",
+	"executionLifetime",
 	"toolBudget",
 	"skill",
 	"artifacts",
@@ -77,6 +79,8 @@ export function parseSubagentDelegationRequest(data: unknown): SubagentDelegatio
 	if (value.timeoutMs !== undefined && (typeof value.timeoutMs !== "number" || !Number.isInteger(value.timeoutMs) || value.timeoutMs < 1)) {
 		return { ok: false, ...identity, error: "timeoutMs must be an integer >= 1." };
 	}
+	const lifetime = resolveExecutionLifetime(value.executionLifetime);
+	if (lifetime.error) return { ok: false, ...identity, error: lifetime.error };
 	const timeoutMs = typeof value.timeoutMs === "number" ? value.timeoutMs : undefined;
 	if (timeoutMs !== undefined && timeoutMs > 2_147_483_647) {
 		return { ok: false, ...identity, error: "timeoutMs must be <= 2147483647." };

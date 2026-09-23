@@ -31,6 +31,9 @@ interface ExecutorResult {
 		runId?: string;
 		results?: Array<{ agent?: string; finalOutput?: string; sessionFile?: string; acceptance?: { status?: string }; artifactPaths?: { metadataPath?: string } }>;
 		asyncId?: string;
+		effectiveExecutionLifetime?: { mode: string; timeoutMs?: number };
+		timeoutMs?: number;
+		deadlineAt?: number;
 		workflow?: { value?: unknown };
 	};
 }
@@ -570,14 +573,22 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			}, null, 2), "utf-8");
 			const { executor } = makeExecutor({ agents: [makeAgent("gpt-pro", { runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } })] });
 
-			const first = await executor.execute("resume-external-job-first", { action: "resume", id: sourceRunId, message: followUpMessage }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			const first = await executor.execute("resume-external-job-first", { action: "resume", id: sourceRunId, message: followUpMessage, executionLifetime: { mode: "bounded", timeoutMs: 60_000 } }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.equal(first.isError, undefined, first.content[0]?.text ?? "follow-up failed");
 			assert.equal(first.details?.asyncId, expectedRunId);
+			assert.deepEqual(first.details?.effectiveExecutionLifetime, { mode: "bounded", timeoutMs: 60_000 });
 
 			const duplicate = await executor.execute("resume-external-job-duplicate", { action: "resume", id: sourceRunId, message: followUpMessage }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.equal(duplicate.isError, undefined, duplicate.content[0]?.text ?? "duplicate failed");
 			assert.equal(duplicate.details?.asyncId, expectedRunId);
 			assert.match(duplicate.content[0]?.text ?? "", /already exists/);
+			assert.deepEqual(duplicate.details?.effectiveExecutionLifetime, first.details?.effectiveExecutionLifetime);
+			const conflicting = await executor.execute("resume-external-job-conflicting", { action: "resume", id: sourceRunId, message: followUpMessage, executionLifetime: { mode: "unbounded" } }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(conflicting.isError, true);
+			assert.match(conflicting.content[0]?.text ?? "", /different execution contract/);
+			const malformed = await executor.execute("resume-external-job-malformed", { action: "resume", id: sourceRunId, message: followUpMessage, executionLifetime: { mode: "bounded", timeoutMs: 0 } }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(malformed.isError, true);
+			assert.match(malformed.content[0]?.text ?? "", /executionLifetime/);
 
 			const resultPath = path.join(RESULTS_DIR, `${expectedRunId}.json`);
 			const deadline = Date.now() + 10_000;

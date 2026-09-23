@@ -1,3 +1,4 @@
+import { resolveExecutionLifetime } from "../shared/execution-lifetime.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DIRS, type AcceptanceInput, type AsyncStatus, type SteeringRecoveryDescriptor, type SubagentRunMode } from "../../shared/types.ts";
@@ -323,7 +324,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': expected an object.`);
 	const parsed = value as Record<string, unknown>;
 	const allowedFields = new Set([
-		"modelResponseAliases", "version", "launchContractDigest", "sourceRunId", "agentContract", "agent", "sessionFile", "cwd", "model", "modelProvider", "modelOverrideFromParent", "modelOrigin", "fast", "thinking", "thinkingCeiling", "tools", "allowNestedSubagents", "allowedAgents", "extensions",
+		"executionLifetime", "effectiveExecutionLifetime", "modelResponseAliases", "version", "launchContractDigest", "sourceRunId", "agentContract", "agent", "sessionFile", "cwd", "model", "modelProvider", "modelOverrideFromParent", "modelOrigin", "fast", "thinking", "thinkingCeiling", "tools", "allowNestedSubagents", "allowedAgents", "extensions",
 		"subagentOnlyExtensions", "mcpDirectTools", "excludeTools", "mutationTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "skills",
 		"skillPath", "agentFilePath", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "context", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
@@ -333,6 +334,10 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	]);
 	for (const field of Object.keys(parsed)) {
 		if (!allowedFields.has(field)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': unknown field '${field}'.`);
+	}
+	for (const field of ["executionLifetime", "effectiveExecutionLifetime"] as const) {
+		const lifetime = resolveExecutionLifetime(parsed[field]);
+		if (lifetime.error) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field}: ${lifetime.error}`);
 	}
 	const requiredStrings = ["sourceRunId", "agent", "cwd", "systemPromptMode", "outputMode"] as const;
 	for (const field of requiredStrings) {

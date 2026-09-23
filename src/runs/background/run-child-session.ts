@@ -391,7 +391,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 			abortChild();
 		};
 		const armToolTimeout = (event: { toolCallId?: unknown; toolName: string }): void => {
-			const timeoutForTool = effectiveToolTimeoutMs(event.toolName, input.toolTimeoutMs);
+			const timeoutForTool = effectiveToolTimeoutMs(event.toolName, input.toolTimeoutMs, input.launch.config.executionLifetime);
 			if (timeoutForTool === undefined) return;
 			const runRemaining = input.runDeadlineAt === undefined ? undefined : Math.max(0, input.runDeadlineAt - Date.now());
 			if (runRemaining !== undefined && timeoutForTool >= runRemaining) return;

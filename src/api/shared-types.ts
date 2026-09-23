@@ -11,6 +11,7 @@ export {
 	type ControlEvent,
 	type Details,
 	type ExecutionProjection,
+	type ExecutionLifetime,
 	type ExternalJobRunnerStatus,
 	type ExternalJobStatus,
 	type IntercomBridgeConfig,

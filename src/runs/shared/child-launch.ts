@@ -45,11 +45,11 @@ export const MCP_DIRECT_TOOLS_ENV = "MCP_DIRECT_TOOLS";
  * launches inherits. Serialized into the background runner config; the
  * foreground path passes the executor's full `ChildRuntimeConfig`.
  */
-export type InheritedChildRuntime = Pick<ChildRuntimeConfig, "depth" | "maxDepth" | "nestedRoute" | "nestedParent" | "capabilityCeiling" | "thinkingCeiling" | "runFanoutBudget" | "requiredExtensions">;
+export type InheritedChildRuntime = Pick<ChildRuntimeConfig, "executionLifetime" | "depth" | "maxDepth" | "nestedRoute" | "nestedParent" | "capabilityCeiling" | "thinkingCeiling" | "runFanoutBudget" | "requiredExtensions">;
 
 export function inheritedChildRuntime(config: ChildRuntimeConfig | undefined): InheritedChildRuntime | undefined {
 	if (!config) return undefined;
-	return {
+	const inherited: InheritedChildRuntime = {
 		depth: config.depth,
 		...(config.maxDepth !== undefined ? { maxDepth: config.maxDepth } : {}),
 		...(config.nestedRoute ? { nestedRoute: config.nestedRoute } : {}),
@@ -59,9 +59,12 @@ export function inheritedChildRuntime(config: ChildRuntimeConfig | undefined): I
 		...(config.runFanoutBudget ? { runFanoutBudget: config.runFanoutBudget } : {}),
 		...(config.requiredExtensions ? { requiredExtensions: config.requiredExtensions } : {}),
 	};
+	if (config.executionLifetime) inherited.executionLifetime = config.executionLifetime;
+	return inherited;
 }
 
 export interface BuildInProcessChildLaunchInput {
+	executionLifetime?: ChildRuntimeConfig["executionLifetime"];
 	machine?: HerdrMachineReference;
 	remoteSkillNames?: string[];
 	remoteReads?: string[] | false;
@@ -295,6 +298,8 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		...(toolPlan.effectiveMcpTools.length > 0 ? { mcpDirectTools: toolPlan.effectiveMcpTools } : {}),
 		fast: input.fast === true,
 	};
+	const executionLifetime = input.executionLifetime ?? inherited?.executionLifetime;
+	if (executionLifetime) config.executionLifetime = executionLifetime;
 	const capturedHooks = createCapturedChildHooks(config);
 
 	const extensionPaths = toolPlan.extensionArgs.filter((extensionPath) => !isSubagentRuntimeExtensionPath(extensionPath));

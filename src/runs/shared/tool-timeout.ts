@@ -1,3 +1,5 @@
+import type { ExecutionLifetime } from "../../shared/types.ts";
+
 export const TOOL_TIMEOUT_ENV = "PI_SUBAGENT_TOOL_TIMEOUT_MS";
 
 /** Maximum delay a Node.js timer accepts without overflow. */
@@ -31,8 +33,9 @@ export function defaultToolTimeoutMs(toolName: string | undefined): number | und
 		: undefined;
 }
 
-export function effectiveToolTimeoutMs(toolName: string | undefined, configuredToolTimeoutMs: number | undefined): number | undefined {
+export function effectiveToolTimeoutMs(toolName: string | undefined, configuredToolTimeoutMs: number | undefined, executionLifetime?: ExecutionLifetime): number | undefined {
 	if (isToolTimeoutExempt(toolName)) return undefined;
+	if (executionLifetime?.mode === "unbounded") return configuredToolTimeoutMs;
 	return configuredToolTimeoutMs ?? defaultToolTimeoutMs(toolName);
 }
 
@@ -47,7 +50,8 @@ export function toolTimeoutCallKey(event: { toolCallId?: unknown; toolName?: unk
 }
 
 export interface ToolTimeoutResolutionInput {
-	/** Per-call value from the subagent tool params (highest precedence). */
+	executionLifetime?: ExecutionLifetime;
+	/** Explicit launch-call budget; the only source honored in unbounded mode. */
 	callValue?: unknown;
 	/** Agent frontmatter default (second precedence). */
 	agentValue?: number;
@@ -64,13 +68,14 @@ export function resolveToolTimeoutMs(input: ToolTimeoutResolutionInput): { toolT
 		{ label: "agent.toolTimeoutMs", value: input.agentValue },
 		{ label: "config.toolTimeoutMs", value: input.configValue },
 	];
+	if (input.executionLifetime?.mode === "unbounded") candidates.splice(1);
 	let winner: { label: string; value: unknown } | undefined;
 	for (const candidate of candidates) {
 		if (candidate.value === undefined) continue;
 		winner = candidate;
 		break;
 	}
-	if (winner === undefined && input.envValue !== undefined && input.envValue.trim() !== "") {
+	if (winner === undefined && input.executionLifetime?.mode !== "unbounded" && input.envValue !== undefined && input.envValue.trim() !== "") {
 		winner = { label: TOOL_TIMEOUT_ENV, value: input.envValue };
 	}
 	if (winner === undefined) return {};
