@@ -15,12 +15,22 @@ import { PROMPT_REDACTED } from "./utils.ts";
  * The name is display-only metadata. When the intercom bridge is active the
  * child keeps its machine intercom target as the session name instead — that
  * name is a routing address and must win (see subagent-prompt-runtime).
+ * The readable name is then persisted separately as a `pi-subagents.child-display`
+ * custom entry so hosts can label the session without changing its route.
  */
 
 /** Longest task excerpt kept in the name; the full string is capped below. */
 const TASK_EXCERPT_MAX_CHARS = 60;
 /** Hard cap on the final name so host UI rows stay one line. */
 export const CHILD_SESSION_NAME_MAX_CHARS = 80;
+/** Session custom entry that preserves a display name beside an intercom route. */
+export const CHILD_DISPLAY_CUSTOM_TYPE = "pi-subagents.child-display";
+
+export interface ChildDisplayMetadata {
+	version: 1;
+	displayName: string;
+	routingName: string;
+}
 
 export function deriveChildSessionName(input: {
 	agent?: string;

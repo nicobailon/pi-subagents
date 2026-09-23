@@ -1060,6 +1060,32 @@ describe("subagent prompt runtime", () => {
 		assert.equal(sessionName, "subagent-worker-78f659a3");
 	});
 
+	it("keeps the readable child name when the intercom route owns the session name", async () => {
+		const entries: Array<{ customType: string; data: unknown }> = [];
+		let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) | undefined;
+
+		registerSubagentPromptRuntime({
+			on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) {
+				if (event === "before_agent_start") beforeAgentStart = handler;
+			},
+			getAllTools: () => [{ name: "intercom" }, { name: "contact_supervisor" }],
+			appendEntry(customType: string, data: unknown) {
+				entries.push({ customType, data });
+			},
+		} as { on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void; getAllTools(): Array<{ name: string }>; appendEntry(customType: string, data: unknown): void }, childConfig({ intercomSessionName: "subagent-worker-78f659a3", sessionName: "worker: display name" }));
+
+		await beforeAgentStart?.({ systemPrompt: BASE_PROMPT });
+
+		assert.deepEqual(entries, [{
+			customType: "pi-subagents.child-display",
+			data: {
+				version: 1,
+				displayName: "worker: display name",
+				routingName: "subagent-worker-78f659a3",
+			},
+		}]);
+	});
+
 	it("rewrites the final child-visible prompt through before_agent_start", async () => {
 		let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) | undefined;
 		registerSubagentPromptRuntime({

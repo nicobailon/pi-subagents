@@ -18,6 +18,7 @@ import type { ChildWatchdogConfig } from "../../watchdog/child-status.ts";
 import { requestWatchdogPermission, type WatchdogPermissionRequest, type WatchdogPermissionResult } from "../../watchdog/permission-arbiter.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../watchdog/types.ts";
 import { captureWatchdogDiffBaseline, createWatchdogDiffTool, WATCHDOG_DIFF_TOOL_NAME } from "../../watchdog/diff-tool.ts";
+import { CHILD_DISPLAY_CUSTOM_TYPE, type ChildDisplayMetadata } from "../../shared/child-session-name.ts";
 import { inheritedNestedRouteOf } from "./nested-events.ts";
 import { registerWaitTool } from "../background/wait-tool.ts";
 import { drainOutstandingWork } from "../background/auto-drain.ts";
@@ -536,6 +537,14 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 		const childSessionName = config.intercomSessionName || config.sessionName;
 		if (childSessionName && typeof pi.setSessionName === "function") {
 			pi.setSessionName(childSessionName);
+		}
+		// The route still owns session_info, but hosts need the human-readable
+		// name without parsing or replacing the intercom address.
+		const displayName = config.sessionName?.trim();
+		const routingName = config.intercomSessionName?.trim();
+		if (displayName && routingName && displayName !== routingName && typeof pi.appendEntry === "function") {
+			const metadata: ChildDisplayMetadata = { version: 1, displayName, routingName };
+			pi.appendEntry(CHILD_DISPLAY_CUSTOM_TYPE, metadata);
 		}
 
 		const { inheritProjectContext, inheritGlobalContext, inheritSkills } = config;

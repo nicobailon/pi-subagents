@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- Preserve a child agent's readable name as `pi-subagents.child-display` session metadata when its intercom route owns the session name, without changing the routing address. Thanks to [@Q-xuan](https://github.com/Q-xuan).
 - `/prompt-workflow` now finds prompt files that are symlinks (as installed by dotfile managers such as GNU Stow or homeshick), and skips dangling links instead of failing. Thanks to [@nietaki](https://github.com/nietaki) for [#2430](https://github.com/nicobailon/pi-subagents/issues/2430).
 - A `runs.run`/`runs.all` workflow child without an `agent` now fails with an error naming that child (`Workflow child 'r1' has no agent…`) instead of the generic "Provide exactly one mode" message. Thanks to [@matthewmathistrellys](https://github.com/matthewmathistrellys) for raising the confusing error in [#2422](https://github.com/nicobailon/pi-subagents/issues/2422).
 - When a background runner exits before writing a result, the failure notification now includes the runner's exit code and signal alongside its PID, even when the full process tree could not be verified. Thanks to [@grahama1970](https://github.com/grahama1970) for [#2423](https://github.com/nicobailon/pi-subagents/issues/2423).
