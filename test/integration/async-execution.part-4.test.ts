@@ -595,7 +595,8 @@ setTimeout(() => process.exit(90), 15000).unref();
 			});
 
 			const payload = await readAsyncPayload(id);
-			const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+			// The runner publishes the result before the terminal status (#1988).
+			const status = await waitForAsyncState(id, (candidate) => candidate.state !== "running" && candidate.state !== "queued");
 			const child = payload.results[0]!;
 			assert.equal(payload.success, false);
 			assert.equal(payload.state, "failed");
