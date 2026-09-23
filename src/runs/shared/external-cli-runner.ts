@@ -6,6 +6,7 @@ import { finished } from "node:stream/promises";
 import type { ExternalProcessStatus, ProcessTreeTerminal } from "../../shared/types.ts";
 import { createOwnedProcessTreeController, type OwnedProcessTreeController } from "../background/owned-process-tree.ts";
 import { omitExtensionBindingsEnv } from "./extension-bindings.ts";
+import { omitInheritedGitRepositoryEnv } from "./inherited-git-env.ts";
 import {
 	invalidateExternalCliPreflight,
 	preflightExternalCli,
@@ -86,7 +87,7 @@ function narrowLimit(value: number | undefined, ceiling: number, label: string):
 }
 
 function externalEnvironment(allowlist: readonly string[] | undefined, values: Readonly<Record<string, string>> | undefined): NodeJS.ProcessEnv {
-	if (!allowlist) return omitExtensionBindingsEnv(process.env);
+	if (!allowlist) return omitInheritedGitRepositoryEnv(omitExtensionBindingsEnv(process.env));
 	const allowed = new Set(allowlist);
 	const env: NodeJS.ProcessEnv = {};
 	for (const key of allowed) {

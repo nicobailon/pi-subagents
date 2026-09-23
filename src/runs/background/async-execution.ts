@@ -86,6 +86,7 @@ import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeili
 import { resolveLaunchBinding } from "../../shared/launch-contract.ts";
 import { resolvePermissionRules, type PermissionConfig } from "../shared/permissions.ts";
 import { normalizeExtensionBindings, omitExtensionBindingsEnv, type ExtensionBindings } from "../shared/extension-bindings.ts";
+import { omitInheritedGitRepositoryEnv } from "../shared/inherited-git-env.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
 import { resolveRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
 
@@ -725,7 +726,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 				? [...preload, "--experimental-strip-types", runner, cfgPath]
 				: [...preload, jitiCliPath!, runner, cfgPath];
 		const runnerEnv: NodeJS.ProcessEnv = {
-			...omitExtensionBindingsEnv(process.env),
+			...omitInheritedGitRepositoryEnv(omitExtensionBindingsEnv(process.env)),
 			...childCacheRetentionEnv(),
 			[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: binaryHost ? undefined : piPackageRoot,
 			// npm must override inherited bundled layouts (#2071); binaries retain release assets.

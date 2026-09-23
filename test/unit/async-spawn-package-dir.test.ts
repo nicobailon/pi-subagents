@@ -149,3 +149,55 @@ test("npm detached launch fails closed when the detected package root is absent"
 		fs.rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("detached spawn drops inherited Git repository routing variables and keeps other environment", async (t) => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "git-env-spawn-"));
+	const inherited = {
+		GIT_DIR: "/outer/repo/.git",
+		GIT_WORK_TREE: "/outer/repo",
+		GIT_INDEX_FILE: "/outer/repo/.git/index",
+		GIT_COMMON_DIR: "/outer/repo/.git",
+		GIT_CONFIG_COUNT: "1",
+		GIT_CONFIG_KEY_0: "core.hooksPath",
+		GIT_CONFIG_VALUE_0: "/outer/hooks",
+		GIT_CONFIG_PARAMETERS: "'core.bare'='true'",
+		GIT_AUTHOR_NAME: "Kept Author",
+		GIT_ENV_SENTINEL_KEEP: "kept",
+	};
+	const previous = Object.fromEntries(Object.keys(inherited).map((key) => [key, process.env[key]]));
+	Object.assign(process.env, inherited);
+	const spawn = t.mock.method(childProcess, "spawn", () => {
+		throw new Error("spawn boundary captured");
+	});
+	syncBuiltinESMExports();
+	try {
+		const { executeAsyncSingle: launch } = await import("../../src/runs/background/async-execution.ts");
+		const result = launch("spawn-git-env", {
+			agent: "worker",
+			task: "Inspect git env",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd, currentSessionId: "spawn-git-env" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(cwd, "sessions"),
+			maxSubagentDepth: 1,
+			acceptance: false,
+		});
+		assert.match(result.content[0]!.text, /spawn boundary captured/);
+		const env = spawn.mock.calls[0]!.arguments[2].env;
+		for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "GIT_CONFIG_PARAMETERS"]) {
+			assert.equal(env[key], undefined, key);
+		}
+		assert.equal(env.GIT_AUTHOR_NAME, "Kept Author");
+		assert.equal(env.GIT_ENV_SENTINEL_KEEP, "kept");
+		assert.ok(env.PI_PACKAGE_DIR, "launch-owned variables are still set");
+	} finally {
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
+		for (const [key, value] of Object.entries(previous)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});

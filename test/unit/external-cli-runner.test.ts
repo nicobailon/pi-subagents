@@ -43,6 +43,30 @@ describe("external CLI runner", () => {
 		}
 	});
 
+	it("does not pass inherited Git repository routing variables to the external process", async () => {
+		const dir = tempDir();
+		const previous = { GIT_DIR: process.env.GIT_DIR, GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME };
+		process.env.GIT_DIR = "/outer/repo/.git";
+		process.env.GIT_AUTHOR_NAME = "Kept Author";
+		try {
+			const result = await runExternalCli({
+				command: process.execPath,
+				args: ["-e", "process.stdout.write(JSON.stringify({ dir: process.env.GIT_DIR ?? null, author: process.env.GIT_AUTHOR_NAME ?? null }))"],
+				cwd: dir,
+				prompt: "x",
+				asyncDir: dir,
+				stepIndex: 0,
+			});
+			assert.equal(result.exitCode, 0);
+			assert.deepEqual(JSON.parse(result.output), { dir: null, author: "Kept Author" });
+		} finally {
+			for (const [key, value] of Object.entries(previous)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	});
+
 	it("delivers the combined prompt only through stdin and preserves argv", async () => {
 		const dir = tempDir();
 		const prompt = buildExternalCliPrompt("Follow exactly.", "Review $HOME; echo nope");
