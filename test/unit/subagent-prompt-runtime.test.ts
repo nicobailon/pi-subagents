@@ -1009,6 +1009,30 @@ describe("subagent prompt runtime", () => {
 		}
 	});
 
+	it("does not reject its own registered structured output when the initial tool snapshot omits it", () => {
+		const diagnostics: Array<ChildToolDiagnostic | undefined> = [];
+		const handlers = new Map<string, (payload?: unknown) => unknown>();
+		const registered: string[] = [];
+		const config = childConfig({
+			agent: "review-companion",
+			requiredTools: ["read", "structured_output"],
+			structuredOutput: { schema: { type: "object" }, capture() {} },
+			toolDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+		});
+		registerSubagentPromptRuntime({
+			on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); },
+			getAllTools: () => [{ name: "read" }],
+			registerTool(tool: { name: string }) { registered.push(tool.name); },
+		} as never, config);
+		assert.ok(registered.includes("structured_output"));
+		assert.doesNotThrow(() => handlers.get("agent_start")?.({}));
+		assert.equal(diagnostics.at(-1), undefined);
+
+		config.requiredTools = ["read", "structured_output", "fixture_search"];
+		assert.throws(() => handlers.get("agent_start")?.({}), /requested unavailable child tools: fixture_search/);
+		assert.deepEqual(diagnostics.at(-1)?.missing, ["fixture_search"]);
+	});
+
 	it("classifies missing resolved MCP direct tools without softening strict diagnostics", () => {
 		{
 			const diagnostics: Array<ChildToolDiagnostic | undefined> = [];

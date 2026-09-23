@@ -496,7 +496,11 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 	});
 	onRuntimeEvent("agent_start", () => {
 		if (!config.requiredTools) return;
-		const diagnostic = evaluateChildToolDiagnostic(config, pi.getAllTools().map((tool) => tool.name));
+		const available = pi.getAllTools().map((tool) => tool.name);
+		// The child registers its own structured_output tool, but getAllTools can omit it at agent_start.
+		// A missing or invalid call still fails the structured-output gate at settlement.
+		if (config.structuredOutput && !available.includes("structured_output")) available.push("structured_output");
+		const diagnostic = evaluateChildToolDiagnostic(config, available);
 		config.toolDiagnostic?.(diagnostic);
 		if (diagnostic) throw new Error(formatChildToolDiagnostic(diagnostic));
 	});
