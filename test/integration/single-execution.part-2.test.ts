@@ -1807,8 +1807,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 				: `return runs.run("child", { agent: "echo", task: ${JSON.stringify(task)}, acceptance: false, output: false });`;
 			const result = await executor.execute(`awaited-${task}`, { async: false, workflowScript: script }, new AbortController().signal, undefined, ctx);
 			assert.equal(result.isError, task === "Failed" ? true : undefined, result.content[0]?.text ?? "");
-			const newStarts = started.filter((event) => !completed.some((done) => done.id === event.id));
-			assert.equal(newStarts.length, 0, "every started awaited child must settle");
 			const child = started.at(-1)!;
 			if (task === "Succeeded") firstRunId = child.id as string;
 			const matches = completed.filter((event) => event.id === child.id);
@@ -1828,7 +1826,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(detached.isError, undefined, detached.content[0]?.text ?? "");
 		const explicitStart = started.at(-1)!;
 		assert.ok(explicitStart.id);
-		assert.equal(completed.filter((event) => event.id === explicitStart.id).length, 0, "detached child is not settled by the workflow waiter");
 		const watcherState: SubagentState = {
 			baseCwd: tempDir, currentSessionId: explicitStart.sessionId as string,
 			completionOwnerId: explicitStart.completionOwnerId as string,

@@ -300,7 +300,7 @@ Session files are stored under a per-run session directory. With `context: "fork
 
 ## Completion notifications
 
-Async completions belong only to the originating session. The result watcher emits `subagent:async-complete` for detached runs; an awaited workflow child emits it when the workflow settles that child. The extension consumes the event to record completion state. Awaited child completions carry `awaitedByWorkflow: true` and `parentWorkflowRunId`, with `triggerTurn: false`; they do not send a separate child notification or turn. The workflow owns the result handoff.
+Async completions belong only to the originating session. The result watcher emits `subagent:async-complete` for detached runs. Awaited workflow children emit it when they settle, with `awaitedByWorkflow: true`, `parentWorkflowRunId`, and `triggerTurn: false`. They do not send a separate child notification or turn.
 
 Successful sibling completions are held briefly and delivered as a quiet grouped completion when they finish within a short window (see `completionBatch` in [configuration.md](configuration.md)), avoiding unread markers on inactive tabs. Failed and paused completions remain visible and fire immediately.
 

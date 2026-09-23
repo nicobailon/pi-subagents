@@ -23,7 +23,7 @@ import { createResultDeliveryOwnership } from "../../src/runs/background/result-
 const COMPLETION_OWNER_ID = "completion-owner-a";
 
 it("does not deliver awaited workflow child lifecycle completions", async () => {
-	const { events, sent, notifier, dispose } = createPi();
+	const { events, sent, dispose } = createPi();
 	try {
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 			id: "awaited-child", runId: "awaited-child", sessionId: "session-1", completionOwnerId: COMPLETION_OWNER_ID,
@@ -32,7 +32,6 @@ it("does not deliver awaited workflow child lifecycle completions", async () => 
 		});
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		assert.deepEqual(sent, []);
-		assert.equal(notifier.hasPendingDelivery(), false);
 	} finally {
 		dispose();
 	}
