@@ -706,6 +706,8 @@ export type ProcessTerminal =
 		state: "unknown";
 		reason: ProcessTerminalReason;
 		diagnostic?: string;
+		/** The runner's own exit, when observed even though the process tree could not be verified. */
+		instances?: RunnerProcessInstanceExit[];
 	});
 
 /** Identifies the durable schedule that launched a run, so its completion is attributable. */

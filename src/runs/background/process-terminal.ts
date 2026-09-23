@@ -205,6 +205,8 @@ export function finalizeProcessTerminal(
 	} catch (error) {
 		proof = unknownProof(runId, runnerClose.processInstanceId, "proof-write-failed", errorMessage(error));
 	}
+	// An unverified process tree still has a directly observed runner exit; keep it for failure reports.
+	if (proof.state === "unknown") proof = { ...proof, instances: [{ kind: "runner", ...runnerClose }] };
 	let durable = false;
 	try {
 		writeAtomicJson(processTerminalPath(asyncDir), proof);

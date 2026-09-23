@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- When a background runner exits before writing a result, the failure notification now includes the runner's exit code and signal alongside its PID, even when the full process tree could not be verified. Thanks to [@grahama1970](https://github.com/grahama1970) for [#2423](https://github.com/nicobailon/pi-subagents/issues/2423).
 - Preserve validated structured output as evidence when a later provider failure or abort keeps the child run failed, without hiding independent watchdog findings or starting an extra continuation turn. Thanks to [@grahama1970](https://github.com/grahama1970) for [#2411](https://github.com/nicobailon/pi-subagents/issues/2411).
 - Discover the authoritative Pi package root for Bun-compiled hosts from Pi's package directory or validated image-owned adjacent and `share/pi-coding-agent` layouts, while keeping unrelated extension dependencies ineligible to enable dynamic tools. Thanks to [@fmoda3](https://github.com/fmoda3) for [#2417](https://github.com/nicobailon/pi-subagents/issues/2417).
 - Keep the bundled reviewer's required `watchdog_diff` available in non-Git directories as a read-only unavailable-baseline report, rather than failing the review before independent file inspection. Thanks to [@matthewmathistrellys](https://github.com/matthewmathistrellys) for [#2422](https://github.com/nicobailon/pi-subagents/issues/2422).

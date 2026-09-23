@@ -89,6 +89,37 @@ describe("async stale-run reconciliation", () => {
 		}
 	});
 
+	it("reports the observed runner exit code and signal when a killed runner left no result", () => {
+		const root = tempRoot("pi-stale-run-killed-");
+		try {
+			const asyncDir = path.join(root, "run-killed");
+			const resultsDir = path.join(root, "results");
+			writeStatus(asyncDir, {
+				lifecycleArtifactVersion: 3,
+				runId: "run-killed",
+				sessionId: "session-current",
+				mode: "single",
+				state: "running",
+				pid: 4242,
+				startedAt: 1000,
+				lastUpdate: 1000,
+				currentStep: 0,
+				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+			});
+			initializeProcessTerminal(asyncDir, "run-killed", "runner-killed");
+			const proof = finalizeProcessTerminal(asyncDir, "run-killed", { processInstanceId: "runner-killed", closeObservedAt: 1500, exitCode: null, signal: "SIGKILL" });
+			assert.equal(proof.state, "unknown");
+
+			reconcileAsyncRun(asyncDir, { resultsDir, kill: () => { throw errno("ESRCH"); }, now: () => 2000 });
+
+			const resultJson = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-killed.json"), "utf-8"));
+			assert.equal(resultJson.state, "failed");
+			assert.match(resultJson.summary, /Async runner process 4242 exited with code none \(signal SIGKILL\) before writing a result/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("repairs sessionless stale status without writing an unindexed result", () => {
 		const root = tempRoot("pi-stale-run-sessionless-");
 		try {

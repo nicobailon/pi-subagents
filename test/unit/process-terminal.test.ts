@@ -272,6 +272,7 @@ test("process-terminal reports unknown when the runner candidate is unavailable"
 			runId: "run-2",
 			runnerProcessInstanceId: "runner-2",
 			reason: "runner-candidate-missing",
+			instances: [{ kind: "runner", processInstanceId: "runner-2", closeObservedAt: 40, exitCode: 1, signal: null }],
 		});
 	} finally {
 		fs.rmSync(asyncDir, { recursive: true, force: true });
