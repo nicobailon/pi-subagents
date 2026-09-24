@@ -662,7 +662,9 @@ export class SubagentFleetStatus {
 		}
 
 		const renderKey = this.getRenderKey();
-		if (!this.active || renderKey !== this.lastRenderKey) this.clearWorkflowCoverage();
+		// The async widget validates coverage structurally and the roster recomputes it on render;
+		// clearing on every live-stat tick makes the widget flash its full tree above the editor.
+		if (!this.active) this.clearWorkflowCoverage();
 		if (!this.widgetRegistered) {
 			ctx.ui.setWidget(FLEET_STATUS_WIDGET_KEY, (tui, theme) => {
 				this.tui = tui;

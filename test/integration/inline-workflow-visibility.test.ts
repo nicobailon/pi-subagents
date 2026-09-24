@@ -212,6 +212,23 @@ it("keeps structural coverage and layout stable across heartbeat and token-only 
 	} finally { h.close(); }
 });
 
+it("keeps coverage across a non-structural refresh when the async widget paints before the roster", () => {
+	const h = harness();
+	const realNow = Date.now;
+	try {
+		const [alpha] = materialize(h);
+		h.activate(); h.roster();
+		assert.match(h.asyncText(), /Workflow children shown in Fleet roster/);
+		// Elapsed seconds and tokens change the roster render key every tick without changing structure.
+		Date.now = () => realNow() + 5_000;
+		alpha.totalTokens = { input: 30, output: 8, total: 38 };
+		h.fleet.refresh();
+		// TUI order: aboveEditor async widget renders before the belowEditor roster.
+		assert.match(h.asyncText(), /Workflow children shown in Fleet roster/, "async widget must not flash its full tree");
+		assert.doesNotMatch(h.asyncText(), /alpha-worker/);
+	} finally { Date.now = realNow; h.close(); }
+});
+
 it("changes the coverage identity for membership, context, and descendant structure", () => {
 	const h = harness();
 	try {
