@@ -3318,25 +3318,21 @@ function emitWorkflowAwaitedChildComplete(
 	} catch (error) {
 		console.error(`Failed to read awaited workflow child status for ${runId}; emitting completion with fallback metadata:`, error);
 	}
-	try {
-		pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
-			id: runId,
-			runId,
-			sessionId: status?.sessionId ?? completed.importedPublication?.sessionId ?? state.currentSessionId,
-			completionOwnerId: status?.completionOwnerId ?? state.completionOwnerId ?? currentCompletionOwnerId(),
-			asyncDir,
-			agent: completed.agent,
-			mode: "single",
-			state: completed.stopped ? "stopped" : completed.success ? "complete" : "failed",
-			success: completed.success,
-			timestamp: Date.now(),
-			triggerTurn: false,
-			awaitedByWorkflow: true,
-			parentWorkflowRunId,
-		});
-	} catch (error) {
-		console.error(`Failed to emit awaited workflow child completion event for ${runId}:`, error);
-	}
+	pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+		id: runId,
+		runId,
+		sessionId: status?.sessionId ?? completed.importedPublication?.sessionId ?? state.currentSessionId,
+		completionOwnerId: status?.completionOwnerId ?? state.completionOwnerId ?? currentCompletionOwnerId(),
+		asyncDir,
+		agent: completed.agent,
+		mode: "single",
+		state: completed.stopped ? "stopped" : completed.success ? "complete" : "failed",
+		success: completed.success,
+		timestamp: Date.now(),
+		triggerTurn: false,
+		awaitedByWorkflow: true,
+		parentWorkflowRunId,
+	});
 }
 
 async function waitForWorkflowAsyncSingleResult(
