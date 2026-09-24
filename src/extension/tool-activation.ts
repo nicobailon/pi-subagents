@@ -137,7 +137,7 @@ function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext): void {
 
 export function registerSubagentToolActivation(
 	pi: ExtensionAPI,
-	options: { advertisedPrompt: () => string | undefined },
+	options: { advertisedPrompt: () => string | undefined | Promise<string | undefined> },
 ): void {
 	const unsupportedReason = unsupportedDynamicToolsReason(pi);
 	if (unsupportedReason) {
@@ -175,7 +175,7 @@ export function registerSubagentToolActivation(
 				content: [{ type: "text", text: "Activation failed: subagent." }],
 				details: { missing: [SUBAGENT_NAME] },
 			};
-			const advertised = options.advertisedPrompt();
+			const advertised = await options.advertisedPrompt();
 			return {
 				content: [{ type: "text", text: `Enabled: subagent. On the next model request, call subagent({action:\"list\",capabilities:true}) for current capabilities.${advertised ? `\n\n${advertised}` : ""}` }],
 				details: { enabled: [SUBAGENT_NAME] },

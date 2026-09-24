@@ -20,6 +20,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { keyText, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import { clearAgentDiscoveryCache, discoverAgentSnapshot, discoverAgents, type AgentConfig, type AgentScope } from "../agents/agents.ts";
+import { resolveGlobalNpmRoot } from "../agents/global-npm-root.ts";
 import { appendAdvertisedAgentPrompt, buildAdvertisedAgentPrompt } from "../agents/advertised-agent-prompt.ts";
 import { clearRuntimeAgentsForPi, listRuntimeAgentConfigs, mergeRuntimeAgents } from "../agents/runtime-agent-registry.ts";
 import { registerRuntimeAgentEventListener } from "../agents/runtime-agent-events.ts";
@@ -532,12 +533,39 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	let refreshResultDelivery = () => {};
 	let advertisedAgents: AgentConfig[] = [];
 	let advertisedContext: Pick<ExtensionContext, "cwd" | "model"> | undefined;
+	let advertisementGeneration = 0;
+	let globalRoot: string | null = null;
+	let advertisementReady: Promise<void | { error: unknown }> = Promise.resolve();
+	const waitForAdvertisement = async () => {
+		let pending: typeof advertisementReady;
+		do {
+			pending = advertisementReady;
+			const result = await pending;
+			if (pending === advertisementReady && result) throw result.error;
+		} while (pending !== advertisementReady);
+	};
 	const refreshAdvertisedAgents = () => {
 		advertisedAgents = [];
 		if (!advertisedContext) return;
 		clearAgentDiscoveryCache();
-		advertisedAgents = discoverAgents(advertisedContext.cwd, "both", advertisedContext.model?.provider).agents
+		advertisedAgents = discoverAgents(advertisedContext.cwd, "both", advertisedContext.model?.provider, { globalNpmRoot: globalRoot }).agents
 			.filter((agent) => agent.advertise === true);
+	};
+	const beginAdvertisement = (ctx: ExtensionContext) => {
+		const generation = ++advertisementGeneration;
+		advertisedAgents = [];
+		advertisedContext = { cwd: ctx.cwd, model: ctx.model };
+		globalRoot = null;
+		advertisementReady = resolveGlobalNpmRoot().catch(() => null).then((root) => {
+			if (generation !== advertisementGeneration) return;
+			globalRoot = root;
+			refreshAdvertisedAgents();
+		}).catch((error) => {
+			if (generation !== advertisementGeneration) return;
+			// Settle without an unhandled rejection if no turn follows session_start.
+			console.error("Failed to refresh advertised agents:", error);
+			return { error };
+		});
 	};
 	const hasResultDeliveryDemand = () => {
 		if ([...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running")) return true;
@@ -818,7 +846,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.registerTool(tool);
 
-	pi.on("before_agent_start", (event, ctx) => {
+	pi.on("before_agent_start", async (event, ctx) => {
+		await waitForAdvertisement();
 		const selectedTools = event.systemPromptOptions?.selectedTools ?? (typeof pi.getActiveTools === "function" ? pi.getActiveTools() : []);
 		const sessionId = state.currentSessionId ?? resolveCurrentSessionId(ctx.sessionManager);
 		const advertisedPrompt = Array.isArray(selectedTools) && selectedTools.includes("subagent")
@@ -1186,12 +1215,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		await herdrStatusBridge.flush();
 	});
 
-	pi.on("session_start", (_event, ctx) => {
-		advertisedContext = { cwd: ctx.cwd, model: ctx.model };
-		refreshAdvertisedAgents();
-	});
+	pi.on("session_start", (_event, ctx) => beginAdvertisement(ctx));
 
 	registerSubagentToolActivation(pi, {
-		advertisedPrompt: () => buildAdvertisedAgentPrompt(advertisedAgents, resolveCurrentSubagentCapabilityCeiling(state.currentSessionId ?? undefined)),
+		advertisedPrompt: async () => {
+			await waitForAdvertisement();
+			return buildAdvertisedAgentPrompt(advertisedAgents, resolveCurrentSubagentCapabilityCeiling(state.currentSessionId ?? undefined));
+		},
 	});
 }
