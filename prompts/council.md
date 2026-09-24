@@ -9,9 +9,10 @@ decide which feedback is valid, and write the final memo. Advisors do not talk
 directly or see peer transcripts by default. This is not free-form agent chat.
 
 Before you orchestrate, load the council protocol with
-`subagent({ action: "guide", topic: "council" })`. It returns the packaged
-council-mode skill and the references it asks you to read, so it also works when
-Pi runs with `--no-skills`.
+`subagent({ action: "guide", topic: "council" })`. If only `subagents_enable`
+is available, call it first; `subagent` is available on the next request. The
+guide returns the packaged council-mode skill and the references it asks you to
+read, so it also works when Pi runs with `--no-skills`.
 
 Parse the invocation yourself. The flags below are conventions, not runtime
 options. Record a brief with the question, scope, non-goals, evidence targets,
