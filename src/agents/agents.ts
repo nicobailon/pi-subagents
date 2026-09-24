@@ -2986,6 +2986,6 @@ export function discoverAgents(cwd: string, scope: AgentScope, preferredModelPro
 	return buildEffectiveDiscovery(sources, scope);
 }
 
-export function discoverAgentsAll(cwd: string, preferredModelProvider?: string): AgentDiscoveryAllResult {
-	return discoverAgentSnapshot(cwd, "both", preferredModelProvider).all;
+export function discoverAgentsAll(cwd: string, preferredModelProvider?: string, options: AgentDiscoveryOptions = {}): AgentDiscoveryAllResult {
+	return discoverAgentSnapshot(cwd, "both", preferredModelProvider, options).all;
 }
