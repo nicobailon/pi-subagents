@@ -14,12 +14,13 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 it("session startup yields to the event loop and both first advertisements await the complete global catalog", () => {
 	const temp = fs.mkdtempSync(path.join(os.tmpdir(), "advertisement-barrier-"));
 	try {
-		const bin = path.join(temp, "bin");
-		const globalRoot = path.join(temp, "global", "node_modules");
-		const newerRoot = path.join(temp, "newer", "node_modules");
+		const fixtureRoot = path.join(temp, "quote's & space");
+		const bin = path.join(fixtureRoot, "bin");
+		const globalRoot = path.join(fixtureRoot, "global", "node_modules");
+		const newerRoot = path.join(fixtureRoot, "newer", "node_modules");
 		const packageDir = path.join(globalRoot, "example");
 		const newerPackage = path.join(newerRoot, "example");
-		const localDir = path.join(temp, "project", ".pi", "agents");
+		const localDir = path.join(fixtureRoot, "project", ".pi", "agents");
 		fs.mkdirSync(bin, { recursive: true });
 		fs.mkdirSync(path.join(packageDir, "agents"), { recursive: true });
 		fs.mkdirSync(path.join(newerPackage, "agents"), { recursive: true });
@@ -42,9 +43,9 @@ setTimeout(() => { if (count === 3) fs.writeFileSync(${JSON.stringify(oldDone)},
 		const npm = path.join(bin, process.platform === "win32" ? "npm.cmd" : "npm");
 		fs.writeFileSync(npm, process.platform === "win32"
 			? `@echo off\r\n"${process.execPath}" "%~dp0fake-npm.cjs" %*\r\n`
-			: `#!/bin/sh\nexec "${process.execPath}" '${path.join(bin, "fake-npm.cjs")}' "$@"\n`);
+			: `#!/bin/sh\nexec "${process.execPath}" "$(dirname "$0")/fake-npm.cjs" "$@"\n`);
 		if (process.platform !== "win32") fs.chmodSync(npm, 0o755);
-		const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, PI_CODING_AGENT_DIR: path.join(temp, "home"), TEST_PROJECT: path.join(temp, "project"), TEST_OLD_DONE: oldDone, APPDATA: path.join(temp, "missing-appdata") };
+		const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, PI_CODING_AGENT_DIR: path.join(temp, "home"), TEST_PROJECT: path.join(fixtureRoot, "project"), TEST_OLD_DONE: oldDone, APPDATA: path.join(temp, "missing-appdata") };
 		delete env.PI_OFFLINE;
 		delete env[SUBAGENT_CHILD_ENV];
 		const hostRoot = resolveInstalledPiPackageRoot();

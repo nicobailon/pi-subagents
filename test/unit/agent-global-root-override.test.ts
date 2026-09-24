@@ -6,11 +6,12 @@ import { after, before, it } from "node:test";
 import { clearAgentDiscoveryCache, discoverAgentSnapshot, discoverAgents } from "../../src/agents/agents.ts";
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-global-root-"));
+const fixtureRoot = path.join(temp, "quote's & space");
 const previous = Object.fromEntries(["HOME", "USERPROFILE", "APPDATA", "PI_CODING_AGENT_DIR", "PI_OFFLINE", "PATH"].map((key) => [key, process.env[key]]));
-const project = path.join(temp, "project");
-const rootA = path.join(temp, "prefix-a", "lib", "node_modules");
-const rootB = path.join(temp, "prefix-b", "lib", "node_modules");
-const invocationFile = path.join(temp, "npm-invocations");
+const project = path.join(fixtureRoot, "project");
+const rootA = path.join(fixtureRoot, "prefix-a", "lib", "node_modules");
+const rootB = path.join(fixtureRoot, "prefix-b", "lib", "node_modules");
+const invocationFile = path.join(fixtureRoot, "npm-invocations");
 
 function writeAgent(file: string, name: string): void {
 	fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -33,12 +34,16 @@ before(() => {
 	writeAgent(path.join(project, ".pi", "agents", "local.md"), "local-only");
 	writePackage(rootA, "global-a");
 	writePackage(rootB, "global-b");
-	const bin = path.join(temp, "bin");
+	const bin = path.join(fixtureRoot, "bin");
 	fs.mkdirSync(bin);
+	fs.writeFileSync(path.join(bin, "fake-npm.cjs"), `const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(invocationFile)}, "x");
+process.stdout.write(${JSON.stringify(`${rootA}\n`)});
+`);
 	const npm = path.join(bin, process.platform === "win32" ? "npm.cmd" : "npm");
 	fs.writeFileSync(npm, process.platform === "win32"
-		? `@echo off\r\necho x>>"${invocationFile}"\r\necho ${rootA}\r\n`
-		: `#!/bin/sh\nprintf x >> '${invocationFile}'\nprintf '%s\\n' '${rootA}'\n`);
+		? `@echo off\r\n"${process.execPath}" "%~dp0fake-npm.cjs" %*\r\n`
+		: `#!/bin/sh\nexec "${process.execPath}" "$(dirname "$0")/fake-npm.cjs" "$@"\n`);
 	if (process.platform !== "win32") fs.chmodSync(npm, 0o755);
 	process.env.PATH = `${bin}${path.delimiter}${previous.PATH ?? ""}`;
 	clearAgentDiscoveryCache();
