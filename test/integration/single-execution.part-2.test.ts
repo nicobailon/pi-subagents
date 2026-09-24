@@ -1861,7 +1861,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			workflowScript: `return runs.run("child", { agent: "echo", task: "Complete", acceptance: false, output: false });`,
 		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
-		assert.equal((result.details.workflow?.value as { results: Array<{ finalOutput: string }> }).results[0]?.finalOutput, "authoritative child result");
+		assert.equal(result.details.results[0]?.finalOutput, "authoritative child result");
 		assert.equal(result.details.results.length, 1);
 		assert.equal(mockPi.callCount(), 1);
 		assert.equal(completions, 1);
