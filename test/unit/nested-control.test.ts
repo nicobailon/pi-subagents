@@ -16,6 +16,7 @@ import { makeAgent } from "../support/helpers.ts";
 import { externalJobPromptDigest, runExternalJob } from "../../src/runs/shared/external-job-runner.ts";
 import { serviceExternalJobBridgeRequests } from "../../src/runs/shared/external-job-bridge.ts";
 import { isActiveAsyncState } from "../../src/runs/background/active-run-index.ts";
+import { readProcessTerminal } from "../../src/runs/background/process-terminal.ts";
 import { readStatus } from "../../src/shared/utils.ts";
 
 const routeRoots: string[] = [];
@@ -759,16 +760,6 @@ function writeNestedRun(route: ReturnType<typeof createNestedRoute>, runId: stri
 	return asyncDir;
 }
 
-function processExists(pid: number | undefined): boolean {
-	if (pid === undefined) return false;
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
 describe("nested external-job follow-up", () => {
 	let root: string;
 	let route: ReturnType<typeof createNestedRoute>;
@@ -798,7 +789,8 @@ describe("nested external-job follow-up", () => {
 		const executor = from === "child"
 			? createExecutor(createState(), AGENTS, false, undefined, fanoutChildRuntime(route))
 			: createExecutor(stateWithNestedRoute(route), AGENTS);
-		return executor.execute("resume", { action: "resume", id: runId, message: "The QA failure was a missing test.", ...params }, new AbortController().signal, undefined, ctx(root));
+		// The spawned runner inherits the caller cwd; keep it outside the disposable fixture directory.
+		return executor.execute("resume", { action: "resume", id: runId, message: "The QA failure was a missing test.", ...params }, new AbortController().signal, undefined, ctx(os.tmpdir()));
 	}
 
 	/** Services the follow-up run's bridge until its runner has finished and exited, so teardown never races its writes. */
@@ -809,10 +801,13 @@ describe("nested external-job follow-up", () => {
 		for (;;) {
 			serviceExternalJobBridgeRequests(followUpDir);
 			const status = readStatus(followUpDir);
-			if (followUps.length > 0 && status && !isActiveAsyncState(status.state) && !processExists(status.pid)) return;
+			const runnerId = status?.processTerminal?.runnerProcessInstanceId;
+			const terminal = runnerId ? readProcessTerminal(followUpDir, { runId: followUpId, runnerProcessInstanceId: runnerId }) : undefined;
+			if (followUps.length > 0 && status && !isActiveAsyncState(status.state) && terminal?.state === "observed"
+				&& terminal.instances?.some((instance) => instance.kind === "runner" && instance.processInstanceId === runnerId && instance.exitCode === 0)) return;
 			if (Date.now() >= deadline) {
 				const stderrPath = path.join(followUpDir, "runner.stderr.log");
-				assert.fail(`Timed out waiting for the external-job follow-up to finish; status=${JSON.stringify(status)}; stderr=${fs.existsSync(stderrPath) ? fs.readFileSync(stderrPath, "utf-8") : "missing"}`);
+				assert.fail(`Timed out waiting for the external-job follow-up to finish; status=${JSON.stringify(status)}; terminal=${JSON.stringify(terminal)}; stderr=${fs.existsSync(stderrPath) ? fs.readFileSync(stderrPath, "utf-8") : "missing"}`);
 			}
 			await new Promise((resolve) => setTimeout(resolve, 25));
 		}
