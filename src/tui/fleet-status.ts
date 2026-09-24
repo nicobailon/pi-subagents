@@ -539,6 +539,7 @@ export class SubagentFleetStatus {
 	private inspectorOpen = false;
 	private lastRenderKey = "";
 	private lastPaint: { width: number; theme: Theme } | undefined;
+	private prepaint: { key: string; width: number; theme: Theme; lines: string[] } | undefined;
 	private entries: FleetStatusEntry[] = [];
 	private workflowSnapshots = new Map<string, { snapshot: string; childRows: Set<string> }>();
 	private readonly onWorkflowCoverageChange: FleetStatusOptions["onWorkflowCoverageChange"];
@@ -595,6 +596,7 @@ export class SubagentFleetStatus {
 	}
 
 	refresh(): void {
+		this.prepaint = undefined;
 		const ctx = this.getActiveUiContext();
 		if (!ctx) return;
 		if (this.state.widgetsSuspended) {
@@ -666,20 +668,30 @@ export class SubagentFleetStatus {
 		if (!this.active) this.clearWorkflowCoverage();
 		// The async widget paints above the roster, so recompute coverage (structure and row fit) now.
 		// Clearing it instead would flash the full workflow tree on every live-stat tick.
-		else if (renderKey !== this.lastRenderKey && this.lastPaint) this.render(this.lastPaint.width, this.lastPaint.theme);
+		else if (renderKey !== this.lastRenderKey && this.lastPaint) {
+			const { width, theme } = this.lastPaint;
+			this.prepaint = { key: renderKey, width, theme, lines: this.render(width, theme) };
+		}
 		if (!this.widgetRegistered) {
 			ctx.ui.setWidget(FLEET_STATUS_WIDGET_KEY, (tui, theme) => {
 				this.tui = tui;
 				return {
 					render: (width: number) => {
 						this.lastPaint = { width, theme };
+						const prepaint = this.prepaint;
+						this.prepaint = undefined;
+						if (prepaint && prepaint.key === this.lastRenderKey && prepaint.key === this.getRenderKey()
+							&& prepaint.width === width && prepaint.theme === theme && !this.state.widgetsSuspended
+							&& !this.inspectorOpen && !this.state.fleetInspectorOpen) return prepaint.lines;
 						return this.render(width, theme);
 					},
 					invalidate: () => {
 						this.lastRenderKey = "";
+						this.prepaint = undefined;
 					},
 					dispose: () => {
 						if (this.tui !== tui) return;
+						this.prepaint = undefined;
 						this.lastPaint = undefined;
 						this.clearWorkflowCoverage();
 						this.widgetRegistered = false;
@@ -1065,6 +1077,7 @@ export class SubagentFleetStatus {
 	}
 
 	private clearWidget(): void {
+		this.prepaint = undefined;
 		this.clearWorkflowCoverage();
 		if (!this.widgetRegistered) return;
 		try {
@@ -1079,6 +1092,7 @@ export class SubagentFleetStatus {
 	}
 
 	private clearUiRegistration(): void {
+		this.prepaint = undefined;
 		this.clearWorkflowCoverage();
 		if (this.timer) clearInterval(this.timer);
 		this.timer = undefined;
