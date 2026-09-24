@@ -30,16 +30,31 @@ it("session startup yields to the event loop and both first advertisements await
 		fs.writeFileSync(path.join(packageDir, "agents", "global-specialist.md"), agent("global-specialist"));
 		fs.writeFileSync(path.join(newerPackage, "agents", "new-specialist.md"), agent("new-specialist"));
 		fs.writeFileSync(path.join(localDir, "local-specialist.md"), agent("local-specialist"));
-		fs.writeFileSync(path.join(bin, "npm"), `#!/bin/sh\ncount=$(cat '${temp}/count' 2>/dev/null || echo 0)\ncount=$((count+1))\necho "$count" > '${temp}/count'\nif [ "$count" = 4 ]; then echo 'private npm failure' >&2; exit 1; fi\nif [ "$count" = 5 ]; then sleep 6; exit 0; fi\nif [ "$count" = 2 ]; then sleep 0.4; else sleep 0.3; fi\nif [ "$count" = 3 ]; then printf '%s\\n' '${newerRoot}'; else printf '%s\\n' '${globalRoot}'; fi\n`);
-		fs.chmodSync(path.join(bin, "npm"), 0o755);
-		const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, PI_CODING_AGENT_DIR: path.join(temp, "home"), TEST_PROJECT: path.join(temp, "project") };
+		const oldDone = path.join(temp, "old-lookup-finished");
+		fs.writeFileSync(path.join(bin, "fake-npm.cjs"), `
+const fs = require("node:fs");
+const counter = ${JSON.stringify(path.join(temp, "count"))};
+const count = (fs.existsSync(counter) ? Number(fs.readFileSync(counter, "utf8")) : 0) + 1;
+fs.writeFileSync(counter, String(count));
+if (count === 5) { console.error("private npm failure"); process.exit(1); }
+setTimeout(() => { if (count === 3) fs.writeFileSync(${JSON.stringify(oldDone)}, "done"); if (count !== 6) console.log(count === 4 ? ${JSON.stringify(newerRoot)} : ${JSON.stringify(globalRoot)}); }, count === 6 ? 6000 : count === 3 ? 2500 : count === 2 || count === 4 ? 150 : 300);
+`);
+		const npm = path.join(bin, process.platform === "win32" ? "npm.cmd" : "npm");
+		fs.writeFileSync(npm, process.platform === "win32"
+			? `@echo off\r\n"${process.execPath}" "%~dp0fake-npm.cjs" %*\r\n`
+			: `#!/bin/sh\nexec "${process.execPath}" '${path.join(bin, "fake-npm.cjs")}' "$@"\n`);
+		if (process.platform !== "win32") fs.chmodSync(npm, 0o755);
+		const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, PI_CODING_AGENT_DIR: path.join(temp, "home"), TEST_PROJECT: path.join(temp, "project"), TEST_OLD_DONE: oldDone, APPDATA: path.join(temp, "missing-appdata") };
 		delete env.PI_OFFLINE;
 		delete env[SUBAGENT_CHILD_ENV];
 		const hostRoot = resolveInstalledPiPackageRoot();
 		if (hostRoot) env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = hostRoot;
 		const output = execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", String.raw`
 			import assert from "node:assert/strict";
+			import fs from "node:fs";
 			import register from "./src/extension/index.ts";
+			import { discoverAgents } from "./src/agents/agents.ts";
+			import { registerRuntimeAgent } from "./src/agents/runtime-agent-registry.ts";
 			const hooks = new Map();
 			const tools = new Map();
 			let active = ["subagents_enable"];
@@ -74,13 +89,29 @@ it("session startup yields to the event loop and both first advertisements await
 				assert.match(text, /<name>global-specialist<\/name>/);
 				assert.match(text, /<name>local-specialist<\/name>/);
 			}
+			assert.ok(discoverAgents(ctx.cwd, "both").agents.some((agent) => agent.name === "global-specialist"));
 			start({ reason: "reload" }, ctx);
 			await new Promise((resolve) => setTimeout(resolve, 50));
+			const waitingOnOld = before({ systemPrompt: "base", systemPromptOptions: { selectedTools: ["subagent"] } }, ctx);
+			const waitingLoader = tools.get("subagents_enable").execute("reload", {}, new AbortController().signal, undefined, ctx);
 			start({ reason: "reload" }, ctx);
-			const latest = await before({ systemPrompt: "base", systemPromptOptions: { selectedTools: ["subagent"] } }, ctx);
+			const [latest, reloadedLoader] = await Promise.all([waitingOnOld, waitingLoader]);
+			assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), false, "old lookup held the new session's prompt");
 			assert.match(latest.systemPrompt, /<name>new-specialist<\/name>/);
+			assert.match(reloadedLoader.content[0].text, /<name>new-specialist<\/name>/);
 			assert.doesNotMatch(latest.systemPrompt, /<name>global-specialist<\/name>/);
-			await new Promise((resolve) => setTimeout(resolve, 150));
+			const runtime = await tools.get("subagent").execute("runtime", { agent: "new-specialist", task: "Probe", async: false }, new AbortController().signal, undefined, ctx)
+				.then((result) => JSON.stringify(result), (error) => error.message);
+			assert.match(runtime, /new-specialist/, "execution must resolve the advertised agent");
+			assert.doesNotMatch(runtime, /Unknown agent|not found/i);
+			const registration = registerRuntimeAgent({ pi, name: "runtime-test", definition: { description: "Test", systemPrompt: "Test" } });
+			const mergedRuntime = await tools.get("subagent").execute("merged-runtime", { agent: "new-specialist", task: "Probe", async: false }, new AbortController().signal, undefined, ctx)
+				.then((result) => JSON.stringify(result), (error) => error.message);
+			assert.match(mergedRuntime, /new-specialist/, "runtime registry must retain the advertised package agent");
+			assert.doesNotMatch(mergedRuntime, /Unknown agent|not found/i);
+			registration.dispose();
+			await new Promise((resolve) => setTimeout(resolve, 2600));
+			assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), true, "old lookup completed");
 			const afterStale = await before({ systemPrompt: "base", systemPromptOptions: { selectedTools: ["subagent"] } }, ctx);
 			assert.match(afterStale.systemPrompt, /<name>new-specialist<\/name>/);
 			assert.doesNotMatch(afterStale.systemPrompt, /<name>global-specialist<\/name>/);

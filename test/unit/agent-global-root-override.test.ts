@@ -6,7 +6,7 @@ import { after, before, it } from "node:test";
 import { clearAgentDiscoveryCache, discoverAgentSnapshot, discoverAgents } from "../../src/agents/agents.ts";
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-global-root-"));
-const previous = Object.fromEntries(["HOME", "USERPROFILE", "PI_CODING_AGENT_DIR", "PI_OFFLINE", "PATH"].map((key) => [key, process.env[key]]));
+const previous = Object.fromEntries(["HOME", "USERPROFILE", "APPDATA", "PI_CODING_AGENT_DIR", "PI_OFFLINE", "PATH"].map((key) => [key, process.env[key]]));
 const project = path.join(temp, "project");
 const rootA = path.join(temp, "prefix-a", "lib", "node_modules");
 const rootB = path.join(temp, "prefix-b", "lib", "node_modules");
@@ -27,6 +27,7 @@ function writePackage(root: string, name: string): void {
 before(() => {
 	process.env.HOME = path.join(temp, "home");
 	process.env.USERPROFILE = process.env.HOME;
+	process.env.APPDATA = path.join(temp, "missing-appdata");
 	process.env.PI_CODING_AGENT_DIR = path.join(temp, "home", ".pi", "agent");
 	delete process.env.PI_OFFLINE;
 	writeAgent(path.join(project, ".pi", "agents", "local.md"), "local-only");
@@ -34,8 +35,11 @@ before(() => {
 	writePackage(rootB, "global-b");
 	const bin = path.join(temp, "bin");
 	fs.mkdirSync(bin);
-	fs.writeFileSync(path.join(bin, "npm"), `#!/bin/sh\nprintf x >> '${invocationFile}'\nprintf '%s\\n' '${rootA}'\n`);
-	fs.chmodSync(path.join(bin, "npm"), 0o755);
+	const npm = path.join(bin, process.platform === "win32" ? "npm.cmd" : "npm");
+	fs.writeFileSync(npm, process.platform === "win32"
+		? `@echo off\r\necho x>>"${invocationFile}"\r\necho ${rootA}\r\n`
+		: `#!/bin/sh\nprintf x >> '${invocationFile}'\nprintf '%s\\n' '${rootA}'\n`);
+	if (process.platform !== "win32") fs.chmodSync(npm, 0o755);
 	process.env.PATH = `${bin}${path.delimiter}${previous.PATH ?? ""}`;
 	clearAgentDiscoveryCache();
 });
@@ -65,7 +69,7 @@ it("explicit null skips global lookup while retaining local agents and does not 
 it("preserves synchronous custom-prefix lookup without an override", () => {
 	const result = discoverAgents(project, "both");
 	assert.equal(result.agents.some((agent) => agent.name === "global-a" && agent.source === "package"), true);
-	assert.equal(fs.readFileSync(invocationFile, "utf8"), "x");
+	assert.equal(fs.readFileSync(invocationFile, "utf8").trim(), "x");
 });
 
 it("different explicit roots cannot reuse stale cached package sources", () => {
@@ -73,5 +77,5 @@ it("different explicit roots cannot reuse stale cached package sources", () => {
 	assert.equal(changed.agents.some((agent) => agent.name === "global-b"), true);
 	assert.equal(changed.agents.some((agent) => agent.name === "global-a"), false);
 	assert.equal(discoverAgents(project, "user", undefined, { globalNpmRoot: rootB }).agents.some((agent) => agent.name === "global-b"), true);
-	assert.equal(fs.readFileSync(invocationFile, "utf8"), "x");
+	assert.equal(fs.readFileSync(invocationFile, "utf8").trim(), "x");
 });

@@ -978,6 +978,7 @@ describe("subagent extension child mode", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
 			import { currentCompletionOwnerId } from "./src/shared/completion-owner.ts";
+			process.env.PI_OFFLINE = "1";
 			const completionOwnerId = currentCompletionOwnerId();
 			const pendingTimers = new Map();
 			const realSetTimeout = globalThis.setTimeout;
@@ -1053,6 +1054,7 @@ describe("subagent extension child mode", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
 			import { currentCompletionOwnerId } from "./src/shared/completion-owner.ts";
+			process.env.PI_OFFLINE = "1";
 			const completionOwnerId = currentCompletionOwnerId();
 			const pendingTimers = new Map();
 			const realSetTimeout = globalThis.setTimeout;

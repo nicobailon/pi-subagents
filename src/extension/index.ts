@@ -536,11 +536,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	let advertisementGeneration = 0;
 	let globalRoot: string | null = null;
 	let advertisementReady: Promise<void | { error: unknown }> = Promise.resolve();
+	let notifySessionChange = () => {};
+	let sessionChanged: Promise<void> = Promise.resolve();
 	const waitForAdvertisement = async () => {
 		let pending: typeof advertisementReady;
 		do {
 			pending = advertisementReady;
-			const result = await pending;
+			const result = await Promise.race([pending, sessionChanged]);
 			if (pending === advertisementReady && result) throw result.error;
 		} while (pending !== advertisementReady);
 	};
@@ -553,6 +555,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	const beginAdvertisement = (ctx: ExtensionContext) => {
 		const generation = ++advertisementGeneration;
+		notifySessionChange();
+		sessionChanged = new Promise<void>((resolve) => { notifySessionChange = resolve; });
 		advertisedAgents = [];
 		advertisedContext = { cwd: ctx.cwd, model: ctx.model };
 		globalRoot = null;
@@ -574,8 +578,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		return missionObserverResultCandidateFiles(DIRS.results).length > 0;
 	};
 	const discoverAgentsForRuntime = (cwd: string, scope: AgentScope, preferredModelProvider?: string) => {
-		if (listRuntimeAgentConfigs(pi).length === 0) return discoverAgents(cwd, scope, preferredModelProvider);
-		const snapshot = discoverAgentSnapshot(cwd, scope, preferredModelProvider, { includeChains: false });
+		if (listRuntimeAgentConfigs(pi).length === 0) return discoverAgents(cwd, scope, preferredModelProvider, { globalNpmRoot: globalRoot });
+		const snapshot = discoverAgentSnapshot(cwd, scope, preferredModelProvider, { includeChains: false, globalNpmRoot: globalRoot });
 		const discovered = snapshot.effective;
 		const all = snapshot.all;
 		const configuredAgents: AgentConfig[] = [
