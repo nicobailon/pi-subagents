@@ -3312,22 +3312,26 @@ function emitWorkflowAwaitedChildComplete(
 	parentWorkflowRunId: string | undefined,
 	completed: Awaited<ReturnType<typeof waitForImportedAsyncRoot>>,
 ): void {
-	const status = readStatus(asyncDir);
-	pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
-		id: runId,
-		runId,
-		sessionId: status?.sessionId ?? state.currentSessionId,
-		completionOwnerId: status?.completionOwnerId ?? state.completionOwnerId ?? currentCompletionOwnerId(),
-		asyncDir,
-		agent: completed.agent,
-		mode: "single",
-		state: completed.stopped ? "stopped" : completed.success ? "complete" : "failed",
-		success: completed.success,
-		timestamp: Date.now(),
-		triggerTurn: false,
-		awaitedByWorkflow: true,
-		parentWorkflowRunId,
-	});
+	try {
+		const status = readStatus(asyncDir);
+		pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: runId,
+			runId,
+			sessionId: status?.sessionId ?? state.currentSessionId,
+			completionOwnerId: status?.completionOwnerId ?? state.completionOwnerId ?? currentCompletionOwnerId(),
+			asyncDir,
+			agent: completed.agent,
+			mode: "single",
+			state: completed.stopped ? "stopped" : completed.success ? "complete" : "failed",
+			success: completed.success,
+			timestamp: Date.now(),
+			triggerTurn: false,
+			awaitedByWorkflow: true,
+			parentWorkflowRunId,
+		});
+	} catch (error) {
+		console.error(`Failed to emit awaited workflow child completion event for ${runId}:`, error);
+	}
 }
 
 async function waitForWorkflowAsyncSingleResult(

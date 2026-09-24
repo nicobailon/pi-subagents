@@ -1847,6 +1847,26 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		}
 	});
 
+	it("returns an awaited workflow child result when its completion subscriber throws", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const bus = createEventBus();
+		let completions = 0;
+		bus.on(SUBAGENT_ASYNC_COMPLETE_EVENT, () => {
+			completions++;
+			throw new Error("completion observer failed");
+		});
+		const executor = makeExecutor([makeAgent("echo")], {}, true, undefined, true, new Map(), undefined, undefined, bus);
+		mockPi.onCall({ output: "authoritative child result" });
+		const result = await executor.execute("awaited-observer-error", {
+			async: false,
+			workflowScript: `return runs.run("child", { agent: "echo", task: "Complete", acceptance: false, output: false });`,
+		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.equal((result.details.workflow?.value as { results: Array<{ finalOutput: string }> }).results[0]?.finalOutput, "authoritative child result");
+		assert.equal(result.details.results.length, 1);
+		assert.equal(mockPi.callCount(), 1);
+		assert.equal(completions, 1);
+	});
+
 	it("preserves original parent authority when reviving a foreground child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const callerRuntime: ChildRuntimeConfig = {
 			capabilityCeiling: {
