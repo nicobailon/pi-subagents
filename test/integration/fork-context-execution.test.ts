@@ -5,6 +5,7 @@ import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
 import { createEventBus, createMockPi, createTempDir, events, removeTempDir, resolveMockPiCallArgs, tryImport } from "../support/helpers.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
+import { registerSubagentCapabilityCeiling } from "../../src/api/capability-ceiling.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey } from "../../src/runs/background/active-async-capacity.ts";
 import { DEFAULT_FORK_PREAMBLE, INTERCOM_DETACH_REQUEST_EVENT, SUBAGENT_ASYNC_STARTED_EVENT } from "../../src/shared/types.ts";
 
@@ -326,6 +327,35 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.equal(result.isError, undefined);
 		assert.equal(fs.readdirSync(mockPi.dir).some((name) => name.startsWith("call-") && name.endsWith(".json")), true);
 	});
+
+	for (const forkMode of ["pruned", "full"] as const) {
+		it(`denies a ceiling-restricted agent before ${forkMode} fork preparation`, async () => {
+			const parentSessionFile = path.join(tempDir, "parent.jsonl");
+			const { manager, openedPaths } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
+			const executor = makeExecutorWithConfig(forkMode === "pruned" ? { forkContext: { mode: "pruned", model: "test/pruner" } } : {});
+			const model = { provider: "test", id: "pruner", api: "test-api", maxTokens: 1024 };
+			const registryCalls: string[] = [];
+			const ctx = {
+				...makeCtx(manager),
+				modelRegistry: {
+					getAvailable: () => { registryCalls.push("getAvailable"); return [model]; },
+					find: () => { registryCalls.push("find"); return model; },
+					getApiKeyAndHeaders: async () => { registryCalls.push("getApiKeyAndHeaders"); return {}; },
+				},
+			};
+			const handle = registerSubagentCapabilityCeiling({ sessionId: parentSessionFile, source: "plan-mode", ceiling: { allowedAgents: ["second"] } });
+			try {
+				const result = await executor.execute("id", { agent: "echo", task: "test", context: "fork" }, new AbortController().signal, undefined, ctx);
+				assert.equal(result.isError, true);
+				assert.match(result.content[0]?.text ?? "", /does not allow agent 'echo'/);
+				assert.deepEqual(openedPaths, []);
+				assert.deepEqual(registryCalls, []);
+				assert.equal(fs.readdirSync(mockPi.dir).some((name) => name.startsWith("call-") && name.endsWith(".json")), false);
+			} finally {
+				handle.dispose();
+			}
+		});
+	}
 
 
 
