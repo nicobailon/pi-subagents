@@ -11,10 +11,10 @@ import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-con
 import { ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR, type SubagentState } from "../../src/shared/types.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
-import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
+import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, ExternalJobProviderError, registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
 import { makeAgent } from "../support/helpers.ts";
 import { externalJobPromptDigest, runExternalJob } from "../../src/runs/shared/external-job-runner.ts";
-import { serviceExternalJobBridgeRequests } from "../../src/runs/shared/external-job-bridge.ts";
+import { requestExternalJobOperation, serviceExternalJobBridgeRequests } from "../../src/runs/shared/external-job-bridge.ts";
 import { isActiveAsyncState } from "../../src/runs/background/active-run-index.ts";
 import { readProcessTerminal } from "../../src/runs/background/process-terminal.ts";
 import { readStatus } from "../../src/shared/utils.ts";
@@ -523,17 +523,21 @@ describe("nested control routing", () => {
 		}
 	});
 
-	it("services the external-job bridge of an async run that the fanout child launched", async () => {
+	it("services only the current session's external-job bridge in a fanout child", async () => {
 		const route = createNestedRoute("root-external-job");
 		routeRoots.push(path.dirname(route.eventSink));
 		const asyncDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-external-job-"));
 		routeRoots.push(asyncDir);
-		const writeStatus = (state: string) => fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ state, steps: [{ runner: { type: "external-job" } }] }));
-		writeStatus("running");
+		const foreignDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-foreign-job-"));
+		routeRoots.push(foreignDir);
+		const writeStatus = (dir: string, state: string) => fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify({ state, steps: [{ runner: { type: "external-job" } }] }));
+		writeStatus(asyncDir, "running");
+		writeStatus(foreignDir, "running");
+		const statusCalls: string[] = [];
 		registerExternalJobProvider({
 			name: "surf-oracle",
 			start: () => ({ providerJobId: "job-1", state: "completed" }),
-			status: () => ({ providerJobId: "job-1", state: "completed" }),
+			status: (providerJobId) => { statusCalls.push(providerJobId); return { providerJobId, state: "completed" }; },
 			reattach: () => ({ providerJobId: "job-1", state: "completed" }),
 			result: () => ({ providerJobId: "job-1", state: "completed", output: "advisor result" }),
 		});
@@ -546,17 +550,33 @@ describe("nested control routing", () => {
 			getSessionName() { return "child"; },
 		} as any;
 		let stop: (() => void) | undefined;
+		let cancelForeign = false;
+		let foreignRequest: ReturnType<typeof requestExternalJobOperation> | undefined;
 		try {
-			registerFanoutChildSubagentExtension(pi, fanoutChildRuntime(route, "root-external-job"));
-			listeners.get("subagent:async-started")?.({ id: "run-1", asyncDir });
+			const runtime = fanoutChildRuntime(route, "root-external-job");
+			runtime.runtimeState = createState();
+			runtime.runtimeState.currentSessionId = "session";
+			registerFanoutChildSubagentExtension(pi, runtime);
+			foreignRequest = requestExternalJobOperation(foreignDir, { operation: "status", provider: "surf-oracle", providerJobId: "foreign-job" }, 30_000,
+				() => cancelForeign ? new ExternalJobProviderError("Foreign request canceled", { code: "canceled" }) : undefined);
+			void foreignRequest.catch(() => {});
+			listeners.get("subagent:async-started")?.({ id: "foreign-run", asyncDir: foreignDir, sessionId: "other-session" });
+			const pending = requestExternalJobOperation(asyncDir, { operation: "status", provider: "surf-oracle", providerJobId: "owner-job" }, 30_000);
+			listeners.get("subagent:async-started")?.({ id: "run-1", asyncDir, sessionId: "session" });
+			assert.deepEqual(await pending, { providerJobId: "owner-job", state: "completed" });
+			assert.deepEqual(statusCalls, ["owner-job"], "foreign session must not service provider requests");
+			cancelForeign = true;
+			await assert.rejects(foreignRequest, { code: "canceled" });
 			let output: string | undefined;
 			void runExternalJob({ provider: "surf-oracle", options: {}, cwd: asyncDir, prompt: "prompt text", asyncDir, stepIndex: 0, runId: "run-1", agent: "gpt-pro", registerStop: (handler) => { stop = handler; } })
 				.then((result) => { output = result.output; });
 			await waitFor(() => output !== undefined, 5_000);
 			assert.equal(output, "advisor result");
 		} finally {
+			cancelForeign = true;
+			await foreignRequest?.catch(() => {});
 			stop?.();
-			writeStatus("complete");
+			writeStatus(asyncDir, "complete");
 			lifecycle.get("session_shutdown")?.();
 			delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_JOB_PROVIDER_REGISTRY_KEY)];
 		}
