@@ -538,6 +538,7 @@ export class SubagentFleetStatus {
 	private selectedKey = "main";
 	private inspectorOpen = false;
 	private lastRenderKey = "";
+	private lastPaint: { width: number; theme: Theme } | undefined;
 	private entries: FleetStatusEntry[] = [];
 	private workflowSnapshots = new Map<string, { snapshot: string; childRows: Set<string> }>();
 	private readonly onWorkflowCoverageChange: FleetStatusOptions["onWorkflowCoverageChange"];
@@ -662,19 +663,24 @@ export class SubagentFleetStatus {
 		}
 
 		const renderKey = this.getRenderKey();
-		// The async widget validates coverage structurally and the roster recomputes it on render;
-		// clearing on every live-stat tick makes the widget flash its full tree above the editor.
 		if (!this.active) this.clearWorkflowCoverage();
+		// The async widget paints above the roster, so recompute coverage (structure and row fit) now.
+		// Clearing it instead would flash the full workflow tree on every live-stat tick.
+		else if (renderKey !== this.lastRenderKey && this.lastPaint) this.render(this.lastPaint.width, this.lastPaint.theme);
 		if (!this.widgetRegistered) {
 			ctx.ui.setWidget(FLEET_STATUS_WIDGET_KEY, (tui, theme) => {
 				this.tui = tui;
 				return {
-					render: (width: number) => this.render(width, theme),
+					render: (width: number) => {
+						this.lastPaint = { width, theme };
+						return this.render(width, theme);
+					},
 					invalidate: () => {
 						this.lastRenderKey = "";
 					},
 					dispose: () => {
 						if (this.tui !== tui) return;
+						this.lastPaint = undefined;
 						this.clearWorkflowCoverage();
 						this.widgetRegistered = false;
 						this.tui = undefined;

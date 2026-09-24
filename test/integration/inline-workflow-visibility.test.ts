@@ -229,6 +229,17 @@ it("keeps coverage across a non-structural refresh when the async widget paints 
 	} finally { Date.now = realNow; h.close(); }
 });
 
+it("revokes coverage on refresh before the async widget paints when the workflow no longer fits the roster", () => {
+	const h = harness(3);
+	try {
+		h.state.asyncJobs.set("later", { asyncId: "later", asyncDir: "/tmp/later", mode: "single", status: "running", startedAt: 2_000, agents: ["later-worker"] });
+		h.activate(); h.roster();
+		assert.match(h.asyncText(), /Workflow children shown in Fleet roster/);
+		h.fleet.handleKey("\x1b[B"); h.fleet.handleKey("\x1b[B");
+		assert.match(h.asyncText(), /unique-worker/, "details must not be hidden from both surfaces for a frame");
+	} finally { h.close(); }
+});
+
 it("changes the coverage identity for membership, context, and descendant structure", () => {
 	const h = harness();
 	try {
