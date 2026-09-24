@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- `/council` now works when Pi runs with `--no-skills`. The prompt told the model to read the council-mode skill files by relative path, which do not resolve without loaded package skills. It now loads them through the new `council` guide topic: `subagent({ action: "guide", topic: "council" })`. Thanks to [@felipemm](https://github.com/felipemm) for [#2467](https://github.com/nicobailon/pi-subagents/issues/2467).
 - A child session can now follow up the external-job runs it launched with `resume`. The nested resume path always needed a Pi session file, which an external-job run does not have, so the provider's `followUp` never ran. A repeated resume from a child also no longer calls `followUp` a second time. Thanks to [@juanpprieto](https://github.com/juanpprieto) for [#2465](https://github.com/nicobailon/pi-subagents/issues/2465).
 - `subagent_supervisor` `pending` now shows each request's question text, so a parent that missed the request notice can still read and answer it ([#2460](https://github.com/nicobailon/pi-subagents/issues/2460)).
 - Awaited workflow children now emit `subagent:async-complete` without sending a separate child notification. Thanks to [@mmarabel](https://github.com/mmarabel) for [#2456](https://github.com/nicobailon/pi-subagents/issues/2456).

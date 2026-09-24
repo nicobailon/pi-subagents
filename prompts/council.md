@@ -8,8 +8,10 @@ session, are the supervisor. You select the roster, curate cross-advisor packets
 decide which feedback is valid, and write the final memo. Advisors do not talk
 directly or see peer transcripts by default. This is not free-form agent chat.
 
-Before you orchestrate, read `skills/council-mode/SKILL.md` and
-`skills/pi-subagents/references/execution-controls.md`.
+Before you orchestrate, load the council protocol with
+`subagent({ action: "guide", topic: "council" })`. It returns the packaged
+council-mode skill and the references it asks you to read, so it also works when
+Pi runs with `--no-skills`.
 
 Parse the invocation yourself. The flags below are conventions, not runtime
 options. Record a brief with the question, scope, non-goals, evidence targets,
@@ -48,7 +50,7 @@ path if the run is not resumable.
 ## Run the protocol
 
 Use the canonical workflow, structured advisor contracts, aggregate pass receipts,
-and memo requirements in `skills/council-mode/SKILL.md`. Keep the parent as the
+and memo requirements from the council guide. Keep the parent as the
 only synthesizer and decision maker. Do not introduce a chair advisor, peer chat,
 or transcript sharing.
 

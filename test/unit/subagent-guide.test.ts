@@ -22,6 +22,14 @@ describe("subagent guide", () => {
 		assert.ok(SUBAGENT_ACTIONS.includes("guide"));
 	});
 
+	it("serves the council protocol and its references without loaded skills", () => {
+		const guide = readSubagentGuide("council");
+
+		assert.match(guide, /# Council Mode/);
+		assert.match(guide, /skills\/council-mode\/references\/pass-contracts\.md -->/);
+		assert.match(guide, /skills\/pi-subagents\/references\/execution-controls\.md -->/);
+	});
+
 	it("documents external CLI runner limits in packaged guide topics", () => {
 		assert.match(readSubagentGuide("tool-reference"), /External CLI agent profiles[\s\S]*native Pi child options[\s\S]*model override[\s\S]*native Pi tools/);
 		assert.match(readSubagentGuide("agents"), /External CLI agents use their own runner contract[\s\S]*native Pi child options/);
