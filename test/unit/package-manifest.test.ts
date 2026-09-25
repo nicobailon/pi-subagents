@@ -121,6 +121,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.deepEqual(packageJson.exports, {
 		".": "./index.ts",
 		"./agents": "./src/api/agents.ts",
+		"./inspectors": "./src/api/inspectors.ts",
 		"./background-work": "./src/api/background-work.ts",
 		"./external-job-provider": "./src/api/external-job-provider.ts",
 		"./external-runs": "./src/api/external-runs.ts",
@@ -139,6 +140,9 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(agents.RUNTIME_AGENT_REGISTER_EVENT, "pi-subagents:runtime-agent-register:v1");
 	assert.equal(agents.RUNTIME_AGENT_REGISTER_VERSION, 1);
 	assert.equal(typeof agents.registerAgentViaEvents, "function");
+	const inspectors = await import("pi-subagents/inspectors");
+	assert.equal(inspectors.INSPECTOR_REGISTER_EVENT, "pi-subagents:inspector-register:v1");
+	assert.deepEqual(Object.keys(inspectors).sort(), ["INSPECTOR_REGISTER_EVENT", "registerInspector"]);
 	const backgroundWork = await import("pi-subagents/background-work");
 	assert.equal(backgroundWork.BACKGROUND_WORK_PROTOCOL_VERSION, 1);
 	assert.equal(backgroundWork.BACKGROUND_WORK_REGISTRY_KEY, "pi-subagents.background-work.v1");

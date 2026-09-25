@@ -450,7 +450,69 @@ subagent({ action: "inspector.status", id: "<run-id>", index: 0 })
 subagent({ action: "inspector.close", id: "<run-id>", index: 0 })
 ```
 
-`inspector.command` returns a standalone runner command without contacting a host or writing a binding. `inspector.open` selects an available bundled inspector plugin. `status` and `close` select the plugin that owns the run binding and report clearly when that plugin does not support the requested lifecycle action. Without an available plugin, `open` fails closed with an actionable message; ordinary launches remain headless. Closing an inspector never stops the run.
+`inspector.command` returns a standalone runner command without contacting a host or writing a binding. `inspector.open` selects an available built-in or externally registered inspector plugin. `status` and `close` select the plugin that owns the run binding and report clearly when that plugin does not support the requested lifecycle action. Without an available plugin, `open` fails closed with an actionable message; ordinary launches remain headless. Closing an inspector never stops the run.
+
+### Register an external inspector
+
+A loaded Pi extension can add an inspector through the synchronous
+`pi-subagents:inspector-register:v1` event. This lets terminal integrations use
+Fleet's existing Enter/H actions without modifying pi-subagents. Registration
+adds no runner, tool, or configuration option.
+
+```ts
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { InspectorRegistration, InspectorRegistrationRequest } from "pi-subagents/inspectors";
+import { myInspector } from "./my-inspector.ts"; // Your InspectorPlugin implementation.
+
+export default function (pi: ExtensionAPI) {
+  let registration: InspectorRegistration | undefined;
+  pi.on("session_start", () => {
+    registration?.dispose();
+    const request: InspectorRegistrationRequest = { version: 1, plugin: myInspector };
+    pi.events.emit("pi-subagents:inspector-register:v1", request);
+    if (!request.result) throw new Error("pi-subagents inspector registration is unavailable.");
+    if (!request.result.ok) throw request.result.error;
+    registration = request.result.registration;
+  });
+  pi.on("session_shutdown", () => registration?.dispose());
+}
+```
+
+`pi-subagents/inspectors` exports the event name as `INSPECTOR_REGISTER_EVENT`,
+the request and registration types, and the existing `InspectorPlugin`,
+`InspectorContext`, `InspectorLaunch`, `InspectorParams`, and `InspectorTarget`
+types. When pi-subagents is a resolvable dependency, `registerInspector(pi, plugin)`
+emits the same request and returns the registration or throws. Independently
+installed extensions can use the event directly; type-only imports need only a
+development dependency and create no runtime module dependency.
+
+An `InspectorPlugin` supplies:
+
+- `name`: 1–128 letters, digits, dots, underscores, or hyphens, starting with a letter or digit.
+- `available(context)`: whether this terminal host can open an inspector; may be async.
+- `open(context, launch, params)`: open the supplied inspector command and return an `AgentToolResult<Details>`, like the built-in plugins. `launch.executable` and `launch.argv` carry the existing runner, target, trusted session roots, and steer/stop permission flags. Preserve these arguments and respect `params.focus`.
+- `owns(context)`: synchronously check whether the provider owns an inspector binding for this target.
+- Optional `status(context)` and `close(context)`: inspect or close that binding, returning the same result type. Closing an inspector must not stop the subagent.
+
+The existing dispatcher tries Herdr, then Ghostty, then external providers in
+registration order. Names are case-sensitive; duplicate names and the built-in
+names `herdr` and `ghostty` are rejected. A selected provider's failure is not
+retried through another provider. Status/close use the first provider whose
+`owns` returns true; unavailable lifecycle methods remain explicit errors.
+Providers own their pane bindings and must verify ownership before closing one.
+
+Registrations belong to the owning pi-subagents extension runtime, not the
+consumer's module instance. They are not inherited by child runtimes or other Pi
+instances. Providers receive the current action context; do not capture a stale
+session context in their callbacks. Dispose before re-registering on session
+changes. Disposal is idempotent, removes callbacks only, and does not close panes.
+The owner also clears registrations at runtime shutdown/reload. Fleet looks up
+providers at action time, so registration or disposal takes effect even while
+Fleet is open. Unsupported versions and malformed plugins return
+`{ ok: false, error }`; the first owner to fill `result` handles the request.
+
+This is a trusted-code integration, not a sandbox. Registration does not change
+run resolution, child-safe restrictions, authority policy, or supervisor routing.
 
 ### Herdr inspector plugin
 

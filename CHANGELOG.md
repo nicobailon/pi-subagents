@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Loaded extensions can register external inspector providers through `pi-subagents:inspector-register:v1` or the `pi-subagents/inspectors` helper. Fleet and inspector actions use those providers without changing the built-in host preference or runner controls.
+
 ### Fixed
 
 - Session startup no longer blocks the JavaScript event loop while locating globally installed agents; the first agent prompt and `subagents_enable` still wait for complete discovery. Thanks to [@trading-bl](https://github.com/trading-bl) for [#2474](https://github.com/nicobailon/pi-subagents/issues/2474).

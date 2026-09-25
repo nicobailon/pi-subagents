@@ -117,7 +117,7 @@ import type { MissionWorkflowChildUpdate } from "../../missions/types.ts";
 import { createMissionWorkflowState } from "../../missions/workflow-state.ts";
 import { resolveAuthorityDecision } from "../../policy/authority.ts";
 import { handleInspectorAction, INSPECTOR_ACTIONS } from "../../inspectors/actions.ts";
-import { createBuiltinInspectorPlugins } from "../../inspectors/plugins.ts";
+import { getInspectorPlugins } from "../../inspectors/plugins.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
 import { previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowChildSettledNotification, type WorkflowLanePlan, type WorkflowReceiptResumeReference, type WorkflowScriptChildResult, type WorkflowScriptTraceEntry, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
 import { formatIncrementalChildCompletion, incrementalChildCompletionTriggersTurn } from "../background/notify.ts";
@@ -6531,7 +6531,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					cwd: requestCwd,
 					...(deps.config.missions ? { missions: deps.config.missions } : {}),
 					...(deps.config.authorityPolicy ? { authorityPolicy: deps.config.authorityPolicy } : {}),
-					plugins: createBuiltinInspectorPlugins(),
+					plugins: getInspectorPlugins(deps.pi),
 					signal,
 				});
 			}

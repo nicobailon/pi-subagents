@@ -33,7 +33,7 @@ import { currentCompletionOwnerId } from "../shared/completion-owner.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderSubagentResult, renderSubagentSummary, setInlineWorkflowCoverage } from "../tui/render.ts";
 import { openSubagentFleet } from "../tui/fleet.ts";
-import { createBuiltinInspectorPlugins } from "../inspectors/plugins.ts";
+import { getInspectorPlugins, registerInspectorEventListener } from "../inspectors/plugins.ts";
 import { SubagentFleetStatus, resolveFleetViewPlacement } from "../tui/fleet-status.ts";
 import { createSubagentParamsSchema } from "./schemas.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
@@ -501,7 +501,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			const ctx = withLastUiContext((current) => current);
 			if (!ctx) return;
 			try {
-				await openSubagentFleet(ctx, state, { initialKey: itemKey, asyncDirRoot: DIRS.async, resultsDir: DIRS.results, fleetKeybindings: config.fleetKeybindings, inspectorPlugins: createBuiltinInspectorPlugins() });
+				await openSubagentFleet(ctx, state, { initialKey: itemKey, asyncDirRoot: DIRS.async, resultsDir: DIRS.results, fleetKeybindings: config.fleetKeybindings, inspectorPlugins: () => getInspectorPlugins(pi) });
 			} catch (error) {
 				if (isStaleExtensionContextError(error)) {
 					if (state.lastUiContext === ctx) state.lastUiContext = null;
@@ -932,6 +932,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	const eventUnsubscribes = [
 		registerRuntimeAgentEventListener(pi),
+		registerInspectorEventListener(pi),
 		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, asyncStartedHandler),
 		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, asyncCompleteHandler),
 		pi.events.on(SUBAGENT_PROCESS_TERMINAL_EVENT, () => {
