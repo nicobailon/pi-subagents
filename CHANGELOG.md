@@ -4,7 +4,7 @@
 
 ### Added
 
-- Loaded extensions can register external inspector providers through `pi-subagents:inspector-register:v1` or the `pi-subagents/inspectors` helper. Fleet and inspector actions use those providers without changing the built-in host preference or runner controls.
+- Loaded extensions can register external inspector providers through `pi-subagents:inspector-register:v1` or the `pi-subagents/inspectors` helper. Fleet and inspector actions use those providers without changing the built-in host preference or runner controls. Thanks to [@ninjapenguin](https://github.com/ninjapenguin) for [#2482](https://github.com/nicobailon/pi-subagents/pull/2482).
 
 ### Fixed
 
