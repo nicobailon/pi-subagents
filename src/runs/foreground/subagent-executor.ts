@@ -7169,20 +7169,31 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 
 		let forkSessionFileForIndex: (idx?: number) => string | undefined = () => undefined;
 		let prepareForkSessionForIndex: (idx?: number) => Promise<void> = async () => {};
-		const currentCapabilityCeiling = () => intersectSubagentCapabilityCeilings(
-			effectiveParams.capabilityCeiling,
-			resolveCurrentSubagentCapabilityCeiling(requestSessionId),
-		);
+		// A launch that forks must not branch the parent session or resolve the pruner for a
+		// child the ceiling will deny, so every agent that can launch is checked before any fork
+		// work. Dynamic templates bounded to zero items never launch. Fresh-only launches keep
+		// the child-launch check.
+		const assertLaunchableAgentsAllowedBeforeFork = (): void => {
+			if (!contextPolicy.usesFork) return;
+			const ceiling = intersectSubagentCapabilityCeilings(
+				effectiveParams.capabilityCeiling,
+				resolveCurrentSubagentCapabilityCeiling(requestSessionId),
+			);
+			const launchable = hasSingle
+				? [effectiveParams.agent!]
+				: hasTasks
+					? (effectiveParams.tasks ?? []).map((task) => task.agent)
+					: (effectiveParams.chain ?? []).flatMap((step) => isDynamicParallelStep(step as ChainStep)
+						&& ((step as DynamicParallelStep).expand.maxItems ?? deps.config.chain?.dynamicFanout?.maxItems ?? 0) === 0
+						? []
+						: getStepAgents(step as ChainStep));
+			for (const agent of launchable) assertAgentAllowedByCapabilityCeiling(agent, ceiling);
+		};
 		// Forked children keep their requested thinking level. Signed Anthropic thinking
 		// blocks are stripped from the inherited transcript by the resolver (they are bound
 		// to the parent session), which is not a reason to disable the child's own reasoning.
 		try {
-			if (contextPolicy.usesFork && deps.config.forkContext?.mode === "pruned") {
-				// Building the pruned writer resolves the pruner model's auth, so deny every agent
-				// the fork preflight below would prepare before that happens.
-				const ceiling = currentCapabilityCeiling();
-				await preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, async (agent) => assertAgentAllowedByCapabilityCeiling(agent, ceiling), deps.config.chain?.dynamicFanout?.maxItems);
-			}
+			assertLaunchableAgentsAllowedBeforeFork();
 			const pruneSession = contextPolicy.usesFork && deps.config.forkContext?.mode === "pruned"
 				? await createPrunedForkSessionWriter(ctx, deps.config.forkContext, signal)
 				: undefined;
@@ -7317,13 +7328,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const childSessionFileForIndex = (idx?: number) =>
 			path.join(sessionDirForIndex(idx), "session.jsonl");
 		try {
+			// The ceiling can change while the pruned writer is built; clarify skips preflight but
+			// still branches the parent session at launch.
+			assertLaunchableAgentsAllowedBeforeFork();
 			if (!(effectiveParams.clarify === true && ctx.hasUI) || deps.config.forkContext?.mode === "pruned") {
-				// Deny a child before its parent-session branch is created, not only at the later launch boundary.
-				const prepareAllowedForkSession: PrepareForkSessionForTask = async (agent, ...rest) => {
-					assertAgentAllowedByCapabilityCeiling(agent, currentCapabilityCeiling());
-					await prepareForkSessionForTask(agent, ...rest);
-				};
-				await preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, prepareAllowedForkSession, deps.config.chain?.dynamicFanout?.maxItems);
+				await preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, prepareForkSessionForTask, deps.config.chain?.dynamicFanout?.maxItems);
 			}
 		} catch (error) {
 			activeAsyncCapacity?.rollback();

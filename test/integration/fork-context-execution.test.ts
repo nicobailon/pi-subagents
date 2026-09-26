@@ -357,6 +357,25 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		});
 	}
 
+	for (const scenario of [
+		{ name: "an allowed agent listed before it", params: { tasks: [{ agent: "echo", task: "a" }, { agent: "second", task: "b" }] }, hasUI: false },
+		{ name: "clarify with a UI", params: { agent: "second", task: "b", clarify: true }, hasUI: true },
+	] as const) {
+		it(`denies a ceiling-restricted agent before any fork with ${scenario.name}`, async () => {
+			const parentSessionFile = path.join(tempDir, "parent.jsonl");
+			const { manager, openedPaths } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
+			const handle = registerSubagentCapabilityCeiling({ sessionId: parentSessionFile, source: "plan-mode", ceiling: { allowedAgents: ["echo"] } });
+			try {
+				const result = await makeExecutor().execute("id", { ...scenario.params, context: "fork" }, new AbortController().signal, undefined, { ...makeCtx(manager), hasUI: scenario.hasUI });
+				assert.equal(result.isError, true);
+				assert.match(result.content[0]?.text ?? "", /does not allow agent 'second'/);
+				assert.deepEqual(openedPaths, []);
+			} finally {
+				handle.dispose();
+			}
+		});
+	}
+
 	it("does not deny a ceiling-restricted dynamic template that fork preflight never prepares", async () => {
 		const parentSessionFile = path.join(tempDir, "parent.jsonl");
 		const { manager, openedPaths } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
