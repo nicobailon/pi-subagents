@@ -140,7 +140,8 @@ function resolveBaseModelCandidate(
 		if (exactId) return exactId;
 	} else {
 		// Some catalogs (OpenRouter's `openrouter/auto-beta`) repeat the provider inside the id.
-		const prefixedIdMatches = availableModels.filter((entry) => entry.id === baseModel && normalizeModelSegment(entry.provider) === queryProvider);
+		const queryId = normalizeModelSegment(baseModel);
+		const prefixedIdMatches = availableModels.filter((entry) => normalizeModelSegment(entry.id) === queryId && normalizeModelSegment(entry.provider) === queryProvider);
 		if (prefixedIdMatches.length === 1) return prefixedIdMatches[0]!.fullId;
 	}
 

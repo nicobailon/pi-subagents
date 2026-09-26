@@ -73,6 +73,7 @@ describe("single model resolution", () => {
 			{ provider: "other", id: "openrouter/free", fullId: "other/openrouter/free" },
 		];
 		assert.equal(resolveModelSelection("openrouter/auto-beta", registry).model, "openrouter/openrouter/auto-beta");
+		assert.equal(resolveModelSelection("OpenRouter/Auto_Beta", registry).model, "openrouter/openrouter/auto-beta");
 		assert.equal(resolveModelSelection("openrouter/auto", registry).model, "openrouter/auto");
 		assert.throws(() => resolveModelSelection("openrouter/free", registry), /Unknown subagent model 'openrouter\/free'/);
 	});
