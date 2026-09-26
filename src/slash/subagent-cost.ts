@@ -268,7 +268,9 @@ export function collectSubagentCost(
 				const flatIndex = steps.length > 1 ? index : undefined;
 				const usage = metadataUsage([...artifactsDirs], { runId: asyncRunId, agent: step.agent }, flatIndex === undefined ? [undefined, 0] : [flatIndex]);
 				const identity = flatIndex === undefined ? `run:${asyncRunId}` : `run:${asyncRunId}:${flatIndex}`;
-				if (!addChild({ agent: step.agent, runId: asyncRunId, identity, usage })) unresolvedAsyncChildren += 1;
+				// Pending and running steps have not finalized their metadata yet.
+				const settled = step.status !== "pending" && step.status !== "running";
+				if (!addChild({ agent: step.agent, runId: asyncRunId, identity, usage }) && settled) unresolvedAsyncChildren += 1;
 			});
 		} catch (error) {
 			unresolvedAsyncChildren += 1;

@@ -626,11 +626,12 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 			fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
 			fs.writeFileSync(sessionFile, "", "utf-8");
 			fs.mkdirSync(artifactsDir, { recursive: true });
-			const writeRun = (runId: string, agents: string[]) => {
+			const runningRunId = `running-cost-${process.pid}-${Date.now()}`;
+			const writeRun = (runId: string, agents: string[], stepStatus = "complete") => {
 				fs.mkdirSync(path.join(DIRS.async, runId), { recursive: true });
 				fs.writeFileSync(path.join(DIRS.async, runId, "status.json"), JSON.stringify({
-					runId, mode: agents.length > 1 ? "chain" : "single", state: "complete", startedAt: Date.now(), cwd: root,
-					steps: agents.map((agent) => ({ agent, status: "complete" })),
+					runId, mode: agents.length > 1 ? "chain" : "single", state: stepStatus === "complete" ? "complete" : "running", startedAt: Date.now(), cwd: root,
+					steps: agents.map((agent) => ({ agent, status: stepStatus })),
 				}), "utf-8");
 			};
 			const writeMetadata = (runId: string, agent: string, index: number | undefined, usage: Record<string, number>) => {
@@ -641,6 +642,8 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 			writeRun(chainRunId, ["scout", "worker"]);
 			writeMetadata(chainRunId, "scout", 0, { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.1, turns: 1 });
 			writeMetadata(chainRunId, "worker", 1, { input: 40, output: 8, cacheRead: 0, cacheWrite: 0, cost: 0.4, turns: 3 });
+			// A still-running child has no metadata yet and is not "unavailable".
+			writeRun(runningRunId, ["reviewer"], "running");
 
 			const sent: unknown[] = [];
 			const commands = new Map<string, RegisteredSlashCommand>();
@@ -653,6 +656,7 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 			const branch = [
 				{ type: "message", message: { role: "toolResult", toolName: "subagent", details: { mode: "single", runId: singleRunId, asyncId: singleRunId, results: [] } } },
 				{ type: "message", message: { role: "toolResult", toolName: "subagent", details: { mode: "chain", runId: chainRunId, asyncId: chainRunId, results: [] } } },
+				{ type: "message", message: { role: "toolResult", toolName: "subagent", details: { mode: "single", runId: runningRunId, asyncId: runningRunId, results: [] } } },
 				// The chain's bg_wait completion must not be counted again from artifacts.
 				{ type: "message", message: { role: "toolResult", toolName: "bg_wait", details: { mode: "single", results: [], completions: [{ runId: chainRunId, mode: "chain", results: [
 					{ agent: "scout", usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.1, turns: 1 } },
@@ -679,6 +683,7 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 			} finally {
 				fs.rmSync(path.join(DIRS.async, singleRunId), { recursive: true, force: true });
 				fs.rmSync(path.join(DIRS.async, chainRunId), { recursive: true, force: true });
+				fs.rmSync(path.join(DIRS.async, runningRunId), { recursive: true, force: true });
 			}
 		});
 	});
