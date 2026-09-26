@@ -491,13 +491,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 
 	const supervisorChannel = createNativeSupervisorChannel(pi, state, {
-		getCurrentOwnerStates: () => {
-			if (executor) return executor.getCurrentSupervisorOwnerStates();
-			// Owner states only exist after a scheduled execution, but begin loading on
-			// the first query so subsequent transport polls can observe them.
-			void getExecutor().catch((error) => console.error("Failed to initialize the subagent executor:", error));
-			return [];
-		},
+		// Owner states are created only by scheduled execution, which loads the executor first.
+		getCurrentOwnerStates: () => executor?.getCurrentSupervisorOwnerStates() ?? [],
 	});
 	const waitSubscriptionManager = createWaitSubscriptionManager(pi, state);
 	const mainWatchdog = registerMainWatchdog(pi);
