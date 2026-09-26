@@ -138,6 +138,10 @@ function resolveBaseModelCandidate(
 	if (queryProvider === undefined) {
 		const exactId = resolveExactIdMatches(baseModel, availableModels, preferredProvider);
 		if (exactId) return exactId;
+	} else {
+		// Some catalogs (OpenRouter's `openrouter/auto-beta`) repeat the provider inside the id.
+		const prefixedIdMatches = availableModels.filter((entry) => entry.id === baseModel && normalizeModelSegment(entry.provider) === queryProvider);
+		if (prefixedIdMatches.length === 1) return prefixedIdMatches[0]!.fullId;
 	}
 
 	return fuzzyResolveModel(baseModel, availableModels, preferredProvider);
