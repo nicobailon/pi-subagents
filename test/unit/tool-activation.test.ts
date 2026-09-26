@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { supportsMinimumVersion, unsupportedDynamicToolsReason } from "../../src/extension/tool-activation.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
@@ -104,7 +105,7 @@ describe("subagent tool activation", () => {
 		const loader = runtime.tools.get("subagents_enable");
 		assert.ok(loader);
 		assert.match(loader.description ?? "", /current request|applicable .*instructions/i);
-		assert.deepEqual(loader.parameters, { type: "object", properties: {}, additionalProperties: false });
+		assert.deepEqual(validateToolArguments(loader as never, { type: "toolCall", id: "call-1", name: "subagents_enable", arguments: { action: "enable" } }), { action: "enable" });
 
 		const result = await loader.execute?.("enable", {}, new AbortController().signal, undefined, runtime.context);
 		assert.notEqual(result?.isError, true);
