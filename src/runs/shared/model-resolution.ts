@@ -140,7 +140,12 @@ function resolveBaseModelCandidate(
 		if (exactId) return exactId;
 	}
 
-	return fuzzyResolveModel(baseModel, availableModels, preferredProvider);
+	const fuzzy = fuzzyResolveModel(baseModel, availableModels, preferredProvider);
+	if (fuzzy || queryProvider === undefined) return fuzzy;
+	// Some catalogs (OpenRouter's `openrouter/auto-beta`) repeat the provider inside the id.
+	const queryId = normalizeModelSegment(baseModel);
+	const prefixedIdMatches = availableModels.filter((entry) => normalizeModelSegment(entry.id) === queryId && normalizeModelSegment(entry.provider) === queryProvider);
+	return prefixedIdMatches.length === 1 ? prefixedIdMatches[0]!.fullId : undefined;
 }
 
 /**

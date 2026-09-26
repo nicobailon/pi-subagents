@@ -66,6 +66,21 @@ describe("single model resolution", () => {
 		assert.equal(resolveModelCandidate("openai/claude-sonnet-4", models), "openai/claude-sonnet-4");
 	});
 
+	it("resolves ids that already carry their provider prefix within that provider", () => {
+		const registry = [
+			{ provider: "openrouter", id: "openrouter/auto-beta", fullId: "openrouter/openrouter/auto-beta" },
+			{ provider: "openrouter", id: "auto", fullId: "openrouter/auto" },
+			{ provider: "other", id: "openrouter/free", fullId: "other/openrouter/free" },
+		];
+		assert.equal(resolveModelSelection("openrouter/auto-beta", registry).model, "openrouter/openrouter/auto-beta");
+		assert.equal(resolveModelSelection("OpenRouter/Auto_Beta", registry).model, "openrouter/openrouter/auto-beta");
+		assert.equal(resolveModelSelection("openrouter/auto", registry).model, "openrouter/auto");
+		assert.throws(() => resolveModelSelection("openrouter/free", registry), /Unknown subagent model 'openrouter\/free'/);
+		// An ordinary id that already resolved keeps winning over a provider-prefixed one.
+		const collision = [...registry, { provider: "openrouter", id: "auto_beta", fullId: "openrouter/auto_beta" }];
+		assert.equal(resolveModelSelection("OpenRouter/Auto-Beta", collision).model, "openrouter/auto_beta");
+	});
+
 	it("fuzzy matches case, separators, dates, and owner/name ids", () => {
 		const registry = [
 			{ provider: "openai", id: "GPT_5.Mini-2025-10-01", fullId: "openai/GPT_5.Mini-2025-10-01" },
