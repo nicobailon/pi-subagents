@@ -32,6 +32,7 @@ import { isStaleExtensionContextError, withCachedUiContext } from "../shared/ext
 import { currentCompletionOwnerId } from "../shared/completion-owner.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderSubagentResult, renderSubagentSummary, setInlineWorkflowCoverage } from "../tui/render.ts";
+import { getInspectorPlugins, registerInspectorEventListener } from "../inspectors/plugins.ts";
 import { SubagentFleetStatus, resolveFleetViewPlacement } from "../tui/fleet-status.ts";
 import { createSubagentParamsSchema } from "./schemas.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
@@ -504,11 +505,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			const ctx = withLastUiContext((current) => current);
 			if (!ctx) return;
 			try {
-				const [{ openSubagentFleet }, { createBuiltinInspectorPlugins }] = await Promise.all([
-					import("../tui/fleet.ts"),
-					import("../inspectors/plugins.ts"),
-				]);
-				await openSubagentFleet(ctx, state, { initialKey: itemKey, asyncDirRoot: DIRS.async, resultsDir: DIRS.results, fleetKeybindings: config.fleetKeybindings, inspectorPlugins: createBuiltinInspectorPlugins() });
+				const { openSubagentFleet } = await import("../tui/fleet.ts");
+				await openSubagentFleet(ctx, state, { initialKey: itemKey, asyncDirRoot: DIRS.async, resultsDir: DIRS.results, fleetKeybindings: config.fleetKeybindings, inspectorPlugins: () => getInspectorPlugins(pi) });
 			} catch (error) {
 				if (isStaleExtensionContextError(error)) {
 					if (state.lastUiContext === ctx) state.lastUiContext = null;
@@ -938,6 +936,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	const eventUnsubscribes = [
 		registerRuntimeAgentEventListener(pi),
+		registerInspectorEventListener(pi),
 		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, asyncStartedHandler),
 		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, asyncCompleteHandler),
 		pi.events.on(SUBAGENT_PROCESS_TERMINAL_EVENT, () => {
