@@ -357,6 +357,27 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		});
 	}
 
+	it("does not deny a ceiling-restricted dynamic template that fork preflight never prepares", async () => {
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		const { manager, openedPaths } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
+		const handle = registerSubagentCapabilityCeiling({ sessionId: parentSessionFile, source: "plan-mode", ceiling: { allowedAgents: ["echo"] } });
+		try {
+			const result = await makeExecutor().execute("id", {
+				context: "fork",
+				chain: [
+					{ agent: "echo", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
+					{ expand: { from: { output: "targets", path: "/items" }, item: "target", maxItems: 0 }, parallel: { agent: "second", task: "Review {target}" }, collect: { as: "reviews" } },
+				],
+				clarify: false,
+			}, new AbortController().signal, undefined, makeCtx(manager));
+			assert.doesNotMatch(result.content[0]?.text ?? "", /does not allow agent/);
+			// The allowed step's fork was prepared, so preflight got past the zero-item template.
+			assert.notDeepEqual(openedPaths, []);
+		} finally {
+			handle.dispose();
+		}
+	});
+
 
 
 	it("falls back to fresh when an implicit default fork has no persisted parent session", async () => {

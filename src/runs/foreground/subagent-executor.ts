@@ -7164,23 +7164,19 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 
 		let forkSessionFileForIndex: (idx?: number) => string | undefined = () => undefined;
 		let prepareForkSessionForIndex: (idx?: number) => Promise<void> = async () => {};
-		const selectedAgentNames = hasSingle
-			? [effectiveParams.agent!]
-			: hasTasks
-				? (effectiveParams.tasks ?? []).map((task) => task.agent)
-				: (effectiveParams.chain ?? []).flatMap((step) => getStepAgents(step as ChainStep));
+		const currentCapabilityCeiling = () => intersectSubagentCapabilityCeilings(
+			effectiveParams.capabilityCeiling,
+			resolveCurrentSubagentCapabilityCeiling(requestSessionId),
+		);
 		// Forked children keep their requested thinking level. Signed Anthropic thinking
 		// blocks are stripped from the inherited transcript by the resolver (they are bound
 		// to the parent session), which is not a reason to disable the child's own reasoning.
 		try {
-			// Pruned writer construction resolves model auth. Deny before even that
-			// preparation; the later assertion also catches a ceiling change before dispatch.
 			if (contextPolicy.usesFork && deps.config.forkContext?.mode === "pruned") {
-				const ceiling = intersectSubagentCapabilityCeilings(
-					effectiveParams.capabilityCeiling,
-					resolveCurrentSubagentCapabilityCeiling(requestSessionId),
-				);
-				for (const agent of selectedAgentNames) assertAgentAllowedByCapabilityCeiling(agent, ceiling);
+				// Building the pruned writer resolves the pruner model's auth, so deny every agent
+				// the fork preflight below would prepare before that happens.
+				const ceiling = currentCapabilityCeiling();
+				await preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, async (agent) => assertAgentAllowedByCapabilityCeiling(agent, ceiling), deps.config.chain?.dynamicFanout?.maxItems);
 			}
 			const pruneSession = contextPolicy.usesFork && deps.config.forkContext?.mode === "pruned"
 				? await createPrunedForkSessionWriter(ctx, deps.config.forkContext, signal)
@@ -7195,6 +7191,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		} catch (error) {
 			return toExecutionErrorResult(effectiveParams, error, contextPolicy.contextSummary);
 		}
+		const selectedAgentNames = hasSingle
+			? [effectiveParams.agent!]
+			: hasTasks
+				? (effectiveParams.tasks ?? []).map((task) => task.agent)
+				: (effectiveParams.chain ?? []).flatMap((step) => getStepAgents(step as ChainStep));
 		const externalAgent = selectedAgentNames
 			.map((name) => agents.find((agent) => agent.name === name))
 			.find((agent) => agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job");
@@ -7311,15 +7312,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const childSessionFileForIndex = (idx?: number) =>
 			path.join(sessionDirForIndex(idx), "session.jsonl");
 		try {
-			// Fork preparation can call an auxiliary model. Refuse a denied child before
-			// that request, not only at the later child process boundary.
-			const ceiling = intersectSubagentCapabilityCeilings(
-				effectiveParams.capabilityCeiling,
-				resolveCurrentSubagentCapabilityCeiling(requestSessionId),
-			);
-			for (const agent of selectedAgentNames) assertAgentAllowedByCapabilityCeiling(agent, ceiling);
 			if (!(effectiveParams.clarify === true && ctx.hasUI) || deps.config.forkContext?.mode === "pruned") {
-				await preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, prepareForkSessionForTask, deps.config.chain?.dynamicFanout?.maxItems);
+				// Deny a child before its parent-session branch is created, not only at the later launch boundary.
+				const prepareAllowedForkSession: PrepareForkSessionForTask = async (agent, ...rest) => {
+					assertAgentAllowedByCapabilityCeiling(agent, currentCapabilityCeiling());
+					await prepareForkSessionForTask(agent, ...rest);
+				};
+				await preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, prepareAllowedForkSession, deps.config.chain?.dynamicFanout?.maxItems);
 			}
 		} catch (error) {
 			activeAsyncCapacity?.rollback();
