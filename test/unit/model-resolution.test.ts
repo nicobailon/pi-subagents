@@ -76,6 +76,9 @@ describe("single model resolution", () => {
 		assert.equal(resolveModelSelection("OpenRouter/Auto_Beta", registry).model, "openrouter/openrouter/auto-beta");
 		assert.equal(resolveModelSelection("openrouter/auto", registry).model, "openrouter/auto");
 		assert.throws(() => resolveModelSelection("openrouter/free", registry), /Unknown subagent model 'openrouter\/free'/);
+		// An ordinary id that already resolved keeps winning over a provider-prefixed one.
+		const collision = [...registry, { provider: "openrouter", id: "auto_beta", fullId: "openrouter/auto_beta" }];
+		assert.equal(resolveModelSelection("OpenRouter/Auto-Beta", collision).model, "openrouter/auto_beta");
 	});
 
 	it("fuzzy matches case, separators, dates, and owner/name ids", () => {
