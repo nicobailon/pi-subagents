@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Loaded extensions can register external inspector providers through `pi-subagents:inspector-register:v1` or the `pi-subagents/inspectors` helper. Fleet and inspector actions use those providers without changing the built-in host preference or runner controls. Thanks to [@ninjapenguin](https://github.com/ninjapenguin) for [#2482](https://github.com/nicobailon/pi-subagents/pull/2482).
+
 ### Fixed
 
 - A foreground launch that the session's capability ceiling denies now fails before fork preparation. Previously a full fork branched the parent session, and a pruned fork resolved the pruner model's auth, before the denial at child launch. Thanks to [@antonioc-cl](https://github.com/antonioc-cl) for [#2481](https://github.com/nicobailon/pi-subagents/pull/2481).

@@ -29,7 +29,7 @@ import { collectSubagentCost, formatSubagentCostReport } from "./subagent-cost.t
 import { openSubagentsAdmin } from "./subagents-admin.ts";
 import { SUBAGENT_GUIDE_TOPICS } from "../extension/subagent-guide.ts";
 import { openSubagentFleet } from "../tui/fleet.ts";
-import { createBuiltinInspectorPlugins } from "../inspectors/plugins.ts";
+import { getInspectorPlugins } from "../inspectors/plugins.ts";
 import {
 	applySlashUpdate,
 	buildSlashInitialResult,
@@ -626,7 +626,7 @@ export function registerSlashCommands(
 		}
 		fleetOpen = true;
 		try {
-			await openSubagentFleet(ctx, state, { asyncDirRoot: DIRS.async, inspectorPlugins: createBuiltinInspectorPlugins(), resultsDir: DIRS.results, fleetKeybindings: options.fleetKeybindings });
+			await openSubagentFleet(ctx, state, { asyncDirRoot: DIRS.async, inspectorPlugins: () => getInspectorPlugins(pi), resultsDir: DIRS.results, fleetKeybindings: options.fleetKeybindings });
 		} finally {
 			fleetOpen = false;
 		}
