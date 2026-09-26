@@ -50,12 +50,13 @@ describe("external inspector registration", () => {
 		const claimed = { events };
 		const replacement = { events };
 		const cleanupClaimed = registerInspectorEventListener(claimed);
-		const cleanupReplacement = registerInspectorEventListener(replacement);
 		const registration = registerInspector({ events }, provider());
+		const cleanupReplacement = registerInspectorEventListener(replacement);
 		cleanupClaimed();
 		assert.deepEqual(getInspectorPlugins(replacement).map((item) => item.name), ["herdr", "ghostty", "test-host"]);
 		registration.dispose();
 		assert.equal(getInspectorPlugins(replacement).length, 2);
+		registerInspector({ events }, provider()).dispose();
 		cleanupReplacement();
 	});
 

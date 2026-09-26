@@ -23,7 +23,7 @@ export function registerInspectorEventListener(pi: InspectorOwner): () => void {
 	}
 	registry.owners += 1;
 	const { plugins } = registry;
-	const builtinNames = new Set(getInspectorPlugins(pi).map((plugin) => plugin.name));
+	const builtinNames = new Set([createHerdrInspectorPlugin().name, createGhosttyInspectorPlugin().name]);
 	/* oxlint-disable anti-slop/no-runtime-typeof -- This listener validates the untyped event-bus boundary, including callable provider methods. */
 	const unsubscribe = pi.events.on(INSPECTOR_REGISTER_EVENT, (rawRequest) => {
 		if (!rawRequest || typeof rawRequest !== "object" || Array.isArray(rawRequest)) return;
