@@ -653,6 +653,11 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 			const branch = [
 				{ type: "message", message: { role: "toolResult", toolName: "subagent", details: { mode: "single", runId: singleRunId, asyncId: singleRunId, results: [] } } },
 				{ type: "message", message: { role: "toolResult", toolName: "subagent", details: { mode: "chain", runId: chainRunId, asyncId: chainRunId, results: [] } } },
+				// The chain's bg_wait completion must not be counted again from artifacts.
+				{ type: "message", message: { role: "toolResult", toolName: "bg_wait", details: { mode: "single", results: [], completions: [{ runId: chainRunId, mode: "chain", results: [
+					{ agent: "scout", usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.1, turns: 1 } },
+					{ agent: "worker", usage: { input: 40, output: 8, cacheRead: 0, cacheWrite: 0, cost: 0.4, turns: 3 } },
+				] }] } } },
 			];
 			try {
 				registerSlashCommands!(pi as never, createState(root));
@@ -665,9 +670,10 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 					},
 				}));
 				const report = String((sent[0] as { content?: unknown }).content ?? "");
-				assert.match(report, /Child 1 \(oracle\): ↑30 ↓6 \$0\.3000 \(2 turns\)/);
-				assert.match(report, /Child 2 \(scout\): ↑10 ↓2 \$0\.1000 \(1 turn\)/);
-				assert.match(report, /Child 3 \(worker\): ↑40 ↓8 \$0\.4000 \(3 turns\)/);
+				assert.match(report, /Child \d \(oracle\): ↑30 ↓6 \$0\.3000 \(2 turns\)/);
+				assert.match(report, /Child \d \(scout\): ↑10 ↓2 \$0\.1000 \(1 turn\)/);
+				assert.match(report, /Child \d \(worker\): ↑40 ↓8 \$0\.4000 \(3 turns\)/);
+				assert.equal((report.match(/Child \d+ \(/g) ?? []).length, 3);
 				assert.match(report, /Children: ↑80 ↓16 \$0\.8000 \(6 turns\)/);
 				assert.doesNotMatch(report, /Async child usage unavailable/);
 			} finally {

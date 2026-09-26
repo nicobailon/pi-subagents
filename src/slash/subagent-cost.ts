@@ -161,6 +161,7 @@ export function collectSubagentCost(
 	const seenChildren = new Set<string>();
 	const workflowRunIds = new Set<string>();
 	const asyncRunIds = new Set<string>();
+	const completedRunIds = new Set<string>();
 	let unresolvedAsyncChildren = 0;
 
 	const addChild = (input: { agent?: string; runId?: string; identity?: string; usage?: Usage; sessionFile?: string }): boolean => {
@@ -195,6 +196,7 @@ export function collectSubagentCost(
 		}
 		for (const completion of details.completions ?? []) {
 			if (completion.mode === "workflow") workflowRunIds.add(completion.runId);
+			completedRunIds.add(completion.runId);
 			for (const result of completion.results ?? []) {
 				addChild({ agent: result.agent, runId: result.runId, usage: usageFromValue(result.usage), sessionFile: result.sessionFile });
 			}
@@ -251,8 +253,8 @@ export function collectSubagentCost(
 	}
 
 	for (const asyncRunId of asyncRunIds) {
-		// A bg_wait completion already reported this run's results.
-		if (seenChildren.has(`run:${asyncRunId}`)) continue;
+		// A bg_wait completion already reported this run's results; its children carry no child runId.
+		if (completedRunIds.has(asyncRunId)) continue;
 		try {
 			const status = readStatus(path.join(DIRS.async, asyncRunId));
 			if (!status?.steps?.length) {
