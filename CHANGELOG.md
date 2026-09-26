@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- `/subagent-cost` now includes async single, chain, and parallel launches. It only read child usage from workflow receipts and returned results, so an async `subagent` call with an empty `results` list reported no child usage. Thanks to [@zeezooz](https://github.com/zeezooz) for [#2484](https://github.com/nicobailon/pi-subagents/issues/2484).
 - `subagents_enable` now ignores stray arguments instead of failing validation. DeepSeek V4.1 Flash calls it as `subagents_enable({ action: "enable" })`, and the strict empty schema rejected that on every attempt, so the model never reached `subagent`. Thanks to [@crusaderky](https://github.com/crusaderky) for [#2483](https://github.com/nicobailon/pi-subagents/issues/2483).
 - Session startup no longer blocks the JavaScript event loop while locating globally installed agents; the first agent prompt and `subagents_enable` still wait for complete discovery. Thanks to [@trading-bl](https://github.com/trading-bl) for [#2474](https://github.com/nicobailon/pi-subagents/issues/2474).
 - The public dispatch schema and guides now clarify script-only preflight, equal timeout aliases, budget limits, and bounded child extension bindings; empty usage budgets are rejected at schema admission. Thanks to [@amchen2310](https://github.com/amchen2310) for [#2473](https://github.com/nicobailon/pi-subagents/issues/2473).
