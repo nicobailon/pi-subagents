@@ -131,7 +131,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		}), config);
 	}
 
-	function makeExecutorWithDiscoverAgents(discoverAgentsImpl: typeof discoverAgents, config: Record<string, unknown> = {}) {
+	function makeExecutorWithDiscoverAgents(discoverAgentsImpl: typeof discoverAgents, config: Record<string, unknown> = {}, extraDeps: Record<string, unknown> = {}) {
 		let sessionName: string | undefined;
 		const eventsApi = createEventBus();
 		return Object.assign(createSubagentExecutor({
@@ -150,6 +150,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (p: string) => p,
 			discoverAgents: discoverAgentsImpl,
+			...extraDeps,
 		}), { eventsApi });
 	}
 
@@ -375,6 +376,19 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 			}
 		});
 	}
+
+	it("denies before any fork when only the inherited child-runtime ceiling excludes the agent", async () => {
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		const { manager, openedPaths } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [{ name: "echo", description: "Echo test agent" }, { name: "second", description: "Second test agent" }],
+			projectAgentsDir: null,
+		}), {}, { childRuntime: { fanoutChild: false, capabilityCeiling: { version: 1, allowedAgents: ["echo"], denyExtensions: false, sources: ["parent"] } } });
+		const result = await executor.execute("id", { agent: "second", task: "b", context: "fork" }, new AbortController().signal, undefined, makeCtx(manager));
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /does not allow agent 'second'/);
+		assert.deepEqual(openedPaths, []);
+	});
 
 	it("does not deny a ceiling-restricted dynamic template that fork preflight never prepares", async () => {
 		const parentSessionFile = path.join(tempDir, "parent.jsonl");

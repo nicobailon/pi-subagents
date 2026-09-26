@@ -7171,14 +7171,16 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		let prepareForkSessionForIndex: (idx?: number) => Promise<void> = async () => {};
 		// A launch that forks must not branch the parent session or resolve the pruner for a
 		// child the ceiling will deny, so every agent that can launch is checked before any fork
-		// work. Dynamic templates bounded to zero items never launch. Fresh-only launches keep
-		// the child-launch check.
+		// work, and each is rechecked right before its fork is prepared in case the ceiling
+		// tightened meanwhile. The ceiling matches the child-launch boundary. Dynamic templates
+		// bounded to zero items never launch. Fresh-only launches keep the child-launch check.
+		const launchCapabilityCeiling = () => intersectSubagentCapabilityCeilings(
+			intersectSubagentCapabilityCeilings(effectiveParams.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(requestSessionId)),
+			deps.childRuntime?.capabilityCeiling,
+		);
 		const assertLaunchableAgentsAllowedBeforeFork = (): void => {
 			if (!contextPolicy.usesFork) return;
-			const ceiling = intersectSubagentCapabilityCeilings(
-				effectiveParams.capabilityCeiling,
-				resolveCurrentSubagentCapabilityCeiling(requestSessionId),
-			);
+			const ceiling = launchCapabilityCeiling();
 			const launchable = hasSingle
 				? [effectiveParams.agent!]
 				: hasTasks
@@ -7332,7 +7334,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			// still branches the parent session at launch.
 			assertLaunchableAgentsAllowedBeforeFork();
 			if (!(effectiveParams.clarify === true && ctx.hasUI) || deps.config.forkContext?.mode === "pruned") {
-				await preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, prepareForkSessionForTask, deps.config.chain?.dynamicFanout?.maxItems);
+				const prepareAllowedForkSession: PrepareForkSessionForTask = async (agent, ...rest) => {
+					assertAgentAllowedByCapabilityCeiling(agent, launchCapabilityCeiling());
+					await prepareForkSessionForTask(agent, ...rest);
+				};
+				await preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, prepareAllowedForkSession, deps.config.chain?.dynamicFanout?.maxItems);
 			}
 		} catch (error) {
 			activeAsyncCapacity?.rollback();
