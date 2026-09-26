@@ -6,6 +6,10 @@
 
 - Loaded extensions can register external inspector providers through `pi-subagents:inspector-register:v1` or the `pi-subagents/inspectors` helper. Fleet and inspector actions use those providers without changing the built-in host preference or runner controls. Thanks to [@ninjapenguin](https://github.com/ninjapenguin) for [#2482](https://github.com/nicobailon/pi-subagents/pull/2482).
 
+### Changed
+
+- Pi starts faster with pi-subagents enabled: the foreground executor and Fleet view now load on first use instead of at startup, cutting the extension's own startup modules from 264 to 199. Tools, commands, and prompts are registered exactly as before. Thanks to [@h4yfans](https://github.com/h4yfans) for the measurements in [#2480](https://github.com/nicobailon/pi-subagents/issues/2480).
+
 ### Fixed
 
 - A qualified model such as `openrouter/auto-beta` now resolves when the provider's catalog id already starts with the provider name. The resolver only compared the part after the prefix, so these OpenRouter models failed with `Unknown subagent model` unless a bare id happened to match. Matching stays inside the named provider. Thanks to [@schmlblk](https://github.com/schmlblk) for [#2487](https://github.com/nicobailon/pi-subagents/issues/2487).

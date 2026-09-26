@@ -732,6 +732,19 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		assert.equal(shortcuts.size, 0);
 	});
 
+	it("/subagents-fleet loads and opens the Fleet view on first use", async () => {
+		const commands = new Map<string, RegisteredSlashCommand>();
+		registerSlashCommands!({
+			events: createEventBus(),
+			registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+			registerShortcut() {},
+			sendMessage() {},
+		}, createState(process.cwd()));
+		let opened = 0;
+		await commands.get("subagents-fleet")!.handler("", createCommandContext({ hasUI: true, custom: async () => { opened += 1; return undefined; } }));
+		assert.equal(opened, 1);
+	});
+
 	it("/subagents-stop keeps the selector within its allocated width", async () => {
 		await withTempProject("pi-stop-selector-width-", async (root) => {
 			const id = "scheduled-width-check";

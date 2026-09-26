@@ -28,7 +28,6 @@ import { registerPromptWorkflowCommands } from "./prompt-workflows.ts";
 import { collectSubagentCost, formatSubagentCostReport } from "./subagent-cost.ts";
 import { openSubagentsAdmin } from "./subagents-admin.ts";
 import { SUBAGENT_GUIDE_TOPICS } from "../extension/subagent-guide.ts";
-import { openSubagentFleet } from "../tui/fleet.ts";
 import { getInspectorPlugins } from "../inspectors/plugins.ts";
 import {
 	applySlashUpdate,
@@ -626,6 +625,7 @@ export function registerSlashCommands(
 		}
 		fleetOpen = true;
 		try {
+			const { openSubagentFleet } = await import("../tui/fleet.ts");
 			await openSubagentFleet(ctx, state, { asyncDirRoot: DIRS.async, inspectorPlugins: () => getInspectorPlugins(pi), resultsDir: DIRS.results, fleetKeybindings: options.fleetKeybindings });
 		} finally {
 			fleetOpen = false;
