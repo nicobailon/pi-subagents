@@ -326,10 +326,6 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 	});
 
 	it("keeps naming labels within the 256-byte cap when truncation splits a multi-byte character", () => {
-		// Regression: truncateUtf8 cut the encoded buffer at exactly maxBytes and
-		// decoded the dangling bytes to U+FFFD (3 bytes each), so the stored label
-		// could exceed WORKTREE_NAMING_LABEL_MAX_BYTES (256) and fail read-side
-		// validation with "naming.label exceeds 256 UTF-8 bytes".
 		for (let pad = 0; pad < 8; pad++) {
 			const task = `${"x".repeat(pad)}${"审".repeat(120)} tail`;
 			const naming = buildWorktreeNaming({ runId: "run", index: 0, agent: "worker", task });

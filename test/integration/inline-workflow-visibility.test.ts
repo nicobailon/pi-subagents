@@ -15,6 +15,7 @@ function harness(maxAgentRows = 6, inspector: () => Promise<void> = async () => 
 	const state = { asyncJobs: new Map([[job.asyncId, job]]), foregroundControls: new Map() } as unknown as SubagentState;
 	const mounted = new Map<string, Mounted>();
 	let requests = 0;
+	let coverageCalls = 0;
 	let expanded = false;
 	const tui = { requestRender() { requests++; }, focusedComponent: Object.create(Editor.prototype) };
 	const ctx = { hasUI: true, ui: { theme, getToolsExpanded: () => expanded, getEditorText: () => "", onTerminalInput: () => () => {}, notify() {},
@@ -22,10 +23,13 @@ function harness(maxAgentRows = 6, inspector: () => Promise<void> = async () => 
 			mounted.get(key)?.dispose?.(); mounted.delete(key);
 			if (factory) mounted.set(key, factory(tui, theme));
 		} } } as unknown as ExtensionContext;
-	const fleet = new SubagentFleetStatus(state, inspector, { refreshMs: 60_000, maxAgentRows, onWorkflowCoverageChange: setInlineWorkflowCoverage });
+	const fleet = new SubagentFleetStatus(state, inspector, { refreshMs: 60_000, maxAgentRows, onWorkflowCoverageChange(ui, coverage) {
+		coverageCalls++;
+		setInlineWorkflowCoverage(ui, coverage);
+	} });
 	fleet.setContext(ctx);
 	renderWidget(ctx, [job]);
-	return { job, state, ctx, fleet, mounted, get requests() { return requests; }, setExpanded(value: boolean) { expanded = value; },
+	return { job, state, ctx, fleet, mounted, get requests() { return requests; }, get coverageCalls() { return coverageCalls; }, setExpanded(value: boolean) { expanded = value; },
 		resetRequests() { requests = 0; },
 		asyncText: () => mounted.get(WIDGET_KEY)!.render(240).join("\n"),
 		roster: (width = 240) => mounted.get(FLEET_STATUS_WIDGET_KEY)!.render(width).join("\n"),
@@ -222,10 +226,19 @@ it("keeps coverage across a non-structural refresh when the async widget paints 
 		// Elapsed seconds and tokens change the roster render key every tick without changing structure.
 		Date.now = () => realNow() + 5_000;
 		alpha.totalTokens = { input: 30, output: 8, total: 38 };
+		const before = h.coverageCalls;
 		h.fleet.refresh();
+		assert.equal(h.coverageCalls, before + 1, "prepaint computes coverage synchronously");
 		// TUI order: aboveEditor async widget renders before the belowEditor roster.
 		assert.match(h.asyncText(), /Workflow children shown in Fleet roster/, "async widget must not flash its full tree");
 		assert.doesNotMatch(h.asyncText(), /alpha-worker/);
+		assert.match(h.roster(), /alpha-worker/);
+		assert.equal(h.coverageCalls, before + 1, "same-key widget paint reuses the prepaint lines");
+		alpha.steps = [{ agent: "changed-worker", status: "running" }];
+		h.fleet.refresh();
+		assert.equal(h.coverageCalls, before + 2, "structural change recomputes coverage before paint");
+		assert.match(h.roster(), /changed-worker/);
+		assert.equal(h.coverageCalls, before + 2, "structural prepaint is reused only for its matching key");
 	} finally { Date.now = realNow; h.close(); }
 });
 

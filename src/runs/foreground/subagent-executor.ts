@@ -3312,11 +3312,16 @@ function emitWorkflowAwaitedChildComplete(
 	parentWorkflowRunId: string | undefined,
 	completed: Awaited<ReturnType<typeof waitForImportedAsyncRoot>>,
 ): void {
-	const status = readStatus(asyncDir);
+	let status: ReturnType<typeof readStatus> | undefined;
+	try {
+		status = readStatus(asyncDir);
+	} catch (error) {
+		console.error(`Failed to read awaited workflow child status for ${runId}; emitting completion with fallback metadata:`, error);
+	}
 	pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 		id: runId,
 		runId,
-		sessionId: status?.sessionId ?? state.currentSessionId,
+		sessionId: status?.sessionId ?? completed.importedPublication?.sessionId ?? state.currentSessionId,
 		completionOwnerId: status?.completionOwnerId ?? state.completionOwnerId ?? currentCompletionOwnerId(),
 		asyncDir,
 		agent: completed.agent,

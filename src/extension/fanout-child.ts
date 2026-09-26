@@ -229,7 +229,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 	const bridgeSweeper = createChildExternalJobBridgeSweeper();
 	const unsubscribeBridgeStarted = pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, (payload: unknown) => {
 		const info = payload as AsyncStartedEvent;
-		if (info.id && info.asyncDir) bridgeSweeper.track(info.id, info.asyncDir);
+		if (info.id && info.asyncDir && info.sessionId === state.currentSessionId) bridgeSweeper.track(info.id, info.asyncDir);
 	});
 	let unsubscribeAsyncStarted: (() => void) | undefined;
 	pi.on("session_start", (_event, ctx) => {
