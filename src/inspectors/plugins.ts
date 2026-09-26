@@ -5,17 +5,24 @@ import { createGhosttyInspectorPlugin } from "./ghostty/plugin.ts";
 import type { InspectorPlugin } from "./types.ts";
 
 type InspectorOwner = Pick<ExtensionAPI, "events">;
-const registeredPlugins = new WeakMap<InspectorOwner, Map<string, InspectorPlugin>>();
+// Keyed by event bus: a runtime that claims a registration can be replaced by a duplicate
+// pi-subagents runtime on the same bus, and the registration must survive that takeover.
+const registries = new WeakMap<InspectorOwner["events"], { plugins: Map<string, InspectorPlugin>; owners: number }>();
 
 /** Built-ins retain host preference; external providers follow registration order. */
 export function getInspectorPlugins(pi: InspectorOwner): readonly InspectorPlugin[] {
-	return [createHerdrInspectorPlugin(), createGhosttyInspectorPlugin(), ...(registeredPlugins.get(pi)?.values() ?? [])];
+	return [createHerdrInspectorPlugin(), createGhosttyInspectorPlugin(), ...(registries.get(pi.events)?.plugins.values() ?? [])];
 }
 
-/** The owner holds callbacks only for this extension runtime, never in child runtimes. */
+/** Registrations live while any owner runtime listens on this bus; child runtimes use their own bus. */
 export function registerInspectorEventListener(pi: InspectorOwner): () => void {
-	const plugins = new Map<string, InspectorPlugin>();
-	registeredPlugins.set(pi, plugins);
+	let registry = registries.get(pi.events);
+	if (!registry) {
+		registry = { plugins: new Map(), owners: 0 };
+		registries.set(pi.events, registry);
+	}
+	registry.owners += 1;
+	const { plugins } = registry;
 	const builtinNames = new Set(getInspectorPlugins(pi).map((plugin) => plugin.name));
 	/* oxlint-disable anti-slop/no-runtime-typeof -- This listener validates the untyped event-bus boundary, including callable provider methods. */
 	const unsubscribe = pi.events.on(INSPECTOR_REGISTER_EVENT, (rawRequest) => {
@@ -55,9 +62,14 @@ export function registerInspectorEventListener(pi: InspectorOwner): () => void {
 		}
 	});
 	/* oxlint-enable anti-slop/no-runtime-typeof */
+	let closed = false;
 	return () => {
+		if (closed) return;
+		closed = true;
 		unsubscribe();
+		registry.owners -= 1;
+		if (registry.owners > 0) return;
 		plugins.clear();
-		if (registeredPlugins.get(pi) === plugins) registeredPlugins.delete(pi);
+		if (registries.get(pi.events) === registry) registries.delete(pi.events);
 	};
 }

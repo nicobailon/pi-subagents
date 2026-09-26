@@ -501,12 +501,14 @@ retried through another provider. Status/close use the first provider whose
 `owns` returns true; unavailable lifecycle methods remain explicit errors.
 Providers own their pane bindings and must verify ownership before closing one.
 
-Registrations belong to the owning pi-subagents extension runtime, not the
-consumer's module instance. They are not inherited by child runtimes or other Pi
-instances. Providers receive the current action context; do not capture a stale
+Registrations are held by the pi-subagents runtimes listening on the Pi event
+bus, not the consumer's module instance, so they survive one pi-subagents runtime
+replacing another on that bus. They are not inherited by child runtimes or other
+Pi instances. Providers receive the current action context; do not capture a stale
 session context in their callbacks. Dispose before re-registering on session
 changes. Disposal is idempotent, removes callbacks only, and does not close panes.
-The owner also clears registrations at runtime shutdown/reload. Fleet looks up
+Registrations are cleared when the last pi-subagents runtime on the bus shuts
+down or reloads. Fleet looks up
 providers at action time, so registration or disposal takes effect even while
 Fleet is open. Unsupported versions and malformed plugins return
 `{ ok: false, error }`; the first owner to fill `result` handles the request.

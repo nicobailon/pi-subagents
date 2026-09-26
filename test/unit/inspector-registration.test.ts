@@ -28,7 +28,6 @@ describe("external inspector registration", () => {
 		const plugin = provider();
 		const registration = registerInspector(consumer, plugin);
 		assert.deepEqual(getInspectorPlugins(owner).map((item) => item.name), ["herdr", "ghostty", "test-host"]);
-		assert.equal(getInspectorPlugins(consumer).length, 2);
 		assert.equal(getInspectorPlugins(otherOwner).length, 2);
 		assert.throws(() => registerInspector(consumer, plugin), /already registered/);
 		assert.throws(() => registerInspector(consumer, provider("herdr")), /already registered/);
@@ -44,6 +43,20 @@ describe("external inspector registration", () => {
 		registerInspector(consumer, plugin);
 		shutdown();
 		assert.equal(getInspectorPlugins(owner).length, 3, "old runtime cleanup must not clear a replacement");
+	});
+
+	it("keeps a registration when a duplicate runtime on the same bus replaces the one that claimed it", () => {
+		const events = createEventBus();
+		const claimed = { events };
+		const replacement = { events };
+		const cleanupClaimed = registerInspectorEventListener(claimed);
+		const cleanupReplacement = registerInspectorEventListener(replacement);
+		const registration = registerInspector({ events }, provider());
+		cleanupClaimed();
+		assert.deepEqual(getInspectorPlugins(replacement).map((item) => item.name), ["herdr", "ghostty", "test-host"]);
+		registration.dispose();
+		assert.equal(getInspectorPlugins(replacement).length, 2);
+		cleanupReplacement();
 	});
 
 	it("rejects malformed event requests without registering callbacks", (t) => {
