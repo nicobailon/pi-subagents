@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Pi starts faster with pi-subagents enabled: the foreground executor and Fleet view now load on first use instead of at startup, cutting the extension's own startup modules from 263 to 193. Tools, commands, and prompts are registered exactly as before. Thanks to [@h4yfans](https://github.com/h4yfans) for the measurements in [#2480](https://github.com/nicobailon/pi-subagents/issues/2480).
+
 ### Fixed
 
 - `/subagent-cost` now includes async single, chain, and parallel launches. It only read child usage from workflow receipts and returned results, so an async `subagent` call with an empty `results` list reported no child usage. Thanks to [@zeezooz](https://github.com/zeezooz) for [#2484](https://github.com/nicobailon/pi-subagents/issues/2484).
