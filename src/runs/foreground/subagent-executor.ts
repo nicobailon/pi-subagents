@@ -67,7 +67,7 @@ import { claimRunFanoutBatch, claimRunFanoutBatchWithCommit, createRunFanoutBudg
 import { retainLiveForegroundNestedRoute } from "../../integrations/pi-web-session-liveness.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
-import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
+import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContract } from "../shared/agent-contract.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
 import { resolveRequiredChildExtensions } from "../../shared/required-child-extensions.ts";
@@ -7169,10 +7169,33 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 
 		let forkSessionFileForIndex: (idx?: number) => string | undefined = () => undefined;
 		let prepareForkSessionForIndex: (idx?: number) => Promise<void> = async () => {};
+		// A launch that forks must not branch the parent session or resolve the pruner for a
+		// child the ceiling will deny, so every agent that can launch is checked before any fork
+		// work, and each is rechecked right before its fork is prepared in case the ceiling
+		// tightened meanwhile. The ceiling matches the child-launch boundary. Dynamic templates
+		// bounded to zero items never launch. Fresh-only launches keep the child-launch check.
+		const launchCapabilityCeiling = () => intersectSubagentCapabilityCeilings(
+			intersectSubagentCapabilityCeilings(effectiveParams.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(requestSessionId)),
+			deps.childRuntime?.capabilityCeiling,
+		);
+		const assertLaunchableAgentsAllowedBeforeFork = (): void => {
+			if (!contextPolicy.usesFork) return;
+			const ceiling = launchCapabilityCeiling();
+			const launchable = hasSingle
+				? [effectiveParams.agent!]
+				: hasTasks
+					? (effectiveParams.tasks ?? []).map((task) => task.agent)
+					: (effectiveParams.chain ?? []).flatMap((step) => isDynamicParallelStep(step as ChainStep)
+						&& ((step as DynamicParallelStep).expand.maxItems ?? deps.config.chain?.dynamicFanout?.maxItems ?? 0) === 0
+						? []
+						: getStepAgents(step as ChainStep));
+			for (const agent of launchable) assertAgentAllowedByCapabilityCeiling(agent, ceiling);
+		};
 		// Forked children keep their requested thinking level. Signed Anthropic thinking
 		// blocks are stripped from the inherited transcript by the resolver (they are bound
 		// to the parent session), which is not a reason to disable the child's own reasoning.
 		try {
+			assertLaunchableAgentsAllowedBeforeFork();
 			const pruneSession = contextPolicy.usesFork && deps.config.forkContext?.mode === "pruned"
 				? await createPrunedForkSessionWriter(ctx, deps.config.forkContext, signal)
 				: undefined;
@@ -7307,8 +7330,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const childSessionFileForIndex = (idx?: number) =>
 			path.join(sessionDirForIndex(idx), "session.jsonl");
 		try {
+			// The ceiling can change while the pruned writer is built; clarify skips preflight but
+			// still branches the parent session at launch.
+			assertLaunchableAgentsAllowedBeforeFork();
 			if (!(effectiveParams.clarify === true && ctx.hasUI) || deps.config.forkContext?.mode === "pruned") {
-				await preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, prepareForkSessionForTask, deps.config.chain?.dynamicFanout?.maxItems);
+				const prepareAllowedForkSession: PrepareForkSessionForTask = async (agent, ...rest) => {
+					assertAgentAllowedByCapabilityCeiling(agent, launchCapabilityCeiling());
+					await prepareForkSessionForTask(agent, ...rest);
+				};
+				await preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, prepareAllowedForkSession, deps.config.chain?.dynamicFanout?.maxItems);
 			}
 		} catch (error) {
 			activeAsyncCapacity?.rollback();
