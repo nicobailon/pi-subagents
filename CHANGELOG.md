@@ -2,9 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- Loaded extensions can register external inspector providers through `pi-subagents:inspector-register:v1` or the `pi-subagents/inspectors` helper. Fleet and inspector actions use those providers without changing the built-in host preference or runner controls. Thanks to [@ninjapenguin](https://github.com/ninjapenguin) for [#2482](https://github.com/nicobailon/pi-subagents/pull/2482).
+
 ### Fixed
 
 - A qualified model such as `openrouter/auto-beta` now resolves when the provider's catalog id already starts with the provider name. The resolver only compared the part after the prefix, so these OpenRouter models failed with `Unknown subagent model` unless a bare id happened to match. Matching stays inside the named provider. Thanks to [@schmlblk](https://github.com/schmlblk) for [#2487](https://github.com/nicobailon/pi-subagents/issues/2487).
+- A foreground launch that the session's capability ceiling denies now fails before fork preparation. Previously a full fork branched the parent session, and a pruned fork resolved the pruner model's auth, before the denial at child launch. Thanks to [@antonioc-cl](https://github.com/antonioc-cl) for [#2481](https://github.com/nicobailon/pi-subagents/pull/2481).
+- `/subagent-cost` now includes async single, chain, and parallel launches. It only read child usage from workflow receipts and returned results, so an async `subagent` call with an empty `results` list reported no child usage. Thanks to [@zeezooz](https://github.com/zeezooz) for [#2484](https://github.com/nicobailon/pi-subagents/issues/2484).
+- `subagents_enable` now ignores stray arguments instead of failing validation. DeepSeek V4.1 Flash calls it as `subagents_enable({ action: "enable" })`, and the strict empty schema rejected that on every attempt, so the model never reached `subagent`. Thanks to [@crusaderky](https://github.com/crusaderky) for [#2483](https://github.com/nicobailon/pi-subagents/issues/2483).
 - Session startup no longer blocks the JavaScript event loop while locating globally installed agents; the first agent prompt and `subagents_enable` still wait for complete discovery. Thanks to [@trading-bl](https://github.com/trading-bl) for [#2474](https://github.com/nicobailon/pi-subagents/issues/2474).
 - The public dispatch schema and guides now clarify script-only preflight, equal timeout aliases, budget limits, and bounded child extension bindings; empty usage budgets are rejected at schema admission. Thanks to [@amchen2310](https://github.com/amchen2310) for [#2473](https://github.com/nicobailon/pi-subagents/issues/2473).
 - An older package-local `pi-ai` peer no longer disables dynamic tool activation when the running Pi supports it, so `subagent` stays hidden behind `subagents_enable` until selected. Thanks to [@abdwhb-png](https://github.com/abdwhb-png) for [#2471](https://github.com/nicobailon/pi-subagents/pull/2471).

@@ -617,6 +617,77 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		});
 	});
 
+	it("/subagent-cost recovers async single and chain usage from status steps and metadata", async () => {
+		await withTempProject("pi-subagent-cost-async-single-", async (root) => {
+			const singleRunId = `single-cost-${process.pid}-${Date.now()}`;
+			const chainRunId = `chain-cost-${process.pid}-${Date.now()}`;
+			const sessionFile = path.join(root, "sessions", "parent.jsonl");
+			const artifactsDir = getArtifactsDir(sessionFile, root, "session");
+			fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.mkdirSync(artifactsDir, { recursive: true });
+			const runningRunId = `running-cost-${process.pid}-${Date.now()}`;
+			const writeRun = (runId: string, agents: string[], stepStatus = "complete") => {
+				fs.mkdirSync(path.join(DIRS.async, runId), { recursive: true });
+				fs.writeFileSync(path.join(DIRS.async, runId, "status.json"), JSON.stringify({
+					runId, mode: agents.length > 1 ? "chain" : "single", state: stepStatus === "complete" ? "complete" : "running", startedAt: Date.now(), cwd: root,
+					steps: agents.map((agent) => ({ agent, status: stepStatus })),
+				}), "utf-8");
+			};
+			const writeMetadata = (runId: string, agent: string, index: number | undefined, usage: Record<string, number>) => {
+				fs.writeFileSync(getArtifactPaths(artifactsDir, runId, agent, index).metadataPath, JSON.stringify({ runId, agent, usage }), "utf-8");
+			};
+			writeRun(singleRunId, ["oracle"]);
+			writeMetadata(singleRunId, "oracle", undefined, { input: 30, output: 6, cacheRead: 0, cacheWrite: 0, cost: 0.3, turns: 2 });
+			writeRun(chainRunId, ["scout", "worker"]);
+			writeMetadata(chainRunId, "scout", 0, { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.1, turns: 1 });
+			writeMetadata(chainRunId, "worker", 1, { input: 40, output: 8, cacheRead: 0, cacheWrite: 0, cost: 0.4, turns: 3 });
+			// A still-running child has no metadata yet and is not "unavailable".
+			writeRun(runningRunId, ["reviewer"], "running");
+
+			const sent: unknown[] = [];
+			const commands = new Map<string, RegisteredSlashCommand>();
+			const pi = {
+				events: createEventBus(),
+				registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+				registerShortcut() {},
+				sendMessage(message: unknown) { sent.push(message); },
+			};
+			const branch = [
+				{ type: "message", message: { role: "toolResult", toolName: "subagent", details: { mode: "single", runId: singleRunId, asyncId: singleRunId, results: [] } } },
+				{ type: "message", message: { role: "toolResult", toolName: "subagent", details: { mode: "chain", runId: chainRunId, asyncId: chainRunId, results: [] } } },
+				{ type: "message", message: { role: "toolResult", toolName: "subagent", details: { mode: "single", runId: runningRunId, asyncId: runningRunId, results: [] } } },
+				// The chain's bg_wait completion must not be counted again from artifacts.
+				{ type: "message", message: { role: "toolResult", toolName: "bg_wait", details: { mode: "single", results: [], completions: [{ runId: chainRunId, mode: "chain", results: [
+					{ agent: "scout", usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.1, turns: 1 } },
+					{ agent: "worker", usage: { input: 40, output: 8, cacheRead: 0, cacheWrite: 0, cost: 0.4, turns: 3 } },
+				] }] } } },
+			];
+			try {
+				registerSlashCommands!(pi as never, createState(root));
+				await commands.get("subagent-cost")!.handler("", createCommandContext({
+					cwd: root,
+					sessionManager: {
+						getBranch: () => branch,
+						getSessionFile: () => sessionFile,
+						getSessionId: () => "session-parent",
+					},
+				}));
+				const report = String((sent[0] as { content?: unknown }).content ?? "");
+				assert.match(report, /Child \d \(oracle\): ↑30 ↓6 \$0\.3000 \(2 turns\)/);
+				assert.match(report, /Child \d \(scout\): ↑10 ↓2 \$0\.1000 \(1 turn\)/);
+				assert.match(report, /Child \d \(worker\): ↑40 ↓8 \$0\.4000 \(3 turns\)/);
+				assert.equal((report.match(/Child \d+ \(/g) ?? []).length, 3);
+				assert.match(report, /Children: ↑80 ↓16 \$0\.8000 \(6 turns\)/);
+				assert.doesNotMatch(report, /Async child usage unavailable/);
+			} finally {
+				fs.rmSync(path.join(DIRS.async, singleRunId), { recursive: true, force: true });
+				fs.rmSync(path.join(DIRS.async, chainRunId), { recursive: true, force: true });
+				fs.rmSync(path.join(DIRS.async, runningRunId), { recursive: true, force: true });
+			}
+		});
+	});
+
 	it("registers a configured foreground detach shortcut", async () => {
 		const shortcuts = new Map<string, { handler(ctx: unknown): Promise<void> }>();
 		const sent: unknown[] = [];

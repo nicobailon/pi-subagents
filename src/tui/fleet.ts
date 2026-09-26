@@ -110,7 +110,7 @@ export interface FleetViewOptions {
 	fleetKeybindings?: FleetKeybindingsConfig;
 	actions?: FleetActionHandlers;
 	copyText?: (text: string) => Promise<void> | void;
-	inspectorPlugins?: readonly InspectorPlugin[];
+	inspectorPlugins?: () => readonly InspectorPlugin[];
 	inspectorEnv?: NodeJS.ProcessEnv;
 }
 
@@ -1428,7 +1428,7 @@ export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentSt
 			cwd: state.baseCwd,
 			...(state.authorityPolicy ? { authorityPolicy: state.authorityPolicy } : {}),
 			...(state.missionStoreConfig ? { missions: state.missionStoreConfig } : {}),
-			...(options.inspectorPlugins ? { plugins: options.inspectorPlugins } : {}),
+			plugins: options.inspectorPlugins?.(),
 			...(options.inspectorEnv ? { env: options.inspectorEnv } : {}),
 		}), `Failed to open inspector for async run ${input.runId}.`),
 		redoPrompt: async (input: { runId: string; index: number; guidance: string; control?: ForegroundRunControl }) => {

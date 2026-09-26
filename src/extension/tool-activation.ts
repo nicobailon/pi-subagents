@@ -148,7 +148,8 @@ export function registerSubagentToolActivation(
 		return;
 	}
 
-	const parameters = Type.Object({}, { additionalProperties: false });
+	// Takes no arguments, but a stray one (DeepSeek sends `{ action: "enable" }`) must not fail validation.
+	const parameters = Type.Object({});
 	const loader: ToolDefinition<typeof parameters, ActivationDetails> = {
 		name: LOADER_NAME,
 		label: "Enable Subagents",
