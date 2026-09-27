@@ -124,7 +124,7 @@ describe("native subagent fleet", () => {
 			sessionManager: { getSessionId: () => "fleet-rewrite-session" },
 			modelRegistry: {
 				async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test" }; },
-				getRegisteredProviderConfig() { return { api: "faux", streamSimple: streamFn }; },
+				streamSimple: streamFn,
 			},
 		} as never;
 		const rewritten = await rewritePromptWithGuidance({
