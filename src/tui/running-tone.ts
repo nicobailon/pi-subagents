@@ -22,12 +22,8 @@ export function readMainThinkingLevel(read: () => unknown): ThinkingLevel | unde
 	}
 }
 
-/** The main session's current thinking level, read at render time. */
-export function mainThinkingLevel(): ThinkingLevel | undefined {
-	return mainThinkingLevelSource();
-}
-
-/** The running tone for a thinking level: Pi's prompt-box color for that level, else accent. */
-export function runningTone(theme: Theme, level: ThinkingLevel | undefined): (text: string) => string {
+/** The running tone of a glyph: Pi's prompt-box color for the recorded level of the one child it stands for, else for the main session's current level, else accent. */
+export function runningTone(theme: Theme, childLevel?: ThinkingLevel): (text: string) => string {
+	const level = childLevel ?? mainThinkingLevelSource();
 	return level ? theme.getThinkingBorderColor(level) : (text) => theme.fg("accent", text);
 }

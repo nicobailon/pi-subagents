@@ -34,7 +34,7 @@ import { formatNestedAggregate } from "../runs/shared/nested-render.ts";
 import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
 import { contextModeBadge, contextModePrefix } from "../runs/shared/context-mode.ts";
 import { shouldSuppressSingleStep, stripRepeatedAgentPrefix, withDuplicateLabelDiscriminators } from "./render-helpers.ts";
-import { mainThinkingLevel, runningTone } from "./running-tone.ts";
+import { runningTone } from "./running-tone.ts";
 import { childThinkingLevel, type ThinkingLevel } from "../shared/model-info.ts";
 import { buildWorkflowChatProgressRows, type WorkflowChatProgressRow } from "../workflows/chat-progress.ts";
 import { formatWorkflowPreflight, formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary, formatWorkflowPreflightWarnings } from "../workflows/workflow-preflight.ts";
@@ -883,7 +883,7 @@ type ResultPresentation = {
 	glyph: string;
 	label: "running" | "detached" | "stopped" | "paused" | "failed" | "partial" | "completed";
 	tone: "accent" | "warning" | "error" | "success";
-	/** Thinking level whose color replaces the accent tone of a running presentation: its one child's, or the main session's for several. */
+	/** Recorded thinking level of the one child a running presentation stands for. */
 	thinking?: ThinkingLevel;
 };
 
@@ -951,7 +951,7 @@ function resultPresentation(result: Details["results"][number], output: string, 
 }
 
 function presentationTone(presentation: ResultPresentation, theme: Theme): (text: string) => string {
-	return presentation.thinking ? runningTone(theme, presentation.thinking) : (text) => theme.fg(presentation.tone, text);
+	return presentation.label === "running" ? runningTone(theme, presentation.thinking) : (text) => theme.fg(presentation.tone, text);
 }
 
 function resultGlyph(result: Details["results"][number], output: string, theme: Theme, running = isResultRunning(result), seed = progressRunningSeed(result.progress ?? result.progressSummary), frame?: number): string {
@@ -1263,11 +1263,11 @@ function widgetJobsRunningSeed(jobs: AsyncJobState[]): number | undefined {
 
 /** Header tone: the main session's thinking color while any job is active, dim otherwise. */
 function activeHeaderTone(theme: Theme, hasActive: boolean): (text: string) => string {
-	return hasActive ? runningTone(theme, mainThinkingLevel()) : (text) => theme.fg("dim", text);
+	return hasActive ? runningTone(theme) : (text) => theme.fg("dim", text);
 }
 
 function widgetStatusGlyph(job: AsyncJobState, theme: Theme, frame?: number): string {
-	if (job.status === "running") return runningTone(theme, job.mode === "single" ? childThinkingLevel(job.steps?.[0]) : mainThinkingLevel())(runningGlyph(animatedSeed(widgetJobRunningSeed(job), frame)));
+	if (job.status === "running") return runningTone(theme, job.mode === "single" ? childThinkingLevel(job.steps?.[0]) : undefined)(runningGlyph(animatedSeed(widgetJobRunningSeed(job), frame)));
 	if (job.status === "queued") return theme.fg("muted", "◦");
 	if (job.status === "complete") return theme.fg("success", "✓");
 	if (job.status === "paused") return theme.fg("warning", "■");
@@ -1363,7 +1363,6 @@ function workflowChecklistWidgetLines(checklist: WorkflowChecklistProjection | u
 		const phaseItem = phase.items.find((item) => item.state === "running") ?? phase.items[0];
 		const glyph = workflowChecklistGlyph({
 			state: phase.state,
-			thinking: mainThinkingLevel(),
 			startedAt: phaseItem?.startedAt,
 			durationMs: phaseItem?.durationMs,
 			toolCount: phaseItem?.toolCount,
@@ -1387,7 +1386,7 @@ function workflowChecklistWidgetLines(checklist: WorkflowChecklistProjection | u
 interface CompactWorkflowLaneRow {
 	key: string;
 	state: WorkflowChecklistState;
-	/** Thinking level whose color a running lane glyph takes: its one child's, or the main session's when the lane stands for several. */
+	/** Recorded thinking level of the lane's child when the lane stands for exactly one. */
 	thinking?: ThinkingLevel;
 	agent?: string;
 	mode?: string;
@@ -1435,12 +1434,11 @@ function compactWorkflowLaneRow(key: string, items: readonly WorkflowChecklistIt
 	const toolCounts = items.map((item) => item.toolCount).filter((value): value is number => value !== undefined);
 	const durations = items.map((item) => item.durationMs).filter((value): value is number => value !== undefined);
 	const label = compactWorkflowLaneLabel(items, key);
-	const thinking = items.length === 1 ? items[0]?.thinking : mainThinkingLevel();
 	return {
 		key: boundedLaneValue(key, 40) ?? key,
 		state,
 		agent: compactWorkflowLaneOwner(items),
-		...(thinking ? { thinking } : {}),
+		...(items.length === 1 && items[0]?.thinking ? { thinking: items[0].thinking } : {}),
 		...(lane?.mode ? { mode: lane.mode } : {}),
 		...(lane?.decision ? { decision: boundedLaneValue(lane.decision, 56) } : {}),
 		...(lane?.claims?.length ? { claims: boundedLaneValue(lane.claims.join(", "), 56) } : {}),
@@ -1815,7 +1813,7 @@ function parallelWidgetGroupHeader(
 	const label = group.stepIndex !== undefined && group.chainTotal !== undefined
 		? `Step ${group.stepIndex + 1}/${group.chainTotal}: parallel group`
 		: "parallel group";
-	return `  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(group.steps), frame, mainThinkingLevel())} ${themeBold(theme, label)} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(group.steps, group.total))}`;
+	return `  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(group.steps), frame)} ${themeBold(theme, label)} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(group.steps, group.total))}`;
 }
 
 function parallelWidgetGroupDetails(
@@ -3202,7 +3200,7 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 	const workflow = d.workflow;
 	const rows = workflow ? buildWorkflowChatProgressRows(workflow.trace, d.preflight) : d.preflight ? buildWorkflowChatProgressRows([], d.preflight) : [];
 	const state = workflowOverallState(rows, workflow?.value !== undefined, result.isError);
-	const glyph = state === "running" ? runningTone(theme, mainThinkingLevel())(runningGlyph(frame)) : state === "complete" ? theme.fg("success", "✓") : state === "paused" ? theme.fg("warning", "■") : theme.fg("error", "✗");
+	const glyph = state === "running" ? runningTone(theme)(runningGlyph(frame)) : state === "complete" ? theme.fg("success", "✓") : state === "paused" ? theme.fg("warning", "■") : theme.fg("error", "✗");
 	const width = getTermWidth() - 4;
 	const runId = d.runId ? d.runId.slice(0, 12) : "workflow";
 	const repoLabel = d.chatProgress?.repoLabel ?? (d.chatProgress?.repoRelation === "same" ? "same repo" : "other repo");
@@ -3289,7 +3287,6 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 		partial,
 		seed: runningSeed(progressRunningSeed(totalSummary), d.currentStepIndex),
 		frame,
-		thinking: mainThinkingLevel(),
 	});
 	const glyph = presentationTone(aggregatePresentation, theme)(aggregatePresentation.glyph);
 	const contextBadge = contextModeBadge(theme, d.context);
@@ -3316,8 +3313,8 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 	const renderEntries = chainEntries ?? buildForegroundResultEntries(d, multiLabel, displayStart, displayEnd, useResultsDirectly);
 	for (const entry of renderEntries) {
 		if (entry.kind === "group") {
-			const glyph = widgetStepGlyph(entry.status as AsyncJobStep["status"], theme, undefined, undefined, mainThinkingLevel());
-			const statusLabel = widgetStepStatus(entry.status as AsyncJobStep["status"], theme, mainThinkingLevel());
+			const glyph = widgetStepGlyph(entry.status as AsyncJobStep["status"], theme);
+			const statusLabel = widgetStepStatus(entry.status as AsyncJobStep["status"], theme);
 			const groupLabel = entry.groupLabel ? ` (${compactTaskText(undefined, entry.groupLabel) ?? entry.groupLabel})` : "";
 			c.addChild(new Text(truncLine(`${rowIndent}${glyph} ${entry.stepLabel}${groupLabel} ${theme.fg("dim", "·")} ${statusLabel}`, width), 0, 0));
 			if (entry.error) c.addChild(new Text(truncLine(theme.fg("error", `${detailIndent}⎿  Error: ${entry.error}`), width), 0, 0));
@@ -3399,7 +3396,7 @@ export function renderSubagentSummary(
 	const partial = Boolean(details && workflowGraphHasStatus(details, ["partial"]));
 	const state = running ? "running" : failed ? "failed" : stopped ? "stopped" : paused ? "paused" : partial ? "partial" : "completed";
 	const glyph = state === "running"
-		? runningTone(theme, details?.mode === "single" && results.length === 1 ? childThinkingLevel(results[0], results[0]?.progress) : mainThinkingLevel())(STATIC_RUNNING_GLYPH)
+		? runningTone(theme, details?.mode === "single" && results.length === 1 ? childThinkingLevel(results[0], results[0]?.progress) : undefined)(STATIC_RUNNING_GLYPH)
 		: state === "completed"
 			? theme.fg("success", "✓")
 			: state === "failed"
@@ -3583,7 +3580,6 @@ export function renderSubagentResult(
 		partial,
 		completedWithoutOutput,
 		frame,
-		thinking: mainThinkingLevel(),
 	}), theme);
 
 	const totalSummary =
@@ -3662,7 +3658,7 @@ export function renderSubagentResult(
 
 	for (const entry of renderEntries) {
 		if (entry.kind === "group") {
-			const statusLabel = widgetStepStatus(entry.status as AsyncJobStep["status"], theme, mainThinkingLevel());
+			const statusLabel = widgetStepStatus(entry.status as AsyncJobStep["status"], theme);
 			const groupLabel = entry.groupLabel ? ` (${compactTaskText(undefined, entry.groupLabel) ?? entry.groupLabel})` : "";
 			c.addChild(new Text(fit(`  ${statusLabel} ${entry.stepLabel}${groupLabel}`), 0, 0));
 			c.addChild(new Text(theme.fg(entry.status === "failed" ? "error" : "dim", `    status: ${entry.status}`), 0, 0));

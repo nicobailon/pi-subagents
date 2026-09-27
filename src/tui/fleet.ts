@@ -18,7 +18,7 @@ import { resolveWorkflowForegroundSteeringTarget, steerWorkflowForegroundTarget 
 import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.ts";
 import { FLEET_STATUS_WIDGET_KEY } from "./fleet-status.ts";
 import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from "./fleet-transcript.ts";
-import { mainThinkingLevel, runningTone } from "./running-tone.ts";
+import { runningTone } from "./running-tone.ts";
 import { childThinkingLevel, type ThinkingLevel } from "../shared/model-info.ts";
 import { handleInspectorAction } from "../inspectors/actions.ts";
 import type { InspectorPlugin } from "../inspectors/types.ts";
@@ -350,12 +350,12 @@ function visibleWorkflowParentKeyForForegroundKey(state: SubagentState, key: str
 	return undefined;
 }
 
-/** The level a running Fleet row reflects: its child's, the main session's for a whole run, none for an external run. */
+/** The recorded level of the one child a running Fleet row stands for; a whole run or an external run has none. */
 function fleetItemThinkingLevel(item: FleetItem): ThinkingLevel | undefined {
 	switch (item.kind) {
-		case "foreground-active": return item.activeChild ? childThinkingLevel(item.activeChild) : childThinkingLevel(item.control);
+		case "foreground-active": return childThinkingLevel(item.activeChild ?? item.control);
 		case "foreground-recent": return childThinkingLevel(item.child);
-		case "async": return item.step ? childThinkingLevel(item.step) : mainThinkingLevel();
+		case "async": return childThinkingLevel(item.step);
 		case "external": return undefined;
 	}
 }

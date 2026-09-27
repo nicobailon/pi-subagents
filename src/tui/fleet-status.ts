@@ -9,7 +9,7 @@ import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
 import { hostStepReportName, hostStepVerdictLabel } from "../runs/shared/host-step-status.ts";
 import { isStaleExtensionContextError } from "../shared/extension-context.ts";
 import { inlineWorkflowRenderKey } from "./render.ts";
-import { mainThinkingLevel, runningTone } from "./running-tone.ts";
+import { runningTone } from "./running-tone.ts";
 import { childThinkingLevel, type ThinkingLevel } from "../shared/model-info.ts";
 import { formatWorkflowChecklistBottleneck, formatWorkflowChecklistPhase, formatWorkflowChecklistSummary, projectWorkflowChecklist, type WorkflowChecklistPhase, type WorkflowChecklistProjection } from "../workflows/workflow-checklist.ts";
 
@@ -919,7 +919,7 @@ export class SubagentFleetStatus {
 
 	private workflowRowStateLabel(row: AsyncStatusWorkflowRow, theme: Theme): string {
 		const state = row.kind ? hostStepVerdictLabel(row.state as HostStepState, row.verdict as HostStepVerdict | undefined) : row.state;
-		if (state === "running") return runningTone(theme, row.kind ? undefined : row.thinking)(state);
+		if (state === "running") return row.kind ? theme.fg("accent", state) : runningTone(theme, row.thinking)(state);
 		if (state === "pending" || state === "queued") return theme.fg("muted", state);
 		if (state === "pass" || state === "complete" || state === "completed") return theme.fg("success", state === "pass" ? "pass" : "complete");
 		if (state === "fail" || state === "failed" || state === "error") return theme.fg("error", state === "fail" ? "fail" : state);
@@ -931,7 +931,7 @@ export class SubagentFleetStatus {
 		const glyph = phase.state === "complete"
 			? theme.fg("success", "✓")
 			: phase.state === "running"
-				? runningTone(theme, mainThinkingLevel())("●")
+				? runningTone(theme)("●")
 				: phase.state === "blocked" || phase.state === "failed"
 					? theme.fg("error", phase.state === "blocked" ? "!" : "✗")
 					: phase.state === "queued"

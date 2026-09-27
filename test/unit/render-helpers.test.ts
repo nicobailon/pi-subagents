@@ -286,6 +286,24 @@ test("a running single card glyph takes the thinking color of the level its chil
 	}
 });
 
+test("a single-child glyph with no recorded level takes the main session's color, then accent", () => {
+	const now = Date.now();
+	const jobs = [
+		{ asyncId: "bare-single", asyncDir: "/tmp/bare-single", status: "running", mode: "single", agents: ["scout"], startedAt: now, updatedAt: now, steps: [{ index: 0, agent: "scout", status: "running" }] },
+		{ asyncId: "bare-other", asyncDir: "/tmp/bare-other", status: "running", mode: "single", agents: ["writer"], startedAt: now, updatedAt: now, steps: [{ index: 0, agent: "writer", status: "running", thinking: "low" }] },
+	] as AsyncJobState[];
+	const singleRow = (lines: string[]) => runningGlyphTone(lines.find((line) => line.includes("scout") && runningGlyphTone(line)));
+	setMainThinkingLevelSource(() => "high");
+	try {
+		assert.equal(runningGlyphTone(singleCard(runningResult("reviewer"), false, toneTheme).split("\n")[0]), "thinking:high", "foreground card");
+		assert.equal(singleRow(buildWidgetLines(jobs, toneTheme as never, 160, false, 0)), "thinking:high", "async widget row");
+	} finally {
+		setMainThinkingLevelSource(() => undefined);
+	}
+	assert.equal(runningGlyphTone(singleCard(runningResult("reviewer"), false, toneTheme).split("\n")[0]), "accent", "no main level either");
+	assert.equal(singleRow(buildWidgetLines(jobs, toneTheme as never, 160, false, 0)), "accent", "no main level either");
+});
+
 test("an expanded running single card colors its glyph and running label with the child's level", () => {
 	const running = runningResult("reviewer", { thinking: "low", sessionThinking: "medium" });
 	const toned = singleCard(running, true, toneTheme);
@@ -400,7 +418,7 @@ test("glyphs that stand for several children take the main session's thinking co
 			const lines = componentText(renderSubagentResult({ content: [{ type: "text", text: "running" }], details } as never, { expanded }, toneTheme as never)).split("\n");
 			assert.equal(runningGlyphTone(lines[0]), "thinking:xhigh", `multi header (expanded=${expanded})`);
 			assert.equal(runningGlyphTone(lines.find((line) => line.includes("scout") && runningGlyphTone(line))), "thinking:low", `child row keeps its own level (expanded=${expanded})`);
-			assert.equal(runningGlyphTone(lines.find((line) => line.includes("reviewer") && runningGlyphTone(line))), "accent", `child without a level stays accent (expanded=${expanded})`);
+			assert.equal(runningGlyphTone(lines.find((line) => line.includes("reviewer") && runningGlyphTone(line))), "thinking:xhigh", `child without a level takes the main level (expanded=${expanded})`);
 		}
 
 		const now = Date.now();
