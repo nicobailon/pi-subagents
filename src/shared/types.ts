@@ -1904,6 +1904,8 @@ export interface AsyncStatus {
 	toolBudgetBlocked?: boolean;
 	usageBudget?: UsageBudgetState;
 	pid?: number;
+	/** Linux PID namespace identity used to scope liveness probes. */
+	pidNamespaceScope?: string;
 	cwd?: string;
 	/** Parent-resolved child session root retained for trusted restored transcript lookup. */
 	sessionRoot?: string;

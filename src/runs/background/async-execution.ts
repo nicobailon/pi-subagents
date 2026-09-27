@@ -81,6 +81,7 @@ import { finalizeProcessTerminal, initializeProcessTerminal, readProcessTerminal
 import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
 import type { ActiveAsyncCapacityHandle } from "./active-async-capacity.ts";
 import { statusStepDescription } from "./chain-append.ts";
+import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../shared/types.ts";
 import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { resolveLaunchBinding } from "../../shared/launch-contract.ts";
@@ -817,6 +818,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 			writePrivateAtomicJson(initialStatusPath, {
 				...initialStatus,
 				pid: proc.pid,
+				pidNamespaceScope: currentPidNamespaceScope(),
 				processTerminal: { version: 1, state: "pending", runId: initialStatus.runId, runnerProcessInstanceId },
 			});
 			// Aggregate waits must see the launch before the runner's first status update.

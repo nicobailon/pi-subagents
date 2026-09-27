@@ -31,6 +31,35 @@ describe("async stale-run reconciliation", () => {
 		assert.equal(checkPidLiveness(123, () => { throw new Error("boom"); }), "unknown");
 	});
 
+	it("does not repair a recent run whose PID belongs to another namespace", () => {
+		const root = tempRoot("pi-stale-run-pid-namespace-");
+		try {
+			const asyncDir = path.join(root, "run-live");
+			writeStatus(asyncDir, {
+				runId: "run-live",
+				mode: "single",
+				state: "running",
+				pid: 1404,
+				pidNamespaceScope: "pid:[runner]",
+				startedAt: 1000,
+				lastUpdate: 1000,
+				steps: [{ agent: "reviewer", status: "running", startedAt: 1000 }],
+			});
+
+			const result = reconcileAsyncRun(asyncDir, {
+				kill: () => { throw errno("ESRCH"); },
+				pidNamespaceScope: () => "pid:[observer]",
+				now: () => 2000,
+			});
+
+			assert.equal(result.repaired, false);
+			assert.equal(result.status?.state, "running");
+			assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).state, "running");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("marks a dead runner failed and writes exactly one completion result", () => {
 		const root = tempRoot("pi-stale-run-");
 		try {
@@ -44,6 +73,7 @@ describe("async stale-run reconciliation", () => {
 				mode: "single",
 				state: "running",
 				pid: 12345,
+				pidNamespaceScope: "pid:[same]",
 				processTerminal: { version: 1, state: "pending", runId: "run-dead", runnerProcessInstanceId: "runner-dead" },
 				startedAt: 1000,
 				lastUpdate: 1000,
@@ -54,6 +84,7 @@ describe("async stale-run reconciliation", () => {
 			const result = reconcileAsyncRun(asyncDir, {
 				resultsDir,
 				kill: () => { throw errno("ESRCH"); },
+				pidNamespaceScope: () => "pid:[same]",
 				now: () => 2000,
 			});
 
