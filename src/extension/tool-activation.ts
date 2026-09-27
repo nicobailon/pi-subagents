@@ -178,7 +178,7 @@ export function registerSubagentToolActivation(
 			};
 			const advertised = await options.advertisedPrompt();
 			return {
-				content: [{ type: "text", text: `Enabled: subagent. On the next model request, call subagent({action:\"list\",capabilities:true}) for current capabilities.${advertised ? `\n\n${advertised}` : ""}` }],
+				content: [{ type: "text", text: `Enabled: subagent. On the next model request, call subagent({action:\"list\",capabilities:true}) for current capabilities. Some providers fix the tool list for a whole prompt, such as bridges to another agent SDK; there subagent appears only after the next user prompt, so do not retry it in this one. The operator can start Pi with --exclude-tools subagents_enable to keep subagent always available.${advertised ? `\n\n${advertised}` : ""}` }],
 				details: { enabled: [SUBAGENT_NAME] },
 			};
 		},
