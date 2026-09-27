@@ -71,8 +71,10 @@ function waitForStartupState(startupPath: string, state: string): Promise<Record
 				if ((error as NodeJS.ErrnoException).code !== "ENOENT") { cleanup(); reject(error); }
 			}
 		};
-		fs.watchFile(startupPath, { interval: 20 }, inspect);
-		const cleanup = () => fs.unwatchFile(startupPath, inspect);
+		// Poll content, not fs.watchFile: its first stat is a silent baseline, so a state
+		// written between the read below and that stat is never reported.
+		const timer = setInterval(inspect, 20);
+		const cleanup = () => clearInterval(timer);
 		inspect();
 	});
 }
