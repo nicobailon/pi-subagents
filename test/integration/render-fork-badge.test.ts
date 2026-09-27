@@ -5,6 +5,7 @@ import { keyText } from "@earendil-works/pi-coding-agent";
 type RenderTheme = {
 	fg(name: string, text: string): string;
 	bold(text: string): string;
+	getThinkingBorderColor(level: string): (text: string) => string;
 };
 
 type RenderSubagentResult = (
@@ -41,6 +42,7 @@ let renderSubagentSummary: RenderSubagentSummary | undefined;
 const theme = {
 	fg: (_name: string, text: string) => text,
 	bold: (text: string) => text,
+	getThinkingBorderColor: (_level: string) => (text: string) => text,
 };
 const expandKey = keyText("app.tools.expand");
 const expandHint = expandKey ? `Press ${expandKey} for full output` : "Configure the expand key for full output";

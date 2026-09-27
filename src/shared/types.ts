@@ -980,6 +980,8 @@ export interface AgentProgress {
 	/** Resolved launch model/effort and split usage for public live projections. */
 	model?: string;
 	thinking?: string;
+	/** Thinking level the child's Pi session runs at, once the session reports it. */
+	sessionThinking?: ThinkingLevel;
 	inputTokens?: number;
 	outputTokens?: number;
 	/** Cumulative cache-read/cache-write tokens for the current attempt, alongside inputTokens/outputTokens. */
@@ -1301,6 +1303,8 @@ export interface SingleResult {
 	nativeMachine?: { provider: "herdr"; machineId: string; initialGit?: HerdrRemoteGitStatus; finalGit?: HerdrRemoteGitStatus };
 	/** Effective thinking level used by this foreground child, when known. */
 	thinking?: string;
+	/** Thinking level the child's Pi session runs at, once the session reports it. */
+	sessionThinking?: ThinkingLevel;
 	requestedModel?: string;
 	controlEvents?: ControlEvent[];
 	error?: string;

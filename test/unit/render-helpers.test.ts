@@ -13,7 +13,24 @@ const theme = {
 	bold(text: string): string {
 		return text;
 	},
+	getThinkingBorderColor(_level: string): (text: string) => string {
+		return (text) => text;
+	},
 };
+
+const toneTheme = {
+	fg: (name: string, text: string) => `⟦${name}⟧${text}⟦/⟧`,
+	bold: (text: string) => text,
+	getThinkingBorderColor: (level: string) => (text: string) => `⟦thinking:${level}⟧${text}⟦/⟧`,
+};
+
+function withoutTones(text: string): string {
+	return text.replace(/⟦[^⟧]*⟧/g, "");
+}
+
+function runningGlyphTone(line: string | undefined): string | undefined {
+	return line?.match(/⟦([^⟧]+)⟧[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏●]⟦\/⟧/)?.[1];
+}
 
 test("external-cli widget rows show their runner and elapsed time", () => {
 	const text = buildWidgetLines([{
@@ -36,10 +53,10 @@ test("external-cli widget rows show their runner and elapsed time", () => {
 	assert.doesNotMatch(text, /0 tokens/);
 });
 
-function componentText(component: unknown): string {
+function componentText(component: unknown, mapText: (text: string) => string = (text) => text): string {
 	if (typeof component !== "object" || component === null) return "";
-	if ("text" in component && typeof component.text === "string") return component.text;
-	if ("children" in component && Array.isArray(component.children)) return component.children.map(componentText).filter(Boolean).join("\n");
+	if ("text" in component && typeof component.text === "string") return mapText(component.text);
+	if ("children" in component && Array.isArray(component.children)) return component.children.map((child) => componentText(child, mapText)).filter(Boolean).join("\n");
 	return "";
 }
 
@@ -231,6 +248,77 @@ test("multiline rendering omits two-column graphemes at one-column width", () =>
 	} finally {
 		if (originalColumns) Object.defineProperty(process.stdout, "columns", originalColumns);
 		else delete (process.stdout as { columns?: number }).columns;
+	}
+});
+
+function runningResult(agent: string, levels: { thinking?: string; sessionThinking?: string; progressSessionThinking?: string } = {}) {
+	return {
+		...result(agent, ""),
+		...(levels.thinking ? { thinking: levels.thinking } : {}),
+		...(levels.sessionThinking ? { sessionThinking: levels.sessionThinking } : {}),
+		progress: {
+			status: "running", index: 0, agent, toolCount: 0, tokens: 0, durationMs: 0,
+			...(levels.progressSessionThinking ? { sessionThinking: levels.progressSessionThinking } : {}),
+		},
+	};
+}
+
+function singleCard(running: ReturnType<typeof runningResult>, expanded: boolean, renderTheme: object, mapText?: (text: string) => string): string {
+	return componentText(renderSubagentResult({
+		content: [{ type: "text", text: "running" }],
+		details: { mode: "single", results: [running] },
+	} as never, { expanded }, renderTheme as never), mapText);
+}
+
+test("a running single card glyph takes the thinking color of the level its child session runs at", () => {
+	const cases: Array<[string, ReturnType<typeof runningResult>, string]> = [
+		["session level beats the configured level", runningResult("reviewer", { thinking: "low", sessionThinking: "high" }), "thinking:high"],
+		["session level reported on progress", runningResult("reviewer", { thinking: "low", progressSessionThinking: "xhigh" }), "thinking:xhigh"],
+		["configured level before the session reports", runningResult("reviewer", { thinking: "low" }), "thinking:low"],
+		["no level at all", runningResult("reviewer"), "accent"],
+		["an unknown level string", runningResult("reviewer", { thinking: "bogus" }), "accent"],
+	];
+	for (const [name, running, tone] of cases) {
+		const toned = singleCard(running, false, toneTheme);
+		assert.equal(runningGlyphTone(toned.split("\n")[0]), tone, name);
+		assert.equal(singleCard(running, false, toneTheme, withoutTones), singleCard(running, false, theme), `${name}: text unchanged`);
+	}
+});
+
+test("an expanded running single card colors its glyph and running label with the child's level", () => {
+	const running = runningResult("reviewer", { thinking: "low", sessionThinking: "medium" });
+	const toned = singleCard(running, true, toneTheme);
+	const header = toned.split("\n")[0];
+	assert.equal(runningGlyphTone(header), "thinking:medium");
+	assert.match(header ?? "", /⟦thinking:medium⟧running⟦\/⟧/);
+	assert.equal(singleCard(running, true, toneTheme, withoutTones), singleCard(running, true, theme));
+});
+
+test("finished single cards keep their state tones whatever the child's level", () => {
+	const completed = { ...result("reviewer", "done"), thinking: "high", sessionThinking: "high" };
+	const toned = componentText(renderSubagentResult({
+		content: [{ type: "text", text: "done" }],
+		details: { mode: "single", results: [completed] },
+	} as never, { expanded: false }, toneTheme as never));
+	assert.match(toned.split("\n")[0] ?? "", /^⟦success⟧✓⟦\/⟧/);
+	assert.doesNotMatch(toned, /thinking:/);
+});
+
+test("multi-child cards keep an accent header while each child row takes its own level", () => {
+	const details = {
+		mode: "parallel",
+		results: [
+			{ ...runningResult("scout", { thinking: "low" }), progress: { status: "running", index: 0, agent: "scout", toolCount: 0, tokens: 0, durationMs: 0 } },
+			{ ...runningResult("reviewer", { sessionThinking: "high" }), progress: { status: "running", index: 1, agent: "reviewer", toolCount: 0, tokens: 0, durationMs: 0 } },
+		],
+	};
+	for (const expanded of [false, true]) {
+		const render = (renderTheme: object, mapText?: (text: string) => string) => componentText(renderSubagentResult({ content: [{ type: "text", text: "running" }], details } as never, { expanded }, renderTheme as never), mapText);
+		const lines = render(toneTheme).split("\n");
+		assert.equal(runningGlyphTone(lines[0]), "accent", `header stays accent (expanded=${expanded})`);
+		assert.equal(runningGlyphTone(lines.find((line) => line.includes("scout") && runningGlyphTone(line))), "thinking:low", `scout row (expanded=${expanded})`);
+		assert.equal(runningGlyphTone(lines.find((line) => line.includes("reviewer") && runningGlyphTone(line))), "thinking:high", `reviewer row (expanded=${expanded})`);
+		assert.equal(render(toneTheme, withoutTones), render(theme), `text unchanged (expanded=${expanded})`);
 	}
 });
 

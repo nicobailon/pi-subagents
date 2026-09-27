@@ -34,6 +34,8 @@ import { formatNestedAggregate } from "../runs/shared/nested-render.ts";
 import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
 import { contextModeBadge, contextModePrefix } from "../runs/shared/context-mode.ts";
 import { shouldSuppressSingleStep, stripRepeatedAgentPrefix, withDuplicateLabelDiscriminators } from "./render-helpers.ts";
+import { childRunningTone, childThinkingLevel } from "./child-running-tone.ts";
+import type { ThinkingLevel } from "../shared/model-info.ts";
 import { buildWorkflowChatProgressRows, type WorkflowChatProgressRow } from "../workflows/chat-progress.ts";
 import { formatWorkflowPreflight, formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary, formatWorkflowPreflightWarnings } from "../workflows/workflow-preflight.ts";
 import { encodeAsyncStatusSnapshotWidget } from "../runs/background/async-status-snapshot.ts";
@@ -881,6 +883,8 @@ type ResultPresentation = {
 	glyph: string;
 	label: "running" | "detached" | "stopped" | "paused" | "failed" | "partial" | "completed";
 	tone: "accent" | "warning" | "error" | "success";
+	/** Thinking level of the one child a running presentation stands for; it replaces the accent tone. */
+	thinking?: ThinkingLevel;
 };
 
 function semanticResultPresentation(input: {
@@ -893,10 +897,11 @@ function semanticResultPresentation(input: {
 	completedWithoutOutput?: boolean;
 	seed?: number;
 	frame?: number;
+	thinking?: ThinkingLevel;
 }): ResultPresentation {
 	if (input.running) {
 		const glyph = input.frame !== undefined ? runningGlyph((input.seed ?? 0) + input.frame) : runningGlyph(input.seed);
-		return { glyph, label: "running", tone: "accent" };
+		return { glyph, label: "running", tone: "accent", ...(input.thinking ? { thinking: input.thinking } : {}) };
 	}
 	if (input.detached) return { glyph: "■", label: "detached", tone: "warning" };
 	if (input.stopped) return { glyph: "■", label: "stopped", tone: "warning" };
@@ -941,18 +946,24 @@ function resultPresentation(result: Details["results"][number], output: string, 
 		completedWithoutOutput: hasEmptyTextOutputWithoutOutputTarget(result.task, output),
 		seed,
 		frame,
+		thinking: childThinkingLevel(result, result.progress),
 	});
+}
+
+function presentationTone(presentation: ResultPresentation, theme: Theme): (text: string) => string {
+	return presentation.thinking ? childRunningTone(theme, presentation.thinking) : (text) => theme.fg(presentation.tone, text);
 }
 
 function resultGlyph(result: Details["results"][number], output: string, theme: Theme, running = isResultRunning(result), seed = progressRunningSeed(result.progress ?? result.progressSummary), frame?: number): string {
 	const presentation = resultPresentation(result, output, running, seed, frame);
-	return theme.fg(presentation.tone, presentation.glyph);
+	return presentationTone(presentation, theme)(presentation.glyph);
 }
 
 function styledResultPresentation(presentation: ResultPresentation, theme: Theme): { glyph: string; label: string } {
+	const tone = presentationTone(presentation, theme);
 	return {
-		glyph: theme.fg(presentation.tone, presentation.glyph),
-		label: theme.fg(presentation.tone, presentation.label),
+		glyph: tone(presentation.glyph),
+		label: tone(presentation.label),
 	};
 }
 
