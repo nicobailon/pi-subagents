@@ -38,6 +38,16 @@ describe("single-agent launch timeout wiring", () => {
 		assert.match(result.error!, /positive integer/);
 	});
 
+	it("rejects explicit timeouts above the maximum schedulable timer delay", () => {
+		for (const key of ["timeoutMs", "maxRuntimeMs"] as const) {
+			const result = resolveSingleAgentLaunchTimeout({ [key]: 2_147_483_648 }, true);
+			assert.equal(result.error, `${key} must be a positive integer no larger than 2147483647.`);
+		}
+		assert.deepEqual(resolveSingleAgentLaunchTimeout({ timeoutMs: 2_147_483_647 }, true), {
+			timeoutMs: 2_147_483_647,
+		});
+	});
+
 	it("rejects mismatched alias values", () => {
 		const result = resolveSingleAgentLaunchTimeout({ timeoutMs: 1_000, maxRuntimeMs: 2_000 }, true);
 		assert.ok(result.error);

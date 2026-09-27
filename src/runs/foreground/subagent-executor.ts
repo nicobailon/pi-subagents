@@ -2953,6 +2953,12 @@ export { DEFAULT_ASYNC_TIMEOUT_MS };
  */
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
+function timerDelayOverflowError(name: string, value: unknown): string | undefined {
+	return typeof value === "number" && value > MAX_TIMER_DELAY_MS
+		? `${name} must be a positive integer no larger than ${MAX_TIMER_DELAY_MS}.`
+		: undefined;
+}
+
 /**
  * Resolve the optional global default runtime deadline from extension config
  * (`config.timeoutMs`). Returns undefined for unset or invalid values so callers
@@ -2976,6 +2982,8 @@ export function resolveForegroundTimeout(params: SubagentParamsLike, defaultTime
 		if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
 			return { error: `${name} must be a positive integer.` };
 		}
+		const overflowError = timerDelayOverflowError(name, value);
+		if (overflowError) return { error: overflowError };
 	}
 	if (rawTimeout !== undefined && rawMaxRuntime !== undefined && rawTimeout !== rawMaxRuntime) {
 		return { error: "timeoutMs and maxRuntimeMs are aliases; provide only one value or use the same value for both." };
@@ -5306,6 +5314,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 			}
 			const parentCwd = ctx.cwd;
+			const explicitWorkflowTimeout = requestParams.timeoutMs !== undefined
+				? (["timeoutMs", requestParams.timeoutMs] as const)
+				: requestParams.maxRuntimeMs !== undefined
+					? (["maxRuntimeMs", requestParams.maxRuntimeMs] as const)
+					: undefined;
+			if (explicitWorkflowTimeout) {
+				const overflowError = timerDelayOverflowError(explicitWorkflowTimeout[0], explicitWorkflowTimeout[1]);
+				if (overflowError) return buildRequestedModeError(requestParams, overflowError);
+			}
 			const timeout = requestParams.timeoutMs ?? requestParams.maxRuntimeMs ?? (requestParams.async === false ? resolveConfigDefaultTimeoutMs(deps.config.timeoutMs) ?? DEFAULT_FOREGROUND_TIMEOUT_MS : undefined);
 			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
 			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);

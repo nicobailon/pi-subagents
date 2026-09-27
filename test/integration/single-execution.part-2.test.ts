@@ -3912,6 +3912,22 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.deepEqual(childTimeout.details.workflow?.receipt?.entries["slow-child"]?.terminalOutcome, { state: "partial", reason: "timeout" });
 	});
 
+	it("rejects workflow-script timeouts above the maximum schedulable timer delay before launch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		for (const key of ["timeoutMs", "maxRuntimeMs"] as const) {
+			const result = await executor.execute(
+				`workflow-overflow-${key}`,
+				{ async: false, [key]: 2_147_483_648, workflowScript: `return await runs.run("never", { agent: "echo", task: "Never launch" });` },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", new RegExp(`${key} must be a positive integer no larger than 2147483647`));
+		}
+		assert.equal(readAllCallArgs().length, 0, "invalid workflow timeout must be rejected before child launch");
+	});
+
 	it("runs omitted async launches in the background when the global default is enabled", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")], {}, true);
 
