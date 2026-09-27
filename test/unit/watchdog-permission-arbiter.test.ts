@@ -11,7 +11,7 @@ function model(): Model<any> {
 	return { id: "watchdog", name: "watchdog", api: "faux", provider: "test", baseUrl: "https://example.invalid", reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100_000, maxTokens: 4_096 };
 }
 
-function ctx(current = model(), cwd = "/tmp/watchdog-permission") {
+function ctx(current = model(), cwd = "/tmp/watchdog-permission", registryStream?: StreamFn) {
 	return {
 		cwd,
 		model: current,
@@ -22,7 +22,7 @@ function ctx(current = model(), cwd = "/tmp/watchdog-permission") {
 			find: (provider: string, id: string) => provider === current.provider && id === current.id ? current : undefined,
 			hasConfiguredAuth: () => true,
 			getApiKeyAndHeaders: async () => ({ ok: true as const, apiKey: "test-key" }),
-			getRegisteredProviderConfig: () => undefined,
+			streamSimple: registryStream ?? (() => { throw new Error("Unexpected model registry stream call"); }),
 		},
 	} as never;
 }
@@ -55,6 +55,27 @@ const childConfig = JSON.stringify({
 });
 
 describe("watchdog permission arbiter", () => {
+	it("uses the session model registry stream for complete providers", async () => {
+		const current = model();
+		const calls: TranscriptContext[] = [];
+		const registryModels: Model<any>[] = [];
+		const providerStream = stream("approve", "registry-owned stream", calls);
+		const registryStream: StreamFn = (nextModel, context, options) => {
+			registryModels.push(nextModel);
+			return providerStream(nextModel, context, options);
+		};
+		const result = await createWatchdogPermissionArbiter()({
+			ctx: ctx(current, "/tmp/watchdog-permission", registryStream),
+			toolName: "write",
+			args: { path: "out.txt" },
+			rawWatchdogConfig: childConfig,
+		});
+
+		assert.deepEqual(result, { approved: true, reason: "registry-owned stream", source: "watchdog" });
+		assert.equal(calls.length, 2);
+		assert.deepEqual(registryModels, [current, current]);
+	});
+
 	it("approves and denies exact calls through the watchdog model decision tool", async () => {
 		const approved = await createWatchdogPermissionArbiter({ streamFn: stream("approve", "safe output path") })({ ctx: ctx(), toolName: "write", args: { path: "out.txt" }, rawWatchdogConfig: childConfig });
 		assert.deepEqual(approved, { approved: true, reason: "safe output path", source: "watchdog" });
