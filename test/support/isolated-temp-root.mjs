@@ -24,5 +24,15 @@ if (!nestedTestProcess) delete process.env.PI_CODING_AGENT_DIR;
 process.env.PI_SUBAGENTS_TEST_LOADER = testFileProcess ? "test-file" : "loaded";
 
 if (!configuredTempRoot) {
-	process.on("exit", () => fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
+	// Housekeeping for a root no other process shares: a Windows handle or a leftover
+	// descendant must not turn a test file whose tests all passed into a failed file.
+	process.on("exit", () => {
+		try {
+			fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+		} catch (error) {
+			try {
+				fs.writeSync(2, `warning: test temp root not removed: ${tempRoot} (${error?.code ?? error})\n`);
+			} catch {}
+		}
+	});
 }
