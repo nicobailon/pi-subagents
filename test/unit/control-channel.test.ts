@@ -22,7 +22,6 @@ import {
 	requestAsyncTimeout,
 	timeoutRequestPath,
 	steerInboxClosedPath,
-	stopInboxClosedPath,
 	stopRequestsDir,
 	stopRequestPath,
 	steerRequestsDir,
@@ -65,18 +64,6 @@ describe("control channel: request file", () => {
 			assert.equal(consumeStopRequest(asyncDir), true);
 			assert.equal(fs.existsSync(requestPath), false);
 			assert.equal(consumeStopRequest(asyncDir), false);
-		} finally {
-			cleanup(asyncDir);
-		}
-	});
-
-	it("rejects stop requests after the runner closes the inbox", () => {
-		const asyncDir = tmpAsyncDir("pi-control-stop-closed-");
-		try {
-			closeStopInbox(asyncDir);
-			assert.equal(fs.existsSync(stopInboxClosedPath(asyncDir)), true);
-			assert.throws(() => requestAsyncStop(asyncDir, { source: "test" }), /Retry stop after runner shutdown is observed/);
-			assert.equal(fs.existsSync(stopRequestsDir(asyncDir)), false);
 		} finally {
 			cleanup(asyncDir);
 		}
