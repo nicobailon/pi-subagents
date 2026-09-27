@@ -2507,6 +2507,28 @@ function canonicalizeAgentName(name: string, agents: AgentConfig[], diagnostics:
 	return { name: resolved.agent.name };
 }
 
+// Mirrors child launch: workflow children without their own cwd/agentScope discover agents at the workflow cwd and scope.
+function workflowValidationOptions(deps: ExecutorDeps, params: SubagentParamsLike, runtimeCwd: string): Parameters<typeof validateWorkflowScript>[1] {
+	const cwd = resolveRequestedCwd(runtimeCwd, params.cwd);
+	const scope = resolveExecutionAgentScope(params.agentScope);
+	let discovered: ReturnType<ExecutorDeps["discoverAgents"]> | undefined;
+	return {
+		maxSubagentSpawnsPerRun: params.maxSubagentSpawnsPerRun ?? resolveMaxSubagentSpawnsPerRun(deps.config.maxSubagentSpawnsPerRun),
+		agentNameError: (name) => {
+			discovered ??= deps.discoverAgents(cwd, scope);
+			const { agents } = discovered;
+			const resolved = resolveAgentName(name, agents);
+			if (resolved.agent || resolved.error) return canonicalizeAgentName(name, agents, discovered.agentDiagnostics, diagnosticContextFromDiscovery(discovered, cwd, scope)).error;
+			const requested = name.trim().toLowerCase();
+			const suggestion = [...new Set(agents.flatMap((agent) => [agent.name, ...(agent.localName ? [agent.localName] : []), ...(agent.aliases ?? [])]))]
+				.map((candidate) => ({ candidate, distance: editDistance(requested, candidate.toLowerCase()) }))
+				.filter(({ candidate, distance }) => distance <= Math.max(1, Math.floor(candidate.length / 4)) || hasSingleAdjacentTransposition(requested, candidate.toLowerCase()))
+				.sort((left, right) => left.distance - right.distance || left.candidate.localeCompare(right.candidate))[0]?.candidate;
+			return `Unknown agent '${name}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""} Use subagent({ action: "list" }) to inspect agents.`;
+		},
+	};
+}
+
 function canonicalizeExecutionParams(params: SubagentParamsLike, agents: AgentConfig[], diagnostics: AgentDiscoveryDiagnostic[] | undefined, context: UnknownAgentDiagnosticContext): { params?: SubagentParamsLike; error?: string } {
 	const resolve = (name: string, location?: string): { name?: string; error?: string } => {
 		const result = canonicalizeAgentName(name, agents, diagnostics, context);
@@ -5183,9 +5205,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			if (requestParams.action?.trim() === "validate") {
-				const validation = validateWorkflowScript(requestParams.workflowScript ?? "", {
-					maxSubagentSpawnsPerRun: requestParams.maxSubagentSpawnsPerRun ?? resolveMaxSubagentSpawnsPerRun(deps.config.maxSubagentSpawnsPerRun),
-				});
+				const validation = validateWorkflowScript(requestParams.workflowScript ?? "", workflowValidationOptions(deps, requestParams, ctx.cwd));
 				const invalidValidation = { ...validation, ok: false, errors: [...validation.errors, { message }] };
 				return {
 					content: [{ type: "text", text: JSON.stringify(invalidValidation) }],
@@ -5196,9 +5216,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			return buildRequestedModeError(requestParams, message);
 		}
 		if (requestParams.action?.trim() === "validate") {
-			const validation = validateWorkflowScript(requestParams.workflowScript ?? "", {
-				maxSubagentSpawnsPerRun: requestParams.maxSubagentSpawnsPerRun ?? resolveMaxSubagentSpawnsPerRun(deps.config.maxSubagentSpawnsPerRun),
-			});
+			const validation = validateWorkflowScript(requestParams.workflowScript ?? "", workflowValidationOptions(deps, requestParams, ctx.cwd));
 			return buildWorkflowValidationResult(validation, "management", workflowPreflight);
 		}
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
@@ -5214,13 +5232,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowArgsEvidence = requestParams.args === undefined ? undefined : { args: requestParams.args, argsDigest: stableJsonDigest(requestParams.args) };
 			const workflowArgs = workflowArgsEvidence?.args;
 			const workflowArgsDigest = workflowArgsEvidence?.argsDigest;
-			const workflowValidation = validateWorkflowScript(requestParams.workflowScript, {
-				maxSubagentSpawnsPerRun: requestParams.maxSubagentSpawnsPerRun ?? resolveMaxSubagentSpawnsPerRun(deps.config.maxSubagentSpawnsPerRun),
-			});
+			const workflowValidation = validateWorkflowScript(requestParams.workflowScript, workflowValidationOptions(deps, requestParams, ctx.cwd));
 			if (!workflowValidation.ok && publicExecution) return buildWorkflowValidationResult(workflowValidation, "workflow", workflowPreflight);
-			const spawnBudgetErrors = workflowValidation.errors.filter((error) => error.kind === "spawn-budget");
-			if (spawnBudgetErrors.length > 0) {
-				return buildRequestedModeError(requestParams, `Workflow '${_id}' validation failed before child launch; no children launched. ${spawnBudgetErrors.map((error) => error.message).join(" ")}`);
+			const launchBlockingErrors = workflowValidation.errors.filter((error) => error.kind === "spawn-budget" || error.kind === "agent");
+			if (launchBlockingErrors.length > 0) {
+				return buildRequestedModeError(requestParams, `Workflow '${_id}' validation failed before child launch; no children launched. ${launchBlockingErrors.map((error) => error.message).join(" ")}`);
 			}
 			for (const warning of workflowValidation.warnings ?? []) console.warn(`[pi-subagents] ${warning.message}`);
 			const acceptanceErrors = validateAcceptanceInput(requestParams.acceptance);

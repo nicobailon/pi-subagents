@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A workflow script with a misspelled agent name now fails before any child starts, instead of running the earlier children first. `action: "validate"` reports the same error with its line, column, and a close match when there is one (for example `Did you mean 'reviewer'?`). Names built at runtime and children with their own `cwd`, `agentScope`, or `resume` are still checked when they launch. Fixes [#2504](https://github.com/nicobailon/pi-subagents/issues/2504).
+
 ## [0.72.1] - 2026-09-26
 
 ### Fixed

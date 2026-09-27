@@ -23,7 +23,7 @@ export interface WorkflowScriptValidationError {
 	message: string;
 	line?: number;
 	column?: number;
-	kind?: "spawn-budget";
+	kind?: "spawn-budget" | "agent";
 }
 
 export interface WorkflowScriptValidationWarning {
@@ -39,6 +39,8 @@ export interface WorkflowScriptValidationResult {
 
 export interface WorkflowScriptValidationOptions {
 	maxSubagentSpawnsPerRun?: number;
+	/** Returns why launch-time resolution would reject this literal child agent name. */
+	agentNameError?: (name: string) => string | undefined;
 }
 
 const WORKER_SOURCE = String.raw`
@@ -1717,6 +1719,39 @@ function validateStaticBaseRef(params: AstNode, owner: string): WorkflowScriptVa
 	return [];
 }
 
+// Children with their own cwd, agentScope, or resume resolve agents elsewhere, and a
+// spread or computed key can replace `agent`; leave those to launch-time resolution.
+function staticChildAgentNode(params: unknown): AstNode | undefined {
+	if (!astNode(params) || params.type !== "ObjectExpression" || !Array.isArray(params.properties)) return undefined;
+	let agent: AstNode | undefined;
+	for (const property of params.properties) {
+		if (!astNode(property) || property.type !== "Property") return undefined;
+		const key = staticPropertyKey(property);
+		if (key === undefined || key === "cwd" || key === "agentScope" || key === "resume") return undefined;
+		if (key === "agent") agent = property.kind === "init" && astNode(property.value) ? property.value : undefined;
+	}
+	return literalString(agent) === undefined ? undefined : agent;
+}
+
+function validateStaticChildAgents(call: AstNode, agentNameError: (name: string) => string | undefined): WorkflowScriptValidationError[] {
+	const args = Array.isArray(call.arguments) ? call.arguments : [];
+	const elements = (node: unknown): unknown[] => astNode(node) && node.type === "ArrayExpression" && Array.isArray(node.elements) ? node.elements : [];
+	const children: Array<{ owner: string; params: unknown }> = directRunsCall(call, "run")
+		? [{ owner: "runs.run", params: args[1] }]
+		: directRunsCall(call, "all")
+			? elements(args[0]).map((params) => ({ owner: "runs.all item", params }))
+			: directRunsCall(call, "lanes")
+				? elements(args[0]).flatMap((lane) => astNode(lane) ? elements(directObjectPropertyValue(lane, "stages")).map((params) => ({ owner: "runs.lanes stage", params })) : [])
+				: [];
+	const errors: WorkflowScriptValidationError[] = [];
+	for (const child of children) {
+		const agentNode = staticChildAgentNode(child.params);
+		const error = agentNode ? agentNameError(literalString(agentNode)!) : undefined;
+		if (agentNode && error) errors.push({ kind: "agent", message: `${child.owner}: ${error}`, ...nodeLocation(agentNode) });
+	}
+	return errors;
+}
+
 function directRunsAllKeys(call: AstNode): Array<{ key: string; node: AstNode }> {
 	const args = Array.isArray(call.arguments) ? call.arguments : [];
 	const items = astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements) ? args[0].elements : [];
@@ -1888,6 +1923,7 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 			}
 		}
 		if (directRunsCall(node, "host")) errors.push(...validateStaticHostCall(node));
+		if (options.agentNameError) errors.push(...validateStaticChildAgents(node, options.agentNameError));
 		const boundaryValue = node.type === "CallExpression" && astNode(node.callee) && node.callee.type === "Identifier" && node.callee.name === "emit" && Array.isArray(node.arguments) && astNode(node.arguments[0])
 			? node.arguments[0]
 			: node.type === "CallExpression" && astNode(node.callee) && node.callee.type === "MemberExpression" && astNode(node.callee.object) && node.callee.object.type === "Identifier" && node.callee.object.name === "state" && astNode(node.callee.property) && node.callee.property.type === "Identifier" && node.callee.property.name === "set" && Array.isArray(node.arguments) && astNode(node.arguments[1])

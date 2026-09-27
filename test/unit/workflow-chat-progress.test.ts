@@ -124,7 +124,8 @@ describe("workflow chat progress rendering", () => {
 				const result = await createExecutor().execute(
 					"wf-headless",
 					{
-						workflowScript: `return await runs.run("scout", { agent: "missing-agent", task: "scan" });`,
+						// A non-literal agent reaches launch-time resolution instead of pre-launch validation.
+						workflowScript: `const agent = "missing-agent"; return await runs.run("scout", { agent, task: "scan" });`,
 						async: false,
 						chatProgress: scenario === "explicit off" ? "off" : "auto",
 						...(other ? { cwd: other } : {}),
@@ -182,7 +183,7 @@ describe("workflow chat progress rendering", () => {
 			const updates: Array<{ details?: Details }> = [];
 			const result = await createExecutor().execute(
 				toolCallId,
-				{ workflowScript: `return await runs.run("scout", { agent: "missing-agent", task: "scan", phase: "Validation", label: "Find renderer seam" });`, async: false },
+				{ workflowScript: `const agent = "missing-agent"; return await runs.run("scout", { agent, task: "scan", phase: "Validation", label: "Find renderer seam" });`, async: false },
 				new AbortController().signal,
 				(update) => updates.push(update),
 				ctx(repo),

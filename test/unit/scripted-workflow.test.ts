@@ -331,6 +331,24 @@ describe("scripted workflow runtime", () => {
 		assert.deepEqual(validateWorkflowScript(script, { maxSubagentSpawnsPerRun: 6 }), { ok: true, errors: [] });
 	});
 
+	it("checks literal child agent names that resolve from the workflow cwd and scope", () => {
+		const known = new Set(["worker", "reviewer"]);
+		const result = validateWorkflowScript([
+			`const scan = await runs.run("scan", { agent: "worker", task: "Scan" });`,
+			`await runs.all([{ key: "review", agent: "reviwer", task: scan.output }]);`,
+			`await runs.lanes([{ key: "lane", stages: [{ key: "write", agent: "wroker", task: "Write" }, { key: "fix", resume: "previous", task: "Fix" }] }]);`,
+			`await runs.run("elsewhere", { agent: "remote-only", cwd: "../other", task: "Scan" });`,
+			`await runs.run("scoped", { agent: "project-only", agentScope: "project", task: "Scan" });`,
+			`await runs.run("spread", { agent: "missing", ...overrides });`,
+			`return runs.run("dynamic", { agent: selectedAgent, task: "Scan" });`,
+		].join("\n"), { agentNameError: (name) => known.has(name) ? undefined : `Unknown agent '${name}'.` });
+		assert.equal(result.ok, false);
+		assert.deepEqual(result.errors.map(({ kind, message, line }) => ({ kind, message, line })), [
+			{ kind: "agent", message: "runs.all item: Unknown agent 'reviwer'.", line: 2 },
+			{ kind: "agent", message: "runs.lanes stage: Unknown agent 'wroker'.", line: 3 },
+		]);
+	});
+
 	it("warns instead of guessing a dynamic spawn count", () => {
 		const result = validateWorkflowScript([
 			`const prefix = "lane";`,
