@@ -2004,6 +2004,8 @@ export interface AsyncStatus {
 		skills?: string[];
 		model?: string;
 		thinking?: string;
+		/** Thinking level the child's Pi session runs at, once the session reports it. */
+		sessionThinking?: ThinkingLevel;
 		contextLimit?: number;
 		thinkingCeiling?: ThinkingLevel;
 		requestedModel?: string;

@@ -1262,7 +1262,7 @@ function widgetJobsRunningSeed(jobs: AsyncJobState[]): number | undefined {
 }
 
 function widgetStatusGlyph(job: AsyncJobState, theme: Theme, frame?: number): string {
-	if (job.status === "running") return theme.fg("accent", runningGlyph(animatedSeed(widgetJobRunningSeed(job), frame)));
+	if (job.status === "running") return childRunningTone(theme, job.mode === "single" ? childThinkingLevel(job.steps?.[0]) : undefined)(runningGlyph(animatedSeed(widgetJobRunningSeed(job), frame)));
 	if (job.status === "queued") return theme.fg("muted", "◦");
 	if (job.status === "complete") return theme.fg("success", "✓");
 	if (job.status === "paused") return theme.fg("warning", "■");
@@ -1270,8 +1270,8 @@ function widgetStatusGlyph(job: AsyncJobState, theme: Theme, frame?: number): st
 	return theme.fg("error", "✗");
 }
 
-function widgetStepGlyph(status: AsyncJobStep["status"], theme: Theme, seed?: number, frame?: number): string {
-	if (status === "running") return theme.fg("accent", runningGlyph(animatedSeed(seed, frame)));
+function widgetStepGlyph(status: AsyncJobStep["status"], theme: Theme, seed?: number, frame?: number, thinking?: ThinkingLevel): string {
+	if (status === "running") return childRunningTone(theme, thinking)(runningGlyph(animatedSeed(seed, frame)));
 	if (status === "complete" || status === "completed") return theme.fg("success", "✓");
 	if (status === "failed") return theme.fg("error", "✗");
 	if (status === "paused") return theme.fg("warning", "■");
@@ -1279,8 +1279,8 @@ function widgetStepGlyph(status: AsyncJobStep["status"], theme: Theme, seed?: nu
 	return theme.fg("muted", "◦");
 }
 
-function widgetStepStatus(status: AsyncJobStep["status"], theme: Theme): string {
-	if (status === "running") return theme.fg("accent", "running");
+function widgetStepStatus(status: AsyncJobStep["status"], theme: Theme, thinking?: ThinkingLevel): string {
+	if (status === "running") return childRunningTone(theme, thinking)("running");
 	if (status === "complete" || status === "completed") return theme.fg("success", "complete");
 	if (status === "failed") return theme.fg("error", "failed");
 	if (status === "paused") return theme.fg("warning", "paused");
@@ -1634,7 +1634,7 @@ function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme, expanded =
 		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
 		const label = compactTaskText(step.description, step.label);
 		const display = step.sessionName?.trim() || (label ? `${label} (${step.agent})` : step.agent);
-		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame)} ${itemTitle} ${index + 1}/${total}: ${display} · ${widgetStepStatus(step.status, theme)}${modelDisplay}${activity ? ` · ${activity}` : ""}`)}`);
+		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame, childThinkingLevel(step))} ${itemTitle} ${index + 1}/${total}: ${display} · ${widgetStepStatus(step.status, theme, childThinkingLevel(step))}${modelDisplay}${activity ? ` · ${activity}` : ""}`)}`);
 		const lane = projectAsyncLane(job, step);
 		if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "    "));
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 8 : 6)) lines.push(`    ${nestedLine}`);
@@ -2329,7 +2329,7 @@ function foregroundStyleWidgetStepLines(
 ): string[] {
 	const rowIndent = options?.rowIndent ?? "  ";
 	const detailIndent = options?.detailIndent ?? "    ";
-	const status = widgetStepStatus(step.status, theme);
+	const status = widgetStepStatus(step.status, theme, childThinkingLevel(step));
 	const stats = widgetStepStats(theme, step, job.updatedAt);
 	const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
 	const collapseDetails = shouldCollapseSingleChildDetails(job, step);
@@ -2340,7 +2340,7 @@ function foregroundStyleWidgetStepLines(
 	const stageIdentity = stageName && stageName !== displayName ? `${stageName} (${displayName})` : stageName ?? displayName;
 	const rowLabel = collapseDetails ? displayName : (options?.rowLabel ?? `${itemTitle} ${index}/${total}: ${itemTitle === "Stage" ? stageIdentity : displayName}`);
 	const rowMarker = options?.rowMarker ? `${options.rowMarker} ` : "";
-	const lines = [`${rowIndent}${rowMarker}${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame)} ${themeBold(theme, rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
+	const lines = [`${rowIndent}${rowMarker}${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame, childThinkingLevel(step))} ${themeBold(theme, rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
 	const lane = projectAsyncLane(job, step);
 	if (lane) lines.push(...formatLaneProjectionLines(lane, theme, detailIndent));
 	const task = collapseDetails ? singleChildTask(job, step) : compactTaskText(step.description, step.label);
@@ -2484,7 +2484,7 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 	lines.push(parallelWidgetGroupHeader(group, theme, frame));
 	for (const [rowIndex, row] of rows.entries()) {
 		const step = row.step;
-		const status = widgetStepStatus(step.status, theme);
+		const status = widgetStepStatus(step.status, theme, childThinkingLevel(step));
 		const activity = widgetStepActivityLine(step, width, false, job.updatedAt);
 		const stepStats = widgetStepStats(theme, step, job.updatedAt);
 		const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
@@ -2492,7 +2492,7 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 		const task = compactTaskText(step.description, step.label);
 		const taskSuffix = task ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", `task: ${task}`)}` : "";
 		const marker = rowIndex === rows.length - 1 && rowIndex >= group.total - 1 ? "└─" : "├─";
-		lines.push(`    ${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, row.index), frame)} ${themeBold(theme, row.rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${taskSuffix}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
+		lines.push(`    ${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, row.index), frame, childThinkingLevel(step))} ${themeBold(theme, row.rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${taskSuffix}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
 		const lane = projectAsyncLane(job, step);
 		if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "      "));
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, false, job.updatedAt, 6)) lines.push(`      ${nestedLine}`);

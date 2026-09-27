@@ -322,6 +322,35 @@ test("multi-child cards keep an accent header while each child row takes its own
 	}
 });
 
+test("async widget rows for one child take its level while headers and multi-step job rows stay accent", () => {
+	const now = Date.now();
+	const jobs = [
+		{
+			asyncId: "single-job", asyncDir: "/tmp/single-job", status: "running", mode: "single", agents: ["scout"], startedAt: now, updatedAt: now,
+			steps: [{ index: 0, agent: "scout", status: "running", thinking: "low", sessionThinking: "high" }],
+		},
+		{
+			asyncId: "chain-job", asyncDir: "/tmp/chain-job", status: "running", mode: "chain", agents: ["planner", "worker"], startedAt: now, updatedAt: now,
+			steps: [
+				{ index: 0, agent: "planner", status: "running", thinking: "medium" },
+				{ index: 1, agent: "worker", status: "pending", thinking: "xhigh" },
+			],
+			stepsTotal: 2,
+		},
+	] as AsyncJobState[];
+	for (const expanded of [false, true]) {
+		const lines = buildWidgetLines(jobs, toneTheme as never, 160, expanded, 0);
+		assert.equal(runningGlyphTone(lines[0]), "accent", `header (expanded=${expanded})`);
+		assert.equal(runningGlyphTone(lines.find((line) => line.includes("scout") && runningGlyphTone(line))), "thinking:high", `single job (expanded=${expanded})`);
+		assert.equal(runningGlyphTone(lines.find((line) => line.includes("chain") && runningGlyphTone(line))), "accent", `chain job (expanded=${expanded})`);
+		assert.deepEqual(lines.map(withoutTones), buildWidgetLines(jobs, theme as never, 160, expanded, 0), `text unchanged (expanded=${expanded})`);
+	}
+	const expandedLines = buildWidgetLines(jobs, toneTheme as never, 160, true, 0);
+	const plannerRow = expandedLines.find((line) => line.includes("planner") && runningGlyphTone(line) && !line.includes("chain"));
+	assert.equal(runningGlyphTone(plannerRow), "thinking:medium", "chain step row");
+	assert.match(plannerRow ?? "", /⟦thinking:medium⟧running⟦\/⟧/);
+});
+
 test("running single-subagent cards show the configured detach shortcut", () => {
 	const running = {
 		...result("reviewer", ""),

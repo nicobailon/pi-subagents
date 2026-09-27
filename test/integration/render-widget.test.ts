@@ -4,7 +4,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { extractToolArgsPreview } from "../../src/shared/utils.ts";
 
 const { buildWidgetLines, clearLegacyResultAnimationTimer, compactTaskText, projectAsyncLane, renderWidget, widgetRenderKey } = await import("../../src/tui/render.ts") as {
-	buildWidgetLines: (jobs: Array<Record<string, unknown>>, theme: { fg(name: string, text: string): string; bold(text: string): string }, width?: number, expanded?: boolean, frame?: number) => string[];
+	buildWidgetLines: (jobs: Array<Record<string, unknown>>, theme: { fg(name: string, text: string): string; bold(text: string): string; getThinkingBorderColor(level: string): (text: string) => string }, width?: number, expanded?: boolean, frame?: number) => string[];
 	clearLegacyResultAnimationTimer: (context: { state: { subagentResultAnimationTimer?: ReturnType<typeof setInterval> } }) => void;
 	compactTaskText: (task: string | undefined, label?: string) => string | undefined;
 	projectAsyncLane: (job: Record<string, unknown>) => { label?: string; role: string; phase?: string; state: string; gate?: string; next?: string; output?: string; workspace?: string; ref: string; chips: string[] } | undefined;
@@ -15,6 +15,7 @@ const { buildWidgetLines, clearLegacyResultAnimationTimer, compactTaskText, proj
 const theme = {
 	fg: (_name: string, text: string) => text,
 	bold: (text: string) => text,
+	getThinkingBorderColor: (_level: string) => (text: string) => text,
 };
 
 const runningGlyphPattern = "[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏●]";
