@@ -73,6 +73,9 @@ describe("foreground child control", () => {
 		assert.equal(control.sessionName, "  reviewer: named task  ");
 		assert.equal(control.activeChildren?.get(0)?.sessionName, "  reviewer: named task  ");
 		assert.equal(control.tokens, 120);
+		updateForegroundChild(control, 0, { ...progress(0, "reviewer", 120), sessionThinking: "xhigh" });
+		assert.equal(control.activeChildren?.get(0)?.sessionThinking, "xhigh");
+		assert.equal(control.sessionThinking, "xhigh");
 		assert.equal(control.inputTokens, 100);
 		assert.equal(control.outputTokens, 20);
 		assert.equal(control.window, 75);

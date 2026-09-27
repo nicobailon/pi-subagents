@@ -2206,6 +2206,8 @@ export interface ForegroundChildControl {
 	windowPeak?: number;
 	model?: string;
 	thinking?: string;
+	/** Thinking level the child's Pi session runs at, once the session reports it. */
+	sessionThinking?: ThinkingLevel;
 	toolCount?: number;
 	interrupt?: () => boolean;
 	detach?: () => boolean;
@@ -2255,6 +2257,8 @@ export interface ForegroundRunControl {
 	windowPeak?: number;
 	model?: string;
 	thinking?: string;
+	/** Thinking level the child's Pi session runs at, once the session reports it. */
+	sessionThinking?: ThinkingLevel;
 	toolCount?: number;
 	/** Independently tracked children for foreground parallel work and fleet inspection. */
 	activeChildren?: Map<number, ForegroundChildControl>;
