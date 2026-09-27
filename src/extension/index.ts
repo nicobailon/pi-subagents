@@ -558,7 +558,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		advertisedAgents = [];
 		advertisedContext = { cwd: ctx.cwd, model: ctx.model };
 		globalRoot = null;
-		advertisementReady = resolveGlobalNpmRoot().catch(() => null).then((root) => {
+		advertisementReady = resolveGlobalNpmRoot().then((root) => {
 			if (generation !== advertisementGeneration) return;
 			globalRoot = root;
 			refreshAdvertisedAgents();

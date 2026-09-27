@@ -65,7 +65,7 @@ describe("async stale-run reconciliation", () => {
 
 			assert.equal(stale.repaired, true);
 			assert.equal(stale.status?.state, "failed");
-			assert.match(stale.message ?? "", /process 1404 could not be probed from this process, but status has not updated for 6000ms/);
+			assert.match(stale.message ?? "", /PID 1404 cannot be probed from this process; status has not updated for 6000ms/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -612,7 +612,7 @@ describe("async stale-run reconciliation", () => {
 
 			assert.equal(result.repaired, true);
 			assert.equal(result.status?.state, "failed");
-			assert.match(result.message ?? "", /live PID, but status has not updated/);
+			assert.match(result.message ?? "", /PID .* is still live; status has not updated/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

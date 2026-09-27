@@ -352,7 +352,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 	it("includes root-only reported usage budget", () => {
 		const usageBudgetSchema = SubagentParams?.properties?.usageBudget;
 		assert.ok(usageBudgetSchema, "usageBudget schema should exist");
-		assert.equal(usageBudgetSchema.minProperties, 1);
 		assert.ok(CompileSchema);
 		const validator = CompileSchema!(SubagentParams);
 		assert.equal(validator.Check({ usageBudget: {} }), false);

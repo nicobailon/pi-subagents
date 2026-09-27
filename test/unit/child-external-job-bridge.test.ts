@@ -38,20 +38,24 @@ function runJob(asyncDir: string) {
 	return runExternalJob({ provider: "surf-oracle", options: {}, cwd: asyncDir, prompt: "prompt text", asyncDir, stepIndex: 0, runId: "run-1", agent: "gpt-pro" });
 }
 
+function registerProvider(onStart: () => void): void {
+	registerExternalJobProvider({
+		name: "surf-oracle",
+		start: () => {
+			onStart();
+			return { providerJobId: "job-1", state: "completed" };
+		},
+		status: () => ({ providerJobId: "job-1", state: "completed" }),
+		reattach: () => ({ providerJobId: "job-1", state: "completed" }),
+		result: () => ({ providerJobId: "job-1", state: "completed", output: "advisor result" }),
+	});
+}
+
 describe("child external-job bridge sweeper", () => {
 	it("services a tracked run before its status exists, starts the provider job once, and releases the run when final", async () => {
 		const dir = tempDir("pi-child-bridge-");
 		let starts = 0;
-		registerExternalJobProvider({
-			name: "surf-oracle",
-			start: () => {
-				starts += 1;
-				return { providerJobId: "job-1", state: "completed" };
-			},
-			status: () => ({ providerJobId: "job-1", state: "completed" }),
-			reattach: () => ({ providerJobId: "job-1", state: "completed" }),
-			result: () => ({ providerJobId: "job-1", state: "completed", output: "advisor result" }),
-		});
+		registerProvider(() => { starts += 1; });
 		const sweeper = createChildExternalJobBridgeSweeper();
 		try {
 			sweeper.track("run-1", dir);
@@ -70,16 +74,7 @@ describe("child external-job bridge sweeper", () => {
 		const dir = tempDir("pi-child-bridge-startup-");
 		fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify({ state: "running", steps: [{ agent: "gpt-pro", status: "pending" }] }));
 		let starts = 0;
-		registerExternalJobProvider({
-			name: "surf-oracle",
-			start: () => {
-				starts += 1;
-				return { providerJobId: "job-1", state: "completed" };
-			},
-			status: () => ({ providerJobId: "job-1", state: "completed" }),
-			reattach: () => ({ providerJobId: "job-1", state: "completed" }),
-			result: () => ({ providerJobId: "job-1", state: "completed", output: "advisor result" }),
-		});
+		registerProvider(() => { starts += 1; });
 		const sweeper = createChildExternalJobBridgeSweeper();
 		try {
 			sweeper.track("run-1", dir);

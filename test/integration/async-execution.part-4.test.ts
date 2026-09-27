@@ -595,7 +595,7 @@ setTimeout(() => process.exit(90), 15000).unref();
 			});
 
 			const payload = await readAsyncPayload(id);
-			// The runner publishes the result before the terminal status (#1988).
+			// The runner publishes the result before the terminal status.
 			const status = await waitForAsyncState(id, (candidate) => candidate.state !== "running" && candidate.state !== "queued");
 			const child = payload.results[0]!;
 			assert.equal(payload.success, false);

@@ -7169,11 +7169,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 
 		let forkSessionFileForIndex: (idx?: number) => string | undefined = () => undefined;
 		let prepareForkSessionForIndex: (idx?: number) => Promise<void> = async () => {};
-		// A launch that forks must not branch the parent session or resolve the pruner for a
-		// child the ceiling will deny, so every agent that can launch is checked before any fork
-		// work, and each is rechecked right before its fork is prepared in case the ceiling
-		// tightened meanwhile. The ceiling matches the child-launch boundary. Dynamic templates
-		// bounded to zero items never launch. Fresh-only launches keep the child-launch check.
+		// Check before pruner/session preparation, then recheck immediately before each fork
+		// because the session capability ceiling can tighten while preparation awaits.
 		const launchCapabilityCeiling = () => intersectSubagentCapabilityCeilings(
 			intersectSubagentCapabilityCeilings(effectiveParams.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(requestSessionId)),
 			deps.childRuntime?.capabilityCeiling,
@@ -7185,10 +7182,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				? [effectiveParams.agent!]
 				: hasTasks
 					? (effectiveParams.tasks ?? []).map((task) => task.agent)
-					: (effectiveParams.chain ?? []).flatMap((step) => isDynamicParallelStep(step as ChainStep)
-						&& ((step as DynamicParallelStep).expand.maxItems ?? deps.config.chain?.dynamicFanout?.maxItems ?? 0) === 0
+					: (effectiveParams.chain ?? []).flatMap((step) => isDynamicParallelStep(step)
+						&& (step.expand.maxItems ?? deps.config.chain?.dynamicFanout?.maxItems ?? 0) === 0
 						? []
-						: getStepAgents(step as ChainStep));
+						: getStepAgents(step));
 			for (const agent of launchable) assertAgentAllowedByCapabilityCeiling(agent, ceiling);
 		};
 		// Forked children keep their requested thinking level. Signed Anthropic thinking

@@ -21,7 +21,7 @@ export function formatChildToolDiagnostic(diagnostic: ChildToolDiagnostic, optio
 			...(diagnostic.missingMcpDirectTools?.length
 				? [`MCP direct tools missing from the child registry: ${diagnostic.missingMcpDirectTools.join(", ")}.`]
 				: []),
-			"Agents that need MCP tools (`mcpDirectTools`, or MCP tools from an ambient adapter such as pi-mcp-adapter) must run as background children (`async: true`), which load the ambient extensions.",
+			"MCP tools require background children (`async: true`) because only they load ambient extensions.",
 			"For extension tools a foreground child can load, add the provider path to `subagentOnlyExtensions` (child-only), `extensions`, or as a path-like entry in `tools`, while keeping each registered tool name in `tools`.",
 		].join("\n");
 	}

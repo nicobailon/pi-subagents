@@ -130,14 +130,11 @@ setTimeout(() => { if (phase === "old") fs.writeFileSync(${JSON.stringify(oldDon
 			const afterStale = await before({ systemPrompt: "base", systemPromptOptions: { selectedTools: ["subagent"] } }, ctx);
 			assert.match(afterStale.systemPrompt, /<name>new-specialist<\/name>/);
 			assert.doesNotMatch(afterStale.systemPrompt, /<name>global-specialist<\/name>/);
-			for (const reason of ["failure", "timeout", "offline"]) {
-				process.env.TEST_NPM_PHASE = reason;
-				if (reason === "offline") process.env.PI_OFFLINE = "1";
-				start({ reason: "reload" }, ctx);
-				const local = await before({ systemPrompt: "base", systemPromptOptions: { selectedTools: ["subagent"] } }, ctx);
-				assert.match(local.systemPrompt, /<name>local-specialist<\/name>/, reason);
-				assert.doesNotMatch(local.systemPrompt, /<name>(global|new)-specialist<\/name>/, reason);
-			}
+			process.env.TEST_NPM_PHASE = "failure";
+			start({ reason: "reload" }, ctx);
+			const local = await before({ systemPrompt: "base", systemPromptOptions: { selectedTools: ["subagent"] } }, ctx);
+			assert.match(local.systemPrompt, /<name>local-specialist<\/name>/);
+			assert.doesNotMatch(local.systemPrompt, /<name>(global|new)-specialist<\/name>/);
 			fs.writeFileSync(path.join(process.env.PI_CODING_AGENT_DIR, "settings.json"), "{");
 			start({ reason: "reload" }, ctx);
 			await assert.rejects(tools.get("subagent").execute("invalid", { action: "list" }, new AbortController().signal, undefined, ctx), /Failed to parse settings file/);

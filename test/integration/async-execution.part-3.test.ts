@@ -2476,7 +2476,7 @@ const mark = (file, text) => { try { fs.writeFileSync(file, text); } catch {} };
 fs.writeFileSync(started, "started");
 await new Promise((resolve) => {
   mark(watchStarted, "watching");
-  // fs.watchFile missed the parent's rejection marker on Ubuntu CI (#2462); poll existence directly.
+  // fs.watchFile missed the parent's rejection marker on Ubuntu CI; poll existence directly.
   const timer = setInterval(() => { if (fs.existsSync(reject)) { clearInterval(timer); mark(rejectSeen, "seen"); resolve(); } }, 20);
 });
 throw new Error("injected parent-visible heavy import rejection");

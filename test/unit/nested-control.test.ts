@@ -761,7 +761,6 @@ interface NestedRunOptions {
 	summary?: Record<string, unknown>;
 }
 
-/** Writes a terminal nested run of the fanout child under `route`, with its own run directory. */
 function writeNestedRun(route: ReturnType<typeof createNestedRoute>, runId: string, options: NestedRunOptions = {}): string {
 	// A follow-up runner starts in the source run's cwd, so record one that per-test teardown never removes.
 	const cwd = os.tmpdir();
@@ -806,7 +805,6 @@ describe("nested external-job follow-up", () => {
 		});
 	}
 
-	/** Resumes `runId` from the fanout child that launched it, or from the root session with `from: "root"`. */
 	function resume(params: Record<string, unknown> = {}, from: "child" | "root" = "child") {
 		const executor = from === "child"
 			? createExecutor(createState(), AGENTS, false, undefined, fanoutChildRuntime(route))
