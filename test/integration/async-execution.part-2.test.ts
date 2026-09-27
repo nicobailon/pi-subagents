@@ -247,7 +247,8 @@ syncBuiltinESMExports();
 
 		const running = await waitForAsyncState(id, (status) => status.steps?.[1]?.status === "running" && typeof status.pid === "number");
 		deliverInterruptRequest({ asyncDir, pid: running.pid, source: "test" });
-		for (let attempt = 0; attempt < 750 && !fs.existsSync(closeGate); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+		const gateDeadline = Date.now() + 30_000;
+		while (!fs.existsSync(closeGate) && Date.now() < gateDeadline) await new Promise((resolve) => setTimeout(resolve, 20));
 		assert.equal(fs.existsSync(closeGate), true, "runner must reach stop-inbox closure before the test delivers stop");
 		try {
 			deliverStopRequest({ asyncDir, pid: running.pid, source: "test" });
@@ -337,6 +338,45 @@ syncBuiltinESMExports();
 			});
 		}
 	}
+
+	it("publishes the result when the stop-inbox marker cannot be written", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "OK" });
+		const id = `async-stop-inbox-close-failure-${Date.now().toString(36)}`;
+		const preload = path.join(tempDir, `${id}-fail-stop-inbox.mjs`);
+		fs.writeFileSync(preload, `
+import fs from "node:fs";
+import path from "node:path";
+import { syncBuiltinESMExports } from "node:module";
+const originalRename = fs.renameSync;
+fs.renameSync = function(source, target) {
+  if (path.basename(String(target)) === "stop-inbox-closed.json") throw Object.assign(new Error("injected marker failure"), { code: "ENOSPC" });
+  return originalRename.call(this, source, target);
+};
+syncBuiltinESMExports();
+`);
+		const previousNodeOptions = process.env.NODE_OPTIONS;
+		process.env.NODE_OPTIONS = [previousNodeOptions, `--import=${pathToFileURL(preload).href}`].filter(Boolean).join(" ");
+		try {
+			executeAsyncSingle(id, {
+				agent: "worker",
+				task: "Reply with OK.",
+				agentConfig: makeAgent("worker"),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				sessionRoot: path.join(tempDir, "sessions"),
+				maxSubagentDepth: 2,
+			});
+		} finally {
+			if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = previousNodeOptions;
+		}
+
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.output, "OK");
+		const journal = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf-8").trim().split("\n").map((line) => JSON.parse(line) as { type?: string });
+		assert.ok(journal.some((event) => event.type === "subagent.run.stop_inbox_close_failed"));
+	});
 
 	it("delivers inbox steer requests to the background child session", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const release = path.join(tempDir, "steer-release");
