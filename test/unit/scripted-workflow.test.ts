@@ -1599,6 +1599,7 @@ describe("scripted workflow runtime", () => {
 
 		await assertFailureKind("return (", "validation");
 		await assertFailureKind(`throw new Error("manual failure");`, "script");
+		await assertFailureKind(`JSON.parse("not json");`, "script");
 		await assertFailureKind(`return { value: 1n };`, "return-serialization");
 		await assertFailureKind(
 			`return runs.run("writer", { agent: "worker", task: "write" });`,

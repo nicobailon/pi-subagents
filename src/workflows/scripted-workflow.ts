@@ -873,8 +873,10 @@ function isSyntaxError(error) {
 }
 
 function postWorkflowError(error) {
+  // Pre-run syntax and portability errors are tagged "validation" where the script is compiled;
+  // anything reaching here was thrown while the script ran, including a runtime SyntaxError.
   const taggedKind = error && (typeof error === "object" || typeof error === "function") ? workflowErrorKinds.get(error) : undefined;
-  parentPort.postMessage({ type: "error", error: isSyntaxError(error) ? formatWorkflowScriptSyntaxError(error) : formatWorkflowScriptError(error), errorKind: taggedKind ?? (isSyntaxError(error) ? "validation" : "script") });
+  parentPort.postMessage({ type: "error", error: isSyntaxError(error) ? formatWorkflowScriptSyntaxError(error) : formatWorkflowScriptError(error), errorKind: taggedKind ?? "script" });
 }
 
 process.on("unhandledRejection", postWorkflowError);
