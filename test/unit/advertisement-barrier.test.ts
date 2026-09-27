@@ -100,7 +100,10 @@ setTimeout(() => { if (phase === "old") fs.writeFileSync(${JSON.stringify(oldDon
 				assert.match(text, /<name>global-specialist<\/name>/);
 				assert.match(text, /<name>local-specialist<\/name>/);
 			}
-			assert.match(loader.content[0].text, /only after the next user prompt, so do not retry it in this one\. The operator can start Pi with --exclude-tools subagents_enable/);
+			assert.match(loader.content[0].text, /If it has a subagent tool now \(the name may carry a prefix\), call it, starting with subagent\(\{action:"list",capabilities:true\}\)/);
+			assert.match(loader.content[0].text, /If it does not, your provider fixes the tool list for the whole prompt: subagent will appear after the next user prompt, so do not retry it in this one\./);
+			assert.match(loader.content[0].text, /The operator can start Pi with --exclude-tools subagents_enable to keep subagent always available\./);
+			assert.doesNotMatch(loader.content[0].text, /Some providers|bridges to another agent SDK/);
 			process.env.TEST_NPM_PHASE = "seed";
 			assert.ok(discoverAgents(ctx.cwd, "both").agents.some((agent) => agent.name === "global-specialist"));
 			process.env.TEST_NPM_PHASE = "old";

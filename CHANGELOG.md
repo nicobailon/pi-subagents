@@ -6,6 +6,10 @@
 
 - After you upgrade pi-subagents, your first interactive session shows a short notice with the highlights of each new version and a link to the changelog. It is shown once and never enters the conversation, so it does not change the model's context or prompt cache. A fresh install and child sessions show nothing.
 
+### Changed
+
+- The `subagents_enable` result told the model to wait for the next prompt on some providers, even when `subagent` was already available in the current turn. It now tells the model to check its tool list: if a `subagent` tool is there, use it; if not, wait for the next user prompt instead of retrying. The `--exclude-tools subagents_enable` hint for operators is unchanged.
+
 ## [0.73.1] - 2026-09-27
 
 ### Highlights
