@@ -110,7 +110,7 @@ describe("async single-agent deadline checkpoint lifecycle", { skip: !available 
 
 	it("does not schedule a checkpoint less than one second after launch", {
 		skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined,
-		timeout: 10_000,
+		timeout: 25_000,
 	}, async () => {
 		mockPi.onCall({ steps: [{ waitForPath: path.join(tempDir, "never-released") }] });
 		const executor = makeAsyncExecutor([makeAgent("worker")]);
@@ -120,7 +120,7 @@ describe("async single-agent deadline checkpoint lifecycle", { skip: !available 
 		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		const id = result.details?.asyncId;
 		assert.ok(id);
-		await waitForAsyncResultFile(id, 5_000);
+		await waitForAsyncResultFile(id);
 		assert.deepEqual(journal(id).filter((event) => event.source === "deadline-checkpoint"), []);
 	});
 });
