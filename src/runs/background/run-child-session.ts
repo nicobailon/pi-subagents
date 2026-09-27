@@ -9,6 +9,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse } from "../../shared/utils.ts";
 import type { EffectsProjection, RuntimeAcknowledgedChildExtensions, SubagentOutputState, ToolBudgetState, Usage } from "../../shared/types.ts";
+import type { ThinkingLevel } from "../../shared/model-info.ts";
 import {
 	acceptChildWatchdogEvent,
 	applyChildWatchdogMessage,
@@ -94,6 +95,8 @@ export interface RunChildSessionInput {
 	stopMessage?: string;
 	onChildEvent?: (event: ChildEvent) => void;
 	onContextWindow?: (contextWindow: number) => void;
+	/** Receives the thinking level the child's Pi session runs at. */
+	onSessionThinking?: (level: ThinkingLevel) => void;
 	transcriptWriter?: ChildTranscriptWriter;
 	toolTimeoutMs?: number;
 	runDeadlineAt?: number;
@@ -655,6 +658,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				}
 				session = created;
 				if (created.contextWindow !== undefined) input.onContextWindow?.(created.contextWindow);
+				if (created.thinkingLevel) input.onSessionThinking?.(created.thinkingLevel);
 				const steer = created.steer.bind(created);
 				const followUp = created.followUp.bind(created);
 				created.steer = async (text) => {

@@ -126,7 +126,7 @@ import {
 	WORKTREE_AGENT_CWD_PLACEHOLDER,
 	type WorktreeSetup,
 } from "../shared/worktree.ts";
-import { findModelInfo, resolveEffectiveThinking, splitKnownThinkingSuffix } from "../../shared/model-info.ts";
+import { findModelInfo, resolveEffectiveThinking, splitKnownThinkingSuffix, type ThinkingLevel } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling } from "../../shared/thinking-ceiling.ts";
 import { resolveLaunchBinding } from "../../shared/launch-contract.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
@@ -690,6 +690,7 @@ interface SingleStepContext {
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	onAttemptStart?: (attempt: { model?: string; thinking?: string; contextLimit?: number }) => void;
+	onSessionThinking?: (level: ThinkingLevel) => void;
 	onChildEvent?: (event: ChildEvent) => void;
 	onExternalProcess?: (process: ExternalProcessStatus) => void;
 	prepareExternalActivity?: (cwd: string, signal: AbortSignal) => Promise<void>;
@@ -1214,6 +1215,7 @@ export async function runSingleStepInner(
 			stopMessage: ctx.stopMessage,
 			onChildEvent: ctx.onChildEvent,
 			onContextWindow: (contextLimit) => ctx.onAttemptStart?.({ ...attemptModel, contextLimit }),
+			onSessionThinking: ctx.onSessionThinking,
 			transcriptWriter,
 			toolTimeoutMs: ctx.toolTimeoutMs,
 			runDeadlineAt: ctx.deadlineAt,
@@ -2957,6 +2959,13 @@ export async function runSubagent(
 		statusPayload.lastUpdate = now;
 		writeStatusPayload();
 	};
+	const updateStepSessionThinking = (flatIndex: number, level: ThinkingLevel): void => {
+		const step = statusPayload.steps[flatIndex];
+		if (!step || step.sessionThinking === level) return;
+		step.sessionThinking = level;
+		statusPayload.lastUpdate = Date.now();
+		writeStatusPayload();
+	};
 	const updateStepFromChildEvent = (flatIndex: number, event: ChildEvent): void => {
 		const step = statusPayload.steps[flatIndex];
 		if (!step) return;
@@ -3736,6 +3745,7 @@ export async function runSubagent(
 					stopMessage,
 					toolTimeoutMs: task.toolTimeoutMs ?? config.toolTimeoutMs,
 					onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking, attempt.contextLimit),
+					onSessionThinking: (level) => updateStepSessionThinking(fi, level),
 					onChildEvent: (event) => updateStepFromChildEvent(fi, event),
 					onExternalProcess: (process) => updateExternalProcess(fi, process),
 					prepareExternalActivity: (externalCwd, signal) => prepareExternalActivity(fi, externalCwd, signal),
@@ -4149,6 +4159,7 @@ export async function runSubagent(
 							stopMessage,
 							toolTimeoutMs: taskForRun.toolTimeoutMs ?? config.toolTimeoutMs,
 							onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking, attempt.contextLimit),
+							onSessionThinking: (level) => updateStepSessionThinking(fi, level),
 							onChildEvent: (event) => updateStepFromChildEvent(fi, event),
 							onExternalProcess: (process) => updateExternalProcess(fi, process),
 							prepareExternalActivity: (externalCwd, signal) => prepareExternalActivity(fi, externalCwd, signal),
@@ -4538,6 +4549,7 @@ export async function runSubagent(
 				stopMessage,
 				toolTimeoutMs: seqStep.toolTimeoutMs ?? config.toolTimeoutMs,
 				onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt.model, attempt.thinking, attempt.contextLimit),
+				onSessionThinking: (level) => updateStepSessionThinking(flatIndex, level),
 				onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
 				onExternalProcess: (process) => updateExternalProcess(flatIndex, process),
 				prepareExternalActivity: (externalCwd, signal) => prepareExternalActivity(flatIndex, externalCwd, signal),
