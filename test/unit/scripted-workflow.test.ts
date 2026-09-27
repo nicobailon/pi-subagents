@@ -1607,6 +1607,48 @@ describe("scripted workflow runtime", () => {
 		);
 	});
 
+	it("preserves an unawaited child failure kind and classifies runtime setup failures", async () => {
+		await assert.rejects(
+			runWorkflowScript({
+				script: `runs.run("writer", { agent: "worker", task: "write" }); await new Promise(() => {});`,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: false, output: "child failed", error: "child failed", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.errorKind === "child",
+		);
+		await assert.rejects(
+			runWorkflowScript({
+				script: `runs.host("ci", { kind: "command", command: "npm test", timeoutMs: 1000 }); await new Promise(() => {});`,
+				timeoutMs: 2_000,
+				async host() { throw new Error("host boundary failed"); },
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.errorKind === "script",
+		);
+
+		const unavailableCwd = path.join(os.tmpdir(), `missing-workflow-cwd-${process.pid}-${Date.now()}`);
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return "unreachable";`,
+				processCwd: unavailableCwd,
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.errorKind === "runtime" && error.partial.children.length === 0,
+		);
+
+		await assert.rejects(
+			runWorkflowScript({
+				script: " ",
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.errorKind === "validation",
+		);
+	});
+
 	it("validates every runs.all item before launching children", async () => {
 		const malformedScripts = [
 			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, null]);`,

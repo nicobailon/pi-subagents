@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Failed workflows now expose a structured `failureKind` in foreground details and async status, distinguishing validation, script, child, return-serialization, timeout, and detached-child failures without requiring callers to parse error text. Fixes [#2506](https://github.com/nicobailon/pi-subagents/issues/2506).
+- Failed workflows now expose a structured `failureKind` in foreground details and async status, distinguishing validation, script, child, return-serialization, timeout, detached-child, and runtime failures without requiring callers to parse error text. Fixes [#2506](https://github.com/nicobailon/pi-subagents/issues/2506).
 
 ## [0.72.1] - 2026-09-26
 

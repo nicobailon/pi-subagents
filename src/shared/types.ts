@@ -131,7 +131,7 @@ export interface WorkflowPreflight {
 
 export type WorkflowReceiptState = "complete" | "failed" | "paused" | "stopped";
 
-export type WorkflowScriptFailureKind = "validation" | "script" | "child" | "return-serialization" | "timeout" | "detached-child";
+export type WorkflowScriptFailureKind = "validation" | "script" | "child" | "return-serialization" | "timeout" | "detached-child" | "runtime";
 
 export type WorkflowTerminalResolution = "settled-awaiting-resume" | "failed-child" | "interrupted-child";
 

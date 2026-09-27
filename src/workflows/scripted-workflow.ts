@@ -872,6 +872,13 @@ function isSyntaxError(error) {
   return error instanceof SyntaxError || error?.name === "SyntaxError";
 }
 
+function postWorkflowError(error) {
+  const taggedKind = error && (typeof error === "object" || typeof error === "function") ? workflowErrorKinds.get(error) : undefined;
+  parentPort.postMessage({ type: "error", error: isSyntaxError(error) ? formatWorkflowScriptSyntaxError(error) : formatWorkflowScriptError(error), errorKind: taggedKind ?? (isSyntaxError(error) ? "validation" : "script") });
+}
+
+process.on("unhandledRejection", postWorkflowError);
+
 const NESTED_ASYNC_WORKFLOW_ERROR = "workflowScript validation failed before child launch; no children launched. workflowScript does not support nested async functions. Use top-level await, plain helper functions that return runs.run(...), or explicit Promise chains so workflows stay portable across Node and Bun. Parallel plus sequential rewrite: const a = runs.run(\"a\", { agent: \"worker\", task: \"A\" }); const writer = await runs.run(\"writer\", { agent: \"worker\", task: \"Write\" }); const review = await runs.run(\"review\", { agent: \"reviewer\", task: writer.output }); const [aResult] = await Promise.all([a]); return { a: aResult.output, issue: { writerRunId: writer.runId, reviewRunId: review.runId } };";
 const AST_SCALAR_KEYS = new Set(["type", "start", "end"]);
 
@@ -1076,8 +1083,7 @@ parentPort.on("message", async (message) => {
     }
     parentPort.postMessage({ type: "complete", value: persistedValue });
   } catch (error) {
-    const errorKind = error && (typeof error === "object" || typeof error === "function") ? workflowErrorKinds.get(error) : undefined;
-    parentPort.postMessage({ type: "error", error: isSyntaxError(error) ? formatWorkflowScriptSyntaxError(error) : formatWorkflowScriptError(error), errorKind: errorKind ?? (isSyntaxError(error) ? "validation" : "script") });
+    postWorkflowError(error);
   }
 });
 `;
@@ -1182,15 +1188,21 @@ export interface WorkflowScriptResult {
 }
 
 function isWorkflowScriptFailureKind(value: unknown): value is WorkflowScriptFailureKind {
-	return value === "validation" || value === "script" || value === "child" || value === "return-serialization" || value === "timeout" || value === "detached-child";
+	return value === "validation" || value === "script" || value === "child" || value === "return-serialization" || value === "timeout" || value === "detached-child" || value === "runtime";
+}
+
+function taggedWorkflowError(message: string, kind: WorkflowScriptFailureKind): Error & { workflowErrorKind: WorkflowScriptFailureKind } {
+	const error = new Error(message) as Error & { workflowErrorKind: WorkflowScriptFailureKind };
+	error.workflowErrorKind = kind;
+	return error;
 }
 
 export class WorkflowScriptError extends Error {
 	readonly partial: Omit<WorkflowScriptResult, "value">;
 	readonly errorKind?: WorkflowScriptFailureKind;
 
-	constructor(message: string, partial: Omit<WorkflowScriptResult, "value">, errorKind?: WorkflowScriptFailureKind) {
-		super(message);
+	constructor(message: string, partial: Omit<WorkflowScriptResult, "value">, errorKind?: WorkflowScriptFailureKind, options?: ErrorOptions) {
+		super(message, options);
 		this.name = "WorkflowScriptError";
 		this.partial = partial;
 		this.errorKind = errorKind;
@@ -2020,10 +2032,11 @@ function setupAbortResumeParams(params: Record<string, unknown>, result: Workflo
 }
 
 export async function runWorkflowScript(options: RunWorkflowScriptOptions): Promise<WorkflowScriptResult> {
-	if (!options.script.trim()) throw new Error("workflowScript must not be empty.");
-	if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 1)) throw new Error("workflow script timeout must be a positive integer.");
+	const emptyPartial = (): Omit<WorkflowScriptResult, "value"> => ({ emits: [], console: [], trace: [], children: [] });
+	if (!options.script.trim()) throw new WorkflowScriptError("workflowScript must not be empty.", emptyPartial(), "validation");
+	if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 1)) throw new WorkflowScriptError("workflow script timeout must be a positive integer.", emptyPartial(), "runtime");
 	if (options.globalConcurrencyLimit !== undefined && (!Number.isSafeInteger(options.globalConcurrencyLimit) || options.globalConcurrencyLimit < 1)) {
-		throw new Error("workflow script global concurrency limit must be a positive integer.");
+		throw new WorkflowScriptError("workflow script global concurrency limit must be a positive integer.", emptyPartial(), "runtime");
 	}
 	const launchSemaphore = new Semaphore(options.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
 
@@ -2033,7 +2046,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			realpathSync(process.cwd());
 		} catch (error) {
 			const code = typeof error === "object" && error !== null && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-			if (code !== "ENOENT") throw new Error("Workflow current cwd could not be validated.", { cause: error });
+			if (code !== "ENOENT") throw new WorkflowScriptError("Workflow current cwd could not be validated.", emptyPartial(), "runtime", { cause: error });
 			staleCwd = true;
 		}
 		try {
@@ -2049,7 +2062,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			}
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
-			throw new Error(`Workflow process cwd is unavailable: ${options.processCwd}: ${detail}`, { cause: error });
+			throw new WorkflowScriptError(`Workflow process cwd is unavailable: ${options.processCwd}: ${detail}`, emptyPartial(), "runtime", { cause: error });
 		}
 	}
 
@@ -2057,9 +2070,14 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	try {
 		acornPath = resolveWorkflowParserEntry();
 	} catch (error) {
-		throw new Error("Workflow parser dependency 'acorn' is unavailable from pi-subagents. Reinstall pi-subagents dependencies before launching workflowScript.", { cause: error });
+		throw new WorkflowScriptError("Workflow parser dependency 'acorn' is unavailable from pi-subagents. Reinstall pi-subagents dependencies before launching workflowScript.", emptyPartial(), "runtime", { cause: error });
 	}
-	const worker = new Worker(WORKER_SOURCE, { eval: true, workerData: { acornPath } });
+	let worker: Worker;
+	try {
+		worker = new Worker(WORKER_SOURCE, { eval: true, workerData: { acornPath } });
+	} catch (error) {
+		throw new WorkflowScriptError(`Workflow worker could not start: ${error instanceof Error ? error.message : String(error)}`, emptyPartial(), "runtime", { cause: error });
+	}
 	const emits: unknown[] = [];
 	const consoleEntries: WorkflowScriptResult["console"] = [];
 	const trace: WorkflowScriptTraceEntry[] = [];
@@ -2167,7 +2185,11 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			console.error("Workflow onChildSettled callback failed:", error);
 		}
 	};
-	options.registerStopChild?.(stopChild);
+	try {
+		options.registerStopChild?.(stopChild);
+	} catch (error) {
+		throw new WorkflowScriptError(`Workflow stop registration failed: ${error instanceof Error ? error.message : String(error)}`, partial(), "runtime");
+	}
 
 	return await new Promise<WorkflowScriptResult>((resolve, reject) => {
 		const finish = (outcome: { value: unknown } | { error: Error & { workflowErrorKind?: unknown } }) => {
@@ -2181,7 +2203,12 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			void Promise.allSettled([...steers.values(), ...hostCalls.values()].map(({ promise }) => promise)).then(() => {
 				if (settled) return;
 				settled = true;
-				options.registerStopChild?.(undefined);
+				let stopRegistrationError: string | undefined;
+				try {
+					options.registerStopChild?.(undefined);
+				} catch (error) {
+					stopRegistrationError = error instanceof Error ? error.message : String(error);
+				}
 				if (timer) clearTimeout(timer);
 				options.signal?.removeEventListener("abort", onAbort);
 				void worker.terminate();
@@ -2196,7 +2223,8 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 							return unobservedHosts.length > 0 ? new Error(`workflowScript completed with unawaited runs.host call(s): ${unobservedHosts.map((key) => `'${key}'`).join(", ")}. Await or return each call.`) : undefined;
 						})()
 						: undefined;
-				if ("error" in outcome) reject(new WorkflowScriptError(outcome.error.message, partial(), isWorkflowScriptFailureKind(outcome.error.workflowErrorKind) ? outcome.error.workflowErrorKind : undefined));
+				if (stopRegistrationError) reject(new WorkflowScriptError(`Workflow stop registration cleanup failed: ${stopRegistrationError}`, partial(), "runtime"));
+				else if ("error" in outcome) reject(new WorkflowScriptError(outcome.error.message, partial(), isWorkflowScriptFailureKind(outcome.error.workflowErrorKind) ? outcome.error.workflowErrorKind : "runtime"));
 				else if (completionError) reject(new WorkflowScriptError(completionError.message, partial(), "validation"));
 				else resolve({ value: outcome.value, ...partial() });
 			});
@@ -2217,7 +2245,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				mayFlushAssembly = options.continueAfterAbortWhenChildrenSettled?.(error) === true;
 			} catch (callbackError) {
 				const callbackMessage = callbackError instanceof Error ? callbackError.message : String(callbackError);
-				return finish({ error: new Error(`Workflow assembly flush eligibility failed: ${callbackMessage}`) });
+				return finish({ error: taggedWorkflowError(`Workflow assembly flush eligibility failed: ${callbackMessage}`, "runtime") });
 			}
 			if (mayFlushAssembly && allChildrenSettled) {
 				// A reloaded async workflow may already be past its last child launch.
@@ -2225,7 +2253,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				// signal so any later launch or side effect cannot use stale context.
 				assemblyAbortRequested = true;
 				childController.abort(error);
-				assemblyFlushTimer = setTimeout(() => finish({ error }), WORKFLOW_ASSEMBLY_FLUSH_TIMEOUT_MS);
+				assemblyFlushTimer = setTimeout(() => finish({ error: taggedWorkflowError(error.message, "runtime") }), WORKFLOW_ASSEMBLY_FLUSH_TIMEOUT_MS);
 				return;
 			}
 			for (const key of launches.keys()) {
@@ -2244,7 +2272,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				});
 			}
 			traceChanged();
-			finish({ error });
+			finish({ error: taggedWorkflowError(error.message, "runtime") });
 		};
 		const timer = options.timeoutMs === undefined
 			? undefined
@@ -2256,9 +2284,9 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		options.signal?.addEventListener("abort", onAbort, { once: true });
 		if (options.signal?.aborted) return onAbort();
 
-		worker.on("error", (error) => finish({ error: new Error(`Workflow worker failed: ${error instanceof Error ? error.message : String(error)}`) }));
+		worker.on("error", (error) => finish({ error: taggedWorkflowError(`Workflow worker failed: ${error instanceof Error ? error.message : String(error)}`, "runtime") }));
 		worker.on("exit", (code) => {
-			if (!settled && code !== 0) finish({ error: new Error(`Workflow worker exited with code ${code}.`) });
+			if (!settled && code !== 0) finish({ error: taggedWorkflowError(`Workflow worker exited with code ${code}.`, "runtime") });
 		});
 		worker.on("message", (message: Record<string, unknown>) => {
 			if (settled) return;
@@ -2270,7 +2298,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				try {
 					assertWorkflowJsonValue(message.value, "emit");
 				} catch (error) {
-					finish({ error: new Error(`Workflow emit could not be persisted: ${error instanceof Error ? error.message : String(error)}`) });
+					finish({ error: taggedWorkflowError(`Workflow emit could not be persisted: ${error instanceof Error ? error.message : String(error)}`, "runtime") });
 					return;
 				}
 				emits.push(message.value);
@@ -2278,7 +2306,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					options.onEmit?.([...emits]);
 				} catch (error) {
 					emits.pop();
-					finish({ error: new Error(`Workflow emit could not be persisted: ${error instanceof Error ? error.message : String(error)}`) });
+					finish({ error: taggedWorkflowError(`Workflow emit could not be persisted: ${error instanceof Error ? error.message : String(error)}`, "runtime") });
 				}
 				return;
 			}
@@ -2646,6 +2674,10 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			respond(deliver(promise), `runs.run('${key}') result`, (error) => children.set(key, responseBoundaryFailure(key, error)));
 		});
 
-		worker.postMessage({ type: "start", script: options.script, ...(options.args ? { args: options.args } : {}), stateEnabled: options.state !== undefined });
+		try {
+			worker.postMessage({ type: "start", script: options.script, ...(options.args ? { args: options.args } : {}), stateEnabled: options.state !== undefined });
+		} catch (error) {
+			finish({ error: taggedWorkflowError(`Workflow worker could not start: ${error instanceof Error ? error.message : String(error)}`, "runtime") });
+		}
 	});
 }
