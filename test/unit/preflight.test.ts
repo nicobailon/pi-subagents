@@ -35,7 +35,7 @@ function writeMcpFixture(): void {
 	const agentDir = process.env.PI_CODING_AGENT_DIR;
 	assert.equal(typeof agentDir, "string");
 	const definition = { command: "github-mcp" };
-	writeJson(path.join(agentDir, "mcp.json"), { mcpServers: { github: definition } });
+	writeJson(path.join(agentDir, "mcp-adapter.json"), { mcpServers: { github: definition } });
 	writeJson(path.join(agentDir, "mcp-cache.json"), {
 		version: 1,
 		servers: {
