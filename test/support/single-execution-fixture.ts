@@ -342,7 +342,7 @@ export function installSingleExecutionHooks() {
 		workflowControllers?: Map<string, AbortController>,
 		handleScheduledRunAction?: Parameters<typeof createSubagentExecutor>[0]["handleScheduledRunAction"],
 		piEvents = createEventBus(),
-		discoverAgentsForCwd?: (cwd: string) => typeof agents,
+		discoverAgentsForCwd?: (cwd: string, preferredModelProvider?: string) => typeof agents,
 		childRuntime?: ChildRuntimeConfig,
 		sendMessage?: (message: unknown, options: unknown) => void,
 	) {
@@ -363,7 +363,7 @@ export function installSingleExecutionHooks() {
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => path.join(tempDir, ".pi/subagents", "sessions"),
 			expandTilde: (value: string) => value,
-			discoverAgents: (cwd: string) => ({ agents: discoverAgentsForCwd ? discoverAgentsForCwd(cwd) : agents }),
+			discoverAgents: (cwd: string, _scope: unknown, preferredModelProvider?: string) => ({ agents: discoverAgentsForCwd ? discoverAgentsForCwd(cwd, preferredModelProvider) : agents }),
 			allowMutatingManagementActions,
 			...(handleScheduledRunAction ? { handleScheduledRunAction } : {}),
 		});

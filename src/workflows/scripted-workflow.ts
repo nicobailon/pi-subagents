@@ -1736,12 +1736,15 @@ function staticChildAgentNode(params: unknown): AstNode | undefined {
 function validateStaticChildAgents(call: AstNode, agentNameError: (name: string) => string | undefined): WorkflowScriptValidationError[] {
 	const args = Array.isArray(call.arguments) ? call.arguments : [];
 	const elements = (node: unknown): unknown[] => astNode(node) && node.type === "ArrayExpression" && Array.isArray(node.elements) ? node.elements : [];
+	// A spread or unknown computed key on the lane can replace `stages`.
+	const staticLane = (lane: unknown): lane is AstNode => astNode(lane) && lane.type === "ObjectExpression" && Array.isArray(lane.properties)
+		&& lane.properties.every((property) => astNode(property) && property.type === "Property" && staticPropertyKey(property) !== undefined);
 	const children: Array<{ owner: string; params: unknown }> = directRunsCall(call, "run")
 		? [{ owner: "runs.run", params: args[1] }]
 		: directRunsCall(call, "all")
 			? elements(args[0]).map((params) => ({ owner: "runs.all item", params }))
 			: directRunsCall(call, "lanes")
-				? elements(args[0]).flatMap((lane) => astNode(lane) ? elements(directObjectPropertyValue(lane, "stages")).map((params) => ({ owner: "runs.lanes stage", params })) : [])
+				? elements(args[0]).flatMap((lane) => staticLane(lane) ? elements(directObjectPropertyValue(lane, "stages")).map((params) => ({ owner: "runs.lanes stage", params })) : [])
 				: [];
 	const errors: WorkflowScriptValidationError[] = [];
 	for (const child of children) {

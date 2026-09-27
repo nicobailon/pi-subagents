@@ -3901,6 +3901,13 @@ Answer only from the supplied synthetic text.
 		assert.deepEqual(JSON.parse(validation.content[0]?.text ?? "").errors.map((error: { kind?: string; line?: number }) => ({ kind: error.kind, line: error.line })), [{ kind: "agent", line: 2 }]);
 	});
 
+	it("checks literal agents with the parent model's provider-specific discovery", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), (_cwd, provider) => provider === "openai-codex" ? [makeAgent("reviewer")] : []);
+		const ctx = { ...makeMinimalCtx(tempDir), model: { provider: "openai-codex", id: "gpt-test" } };
+		const validation = await executor.execute("provider-agent-validate", { action: "validate", workflowScript: `return runs.run("review", { agent: "reviewer", task: "Review" });` }, new AbortController().signal, undefined, ctx as ReturnType<typeof makeMinimalCtx>);
+		assert.equal(validation.isError, undefined, validation.content[0]?.text);
+	});
+
 	it("lets an explicit workflow spawn override exceed config", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "first child completed" });
 		mockPi.onCall({ output: "second child completed" });

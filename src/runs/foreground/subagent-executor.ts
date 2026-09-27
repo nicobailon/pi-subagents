@@ -2508,14 +2508,14 @@ function canonicalizeAgentName(name: string, agents: AgentConfig[], diagnostics:
 }
 
 // Mirrors child launch: workflow children without their own cwd/agentScope discover agents at the workflow cwd and scope.
-function workflowValidationOptions(deps: ExecutorDeps, params: SubagentParamsLike, runtimeCwd: string): Parameters<typeof validateWorkflowScript>[1] {
+function workflowValidationOptions(deps: ExecutorDeps, params: SubagentParamsLike, runtimeCwd: string, parentModelProvider: string | undefined): Parameters<typeof validateWorkflowScript>[1] {
 	const cwd = resolveRequestedCwd(runtimeCwd, params.cwd);
 	const scope = resolveExecutionAgentScope(params.agentScope);
 	let discovered: ReturnType<ExecutorDeps["discoverAgents"]> | undefined;
 	return {
 		maxSubagentSpawnsPerRun: params.maxSubagentSpawnsPerRun ?? resolveMaxSubagentSpawnsPerRun(deps.config.maxSubagentSpawnsPerRun),
 		agentNameError: (name) => {
-			discovered ??= deps.discoverAgents(cwd, scope);
+			discovered ??= deps.discoverAgents(cwd, scope, parentModelProvider);
 			const { agents } = discovered;
 			const resolved = resolveAgentName(name, agents);
 			if (resolved.agent || resolved.error) return canonicalizeAgentName(name, agents, discovered.agentDiagnostics, diagnosticContextFromDiscovery(discovered, cwd, scope)).error;
@@ -5196,6 +5196,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const capacityOverrideError = validateWorkflowCapacityOverrides(requestParams);
 		if (capacityOverrideError) return buildRequestedModeError(requestParams, capacityOverrideError);
 		let workflowPreflight: import("../../shared/types.ts").WorkflowPreflight | undefined;
+		const workflowParentModel = parentModelOverride !== undefined
+			? parentModelOverride
+			: (() => {
+				const currentParentModel = normalizeParentModel(ctx.model);
+				return (preserveActiveSession
+					? currentParentModel
+					: rememberParentModel(deps.state, resolveCurrentSessionId(ctx.sessionManager), currentParentModel)) ?? null;
+			})();
 		try {
 			if (requestParams.preflight !== undefined && requestParams.workflowScript === undefined && requestParams.workflowScriptPath === undefined) {
 				throw new Error("preflight requires workflowScript or workflowScriptPath.");
@@ -5205,7 +5213,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			if (requestParams.action?.trim() === "validate") {
-				const validation = validateWorkflowScript(requestParams.workflowScript ?? "", workflowValidationOptions(deps, requestParams, ctx.cwd));
+				const validation = validateWorkflowScript(requestParams.workflowScript ?? "", workflowValidationOptions(deps, requestParams, ctx.cwd, workflowParentModel?.provider));
 				const invalidValidation = { ...validation, ok: false, errors: [...validation.errors, { message }] };
 				return {
 					content: [{ type: "text", text: JSON.stringify(invalidValidation) }],
@@ -5216,7 +5224,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			return buildRequestedModeError(requestParams, message);
 		}
 		if (requestParams.action?.trim() === "validate") {
-			const validation = validateWorkflowScript(requestParams.workflowScript ?? "", workflowValidationOptions(deps, requestParams, ctx.cwd));
+			const validation = validateWorkflowScript(requestParams.workflowScript ?? "", workflowValidationOptions(deps, requestParams, ctx.cwd, workflowParentModel?.provider));
 			return buildWorkflowValidationResult(validation, "management", workflowPreflight);
 		}
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
@@ -5232,7 +5240,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowArgsEvidence = requestParams.args === undefined ? undefined : { args: requestParams.args, argsDigest: stableJsonDigest(requestParams.args) };
 			const workflowArgs = workflowArgsEvidence?.args;
 			const workflowArgsDigest = workflowArgsEvidence?.argsDigest;
-			const workflowValidation = validateWorkflowScript(requestParams.workflowScript, workflowValidationOptions(deps, requestParams, ctx.cwd));
+			const workflowValidation = validateWorkflowScript(requestParams.workflowScript, workflowValidationOptions(deps, requestParams, ctx.cwd, workflowParentModel?.provider));
 			if (!workflowValidation.ok && publicExecution) return buildWorkflowValidationResult(workflowValidation, "workflow", workflowPreflight);
 			const launchBlockingErrors = workflowValidation.errors.filter((error) => error.kind === "spawn-budget" || error.kind === "agent");
 			if (launchBlockingErrors.length > 0) {
@@ -5247,14 +5255,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (permitError) return buildRequestedModeError(requestParams, permitError);
 				if (requestParams.async !== false) return buildRequestedModeError(requestParams, "Workflow child permit supports foreground workflow roots only; set async:false.");
 			}
-			const workflowParentModel = parentModelOverride !== undefined
-				? parentModelOverride
-				: (() => {
-					const currentParentModel = normalizeParentModel(ctx.model);
-					return (preserveActiveSession
-						? currentParentModel
-						: rememberParentModel(deps.state, resolveCurrentSessionId(ctx.sessionManager), currentParentModel)) ?? null;
-				})();
 			if (requestParams.extensionBindings !== undefined) {
 				try {
 					requestParams.extensionBindings = normalizeExtensionBindings(requestParams.extensionBindings)!.value;

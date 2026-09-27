@@ -340,6 +340,7 @@ describe("scripted workflow runtime", () => {
 			`await runs.run("elsewhere", { agent: "remote-only", cwd: "../other", task: "Scan" });`,
 			`await runs.run("scoped", { agent: "project-only", agentScope: "project", task: "Scan" });`,
 			`await runs.run("spread", { agent: "missing", ...overrides });`,
+			`await runs.lanes([{ key: "replaced", stages: [{ key: "write", agent: "missing", task: "Write" }], ...laneOverrides }]);`,
 			`return runs.run("dynamic", { agent: selectedAgent, task: "Scan" });`,
 		].join("\n"), { agentNameError: (name) => known.has(name) ? undefined : `Unknown agent '${name}'.` });
 		assert.equal(result.ok, false);
