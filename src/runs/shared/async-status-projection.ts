@@ -1,5 +1,6 @@
 import { sanitizeDisplayText, truncateDisplayText } from "../../shared/display-text.ts";
 import { formatModelThinking } from "../../shared/formatters.ts";
+import { childThinkingLevel, type ThinkingLevel } from "../../shared/model-info.ts";
 import type { AsyncJobState, AsyncJobStep, HostStepFreshness, HostStepMonitorKind, HostStepNode, HostStepState, HostStepVerdict, NestedRunSummary, NestedStepSummary, SubagentRunMode, WorkflowGraphSnapshot, WorkflowPreflightLane, WorkflowPreflight } from "../../shared/types.ts";
 import { HOST_STEP_MAX_COUNT, HOST_STEP_MAX_DETAIL_CHARS, HOST_STEP_MAX_LABEL_CHARS, HOST_STEP_MAX_PROVIDER_CHARS, HOST_STEP_MAX_REASON_CHARS, HOST_STEP_MAX_REF_CHARS, HOST_STEP_MAX_ROLE_CHARS, HOST_STEP_MAX_TARGET_CHARS, hostStepReportName, parseHostStepNode, validHostStepNodes } from "./host-step-status.ts";
 import { workflowPreflightLaneForRuntimeKey } from "../../workflows/workflow-preflight.ts";
@@ -106,6 +107,8 @@ export interface AsyncStatusWorkflowRow {
 	kind?: HostStepMonitorKind;
 	context?: AsyncJobStep["context"];
 	modelThinking?: string;
+	/** Thinking level of the child a child row stands for. */
+	thinking?: ThinkingLevel;
 	activity?: string;
 	startedAt?: number;
 	endedAt?: number;
@@ -623,12 +626,14 @@ export function projectAsyncWorkflowRows(
 
 function projectLoadedWorkflowRow(step: AsyncJobStep, index: number, preflight?: WorkflowPreflightLane): AsyncStatusWorkflowRow {
 	const modelThinking = formatModelThinking(step.model, step.thinking) || undefined;
+	const thinking = childThinkingLevel(step);
 	const activity = workflowStepActivity(step);
 	return {
 		name: workflowStepName(step, index),
 		state: step.status,
 		...(step.context ? { context: step.context } : {}),
 		...(modelThinking ? { modelThinking } : {}),
+		...(thinking ? { thinking } : {}),
 		...(activity ? { activity } : {}),
 		...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
 		...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),

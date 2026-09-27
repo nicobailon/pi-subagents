@@ -6,7 +6,6 @@ import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../runs/shared/para
 import { HOST_STEP_MAX_COUNT } from "../runs/shared/host-step-status.ts";
 import { describeGateAcceptanceConflict, parseGateInput } from "../runs/shared/acceptance.ts";
 import type { AcceptanceRecoveryMetadata, HostStepNode, SingleResult, WorkflowScriptFailureKind } from "../shared/types.ts";
-export type { WorkflowScriptFailureKind } from "../shared/types.ts";
 import { normalizeWorkflowHostCommandParams, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "./host-command.ts";
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -1196,9 +1195,7 @@ function isWorkflowScriptFailureKind(value: unknown): value is WorkflowScriptFai
 }
 
 function taggedWorkflowError(message: string, kind: WorkflowScriptFailureKind): Error & { workflowErrorKind: WorkflowScriptFailureKind } {
-	const error = new Error(message) as Error & { workflowErrorKind: WorkflowScriptFailureKind };
-	error.workflowErrorKind = kind;
-	return error;
+	return Object.assign(new Error(message), { workflowErrorKind: kind });
 }
 
 export class WorkflowScriptError extends Error {
@@ -1772,7 +1769,8 @@ function validateStaticChildAgents(call: AstNode, agentNameError: (name: string)
 	const errors: WorkflowScriptValidationError[] = [];
 	for (const child of children) {
 		const agentNode = staticChildAgentNode(child.params);
-		const error = agentNode ? agentNameError(literalString(agentNode)!) : undefined;
+		const agentName = literalString(agentNode);
+		const error = agentName === undefined ? undefined : agentNameError(agentName);
 		if (agentNode && error) errors.push({ kind: "agent", message: `${child.owner}: ${error}`, ...nodeLocation(agentNode) });
 	}
 	return errors;
@@ -2313,9 +2311,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		const timer = options.timeoutMs === undefined
 			? undefined
 			: setTimeout(() => {
-				const error = new Error(`Workflow script timed out after ${options.timeoutMs}ms.`) as Error & { workflowErrorKind: "timeout" };
-				error.workflowErrorKind = "timeout";
-				finish({ error });
+				finish({ error: taggedWorkflowError(`Workflow script timed out after ${options.timeoutMs}ms.`, "timeout") });
 			}, options.timeoutMs);
 		options.signal?.addEventListener("abort", onAbort, { once: true });
 		if (options.signal?.aborted) return onAbort();
@@ -2355,18 +2351,14 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				try {
 					assertWorkflowJsonValue(message.value, "return");
 				} catch (error) {
-					const workflowError = new Error(`Workflow return could not be persisted: ${error instanceof Error ? error.message : String(error)}`) as Error & { workflowErrorKind: WorkflowScriptFailureKind };
-					workflowError.workflowErrorKind = "return-serialization";
-					return finish({ error: workflowError });
+					return finish({ error: taggedWorkflowError(`Workflow return could not be persisted: ${error instanceof Error ? error.message : String(error)}`, "return-serialization") });
 				}
 				return finish({ value: message.value });
 			}
 			if (message.type === "error") {
 				const rawError = typeof message.error === "string" ? message.error : "Workflow script failed.";
 				const text = message.errorPhase === "return-serialization" ? `${rawError}${workflowReturnRecoveryHint(partial().children)}` : rawError;
-				const workflowError = new Error(text) as Error & { workflowErrorKind?: WorkflowScriptFailureKind };
-				if (isWorkflowScriptFailureKind(message.errorKind)) workflowError.workflowErrorKind = message.errorKind;
-				return finish({ error: workflowError });
+				return finish({ error: isWorkflowScriptFailureKind(message.errorKind) ? taggedWorkflowError(text, message.errorKind) : new Error(text) });
 			}
 			if (message.type === "callObserved" && typeof message.callId === "number") {
 				const key = typeof message.key === "string" ? message.key : undefined;
@@ -2549,9 +2541,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					const recoverableAcceptanceMetadata = result.recovery?.status === "available-for-review"
 						&& result.recovery.reason === "acceptance-metadata-rejected";
 					if (!result.ok && result.state !== "running" && !result.stopped && !recoverableAcceptanceMetadata) {
-						const childError = new Error(result.detached ? `Run '${key}' detached: ${result.error ?? result.output}` : `Run '${key}' failed: ${result.error ?? result.output}`) as Error & { workflowErrorKind: WorkflowScriptFailureKind };
-						childError.workflowErrorKind = result.detached ? "detached-child" : "child";
-						throw childError;
+						throw taggedWorkflowError(`Run '${key}' ${result.detached ? "detached" : "failed"}: ${result.error ?? result.output}`, result.detached ? "detached-child" : "child");
 					}
 					return result;
 				});

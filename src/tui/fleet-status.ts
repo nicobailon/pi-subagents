@@ -9,6 +9,8 @@ import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
 import { hostStepReportName, hostStepVerdictLabel } from "../runs/shared/host-step-status.ts";
 import { isStaleExtensionContextError } from "../shared/extension-context.ts";
 import { inlineWorkflowRenderKey } from "./render.ts";
+import { runningTone } from "./running-tone.ts";
+import { childThinkingLevel, type ThinkingLevel } from "../shared/model-info.ts";
 import { formatWorkflowChecklistBottleneck, formatWorkflowChecklistPhase, formatWorkflowChecklistSummary, projectWorkflowChecklist, type WorkflowChecklistPhase, type WorkflowChecklistProjection } from "../workflows/workflow-checklist.ts";
 
 export const FLEET_STATUS_WIDGET_KEY = "subagent-fleet-status";
@@ -75,6 +77,8 @@ type FleetNestedRow = {
 	agentIdentity?: string;
 	state: NestedRunSummary["state"] | NestedStepSummary["status"];
 	modelThinking?: string;
+	/** Thinking level of the child this row stands for; it colors the running glyph. */
+	thinking?: ThinkingLevel;
 	activity?: string;
 	startedAt?: number;
 	endedAt?: number;
@@ -178,8 +182,8 @@ function isWorkflowRowTerminal(row: AsyncStatusWorkflowRow): boolean {
 	return row.state === "complete" || row.state === "completed";
 }
 
-function nestedStatusGlyph(state: FleetNestedRow["state"] | "planned", theme: Theme): string {
-	if (state === "running") return theme.fg("accent", "●");
+function nestedStatusGlyph(state: FleetNestedRow["state"] | "planned", theme: Theme, thinking?: ThinkingLevel): string {
+	if (state === "running") return runningTone(theme, thinking)("●");
 	if (state === "queued" || state === "pending" || state === "planned") return theme.fg("muted", "◦");
 	if (state === "complete" || state === "completed") return theme.fg("success", "✓");
 	if (state === "failed" || state === "rejected") return theme.fg("error", "✗");
@@ -222,6 +226,7 @@ function nestedFleetRows(children: NestedRunSummary[] | undefined, visibleLimit:
 					}
 					const step = steps[stepIndex]!;
 					const modelThinking = formatModelThinking(step.model, step.thinking) || undefined;
+					const thinking = childThinkingLevel(step);
 					const activity = nestedActivity(step);
 					rows.push({
 						name: step.agent,
@@ -229,6 +234,7 @@ function nestedFleetRows(children: NestedRunSummary[] | undefined, visibleLimit:
 						state: step.status,
 						depth,
 						...(modelThinking ? { modelThinking } : {}),
+						...(thinking ? { thinking } : {}),
 						...(activity ? { activity } : {}),
 						...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
 						...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
@@ -246,6 +252,7 @@ function nestedFleetRows(children: NestedRunSummary[] | undefined, visibleLimit:
 					return false;
 				}
 				const modelThinking = formatModelThinking(child.model, child.thinking) || undefined;
+				const thinking = childThinkingLevel(child);
 				const activity = nestedActivity(child);
 				rows.push({
 					name: nestedRunLabel(child),
@@ -253,6 +260,7 @@ function nestedFleetRows(children: NestedRunSummary[] | undefined, visibleLimit:
 					state: child.state,
 					depth,
 					...(modelThinking ? { modelThinking } : {}),
+					...(thinking ? { thinking } : {}),
 					...(activity ? { activity } : {}),
 					...(child.startedAt !== undefined ? { startedAt: child.startedAt } : {}),
 					...(child.endedAt !== undefined ? { endedAt: child.endedAt } : {}),
@@ -896,13 +904,13 @@ export class SubagentFleetStatus {
 		if (row.overflow !== undefined) return truncateToWidth(`${indent}${marker} ${theme.fg("dim", `+${row.overflow} nested leaves`)}`, width);
 		const modelThinking = row.modelThinking ? ` (${row.modelThinking})` : "";
 		const activity = row.activity ? ` · ${row.activity}` : "";
-		const left = `${indent}${marker} ${nestedStatusGlyph(row.state, theme)} ${theme.fg(fleetAgentIdentityColor(row.agentIdentity ?? row.name), `${row.name}${modelThinking}`)} · ${row.state}${activity}`;
+		const left = `${indent}${marker} ${nestedStatusGlyph(row.state, theme, row.thinking)} ${theme.fg(fleetAgentIdentityColor(row.agentIdentity ?? row.name), `${row.name}${modelThinking}`)} · ${row.state}${activity}`;
 		const elapsed = detailElapsed(row);
 		return truncateToWidth(`${left}${elapsed !== undefined ? theme.fg("dim", ` · ${elapsed}`) : ""}`, width);
 	}
 
 	private workflowRowGlyph(row: AsyncStatusWorkflowRow, theme: Theme): string {
-		if (!row.kind) return nestedStatusGlyph(row.state as FleetNestedRow["state"], theme);
+		if (!row.kind) return nestedStatusGlyph(row.state as FleetNestedRow["state"], theme, row.thinking);
 		const state = row.state as HostStepState;
 		if (state === "pending") return theme.fg("muted", "◦");
 		if (state === "running") return theme.fg("accent", "●");
@@ -913,7 +921,7 @@ export class SubagentFleetStatus {
 
 	private workflowRowStateLabel(row: AsyncStatusWorkflowRow, theme: Theme): string {
 		const state = row.kind ? hostStepVerdictLabel(row.state as HostStepState, row.verdict as HostStepVerdict | undefined) : row.state;
-		if (state === "running") return theme.fg("accent", state);
+		if (state === "running") return row.kind ? theme.fg("accent", state) : runningTone(theme, row.thinking)(state);
 		if (state === "pending" || state === "queued") return theme.fg("muted", state);
 		if (state === "pass" || state === "complete" || state === "completed") return theme.fg("success", state === "pass" ? "pass" : "complete");
 		if (state === "fail" || state === "failed" || state === "error") return theme.fg("error", state === "fail" ? "fail" : state);
@@ -925,7 +933,7 @@ export class SubagentFleetStatus {
 		const glyph = phase.state === "complete"
 			? theme.fg("success", "✓")
 			: phase.state === "running"
-				? theme.fg("accent", "●")
+				? runningTone(theme)("●")
 				: phase.state === "blocked" || phase.state === "failed"
 					? theme.fg("error", phase.state === "blocked" ? "!" : "✗")
 					: phase.state === "queued"

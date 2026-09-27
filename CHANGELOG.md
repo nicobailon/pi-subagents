@@ -2,15 +2,31 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Turning on `subagent` no longer throws away the prompt cache. The catalog of advertised agents is now sent as its own `advertised_subagents` prompt section, which Pi adds at the end of the conversation. Before, pi-subagents rewrote the whole system prompt, so the first message after `subagents_enable` resent the entire conversation to the cache. Fixes [#2518](https://github.com/nicobailon/pi-subagents/issues/2518). Thanks to [@javapacr](https://github.com/javapacr) for [#2519](https://github.com/nicobailon/pi-subagents/pull/2519).
+
+## [0.73.0] - 2026-09-27
+
+### Highlights
+
+- Failed workflows now say what kind of failure happened, such as a bad script, a failed child, or a timeout, so callers can react without parsing error text.
+- Huge workflow results no longer flood the parent's context. Output is capped, every cut is marked, and the full text is saved to a file.
+- A typo in a workflow's agent name now stops the workflow before any child starts, and `validate` suggests the name you probably meant.
+- Running subagent spinners now use the same thinking-level colors as Pi's prompt box.
+- `mcp:` tool selections work with pi-mcp-adapter 3.0's `mcp-adapter.json` files.
+
 ### Changed
 
-- Failed workflows now expose a structured `failureKind` in foreground details and async status, distinguishing validation, script, child, return-serialization, timeout, detached-child, and runtime failures without requiring callers to parse error text. Fixes [#2506](https://github.com/nicobailon/pi-subagents/issues/2506).
+- Failed workflows now include a `failureKind` in foreground details and async status: `validation`, `script`, `child`, `return-serialization`, `timeout`, `detached-child`, or `runtime`. Callers no longer need to parse the error text to tell these apart. Fixes [#2506](https://github.com/nicobailon/pi-subagents/issues/2506).
+- A running subagent's spinner now uses Pi's prompt-box thinking color. A spinner for one child uses that child's thinking level, or the main session's level when the child has none. A spinner for several children, such as a widget header, a parallel or chain card, or a workflow phase, uses the main session's level. `thinking` labels still show the configured level. Thanks to [@pwguler](https://github.com/pwguler) for [#2512](https://github.com/nicobailon/pi-subagents/pull/2512).
 
 ### Fixed
 
-- Turning on `subagent` no longer throws away the prompt cache. On Pi 0.86 and later, the catalog of advertised agents is now sent as its own `advertised_subagents` system prompt section. Before, pi-subagents rewrote the whole system prompt, so the first message after `subagents_enable` resent the entire conversation to the cache. Older Pi versions still get the catalog appended to the system prompt. Fixes [#2518](https://github.com/nicobailon/pi-subagents/issues/2518).
-- Large workflow results no longer flood the parent's context. A foreground workflow now caps its Return, Emitted, and Console sections and its failure error at 200 KB / 5000 lines (or your `maxOutput`), shortens each call-trace error to 500 characters, says where it cut them, and saves the full text to a file. Async completion notices and `action: "status"` used to cut the return value with no sign, and async notices included the full error however large it was. They now end the cut text in `…` and point to the run's `status.json` for the full value. Fixes [#2505](https://github.com/nicobailon/pi-subagents/issues/2505).
-- A workflow script with a misspelled agent name now fails before any child starts, instead of running the earlier children first. `action: "validate"` reports the same error with its line, column, and a close match when there is one (for example `Did you mean 'reviewer'?`). Names built at runtime and children with their own `cwd`, `agentScope`, or `resume` are still checked when they launch. Fixes [#2504](https://github.com/nicobailon/pi-subagents/issues/2504).
+- `mcp:` direct-tool selections now read pi-mcp-adapter 3.0's `mcp-adapter.json` files (the global one and a project's `.pi/mcp-adapter.json`), so a migrated setup no longer fails to launch children with `Unresolved MCP direct-tool selectors`. Pi's own `mcp.json` files are no longer read, because they belong to Pi's built-in MCP support. If your adapter servers are still listed there, move them to `mcp-adapter.json`. Thanks to [@qsgy-edge](https://github.com/qsgy-edge) for [#2511](https://github.com/nicobailon/pi-subagents/pull/2511).
+- Large workflow results no longer flood the parent's context. A foreground workflow caps its Return, Emitted, and Console sections and its failure error at 200 KB or 5000 lines (or your `maxOutput`), shortens each call-trace error to 500 characters, marks each cut, and saves the full text to a file. Async completion notices and `action: "status"` now end cut text in `…` and point to the run's `status.json`. Before, they cut the return value without saying so and showed the full error however long it was. Fixes [#2505](https://github.com/nicobailon/pi-subagents/issues/2505).
+- A workflow script with a misspelled agent name now fails before any child starts, instead of running the earlier children first. `action: "validate"` reports the same error with its line, column, and the closest agent name when there is one (for example `Did you mean 'reviewer'?`). Names built at runtime, and children with their own `cwd`, `agentScope`, or `resume`, are still checked when they launch. Fixes [#2504](https://github.com/nicobailon/pi-subagents/issues/2504).
+- On providers that fix the tool list for a whole prompt, such as bridges to another agent SDK, `subagent` only appears after the next user prompt. The `subagents_enable` result now says so, which stops the model from retrying `subagent` in the same prompt, and it names `--exclude-tools subagents_enable` for keeping `subagent` always available. Fixes [#2513](https://github.com/nicobailon/pi-subagents/issues/2513).
 
 ## [0.72.1] - 2026-09-26
 

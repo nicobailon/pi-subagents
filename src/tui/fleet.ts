@@ -18,6 +18,8 @@ import { resolveWorkflowForegroundSteeringTarget, steerWorkflowForegroundTarget 
 import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.ts";
 import { FLEET_STATUS_WIDGET_KEY } from "./fleet-status.ts";
 import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from "./fleet-transcript.ts";
+import { runningTone } from "./running-tone.ts";
+import { childThinkingLevel, type ThinkingLevel } from "../shared/model-info.ts";
 import { handleInspectorAction } from "../inspectors/actions.ts";
 import type { InspectorPlugin } from "../inspectors/types.ts";
 import { getLivePromptAudit, type LivePromptAudit, type PromptAuditView } from "../runs/foreground/prompt-audit.ts";
@@ -348,8 +350,18 @@ function visibleWorkflowParentKeyForForegroundKey(state: SubagentState, key: str
 	return undefined;
 }
 
+/** The recorded level of the one child a running Fleet row stands for; a whole run or an external run has none. */
+function fleetItemThinkingLevel(item: FleetItem): ThinkingLevel | undefined {
+	switch (item.kind) {
+		case "foreground-active": return childThinkingLevel(item.activeChild ?? item.control);
+		case "foreground-recent": return childThinkingLevel(item.child);
+		case "async": return childThinkingLevel(item.step);
+		case "external": return undefined;
+	}
+}
+
 function statusGlyph(item: FleetItem, theme: Theme): string {
-	if (item.state === "running") return theme.fg("accent", "●");
+	if (item.state === "running") return runningTone(theme, fleetItemThinkingLevel(item))("●");
 	if (item.state === "queued" || item.state === "pending") return theme.fg("muted", "◦");
 	if (item.state === "complete" || item.state === "completed") return theme.fg("success", "✓");
 	if (item.state === "paused" || item.state === "stopped" || item.state === "detached") return theme.fg("warning", "■");

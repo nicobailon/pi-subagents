@@ -198,6 +198,7 @@ function createUiContext() {
 			theme: {
 				fg: (_theme: string, text: string) => text,
 				bold: (text: string) => text,
+				getThinkingBorderColor: (_level: string) => (text: string) => text,
 			},
 			setWidget: (_key: string, value: unknown) => {
 				widgets.push(value);

@@ -15,6 +15,7 @@ import {
 	formatFleetTokens,
 	resolveFleetViewPlacement,
 } from "../../src/tui/fleet-status.ts";
+import { setMainThinkingLevelSource } from "../../src/tui/running-tone.ts";
 
 function clearExternalRuns(): void {
 	delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_RUN_REGISTRY_KEY)];
@@ -43,6 +44,14 @@ const theme = {
 	fg: (_name: string, text: string) => text,
 	bg: (_name: string, text: string) => text,
 	bold: (text: string) => text,
+	getThinkingBorderColor: (_level: string) => (text: string) => text,
+};
+
+const toneTheme = {
+	fg: (name: string, text: string) => `⟦${name}⟧${text}⟦/⟧`,
+	bg: (_name: string, text: string) => text,
+	bold: (text: string) => text,
+	getThinkingBorderColor: (level: string) => (text: string) => `⟦thinking:${level}⟧${text}⟦/⟧`,
 };
 
 describe("below-editor subagent FleetView", () => {
@@ -1592,6 +1601,103 @@ describe("below-editor subagent FleetView", () => {
 			assert.equal(restoredComponent.render(100).length, 1, "Escape should return to the compact summary");
 		} finally {
 			fleet.dispose();
+		}
+	});
+
+	it("colors a running nested row by the thinking level of the child it stands for", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("owner", {
+			asyncId: "owner", asyncDir: "/tmp/owner", status: "running", startedAt: Date.now(), mode: "single",
+			steps: [{ index: 0, agent: "owner", status: "running" }],
+			nestedChildren: [
+				{ id: "leaf-run", parentRunId: "owner", parentStepIndex: 0, depth: 1, path: [{ runId: "owner", stepIndex: 0 }], state: "running", agent: "leaf-agent", thinking: "max" },
+				{ id: "fanout", parentRunId: "owner", parentStepIndex: 0, depth: 1, path: [{ runId: "owner", stepIndex: 0 }], state: "running", mode: "parallel", steps: [{ agent: "step-agent", status: "running", thinking: "medium" }] },
+			],
+		});
+		let widgetFactory: ((tui: unknown, theme: typeof toneTheme) => { render(width: number): string[] }) | undefined;
+		const ctx = { hasUI: true, ui: {
+			setWidget(_key: string, content: typeof widgetFactory) { if (content) widgetFactory = content; },
+			onTerminalInput() { return () => {}; }, getEditorText() { return ""; },
+			requestRender() {}, notify() {}, theme: toneTheme,
+		} } as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext(ctx);
+			const component = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor }, toneTheme);
+			fleet.handleKey("\x1b[B");
+			const lines = component.render(240);
+			const glyphTone = (label: string) => lines.find((line) => line.includes(label) && /[├└]─/.test(line))?.match(/⟦([^⟧]+)⟧●⟦\/⟧/)?.[1];
+			assert.equal(glyphTone("leaf-agent"), "thinking:max");
+			assert.equal(glyphTone("step-agent"), "thinking:medium");
+		} finally {
+			fleet.dispose();
+		}
+	});
+
+	it("colors a running workflow child row and its state word by the child's thinking level", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("wf", {
+			asyncId: "wf", asyncDir: "/tmp/wf", status: "running", startedAt: Date.now(), mode: "workflow",
+			steps: [
+				{ index: 0, agent: "wf-writer", status: "running", thinking: "xhigh" },
+				{ index: 1, agent: "wf-scout", status: "running" },
+			],
+		});
+		let widgetFactory: ((tui: unknown, theme: typeof toneTheme) => { render(width: number): string[] }) | undefined;
+		const ctx = { hasUI: true, ui: {
+			setWidget(_key: string, content: typeof widgetFactory) { if (content) widgetFactory = content; },
+			onTerminalInput() { return () => {}; }, getEditorText() { return ""; },
+			requestRender() {}, notify() {}, theme: toneTheme,
+		} } as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext(ctx);
+			const component = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor }, toneTheme);
+			fleet.handleKey("\x1b[B");
+			const lines = component.render(240);
+			const row = (label: string) => lines.find((line) => line.includes(label) && /[\u251c\u2514]\u2500/.test(line)) ?? "";
+			assert.match(row("wf-writer"), /\u27e6thinking:xhigh\u27e7\u25cf\u27e6\/\u27e7/);
+			assert.match(row("wf-writer"), /\u27e6thinking:xhigh\u27e7running\u27e6\/\u27e7/);
+			assert.match(row("wf-scout"), /\u27e6accent\u27e7\u25cf\u27e6\/\u27e7/);
+		} finally {
+			fleet.dispose();
+		}
+	});
+
+	it("colors a running workflow phase row by the main session's thinking level", () => {
+		setMainThinkingLevelSource(() => "high");
+		const state = stateForTest();
+		state.asyncJobs.set("wf-phase", {
+			asyncId: "wf-phase", asyncDir: "/tmp/wf-phase", status: "running", startedAt: Date.now(), mode: "workflow",
+			workflowGraph: {
+				runId: "wf-phase", mode: "workflow",
+				phases: [{ title: "build-phase", nodeIds: ["a", "b"] }],
+				nodes: [
+					{ id: "a", kind: "agent", agent: "phase-a", label: "a", status: "running", flatIndex: 0 },
+					{ id: "b", kind: "agent", agent: "phase-b", label: "b", status: "running", flatIndex: 1 },
+				],
+			},
+			steps: [
+				{ index: 0, agent: "phase-a", status: "running", workflowKey: "a" },
+				{ index: 1, agent: "phase-b", status: "running", workflowKey: "b" },
+			],
+		});
+		let widgetFactory: ((tui: unknown, theme: typeof toneTheme) => { render(width: number): string[] }) | undefined;
+		const ctx = { hasUI: true, ui: {
+			setWidget(_key: string, content: typeof widgetFactory) { if (content) widgetFactory = content; },
+			onTerminalInput() { return () => {}; }, getEditorText() { return ""; },
+			requestRender() {}, notify() {}, theme: toneTheme,
+		} } as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext(ctx);
+			const component = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor }, toneTheme);
+			fleet.handleKey("\x1b[B");
+			const phaseRow = component.render(240).find((line) => line.includes("build-phase")) ?? "";
+			assert.match(phaseRow, /\u27e6thinking:high\u27e7\u25cf\u27e6\/\u27e7/);
+		} finally {
+			fleet.dispose();
+			setMainThinkingLevelSource(() => undefined);
 		}
 	});
 });
