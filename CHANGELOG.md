@@ -5,7 +5,7 @@
 ### Changed
 
 - Failed workflows now expose a structured `failureKind` in foreground details and async status, distinguishing validation, script, child, return-serialization, timeout, detached-child, and runtime failures without requiring callers to parse error text. Fixes [#2506](https://github.com/nicobailon/pi-subagents/issues/2506).
-- A running subagent's spinner now takes Pi's prompt-box thinking color for the level that child's Pi session actually runs at, including Pi's default and model clamp and any mid-run change. This applies to the foreground card, async widget, nested rows, workflow rows, and Fleet. A glyph that stands for several children, such as a widget header, a parallel or chain card, or a workflow phase, takes the main session's current thinking color. Every `thinking` label still shows the configured level. Thanks to [@pwguler](https://github.com/pwguler) for [#2512](https://github.com/nicobailon/pi-subagents/pull/2512).
+- A running subagent's spinner now takes Pi's prompt-box thinking color. A glyph for one child uses that child's configured thinking level, or the main session's current level when none is set. A glyph for several children, such as a widget header, a parallel or chain card, or a workflow phase, uses the main session's current level. This applies to the foreground card, async widget, nested rows, workflow rows, and Fleet, and every `thinking` label still shows the configured level. Thanks to [@pwguler](https://github.com/pwguler) for [#2512](https://github.com/nicobailon/pi-subagents/pull/2512).
 
 ### Fixed
 
