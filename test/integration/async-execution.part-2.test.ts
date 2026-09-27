@@ -216,7 +216,8 @@ const originalRename = fs.renameSync;
 fs.renameSync = function(source, target) {
   if (String(target) === path.join(process.env.PAUSED_STOP_ASYNC_DIR, "control", "stop-inbox-closed.json")) {
     fs.writeFileSync(process.env.PAUSED_STOP_CLOSE_GATE, "ready");
-    const deadline = Date.now() + 15000;
+    // Longer than the test's own waits, so a slow test process still delivers stop before closure.
+    const deadline = Date.now() + 60000;
     while (!fs.existsSync(process.env.PAUSED_STOP_CLOSE_RELEASE) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
   }
   return originalRename.call(this, source, target);
