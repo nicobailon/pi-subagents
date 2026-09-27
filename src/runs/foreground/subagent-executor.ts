@@ -246,13 +246,16 @@ function hasSingleAdjacentTransposition(left: string, right: string): boolean {
 		&& left.slice(mismatch + 2) === right.slice(mismatch + 2);
 }
 
+function isCloseMatch(requested: string, candidate: string, distance: number): boolean {
+	return distance <= Math.max(1, Math.floor(candidate.length / 4)) || hasSingleAdjacentTransposition(requested, candidate);
+}
+
 export function unknownSubagentActionMessage(action: string): string {
 	const requested = action.toLowerCase();
 	const suggestion = SUBAGENT_ACTIONS.find((candidate) => {
 		const distance = editDistance(requested, candidate);
-		const closeMatch = distance <= Math.max(1, Math.floor(candidate.length / 4)) || hasSingleAdjacentTransposition(requested, candidate);
 		if (DESTRUCTIVE_MANAGEMENT_ACTIONS.has(candidate)) return distance === 1 && requested.length >= candidate.length - 1;
-		return closeMatch;
+		return isCloseMatch(requested, candidate, distance);
 	});
 	const nextStep = 'Use subagent({ action: "status" }) to inspect runs or subagent({ action: "list" }) to inspect agents.';
 	const validActions = `Valid: ${SUBAGENT_ACTIONS.join(", ")}.`;
@@ -2524,7 +2527,7 @@ function workflowValidationOptions(deps: ExecutorDeps, params: SubagentParamsLik
 			const requested = name.trim().toLowerCase();
 			const suggestion = [...new Set(agents.flatMap((agent) => [agent.name, ...(agent.localName ? [agent.localName] : []), ...(agent.aliases ?? [])]))]
 				.map((candidate) => ({ candidate, distance: editDistance(requested, candidate.toLowerCase()) }))
-				.filter(({ candidate, distance }) => distance <= Math.max(1, Math.floor(candidate.length / 4)) || hasSingleAdjacentTransposition(requested, candidate.toLowerCase()))
+				.filter(({ candidate, distance }) => isCloseMatch(requested, candidate.toLowerCase(), distance))
 				.sort((left, right) => left.distance - right.distance || left.candidate.localeCompare(right.candidate))[0]?.candidate;
 			return `Unknown agent '${name}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""} Use subagent({ action: "list" }) to inspect agents.`;
 		},
@@ -6132,7 +6135,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const emitText = workflow.emits.map(formatWorkflowValue).join(", ");
 						const returnPreview = returnText.length > 1_000 ? `${returnText.slice(0, 1_000)}…` : returnText;
 						const emitPreview = workflow.emits.length > 0 ? ` Emitted: ${emitText.length > 1_000 ? `${emitText.slice(0, 1_000)}…` : emitText}` : "";
-						const previewNote = returnText.length > 1_000 || emitText.length > 1_000 ? ` (truncated; full return value and emits: ${statusPath} workflow.value, workflow.emits)` : "";
+						const previewNote = returnText.length > 1_000 || emitText.length > 1_000 ? ` (truncated; full return value and emits: ${statusPath} (workflow.value, workflow.emits))` : "";
 						const runningSummary = workflowRunningChildrenSummary(workflow.children);
 						const summary = `${runningSummary ? `Workflow dispatch completed; ${runningSummary}` : `Workflow completed with ${workflow.children.length} child run(s).`} Return: ${returnPreview}${emitPreview}${previewNote} Trace: ${workflow.trace.length} event(s).${workflowOutputPathMappingSummary(workflow.children)}${finalPreflightWarnings.length ? ` ${finalPreflightWarnings.join(" ")}` : ""}`;
 						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, summary, producedChildOutputPaths);
@@ -6185,7 +6188,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							if (promoted) status = promoted;
 						}
 						// A script can throw an error of any size; status.json keeps the full text.
-						const errorPreview = status.error && status.error.length > 1_000 ? `${status.error.slice(0, 1_000)}… (truncated; full error: ${statusPath} error)` : status.error;
+						const errorPreview = status.error && status.error.length > 1_000 ? `${status.error.slice(0, 1_000)}… (truncated; full error: ${statusPath} (error))` : status.error;
 						const terminalSummary = `${status.state === "complete"
 							? "Workflow completed after detached child finished."
 							: errorPreview ?? (pauseForDetached ? "Workflow paused." : "Workflow failed.")}${workflowOutputPathMappingSummary(partial.children)}${finalPreflightWarnings.length ? ` ${finalPreflightWarnings.join(" ")}` : ""}`;

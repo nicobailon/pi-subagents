@@ -200,13 +200,14 @@ function stepKey(step: WorkflowChecklistStep): string | undefined {
 
 function stepItem(step: WorkflowChecklistStep, index: number, phase: string, key = stepKey(step) ?? `step-${index + 1}`, label = step.label ?? step.description ?? stepKey(step) ?? step.agent ?? key, preflight?: WorkflowPreflightLane): WorkflowChecklistItem {
 	const state = checklistState(step);
+	const thinking = childThinkingLevel(step);
 	return {
 		key: keyText(key, `step-${index + 1}`),
 		label: keyText(label, key),
 		phase,
 		state,
 		...(text(step.agent) ? { agent: text(step.agent) } : {}),
-		...(childThinkingLevel(step) ? { thinking: childThinkingLevel(step) } : {}),
+		...(thinking ? { thinking } : {}),
 		...(step.context ? { context: step.context } : {}),
 		...(finite(step.startedAt) !== undefined ? { startedAt: finite(step.startedAt) } : {}),
 		...(duration(step, undefined, state) !== undefined ? { durationMs: duration(step, undefined, state) } : {}),

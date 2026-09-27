@@ -7,7 +7,6 @@ const unboundMessage = "Extension runtime not initialized. Action methods cannot
 
 test("reads the main session's thinking level and treats a stale or unbound runtime as having none", () => {
 	assert.equal(readMainThinkingLevel(() => "high"), "high");
-	assert.equal(readMainThinkingLevel(() => "turbo"), undefined);
 	assert.equal(readMainThinkingLevel(() => { throw new Error(staleMessage); }), undefined);
 	assert.equal(readMainThinkingLevel(() => { throw new Error(unboundMessage); }), undefined);
 	assert.throws(() => readMainThinkingLevel(() => { throw new Error("disk on fire"); }), /disk on fire/);

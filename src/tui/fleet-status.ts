@@ -226,6 +226,7 @@ function nestedFleetRows(children: NestedRunSummary[] | undefined, visibleLimit:
 					}
 					const step = steps[stepIndex]!;
 					const modelThinking = formatModelThinking(step.model, step.thinking) || undefined;
+					const thinking = childThinkingLevel(step);
 					const activity = nestedActivity(step);
 					rows.push({
 						name: step.agent,
@@ -233,7 +234,7 @@ function nestedFleetRows(children: NestedRunSummary[] | undefined, visibleLimit:
 						state: step.status,
 						depth,
 						...(modelThinking ? { modelThinking } : {}),
-						...(childThinkingLevel(step) ? { thinking: childThinkingLevel(step) } : {}),
+						...(thinking ? { thinking } : {}),
 						...(activity ? { activity } : {}),
 						...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
 						...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
@@ -251,6 +252,7 @@ function nestedFleetRows(children: NestedRunSummary[] | undefined, visibleLimit:
 					return false;
 				}
 				const modelThinking = formatModelThinking(child.model, child.thinking) || undefined;
+				const thinking = childThinkingLevel(child);
 				const activity = nestedActivity(child);
 				rows.push({
 					name: nestedRunLabel(child),
@@ -258,7 +260,7 @@ function nestedFleetRows(children: NestedRunSummary[] | undefined, visibleLimit:
 					state: child.state,
 					depth,
 					...(modelThinking ? { modelThinking } : {}),
-					...(childThinkingLevel(child) ? { thinking: childThinkingLevel(child) } : {}),
+					...(thinking ? { thinking } : {}),
 					...(activity ? { activity } : {}),
 					...(child.startedAt !== undefined ? { startedAt: child.startedAt } : {}),
 					...(child.endedAt !== undefined ? { endedAt: child.endedAt } : {}),

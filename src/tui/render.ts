@@ -1261,7 +1261,6 @@ function widgetJobsRunningSeed(jobs: AsyncJobState[]): number | undefined {
 	return seed;
 }
 
-/** Header tone: the main session's thinking color while any job is active, dim otherwise. */
 function activeHeaderTone(theme: Theme, hasActive: boolean): (text: string) => string {
 	return hasActive ? runningTone(theme) : (text) => theme.fg("dim", text);
 }
@@ -1642,7 +1641,8 @@ function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme, expanded =
 		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
 		const label = compactTaskText(step.description, step.label);
 		const display = step.sessionName?.trim() || (label ? `${label} (${step.agent})` : step.agent);
-		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame, childThinkingLevel(step))} ${itemTitle} ${index + 1}/${total}: ${display} · ${widgetStepStatus(step.status, theme, childThinkingLevel(step))}${modelDisplay}${activity ? ` · ${activity}` : ""}`)}`);
+		const thinking = childThinkingLevel(step);
+		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame, thinking)} ${itemTitle} ${index + 1}/${total}: ${display} · ${widgetStepStatus(step.status, theme, thinking)}${modelDisplay}${activity ? ` · ${activity}` : ""}`)}`);
 		const lane = projectAsyncLane(job, step);
 		if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "    "));
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 8 : 6)) lines.push(`    ${nestedLine}`);
@@ -2337,7 +2337,8 @@ function foregroundStyleWidgetStepLines(
 ): string[] {
 	const rowIndent = options?.rowIndent ?? "  ";
 	const detailIndent = options?.detailIndent ?? "    ";
-	const status = widgetStepStatus(step.status, theme, childThinkingLevel(step));
+	const thinking = childThinkingLevel(step);
+	const status = widgetStepStatus(step.status, theme, thinking);
 	const stats = widgetStepStats(theme, step, job.updatedAt);
 	const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
 	const collapseDetails = shouldCollapseSingleChildDetails(job, step);
@@ -2348,7 +2349,7 @@ function foregroundStyleWidgetStepLines(
 	const stageIdentity = stageName && stageName !== displayName ? `${stageName} (${displayName})` : stageName ?? displayName;
 	const rowLabel = collapseDetails ? displayName : (options?.rowLabel ?? `${itemTitle} ${index}/${total}: ${itemTitle === "Stage" ? stageIdentity : displayName}`);
 	const rowMarker = options?.rowMarker ? `${options.rowMarker} ` : "";
-	const lines = [`${rowIndent}${rowMarker}${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame, childThinkingLevel(step))} ${themeBold(theme, rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
+	const lines = [`${rowIndent}${rowMarker}${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame, thinking)} ${themeBold(theme, rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
 	const lane = projectAsyncLane(job, step);
 	if (lane) lines.push(...formatLaneProjectionLines(lane, theme, detailIndent));
 	const task = collapseDetails ? singleChildTask(job, step) : compactTaskText(step.description, step.label);
@@ -2492,7 +2493,8 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 	lines.push(parallelWidgetGroupHeader(group, theme, frame));
 	for (const [rowIndex, row] of rows.entries()) {
 		const step = row.step;
-		const status = widgetStepStatus(step.status, theme, childThinkingLevel(step));
+		const thinking = childThinkingLevel(step);
+		const status = widgetStepStatus(step.status, theme, thinking);
 		const activity = widgetStepActivityLine(step, width, false, job.updatedAt);
 		const stepStats = widgetStepStats(theme, step, job.updatedAt);
 		const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
@@ -2500,7 +2502,7 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 		const task = compactTaskText(step.description, step.label);
 		const taskSuffix = task ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", `task: ${task}`)}` : "";
 		const marker = rowIndex === rows.length - 1 && rowIndex >= group.total - 1 ? "└─" : "├─";
-		lines.push(`    ${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, row.index), frame, childThinkingLevel(step))} ${themeBold(theme, row.rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${taskSuffix}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
+		lines.push(`    ${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, row.index), frame, thinking)} ${themeBold(theme, row.rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${taskSuffix}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
 		const lane = projectAsyncLane(job, step);
 		if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "      "));
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, false, job.updatedAt, 6)) lines.push(`      ${nestedLine}`);
@@ -2574,7 +2576,8 @@ function buildSingleLineWidgetLines(jobs: AsyncJobState[], theme: Theme, width: 
 		if (count > 0) parts.push(`${count} ${status}`);
 	}
 	if (!hasActive && counts.complete.length > 0) parts.push(`${counts.complete.length}/${jobs.length} done`);
-	return [truncLine(`${activeHeaderTone(theme, hasActive)(glyph)} ${activeHeaderTone(theme, hasActive)("subagents")} (${parts.join(", ") || `${jobs.length} total`})`, width)];
+	const tone = activeHeaderTone(theme, hasActive);
+	return [truncLine(`${tone(glyph)} ${tone("subagents")} (${parts.join(", ") || `${jobs.length} total`})`, width)];
 }
 
 function orderedWidgetJobs(jobs: AsyncJobState[]): AsyncJobState[] {
@@ -2639,7 +2642,8 @@ function progressiveHeaderLine(jobs: AsyncJobState[], theme: Theme, width: numbe
 		if (counts.paused.length > 0) parts.push(`${counts.paused.length} paused`);
 		if (counts.complete.length > 0) parts.push(`${counts.complete.length}/${jobs.length} done`);
 	}
-	return truncLine(`${activeHeaderTone(theme, hasActive)(glyph)} ${activeHeaderTone(theme, hasActive)("Async agents")} ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(", ") || `${jobs.length} total`)}`, width);
+	const tone = activeHeaderTone(theme, hasActive);
+	return truncLine(`${tone(glyph)} ${tone("Async agents")} ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(", ") || `${jobs.length} total`)}`, width);
 }
 
 function progressiveJobLine(job: AsyncJobState, theme: Theme, width: number, frame?: number, projection = buildWorkflowWidgetProjection(job)): string {
@@ -2961,7 +2965,8 @@ function buildWidgetLinesWithProjection(jobs: AsyncJobState[], theme: Theme, wid
 	const lines: string[] = [];
 	const hasActive = running.length > 0 || queued.length > 0;
 	const headerGlyph = running.length > 0 ? runningGlyph(animatedSeed(widgetJobsRunningSeed(running), frame)) : hasActive ? "●" : "○";
-	lines.push(truncLine(`${activeHeaderTone(theme, hasActive)(headerGlyph)} ${activeHeaderTone(theme, hasActive)("Async agents")} ${theme.fg("dim", "· background")}`, width));
+	const tone = activeHeaderTone(theme, hasActive);
+	lines.push(truncLine(`${tone(headerGlyph)} ${tone("Async agents")} ${theme.fg("dim", "· background")}`, width));
 
 	const items: string[][] = [];
 	let hiddenRunning = 0;

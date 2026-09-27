@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { THINKING_LEVELS, type ThinkingLevel } from "../shared/model-info.ts";
+import type { ThinkingLevel } from "../shared/model-info.ts";
 import { isStaleExtensionContextError, isUnboundExtensionRuntimeError } from "../shared/extension-context.ts";
 
 type Theme = Pick<ExtensionContext["ui"]["theme"], "fg" | "getThinkingBorderColor">;
@@ -12,10 +12,9 @@ export function setMainThinkingLevelSource(source: () => ThinkingLevel | undefin
 }
 
 /** Reads the main session's level through `read`; a stale or not-yet-bound Pi runtime has no level to show. */
-export function readMainThinkingLevel(read: () => unknown): ThinkingLevel | undefined {
+export function readMainThinkingLevel(read: () => ThinkingLevel): ThinkingLevel | undefined {
 	try {
-		const level = read();
-		return THINKING_LEVELS.find((candidate) => candidate === level);
+		return read();
 	} catch (error) {
 		if (isStaleExtensionContextError(error) || isUnboundExtensionRuntimeError(error)) return undefined;
 		throw error;

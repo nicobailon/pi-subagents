@@ -1431,7 +1431,7 @@ Answer only from the supplied synthetic text.
 		);
 		assert.ok(failed.details.asyncDir);
 		const failedStatusPath = path.join(failed.details.asyncDir!, "status.json");
-		let failedStatus: { state?: string; workflow?: { failureKind?: string }; workflowGraph?: { nodes?: Array<{ hostStep?: { state?: string; reasonCode?: string; exitCode?: number | null } }> } } = {};
+		let failedStatus: Partial<Pick<AsyncStatus, "state" | "workflow" | "workflowGraph">> = {};
 		for (let attempt = 0; attempt < 100; attempt += 1) {
 			failedStatus = JSON.parse(fs.readFileSync(failedStatusPath, "utf8"));
 			if (failedStatus.state === "complete" || failedStatus.state === "failed") break;
@@ -3906,7 +3906,7 @@ Answer only from the supplied synthetic text.
 		assert.equal(status.state, "complete");
 		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
 		const summary = (JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { summary?: string }).summary ?? "";
-		assert.ok(summary.includes(`Return: ${"y".repeat(1000)}… (truncated; full return value and emits: ${statusPath} workflow.value, workflow.emits)`), summary);
+		assert.ok(summary.includes(`Return: ${"y".repeat(1000)}… (truncated; full return value and emits: ${statusPath} (workflow.value, workflow.emits))`), summary);
 		const statusText = (await executor.execute("status-large-return", { action: "status", id: workflowRunId }, new AbortController().signal, undefined, makeMinimalCtx(tempDir))).content[0]?.text ?? "";
 		assert.match(statusText, /Return: "y{239}…/);
 		assert.ok(statusText.includes(`Full return value and emits: ${statusPath} (workflow.value, workflow.emits)`), statusText);
@@ -3952,7 +3952,7 @@ Answer only from the supplied synthetic text.
 		assert.ok(status.error?.includes("e".repeat(300000)));
 		const resultPath = path.join(DIRS.results, `${started.details.asyncId}.json`);
 		const summary = (JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { summary?: string }).summary ?? "";
-		assert.ok(summary.length < 2_000 && summary.includes(`… (truncated; full error: ${statusPath} error)`), summary.slice(0, 300));
+		assert.ok(summary.length < 2_000 && summary.includes(`… (truncated; full error: ${statusPath} (error))`), summary.slice(0, 300));
 		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true });
 		fs.rmSync(resultPath, { force: true });
 	});

@@ -47,6 +47,13 @@ const theme = {
 	getThinkingBorderColor: (_level: string) => (text: string) => text,
 };
 
+const toneTheme = {
+	fg: (name: string, text: string) => `⟦${name}⟧${text}⟦/⟧`,
+	bg: (_name: string, text: string) => text,
+	bold: (text: string) => text,
+	getThinkingBorderColor: (level: string) => (text: string) => `⟦thinking:${level}⟧${text}⟦/⟧`,
+};
+
 describe("below-editor subagent FleetView", () => {
 	for (const source of ["workflow", "nested-run", "nested-step"] as const) {
 		it(`advances only running ${source} detail elapsed and freezes terminal evidence`, () => {
@@ -1607,12 +1614,6 @@ describe("below-editor subagent FleetView", () => {
 				{ id: "fanout", parentRunId: "owner", parentStepIndex: 0, depth: 1, path: [{ runId: "owner", stepIndex: 0 }], state: "running", mode: "parallel", steps: [{ agent: "step-agent", status: "running", thinking: "medium" }] },
 			],
 		});
-		const toneTheme = {
-			fg: (name: string, text: string) => `⟦${name}⟧${text}⟦/⟧`,
-			bg: (_name: string, text: string) => text,
-			bold: (text: string) => text,
-			getThinkingBorderColor: (level: string) => (text: string) => `⟦thinking:${level}⟧${text}⟦/⟧`,
-		};
 		let widgetFactory: ((tui: unknown, theme: typeof toneTheme) => { render(width: number): string[] }) | undefined;
 		const ctx = { hasUI: true, ui: {
 			setWidget(_key: string, content: typeof widgetFactory) { if (content) widgetFactory = content; },
@@ -1642,12 +1643,6 @@ describe("below-editor subagent FleetView", () => {
 				{ index: 1, agent: "wf-scout", status: "running" },
 			],
 		});
-		const toneTheme = {
-			fg: (name: string, text: string) => `\u27e6${name}\u27e7${text}\u27e6/\u27e7`,
-			bg: (_name: string, text: string) => text,
-			bold: (text: string) => text,
-			getThinkingBorderColor: (level: string) => (text: string) => `\u27e6thinking:${level}\u27e7${text}\u27e6/\u27e7`,
-		};
 		let widgetFactory: ((tui: unknown, theme: typeof toneTheme) => { render(width: number): string[] }) | undefined;
 		const ctx = { hasUI: true, ui: {
 			setWidget(_key: string, content: typeof widgetFactory) { if (content) widgetFactory = content; },
@@ -1687,12 +1682,6 @@ describe("below-editor subagent FleetView", () => {
 				{ index: 1, agent: "phase-b", status: "running", workflowKey: "b" },
 			],
 		});
-		const toneTheme = {
-			fg: (name: string, text: string) => `\u27e6${name}\u27e7${text}\u27e6/\u27e7`,
-			bg: (_name: string, text: string) => text,
-			bold: (text: string) => text,
-			getThinkingBorderColor: (level: string) => (text: string) => `\u27e6thinking:${level}\u27e7${text}\u27e6/\u27e7`,
-		};
 		let widgetFactory: ((tui: unknown, theme: typeof toneTheme) => { render(width: number): string[] }) | undefined;
 		const ctx = { hasUI: true, ui: {
 			setWidget(_key: string, content: typeof widgetFactory) { if (content) widgetFactory = content; },

@@ -626,13 +626,14 @@ export function projectAsyncWorkflowRows(
 
 function projectLoadedWorkflowRow(step: AsyncJobStep, index: number, preflight?: WorkflowPreflightLane): AsyncStatusWorkflowRow {
 	const modelThinking = formatModelThinking(step.model, step.thinking) || undefined;
+	const thinking = childThinkingLevel(step);
 	const activity = workflowStepActivity(step);
 	return {
 		name: workflowStepName(step, index),
 		state: step.status,
 		...(step.context ? { context: step.context } : {}),
 		...(modelThinking ? { modelThinking } : {}),
-		...(childThinkingLevel(step) ? { thinking: childThinkingLevel(step) } : {}),
+		...(thinking ? { thinking } : {}),
 		...(activity ? { activity } : {}),
 		...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
 		...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),

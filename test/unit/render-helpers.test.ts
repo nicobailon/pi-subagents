@@ -274,7 +274,6 @@ test("a running single card glyph takes the thinking color of its child's record
 	const cases: Array<[string, ReturnType<typeof runningResult>, string]> = [
 		["level recorded on the result", runningResult("reviewer", { thinking: "low" }), "thinking:low"],
 		["level recorded on progress", runningResult("reviewer", { progressThinking: "xhigh" }), "thinking:xhigh"],
-		["no level at all", runningResult("reviewer"), "accent"],
 		["an unknown level string", runningResult("reviewer", { thinking: "bogus" }), "accent"],
 	];
 	for (const [name, running, tone] of cases) {

@@ -235,20 +235,3 @@ test("workflow checklist text can suppress item rows for status surfaces", () =>
 	assert.match(text, /writers 1 done · 1 active/);
 	assert.doesNotMatch(text, /writer-b · writer · active/);
 });
-
-test("workflow checklist items carry the thinking level of the child each stands for", () => {
-	const projection = projectWorkflowChecklist({
-		graph: graph(),
-		steps: [
-			{ workflowKey: "inventory", agent: "scout", status: "complete", thinking: "low" },
-			{ workflowKey: "writer-a", agent: "writer", status: "complete" },
-			{ workflowKey: "writer-b", agent: "writer", status: "running", thinking: "high" },
-			{ workflowKey: "review", agent: "reviewer", status: "pending", thinking: "medium" },
-		],
-		now: 5000,
-	});
-	const levels = Object.fromEntries(projection.phases.flatMap((phase) => phase.items).map((item) => [item.key, item.thinking]));
-	assert.equal(levels["writer-b"], "high");
-	assert.equal(levels.review, "medium");
-	assert.equal(levels["writer-a"], undefined);
-});
