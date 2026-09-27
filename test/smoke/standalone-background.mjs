@@ -1,5 +1,5 @@
 // Linux real-binary smoke from xz-dev's PR #2049. No filesystem core SDK or execution network.
-// node test/smoke/standalone-background.mjs /absolute/pi-binary [fresh-artifacts] [mode]
+// node test/smoke/standalone-background.mjs /absolute/pi-binary [fresh-artifacts] [mode] [/absolute/prebuilt.tgz]
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -32,11 +32,20 @@ function run(name, command, args) {
 	assert.ifError(result.error);
 	return result;
 }
-const built = run("build-package", process.execPath, ["scripts/build-package.mjs"]);
-assert.equal(built.status, 0, built.stderr);
-const packed = run("pack", "npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", root, path.join(source, "dist-pkg")]);
-assert.equal(packed.status, 0, packed.stderr);
-const tarball = JSON.parse(packed.stdout)[0];
+// The matrix packs once and passes the tarball so parallel modes never race on dist-pkg.
+const prebuilt = process.argv[5];
+let tarball;
+if (prebuilt) {
+	assert.ok(path.isAbsolute(prebuilt) && fs.existsSync(prebuilt), "the prebuilt package must be an existing absolute path");
+	tarball = { filename: path.basename(prebuilt) };
+	fs.copyFileSync(prebuilt, path.join(root, tarball.filename));
+} else {
+	const built = run("build-package", process.execPath, ["scripts/build-package.mjs"]);
+	assert.equal(built.status, 0, built.stderr);
+	const packed = run("pack", "npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", root, path.join(source, "dist-pkg")]);
+	assert.equal(packed.status, 0, packed.stderr);
+	tarball = JSON.parse(packed.stdout)[0];
+}
 assert.equal(run("extract", "tar", ["-xf", path.join(root, tarball.filename), "-C", root]).status, 0);
 // Copy rather than symlink: ancestor resolution must not escape into the checkout's dev SDK/shim.
 fs.cpSync(path.join(source, "node_modules"), path.join(root, "package/node_modules"), {
