@@ -34,6 +34,7 @@ import { discoverAgents } from "../../src/agents/agents.ts";
 import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
 import { INTERCOM_BRIDGE_MARKER, resolveIntercomSessionTarget } from "../../src/intercom/intercom-bridge.ts";
 import { stableJsonDigest } from "../../src/shared/launch-contract.ts";
+import { cleanupOldArtifacts } from "../../src/shared/artifacts.ts";
 import { createStructuredOutputRuntime } from "../../src/runs/shared/structured-output.ts";
 import {
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
@@ -3886,6 +3887,12 @@ Answer only from the supplied synthetic text.
 		assert.ok(savedPath, text.slice(0, 500));
 		assert.ok(!savedPath.includes(`${path.sep}outputs${path.sep}`), `full result must not share the child outputs tree: ${savedPath}`);
 		assert.ok(fs.readFileSync(savedPath, "utf-8").includes(`Return:\n${"x".repeat(210000)}`));
+		// Age-based artifact retention must remove the saved full result like other run artifacts.
+		const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+		fs.utimesSync(savedPath, old, old);
+		fs.rmSync(path.join(TEMP_ARTIFACTS_DIR, ".last-cleanup"), { force: true });
+		cleanupOldArtifacts(TEMP_ARTIFACTS_DIR, 1);
+		assert.equal(fs.existsSync(savedPath), false);
 	});
 
 	it("marks cut async workflow return previews and points to the full value", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
