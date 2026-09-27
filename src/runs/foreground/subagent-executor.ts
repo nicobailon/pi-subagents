@@ -246,16 +246,13 @@ function hasSingleAdjacentTransposition(left: string, right: string): boolean {
 		&& left.slice(mismatch + 2) === right.slice(mismatch + 2);
 }
 
-function isCloseMatch(requested: string, candidate: string, distance: number): boolean {
-	return distance <= Math.max(1, Math.floor(candidate.length / 4)) || hasSingleAdjacentTransposition(requested, candidate);
-}
-
 export function unknownSubagentActionMessage(action: string): string {
 	const requested = action.toLowerCase();
 	const suggestion = SUBAGENT_ACTIONS.find((candidate) => {
 		const distance = editDistance(requested, candidate);
+		const closeMatch = distance <= Math.max(1, Math.floor(candidate.length / 4)) || hasSingleAdjacentTransposition(requested, candidate);
 		if (DESTRUCTIVE_MANAGEMENT_ACTIONS.has(candidate)) return distance === 1 && requested.length >= candidate.length - 1;
-		return isCloseMatch(requested, candidate, distance);
+		return closeMatch;
 	});
 	const nextStep = 'Use subagent({ action: "status" }) to inspect runs or subagent({ action: "list" }) to inspect agents.';
 	const validActions = `Valid: ${SUBAGENT_ACTIONS.join(", ")}.`;
@@ -2527,7 +2524,7 @@ function workflowValidationOptions(deps: ExecutorDeps, params: SubagentParamsLik
 			const requested = name.trim().toLowerCase();
 			const suggestion = [...new Set(agents.flatMap((agent) => [agent.name, ...(agent.localName ? [agent.localName] : []), ...(agent.aliases ?? [])]))]
 				.map((candidate) => ({ candidate, distance: editDistance(requested, candidate.toLowerCase()) }))
-				.filter(({ candidate, distance }) => isCloseMatch(requested, candidate.toLowerCase(), distance))
+				.filter(({ candidate, distance }) => distance <= Math.max(1, Math.floor(candidate.length / 4)) || hasSingleAdjacentTransposition(requested, candidate.toLowerCase()))
 				.sort((left, right) => left.distance - right.distance || left.candidate.localeCompare(right.candidate))[0]?.candidate;
 			return `Unknown agent '${name}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""} Use subagent({ action: "list" }) to inspect agents.`;
 		},
