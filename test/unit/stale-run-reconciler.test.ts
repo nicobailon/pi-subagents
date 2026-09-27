@@ -31,7 +31,7 @@ describe("async stale-run reconciliation", () => {
 		assert.equal(checkPidLiveness(123, () => { throw new Error("boom"); }), "unknown");
 	});
 
-	it("does not repair a recent run whose PID belongs to another namespace", () => {
+	it("repairs a run whose PID belongs to another namespace only after status goes stale", () => {
 		const root = tempRoot("pi-stale-run-pid-namespace-");
 		try {
 			const asyncDir = path.join(root, "run-live");
@@ -55,6 +55,45 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(result.repaired, false);
 			assert.equal(result.status?.state, "running");
 			assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).state, "running");
+
+			const stale = reconcileAsyncRun(asyncDir, {
+				kill: () => { throw errno("ESRCH"); },
+				pidNamespaceScope: () => "pid:[observer]",
+				staleAlivePidMs: 5000,
+				now: () => 7000,
+			});
+
+			assert.equal(stale.repaired, true);
+			assert.equal(stale.status?.state, "failed");
+			assert.match(stale.message ?? "", /process 1404 could not be probed from this process, but status has not updated for 6000ms/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("trusts ESRCH when the observer cannot read its own PID namespace", () => {
+		const root = tempRoot("pi-stale-run-pid-namespace-unknown-");
+		try {
+			const asyncDir = path.join(root, "run-dead");
+			writeStatus(asyncDir, {
+				runId: "run-dead",
+				mode: "single",
+				state: "running",
+				pid: 1404,
+				pidNamespaceScope: "pid:[runner]",
+				startedAt: 1000,
+				lastUpdate: 1000,
+				steps: [{ agent: "reviewer", status: "running", startedAt: 1000 }],
+			});
+
+			const result = reconcileAsyncRun(asyncDir, {
+				kill: () => { throw errno("ESRCH"); },
+				pidNamespaceScope: () => undefined,
+				now: () => 2000,
+			});
+
+			assert.equal(result.repaired, true);
+			assert.equal(result.status?.state, "failed");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

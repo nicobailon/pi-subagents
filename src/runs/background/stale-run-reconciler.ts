@@ -435,14 +435,15 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 	}
 
 	const observedScope = options.pidNamespaceScope ? options.pidNamespaceScope() : currentPidNamespaceScope();
-	const pidScopeMismatch = effectiveStatus.pidNamespaceScope !== undefined && effectiveStatus.pidNamespaceScope !== observedScope;
+	const pidScopeMismatch = effectiveStatus.pidNamespaceScope !== undefined && observedScope !== undefined && effectiveStatus.pidNamespaceScope !== observedScope;
 	const observedLiveness = checkPidLiveness(effectiveStatus.pid, options.kill);
 	const liveness = observedLiveness === "dead" && pidScopeMismatch ? "unknown" : observedLiveness;
 	if (liveness !== "dead") {
 		const staleAfterMs = options.staleAlivePidMs ?? 24 * 60 * 60 * 1000;
 		const lastUpdate = effectiveStatus.lastUpdate ?? effectiveStatus.startedAt;
 		if (now - lastUpdate <= staleAfterMs) return { status: status ?? null, repaired: false, resultPath };
-		const message = `Async runner process ${effectiveStatus.pid} still has a live PID, but status has not updated for ${now - lastUpdate}ms. Marked run failed by stale-run reconciliation because PID ownership cannot be verified.`;
+		const probe = liveness === "alive" ? "still has a live PID" : "could not be probed from this process";
+		const message = `Async runner process ${effectiveStatus.pid} ${probe}, but status has not updated for ${now - lastUpdate}ms. Marked run failed by stale-run reconciliation because PID ownership cannot be verified.`;
 		return writeFailedRepair(asyncDir, effectiveStatus, resultPath, now, message);
 	}
 
