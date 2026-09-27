@@ -6,7 +6,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { Worker } from "node:worker_threads";
 import { formatChildToolDiagnostic } from "../../src/runs/shared/tool-availability.ts";
-import { formatWorkflowJsonPreview, previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
+import { formatWorkflowJsonPreview, previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowScriptChildResult } from "../../src/workflows/scripted-workflow.ts";
 import { workflowChildSummary } from "../../src/workflows/workflow-child-summary.ts";
 import { preflightWorkflowWorktrees } from "../../src/runs/foreground/subagent-executor.ts";
 import { runSetupCommand } from "../../src/runs/shared/worktree-setup-command.ts";
@@ -1578,9 +1578,87 @@ describe("scripted workflow runtime", () => {
 				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 			}),
 			(error: unknown) => error instanceof WorkflowScriptError
-				&& error.errorKind === undefined
+				&& error.errorKind === "script"
 				&& /manual hard failure/.test(error.message)
 				&& error.partial.children[0]?.detached === true,
+		);
+	});
+
+	it("classifies validation, script, return serialization, and child failures", async () => {
+		const assertFailureKind = async (script: string, kind: WorkflowScriptError["errorKind"], launch: (key: string) => Promise<WorkflowScriptChildResult> = async (key) => ({ key, ok: true, output: "ok", artifactPaths: [] })) => {
+			await assert.rejects(
+				runWorkflowScript({
+					script,
+					timeoutMs: 2_000,
+					launch,
+					async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				}),
+				(error: unknown) => error instanceof WorkflowScriptError && error.errorKind === kind,
+			);
+		};
+
+		await assertFailureKind("return (", "validation");
+		await assertFailureKind(`throw new Error("manual failure");`, "script");
+		await assertFailureKind(`JSON.parse("not json");`, "script");
+		await assertFailureKind(`return { value: 1n };`, "return-serialization");
+		await assertFailureKind(
+			`return runs.run("writer", { agent: "worker", task: "write" });`,
+			"child",
+			async (key) => ({ key, ok: false, output: "child failed", error: "child failed", artifactPaths: [] }),
+		);
+	});
+
+	it("preserves an unawaited child failure kind and classifies runtime setup failures", async () => {
+		await assert.rejects(
+			runWorkflowScript({
+				script: `runs.run("writer", { agent: "worker", task: "write" }); await new Promise(() => {});`,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: false, output: "child failed", error: "child failed", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.errorKind === "child",
+		);
+		await assert.rejects(
+			runWorkflowScript({
+				script: `runs.host("ci", { kind: "command", command: "npm test", timeoutMs: 1000 }); await new Promise(() => {});`,
+				timeoutMs: 2_000,
+				async host() { throw new Error("host boundary failed"); },
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.errorKind === "script",
+		);
+
+		const unavailableCwd = path.join(os.tmpdir(), `missing-workflow-cwd-${process.pid}-${Date.now()}`);
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return "unreachable";`,
+				processCwd: unavailableCwd,
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.errorKind === "runtime" && error.partial.children.length === 0,
+		);
+
+		const controller = new AbortController();
+		controller.abort(new Error("stopped by user"));
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return "unreachable";`,
+				signal: controller.signal,
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.message === "stopped by user" && error.errorKind === undefined,
+		);
+
+		await assert.rejects(
+			runWorkflowScript({
+				script: " ",
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.errorKind === "validation",
 		);
 	});
 

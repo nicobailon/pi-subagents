@@ -131,6 +131,8 @@ export interface WorkflowPreflight {
 
 export type WorkflowReceiptState = "complete" | "failed" | "paused" | "stopped";
 
+export type WorkflowScriptFailureKind = "validation" | "script" | "child" | "return-serialization" | "timeout" | "detached-child" | "runtime";
+
 export type WorkflowTerminalResolution = "settled-awaiting-resume" | "failed-child" | "interrupted-child";
 
 export interface WorkflowTerminalOutcome {
@@ -1514,6 +1516,7 @@ export interface Details {
 	mission?: MissionRecord;
 	workflow?: {
 		value?: unknown;
+		failureKind?: WorkflowScriptFailureKind;
 		args?: Record<string, unknown>;
 		argsDigest?: string;
 		resource?: WorkflowResourceProvenance;

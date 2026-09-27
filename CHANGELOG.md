@@ -2,10 +2,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Failed workflows now expose a structured `failureKind` in foreground details and async status, distinguishing validation, script, child, return-serialization, timeout, detached-child, and runtime failures without requiring callers to parse error text. Fixes [#2506](https://github.com/nicobailon/pi-subagents/issues/2506).
+
 ### Fixed
 
-
 - Large workflow results no longer flood the parent's context. A foreground workflow now caps its Return, Emitted, and Console sections and its failure error at 200 KB / 5000 lines (or your `maxOutput`), shortens each call-trace error to 500 characters, says where it cut them, and saves the full text to a file. Async completion notices and `action: "status"` used to cut the return value with no sign, and async notices included the full error however large it was. They now end the cut text in `…` and point to the run's `status.json` for the full value. Fixes [#2505](https://github.com/nicobailon/pi-subagents/issues/2505).
+
 ## [0.72.1] - 2026-09-26
 
 ### Fixed
