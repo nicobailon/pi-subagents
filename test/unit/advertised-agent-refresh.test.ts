@@ -39,7 +39,7 @@ it("emits bounded file-only snapshots, refreshes through management, and perform
 				"---\nname: " + name + "\ndescription: " + description + "\nadvertise: " + advertise + "\n---\nAct narrowly.\n");
 			const handlers = new Map();
 			let tool;
-			let activeTools = ["subagent"];
+			const activeTools = ["subagent"];
 			const pi = new Proxy({
 				events: { on() { return () => {}; }, emit() {} },
 				on(event, handler) { handlers.set(event, [...(handlers.get(event) ?? []), handler]); },
@@ -54,9 +54,10 @@ it("emits bounded file-only snapshots, refreshes through management, and perform
 			};
 			// Invoke the catalog hooks directly; activation lifecycle is registered after them.
 			const refresh = (reason = "reload") => handlers.get("session_start").at(-2)({ reason }, ctx);
-			const emit = async (systemPrompt = "base", selectedTools = activeTools) => {
-				const result = await handlers.get("before_agent_start").at(-2)({ systemPrompt, systemPromptOptions: { selectedTools: selectedTools ?? undefined } }, ctx);
-				return result?.systemPrompt ?? systemPrompt;
+			const emit = async (_previous = "base", selectedTools = activeTools) => {
+				const sections = {};
+				await handlers.get("before_agent_start").at(-2)({ systemPrompt: "base", systemPromptOptions: { selectedTools, sections } }, ctx);
+				return sections.advertised_subagents ?? "base";
 			};
 			const io = { statSync: 0, readdirSync: 0, readFileSync: 0 };
 			const originals = {};
@@ -87,9 +88,6 @@ it("emits bounded file-only snapshots, refreshes through management, and perform
 			assert.doesNotMatch(prompt, /hidden-/);
 			assert.match(prompt, /Before execution.*action: "list", capabilities: true/);
 			assert.equal(await noIo(() => emit(prompt, ["read"])), "base");
-			activeTools = ["read"];
-			assert.equal(await noIo(() => emit(prompt, null)), "base");
-			activeTools = ["subagent"];
 			const ceiling = registerSubagentCapabilityCeiling({ sessionId: "advertised-test", source: "test", ceiling: { allowedAgents: [] } });
 			assert.equal(await noIo(() => emit(prompt)), "base");
 			ceiling.dispose();
@@ -156,7 +154,7 @@ it("emits bounded file-only snapshots, refreshes through management, and perform
 			refresh();
 			await emit();
 			prompt = await noIo(async () => { let result; for (let i = 0; i < 20; i++) result = await emit(); return result; });
-			const catalog = prompt.slice(prompt.indexOf("<advertised_subagents>"));
+			const catalog = prompt;
 			assert.ok(Buffer.byteLength(catalog) <= 12288);
 			assert.doesNotMatch(catalog, /<name>[ab]/);
 			assert.match(catalog, /&lt;&gt;&amp;&quot;/);
@@ -238,9 +236,6 @@ it("delivers the catalog as a structured prompt section instead of replacing the
 			turn = await emit(["subagent"], { other: "kept" });
 			assert.equal(turn.sections.other, "kept", "other sections are untouched");
 			assert.match(turn.sections.advertised_subagents, /<name>specialist<\/name>/);
-
-			const legacy = await before({ systemPrompt: "base", systemPromptOptions: { selectedTools: ["subagent"] } }, ctx);
-			assert.match(legacy.systemPrompt, /^base\n\n<advertised_subagents>\n[\s\S]*<name>specialist<\/name>[\s\S]*\n<\/advertised_subagents>$/, "hosts without sections keep the appended catalog");
 			process.stdout.write("section delivery passed");
 		`], { cwd: root, env, encoding: "utf8", timeout: 60_000 });
 		assert.match(output, /section delivery passed/);

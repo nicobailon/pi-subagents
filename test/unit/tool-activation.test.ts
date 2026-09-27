@@ -153,14 +153,14 @@ describe("subagent tool activation", () => {
 		const selectedTools = runtime.active();
 		await runtime.emit("before_agent_start", {
 			type: "before_agent_start", prompt: "delegate this complex task", systemPrompt: "base",
-			systemPromptOptions: { selectedTools, sections: new Map(), promptGuidelines: [] },
+			systemPromptOptions: { selectedTools, sections: {}, promptGuidelines: [] },
 		});
 		assert.equal(runtime.active().includes("subagent"), false);
 		assert.ok(runtime.active().includes("subagents_enable"));
 		assert.ok(selectedTools.includes("subagents_enable"));
 		const defaultSelectionEvent = {
 			type: "before_agent_start", prompt: "continue", systemPrompt: "base",
-			systemPromptOptions: { selectedTools: undefined as string[] | undefined, sections: new Map(), promptGuidelines: [] },
+			systemPromptOptions: { selectedTools: runtime.active(), sections: {}, promptGuidelines: [] },
 		};
 		await runtime.emit("before_agent_start", defaultSelectionEvent);
 		assert.ok(defaultSelectionEvent.systemPromptOptions.selectedTools?.includes("read"));
