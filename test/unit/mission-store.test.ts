@@ -353,7 +353,8 @@ describe("mission store", () => {
 				});
 				child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
 				return new Promise<void>((resolve, reject) => {
-					const timeout = setTimeout(() => { child.kill(); reject(new Error(`${key} writer timed out`)); }, 5_000);
+					// On Windows each writer cold-starts Node and spawns powershell.exe for lock process identity, so 5s was too short under CI load.
+					const timeout = setTimeout(() => { child.kill(); reject(new Error(`${key} writer timed out`)); }, 20_000);
 					child.on("exit", (code, signal) => {
 						clearTimeout(timeout);
 						if (code === 0 && signal === null) resolve();
