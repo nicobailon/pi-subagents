@@ -34,8 +34,8 @@ import { formatNestedAggregate } from "../runs/shared/nested-render.ts";
 import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
 import { contextModeBadge, contextModePrefix } from "../runs/shared/context-mode.ts";
 import { shouldSuppressSingleStep, stripRepeatedAgentPrefix, withDuplicateLabelDiscriminators } from "./render-helpers.ts";
-import { childRunningTone, childThinkingLevel } from "./child-running-tone.ts";
-import type { ThinkingLevel } from "../shared/model-info.ts";
+import { mainThinkingLevel, runningTone } from "./running-tone.ts";
+import { childThinkingLevel, type ThinkingLevel } from "../shared/model-info.ts";
 import { buildWorkflowChatProgressRows, type WorkflowChatProgressRow } from "../workflows/chat-progress.ts";
 import { formatWorkflowPreflight, formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary, formatWorkflowPreflightWarnings } from "../workflows/workflow-preflight.ts";
 import { encodeAsyncStatusSnapshotWidget } from "../runs/background/async-status-snapshot.ts";
@@ -883,7 +883,7 @@ type ResultPresentation = {
 	glyph: string;
 	label: "running" | "detached" | "stopped" | "paused" | "failed" | "partial" | "completed";
 	tone: "accent" | "warning" | "error" | "success";
-	/** Thinking level of the one child a running presentation stands for; it replaces the accent tone. */
+	/** Thinking level whose color replaces the accent tone of a running presentation: its one child's, or the main session's for several. */
 	thinking?: ThinkingLevel;
 };
 
@@ -951,7 +951,7 @@ function resultPresentation(result: Details["results"][number], output: string, 
 }
 
 function presentationTone(presentation: ResultPresentation, theme: Theme): (text: string) => string {
-	return presentation.thinking ? childRunningTone(theme, presentation.thinking) : (text) => theme.fg(presentation.tone, text);
+	return presentation.thinking ? runningTone(theme, presentation.thinking) : (text) => theme.fg(presentation.tone, text);
 }
 
 function resultGlyph(result: Details["results"][number], output: string, theme: Theme, running = isResultRunning(result), seed = progressRunningSeed(result.progress ?? result.progressSummary), frame?: number): string {
@@ -1261,8 +1261,13 @@ function widgetJobsRunningSeed(jobs: AsyncJobState[]): number | undefined {
 	return seed;
 }
 
+/** Header tone: the main session's thinking color while any job is active, dim otherwise. */
+function activeHeaderTone(theme: Theme, hasActive: boolean): (text: string) => string {
+	return hasActive ? runningTone(theme, mainThinkingLevel()) : (text) => theme.fg("dim", text);
+}
+
 function widgetStatusGlyph(job: AsyncJobState, theme: Theme, frame?: number): string {
-	if (job.status === "running") return childRunningTone(theme, job.mode === "single" ? childThinkingLevel(job.steps?.[0]) : undefined)(runningGlyph(animatedSeed(widgetJobRunningSeed(job), frame)));
+	if (job.status === "running") return runningTone(theme, job.mode === "single" ? childThinkingLevel(job.steps?.[0]) : mainThinkingLevel())(runningGlyph(animatedSeed(widgetJobRunningSeed(job), frame)));
 	if (job.status === "queued") return theme.fg("muted", "◦");
 	if (job.status === "complete") return theme.fg("success", "✓");
 	if (job.status === "paused") return theme.fg("warning", "■");
@@ -1271,7 +1276,7 @@ function widgetStatusGlyph(job: AsyncJobState, theme: Theme, frame?: number): st
 }
 
 function widgetStepGlyph(status: AsyncJobStep["status"], theme: Theme, seed?: number, frame?: number, thinking?: ThinkingLevel): string {
-	if (status === "running") return childRunningTone(theme, thinking)(runningGlyph(animatedSeed(seed, frame)));
+	if (status === "running") return runningTone(theme, thinking)(runningGlyph(animatedSeed(seed, frame)));
 	if (status === "complete" || status === "completed") return theme.fg("success", "✓");
 	if (status === "failed") return theme.fg("error", "✗");
 	if (status === "paused") return theme.fg("warning", "■");
@@ -1280,7 +1285,7 @@ function widgetStepGlyph(status: AsyncJobStep["status"], theme: Theme, seed?: nu
 }
 
 function widgetStepStatus(status: AsyncJobStep["status"], theme: Theme, thinking?: ThinkingLevel): string {
-	if (status === "running") return childRunningTone(theme, thinking)("running");
+	if (status === "running") return runningTone(theme, thinking)("running");
 	if (status === "complete" || status === "completed") return theme.fg("success", "complete");
 	if (status === "failed") return theme.fg("error", "failed");
 	if (status === "paused") return theme.fg("warning", "paused");
@@ -1295,7 +1300,7 @@ function workflowChecklistStateLabel(state: WorkflowChecklistState): string {
 }
 
 function workflowChecklistGlyph(item: { state: WorkflowChecklistState; startedAt?: number; durationMs?: number; toolCount?: number; currentToolStartedAt?: number; thinking?: ThinkingLevel }, theme: Theme, frame?: number): string {
-	if (item.state === "running") return childRunningTone(theme, item.thinking)(runningGlyph(animatedSeed(runningSeed(item.startedAt, item.durationMs, item.toolCount, item.currentToolStartedAt), frame)));
+	if (item.state === "running") return runningTone(theme, item.thinking)(runningGlyph(animatedSeed(runningSeed(item.startedAt, item.durationMs, item.toolCount, item.currentToolStartedAt), frame)));
 	if (item.state === "complete") return theme.fg("success", "✓");
 	if (item.state === "blocked") return theme.fg("error", "!");
 	if (item.state === "failed") return theme.fg("error", "✗");
@@ -1358,6 +1363,7 @@ function workflowChecklistWidgetLines(checklist: WorkflowChecklistProjection | u
 		const phaseItem = phase.items.find((item) => item.state === "running") ?? phase.items[0];
 		const glyph = workflowChecklistGlyph({
 			state: phase.state,
+			thinking: mainThinkingLevel(),
 			startedAt: phaseItem?.startedAt,
 			durationMs: phaseItem?.durationMs,
 			toolCount: phaseItem?.toolCount,
@@ -1808,7 +1814,7 @@ function parallelWidgetGroupHeader(
 	const label = group.stepIndex !== undefined && group.chainTotal !== undefined
 		? `Step ${group.stepIndex + 1}/${group.chainTotal}: parallel group`
 		: "parallel group";
-	return `  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(group.steps), frame)} ${themeBold(theme, label)} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(group.steps, group.total))}`;
+	return `  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(group.steps), frame, mainThinkingLevel())} ${themeBold(theme, label)} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(group.steps, group.total))}`;
 }
 
 function parallelWidgetGroupDetails(
@@ -2170,7 +2176,7 @@ function nestedRunName(run: NestedRunSummary): string {
 }
 
 function nestedStatusGlyph(state: NestedRunSummary["state"] | NestedStepSummary["status"], theme: Theme, seed?: number, thinking?: ThinkingLevel): string {
-	if (state === "running") return childRunningTone(theme, thinking)(runningGlyph(seed));
+	if (state === "running") return runningTone(theme, thinking)(runningGlyph(seed));
 	if (state === "complete" || state === "completed") return theme.fg("success", "✓");
 	if (state === "failed") return theme.fg("error", "✗");
 	if (state === "partial") return theme.fg("warning", "■");
@@ -2569,7 +2575,7 @@ function buildSingleLineWidgetLines(jobs: AsyncJobState[], theme: Theme, width: 
 		if (count > 0) parts.push(`${count} ${status}`);
 	}
 	if (!hasActive && counts.complete.length > 0) parts.push(`${counts.complete.length}/${jobs.length} done`);
-	return [truncLine(`${theme.fg(hasActive ? "accent" : "dim", glyph)} ${theme.fg(hasActive ? "accent" : "dim", "subagents")} (${parts.join(", ") || `${jobs.length} total`})`, width)];
+	return [truncLine(`${activeHeaderTone(theme, hasActive)(glyph)} ${activeHeaderTone(theme, hasActive)("subagents")} (${parts.join(", ") || `${jobs.length} total`})`, width)];
 }
 
 function orderedWidgetJobs(jobs: AsyncJobState[]): AsyncJobState[] {
@@ -2634,7 +2640,7 @@ function progressiveHeaderLine(jobs: AsyncJobState[], theme: Theme, width: numbe
 		if (counts.paused.length > 0) parts.push(`${counts.paused.length} paused`);
 		if (counts.complete.length > 0) parts.push(`${counts.complete.length}/${jobs.length} done`);
 	}
-	return truncLine(`${theme.fg(hasActive ? "accent" : "dim", glyph)} ${theme.fg(hasActive ? "accent" : "dim", "Async agents")} ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(", ") || `${jobs.length} total`)}`, width);
+	return truncLine(`${activeHeaderTone(theme, hasActive)(glyph)} ${activeHeaderTone(theme, hasActive)("Async agents")} ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(", ") || `${jobs.length} total`)}`, width);
 }
 
 function progressiveJobLine(job: AsyncJobState, theme: Theme, width: number, frame?: number, projection = buildWorkflowWidgetProjection(job)): string {
@@ -2956,7 +2962,7 @@ function buildWidgetLinesWithProjection(jobs: AsyncJobState[], theme: Theme, wid
 	const lines: string[] = [];
 	const hasActive = running.length > 0 || queued.length > 0;
 	const headerGlyph = running.length > 0 ? runningGlyph(animatedSeed(widgetJobsRunningSeed(running), frame)) : hasActive ? "●" : "○";
-	lines.push(truncLine(`${theme.fg(hasActive ? "accent" : "dim", headerGlyph)} ${theme.fg(hasActive ? "accent" : "dim", "Async agents")} ${theme.fg("dim", "· background")}`, width));
+	lines.push(truncLine(`${activeHeaderTone(theme, hasActive)(headerGlyph)} ${activeHeaderTone(theme, hasActive)("Async agents")} ${theme.fg("dim", "· background")}`, width));
 
 	const items: string[][] = [];
 	let hiddenRunning = 0;
@@ -3110,7 +3116,7 @@ function renderSingleCompact(
 
 function workflowRowGlyph(row: WorkflowChatProgressRow, theme: Theme, frame?: number, thinking?: ThinkingLevel): string {
 	if (row.state === "planned") return theme.fg("muted", "◦");
-	if (row.state === "running") return childRunningTone(theme, thinking)(runningGlyph(frame));
+	if (row.state === "running") return runningTone(theme, thinking)(runningGlyph(frame));
 	if (row.state === "complete") return theme.fg("success", "✓");
 	if (row.state === "detached" || row.state === "stopped") return theme.fg("warning", "■");
 	return theme.fg("error", "✗");
@@ -3119,7 +3125,7 @@ function workflowRowGlyph(row: WorkflowChatProgressRow, theme: Theme, frame?: nu
 function workflowRowStateLabel(row: WorkflowChatProgressRow, theme: Theme, thinking?: ThinkingLevel): string {
 	const label = (row.state === "complete" ? "complete" : row.state).padEnd(8);
 	if (row.state === "planned") return theme.fg("dim", label);
-	if (row.state === "running") return childRunningTone(theme, thinking)(label);
+	if (row.state === "running") return runningTone(theme, thinking)(label);
 	if (row.state === "complete") return theme.fg("success", label);
 	if (row.state === "detached" || row.state === "stopped") return theme.fg("warning", label);
 	return theme.fg("error", label);
@@ -3195,7 +3201,7 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 	const workflow = d.workflow;
 	const rows = workflow ? buildWorkflowChatProgressRows(workflow.trace, d.preflight) : d.preflight ? buildWorkflowChatProgressRows([], d.preflight) : [];
 	const state = workflowOverallState(rows, workflow?.value !== undefined, result.isError);
-	const glyph = state === "running" ? theme.fg("accent", runningGlyph(frame)) : state === "complete" ? theme.fg("success", "✓") : state === "paused" ? theme.fg("warning", "■") : theme.fg("error", "✗");
+	const glyph = state === "running" ? runningTone(theme, mainThinkingLevel())(runningGlyph(frame)) : state === "complete" ? theme.fg("success", "✓") : state === "paused" ? theme.fg("warning", "■") : theme.fg("error", "✗");
 	const width = getTermWidth() - 4;
 	const runId = d.runId ? d.runId.slice(0, 12) : "workflow";
 	const repoLabel = d.chatProgress?.repoLabel ?? (d.chatProgress?.repoRelation === "same" ? "same repo" : "other repo");
@@ -3282,8 +3288,9 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 		partial,
 		seed: runningSeed(progressRunningSeed(totalSummary), d.currentStepIndex),
 		frame,
+		thinking: mainThinkingLevel(),
 	});
-	const glyph = theme.fg(aggregatePresentation.tone, aggregatePresentation.glyph);
+	const glyph = presentationTone(aggregatePresentation, theme)(aggregatePresentation.glyph);
 	const contextBadge = contextModeBadge(theme, d.context);
 	const c = new Container();
 	const width = getTermWidth() - 4;
@@ -3308,8 +3315,8 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 	const renderEntries = chainEntries ?? buildForegroundResultEntries(d, multiLabel, displayStart, displayEnd, useResultsDirectly);
 	for (const entry of renderEntries) {
 		if (entry.kind === "group") {
-			const glyph = widgetStepGlyph(entry.status as AsyncJobStep["status"], theme);
-			const statusLabel = widgetStepStatus(entry.status as AsyncJobStep["status"], theme);
+			const glyph = widgetStepGlyph(entry.status as AsyncJobStep["status"], theme, undefined, undefined, mainThinkingLevel());
+			const statusLabel = widgetStepStatus(entry.status as AsyncJobStep["status"], theme, mainThinkingLevel());
 			const groupLabel = entry.groupLabel ? ` (${compactTaskText(undefined, entry.groupLabel) ?? entry.groupLabel})` : "";
 			c.addChild(new Text(truncLine(`${rowIndent}${glyph} ${entry.stepLabel}${groupLabel} ${theme.fg("dim", "·")} ${statusLabel}`, width), 0, 0));
 			if (entry.error) c.addChild(new Text(truncLine(theme.fg("error", `${detailIndent}⎿  Error: ${entry.error}`), width), 0, 0));
@@ -3391,7 +3398,7 @@ export function renderSubagentSummary(
 	const partial = Boolean(details && workflowGraphHasStatus(details, ["partial"]));
 	const state = running ? "running" : failed ? "failed" : stopped ? "stopped" : paused ? "paused" : partial ? "partial" : "completed";
 	const glyph = state === "running"
-		? theme.fg("accent", STATIC_RUNNING_GLYPH)
+		? runningTone(theme, details?.mode === "single" && results.length === 1 ? childThinkingLevel(results[0], results[0]?.progress) : mainThinkingLevel())(STATIC_RUNNING_GLYPH)
 		: state === "completed"
 			? theme.fg("success", "✓")
 			: state === "failed"
@@ -3575,6 +3582,7 @@ export function renderSubagentResult(
 		partial,
 		completedWithoutOutput,
 		frame,
+		thinking: mainThinkingLevel(),
 	}), theme);
 
 	const totalSummary =
@@ -3653,7 +3661,7 @@ export function renderSubagentResult(
 
 	for (const entry of renderEntries) {
 		if (entry.kind === "group") {
-			const statusLabel = widgetStepStatus(entry.status as AsyncJobStep["status"], theme);
+			const statusLabel = widgetStepStatus(entry.status as AsyncJobStep["status"], theme, mainThinkingLevel());
 			const groupLabel = entry.groupLabel ? ` (${compactTaskText(undefined, entry.groupLabel) ?? entry.groupLabel})` : "";
 			c.addChild(new Text(fit(`  ${statusLabel} ${entry.stepLabel}${groupLabel}`), 0, 0));
 			c.addChild(new Text(theme.fg(entry.status === "failed" ? "error" : "dim", `    status: ${entry.status}`), 0, 0));

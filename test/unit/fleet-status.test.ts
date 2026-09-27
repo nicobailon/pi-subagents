@@ -15,6 +15,7 @@ import {
 	formatFleetTokens,
 	resolveFleetViewPlacement,
 } from "../../src/tui/fleet-status.ts";
+import { setMainThinkingLevelSource } from "../../src/tui/running-tone.ts";
 
 function clearExternalRuns(): void {
 	delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_RUN_REGISTRY_KEY)];
@@ -1665,6 +1666,49 @@ describe("below-editor subagent FleetView", () => {
 			assert.match(row("wf-scout"), /\u27e6accent\u27e7\u25cf\u27e6\/\u27e7/);
 		} finally {
 			fleet.dispose();
+		}
+	});
+
+	it("colors a running workflow phase row by the main session's thinking level", () => {
+		setMainThinkingLevelSource(() => "high");
+		const state = stateForTest();
+		state.asyncJobs.set("wf-phase", {
+			asyncId: "wf-phase", asyncDir: "/tmp/wf-phase", status: "running", startedAt: Date.now(), mode: "workflow",
+			workflowGraph: {
+				runId: "wf-phase", mode: "workflow",
+				phases: [{ title: "build-phase", nodeIds: ["a", "b"] }],
+				nodes: [
+					{ id: "a", kind: "agent", agent: "phase-a", label: "a", status: "running", flatIndex: 0 },
+					{ id: "b", kind: "agent", agent: "phase-b", label: "b", status: "running", flatIndex: 1 },
+				],
+			},
+			steps: [
+				{ index: 0, agent: "phase-a", status: "running", workflowKey: "a" },
+				{ index: 1, agent: "phase-b", status: "running", workflowKey: "b" },
+			],
+		});
+		const toneTheme = {
+			fg: (name: string, text: string) => `\u27e6${name}\u27e7${text}\u27e6/\u27e7`,
+			bg: (_name: string, text: string) => text,
+			bold: (text: string) => text,
+			getThinkingBorderColor: (level: string) => (text: string) => `\u27e6thinking:${level}\u27e7${text}\u27e6/\u27e7`,
+		};
+		let widgetFactory: ((tui: unknown, theme: typeof toneTheme) => { render(width: number): string[] }) | undefined;
+		const ctx = { hasUI: true, ui: {
+			setWidget(_key: string, content: typeof widgetFactory) { if (content) widgetFactory = content; },
+			onTerminalInput() { return () => {}; }, getEditorText() { return ""; },
+			requestRender() {}, notify() {}, theme: toneTheme,
+		} } as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext(ctx);
+			const component = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor }, toneTheme);
+			fleet.handleKey("\x1b[B");
+			const phaseRow = component.render(240).find((line) => line.includes("build-phase")) ?? "";
+			assert.match(phaseRow, /\u27e6thinking:high\u27e7\u25cf\u27e6\/\u27e7/);
+		} finally {
+			fleet.dispose();
+			setMainThinkingLevelSource(() => undefined);
 		}
 	});
 });
