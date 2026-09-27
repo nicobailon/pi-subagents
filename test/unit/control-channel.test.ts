@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
+	closeStopInbox,
 	closeSteerInbox,
 	consumeInterruptRequest,
 	consumeSteerRequests,
@@ -21,6 +22,7 @@ import {
 	requestAsyncTimeout,
 	timeoutRequestPath,
 	steerInboxClosedPath,
+	stopInboxClosedPath,
 	stopRequestsDir,
 	stopRequestPath,
 	steerRequestsDir,
@@ -63,6 +65,35 @@ describe("control channel: request file", () => {
 			assert.equal(consumeStopRequest(asyncDir), true);
 			assert.equal(fs.existsSync(requestPath), false);
 			assert.equal(consumeStopRequest(asyncDir), false);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("rejects stop requests after the runner closes the inbox", () => {
+		const asyncDir = tmpAsyncDir("pi-control-stop-closed-");
+		try {
+			closeStopInbox(asyncDir);
+			assert.equal(fs.existsSync(stopInboxClosedPath(asyncDir)), true);
+			assert.throws(() => requestAsyncStop(asyncDir, { source: "test" }), /Retry stop after runner shutdown is observed/);
+			assert.equal(fs.existsSync(stopRequestsDir(asyncDir)), false);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("removes a stop request if the inbox closes while it is being written", () => {
+		const asyncDir = tmpAsyncDir("pi-control-stop-closing-");
+		try {
+			assert.throws(() => requestAsyncStop(asyncDir, { source: "test" }, {
+				now: () => 1234,
+				write(requestPath, request) {
+					fs.mkdirSync(path.dirname(requestPath), { recursive: true });
+					fs.writeFileSync(requestPath, JSON.stringify(request), "utf-8");
+					closeStopInbox(asyncDir);
+				},
+			}), /Retry stop after runner shutdown is observed/);
+			assert.deepEqual(fs.readdirSync(stopRequestsDir(asyncDir)), []);
 		} finally {
 			cleanup(asyncDir);
 		}

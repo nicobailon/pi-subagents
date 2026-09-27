@@ -79,6 +79,7 @@ const STOP_REQUESTS_DIR = "stop-requests";
 const REVIVAL_BRIEFS_DIR = "revival-briefs";
 export const MAX_STEER_QUEUE_SIZE = 20;
 const STEER_INBOX_CLOSED_FILE = "steer-inbox-closed.json";
+const STOP_INBOX_CLOSED_FILE = "stop-inbox-closed.json";
 const MAX_STEER_MESSAGE_BYTES = 128 * 1024;
 const MAX_STEER_REQUEST_ID_LENGTH = 256;
 
@@ -114,6 +115,21 @@ export function steerRequestsDir(asyncDir: string): string {
 
 export function steerInboxClosedPath(asyncDir: string): string {
 	return path.join(controlInboxDir(asyncDir), STEER_INBOX_CLOSED_FILE);
+}
+
+export function stopInboxClosedPath(asyncDir: string): string {
+	return path.join(controlInboxDir(asyncDir), STOP_INBOX_CLOSED_FILE);
+}
+
+export class StopInboxClosedError extends Error {
+	constructor() {
+		super("Runner stop inbox is closed. Retry stop after runner shutdown is observed.");
+		this.name = "StopInboxClosedError";
+	}
+}
+
+export function closeStopInbox(asyncDir: string, write: (filePath: string, payload: object) => void = writeAtomicJson): void {
+	write(stopInboxClosedPath(asyncDir), { version: 1, closedAt: Date.now() });
 }
 
 export function closeSteerInbox(asyncDir: string, state: string, write: (filePath: string, payload: object) => void = writeAtomicJson): void {
@@ -206,15 +222,21 @@ export function requestAsyncTimeout(
 export function requestAsyncStop(
 	asyncDir: string,
 	payload: Omit<StopRequest, "type"> = {},
-	deps: { now?: () => number } = {},
+	deps: { now?: () => number; write?: typeof writeAtomicJson } = {},
 ): string {
 	if (payload.targetIndex !== undefined) assertChildIndex(payload.targetIndex);
 	if (payload.childId !== undefined && !validStopChildId(payload.childId)) {
 		throw new Error("stop childId must be a non-empty string without newlines and at most 256 characters.");
 	}
+	const closedPath = stopInboxClosedPath(asyncDir);
+	if (fs.existsSync(closedPath)) throw new StopInboxClosedError();
 	const request: StopRequest = { ...payload, ts: payload.ts ?? deps.now?.() ?? Date.now(), type: "stop" };
 	const requestPath = path.join(stopRequestsDir(asyncDir), stopRequestFileName(request));
-	writeAtomicJson(requestPath, request);
+	(deps.write ?? writeAtomicJson)(requestPath, request);
+	if (fs.existsSync(closedPath)) {
+		fs.rmSync(requestPath, { force: true });
+		throw new StopInboxClosedError();
+	}
 	return requestPath;
 }
 

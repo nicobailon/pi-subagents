@@ -11,6 +11,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import { createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir, resolveMockPiCallArgs } from "../support/helpers.ts";
 import { deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, requestAsyncSteer } from "../../src/runs/background/control-channel.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
@@ -203,29 +204,56 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ output: "first done" });
 		mockPi.onCall({ delay: 10_000, output: "second done" });
 		const id = `async-paused-stop-race-${Date.now().toString(36)}`;
-		executeAsyncChain(id, {
-			chain: [{ parallel: [{ agent: "first", task: "Finish", acceptance: false }, { agent: "second", task: "Wait", acceptance: false }], concurrency: 2 }],
-			resultMode: "parallel",
-			agents: [makeAgent("first"), makeAgent("second")],
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-			shareEnabled: false,
-			maxSubagentDepth: 2,
-		});
-
 		const asyncDir = path.join(ASYNC_DIR, id);
+		const closeGate = path.join(tempDir, `${id}-close-gate`);
+		const closeRelease = path.join(tempDir, `${id}-close-release`);
+		const preload = path.join(tempDir, `${id}-close-stop-inbox.mjs`);
+		fs.writeFileSync(preload, `
+import fs from "node:fs";
+import path from "node:path";
+import { syncBuiltinESMExports } from "node:module";
+const originalRename = fs.renameSync;
+fs.renameSync = function(source, target) {
+  if (String(target) === path.join(process.env.PAUSED_STOP_ASYNC_DIR, "control", "stop-inbox-closed.json")) {
+    fs.writeFileSync(process.env.PAUSED_STOP_CLOSE_GATE, "ready");
+    const deadline = Date.now() + 15000;
+    while (!fs.existsSync(process.env.PAUSED_STOP_CLOSE_RELEASE) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+  }
+  return originalRename.call(this, source, target);
+};
+syncBuiltinESMExports();
+`);
+		const previousNodeOptions = process.env.NODE_OPTIONS;
+		process.env.NODE_OPTIONS = [previousNodeOptions, `--import=${pathToFileURL(preload).href}`].filter(Boolean).join(" ");
+		process.env.PAUSED_STOP_ASYNC_DIR = asyncDir;
+		process.env.PAUSED_STOP_CLOSE_GATE = closeGate;
+		process.env.PAUSED_STOP_CLOSE_RELEASE = closeRelease;
+		try {
+			executeAsyncChain(id, {
+				chain: [{ parallel: [{ agent: "first", task: "Finish", acceptance: false }, { agent: "second", task: "Wait", acceptance: false }], concurrency: 2 }],
+				resultMode: "parallel",
+				agents: [makeAgent("first"), makeAgent("second")],
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+			});
+		} finally {
+			if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = previousNodeOptions;
+			delete process.env.PAUSED_STOP_ASYNC_DIR;
+			delete process.env.PAUSED_STOP_CLOSE_GATE;
+			delete process.env.PAUSED_STOP_CLOSE_RELEASE;
+		}
+
 		const running = await waitForAsyncState(id, (status) => status.steps?.[1]?.status === "running" && typeof status.pid === "number");
-		const pausedStop = new Promise<void>((resolve) => {
-			const timer = setInterval(() => {
-				const status = readStatus(asyncDir);
-				if (status?.state !== "paused") return;
-				deliverStopRequest({ asyncDir, pid: status.pid, source: "test" });
-				clearInterval(timer);
-				resolve();
-			}, 1);
-		});
 		deliverInterruptRequest({ asyncDir, pid: running.pid, source: "test" });
-		await pausedStop;
+		for (let attempt = 0; attempt < 750 && !fs.existsSync(closeGate); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(fs.existsSync(closeGate), true, "runner must reach stop-inbox closure before the test delivers stop");
+		try {
+			deliverStopRequest({ asyncDir, pid: running.pid, source: "test" });
+		} finally {
+			fs.writeFileSync(closeRelease, "release", "utf-8");
+		}
 
 		const resultPath = await waitForAsyncResultFile(id, 30_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;

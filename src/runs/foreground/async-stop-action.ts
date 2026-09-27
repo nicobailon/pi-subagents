@@ -4,7 +4,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { DIRS, type AsyncStatus, type Details, type SubagentState } from "../../shared/types.ts";
 import { updateActiveRunIndex } from "../background/active-run-index.ts";
-import { deliverStopRequest } from "../background/control-channel.ts";
+import { deliverStopRequest, StopInboxClosedError } from "../background/control-channel.ts";
 import { readProcessTerminal } from "../background/process-terminal.ts";
 import { resultFilePath, resultPayloadPathForSessionRun, writeAsyncResultFile } from "../background/result-files.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
@@ -145,7 +145,11 @@ export function stopAsyncRun(
 		}
 	}
 	try {
-		deliverStopRequest({ asyncDir: target.asyncDir, pid: typeof status.pid === "number" ? status.pid : undefined, kill, source: "stop-action", targetIndex: child?.index, childId: child?.id ?? childId });
+		try {
+			deliverStopRequest({ asyncDir: target.asyncDir, pid: typeof status.pid === "number" ? status.pid : undefined, kill, source: "stop-action", targetIndex: child?.index, childId: child?.id ?? childId });
+		} catch (error) {
+			if (!(pausedWholeRun && error instanceof StopInboxClosedError)) throw error;
+		}
 		if (pausedWholeRun) {
 			const failure = sealPausedRun(target.asyncDir, status);
 			if (failure) {

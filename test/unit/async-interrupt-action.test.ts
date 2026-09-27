@@ -821,6 +821,24 @@ describe("async interrupt action", () => {
 		}
 	});
 
+	it("rejects a stop after a running run closes its stop inbox", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `stop-closed-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "session" });
+		try {
+			writeJson(path.join(asyncDir, "control", "stop-inbox-closed.json"), { version: 1, closedAt: Date.now() });
+			const result = await executorWithKill(state, () => true)
+				.execute("stop-closed", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /Failed to stop async run.*Retry stop after runner shutdown is observed/);
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "stop-requests")), false);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
 	it("seals a paused whole run only with exact observed runner proof", async () => {
 		const state = createState();
 		state.currentSessionId = "session";
@@ -836,13 +854,14 @@ describe("async interrupt action", () => {
 				.execute("stop-paused-child", { action: "stop", id: runId, childId: "paused" }, new AbortController().signal, undefined, ctx());
 			assert.equal(childStop.isError, true);
 			assert.equal(fs.existsSync(path.join(asyncDir, "control", "stop-requests")), false);
+			writeJson(path.join(asyncDir, "control", "stop-inbox-closed.json"), { version: 1, closedAt: Date.now() });
 
 			const result = await executorWithKill(state, () => true)
 				.execute("stop-paused", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
 
 			assert.equal(result.isError, undefined);
 			assert.match(text(result), /Stopped paused async run/);
-			assert.ok(fs.readdirSync(path.join(asyncDir, "control", "stop-requests")).length > 0);
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "stop-requests")), false);
 			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
 			const payload = JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, `${runId}.json`), "utf-8"));
 			assert.equal(status.state, "stopped");
