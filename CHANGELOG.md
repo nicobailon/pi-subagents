@@ -2,10 +2,6 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- Run-level `timeoutMs` / `maxRuntimeMs` values above Node.js' maximum timer delay are now rejected before launch instead of overflowing `setTimeout` and timing out almost immediately. Thanks to [@quifox](https://github.com/quifox) for [#2517](https://github.com/nicobailon/pi-subagents/pull/2517).
-
 ## [0.73.0] - 2026-09-27
 
 ### Highlights
@@ -27,6 +23,7 @@
 - Large workflow results no longer flood the parent's context. A foreground workflow caps its Return, Emitted, and Console sections and its failure error at 200 KB or 5000 lines (or your `maxOutput`), shortens each call-trace error to 500 characters, marks each cut, and saves the full text to a file. Async completion notices and `action: "status"` now end cut text in `…` and point to the run's `status.json`. Before, they cut the return value without saying so and showed the full error however long it was. Fixes [#2505](https://github.com/nicobailon/pi-subagents/issues/2505).
 - A workflow script with a misspelled agent name now fails before any child starts, instead of running the earlier children first. `action: "validate"` reports the same error with its line, column, and the closest agent name when there is one (for example `Did you mean 'reviewer'?`). Names built at runtime, and children with their own `cwd`, `agentScope`, or `resume`, are still checked when they launch. Fixes [#2504](https://github.com/nicobailon/pi-subagents/issues/2504).
 - On providers that fix the tool list for a whole prompt, such as bridges to another agent SDK, `subagent` only appears after the next user prompt. The `subagents_enable` result now says so, which stops the model from retrying `subagent` in the same prompt, and it names `--exclude-tools subagents_enable` for keeping `subagent` always available. Fixes [#2513](https://github.com/nicobailon/pi-subagents/issues/2513).
+- A `timeoutMs` or `maxRuntimeMs` above 2,147,483,647 ms (about 24.8 days), the longest delay Node.js timers support, is now rejected before launch, including on `action: "resume"`. Node shortened such a timer to about 1 ms, so the run timed out almost immediately. Thanks to [@quifox](https://github.com/quifox) for [#2517](https://github.com/nicobailon/pi-subagents/pull/2517).
 
 ## [0.72.1] - 2026-09-26
 

@@ -1877,6 +1877,14 @@ async function resumeAsyncRun(input: {
 			details: { mode: "management", results: [] },
 		};
 	}
+	const timeoutOverflowError = timerDelayOverflowError("timeoutMs", input.params.timeoutMs);
+	if (timeoutOverflowError) {
+		return {
+			content: [{ type: "text", text: timeoutOverflowError }],
+			isError: true,
+			details: { mode: "management", results: [] },
+		};
+	}
 	if (input.params.model !== undefined) {
 		return {
 			content: [{ type: "text", text: "action='resume' reuses the persisted child model and does not accept a model override." }],
