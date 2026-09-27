@@ -1455,7 +1455,9 @@ export function formatWorkflowJsonPreview(value: unknown, maxLength: number): st
 	try {
 		assertWorkflowJsonValue(value);
 		const serialized = JSON.stringify(value);
-		return typeof serialized === "string" ? serialized.slice(0, maxLength) : undefined;
+		if (typeof serialized !== "string") return undefined;
+		// Serialized JSON never ends in "…", so the suffix always means the preview was cut.
+		return serialized.length > maxLength ? `${serialized.slice(0, maxLength)}…` : serialized;
 	} catch {
 		return undefined;
 	}

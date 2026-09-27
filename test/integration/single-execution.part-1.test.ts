@@ -3866,6 +3866,47 @@ Answer only from the supplied synthetic text.
 		assert.deepEqual(result.details.workflow?.value, ["first child completed", "second child completed"]);
 	});
 
+	it("cuts an oversized foreground workflow return, keeps the call trace, and saves the full result", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "scan done" });
+		const result = await makeExecutor([makeAgent("echo")]).execute(
+			"scripted-workflow-large-return",
+			{ async: false, workflowScript: `await runs.run("scan", { agent: "echo", task: "Scan" }); return "x".repeat(210000);` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const text = result.content[0]?.text ?? "";
+		assert.equal(result.isError, undefined, text);
+		assert.ok(Buffer.byteLength(text, "utf-8") < 210_000);
+		assert.match(text.slice(-500), /Call trace:\n- run scan: started\n- run scan: completed/);
+		const savedPath = /\[TRUNCATED: .* - full output at (.+)\]/.exec(text)?.[1];
+		assert.ok(savedPath, text.slice(0, 500));
+		assert.ok(fs.readFileSync(savedPath, "utf-8").includes(`Return:\n${"x".repeat(210000)}`));
+	});
+
+	it("marks cut async workflow return previews and points to the full value", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const result = await executor.execute("scripted-workflow-large-async-return", { async: true, workflowScript: `return "y".repeat(2000);` }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		const workflowRunId = result.details.asyncId!;
+		const statusPath = path.join(result.details.asyncDir!, "status.json");
+		let status: { state?: string } = {};
+		for (let attempt = 0; attempt < 300; attempt++) {
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+			if (status.state === "complete" || status.state === "failed") break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(status.state, "complete");
+		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
+		const summary = (JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { summary?: string }).summary ?? "";
+		assert.ok(summary.includes(`Return: ${"y".repeat(1000)}… (truncated; full return value and emits: ${statusPath} workflow.value, workflow.emits)`), summary);
+		const statusText = (await executor.execute("status-large-return", { action: "status", id: workflowRunId }, new AbortController().signal, undefined, makeMinimalCtx(tempDir))).content[0]?.text ?? "";
+		assert.match(statusText, /Return: "y{239}…/);
+		assert.ok(statusText.includes(`Full return value and emits: ${statusPath} (workflow.value, workflow.emits)`), statusText);
+		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true });
+		fs.rmSync(resultPath, { force: true });
+	});
+
 	it("rejects an over-limit runs.all batch before launching any workflow child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerRun: 1 });
 
