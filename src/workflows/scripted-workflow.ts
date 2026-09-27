@@ -1899,6 +1899,8 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 		? root.body[0].expression.callee
 		: undefined;
 	const workflowBody = wrapper && astNode(wrapper.body) ? wrapper.body : root;
+	// A rebound `runs` may not be the workflow API, so its calls prove nothing about child launches.
+	const agentNameError = options.agentNameError && !invalidatesRunsBinding(workflowBody) ? options.agentNameError : undefined;
 	walkAst(workflowBody, (node) => {
 		if (node !== wrapper && node.async === true && (node.type === "FunctionDeclaration" || node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression")) {
 			errors.push({ message: "workflowScript does not support nested async functions. Use top-level await, plain helper functions that return runs.run(...), or explicit Promise chains.", ...nodeLocation(node) });
@@ -1926,7 +1928,7 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 			}
 		}
 		if (directRunsCall(node, "host")) errors.push(...validateStaticHostCall(node));
-		if (options.agentNameError) errors.push(...validateStaticChildAgents(node, options.agentNameError));
+		if (agentNameError) errors.push(...validateStaticChildAgents(node, agentNameError));
 		const boundaryValue = node.type === "CallExpression" && astNode(node.callee) && node.callee.type === "Identifier" && node.callee.name === "emit" && Array.isArray(node.arguments) && astNode(node.arguments[0])
 			? node.arguments[0]
 			: node.type === "CallExpression" && astNode(node.callee) && node.callee.type === "MemberExpression" && astNode(node.callee.object) && node.callee.object.type === "Identifier" && node.callee.object.name === "state" && astNode(node.callee.property) && node.callee.property.type === "Identifier" && node.callee.property.name === "set" && Array.isArray(node.arguments) && astNode(node.arguments[1])

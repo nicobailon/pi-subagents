@@ -348,6 +348,7 @@ describe("scripted workflow runtime", () => {
 			{ kind: "agent", message: "runs.all item: Unknown agent 'reviwer'.", line: 2 },
 			{ kind: "agent", message: "runs.lanes stage: Unknown agent 'wroker'.", line: 3 },
 		]);
+		assert.deepEqual(validateWorkflowScript(`const runs = { run: (key) => key };\nreturn runs.run("local", { agent: "missing" });`, { agentNameError: () => "Unknown agent." }), { ok: true, errors: [] });
 	});
 
 	it("warns instead of guessing a dynamic spawn count", () => {
