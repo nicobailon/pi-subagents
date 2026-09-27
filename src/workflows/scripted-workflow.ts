@@ -5,7 +5,8 @@ import { Worker } from "node:worker_threads";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../runs/shared/parallel-utils.ts";
 import { HOST_STEP_MAX_COUNT } from "../runs/shared/host-step-status.ts";
 import { describeGateAcceptanceConflict, parseGateInput } from "../runs/shared/acceptance.ts";
-import type { AcceptanceRecoveryMetadata, HostStepNode, SingleResult } from "../shared/types.ts";
+import type { AcceptanceRecoveryMetadata, HostStepNode, SingleResult, WorkflowScriptFailureKind } from "../shared/types.ts";
+export type { WorkflowScriptFailureKind } from "../shared/types.ts";
 import { normalizeWorkflowHostCommandParams, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "./host-command.ts";
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -67,6 +68,7 @@ let topLevelWorkflowPromise;
 let suppressNativePromiseConsumption = 0;
 const activeNativePromises = [];
 const pending = new Map();
+const workflowErrorKinds = new WeakMap();
 const runKeyPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 function validGitRef(ref) {
   if (typeof ref !== "string" || !ref || ref === "@" || new TextEncoder().encode(ref).length > 1024 || ref.startsWith("/") || ref.endsWith("/") || ref.includes("//") || ref.includes("..") || ref.includes("@{")) return false;
@@ -986,7 +988,7 @@ parentPort.on("message", async (message) => {
     if (message.ok) entry.resolve(message.value);
     else {
       const error = new Error(message.error);
-      if (message.errorKind === "detached-child") error.workflowErrorKind = "detached-child";
+      if (message.errorKind === "child" || message.errorKind === "detached-child") workflowErrorKinds.set(error, message.errorKind);
       entry.reject(error);
     }
     return;
@@ -1005,7 +1007,7 @@ parentPort.on("message", async (message) => {
       assertPortableWorkflowScript(message.script);
       compiled = new vm.Script("(async () => {\n" + message.script + "\n})()", { filename: "workflow-script.js" });
     } catch (error) {
-      parentPort.postMessage({ type: "error", error: isSyntaxError(error) ? formatWorkflowScriptSyntaxError(error) : formatWorkflowScriptError(error) });
+      parentPort.postMessage({ type: "error", errorKind: "validation", error: isSyntaxError(error) ? formatWorkflowScriptSyntaxError(error) : formatWorkflowScriptError(error) });
       return;
     }
     const nativePromisePrototype = vm.runInContext("(async () => {})().constructor.prototype", context);
@@ -1069,12 +1071,13 @@ parentPort.on("message", async (message) => {
     try {
       assertJsonValue(persistedValue, "return");
     } catch (error) {
-      parentPort.postMessage({ type: "error", errorPhase: "return-serialization", error: formatWorkflowScriptError(error) });
+      parentPort.postMessage({ type: "error", errorKind: "return-serialization", errorPhase: "return-serialization", error: formatWorkflowScriptError(error) });
       return;
     }
     parentPort.postMessage({ type: "complete", value: persistedValue });
   } catch (error) {
-    parentPort.postMessage({ type: "error", error: isSyntaxError(error) ? formatWorkflowScriptSyntaxError(error) : formatWorkflowScriptError(error), ...(error && error.workflowErrorKind === "detached-child" ? { errorKind: "detached-child" } : {}) });
+    const errorKind = error && (typeof error === "object" || typeof error === "function") ? workflowErrorKinds.get(error) : undefined;
+    parentPort.postMessage({ type: "error", error: isSyntaxError(error) ? formatWorkflowScriptSyntaxError(error) : formatWorkflowScriptError(error), errorKind: errorKind ?? (isSyntaxError(error) ? "validation" : "script") });
   }
 });
 `;
@@ -1178,11 +1181,15 @@ export interface WorkflowScriptResult {
 	children: WorkflowScriptChildResult[];
 }
 
+function isWorkflowScriptFailureKind(value: unknown): value is WorkflowScriptFailureKind {
+	return value === "validation" || value === "script" || value === "child" || value === "return-serialization" || value === "timeout" || value === "detached-child";
+}
+
 export class WorkflowScriptError extends Error {
 	readonly partial: Omit<WorkflowScriptResult, "value">;
-	readonly errorKind?: "detached-child" | "timeout";
+	readonly errorKind?: WorkflowScriptFailureKind;
 
-	constructor(message: string, partial: Omit<WorkflowScriptResult, "value">, errorKind?: "detached-child" | "timeout") {
+	constructor(message: string, partial: Omit<WorkflowScriptResult, "value">, errorKind?: WorkflowScriptFailureKind) {
 		super(message);
 		this.name = "WorkflowScriptError";
 		this.partial = partial;
@@ -2189,8 +2196,8 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 							return unobservedHosts.length > 0 ? new Error(`workflowScript completed with unawaited runs.host call(s): ${unobservedHosts.map((key) => `'${key}'`).join(", ")}. Await or return each call.`) : undefined;
 						})()
 						: undefined;
-				if ("error" in outcome) reject(new WorkflowScriptError(outcome.error.message, partial(), outcome.error.workflowErrorKind === "detached-child" || outcome.error.workflowErrorKind === "timeout" ? outcome.error.workflowErrorKind : undefined));
-				else if (completionError) reject(new WorkflowScriptError(completionError.message, partial()));
+				if ("error" in outcome) reject(new WorkflowScriptError(outcome.error.message, partial(), isWorkflowScriptFailureKind(outcome.error.workflowErrorKind) ? outcome.error.workflowErrorKind : undefined));
+				else if (completionError) reject(new WorkflowScriptError(completionError.message, partial(), "validation"));
 				else resolve({ value: outcome.value, ...partial() });
 			});
 		};
@@ -2284,15 +2291,17 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				try {
 					assertWorkflowJsonValue(message.value, "return");
 				} catch (error) {
-					return finish({ error: new Error(`Workflow return could not be persisted: ${error instanceof Error ? error.message : String(error)}`) });
+					const workflowError = new Error(`Workflow return could not be persisted: ${error instanceof Error ? error.message : String(error)}`) as Error & { workflowErrorKind: WorkflowScriptFailureKind };
+					workflowError.workflowErrorKind = "return-serialization";
+					return finish({ error: workflowError });
 				}
 				return finish({ value: message.value });
 			}
 			if (message.type === "error") {
 				const rawError = typeof message.error === "string" ? message.error : "Workflow script failed.";
 				const text = message.errorPhase === "return-serialization" ? `${rawError}${workflowReturnRecoveryHint(partial().children)}` : rawError;
-				const workflowError = new Error(text) as Error & { workflowErrorKind?: "detached-child" };
-				if (message.errorKind === "detached-child") workflowError.workflowErrorKind = "detached-child";
+				const workflowError = new Error(text) as Error & { workflowErrorKind?: WorkflowScriptFailureKind };
+				if (isWorkflowScriptFailureKind(message.errorKind)) workflowError.workflowErrorKind = message.errorKind;
 				return finish({ error: workflowError });
 			}
 			if (message.type === "callObserved" && typeof message.callId === "number") {
@@ -2333,7 +2342,10 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 						}
 					},
 					(error: unknown) => {
-						if (!settled) worker.postMessage({ type: "response", callId: message.callId, ok: false, error: error instanceof Error ? error.message : String(error), ...(error instanceof Error && (error as { workflowErrorKind?: unknown }).workflowErrorKind === "detached-child" ? { errorKind: "detached-child" } : {}) });
+						if (!settled) {
+							const errorKind = error instanceof Error ? (error as { workflowErrorKind?: unknown }).workflowErrorKind : undefined;
+							worker.postMessage({ type: "response", callId: message.callId, ok: false, error: error instanceof Error ? error.message : String(error), ...(isWorkflowScriptFailureKind(errorKind) ? { errorKind } : {}) });
+						}
 					},
 				);
 			};
@@ -2473,8 +2485,8 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					const recoverableAcceptanceMetadata = result.recovery?.status === "available-for-review"
 						&& result.recovery.reason === "acceptance-metadata-rejected";
 					if (!result.ok && result.state !== "running" && !result.stopped && !recoverableAcceptanceMetadata) {
-						const childError = new Error(result.detached ? `Run '${key}' detached: ${result.error ?? result.output}` : `Run '${key}' failed: ${result.error ?? result.output}`) as Error & { workflowErrorKind?: "detached-child" };
-						if (result.detached) childError.workflowErrorKind = "detached-child";
+						const childError = new Error(result.detached ? `Run '${key}' detached: ${result.error ?? result.output}` : `Run '${key}' failed: ${result.error ?? result.output}`) as Error & { workflowErrorKind: WorkflowScriptFailureKind };
+						childError.workflowErrorKind = result.detached ? "detached-child" : "child";
 						throw childError;
 					}
 					return result;

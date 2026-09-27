@@ -1434,13 +1434,14 @@ Answer only from the supplied synthetic text.
 		);
 		assert.ok(failed.details.asyncDir);
 		const failedStatusPath = path.join(failed.details.asyncDir!, "status.json");
-		let failedStatus: { state?: string; workflowGraph?: { nodes?: Array<{ hostStep?: { state?: string; reasonCode?: string; exitCode?: number | null } }> } } = {};
+		let failedStatus: { state?: string; workflow?: { failureKind?: string }; workflowGraph?: { nodes?: Array<{ hostStep?: { state?: string; reasonCode?: string; exitCode?: number | null } }> } } = {};
 		for (let attempt = 0; attempt < 100; attempt += 1) {
 			failedStatus = JSON.parse(fs.readFileSync(failedStatusPath, "utf8"));
 			if (failedStatus.state === "complete" || failedStatus.state === "failed") break;
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
 		assert.equal(failedStatus.state, "failed");
+		assert.equal(failedStatus.workflow?.failureKind, "script");
 		assert.deepEqual(failedStatus.workflowGraph?.nodes?.map((node) => node.hostStep && { state: node.hostStep.state, reasonCode: node.hostStep.reasonCode, exitCode: node.hostStep.exitCode }), [{ state: "error", reasonCode: "command_failed", exitCode: 3 }]);
 		const failedReceipt = JSON.parse(fs.readFileSync(path.join(failed.details.asyncDir!, "workflow-receipt.json"), "utf8")) as { state?: string; hostSteps?: Array<{ state?: string; reasonCode?: string; exitCode?: number | null }> };
 		assert.equal(failedReceipt.state, "failed");
@@ -3602,6 +3603,7 @@ Answer only from the supplied synthetic text.
 		assert.match(result.content[0]?.text ?? "", new RegExp(`Workflow '${workflowId}' validation failed before child launch; no children launched`));
 		assert.match(result.content[0]?.text ?? "", /Parallel plus sequential rewrite/);
 		assert.deepEqual(result.details.results, []);
+		assert.equal(result.details.workflow?.failureKind, "validation");
 	});
 
 	it("replaces stale workflow output when a child claims its path but writes no report", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

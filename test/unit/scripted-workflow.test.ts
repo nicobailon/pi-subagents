@@ -6,7 +6,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { Worker } from "node:worker_threads";
 import { formatChildToolDiagnostic } from "../../src/runs/shared/tool-availability.ts";
-import { formatWorkflowJsonPreview, previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
+import { formatWorkflowJsonPreview, previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowScriptChildResult } from "../../src/workflows/scripted-workflow.ts";
 import { workflowChildSummary } from "../../src/workflows/workflow-child-summary.ts";
 import { preflightWorkflowWorktrees } from "../../src/runs/foreground/subagent-executor.ts";
 import { runSetupCommand } from "../../src/runs/shared/worktree-setup-command.ts";
@@ -1578,9 +1578,32 @@ describe("scripted workflow runtime", () => {
 				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 			}),
 			(error: unknown) => error instanceof WorkflowScriptError
-				&& error.errorKind === undefined
+				&& error.errorKind === "script"
 				&& /manual hard failure/.test(error.message)
 				&& error.partial.children[0]?.detached === true,
+		);
+	});
+
+	it("classifies validation, script, return serialization, and child failures", async () => {
+		const assertFailureKind = async (script: string, kind: WorkflowScriptError["errorKind"], launch: (key: string) => Promise<WorkflowScriptChildResult> = async (key) => ({ key, ok: true, output: "ok", artifactPaths: [] })) => {
+			await assert.rejects(
+				runWorkflowScript({
+					script,
+					timeoutMs: 2_000,
+					launch,
+					async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				}),
+				(error: unknown) => error instanceof WorkflowScriptError && error.errorKind === kind,
+			);
+		};
+
+		await assertFailureKind("return (", "validation");
+		await assertFailureKind(`throw new Error("manual failure");`, "script");
+		await assertFailureKind(`return { value: 1n };`, "return-serialization");
+		await assertFailureKind(
+			`return runs.run("writer", { agent: "worker", task: "write" });`,
+			"child",
+			async (key) => ({ key, ok: false, output: "child failed", error: "child failed", artifactPaths: [] }),
 		);
 	});
 
