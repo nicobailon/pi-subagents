@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- After you upgrade pi-subagents, your first interactive session shows a short notice with the highlights of each new version and a link to the changelog. It is shown once and never enters the conversation, so it does not change the model's context or prompt cache. A fresh install and child sessions show nothing.
+
 ## [0.73.1] - 2026-09-27
 
 ### Highlights

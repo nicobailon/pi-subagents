@@ -103,6 +103,7 @@ import {
 	SUBAGENT_CONTROL_MESSAGE_TYPE,
 	type SubagentControlMessageDetails,
 } from "./control-notices.ts";
+import { showUpgradeNotice } from "./upgrade-notice.ts";
 
 export { loadConfig, resolveAsyncByDefault } from "./config.ts";
 
@@ -1233,6 +1234,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		await herdrStatusBridge.flush();
 	});
 
+	// Child processes and Herdr panes never load this module; in-process children have no UI.
+	pi.on("session_start", (_event, ctx) => void showUpgradeNotice(ctx).catch(() => {}));
 	pi.on("session_start", (_event, ctx) => beginAdvertisement(ctx));
 
 	registerSubagentToolActivation(pi, {
