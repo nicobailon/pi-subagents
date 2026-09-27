@@ -71,7 +71,7 @@ describe("async stale-run reconciliation", () => {
 		}
 	});
 
-	it("trusts ESRCH when the observer cannot read its own PID namespace", () => {
+	it("does not repair a recent namespaced run from an observer without a PID namespace", () => {
 		const root = tempRoot("pi-stale-run-pid-namespace-unknown-");
 		try {
 			const asyncDir = path.join(root, "run-dead");
@@ -92,8 +92,8 @@ describe("async stale-run reconciliation", () => {
 				now: () => 2000,
 			});
 
-			assert.equal(result.repaired, true);
-			assert.equal(result.status?.state, "failed");
+			assert.equal(result.repaired, false);
+			assert.equal(result.status?.state, "running");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

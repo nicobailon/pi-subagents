@@ -435,7 +435,8 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 	}
 
 	const observedScope = options.pidNamespaceScope ? options.pidNamespaceScope() : currentPidNamespaceScope();
-	const pidScopeMismatch = effectiveStatus.pidNamespaceScope !== undefined && observedScope !== undefined && effectiveStatus.pidNamespaceScope !== observedScope;
+	// An observer without a scope (macOS/Windows host sharing a container's temp root) cannot match a recorded one.
+	const pidScopeMismatch = effectiveStatus.pidNamespaceScope !== undefined && effectiveStatus.pidNamespaceScope !== observedScope;
 	const observedLiveness = checkPidLiveness(effectiveStatus.pid, options.kill);
 	const liveness = observedLiveness === "dead" && pidScopeMismatch ? "unknown" : observedLiveness;
 	if (liveness !== "dead") {
