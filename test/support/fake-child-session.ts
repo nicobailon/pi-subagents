@@ -9,6 +9,7 @@
  * failure a non-zero `exitCode` raises.
  */
 import * as fs from "node:fs";
+import { THINKING_LEVELS, type ThinkingLevel } from "../../src/shared/model-info.ts";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -201,6 +202,18 @@ function parseRawStdout(response: FakeChildResponse): unknown[] {
 }
 
 /** Model id without a `:thinking` suffix, as the child would report it. */
+/** Queue-dir file holding the thinking level fake sessions report; a file so runner-hosted fakes see it too. */
+export const SESSION_THINKING_FILE = "session-thinking.json";
+
+function reportedSessionThinking(dir: string): ThinkingLevel | undefined {
+	try {
+		const level: unknown = JSON.parse(fs.readFileSync(path.join(dir, SESSION_THINKING_FILE), "utf-8"));
+		return THINKING_LEVELS.find((candidate) => candidate === level);
+	} catch {
+		return undefined;
+	}
+}
+
 function reportedModel(model: string | undefined): string | undefined {
 	if (!model) return undefined;
 	const colon = model.lastIndexOf(":");
@@ -222,6 +235,7 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 			const queuedWaiters: Array<() => void> = [];
 			let boundaryOpen = false;
 			const model = reportedModel(launch.model);
+			const sessionThinking = reportedSessionThinking(queueDir());
 			let abortResolve: (() => void) | undefined;
 			const abortedPromise = new Promise<void>((resolve) => { abortResolve = resolve; });
 			const sessionId = randomUUID();
@@ -501,6 +515,7 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 				get sessionFile() { return sessionFile; },
 				get sessionId() { return sessionId; },
 				get modelId() { return model; },
+				get thinkingLevel() { return sessionThinking; },
 			};
 			record.session = session;
 			return session;

@@ -12,7 +12,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setChildSessionFactory, setChildSessionFactoryModule } from "../../src/runs/shared/child-session.ts";
-import { createFakeChildSessions, type FakeChildResponse, type FakeChildSessionRecord } from "./fake-child-session.ts";
+import { createFakeChildSessions, SESSION_THINKING_FILE, type FakeChildResponse, type FakeChildSessionRecord } from "./fake-child-session.ts";
 
 export type MockPiResponse = FakeChildResponse;
 
@@ -25,6 +25,8 @@ export interface MockPi {
 	install(): void;
 	uninstall(): void;
 	onCall(response: MockPiResponse): void;
+	/** Thinking level every fake child session reports until the next reset, standing in for Pi's own resolution. */
+	setSessionThinking(level: string): void;
 	reset(): void;
 	callCount(): number;
 }
@@ -97,6 +99,10 @@ export function createMockPi(): MockPi {
 			fs.writeFileSync(tempPath, JSON.stringify(response), "utf-8");
 			fs.renameSync(tempPath, finalPath);
 			fs.writeFileSync(path.join(queueDir, DEFAULT_RESPONSE_FILE), JSON.stringify(response), "utf-8");
+		},
+		setSessionThinking(level) {
+			ensureDir(queueDir);
+			fs.writeFileSync(path.join(queueDir, SESSION_THINKING_FILE), JSON.stringify(level), "utf-8");
 		},
 		reset() {
 			nextSequence = 0;

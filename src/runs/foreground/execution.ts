@@ -1390,6 +1390,10 @@ async function runSingleAttempt(
 					return;
 				}
 				session = created;
+				if (created.thinkingLevel) {
+					progress.sessionThinking = created.thinkingLevel;
+					result.sessionThinking = created.thinkingLevel;
+				}
 				const steer = created.steer.bind(created);
 				const followUp = created.followUp.bind(created);
 				created.steer = async (text) => {

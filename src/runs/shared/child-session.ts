@@ -8,6 +8,7 @@
  * `createAgentSession` from a pi package module.
  */
 import * as fs from "node:fs";
+import type { ThinkingLevel } from "../../shared/model-info.ts";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -107,6 +108,8 @@ export interface ChildSession {
 	readonly sessionId: string;
 	readonly modelId: string | undefined;
 	readonly contextWindow?: number;
+	/** Thinking level the Pi session runs at, after Pi's defaulting and model clamp. */
+	readonly thinkingLevel?: ThinkingLevel;
 	readonly machineEvidence?: { machineId: string; initial?: HerdrRemoteGitStatus; final?: HerdrRemoteGitStatus };
 	/** Event-updated pane-native status; reading it performs no network work. */
 	readonly placementSnapshot?: unknown;
@@ -429,6 +432,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				get sessionId() { return session.sessionId; },
 				get modelId() { return session.model ? `${session.model.provider}/${session.model.id}` : undefined; },
 				get contextWindow() { return session.model?.contextWindow; },
+				get thinkingLevel() { return session.thinkingLevel; },
 			};
 			live.add(child);
 			return child;
