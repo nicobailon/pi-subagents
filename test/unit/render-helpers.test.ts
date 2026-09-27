@@ -425,6 +425,29 @@ test("glyphs that stand for several children take the main session's thinking co
 	}
 });
 
+test("compact workflow lanes take their one child's level, or the main session's for several", () => {
+	setMainThinkingLevelSource(() => "xhigh");
+	try {
+		const now = Date.now();
+		const job = {
+			asyncId: "wf-lanes", asyncDir: "/tmp/wf-lanes", status: "running", mode: "workflow", startedAt: now, updatedAt: now,
+			preflight: { version: 1, coverage: "partial", lanes: [{ key: "review", mode: "review" }, { key: "write", mode: "mutation" }] },
+			steps: [
+				{ index: 0, workflowKey: "review.a", agent: "reviewer", status: "running", thinking: "low" },
+				{ index: 1, workflowKey: "review.b", agent: "reviewer", status: "running", thinking: "high" },
+				{ index: 2, workflowKey: "write", agent: "worker", status: "running", sessionThinking: "medium" },
+			],
+			workflow: { trace: [], emits: [], console: [] },
+		} as AsyncJobState;
+		const lines = buildWidgetLines([job], toneTheme as never, 180, false, 0);
+		const laneTone = (key: string) => runningGlyphTone(lines.find((line) => new RegExp(`\\s${key} \u00b7 `).test(withoutTones(line))));
+		assert.equal(laneTone("review"), "thinking:xhigh", "two children");
+		assert.equal(laneTone("write"), "thinking:medium", "one child");
+	} finally {
+		setMainThinkingLevelSource(() => undefined);
+	}
+});
+
 test("running single-subagent cards show the configured detach shortcut", () => {
 	const running = {
 		...result("reviewer", ""),

@@ -1387,7 +1387,7 @@ function workflowChecklistWidgetLines(checklist: WorkflowChecklistProjection | u
 interface CompactWorkflowLaneRow {
 	key: string;
 	state: WorkflowChecklistState;
-	/** Thinking level of the lane's child when the lane stands for exactly one. */
+	/** Thinking level whose color a running lane glyph takes: its one child's, or the main session's when the lane stands for several. */
 	thinking?: ThinkingLevel;
 	agent?: string;
 	mode?: string;
@@ -1435,11 +1435,12 @@ function compactWorkflowLaneRow(key: string, items: readonly WorkflowChecklistIt
 	const toolCounts = items.map((item) => item.toolCount).filter((value): value is number => value !== undefined);
 	const durations = items.map((item) => item.durationMs).filter((value): value is number => value !== undefined);
 	const label = compactWorkflowLaneLabel(items, key);
+	const thinking = items.length === 1 ? items[0]?.thinking : mainThinkingLevel();
 	return {
 		key: boundedLaneValue(key, 40) ?? key,
 		state,
 		agent: compactWorkflowLaneOwner(items),
-		...(items.length === 1 && items[0]?.thinking ? { thinking: items[0].thinking } : {}),
+		...(thinking ? { thinking } : {}),
 		...(lane?.mode ? { mode: lane.mode } : {}),
 		...(lane?.decision ? { decision: boundedLaneValue(lane.decision, 56) } : {}),
 		...(lane?.claims?.length ? { claims: boundedLaneValue(lane.claims.join(", "), 56) } : {}),
