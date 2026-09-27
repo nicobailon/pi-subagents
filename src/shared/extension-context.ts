@@ -6,6 +6,11 @@ export function isStaleExtensionContextError(error: unknown): boolean {
 		&& /extension ctx is stale|extension context no longer active|stale after session replacement or reload/i.test(error.message);
 }
 
+/** Pi throws this from action methods while extensions are still loading, before it binds the runtime. */
+export function isUnboundExtensionRuntimeError(error: unknown): boolean {
+	return error instanceof Error && /extension runtime not initialized/i.test(error.message);
+}
+
 /** Run a synchronous operation against a cached UI context without leaking replacement errors. */
 export function withCachedUiContext<T>(
 	ctx: ExtensionContext | null | undefined,
