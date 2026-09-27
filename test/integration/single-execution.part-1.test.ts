@@ -16,6 +16,7 @@ import {
 	mockAssistantMessage, readCall, readCallArgs, readAllCallArgs, makeExecutor,
 	installSingleExecutionHooks,
 } from "../support/single-execution-fixture.ts";
+import { waitForAsyncResultFile, waitForAsyncState } from "../support/async-execution-fixture.ts";
 import assert from "node:assert/strict";
 import fsDefault, * as fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
@@ -1609,13 +1610,12 @@ Answer only from the supplied synthetic text.
 		assert.match(result.content[0]?.text ?? "", /Preflight: v1 · complete · 1 lane/);
 		assert.match(result.content[0]?.text ?? "", /Async workflow/);
 		assert.doesNotMatch(result.content[0]?.text ?? "", /argument-sentinel-2233/);
-		const statusPath = path.join(result.details.asyncDir!, "status.json");
-		let status: { runId?: string; toolCallId?: string; cwd?: string; sessionRoot?: string; state?: string; preflight?: unknown; steps?: Array<{ agent?: string; sessionName?: string; label?: string; phase?: string; workflowKey?: string; parentWorkflowRunId?: string; async?: boolean }>; workflow?: { value?: unknown; args?: Record<string, unknown>; argsDigest?: string; emits?: unknown[]; trace?: Array<{ key?: string; agent?: string; label?: string; phase?: string; state?: string }> } } = {};
-		for (let attempt = 0; attempt < 300; attempt++) {
-			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
-			if (status.state === "complete" || status.state === "failed") break;
-			await new Promise((resolve) => setTimeout(resolve, 20));
-		}
+		type WorkflowStatus = { runId?: string; toolCallId?: string; cwd?: string; sessionRoot?: string; state?: string; preflight?: unknown; steps?: Array<{ agent?: string; sessionName?: string; label?: string; phase?: string; workflowKey?: string; parentWorkflowRunId?: string; async?: boolean }>; workflow?: { value?: unknown; args?: Record<string, unknown>; argsDigest?: string; emits?: unknown[]; trace?: Array<{ key?: string; agent?: string; label?: string; phase?: string; state?: string }> } };
+		const status = await waitForAsyncState(
+			workflowRunId,
+			(candidate) => ["complete", "failed", "partial", "paused", "stopped", "rejected"].includes(candidate.state ?? ""),
+			60_000,
+		) as WorkflowStatus;
 		assert.equal(status.state, "complete");
 		assert.equal(status.runId, workflowRunId);
 		assert.equal(status.toolCallId, toolCallId);
@@ -2193,24 +2193,15 @@ Answer only from the supplied synthetic text.
 		const { asyncId: workflowRunId, asyncDir } = result.details;
 		assert.ok(workflowRunId);
 		assert.ok(asyncDir);
-		const statusPath = path.join(asyncDir, "status.json");
 		const eventsPath = path.join(asyncDir, "events.jsonl");
 		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
-		let liveStatus: AsyncStatus | undefined;
-		const activityDeadline = Date.now() + 5_000;
-		while (Date.now() < activityDeadline) {
-			if (fs.existsSync(statusPath)) {
-				const candidate = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
-				if (candidate.activityState === "needs_attention" && !candidate.steps?.[0]?.currentTool
-					&& controlPayloads.some((payload) => payload.event?.type === "needs_attention")) {
-					liveStatus = candidate;
-					break;
-				}
-			}
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
+		const liveStatus = await waitForAsyncState(
+			workflowRunId,
+			(candidate) => candidate.activityState === "needs_attention" && !candidate.steps?.[0]?.currentTool
+				&& controlPayloads.some((payload) => payload.event?.type === "needs_attention"),
+			60_000,
+		) as AsyncStatus;
 
-		assert.ok(liveStatus, "expected workflow status to expose idle child attention");
 		assert.equal(liveStatus.activityState, "needs_attention");
 		assert.equal(liveStatus.steps?.[0]?.activityState, "needs_attention");
 		assert.equal(liveStatus.steps?.[0]?.workflowKey, "stalled-review");
@@ -2244,11 +2235,7 @@ Answer only from the supplied synthetic text.
 
 		assert.equal(fs.existsSync(resultPath), false, "child must remain live until attention is observed");
 		fs.writeFileSync(releasePath, "release");
-		const completionDeadline = Date.now() + 5_000;
-		while (!fs.existsSync(resultPath)) {
-			if (Date.now() > completionDeadline) assert.fail("Timed out waiting for async workflow completion");
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
+		await waitForAsyncResultFile(workflowRunId, 60_000);
 		fs.rmSync(asyncDir, { recursive: true, force: true });
 		fs.rmSync(resultPath, { force: true });
 	});
@@ -2465,10 +2452,7 @@ Answer only from the supplied synthetic text.
 		assert.ok(childRunId);
 		const childDir = path.join(DIRS.async, childRunId);
 		const childResultPath = path.join(DIRS.results, `${childRunId}.json`);
-		for (let attempt = 0; attempt < 200 && !fs.existsSync(childResultPath); attempt++) {
-			await new Promise((resolve) => setTimeout(resolve, 20));
-		}
-		assert.equal(fs.existsSync(childResultPath), true);
+		await waitForAsyncResultFile(childRunId, 60_000);
 		assert.equal(fs.existsSync(path.join(childDir, "workflow-result.json")), false);
 		fs.rmSync(childDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		fs.rmSync(childResultPath, { force: true });
