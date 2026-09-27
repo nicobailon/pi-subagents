@@ -1430,13 +1430,14 @@ Answer only from the supplied synthetic text.
 		);
 		assert.ok(failed.details.asyncDir);
 		const failedStatusPath = path.join(failed.details.asyncDir!, "status.json");
-		let failedStatus: { state?: string; workflowGraph?: { nodes?: Array<{ hostStep?: { state?: string; reasonCode?: string; exitCode?: number | null } }> } } = {};
+		let failedStatus: { state?: string; workflow?: { failureKind?: string }; workflowGraph?: { nodes?: Array<{ hostStep?: { state?: string; reasonCode?: string; exitCode?: number | null } }> } } = {};
 		for (let attempt = 0; attempt < 100; attempt += 1) {
 			failedStatus = JSON.parse(fs.readFileSync(failedStatusPath, "utf8"));
 			if (failedStatus.state === "complete" || failedStatus.state === "failed") break;
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
 		assert.equal(failedStatus.state, "failed");
+		assert.equal(failedStatus.workflow?.failureKind, "script");
 		assert.deepEqual(failedStatus.workflowGraph?.nodes?.map((node) => node.hostStep && { state: node.hostStep.state, reasonCode: node.hostStep.reasonCode, exitCode: node.hostStep.exitCode }), [{ state: "error", reasonCode: "command_failed", exitCode: 3 }]);
 		const failedReceipt = JSON.parse(fs.readFileSync(path.join(failed.details.asyncDir!, "workflow-receipt.json"), "utf8")) as { state?: string; hostSteps?: Array<{ state?: string; reasonCode?: string; exitCode?: number | null }> };
 		assert.equal(failedReceipt.state, "failed");
@@ -3599,6 +3600,7 @@ Answer only from the supplied synthetic text.
 		assert.match(result.content[0]?.text ?? "", new RegExp(`Workflow '${workflowId}' validation failed before child launch; no children launched`));
 		assert.match(result.content[0]?.text ?? "", /Parallel plus sequential rewrite/);
 		assert.deepEqual(result.details.results, []);
+		assert.equal(result.details.workflow?.failureKind, "validation");
 	});
 
 	it("replaces stale workflow output when a child claims its path but writes no report", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -3861,6 +3863,91 @@ Answer only from the supplied synthetic text.
 			{ key: "second", output: "second child completed" },
 		]);
 		assert.deepEqual(result.details.workflow?.value, ["first child completed", "second child completed"]);
+	});
+
+	it("cuts an oversized foreground workflow return, keeps the call trace, and saves the full result", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "scan done" });
+		const result = await makeExecutor([makeAgent("echo")]).execute(
+			"scripted-workflow-large-return",
+			{ async: false, workflowScript: `await runs.run("scan", { agent: "echo", task: "Scan" }); return "x".repeat(210000);` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const text = result.content[0]?.text ?? "";
+		assert.equal(result.isError, undefined, text);
+		assert.ok(Buffer.byteLength(text, "utf-8") < 210_000);
+		assert.match(text.slice(-500), /Call trace:\n- run scan: started\n- run scan: completed/);
+		const savedPath = /\[TRUNCATED: .* - full output at (.+)\]/.exec(text)?.[1];
+		assert.ok(savedPath, text.slice(0, 500));
+		assert.ok(!savedPath.includes(`${path.sep}outputs${path.sep}`), `full result must not share the child outputs tree: ${savedPath}`);
+		assert.ok(fs.readFileSync(savedPath, "utf-8").includes(`Return:\n${"x".repeat(210000)}`));
+	});
+
+	it("marks cut async workflow return previews and points to the full value", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const result = await executor.execute("scripted-workflow-large-async-return", { async: true, workflowScript: `return "y".repeat(2000);` }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		const workflowRunId = result.details.asyncId!;
+		const statusPath = path.join(result.details.asyncDir!, "status.json");
+		let status: { state?: string } = {};
+		for (let attempt = 0; attempt < 300; attempt++) {
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+			if (status.state === "complete" || status.state === "failed") break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(status.state, "complete");
+		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
+		const summary = (JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { summary?: string }).summary ?? "";
+		assert.ok(summary.includes(`Return: ${"y".repeat(1000)}… (truncated; full return value and emits: ${statusPath} workflow.value, workflow.emits)`), summary);
+		const statusText = (await executor.execute("status-large-return", { action: "status", id: workflowRunId }, new AbortController().signal, undefined, makeMinimalCtx(tempDir))).content[0]?.text ?? "";
+		assert.match(statusText, /Return: "y{239}…/);
+		assert.ok(statusText.includes(`Full return value and emits: ${statusPath} (workflow.value, workflow.emits)`), statusText);
+		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true });
+		fs.rmSync(resultPath, { force: true });
+	});
+
+	it("bounds a large child error in the workflow call trace", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ exitCode: 1, stderr: "c".repeat(300000) });
+		const result = await makeExecutor([makeAgent("echo")]).execute(
+			"scripted-workflow-large-child-error",
+			{ async: false, workflowScript: `try { await runs.run("scan", { agent: "echo", task: "Scan" }); } catch {} return "done";` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const text = result.content[0]?.text ?? "";
+		assert.ok(Buffer.byteLength(text, "utf-8") < 50_000, `${Buffer.byteLength(text, "utf-8")} bytes`);
+		assert.match(text, /- run scan: failed [\s\S]*c… \(\+\d+ chars\)/);
+		const savedPath = /\[TRUNCATED: trace errors shortened - full output at (.+)\]/.exec(text)?.[1];
+		assert.ok(savedPath && fs.readFileSync(savedPath, "utf-8").includes("c".repeat(300000)), text.slice(-400));
+	});
+
+	it("caps an oversized thrown workflow error in foreground text and async summaries", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const workflowScript = `throw new Error("e".repeat(300000));`;
+		const foreground = await executor.execute("scripted-workflow-large-error", { async: false, workflowScript }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		const text = foreground.content[0]?.text ?? "";
+		assert.equal(foreground.isError, true);
+		assert.ok(Buffer.byteLength(text, "utf-8") < 300_000);
+		const savedPath = /\[TRUNCATED: .* - full output at (.+)\]/.exec(text)?.[1];
+		assert.ok(savedPath && fs.readFileSync(savedPath, "utf-8").includes("e".repeat(300000)), text.slice(0, 500));
+
+		const started = await executor.execute("scripted-workflow-large-async-error", { async: true, workflowScript }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		const statusPath = path.join(started.details.asyncDir!, "status.json");
+		let status: { state?: string; error?: string } = {};
+		for (let attempt = 0; attempt < 300; attempt++) {
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+			if (status.state === "failed") break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(status.state, "failed");
+		assert.ok(status.error?.includes("e".repeat(300000)));
+		const resultPath = path.join(DIRS.results, `${started.details.asyncId}.json`);
+		const summary = (JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { summary?: string }).summary ?? "";
+		assert.ok(summary.length < 2_000 && summary.includes(`… (truncated; full error: ${statusPath} error)`), summary.slice(0, 300));
+		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true });
+		fs.rmSync(resultPath, { force: true });
 	});
 
 	it("rejects an over-limit runs.all batch before launching any workflow child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

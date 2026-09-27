@@ -25,6 +25,8 @@ A failure in the subagent workflow, child launch, prompt runtime, extension load
 
 Stop and report the exact failure, run/status, and repository/cwd/worktree/branch/ref state. Before a same-protocol retry or asking the owner, verify the worktree is clean or capture the partial diff. Retry or fix the `subagent` path only through a clear same-protocol action. For backlog lanes and other subagent-governed workflows, external/foreground/CLI fallback requires explicit owner approval. `interactive_shell` remains valid when the user explicitly requests visible foreground/CLI work or the task is outside the governed subagent protocol.
 
+Failed workflow details and async `status.json` include `workflow.failureKind` as `validation`, `script`, `child`, `return-serialization`, `timeout`, `detached-child`, or `runtime`. `validation` means the host rejected the script before it ran (syntax or portability) or at completion (unawaited calls); errors thrown into a running script, including rejected `runs.run` parameters and runtime `SyntaxError`s, are `script` because the script could catch them, and failed children are `child`. `runtime` covers host setup and infrastructure failures, such as an unavailable cwd or a crashed worker. A workflow that is stopped or reloaded is not a failure and has no `failureKind`.
+
 Pi core may print a generic `pi -ne` extension-load hint; that out-of-repo hint is not protocol-approved fallback. A verified compaction abort may continue the retained child once on its already resolved model; it does not authorize an execution-mode or model switch.
 
 ## Prompt shortcuts
@@ -426,6 +428,8 @@ For watched same-repo workflows, pass `async:false` only when the parent must bl
 
 Synchronous workflows publish trace and `emit(...)` updates through the tool update callback regardless of `chatProgress`, including RPC/headless and cross-repository runs. These updates include `details.workflow` and `details.workflowChildren`; `chatProgress: "off"` disables the live card, not transport progress. Running foreground child rows additionally expose bounded `activity` (current tool, timing, and counters), plus resolved model/thinking when available, keyed by `childId`. Activity-only updates coalesce over 100 ms; lifecycle updates remain immediate. Activity clears when children settle, and is not persisted for async workflows. Tool names are limited to 256 UTF-8 bytes and each activity object is below 2 KiB (including JSON escaping); arguments and transcripts are not forwarded.
 
+
+The workflow result text keeps the Return, Emitted, and Console sections, and a failed workflow's error, under 200 KB and 5000 lines by default, or under `maxOutput` when you set it. Each call-trace error is shortened to 500 characters. When anything is cut, a `[TRUNCATED: ... - full output at <path>]` line points to the uncut text, which is written to the workflow `output` file when one is set, otherwise to `workflow-results/<run>.md` under the run's artifacts directory (outside the `outputs/` tree where children save their reports). The status line, the rest of each trace line, warnings, and output-path mappings are never cut. Async completion notices and `action: "status"` show short previews. When a preview or an async error is cut, it ends in `…` and names the run's `status.json`, which holds the full `workflow.value`, `workflow.emits`, and `error`.
 The legacy `/chain`, `/parallel`, and `/run-chain` commands are not registered.
 
 ## Direct commands

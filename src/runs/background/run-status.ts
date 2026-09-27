@@ -595,6 +595,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}${status.workflowKey ? ` (${status.workflowKey})` : ""}` : undefined,
 				status.mode === "workflow" && workflowReturnPreview !== undefined ? `Return: ${workflowReturnPreview}` : undefined,
 				status.mode === "workflow" && workflowEmitPreview !== undefined ? `Latest emit: ${workflowEmitPreview}` : undefined,
+				status.mode === "workflow" && (workflowReturnPreview?.endsWith("…") || workflowEmitPreview?.endsWith("…")) ? `Full return value and emits: ${path.join(asyncDir, "status.json")} (workflow.value, workflow.emits)` : undefined,
 				`Progress: ${progressLabel}`,
 				...(status.mode === "workflow" ? formatWorkflowChecklistText(projectWorkflowChecklist({
 					graph: status.workflowGraph,

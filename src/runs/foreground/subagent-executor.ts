@@ -194,6 +194,7 @@ import {
 	type SubagentState,
 	DIRS,
 	DEFAULT_ARTIFACT_CONFIG,
+	DEFAULT_MAX_OUTPUT,
 	DEFAULT_FORK_PREAMBLE,
 	SUBAGENT_ACTIONS,
 	SUBAGENT_ASYNC_STARTED_EVENT,
@@ -206,6 +207,7 @@ import {
 	resolveChildMaxSubagentDepth,
 	resolveCurrentMaxSubagentDepth,
 	resolveMaxSubagentSpawnsPerRun,
+	truncateOutput,
 	wrapForkTask,
 	type ScheduleOrigin,
 	type SteeringTargetState,
@@ -3683,6 +3685,45 @@ function appendWorkflowOutputWarning(text: string, warning: string | undefined):
 	return warning ? `${text}\n\n${warning}` : text;
 }
 
+const WORKFLOW_TRACE_ERROR_MAX_CHARS = 500;
+
+// Return, emits, console, and trace errors (which carry child text) have no size limit of their
+// own, so only they are cut; other host sections stay whole. The saved full result is uncut.
+function formatWorkflowResultText(input: {
+	head: string[];
+	script: string[];
+	trace: Array<{ line: string; error?: string }>;
+	tail: string[];
+	maxOutput: MaxOutputConfig | undefined;
+	aggregateOutputPath: string | undefined;
+	fullResultPath: string;
+	producedChildOutputPaths: ReadonlySet<string>;
+}): string {
+	const traceSection = (error: (text: string) => string) => input.trace.length > 0
+		? [`Call trace:\n${input.trace.map((entry) => `${entry.line}${entry.error ? ` — ${error(entry.error)}` : ""}`).join("\n")}`]
+		: [];
+	const fullText = [...input.head, ...input.script, ...traceSection((error) => error), ...input.tail].join("\n\n");
+	const outputWarning = writeWorkflowAggregateOutput(input.aggregateOutputPath, fullText, input.producedChildOutputPaths);
+	const scriptText = input.script.join("\n\n");
+	const config = { ...DEFAULT_MAX_OUTPUT, ...input.maxOutput };
+	const scriptCut = truncateOutput(scriptText, config).truncated;
+	const traceCut = input.trace.some((entry) => (entry.error?.length ?? 0) > WORKFLOW_TRACE_ERROR_MAX_CHARS);
+	let shownScriptText = scriptText;
+	let saveWarning: string | undefined;
+	let savedPath: string | undefined;
+	if (scriptCut || traceCut) {
+		const aggregateHoldsFullText = input.aggregateOutputPath !== undefined && !outputWarning
+			&& !input.producedChildOutputPaths.has(resolveWorkflowHostOutputClaimPath(input.aggregateOutputPath));
+		if (!aggregateHoldsFullText) saveWarning = writeWorkflowAggregateOutput(input.fullResultPath, fullText, new Set());
+		savedPath = aggregateHoldsFullText ? input.aggregateOutputPath : saveWarning ? undefined : input.fullResultPath;
+		if (scriptCut) shownScriptText = truncateOutput(scriptText, config, savedPath).text;
+	}
+	const shownTrace = traceSection((error) => error.length > WORKFLOW_TRACE_ERROR_MAX_CHARS ? `${error.slice(0, WORKFLOW_TRACE_ERROR_MAX_CHARS)}… (+${error.length - WORKFLOW_TRACE_ERROR_MAX_CHARS} chars)` : error);
+	const traceNote = traceCut && !scriptCut && savedPath ? [`[TRUNCATED: trace errors shortened - full output at ${savedPath}]`] : [];
+	const text = [...input.head, ...(shownScriptText ? [shownScriptText] : []), ...shownTrace, ...input.tail, ...traceNote].join("\n\n");
+	return appendWorkflowOutputWarning(appendWorkflowOutputWarning(text, outputWarning), saveWarning);
+}
+
 export function resolveWorkflowChildLocalCwd(input: {
 	workflowCwd: string;
 	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[] };
@@ -6087,10 +6128,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						});
 						const finalPreflightWarnings = workflowPreflightWarnings(workflowPreflight, workflow.trace, { settled: true });
 						const finalPreflightTrace = annotateWorkflowPreflightTrace(workflow.trace, workflowPreflight);
-						const returnPreview = formatWorkflowValue(workflow.value).slice(0, 1_000);
-						const emitPreview = workflow.emits.length > 0 ? ` Emitted: ${workflow.emits.map(formatWorkflowValue).join(", ").slice(0, 1_000)}` : "";
+						const returnText = formatWorkflowValue(workflow.value);
+						const emitText = workflow.emits.map(formatWorkflowValue).join(", ");
+						const returnPreview = returnText.length > 1_000 ? `${returnText.slice(0, 1_000)}…` : returnText;
+						const emitPreview = workflow.emits.length > 0 ? ` Emitted: ${emitText.length > 1_000 ? `${emitText.slice(0, 1_000)}…` : emitText}` : "";
+						const previewNote = returnText.length > 1_000 || emitText.length > 1_000 ? ` (truncated; full return value and emits: ${statusPath} workflow.value, workflow.emits)` : "";
 						const runningSummary = workflowRunningChildrenSummary(workflow.children);
-						const summary = `${runningSummary ? `Workflow dispatch completed; ${runningSummary}` : `Workflow completed with ${workflow.children.length} child run(s).`} Return: ${returnPreview}${emitPreview} Trace: ${workflow.trace.length} event(s).${workflowOutputPathMappingSummary(workflow.children)}${finalPreflightWarnings.length ? ` ${finalPreflightWarnings.join(" ")}` : ""}`;
+						const summary = `${runningSummary ? `Workflow dispatch completed; ${runningSummary}` : `Workflow completed with ${workflow.children.length} child run(s).`} Return: ${returnPreview}${emitPreview}${previewNote} Trace: ${workflow.trace.length} event(s).${workflowOutputPathMappingSummary(workflow.children)}${finalPreflightWarnings.length ? ` ${finalPreflightWarnings.join(" ")}` : ""}`;
 						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, summary, producedChildOutputPaths);
 						const resultSummary = appendWorkflowOutputWarning(summary, outputWarning);
 						const workflowUsage = sumResultsUsage(workflowResults);
@@ -6135,14 +6179,16 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const workflowChildren = workflowChildSummary({ parentToolCallId: toolCallId, workflowRunId, workflowState, inventoryComplete: true, trace: partial.trace, children: partial.children, steps: status.steps });
 						const finalPreflightWarnings = workflowPreflightWarnings(workflowPreflight, partial.trace, { settled: true });
 						const finalPreflightTrace = annotateWorkflowPreflightTrace(partial.trace, workflowPreflight);
-						status = compactOptional<AsyncStatus>({ ...status, state, stopped: stopped || undefined, activityState: pauseForDetached || status.activityState === "needs_attention" ? "needs_attention" : undefined, error: workflowFailureMessage(error, workflowRunId, partial.children), endedAt: Date.now(), workflow: { trace: finalPreflightTrace, emits: partial.emits, console: partial.console, ...(workflowArgsEvidence ?? {}), ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}) }, workflowChildren });
+						status = compactOptional<AsyncStatus>({ ...status, state, stopped: stopped || undefined, activityState: pauseForDetached || status.activityState === "needs_attention" ? "needs_attention" : undefined, error: workflowFailureMessage(error, workflowRunId, partial.children), endedAt: Date.now(), workflow: { trace: finalPreflightTrace, emits: partial.emits, console: partial.console, ...(error instanceof WorkflowScriptError && error.errorKind ? { failureKind: error.errorKind } : {}), ...(workflowArgsEvidence ?? {}), ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}) }, workflowChildren });
 						if (pauseForDetached) {
 							const promoted = promotePausedWorkflowIfSettled(status);
 							if (promoted) status = promoted;
 						}
+						// A script can throw an error of any size; status.json keeps the full text.
+						const errorPreview = status.error && status.error.length > 1_000 ? `${status.error.slice(0, 1_000)}… (truncated; full error: ${statusPath} error)` : status.error;
 						const terminalSummary = `${status.state === "complete"
 							? "Workflow completed after detached child finished."
-							: status.error ?? (pauseForDetached ? "Workflow paused." : "Workflow failed.")}${workflowOutputPathMappingSummary(partial.children)}${finalPreflightWarnings.length ? ` ${finalPreflightWarnings.join(" ")}` : ""}`;
+							: errorPreview ?? (pauseForDetached ? "Workflow paused." : "Workflow failed.")}${workflowOutputPathMappingSummary(partial.children)}${finalPreflightWarnings.length ? ` ${finalPreflightWarnings.join(" ")}` : ""}`;
 						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, terminalSummary, producedChildOutputPaths);
 						const resultSummary = appendWorkflowOutputWarning(terminalSummary, outputWarning);
 						const receiptState: WorkflowReceiptState = status.state === "complete" ? "complete" : status.state === "paused" ? "paused" : status.state === "stopped" ? "stopped" : "failed";
@@ -6185,6 +6231,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
 			const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
 			const workflowAggregateOutputPath = resolveSingleOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, foregroundWorkflowRunId));
+			// Outside outputs/, where workflow children save their reports, so it cannot overwrite one.
+			const workflowFullResultPath = path.join(workflowArtifactsDir, "workflow-results", `${sanitizeRunPathSegment(foregroundWorkflowRunId)}.md`);
 			const claimedOutputPaths = new Map<string, string>();
 			const childOutputOverrides = new Map<string, string>();
 			const childOutputClaimPaths = new Map<string, string>();
@@ -6344,22 +6392,26 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const finalPreflightTrace = annotateWorkflowPreflightTrace(workflow.trace, workflowPreflight);
 				const workflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: foregroundWorkflowRunId, workflowState: "completed", inventoryComplete: true, trace: workflow.trace, children: workflow.children });
 				const receipt = terminalWorkflowReceipt(foregroundWorkflowRunId, "complete", workflow.children, workflowChildren, undefined, [...workflowHostSteps.values()], workflowResource?.provenance, workflowArgsDigest);
-				const traceLines = finalPreflightTrace.map((entry) => `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.durationMs !== undefined ? ` in ${entry.durationMs}ms` : ""}${entry.warning ? ` — ${entry.warning}` : ""}${entry.error ? ` — ${entry.error}` : ""}`);
+				const trace = finalPreflightTrace.map((entry) => ({ line: `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.durationMs !== undefined ? ` in ${entry.durationMs}ms` : ""}${entry.warning ? ` — ${entry.warning}` : ""}`, error: entry.error }));
 				const runningSummary = workflowRunningChildrenSummary(workflow.children);
-				const sections = [
-					...(workflowPreflight ? [formatWorkflowPreflight(workflowPreflight)] : []),
-					runningSummary ? `Workflow dispatch completed; ${runningSummary}` : "Workflow completed.",
-					`Return:\n${formatWorkflowValue(workflow.value)}`,
-				];
-				if (workflow.emits.length > 0) sections.push(`Emitted:\n${workflow.emits.map(formatWorkflowValue).join("\n")}`);
-				if (workflow.console.length > 0) sections.push(`Console:\n${workflow.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n")}`);
-				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
-				if (finalPreflightWarnings.length > 0) sections.push(formatWorkflowPreflightWarnings(finalPreflightWarnings));
 				const outputMappings = workflowOutputPathMappingSummary(workflow.children).trim();
-				if (outputMappings) sections.push(outputMappings);
-				const workflowText = sections.join("\n\n");
-				const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, workflowText, producedChildOutputPaths);
-				const displayText = appendWorkflowOutputWarning(workflowText, outputWarning);
+				const displayText = formatWorkflowResultText({
+					head: [...(workflowPreflight ? [formatWorkflowPreflight(workflowPreflight)] : []), runningSummary ? `Workflow dispatch completed; ${runningSummary}` : "Workflow completed."],
+					script: [
+						`Return:\n${formatWorkflowValue(workflow.value)}`,
+						...(workflow.emits.length > 0 ? [`Emitted:\n${workflow.emits.map(formatWorkflowValue).join("\n")}`] : []),
+						...(workflow.console.length > 0 ? [`Console:\n${workflow.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n")}`] : []),
+					],
+					trace,
+					tail: [
+						...(finalPreflightWarnings.length > 0 ? [formatWorkflowPreflightWarnings(finalPreflightWarnings)] : []),
+						...(outputMappings ? [outputMappings] : []),
+					],
+					maxOutput: requestParams.maxOutput,
+					aggregateOutputPath: workflowAggregateOutputPath,
+					fullResultPath: workflowFullResultPath,
+					producedChildOutputPaths,
+				});
 				return attachWorkflowMission(withRunFanoutBudget({
 					content: [{ type: "text", text: displayText }],
 					details: compactOptional<Details>({ mode: "workflow", runId: foregroundWorkflowRunId, results: workflowDetailsResults(workflow.children), ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflowChildren, totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { value: workflow.value, trace: finalPreflightTrace, emits: workflow.emits, console: workflow.console, ...(workflowArgsEvidence ?? {}), ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}), receipt }, chatProgress }),
@@ -6369,27 +6421,32 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const text = workflowFailureMessage(error, foregroundWorkflowRunId, partial.children);
 				const finalPreflightWarnings = workflowPreflightWarnings(workflowPreflight, partial.trace, { settled: true });
 				const finalPreflightTrace = annotateWorkflowPreflightTrace(partial.trace, workflowPreflight);
-				const traceLines = finalPreflightTrace.map((entry) => `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.warning ? ` — ${entry.warning}` : ""}${entry.error ? ` — ${entry.error}` : ""}`);
-				const sections = [
-					...(workflowPreflight ? [formatWorkflowPreflight(workflowPreflight)] : []),
-					`Workflow failed: ${text}`,
-				];
-				if (partial.emits.length > 0) sections.push(`Emitted:\n${partial.emits.map(formatWorkflowValue).join("\n")}`);
-				if (partial.console.length > 0) sections.push(`Console:\n${partial.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n")}`);
-				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
-				if (finalPreflightWarnings.length > 0) sections.push(formatWorkflowPreflightWarnings(finalPreflightWarnings));
+				const trace = finalPreflightTrace.map((entry) => ({ line: `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.warning ? ` — ${entry.warning}` : ""}`, error: entry.error }));
 				const outputMappings = workflowOutputPathMappingSummary(partial.children).trim();
-				if (outputMappings) sections.push(outputMappings);
-				const workflowText = sections.join("\n\n");
-				const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, workflowText, producedChildOutputPaths);
-				const displayText = appendWorkflowOutputWarning(workflowText, outputWarning);
+				const displayText = formatWorkflowResultText({
+					head: workflowPreflight ? [formatWorkflowPreflight(workflowPreflight)] : [],
+					script: [
+						`Workflow failed: ${text}`,
+						...(partial.emits.length > 0 ? [`Emitted:\n${partial.emits.map(formatWorkflowValue).join("\n")}`] : []),
+						...(partial.console.length > 0 ? [`Console:\n${partial.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n")}`] : []),
+					],
+					trace,
+					tail: [
+						...(finalPreflightWarnings.length > 0 ? [formatWorkflowPreflightWarnings(finalPreflightWarnings)] : []),
+						...(outputMappings ? [outputMappings] : []),
+					],
+					maxOutput: requestParams.maxOutput,
+					aggregateOutputPath: workflowAggregateOutputPath,
+					fullResultPath: workflowFullResultPath,
+					producedChildOutputPaths,
+				});
 				const workflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: foregroundWorkflowRunId, workflowState: "failed", inventoryComplete: true, trace: partial.trace, children: partial.children });
 				const terminalOutcome = workflowFailureTerminalOutcome(error, partial.children, usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)));
 				const receipt = terminalWorkflowReceipt(foregroundWorkflowRunId, "failed", partial.children, workflowChildren, terminalOutcome, [...workflowHostSteps.values()], workflowResource?.provenance, workflowArgsDigest);
 				return attachWorkflowMission(withRunFanoutBudget({
 					content: [{ type: "text", text: displayText }],
 					isError: true,
-					details: compactOptional<Details>({ mode: "workflow", runId: foregroundWorkflowRunId, results: workflowDetailsResults(partial.children), ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflowChildren, totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: finalPreflightTrace, emits: partial.emits, console: partial.console, ...(workflowArgsEvidence ?? {}), ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}), receipt }, chatProgress }),
+					details: compactOptional<Details>({ mode: "workflow", runId: foregroundWorkflowRunId, results: workflowDetailsResults(partial.children), ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflowChildren, totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: finalPreflightTrace, emits: partial.emits, console: partial.console, ...(error instanceof WorkflowScriptError && error.errorKind ? { failureKind: error.errorKind } : {}), ...(workflowArgsEvidence ?? {}), ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}), receipt }, chatProgress }),
 				}, workflowFanoutBudget));
 			} finally {
 				workflowProgressClosed = true;

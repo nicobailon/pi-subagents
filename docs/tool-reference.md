@@ -126,7 +126,7 @@ The complete plain-JSON inventory is validated before the first launch (maximum 
 | `preflight` | object | none | Advisory lane hints for `workflowScript` or `workflowScriptPath` only; not accepted with named workflows or direct children. See [bounded workflows](workflows.md#opt-in-bounded-workflows). |
 | `cwd` | string | runtime cwd | Override working directory. With `machine`, the directory on that machine. |
 | `machine` | string | - | Herdr saved machine (label or profile id) for external-cli agents; see [agents.md](agents.md#running-external-cli-agents-on-a-herdr-saved-machine). |
-| `maxOutput` | object | none | Final output truncation limits `{ bytes?, lines? }`. Only applied when set; there is no default cap on the inline path, so use `outputMode: "file-only"` for large outputs. |
+| `maxOutput` | object | none | Final output truncation limits `{ bytes?, lines? }`. For child runs it is only applied when set; there is no default cap on the inline path, so use `outputMode: "file-only"` for large outputs. For `workflowScript` results, the Return, Emitted, and Console sections are always capped, at 200 KB / 5000 lines unless `maxOutput` sets other limits. |
 | `artifacts` | boolean | true | Write debug artifacts. |
 | `includeProgress` | boolean | false | Include full progress in result. |
 | `share` | boolean | false | Upload session export to GitHub Gist. |
