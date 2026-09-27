@@ -908,7 +908,7 @@ export class SubagentFleetStatus {
 	}
 
 	private workflowRowGlyph(row: AsyncStatusWorkflowRow, theme: Theme): string {
-		if (!row.kind) return nestedStatusGlyph(row.state as FleetNestedRow["state"], theme);
+		if (!row.kind) return nestedStatusGlyph(row.state as FleetNestedRow["state"], theme, row.thinking);
 		const state = row.state as HostStepState;
 		if (state === "pending") return theme.fg("muted", "◦");
 		if (state === "running") return theme.fg("accent", "●");
@@ -919,7 +919,7 @@ export class SubagentFleetStatus {
 
 	private workflowRowStateLabel(row: AsyncStatusWorkflowRow, theme: Theme): string {
 		const state = row.kind ? hostStepVerdictLabel(row.state as HostStepState, row.verdict as HostStepVerdict | undefined) : row.state;
-		if (state === "running") return theme.fg("accent", state);
+		if (state === "running") return childRunningTone(theme, row.kind ? undefined : row.thinking)(state);
 		if (state === "pending" || state === "queued") return theme.fg("muted", state);
 		if (state === "pass" || state === "complete" || state === "completed") return theme.fg("success", state === "pass" ? "pass" : "complete");
 		if (state === "fail" || state === "failed" || state === "error") return theme.fg("error", state === "fail" ? "fail" : state);

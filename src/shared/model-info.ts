@@ -60,6 +60,22 @@ export function resolveEffectiveThinking(model: string | undefined, configThinki
 	return THINKING_LEVELS.find((level) => level === configThinking);
 }
 
+/** Where a child's thinking level is recorded: the level its Pi session reported, and the configured launch level. */
+export type ChildThinkingSource = { sessionThinking?: string; thinking?: string } | undefined;
+
+/** The level that stands for one child: a session-reported level from any source first, then the configured level. */
+export function childThinkingLevel(...sources: ChildThinkingSource[]): ThinkingLevel | undefined {
+	for (const source of sources) {
+		const level = THINKING_LEVELS.find((candidate) => candidate === source?.sessionThinking);
+		if (level) return level;
+	}
+	for (const source of sources) {
+		const level = THINKING_LEVELS.find((candidate) => candidate === source?.thinking);
+		if (level) return level;
+	}
+	return undefined;
+}
+
 export function splitKnownThinkingSuffix(model: string): { baseModel: string; thinkingSuffix: string } {
 	const colonIdx = model.lastIndexOf(":");
 	if (colonIdx === -1) return { baseModel: model, thinkingSuffix: "" };

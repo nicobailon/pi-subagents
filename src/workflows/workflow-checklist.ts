@@ -1,4 +1,5 @@
 import type { AsyncJobStep, HostStepNode, WorkflowGraphNode, WorkflowGraphSnapshot, WorkflowPreflightLane, WorkflowPreflight } from "../shared/types.ts";
+import { childThinkingLevel, type ThinkingLevel } from "../shared/model-info.ts";
 import { sanitizeDisplayText } from "../shared/display-text.ts";
 import { workflowPreflightLaneForRuntimeKey as laneFor } from "./workflow-preflight.ts";
 
@@ -6,6 +7,8 @@ export type WorkflowChecklistState = "complete" | "running" | "queued" | "blocke
 
 export interface WorkflowChecklistStep {
 	key?: string;
+	thinking?: string;
+	sessionThinking?: string;
 	workflowKey?: string;
 	runId?: string;
 	label?: string;
@@ -53,6 +56,8 @@ export interface WorkflowChecklistItem {
 	phase: string;
 	state: WorkflowChecklistState;
 	agent?: string;
+	/** Thinking level of the child this item stands for. */
+	thinking?: ThinkingLevel;
 	context?: "fresh" | "fork";
 	startedAt?: number;
 	durationMs?: number;
@@ -202,6 +207,7 @@ function stepItem(step: WorkflowChecklistStep, index: number, phase: string, key
 		phase,
 		state,
 		...(text(step.agent) ? { agent: text(step.agent) } : {}),
+		...(childThinkingLevel(step) ? { thinking: childThinkingLevel(step) } : {}),
 		...(step.context ? { context: step.context } : {}),
 		...(finite(step.startedAt) !== undefined ? { startedAt: finite(step.startedAt) } : {}),
 		...(duration(step, undefined, state) !== undefined ? { durationMs: duration(step, undefined, state) } : {}),

@@ -1631,4 +1631,40 @@ describe("below-editor subagent FleetView", () => {
 			fleet.dispose();
 		}
 	});
+
+	it("colors a running workflow child row and its state word by the child's thinking level", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("wf", {
+			asyncId: "wf", asyncDir: "/tmp/wf", status: "running", startedAt: Date.now(), mode: "workflow",
+			steps: [
+				{ index: 0, agent: "wf-writer", status: "running", thinking: "low", sessionThinking: "xhigh" },
+				{ index: 1, agent: "wf-scout", status: "running" },
+			],
+		});
+		const toneTheme = {
+			fg: (name: string, text: string) => `\u27e6${name}\u27e7${text}\u27e6/\u27e7`,
+			bg: (_name: string, text: string) => text,
+			bold: (text: string) => text,
+			getThinkingBorderColor: (level: string) => (text: string) => `\u27e6thinking:${level}\u27e7${text}\u27e6/\u27e7`,
+		};
+		let widgetFactory: ((tui: unknown, theme: typeof toneTheme) => { render(width: number): string[] }) | undefined;
+		const ctx = { hasUI: true, ui: {
+			setWidget(_key: string, content: typeof widgetFactory) { if (content) widgetFactory = content; },
+			onTerminalInput() { return () => {}; }, getEditorText() { return ""; },
+			requestRender() {}, notify() {}, theme: toneTheme,
+		} } as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext(ctx);
+			const component = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor }, toneTheme);
+			fleet.handleKey("\x1b[B");
+			const lines = component.render(240);
+			const row = (label: string) => lines.find((line) => line.includes(label) && /[\u251c\u2514]\u2500/.test(line)) ?? "";
+			assert.match(row("wf-writer"), /\u27e6thinking:xhigh\u27e7\u25cf\u27e6\/\u27e7/);
+			assert.match(row("wf-writer"), /\u27e6thinking:xhigh\u27e7running\u27e6\/\u27e7/);
+			assert.match(row("wf-scout"), /\u27e6accent\u27e7\u25cf\u27e6\/\u27e7/);
+		} finally {
+			fleet.dispose();
+		}
+	});
 });

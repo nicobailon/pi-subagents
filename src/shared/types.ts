@@ -204,6 +204,8 @@ export interface WorkflowChildSummary {
 		sessionName?: string;
 		model?: string;
 		thinking?: string;
+		/** Thinking level the child's Pi session runs at, once the session reports it. */
+		sessionThinking?: ThinkingLevel;
 		/** Present only while a synchronous foreground child is running. */
 		activity?: WorkflowChildActivity;
 		state: "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "rejected" | "detached";

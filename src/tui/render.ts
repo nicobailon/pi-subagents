@@ -1294,8 +1294,8 @@ function workflowChecklistStateLabel(state: WorkflowChecklistState): string {
 	return state;
 }
 
-function workflowChecklistGlyph(item: { state: WorkflowChecklistState; startedAt?: number; durationMs?: number; toolCount?: number; currentToolStartedAt?: number }, theme: Theme, frame?: number): string {
-	if (item.state === "running") return theme.fg("accent", runningGlyph(animatedSeed(runningSeed(item.startedAt, item.durationMs, item.toolCount, item.currentToolStartedAt), frame)));
+function workflowChecklistGlyph(item: { state: WorkflowChecklistState; startedAt?: number; durationMs?: number; toolCount?: number; currentToolStartedAt?: number; thinking?: ThinkingLevel }, theme: Theme, frame?: number): string {
+	if (item.state === "running") return childRunningTone(theme, item.thinking)(runningGlyph(animatedSeed(runningSeed(item.startedAt, item.durationMs, item.toolCount, item.currentToolStartedAt), frame)));
 	if (item.state === "complete") return theme.fg("success", "✓");
 	if (item.state === "blocked") return theme.fg("error", "!");
 	if (item.state === "failed") return theme.fg("error", "✗");
@@ -1381,6 +1381,8 @@ function workflowChecklistWidgetLines(checklist: WorkflowChecklistProjection | u
 interface CompactWorkflowLaneRow {
 	key: string;
 	state: WorkflowChecklistState;
+	/** Thinking level of the lane's child when the lane stands for exactly one. */
+	thinking?: ThinkingLevel;
 	agent?: string;
 	mode?: string;
 	decision?: string;
@@ -1431,6 +1433,7 @@ function compactWorkflowLaneRow(key: string, items: readonly WorkflowChecklistIt
 		key: boundedLaneValue(key, 40) ?? key,
 		state,
 		agent: compactWorkflowLaneOwner(items),
+		...(items.length === 1 && items[0]?.thinking ? { thinking: items[0].thinking } : {}),
 		...(lane?.mode ? { mode: lane.mode } : {}),
 		...(lane?.decision ? { decision: boundedLaneValue(lane.decision, 56) } : {}),
 		...(lane?.claims?.length ? { claims: boundedLaneValue(lane.claims.join(", "), 56) } : {}),
@@ -1504,7 +1507,7 @@ function compactWorkflowLaneLine(row: CompactWorkflowLaneRow, theme: Theme, inde
 		row.expectedOutput,
 		!row.mode && row.label ? row.label : undefined,
 	].filter((value): value is string => Boolean(value));
-	return `${indent}${workflowChecklistGlyph({ state: row.state, durationMs: row.durationMs, toolCount: row.toolUses }, theme, frame)} ${theme.bold(row.key)}${owner ? ` ${theme.fg("dim", `· ${owner}`)}` : ""}${state ? ` ${theme.fg("dim", `· ${state}`)}` : ""}${intent.length ? ` ${theme.fg("dim", `· ${intent.join(" · ")}`)}` : ""}`;
+	return `${indent}${workflowChecklistGlyph({ state: row.state, durationMs: row.durationMs, toolCount: row.toolUses, thinking: row.thinking }, theme, frame)} ${theme.bold(row.key)}${owner ? ` ${theme.fg("dim", `· ${owner}`)}` : ""}${state ? ` ${theme.fg("dim", `· ${state}`)}` : ""}${intent.length ? ` ${theme.fg("dim", `· ${intent.join(" · ")}`)}` : ""}`;
 }
 
 function compactWorkflowShortId(job: AsyncJobState): string {
@@ -3105,18 +3108,18 @@ function renderSingleCompact(
 	return c;
 }
 
-function workflowRowGlyph(row: WorkflowChatProgressRow, theme: Theme, frame?: number): string {
+function workflowRowGlyph(row: WorkflowChatProgressRow, theme: Theme, frame?: number, thinking?: ThinkingLevel): string {
 	if (row.state === "planned") return theme.fg("muted", "◦");
-	if (row.state === "running") return theme.fg("accent", runningGlyph(frame));
+	if (row.state === "running") return childRunningTone(theme, thinking)(runningGlyph(frame));
 	if (row.state === "complete") return theme.fg("success", "✓");
 	if (row.state === "detached" || row.state === "stopped") return theme.fg("warning", "■");
 	return theme.fg("error", "✗");
 }
 
-function workflowRowStateLabel(row: WorkflowChatProgressRow, theme: Theme): string {
+function workflowRowStateLabel(row: WorkflowChatProgressRow, theme: Theme, thinking?: ThinkingLevel): string {
 	const label = (row.state === "complete" ? "complete" : row.state).padEnd(8);
 	if (row.state === "planned") return theme.fg("dim", label);
-	if (row.state === "running") return theme.fg("accent", label);
+	if (row.state === "running") return childRunningTone(theme, thinking)(label);
 	if (row.state === "complete") return theme.fg("success", label);
 	if (row.state === "detached" || row.state === "stopped") return theme.fg("warning", label);
 	return theme.fg("error", label);
@@ -3155,6 +3158,8 @@ function foregroundWorkflowChecklist(details: Details): WorkflowChecklistProject
 			label: node?.label ?? workflowLabelForResult(details, resultIndex) ?? result.task ?? result.agent,
 			phase: node?.phase,
 			agent: result.agent,
+			thinking: result.thinking ?? progress?.thinking,
+			sessionThinking: result.sessionThinking ?? progress?.sessionThinking,
 			status,
 			context: result.context,
 			activityState: progress?.activityState,
@@ -3211,8 +3216,10 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 	}
 	const visible = visibleWorkflowRows(rows);
 	if (visible.hiddenRows > 0) c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}… ${visible.hiddenRows} older workflow rows hidden`), width), 0, 0));
+	const childLevels = new Map((d.workflowChildren?.children ?? []).map((child) => [child.childId, childThinkingLevel(child)]));
 	for (const row of visible.rows) {
-		const status = workflowRowStateLabel(row, theme);
+		const thinking = childLevels.get(row.key);
+		const status = workflowRowStateLabel(row, theme, thinking);
 		const label = row.label && row.label !== row.key ? ` ${oneLine(row.label)}` : "";
 		const duration = row.durationMs !== undefined ? ` ${theme.fg("dim", `· ${formatDuration(row.durationMs)}`)}` : "";
 		const run = row.runId ? ` ${theme.fg("dim", `[${row.runId.slice(0, 8)}]`)}` : "";
@@ -3224,7 +3231,7 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 			row.preflight.expectedOutput ? `expected:${row.preflight.expectedOutput}` : undefined,
 			row.preflight.independence ? `independence:${row.preflight.independence}` : undefined,
 		].filter((value): value is string => Boolean(value)).join(" · ") : "";
-		c.addChild(new Text(truncLine(`${rowIndent}${workflowRowGlyph(row, theme, frame)} ${status} ${theme.bold(row.key)}${label}${run}${duration}${error}${hints ? ` ${theme.fg("dim", `· ${hints}`)}` : ""}`, width), 0, 0));
+		c.addChild(new Text(truncLine(`${rowIndent}${workflowRowGlyph(row, theme, frame, thinking)} ${status} ${theme.bold(row.key)}${label}${run}${duration}${error}${hints ? ` ${theme.fg("dim", `· ${hints}`)}` : ""}`, width), 0, 0));
 	}
 	if (workflow?.preflightWarnings?.length) {
 		const warningLines = expanded

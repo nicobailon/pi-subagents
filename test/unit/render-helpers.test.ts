@@ -351,6 +351,40 @@ test("async widget rows for one child take its level while headers and multi-ste
 	assert.match(plannerRow ?? "", /⟦thinking:medium⟧running⟦\/⟧/);
 });
 
+test("workflow checklist rows take their child's level while phase rows stay accent", () => {
+	const details = {
+		mode: "workflow",
+		results: [{ ...runningResult("writer", { thinking: "low", sessionThinking: "max" }), workflowKey: "write" }],
+		workflowGraph: {
+			runId: "wf-levels", mode: "workflow",
+			phases: [{ title: "write", nodeIds: ["write"] }],
+			nodes: [{ id: "write", kind: "agent", agent: "writer", label: "Write", status: "running", flatIndex: 0 }],
+		},
+	};
+	const lines = componentText(renderSubagentResult({ content: [{ type: "text", text: "running" }], details } as never, { expanded: true }, toneTheme as never)).split("\n");
+	assert.equal(runningGlyphTone(lines.find((line) => line.includes("Write") && runningGlyphTone(line))), "thinking:max");
+	assert.ok(lines.some((line) => /write/i.test(line) && runningGlyphTone(line) === "accent"), "phase row stays accent");
+});
+
+test("workflow chat progress rows take the level of the child with the same key", () => {
+	const render = (renderTheme: object, mapText?: (text: string) => string) => componentText(renderSubagentResult({
+		content: [{ type: "text", text: "Workflow running." }],
+		details: {
+			mode: "workflow", runId: "wf_levels", results: [],
+			chatProgress: { mode: "live-card", repoRelation: "same", repoLabel: "pi-subagents" },
+			workflowChildren: { version: 1, parentToolCallId: "call", workflowRunId: "wf_levels", inventoryComplete: false, workflowState: "running", children: [{ childId: "tests", state: "running", thinking: "low", sessionThinking: "high" }] },
+			workflow: { trace: [
+				{ operation: "run", key: "tests", state: "started", phase: "Validation", label: "focused suite" },
+				{ operation: "run", key: "lint", state: "started", phase: "Validation", label: "lint" },
+			], emits: [], console: [] },
+		},
+	} as never, { expanded: false }, renderTheme as never), mapText);
+	const lines = render(toneTheme).split("\n");
+	assert.equal(runningGlyphTone(lines.find((line) => line.includes("tests focused suite"))), "thinking:high");
+	assert.equal(runningGlyphTone(lines.find((line) => line.includes("lint") && !line.includes("focused"))), "accent");
+	assert.equal(render(toneTheme, withoutTones), render(theme));
+});
+
 test("running single-subagent cards show the configured detach shortcut", () => {
 	const running = {
 		...result("reviewer", ""),
