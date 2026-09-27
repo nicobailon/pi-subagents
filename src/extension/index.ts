@@ -1235,7 +1235,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	// Child processes and Herdr panes never load this module; in-process children have no UI.
-	pi.on("session_start", (_event, ctx) => void showUpgradeNotice(ctx).catch(() => {}));
+	pi.on("session_start", (_event, ctx) => void showUpgradeNotice(ctx).catch((error) => console.error("Failed to show the pi-subagents upgrade notice:", error)));
 	pi.on("session_start", (_event, ctx) => beginAdvertisement(ctx));
 
 	registerSubagentToolActivation(pi, {
