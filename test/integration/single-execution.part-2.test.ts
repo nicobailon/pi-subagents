@@ -3914,16 +3914,21 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 
 	it("rejects workflow-script timeouts above the maximum schedulable timer delay before launch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
-		for (const key of ["timeoutMs", "maxRuntimeMs"] as const) {
+		const cases = [
+			{ name: "timeoutMs", params: { timeoutMs: 2_147_483_648 } },
+			{ name: "maxRuntimeMs", params: { maxRuntimeMs: 2_147_483_648 } },
+			{ name: "maxRuntimeMs", params: { timeoutMs: 1_000, maxRuntimeMs: 2_147_483_648 } },
+		] as const;
+		for (const { name, params } of cases) {
 			const result = await executor.execute(
-				`workflow-overflow-${key}`,
-				{ async: false, [key]: 2_147_483_648, workflowScript: `return await runs.run("never", { agent: "echo", task: "Never launch" });` },
+				`workflow-overflow-${name}`,
+				{ async: false, ...params, workflowScript: `return await runs.run("never", { agent: "echo", task: "Never launch" });` },
 				new AbortController().signal,
 				undefined,
 				makeMinimalCtx(tempDir),
 			);
 			assert.equal(result.isError, true);
-			assert.match(result.content[0]?.text ?? "", new RegExp(`${key} must be a positive integer no larger than 2147483647`));
+			assert.match(result.content[0]?.text ?? "", new RegExp(`${name} must be a positive integer no larger than 2147483647`));
 		}
 		assert.equal(readAllCallArgs().length, 0, "invalid workflow timeout must be rejected before child launch");
 	});

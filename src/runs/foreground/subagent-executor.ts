@@ -5314,13 +5314,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 			}
 			const parentCwd = ctx.cwd;
-			const explicitWorkflowTimeout = requestParams.timeoutMs !== undefined
-				? (["timeoutMs", requestParams.timeoutMs] as const)
-				: requestParams.maxRuntimeMs !== undefined
-					? (["maxRuntimeMs", requestParams.maxRuntimeMs] as const)
-					: undefined;
-			if (explicitWorkflowTimeout) {
-				const overflowError = timerDelayOverflowError(explicitWorkflowTimeout[0], explicitWorkflowTimeout[1]);
+			for (const [name, value] of [["timeoutMs", requestParams.timeoutMs], ["maxRuntimeMs", requestParams.maxRuntimeMs]] as const) {
+				if (value === undefined) continue;
+				const overflowError = timerDelayOverflowError(name, value);
 				if (overflowError) return buildRequestedModeError(requestParams, overflowError);
 			}
 			const timeout = requestParams.timeoutMs ?? requestParams.maxRuntimeMs ?? (requestParams.async === false ? resolveConfigDefaultTimeoutMs(deps.config.timeoutMs) ?? DEFAULT_FOREGROUND_TIMEOUT_MS : undefined);
