@@ -43,6 +43,7 @@ const theme = {
 	fg: (_name: string, text: string) => text,
 	bg: (_name: string, text: string) => text,
 	bold: (text: string) => text,
+	getThinkingBorderColor: (_level: string) => (text: string) => text,
 };
 
 describe("below-editor subagent FleetView", () => {
@@ -1590,6 +1591,42 @@ describe("below-editor subagent FleetView", () => {
 			assert.ok(restoredComponent.render(100).some((line) => line.includes("> worker")), "closing should restore the prior selected roster row");
 			assert.deepEqual(inputHandler!("\x1b"), { consume: true });
 			assert.equal(restoredComponent.render(100).length, 1, "Escape should return to the compact summary");
+		} finally {
+			fleet.dispose();
+		}
+	});
+
+	it("colors a running nested row by the thinking level of the child it stands for", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("owner", {
+			asyncId: "owner", asyncDir: "/tmp/owner", status: "running", startedAt: Date.now(), mode: "single",
+			steps: [{ index: 0, agent: "owner", status: "running" }],
+			nestedChildren: [
+				{ id: "leaf-run", parentRunId: "owner", parentStepIndex: 0, depth: 1, path: [{ runId: "owner", stepIndex: 0 }], state: "running", agent: "leaf-agent", thinking: "low", sessionThinking: "max" },
+				{ id: "fanout", parentRunId: "owner", parentStepIndex: 0, depth: 1, path: [{ runId: "owner", stepIndex: 0 }], state: "running", mode: "parallel", steps: [{ agent: "step-agent", status: "running", thinking: "medium" }] },
+			],
+		});
+		const toneTheme = {
+			fg: (name: string, text: string) => `⟦${name}⟧${text}⟦/⟧`,
+			bg: (_name: string, text: string) => text,
+			bold: (text: string) => text,
+			getThinkingBorderColor: (level: string) => (text: string) => `⟦thinking:${level}⟧${text}⟦/⟧`,
+		};
+		let widgetFactory: ((tui: unknown, theme: typeof toneTheme) => { render(width: number): string[] }) | undefined;
+		const ctx = { hasUI: true, ui: {
+			setWidget(_key: string, content: typeof widgetFactory) { if (content) widgetFactory = content; },
+			onTerminalInput() { return () => {}; }, getEditorText() { return ""; },
+			requestRender() {}, notify() {}, theme: toneTheme,
+		} } as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext(ctx);
+			const component = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor }, toneTheme);
+			fleet.handleKey("\x1b[B");
+			const lines = component.render(240);
+			const glyphTone = (label: string) => lines.find((line) => line.includes(label) && /[├└]─/.test(line))?.match(/⟦([^⟧]+)⟧●⟦\/⟧/)?.[1];
+			assert.equal(glyphTone("leaf-agent"), "thinking:max");
+			assert.equal(glyphTone("step-agent"), "thinking:medium");
 		} finally {
 			fleet.dispose();
 		}

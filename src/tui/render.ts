@@ -2166,8 +2166,8 @@ function nestedRunName(run: NestedRunSummary): string {
 	return run.id;
 }
 
-function nestedStatusGlyph(state: NestedRunSummary["state"] | NestedStepSummary["status"], theme: Theme, seed?: number): string {
-	if (state === "running") return theme.fg("accent", runningGlyph(seed));
+function nestedStatusGlyph(state: NestedRunSummary["state"] | NestedStepSummary["status"], theme: Theme, seed?: number, thinking?: ThinkingLevel): string {
+	if (state === "running") return childRunningTone(theme, thinking)(runningGlyph(seed));
 	if (state === "complete" || state === "completed") return theme.fg("success", "✓");
 	if (state === "failed") return theme.fg("error", "✗");
 	if (state === "partial") return theme.fg("warning", "■");
@@ -2246,7 +2246,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 			const name = "status" in step ? childDisplayName(step) : nestedRunName(step);
 			rows.push({
 				prefix,
-				text: `${nestedTimestampPrefix(timestamp)}${nestedStatusGlyph(state, theme)} ${name} · ${state}${modelThinking ? ` · ${modelThinking}` : ""}${activity ? ` · ${activity}` : ""}${error}`,
+				text: `${nestedTimestampPrefix(timestamp)}${nestedStatusGlyph(state, theme, undefined, childThinkingLevel(step))} ${name} · ${state}${modelThinking ? ` · ${modelThinking}` : ""}${activity ? ` · ${activity}` : ""}${error}`,
 			});
 		};
 		for (const child of children) {
@@ -2257,7 +2257,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 				const ownerError = child.error ? ` · ${child.error}` : "";
 				rows.push({
 					prefix: "↳ ",
-					text: `OWNER ${nestedStatusGlyph(child.state, theme, nestedRunSeed(child))} ${nestedRunName(child)} · ${child.state}${ownerModelThinking ? ` · ${ownerModelThinking}` : ""}${ownerActivity ? ` · ${ownerActivity}` : ""}${ownerError}`,
+					text: `OWNER ${nestedStatusGlyph(child.state, theme, nestedRunSeed(child), childThinkingLevel(child))} ${nestedRunName(child)} · ${child.state}${ownerModelThinking ? ` · ${ownerModelThinking}` : ""}${ownerActivity ? ` · ${ownerActivity}` : ""}${ownerError}`,
 				});
 				for (const step of steps) appendLeaf(step, "↳ │  ", child.lastUpdate);
 			} else {
@@ -2296,7 +2296,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 			const activity = nestedActivity(child, child.state, snapshotNow ?? child.lastUpdate);
 			const error = child.error ? ` · ${child.error}` : "";
 			const modelThinking = formatModelThinking(child.model, child.thinking);
-			lines.push(theme.fg("dim", `${prefix}↳ ${nestedTimestampPrefix(formatClockTime(nestedRunEventTime(child)))}${nestedStatusGlyph(child.state, theme, nestedRunSeed(child))} ${nestedRunName(child)} · ${child.state}${modelThinking ? ` · ${modelThinking}` : ""} · ${activity}${error}`));
+			lines.push(theme.fg("dim", `${prefix}↳ ${nestedTimestampPrefix(formatClockTime(nestedRunEventTime(child)))}${nestedStatusGlyph(child.state, theme, nestedRunSeed(child), childThinkingLevel(child))} ${nestedRunName(child)} · ${child.state}${modelThinking ? ` · ${modelThinking}` : ""} · ${activity}${error}`));
 			if (depth === maxDepth) {
 				const aggregate = formatNestedAggregate([...(child.steps?.flatMap((step) => step.children ?? []) ?? []), ...(child.children ?? [])]);
 				if (aggregate && lines.length < lineBudget) lines.push(theme.fg("dim", `${prefix}  ↳ ${aggregate}`));
@@ -2305,7 +2305,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 			for (const step of child.steps ?? []) {
 				if (lines.length >= lineBudget) return;
 				const modelThinking = formatModelThinking(step.model, step.thinking);
-				lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedTimestampPrefix(nestedStepTimestamp(step, child.lastUpdate))}${nestedStatusGlyph(step.status, theme)} ${childDisplayName(step)} · ${step.status}${modelThinking ? ` · ${modelThinking}` : ""} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate)}`));
+				lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedTimestampPrefix(nestedStepTimestamp(step, child.lastUpdate))}${nestedStatusGlyph(step.status, theme, undefined, childThinkingLevel(step))} ${childDisplayName(step)} · ${step.status}${modelThinking ? ` · ${modelThinking}` : ""} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate)}`));
 				append(step.children, depth + 1, `${prefix}    `);
 			}
 			append(child.children, depth + 1, `${prefix}  `);

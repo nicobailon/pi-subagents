@@ -1615,6 +1615,8 @@ export interface NestedStepSummary {
 	status: "pending" | "running" | "complete" | "completed" | "failed" | "partial" | "paused" | "stopped" | "rejected";
 	model?: string;
 	thinking?: string;
+	/** Thinking level the child's Pi session runs at, once the session reports it. */
+	sessionThinking?: ThinkingLevel;
 	sessionFile?: string;
 	transcriptPath?: string;
 	transcriptError?: string;
@@ -1668,6 +1670,8 @@ export interface NestedRunSummary extends NestedRunAddress {
 	agents?: string[];
 	model?: string;
 	thinking?: string;
+	/** Thinking level the child's Pi session runs at, once the session reports it. */
+	sessionThinking?: ThinkingLevel;
 	currentStep?: number;
 	chainStepCount?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
