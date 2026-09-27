@@ -60,7 +60,7 @@ import { resolvePermissionRules } from "../shared/permissions.ts";
 import { applyThinkingSuffix, deriveForkPromptCacheKey } from "../shared/child-tool-plan.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
-import { resolveEffectiveThinking } from "../../shared/model-info.ts";
+import { resolveEffectiveThinking, THINKING_LEVELS } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling, intersectThinkingCeilings } from "../../shared/thinking-ceiling.ts";
 import { formatStructuredOutputRejectionError, MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, MISSING_STRUCTURED_OUTPUT_CALL_ERROR } from "../shared/structured-output.ts";
 import { formatMidToolExitError, isOrdinaryToolForMidToolExit } from "../shared/process-signal.ts";
@@ -967,6 +967,14 @@ async function runSingleAttempt(
 			jsonlWriter.writeLine(JSON.stringify(projectChildSessionEventForJson(evt)));
 			shared.transcriptWriter?.writeChildEvent(evt);
 			shared.orcaProgressTab?.event(evt);
+			if (evt.type === "thinking_level_changed") {
+				const level = THINKING_LEVELS.find((candidate) => candidate === evt.level);
+				if (level) {
+					progress.sessionThinking = level;
+					result.sessionThinking = level;
+					fireUpdate();
+				}
+			}
 			if (evt.type === "compaction_start") compactionStartedReceived = true;
 			if (evt.type === "compaction_end" && evt.willRetry === true) {
 				compactionStartedReceived = false;

@@ -9,7 +9,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse } from "../../shared/utils.ts";
 import type { EffectsProjection, RuntimeAcknowledgedChildExtensions, SubagentOutputState, ToolBudgetState, Usage } from "../../shared/types.ts";
-import type { ThinkingLevel } from "../../shared/model-info.ts";
+import { THINKING_LEVELS, type ThinkingLevel } from "../../shared/model-info.ts";
 import {
 	acceptChildWatchdogEvent,
 	applyChildWatchdogMessage,
@@ -417,6 +417,10 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 			const event = raw as ChildSessionEvent & ChildEvent;
 			appendChildEvent(projectChildSessionEventForJson(raw) as Record<string, unknown>);
 			input.transcriptWriter?.writeChildEvent(projectChildSessionEventForJson(raw) as ChildEvent);
+			if (raw.type === "thinking_level_changed") {
+				const level = THINKING_LEVELS.find((candidate) => candidate === raw.level);
+				if (level) input.onSessionThinking?.(level);
+			}
 			if (event.type === "compaction_start") compactionStartedReceived = true;
 			if (event.type === "compaction_end" && event.willRetry === true) {
 				compactionStartedReceived = false;
