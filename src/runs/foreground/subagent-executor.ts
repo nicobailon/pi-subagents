@@ -6213,7 +6213,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
 			const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
 			const workflowAggregateOutputPath = resolveSingleOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, foregroundWorkflowRunId));
-			const workflowFullResultPath = path.join(workflowArtifactsDir, "outputs", sanitizeRunPathSegment(foregroundWorkflowRunId), "workflow-result.md");
+			// Outside outputs/, where workflow children save their reports, so it cannot overwrite one.
+			const workflowFullResultPath = path.join(workflowArtifactsDir, "workflow-results", `${sanitizeRunPathSegment(foregroundWorkflowRunId)}.md`);
 			const claimedOutputPaths = new Map<string, string>();
 			const childOutputOverrides = new Map<string, string>();
 			const childOutputClaimPaths = new Map<string, string>();

@@ -3882,6 +3882,7 @@ Answer only from the supplied synthetic text.
 		assert.match(text.slice(-500), /Call trace:\n- run scan: started\n- run scan: completed/);
 		const savedPath = /\[TRUNCATED: .* - full output at (.+)\]/.exec(text)?.[1];
 		assert.ok(savedPath, text.slice(0, 500));
+		assert.ok(!savedPath.includes(`${path.sep}outputs${path.sep}`), `full result must not share the child outputs tree: ${savedPath}`);
 		assert.ok(fs.readFileSync(savedPath, "utf-8").includes(`Return:\n${"x".repeat(210000)}`));
 	});
 
