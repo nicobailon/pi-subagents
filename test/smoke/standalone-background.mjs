@@ -32,7 +32,7 @@ function run(name, command, args) {
 	assert.ifError(result.error);
 	return result;
 }
-// The matrix packs once and passes the tarball so parallel modes never race on dist-pkg.
+// The matrix packs once and passes the tarball so every mode stages the same candidate.
 const prebuilt = process.argv[5];
 let tarball;
 if (prebuilt) {

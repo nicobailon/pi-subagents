@@ -1,7 +1,7 @@
 // Derived from xz-dev's PR #2049 (910807bf). Fresh isolated stages, one pinned input snapshot.
 // node test/smoke/standalone-matrix.mjs /absolute/official-pi /fresh/artifacts
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -44,40 +44,19 @@ const candidate = path.join(candidateDir, JSON.parse(packed.stdout)[0].filename)
 const packageSha = sha(candidate);
 const modes = ["single", "workflow", "shared-run", "parallel-stop", "targeted-controls", "steer", "interrupt", "stop", "child-stop", "child-timeout", "run-timeout", "tool-timeout", "missing-bootstrap", "persistence-failure", "authorization-failure", "sdk-init-failure", "bootstrap-errors", "revival"];
 const receipt = { release, complete: false, cases: [] };
-// Modes are isolated in separate stages and sandboxes and spend most of their time waiting on child processes.
-const concurrency = 4;
-function runMode(mode) {
+// Modes run one at a time: they are CPU-bound, and four concurrent modes missed the parent's 45s deadline.
+for (const mode of modes) {
 	assertFrozen();
-	const startedAt = new Date();
-	return new Promise((resolve) => {
-		const child = spawn(process.execPath, [path.join(source, "test/smoke/standalone-background.mjs"), binary, path.join(root, mode), mode, candidate], { cwd: source, stdio: ["ignore", "pipe", "pipe"], timeout: 180000 });
-		let output = "";
-		child.stdout.on("data", (chunk) => { output += chunk; });
-		child.stderr.on("data", (chunk) => { output += chunk; });
-		let error;
-		child.on("error", (spawnError) => { error = spawnError; });
-		child.on("close", (exitCode, signal) => {
-			fs.writeFileSync(path.join(root, `${mode}.log`), output);
-			resolve({ mode, startedAt: startedAt.toISOString(), durationMs: Date.now() - startedAt.getTime(), exitCode, error: error?.message ?? (signal ? `terminated by ${signal}` : undefined) });
-		});
-	});
-}
-const results = new Map();
-const queue = [...modes];
-await Promise.all(Array.from({ length: concurrency }, async () => {
-	for (let mode = queue.shift(); mode; mode = queue.shift()) {
-		const result = await runMode(mode);
-		results.set(mode, result);
-		receipt.cases = modes.filter((name) => results.has(name)).map((name) => results.get(name));
-		fs.writeFileSync(path.join(root, "matrix.json"), JSON.stringify(receipt, null, 2));
-		console.log(`${result.exitCode === 0 && !result.error ? "PASS" : "FAIL"} ${mode} (${Math.round(result.durationMs / 1000)}s)`);
-	}
-}));
-for (const { mode, exitCode, error } of receipt.cases) {
-	assert.equal(error, undefined, `${mode} failed: ${error}`);
-	assert.equal(exitCode, 0, `${mode} failed; inspect ${path.join(root, `${mode}.log`)}`);
+	const startedAt = Date.now();
+	const result = spawnSync(process.execPath, [path.join(source, "test/smoke/standalone-background.mjs"), binary, path.join(root, mode), mode, candidate], { cwd: source, encoding: "utf8", timeout: 180000, maxBuffer: 10 * 1024 * 1024 });
+	fs.writeFileSync(path.join(root, `${mode}.log`), `${result.stdout ?? ""}${result.stderr ?? ""}`);
+	receipt.cases.push({ mode, startedAt: new Date(startedAt).toISOString(), durationMs: Date.now() - startedAt, exitCode: result.status, error: result.error?.message });
+	fs.writeFileSync(path.join(root, "matrix.json"), JSON.stringify(receipt, null, 2));
+	assert.ifError(result.error);
+	assert.equal(result.status, 0, `${mode} failed; inspect ${path.join(root, `${mode}.log`)}`);
 	const identity = JSON.parse(fs.readFileSync(path.join(root, mode, "identity.json"), "utf8"));
 	assert.equal(sha(path.join(root, mode, identity.packed)), packageSha, "matrix modes used different packaged candidates");
+	console.log(`PASS ${mode} (${Math.round((Date.now() - startedAt) / 1000)}s)`);
 }
 assertFrozen();
 receipt.complete = true;
