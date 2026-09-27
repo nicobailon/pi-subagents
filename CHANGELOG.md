@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Run-level `timeoutMs` / `maxRuntimeMs` values above Node.js' maximum timer delay are now rejected before launch instead of overflowing `setTimeout` and timing out almost immediately. Thanks to [@quifox](https://github.com/quifox) for [#2517](https://github.com/nicobailon/pi-subagents/pull/2517).
+
 ## [0.73.0] - 2026-09-27
 
 ### Highlights
