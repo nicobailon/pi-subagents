@@ -177,3 +177,74 @@ it("emits bounded file-only snapshots, refreshes through management, and perform
 		fs.rmSync(home, { recursive: true, force: true });
 	}
 });
+
+it("delivers the catalog as a structured prompt section instead of replacing the system prompt", () => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "advertised-section-"));
+	const env = { ...process.env, PI_CODING_AGENT_DIR: home };
+	delete env[SUBAGENT_CHILD_ENV];
+	if (!env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]) {
+		const hostRoot = resolveInstalledPiPackageRoot();
+		if (hostRoot) env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = hostRoot;
+	}
+	try {
+		const output = execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", String.raw`
+			import assert from "node:assert/strict";
+			import fs from "node:fs";
+			import path from "node:path";
+			import register from "./src/extension/index.ts";
+			import { registerSubagentCapabilityCeiling } from "./src/runs/shared/capability-ceiling.ts";
+			const home = process.env.PI_CODING_AGENT_DIR;
+			const cwd = path.join(home, "project");
+			fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+			const dir = path.join(home, "agents");
+			fs.mkdirSync(dir);
+			fs.writeFileSync(path.join(dir, "specialist.md"), "---\nname: specialist\ndescription: Section specialist\nadvertise: true\n---\nAct narrowly.\n");
+			const handlers = new Map();
+			const pi = new Proxy({
+				events: { on() { return () => {}; }, emit() {} },
+				on(event, handler) { handlers.set(event, [...(handlers.get(event) ?? []), handler]); },
+				registerTool() {},
+				getActiveTools() { return ["subagent"]; },
+			}, { get(target, key) { return key in target ? target[key] : () => undefined; } });
+			register(pi);
+			const ctx = {
+				cwd, hasUI: false, model: { provider: "test", id: "test" },
+				modelRegistry: { getAvailable() { return []; }, getAll() { return []; } },
+				sessionManager: { getSessionId() { return "section-test"; }, getSessionFile() { return undefined; }, getBranch() { return []; } },
+			};
+			handlers.get("session_start").at(-2)({ reason: "startup" }, ctx);
+			const before = handlers.get("before_agent_start").at(-2);
+			const emit = async (selectedTools, sections = {}) => {
+				const event = { systemPrompt: "base", systemPromptOptions: { selectedTools, sections } };
+				return { result: await before(event, ctx), sections: event.systemPromptOptions.sections };
+			};
+
+			let turn = await emit(["subagent"]);
+			assert.equal(turn.result, undefined, "the sections path must not return systemPrompt");
+			assert.match(turn.sections.advertised_subagents, /<name>specialist<\/name>/);
+			assert.match(turn.sections.advertised_subagents, /Section specialist/);
+			assert.doesNotMatch(turn.sections.advertised_subagents, /advertised_subagents/, "Pi adds the tag from the section key");
+
+			turn = await emit(["read"]);
+			assert.equal(turn.result, undefined);
+			assert.equal("advertised_subagents" in turn.sections, false, "no section when subagent is not selected");
+
+			const ceiling = registerSubagentCapabilityCeiling({ sessionId: "section-test", source: "test", ceiling: { allowedAgents: [] } });
+			turn = await emit(["subagent"]);
+			assert.equal(turn.result, undefined);
+			assert.equal("advertised_subagents" in turn.sections, false, "no section when the ceiling excludes every agent");
+			ceiling.dispose();
+
+			turn = await emit(["subagent"], { other: "kept" });
+			assert.equal(turn.sections.other, "kept", "other sections are untouched");
+			assert.match(turn.sections.advertised_subagents, /<name>specialist<\/name>/);
+
+			const legacy = await before({ systemPrompt: "base", systemPromptOptions: { selectedTools: ["subagent"] } }, ctx);
+			assert.match(legacy.systemPrompt, /^base\n\n<advertised_subagents>\n[\s\S]*<name>specialist<\/name>[\s\S]*\n<\/advertised_subagents>$/, "hosts without sections keep the appended catalog");
+			process.stdout.write("section delivery passed");
+		`], { cwd: root, env, encoding: "utf8", timeout: 60_000 });
+		assert.match(output, /section delivery passed/);
+	} finally {
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});

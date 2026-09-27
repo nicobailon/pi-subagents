@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { appendAdvertisedAgentPrompt, buildAdvertisedAgentPrompt } from "../../src/agents/advertised-agent-prompt.ts";
+import { appendAdvertisedAgentPrompt, buildAdvertisedAgentCatalog, buildAdvertisedAgentPrompt } from "../../src/agents/advertised-agent-prompt.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 
 function agent(name: string, overrides: Partial<AgentConfig> = {}): AgentConfig {
@@ -78,6 +78,28 @@ describe("advertised agent prompt", () => {
 		const over = buildAdvertisedAgentPrompt([agent(`${name}x`, { advertise: true, description: "small" })])!;
 		assert.doesNotMatch(over, /<name>/);
 		assert.match(over, /<omitted count="1"/);
+	});
+
+	it("builds a section body without the outer tag that Pi adds from the section key", () => {
+		const agents = [agent("alpha", { advertise: true }), agent("hidden")];
+		const body = buildAdvertisedAgentCatalog(agents)!;
+		assert.doesNotMatch(body, /advertised_subagents/);
+		assert.match(body, /<name>alpha<\/name>/);
+		assert.doesNotMatch(body, /hidden/);
+		assert.equal(buildAdvertisedAgentPrompt(agents), `<advertised_subagents>\n${body}\n</advertised_subagents>`);
+		assert.equal(buildAdvertisedAgentCatalog([agent("hidden")]), undefined);
+	});
+
+	it("bounds the section body by the same wrapped byte budget", () => {
+		const agents = Array.from({ length: 40 }, (_, index) => agent(`agent-${String(index).padStart(2, "0")}`, {
+			advertise: true,
+			description: "🦜界".repeat(200),
+		}));
+		const body = buildAdvertisedAgentCatalog(agents)!;
+		const wrapped = buildAdvertisedAgentPrompt(agents)!;
+		assert.equal(wrapped, `<advertised_subagents>\n${body}\n</advertised_subagents>`);
+		assert.ok(Buffer.byteLength(wrapped) <= 12_288);
+		assert.match(body, /<omitted count="\d+" \/>/);
 	});
 
 	it("withdraws a reused catalog when the last advertised agent disappears", () => {

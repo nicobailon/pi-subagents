@@ -21,7 +21,7 @@ import { keyText, type ExtensionAPI, type ExtensionContext, type ToolDefinition 
 import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import { clearAgentDiscoveryCache, discoverAgentSnapshot, discoverAgents, discoverAgentsAll, type AgentConfig, type AgentScope } from "../agents/agents.ts";
 import { resolveGlobalNpmRoot } from "../agents/global-npm-root.ts";
-import { appendAdvertisedAgentPrompt, buildAdvertisedAgentPrompt } from "../agents/advertised-agent-prompt.ts";
+import { appendAdvertisedAgentPrompt, buildAdvertisedAgentCatalog, buildAdvertisedAgentPrompt } from "../agents/advertised-agent-prompt.ts";
 import { clearRuntimeAgentsForPi, listRuntimeAgentConfigs, mergeRuntimeAgents } from "../agents/runtime-agent-registry.ts";
 import { registerRuntimeAgentEventListener } from "../agents/runtime-agent-events.ts";
 import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
@@ -865,9 +865,18 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		await waitForAdvertisement();
 		const selectedTools = event.systemPromptOptions?.selectedTools ?? (typeof pi.getActiveTools === "function" ? pi.getActiveTools() : []);
 		const sessionId = state.currentSessionId ?? resolveCurrentSessionId(ctx.sessionManager);
-		const advertisedPrompt = Array.isArray(selectedTools) && selectedTools.includes("subagent")
-			? buildAdvertisedAgentPrompt(advertisedAgents, resolveCurrentSubagentCapabilityCeiling(sessionId))
-			: undefined;
+		const advertise = Array.isArray(selectedTools) && selectedTools.includes("subagent");
+		const ceiling = advertise ? resolveCurrentSubagentCapabilityCeiling(sessionId) : undefined;
+		// Structured sections let Pi append a transcript delta instead of replacing the
+		// cached system prompt. Set the section on every turn it applies: Pi rebuilds the
+		// options each turn, and an unset turn records a removal.
+		const sections = event.systemPromptOptions?.sections;
+		if (sections) {
+			const catalog = advertise ? buildAdvertisedAgentCatalog(advertisedAgents, ceiling) : undefined;
+			if (catalog) sections.advertised_subagents = catalog;
+			return;
+		}
+		const advertisedPrompt = advertise ? buildAdvertisedAgentPrompt(advertisedAgents, ceiling) : undefined;
 		const systemPrompt = appendAdvertisedAgentPrompt(event.systemPrompt, advertisedPrompt);
 		if (systemPrompt !== event.systemPrompt) return { systemPrompt };
 	});
