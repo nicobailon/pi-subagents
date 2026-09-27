@@ -6155,9 +6155,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							const promoted = promotePausedWorkflowIfSettled(status);
 							if (promoted) status = promoted;
 						}
+						// A script can throw an error of any size; status.json keeps the full text.
+						const errorPreview = status.error && status.error.length > 1_000 ? `${status.error.slice(0, 1_000)}… (truncated; full error: ${statusPath} error)` : status.error;
 						const terminalSummary = `${status.state === "complete"
 							? "Workflow completed after detached child finished."
-							: status.error ?? (pauseForDetached ? "Workflow paused." : "Workflow failed.")}${workflowOutputPathMappingSummary(partial.children)}${finalPreflightWarnings.length ? ` ${finalPreflightWarnings.join(" ")}` : ""}`;
+							: errorPreview ?? (pauseForDetached ? "Workflow paused." : "Workflow failed.")}${workflowOutputPathMappingSummary(partial.children)}${finalPreflightWarnings.length ? ` ${finalPreflightWarnings.join(" ")}` : ""}`;
 						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, terminalSummary, producedChildOutputPaths);
 						const resultSummary = appendWorkflowOutputWarning(terminalSummary, outputWarning);
 						const receiptState: WorkflowReceiptState = status.state === "complete" ? "complete" : status.state === "paused" ? "paused" : status.state === "stopped" ? "stopped" : "failed";
@@ -6392,8 +6394,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const traceLines = finalPreflightTrace.map((entry) => `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.warning ? ` — ${entry.warning}` : ""}${entry.error ? ` — ${entry.error}` : ""}`);
 				const outputMappings = workflowOutputPathMappingSummary(partial.children).trim();
 				const displayText = formatWorkflowResultText({
-					head: [...(workflowPreflight ? [formatWorkflowPreflight(workflowPreflight)] : []), `Workflow failed: ${text}`],
+					head: workflowPreflight ? [formatWorkflowPreflight(workflowPreflight)] : [],
 					script: [
+						`Workflow failed: ${text}`,
 						...(partial.emits.length > 0 ? [`Emitted:\n${partial.emits.map(formatWorkflowValue).join("\n")}`] : []),
 						...(partial.console.length > 0 ? [`Console:\n${partial.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n")}`] : []),
 					],

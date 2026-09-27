@@ -3907,6 +3907,33 @@ Answer only from the supplied synthetic text.
 		fs.rmSync(resultPath, { force: true });
 	});
 
+	it("caps an oversized thrown workflow error in foreground text and async summaries", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const workflowScript = `throw new Error("e".repeat(300000));`;
+		const foreground = await executor.execute("scripted-workflow-large-error", { async: false, workflowScript }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		const text = foreground.content[0]?.text ?? "";
+		assert.equal(foreground.isError, true);
+		assert.ok(Buffer.byteLength(text, "utf-8") < 300_000);
+		const savedPath = /\[TRUNCATED: .* - full output at (.+)\]/.exec(text)?.[1];
+		assert.ok(savedPath && fs.readFileSync(savedPath, "utf-8").includes("e".repeat(300000)), text.slice(0, 500));
+
+		const started = await executor.execute("scripted-workflow-large-async-error", { async: true, workflowScript }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		const statusPath = path.join(started.details.asyncDir!, "status.json");
+		let status: { state?: string; error?: string } = {};
+		for (let attempt = 0; attempt < 300; attempt++) {
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+			if (status.state === "failed") break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(status.state, "failed");
+		assert.ok(status.error?.includes("e".repeat(300000)));
+		const resultPath = path.join(DIRS.results, `${started.details.asyncId}.json`);
+		const summary = (JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { summary?: string }).summary ?? "";
+		assert.ok(summary.length < 2_000 && summary.includes(`… (truncated; full error: ${statusPath} error)`), summary.slice(0, 300));
+		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true });
+		fs.rmSync(resultPath, { force: true });
+	});
+
 	it("rejects an over-limit runs.all batch before launching any workflow child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerRun: 1 });
 

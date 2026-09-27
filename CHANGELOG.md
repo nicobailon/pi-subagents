@@ -4,8 +4,8 @@
 
 ### Fixed
 
-- Large workflow results no longer flood the parent's context. A foreground workflow now caps its Return, Emitted, and Console sections at 200 KB / 5000 lines (or your `maxOutput`), says where it cut them, and saves the full text to a file. The call trace and warnings stay whole. Async completion notices and `action: "status"` used to cut the return value with no sign. They now end the preview in `…` and point to the run's `status.json` for the full value. Fixes [#2505](https://github.com/nicobailon/pi-subagents/issues/2505).
 
+- Large workflow results no longer flood the parent's context. A foreground workflow now caps its Return, Emitted, and Console sections and its failure error at 200 KB / 5000 lines (or your `maxOutput`), says where it cut them, and saves the full text to a file. The call trace and warnings stay whole. Async completion notices and `action: "status"` used to cut the return value with no sign, and async notices included the full error however large it was. They now end the cut text in `…` and point to the run's `status.json` for the full value. Fixes [#2505](https://github.com/nicobailon/pi-subagents/issues/2505).
 ## [0.72.1] - 2026-09-26
 
 ### Fixed
