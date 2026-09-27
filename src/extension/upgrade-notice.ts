@@ -19,7 +19,7 @@ export async function showUpgradeNotice(
 ): Promise<void> {
 	if (!ctx.hasUI) return;
 	const statePath = path.join(stateDir, "last-seen-version.json");
-	const lastSeen = await fs.promises.readFile(statePath, "utf-8").then((raw) => JSON.parse(raw).version, () => undefined);
+	const lastSeen = await fs.promises.readFile(statePath, "utf-8").then((raw) => JSON.parse(raw).version).catch(() => undefined);
 	const previous = versionNumber(lastSeen);
 	const current = versionNumber(version);
 	if (current === undefined || previous === current) return;
