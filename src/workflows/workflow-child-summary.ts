@@ -1,12 +1,11 @@
 import type { AgentProgress, AsyncStatus, WorkflowChildActivity, WorkflowChildSummary } from "../shared/types.ts";
 import type { WorkflowScriptChildResult, WorkflowScriptTraceEntry } from "./scripted-workflow.ts";
-import { THINKING_LEVELS, type ThinkingLevel } from "../shared/model-info.ts";
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const TERMINAL_STATES = new Set(["completed", "failed", "paused", "stopped", "rejected", "detached"]);
 const MAX_REQUIRED_ID_BYTES = 4_096;
 const ACTIVITY_COUNTERS = ["currentToolStartedAt", "lastActivityAt", "durationMs", "toolCount", "turnCount", "tokens", "inputTokens", "outputTokens"] as const;
-type WorkflowChildLiveProgress = WorkflowChildActivity & Pick<AgentProgress, "agent" | "sessionName" | "model" | "thinking" | "sessionThinking">;
+type WorkflowChildLiveProgress = WorkflowChildActivity & Pick<AgentProgress, "agent" | "sessionName" | "model" | "thinking">;
 
 export function workflowChildProgress(progress: AgentProgress): WorkflowChildLiveProgress {
 	return {
@@ -15,7 +14,6 @@ export function workflowChildProgress(progress: AgentProgress): WorkflowChildLiv
 		...(bounded(progress.sessionName, 256) ? { sessionName: progress.sessionName } : {}),
 		...(bounded(progress.model, 256) ? { model: progress.model } : {}),
 		...(bounded(progress.thinking, 32) ? { thinking: progress.thinking } : {}),
-		...(knownLevel(progress.sessionThinking) ? { sessionThinking: knownLevel(progress.sessionThinking) } : {}),
 	};
 }
 
@@ -28,10 +26,6 @@ export function workflowChildActivity(progress: WorkflowChildActivity): Workflow
 		if (typeof value === "number" && Number.isFinite(value) && value >= 0) activity[field] = value;
 	}
 	return activity;
-}
-
-function knownLevel(value: unknown): ThinkingLevel | undefined {
-	return THINKING_LEVELS.find((level) => level === value);
 }
 
 function parseActivity(value: unknown): WorkflowChildActivity | undefined {
@@ -84,7 +78,6 @@ export function workflowChildSummary(input: {
 			...(previous?.sessionName ? { sessionName: previous.sessionName } : {}),
 			...(previous?.model ? { model: previous.model } : {}),
 			...(previous?.thinking ? { thinking: previous.thinking } : {}),
-			...(previous?.sessionThinking ? { sessionThinking: previous.sessionThinking } : {}),
 		});
 	}
 	for (const step of input.steps ?? []) {
@@ -106,7 +99,6 @@ export function workflowChildSummary(input: {
 			...(bounded(step.sessionName, 256) ? { sessionName: bounded(step.sessionName, 256) } : {}),
 			...(bounded(step.model, 256) ? { model: bounded(step.model, 256) } : {}),
 			...(bounded(step.thinking, 32) ? { thinking: bounded(step.thinking, 32) } : {}),
-			...(knownLevel(step.sessionThinking) ? { sessionThinking: knownLevel(step.sessionThinking) } : {}),
 		});
 	}
 	for (const child of input.children ?? []) {
@@ -121,7 +113,6 @@ export function workflowChildSummary(input: {
 			...(bounded(result?.sessionName, 256) ? { sessionName: bounded(result?.sessionName, 256) } : {}),
 			...(bounded(result?.model, 256) ? { model: bounded(result?.model, 256) } : {}),
 			...(bounded(result?.thinking, 32) ? { thinking: bounded(result?.thinking, 32) } : {}),
-			...(knownLevel(result?.sessionThinking) ? { sessionThinking: knownLevel(result?.sessionThinking) } : {}),
 		});
 	}
 	if (input.inventoryComplete) {
@@ -138,7 +129,6 @@ export function workflowChildSummary(input: {
 			...(bounded(progress.sessionName, 256) ? { sessionName: progress.sessionName } : {}),
 			...(bounded(progress.model, 256) ? { model: progress.model } : {}),
 			...(bounded(progress.thinking, 32) ? { thinking: progress.thinking } : {}),
-			...(progress.sessionThinking ? { sessionThinking: progress.sessionThinking } : {}),
 			activity: workflowChildActivity(progress),
 		});
 	}
@@ -164,18 +154,16 @@ export function parseWorkflowChildSummary(value: unknown): WorkflowChildSummary 
 	const children = input.children.map((row): WorkflowChildSummary["children"][number] => {
 		if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error("workflowChildren child row is invalid.");
 		const child = row as Record<string, unknown>;
-		if (Object.keys(child).some((key) => !["childId", "runId", "agent", "sessionName", "model", "thinking", "sessionThinking", "state", "activity"].includes(key))) throw new Error("workflowChildren child row has unsupported fields.");
+		if (Object.keys(child).some((key) => !["childId", "runId", "agent", "sessionName", "model", "thinking", "state", "activity"].includes(key))) throw new Error("workflowChildren child row has unsupported fields.");
 		if (typeof child.childId !== "string" || !KEY_PATTERN.test(child.childId)) throw new Error("workflowChildren childId is invalid.");
 		const state = child.state;
 		if (state !== "pending" && state !== "running" && state !== "completed" && state !== "failed" && state !== "paused" && state !== "stopped" && state !== "rejected" && state !== "detached") throw new Error("workflowChildren child state is invalid.");
 		for (const [field, maxBytes] of [["runId", 256], ["agent", 256], ["sessionName", 256], ["model", 256], ["thinking", 32]] as const) {
 			if (child[field] !== undefined && bounded(child[field], maxBytes) === undefined) throw new Error(`workflowChildren child ${field} is invalid.`);
 		}
-		const sessionThinking = child.sessionThinking === undefined ? undefined : knownLevel(child.sessionThinking);
-		if (child.sessionThinking !== undefined && !sessionThinking) throw new Error("workflowChildren child sessionThinking is invalid.");
 		const activity = parseActivity(child.activity);
 		if (activity && state !== "running") throw new Error("workflowChildren child activity requires running state.");
-		return { childId: child.childId, state, ...(activity ? { activity } : {}), ...(child.runId ? { runId: child.runId as string } : {}), ...(child.agent ? { agent: child.agent as string } : {}), ...(child.sessionName ? { sessionName: child.sessionName as string } : {}), ...(child.model ? { model: child.model as string } : {}), ...(child.thinking ? { thinking: child.thinking as string } : {}), ...(sessionThinking ? { sessionThinking } : {}) };
+		return { childId: child.childId, state, ...(activity ? { activity } : {}), ...(child.runId ? { runId: child.runId as string } : {}), ...(child.agent ? { agent: child.agent as string } : {}), ...(child.sessionName ? { sessionName: child.sessionName as string } : {}), ...(child.model ? { model: child.model as string } : {}), ...(child.thinking ? { thinking: child.thinking as string } : {}) };
 	});
 	if (new Set(children.map((child) => child.childId)).size !== children.length) throw new Error("workflowChildren has duplicate childId values.");
 	if (typeof input.parentToolCallId !== "string") throw new Error("workflowChildren.parentToolCallId is invalid.");

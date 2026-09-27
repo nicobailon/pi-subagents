@@ -54,7 +54,6 @@ function writeAsyncRun(root: string, input: {
 	contexts?: Array<"fresh" | "fork">;
 	models?: string[];
 	thinking?: string[];
-	sessionThinking?: string[];
 	output?: string;
 	transcript?: Array<Record<string, unknown>>;
 }): string {
@@ -78,7 +77,6 @@ function writeAsyncRun(root: string, input: {
 			...(input.contexts?.[index] ? { context: input.contexts[index] } : {}),
 			...(input.models?.[index] ? { model: input.models[index] } : {}),
 			...(input.thinking?.[index] ? { thinking: input.thinking[index] } : {}),
-			...(input.sessionThinking?.[index] ? { sessionThinking: input.sessionThinking[index] } : {}),
 			status: input.state === "complete" ? "complete" : input.state === "failed" ? "failed" : index === 0 ? "running" : "pending",
 			startedAt: 100,
 			...(index === 0 ? { sessionFile: path.join(asyncDir, `${agent}.jsonl`), ...(transcriptPath ? { transcriptPath } : {}) } : {}),
@@ -549,14 +547,14 @@ describe("native subagent fleet", () => {
 		}
 	});
 
-	it("colors running Fleet rows by their child's session level, and whole runs by the main session's", () => {
+	it("colors running Fleet rows by their child's recorded level, and whole runs by the main session's", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-levels-"));
 		setMainThinkingLevelSource(() => "xhigh");
 		try {
-			writeAsyncRun(root, { id: "level-steps", state: "running", agents: ["scout", "reviewer"], thinking: ["low", "medium"], sessionThinking: ["high"], lastUpdate: 300 });
+			writeAsyncRun(root, { id: "level-steps", state: "running", agents: ["scout", "reviewer"], thinking: ["high", "medium"], lastUpdate: 300 });
 			writeAsyncRun(root, { id: "level-workflow", state: "running", mode: "workflow", agents: ["worker"], lastUpdate: 200 });
 			const state = stateForTest();
-			state.foregroundControls.set("level-foreground", { runId: "level-foreground", mode: "single", startedAt: 10, updatedAt: 400, currentAgent: "planner", currentIndex: 0, thinking: "low", sessionThinking: "max" });
+			state.foregroundControls.set("level-foreground", { runId: "level-foreground", mode: "single", startedAt: 10, updatedAt: 400, currentAgent: "planner", currentIndex: 0, thinking: "max" });
 			const tones = ["accent", ...["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => `thinking:${level}`)];
 			const colored = (tone: string, text: string) => `\x1b[38;5;${Math.max(0, tones.indexOf(tone)) + 100}m${text}\x1b[39m`;
 			const ansiTheme = {
@@ -578,8 +576,8 @@ describe("native subagent fleet", () => {
 					const code = lines.find((line) => plain(line).includes(`\u25cf ${label}`))?.match(/\x1b\[38;5;(\d+)m\u25cf/)?.[1];
 					return code === undefined ? undefined : tones[Number(code) - 100];
 				};
-				assert.equal(glyphTone("scout"), "thinking:high", "async step uses its session level");
-				assert.equal(glyphTone("planner"), "thinking:max", "foreground child uses its session level");
+				assert.equal(glyphTone("scout"), "thinking:high", "async step uses its recorded level");
+				assert.equal(glyphTone("planner"), "thinking:max", "foreground child uses its recorded level");
 				assert.equal(glyphTone("workflow"), "thinking:xhigh", "a whole workflow run uses the main level");
 			} finally {
 				component.dispose();

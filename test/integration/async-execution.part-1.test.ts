@@ -542,45 +542,6 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		await waitForAsyncResultFile(id);
 	});
 
-	it("records the level an async child session runs at on its status step", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		mockPi.setSessionThinking("xhigh");
-		mockPi.onCall({ output: "async level done" });
-		const id = `async-session-thinking-${Date.now().toString(36)}`;
-		executeAsyncSingle(id, {
-			agent: "worker",
-			task: "Report the session level",
-			agentConfig: makeAgent("worker", { model: "mock/test-model" }),
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-async-level" },
-			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 128_000 }],
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-			shareEnabled: false,
-			maxSubagentDepth: 2,
-		});
-		await waitForAsyncResultFile(id);
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload & { steps?: Array<{ sessionThinking?: string; thinking?: string; contextLimit?: number }> };
-		assert.equal(status.steps?.[0]?.sessionThinking, "xhigh");
-		assert.equal(status.steps?.[0]?.thinking, undefined);
-		assert.equal(status.steps?.[0]?.contextLimit, 128_000);
-	});
-
-	it("follows an async child session's mid-run thinking level change on its status step", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		mockPi.setSessionThinking("low");
-		mockPi.onCall({ jsonl: [{ type: "thinking_level_changed", level: "max" }], output: "async changed" });
-		const id = `async-session-thinking-change-${Date.now().toString(36)}`;
-		executeAsyncSingle(id, {
-			agent: "worker",
-			task: "Change the session level",
-			agentConfig: makeAgent("worker", { model: "mock/test-model" }),
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-async-level-change" },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-			shareEnabled: false,
-			maxSubagentDepth: 2,
-		});
-		await waitForAsyncResultFile(id);
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload & { steps?: Array<{ sessionThinking?: string }> };
-		assert.equal(status.steps?.[0]?.sessionThinking, "max");
-	});
-
 	it("persists absent output provenance when async lifecycle text is synthetic", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ jsonl: [mockAssistantMessage("", "tool_use")], stderr: "mock child failure", exitCode: 1 });
 		const id = `async-output-absent-${Date.now().toString(36)}`;

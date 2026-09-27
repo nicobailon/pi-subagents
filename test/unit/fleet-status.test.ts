@@ -1603,7 +1603,7 @@ describe("below-editor subagent FleetView", () => {
 			asyncId: "owner", asyncDir: "/tmp/owner", status: "running", startedAt: Date.now(), mode: "single",
 			steps: [{ index: 0, agent: "owner", status: "running" }],
 			nestedChildren: [
-				{ id: "leaf-run", parentRunId: "owner", parentStepIndex: 0, depth: 1, path: [{ runId: "owner", stepIndex: 0 }], state: "running", agent: "leaf-agent", thinking: "low", sessionThinking: "max" },
+				{ id: "leaf-run", parentRunId: "owner", parentStepIndex: 0, depth: 1, path: [{ runId: "owner", stepIndex: 0 }], state: "running", agent: "leaf-agent", thinking: "max" },
 				{ id: "fanout", parentRunId: "owner", parentStepIndex: 0, depth: 1, path: [{ runId: "owner", stepIndex: 0 }], state: "running", mode: "parallel", steps: [{ agent: "step-agent", status: "running", thinking: "medium" }] },
 			],
 		});
@@ -1638,7 +1638,7 @@ describe("below-editor subagent FleetView", () => {
 		state.asyncJobs.set("wf", {
 			asyncId: "wf", asyncDir: "/tmp/wf", status: "running", startedAt: Date.now(), mode: "workflow",
 			steps: [
-				{ index: 0, agent: "wf-writer", status: "running", thinking: "low", sessionThinking: "xhigh" },
+				{ index: 0, agent: "wf-writer", status: "running", thinking: "xhigh" },
 				{ index: 1, agent: "wf-scout", status: "running" },
 			],
 		});

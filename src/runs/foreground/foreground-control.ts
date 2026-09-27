@@ -33,7 +33,6 @@ function copyProgress(target: ForegroundChildControl, progress: AgentProgress | 
 	target.windowPeak = progress.windowPeak;
 	target.model = progress.model;
 	target.thinking = progress.thinking;
-	target.sessionThinking = progress.sessionThinking;
 	target.toolCount = progress.toolCount;
 }
 
@@ -55,7 +54,6 @@ function syncCurrentChild(control: ForegroundRunControl, child: ForegroundChildC
 	control.windowPeak = child.windowPeak;
 	control.model = child.model;
 	control.thinking = child.thinking;
-	control.sessionThinking = child.sessionThinking;
 	control.toolCount = child.toolCount;
 	control.interrupt = child.interrupt;
 	control.detach = child.detach;
@@ -80,7 +78,6 @@ function clearCurrentChild(control: ForegroundRunControl): void {
 	control.windowPeak = undefined;
 	control.model = undefined;
 	control.thinking = undefined;
-	control.sessionThinking = undefined;
 	control.toolCount = undefined;
 	control.interrupt = undefined;
 	control.detach = undefined;

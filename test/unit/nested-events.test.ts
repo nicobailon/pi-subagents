@@ -409,33 +409,6 @@ describe("nested event parsing and projection", () => {
 		assert.equal(summary.steps?.[0]?.thinking, "high");
 	});
 
-	it("carries session thinking levels through nested events and async status summaries", () => {
-		const route = trackRoute();
-		writeNestedEvent(route, {
-			type: "subagent.nested.updated",
-			ts: 100,
-			parentRunId: "root-run",
-			parentStepIndex: 1,
-			child: {
-				...child("nested-session-level", "running", 100),
-				sessionThinking: "max",
-				steps: [{ agent: "leaf", status: "running", sessionThinking: "high" }, { agent: "bad", status: "running", sessionThinking: "turbo" }],
-			},
-		});
-		const projected = projectNestedEvents(route).children[0]!;
-		assert.equal(projected.sessionThinking, "max");
-		assert.equal(projected.steps?.[0]?.sessionThinking, "high");
-		assert.equal(projected.steps?.[1]?.sessionThinking, undefined);
-
-		const summary = nestedSummaryFromAsyncStatus({
-			runId: "child-run", mode: "single", state: "running", startedAt: 1,
-			steps: [{ agent: "worker", status: "running", thinking: "low", sessionThinking: "xhigh" }],
-		}, "/tmp/child-run", { id: "child-run", parentRunId: "parent-run", depth: 1, mode: "single", ts: 2 });
-		assert.equal(summary.sessionThinking, "xhigh");
-		assert.equal(summary.thinking, "low");
-		assert.equal(summary.steps?.[0]?.sessionThinking, "xhigh");
-	});
-
 	it("sanitizes malformed process-terminal proofs in nested status summaries", () => {
 		const summary = nestedSummaryFromAsyncStatus({
 			runId: "child-run",

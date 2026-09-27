@@ -242,7 +242,7 @@ test("workflow checklist items carry the thinking level of the child each stands
 		steps: [
 			{ workflowKey: "inventory", agent: "scout", status: "complete", thinking: "low" },
 			{ workflowKey: "writer-a", agent: "writer", status: "complete" },
-			{ workflowKey: "writer-b", agent: "writer", status: "running", thinking: "low", sessionThinking: "high" },
+			{ workflowKey: "writer-b", agent: "writer", status: "running", thinking: "high" },
 			{ workflowKey: "review", agent: "reviewer", status: "pending", thinking: "medium" },
 		],
 		now: 5000,

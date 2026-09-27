@@ -177,7 +177,7 @@ describe("nested widget rendering", () => {
 			getThinkingBorderColor: (level: string) => (text: string) => `⟦thinking:${level}⟧${text}⟦/⟧`,
 		};
 		const child = nested("leaf-run", "root-run", "running", {
-			thinking: "low", sessionThinking: "xhigh",
+			thinking: "xhigh",
 			steps: [{ agent: "step-agent", status: "running", thinking: "minimal" }],
 		});
 		const lines = buildWidgetLines([job(child)], toneTheme as any, 160, true);

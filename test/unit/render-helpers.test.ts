@@ -252,14 +252,13 @@ test("multiline rendering omits two-column graphemes at one-column width", () =>
 	}
 });
 
-function runningResult(agent: string, levels: { thinking?: string; sessionThinking?: string; progressSessionThinking?: string } = {}) {
+function runningResult(agent: string, levels: { thinking?: string; progressThinking?: string } = {}) {
 	return {
 		...result(agent, ""),
 		...(levels.thinking ? { thinking: levels.thinking } : {}),
-		...(levels.sessionThinking ? { sessionThinking: levels.sessionThinking } : {}),
 		progress: {
 			status: "running", index: 0, agent, toolCount: 0, tokens: 0, durationMs: 0,
-			...(levels.progressSessionThinking ? { sessionThinking: levels.progressSessionThinking } : {}),
+			...(levels.progressThinking ? { thinking: levels.progressThinking } : {}),
 		},
 	};
 }
@@ -271,11 +270,10 @@ function singleCard(running: ReturnType<typeof runningResult>, expanded: boolean
 	} as never, { expanded }, renderTheme as never), mapText);
 }
 
-test("a running single card glyph takes the thinking color of the level its child session runs at", () => {
+test("a running single card glyph takes the thinking color of its child's recorded level", () => {
 	const cases: Array<[string, ReturnType<typeof runningResult>, string]> = [
-		["session level beats the configured level", runningResult("reviewer", { thinking: "low", sessionThinking: "high" }), "thinking:high"],
-		["session level reported on progress", runningResult("reviewer", { thinking: "low", progressSessionThinking: "xhigh" }), "thinking:xhigh"],
-		["configured level before the session reports", runningResult("reviewer", { thinking: "low" }), "thinking:low"],
+		["level recorded on the result", runningResult("reviewer", { thinking: "low" }), "thinking:low"],
+		["level recorded on progress", runningResult("reviewer", { progressThinking: "xhigh" }), "thinking:xhigh"],
 		["no level at all", runningResult("reviewer"), "accent"],
 		["an unknown level string", runningResult("reviewer", { thinking: "bogus" }), "accent"],
 	];
@@ -305,7 +303,7 @@ test("a single-child glyph with no recorded level takes the main session's color
 });
 
 test("an expanded running single card colors its glyph and running label with the child's level", () => {
-	const running = runningResult("reviewer", { thinking: "low", sessionThinking: "medium" });
+	const running = runningResult("reviewer", { thinking: "medium" });
 	const toned = singleCard(running, true, toneTheme);
 	const header = toned.split("\n")[0];
 	assert.equal(runningGlyphTone(header), "thinking:medium");
@@ -314,7 +312,7 @@ test("an expanded running single card colors its glyph and running label with th
 });
 
 test("finished single cards keep their state tones whatever the child's level", () => {
-	const completed = { ...result("reviewer", "done"), thinking: "high", sessionThinking: "high" };
+	const completed = { ...result("reviewer", "done"), thinking: "high" };
 	const toned = componentText(renderSubagentResult({
 		content: [{ type: "text", text: "done" }],
 		details: { mode: "single", results: [completed] },
@@ -328,7 +326,7 @@ test("multi-child cards keep an accent header while each child row takes its own
 		mode: "parallel",
 		results: [
 			{ ...runningResult("scout", { thinking: "low" }), progress: { status: "running", index: 0, agent: "scout", toolCount: 0, tokens: 0, durationMs: 0 } },
-			{ ...runningResult("reviewer", { sessionThinking: "high" }), progress: { status: "running", index: 1, agent: "reviewer", toolCount: 0, tokens: 0, durationMs: 0 } },
+			{ ...runningResult("reviewer", { thinking: "high" }), progress: { status: "running", index: 1, agent: "reviewer", toolCount: 0, tokens: 0, durationMs: 0 } },
 		],
 	};
 	for (const expanded of [false, true]) {
@@ -346,7 +344,7 @@ test("async widget rows for one child take its level while headers and multi-ste
 	const jobs = [
 		{
 			asyncId: "single-job", asyncDir: "/tmp/single-job", status: "running", mode: "single", agents: ["scout"], startedAt: now, updatedAt: now,
-			steps: [{ index: 0, agent: "scout", status: "running", thinking: "low", sessionThinking: "high" }],
+			steps: [{ index: 0, agent: "scout", status: "running", thinking: "high" }],
 		},
 		{
 			asyncId: "chain-job", asyncDir: "/tmp/chain-job", status: "running", mode: "chain", agents: ["planner", "worker"], startedAt: now, updatedAt: now,
@@ -373,7 +371,7 @@ test("async widget rows for one child take its level while headers and multi-ste
 test("workflow checklist rows take their child's level while phase rows stay accent", () => {
 	const details = {
 		mode: "workflow",
-		results: [{ ...runningResult("writer", { thinking: "low", sessionThinking: "max" }), workflowKey: "write" }],
+		results: [{ ...runningResult("writer", { thinking: "max" }), workflowKey: "write" }],
 		workflowGraph: {
 			runId: "wf-levels", mode: "workflow",
 			phases: [{ title: "write", nodeIds: ["write"] }],
@@ -391,7 +389,7 @@ test("workflow chat progress rows take the level of the child with the same key"
 		details: {
 			mode: "workflow", runId: "wf_levels", results: [],
 			chatProgress: { mode: "live-card", repoRelation: "same", repoLabel: "pi-subagents" },
-			workflowChildren: { version: 1, parentToolCallId: "call", workflowRunId: "wf_levels", inventoryComplete: false, workflowState: "running", children: [{ childId: "tests", state: "running", thinking: "low", sessionThinking: "high" }] },
+			workflowChildren: { version: 1, parentToolCallId: "call", workflowRunId: "wf_levels", inventoryComplete: false, workflowState: "running", children: [{ childId: "tests", state: "running", thinking: "high" }] },
 			workflow: { trace: [
 				{ operation: "run", key: "tests", state: "started", phase: "Validation", label: "focused suite" },
 				{ operation: "run", key: "lint", state: "started", phase: "Validation", label: "lint" },
@@ -424,7 +422,7 @@ test("glyphs that stand for several children take the main session's thinking co
 		const now = Date.now();
 		const jobs = [{
 			asyncId: "single-job", asyncDir: "/tmp/single-job", status: "running", mode: "single", agents: ["scout"], startedAt: now, updatedAt: now,
-			steps: [{ index: 0, agent: "scout", status: "running", sessionThinking: "low" }],
+			steps: [{ index: 0, agent: "scout", status: "running", thinking: "low" }],
 		}, {
 			asyncId: "chain-job", asyncDir: "/tmp/chain-job", status: "running", mode: "chain", agents: ["planner", "worker"], startedAt: now, updatedAt: now,
 			steps: [{ index: 0, agent: "planner", status: "running", thinking: "medium" }, { index: 1, agent: "worker", status: "pending" }], stepsTotal: 2,
@@ -453,7 +451,7 @@ test("compact workflow lanes take their one child's level, or the main session's
 			steps: [
 				{ index: 0, workflowKey: "review.a", agent: "reviewer", status: "running", thinking: "low" },
 				{ index: 1, workflowKey: "review.b", agent: "reviewer", status: "running", thinking: "high" },
-				{ index: 2, workflowKey: "write", agent: "worker", status: "running", sessionThinking: "medium" },
+				{ index: 2, workflowKey: "write", agent: "worker", status: "running", thinking: "medium" },
 			],
 			workflow: { trace: [], emits: [], console: [] },
 		} as AsyncJobState;

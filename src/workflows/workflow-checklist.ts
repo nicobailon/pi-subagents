@@ -8,7 +8,6 @@ export type WorkflowChecklistState = "complete" | "running" | "queued" | "blocke
 export interface WorkflowChecklistStep {
 	key?: string;
 	thinking?: string;
-	sessionThinking?: string;
 	workflowKey?: string;
 	runId?: string;
 	label?: string;

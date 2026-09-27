@@ -152,35 +152,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(output, "Hello from mock agent");
 	});
 
-	it("records the level the child session runs at beside the configured level", async () => {
-		mockPi.setSessionThinking("high");
-		mockPi.onCall({ output: "done" });
-		const agents = makeAgentConfigs(["echo"]);
-		const updates: Array<string | undefined> = [];
-		const result = await runSync(tempDir, agents, "echo", "Say hello", {
-			onUpdate: (update: { details?: { progress?: Array<{ sessionThinking?: string }> } }) => updates.push(update.details?.progress?.[0]?.sessionThinking),
-		});
-
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.thinking, undefined);
-		assert.equal(result.sessionThinking, "high");
-		assert.equal(result.progress?.sessionThinking, "high");
-		assert.ok(updates.includes("high"), "live progress carries the session level");
-	});
-
-	it("follows a child session's mid-run thinking level change", async () => {
-		mockPi.setSessionThinking("low");
-		mockPi.onCall({ jsonl: [{ type: "thinking_level_changed", level: "max" }], output: "changed" });
-		const agents = makeAgentConfigs(["echo"]);
-		const updates: Array<string | undefined> = [];
-		const result = await runSync(tempDir, agents, "echo", "Change level", {
-			onUpdate: (update: { details?: { progress?: Array<{ sessionThinking?: string }> } }) => updates.push(update.details?.progress?.[0]?.sessionThinking),
-		});
-
-		assert.equal(result.sessionThinking, "max");
-		assert.ok(updates.includes("max"), "an update carries the changed level");
-	});
-
 	it("derives a child session name and passes it to the child runtime config", async () => {
 		mockPi.onCall({ output: "hello" });
 		const agents = makeAgentConfigs(["echo"]);

@@ -204,8 +204,6 @@ export interface WorkflowChildSummary {
 		sessionName?: string;
 		model?: string;
 		thinking?: string;
-		/** Thinking level the child's Pi session runs at, once the session reports it. */
-		sessionThinking?: ThinkingLevel;
 		/** Present only while a synchronous foreground child is running. */
 		activity?: WorkflowChildActivity;
 		state: "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "rejected" | "detached";
@@ -982,8 +980,6 @@ export interface AgentProgress {
 	/** Resolved launch model/effort and split usage for public live projections. */
 	model?: string;
 	thinking?: string;
-	/** Thinking level the child's Pi session runs at, once the session reports it. */
-	sessionThinking?: ThinkingLevel;
 	inputTokens?: number;
 	outputTokens?: number;
 	/** Cumulative cache-read/cache-write tokens for the current attempt, alongside inputTokens/outputTokens. */
@@ -1305,8 +1301,6 @@ export interface SingleResult {
 	nativeMachine?: { provider: "herdr"; machineId: string; initialGit?: HerdrRemoteGitStatus; finalGit?: HerdrRemoteGitStatus };
 	/** Effective thinking level used by this foreground child, when known. */
 	thinking?: string;
-	/** Thinking level the child's Pi session runs at, once the session reports it. */
-	sessionThinking?: ThinkingLevel;
 	requestedModel?: string;
 	controlEvents?: ControlEvent[];
 	error?: string;
@@ -1617,8 +1611,6 @@ export interface NestedStepSummary {
 	status: "pending" | "running" | "complete" | "completed" | "failed" | "partial" | "paused" | "stopped" | "rejected";
 	model?: string;
 	thinking?: string;
-	/** Thinking level the child's Pi session runs at, once the session reports it. */
-	sessionThinking?: ThinkingLevel;
 	sessionFile?: string;
 	transcriptPath?: string;
 	transcriptError?: string;
@@ -1672,8 +1664,6 @@ export interface NestedRunSummary extends NestedRunAddress {
 	agents?: string[];
 	model?: string;
 	thinking?: string;
-	/** Thinking level the child's Pi session runs at, once the session reports it. */
-	sessionThinking?: ThinkingLevel;
 	currentStep?: number;
 	chainStepCount?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
@@ -2010,8 +2000,6 @@ export interface AsyncStatus {
 		skills?: string[];
 		model?: string;
 		thinking?: string;
-		/** Thinking level the child's Pi session runs at, once the session reports it. */
-		sessionThinking?: ThinkingLevel;
 		contextLimit?: number;
 		thinkingCeiling?: ThinkingLevel;
 		requestedModel?: string;
@@ -2206,8 +2194,6 @@ export interface ForegroundChildControl {
 	windowPeak?: number;
 	model?: string;
 	thinking?: string;
-	/** Thinking level the child's Pi session runs at, once the session reports it. */
-	sessionThinking?: ThinkingLevel;
 	toolCount?: number;
 	interrupt?: () => boolean;
 	detach?: () => boolean;
@@ -2257,8 +2243,6 @@ export interface ForegroundRunControl {
 	windowPeak?: number;
 	model?: string;
 	thinking?: string;
-	/** Thinking level the child's Pi session runs at, once the session reports it. */
-	sessionThinking?: ThinkingLevel;
 	toolCount?: number;
 	/** Independently tracked children for foreground parallel work and fleet inspection. */
 	activeChildren?: Map<number, ForegroundChildControl>;

@@ -3164,7 +3164,6 @@ function foregroundWorkflowChecklist(details: Details): WorkflowChecklistProject
 			phase: node?.phase,
 			agent: result.agent,
 			thinking: result.thinking ?? progress?.thinking,
-			sessionThinking: result.sessionThinking ?? progress?.sessionThinking,
 			status,
 			context: result.context,
 			activityState: progress?.activityState,
