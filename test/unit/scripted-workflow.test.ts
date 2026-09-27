@@ -1639,6 +1639,18 @@ describe("scripted workflow runtime", () => {
 			(error: unknown) => error instanceof WorkflowScriptError && error.errorKind === "runtime" && error.partial.children.length === 0,
 		);
 
+		const controller = new AbortController();
+		controller.abort(new Error("stopped by user"));
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return "unreachable";`,
+				signal: controller.signal,
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.message === "stopped by user" && error.errorKind === undefined,
+		);
+
 		await assert.rejects(
 			runWorkflowScript({
 				script: " ",

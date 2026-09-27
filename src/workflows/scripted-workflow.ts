@@ -2185,11 +2185,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			console.error("Workflow onChildSettled callback failed:", error);
 		}
 	};
-	try {
-		options.registerStopChild?.(stopChild);
-	} catch (error) {
-		throw new WorkflowScriptError(`Workflow stop registration failed: ${error instanceof Error ? error.message : String(error)}`, partial(), "runtime");
-	}
+	options.registerStopChild?.(stopChild);
 
 	return await new Promise<WorkflowScriptResult>((resolve, reject) => {
 		const finish = (outcome: { value: unknown } | { error: Error & { workflowErrorKind?: unknown } }) => {
@@ -2203,12 +2199,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			void Promise.allSettled([...steers.values(), ...hostCalls.values()].map(({ promise }) => promise)).then(() => {
 				if (settled) return;
 				settled = true;
-				let stopRegistrationError: string | undefined;
-				try {
-					options.registerStopChild?.(undefined);
-				} catch (error) {
-					stopRegistrationError = error instanceof Error ? error.message : String(error);
-				}
+				options.registerStopChild?.(undefined);
 				if (timer) clearTimeout(timer);
 				options.signal?.removeEventListener("abort", onAbort);
 				void worker.terminate();
@@ -2223,8 +2214,8 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 							return unobservedHosts.length > 0 ? new Error(`workflowScript completed with unawaited runs.host call(s): ${unobservedHosts.map((key) => `'${key}'`).join(", ")}. Await or return each call.`) : undefined;
 						})()
 						: undefined;
-				if (stopRegistrationError) reject(new WorkflowScriptError(`Workflow stop registration cleanup failed: ${stopRegistrationError}`, partial(), "runtime"));
-				else if ("error" in outcome) reject(new WorkflowScriptError(outcome.error.message, partial(), isWorkflowScriptFailureKind(outcome.error.workflowErrorKind) ? outcome.error.workflowErrorKind : "runtime"));
+				// Stops and reloads end through the abort paths untagged: they are not failures.
+				if ("error" in outcome) reject(new WorkflowScriptError(outcome.error.message, partial(), isWorkflowScriptFailureKind(outcome.error.workflowErrorKind) ? outcome.error.workflowErrorKind : undefined));
 				else if (completionError) reject(new WorkflowScriptError(completionError.message, partial(), "validation"));
 				else resolve({ value: outcome.value, ...partial() });
 			});
@@ -2253,7 +2244,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				// signal so any later launch or side effect cannot use stale context.
 				assemblyAbortRequested = true;
 				childController.abort(error);
-				assemblyFlushTimer = setTimeout(() => finish({ error: taggedWorkflowError(error.message, "runtime") }), WORKFLOW_ASSEMBLY_FLUSH_TIMEOUT_MS);
+				assemblyFlushTimer = setTimeout(() => finish({ error }), WORKFLOW_ASSEMBLY_FLUSH_TIMEOUT_MS);
 				return;
 			}
 			for (const key of launches.keys()) {
@@ -2272,7 +2263,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				});
 			}
 			traceChanged();
-			finish({ error: taggedWorkflowError(error.message, "runtime") });
+			finish({ error });
 		};
 		const timer = options.timeoutMs === undefined
 			? undefined
@@ -2674,10 +2665,6 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			respond(deliver(promise), `runs.run('${key}') result`, (error) => children.set(key, responseBoundaryFailure(key, error)));
 		});
 
-		try {
-			worker.postMessage({ type: "start", script: options.script, ...(options.args ? { args: options.args } : {}), stateEnabled: options.state !== undefined });
-		} catch (error) {
-			finish({ error: taggedWorkflowError(`Workflow worker could not start: ${error instanceof Error ? error.message : String(error)}`, "runtime") });
-		}
+		worker.postMessage({ type: "start", script: options.script, ...(options.args ? { args: options.args } : {}), stateEnabled: options.state !== undefined });
 	});
 }
