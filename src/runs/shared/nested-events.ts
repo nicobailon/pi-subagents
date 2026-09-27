@@ -303,11 +303,13 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 		: "pending";
 	const model = stringValue(raw.model);
 	const thinking = THINKING_LEVELS.find((level) => level === raw.thinking);
+	const sessionThinking = THINKING_LEVELS.find((level) => level === raw.sessionThinking);
 	return {
 		agent,
 		status,
 		...(model ? { model } : {}),
 		...(thinking ? { thinking } : {}),
+		...(sessionThinking ? { sessionThinking } : {}),
 		...(stringValue(raw.sessionName, 256) ? { sessionName: stringValue(raw.sessionName, 256) } : {}),
 		...(stringValue(raw.sessionFile, 2048) ? { sessionFile: stringValue(raw.sessionFile, 2048) } : {}),
 		...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention" ? { activityState: raw.activityState } : {}),
@@ -352,6 +354,7 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
 		...(stringValue(raw.sessionName, 256) ? { sessionName: stringValue(raw.sessionName, 256) } : {}),
 		...(stringValue(raw.model) ? { model: stringValue(raw.model) } : {}),
 		...(THINKING_LEVELS.find((level) => level === raw.thinking) ? { thinking: THINKING_LEVELS.find((level) => level === raw.thinking) } : {}),
+		...(THINKING_LEVELS.find((level) => level === raw.sessionThinking) ? { sessionThinking: THINKING_LEVELS.find((level) => level === raw.sessionThinking) } : {}),
 		...(stringValue(raw.asyncDir, 2048) ? { asyncDir: stringValue(raw.asyncDir, 2048) } : {}),
 		...(clampNumber(raw.pid) !== undefined && clampNumber(raw.pid)! > 0 && Number.isInteger(clampNumber(raw.pid)) ? { pid: clampNumber(raw.pid) } : {}),
 		...(stringValue(raw.sessionId, 256) ? { sessionId: stringValue(raw.sessionId, 256) } : {}),
@@ -1012,6 +1015,7 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		mode: status.mode ?? fallback.mode,
 		...(status.steps?.length === 1 && status.steps[0]?.model ? { model: status.steps[0].model } : {}),
 		...(status.steps?.length === 1 && status.steps[0]?.thinking ? { thinking: status.steps[0].thinking } : {}),
+		...(status.steps?.length === 1 && status.steps[0]?.sessionThinking ? { sessionThinking: status.steps[0].sessionThinking } : {}),
 		...(status.steps?.length === 1 && status.steps[0]?.sessionName ? { sessionName: status.steps[0].sessionName } : {}),
 		...(status.processTerminal ? { processTerminal: sanitizeProcessTerminal(status.processTerminal, { runId: status.runId || fallback.id, runnerProcessInstanceId: status.processTerminal.runnerProcessInstanceId }, `${asyncDir}/status.json`) } : {}),
 		...(status.launchResolvedExtensions ? { launchResolvedExtensions: status.launchResolvedExtensions } : {}),
@@ -1047,6 +1051,7 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 			status: step.status,
 			...(step.model ? { model: step.model } : {}),
 			...(step.thinking ? { thinking: step.thinking } : {}),
+			...(step.sessionThinking ? { sessionThinking: step.sessionThinking } : {}),
 			...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
 			...(step.activityState ? { activityState: step.activityState } : {}),
 			...(step.lastActivityAt !== undefined ? { lastActivityAt: step.lastActivityAt } : {}),

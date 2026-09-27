@@ -42,3 +42,21 @@ it("bounds UTF-8 and JSON bytes and rejects malformed activity strictly", () => 
 	}
 	assert.throws(() => parseWorkflowChildSummary({ ...summary, children: [{ ...summary.children[0], state: "completed" }] }), /running state/);
 });
+
+it("carries and validates the session thinking level of workflow children", () => {
+	const summary = workflowChildSummary({
+		parentToolCallId: "call", workflowRunId: "wf", workflowState: "running", inventoryComplete: false,
+		steps: [{ agent: "writer", status: "running", workflowKey: "write", model: "m", thinking: "low", sessionThinking: "high" }],
+		progress: new Map([["live", { ...workflowChildProgress({ agent: "scout", status: "running", sessionThinking: "max" } as unknown as AgentProgress) }]]),
+		trace: [{ operation: "run", key: "live", state: "started" }] as never,
+	});
+	const byId = Object.fromEntries(summary.children.map((child) => [child.childId, child]));
+	assert.equal(byId.write?.sessionThinking, "high");
+	assert.equal(byId.write?.thinking, "low");
+	assert.equal(byId.live?.sessionThinking, "max");
+
+	assert.deepEqual(parseWorkflowChildSummary(summary), summary);
+	const withLevel = (sessionThinking: unknown) => ({ ...summary, children: [{ childId: "write", state: "running", sessionThinking }] });
+	assert.throws(() => parseWorkflowChildSummary(withLevel("turbo")), /sessionThinking is invalid/);
+	assert.throws(() => parseWorkflowChildSummary({ ...summary, children: [{ childId: "write", state: "running", runtimeLevel: "high" }] }), /unsupported fields/);
+});
