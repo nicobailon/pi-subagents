@@ -3663,8 +3663,14 @@ function appendWorkflowOutputWarning(text: string, warning: string | undefined):
 	return warning ? `${text}\n\n${warning}` : text;
 }
 
+// Trace errors carry child text of any size, so each one is bounded where the trace line is built.
+function workflowTraceErrorText(error: string): string {
+	return error.length > 500 ? `${error.slice(0, 500)}… (+${error.length - 500} chars; see the child run's output)` : error;
+}
+
 // Return, emits, and console come from the script with no size limit of their own, so only
-// they are cut. Host sections (status, trace, warnings, output mappings) stay whole.
+// they are cut. Host sections (status, trace, warnings, output mappings) stay whole, apart
+// from trace errors, which are bounded per line.
 function formatWorkflowResultText(input: {
 	head: string[];
 	script: string[];
@@ -6362,7 +6368,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const finalPreflightTrace = annotateWorkflowPreflightTrace(workflow.trace, workflowPreflight);
 				const workflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: foregroundWorkflowRunId, workflowState: "completed", inventoryComplete: true, trace: workflow.trace, children: workflow.children });
 				const receipt = terminalWorkflowReceipt(foregroundWorkflowRunId, "complete", workflow.children, workflowChildren, undefined, [...workflowHostSteps.values()], workflowResource?.provenance, workflowArgsDigest);
-				const traceLines = finalPreflightTrace.map((entry) => `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.durationMs !== undefined ? ` in ${entry.durationMs}ms` : ""}${entry.warning ? ` — ${entry.warning}` : ""}${entry.error ? ` — ${entry.error}` : ""}`);
+				const traceLines = finalPreflightTrace.map((entry) => `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.durationMs !== undefined ? ` in ${entry.durationMs}ms` : ""}${entry.warning ? ` — ${entry.warning}` : ""}${entry.error ? ` — ${workflowTraceErrorText(entry.error)}` : ""}`);
 				const runningSummary = workflowRunningChildrenSummary(workflow.children);
 				const outputMappings = workflowOutputPathMappingSummary(workflow.children).trim();
 				const displayText = formatWorkflowResultText({
@@ -6391,7 +6397,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const text = workflowFailureMessage(error, foregroundWorkflowRunId, partial.children);
 				const finalPreflightWarnings = workflowPreflightWarnings(workflowPreflight, partial.trace, { settled: true });
 				const finalPreflightTrace = annotateWorkflowPreflightTrace(partial.trace, workflowPreflight);
-				const traceLines = finalPreflightTrace.map((entry) => `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.warning ? ` — ${entry.warning}` : ""}${entry.error ? ` — ${entry.error}` : ""}`);
+				const traceLines = finalPreflightTrace.map((entry) => `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.warning ? ` — ${entry.warning}` : ""}${entry.error ? ` — ${workflowTraceErrorText(entry.error)}` : ""}`);
 				const outputMappings = workflowOutputPathMappingSummary(partial.children).trim();
 				const displayText = formatWorkflowResultText({
 					head: workflowPreflight ? [formatWorkflowPreflight(workflowPreflight)] : [],

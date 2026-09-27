@@ -3907,6 +3907,20 @@ Answer only from the supplied synthetic text.
 		fs.rmSync(resultPath, { force: true });
 	});
 
+	it("bounds a large child error in the workflow call trace", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ exitCode: 1, stderr: "c".repeat(300000) });
+		const result = await makeExecutor([makeAgent("echo")]).execute(
+			"scripted-workflow-large-child-error",
+			{ async: false, workflowScript: `try { await runs.run("scan", { agent: "echo", task: "Scan" }); } catch {} return "done";` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const text = result.content[0]?.text ?? "";
+		assert.ok(Buffer.byteLength(text, "utf-8") < 50_000, `${Buffer.byteLength(text, "utf-8")} bytes`);
+		assert.match(text, /- run scan: failed [\s\S]*c… \(\+\d+ chars; see the child run's output\)/);
+	});
+
 	it("caps an oversized thrown workflow error in foreground text and async summaries", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 		const workflowScript = `throw new Error("e".repeat(300000));`;
