@@ -264,15 +264,12 @@ function loadMcpConfig(cwd: string): McpConfig {
 function getConfigPaths(projectRoot: string): string[] {
 	const agentDir = getAgentDir();
 	const projectDir = getProjectConfigDir(projectRoot);
-	// pi-mcp-adapter 3.x reads its Pi-global and project overrides from
-	// mcp-adapter.json; the legacy mcp.json stays readable at lower precedence so
-	// un-migrated setups keep resolving.
+	// pi-mcp-adapter 3.x reads mcp-adapter.json. Pi's own mcp.json files belong to
+	// Pi's built-in MCP support, so servers there are never adapter-registered.
 	const candidates = [
 		GENERIC_GLOBAL_CONFIG_PATH,
-		path.join(agentDir, "mcp.json"),
 		path.join(agentDir, "mcp-adapter.json"),
 		path.resolve(projectRoot, ".mcp.json"),
-		path.join(projectDir, "mcp.json"),
 		path.join(projectDir, "mcp-adapter.json"),
 	];
 	return [...new Set(candidates)];

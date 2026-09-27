@@ -33,10 +33,6 @@ const CURRENT_DEFINITION: McpServerDefinition = {
 	args: ["-y", "@colbymchenry/codegraph@1.6.0", "serve", "--mcp"],
 	env: { CODEGRAPH_MCP_TOOLS: "explore,node,status" },
 };
-const LEGACY_DEFINITION: McpServerDefinition = {
-	command: "npx",
-	args: ["-y", "@colbymchenry/codegraph@0.9.0", "serve", "--mcp", "--legacy"],
-};
 
 function writeServerConfig(configPath: string, definition: McpServerDefinition): void {
 	fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -70,6 +66,7 @@ after(() => {
 describe("MCP direct-tool resolution config sources", () => {
 	beforeEach(() => {
 		assert.equal(getAgentDir(), agentDir, "test isolation must redirect the Pi agent directory");
+		fs.rmSync(projectDir, { recursive: true, force: true });
 		fs.mkdirSync(projectDir, { recursive: true });
 		for (const name of ["mcp.json", "mcp-adapter.json", "mcp-cache.json"]) {
 			fs.rmSync(path.join(agentDir, name), { force: true });
@@ -86,29 +83,15 @@ describe("MCP direct-tool resolution config sources", () => {
 		assert.deepEqual(resolution.unresolvedSelectors, []);
 	});
 
-	it("keeps resolving the legacy Pi-global mcp.json", () => {
+	it("ignores Pi's own mcp.json files, which the adapter no longer reads", () => {
 		writeServerConfig(path.join(agentDir, "mcp.json"), CURRENT_DEFINITION);
+		writeServerConfig(path.join(getProjectConfigDir(projectDir), "mcp.json"), CURRENT_DEFINITION);
 		writeMetadataCache(CURRENT_DEFINITION);
 
 		const resolution = resolveMcpDirectToolResolution(SELECTORS, projectDir);
 
-		assert.deepEqual(resolution.selections.map((selection) => selection.name), SELECTED_NAMES);
-		assert.deepEqual(resolution.unresolvedSelectors, []);
-	});
-
-	it("prefers mcp-adapter.json over a legacy mcp.json at the same scope", () => {
-		writeServerConfig(path.join(agentDir, "mcp.json"), LEGACY_DEFINITION);
-		writeServerConfig(path.join(agentDir, "mcp-adapter.json"), CURRENT_DEFINITION);
-
-		writeMetadataCache(CURRENT_DEFINITION);
-		const current = resolveMcpDirectToolResolution(SELECTORS, projectDir);
-		assert.deepEqual(current.selections.map((selection) => selection.name), SELECTED_NAMES);
-		assert.deepEqual(current.unresolvedSelectors, []);
-
-		writeMetadataCache(LEGACY_DEFINITION);
-		const legacy = resolveMcpDirectToolResolution(SELECTORS, projectDir);
-		assert.deepEqual(legacy.selections, []);
-		assert.deepEqual(legacy.unresolvedSelectors, SELECTORS);
+		assert.deepEqual(resolution.selections, []);
+		assert.deepEqual(resolution.unresolvedSelectors, SELECTORS);
 	});
 
 	it("resolves direct tools declared in the project mcp-adapter.json", () => {
