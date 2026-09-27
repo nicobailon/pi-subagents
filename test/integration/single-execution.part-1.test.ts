@@ -3918,7 +3918,9 @@ Answer only from the supplied synthetic text.
 		);
 		const text = result.content[0]?.text ?? "";
 		assert.ok(Buffer.byteLength(text, "utf-8") < 50_000, `${Buffer.byteLength(text, "utf-8")} bytes`);
-		assert.match(text, /- run scan: failed [\s\S]*c… \(\+\d+ chars; see the child run's output\)/);
+		assert.match(text, /- run scan: failed [\s\S]*c… \(\+\d+ chars\)/);
+		const savedPath = /\[TRUNCATED: trace errors shortened - full output at (.+)\]/.exec(text)?.[1];
+		assert.ok(savedPath && fs.readFileSync(savedPath, "utf-8").includes("c".repeat(300000)), text.slice(-400));
 	});
 
 	it("caps an oversized thrown workflow error in foreground text and async summaries", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
