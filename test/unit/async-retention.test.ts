@@ -271,6 +271,29 @@ describe("async retention cleanup", () => {
 		}
 	});
 
+	it("keeps a terminal-mission run while its mission sync is still pending", async () => {
+		const roots = makeRoots();
+		try {
+			const location = resolveMissionStoreLocation({ projectRoot: path.join(roots.root, "project"), agentDir: path.join(roots.root, "agent") });
+			const mission = createMission(location, { title: "Closed mission", objective: "Deliver and close" });
+			updateMission(location, mission.id, { status: "completed" });
+			const pendingRun = writeOldRun(roots.asyncDirRoot, "pending-sync-run");
+			writeMissionAsyncBinding(pendingRun, { missionId: mission.id, location, autoCreated: true });
+			fs.utimesSync(pendingRun, OLD / 1000, OLD / 1000);
+			const observerDir = path.join(roots.resultsDir, "result-index", "observers", "mission");
+			fs.mkdirSync(observerDir, { recursive: true });
+			fs.writeFileSync(path.join(observerDir, "pending-sync-run.json"), "{}");
+
+			const result = await cleanupAsyncRetention(cleanupOptions(roots));
+
+			assert.equal(fs.existsSync(pendingRun), true);
+			assert.equal(result.deletedRuns, 0);
+			assert.equal(result.skipped["mission-reference"], 1);
+		} finally {
+			fs.rmSync(roots.root, { recursive: true, force: true });
+		}
+	});
+
 	it("uses one cleaner, reaps stale tombstones safely, and limits processed runs", async () => {
 		const roots = makeRoots();
 		try {

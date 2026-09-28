@@ -217,17 +217,20 @@ function missionObserverIndexExists(resultsDir: string, runId: string): boolean 
 /**
  * Mission-bound runs are reclaimable once their mission is terminal (the run age
  * window doubles as the grace period) or once the mission record was pruned by
- * mission retention. Worn bindings and unreadable records fail closed.
+ * mission retention. A pending mission observer index, worn bindings, and
+ * unreadable records fail closed.
  */
 function missionReferenceBlocksReclaim(runDir: string, resultsDir: string, runId: string): boolean {
-	if (!fs.existsSync(path.join(runDir, MISSION_BINDING_FILE))) return missionObserverIndexExists(resultsDir, runId);
+	// The watcher needs the run's binding to retry a pending mission sync.
+	if (missionObserverIndexExists(resultsDir, runId)) return true;
+	if (!fs.existsSync(path.join(runDir, MISSION_BINDING_FILE))) return false;
 	let binding: MissionLaunchBinding | undefined;
 	try {
 		binding = readMissionBinding(runDir);
 	} catch {
 		return true;
 	}
-	if (!binding) return missionObserverIndexExists(resultsDir, runId);
+	if (!binding) return false;
 	try {
 		const mission = readMission(binding.location, binding.missionId);
 		return !TERMINAL_MISSION_STATUSES.has(mission.status);

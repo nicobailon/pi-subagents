@@ -17,6 +17,7 @@
 - Machine-generated worktree patches now use explicit `a/` and `b/` prefixes instead of Git's newer `--default-prefix` option, so diff capture works on older Git releases while still overriding `diff.noprefix`. Thanks to [@quifox](https://github.com/quifox) for [#2527](https://github.com/nicobailon/pi-subagents/pull/2527).
 - Dynamic tool activation now works in hosts that run Pi in-process, such as pi-web. pi-subagents no longer tries to read the host Pi version from disk before enabling `subagents_enable`, so those hosts no longer print "Could not locate the running Pi installation" and keep `subagent` always loaded; Pi 0.86.1 is already the oldest supported host. Thanks to [@q107580018](https://github.com/q107580018) for [#2526](https://github.com/nicobailon/pi-subagents/issues/2526).
 - Answering a background subagent's supervisor request no longer wakes the parent again with a stale needs-attention notice and intercom copy. The attention notice now waits 60 seconds and is sent only if the request is still unanswered and the run is still active. Status displays and waits still react to the request immediately.
+- Async run retention now removes old runs whose mission has finished or was deleted, instead of keeping every mission-bound run forever. Runs whose mission update has not been synced yet are still kept. Fixes [#2535](https://github.com/nicobailon/pi-subagents/issues/2535). Thanks to [@LCorleone](https://github.com/LCorleone) for [#2536](https://github.com/nicobailon/pi-subagents/pull/2536).
 
 ## [0.73.1] - 2026-09-27
 
