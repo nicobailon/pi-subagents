@@ -3,6 +3,7 @@
  */
 
 import { Type } from "typebox";
+import type { DisabledFeatureSurface } from "./features.ts";
 
 function keepTopLevelParameterDescriptions<T>(schema: T): T {
 	return pruneNestedDescriptions(schema, []) as T;
@@ -402,8 +403,11 @@ const SubagentParamsSchema = Type.Object(SubagentParamProperties);
 
 export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);
 
-export function createSubagentParamsSchema(): typeof SubagentParams {
-	return SubagentParams;
+export function createSubagentParamsSchema(disabled?: DisabledFeatureSurface): typeof SubagentParams {
+	if (!disabled || disabled.params.size === 0) return SubagentParams;
+	const enabledProperties = Object.fromEntries(Object.entries(SubagentParamProperties).filter(([name]) => !disabled.params.has(name)));
+	// Execution still accepts the full parameter type; disabled options are rejected at the execution boundary.
+	return keepTopLevelParameterDescriptions(Type.Object(enabledProperties)) as unknown as typeof SubagentParams;
 }
 
 const SubagentWaitParamsSchema = Type.Object({

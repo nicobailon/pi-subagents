@@ -2652,6 +2652,8 @@ export interface ExtensionConfig {
 	modelResponseAliases?: Record<string, string[]>;
 	/** Tool description variant registered for the parent-facing subagent tool. Defaults to split metadata. */
 	toolDescriptionMode?: ToolDescriptionMode;
+	/** Opt-in feature groups removed from the subagent tool schema and rejected at every execution boundary. */
+	disabledFeatures?: import("../extension/features.ts").SubagentFeature[];
 	/** Inline chat rendering for the subagent tool. Defaults to rich. */
 	inlineToolDisplay?: InlineToolDisplay;
 	/** Density controls for the main chat subagent call/result renderer. */
