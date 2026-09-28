@@ -13,6 +13,7 @@
 ### Fixed
 
 - Machine-generated worktree patches now use explicit `a/` and `b/` prefixes instead of Git's newer `--default-prefix` option, so diff capture works on older Git releases while still overriding `diff.noprefix`. Thanks to [@quifox](https://github.com/quifox) for [#2527](https://github.com/nicobailon/pi-subagents/pull/2527).
+- Dynamic tool activation now works in hosts that run Pi in-process, such as pi-web. pi-subagents no longer tries to read the host Pi version from disk before enabling `subagents_enable`, so those hosts no longer print "Could not locate the running Pi installation" and keep `subagent` always loaded; Pi 0.86.1 is already the oldest supported host. Thanks to [@q107580018](https://github.com/q107580018) for [#2526](https://github.com/nicobailon/pi-subagents/issues/2526).
 
 ## [0.73.1] - 2026-09-27
 

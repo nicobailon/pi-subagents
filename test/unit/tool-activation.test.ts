@@ -1,20 +1,16 @@
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import registerSubagentExtension from "../../src/extension/index.ts";
-import { supportsMinimumVersion, unsupportedDynamicToolsReason } from "../../src/extension/tool-activation.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
-import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
+import { resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
 
 type Handler = (event: any, context: any) => any;
 type Tool = { name: string; description?: string; promptSnippet?: string; parameters?: unknown; execute?: (...args: any[]) => any };
 
 const runtimes: Array<{ handlers: Map<string, Handler[]>; context: any }> = [];
 
-function createRuntime(messages: any[] = [], excluded: string[] = [], missingApis: string[] = [], declareHost = true) {
+function createRuntime(messages: any[] = [], excluded: string[] = [], missingApis: string[] = []) {
 	const handlers = new Map<string, Handler[]>();
 	const tools = new Map<string, Tool>();
 	let activeNames = ["read"];
@@ -55,15 +51,9 @@ function createRuntime(messages: any[] = [], excluded: string[] = [], missingApi
 	};
 	const childEnv = process.env.PI_SUBAGENT_CHILD;
 	delete process.env.PI_SUBAGENT_CHILD;
-	// The gate trusts the running host or an explicit override only, and this
-	// test process is neither, so declare the host it is exercising.
-	const hostRoot = declareHost ? process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] ?? resolveInstalledPiPackageRoot() : undefined;
-	const declaredHost = declareHost && process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] === undefined && hostRoot !== undefined;
-	if (declaredHost) process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = hostRoot;
 	try {
 		registerSubagentExtension(pi as any);
 	} finally {
-		if (declaredHost) delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
 		if (childEnv === undefined) delete process.env.PI_SUBAGENT_CHILD;
 		else process.env.PI_SUBAGENT_CHILD = childEnv;
 	}
@@ -174,114 +164,21 @@ describe("subagent tool activation", () => {
 	});
 });
 
-function withHostPackageRoot(manifest: Record<string, unknown> | string, run: () => void): void {
-	assert.equal(resolvePiPackageRoot(), undefined, "the test process must not look like a running host package");
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-host-root-"));
-	fs.writeFileSync(path.join(root, "package.json"), typeof manifest === "string" ? manifest : JSON.stringify(manifest));
-	const prior = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
-	const priorPiPackageDir = process.env.PI_PACKAGE_DIR;
-	delete process.env.PI_PACKAGE_DIR;
-	process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = root;
-	try {
-		run();
-	} finally {
-		if (prior === undefined) delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
-		else process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = prior;
-		if (priorPiPackageDir === undefined) delete process.env.PI_PACKAGE_DIR;
-		else process.env.PI_PACKAGE_DIR = priorPiPackageDir;
-		fs.rmSync(root, { recursive: true, force: true });
-	}
-}
-
 describe("host dynamic tool support detection", () => {
-	it("compares the host version against the 0.86.1 floor", () => {
-		for (const [version, supported] of [
-			["0.85.9", false], ["0.86.0", false], ["0.86.1", true], ["0.87.0", true], ["1.0.0", true],
-			["0.86", false], ["0.86.1-rc.1", false], ["0.87.0-beta.2", false], ["v0.87.0", false], ["current", false],
-		] as const) {
-			assert.equal(supportsMinimumVersion(version), supported, `version ${version}`);
-		}
-	});
-
-	it("names the measured installation for a host below the floor", () => {
-		const hostApi = { getAllTools() {}, getActiveTools() {}, setActiveTools() {} } as any;
-		withHostPackageRoot({ name: PI_CODING_AGENT_PACKAGE, version: "0.86.0" }, () => {
-			const reason = unsupportedDynamicToolsReason(hostApi);
-			assert.match(reason ?? "", /requires Pi 0\.86\.1 or newer/);
-			assert.match(reason ?? "", /detected 0\.86\.0 in .*pi-subagents-host-root-/);
-		});
-		withHostPackageRoot({ name: PI_CODING_AGENT_PACKAGE, version: "0.88.0" }, () => {
-			assert.equal(unsupportedDynamicToolsReason(hostApi), undefined);
-		});
-	});
-
-	it("accepts a validated 0.87 Bun bin/share host image", () => {
-		const hostApi = { getAllTools() {}, getActiveTools() {}, setActiveTools() {} } as any;
-		const manifestPath = "/synthetic-host/share/pi-coding-agent/package.json";
-		assert.equal(unsupportedDynamicToolsReason(hostApi, {
-			platform: "linux",
-			bunVersion: "1.2.0",
-			argv1: "/$bunfs/root/pi",
-			execPath: "/synthetic-host/bin/pi",
-			env: {},
-			realpathSync: (value) => value,
-			existsSync: (value) => value === manifestPath,
-			readFileSync: (value) => value === manifestPath
-				? JSON.stringify({ name: PI_CODING_AGENT_PACKAGE, version: "0.87.0" })
-				: (() => { throw new Error(`unexpected read: ${value}`); })(),
-		}), undefined);
-	});
-
-	it("keeps manifest failures visible instead of falling through", () => {		const hostApi = { getAllTools() {}, getActiveTools() {}, setActiveTools() {} } as any;
-		withHostPackageRoot("{ not json", () => {
-			assert.match(unsupportedDynamicToolsReason(hostApi) ?? "", /Could not read a valid Pi package manifest at .*package\.json/);
-		});
-		withHostPackageRoot({ name: PI_CODING_AGENT_PACKAGE }, () => {
-			assert.match(unsupportedDynamicToolsReason(hostApi) ?? "", /has no version/);
-		});
-		withHostPackageRoot({ name: "@someone-else/tool", version: "0.88.0" }, () => {
-			const reason = unsupportedDynamicToolsReason(hostApi) ?? "";
-			assert.match(reason, /is not @earendil-works\/pi-coding-agent/);
-			assert.match(reason, /PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT override/);
-		});
-	});
-
-	it("refuses to gate on an SDK that is not the running host", async () => {
-		const hostApi = { getAllTools() {}, getActiveTools() {}, setActiveTools() {} } as any;
+	it("activates the loader on an in-process host with no Pi package root evidence", async () => {
 		const prior = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
 		const priorPiPackageDir = process.env.PI_PACKAGE_DIR;
 		delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
 		delete process.env.PI_PACKAGE_DIR;
 		try {
-			assert.equal(resolvePiPackageRoot(), undefined);
-			assert.match(unsupportedDynamicToolsReason(hostApi) ?? "", /Could not verify the running Pi installation|Could not locate the running Pi installation/);
-			const runtime = createRuntime([], [], [], false);
+			assert.equal(resolvePiPackageRoot(), undefined, "the test process must not look like a running host package");
+			const runtime = createRuntime();
 			await runtime.emit("session_start", { type: "session_start", reason: "startup" });
-			assert.equal(runtime.tools.has("subagents_enable"), false);
-			assert.ok(runtime.active().includes("subagent"));
+			assert.ok(runtime.tools.has("subagents_enable"));
+			assert.equal(runtime.active().includes("subagent"), false);
 		} finally {
 			if (prior !== undefined) process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = prior;
 			if (priorPiPackageDir !== undefined) process.env.PI_PACKAGE_DIR = priorPiPackageDir;
 		}
-	});
-
-	it("stays eager below the floor and activates the loader at or above it", async () => {
-		let old!: ReturnType<typeof createRuntime>;
-		withHostPackageRoot({ name: PI_CODING_AGENT_PACKAGE, version: "0.86.0" }, () => { old = createRuntime(); });
-		await old.emit("session_start", { type: "session_start", reason: "startup" });
-		assert.equal(old.tools.has("subagents_enable"), false);
-		assert.ok(old.active().includes("subagent"));
-
-		let broken!: ReturnType<typeof createRuntime>;
-		withHostPackageRoot("{ not json", () => { broken = createRuntime(); });
-		await broken.emit("session_start", { type: "session_start", reason: "startup" });
-		assert.equal(broken.tools.has("subagents_enable"), false, "a broken host manifest must fail closed");
-		assert.ok(broken.active().includes("subagent"));
-
-		let supported!: ReturnType<typeof createRuntime>;
-		withHostPackageRoot({ name: PI_CODING_AGENT_PACKAGE, version: "0.88.0" }, () => { supported = createRuntime(); });
-		await supported.emit("session_start", { type: "session_start", reason: "startup" });
-		assert.ok(supported.tools.has("subagents_enable"));
-		assert.equal(supported.active().includes("subagent"), false);
 	});
 });

@@ -3,23 +3,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import {
-	findPiPackageRootFromEntry,
-	PI_PACKAGE_DIR_ENV,
-	resolvePiPackageRoot,
-	resolveRunningPiPackageRoot,
-} from "../../src/runs/shared/pi-spawn.ts";
-import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
+import { findPiPackageRootFromEntry, resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
 
 const PACKAGE_DIR = path.join("@earendil-works", "pi-coding-agent");
 
 function writePackageRoot(root: string, name = "@earendil-works/pi-coding-agent"): void {
 	fs.mkdirSync(root, { recursive: true });
 	fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name, version: "0.0.0" }));
-}
-
-function resolutionReason(result: ReturnType<typeof resolveRunningPiPackageRoot>): string {
-	return result && "reason" in result ? result.reason : "";
 }
 
 describe("findPiPackageRootFromEntry", () => {
@@ -88,103 +78,5 @@ describe("resolvePiPackageRoot host discovery", () => {
 		fs.writeFileSync(path.join(unrelated, "script.js"), "");
 		process.argv[1] = path.join(unrelated, "script.js");
 		assert.equal(resolvePiPackageRoot(), undefined);
-	});
-});
-
-describe("resolveRunningPiPackageRoot", () => {
-	it("keeps argv ownership ahead of both explicit roots", () => {
-		const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-running-root-precedence-"));
-		try {
-			const argvRoot = path.join(tmp, "argv");
-			const entry = path.join(argvRoot, "dist", "cli.js");
-			writePackageRoot(argvRoot);
-			fs.mkdirSync(path.dirname(entry), { recursive: true });
-			fs.writeFileSync(entry, "");
-			assert.deepEqual(resolveRunningPiPackageRoot({
-				argv1: entry,
-				env: {
-					[PI_PACKAGE_DIR_ENV]: path.join(tmp, "pi-owned"),
-					[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: path.join(tmp, "subagents"),
-				},
-			}), { root: fs.realpathSync(argvRoot), source: "argv" });
-		} finally {
-			fs.rmSync(tmp, { recursive: true, force: true });
-		}
-	});
-
-	it("reports an unreadable argv-owned manifest instead of selecting an override", () => {
-		const reason = resolutionReason(resolveRunningPiPackageRoot({
-			platform: "linux",
-			argv1: "/synthetic-host/pi/dist/cli.js",
-			env: { [PI_PACKAGE_DIR_ENV]: "/fallback" },
-			realpathSync: (value) => value,
-			existsSync: (value) => value === "/synthetic-host/pi/package.json",
-			readFileSync: () => { throw new Error("manifest unreadable"); },
-		}));
-		assert.match(reason, /running Pi entry.*manifest unreadable/);
-	});
-
-	it("prefers PI_PACKAGE_DIR, ignores blanks, and fails closed on explicit invalid roots", () => {
-		const manifests = new Map([
-			["/pi-owned/package.json", JSON.stringify({ name: "@earendil-works/pi-coding-agent" })],
-			["/subagents/package.json", JSON.stringify({ name: "@earendil-works/pi-coding-agent" })],
-			["/foreign/package.json", JSON.stringify({ name: "someone-else" })],
-		]);
-		const base = {
-			platform: "linux" as const,
-			argv1: "/missing/entry.js",
-			realpathSync: () => { throw new Error("missing"); },
-			readFileSync: (filePath: string) => {
-				const value = manifests.get(filePath);
-				if (value === undefined) throw new Error("missing");
-				return value;
-			},
-		};
-		assert.deepEqual(resolveRunningPiPackageRoot({ ...base, env: {
-			[PI_PACKAGE_DIR_ENV]: "/pi-owned",
-			[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: "/subagents",
-		} }), { root: "/pi-owned", source: "PI_PACKAGE_DIR" });
-		assert.deepEqual(resolveRunningPiPackageRoot({ ...base, env: {
-			[PI_PACKAGE_DIR_ENV]: "  ",
-			[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: "/subagents",
-		} }), { root: "/subagents", source: "PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT" });
-		assert.match(resolutionReason(resolveRunningPiPackageRoot({ ...base, env: {
-			[PI_PACKAGE_DIR_ENV]: "/foreign",
-			[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: "/subagents",
-		} })), /is not @earendil-works\/pi-coding-agent \(PI_PACKAGE_DIR\)/);
-		assert.match(resolutionReason(resolveRunningPiPackageRoot({ ...base, env: {
-			[PI_PACKAGE_DIR_ENV]: "/malformed",
-			[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: "/subagents",
-		}, readFileSync: () => "{" })), /Could not read a valid Pi package manifest.*PI_PACKAGE_DIR/);
-	});
-
-	it("recognizes POSIX share and Windows adjacent compiled Bun layouts", () => {
-		const manifest = JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "0.87.0" });
-		const posixRoot = path.posix.join("/", "synthetic-host", "share", "pi-coding-agent");
-		const posixManifest = path.posix.join(posixRoot, "package.json");
-		assert.deepEqual(resolveRunningPiPackageRoot({
-			platform: "linux", bunVersion: "1.2.0", argv1: "/$bunfs/root/pi", execPath: "/synthetic-host/bin/pi", env: {},
-			realpathSync: (value) => value,
-			existsSync: (value) => value === posixManifest,
-			readFileSync: (value) => value === posixManifest ? manifest : (() => { throw new Error("unexpected"); })(),
-		}), { root: posixRoot, source: "bun-share" });
-
-		const windowsRoot = path.win32.join("Q:\\", "synthetic-host", "pi");
-		const windowsManifest = path.win32.join(windowsRoot, "package.json");
-		assert.deepEqual(resolveRunningPiPackageRoot({
-			platform: "win32", bunVersion: "1.2.0", argv1: "B:\\~BUN\\root\\pi.exe", execPath: path.win32.join(windowsRoot, "pi.exe"), env: {},
-			realpathSync: (value) => value,
-			existsSync: (value) => value === windowsManifest,
-			readFileSync: (value) => value === windowsManifest ? manifest : (() => { throw new Error("unexpected"); })(),
-		}), { root: windowsRoot, source: "bun-adjacent" });
-	});
-
-	it("does not infer image layouts for ordinary Node processes named pi", () => {
-		assert.equal(resolveRunningPiPackageRoot({
-			bunVersion: "", argv1: "/app/index.js", execPath: "/opt/pi/bin/pi", env: {},
-			realpathSync: (value) => value,
-			existsSync: () => false,
-			readFileSync: () => JSON.stringify({ name: "@earendil-works/pi-coding-agent" }),
-		}), undefined);
 	});
 });
