@@ -6,7 +6,9 @@ import { randomUUID } from "node:crypto";
 import { Worker } from "node:worker_threads";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import type { AsyncStatus } from "../../shared/types.ts";
-import { MISSION_BINDING_FILE } from "../../missions/lifecycle.ts";
+import { MISSION_BINDING_FILE, readMissionBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
+import { MissionNotFoundError, readMission } from "../../missions/store.ts";
+import type { MissionStatus } from "../../missions/types.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "./active-run-index.ts";
 import { encodeIndexSegment } from "./index-segment.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
@@ -26,6 +28,8 @@ const RUN_TOMBSTONE_MARKERS_DIR = "async-retention-run-tombstones";
 const LOCK_STALE_MS = 24 * 60 * 60 * 1000;
 const RUN_MODES = new Set<AsyncStatus["mode"]>(["single", "parallel", "chain", "workflow"]);
 const TERMINAL_STATES = new Set<AsyncStatus["state"]>(["complete", "failed", "stopped", "rejected"]);
+// Mirrors TERMINAL_MISSION_STATUSES in src/missions/store.ts, which keeps it private.
+const TERMINAL_MISSION_STATUSES = new Set<MissionStatus>(["completed", "failed", "cancelled"]);
 const RESULT_TIMESTAMP_FIELDS = ["endedAt", "completedAt", "createdAt", "writtenAt", "expiresAt", "timestamp"] as const;
 
 interface RetentionCursor {
@@ -210,6 +214,29 @@ function missionObserverIndexExists(resultsDir: string, runId: string): boolean 
 	return fs.existsSync(path.join(resultsDir, "result-index", "observers", "mission", `${encodeIndexSegment(runId)}.json`));
 }
 
+/**
+ * Mission-bound runs are reclaimable once their mission is terminal (the run age
+ * window doubles as the grace period) or once the mission record was pruned by
+ * mission retention. Worn bindings and unreadable records fail closed.
+ */
+function missionReferenceBlocksReclaim(runDir: string, resultsDir: string, runId: string): boolean {
+	if (!fs.existsSync(path.join(runDir, MISSION_BINDING_FILE))) return missionObserverIndexExists(resultsDir, runId);
+	let binding: MissionLaunchBinding | undefined;
+	try {
+		binding = readMissionBinding(runDir);
+	} catch {
+		return true;
+	}
+	if (!binding) return missionObserverIndexExists(resultsDir, runId);
+	try {
+		const mission = readMission(binding.location, binding.missionId);
+		return !TERMINAL_MISSION_STATUSES.has(mission.status);
+	} catch (error) {
+		if (error instanceof MissionNotFoundError) return false;
+		return true;
+	}
+}
+
 function runTombstoneMarkerPath(maintenanceRoot: string, runId: string): string {
 	return path.join(maintenanceRoot, RUN_TOMBSTONE_MARKERS_DIR, `${encodeIndexSegment(runId)}.json`);
 }
@@ -295,7 +322,7 @@ function runSkipReason(input: {
 	if (!TERMINAL_STATES.has(status.state)) return "non-terminal";
 	if (status.mode === "workflow" || status.parentWorkflowRunId || status.workflowKey) return "workflow-reference";
 	if (hasNestedReferences(status)) return "nested-reference";
-	if (fs.existsSync(path.join(runDir, MISSION_BINDING_FILE)) || missionObserverIndexExists(input.resultsDir, status.runId)) return "mission-reference";
+	if (missionReferenceBlocksReclaim(runDir, input.resultsDir, status.runId)) return "mission-reference";
 	if (hasUnresolvedRunHandoff(runDir, status)) return "handoff-reference";
 	if (hasResumableContract(runDir, status)) return "resumable";
 	const timestamp = statusTimestamp(status, runDir);
