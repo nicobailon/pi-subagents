@@ -20,7 +20,7 @@ const WORKTREE_NAMING_BRANCH_MAX_BYTES = 256;
 const WORKTREE_COMMAND_OUTPUT_MAX_BYTES = 128 * 1024;
 const WORKTRUNK_COMMAND = process.platform === "win32" ? "git" : "wt";
 const WORKTRUNK_ARG_PREFIX = process.platform === "win32" ? ["wt"] : [];
-export const MACHINE_DIFF_OPTIONS = ["--no-color", "--no-ext-diff", "--no-textconv", "--default-prefix", "--line-prefix=", "--no-relative"] as const;
+export const MACHINE_DIFF_OPTIONS = ["--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/", "--line-prefix=", "--no-relative"] as const;
 const MACHINE_PATCH_OPTIONS = [...MACHINE_DIFF_OPTIONS, "--binary"] as const;
 const PATCH_VALIDATION_OPTIONS = ["apply", "--check", "--cached", "--reverse", "--binary", "--whitespace=nowarn"] as const;
 
